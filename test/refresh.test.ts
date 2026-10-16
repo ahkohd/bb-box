@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { pinsDigest, type ImageRecord } from "../src/backends/images.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../src/backends/types.ts";
 import { buildScript, recordChecks, refreshImage } from "../src/core/refresh.ts";
-import type { CommandTransport, RunResult } from "../src/transports/types.ts";
+import { TransportError, type CommandTransport, type RunResult } from "../src/transports/types.ts";
 
 const SETUP = fileURLToPath(new URL("../setup/", import.meta.url));
 const APP = "a".repeat(64);
@@ -256,21 +256,33 @@ const WINDOWS: ImageBuild = { ref: "9200", image: "standard", kind: "windows-des
  * A fake backend with Windows boxes: refresh.ps1 exits with each of `exits`
  * in turn, and each restart moves the box's boot time on.
  */
-function fakeWindows(exits: number[]) {
+function fakeWindows(exits: number[], options: { readonly after?: (string | null)[]; readonly cut?: number; readonly steadyMs?: number } = {}) {
   const made = fake();
   let boots = 0;
   const left = [...exits];
+  // What the box answers when asked its boot time after a restart, in turn, before its own: null for no answer.
+  let after: (string | null)[] = [];
+  let streams = 0;
   const windowsCommand = (ref: string): CommandTransport => ({
     probe: async () => true,
     run: async (script) => {
       const what = script.includes("LastBootUpTime") ? "booted" : script.startsWith("Restart-Computer") ? "restart" : script.startsWith("Remove-Item") ? "clean" : script.includes("Check 'Node.js") ? "check.ps1" : script;
       made.events.push(`run ${ref} ${what}`);
-      if (what === "restart") boots++;
+      if (what === "restart") {
+        boots++;
+        after = [...(options.after ?? [])];
+      }
+      if (what === "booted" && after.length) {
+        const said = after.shift()!;
+        if (said === null) return { exitCode: 255, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult;
+        return { exitCode: 0, stdout: `${said}\n`, stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult;
+      }
       const stdout = what === "booted" ? `boot ${boots}\n` : what === "check.ps1" ? "ok    PowerShell 7 over SSH  7.6.6\nok    Node.js 22.19 or later on PATH  node v24.21.0, npm 11.6.2\n" : "";
       return { exitCode: 0, stdout, stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult;
     },
     stream: async (script, { onOutput }) => {
       made.events.push(`stream ${ref}`);
+      if (++streams === options.cut) throw new TransportError("unreachable", "The box at 192.0.2.9 did not answer on SSH.");
       assert.equal(script, "& 'C:\\bb-box\\build\\refresh.ps1' -Pins 'C:\\bb-box\\build\\pins.json' -Record 'C:\\bb-box\\build\\image.json'; exit $LASTEXITCODE");
       const exit = left.shift() ?? 0;
       onOutput(new TextEncoder().encode(exit === 3010 ? "12:00:00 a restart, then this again\n" : exit ? "12:00:00 FAILED: no network\n" : "12:00:00 Done\n"), "stdout");
@@ -297,7 +309,7 @@ function fakeWindows(exits: number[]) {
     build: async () => assert.fail("a Windows refresh does not build with the backend's script"),
   };
   const run = () =>
-    refreshImage({ images, current: WINDOWS, setup: SETUP, bbUrl: "https://bb.example.com", bbApp: APP, signal: AbortSignal.timeout(60_000), now: made.now, restart: { timeoutMs: 1_000, pollMs: 0 } });
+    refreshImage({ images, current: WINDOWS, setup: SETUP, bbUrl: "https://bb.example.com", bbApp: APP, signal: AbortSignal.timeout(60_000), now: made.now, restart: { timeoutMs: 1_000, pollMs: 0, steadyMs: options.steadyMs ?? 0 } });
   return { ...made, run };
 }
 
@@ -340,6 +352,27 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
   assert.equal(written.tools.node, "24.21.0");
   assert.equal(written.tools.pwsh, pins.tools.find((pin) => pin.name === "pwsh")!.version);
   assert.equal(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\refresh.ps1")), readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8"));
+});
+
+test("a Windows refresh waits for the box to stay up after a restart, through the restart Windows makes by itself to finish its updates", async () => {
+  // As live: the box answers started anew, then restarts by itself, then answers started anew once more, as "boot 1".
+  const made = fakeWindows([3010, 0], { after: [null, "boot 0a", null, null], steadyMs: 30 });
+  const result = await made.run();
+  assert.equal(result.ok, true, result.reason ?? "");
+  const said = result.output.join("\n");
+  assert.match(said, /\nthe box answers again \d+ s after the restart; waiting for it to stay up 0 s, as Windows may restart again to finish its updates\nWindows restarted again by itself, as it finishes its updates: the box answers again \d+ s after the restart; waiting for it to stay up 0 s\n12:00:00 Done\n/);
+  // The second round runs only once the box has answered with its last boot time.
+  const events = made.events.filter((event) => event === "run 7000 booted" || event === "stream 7000");
+  assert.equal(events.filter((event) => event === "stream 7000").length, 2);
+  assert.ok(events.indexOf("stream 7000", 1) > 5, events.join(", "));
+});
+
+test("a Windows refresh round that finds the box gone waits for it to stay up, then runs again", async () => {
+  const made = fakeWindows([3010, 0], { cut: 2 });
+  const result = await made.run();
+  assert.equal(result.ok, true, result.reason ?? "");
+  assert.ok(result.output.includes("the box stopped answering in round 2, as when Windows restarts by itself; waiting for it"), result.output.join("\n"));
+  assert.equal(made.events.filter((event) => event === "stream 7000").length, 3);
 });
 
 test("a Windows refresh takes 194, 3010 as ssh's 8-bit exit code gives it, as a restart (054)", async () => {
