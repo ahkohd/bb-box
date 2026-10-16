@@ -2,7 +2,7 @@
 // plugin's relay (&stream=selkies), decoded with WebCodecs onto a canvas. It
 // does what DesktopSession does for noVNC, so the toolbar treats both alike:
 // control, the clipboard, the cursor rules (#467), Cmd as Ctrl, and the
-// viewer's size while it has control. Its clipboard carries images too, both
+// viewer's size once it changes while the viewer has control. Its clipboard carries images too, both
 // ways (#609), as Selkies' does: an image goes as its binary clipboard
 // messages, and anything over a chunk in parts. Keys are the keysyms of noVNC's own
 // keyboard handling, sent as Selkies' kd and ku; the pointer and the wheel go
@@ -119,6 +119,10 @@ export class SelkiesSession implements Kept {
   #retry: ReturnType<typeof setTimeout> | undefined;
   #mine = false;
   #resizable = false;
+  /** Whether the desktop follows this tab's size: only once the tab's size changes while it has control, as the RFB viewer does. */
+  #follow = false;
+  /** The tab's size last seen, as "<w>x<h>". */
+  #lastSize: string | null = null;
   #disposed = false;
   /** The desktop's size, from its frames. */
   #width = 0;
@@ -156,7 +160,14 @@ export class SelkiesSession implements Kept {
     this.#observer =
       typeof ResizeObserver === "undefined"
         ? null
-        : new ResizeObserver(() => {
+        : new ResizeObserver((entries) => {
+            const size = entries.at(-1)?.contentRect;
+            if (!size || size.width <= 0 || size.height <= 0) return;
+            const key = `${Math.round(size.width)}x${Math.round(size.height)}`;
+            const moved = this.#lastSize !== null && this.#lastSize !== key;
+            this.#lastSize = key;
+            if (!moved || !this.#mine) return;
+            this.#follow = true;
             clearTimeout(this.#settle);
             this.#settle = setTimeout(() => this.#sendSize(), SETTLE_MS);
           });
@@ -417,7 +428,8 @@ export class SelkiesSession implements Kept {
         this.#failures = 0;
         this.#set({ state: "connected" });
         this.#apply();
-        // Control held before this connection, as after a reload, a reconnect or a switch from VNC: the desktop takes the viewer's size now.
+        // Control held before this connection, as after a reload, a reconnect or a switch from VNC: the desktop keeps its size,
+        // unless this tab's size changed while it had control.
         this.#sendSize();
       }
     } finally {
@@ -444,7 +456,8 @@ export class SelkiesSession implements Kept {
     this.#resizable = resizable;
     if (was && !mine) this.#release();
     this.#apply();
-    if (mine && !was) this.#sendSize();
+    // Control taken, or lost: the desktop keeps its size until this tab's size changes while it has control.
+    if (mine !== was) this.#follow = false;
   }
 
   #apply(): void {
@@ -529,7 +542,7 @@ export class SelkiesSession implements Kept {
 
   /** The viewer's size, for the desktop to take, while it has control and the desktop can resize. */
   #sendSize(): void {
-    if (!this.#mine || !this.#resizable || this.connection.state !== "connected") return;
+    if (!this.#mine || !this.#resizable || !this.#follow || this.connection.state !== "connected") return;
     const width = Math.floor(this.element.clientWidth);
     const height = Math.floor(this.element.clientHeight);
     if (width > 0 && height > 0) this.#send(`r,${width}x${height}`);
