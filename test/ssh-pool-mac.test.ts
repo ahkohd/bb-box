@@ -634,6 +634,8 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(statSync(join(mac.root, "private/var/bbbox-admin")).mode & 0o777, 0o700, "closed to box users, in staff (047)");
   // bb-box-own, which runs a granted program as its own responsible process (058).
   assert.ok(statSync(join(mac.root, "usr/local/bin/bb-box-own")).mode & 0o111, "bb-box-own is built");
+  // bb-box-display, which gives each box user's desktop the 2x mode of its size.
+  assert.ok(statSync(join(mac.root, "usr/local/bin/bb-box-display")).mode & 0o111, "bb-box-display is built");
   // The agent CLIs, pinned, linked from /usr/local/bin (#561).
   for (const [command, target] of [
     ["claude", "/usr/local/lib/bb-box/claude-code-2.1.283/claude"],
@@ -941,6 +943,21 @@ test("in a Mac VM that is itself the box, as Tart's are, the helper makes the us
   assert.equal(on.status, 7);
   assert.match(on.stderr, /^System Integrity Protection is on/);
   assert.equal(mac.helper(["vm-grant"]).status, 2);
+});
+
+test("each box user's desktop gets the 2x mode of its size for its session, after its sign-in and at a claim, where setup-mac.sh built bb-box-display", () => {
+  const mac = readyMac();
+  const display = "launchctl asuser 70000 /usr/bin/sudo -n -H -u bbx-0 -- /usr/local/bin/bb-box-display hidpi";
+  // Without the tool, as before setup-mac.sh builds it, nothing runs.
+  assert.equal(mac.helper(["claim", "0"], CLAIM()).status, 0);
+  assert.equal(count(mac, display), 0);
+  assert.equal(mac.helper(["release", "0"], RELEASE()).status, 0);
+  mkdirSync(join(mac.root, "usr/local/bin"), { recursive: true });
+  writeFileSync(join(mac.root, "usr/local/bin/bb-box-display"), "#!/bin/sh\n", { mode: 0o755 });
+  assert.equal(mac.helper(["claim", "1"], CLAIM("box_b")).status, 0);
+  assert.equal(count(mac, display.replaceAll("70000", "70001").replace("bbx-0", "bbx-1")), 1, "at the claim");
+  assert.equal(mac.helper(["release", "1"], RELEASE("box_b")).status, 0);
+  assert.equal(count(mac, display.replaceAll("70000", "70002").replace("bbx-0", "bbx-2")), 1, "after the next user's sign-in");
 });
 
 test("each box user gets a code-signing identity of its own in a keychain codesign uses with no prompt, made at the reset and unlocked at each claim (058)", () => {

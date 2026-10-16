@@ -87,7 +87,8 @@ keeps for its own users. Elsewhere box users take 70000 to 79999.
 - An HDMI dummy plug, if the Mac runs without a display. With nothing
   attached, one reset ended in a kernel panic in the display coprocessor,
   and the Mac restarted; the pool waits for a Mac that restarts in its
-  reset. A test with a plug fitted will say more.
+  reset. With a 1080p plug fitted, 15 resets in a row had none. The plug
+  also gives the desktop its 2x mode, so the viewer is sharp.
 - A Mac that is not also a Tart host, as a box takes the whole Mac. On
   macOS 27 and later, every reset restarts the Mac's user space, which
   stops every Tart VM on it and ends every SSH session. The doctor warns
@@ -590,6 +591,20 @@ Sharing's sign-in. bb-box never stores it. Each box's user has its own
 password, which the reset removes with the user. The desktop has the size
 of the Mac's display, and cannot be resized. A Mac without a display may
 need an HDMI dummy plug for a useful size.
+
+Where the display offers it, each box user's desktop runs at the 2x mode of
+its size, for that user's session only: 1920 x 1080 points drawn with
+3840 x 2160 pixels on a 1080p plug. On a Retina screen the viewer then
+shows each pixel at about 1.35 screen pixels, rather than 2.7 at 1x, so
+text is sharp. Computer use's coordinates stay in points, so they do not
+change. setup-mac.sh builds `bb-box-display`, which the helper runs after
+each user signs in. On a Mac whose display has no 2x mode, it does
+nothing.
+
+The cost is 4 times the pixels. Measured through the viewer, a full screen
+of noise, the worst case for Screen Sharing's lossless compression, took
+1.37 s to reach the browser at 2x and 0.36 s at 1x. Typing reached the
+picture in 49 to 111 ms at 2x and 28 to 71 ms at 1x.
 
 The box user is a standard user, not an administrator. It cannot run
 commands as root, install into `/Applications` or `/opt/homebrew`, or change

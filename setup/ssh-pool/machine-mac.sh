@@ -746,6 +746,14 @@ signing_identity() { # user uid
   echo "$user" >"$STATE/signing"
 }
 
+# The desktop at the 2x mode of its size, for user $1's session only, where
+# the display offers one (setup-mac.sh's bb-box-display). Best effort: a 1x
+# desktop still works.
+hidpi() { # user uid
+  [ -x "$ROOT/usr/local/bin/bb-box-display" ] || return 0
+  launchctl asuser "$2" /usr/bin/sudo -n -H -u "$1" -- /usr/local/bin/bb-box-display hidpi >/dev/null 2>&1
+}
+
 # The microphone and the camera for box_run's commands, by default (058), in
 # box user $1's own TCC database: those commands are charged to
 # sshd-keygen-wrapper. The Mac has no microphone of its own: setup-mac.sh
@@ -960,6 +968,8 @@ claim() {
   default_grants "$user" || :
   tcc_snapshot
   signing_identity "$user" "$uid" || :
+  # Set already by the reset, but not for the first user, which init makes.
+  hidpi "$user" "$uid" || :
   # The box's key, and 030's sudo rule, which lets the user run desktop commands in its own session and nothing else.
   home=$ROOT/Users/$user
   rule=$ROOT/etc/sudoers.d/$user
@@ -1047,6 +1057,7 @@ finish() {
   # Made now the user is signed in, so a claim has only to unlock it.
   signing_identity "$next_user" "$next_uid" || :
   default_grants "$next_user" || :
+  hidpi "$next_user" "$next_uid" || :
   echo "$next" | put "$STATE/generation"
   rm -f "$STATE/resetting"
   echo "generation=$next"
