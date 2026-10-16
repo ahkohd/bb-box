@@ -342,6 +342,13 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
   assert.equal(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\refresh.ps1")), readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8"));
 });
 
+test("a Windows refresh takes 194, 3010 as ssh's 8-bit exit code gives it, as a restart (054)", async () => {
+  const made = fakeWindows([194, 0]);
+  const result = await made.run();
+  assert.equal(result.ok, true, result.reason ?? "");
+  assert.ok(result.output.includes("restarting the box (round 1 of 5)"));
+});
+
 test("a Windows refresh that fails, or that Windows keeps asking to restart, keeps the image", async () => {
   const failed = fakeWindows([1]);
   const result = await failed.run();
