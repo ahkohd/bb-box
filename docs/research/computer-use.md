@@ -228,6 +228,8 @@ inside the standard limit.
   selection by title ambiguous; always select by window ID.
 - **Behaviour changes between releases**: 0.30.4 refuses background radio
   clicks that 0.28.3 performed.
+- **Chords lose their modifiers in background on Windows** (Cua 0.30.4,
+  below): Cua reports success and the app gets the bare key.
 - **Leftover input devices**: Cua's MPX path can leave a master pointer and
   keyboard behind if killed mid-action; the next daemon start removes them
   (Cua's `linux-mpx-recovery.md`).
@@ -373,6 +375,33 @@ From Cua Driver's `WINDOWS.md` and accessibility-cli's source.
 - **accessibility-cli** reads UI Automation but clicks by pixel with
   `SendInput` using absolute moves, which moves the shared cursor, despite
   the README's example.
+- **Chords in background lose their modifiers** (Cua Driver 0.30.4,
+  16 October 2026). In background, Cua presses a chord with posted
+  `WM_KEYDOWN` and `WM_KEYUP` messages (`post_key` in
+  `platform-windows/src/input/keyboard.rs`). Its own comment on
+  `send_key_synthesized` says why that fails: a posted `VK_CONTROL` does not
+  change the modifier state that apps read with `GetKeyState`, so "the `s`
+  arrives as plain text input". Cua refuses a background chord
+  (`background_unavailable`) only for windows it recognises as Chromium, a
+  WebView2 host, WPF, Tk or LibreOffice (`would_be_silently_dropped` in
+  `delivery.rs`). Windows 11's Notepad is none of these, so Cua answers
+  success, and bb-box, which falls back to foreground only on a refusal,
+  says the chord was pressed. Measured in Notepad on a Proxmox QEMU box:
+
+  | Chord | Background | Foreground (the real keyboard) |
+  | --- | --- | --- |
+  | ctrl+a | types "a" | selects all |
+  | ctrl+c, then ctrl+v | types "c", then "v" | copies, then pastes |
+  | shift+Left | moves the caret, selects nothing | selects a character |
+  | ctrl+s | types "s" | opens "Save as" |
+  | alt+Tab | no switch; touches Notepad's System menu | switches window |
+
+  For comparison, on Linux (Mousepad, X11) Cua refuses ctrl+a in
+  background, bb-box presses it with the real keyboard, and it selects all.
+  On macOS (TextEdit on Tart) cmd+a selects all in background, and ctrl+a
+  moves to the line's start, as Cocoa's text bindings do. Text that Cua
+  types in background on Linux went in at the start of the text, not over
+  the selection.
 
 ## macOS
 
@@ -472,7 +501,9 @@ On the local rig first, then on each backend as it arrives:
   `MACOS.md`, `RUNTIME.md` and `EMBEDDING.md`; `docs/action-support.md`,
   `docs/linux-mpx-recovery.md`, `docs/linux-desktop-validation.md`,
   `scripts/README.md`; `rust/crates/cua-driver/src/telemetry.rs`,
-  `version_check.rs` and `mcp_envelope.rs`; `rust/crates/cua-driver-uia`
+  `version_check.rs` and `mcp_envelope.rs`; `rust/crates/cua-driver-uia`;
+  at `cua-driver-rs-v0.30.4`, `rust/crates/platform-windows/src/input/`
+  `keyboard.rs` and `delivery.rs`
 - accessibility-cli: https://github.com/DioxusLabs/accessibility-cli (commit
   f64c036), `README.md`, `packages/accessibility-core/src/platform/x11.rs`,
   `macos.rs` and `msft.rs`, `accessibility/cache.rs`,
