@@ -14,6 +14,7 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | [`box_image_try`](#box_image_try) | Try a project image's script as a build runs it (049), before box_image_set: in a new box of the kind's current standard image, on a backend that builds images, the script runs as root with BB_BOX_IMAGE, BB_BOX_KIND, BB_BOX_BACKEND and BB_BOX_ARCH, then the check as the box user, then finalizing, which empties /tmp, /var/tmp and the caches. |
 | [`box_job`](#box_job) | Get the exit code and output of a box_run command that went on in its box as a job: one still running after 270 s, or when bb-box restarted, as for an update. |
 | [`box_list`](#box_list) | List this thread's boxes and the kinds of box you can acquire. |
+| [`box_record`](#box_record) | Record a desktop box's screen, to show your work in the thread as a short video (059). |
 | [`box_release`](#box_release) | Release a box you no longer need. |
 | [`box_run`](#box_run) | Run a shell script in a box, as its user, and wait for it. |
 | [`box_start`](#box_start) | Start a stopped box again, with its disk as it was, and wait up to 20 s more while it reconnects as a BB machine. |
@@ -115,6 +116,17 @@ Get the exit code and output of a box_run command that went on in its box as a j
 List this thread's boxes and the kinds of box you can acquire.
 
 It takes no parameters.
+
+## box_record
+
+Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after 5 minutes, and stop still gives its clip. Linux desktops on X11 for now.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
+| `action` | `start`, `stop` | yes | start begins recording; stop ends it and makes the clip. |
+| `speed` | number or number or number | no | With stop: the clip plays this many times faster. Defaults to 1. |
+| `stills` | `cut`, `keep` | no | With stop: cut each still stretch to half a second (the default), or keep it. |
 
 ## box_release
 

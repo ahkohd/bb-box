@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -305,4 +305,39 @@ export function joined(hub: () => Routed, options: { openAfterMs?: number } = {}
     return socket;
   };
   return { urls, connectTo };
+}
+
+/**
+ * ffmpeg that records until SIGTERM, reports two still stretches, the second
+ * running to the end, and writes "mp4data" for a clip; ffprobe that gives
+ * 10 s for the capture, 4.2 s for the clip and 1280x720. Each ffmpeg call's
+ * arguments go to ~/ffmpeg-args.
+ */
+export function fakeFfmpeg(): string {
+  const bin = tempDir("fake-ffmpeg");
+  writeFileSync(
+    join(bin, "ffmpeg"),
+    `#!/bin/sh
+for a; do out=$a; done
+echo "$*" >> "$HOME/ffmpeg-args"
+case "$*" in
+  *x11grab*) trap 'echo capture > "$out"; exit 0' TERM; while :; do sleep 0.05; done ;;
+  *"-f null"*) printf '[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 1\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_end: 6\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 8\\n' >&2 ;;
+  *) printf mp4data > "$out" ;;
+esac
+`,
+  );
+  writeFileSync(
+    join(bin, "ffprobe"),
+    `#!/bin/sh
+case "$*" in
+  *width,height*) echo 1280x720 ;;
+  *capture.mkv*) echo 10.000000 ;;
+  *) echo 4.200000 ;;
+esac
+`,
+  );
+  chmodSync(join(bin, "ffmpeg"), 0o755);
+  chmodSync(join(bin, "ffprobe"), 0o755);
+  return bin;
 }

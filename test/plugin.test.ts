@@ -25,7 +25,7 @@ import { hostEntry } from "../src/host/entry.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
-import { fakeDaemon, joined, tempDir } from "./helpers.ts";
+import { fakeDaemon, fakeFfmpeg, joined, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_one";
 const PROJECT = "prj_one";
@@ -705,6 +705,41 @@ test("box_copy takes relative paths under the workspace and the box user's home,
   assert.equal(readFileSync(join(world.workspace, "both.txt"), "utf8"), "notes\nnotes\n");
   await tool("box_copy", { box: box.name, direction: "from_box", from: "both.txt", to: join(world.root, "outside.txt") });
   assert.equal(readFileSync(join(world.root, "outside.txt"), "utf8"), "notes\nnotes\n");
+});
+
+test("box_record records a Linux desktop, and stop puts the clip and a page that plays it in the thread's storage, with the line to show it (059)", { skip: process.platform !== "linux" && "needs GNU stat" }, async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  const saved = process.env.PATH;
+  process.env.PATH = `${fakeFfmpeg()}:${saved}`;
+  t.after(() => (process.env.PATH = saved));
+
+  await tool("box_acquire", { kind: "linux" });
+  const server = await only(app);
+  const refused = await tool("box_record", { box: server.name, action: "start" });
+  assert.ok(isError(refused));
+  assert.match(text(refused), /has no Linux desktop\. box_record records Linux desktops for now/);
+  await tool("box_release", { box: server.name });
+
+  await tool("box_acquire", { kind: "linux-desktop" });
+  const desktop = (await app.boxes.list(THREAD)).find((box) => box.kind === "linux-desktop")!;
+  // The fake's desktop has no display.env, so it is not running.
+  assert.match(text(await tool("box_record", { box: desktop.name, action: "start" })), /desktop is not running/);
+  const none = await tool("box_record", { box: desktop.name, action: "stop" });
+  assert.ok(isError(none));
+  assert.match(text(none), /has no recording\./);
+
+  // A recording that ended at its limit, as the box leaves it.
+  await tool("box_run", { box: desktop.name, command: "mkdir -p .local/state/bb-box/recording && echo capture > .local/state/bb-box/recording/capture.mkv" });
+  const stopped = await tool("box_record", { box: desktop.name, action: "stop", speed: 2 });
+  assert.ok(!isError(stopped), text(stopped));
+  const said = text(stopped);
+  const name = /\$BB_THREAD_STORAGE\/(recordings\/[^ ]+)\.mp4/.exec(said)?.[1];
+  assert.ok(name, said);
+  assert.match(said, /^Recorded box \S+: a 4\.2 s clip of 10\.0 s recorded, 1\.6 s of still stretches cut, played 2x, 1280x720, 1 KB\. It reached the 5-minute limit/);
+  assert.ok(said.includes(`::inline-vis{source="thread-storage" file="${name}.html" height="368"}`), said);
+  assert.equal(readFileSync(join(world.storage, `${name}.mp4`), "utf8"), "mp4data");
+  assert.ok(readFileSync(join(world.storage, `${name}.html`), "utf8").includes(`data:video/mp4;base64,${Buffer.from("mp4data").toString("base64")}`));
 });
 
 test("box_copy takes files in the thread's storage folder both ways, by its variable or its path (#482)", async (t) => {

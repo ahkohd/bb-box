@@ -12,6 +12,7 @@ import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
+import { PREVIEW_MAX_BYTES, RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STOP_EXITS, parseRecordResult, previewHeight, recordPreview, recordStartScript, recordStopScript } from "../core/record.ts";
 import { GRANT_PERMISSIONS, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
@@ -601,6 +602,82 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         return `Copied ${from} (${data.byteLength} bytes) from box ${box.name} to ${target.path} in ${target.stored ? "this thread's storage folder" : "the workspace"}.${next("Read it with your usual file tools.")}`;
       } catch (error) {
         return failure(error, "Copying the file");
+      }
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "box_record",
+    description:
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops on X11 for now.`,
+    presentation: { label: { pending: "Recording the desktop", completed: "Recorded the desktop" } },
+    parameters: z.object({
+      box: boxParam,
+      action: z.enum(["start", "stop"]).describe("start begins recording; stop ends it and makes the clip."),
+      speed: z
+        .union([z.literal(1), z.literal(2), z.literal(4)])
+        .optional()
+        .describe("With stop: the clip plays this many times faster. Defaults to 1."),
+      stills: z.enum(["cut", "keep"]).optional().describe("With stop: cut each still stretch to half a second (the default), or keep it."),
+    }),
+    async execute({ box: ref, action, speed, stills }, { threadId, signal }) {
+      try {
+        const id = thread(threadId);
+        const { owner, box: found } = await app.resolve(id, ref, signal);
+        if (found.capabilities.os !== "linux" || !found.capabilities.displays.length) {
+          throw new BoxError("unsupported", `Box ${found.name} has no Linux desktop. box_record records Linux desktops for now; macOS and Windows come later.`);
+        }
+        if (action === "start") {
+          const { result } = await boxes.run(owner, found.id, recordStartScript(), { timeoutMs: 30_000, signal, waitForEnrolment: false });
+          const refused: Partial<Record<number, string>> = {
+            [RECORD_START_EXITS.running]: `Box ${found.name} is recording already.${next(`Call box_record with box "${found.name}" and action "stop" for its clip.`)}`,
+            [RECORD_START_EXITS.wayland]: `Box ${found.name}'s desktop is on Wayland, which box_record does not record yet.`,
+            [RECORD_START_EXITS.noDisplay]: `Box ${found.name}'s desktop is not running.${next(`Call box_status with box "${found.name}" to see why.`)}`,
+          };
+          const said = refused[result.exitCode ?? -1];
+          if (said) return { content: [{ type: "text", text: said }], isError: true };
+          if (result.exitCode !== 0) throw new BoxError("unreachable", `Recording box ${found.name} did not start: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+          return `Recording box ${found.name}'s desktop, for at most ${RECORD_LIMIT_S / 60} minutes.${next(`Do what the video should show, then call box_record with box "${found.name}" and action "stop".`)}`;
+        }
+        const storage = await app.threadStorage(id, signal);
+        if (!storage) throw new BoxError("unsupported", "BB gives no storage folder for this thread, so there is nowhere to put the clip.");
+        const times = speed ?? 1;
+        const { result } = await boxes.run(owner, found.id, recordStopScript({ speed: times, stills: stills ?? "cut" }), {
+          timeoutMs: 240_000,
+          signal,
+          maxOutputBytes: 64 * 1024,
+          waitForEnrolment: false,
+        });
+        if (result.exitCode === RECORD_STOP_EXITS.none) {
+          return { content: [{ type: "text", text: `Box ${found.name} has no recording.${next(`Call box_record with box "${found.name}" and action "start" to begin one.`)}` }], isError: true };
+        }
+        const made = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
+        if (!made) throw new BoxError("unreachable", `Making the clip in box ${found.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+        const { data } = await boxes.readFile(owner, found.id, `${RECORD_DIR}/clip.mp4`, { maxBytes: COPY_MAX_BYTES, signal });
+        const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+        const name = `recordings/${found.name}-${stamp}`;
+        const paths = pathsOf(storage.path);
+        const write = (file: string, content: Uint8Array | string) =>
+          bb.sdk.files.write({ hostId: storage.hostId, path: paths.join(storage.path, file), rootPath: storage.path, content: Buffer.from(content).toString("base64"), contentEncoding: "base64", createParents: true });
+        await write(`${name}.mp4`, data);
+        const shown = data.byteLength <= PREVIEW_MAX_BYTES;
+        if (shown) await write(`${name}.html`, recordPreview(`Box ${found.name}`, data));
+        const cut = stills === "keep" ? 0 : Math.max(0, made.recorded - made.clip * times);
+        const parts = [
+          `a ${made.clip.toFixed(1)} s clip of ${made.recorded.toFixed(1)} s recorded`,
+          ...(cut >= 0.5 ? [`${cut.toFixed(1)} s of still stretches cut`] : []),
+          ...(times > 1 ? [`played ${times}x`] : []),
+          `${made.size}, ${Math.max(1, Math.round(made.bytes / 1024))} KB`,
+        ];
+        const limit = made.ended === "limit" ? ` It reached the ${RECORD_LIMIT_S / 60}-minute limit and ended by itself.` : "";
+        const where = `The MP4 is in this thread's storage folder: $BB_THREAD_STORAGE/${name}.mp4.`;
+        if (!shown) {
+          return `Recorded box ${found.name}: ${parts.join(", ")}.${limit} ${where} It is too large for the thread's preview, so link it instead.${next("Record a shorter stretch for a clip that plays in the thread.")}`;
+        }
+        const directive = `::inline-vis{source="thread-storage" file="${name}.html" height="${previewHeight(made.size)}"}`;
+        return `Recorded box ${found.name}: ${parts.join(", ")}.${limit} ${where}${next(`To show it in the thread, put this line on its own in your reply, outside any code block:\n${directive}`)}`;
+      } catch (error) {
+        return failure(error, "Recording the desktop");
       }
     },
   });
