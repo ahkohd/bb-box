@@ -35,6 +35,7 @@ is a log: bb-box does not file these with BB.
 | [End a thread's processes before removing its worktree on Windows](#24-end-a-threads-processes-before-removing-its-worktree-on-windows) | not met | bb-box ends the processes working in BB's worktrees in a Windows box before it asks BB to remove the box's machine, or BB's teardown fails with EBUSY and the machine stays "removing" (#539) |
 | [Keep the server's event loop free](#25-keep-the-servers-event-loop-free) | not met | BB's server stops for up to 1.2 s, 10 to 16 times a minute, and every desktop's frames and input wait it out, so a drag lags by up to a second and a video viewer loses frames |
 | [Say what uninstalling a plugin keeps](#26-say-what-uninstalling-a-plugin-keeps) | not met | after an uninstall in BB's settings and a fresh install, bb-box came back with its old box records and its Docker backend on, though the dialog says it deletes the plugin's settings |
+| [Start a Windows machine's helpers without a window](#27-start-a-windows-machines-helpers-without-a-window) | not met | on a Windows box, Keep Awake's PowerShell opens a window over the desktop each time BB's daemon starts, which takes the focus and shows in box_record's clips |
 
 ## 1. BB's host app on Windows
 
@@ -990,6 +991,42 @@ empty storage (see 4).
 **Until then.** The [setup guide](../setup/README.md#remove-bb-box) says to
 release the boxes before removing bb-box. A box whose container went
 meanwhile shows as Gone.
+
+## 27. Start a Windows machine's helpers without a window
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** Nothing on a Windows box's desktop that the agent
+or person did not open. Agents drive the desktop with computer use, and
+`box_record` records it ([059](decisions/059-agents-record-their-desktop-box-with-box-record.md)).
+
+**What BB does now.** On a Windows box enrolled as a BB machine, on 16
+October 2026, BB's Keep Awake plugin starts `powershell.exe -NoProfile
+-NonInteractive -Command ...` from its host worker in the desktop session.
+It calls `SetThreadExecutionState`, then waits for the worker. BB starts it
+without hiding its console, so it opens a window:
+
+- With Windows Terminal as the default terminal, as Windows 11 has it, a
+  Windows Terminal window titled "Windows PowerShell" opens over the
+  desktop and takes the focus. Keys an agent sent to Notepad went to it.
+  Closing it ends the PowerShell, and BB starts it again, with another
+  window.
+- With Windows Console Host as the default (the `DelegationConsole` and
+  `DelegationTerminal` settings), an empty console window opens instead.
+  So bb-box cannot avoid it by choosing the terminal.
+
+A new window opens each time BB's daemon starts, such as when a box
+resumes. bb-box's own helper in the same session, a Node process, opens
+none.
+
+**What we ask.** Start helper processes on Windows with their windows
+hidden: Node's `windowsHide: true`, or `CREATE_NO_WINDOW`.
+
+**Until then.** A box does not need Keep Awake: its image turns sleep,
+hibernation and the screen's timeout off. Keep Awake's machine selection
+in BB can leave boxes out. bb-box changes nothing on its side: hiding the
+console after it opens works only with Windows Console Host as the default,
+and would need a watcher, as BB starts the PowerShell again at each start.
 
 ## Checked, no request needed
 
