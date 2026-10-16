@@ -11,7 +11,7 @@ import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type G
 import { FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
 import { FakeTart, Viewer } from "./fake-tart-vnc.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
 const MAC = FAKE_MAC;
@@ -21,7 +21,7 @@ after(async () => {
   for (const backend of made) await backend.dispose();
 });
 
-const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 };
+const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER };
 
 function setup(values: Record<string, unknown> = {}) {
   const ssh = fakeSsh();
@@ -194,6 +194,21 @@ test("a macOS desktop is Tart's VNC through the run's holder, which starts with 
   assert.equal(tart.connections, 1, "and it did not connect again");
 });
 
+test("a macOS box grants its programs macOS permissions through the Mac helper in the VM, refusing while SIP is on, and lists its grants (058)", async () => {
+  const { ssh, backend } = setup();
+  const guest = await backend.acquire(identity("macos"), null, hooks().hooks, signal());
+  const flags = join(ssh.home(guest.address!), ".bb-box-state", "flags");
+  const request = { program: "/Users/admin/Applications/Probe.app", permissions: ["accessibility", "screen-recording"] as const };
+  await assert.rejects(backend.grant!(guest, request), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && /^System Integrity Protection is on/.test(error.message));
+  assert.deepEqual(await backend.grants!(guest), { canGrant: false, signingIdentity: true, grants: [] });
+  mkdirSync(flags, { recursive: true });
+  writeFileSync(join(flags, "sip-off"), "");
+  assert.deepEqual(await backend.grant!(guest, request), { client: "dev.example.probe", granted: ["accessibility", "screen-recording"], refused: [] });
+  await assert.rejects(backend.grant!(guest, { program: "/usr/bin/true", permissions: ["camera"] }), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
+  assert.deepEqual((await backend.grants!(guest))?.grants.map((grant) => grant.permission), ["accessibility", "screen-recording"]);
+  await backend.release(guest, releasing);
+});
+
 test("acquire claims the VM before it writes anything, then clones, starts and reaches it through the Mac", async () => {
   const { ssh, owners, backend } = setup();
   const box = identity();
@@ -203,7 +218,7 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
   assert.deepEqual(recorded.claimed.at(-1), guest, "claimed again with its address");
   assert.equal(recorded.claimed[0]!.ref, `bb-box-${box.boxId}`);
   assert.deepEqual(recorded.claimed[0]!.data, { box: box.boxId });
-  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh", "identify", "name"]);
+  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh", "identify", "name", "grants"]);
   assert.equal(guest.host, "mac1");
   assert.match(guest.address ?? "", /^192\.168\.64\.\d+$/);
   const owner = readFileSync(join(owners, guest.ref), "utf8");

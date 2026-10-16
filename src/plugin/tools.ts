@@ -368,7 +368,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   bb.agents.registerTool({
     name: "box_grant",
     description:
-      "Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. Only on a Mac of the SSH host pool with SIP off. The program must be the box user's, or an app in /Applications, and signed: sign it with the box's identity, codesign -s \"bb-box local code signing\", so a rebuild keeps the grant. Commands box_run runs have the microphone and camera already.",
+      "Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. On Tart's macOS boxes, and on Macs of the SSH host pool with SIP off; Linux and Windows boxes refuse. The program must be the box user's, or an app in /Applications, and signed: sign it with the box's identity, codesign -s \"bb-box local code signing\", so a rebuild keeps the grant. Commands box_run runs have the microphone and camera already.",
     presentation: { label: { pending: "Granting permissions", completed: "Granted permissions" } },
     parameters: z.object({
       box: boxParam,

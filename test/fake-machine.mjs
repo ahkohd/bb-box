@@ -154,6 +154,29 @@ function grant() {
   console.log(`client=${client}`);
 }
 
+/**
+ * machine-mac.sh's commands for a Mac VM that is the box, as a Tart backend
+ * runs them: no owner marker. Grants need sip-off, as on a pool Mac.
+ */
+function vm(verb) {
+  if (verb === "vm-ready") return console.log(`signing=${flag("no-signing") !== null ? 0 : 1}`);
+  if (verb === "vm-granted") {
+    console.log(`sip=${flag("sip-off") !== null ? 0 : 1}\nsigning=${flag("no-signing") !== null ? 0 : 1}`);
+    for (const line of (read("grants") ?? "").split("\n").filter(Boolean)) console.log(`grant=${line}`);
+    return;
+  }
+  const lines = readFileSync(0, "utf8").split("\n");
+  const program = lines.find((line) => line.startsWith("program="))?.slice("program=".length) ?? "";
+  if (flag("sip-off") === null) quit(EXIT.protected, "System Integrity Protection is on, so macOS lets no program grant permissions.");
+  if (!/^\/(Users|Applications)\//.test(program)) quit(EXIT.refused, `${program} is not in the box user's home or /Applications.`);
+  const client = program.endsWith(".app") ? `dev.example.${program.split("/").pop().slice(0, -4).toLowerCase()}` : program;
+  for (const permission of lines.filter((line) => line.startsWith("permission=")).map((line) => line.slice("permission=".length))) {
+    writeFileSync(join(state, "grants"), `${read("grants") ?? ""}${permission}\t${client}\tUNUSED\n`);
+    console.log(`granted=${permission}`);
+  }
+  console.log(`client=${client}`);
+}
+
 /** machine-mac.sh's granted: SIP's state and the box's grants. */
 function granted(expected) {
   if (!mac) quit(EXIT.usage, "usage: machine status | claim | release | reset | init");
@@ -245,6 +268,7 @@ const [verb, ...args] = process.argv.slice(2);
 if (verb === "status") status(...args);
 else if (verb === "display") display(...args);
 else if (verb === "grant") grant();
+else if (verb === "vm-ready" || verb === "vm-grant" || verb === "vm-granted") vm(verb);
 else if (verb === "granted") granted(...args);
 else if (verb === "claim") claim(...args);
 else if (verb === "release") release(...args);

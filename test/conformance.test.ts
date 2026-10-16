@@ -14,7 +14,7 @@ import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
 import { fakeMsbHost, msbConfig } from "./fake-msb.ts";
 import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
 const root = tempDir("fake-backend");
 const machineSize = "the fake box is a directory on the test machine, so it has the machine's cores and memory";
@@ -102,7 +102,7 @@ const tart = tartConfig();
 await conformance({
   name: "Tart on a fake Mac",
   storage: new MemoryStorage(),
-  create: (storage, installId) => new TartBackend(tart, testContext(storage, installId), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }),
+  create: (storage, installId) => new TartBackend(tart, testContext(storage, installId), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER }),
   skip: {
     arch: "the fake SSH runs commands on the test machine",
     display: "the fake Mac has no VNC server to stream",
@@ -122,7 +122,7 @@ await conformance({
   name: "Tart on a fake Mac with a warm pool",
   storage: new MemoryStorage(),
   create: (storage, installId) =>
-    new TartBackend(tart, testContext(storage, installId, { warm: { macos: 1, "macos-desktop": 1 } }), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }),
+    new TartBackend(tart, testContext(storage, installId, { warm: { macos: 1, "macos-desktop": 1 } }), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER }),
   skip: {
     arch: "the fake SSH runs commands on the test machine",
     display: "the fake Mac has no VNC server to stream",

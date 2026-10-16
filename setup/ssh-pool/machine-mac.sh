@@ -14,6 +14,15 @@
 #   machine display <generation>  stdin: install, box
 #   machine grant                 stdin: install, box, program, permission (repeated), target
 #   machine granted <generation>  stdin: install, box
+#
+# A Mac VM that is itself the box, as Tart's are, runs the helper from bb-box
+# through sudo with 3 more commands, for its user, with no owner marker and
+# no reset, as the VM goes with the box:
+#
+#   machine vm-ready <user>       the user's signing identity, and the microphone
+#                                 and camera for its commands; says signing=
+#   machine vm-grant <user>       stdin: program, permission (repeated), target
+#   machine vm-granted <user>     as granted
 #   machine init
 #   machine version
 #
@@ -778,6 +787,8 @@ service_of() {
 # permission=<name> lines, and target=<bundle ID> for automation. It says
 # granted=<permission> or refused=<permission> <why> for each.
 grant() {
+  # A Tart VM's user, vm-grant's, or else the user of the box that holds the Mac.
+  vm_user=${1:-}
   install='' box='' program='' permissions='' target=''
   while IFS= read -r line || [ -n "$line" ]; do
     case $line in
@@ -790,12 +801,18 @@ grant() {
       *) quit 2 "Unknown input: ${line%%=*}." ;;
     esac
   done
-  [ -n "$install" ] && [ -n "$box" ] && [ -n "$program" ] && [ -n "$permissions" ] || quit 2 "The grant needs install=, box=, program= and permission=."
-  lock 60
-  [ -e "$STATE/owner" ] && [ "$(field "$STATE/owner" install)" = "$install" ] && [ "$(field "$STATE/owner" box)" = "$box" ] || quit 4 "Box $box does not hold the Mac."
+  if [ -n "$vm_user" ]; then
+    [ -n "$program" ] && [ -n "$permissions" ] || quit 2 "The grant needs program= and permission=."
+    lock 60
+    user=$vm_user
+  else
+    [ -n "$install" ] && [ -n "$box" ] && [ -n "$program" ] && [ -n "$permissions" ] || quit 2 "The grant needs install=, box=, program= and permission=."
+    lock 60
+    [ -e "$STATE/owner" ] && [ "$(field "$STATE/owner" install)" = "$install" ] && [ "$(field "$STATE/owner" box)" = "$box" ] || quit 4 "Box $box does not hold the Mac."
+    user=$(field "$STATE/owner" user)
+  fi
   sip_off || quit 7 "System Integrity Protection is on, so macOS lets no program grant permissions. A person grants them in System Settings, or the Mac's owner turns SIP off in recovery (058)."
   tcc_known "$ROOT$TCC" || fail "TCC's database is not as bb-box knows it on macOS 27, so it writes nothing there."
-  user=$(field "$STATE/owner" user)
   home=$(attribute "$user" NFSHomeDirectory)
   [ -n "$home" ] || fail "Box user $user has no home."
   case $program in
@@ -1127,6 +1144,23 @@ granted() {
   [ ! -f "$STATE/grants" ] || awk '!seen[$0]++ { print "grant=" $0 }' "$STATE/grants"
 }
 
+# A VM that is itself the box (Tart's): its user's signing identity, and the
+# microphone and camera for its commands, at the box's start.
+vm_ready() { # user
+  number "$(id -u "$1" 2>/dev/null)" || quit 2 "There is no user $1."
+  mkdir -p "$STATE"
+  signing_identity "$1" "$(id -u "$1")" || :
+  default_grants "$1" || :
+  if [ "$(cat "$STATE/signing" 2>/dev/null)" = "$1" ]; then echo signing=1; else echo signing=0; fi
+}
+
+# A VM's grants, for box_status, as granted gives them.
+vm_granted() { # user
+  if sip_off; then echo sip=0; else echo sip=1; fi
+  if [ "$(cat "$STATE/signing" 2>/dev/null)" = "$1" ]; then echo signing=1; else echo signing=0; fi
+  [ ! -f "$STATE/grants" ] || awk '!seen[$0]++ { print "grant=" $0 }' "$STATE/grants"
+}
+
 # Starts the reset generation at 0 and, on a free Mac, makes its box user and
 # sets it as the automatic login. With nobody at the console, loginwindow
 # starts again and signs the user in. A person signed in there restarts the
@@ -1156,7 +1190,11 @@ case $verb in
   reset) reset "$@" ;;
   display) display "$@" ;;
   granted) granted "$@" ;;
+  vm-ready | vm-grant | vm-granted)
+    [ $# -eq 1 ] && [ -n "$1" ] || quit 2 "usage: machine $verb <user>"
+    case $verb in vm-ready) vm_ready "$1" ;; vm-grant) grant "$1" ;; vm-granted) vm_granted "$1" ;; esac
+    ;;
   init) init ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: machine status [grants] | claim | grant | granted | release | reset | display | init | version" ;;
+  *) quit 2 "usage: machine status [grants] | claim | grant | granted | release | reset | display | vm-ready | vm-grant | vm-granted | init | version" ;;
 esac

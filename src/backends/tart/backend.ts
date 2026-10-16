@@ -33,6 +33,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
+import { setupDir } from "../setup-dir.ts";
+import { EXIT, grantInput, parseGrant, parseGranted } from "../ssh-pool/protocol.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import {
@@ -51,6 +53,7 @@ import {
   type Backend,
   type BackendContext,
   type BackendImages,
+  type BoxGrants,
   type BoxIdentity,
   type BoxKind,
   type BoxOwner,
@@ -62,6 +65,8 @@ import {
   type DoctorCheck,
   type DoctorReport,
   type Footprint,
+  type GrantAnswer,
+  type GrantRequest,
   type Guest,
   type HeldGuest,
   type HostCapacity,
@@ -236,6 +241,8 @@ export interface TartBackendOptions {
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
+  /** What runs the Mac helper's VM commands in a macOS VM, instead of machine-mac.sh through sudo: a fake, in tests. */
+  readonly macHelper?: string;
 }
 
 interface SshKeys {
@@ -600,6 +607,8 @@ export class TartBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Each VM's address while bb-box knows it: learnt when it starts, forgotten when it stops. */
   readonly #addresses = new Map<string, string>();
+  /** The command that runs machine-mac.sh in a macOS VM, made once, for its grants (058). */
+  #macHelper: string | null = null;
   /** VMs being started for boxes or warm pools, by VM, until they run or their start ends. */
   readonly #placing = new Map<string, Placing>();
   /** Placement is one at a time, so two acquires, or an acquire and a fill, never take the last slot of one Mac. */
@@ -936,6 +945,7 @@ export class TartBackend implements Backend {
         if (os === "linux" && kind.capabilities.displays.length) await step("desktop", () => this.#linuxDesktop(host, vm, address, signal));
         await step("identify", () => this.#identify(host, address, vm, os, signal));
         await step("name", () => this.#rename(host, address, vm, os, box.name, signal));
+        if (os === "macos") await step("grants", () => this.#vmReady(host, address, vm, signal));
         // A warm VM, or one held before a restart, resumed from a suspend with an old clock.
         if (os === "macos" && (placement.how === "warm" || placement.how === "resume")) await step("clock", () => this.#clock(host, address, signal));
         const size = sizeOf((await this.#state(host, signal)).configs.get(vm));
@@ -1096,6 +1106,53 @@ export class TartBackend implements Backend {
     const started = performance.now();
     await this.#delete(host, guest.ref, this.#osOf(guest), this.#boxOf(guest), signal, this.#sshPort(guest));
     hooks.timing("delete", Math.round(performance.now() - started));
+  }
+
+  /**
+   * The pool Mac's helper, machine-mac.sh, run in a macOS VM through sudo for
+   * the VM's user (058): the VM is the box, so it grants with no owner marker
+   * and needs no reset.
+   */
+  async #vmHelper(command: SshTransport, verb: "vm-ready" | "vm-grant" | "vm-granted", input: string | null, signal?: AbortSignal): Promise<RunResult> {
+    this.#macHelper ??= this.#options.macHelper ?? `sudo -n /bin/sh -c ${quote(readFileSync(join(setupDir(), "ssh-pool", "machine-mac.sh"), "utf8"))} machine`;
+    return command.run(`${this.#macHelper} ${verb} "$(id -un)"`, {
+      ...(input !== null ? { stdin: input } : {}),
+      timeoutMs: 60_000,
+      signal,
+      maxOutputBytes: 64 * 1024,
+    });
+  }
+
+  /** A macOS box's signing identity and default grants, at its start. Best effort: a box without them still works. */
+  async #vmReady(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "macos"), "macos");
+    const result = await this.#vmHelper(command, "vm-ready", null, signal).catch((error: unknown) => ({ exitCode: null, stdout: "", stderr: message(error) }));
+    if (result.exitCode !== 0 || !result.stdout.includes("signing=1")) {
+      this.#context.logError("ready the box's grants", new Error(`${vm} on ${host.name}: the box's signing identity was not made: ${result.stderr.trim() || `exit code ${result.exitCode}`}`));
+    }
+  }
+
+  /** The command transport of a macOS box, for its grants. */
+  async #macCommand(guest: Guest): Promise<SshTransport> {
+    if (this.#osOf(guest) !== "macos") throw new BackendError("unsupported", `Only a macOS box has macOS permissions to grant: ${guest.ref} runs ${this.#osOf(guest) === "windows" ? "Windows" : "Linux"}.`);
+    return (await this.transports(guest, "macos")).command as SshTransport;
+  }
+
+  async grant(guest: Guest, request: GrantRequest, signal?: AbortSignal): Promise<GrantAnswer> {
+    const command = await this.#macCommand(guest);
+    const box = typeof guest.data?.box === "string" ? guest.data.box : guest.ref;
+    const result = await this.#vmHelper(command, "vm-grant", grantInput(this.#context.installId, box, request), signal);
+    const said = result.stderr.trim() || `exit code ${result.exitCode}`;
+    if (result.exitCode === EXIT.protected || result.exitCode === EXIT.refused) throw new BackendError("unsupported", said);
+    if (result.exitCode !== 0) throw new Error(`The VM ${guest.ref} did not grant: ${said}`);
+    return parseGrant(result.stdout);
+  }
+
+  async grants(guest: Guest, signal?: AbortSignal): Promise<BoxGrants | null> {
+    if (this.#osOf(guest) !== "macos") return null;
+    const result = await this.#vmHelper(await this.#macCommand(guest), "vm-granted", null, signal).catch(() => null);
+    return result?.exitCode === 0 ? parseGranted(result.stdout) : null;
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {

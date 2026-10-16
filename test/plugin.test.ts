@@ -444,7 +444,7 @@ test("box_grant grants a program in a Mac's box its permissions, says how to run
   const box = await only(app);
   const refused = await tool("box_grant", { box: box.name, program: "/home/box/tool", permissions: ["accessibility"] });
   assert.ok(isError(refused));
-  assert.match(text(refused), /cannot grant macOS permissions: only a Mac of the SSH host pool with SIP off can\./);
+  assert.match(text(refused), /cannot grant macOS permissions: only Tart's macOS boxes and Macs of the SSH host pool with SIP off can\./);
   assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /macOS permissions/);
 
   // A backend that grants, as the SSH host pool does for a Mac.

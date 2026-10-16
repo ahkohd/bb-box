@@ -75,11 +75,12 @@ bb-box restarts. Beyond those:
 
 ### macOS permissions
 
-On a Mac of the SSH host pool with System Integrity Protection off,
-`box_grant` grants a program macOS permissions with no prompt:
-Accessibility, Screen Recording, Input Monitoring, the microphone, the
-camera, or Automation of one app. `box_status` lists the box's grants, and
-the box's reset removes them.
+On Tart's macOS boxes, and on Macs of the SSH host pool with System
+Integrity Protection off, `box_grant` grants a program macOS permissions
+with no prompt: Accessibility, Screen Recording, Input Monitoring, the
+microphone, the camera, or Automation of one app. `box_status` lists the
+box's grants. They go with the box: a Tart VM is deleted, and a pool Mac's
+reset removes them. Linux and Windows boxes refuse.
 
 - Grant only the program that needs it, under the box user's home or in
   `/Applications`. bb-box grants nothing to Apple's programs, shells,
