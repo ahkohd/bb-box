@@ -10,7 +10,7 @@ import { TartBackend } from "../src/backends/tart/backend.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_DISK_GIB, FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const SMALL: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
 const MEDIUM: BoxSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
@@ -32,7 +32,7 @@ function setup(warm: Record<string, number> = { macos: 1 }) {
   const make = (installId = "test", counts = warm, values: Record<string, unknown> = {}) => {
     const context = testContext(new MemoryStorage(), installId, { warm: counts });
     contexts.push(context);
-    const backend = new TartBackend(tartConfig(values), context, { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 });
+    const backend = new TartBackend(tartConfig(values), context, { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER });
     made.push(backend);
     return backend;
   };

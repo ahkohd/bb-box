@@ -32,10 +32,8 @@
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { fileURLToPath } from "node:url";
 import { MIN_DESKTOP, type Display } from "../../transports/types.ts";
 import {
   type Arch,
@@ -64,6 +62,7 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
+import { setupDir } from "../setup-dir.ts";
 import { CUA_DRIVER, DOCKER_CHECK } from "../docker/backend.ts";
 import { judgeImage, recordFromJson } from "../images.ts";
 import { quote } from "../../transports/process.ts";
@@ -117,15 +116,6 @@ const BUILD_MS = 90 * 60_000;
 const BUILD_POLL_MS = 10_000;
 const BUILD_POLL_MISSES = 6;
 const BUILD_FREE_GIB = 80;
-
-/**
- * bb-box's setup/ folder: beside src/ in the repository; the plugin's
- * bundle, dist/server.js, has the plugin's files one up.
- */
-function setupDir(): string {
-  const here = fileURLToPath(new URL("../../../setup/", import.meta.url));
-  return existsSync(join(here, "docker", "build.sh")) ? here : fileURLToPath(new URL("../setup/", import.meta.url));
-}
 
 /** `setup` as a gzipped tar of one folder, setup/, for a builder. */
 function setupArchive(setup: string): Promise<Buffer> {

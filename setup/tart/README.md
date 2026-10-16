@@ -178,6 +178,18 @@ and the Metal toolchain), plus:
   microphone;
 - BB's app, with `--bb-url`.
 
+At each macOS box's start, bb-box runs the SSH host pool's Mac helper,
+`../ssh-pool/machine-mac.sh`, in the VM through sudo. It gives `admin` a
+code-signing identity of its own, "bb-box local code signing", so an app
+signed with it keeps its grants when it is rebuilt. It also gives commands
+run over SSH the microphone and the camera, which the launcher gives only
+to desktop commands. This takes about 0.7 s of the box's start.
+`box_grant` then grants the box's programs other permissions, such as
+Accessibility, through the same helper
+([058](../../docs/decisions/058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md)).
+Both need System Integrity Protection off in the image: `csrutil status`
+in a box says whether it is. With it on, `box_grant` refuses and says so.
+
 #### Linux (arm64)
 
 ```sh

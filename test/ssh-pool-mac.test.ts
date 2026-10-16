@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { EXIT, fields, parseStatus } from "../src/backends/ssh-pool/protocol.ts";
@@ -900,6 +900,47 @@ test("with SIP off, each box user's commands get the microphone and the camera i
   // They are the box user's from before the claim, so the reset keeps them.
   assert.equal(mac.helper(["release", "0"], RELEASE()).status, 0);
   assert.equal(sqlite(user, rows), granted);
+});
+
+test("in a Mac VM that is itself the box, as Tart's are, the helper makes the user's identity and default grants at the start, and grants with no owner marker (058)", { skip: spawnSync("sqlite3", ["-version"]).status !== 0 && "needs sqlite3" }, () => {
+  // A VM's user, here bbx-0 as init makes it; no box claims the Mac.
+  const mac = readyMac();
+  mac.flag("sip-off");
+  const system = join(mac.root, TCC);
+  rmSync(system, { force: true });
+  sqlite(system, TCC_SCHEMA);
+  const container = join(mac.data, "private/var/containers/Data/ProtectedSystem/U1/Data/Library/Application Support/com.apple.TCC");
+  mkdirSync(container, { recursive: true });
+  const user = join(container, "TCC.db");
+  sqlite(user, TCC_SCHEMA);
+  mac.add("processes", "500 70000 tccd 1");
+  mkdirSync(join(mac.state, "openfiles"), { recursive: true });
+  writeFileSync(join(mac.state, "openfiles", "500"), `${user}\n`);
+  mkdirSync(join(mac.root, "usr/libexec"), { recursive: true });
+  writeFileSync(join(mac.root, "usr/libexec/sshd-keygen-wrapper.sig"), 'identifier=com.apple.sshd-keygen-wrapper\nrequirement=identifier "com.apple.sshd-keygen-wrapper" and anchor apple\n');
+
+  const ready = mac.helper(["vm-ready", "bbx-0"]);
+  assert.equal(ready.status, 0, ready.stderr);
+  assert.equal(ready.stdout, "signing=1\n");
+  assert.ok(existsSync(join(mac.root, "/Users/bbx-0/Library/Keychains/bb-box-signing.keychain-db")));
+  assert.equal(sqlite(user, "select service from access where client = '/usr/libexec/sshd-keygen-wrapper' order by service;"), "kTCCServiceCamera\nkTCCServiceMicrophone");
+
+  const tool = join(mac.data, "Users/bbx-0/bin/tool");
+  mkdirSync(dirname(tool), { recursive: true });
+  writeFileSync(tool, "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(`${tool}.sig`, 'identifier=tool\nrequirement=identifier "tool" and certificate leaf = H"ab"\n');
+  const granted = mac.helper(["vm-grant", "bbx-0"], "program=/Users/bbx-0/bin/tool\npermission=accessibility\n");
+  assert.equal(granted.status, 0, granted.stderr);
+  assert.equal(granted.stdout, "granted=accessibility\nclient=/Users/bbx-0/bin/tool\n");
+  assert.equal(sqlite(system, "select client from access where service = 'kTCCServiceAccessibility';"), "/Users/bbx-0/bin/tool");
+  assert.deepEqual(mac.helper(["vm-granted", "bbx-0"]).stdout.split("\n").filter(Boolean), ["sip=0", "signing=1", "grant=accessibility\t/Users/bbx-0/bin/tool\tUNUSED"]);
+  // Refusals as on a pool Mac: outside the user's folders, or SIP on.
+  assert.equal(mac.helper(["vm-grant", "bbx-0"], "program=/usr/local/bin/tool\npermission=accessibility\n").status, 8);
+  mac.flag("sip-off", false);
+  const on = mac.helper(["vm-grant", "bbx-0"], "program=/Users/bbx-0/bin/tool\npermission=accessibility\n");
+  assert.equal(on.status, 7);
+  assert.match(on.stderr, /^System Integrity Protection is on/);
+  assert.equal(mac.helper(["vm-grant"]).status, 2);
 });
 
 test("each box user gets a code-signing identity of its own in a keychain codesign uses with no prompt, made at the reset and unlocked at each claim (058)", () => {

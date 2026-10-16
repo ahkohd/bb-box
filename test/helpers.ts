@@ -88,6 +88,8 @@ export function inGroup(group: number, argv: readonly string[]): [string, ...str
 }
 
 export const FAKE_SSH_BINARY = new URL("./fake-ssh.mjs", import.meta.url).pathname;
+/** The Mac helper's VM commands, as a Tart backend runs them in a macOS VM, for fake VMs. */
+export const FAKE_MAC_HELPER = `${process.execPath} ${new URL("./fake-machine.mjs", import.meta.url).pathname}`;
 
 /** SSH access to a fresh box at `host`, as user box. */
 export function at(host: string): SshAccess {
