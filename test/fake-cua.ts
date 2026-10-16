@@ -743,6 +743,14 @@ export class FakeCua {
         const window = openTasks(desktop, []);
         return text("Launched tasks.", { pid: window.pid, running: true, windows: [this.#windowJson(window)] });
       }
+      if (name === "early") {
+        // As Cua on a fresh Wayland box can: the launch names the window as its accessibility side saw it, under an ID
+        // no listing has, as Sway's own window, which list_windows gives, has another (#737).
+        const pid = desktop.nextPid++;
+        const own: FakeWindow = { id: desktop.nextWindow++, pid, app: "early", title: "Untitled 1 - Early [early]", x: 0, y: 0, width: 640, height: 480, onScreen: true };
+        desktop.windows.push(own);
+        return text("Launched early.", { pid, running: true, windows: [{ ...this.#windowJson(own), window_id: 142278656, title: "Untitled 1 - Early" }] });
+      }
       if (name === "textedit") {
         // As on a Mac: a helper of another process opens a window off screen, listed before the app's own.
         const pid = desktop.nextPid++;
