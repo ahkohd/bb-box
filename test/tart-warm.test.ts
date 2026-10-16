@@ -91,6 +91,7 @@ test("maintain fills a pool with suspended clones at the default size, which hel
   for (const vm of warmVms()) {
     assert.ok(suspended(vm), `${vm} is suspended`);
     assert.match(owner(vm), /^state=warm$/m);
+    assert.match(owner(vm), /^grants=ready$/m, "its fill made its signing identity and default grants (058)");
     assert.match(owner(vm), new RegExp(`^image=${FAKE_IMAGE}$`, "m"));
     assert.doesNotMatch(owner(vm), /^box=/m);
   }
@@ -130,12 +131,30 @@ test("a box at the default size takes a warm VM, and the pool fills again", asyn
   assert.equal(guest.ref, warm);
   assert.deepEqual(guest.size, SMALL);
   assert.ok("warm" in recorded.timings && "clock" in recorded.timings && !("clone" in recorded.timings), JSON.stringify(recorded.timings));
+  assert.ok(!("grants" in recorded.timings), "the fill made the grants, so the claim pays nothing for them");
   assert.match(owner(warm!), new RegExp(`^box=${box.boxId}$`, "m"));
   assert.doesNotMatch(owner(warm!), /^state=/m);
   assert.equal(await backend.power(guest), "running");
   assert.equal((await backend.held()).find((held) => held.ref === warm)?.owner?.boxId, box.boxId);
   await backend.maintain();
   assert.equal(warmVms().filter((vm) => vm !== warm).length, 1, "the pool fills again");
+  await backend.release(guest, releasing);
+});
+
+test("a warm VM whose fill could not make its grants gets them at its claim (058)", async () => {
+  const { ssh, make, warmVms, owner, nextAddress } = setup();
+  // The helper in the next VM says it made no signing identity.
+  const flags = join(ssh.home(nextAddress()), ".bb-box-state", "flags");
+  mkdirSync(flags, { recursive: true });
+  writeFileSync(join(flags, "no-signing"), "");
+  const backend = make();
+  await backend.maintain();
+  const [warm] = warmVms();
+  assert.doesNotMatch(owner(warm!), /^grants=/m);
+  const recorded = hooks();
+  const guest = await backend.acquire(identity(), null, recorded.hooks, signal());
+  assert.equal(guest.ref, warm);
+  assert.ok("grants" in recorded.timings, JSON.stringify(recorded.timings));
   await backend.release(guest, releasing);
 });
 

@@ -297,11 +297,14 @@ interface FreeWarm {
   readonly vm: string;
   readonly size: BoxSize;
   readonly kinds: readonly string[];
+  /** A macOS VM whose fill ran the helper's vm-ready (058): its claim skips the grants step. */
+  readonly ready: boolean;
 }
 
 /** How an acquire gets its VM: a clone, a free warm VM, a fill to take over, or its own VM after a restart. */
 type Placement =
-  | { readonly how: "clone" | "warm" | "resume"; readonly host: TartHost; readonly vm: string }
+  | { readonly how: "clone" | "resume"; readonly host: TartHost; readonly vm: string }
+  | { readonly how: "warm"; readonly host: TartHost; readonly vm: string; readonly ready: boolean }
   | { readonly how: "adopt"; readonly host: TartHost; readonly vm: string; readonly fill: Fill }
   | { readonly how: "wait"; readonly fills: readonly Fill[] };
 
@@ -835,7 +838,7 @@ export class TartBackend implements Backend {
         const warm = this.#freeWarm(state).find((free) => free.kinds.includes(box.kind) && sameSize(free.size, box.size));
         if (warm) {
           count(room.host, warm.vm);
-          return { how: "warm", host: room.host, vm: warm.vm };
+          return { how: "warm", host: room.host, vm: warm.vm, ready: warm.ready };
         }
       }
       const chosen = rooms.find((room) => room.capacity.ok);
@@ -945,7 +948,8 @@ export class TartBackend implements Backend {
         if (os === "linux" && kind.capabilities.displays.length) await step("desktop", () => this.#linuxDesktop(host, vm, address, signal));
         await step("identify", () => this.#identify(host, address, vm, os, signal));
         await step("name", () => this.#rename(host, address, vm, os, box.name, signal));
-        if (os === "macos") await step("grants", () => this.#vmReady(host, address, vm, signal));
+        // A warm VM's fill ran it already, before its suspend, so its claim pays nothing for it.
+        if (os === "macos" && !(placement.how === "warm" && placement.ready)) await step("grants", () => this.#vmReady(host, address, vm, signal));
         // A warm VM, or one held before a restart, resumed from a suspend with an old clock.
         if (os === "macos" && (placement.how === "warm" || placement.how === "resume")) await step("clock", () => this.#clock(host, address, signal));
         const size = sizeOf((await this.#state(host, signal)).configs.get(vm));
@@ -1123,14 +1127,20 @@ export class TartBackend implements Backend {
     });
   }
 
-  /** A macOS box's signing identity and default grants, at its start. Best effort: a box without them still works. */
-  async #vmReady(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<void> {
+  /**
+   * A macOS box's signing identity and default grants, at its start or its
+   * warm VM's fill. Best effort: a box without them still works. Whether
+   * they were made.
+   */
+  async #vmReady(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<boolean> {
     const { ssh } = await this.#keys();
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "macos"), "macos");
     const result = await this.#vmHelper(command, "vm-ready", null, signal).catch((error: unknown) => ({ exitCode: null, stdout: "", stderr: message(error) }));
     if (result.exitCode !== 0 || !result.stdout.includes("signing=1")) {
       this.#context.logError("ready the box's grants", new Error(`${vm} on ${host.name}: the box's signing identity was not made: ${result.stderr.trim() || `exit code ${result.exitCode}`}`));
+      return false;
     }
+    return true;
   }
 
   /** The command transport of a macOS box, for its grants. */
@@ -1365,7 +1375,7 @@ export class TartBackend implements Backend {
       const { size, suspended } = warmOf(state, vm, fields);
       if (!suspended) continue;
       const kinds = this.#servedBy(state, fields, size);
-      if (size && kinds.length) free.push({ vm, size, kinds });
+      if (size && kinds.length) free.push({ vm, size, kinds, ready: fields.grants === "ready" });
     }
     return free;
   }
@@ -1497,6 +1507,8 @@ export class TartBackend implements Backend {
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? (windows ? WINDOWS_READY_TIMEOUT_MS : READY_TIMEOUT_MS));
     // A Windows VM's SSH port on the Mac, once it is made.
     let port: number | null = null;
+    // Whether a macOS VM's helper made its signing identity and default grants.
+    let granted = false;
     try {
       const owner = ownerText({
         install: this.#context.installId,
@@ -1534,6 +1546,8 @@ export class TartBackend implements Backend {
           maxOutputBytes: 4096,
         });
         if (desktop.exitCode !== 0) throw new Error(`Warm VM ${vm} on ${host.name}: ${desktop.stderr.trim() || `exit code ${desktop.exitCode}`}`);
+        // The signing identity and default grants, before the suspend, so the claim need not make them.
+        granted = await this.#vmReady(host, address, vm, fillSignal);
       }
       ready.resolve(address);
       // In the chain, so an acquire that takes the VM over and this save never cross.
@@ -1541,8 +1555,8 @@ export class TartBackend implements Backend {
         if (fill.adopted) return true;
         fillSignal.throwIfAborted();
         await this.#forget(host, vm, pool.os, port);
-        const script = windows ? qemuWarmScript : warmScript;
-        const result = (await this.#run(host, script(vm, this.#context.installId), { timeoutMs: windows ? 240_000 : 120_000, signal: fillSignal })).stdout.trim();
+        const script = windows ? qemuWarmScript(vm, this.#context.installId) : warmScript(vm, this.#context.installId, granted);
+        const result = (await this.#run(host, script, { timeoutMs: windows ? 240_000 : 120_000, signal: fillSignal })).stdout.trim();
         if (result !== "warm") throw new Error(`Warm VM ${vm} on ${host.name} was no longer being filled.`);
         return false;
       });
