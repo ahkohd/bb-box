@@ -1016,17 +1016,31 @@ without hiding its console, so it opens a window:
   So bb-box cannot avoid it by choosing the terminal.
 
 A new window opens each time BB's daemon starts, such as when a box
-resumes. bb-box's own helper in the same session, a Node process, opens
-none.
+resumes. The daemon itself opens none: it starts from its `HKCU` `Run`
+entry through `powershell.exe -WindowStyle Hidden`, so it has a hidden
+console, and only the Keep Awake PowerShell it starts gets a visible
+window. bb-box's own helper in the same session, a Node process, opens
+none either.
 
-**What we ask.** Start helper processes on Windows with their windows
-hidden: Node's `windowsHide: true`, or `CREATE_NO_WINDOW`.
+Keep Awake's machine selection is "all" or a list of host IDs. An install
+that keeps "all" cannot leave boxes out, and one that lists hosts must add
+each new machine by hand, which does not suit boxes that come and go.
+
+**What we ask.**
+
+1. Start helper processes on Windows with their windows hidden: Node's
+   `windowsHide: true`, or `CREATE_NO_WINDOW`.
+2. Let a machine opt out of a plugin such as Keep Awake, so that a
+   machine provider, such as bb-box, can leave its boxes out whatever a
+   plugin's selection says.
 
 **Until then.** A box does not need Keep Awake: its image turns sleep,
-hibernation and the screen's timeout off. Keep Awake's machine selection
-in BB can leave boxes out. bb-box changes nothing on its side: hiding the
-console after it opens works only with Windows Console Host as the default,
-and would need a watcher, as BB starts the PowerShell again at each start.
+hibernation and the screen's timeout off. Keep Awake's selection can leave
+boxes out only by listing every other machine. The skill tells agents to
+minimise the window before they record. bb-box changes nothing else on its
+side: hiding the console after it opens works only with Windows Console Host
+as the default, and would need a watcher, as BB starts the PowerShell again
+at each start.
 
 ## Checked, no request needed
 
