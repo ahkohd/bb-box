@@ -121,7 +121,9 @@ home=$(dscl . -read "/Users/$admin" NFSHomeDirectory | sed -n 's/^NFSHomeDirecto
 uid=$(id -u "$admin")
 gid=$(id -g "$admin")
 mkdir -p "$ROOT$home/.ssh"
-chmod 0755 "$ROOT$home"
+# Closed to box users, who are in staff, its group (047). sshd asks only that
+# no one else may write to it.
+chmod 0700 "$ROOT$home"
 chmod 0700 "$ROOT$home/.ssh"
 printf '%s' "$keys" | sed 's/^/restrict /' >"$ROOT$home/.ssh/authorized_keys.new"
 chmod 0600 "$ROOT$home/.ssh/authorized_keys.new"

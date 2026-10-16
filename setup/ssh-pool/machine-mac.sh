@@ -105,7 +105,9 @@ put() { cat >"$1.new.$$" && mv -f "$1.new.$$" "$1"; }
 # Changes when the Mac starts again.
 boot_id() { sysctl -n kern.bootsessionuuid 2>/dev/null || echo unknown; }
 # A user's attribute in the local directory, such as its UniqueID.
-attribute() { dscl . -read "/Users/$1" "$2" 2>/dev/null | sed -n "s/^$2: //p" | head -n 1; }
+# dscl names an attribute outside Open Directory's standard set, such as
+# IsHidden, with dsAttrTypeNative: before it.
+attribute() { dscl . -read "/Users/$1" "$2" 2>/dev/null | sed -n -e "s/^$2: //p" -e "s/^dsAttrTypeNative:$2: //p" | head -n 1; }
 # The people on the Mac whose homes box users can enter, space separated:
 # users with a login shell, a UID from 500 to below the box users', not
 # hidden, whose home others or the staff group, which box users are in, may
