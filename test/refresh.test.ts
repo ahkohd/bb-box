@@ -362,6 +362,15 @@ test("a Windows refresh that fails, or that Windows keeps asking to restart, kee
   assert.equal(restarts.events.filter((event) => event === "run 7000 restart").length, 4);
 });
 
+test("the Windows refresh gives an image built before the OneDrive policy what the first logon gives a new one, and ends a running OneDrive (#707)", () => {
+  const policy = /'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\OneDrive'[^\n]*\n?[^\n]*DisableFileSyncNGSC/;
+  const refresh = readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8");
+  assert.match(readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "firstlogon.ps1"), "utf8"), policy);
+  assert.match(refresh, /New-ItemProperty -Path \$onedrive -Name DisableFileSyncNGSC -Value 1 -PropertyType DWord -Force/);
+  assert.match(refresh, /Get-Process OneDrive -ErrorAction SilentlyContinue \| Stop-Process -Force/);
+  assert.match(readFileSync(join(SETUP, "windows", "check.ps1"), "utf8"), /Check 'no OneDrive'/);
+});
+
 test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {
   const pins = (JSON.parse(readFileSync(join(SETUP, "windows", "pins.json"), "utf8")) as { tools: { name: string; arch: string; version: string; url: string; sha256: string }[] }).tools;
   const names: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node", CLAUDE: "claude-code", CODEX: "codex", PI: "pi", FFMPEG: "ffmpeg" };

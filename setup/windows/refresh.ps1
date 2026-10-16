@@ -246,6 +246,15 @@ try {
   }
   & C:\bb-box\logon.ps1 -Shortcuts "$env:PUBLIC\Desktop", "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
 
+  # No OneDrive, as the first logon has it since #707: images built before
+  # get the policy here, and the OneDrive their sign-in started ends now, so
+  # check.ps1 need not wait for a restart.
+  Step 'OneDrive: off by policy'
+  $onedrive = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive'
+  if (-not (Test-Path $onedrive)) { New-Item -Path $onedrive -Force | Out-Null }
+  New-ItemProperty -Path $onedrive -Name DisableFileSyncNGSC -Value 1 -PropertyType DWord -Force | Out-Null
+  Get-Process OneDrive -ErrorAction SilentlyContinue | Stop-Process -Force
+
   if ($restart) { Step 'a restart, then this again'; exit 3010 }
 
   # The record, with the edition this Windows says it is, such as Windows 11 Pro.

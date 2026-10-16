@@ -187,7 +187,7 @@ if ([Environment]::GetEnvironmentVariable('Path', 'User') -notlike '*\.cargo\bin
 Step 'UTF-8 as the system code page'
 foreach ($name in 'ACP', 'OEMCP', 'MACCP') { Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage' -Name $name -Value '65001' }
 
-Step 'Automatic logon; no lock screen, sleep, screen saver, UAC prompt, updates or first-run screens'
+Step 'Automatic logon; no lock screen, sleep, screen saver, UAC prompt, updates, OneDrive or first-run screens'
 $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 Set-Reg $winlogon AutoAdminLogon '1' String
 Set-Reg $winlogon DefaultUserName 'box' String
@@ -203,6 +203,10 @@ Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement' 
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' NoAutoUpdate 1
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' NoAutoRebootWithLoggedOnUsers 1
 Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore' AutoDownload 2
+# OneDrive does not start at sign-in, nor ask to back the box up, which would
+# show over the desktop the agent uses and records (#707). The policy holds
+# whatever OneDrive's own setup, Run entry and startup task do.
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive' DisableFileSyncNGSC 1
 powercfg.exe /change standby-timeout-ac 0
 powercfg.exe /change monitor-timeout-ac 0
 powercfg.exe /change hibernate-timeout-ac 0
