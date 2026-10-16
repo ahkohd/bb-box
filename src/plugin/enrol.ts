@@ -92,6 +92,44 @@ done
 }
 
 /**
+ * Sets aside BB's data for any machine but `keep` in a Linux or macOS box,
+ * as a restored box has from the machine BB removed: BB's installer refuses
+ * a data folder that belongs to another machine. It stops that machine's
+ * daemon, a systemd user unit or a LaunchAgent, and moves its folder to
+ * ~/.bb-machines/.set-aside/<folder>-<machine>, keeping its threads' files.
+ * Prints each folder it moved. In /bin/sh, as the box user's zsh fails a
+ * glob that matches nothing.
+ */
+export function setAsideOtherMachines(keep: string | null): string {
+  return `/bin/sh -c ${quote(String.raw`keep=${quote(keep ?? "")}
+for d in "$HOME"/.bb-machines/*/; do
+  d=$(dirname "$d/.")
+  id=$(cat "$d/host-id" 2>/dev/null)
+  [ -n "$id" ] && [ "$id" != "$keep" ] || continue
+  if [ "$(uname)" = Darwin ]; then
+    for p in "$HOME"/Library/LaunchAgents/app.getbb.host-daemon.*-"$id".plist; do
+      [ -f "$p" ] || continue
+      launchctl bootout "gui/$(id -u)/$(basename "$p" .plist)" >/dev/null 2>&1
+      rm -f "$p"
+    done
+  else
+    for u in "$HOME"/.config/systemd/user/bb-host-daemon-*-"$id".service; do
+      [ -f "$u" ] || continue
+      systemctl --user disable --now "$(basename "$u")" >/dev/null 2>&1
+      rm -f "$u"
+    done
+    systemctl --user daemon-reload >/dev/null 2>&1
+  fi
+  mkdir -p "$HOME/.bb-machines/.set-aside" || exit 1
+  to="$HOME/.bb-machines/.set-aside/$(basename "$d")-$id"
+  rm -rf "$to"
+  mv "$d" "$to" || exit 1
+  echo "$d $id"
+done
+`)}`;
+}
+
+/**
  * Unloads BB's daemon's LaunchAgent for machine `hostId` in the box user's
  * session, and waits up to 10 s for it to go, as `launchctl bootstrap` fails
  * the same way while it is going (#416). In /bin/sh, as the box user's zsh
@@ -380,6 +418,7 @@ export class Enrolment {
           report.step(`Installing BB in box ${box.name}`);
           const bbUrl = box.capabilities.os === "windows" ? null : this.#deps.bbUrl?.();
           if (bbUrl) await transport.run(removeStaleApp(bbUrl), { timeoutMs: 30_000, signal }).catch((error) => this.#deps.logError("remove a stale BB app", error));
+          if (box.capabilities.os !== "windows") await this.#setAside(box, transport, signal);
           await this.#deps.bootstrap({ key, executor: executor(transport, phases), report, signal });
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
@@ -405,6 +444,21 @@ export class Enrolment {
         return { status: "removed" };
       },
     };
+  }
+
+  /**
+   * BB creates a new machine for the box only when it has none: data another
+   * machine left, as in a box the sweep restored after its machine was
+   * removed, is set aside first, so BB's installer takes the box.
+   */
+  async #setAside(box: BoxRecord, transport: CommandTransport, signal: AbortSignal): Promise<void> {
+    const keep = (await this.#deps.boxes.find(box.id))?.enrol.hostId ?? null;
+    const result = await transport.run(setAsideOtherMachines(keep), { timeoutMs: 60_000, signal });
+    if (result.exitCode !== 0) throw new Error(`BB's data from another machine in box ${box.name} could not be set aside: ${result.stderr.trim() || `exit ${result.exitCode}`}`);
+    for (const line of result.stdout.split("\n").filter(Boolean)) {
+      const [folder, machine] = line.split(" ");
+      this.#deps.log?.(`Box ${box.name} had BB's data for machine ${machine}, which is not its machine now: set aside ${folder} in ~/.bb-machines/.set-aside, and stopped its daemon.`);
+    }
   }
 
   /**
