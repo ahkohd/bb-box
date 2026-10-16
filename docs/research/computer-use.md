@@ -406,9 +406,17 @@ From Cua Driver's `WINDOWS.md` and accessibility-cli's source.
   For comparison, on Linux (Mousepad, X11) Cua refuses ctrl+a in
   background, bb-box presses it with the real keyboard, and it selects all.
   On macOS (TextEdit on Tart) cmd+a selects all in background, and ctrl+a
-  moves to the line's start, as Cocoa's text bindings do. Text that Cua
-  types in background on Linux went in at the start of the text, not over
-  the selection.
+  moves to the line's start, as Cocoa's text bindings do.
+- **On Linux, background typing leaves a selection in place** (Cua Driver
+  0.30.4). Cua writes background text through AT-SPI
+  `EditableText.insertText` at the caret offset
+  (`write_through_editable_proxies` in `platform-linux/src/atspi/native.rs`)
+  and never deletes the selected range. In Mousepad, text typed after
+  ctrl+a went in at the start, and after a double-click on a word it went
+  in before the word. Cua's window state says nothing of a selection. So
+  bb-box types through the real keyboard into a window where its last
+  action could have selected text, a key chord or a double-click, until a
+  click or typing there; the real keyboard types over the selection.
 
 ## macOS
 
@@ -510,7 +518,8 @@ On the local rig first, then on each backend as it arrives:
   `scripts/README.md`; `rust/crates/cua-driver/src/telemetry.rs`,
   `version_check.rs` and `mcp_envelope.rs`; `rust/crates/cua-driver-uia`;
   at `cua-driver-rs-v0.30.4`, `rust/crates/platform-windows/src/input/`
-  `keyboard.rs` and `delivery.rs`
+  `keyboard.rs` and `delivery.rs`, and
+  `rust/crates/platform-linux/src/atspi/native.rs`
 - accessibility-cli: https://github.com/DioxusLabs/accessibility-cli (commit
   f64c036), `README.md`, `packages/accessibility-core/src/platform/x11.rs`,
   `macos.rs` and `msft.rs`, `accessibility/cache.rs`,
