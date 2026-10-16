@@ -2737,7 +2737,7 @@ test("a desktop's clipboard commands: pbcopy and pbpaste on macOS, Get-Clipboard
   assert.match(wrapped, /OpenStandardInput\(\)\.CopyTo\(\$bbFile\)/);
 });
 
-test("the upkeep replaces a kind's spare whose image has a newer build, keeps one its backend says is current or cannot tell of, and a claim never waits for it (049)", async () => {
+test("the upkeep replaces a kind's spare whose image has a newer build, and keeps one its backend says is current or cannot tell of (049)", async () => {
   const logs: string[] = [];
   const world = setup({}, { log: (line) => logs.push(line) });
   world.general = { ...world.general, spares: { linux: 1 } };
@@ -2770,11 +2770,34 @@ test("the upkeep replaces a kind's spare whose image has a newer build, keeps on
   assert.ok(!(await world.boxes.list(SPARES)).some((spare) => spare.id === first.id));
   assert.match(logs.join("\n"), /its linux image on .+ has a newer build/);
 
-  // A claim takes the spare without asking the backend.
+  // A claim asks the backend once, and takes the current spare.
   const before = asked;
   const claimed = await world.boxes.acquire({ threadId: "thr_a", projectId: null, kind: "linux" });
   assert.ok(claimed.timings?.spare !== undefined, "from the spare");
-  assert.equal(asked, before, "the claim did not wait on the backend");
+  assert.equal(asked, before + 1, "the claim asked once");
+  assert.deepEqual(world.errors, []);
+});
+
+test("once its image is replaced, a claim does not take a spare of the old build, even before the upkeep: it makes a box of the new build, and the upkeep replaces the spare at once", async () => {
+  const logs: string[] = [];
+  const world = setup({}, { log: (line) => logs.push(line) });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  let current = true;
+  Object.defineProperty(world.backend, "fromCurrentBuild", { value: async () => current });
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  const [old] = await world.boxes.list(SPARES);
+  assert.equal(old?.enrol.state, "enrolled");
+
+  // The template is replaced; no upkeep has run since.
+  current = false;
+  const box = await world.boxes.acquire({ threadId: "thr_a", projectId: null, kind: "linux" });
+  current = true;
+  assert.equal(box.timings?.spare, undefined, "not the old build's spare");
+  assert.notEqual(box.id, old!.id);
+  assert.match(logs.join("\n"), new RegExp(`Skipped spare box ${old!.name}: it is of an older build of its linux image than .+ starts boxes from now\\. The upkeep replaces it\\.`));
+  await until(async () => (await world.boxes.list(SPARES)).some((spare) => spare.id !== old!.id && spare.enrol.state === "enrolled"));
+  assert.ok(!(await world.boxes.list(SPARES)).some((spare) => spare.id === old!.id), "the old spare is gone");
   assert.deepEqual(world.errors, []);
 });
 

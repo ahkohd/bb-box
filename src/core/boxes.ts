@@ -803,39 +803,54 @@ export class Boxes {
     imageName: string | null,
   ): Promise<{ box: BoxRecord; from: string } | null> {
     return this.#locked(SPARES, async () => {
-      for (const spare of await this.list(SPARES)) {
-        if (!offered.some((candidate) => candidate.backend.id === spare.backend && candidate.kind.id === spare.kind)) continue;
-        if ((spare.image?.name ?? null) !== imageName) continue;
-        // An image's spare from a build that is no longer current there is not claimed: the upkeep replaces it.
-        if (imageName && (spare.image?.state !== "baked" || (await this.#deps.baked?.(imageName, spare.backend, spare.kind).catch(() => null))?.ref !== spare.image.from)) continue;
-        // A spare made before its backend's offer gained a feature lacks it.
-        if (!hasFeatures(spare.capabilities, features)) continue;
-        if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), size)) continue;
-        try {
-          if (this.#deps.spareThread && (await this.#deps.spareThread(spare)) !== null) {
-            this.#deps.log?.(`Skipped spare box ${spare.name}: a thread uses its BB machine.`);
+      // A spare of an old build skipped here: the upkeep is asked to replace it now.
+      let stale = false;
+      const claimed = await (async () => {
+        for (const spare of await this.list(SPARES)) {
+          if (!offered.some((candidate) => candidate.backend.id === spare.backend && candidate.kind.id === spare.kind)) continue;
+          if ((spare.image?.name ?? null) !== imageName) continue;
+          // An image's spare from a build that is no longer current there is not claimed: the upkeep replaces it.
+          if (imageName && (spare.image?.state !== "baked" || (await this.#deps.baked?.(imageName, spare.backend, spare.kind).catch(() => null))?.ref !== spare.image.from)) continue;
+          // A spare made before its backend's offer gained a feature lacks it.
+          if (!hasFeatures(spare.capabilities, features)) continue;
+          if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), size)) continue;
+          // A spare of an older build of its kind's image than its backend starts
+          // boxes from now is not claimed, from the moment the image is
+          // replaced, not only once the upkeep has replaced the spare. The
+          // backend answers without starting it.
+          if (!imageName && (await this.#oldBuild(spare))) {
+            this.#deps.log?.(`Skipped spare box ${spare.name}: it is of an older build of its ${spare.kind} image than ${spare.backendLabel} starts boxes from now. The upkeep replaces it.`);
+            stale = true;
             continue;
           }
-        } catch (error) {
-          this.#deps.logError("claim", error);
-          continue;
+          try {
+            if (this.#deps.spareThread && (await this.#deps.spareThread(spare)) !== null) {
+              this.#deps.log?.(`Skipped spare box ${spare.name}: a thread uses its BB machine.`);
+              continue;
+            }
+          } catch (error) {
+            this.#deps.logError("claim", error);
+            continue;
+          }
+          const ms = this.#now() - requested;
+          const box: BoxRecord = {
+            ...spare,
+            threadId: input.threadId,
+            projectId: input.projectId,
+            name: input.name ?? (taken.has(spare.name) ? generateName(await this.#liveNames(taken), this.#random) : spare.name),
+            requires: [...new Set([...spare.requires, ...features])],
+            timings: { spare: ms, total: ms },
+          };
+          await this.#deps.kv.set(indexKey(box.id), box.threadId);
+          await this.#write(box);
+          await this.#deps.kv.delete(recordKey(SPARES, box.id));
+          this.#deps.notify(SPARES);
+          return { box, from: spare.name };
         }
-        const ms = this.#now() - requested;
-        const box: BoxRecord = {
-          ...spare,
-          threadId: input.threadId,
-          projectId: input.projectId,
-          name: input.name ?? (taken.has(spare.name) ? generateName(await this.#liveNames(taken), this.#random) : spare.name),
-          requires: [...new Set([...spare.requires, ...features])],
-          timings: { spare: ms, total: ms },
-        };
-        await this.#deps.kv.set(indexKey(box.id), box.threadId);
-        await this.#write(box);
-        await this.#deps.kv.delete(recordKey(SPARES, box.id));
-        this.#deps.notify(SPARES);
-        return { box, from: spare.name };
-      }
-      return null;
+        return null;
+      })();
+      if (stale) void this.keepSpares();
+      return claimed;
     });
   }
 
