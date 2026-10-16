@@ -97,6 +97,10 @@ CODEX_VERSION=0.157.1
 CODEX_SHA256=04CB2F6143DA840F33F0061ED9E13FCB0F4D7CD9BFCE27299C456A6BC47B410D
 PI_VERSION=0.87.1
 PI_SHA256=2E0D544999A765018EE5C2FF1A8B1A7E0F5D5B6B1E00B32D8C025D6C1DBCC833
+# box_record's recorder (059): a month's last build, which BtbN keeps.
+FFMPEG_VERSION=9.0.2
+FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-winarm64-gpl-9.0.zip
+FFMPEG_SHA256=6DCD0626F9F6D6C7323565E57410E9F37ED14A85946EC9EA9CAFF294CA32F5C0
 # The drivers Setup needs for the disk, and Windows for the network and display.
 VIRTIO_VERSION=0.1.302
 VIRTIO_SHA256=303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d
@@ -142,9 +146,9 @@ free=$(kib)
 
 build=build.$(date -u +%Y%m%d-%H%M%S)
 # The image's record (049). The pins' SHA-256 is of this script's pin lines.
-record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","node":"%s","claude-code":"%s","codex":"%s","pi":"%s","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
+record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","node":"%s","claude-code":"%s","codex":"%s","pi":"%s","ffmpeg":"%s","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
   "$build" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$edition" "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/prepare-windows-image.sh" | shasum -a 256 | cut -d' ' -f1)" \
-  "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$NODE_VERSION" "$CLAUDE_VERSION" "$CODEX_VERSION" "$PI_VERSION" "$VIRTIO_VERSION")
+  "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$NODE_VERSION" "$CLAUDE_VERSION" "$CODEX_VERSION" "$PI_VERSION" "$FFMPEG_VERSION" "$VIRTIO_VERSION")
 d=$images/$build.new
 # Kept on a failure, to look at: the screen and QEMU's output.
 png=$images/$build.png
@@ -305,6 +309,8 @@ pin() { printf '"%s": {"version": "%s", "sha256": "%s", "url": "%s"}' "$1" "$2" 
   pin codex "$CODEX_VERSION" "$CODEX_SHA256" "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-aarch64-pc-windows-msvc.exe"
   printf ',\n  '
   pin pi "$PI_VERSION" "$PI_SHA256" "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-windows-arm64.zip"
+  printf ',\n  '
+  pin ffmpeg "$FFMPEG_VERSION" "$FFMPEG_SHA256" "$FFMPEG_URL"
   printf ',\n  "record": "%s"' "$(json "$record")"
   printf '\n}\n'
 } >"$a/bb-box/build.json"

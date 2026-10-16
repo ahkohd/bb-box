@@ -131,6 +131,20 @@ foreach ($tool in @(@{ name = 'claude'; exe = 'claude.exe'; pin = $build.claude 
 }
 [Environment]::SetEnvironmentVariable('CLAUDE_CODE_USE_POWERSHELL_TOOL', '1', 'Machine')
 
+Step "ffmpeg $($build.ffmpeg.version)"
+# box_record's recorder (059): ffmpeg and ffprobe, from the archive's bin, in
+# a directory of their own on the machine's PATH.
+$zip = 'C:\bb-box\ffmpeg.zip'
+Get-Pinned $build.ffmpeg.url $build.ffmpeg.sha256 $zip
+Expand-Archive $zip -DestinationPath C:\bb-box\ffmpeg -Force
+$bin = (Get-ChildItem C:\bb-box\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1).Directory.FullName
+$to = 'C:\Program Files\bb-box-tools\ffmpeg'
+New-Item -ItemType Directory -Force $to | Out-Null
+Copy-Item "$bin\ffmpeg.exe", "$bin\ffprobe.exe" $to
+Remove-Item C:\bb-box\ffmpeg, $zip -Recurse -Force
+$path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+if ($path -notlike "*$to*") { [Environment]::SetEnvironmentVariable('Path', "$path;$to", 'Machine') }
+
 Step "Visual Studio Build Tools $($build.vs.version): $($build.vs.components -join ', ')"
 # The C++ build tools and the Windows SDK, which Rust's MSVC toolchain links
 # with. A fixed-version bootstrapper installs that version's components.

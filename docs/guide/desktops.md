@@ -81,4 +81,4 @@ After a lost connection, the viewer tries again by itself, waiting a little long
 
 Agents see and use a desktop through computer tools, such as taking a screenshot, clicking and typing. See [agent tools](../reference/tools.md).
 
-An agent can record a Linux or macOS desktop with `box_record` and show you the clip in the thread, rather than describe what it did. Still stretches are cut, so a long session makes a short clip. A recording runs for at most 5 minutes. While it records, it uses about a tenth of a core on an X11 desktop, a quarter on macOS, and two thirds on Wayland.
+An agent can record a Linux, macOS or Windows desktop with `box_record` and show you the clip in the thread, rather than describe what it did. Still stretches are cut, so a long session makes a short clip. A recording runs for at most 5 minutes. While it records, it uses about a tenth of a core on an X11 or Windows desktop, a quarter on macOS, and two thirds on Wayland.

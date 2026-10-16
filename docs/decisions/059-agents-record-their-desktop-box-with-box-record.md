@@ -1,7 +1,7 @@
 # 059: Agents record their desktop box with box_record
 
 Status: accepted, 16 October 2026 (#707). Linux X11 desktops first, then
-Wayland, then macOS on Tart; Windows later.
+Wayland, then macOS on Tart, then Windows.
 
 ## Context
 
@@ -122,8 +122,16 @@ time was cut.
    needs no grant of its own. macOS has no `setsid` command: Perl's starts
    ffmpeg's session. Pool Macs need Screen Recording granted as 058
    allows.
-4. **Windows** later: ffmpeg's `ddagrab` in the desktop session, with
-   ffmpeg added to the Windows images.
+4. **Windows**: ffmpeg's `gdigrab` in the desktop session, with BtbN's
+   ffmpeg build added to the Windows images and their nightly refresh.
+   `ddagrab` was the plan, but it needs a Direct3D 11 device, and a box
+   drawn by WARP has none ("Failed to create D3D11VA device"). On a
+   Proxmox QEMU box at 1280x800, gdigrab at 15 fps costs about a tenth of
+   a core while an agent types. bb-box starts ffmpeg hidden, with a console
+   of its own, and stops it with `taskkill` without `/F`: ffmpeg sees its
+   console close and ends its file whole, about half a second later.
+   `/F` leaves a file that cannot be read, and the close reaches ffmpeg
+   only from the desktop session, so both actions run there. (Amended.)
 
 ### Notifications are the agent's
 
@@ -146,6 +154,6 @@ video, before starting a recording.
 - An agent shows its work in two calls, and the person sees it play in the
   thread.
 - Each OS needs its own capture command in bb-box, and macOS and Windows
-  need ffmpeg in their images.
+  need ffmpeg in their images, which old images lack until rebuilt.
 - A recording uses about a tenth of the box's core while it runs, and its
   capture file stays in the box until the clip is made.
