@@ -153,6 +153,11 @@ cut by default, so a long session makes a short clip.
 
 - Before you start a recording, clear or dismiss notifications, and close
   windows that do not belong in the video.
+- On Windows, BB's Keep Awake opens a "Windows PowerShell" window over the
+  desktop when the box joins BB and each time BB restarts there, such as
+  after a resume. Minimise it with the computer tools before you record;
+  closing it ends Keep Awake, and BB opens another. If typing seems to go
+  nowhere on Windows, that window may have taken the focus.
 
 ## BB machines
 
