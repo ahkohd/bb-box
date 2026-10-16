@@ -64,11 +64,15 @@ test("init makes the first box user, hidden and in _developer, from the home tem
     /<key>idleTime<\/key><integer>0<\/integer>/,
   );
   assert.ok(mac.lines("owners").some((line) => line === `70000 ${mac.data}/Users/bbx-0/.zshenv`), "the home is the user's");
-  // Cua's screen capture approved for the user, so macOS 27 does not ask a box nobody answers (047): asked now, again in years.
+  // Screen capture approved for the user, so macOS 27 does not ask a box nobody answers (047): asked now, again in years.
+  // Cua's, by bundle ID; box_run's, charged to sshd-keygen-wrapper, by path; and a Tart desktop command's launcher, by URL.
   const approvals = "/Users/bbx-0/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist";
   const approval = mac.file(approvals)!;
   const year = new Date().getUTCFullYear();
-  assert.match(approval, /<key>com\.trycua\.driver<\/key><dict>/);
+  for (const client of ["com.trycua.driver", "/usr/libexec/sshd-keygen-wrapper", "file:///usr/local/libexec/bb-box/Launcher.app/"]) {
+    assert.ok(approval.includes(`<key>${client}</key><dict>`), client);
+  }
+  assert.equal(approval.match(/<key>kScreenCapturePrivacyHintDate<\/key>/g)?.length, 3);
   assert.match(approval, /<key>kScreenCaptureApprovalLastAlerted<\/key><date>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z<\/date>/);
   assert.match(approval, new RegExp(`<key>kScreenCapturePrivacyHintDate</key><date>${year + 5}-01-01T00:00:00Z</date>`));
   assert.equal(statSync(join(mac.root, approvals)).mode & 0o777, 0o600);
@@ -924,6 +928,9 @@ test("in a Mac VM that is itself the box, as Tart's are, the helper makes the us
   assert.equal(ready.stdout, "signing=1\n");
   assert.ok(existsSync(join(mac.root, "/Users/bbx-0/Library/Keychains/bb-box-signing.keychain-db")));
   assert.equal(sqlite(user, "select service from access where client = '/usr/libexec/sshd-keygen-wrapper' order by service;"), "kTCCServiceCamera\nkTCCServiceMicrophone");
+  // A desktop command's screencapture raises no notice: the approvals cover SSH and Tart's launcher too.
+  const approvals = mac.file("/Users/bbx-0/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist")!;
+  assert.ok(approvals.includes("<key>/usr/libexec/sshd-keygen-wrapper</key>") && approvals.includes("<key>file:///usr/local/libexec/bb-box/Launcher.app/</key>"), approvals);
 
   const tool = join(mac.data, "Users/bbx-0/bin/tool");
   mkdirSync(dirname(tool), { recursive: true });
