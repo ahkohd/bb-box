@@ -336,16 +336,17 @@ if (set -C; printf '%s' ${quote(owner)} > "$f") 2>/dev/null; then echo claimed; 
 
 /**
  * Suspends a warm VM bb-box has filled, once it is ready, and marks it warm,
- * and with `ready` notes that its fill made its grants (grants=ready, 058).
+ * and with `grants` notes that its fill made its grants with the Mac helper
+ * of that hash (grants=<hash>, 058).
  * Prints "warm", or "gone" when its owner file no longer says it is filling.
  */
-export function warmScript(vm: string, installId: string, ready = false): string {
+export function warmScript(vm: string, installId: string, grants: string | null = null): string {
   return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
 grep -qxF ${quote(`install=${installId}`)} "$f" 2>/dev/null && grep -qx 'state=filling' "$f" || { echo gone; exit 0; }
 if [ "$(state "$vm")" = running ]; then tart suspend "$vm" || exit 1; fi
 settled "$vm" 1200 || { echo "$vm is still running a minute after tart suspend." >&2; exit 1; }
 [ "$(state "$vm")" = suspended ] || { echo "$vm did not suspend." >&2; exit 1; }
-{ sed 's/^state=filling$/state=warm/' "$f"${ready ? "; echo grants=ready" : ""}; } > "$f.new" && mv -f "$f.new" "$f"
+{ sed 's/^state=filling$/state=warm/' "$f"${grants ? `; echo grants=${quote(grants)}` : ""}; } > "$f.new" && mv -f "$f.new" "$f"
 echo warm
 `);
 }

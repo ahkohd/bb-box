@@ -28,7 +28,7 @@
 
 import type { CheckId } from "../../core/checks.ts";
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -297,7 +297,7 @@ interface FreeWarm {
   readonly vm: string;
   readonly size: BoxSize;
   readonly kinds: readonly string[];
-  /** A macOS VM whose fill ran the helper's vm-ready (058): its claim skips the grants step. */
+  /** A macOS VM whose fill ran this Mac helper's vm-ready (058): its claim skips the grants step. */
   readonly ready: boolean;
 }
 
@@ -1118,13 +1118,27 @@ export class TartBackend implements Backend {
    * and needs no reset.
    */
   async #vmHelper(command: SshTransport, verb: "vm-ready" | "vm-grant" | "vm-granted", input: string | null, signal?: AbortSignal): Promise<RunResult> {
-    this.#macHelper ??= this.#options.macHelper ?? `sudo -n /bin/sh -c ${quote(readFileSync(join(setupDir(), "ssh-pool", "machine-mac.sh"), "utf8"))} machine`;
-    return command.run(`${this.#macHelper} ${verb} "$(id -un)"`, {
+    return command.run(`${this.#helperCommand()} ${verb} "$(id -un)"`, {
       ...(input !== null ? { stdin: input } : {}),
       timeoutMs: 60_000,
       signal,
       maxOutputBytes: 64 * 1024,
     });
+  }
+
+  /** The command that runs machine-mac.sh in a macOS VM, made once. */
+  #helperCommand(): string {
+    this.#macHelper ??= this.#options.macHelper ?? `sudo -n /bin/sh -c ${quote(readFileSync(join(setupDir(), "ssh-pool", "machine-mac.sh"), "utf8"))} machine`;
+    return this.#macHelper;
+  }
+
+  /**
+   * A short hash of that command, which holds the helper's whole script: a
+   * warm VM filled with another helper, older or newer, may lack what this
+   * one's vm-ready makes, so its claim runs vm-ready again.
+   */
+  #helperHash(): string {
+    return createHash("sha256").update(this.#helperCommand()).digest("hex").slice(0, 16);
   }
 
   /**
@@ -1375,7 +1389,7 @@ export class TartBackend implements Backend {
       const { size, suspended } = warmOf(state, vm, fields);
       if (!suspended) continue;
       const kinds = this.#servedBy(state, fields, size);
-      if (size && kinds.length) free.push({ vm, size, kinds, ready: fields.grants === "ready" });
+      if (size && kinds.length) free.push({ vm, size, kinds, ready: fields.grants === this.#helperHash() });
     }
     return free;
   }
@@ -1508,7 +1522,7 @@ export class TartBackend implements Backend {
     // A Windows VM's SSH port on the Mac, once it is made.
     let port: number | null = null;
     // Whether a macOS VM's helper made its signing identity and default grants.
-    let granted = false;
+    let granted: string | null = null;
     try {
       const owner = ownerText({
         install: this.#context.installId,
@@ -1547,7 +1561,7 @@ export class TartBackend implements Backend {
         });
         if (desktop.exitCode !== 0) throw new Error(`Warm VM ${vm} on ${host.name}: ${desktop.stderr.trim() || `exit code ${desktop.exitCode}`}`);
         // The signing identity and default grants, before the suspend, so the claim need not make them.
-        granted = await this.#vmReady(host, address, vm, fillSignal);
+        granted = (await this.#vmReady(host, address, vm, fillSignal)) ? this.#helperHash() : null;
       }
       ready.resolve(address);
       // In the chain, so an acquire that takes the VM over and this save never cross.
