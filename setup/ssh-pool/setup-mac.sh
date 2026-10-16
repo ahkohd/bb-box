@@ -242,6 +242,13 @@ own_built=
 if clang -O -o "$ROOT/usr/local/bin/bb-box-own.new" "$here/mac-own.c" 2>/dev/null; then
   chmod 0755 "$ROOT/usr/local/bin/bb-box-own.new" && mv -f "$ROOT/usr/local/bin/bb-box-own.new" "$ROOT/usr/local/bin/bb-box-own" && own_built=1
 fi
+# bb-box-display gives each box user's desktop the 2x mode of its size, for
+# the session, where the display offers one, as with an HDMI dummy plug: the
+# viewer then draws it as sharp as the Mac does.
+display_built=
+if clang -O -framework ApplicationServices -o "$ROOT/usr/local/bin/bb-box-display.new" "$here/mac-display.c" 2>/dev/null; then
+  chmod 0755 "$ROOT/usr/local/bin/bb-box-display.new" && mv -f "$ROOT/usr/local/bin/bb-box-display.new" "$ROOT/usr/local/bin/bb-box-display" && display_built=1
+fi
 
 # 058: with System Integrity Protection off, a box's commands run over SSH,
 # charged to sshd-keygen-wrapper, get Screen Recording as they have
@@ -290,6 +297,8 @@ mdutil -a -i off >/dev/null 2>&1 || :
 warnings=''
 warn() { warnings="$warnings
 - $*"; }
+[ -n "$display_built" ] ||
+  warn "clang could not build bb-box-display, so desktops stay at 1x. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
 [ -n "$own_built" ] ||
   warn "clang could not build bb-box-own, so programs granted permissions cannot run as their own responsible process. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
 if csrutil status 2>/dev/null | grep -q 'status: disabled' && [ -z "$sip_granted" ]; then
