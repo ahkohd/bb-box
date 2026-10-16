@@ -219,6 +219,11 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Why a box's machine cannot be reached while its line is out of the settings. */
+function missing(name: string): string {
+  return `Machine ${name} is not in the SSH host pool's settings now, so bb-box cannot reach its box. Put its line back in ssh-pool-machines, or release the box, which leaves the machine as it is.`;
+}
+
 /** The last lines of a command's error output, for a reason or a doctor check. */
 function said(result: RunResult): string {
   const text = result.stderr.trim().split("\n").slice(-3).join(" ").trim();
@@ -631,9 +636,16 @@ export class SshPoolBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const machine = this.#machines.get(guest.ref);
     const generation = whole(guest.data?.generation);
-    // A machine no longer in the settings is no longer bb-box's to reset.
-    if (!machine || generation === null) return;
     const box = typeof guest.data?.box === "string" ? guest.data.box : null;
+    // A machine no longer in the settings is no longer bb-box's to reset. Its
+    // record goes with the box, so the doctor stops naming it.
+    if (!machine) {
+      const key = `${RECORD}${guest.ref}`;
+      const record = await this.#context.storage.get<MachineRecord>(key);
+      if (record?.owner && record.owner.boxId === box) await this.#context.storage.delete(key);
+      return;
+    }
+    if (generation === null) return;
     const record = await this.#read(machine);
     if (record?.state === "out-of-service") return;
     const probe = await this.#status(machine, signal);
@@ -720,7 +732,10 @@ export class SshPoolBackend implements Backend {
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
     const machine = this.#machines.get(guest.ref);
-    if (!machine) return null;
+    // Out of the settings, the machine and its box user are as they were:
+    // the box keeps what bb-box knows until the line comes back, or someone
+    // releases the box. "Gone" would lose its guest to the sweep's leftovers.
+    if (!machine) return "unknown";
     const probe = await this.#status(machine, signal);
     if (!probe.status) return "unknown";
     const marker = probe.status.owner;
@@ -737,7 +752,7 @@ export class SshPoolBackend implements Backend {
   /** The Mac that holds the box, and the box: a grant is the holder's alone (058). */
   #grantee(guest: Guest): { machine: SshPoolMachine; box: string; generation: number } {
     const machine = this.#machines.get(guest.ref);
-    if (!machine) throw new BackendError("gone", `Machine ${guest.ref} is no longer in the SSH host pool's settings.`);
+    if (!machine) throw new Error(missing(guest.ref));
     if (machine.os !== "macos") throw new BackendError("unsupported", `Machine ${machine.name} runs Linux: only a Mac's box has macOS permissions to grant.`);
     const generation = whole(guest.data?.generation);
     const box = typeof guest.data?.box === "string" ? guest.data.box : null;
@@ -787,7 +802,7 @@ export class SshPoolBackend implements Backend {
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
     const machine = this.#machines.get(guest.ref);
-    if (!machine) throw new BackendError("gone", `Machine ${guest.ref} is no longer in the SSH host pool's settings.`);
+    if (!machine) throw new Error(missing(guest.ref));
     const user = typeof guest.data?.user === "string" ? guest.data.user : `${USER_PREFIX}${guest.data?.generation}`;
     const access = this.#access(machine, user);
     const offer = this.kinds().find((other) => other.id === kind);
@@ -1055,6 +1070,18 @@ export class SshPoolBackend implements Backend {
       if (sizes) checks.push(sizes);
     }
 
+    // A machine taken out of the settings while a box holds it: its box waits, unreachable, for its line.
+    const configured = new Set(this.#config.machines.map((machine) => machine.name));
+    for (const key of await this.#context.storage.list(RECORD)) {
+      const name = key.slice(RECORD.length);
+      if (configured.has(name)) continue;
+      const record = await this.#context.storage.get<MachineRecord>(key);
+      if (record?.state !== "held" || !record.owner) continue;
+      notes.push(
+        `Machine ${name} is not in ssh-pool-machines, but box ${record.owner.name ?? record.owner.boxId} held it when it was last seen. ` +
+          "bb-box cannot reach that box, and leaves the machine as it is. Put the machine's line back, or release the box, which does not reset the machine.",
+      );
+    }
     if (others.size) {
       const parts = [...others].map(([install, count]) => `${plural(count, "machine")} held by install ${install}`);
       notes.push(

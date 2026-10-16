@@ -703,6 +703,33 @@ await conformance({
   timeoutMs: 20_000,
 });
 
+describe("A machine taken out of the SSH host pool's settings while a box holds it", () => {
+  it("leaves the box as it is: its power is unknown, not gone, and it answers again once its line is back", async () => {
+    machine("192.0.2.77");
+    machine("192.0.2.76");
+    const storage = new MemoryStorage();
+    const before = pool("held 192.0.2.77 linux\nkept 192.0.2.76 linux", storage).backend;
+    const { guest } = await acquire(before, "linux");
+    assert.equal(guest.ref, "held");
+    const without = pool("kept 192.0.2.76 linux", storage).backend;
+    assert.equal(await without.power(guest), "unknown", "not null, which core takes for a guest deleted outside bb-box");
+    await assert.rejects(without.transports(guest, "linux"), (error: unknown) => !(error instanceof BackendError) && /^Machine held is not in the SSH host pool's settings now/.test((error as Error).message));
+    assert.deepEqual(await without.held(), [], "the sweep sees nothing of it");
+    const named = (notes: readonly string[]) => notes.some((note) => note.startsWith("Machine held is not in ssh-pool-machines, but box "));
+    assert.ok(named((await without.doctor()).notes), "the doctor names the held machine missing from the settings");
+    // The line comes back: the box's guest is still the machine's owner.
+    const back = pool("held 192.0.2.77 linux\nkept 192.0.2.76 linux", storage).backend;
+    assert.equal(await back.power(guest), "running");
+    assert.deepEqual((await back.held()).map((held) => [held.ref, held.owner?.boxId]), [["held", guest.data?.box]]);
+    // Released while out of the settings: the machine is left as it is, and the doctor stops naming it.
+    await without.release(guest, releaseHooks().hooks);
+    assert.ok(!named((await without.doctor()).notes));
+    assert.equal(await back.power(guest), "running", "not reset");
+    await back.release(guest, releaseHooks().hooks);
+    for (const backend of [before, without, back]) await backend.dispose?.();
+  });
+});
+
 describe("An SSH host pool of Macs (047)", () => {
   it("parses a Mac's line, and refuses one that mixes Linux and macOS kinds or asks for a whole-machine reset", () => {
     const parsed = config("mac-mini bbbox-admin@192.0.2.80 macos,macos-desktop").machines[0]!;

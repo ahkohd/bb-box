@@ -16,7 +16,7 @@ import type { BackendDriver, BoxKind } from "../src/backends/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
-import { Phases, removeStaleApp } from "../src/plugin/enrol.ts";
+import { Phases, removeStaleApp, setAsideOtherMachines } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
@@ -3922,6 +3922,41 @@ test("a provider's profile for the form's (i): its technology, hosts, kinds, roo
   const again = (await harness.behavior.callRpc("provider", { backend: offer.backend })) as { boxes: number };
   assert.equal(again.boxes, 1);
   await assert.rejects(harness.behavior.callRpc("provider", { backend: "elsewhere" }), /No provider has the ID elsewhere/);
+});
+
+test("before BB's installer, a box sets aside BB's data for a machine that is not its own, and stops that machine's daemon, as after a restore", () => {
+  const root = join(tmpdir(), `bb-box-aside-${randomBytes(4).toString("hex")}`);
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  // systemctl records what it is asked, and uname says Linux.
+  writeFileSync(join(bin, "systemctl"), `#!/bin/sh\necho "$*" >> "$HOME/systemctl.log"\n`);
+  writeFileSync(join(bin, "uname"), "#!/bin/sh\necho Linux\n");
+  chmodSync(join(bin, "systemctl"), 0o755);
+  chmodSync(join(bin, "uname"), 0o755);
+  const data = (dir: string, host: string) => {
+    mkdirSync(join(root, ".bb-machines", dir, "thread-storage"), { recursive: true });
+    writeFileSync(join(root, ".bb-machines", dir, "host-id"), host);
+    writeFileSync(join(root, ".bb-machines", dir, "thread-storage", "notes.txt"), "kept\n");
+  };
+  data("bb.example.com", "host_old");
+  data("other.example.com", "host_mine");
+  const units = join(root, ".config/systemd/user");
+  mkdirSync(units, { recursive: true });
+  writeFileSync(join(units, "bb-host-daemon-bb-example-com-host_old.service"), "[Service]\n");
+  writeFileSync(join(units, "bb-host-daemon-other-example-com-host_mine.service"), "[Service]\n");
+  const run = (keep: string | null) => execFileSync("/bin/sh", ["-c", setAsideOtherMachines(keep)], { encoding: "utf8", env: { HOME: root, PATH: `${bin}:/usr/bin:/bin` } });
+
+  assert.equal(run("host_mine"), `${root}/.bb-machines/bb.example.com host_old\n`);
+  assert.equal(readFileSync(join(root, ".bb-machines/.set-aside/bb.example.com-host_old/thread-storage/notes.txt"), "utf8"), "kept\n", "its threads' files are kept");
+  assert.ok(!existsSync(join(root, ".bb-machines/bb.example.com")), "BB's installer finds no folder of another machine");
+  assert.ok(existsSync(join(root, ".bb-machines/other.example.com/host-id")), "the box's own machine's data stays");
+  assert.ok(!existsSync(join(units, "bb-host-daemon-bb-example-com-host_old.service")));
+  assert.ok(existsSync(join(units, "bb-host-daemon-other-example-com-host_mine.service")));
+  assert.match(readFileSync(join(root, "systemctl.log"), "utf8"), /^--user disable --now bb-host-daemon-bb-example-com-host_old\.service\n--user daemon-reload\n$/);
+  // Again: nothing more to do.
+  assert.equal(run("host_mine"), "");
+  // With no machine known yet, any machine's data is another's.
+  assert.equal(run(null), `${root}/.bb-machines/other.example.com host_mine\n`);
 });
 
 test("before BB's installer, a box on an overlay root drops a pre-installed BB app of another build than the server's, and keeps the server's (#701)", () => {
