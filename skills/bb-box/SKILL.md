@@ -130,8 +130,9 @@ two for a Windows box, so threads and terminals can use it. `box_acquire`,
   runs on it. A command that needs one can run in a thread on the box: start
   one with `box_thread`.
 - `box_thread` starts the child on your thread's agent and model when the
-  box has that agent's CLI, and on BB's default otherwise. It refuses a box
-  with none of BB's agent CLIs, and names them.
+  box has that agent's CLI, and otherwise on the first agent CLI the box
+  has, with its default model. It refuses a box with none of BB's agent
+  CLIs, and names them.
 - In BB's new-thread screen, "New box" starts a thread on a Linux or macOS
   box of its own, not a Windows one. From a terminal, `bb thread spawn`
   does the same with the environment provider `bb-box-new` and inputs such

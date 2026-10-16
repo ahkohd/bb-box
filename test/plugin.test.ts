@@ -1588,7 +1588,7 @@ test("box_thread starts a child thread on a box's BB machine, with the thread's 
   assert.equal(world.sources.length, 1, "later threads use the same clone");
 });
 
-test("box_thread starts the child on its parent's provider and model when the box has them, BB's default otherwise, and refuses a box with no agent CLI (#561)", async (t) => {
+test("box_thread starts the child on its parent's provider and model when the box has them, a CLI the box has otherwise, and refuses a box with no agent CLI (#561)", async (t) => {
   const { harness, tool, world } = await start();
   t.after(() => harness.lifecycle.dispose());
   await tool("box_acquire", {});
@@ -1604,9 +1604,16 @@ test("box_thread starts the child on its parent's provider and model when the bo
   // The box's CLI does not list the parent's model: that CLI's default.
   world.parentModel = "claude-opus-4-1";
   assert.deepEqual(await agent(), { providerId: "claude-code", model: undefined });
-  // The box lacks the parent's CLI: BB's default.
+  // The box lacks the parent's CLI: the first it has, in BB's order, with its default model, not BB's default, which the box may lack too (#47).
   world.agentClis!["claude-code"] = { ...world.agentClis!["claude-code"]!, installed: false };
-  assert.deepEqual(await agent(), { providerId: undefined, model: undefined });
+  assert.deepEqual(await agent(), { providerId: "codex", model: undefined });
+  // The parent's provider unknown, as BB cannot read the thread: the first CLI the box has, though the parent's is there too.
+  const listed = world.agentClis!;
+  world.agentClis = { codex: listed.codex!, "claude-code": { ...listed["claude-code"]!, installed: true } };
+  world.threadErrors.set(THREAD, new Error("thread not readable"));
+  assert.deepEqual(await agent(), { providerId: "codex", model: undefined });
+  world.threadErrors.delete(THREAD);
+  world.agentClis = listed;
   // BB cannot say which CLIs the box has: BB's default.
   const clis = world.agentClis;
   world.agentClis = null;

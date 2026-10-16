@@ -4,8 +4,10 @@
 // provider, which the box may not have. On a Windows box with none of BB's
 // CLIs, BB then picked another it did not have either, and the child failed.
 // So bb-box asks BB which CLIs the box's machine has: it starts the child on
-// its parent's provider and model when the box has them, leaves BB's default
-// otherwise, and refuses at once when the box has none.
+// its parent's provider and model when the box has them, else on the first
+// CLI the box has, in BB's order, and refuses at once when the box has none.
+// BB's own default may be missing from the box too: on a Mac in the SSH
+// host pool, BB chose an agent the box lacked, and the child failed (#47).
 
 import { BoxError } from "../core/boxes.ts";
 
@@ -34,8 +36,8 @@ export interface AgentChoice {
 
 /**
  * The provider and model for a child of thread `threadId` on machine
- * `hostId`, box `box`'s. Throws when the box has none of BB's CLIs. A
- * question BB cannot answer, as an older BB's, leaves BB's default.
+ * `hostId`, box `box`'s. Throws when the box has none of BB's CLIs. When BB
+ * cannot say which CLIs the box has, as an older BB, BB's default stays.
  */
 export async function agentFor(sdk: AgentSdk, threadId: string, hostId: string, box: string, logError: (operation: string, error: unknown) => void): Promise<AgentChoice> {
   const clis = await sdk.hosts.providerCliStatus({ hostId }).catch((error: unknown) => (logError("list a box's agent CLIs", error), null));
@@ -46,7 +48,8 @@ export async function agentFor(sdk: AgentSdk, threadId: string, hostId: string, 
     throw new BoxError("unsupported", `A thread cannot run on box ${box}: it has none of the agent CLIs BB runs threads with: ${missing}. Install one there, then start the thread again.`);
   }
   const providerId = (await sdk.threads.get({ threadId }).catch(() => null))?.providerId;
-  if (!providerId || !clis![providerId]?.installed) return {};
+  // The parent's CLI missing on the box, or the parent's unknown: one the box has, with its CLI's default model.
+  if (!providerId || !clis![providerId]?.installed) return { providerId: known.find(([, cli]) => cli.installed)![0] };
   const model = (await sdk.threads.defaultExecutionOptions({ threadId }).catch(() => null))?.model;
   if (!model) return { providerId };
   const models = (await sdk.providers.models({ hostId, providerId }).catch(() => null))?.models ?? [];
