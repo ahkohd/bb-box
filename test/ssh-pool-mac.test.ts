@@ -631,6 +631,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
 
   const admin = mac.user("bbbox-admin")!;
   assert.deepEqual([admin.RealName, admin.IsHidden, admin.NFSHomeDirectory], ["bb-box admin", "1", "/private/var/bbbox-admin"]);
+  assert.equal(statSync(join(mac.root, "private/var/bbbox-admin")).mode & 0o777, 0o700, "closed to box users, in staff (047)");
   // The agent CLIs, pinned, linked from /usr/local/bin (#561).
   for (const [command, target] of [
     ["claude", "/usr/local/lib/bb-box/claude-code-2.1.283/claude"],
@@ -745,6 +746,14 @@ test("the doctor's status names the people whose homes box users can enter, as m
   assert.equal(fields(mac.helper(["status"]).stdout).get("openhomes"), undefined, "not in an ordinary status");
   chmodSync(home, 0o700);
   assert.equal(fields(mac.helper(["status", "xcode"]).stdout).get("openhomes"), "", "closed to others");
+  // A hidden user, as bb-box's admin, is not a person's, though macOS names the flag dsAttrTypeNative:IsHidden.
+  for (const [name, value] of Object.entries({ UniqueID: "502", UserShell: "/bin/zsh", IsHidden: "1", NFSHomeDirectory: "/private/var/hidden" })) {
+    mkdirSync(join(mac.state, "users", "hidden"), { recursive: true });
+    writeFileSync(join(mac.state, "users", "hidden", name), `${value}\n`);
+  }
+  mkdirSync(join(mac.data, "private/var/hidden"), { recursive: true });
+  chmodSync(join(mac.data, "private/var/hidden"), 0o755);
+  assert.equal(fields(mac.helper(["status", "xcode"]).stdout).get("openhomes"), "");
   // A user with no login shell, as macOS's service accounts, is not a person's.
   chmodSync(home, 0o755);
   writeFileSync(join(mac.state, "users", "person", "UserShell"), "/usr/bin/false\n");

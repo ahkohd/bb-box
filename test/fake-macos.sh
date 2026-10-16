@@ -107,7 +107,9 @@ case $tool in
             echo "No such key: $attribute" >&2
             exit 181
           }
-          printf '%s: %s\n' "$attribute" "$(values "$dir/$attribute")"
+          # As macOS, an attribute outside the standard set has dsAttrTypeNative: before it.
+          case $attribute in IsHidden) prefix=dsAttrTypeNative: ;; *) prefix='' ;; esac
+          printf '%s%s: %s\n' "$prefix" "$attribute" "$(values "$dir/$attribute")"
         else
           for file in "$dir"/*; do if [ -f "$file" ]; then printf '%s: %s\n' "${file##*/}" "$(values "$file")"; fi; done
         fi
