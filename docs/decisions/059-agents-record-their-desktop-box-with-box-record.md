@@ -131,7 +131,10 @@ time was cut.
    of its own, and stops it with `taskkill` without `/F`: ffmpeg sees its
    console close and ends its file whole, about half a second later.
    `/F` leaves a file that cannot be read, and the close reaches ffmpeg
-   only from the desktop session, so both actions run there. (Amended.)
+   only from the desktop session, so both actions run there. The arm64
+   image takes BtbN's build of 31 August 2026: those from 30 September
+   crash at start on Windows on arm64, even x64 ones under emulation.
+   (Amended.)
 
 ### Notifications are the agent's
 
