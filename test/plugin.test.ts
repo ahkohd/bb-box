@@ -3435,6 +3435,22 @@ test("computer_launch on Wayland gives the window the compositor lists, not an e
   assert.doesNotMatch(launched, /142278656/);
 });
 
+test("computer_launch asks again while Windows' shell cannot look an app's name up yet, as just after a box starts, and gives up after a while", async (t) => {
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 500, lookupWaitMs: 5_000 } });
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.lookupBusy = 2;
+  });
+  assert.match(text(await tool("computer_launch", { box: box.name, app: "tasks" })), /^Opened tasks\. Its window:\n- window 101: tasks "Tasks"/);
+  // Busy for longer than the wait: Cua's answer, as before.
+  editDesktop(file, (desktop) => {
+    desktop.lookupBusy = 100;
+  });
+  const busy = await tool("computer_launch", { box: box.name, app: "tasks" });
+  assert.equal(isError(busy), true);
+  assert.match(text(busy), /temporarily unavailable: Windows did not respond to the shell:AppsFolder query within 4s/);
+});
+
 test("computer_launch opens apps and URLs and says which windows opened", async (t) => {
   const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 500, pageWaitMs: 1_500 } });
   t.after(() => harness.lifecycle.dispose());
