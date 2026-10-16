@@ -141,6 +141,7 @@ $versions = @{
   'claude-code' = { & "$tools\claude\claude.exe" --version }
   'codex' = { & "$tools\codex\codex.exe" --version }
   'pi' = { & "$tools\pi\pi.exe" --version }
+  'ffmpeg' = { & "$tools\ffmpeg\ffmpeg.exe" -version }
 }
 
 # Puts an agent CLI's program in its directory, in place of what was there, on the machine's PATH.
@@ -201,6 +202,14 @@ $installers = @{
   'claude-code' = { param($pin, $file) Install-Tool claude $file claude.exe }
   'codex' = { param($pin, $file) Install-Tool codex $file codex.exe }
   'pi' = { param($pin, $file) Install-Tool pi $file pi.exe }
+  # box_record's recorder (059): ffmpeg and ffprobe, from the archive's bin.
+  'ffmpeg' = { param($pin, $file)
+    Expand-Archive $file -DestinationPath "$dir\ffmpeg" -Force
+    $bin = (Get-ChildItem "$dir\ffmpeg" -Recurse -Filter ffmpeg.exe | Select-Object -First 1).Directory.FullName
+    Install-Tool ffmpeg "$bin\ffmpeg.exe" ffmpeg.exe
+    Copy-Item "$bin\ffprobe.exe" (Join-Path $tools ffmpeg)
+    Remove-Item "$dir\ffmpeg" -Recurse -Force
+  }
 }
 
 try {

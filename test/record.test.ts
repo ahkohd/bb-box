@@ -69,6 +69,21 @@ test("on macOS box_record records ffmpeg's avfoundation screen in a session Perl
   assert.deepEqual(parseRecordResult(stopped.stdout), { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720" });
 });
 
+test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its console before it would force it, then makes the clip as elsewhere (059)", () => {
+  const start = recordStartScript("windows");
+  assert.match(start, /Join-Path \$HOME '\.local\\state\\bb-box\\recording'/);
+  assert.match(start, /Start-Process \$ffmpeg -WindowStyle Hidden -PassThru -RedirectStandardError "\$d\\log"/);
+  assert.match(start, /-f gdigrab -framerate 15 -draw_mouse 1 -i desktop -t 300 -c:v libx264 -preset ultrafast -crf 0 /);
+  assert.match(start, /exit 4 }/);
+  const stop = recordStopScript({ speed: 4, stills: "cut", os: "windows" });
+  // Without /F, ffmpeg sees its console close and ends its file whole.
+  assert.ok(stop.indexOf("taskkill /PID $p.Id") < stop.indexOf("taskkill /F /PID $p.Id"), stop);
+  assert.match(stop, /if \('cut' -eq 'cut'\)/);
+  assert.match(stop, /-vf freezedetect=n=0\.0001:d=1 -map 0:v -f null -/);
+  assert.match(stop, /setpts=N\/\(15\*4\)\/TB,fps=15,scale='min\(1280,iw\)':-2" -an -c:v libx264 -preset medium -crf 28 -tune animation -pix_fmt yuv420p -movflags \+faststart/);
+  assert.match(recordStopScript({ speed: 1, stills: "keep", os: "windows" }), /if \('keep' -eq 'cut'\)/);
+});
+
 test("box_record's page plays the clip beside it by its name, and its height follows the clip's shape (059)", () => {
   const page = recordPage(`Box "a" <b>`, "box a&b.mp4");
   assert.ok(page.includes(`<video src="box%20a%26b.mp4" autoplay muted loop controls playsinline`), page);

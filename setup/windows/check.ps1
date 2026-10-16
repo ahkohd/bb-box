@@ -36,6 +36,12 @@ Check 'Claude Code, Codex and Pi on PATH' {
   $said = foreach ($tool in 'claude', 'codex', 'pi') { $v = & $tool --version 2>&1 | Select-Object -First 1; if ($LASTEXITCODE -or -not $v) { throw "$tool did not run" }; "$v" }
   $said -join '; '
 }
+Check "ffmpeg with gdigrab, and ffprobe, on PATH, for box_record" {
+  $v = ffmpeg -hide_banner -version | Select-Object -First 1; $p = ffprobe -hide_banner -version | Select-Object -First 1
+  if (-not $v -or -not $p) { throw 'missing' }
+  if (-not (ffmpeg -hide_banner -devices 2>$null | Select-String '\bgdigrab\b')) { throw "$v has no gdigrab" }
+  $v
+}
 Check "Claude Code's PowerShell tool on PowerShell 7" {
   # Its init frame says which shell tools it has and which PowerShell runs, with no sign-in.
   $init = ('hi' | claude -p --output-format stream-json --verbose 2>$null | Select-Object -First 1) | ConvertFrom-Json

@@ -81,6 +81,10 @@ CODEX_VERSION=0.157.1
 CODEX_SHA256=8CB0E69E99FF2A158C54815DB82D0F2E524D8F301BC30184722CFD1AE5973574
 PI_VERSION=0.87.1
 PI_SHA256=AAB2BA67BAF8FF97A52D05B62D88E9E65A840C6EA8FA1029A28D62D210D4E5FC
+# box_record's recorder (059): a month's last build, which BtbN keeps.
+FFMPEG_VERSION=9.0.2
+FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip
+FFMPEG_SHA256=A0E45723C72141975F51D8666302E614711745F3102B704CA3F82C897A58D278
 
 for tool in genisoimage jq python3 ssh scp; do command -v "$tool" >/dev/null || die "$tool is required"; done
 [ -f "$BBBOX_SSH_KEY.pub" ] || die "no plugin key at $BBBOX_SSH_KEY.pub: run ../proxmox-lxc/host/setup-host.sh"
@@ -105,10 +109,10 @@ thin=
 record=$(jq -cn --arg build "$build" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg os "$BBBOX_WINDOWS_EDITION" \
   --arg pins "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/build.sh" | sha256sum | cut -d' ' -f1)" \
   --arg pwsh "$PWSH_VERSION" --arg git "$GIT_VERSION" --arg gh "$GH_VERSION" --arg cua "$CUA_VERSION" \
-  --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" --arg node "$NODE_VERSION" --arg claude "$CLAUDE_VERSION" --arg codex "$CODEX_VERSION" --arg pi "$PI_VERSION" \
+  --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" --arg node "$NODE_VERSION" --arg claude "$CLAUDE_VERSION" --arg codex "$CODEX_VERSION" --arg pi "$PI_VERSION" --arg ffmpeg "$FFMPEG_VERSION" \
   '{contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: $build, built: $built, base: null, os: $os,
     aptSnapshot: null, pins: $pins, bbApp: null,
-    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node, "claude-code": $claude, codex: $codex, pi: $pi},
+    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node, "claude-code": $claude, codex: $codex, pi: $pi, ffmpeg: $ffmpeg},
     nvidia: null, layer: null, sizeGiB: null}')
 linked_clones() { # vmid
   { grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null ||
@@ -206,6 +210,8 @@ json.dump({
               "url": "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-x86_64-pc-windows-msvc.exe"},
     "pi": {"version": "$PI_VERSION", "sha256": "$PI_SHA256",
            "url": "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-windows-x64.zip"},
+    "ffmpeg": {"version": "$FFMPEG_VERSION", "sha256": "$FFMPEG_SHA256",
+               "url": "$FFMPEG_URL"},
 }, open(sys.argv[1], "w"), indent=2)
 EOF
 genisoimage -quiet -J -r -V BBBOXANSWER -o "$answer_iso" "$work/answer"
@@ -329,7 +335,7 @@ qm destroy "$check_vm" --purge 1 >/dev/null
 check_vm=
 [ "$checked" = 0 ] || die "the check failed (above)"
 
-description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION, Node.js $NODE_VERSION, Claude Code $CLAUDE_VERSION, Codex $CODEX_VERSION, Pi $PI_VERSION.
+description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION, Node.js $NODE_VERSION, Claude Code $CLAUDE_VERSION, Codex $CODEX_VERSION, Pi $PI_VERSION, ffmpeg $FFMPEG_VERSION.
 $record"
 # The pool's ACL lets the plugin's token delete guests in it; protection keeps
 # it from deleting templates. Clones inherit the flag, so the plugin clears it

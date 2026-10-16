@@ -357,9 +357,9 @@ test("a Windows refresh that fails, or that Windows keeps asking to restart, kee
 
 test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {
   const pins = (JSON.parse(readFileSync(join(SETUP, "windows", "pins.json"), "utf8")) as { tools: { name: string; arch: string; version: string; url: string; sha256: string }[] }).tools;
-  const names: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node", CLAUDE: "claude-code", CODEX: "codex", PI: "pi" };
+  const names: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node", CLAUDE: "claude-code", CODEX: "codex", PI: "pi", FFMPEG: "ffmpeg" };
   for (const [script, arch] of [["proxmox-qemu/build.sh", "x86_64"], ["tart/prepare-windows-image.sh", "arm64"]] as const) {
-    const lines = Object.fromEntries([...readFileSync(join(SETUP, script), "utf8").matchAll(/^([A-Z0-9]+)_(VERSION|SHA256)=(\S+)$/gm)].map((match) => [`${match[1]}_${match[2]}`, match[3]!]));
+    const lines = Object.fromEntries([...readFileSync(join(SETUP, script), "utf8").matchAll(/^([A-Z0-9]+)_(VERSION|SHA256|URL)=(\S+)$/gm)].map((match) => [`${match[1]}_${match[2]}`, match[3]!]));
     const ours = pins.filter((pin) => pin.arch === arch);
     assert.deepEqual(ours.map((pin) => pin.name).sort(), Object.values(names).sort(), `${arch}: one pin per tool`);
     for (const [prefix, name] of Object.entries(names)) {
@@ -367,6 +367,7 @@ test("setup/windows/pins.json has the Windows build scripts' pins, Node.js inclu
       assert.equal(pin.version, lines[`${prefix}_VERSION`], `${script}'s ${name} version`);
       assert.equal(pin.sha256.toUpperCase(), lines[`${prefix}_SHA256`]?.toUpperCase(), `${script}'s ${name} SHA-256`);
       assert.ok(pin.url.startsWith("https://") && (name === "vs-buildtools" || pin.url.includes(pin.version)), `${name}'s URL names its version`);
+      if (lines[`${prefix}_URL`] && name !== "vs-buildtools") assert.equal(pin.url, lines[`${prefix}_URL`], `${script}'s ${name} URL`);
     }
   }
 });

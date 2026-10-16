@@ -621,7 +621,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   bb.agents.registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, and macOS desktops; not Windows yet.`,
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops.`,
     presentation: { label: { pending: "Recording the desktop", completed: "Recorded the desktop" } },
     parameters: z.object({
       box: boxParam,
@@ -636,11 +636,12 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       try {
         const id = thread(threadId);
         const { owner, box: found } = await app.resolve(id, ref, signal);
-        if (found.capabilities.os === "windows" || !found.capabilities.displays.length) {
-          throw new BoxError("unsupported", `Box ${found.name} has no Linux or macOS desktop. box_record records those for now; Windows comes later.`);
-        }
+        if (!found.capabilities.displays.length) throw new BoxError("unsupported", `Box ${found.name} has no desktop to record.`);
+        // On Windows both run in the desktop session: gdigrab reads the desktop it runs in, and the stop closes its window.
+        const os = found.capabilities.os;
+        const session = os === "windows" ? ("desktop" as const) : undefined;
         if (action === "start") {
-          const { result } = await boxes.run(owner, found.id, recordStartScript(), { timeoutMs: 30_000, signal, waitForEnrolment: false });
+          const { result } = await boxes.run(owner, found.id, recordStartScript(os), { timeoutMs: 30_000, signal, session, waitForEnrolment: false });
           const refused: Partial<Record<number, string>> = {
             [RECORD_START_EXITS.running]: `Box ${found.name} is recording already.${next(`Call box_record with box "${found.name}" and action "stop" for its clip.`)}`,
             [RECORD_START_EXITS.noRecorder]: `Box ${found.name} has no ${result.stderr.trim() || "recorder"} yet, which box_record needs there. It comes with the image's next rebuild, or on a Mac of the SSH host pool when its owner runs setup-mac.sh again.`,
@@ -654,9 +655,10 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const storage = await app.threadStorage(id, signal);
         if (!storage) throw new BoxError("unsupported", "BB gives no storage folder for this thread, so there is nowhere to put the clip.");
         const times = speed ?? 1;
-        const { result } = await boxes.run(owner, found.id, recordStopScript({ speed: times, stills: stills ?? "cut" }), {
+        const { result } = await boxes.run(owner, found.id, recordStopScript({ speed: times, stills: stills ?? "cut", os }), {
           timeoutMs: 240_000,
           signal,
+          session,
           maxOutputBytes: 64 * 1024,
           waitForEnrolment: false,
         });
