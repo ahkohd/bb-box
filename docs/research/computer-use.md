@@ -313,6 +313,13 @@ role, name, and the roles and names of its ancestors.
   "Background delivery is not available" message (it answers in 2 to 4 ms),
   the plugin retries in foreground, unless you are watching and have turned
   foreground off for the box.
+- On Windows, a key chord with a modifier goes in foreground from the
+  start: Cua's background chord reaches the app as the bare key without a
+  refusal (below). bb-box brings the chord's window to the front first
+  (`bring_to_front`) and leaves it there. Cua's foreground swap alone puts
+  the window back behind the one that was in front, and its editor's focus
+  does not come back, so text typed into the window next was lost, with
+  Cua reporting success. Plain keys and text stay in background.
 - Background element actions do not move the pointer and act on the element
   itself, so they are the safer choice. On a Linux desktop served by
   Xtigervnc or Xvfb, Chrome needs foreground for typing, keys, scrolling and
