@@ -12,6 +12,7 @@ import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
+import { GRANT_PERMISSIONS, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
@@ -221,6 +222,13 @@ function ownerWords(box: BoxRecord): string {
 
 export const boxParam = z.string().min(1).describe("The box's name or ID, from box_acquire or box_list.");
 
+/** A Mac box's grants, for box_status (058). */
+export function grantsText(grants: BoxGrants): string {
+  const listed = grants.grants.map((grant) => `${grant.permission} to ${grant.client}${grant.target ? ` (for ${grant.target})` : ""}`);
+  if (!grants.canGrant) return "\nmacOS permissions: box_grant cannot grant them on this Mac, as System Integrity Protection is on.";
+  return `\nmacOS permissions granted with box_grant: ${listed.length ? listed.join(", ") : "none"}.`;
+}
+
 export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: number; runWaitMs?: number } = {}): void {
   const runWaitMs = options.runWaitMs ?? RUN_WAIT_MS;
   const { boxes } = app;
@@ -345,9 +353,46 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           failed: [`Release it with box_release, then box_acquire another.`],
           gone: [`Release it with box_release, then box_acquire another.`],
         };
-        return `${boxDetail(box, app.control(box))}${next(...(hints[box.state] ?? []))}`;
+        const grants = await boxes.grants(box, signal);
+        return `${boxDetail(box, app.control(box))}${grants ? grantsText(grants) : ""}${next(...(hints[box.state] ?? []))}`;
       } catch (error) {
         return failure(error, "Checking the box");
+      }
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "box_grant",
+    description:
+      "Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. Only on a Mac of the SSH host pool with SIP off. The program must be the box user's, or an app in /Applications, and signed: sign it with the box's identity, codesign -s \"bb-box local code signing\", so a rebuild keeps the grant. Commands box_run runs have the microphone and camera already.",
+    presentation: { label: { pending: "Granting permissions", completed: "Granted permissions" } },
+    parameters: z.object({
+      box: boxParam,
+      program: z.string().min(1).describe("The app's path, such as /Users/bbx-3/Applications/Probe.app, or a program's full path in the box."),
+      permissions: z.array(z.enum(GRANT_PERMISSIONS)).min(1).describe("The permissions to grant."),
+      target: z.string().optional().describe("For automation: the bundle ID of the app the program sends Apple events to, such as com.apple.finder."),
+    }),
+    async execute({ box: ref, program, permissions, target }, { threadId, signal }) {
+      try {
+        const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
+        const { box, answer } = await boxes.grant(owner, found.id, { program, permissions, ...(target ? { target } : {}) }, signal);
+        const lines = [
+          ...(answer.granted.length ? [`Granted ${answer.granted.join(", ")} to ${answer.client} in box ${box.name}.`] : []),
+          ...answer.refused.map((refusal) => `Refused ${refusal.permission}: ${refusal.reason}`),
+        ];
+        const isApp = /\.app\/?$/.test(program);
+        const hints = answer.granted.length
+          ? [
+              "Start the program again if it is running: macOS reads some permissions only at launch.",
+              isApp
+                ? "Open the app with open, so that it is its own responsible process and its grants apply."
+                : `Run it through bb-box-own, as bb-box-own ${program} <arguments>, so that it is its own responsible process and its grants apply.`,
+            ]
+          : ["Fix what the refusals say, then call box_grant again."];
+        const text = `${lines.join("\n")}${next(...hints)}`;
+        return answer.granted.length ? text : { content: [{ type: "text", text }], isError: true };
+      } catch (error) {
+        return failure(error, "Granting permissions");
       }
     },
   });

@@ -730,6 +730,45 @@ describe("An SSH host pool of Macs (047)", () => {
     assert.deepEqual(mixed.kinds()[0]!.capabilities.features, ["docker"], "a Mac has no whole-machine reset, but takes no Docker from the linux boxes");
   });
 
+  it("grants a program in a Mac's box macOS permissions through the helper, and lists the box's grants, only with SIP off (058)", async () => {
+    const host = "192.0.2.79";
+    mac(host);
+    const { backend } = pool("g 192.0.2.79 macos");
+    const { guest } = await acquire(backend, "macos");
+    const request = { program: "/Users/bbx-0/Applications/Probe.app", permissions: ["accessibility", "microphone"] as const };
+    await assert.rejects(backend.grant!(guest, request), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && /^System Integrity Protection is on/.test(error.message));
+    assert.deepEqual(await backend.grants!(guest), { canGrant: false, grants: [] });
+
+    setFlag(host, "sip-off");
+    assert.deepEqual(await backend.grant!(guest, request), { client: "dev.example.probe", granted: ["accessibility", "microphone"], refused: [] });
+    await assert.rejects(backend.grant!(guest, { program: "/usr/bin/true", permissions: ["camera"] }), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
+    assert.deepEqual(await backend.grants!(guest), {
+      canGrant: true,
+      grants: [
+        { permission: "accessibility", client: "dev.example.probe", target: null },
+        { permission: "microphone", client: "dev.example.probe", target: null },
+      ],
+    });
+    assert.deepEqual(helperCalls(host).filter((call) => call.startsWith("grant")), ["grant", "granted 0", "grant", "grant", "granted 0"]);
+
+    // The reset removes them.
+    await backend.release(guest, releaseHooks().hooks);
+    const next = await acquire(backend, "macos");
+    assert.deepEqual(await backend.grants!(next.guest), { canGrant: true, grants: [] });
+    await backend.release(next.guest, releaseHooks().hooks);
+    await backend.dispose?.();
+  });
+
+  it("refuses grants on a Linux machine of the pool", async () => {
+    machine("192.0.2.78");
+    const { backend } = pool("l 192.0.2.78 linux");
+    const { guest } = await acquire(backend);
+    await assert.rejects(backend.grant!(guest, { program: "/home/bbx-0/tool", permissions: ["accessibility"] }), /^BackendError: Machine l runs Linux: only a Mac's box has macOS permissions to grant\.$/);
+    assert.equal(await backend.grants!(guest), null);
+    await backend.release(guest, releaseHooks().hooks);
+    await backend.dispose?.();
+  });
+
   it("lends a Mac once its box user is at the console and, for macos-desktop, Cua Driver's socket is in the box user's home", async () => {
     const host = "192.0.2.82";
     mac(host);

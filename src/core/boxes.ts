@@ -25,12 +25,15 @@ import {
   type AcquireHooks,
   type Backend,
   type BackendStorage,
+  type BoxGrants,
   type BoxIdentity,
   type BoxKind,
   type BoxSize,
   type BoxTransports,
   type Capacity,
   type DoctorCheck,
+  type GrantAnswer,
+  type GrantRequest,
   type Guest,
   type GuestFact,
   type HeldGuest,
@@ -1862,6 +1865,27 @@ export class Boxes {
     const stamped = await backend.stamp(box.id, guest, signal);
     const updated = await this.update(box, (current) => (current.guest?.ref === guest.ref ? { guest: stamped } : {}));
     return updated ?? { ...box, guest: stamped };
+  }
+
+  /** Grants a program in a ready box macOS permissions (058). */
+  async grant(threadId: string, ref: string, request: GrantRequest, signal?: AbortSignal): Promise<{ box: BoxRecord; answer: GrantAnswer }> {
+    const box = await this.get(threadId, ref);
+    const backend = this.#backend(box);
+    if (!backend.grant) throw new BoxError("unsupported", `${box.backendLabel} cannot grant macOS permissions: only a Mac of the SSH host pool with SIP off can.`);
+    this.#require(box, "ready");
+    try {
+      return { box, answer: await backend.grant(box.guest!, request, signal) };
+    } catch (error) {
+      if (error instanceof BackendError && error.code === "unsupported") throw new BoxError("unsupported", error.message);
+      throw error;
+    }
+  }
+
+  /** A ready box's grants, or null where its backend does not say. */
+  async grants(box: BoxRecord, signal?: AbortSignal): Promise<BoxGrants | null> {
+    const backend = this.#deps.backends.get(box.backend);
+    if (!backend?.grants || box.state !== "ready" || !box.guest) return null;
+    return backend.grants(box.guest, signal).catch(() => null);
   }
 
   /** The transports that reach a ready box. */

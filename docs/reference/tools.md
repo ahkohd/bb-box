@@ -8,6 +8,7 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | --- | --- |
 | [`box_acquire`](#box_acquire) | Get a fresh box for this thread: a Linux or macOS computer for commands, builds, tests, servers or Docker, away from the thread's own machine. |
 | [`box_copy`](#box_copy) | Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. |
+| [`box_grant`](#box_grant) | Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. |
 | [`box_image_draft`](#box_image_draft) | Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. |
 | [`box_image_set`](#box_image_set) | Set this thread's project's image (049): a shell script run as root on the standard image of its kinds, so the project's boxes start with what it needs, such as a language's toolchain. |
 | [`box_image_try`](#box_image_try) | Try a project image's script as a build runs it (049), before box_image_set: in a new box of the kind's current standard image, on a backend that builds images, the script runs as root with BB_BOX_IMAGE, BB_BOX_KIND, BB_BOX_BACKEND and BB_BOX_ARCH, then the check as the box user, then finalizing, which empties /tmp, /var/tmp and the caches. |
@@ -52,6 +53,17 @@ Copy one file, of any size, between this thread's workspace or its storage folde
 | `direction` | `to_box`, `from_box` | yes | to_box copies from the workspace or storage folder into the box; from_box copies from the box into the workspace or storage folder. |
 | `from` | string | yes | The file to copy. |
 | `to` | string | no | Where to put it. Defaults to the file's own name, in the box user's home or in the workspace's directory. |
+
+## box_grant
+
+Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. Only on a Mac of the SSH host pool with SIP off. The program must be the box user's, or an app in /Applications, and signed: sign it with the box's identity, codesign -s "bb-box local code signing", so a rebuild keeps the grant. Commands box_run runs have the microphone and camera already.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
+| `program` | string | yes | The app's path, such as /Users/bbx-3/Applications/Probe.app, or a program's full path in the box. |
+| `permissions` | array of `accessibility`, `screen-recording`, `input-monitoring`, `microphone`, `camera`, `automation` | yes | The permissions to grant. |
+| `target` | string | no | For automation: the bundle ID of the app the program sends Apple events to, such as com.apple.finder. |
 
 ## box_image_draft
 

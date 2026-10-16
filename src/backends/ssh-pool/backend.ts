@@ -36,6 +36,7 @@ import {
   type Backend,
   type BackendContext,
   type BoxIdentity,
+  type BoxGrants,
   type BoxKind,
   type BoxOwner,
   type BoxSize,
@@ -46,6 +47,8 @@ import {
   type ComputerUse,
   type DoctorReport,
   type Footprint,
+  type GrantAnswer,
+  type GrantRequest,
   type Guest,
   type GuestFact,
   type HeldGuest,
@@ -62,7 +65,7 @@ import { command as inBoxCommand } from "../../core/in-box.ts";
 import { MacInput, macInputCommand } from "../../core/mac-input.ts";
 import { CUA_VERSION } from "../tart/backend.ts";
 import { EXAMPLE, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
-import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, parseDisplay, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
+import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, parseDisplay, parseGrant, parseGranted, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
 
 const SSH_KEY = "ssh-key";
 const RECORD = "machine/";
@@ -729,6 +732,35 @@ export class SshPoolBackend implements Backend {
       marker.box === box &&
       marker.generation === whole(guest.data?.generation);
     return ours ? "running" : null;
+  }
+
+  /** The Mac that holds the box, and the box: a grant is the holder's alone (058). */
+  #grantee(guest: Guest): { machine: SshPoolMachine; box: string; generation: number } {
+    const machine = this.#machines.get(guest.ref);
+    if (!machine) throw new BackendError("gone", `Machine ${guest.ref} is no longer in the SSH host pool's settings.`);
+    if (machine.os !== "macos") throw new BackendError("unsupported", `Machine ${machine.name} runs Linux: only a Mac's box has macOS permissions to grant.`);
+    const generation = whole(guest.data?.generation);
+    const box = typeof guest.data?.box === "string" ? guest.data.box : null;
+    if (generation === null || !box) throw new BackendError("gone", `Machine ${machine.name} does not say which box holds it.`);
+    return { machine, box, generation };
+  }
+
+  async grant(guest: Guest, request: GrantRequest, signal?: AbortSignal): Promise<GrantAnswer> {
+    const { machine, box } = this.#grantee(guest);
+    const result = await this.#helper(machine, ["grant"], grantInput(this.#context.installId, box, request), STATUS_TIMEOUT_MS, signal);
+    if (result.exitCode === EXIT.notOurs) throw new BackendError("gone", `Machine ${machine.name} is no longer this box's.`);
+    if (result.exitCode === EXIT.protected || result.exitCode === EXIT.refused) throw new BackendError("unsupported", said(result));
+    if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} did not grant: ${said(result)}`);
+    return parseGrant(result.stdout);
+  }
+
+  async grants(guest: Guest, signal?: AbortSignal): Promise<BoxGrants | null> {
+    const machine = this.#machines.get(guest.ref);
+    if (machine?.os !== "macos") return null;
+    const { box, generation } = this.#grantee(guest);
+    const result = await this.#helper(machine, ["granted", String(generation)], releaseInput(this.#context.installId, box), STATUS_TIMEOUT_MS, signal);
+    // A helper from before box_grant does not know the command.
+    return result.exitCode === EXIT.ok ? parseGranted(result.stdout) : null;
   }
 
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {

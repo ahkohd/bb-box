@@ -456,6 +456,15 @@ export interface Backend {
   stopped?(guest: Guest, signal?: AbortSignal): Promise<StopReason | null>;
 
   /**
+   * Grants a program in the box macOS permissions (058). Throws
+   * BackendError("unsupported") with the reason when the machine cannot
+   * grant, or will not grant to that program. Only backends that can.
+   */
+  grant?(guest: Guest, request: GrantRequest, signal?: AbortSignal): Promise<GrantAnswer>;
+  /** The box's grants, or null where the guest does not say. Only backends with `grant`. */
+  grants?(guest: Guest, signal?: AbortSignal): Promise<BoxGrants | null>;
+
+  /**
    * Every guest this backend holds for this install's boxes, for the safety
    * sweep. Excludes free pool members, and guests with another install's ID
    * or none, which still count against capacity. The owner comes from the
@@ -531,6 +540,34 @@ export interface Backend {
   /** Building images in boxes and keeping their builds (049). Only backends that can. */
   readonly images?: BackendImages;
   dispose?(): Promise<void>;
+}
+
+/** The macOS permissions bb-box can grant a program in a box (058). */
+export const GRANT_PERMISSIONS = ["accessibility", "screen-recording", "input-monitoring", "microphone", "camera", "automation"] as const;
+export type GrantPermission = (typeof GRANT_PERMISSIONS)[number];
+
+/** What box_grant asks: a program in the box, and the permissions to grant it (058). */
+export interface GrantRequest {
+  /** An app's path, or a program's path, in the box. */
+  readonly program: string;
+  readonly permissions: readonly GrantPermission[];
+  /** For automation: the bundle ID of the app the program sends Apple events to. */
+  readonly target?: string;
+}
+
+/** The answer to a grant, permission by permission. */
+export interface GrantAnswer {
+  /** What macOS knows the program by: an app's bundle ID, or a program's path. */
+  readonly client: string;
+  readonly granted: readonly GrantPermission[];
+  readonly refused: readonly { readonly permission: string; readonly reason: string }[];
+}
+
+/** A box's grants, for box_status. */
+export interface BoxGrants {
+  /** False where the machine cannot grant, as a Mac with SIP on. */
+  readonly canGrant: boolean;
+  readonly grants: readonly { readonly permission: string; readonly client: string; readonly target: string | null }[];
 }
 
 /** A warm pool below its count because no host had room for another (#356). */
