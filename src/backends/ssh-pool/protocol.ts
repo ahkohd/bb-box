@@ -274,7 +274,7 @@ export function parseGrant(stdout: string): GrantAnswer {
   return { client, granted, refused };
 }
 
-/** A Mac's `granted` answer: sip=, then grant=<permission> TAB <client> TAB <target>. */
+/** A Mac's `granted` answer: sip=, signing=, then grant=<permission> TAB <client> TAB <target>. */
 export function parseGranted(stdout: string): BoxGrants {
   const grants: { permission: string; client: string; target: string | null }[] = [];
   for (const line of stdout.split("\n")) {
@@ -282,5 +282,7 @@ export function parseGranted(stdout: string): BoxGrants {
     const [permission = "", client = "", target = ""] = line.slice("grant=".length).split("\t");
     if (permission && client) grants.push({ permission, client, target: target && target !== "UNUSED" ? target : null });
   }
-  return { canGrant: fields(stdout).get("sip") === "0", grants };
+  const values = fields(stdout);
+  const signing = values.get("signing");
+  return { canGrant: values.get("sip") === "0", signingIdentity: signing === undefined ? null : signing === "1", grants };
 }

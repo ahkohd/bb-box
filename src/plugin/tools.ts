@@ -225,8 +225,12 @@ export const boxParam = z.string().min(1).describe("The box's name or ID, from b
 /** A Mac box's grants, for box_status (058). */
 export function grantsText(grants: BoxGrants): string {
   const listed = grants.grants.map((grant) => `${grant.permission} to ${grant.client}${grant.target ? ` (for ${grant.target})` : ""}`);
-  if (!grants.canGrant) return "\nmacOS permissions: box_grant cannot grant them on this Mac, as System Integrity Protection is on.";
-  return `\nmacOS permissions granted with box_grant: ${listed.length ? listed.join(", ") : "none"}.`;
+  const signing =
+    grants.signingIdentity === false
+      ? '\nSigning identity: missing, so codesign -s "bb-box local code signing" fails in this box. Tell the Mac\'s operator: its helper could not make it.'
+      : "";
+  if (!grants.canGrant) return `\nmacOS permissions: box_grant cannot grant them on this Mac, as System Integrity Protection is on.${signing}`;
+  return `\nmacOS permissions granted with box_grant: ${listed.length ? listed.join(", ") : "none"}.${signing}`;
 }
 
 export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: number; runWaitMs?: number } = {}): void {

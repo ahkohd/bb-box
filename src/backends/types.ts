@@ -567,6 +567,8 @@ export interface GrantAnswer {
 export interface BoxGrants {
   /** False where the machine cannot grant, as a Mac with SIP on. */
   readonly canGrant: boolean;
+  /** Whether the box user has its code-signing identity, "bb-box local code signing". Null where the machine does not say. */
+  readonly signingIdentity: boolean | null;
   readonly grants: readonly { readonly permission: string; readonly client: string; readonly target: string | null }[];
 }
 

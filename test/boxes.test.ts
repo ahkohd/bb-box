@@ -1003,6 +1003,17 @@ test("the hook loads the env file in a shell, but not in one whose command loads
   assert.equal(run("zsh", ": bb-box-env; echo marked"), "marked\n");
 });
 
+test("a macOS command unlocks the box user's signing keychain in its own session, as a keychain unlocks per session (058)", () => {
+  const unlock = '/usr/bin/security unlock-keychain -p "" "$bb_keychain"';
+  assert.ok(command("macos", "true").includes(unlock));
+  // In the desktop session, it is part of the script that runs there.
+  const desktop = command("macos", "true", { session: "desktop" });
+  assert.ok(desktop.indexOf(unlock) > desktop.indexOf("launchctl asuser"), desktop);
+  assert.ok(!command("linux", "true").includes("unlock-keychain"));
+  // Without the keychain, as on a Tart box, it does nothing.
+  assert.equal(execFileSync("sh", ["-c", command("macos", "echo ok")], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: tempDir("home") } }), "ok\n");
+});
+
 test("bb-box's commands start with the mark, in each shell they start (#100)", () => {
   const marked = (script: string) => script.startsWith(LOADS_ENV);
   assert.ok(marked(command("linux", "true")));

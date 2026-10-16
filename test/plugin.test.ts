@@ -449,13 +449,14 @@ test("box_grant grants a program in a Mac's box its permissions, says how to run
 
   // A backend that grants, as the SSH host pool does for a Mac.
   const grants: { permission: string; client: string; target: string | null }[] = [];
+  let signingIdentity = true;
   Object.assign(app.backends.get(box.backend)!, {
     grant: async (_guest: unknown, request: { program: string; permissions: string[] }) => {
       const client = request.program.endsWith(".app") ? "dev.example.probe" : request.program;
       for (const permission of request.permissions) grants.push({ permission, client, target: null });
       return { client, granted: request.permissions, refused: [] };
     },
-    grants: async () => ({ canGrant: true, grants }),
+    grants: async () => ({ canGrant: true, signingIdentity, grants }),
   });
   assert.match(text(await tool("box_status", { box: box.name })), /\nmacOS permissions granted with box_grant: none\./);
   const granted = await tool("box_grant", { box: box.name, program: "/Users/bbx-0/Applications/Probe.app", permissions: ["accessibility", "screen-recording"] });
@@ -466,6 +467,9 @@ test("box_grant grants a program in a Mac's box its permissions, says how to run
   assert.match(text(cli), /Run it through bb-box-own, as bb-box-own \/Users\/bbx-0\/bin\/tool <arguments>/);
   assert.match(text(await tool("box_status", { box: box.name })), /\nmacOS permissions granted with box_grant: accessibility to dev\.example\.probe, screen-recording to dev\.example\.probe, microphone to \/Users\/bbx-0\/bin\/tool\./);
   await assert.rejects(tool("box_grant", { box: box.name, program: "/Users/bbx-0/bin/tool", permissions: ["telepathy"] }), /expected one of "accessibility"/);
+  assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /Signing identity/);
+  signingIdentity = false;
+  assert.match(text(await tool("box_status", { box: box.name })), /\nSigning identity: missing, so codesign -s "bb-box local code signing" fails in this box\. Tell the Mac's operator: its helper could not make it\.\n/);
 });
 
 test("an agent acquires a box, runs commands, copies files both ways and releases it", async (t) => {

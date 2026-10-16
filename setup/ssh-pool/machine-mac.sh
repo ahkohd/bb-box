@@ -692,7 +692,10 @@ old_leftovers() {
 # with no prompt. A program signed with it keeps its code requirement, and
 # so its grants, across rebuilds. The login keychain would ask for a password
 # the box user does not know. A restart locks the keychain, so each claim
-# unlocks it again.
+# unlocks it again, in the desktop session; each command a box runs unlocks it
+# in its own session. A keychain without the identity, as a failed attempt
+# leaves, is made again. $STATE/signing names the user that has it, for
+# box_status.
 SIGNING="bb-box local code signing"
 signing_identity() { # user uid
   user=$1 uid=$2
@@ -700,8 +703,12 @@ signing_identity() { # user uid
   [ -n "$home" ] && number "$uid" || return 1
   keychain=$home/Library/Keychains/bb-box-signing.keychain-db
   run() { launchctl asuser "$uid" /usr/bin/sudo -n -H -u "$user" -- "$@"; }
-  if [ ! -f "$ROOT$keychain" ]; then
-    work=$(mktemp -d) || return 1
+  rm -f "$STATE/signing"
+  run security unlock-keychain -p "" "$keychain" >/dev/null 2>&1
+  if ! run security find-identity -p codesigning "$keychain" 2>/dev/null | grep -qF "\"$SIGNING\""; then
+    rm -f "$ROOT$keychain"
+    # In /tmp, which the user can enter: under sudo, mktemp's own folder is root's alone.
+    work=$(mktemp -d /tmp/bb-box-signing.XXXXXX) || return 1
     secret=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)
     printf '%s\n' '[req]' 'distinguished_name = dn' 'prompt = no' 'x509_extensions = ext' '[dn]' "CN = $SIGNING" '[ext]' \
       'basicConstraints = critical,CA:false' 'keyUsage = critical,digitalSignature' 'extendedKeyUsage = critical,codeSigning' >"$work/cert.cnf"
@@ -727,6 +734,7 @@ signing_identity() { # user uid
   listed=$(run security list-keychains -d user 2>/dev/null | sed 's/^ *"//; s/"$//')
   printf '%s\n' "$listed" | grep -qxF "$keychain" ||
     run security list-keychains -d user -s $listed "$keychain" >/dev/null 2>&1
+  echo "$user" >"$STATE/signing"
 }
 
 # The microphone and the camera for box_run's commands, by default (058), in
@@ -1103,7 +1111,8 @@ display() {
   printf 'user=%s\npassword=%s\n' "$user" "$password"
 }
 
-# The box's grants (058), for box_status: sip=0 or 1, then a line
+# The box's grants (058), for box_status: sip=0 or 1, signing=1 when the box
+# user has its signing identity, then a line
 # grant=<permission> TAB <client> TAB <target> for each, oldest first.
 granted() {
   expected=${1:-}
@@ -1114,6 +1123,7 @@ granted() {
   [ "$(field "$STATE/owner" install)" = "$install" ] && [ "$(field "$STATE/owner" box)" = "$box" ] &&
     [ "$(field "$STATE/owner" generation)" = "$expected" ] || quit 4 "Another box holds the Mac."
   if sip_off; then echo sip=0; else echo sip=1; fi
+  if [ "$(cat "$STATE/signing" 2>/dev/null)" = "$(field "$STATE/owner" user)" ]; then echo signing=1; else echo signing=0; fi
   [ ! -f "$STATE/grants" ] || awk '!seen[$0]++ { print "grant=" $0 }' "$STATE/grants"
 }
 

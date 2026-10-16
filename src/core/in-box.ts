@@ -102,6 +102,14 @@ const LINUX_DESKTOP =
 export const MAC_LAUNCHER = "/usr/local/libexec/bb-box/Launcher.app/Contents/MacOS/bb-box-launcher";
 
 /**
+ * Unlocks a pool Mac's signing keychain (058) in the command's own session:
+ * a keychain unlocks per session, and codesign in a session where it is
+ * locked asks for its password, in a dialog on the desktop or not at all.
+ */
+const MAC_UNLOCK =
+  'bb_keychain="$HOME/Library/Keychains/bb-box-signing.keychain-db"; [ ! -f "$bb_keychain" ] || /usr/bin/security unlock-keychain -p "" "$bb_keychain" 2>/dev/null; unset bb_keychain; ';
+
+/**
  * Puts a macOS command in the box user's desktop session (030). sudo gives
  * `launchctl asuser` the root it needs, and runs the command as the box user
  * again, with a fresh environment, so `script` sources the env file itself.
@@ -363,7 +371,7 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
     // Killing the local ssh leaves the command running in the box, as on Linux.
     const timed = options.timeoutMs === undefined ? script : macTimeout(script, options.timeoutMs);
     const run = options.job ? inJob(options.job, timed) : timed;
-    return LOADS_ENV + (options.session === "desktop" ? `${write}${macDesktop(`${env}${cd}${run}`)}` : `${write}${env}${cd}${run}`);
+    return LOADS_ENV + (options.session === "desktop" ? `${write}${macDesktop(`${env}${MAC_UNLOCK}${cd}${run}`)}` : `${write}${env}${MAC_UNLOCK}${cd}${run}`);
   }
   const desktop = options.session === "desktop" ? LINUX_DESKTOP : "";
   const job = (run: string) => (options.job ? inJob(options.job, run) : run);
