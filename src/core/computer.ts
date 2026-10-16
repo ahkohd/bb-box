@@ -36,6 +36,13 @@ const CALL_TIMEOUT_MS = 30_000;
 const LAUNCH_WAIT_MS = 10_000;
 const LAUNCH_POLL_MS = 250;
 /**
+ * How long a launch on Wayland waits at most for its windows to be the
+ * compositor's: Cua can list a new window from its accessibility side
+ * before Sway maps it, under an ID it can never act on, and lists Sway's
+ * own some 150 ms later.
+ */
+const COMPOSITOR_WAIT_MS = 2_000;
+/**
  * After an action on a window that changed nothing in it, how long bb-box
  * waits before it looks once more whether the window has gone, as a dialog
  * closes a moment after its button is pressed.
@@ -1098,6 +1105,7 @@ export class Computer {
         const where = input.url !== undefined ? " It may have opened in a browser window that was already open." : "";
         return { text: `Opened ${what}, but no new window appeared within ${Math.round(waited / 1000)} s.${where}`, hints: ["Call computer_windows to see the windows now."] };
       }
+      if (!reused && kindInfo(currentKindId(box.kind)).windowing === "wayland") windows = await this.#compositorWindows(use, windows, before);
       // The app's first window on screen, not a helper's off screen (#219). A
       // browser names its window after the page once the page has a title.
       let page =
@@ -1492,6 +1500,31 @@ export class Computer {
     } catch (error) {
       if (error instanceof ComputerError && error.code !== "driver") throw error;
       return [];
+    }
+  }
+
+  /**
+   * A Wayland launch's new windows as the compositor knows them. Cua can list
+   * a window from its accessibility side before Sway maps it, under an ID
+   * that Sway cannot attest, so a first computer_type into it is refused.
+   * Once Sway maps the window, Cua lists that one instead, under Sway's ID.
+   * So this lists the launched processes' new windows again until they are
+   * the same twice running. It waits about 0.25 s when they are Sway's
+   * already.
+   */
+  async #compositorWindows(use: Use, windows: WindowInfo[], before: ReadonlyMap<number, WindowInfo>): Promise<WindowInfo[]> {
+    const deadline = Date.now() + COMPOSITOR_WAIT_MS;
+    const pids = new Set(windows.map((window) => window.pid));
+    let last = windows.map((window) => window.id).join(",");
+    for (;;) {
+      await sleep(Math.min(LAUNCH_POLL_MS, Math.max(0, deadline - Date.now())), use.signal);
+      const now = await this.#listWindows(use);
+      const next = [...now.values()].filter((window) => pids.has(window.pid) && !before.has(window.id) && window.width > 1 && window.height > 1);
+      const ids = next.map((window) => window.id).join(",");
+      if (next.length) windows = next;
+      for (const window of windows) use.state.windows.set(window.id, window);
+      if ((next.length && ids === last) || Date.now() >= deadline) return windows;
+      last = ids;
     }
   }
 

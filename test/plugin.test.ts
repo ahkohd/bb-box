@@ -3408,6 +3408,17 @@ test("an element partly above its window on an X11 desktop keeps its frame on th
   assert.match(menu, /\n\nOpened a context menu on list item 'Task 2' \(window 101\):\n/);
 });
 
+test("computer_launch on Wayland gives the window the compositor lists, not an earlier entry Cua cannot act on (#737)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 }, kind: FAKE_WAYLAND_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.wayland = true;
+  });
+  const launched = text(await tool("computer_launch", { box: box.name, app: "early" }));
+  assert.match(launched, /^Opened early\. Its window:\n- window (\d+): early "Untitled 1 - Early \[early\]", 640 by 480\n\nNext: Call computer_observe with window \1/);
+  assert.doesNotMatch(launched, /142278656/);
+});
+
 test("computer_launch opens apps and URLs and says which windows opened", async (t) => {
   const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 500, pageWaitMs: 1_500 } });
   t.after(() => harness.lifecycle.dispose());
