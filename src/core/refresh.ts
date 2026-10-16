@@ -17,7 +17,7 @@ import { KIND_INFO } from "../backends/kinds.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../backends/types.ts";
 import { compareVersions, resolveVersions, stageSetup } from "../backends/versions.ts";
 import { quote } from "../transports/process.ts";
-import type { CommandTransport } from "../transports/types.ts";
+import { TransportError, type CommandTransport } from "../transports/types.ts";
 
 /** How each Linux kind's standard image is built, as template/build.sh builds it. */
 const BUILDS: Readonly<Record<string, { readonly artifacts: string; readonly finalize: string; readonly gpu: string; readonly session: string; readonly check: string }>> = {
@@ -73,8 +73,8 @@ export interface RefreshOptions {
   readonly now?: () => number;
   /** How long to wait for room for a box when the backend has none, and how often to ask (#650). */
   readonly room?: { readonly waitMs: number; readonly pollMs: number };
-  /** How long a Windows box may take to come back after a restart, and how often to ask. */
-  readonly restart?: { readonly timeoutMs: number; readonly pollMs: number };
+  /** How long a Windows box may take to come back after a restart, how often to ask, and how long it must stay up (steadyMs). */
+  readonly restart?: WindowsRestart;
 }
 
 export interface RefreshCheck {
@@ -200,22 +200,62 @@ export function windowsRefreshScript(): string {
 /** When a Windows box last started, as it says. */
 const BOOTED = "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')";
 
-/** Restarts a Windows box and waits until it answers again, started anew. */
-async function restartWindows(command: CommandTransport, options: { readonly timeoutMs: number; readonly pollMs: number }, signal: AbortSignal): Promise<void> {
-  const booted = async () => {
-    const result = await command.run(BOOTED, { timeoutMs: 15_000, signal }).catch(() => null);
-    return result?.exitCode === 0 ? result.stdout.trim() : null;
-  };
-  const before = await booted();
+/** How a refresh restarts a Windows box and waits for it. */
+export interface WindowsRestart {
+  readonly timeoutMs: number;
+  readonly pollMs: number;
+  /** How long the box must answer with the same boot time before the next round: 90 s unless given. */
+  readonly steadyMs?: number;
+}
+
+/** The box's boot time, as it says, or null when it does not answer. */
+async function bootedAt(command: CommandTransport, signal: AbortSignal): Promise<string | null> {
+  const result = await command.run(BOOTED, { timeoutMs: 15_000, signal }).catch(() => null);
+  return result?.exitCode === 0 ? result.stdout.trim() || null : null;
+}
+
+/** Restarts a Windows box and waits until it has started anew and stays up. */
+async function restartWindows(command: CommandTransport, options: WindowsRestart, say: (line: string) => void, signal: AbortSignal): Promise<void> {
+  const before = await bootedAt(command, signal);
   if (!before) throw new Error("The box did not say when it started, before its restart.");
   // The connection may end before the command does.
   await command.run("Restart-Computer -Force", { timeoutMs: 30_000, signal }).catch(() => undefined);
-  const until = Date.now() + options.timeoutMs;
+  await steadyWindows(command, before, options, say, signal);
+}
+
+/**
+ * Waits until a Windows box answers with a boot time other than `before`,
+ * and with that same boot time for `steadyMs`. Windows finishes some updates
+ * at the boot after the restart that installs them, then restarts once more
+ * by itself: SSH answers for some 20 s in between (live, 16 October 2026). A
+ * round that started then would meet the box going down again.
+ */
+async function steadyWindows(command: CommandTransport, before: string | null, options: WindowsRestart, say: (line: string) => void, signal: AbortSignal): Promise<void> {
+  const steadyMs = options.steadyMs ?? 90_000;
+  const started = Date.now();
+  const until = started + options.timeoutMs;
+  let seen: string | null = null;
+  let since = 0;
   for (;;) {
     await sleep(options.pollMs, undefined, { signal });
-    const now = await booted();
-    if (now && now !== before) return;
-    if (Date.now() >= until) throw new Error(`The box did not answer within ${Math.round(options.timeoutMs / 60_000)} minutes of its restart.`);
+    const now = await bootedAt(command, signal);
+    if (now && now !== before && now !== seen) {
+      say(
+        seen
+          ? `Windows restarted again by itself, as it finishes its updates: the box answers again ${Math.round((Date.now() - started) / 1000)} s after the restart; waiting for it to stay up ${Math.round(steadyMs / 1000)} s`
+          : `the box answers again ${Math.round((Date.now() - started) / 1000)} s after the restart; waiting for it to stay up ${Math.round(steadyMs / 1000)} s, as Windows may restart again to finish its updates`,
+      );
+      seen = now;
+      since = Date.now();
+    }
+    if (seen && now === seen && Date.now() - since >= steadyMs) return;
+    if (Date.now() >= until) {
+      throw new Error(
+        seen
+          ? `The box did not stay up for ${Math.round(steadyMs / 1000)} s within ${Math.round(options.timeoutMs / 60_000)} minutes of its restart.`
+          : `The box did not answer within ${Math.round(options.timeoutMs / 60_000)} minutes of its restart.`,
+      );
+    }
   }
 }
 
@@ -331,13 +371,21 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       const { box } = await boxOf(current, `refresh of ${current.ref}`);
       made.push(box.ref);
       for (const [name, text] of files) await box.command.writeFile(`${WINDOWS_DIR}\\${name}`, new TextEncoder().encode(text), { signal });
+      const restart = options.restart ?? { timeoutMs: 20 * 60_000, pollMs: 5_000 };
       for (let round = 1; ; round++) {
-        const built = await streamLines(box.command, windowsRefreshScript(), options.buildTimeoutMs ?? 3 * 60 * 60_000, signal, say);
+        const built = await streamLines(box.command, windowsRefreshScript(), options.buildTimeoutMs ?? 3 * 60 * 60_000, signal, say).catch(async (error: unknown) => {
+          // The box went down under the round, as when Windows restarts by itself: wait for it, then the round runs again.
+          if (!(error instanceof TransportError) || error.code !== "unreachable" || round === WINDOWS_ROUNDS) throw error;
+          say(`the box stopped answering in round ${round}, as when Windows restarts by itself; waiting for it`);
+          await steadyWindows(box.command, null, restart, say, signal);
+          return null;
+        });
+        if (built === null) continue;
         if (built.exitCode === 0) break;
         if (!restarts(built.exitCode)) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}`);
         if (round === WINDOWS_ROUNDS) return end(false, null, `Windows still wanted a restart after ${WINDOWS_ROUNDS} rounds of updates.`);
         say(`restarting the box (round ${round} of ${WINDOWS_ROUNDS})`);
-        await restartWindows(box.command, options.restart ?? { timeoutMs: 20 * 60_000, pollMs: 5_000 }, signal);
+        await restartWindows(box.command, restart, say, signal);
       }
       await box.command.run(`Remove-Item '${WINDOWS_DIR}' -Recurse -Force -ErrorAction SilentlyContinue`, { timeoutMs: 60_000, signal });
       captured = await images.capture(box, current, "standard", signal);
