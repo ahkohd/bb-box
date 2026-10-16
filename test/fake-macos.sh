@@ -301,6 +301,9 @@ case $tool in
       grep -qxF "$3" "$F/sunlnk" 2>/dev/null && echo sunlnk || echo -
       exit 0
     fi
+    # stat -f %Lp <path>: its permission bits, as macOS gives them; stat -f %g: staff's GID, 20, as a home's group is.
+    if [ "$2" = %Lp ]; then exec /usr/bin/stat -c %a "$3"; fi
+    if [ "$2" = %g ]; then echo 20; exit 0; fi
     # stat -f %u <path>: the UID owners says owns it, else root's.
     if [ "$2" = %u ]; then
       real=$(readlink -f "$3")

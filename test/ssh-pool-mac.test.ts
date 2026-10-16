@@ -55,6 +55,9 @@ test("init makes the first box user, hidden and in _developer, from the home tem
   assert.deepEqual([user.UniqueID, user.RealName, user.IsHidden, user.NFSHomeDirectory], ["70000", "bb-box bbx-0", "1", "/Users/bbx-0"]);
   assert.deepEqual(mac.members("_developer"), ["bbx-0"]);
   assert.match(mac.file("/Users/bbx-0/.zshenv")!, /path_helper/);
+  // bb-box's pinned CLIs in /usr/local/bin come before Homebrew's, prepended last.
+  const zshenv = mac.file("/Users/bbx-0/.zshenv")!;
+  assert.ok(zshenv.indexOf('PATH="/usr/local/bin:$PATH"') > zshenv.lastIndexOf("/opt/homebrew"), "after Homebrew's and Node's");
   assert.match(mac.file("/Users/bbx-0/Library/LaunchAgents/com.trycua.cua-driver.plist")!, /<string>serve<\/string>/);
   assert.match(
     mac.file("/Users/bbx-0/Library/Preferences/ByHost/com.apple.screensaver.0A1B2C3D-0000-4000-8000-000000000001.plist")!,
@@ -107,7 +110,7 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
     {
       helper: 1, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", owner: null, hook: false,
       docker: false, systemd: false, cores: 8, memoryMiB: 16384, diskGiB: null, missing: [], enrolment: { node: "24.9.0", lacks: [] }, dirty: null,
-      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] }, leftovers: null },
+      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] }, leftovers: null, openHomes: null },
     },
   );
   const values = fields(result.stdout);
@@ -730,4 +733,20 @@ test("setup-mac.sh pins the agent CLIs at the versions the Linux images pin (#56
     assert.equal(new RegExp(`^${variable}_VERSION=(\\S+)$`, "m").exec(script)?.[1], pinned, name);
     assert.match(script, new RegExp(`^${variable}_SHA256=[0-9a-f]{64}$`, "m"), `${name} has a SHA-256`);
   }
+});
+
+test("the doctor's status names the people whose homes box users can enter, as macOS makes a home readable to staff", () => {
+  const mac = readyMac();
+  writeFileSync(join(mac.state, "users", "person", "UserShell"), "/bin/zsh\n");
+  const home = join(mac.data, "Users", "person");
+  mkdirSync(home, { recursive: true });
+  chmodSync(home, 0o750);
+  assert.equal(fields(mac.helper(["status", "xcode"]).stdout).get("openhomes"), "person");
+  assert.equal(fields(mac.helper(["status"]).stdout).get("openhomes"), undefined, "not in an ordinary status");
+  chmodSync(home, 0o700);
+  assert.equal(fields(mac.helper(["status", "xcode"]).stdout).get("openhomes"), "", "closed to others");
+  // A user with no login shell, as macOS's service accounts, is not a person's.
+  chmodSync(home, 0o755);
+  writeFileSync(join(mac.state, "users", "person", "UserShell"), "/usr/bin/false\n");
+  assert.equal(fields(mac.helper(["status", "xcode"]).stdout).get("openhomes"), "");
 });

@@ -29,6 +29,7 @@
 //   simctl-fails     `status xcode` fails, as when simctl does not answer
 //   no-status-xcode  status says nothing of Xcode, and `status xcode` is a usage error, as in an older helper
 //   password         the password display gives instead of a made-up one
+//   open-homes       the people whose homes box users can enter, for `status xcode`, instead of none
 //   display-user     the user display gives instead of the box user
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -67,7 +68,8 @@ function foundXcode() {
   if (version && flag("simctl-fails") !== null) quit(EXIT.failed, "xcrun simctl did not list the Simulator's runtimes within 10 seconds.");
   const lines = [`xcode=${version}`, `runtimes=${version ? (flag("runtimes") ?? "iOS 26.0,watchOS 26.0") : ""}`];
   writeFileSync(join(state, "xcode"), `${lines.join("\n")}\n`);
-  return lines;
+  // The doctor's status also names the people whose homes box users can enter.
+  return [...lines, `openhomes=${flag("open-homes") ?? ""}`];
 }
 
 /** What plain status says of Xcode: its version now, and the runtimes `status xcode` last found for that version. */

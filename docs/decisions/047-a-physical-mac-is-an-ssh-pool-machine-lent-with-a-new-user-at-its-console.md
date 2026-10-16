@@ -201,6 +201,15 @@ Boxes are not a security boundary between each other or from the Mac.
   - what it sent elsewhere.
 - A box can read whatever any user on the Mac can read. Lend Macs set
   aside for boxes, not ones people use.
+- That includes a person's home: macOS makes it `drwxr-x---` for the
+  `staff` group, which box users are in. On the Mac set aside, the
+  administrator's home held BB's and the agent CLIs' credentials, readable
+  by every box until it was made `700`. The doctor warns of each person's
+  home (a user with a login shell, a UID under the box users', not hidden)
+  that box users can enter, and gives the `chmod 700`.
+- Box users' `PATH` has `/usr/local/bin`, bb-box's pinned agent CLIs, before
+  Homebrew's `bin`, so a link a person puts there, as to a CLI in their
+  own home, does not shadow them.
 
 **The box user is not an administrator** (`admin: false`).
 

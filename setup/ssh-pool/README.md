@@ -80,6 +80,10 @@ keeps for its own users. Elsewhere box users take 70000 to 79999.
   part of BB Box's settings if your Macs are smaller.
 - A Mac set aside for boxes, not one people use. A box can read whatever
   any user on the Mac can read, and the reset removes users.
+- Your own home on it closed to box users: macOS makes a home readable to
+  the `staff` group, which box users are in, and yours may hold BB's or an
+  agent CLI's credentials. Run `sudo chmod 700 /Users/<you>`. The doctor
+  warns while a person's home is open.
 - A Mac that is not also a Tart host, as a box takes the whole Mac. On
   macOS 27 and later, every reset restarts the Mac's user space, which
   stops every Tart VM on it and ends every SSH session. The doctor warns

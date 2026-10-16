@@ -86,6 +86,7 @@ export const CHECKS = {
   "machine.<machine>.filevault": { name: "<machine>: FileVault", from: ["ssh-pool"], what: "On a Mac, FileVault is off, so it signs a box user in after a restart." },
   "machine.<machine>.signin": { name: "<machine>: sign-in", from: ["ssh-pool"], what: "On a Mac, the next box user is signed in at the console." },
   "machine.<machine>.fulldisk": { name: "<machine>: Full Disk Access", from: ["ssh-pool"], what: "On a Mac, the helper has Full Disk Access, which a reset needs." },
+  "machine.<machine>.homes": { name: "<machine>: people's homes", from: ["ssh-pool"], what: "On a Mac, box users cannot enter any person's home, such as an administrator's with BB's or an agent CLI's credentials." },
   "machine.<machine>.xcode": { name: "<machine>: Xcode", from: ["ssh-pool"], what: "On a Mac, Xcode and its iOS runtime." },
   "machine.<machine>.screensharing": { name: "<machine>: Screen Sharing", from: ["ssh-pool"], what: "On a Mac with desktops, Screen Sharing is on." },
   "machine.<machine>.grants": { name: "<machine>: Cua Driver's grants", from: ["ssh-pool"], what: "On a Mac with desktops, Cua Driver has Accessibility and Screen Recording." },
