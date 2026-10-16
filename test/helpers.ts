@@ -313,7 +313,7 @@ export function joined(hub: () => Routed, options: { openAfterMs?: number } = {}
  * 10 s for the capture, 4.2 s for the clip and 1280x720. Each ffmpeg call's
  * arguments go to ~/ffmpeg-args.
  */
-export function fakeFfmpeg(): string {
+export function fakeFfmpeg(options: { wfRecorder?: boolean } = {}): string {
   const bin = tempDir("fake-ffmpeg");
   writeFileSync(
     join(bin, "ffmpeg"),
@@ -339,5 +339,18 @@ esac
   );
   chmodSync(join(bin, "ffmpeg"), 0o755);
   chmodSync(join(bin, "ffprobe"), 0o755);
+  if (options.wfRecorder !== false) {
+    // wf-recorder records to its -f file until SIGTERM, which timeout passes on.
+    writeFileSync(
+      join(bin, "wf-recorder"),
+      `#!/bin/sh
+echo "wf-recorder $*" >> "$HOME/ffmpeg-args"
+while [ $# -gt 0 ]; do [ "$1" = -f ] && out=$2; shift; done
+trap 'echo capture > "$out"; exit 0' TERM
+while :; do sleep 0.05; done
+`,
+    );
+    chmodSync(join(bin, "wf-recorder"), 0o755);
+  }
   return bin;
 }

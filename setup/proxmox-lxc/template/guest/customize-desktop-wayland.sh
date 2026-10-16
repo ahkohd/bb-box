@@ -42,7 +42,8 @@ check() { # pin name -> path of the checked artifact
 }
 
 # Packages, without recommends: Sway's include Xwayland, which stays out.
-desktop_packages="sway swaybg waybar wayvnc foot wofi wl-clipboard grim slurp wtype wayland-utils
+# wf-recorder records the desktop for box_record (059).
+desktop_packages="sway swaybg waybar wayvnc foot wofi wl-clipboard grim slurp wf-recorder wtype wayland-utils
   dbus-user-session at-spi2-core xdg-utils ffmpeg adwaita-icon-theme hicolor-icon-theme
   fonts-dejavu-core fonts-liberation fonts-noto-color-emoji libvulkan1 vulkan-tools mesa-vulkan-drivers
   libgl1-mesa-dri libegl1 libgl1 libgles2 libglvnd0 pciutils"

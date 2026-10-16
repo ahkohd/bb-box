@@ -17,7 +17,7 @@ What is there today:
 - ffmpeg is in the Linux X11 and Wayland desktop images
   (`customize-desktop.sh`, `customize-desktop-wayland.sh`). On X11 its
   `x11grab` reads the display. Sway on Wayland needs a wlroots recorder,
-  such as `wf-recorder`, which the images lack.
+  such as `wf-recorder`, which the images lacked until #707.
 - BB shows a file inline in a thread through the inline-vis directive:
   HTML or Markdown only, at most 5 MiB, in an opaque-origin iframe. A
   video shows inline only inside an HTML file. The owner checked that BB
@@ -106,8 +106,13 @@ time was cut.
 1. **Linux X11 desktops**, on Proxmox LXC, Docker and microsandbox:
    `x11grab`, with the ffmpeg the images have. Nothing to add.
 2. **Linux Wayland desktops**: `wf-recorder` from Ubuntu 24.04, added to
-   the Wayland image builds, which the nightly refresh rolls out. It stops
-   cleanly on SIGINT.
+   the Wayland image builds, which the nightly refresh rolls out, run with
+   `--no-damage` under `timeout`. Tracking damage, it recorded no frame
+   while the screen was still, and saw a stop only once the screen changed,
+   up to a minute later when Waybar's clock ticked. With `--no-damage` it
+   ends 51 ms after SIGTERM, with a whole file, but copies frames all the
+   time it records: about two thirds of a core, against a tenth for
+   `x11grab`, for at most 5 minutes on a desktop kind of 4 cores.
 3. **macOS on Tart**, then pool Macs: ffmpeg's `avfoundation`, which stops
    cleanly on `q`, with ffmpeg added to the macOS image. `screencapture -v`
    records a fixed length only, and exits without a file if stopped by a
