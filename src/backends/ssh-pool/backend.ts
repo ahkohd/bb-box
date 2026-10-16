@@ -204,7 +204,7 @@ interface SshKeys {
 
 type Check = readonly [id: CheckId, name: string];
 /** What a machine's checks are of: machine.<name>.<what> in the catalog. */
-type MachineCheck = "ssh" | "sizes" | "helper" | "arch" | "tools" | "docker" | "state" | "filevault" | "signin" | "fulldisk" | "homes" | "screensharing" | "grants" | "xcode" | "input";
+type MachineCheck = "ssh" | "sizes" | "helper" | "arch" | "tools" | "docker" | "state" | "filevault" | "signin" | "fulldisk" | "homes" | "sip" | "screensharing" | "grants" | "xcode" | "input";
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 const MACHINES_CHECK: Check = ["machines", "Machines"];
 const DOCKER_CHECK: Check = ["docker", "Docker"];
@@ -926,10 +926,11 @@ export class SshPoolBackend implements Backend {
       const TOOLS = check("tools", "tools"), DOCKER = check("docker", "Docker"), STATE = check("state", "state");
       const FILEVAULT = check("filevault", "FileVault"), SIGNIN = check("signin", "sign-in"), FULL_DISK = check("fulldisk", "Full Disk Access");
       const HOMES = check("homes", "people's homes");
+      const SIP = check("sip", "System Integrity Protection");
       const SCREEN = check("screensharing", "Screen Sharing"), GRANTS = check("grants", "Cua Driver's grants"), XCODE = check("xcode", "Xcode");
       const INPUT = check("input", "viewer's input");
       const desktop = this.#lists(machine, "macos-desktop");
-      const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, HOMES, XCODE, ...(desktop ? [SCREEN, GRANTS, INPUT] : [])] : [];
+      const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, HOMES, SIP, XCODE, ...(desktop ? [SCREEN, GRANTS, INPUT] : [])] : [];
       const after = [ARCH_CHECK, TOOLS, ...(docker ? [DOCKER] : []), ...macChecks, STATE];
       const rest = [HELPER, ...after];
       const view = views.find((other) => other.machine === machine);
@@ -1004,7 +1005,7 @@ export class SshPoolBackend implements Backend {
         } else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
       if (mac && !status.mac) skip(...macChecks);
-      else if (mac) this.#macChecks(status, machine, view.state === "out-of-service", grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, HOMES, XCODE, SCREEN, GRANTS, INPUT }, { pass, warn, fail });
+      else if (mac) this.#macChecks(status, machine, view.state === "out-of-service", grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, HOMES, SIP, XCODE, SCREEN, GRANTS, INPUT }, { pass, warn, fail });
       // An operator's reset names no install.
       const install = status.owner?.install;
       if (install && install !== this.#context.installId) others.set(install, (others.get(install) ?? 0) + 1);
@@ -1105,7 +1106,7 @@ export class SshPoolBackend implements Backend {
     outOfService: boolean,
     grants: MacStatus["grants"],
     xcodeProbe: Probe | null,
-    ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "HOMES" | "XCODE" | "SCREEN" | "GRANTS" | "INPUT", Check>>,
+    ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "HOMES" | "SIP" | "XCODE" | "SCREEN" | "GRANTS" | "INPUT", Check>>,
     report: Readonly<Record<"pass", (check: Check, detail: string) => void> & Record<"warn" | "fail", (check: Check, detail: string, fix: string) => void>>,
   ): void {
     const mac = status.mac!;
@@ -1144,6 +1145,10 @@ export class SshPoolBackend implements Backend {
         `On ${name}, as an administrator: sudo chmod 700 ${homes.join(" ")}`,
       );
     } else pass(ids.HOMES, "Box users cannot enter any person's home.");
+    // Either way works (058): it says what each gives.
+    if (mac.sip === true) pass(ids.SIP, "On. Cua Driver has its grants; any other program a box runs needs a person to grant it macOS permissions, in the desktop's viewer.");
+    else if (mac.sip === false) pass(ids.SIP, "Off, so bb-box grants box users' programs the macOS permissions they ask for (box_grant). Keep this Mac for agents: with SIP off, a process with root can change the system.");
+    else warn(ids.SIP, "The Mac's helper did not say whether System Integrity Protection is on: it is older than this bb-box's.", `Run setup-mac.sh again on ${name}.`);
 
     // Xcode is optional, so a Mac without it passes; the pool's check warns when only some Macs have it.
     const xcode = xcodeProbe?.status?.mac?.xcode;

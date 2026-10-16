@@ -71,6 +71,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `machine.<machine>.filevault` | <machine>: FileVault | On a Mac, FileVault is off, so it signs a box user in after a restart. |
 | `machine.<machine>.signin` | <machine>: sign-in | On a Mac, the next box user is signed in at the console. |
 | `machine.<machine>.fulldisk` | <machine>: Full Disk Access | On a Mac, the helper has Full Disk Access, which a reset needs. |
+| `machine.<machine>.sip` | <machine>: System Integrity Protection | On a Mac, whether System Integrity Protection is on, and so whether bb-box can grant box users' programs macOS permissions (058). |
 | `machine.<machine>.homes` | <machine>: people's homes | On a Mac, box users cannot enter any person's home, such as an administrator's with BB's or an agent CLI's credentials. |
 | `machine.<machine>.xcode` | <machine>: Xcode | On a Mac, Xcode and its iOS runtime. |
 | `machine.<machine>.screensharing` | <machine>: Screen Sharing | On a Mac with desktops, Screen Sharing is on. |

@@ -21,6 +21,10 @@ export const EXIT = {
   dirty: 5,
   /** The machine's reset generation moved on. */
   moved: 6,
+  /** A Mac's grant: System Integrity Protection is on, so no program may grant permissions (058). */
+  protected: 7,
+  /** A Mac's grant: the program is not one bb-box grants permissions to (058). */
+  refused: 8,
   /** The whole-machine reset is still running: ask again. */
   restoring: 10,
 } as const;
@@ -95,6 +99,8 @@ export interface MacStatus {
   readonly leftovers: { readonly count: number; readonly kib: number } | null;
   /** The people whose homes box users can enter (047), from the doctor's status calls; null otherwise. */
   readonly openHomes: readonly string[] | null;
+  /** System Integrity Protection is on; false when the owner turned it off (058); null when the helper did not say. */
+  readonly sip: boolean | null;
 }
 
 /** The Xcode xcode-select chooses on a Mac (047). */
@@ -199,6 +205,7 @@ export function parseStatus(stdout: string): MachineStatus {
             xcode: values.has("xcode") ? { version: values.get("xcode") || null, runtimes: listed(values.get("runtimes")) } : null,
             leftovers: values.has("leftovers") ? { count: whole(values.get("leftovers")) ?? 0, kib: whole(values.get("leftovers_kib")) ?? 0 } : null,
             openHomes: values.has("openhomes") ? words(values.get("openhomes")) : null,
+            sip: values.get("sip") === "1" ? true : values.get("sip") === "0" ? false : null,
           }
         : null,
   };
