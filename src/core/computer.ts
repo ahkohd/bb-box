@@ -338,6 +338,8 @@ interface BoxState {
   lastNaming: { readonly at: number; readonly windows: string } | null;
   /** Titles the namer gave in the background, by window ID, until computer_windows says so. */
   readonly titled: Map<number, string>;
+  /** On Linux, windows where the last action could have selected text: a key chord or a double-click. */
+  readonly selecting: Set<number>;
 }
 
 interface Use {
@@ -967,6 +969,7 @@ export class Computer {
         set_value: { tool: "set_value", args: { value: input.value }, done: "Set the value of" },
       };
       const step = steps[input.action];
+      this.#selecting(use, num(target.args.window_id), input.action === "double_click", input.action === "click" || input.action === "right_click");
       // On the desktop or in a popup, Cua cannot say what changed: bb-box looks before and after.
       const inPopup = !!target.snapshot && use.state.popups.has(target.snapshot.window.id);
       const watch = target.screen || inPopup ? await this.#watch(use, target.screen ?? null) : null;
@@ -1044,8 +1047,15 @@ export class Computer {
     // in front, and the window's focus does not come back with it, so text
     // typed into the window next would be lost.
     const chordOnWindows = !!keys?.modifiers.length && use.box.capabilities.os === "windows";
+    // On Linux, Cua types in the background through AT-SPI at the caret, and
+    // leaves a selection in place: after an action that could have selected
+    // text in the window, its text goes through the real keyboard, which
+    // types over the selection.
+    const id = num(args.window_id);
+    const overSelection = !keys && use.box.capabilities.os === "linux" && id !== undefined && use.state.selecting.has(id);
+    this.#selecting(use, id, !!keys?.modifiers.length, !keys);
     if (chordOnWindows) await this.#call(use, "bring_to_front", { pid: args.pid, window_id: args.window_id }, { readOnly: true });
-    const { foreground } = await this.#deliver(use, tool, { ...args, ...typed }, chordOnWindows ? "foreground" : true);
+    const { foreground } = await this.#deliver(use, tool, { ...args, ...typed }, chordOnWindows || overSelection ? "foreground" : true);
     const how = chordOnWindows ? `, with the real keyboard, its window brought to the front` : foreground ? KEYBOARD : "";
     const lines = [`${what} ${keys ? "in" : "into"} ${label}${how}.`];
     if (!before) {
@@ -1231,6 +1241,7 @@ export class Computer {
         naming: null,
         lastNaming: null,
         titled: new Map(),
+        selecting: new Set(),
       };
       this.#boxes.set(boxId, state);
     }
@@ -1324,6 +1335,7 @@ export class Computer {
     state.images.clear();
     state.popups.clear();
     state.large.clear();
+    state.selecting.clear();
   }
 
   async #live(use: Use): Promise<Live> {
@@ -1422,6 +1434,13 @@ export class Computer {
         "Call it again: bb-box opens a new session with the driver.",
       );
     }
+  }
+
+  /** Notes, on Linux, whether the action on window `id` could have selected text there, or ended any selection. */
+  #selecting(use: Use, id: number | undefined, selects: boolean, ends: boolean): void {
+    if (use.box.capabilities.os !== "linux" || id === undefined) return;
+    if (selects) use.state.selecting.add(id);
+    else if (ends) use.state.selecting.delete(id);
   }
 
   /**

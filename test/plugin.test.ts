@@ -3531,6 +3531,27 @@ test("a text area keeps its reference when typing into it renames its document",
   assert.deepEqual(readDesktop(file).fields[id], "Hello world");
 });
 
+test("on Linux, text typed after a key chord or a double-click in the window goes through the real keyboard, as Cua's background typing leaves a selection in place", async (t) => {
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
+  t.after(() => harness.lifecycle.dispose());
+  const opened = text(await tool("computer_launch", { box: box.name, app: "editor" }));
+  const id = Number(/window (\d+): editor "Untitled 1 - Editor"/.exec(opened)?.[1]);
+  const area = refOf(text(await tool("computer_observe", { box: box.name, window: id })), 'text "" value=""');
+  const modes = () => readDesktop(file).calls.filter((call) => call.tool === "type_text").map((call) => call.args.delivery_mode);
+
+  await tool("computer_type", { box: box.name, ref: area, text: "one" });
+  await tool("computer_type", { box: box.name, window: id, keys: "ctrl+a" });
+  assert.match(text(await tool("computer_type", { box: box.name, ref: area, text: "two" })), /^Typed 3 characters into .*, with the real keyboard/);
+  await tool("computer_type", { box: box.name, window: id, text: "three" });
+  await tool("computer_act", { box: box.name, action: "double_click", ref: area });
+  await tool("computer_type", { box: box.name, window: id, text: "four" });
+  // A click ends a selection.
+  await tool("computer_act", { box: box.name, action: "double_click", ref: area });
+  await tool("computer_act", { box: box.name, action: "click", ref: area });
+  await tool("computer_type", { box: box.name, ref: area, text: "five" });
+  assert.deepEqual(modes(), ["background", "foreground", "background", "foreground", "background"]);
+});
+
 test("an action on a reference is refused once when its element was renamed where the agent did not see it", async (t) => {
   const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
   t.after(() => harness.lifecycle.dispose());
