@@ -41,6 +41,12 @@ const WINDOWS_DIR = "C:\\bb-box\\build";
 const WINDOWS_ROUNDS = 5;
 /** What refresh.ps1 exits with when Windows needs a restart first. */
 const RESTART = 3010;
+/**
+ * Whether a refresh asked for a restart. The command goes through the ssh
+ * program, whose exit code, like any process's, keeps only 8 bits, so 3010
+ * arrives as 194.
+ */
+const restarts = (code: number | null): boolean => code === RESTART || code === (RESTART & 0xff);
 
 export interface RefreshOptions {
   readonly images: BackendImages;
@@ -328,7 +334,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       for (let round = 1; ; round++) {
         const built = await streamLines(box.command, windowsRefreshScript(), options.buildTimeoutMs ?? 3 * 60 * 60_000, signal, say);
         if (built.exitCode === 0) break;
-        if (built.exitCode !== RESTART) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}`);
+        if (!restarts(built.exitCode)) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}`);
         if (round === WINDOWS_ROUNDS) return end(false, null, `Windows still wanted a restart after ${WINDOWS_ROUNDS} rounds of updates.`);
         say(`restarting the box (round ${round} of ${WINDOWS_ROUNDS})`);
         await restartWindows(box.command, options.restart ?? { timeoutMs: 20 * 60_000, pollMs: 5_000 }, signal);
