@@ -606,6 +606,13 @@ virtual device that plays back what is sent to it. A box records through it,
 and `say -a BlackHole` feeds it speech. A box has a camera only if one is
 attached to the Mac, such as a USB webcam.
 
+On such a Mac, an agent grants its own programs other permissions with
+`box_grant`, such as Accessibility for an app it built, and `box_status`
+lists them. The helper grants only the box user's programs and apps in
+`/Applications`, never Apple's, a shell or an interpreter, and the reset
+removes every grant. Each box user has a signing identity of its own,
+"bb-box local code signing", so a program it rebuilds keeps its grants.
+
 ### What a Mac's reset does
 
 When a box is released, the helper:

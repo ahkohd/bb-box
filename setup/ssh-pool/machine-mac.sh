@@ -12,6 +12,8 @@
 #   machine release <generation>  stdin: install, and box unless the box is not known
 #   machine reset                 stdin: install, or nothing when an operator runs it
 #   machine display <generation>  stdin: install, box
+#   machine grant                 stdin: install, box, program, permission (repeated), target
+#   machine granted <generation>  stdin: install, box
 #   machine init
 #   machine version
 #
@@ -1101,6 +1103,20 @@ display() {
   printf 'user=%s\npassword=%s\n' "$user" "$password"
 }
 
+# The box's grants (058), for box_status: sip=0 or 1, then a line
+# grant=<permission> TAB <client> TAB <target> for each, oldest first.
+granted() {
+  expected=${1:-}
+  number "$expected" || quit 2 "usage: machine granted <generation>"
+  read_input
+  [ -n "$box" ] || quit 2 "The grants need box=."
+  [ -e "$STATE/owner" ] || quit 4 "No box holds the Mac."
+  [ "$(field "$STATE/owner" install)" = "$install" ] && [ "$(field "$STATE/owner" box)" = "$box" ] &&
+    [ "$(field "$STATE/owner" generation)" = "$expected" ] || quit 4 "Another box holds the Mac."
+  if sip_off; then echo sip=0; else echo sip=1; fi
+  [ ! -f "$STATE/grants" ] || awk '!seen[$0]++ { print "grant=" $0 }' "$STATE/grants"
+}
+
 # Starts the reset generation at 0 and, on a free Mac, makes its box user and
 # sets it as the automatic login. With nobody at the console, loginwindow
 # starts again and signs the user in. A person signed in there restarts the
@@ -1129,7 +1145,8 @@ case $verb in
   release) release "$@" ;;
   reset) reset "$@" ;;
   display) display "$@" ;;
+  granted) granted "$@" ;;
   init) init ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: machine status [grants] | claim | grant | release | reset | display | init | version" ;;
+  *) quit 2 "usage: machine status [grants] | claim | grant | granted | release | reset | display | init | version" ;;
 esac

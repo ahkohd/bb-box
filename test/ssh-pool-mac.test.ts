@@ -834,6 +834,15 @@ test("with SIP off, the helper grants the box user's programs their permissions,
   // A program signed only ad hoc, by its path alone, which a rebuild keeps.
   assert.equal(grant("/Users/bbx-0/project/target/release/tool", ["accessibility"]).stdout.split("\n")[0], "granted=accessibility");
   assert.equal(sqlite(system, "select client_type || '|' || ifnull(csreq, 'none') from access where client = '/Users/bbx-0/project/target/release/tool';"), "1|none");
+  // What box_status lists, only to the box that holds the Mac.
+  assert.deepEqual(mac.helper(["granted", "0"], RELEASE()).stdout.split("\n").filter(Boolean), [
+    "sip=0",
+    "grant=accessibility\tdev.example.probe\tUNUSED",
+    "grant=screen-recording\tdev.example.probe\tUNUSED",
+    "grant=microphone\tdev.example.probe\tUNUSED",
+    "grant=accessibility\t/Users/bbx-0/project/target/release/tool\tUNUSED",
+  ]);
+  assert.equal(mac.helper(["granted", "0"], RELEASE("box_b")).status, EXIT.notOurs);
   // A denied row macOS wrote while the box had the Mac.
   sqlite(system, "INSERT INTO access (service, client, client_type, auth_value, auth_reason, auth_version) VALUES ('kTCCServiceAccessibility', 'dev.example.asked', 0, 0, 4, 1);");
 

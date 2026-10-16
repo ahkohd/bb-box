@@ -2,7 +2,7 @@
 // or machine-mac.sh on a Mac (047). The admin user runs it through sudo.
 // Input and output are name=value lines, and the exit code says what happened.
 
-import type { BoxIdentity } from "../types.ts";
+import type { BoxGrants, BoxIdentity, GrantAnswer, GrantPermission, GrantRequest } from "../types.ts";
 
 /** Where setup.sh installs the helper, run as root through sudo. */
 export const HELPER_COMMAND = "sudo -n /usr/local/libexec/bb-box/machine";
@@ -245,4 +245,42 @@ export function claimInput(installId: string, box: BoxIdentity, publicKey: strin
 /** A release's or reset's input. With no box, a release matches only a machine already resetting. */
 export function releaseInput(installId: string, box: string | null): string {
   return [`install=${value(installId)}`, ...(box ? [`box=${value(box)}`] : []), ""].join("\n");
+}
+
+/** A Mac's grant's input (058): the box's labels, the program, each permission, and automation's target. */
+export function grantInput(installId: string, box: string, request: GrantRequest): string {
+  return [
+    `install=${value(installId)}`,
+    `box=${value(box)}`,
+    `program=${value(request.program)}`,
+    ...request.permissions.map((permission) => `permission=${value(permission)}`),
+    ...(request.target ? [`target=${value(request.target)}`] : []),
+    "",
+  ].join("\n");
+}
+
+/** A Mac's grant's answer: granted=<permission> and refused=<permission> <why> lines, then client=. */
+export function parseGrant(stdout: string): GrantAnswer {
+  const granted: GrantPermission[] = [];
+  const refused: { permission: string; reason: string }[] = [];
+  let client = "";
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("granted=")) granted.push(line.slice("granted=".length).trim() as GrantPermission);
+    else if (line.startsWith("refused=")) {
+      const [permission = "", ...why] = line.slice("refused=".length).trim().split(" ");
+      refused.push({ permission, reason: why.join(" ") });
+    } else if (line.startsWith("client=")) client = line.slice("client=".length).trim();
+  }
+  return { client, granted, refused };
+}
+
+/** A Mac's `granted` answer: sip=, then grant=<permission> TAB <client> TAB <target>. */
+export function parseGranted(stdout: string): BoxGrants {
+  const grants: { permission: string; client: string; target: string | null }[] = [];
+  for (const line of stdout.split("\n")) {
+    if (!line.startsWith("grant=")) continue;
+    const [permission = "", client = "", target = ""] = line.slice("grant=".length).split("\t");
+    if (permission && client) grants.push({ permission, client, target: target && target !== "UNUSED" ? target : null });
+  }
+  return { canGrant: fields(stdout).get("sip") === "0", grants };
 }

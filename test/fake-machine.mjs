@@ -30,12 +30,12 @@
 //   no-status-xcode  status says nothing of Xcode, and `status xcode` is a usage error, as in an older helper
 //   password         the password display gives instead of a made-up one
 //   open-homes       the people whose homes box users can enter, for `status xcode`, instead of none
-//   sip-off          status says System Integrity Protection is off (058)
+//   sip-off          status says System Integrity Protection is off (058), and grant grants
 //   display-user     the user display gives instead of the box user
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const EXIT = { ok: 0, failed: 1, usage: 2, held: 3, notOurs: 4, dirty: 5, moved: 6, restoring: 10 };
+const EXIT = { ok: 0, failed: 1, usage: 2, held: 3, notOurs: 4, dirty: 5, moved: 6, protected: 7, refused: 8, restoring: 10 };
 const state = join(process.env.HOME, ".bb-box-state");
 const flags = join(state, "flags");
 mkdirSync(flags, { recursive: true });
@@ -126,6 +126,42 @@ function display(expected) {
   console.log(`user=${flag("display-user") ?? field(text, "user")}\npassword=${flag("password") ?? PASSWORD}`);
 }
 
+/** The owner marker, when it names this install and box. */
+const holder = (values) => {
+  const text = read("owner");
+  return text !== null && field(text, "install") === values.install && field(text, "box") === values.box ? text : null;
+};
+
+/** machine-mac.sh's grant (058): a program in the box user's home or /Applications, by its path, or an app by its name. */
+function grant() {
+  if (!mac) quit(EXIT.usage, "usage: machine status | claim | release | reset | init");
+  const lines = readFileSync(0, "utf8").split("\n");
+  const one = (name) => lines.find((line) => line.startsWith(`${name}=`))?.slice(name.length + 1) ?? "";
+  const values = { install: one("install"), box: one("box") };
+  const program = one("program");
+  const permissions = lines.filter((line) => line.startsWith("permission=")).map((line) => line.slice("permission=".length));
+  if (!holder(values)) quit(EXIT.notOurs, `Box ${values.box} does not hold the Mac.`);
+  if (flag("sip-off") === null) quit(EXIT.protected, "System Integrity Protection is on, so macOS lets no program grant permissions.");
+  if (!/^\/(Users|Applications)\//.test(program)) quit(EXIT.refused, `${program} is not in the box user's home or /Applications.`);
+  const client = program.endsWith(".app") ? `dev.example.${program.split("/").pop().slice(0, -4).toLowerCase()}` : program;
+  for (const permission of permissions) {
+    if (["accessibility", "screen-recording", "input-monitoring", "microphone", "camera", "automation"].includes(permission)) {
+      writeFileSync(join(state, "grants"), `${read("grants") ?? ""}${permission}\t${client}\tUNUSED\n`);
+      console.log(`granted=${permission}`);
+    } else console.log(`refused=${permission} bb-box grants accessibility, screen-recording, input-monitoring, microphone, camera and automation.`);
+  }
+  console.log(`client=${client}`);
+}
+
+/** machine-mac.sh's granted: SIP's state and the box's grants. */
+function granted(expected) {
+  if (!mac) quit(EXIT.usage, "usage: machine status | claim | release | reset | init");
+  const text = holder(input());
+  if (!text || field(text, "generation") !== expected) quit(EXIT.notOurs, "Another box holds the Mac.");
+  console.log(`sip=${flag("sip-off") !== null ? 0 : 1}`);
+  for (const line of (read("grants") ?? "").split("\n").filter(Boolean)) console.log(`grant=${line}`);
+}
+
 function claim(expected, extra) {
   if (!/^\d+$/.test(expected ?? "")) quit(EXIT.usage, "usage: machine claim <generation> [docker]");
   const values = input();
@@ -170,6 +206,7 @@ function finish(kind, mode) {
   if (flag("dirty")) quit(EXIT.failed, `The reset left ${flag("dirty")}.`);
   writeFileSync(join(state, "generation"), `${held + 1}\n`);
   rmSync(join(state, "resetting"));
+  rmSync(join(state, "grants"), { force: true });
   console.log(`generation=${held + 1}\nreleased=yes`);
 }
 
@@ -206,6 +243,8 @@ function reset(mode) {
 const [verb, ...args] = process.argv.slice(2);
 if (verb === "status") status(...args);
 else if (verb === "display") display(...args);
+else if (verb === "grant") grant();
+else if (verb === "granted") granted(...args);
 else if (verb === "claim") claim(...args);
 else if (verb === "release") release(...args);
 else if (verb === "reset") reset(...args);

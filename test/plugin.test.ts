@@ -437,6 +437,37 @@ async function only(app: Awaited<ReturnType<typeof start>>["app"]): Promise<BoxR
   return box;
 }
 
+test("box_grant grants a program in a Mac's box its permissions, says how to run it, and box_status lists the grants (058)", async (t) => {
+  const { harness, app, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  assert.ok(!isError(await tool("box_acquire", {})));
+  const box = await only(app);
+  const refused = await tool("box_grant", { box: box.name, program: "/home/box/tool", permissions: ["accessibility"] });
+  assert.ok(isError(refused));
+  assert.match(text(refused), /cannot grant macOS permissions: only a Mac of the SSH host pool with SIP off can\./);
+  assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /macOS permissions/);
+
+  // A backend that grants, as the SSH host pool does for a Mac.
+  const grants: { permission: string; client: string; target: string | null }[] = [];
+  Object.assign(app.backends.get(box.backend)!, {
+    grant: async (_guest: unknown, request: { program: string; permissions: string[] }) => {
+      const client = request.program.endsWith(".app") ? "dev.example.probe" : request.program;
+      for (const permission of request.permissions) grants.push({ permission, client, target: null });
+      return { client, granted: request.permissions, refused: [] };
+    },
+    grants: async () => ({ canGrant: true, grants }),
+  });
+  assert.match(text(await tool("box_status", { box: box.name })), /\nmacOS permissions granted with box_grant: none\./);
+  const granted = await tool("box_grant", { box: box.name, program: "/Users/bbx-0/Applications/Probe.app", permissions: ["accessibility", "screen-recording"] });
+  assert.ok(!isError(granted), text(granted));
+  assert.match(text(granted), new RegExp(`^Granted accessibility, screen-recording to dev\\.example\\.probe in box ${box.name}\\.`));
+  assert.match(text(granted), /Open the app with open, so that it is its own responsible process/);
+  const cli = await tool("box_grant", { box: box.name, program: "/Users/bbx-0/bin/tool", permissions: ["microphone"] });
+  assert.match(text(cli), /Run it through bb-box-own, as bb-box-own \/Users\/bbx-0\/bin\/tool <arguments>/);
+  assert.match(text(await tool("box_status", { box: box.name })), /\nmacOS permissions granted with box_grant: accessibility to dev\.example\.probe, screen-recording to dev\.example\.probe, microphone to \/Users\/bbx-0\/bin\/tool\./);
+  await assert.rejects(tool("box_grant", { box: box.name, program: "/Users/bbx-0/bin/tool", permissions: ["telepathy"] }), /expected one of "accessibility"/);
+});
+
 test("an agent acquires a box, runs commands, copies files both ways and releases it", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());

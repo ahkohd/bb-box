@@ -73,6 +73,31 @@ bb-box restarts. Beyond those:
   output. Start the app with `desktop: true`, which has the microphone and
   the system's audio without a prompt.
 
+### macOS permissions
+
+On a Mac of the SSH host pool with System Integrity Protection off,
+`box_grant` grants a program macOS permissions with no prompt:
+Accessibility, Screen Recording, Input Monitoring, the microphone, the
+camera, or Automation of one app. `box_status` lists the box's grants, and
+the box's reset removes them.
+
+- Grant only the program that needs it, under the box user's home or in
+  `/Applications`. bb-box grants nothing to Apple's programs, shells,
+  terminals or interpreters.
+- Sign the program first, with the box's own identity, so a rebuild keeps
+  the grant: `codesign -s "bb-box local code signing" --identifier
+  <id> <program>`. Xcode can sign with it too. A command-line program
+  signed only ad hoc is granted by its path, which also survives a rebuild.
+- A grant applies only when the program is its own responsible process.
+  Open an app with `open`. Run a command-line program through
+  `bb-box-own <program> <arguments>`. A program `box_run` runs directly is
+  charged to SSH instead, which has Accessibility, Screen Recording, the
+  microphone and the camera already.
+- Start the program again after a grant: macOS reads some permissions only
+  at launch.
+- The Mac's microphone is BlackHole 2ch, as above. A box has a camera only
+  if one is attached to the Mac.
+
 ### Windows
 
 The Windows kinds' descriptions in `box_list` say how commands run there.
