@@ -93,6 +93,8 @@ export interface MacStatus {
    * calls, with grants or xcode, count them; null otherwise.
    */
   readonly leftovers: { readonly count: number; readonly kib: number } | null;
+  /** The people whose homes box users can enter (047), from the doctor's status calls; null otherwise. */
+  readonly openHomes: readonly string[] | null;
 }
 
 /** The Xcode xcode-select chooses on a Mac (047). */
@@ -196,6 +198,7 @@ export function parseStatus(stdout: string): MachineStatus {
               : null,
             xcode: values.has("xcode") ? { version: values.get("xcode") || null, runtimes: listed(values.get("runtimes")) } : null,
             leftovers: values.has("leftovers") ? { count: whole(values.get("leftovers")) ?? 0, kib: whole(values.get("leftovers_kib")) ?? 0 } : null,
+            openHomes: values.has("openhomes") ? words(values.get("openhomes")) : null,
           }
         : null,
   };

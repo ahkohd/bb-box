@@ -204,7 +204,7 @@ interface SshKeys {
 
 type Check = readonly [id: CheckId, name: string];
 /** What a machine's checks are of: machine.<name>.<what> in the catalog. */
-type MachineCheck = "ssh" | "sizes" | "helper" | "arch" | "tools" | "docker" | "state" | "filevault" | "signin" | "fulldisk" | "screensharing" | "grants" | "xcode" | "input";
+type MachineCheck = "ssh" | "sizes" | "helper" | "arch" | "tools" | "docker" | "state" | "filevault" | "signin" | "fulldisk" | "homes" | "screensharing" | "grants" | "xcode" | "input";
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 const MACHINES_CHECK: Check = ["machines", "Machines"];
 const DOCKER_CHECK: Check = ["docker", "Docker"];
@@ -925,10 +925,11 @@ export class SshPoolBackend implements Backend {
       const SSH = check("ssh", "SSH"), HELPER = check("helper", "helper"), ARCH_CHECK = check("arch", "architecture");
       const TOOLS = check("tools", "tools"), DOCKER = check("docker", "Docker"), STATE = check("state", "state");
       const FILEVAULT = check("filevault", "FileVault"), SIGNIN = check("signin", "sign-in"), FULL_DISK = check("fulldisk", "Full Disk Access");
+      const HOMES = check("homes", "people's homes");
       const SCREEN = check("screensharing", "Screen Sharing"), GRANTS = check("grants", "Cua Driver's grants"), XCODE = check("xcode", "Xcode");
       const INPUT = check("input", "viewer's input");
       const desktop = this.#lists(machine, "macos-desktop");
-      const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, XCODE, ...(desktop ? [SCREEN, GRANTS, INPUT] : [])] : [];
+      const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, HOMES, XCODE, ...(desktop ? [SCREEN, GRANTS, INPUT] : [])] : [];
       const after = [ARCH_CHECK, TOOLS, ...(docker ? [DOCKER] : []), ...macChecks, STATE];
       const rest = [HELPER, ...after];
       const view = views.find((other) => other.machine === machine);
@@ -1003,7 +1004,7 @@ export class SshPoolBackend implements Backend {
         } else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
       if (mac && !status.mac) skip(...macChecks);
-      else if (mac) this.#macChecks(status, machine, view.state === "out-of-service", grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, XCODE, SCREEN, GRANTS, INPUT }, { pass, warn, fail });
+      else if (mac) this.#macChecks(status, machine, view.state === "out-of-service", grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, HOMES, XCODE, SCREEN, GRANTS, INPUT }, { pass, warn, fail });
       // An operator's reset names no install.
       const install = status.owner?.install;
       if (install && install !== this.#context.installId) others.set(install, (others.get(install) ?? 0) + 1);
@@ -1104,7 +1105,7 @@ export class SshPoolBackend implements Backend {
     outOfService: boolean,
     grants: MacStatus["grants"],
     xcodeProbe: Probe | null,
-    ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "XCODE" | "SCREEN" | "GRANTS" | "INPUT", Check>>,
+    ids: Readonly<Record<"FILEVAULT" | "SIGNIN" | "FULL_DISK" | "HOMES" | "XCODE" | "SCREEN" | "GRANTS" | "INPUT", Check>>,
     report: Readonly<Record<"pass", (check: Check, detail: string) => void> & Record<"warn" | "fail", (check: Check, detail: string, fix: string) => void>>,
   ): void {
     const mac = status.mac!;
@@ -1132,6 +1133,17 @@ export class SshPoolBackend implements Backend {
 
     if (mac.fullDisk) pass(ids.FULL_DISK, "The helper has it, so a reset can remove the folders macOS protects.");
     else fail(ids.FULL_DISK, "The helper lacks Full Disk Access, so a reset cannot remove the folders macOS protects, such as ~/Library/Mail, and would put the Mac out of service.", `On ${name}: ${FULL_DISK_FIX}`);
+    // The people's homes box users can enter, which the doctor's status call lists (047).
+    const open = xcodeProbe?.status?.mac?.openHomes ?? null;
+    if (open === null) warn(ids.HOMES, "The Mac's helper did not say whose homes box users can enter: it is older than this bb-box's.", `Run setup-mac.sh again on ${name}.`);
+    else if (open.length) {
+      const homes = open.map((user) => `/Users/${user}`);
+      warn(
+        ids.HOMES,
+        `Box users can enter ${open.length === 1 ? "the home" : "the homes"} of ${open.join(", ")}, which macOS makes readable to the staff group they are in, so a box can read what is there, such as an agent CLI's or BB's credentials.`,
+        `On ${name}, as an administrator: sudo chmod 700 ${homes.join(" ")}`,
+      );
+    } else pass(ids.HOMES, "Box users cannot enter any person's home.");
 
     // Xcode is optional, so a Mac without it passes; the pool's check warns when only some Macs have it.
     const xcode = xcodeProbe?.status?.mac?.xcode;

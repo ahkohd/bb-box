@@ -5,4 +5,6 @@ if [ -d /opt/homebrew/bin ]; then
   PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
 fi
 for d in /opt/homebrew/opt/node@24/bin /opt/homebrew/opt/node/bin; do if [ -d "$d" ]; then PATH="$d:$PATH"; break; fi; done
+# bb-box's pinned CLIs first, so a link an administrator put in Homebrew's bin never shadows them.
+PATH="/usr/local/bin:$PATH"
 export PATH CUA_DRIVER_RS_TELEMETRY_ENABLED=false CUA_DRIVER_RS_UPDATE_CHECK=false

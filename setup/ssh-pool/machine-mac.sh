@@ -106,6 +106,23 @@ put() { cat >"$1.new.$$" && mv -f "$1.new.$$" "$1"; }
 boot_id() { sysctl -n kern.bootsessionuuid 2>/dev/null || echo unknown; }
 # A user's attribute in the local directory, such as its UniqueID.
 attribute() { dscl . -read "/Users/$1" "$2" 2>/dev/null | sed -n "s/^$2: //p" | head -n 1; }
+# The people on the Mac whose homes box users can enter, space separated:
+# users with a login shell, a UID from 500 to below the box users', not
+# hidden, whose home others or the staff group, which box users are in, may
+# enter. macOS makes a home drwxr-x--- for staff, so an administrator's
+# credentials there, such as BB's or an agent CLI's, are readable by boxes.
+open_homes() {
+  dscl . -list /Users UniqueID 2>/dev/null | while read -r user uid; do
+    number "$uid" && [ "$uid" -ge 500 ] && [ "$uid" -lt "$ID_BASE" ] || continue
+    [ "$(attribute "$user" IsHidden)" != 1 ] || continue
+    case $(attribute "$user" UserShell) in '' | /usr/bin/false | /sbin/nologin | /usr/sbin/nologin) continue ;; esac
+    home=$(attribute "$user" NFSHomeDirectory)
+    [ -n "$home" ] && [ -d "$ROOT$home" ] || continue
+    mode=$(stat -f %Lp "$ROOT$home" 2>/dev/null) && number "$mode" || continue
+    if [ $((0$mode & 1)) -ne 0 ] || { [ $((0$mode & 8)) -ne 0 ] && [ "$(stat -f %g "$ROOT$home" 2>/dev/null)" = 20 ]; }; then printf '%s\n' "$user"; fi
+  done | paste -sd ' ' -
+}
+
 # Whether this helper has Full Disk Access.
 full_disk() { head -c 1 "$ROOT$TCC" >/dev/null 2>&1; }
 # The user at the console: root at the login window.
@@ -371,6 +388,7 @@ status() {
     left=$(leftovers)
     echo "leftovers=${left%% *}"
     echo "leftovers_kib=${left#* }"
+    echo "openhomes=$(open_homes)"
   fi
 }
 
