@@ -16,6 +16,7 @@
 #   sunlnk                     paths on the Mac's disk that stat -f %Sf says have the sunlnk flag
 #   openfiles/<pid>            the files lsof says process <pid> has open
 #   flags/sip-off              csrutil says System Integrity Protection is disabled
+#   flags/no-import            security import fails, so no box user gets its signing identity
 #   flags/<name>               changes a tool, as each tool below says
 #   calls                      each tool and its arguments, one a line
 
@@ -440,10 +441,18 @@ case $tool in
     printf '#!/bin/sh\n' >"$out" && chmod 755 "$out"
     ;;
   security)
-    # security create-keychain makes the keychain's file; list-keychains -d user [-s <keychains>] keeps the
-    # user's search list in keychains/<uid>, and gives it as security does, each quoted on a line.
+    # security create-keychain makes the keychain's file, import -k <keychain> puts the identity in it
+    # unless flags/no-import, and find-identity -p codesigning <keychain> lists it; list-keychains -d user
+    # [-s <keychains>] keeps the user's search list in keychains/<uid>, and gives it as security does,
+    # each quoted on a line.
     case $1 in
       create-keychain) path=$(eval "echo \${$#}"); mkdir -p "$(dirname "$R$path")" && : >"$R$path" ;;
+      import)
+        flag no-import && exit 1
+        [ -r "$2" ] || { echo "security: Error reading infile $2: Permission denied" >&2; exit 1; }
+        echo identity >"$R$4"
+        ;;
+      find-identity) [ -s "$R$4" ] && printf '  1) F26BFAF6B29A8AFCF02CD1EC3DBE7E68864E1F4E "bb-box local code signing"\n' ;;
       list-keychains)
         list=$F/keychains/$(id -u)
         mkdir -p "$F/keychains"

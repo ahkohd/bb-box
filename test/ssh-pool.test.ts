@@ -737,13 +737,14 @@ describe("An SSH host pool of Macs (047)", () => {
     const { guest } = await acquire(backend, "macos");
     const request = { program: "/Users/bbx-0/Applications/Probe.app", permissions: ["accessibility", "microphone"] as const };
     await assert.rejects(backend.grant!(guest, request), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && /^System Integrity Protection is on/.test(error.message));
-    assert.deepEqual(await backend.grants!(guest), { canGrant: false, grants: [] });
+    assert.deepEqual(await backend.grants!(guest), { canGrant: false, signingIdentity: true, grants: [] });
 
     setFlag(host, "sip-off");
     assert.deepEqual(await backend.grant!(guest, request), { client: "dev.example.probe", granted: ["accessibility", "microphone"], refused: [] });
     await assert.rejects(backend.grant!(guest, { program: "/usr/bin/true", permissions: ["camera"] }), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
     assert.deepEqual(await backend.grants!(guest), {
       canGrant: true,
+      signingIdentity: true,
       grants: [
         { permission: "accessibility", client: "dev.example.probe", target: null },
         { permission: "microphone", client: "dev.example.probe", target: null },
@@ -754,7 +755,7 @@ describe("An SSH host pool of Macs (047)", () => {
     // The reset removes them.
     await backend.release(guest, releaseHooks().hooks);
     const next = await acquire(backend, "macos");
-    assert.deepEqual(await backend.grants!(next.guest), { canGrant: true, grants: [] });
+    assert.deepEqual(await backend.grants!(next.guest), { canGrant: true, signingIdentity: true, grants: [] });
     await backend.release(next.guest, releaseHooks().hooks);
     await backend.dispose?.();
   });

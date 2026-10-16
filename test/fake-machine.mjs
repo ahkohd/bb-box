@@ -32,6 +32,7 @@
 //   open-homes       the people whose homes box users can enter, for `status xcode`, instead of none
 //   sip-off          status says System Integrity Protection is off (058), and grant grants
 //   display-user     the user display gives instead of the box user
+//   no-signing       granted says the box user has no signing identity
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -158,7 +159,7 @@ function granted(expected) {
   if (!mac) quit(EXIT.usage, "usage: machine status | claim | release | reset | init");
   const text = holder(input());
   if (!text || field(text, "generation") !== expected) quit(EXIT.notOurs, "Another box holds the Mac.");
-  console.log(`sip=${flag("sip-off") !== null ? 0 : 1}`);
+  console.log(`sip=${flag("sip-off") !== null ? 0 : 1}\nsigning=${flag("no-signing") !== null ? 0 : 1}`);
   for (const line of (read("grants") ?? "").split("\n").filter(Boolean)) console.log(`grant=${line}`);
 }
 

@@ -837,6 +837,7 @@ test("with SIP off, the helper grants the box user's programs their permissions,
   // What box_status lists, only to the box that holds the Mac.
   assert.deepEqual(mac.helper(["granted", "0"], RELEASE()).stdout.split("\n").filter(Boolean), [
     "sip=0",
+    "signing=1",
     "grant=accessibility\tdev.example.probe\tUNUSED",
     "grant=screen-recording\tdev.example.probe\tUNUSED",
     "grant=microphone\tdev.example.probe\tUNUSED",
@@ -924,4 +925,24 @@ test("each box user gets a code-signing identity of its own in a keychain codesi
   assert.equal(mac.helper(["claim", "1"], CLAIM("box_b")).status, 0);
   const claim = mac.calls().slice(before).filter((line) => line.startsWith("security "));
   assert.ok(claim.some((line) => line.startsWith("security unlock-keychain")) && !claim.some((line) => line.startsWith("security create-keychain")), claim.join("; "));
+  const signing = (generation: string, box: string) => fields(mac.helper(["granted", generation], RELEASE(box)).stdout).get("signing");
+  assert.equal(signing("1", "box_b"), "1", "box_status can say the box has its identity");
+  // The work folder is in /tmp, which the box user can enter, not in root's own temporary folder.
+  assert.ok(mac.calls().some((line) => /^security import \/tmp\/bb-box-signing\.\w+\/id\.p12 /.test(line)), "imported from /tmp");
+
+  // A failed attempt is reported, and leaves no keychain.
+  mac.flag("no-import");
+  assert.equal(mac.helper(["release", "1"], RELEASE("box_b")).status, 0);
+  const next = join(mac.root, "/Users/bbx-2/Library/Keychains/bb-box-signing.keychain-db");
+  assert.equal(existsSync(next), false);
+  // A keychain without the identity, as an earlier attempt could leave, is made again at the claim.
+  writeFileSync(next, "");
+  mac.flag("no-import", false);
+  assert.equal(mac.helper(["claim", "2"], CLAIM("box_c")).status, 0);
+  assert.equal(readFileSync(next, "utf8"), "identity\n");
+  assert.equal(signing("2", "box_c"), "1");
+  mac.flag("no-import");
+  assert.equal(mac.helper(["release", "2"], RELEASE("box_c")).status, 0);
+  assert.equal(mac.helper(["claim", "3"], CLAIM("box_d")).status, 0);
+  assert.equal(signing("3", "box_d"), "0", "box_status can say the box has no identity");
 });
