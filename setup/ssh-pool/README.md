@@ -84,6 +84,10 @@ keeps for its own users. Elsewhere box users take 70000 to 79999.
   the `staff` group, which box users are in, and yours may hold BB's or an
   agent CLI's credentials. Run `sudo chmod 700 /Users/<you>`. The doctor
   warns while a person's home is open.
+- An HDMI dummy plug, if the Mac runs without a display. With nothing
+  attached, one reset ended in a kernel panic in the display coprocessor,
+  and the Mac restarted; the pool waits for a Mac that restarts in its
+  reset. A test with a plug fitted will say more.
 - A Mac that is not also a Tart host, as a box takes the whole Mac. On
   macOS 27 and later, every reset restarts the Mac's user space, which
   stops every Tart VM on it and ends every SSH session. The doctor warns
@@ -190,6 +194,11 @@ AllowUsers bbbox-admin bbx-* alice
 
 Then reload sshd. `setup.sh` warns when it finds either setting.
 
+On a Mac, sshd must also let box users forward to a local port: a desktop's
+route is `ssh -W` as the box user. A hardened `sshd_config` with
+`AllowTcpForwarding no` breaks every desktop, with no error at setup. Use
+`AllowTcpForwarding local`, or leave it out.
+
 ### 3. Set up each Mac
 
 A Mac lends its box a new standard user, `bbx-<generation>`, signed in at
@@ -250,6 +259,10 @@ person at the Mac or on Screen Sharing:
    is not Apple's, so a person's keys and pointer in the desktop's viewer go
    to a helper that `osascript` runs in the box user's session over SSH
    (#406).
+
+These grants are per Mac, once. Box users are not asked to approve Cua's
+screen capture: macOS 27 asks each new user, so the helper writes the
+approval for each box user it makes.
 
 If someone was signed in when you ran it, restart the Mac, so that it signs
 in `bbx-0`. Then add the line and host keys to bb-box, as for a Linux
