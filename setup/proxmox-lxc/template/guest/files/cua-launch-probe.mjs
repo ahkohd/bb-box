@@ -81,8 +81,25 @@ try {
   let typedMs = null;
   if (text) {
     // Input goes only to the focused window on Wayland, so in the foreground.
+    // A window Cua lists just after launch can be its accessibility entry,
+    // which Sway cannot attest, before Sway's own; Cua then refuses it, and
+    // sends no input. So the probe types into the process's window as Cua
+    // lists it now, and on a refusal lists again, as an agent does.
     const typing = performance.now();
-    await call("type_text", { pid: window.pid, window_id: window.window_id, text, delivery_mode: "foreground" });
+    const refusedIds = new Set();
+    for (let attempt = 1; ; attempt++) {
+      const pid = window.pid;
+      window = (await windows()).find((w) => w.pid === pid && !refusedIds.has(w.window_id) && (w.bounds?.width ?? w.width ?? 0) > 1) ?? window;
+      try {
+        await call("type_text", { pid: window.pid, window_id: window.window_id, text, delivery_mode: "foreground" });
+        break;
+      } catch (error) {
+        const refused = /foreground_unavailable: .*no global keyboard input was sent/.test(String(error.message ?? error));
+        if (!refused || attempt >= 12) throw error;
+        refusedIds.add(window.window_id);
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
     for (let i = 0; i < 40 && typedMs === null; i++) {
       const reply = await request("tools/call", { name: "get_window_state", arguments: { pid: window.pid, window_id: window.window_id, include_screenshot: false } });
       if (JSON.stringify(reply.result ?? {}).includes(text)) typedMs = Math.round(performance.now() - typing);
