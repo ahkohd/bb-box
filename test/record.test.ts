@@ -11,15 +11,14 @@ import { fakeFfmpeg, tempDir } from "./helpers.ts";
 
 const skip = process.platform === "linux" ? false : "needs GNU stat and setsid";
 
-function run(script: string, home: string, env: Record<string, string> = {}) {
-  const bin = fakeFfmpeg();
-  return spawnSync("bash", ["-c", script], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, ...env }, encoding: "utf8" });
+function run(script: string, home: string, env: Record<string, string> = {}, wfRecorder = true) {
+  const bin = fakeFfmpeg({ wfRecorder });
+  return spawnSync("bash", ["-c", script], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, ...env }, encoding: "utf8" });
 }
 
-test("box_record starts once, refuses Wayland and no display, and stop makes the clip with still stretches cut and the speed (059)", { skip }, () => {
+test("box_record starts once, refuses no display, and stop makes the clip with still stretches cut and the speed (059)", { skip }, () => {
   const home = tempDir("record-home");
   const display = { DISPLAY: ":99" };
-  assert.equal(run(recordStartScript(), home, { ...display, WAYLAND_DISPLAY: "wayland-1" }).status, RECORD_START_EXITS.wayland);
   assert.equal(run(recordStartScript(), home).status, RECORD_START_EXITS.noDisplay);
   assert.equal(run(recordStopScript({ speed: 1, stills: "cut" }), home).status, RECORD_STOP_EXITS.none, "no recording yet");
 
@@ -46,6 +45,18 @@ test("box_record starts once, refuses Wayland and no display, and stop makes the
   const kept = run(recordStopScript({ speed: 1, stills: "keep" }), home);
   assert.equal(parseRecordResult(kept.stdout)?.ended, "limit");
   assert.doesNotMatch(readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!, /select=|freezedetect/);
+});
+
+test("on Wayland box_record runs wf-recorder with --no-damage under timeout, and a stop ends it through timeout (059)", { skip }, () => {
+  const home = tempDir("record-wayland");
+  const wayland = { WAYLAND_DISPLAY: "wayland-1" };
+  assert.equal(run(recordStartScript(), home, wayland, false).status, RECORD_START_EXITS.noRecorder, "an image without wf-recorder");
+  const started = run(recordStartScript(), home, wayland);
+  assert.equal(started.status, RECORD_START_EXITS.started, started.stderr);
+  assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8"), /^wf-recorder --no-dmabuf --no-damage -r 15 -c libx264 -p preset=ultrafast -p crf=0 -f \S+\/capture\.mkv$/m);
+  const stopped = run(recordStopScript({ speed: 1, stills: "cut" }), home);
+  assert.equal(stopped.status, RECORD_STOP_EXITS.made, stopped.stderr);
+  assert.equal(parseRecordResult(stopped.stdout)?.ended, "stopped");
 });
 
 test("box_record's page plays the clip beside it by its name, and its height follows the clip's shape (059)", () => {

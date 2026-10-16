@@ -1,6 +1,7 @@
 // A desktop box records its own screen, for an agent to show its work in the
-// thread (059). Linux X11 desktops first: ffmpeg's x11grab, in the box, with
-// the ffmpeg the desktop images have. A recording runs in a session of its
+// thread (059). On X11, ffmpeg's x11grab, with the ffmpeg the desktop images
+// have; on Wayland, wf-recorder, which the Wayland images have from their
+// rebuild after #707. A recording runs in a session of its
 // own, so it outlives the command that started it, and ends by itself at
 // RECORD_LIMIT_S. Stopping it makes the clip in the box: still stretches cut
 // to a short pause, an optional speed, and an H.264 MP4, which a small page
@@ -14,22 +15,35 @@ export const RECORD_FPS = 15;
 export const RECORD_DIR = ".local/state/bb-box/recording";
 
 /** What the start script exits with. */
-export const RECORD_START_EXITS = { started: 0, running: 3, wayland: 4, noDisplay: 5, failed: 6 } as const;
+export const RECORD_START_EXITS = { started: 0, running: 3, noRecorder: 4, noDisplay: 5, failed: 6 } as const;
 /** What the stop script exits with. */
 export const RECORD_STOP_EXITS = { made: 0, none: 3, failed: 6 } as const;
 
 export type RecordSpeed = 1 | 2 | 4;
 
-/** Starts recording the X11 desktop, in the background, for at most RECORD_LIMIT_S. */
+/**
+ * Starts recording the desktop, in the background, for at most
+ * RECORD_LIMIT_S. On Wayland, wf-recorder runs with --no-damage: tracking
+ * damage, it records no frame while the screen is still, and does not see
+ * a stop until the screen changes. It copies frames all the while, about
+ * two thirds of a core, against a tenth for x11grab. timeout ends it at
+ * the limit, and passes a stop's SIGTERM on to it.
+ */
 export function recordStartScript(): string {
   return String.raw`d="$HOME/${RECORD_DIR}"; mkdir -p "$d"
 if [ -s "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null; then exit ${RECORD_START_EXITS.running}; fi
 set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
-[ -z "${"$"}{WAYLAND_DISPLAY:-}" ] || exit ${RECORD_START_EXITS.wayland}
-[ -n "${"$"}{DISPLAY:-}" ] || exit ${RECORD_START_EXITS.noDisplay}
 rm -f "$d/capture.mkv" "$d/clip.mp4" "$d/log"
-setsid nohup ffmpeg -nostdin -loglevel error -y -f x11grab -framerate ${RECORD_FPS} -i "$DISPLAY" -t ${RECORD_LIMIT_S} \
-  -c:v libx264 -preset ultrafast -crf 0 "$d/capture.mkv" >"$d/log" 2>&1 </dev/null &
+if [ -n "${"$"}{WAYLAND_DISPLAY:-}" ]; then
+  command -v wf-recorder >/dev/null || exit ${RECORD_START_EXITS.noRecorder}
+  setsid nohup timeout -s TERM ${RECORD_LIMIT_S} wf-recorder --no-dmabuf --no-damage -r ${RECORD_FPS} \
+    -c libx264 -p preset=ultrafast -p crf=0 -f "$d/capture.mkv" >"$d/log" 2>&1 </dev/null &
+elif [ -n "${"$"}{DISPLAY:-}" ]; then
+  setsid nohup ffmpeg -nostdin -loglevel error -y -f x11grab -framerate ${RECORD_FPS} -i "$DISPLAY" -t ${RECORD_LIMIT_S} \
+    -c:v libx264 -preset ultrafast -crf 0 "$d/capture.mkv" >"$d/log" 2>&1 </dev/null &
+else
+  exit ${RECORD_START_EXITS.noDisplay}
+fi
 echo $! >"$d/pid"
 sleep 0.5
 kill -0 "$(cat "$d/pid")" 2>/dev/null || { rm -f "$d/pid"; tail -n 3 "$d/log" >&2; exit ${RECORD_START_EXITS.failed}; }

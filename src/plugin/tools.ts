@@ -621,7 +621,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   bb.agents.registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops on X11 for now.`,
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops for now, on X11 and Wayland.`,
     presentation: { label: { pending: "Recording the desktop", completed: "Recorded the desktop" } },
     parameters: z.object({
       box: boxParam,
@@ -643,7 +643,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           const { result } = await boxes.run(owner, found.id, recordStartScript(), { timeoutMs: 30_000, signal, waitForEnrolment: false });
           const refused: Partial<Record<number, string>> = {
             [RECORD_START_EXITS.running]: `Box ${found.name} is recording already.${next(`Call box_record with box "${found.name}" and action "stop" for its clip.`)}`,
-            [RECORD_START_EXITS.wayland]: `Box ${found.name}'s desktop is on Wayland, which box_record does not record yet.`,
+            [RECORD_START_EXITS.noRecorder]: `Box ${found.name}'s Wayland desktop has no wf-recorder yet, which box_record needs there. It comes with the image's next rebuild, as a new box of the kind will have it.`,
             [RECORD_START_EXITS.noDisplay]: `Box ${found.name}'s desktop is not running.${next(`Call box_status with box "${found.name}" to see why.`)}`,
           };
           const said = refused[result.exitCode ?? -1];
