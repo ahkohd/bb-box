@@ -214,6 +214,9 @@ It takes the same options as `setup.sh`, except `--reset-hook`.
 - installs Homebrew if it is missing, as the administrator who ran sudo,
   then Git, GitHub CLI and Node.js with it
 - installs Cua Driver in `/Applications`
+- installs the agent CLIs BB runs threads with, Claude Code, Codex and Pi,
+  in `/usr/local/lib/bb-box`, linked from `/usr/local/bin`, pinned as the
+  Linux images pin them
 - adds a launch daemon that clears BB's lock and PID files in box homes at
   boot
 - keeps the Mac awake, starts it after a power failure, and turns off

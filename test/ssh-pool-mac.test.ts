@@ -599,6 +599,13 @@ function setupMac(): FakeMacos {
   writeFileSync(join(app, "cua-driver"), "#!/bin/sh\n", { mode: 0o755 });
   assert.equal(spawnSync("tar", ["-czf", join(work, "cua.tgz"), "-C", work, "cua-driver-rs-0.30.4-darwin-arm64"]).status, 0);
   writeFileSync(join(mac.state, "flags", "cua.tgz"), readFileSync(join(work, "cua.tgz")));
+  // The agent CLIs' downloads, laid out as their releases are.
+  writeFileSync(join(mac.state, "flags", "claude"), "#!/bin/sh\necho claude\n");
+  writeFileSync(join(work, "codex-aarch64-apple-darwin"), "#!/bin/sh\n", { mode: 0o755 });
+  assert.equal(spawnSync("tar", ["-czf", join(mac.state, "flags", "codex-aarch64-apple-darwin.tar.gz"), "-C", work, "codex-aarch64-apple-darwin"]).status, 0);
+  mkdirSync(join(work, "pi"));
+  writeFileSync(join(work, "pi", "pi"), "#!/bin/sh\n", { mode: 0o755 });
+  assert.equal(spawnSync("tar", ["-czf", join(mac.state, "flags", "pi-darwin-arm64.tar.gz"), "-C", work, "pi"]).status, 0);
   mac.flag("install.sh", true, 'mkdir -p "$FAKE_MAC_ROOT/opt/homebrew/bin" && ln -s "$FAKE_MAC_BIN/brew" "$FAKE_MAC_ROOT/opt/homebrew/bin/brew"\n');
   mac.flag("owner", true, "person\n");
   writeFileSync(join(mac.root, "etc/ssh/ssh_host_ed25519_key.pub"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMacHostKeyForTests root@mac\n");
@@ -621,6 +628,15 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
 
   const admin = mac.user("bbbox-admin")!;
   assert.deepEqual([admin.RealName, admin.IsHidden, admin.NFSHomeDirectory], ["bb-box admin", "1", "/private/var/bbbox-admin"]);
+  // The agent CLIs, pinned, linked from /usr/local/bin (#561).
+  for (const [command, target] of [
+    ["claude", "/usr/local/lib/bb-box/claude-code-2.1.283/claude"],
+    ["codex", "/usr/local/lib/bb-box/codex-0.157.1/codex-aarch64-apple-darwin"],
+    ["pi", "/usr/local/lib/bb-box/pi-0.87.1/pi"],
+  ]) {
+    assert.equal(readlinkSync(join(mac.root, "usr/local/bin", command)), target, command);
+    assert.ok(statSync(join(mac.root, target)).mode & 0o111, `${command} is executable`);
+  }
   assert.equal(mac.file("/private/var/bbbox-admin/.ssh/authorized_keys"), "restrict ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box\n");
   assert.equal(mac.file("/etc/sudoers.d/bb-box"), "Defaults:bbbox-admin !requiretty\nbbbox-admin ALL=(root) NOPASSWD: /usr/local/libexec/bb-box/machine\n");
   assert.equal(statSync(join(mac.root, "usr/local/libexec/bb-box/machine")).mode & 0o777, 0o755);
@@ -658,7 +674,10 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(mac.file("/private/var/bbbox-admin/.ssh/authorized_keys")!.split("\n").length, 3);
   assert.equal(count(mac, "sysadminctl -addUser bbbox-admin"), 1);
   assert.equal(count(mac, "sudo -u person -H env NONINTERACTIVE=1"), 1, "Homebrew is installed once");
-  assert.equal(count(mac, "curl -fsSL --retry 3 -o"), 1, "Cua Driver is downloaded once");
+  assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.includes("cua-driver-rs")).length, 1, "Cua Driver is downloaded once");
+  for (const file of ["/claude", "codex-aarch64-apple-darwin.tar.gz", "pi-darwin-arm64.tar.gz"]) {
+    assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.endsWith(file)).length, 1, `${file} is downloaded once`);
+  }
   for (const call of ["xcodebuild -license accept", "xcodebuild -runFirstLaunch", "DevToolsSecurity -enable"]) assert.equal(count(mac, call), 1, call);
   assert.equal(count(mac, "xcodebuild -downloadPlatform iOS"), 0, "the iOS runtime is there");
   assert.equal(mac.file("/var/db/bb-box/xcode"), "xcode=26.0\nruntimes=iOS 26.0,watchOS 26.0\n", "what the pool's offers follow");
@@ -700,4 +719,15 @@ test("setup-mac.sh pins the Cua Driver that Tart's image pins", () => {
   };
   assert.deepEqual(pins("../setup/ssh-pool/setup-mac.sh"), pins("../setup/tart/prepare-image.sh"));
   assert.match(pins("../setup/ssh-pool/setup-mac.sh")[1]!, /^[0-9a-f]{64}$/);
+});
+
+test("setup-mac.sh pins the agent CLIs at the versions the Linux images pin (#561)", () => {
+  const script = readFileSync(fileURLToPath(new URL("../setup/ssh-pool/setup-mac.sh", import.meta.url)), "utf8");
+  const pins = JSON.parse(readFileSync(fileURLToPath(new URL("../setup/proxmox-lxc/template/pins.json", import.meta.url)), "utf8")) as { tools: { name: string; arch: string; version: string }[] };
+  for (const [variable, name] of [["CLAUDE", "claude-code"], ["CODEX", "codex"], ["PI", "pi"]] as const) {
+    const pinned = pins.tools.find((tool) => tool.name === name && tool.arch === "arm64")?.version;
+    assert.ok(pinned, name);
+    assert.equal(new RegExp(`^${variable}_VERSION=(\\S+)$`, "m").exec(script)?.[1], pinned, name);
+    assert.match(script, new RegExp(`^${variable}_SHA256=[0-9a-f]{64}$`, "m"), `${name} has a SHA-256`);
+  }
 });
