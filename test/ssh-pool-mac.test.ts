@@ -632,6 +632,8 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   const admin = mac.user("bbbox-admin")!;
   assert.deepEqual([admin.RealName, admin.IsHidden, admin.NFSHomeDirectory], ["bb-box admin", "1", "/private/var/bbbox-admin"]);
   assert.equal(statSync(join(mac.root, "private/var/bbbox-admin")).mode & 0o777, 0o700, "closed to box users, in staff (047)");
+  // bb-box-own, which runs a granted program as its own responsible process (058).
+  assert.ok(statSync(join(mac.root, "usr/local/bin/bb-box-own")).mode & 0o111, "bb-box-own is built");
   // The agent CLIs, pinned, linked from /usr/local/bin (#561).
   for (const [command, target] of [
     ["claude", "/usr/local/lib/bb-box/claude-code-2.1.283/claude"],
@@ -646,6 +648,10 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(statSync(join(mac.root, "usr/local/libexec/bb-box/machine")).mode & 0o777, 0o755);
   assert.match(mac.file("/usr/local/share/bb-box/home/.zshenv")!, /path_helper/);
   assert.equal(mac.file("/usr/local/share/bb-box/cua-driver"), "0.30.4\n");
+  // BlackHole 2ch, the box's audio input, pinned as Tart's image pins it (#631).
+  assert.equal(mac.file("/usr/local/share/bb-box/blackhole"), "0.7.1\n");
+  assert.equal(count(mac, "installer -pkg "), 1);
+  assert.equal(count(mac, "killall coreaudiod"), 1);
   assert.equal(mac.file("/Applications/CuaDriver.app/Contents/MacOS/cua-driver"), "#!/bin/sh\n");
   assert.equal(readlinkSync(join(mac.root, "usr/local/bin/cua-driver")), "/Applications/CuaDriver.app/Contents/MacOS/cua-driver");
   assert.match(mac.file("/Library/LaunchDaemons/dev.bb-box.clear-bb-state.plist")!, /rm -rf \/Users\/bbx-\*\/\.bb-machines\/\*\/daemon\.lock\.lock /);
@@ -667,6 +673,13 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   mkdirSync(join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info"), { recursive: true });
   writeFileSync(join(mac.state, "defaults/_Applications_Xcode.app_Contents_Info/CFBundleShortVersionString"), "26.0\n");
   mac.setConsole("person");
+  // With SIP off, sshd-keygen-wrapper gets Screen Recording, by path with its requirement (058).
+  mac.flag("sip-off");
+  const tcc = join(mac.root, TCC);
+  rmSync(tcc, { force: true });
+  assert.equal(spawnSync("sqlite3", [tcc, TCC_SCHEMA]).status, 0);
+  mkdirSync(join(mac.root, "usr/libexec"), { recursive: true });
+  writeFileSync(join(mac.root, "usr/libexec/sshd-keygen-wrapper.sig"), 'identifier=com.apple.sshd-keygen-wrapper\nrequirement=identifier "com.apple.sshd-keygen-wrapper" and anchor apple\n');
   // An approval placed in the template by hand before the helper wrote one per user (047): setup removes it.
   const placed = join(mac.root, "usr/local/share/bb-box/home/Library/Group Containers/group.com.apple.replayd");
   mkdirSync(placed, { recursive: true });
@@ -679,6 +692,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(count(mac, "sysadminctl -addUser bbbox-admin"), 1);
   assert.equal(count(mac, "sudo -u person -H env NONINTERACTIVE=1"), 1, "Homebrew is installed once");
   assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.includes("cua-driver-rs")).length, 1, "Cua Driver is downloaded once");
+  assert.equal(count(mac, "installer -pkg "), 1, "BlackHole is installed once");
   for (const file of ["/claude", "codex-aarch64-apple-darwin.tar.gz", "pi-darwin-arm64.tar.gz"]) {
     assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.endsWith(file)).length, 1, `${file} is downloaded once`);
   }
@@ -688,6 +702,10 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(count(mac, "sudo -u person open x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"), 1);
   assert.equal(mac.file("/var/db/bb-box/generation"), "0\n");
   assert.equal(existsSync(join(mac.root, "usr/local/share/bb-box/home/Library/Group Containers")), false, "the hand-placed approval is gone");
+  assert.equal(
+    spawnSync("sqlite3", [tcc, "select client_type || '|' || auth_value || '|' || cast(csreq as text) from access where service = 'kTCCServiceScreenCapture' and client = '/usr/libexec/sshd-keygen-wrapper';"], { encoding: "utf8" }).stdout.trim(),
+    '1|2|identifier "com.apple.sshd-keygen-wrapper" and anchor apple',
+  );
 });
 
 test("setup-mac.sh refuses a Mac with FileVault on or Remote Login off, no key, someone else's admin user, or a Cua Driver that is not the pinned one", () => {
@@ -847,4 +865,54 @@ test("with SIP off, the helper grants the box user's programs their permissions,
   assert.equal(sqlite(system, "select client from access order by client;"), "com.trycua.driver");
   assert.deepEqual([existsSync(join(protectedSystem, "U5")), existsSync(join(protectedSystem, "U501"))], [false, true], "an old box user's container goes, a person's stays");
   assert.equal(existsSync(join(mac.data, "private/var/folders/zz/old70005")), false);
+});
+
+test("with SIP off, each box user's commands get the microphone and the camera in its own TCC database, which the reset keeps (058)", { skip: spawnSync("sqlite3", ["-version"]).status !== 0 && "needs sqlite3" }, () => {
+  const mac = readyMac();
+  const container = join(mac.data, "private/var/containers/Data/ProtectedSystem/U1/Data/Library/Application Support/com.apple.TCC");
+  mkdirSync(container, { recursive: true });
+  const user = join(container, "TCC.db");
+  sqlite(user, TCC_SCHEMA);
+  mac.add("processes", "500 70000 tccd 1");
+  mkdirSync(join(mac.state, "openfiles"), { recursive: true });
+  writeFileSync(join(mac.state, "openfiles", "500"), `${user}\n`);
+  mkdirSync(join(mac.root, "usr/libexec"), { recursive: true });
+  writeFileSync(join(mac.root, "usr/libexec/sshd-keygen-wrapper.sig"), 'identifier=com.apple.sshd-keygen-wrapper\nrequirement=identifier "com.apple.sshd-keygen-wrapper" and anchor apple\n');
+  const rows = "select service || '|' || client || '|' || client_type || '|' || auth_value || '|' || cast(csreq as text) from access order by service;";
+
+  mac.flag("sip-off");
+  assert.equal(mac.helper(["claim", "0"], CLAIM()).status, 0);
+  const granted = [
+    'kTCCServiceCamera|/usr/libexec/sshd-keygen-wrapper|1|2|identifier "com.apple.sshd-keygen-wrapper" and anchor apple',
+    'kTCCServiceMicrophone|/usr/libexec/sshd-keygen-wrapper|1|2|identifier "com.apple.sshd-keygen-wrapper" and anchor apple',
+  ].join("\n");
+  assert.equal(sqlite(user, rows), granted);
+  // They are the box user's from before the claim, so the reset keeps them.
+  assert.equal(mac.helper(["release", "0"], RELEASE()).status, 0);
+  assert.equal(sqlite(user, rows), granted);
+});
+
+test("each box user gets a code-signing identity of its own in a keychain codesign uses with no prompt, made at the reset and unlocked at each claim (058)", () => {
+  const mac = lentMac();
+  const keychain = "/Users/bbx-0/Library/Keychains/bb-box-signing.keychain-db";
+  assert.ok(existsSync(join(mac.root, keychain)), "made at the claim, as the first user had none");
+  const calls = mac.calls().filter((line) => line.startsWith("security "));
+  for (const call of [
+    `security create-keychain -p  ${keychain}`,
+    `security import`,
+    `security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k  ${keychain}`,
+    `security unlock-keychain -p  ${keychain}`,
+  ]) {
+    assert.ok(calls.some((line) => line.startsWith(call)), call);
+  }
+  assert.ok(readFileSync(join(mac.state, "keychains", "0"), "utf8").split("\n").includes(keychain), "on the user's search list");
+  assert.ok(mac.calls().some((line) => /^security import \S+\/id\.p12 -k \S+ -P \S+ -A$/.test(line)), "imported for all apps");
+
+  // The next user's is made at the reset, once it is signed in, so its claim only unlocks it.
+  assert.equal(mac.helper(["release", "0"], RELEASE()).status, 0);
+  assert.ok(existsSync(join(mac.root, "/Users/bbx-1/Library/Keychains/bb-box-signing.keychain-db")));
+  const before = mac.calls().length;
+  assert.equal(mac.helper(["claim", "1"], CLAIM("box_b")).status, 0);
+  const claim = mac.calls().slice(before).filter((line) => line.startsWith("security "));
+  assert.ok(claim.some((line) => line.startsWith("security unlock-keychain")) && !claim.some((line) => line.startsWith("security create-keychain")), claim.join("; "));
 });

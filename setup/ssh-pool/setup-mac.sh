@@ -15,6 +15,7 @@
 #   and the box users' home template, mac-home, as /usr/local/share/bb-box/home
 # - installs Homebrew if it is missing, as the administrator who ran sudo,
 #   then Git, GitHub CLI and Node.js with it, and Cua Driver
+# - installs BlackHole 2ch, the box's audio input (#631)
 # - installs the agent CLIs BB runs threads with, Claude Code, Codex and Pi,
 #   pinned as the Linux images pin them (#561)
 # - clears BB's daemon lock and PID file in box homes at boot (017)
@@ -47,6 +48,9 @@ ROOT=
 # Cua Driver, as Tart's image pins it in setup/tart/prepare-image.sh.
 CUA_VERSION=0.30.4
 CUA_SHA256=e270ea67388d794505031b0a15d8b58994c67e18e754a43634d7732251f595df
+# BlackHole 2ch (#631), as Tart's image pins it in setup/tart/prepare-image.sh.
+BLACKHOLE_VERSION=0.7.1
+BLACKHOLE_SHA256=57b540f27a3e29c37e310e01bee0fdfab76733087e47f997ef9dccf851400dcf
 # The agent CLIs BB runs threads with, at the versions the Linux images pin
 # in setup/proxmox-lxc/template/pins.json (#561), for darwin-arm64. A test
 # keeps the versions equal. Claude Code's SHA-256 is from its release
@@ -216,6 +220,47 @@ tool codex "$CODEX_VERSION" "$CODEX_SHA256" \
 tool pi "$PI_VERSION" "$PI_SHA256" \
   "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-darwin-arm64.tar.gz" 1 pi pi
 
+# BlackHole 2ch (#631, 058): a virtual audio device whose output comes back on
+# its input. The Mac has no microphone of its own, so it is the only input, and
+# macOS makes it the default: a box records through it, and say -a BlackHole
+# feeds it speech. A Core Audio plug-in, not a kernel extension.
+if [ "$(cat "$ROOT$SHARE/blackhole" 2>/dev/null)" != "$BLACKHOLE_VERSION" ]; then
+  tmp=$(mktemp -d)
+  curl -fsSL --retry 3 -o "$tmp/blackhole.pkg" "https://existential.audio/downloads/BlackHole2ch-$BLACKHOLE_VERSION.pkg" ||
+    die "Could not download BlackHole $BLACKHOLE_VERSION."
+  echo "$BLACKHOLE_SHA256  $tmp/blackhole.pkg" | shasum -a 256 -c --quiet - >/dev/null 2>&1 || die "BlackHole's package does not match its pin."
+  installer -pkg "$tmp/blackhole.pkg" -target / >/dev/null || die "BlackHole's installer failed."
+  rm -rf "$tmp"
+  killall coreaudiod 2>/dev/null || :
+  echo "$BLACKHOLE_VERSION" >"$ROOT$SHARE/blackhole"
+fi
+
+# 058: bb-box-own runs a program as its own responsible process, so the
+# permissions bb-box grants that program are the ones macOS checks. Built
+# with the Command Line Tools' clang, which Homebrew needs anyway.
+own_built=
+if clang -O -o "$ROOT/usr/local/bin/bb-box-own.new" "$here/mac-own.c" 2>/dev/null; then
+  chmod 0755 "$ROOT/usr/local/bin/bb-box-own.new" && mv -f "$ROOT/usr/local/bin/bb-box-own.new" "$ROOT/usr/local/bin/bb-box-own" && own_built=1
+fi
+
+# 058: with System Integrity Protection off, a box's commands run over SSH,
+# charged to sshd-keygen-wrapper, get Screen Recording as they have
+# Accessibility, so they can capture the box's screen. A person grants the
+# Accessibility at setup; no person can grant this with SIP on.
+sip_granted=
+if csrutil status 2>/dev/null | grep -q 'status: disabled'; then
+  db="$ROOT/Library/Application Support/com.apple.TCC/TCC.db"
+  wrapper=/usr/libexec/sshd-keygen-wrapper
+  requirement=$(codesign -d -r- "$ROOT$wrapper" 2>&1 | sed -n 's/^designated => //p' | head -n 1)
+  blob=$(printf '%s' "$requirement" | csreq -r- -b /dev/stdout 2>/dev/null | xxd -p | tr -d '\n')
+  now=$(date +%s)
+  if [ -n "$blob" ] && sqlite3 "$db" "DELETE FROM access WHERE service = 'kTCCServiceScreenCapture' AND client = '$wrapper';
+    INSERT INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded)
+    VALUES ('kTCCServiceScreenCapture', '$wrapper', 1, 2, 4, 1, X'$blob', NULL, 0, 'UNUSED', NULL, 0, $now, NULL, NULL, 'UNUSED', $now);" 2>/dev/null; then
+    sip_granted=1
+  fi
+fi
+
 # 017: a box's BB daemon leaves its lock and PID file after a hard stop. Clear them at boot.
 daemon=$ROOT/Library/LaunchDaemons/dev.bb-box.clear-bb-state.plist
 cat >"$daemon" <<'PLIST'
@@ -245,6 +290,11 @@ mdutil -a -i off >/dev/null 2>&1 || :
 warnings=''
 warn() { warnings="$warnings
 - $*"; }
+[ -n "$own_built" ] ||
+  warn "clang could not build bb-box-own, so programs granted permissions cannot run as their own responsible process. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
+if csrutil status 2>/dev/null | grep -q 'status: disabled' && [ -z "$sip_granted" ]; then
+  warn "SIP is off, but Screen Recording could not be granted to sshd-keygen-wrapper, so box_run's commands cannot capture the screen."
+fi
 
 # Xcode is the operator's to install, as its download needs an Apple Account.
 xcode=no

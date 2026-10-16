@@ -432,6 +432,25 @@ case $tool in
     # csreq -r- -b <out>: the requirement's text, as its compiled form.
     cat
     ;;
+  clang)
+    # clang ... -o <out> <source>: an executable that runs nothing, unless flags/no-clang.
+    flag no-clang && exit 1
+    out=''
+    while [ $# -gt 0 ]; do [ "$1" != -o ] || out=$2; shift; done
+    printf '#!/bin/sh\n' >"$out" && chmod 755 "$out"
+    ;;
+  security)
+    # security create-keychain makes the keychain's file; list-keychains -d user [-s <keychains>] keeps the
+    # user's search list in keychains/<uid>, and gives it as security does, each quoted on a line.
+    case $1 in
+      create-keychain) path=$(eval "echo \${$#}"); mkdir -p "$(dirname "$R$path")" && : >"$R$path" ;;
+      list-keychains)
+        list=$F/keychains/$(id -u)
+        mkdir -p "$F/keychains"
+        if [ "${4:-}" = -s ]; then shift 4; printf '%s\n' "$@" >"$list"; else [ -f "$list" ] && sed 's/.*/    "&"/' "$list"; fi
+        ;;
+    esac
+    ;;
   pkill)
     # pkill -KILL -u <uid>: each process loses a kill.
     edit "$F/processes" awk -v u="$3" '$2 == u { $4 -= 1; if ($4 <= 0) next } { print }'
@@ -473,6 +492,8 @@ case $tool in
     cat >/dev/null
     ! flag bad-sha
     ;;
+  # installer -pkg <pkg> -target / and killall coreaudiod: recorded only.
+  installer | killall) : ;;
   *)
     echo "fake-macos.sh: no fake $tool" >&2
     exit 127
