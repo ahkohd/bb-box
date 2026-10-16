@@ -768,7 +768,7 @@ const sqlite = (db: string, sql: string) => {
   return run.stdout.trim();
 };
 
-test("with SIP off, the helper grants the box user's programs their permissions, by bundle ID or path with their requirement, and the reset removes every row added since the claim (058)", () => {
+test("with SIP off, the helper grants the box user's programs their permissions, by bundle ID or path with their requirement, and the reset removes every row added since the claim (058)", { skip: spawnSync("sqlite3", ["-version"]).status !== 0 && "needs sqlite3" }, () => {
   const mac = readyMac();
   mac.flag("sip-off");
   // The system database, with Cua's grant from before the box, and the box user's, which macOS 27 keeps outside the home.
