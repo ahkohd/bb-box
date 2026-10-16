@@ -168,7 +168,8 @@ if [ ! -x "$ROOT$BREW" ]; then
   [ -x "$ROOT$BREW" ] || die "Homebrew's installer did not install $BREW."
 fi
 owner=$(stat -f %Su "$ROOT/opt/homebrew")
-sudo -u "$owner" -H "$ROOT$BREW" install git gh node || die "brew install git gh node failed."
+# ffmpeg records a box's desktop for box_record (059).
+sudo -u "$owner" -H "$ROOT$BREW" install git gh node ffmpeg || die "brew install git gh node ffmpeg failed."
 
 # Cua Driver, pinned by version and SHA-256, in /Applications. Its daemon
 # is a LaunchAgent in the home template, so it starts in each box user's
