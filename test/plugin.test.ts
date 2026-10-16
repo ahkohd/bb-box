@@ -718,7 +718,7 @@ test("box_record records a Linux desktop, and stop puts the clip and a page that
   const server = await only(app);
   const refused = await tool("box_record", { box: server.name, action: "start" });
   assert.ok(isError(refused));
-  assert.match(text(refused), /has no Linux desktop\. box_record records Linux desktops for now/);
+  assert.match(text(refused), /has no Linux or macOS desktop\. box_record records those for now; Windows comes later/);
   await tool("box_release", { box: server.name });
 
   await tool("box_acquire", { kind: "linux-desktop" });

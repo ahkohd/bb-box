@@ -313,7 +313,7 @@ export function joined(hub: () => Routed, options: { openAfterMs?: number } = {}
  * 10 s for the capture, 4.2 s for the clip and 1280x720. Each ffmpeg call's
  * arguments go to ~/ffmpeg-args.
  */
-export function fakeFfmpeg(options: { wfRecorder?: boolean } = {}): string {
+export function fakeFfmpeg(options: { wfRecorder?: boolean; darwin?: boolean } = {}): string {
   const bin = tempDir("fake-ffmpeg");
   writeFileSync(
     join(bin, "ffmpeg"),
@@ -321,7 +321,8 @@ export function fakeFfmpeg(options: { wfRecorder?: boolean } = {}): string {
 for a; do out=$a; done
 echo "$*" >> "$HOME/ffmpeg-args"
 case "$*" in
-  *x11grab*) trap 'echo capture > "$out"; exit 0' TERM; while :; do sleep 0.05; done ;;
+  *list_devices*) printf '[AVFoundation indev @ 0x1] [0] Capture screen 0\n' >&2 ;;
+  *x11grab* | *"-f avfoundation"*) trap 'echo capture > "$out"; exit 0' TERM; while :; do sleep 0.05; done ;;
   *"-f null"*) printf '[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 1\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_end: 6\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 8\\n' >&2 ;;
   *) printf mp4data > "$out" ;;
 esac
@@ -339,6 +340,10 @@ esac
   );
   chmodSync(join(bin, "ffmpeg"), 0o755);
   chmodSync(join(bin, "ffprobe"), 0o755);
+  if (options.darwin) {
+    writeFileSync(join(bin, "uname"), "#!/bin/sh\necho Darwin\n");
+    chmodSync(join(bin, "uname"), 0o755);
+  }
   if (options.wfRecorder !== false) {
     // wf-recorder records to its -f file until SIGTERM, which timeout passes on.
     writeFileSync(

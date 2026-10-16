@@ -621,7 +621,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   bb.agents.registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops for now, on X11 and Wayland.`,
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, and macOS desktops; not Windows yet.`,
     presentation: { label: { pending: "Recording the desktop", completed: "Recorded the desktop" } },
     parameters: z.object({
       box: boxParam,
@@ -636,14 +636,14 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       try {
         const id = thread(threadId);
         const { owner, box: found } = await app.resolve(id, ref, signal);
-        if (found.capabilities.os !== "linux" || !found.capabilities.displays.length) {
-          throw new BoxError("unsupported", `Box ${found.name} has no Linux desktop. box_record records Linux desktops for now; macOS and Windows come later.`);
+        if (found.capabilities.os === "windows" || !found.capabilities.displays.length) {
+          throw new BoxError("unsupported", `Box ${found.name} has no Linux or macOS desktop. box_record records those for now; Windows comes later.`);
         }
         if (action === "start") {
           const { result } = await boxes.run(owner, found.id, recordStartScript(), { timeoutMs: 30_000, signal, waitForEnrolment: false });
           const refused: Partial<Record<number, string>> = {
             [RECORD_START_EXITS.running]: `Box ${found.name} is recording already.${next(`Call box_record with box "${found.name}" and action "stop" for its clip.`)}`,
-            [RECORD_START_EXITS.noRecorder]: `Box ${found.name}'s Wayland desktop has no wf-recorder yet, which box_record needs there. It comes with the image's next rebuild, as a new box of the kind will have it.`,
+            [RECORD_START_EXITS.noRecorder]: `Box ${found.name} has no ${result.stderr.trim() || "recorder"} yet, which box_record needs there. It comes with the image's next rebuild, as a new box of the kind will have it.`,
             [RECORD_START_EXITS.noDisplay]: `Box ${found.name}'s desktop is not running.${next(`Call box_status with box "${found.name}" to see why.`)}`,
           };
           const said = refused[result.exitCode ?? -1];

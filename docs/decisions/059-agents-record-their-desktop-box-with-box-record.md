@@ -113,12 +113,15 @@ time was cut.
    ends 51 ms after SIGTERM, with a whole file, but copies frames all the
    time it records: about two thirds of a core, against a tenth for
    `x11grab`, for at most 5 minutes on a desktop kind of 4 cores.
-3. **macOS on Tart**, then pool Macs: ffmpeg's `avfoundation`, which stops
-   cleanly on `q`, with ffmpeg added to the macOS image. `screencapture -v`
-   records a fixed length only, and exits without a file if stopped by a
-   signal ([demo.md](../demo.md)). ffmpeg, run over SSH, needs Screen
-   Recording: granted in the image offline on Tart (#628), and on pool
-   Macs as 058 allows.
+3. **macOS on Tart**, then pool Macs: ffmpeg's `avfoundation`, with
+   Homebrew's ffmpeg added to the macOS image. `screencapture -v` records
+   a fixed length only, and exits without a file if stopped by a signal
+   ([demo.md](../demo.md)). On a Tart box, ffmpeg run over SSH records the
+   screen with its windows, raises no dialog, and ends 137 ms after
+   SIGTERM with a whole file, at about a quarter of a core, so the image
+   needs no grant of its own. macOS has no `setsid` command: Perl's starts
+   ffmpeg's session. Pool Macs need Screen Recording granted as 058
+   allows.
 4. **Windows** later: ffmpeg's `ddagrab` in the desktop session, with
    ffmpeg added to the Windows images.
 

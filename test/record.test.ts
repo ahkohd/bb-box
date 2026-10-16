@@ -11,8 +11,8 @@ import { fakeFfmpeg, tempDir } from "./helpers.ts";
 
 const skip = process.platform === "linux" ? false : "needs GNU stat and setsid";
 
-function run(script: string, home: string, env: Record<string, string> = {}, wfRecorder = true) {
-  const bin = fakeFfmpeg({ wfRecorder });
+function run(script: string, home: string, env: Record<string, string> = {}, wfRecorder = true, darwin = false) {
+  const bin = fakeFfmpeg({ wfRecorder, darwin });
   return spawnSync("bash", ["-c", script], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, ...env }, encoding: "utf8" });
 }
 
@@ -57,6 +57,16 @@ test("on Wayland box_record runs wf-recorder with --no-damage under timeout, and
   const stopped = run(recordStopScript({ speed: 1, stills: "cut" }), home);
   assert.equal(stopped.status, RECORD_STOP_EXITS.made, stopped.stderr);
   assert.equal(parseRecordResult(stopped.stdout)?.ended, "stopped");
+});
+
+test("on macOS box_record records ffmpeg's avfoundation screen in a session Perl starts, and stop makes the clip (059)", { skip }, () => {
+  const home = tempDir("record-macos");
+  const started = run(recordStartScript(), home, {}, true, true);
+  assert.equal(started.status, RECORD_START_EXITS.started, started.stderr);
+  assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8"), /-f avfoundation -capture_cursor 1 -framerate 15 -i 0:none -t 300 -c:v libx264 -preset ultrafast -crf 0 \S+\/capture\.mkv$/m);
+  const stopped = run(recordStopScript({ speed: 1, stills: "cut" }), home, {}, true, true);
+  assert.equal(stopped.status, RECORD_STOP_EXITS.made, stopped.stderr);
+  assert.deepEqual(parseRecordResult(stopped.stdout), { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720" });
 });
 
 test("box_record's page plays the clip beside it by its name, and its height follows the clip's shape (059)", () => {

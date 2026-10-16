@@ -119,7 +119,7 @@ It takes no parameters.
 
 ## box_record
 
-Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after 5 minutes, and stop still gives its clip. Linux desktops for now, on X11 and Wayland.
+Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after 5 minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, and macOS desktops; not Windows yet.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
