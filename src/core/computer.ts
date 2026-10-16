@@ -1037,8 +1037,17 @@ export class Computer {
       const seen = await this.#settle(use, watch, { element: null, right: false });
       return { text: [`${what} with the real keyboard, ${where}.`, ...seen.parts].join("\n\n"), hints: seen.hints };
     }
-    const { foreground } = await this.#deliver(use, tool, { ...args, ...typed }, true);
-    const lines = [`${what} ${keys ? "in" : "into"} ${label}${foreground ? KEYBOARD : ""}.`];
+    // On Windows, Cua presses a chord in the background with posted key
+    // messages, which carry no modifier, and says it worked: the app gets the
+    // bare key. So a chord goes in the foreground there, to its window brought
+    // to the front first: Cua's own swap puts the window back behind the one
+    // in front, and the window's focus does not come back with it, so text
+    // typed into the window next would be lost.
+    const chordOnWindows = !!keys?.modifiers.length && use.box.capabilities.os === "windows";
+    if (chordOnWindows) await this.#call(use, "bring_to_front", { pid: args.pid, window_id: args.window_id }, { readOnly: true });
+    const { foreground } = await this.#deliver(use, tool, { ...args, ...typed }, chordOnWindows ? "foreground" : true);
+    const how = chordOnWindows ? `, with the real keyboard, its window brought to the front` : foreground ? KEYBOARD : "";
+    const lines = [`${what} ${keys ? "in" : "into"} ${label}${how}.`];
     if (!before) {
       return { text: lines.join("\n\n"), hints: [`Call computer_observe with window ${args.window_id} to see it.`] };
     }
@@ -1417,15 +1426,20 @@ export class Computer {
 
   /**
    * Does an action in the background, or in the foreground when Cua cannot
-   * do it in the background. Cua says so before it does anything. An action
-   * on the desktop has no background, so it needs no note that it went in
-   * the foreground. A failure that `handled` takes is returned, not thrown.
+   * do it in the background. Cua says so before it does anything, or
+   * `delivery` is "foreground" for an action Cua does wrongly in the
+   * background. An action on the desktop has no background, so it needs no
+   * note that it went in the foreground. A failure that `handled` takes is
+   * returned, not thrown.
    */
-  async #deliver(use: Use, tool: string, args: Json, delivery: boolean, handled?: (result: McpResult) => boolean): Promise<{ result: McpResult; foreground: boolean }> {
+  async #deliver(use: Use, tool: string, args: Json, delivery: boolean | "foreground", handled?: (result: McpResult) => boolean): Promise<{ result: McpResult; foreground: boolean }> {
     let result: McpResult;
     let foreground = false;
     if (args.scope === "desktop") {
       ({ result } = await this.#call(use, tool, { ...args, delivery_mode: "foreground" }, { readOnly: false }));
+    } else if (delivery === "foreground") {
+      ({ result } = await this.#call(use, tool, { ...args, delivery_mode: "foreground" }, { readOnly: false }));
+      foreground = true;
     } else {
       ({ result } = await this.#call(use, tool, delivery ? { ...args, delivery_mode: "background" } : args, { readOnly: false }));
       if (delivery && refusedInBackground(result)) {

@@ -3199,6 +3199,22 @@ test("on Wayland, a window that closes and gives way to another of its app's say
   assert.ok(isError(typed));
 });
 
+test("on Windows, a chord with a modifier goes through the real keyboard at once, to its window brought to the front, as Cua's background chord reaches the app as the bare key; a plain key stays in the background", async (t) => {
+  const desktopKind = FAKE_KINDS.find((kind) => kind.capabilities.displays.length)!;
+  const windowsDesktop: BoxKind = { ...desktopKind, id: "windows-desktop", label: "Windows desktop", capabilities: { ...desktopKind.capabilities, os: "windows", enrol: false } };
+  const { harness, box, tool, file } = await desktopBox({ kind: windowsDesktop });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_observe", { box: box.name, window: 100 });
+
+  const presses = () => readDesktop(file).calls.filter((call) => call.tool === "press_key").map((call) => [call.args.key, call.args.delivery_mode]);
+  assert.match(text(await tool("computer_type", { box: box.name, window: 100, keys: "ctrl+a" })), /^Pressed ctrl\+a in window 100, with the real keyboard, its window brought to the front\./);
+  assert.match(text(await tool("computer_act", { box: box.name, action: "key", window: 100, keys: "shift+Left" })), /^Pressed shift\+Left in window 100, with the real keyboard/);
+  assert.match(text(await tool("computer_type", { box: box.name, window: 100, keys: "Return" })), /^Pressed Return in window 100\./);
+  assert.deepEqual(presses(), [["a", "foreground"], ["Left", "foreground"], ["Return", "background"]], "no background try for a chord");
+  // Each chord's window came to the front first, and stays there, so what is typed next reaches it.
+  assert.deepEqual(readDesktop(file).calls.filter((call) => call.tool === "bring_to_front").map((call) => call.args), [{ pid: 5000, window_id: 100 }, { pid: 5000, window_id: 100 }]);
+});
+
 test("on Windows, computer_windows and computer_launch give a window with no title one, so Cua lists and reads it, and say so (#365)", async (t) => {
   // The backend's namer, as the box's helper is: a moment later, it titles each window on screen that has none.
   let file = "";
