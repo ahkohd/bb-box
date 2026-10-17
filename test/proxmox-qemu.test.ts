@@ -123,7 +123,11 @@ test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShe
   assert.equal(kind!.capabilities.os, "windows");
   assert.equal(kind!.capabilities.arch, "x86_64");
   assert.equal(kind!.capabilities.enrol, true, "its boxes join BB unless the switch is set off (#539)");
-  assert.deepEqual(kind!.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }]);
+  // The desktop as video (060), which a box's transports include only where its image has bb-box-stream.
+  assert.deepEqual(kind!.capabilities.displays, [
+    { id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" },
+    { id: "video", protocol: "selkies", resizable: true },
+  ]);
   assert.deepEqual(kind!.capabilities.computerUse, { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" });
 });
 
@@ -357,6 +361,31 @@ test("with Linux templates, linux boxes are VMs from them, with their own kernel
   // KVM is offered where the settings say the host allows nested virtualization.
   const withKvm = setup({ "linux-templates": "9120", "linux-kvm": true }).backend.kinds().find((kind) => kind.id === "linux");
   assert.deepEqual(withKvm?.capabilities.features, ["docker", "kernel", "kvm"]);
+});
+
+test("a Windows box shows its desktop as video, through bb-box-stream.exe connect over SSH, only where its template's image record lists OpenH264 (060)", async () => {
+  const displaysOf = async (tools: Record<string, string> | null) => {
+    const { backend, proxmox } = setup();
+    if (tools) {
+      const record = { contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: "build.20261017-030000-1a2b", built: "2026-10-17T03:00:00Z", os: "Windows 11 Pro", pins: "p".repeat(64), bbApp: null, tools };
+      proxmox.guests.get(9104)!.config.description = `bb-box windows template, built 2026-10-17.\n${JSON.stringify(record)}`;
+    }
+    const guest = await backend.acquire(identity(), null, hooks().value, signal());
+    assert.equal(guest.data?.template, 9104);
+    return (await backend.transports(guest)).displays;
+  };
+  assert.deepEqual(
+    (await displaysOf(null)).map((display) => display.protocol),
+    ["rfb"],
+    "an image without it: the viewer's video ends at once, and it falls back to VNC",
+  );
+  assert.deepEqual((await displaysOf({ pwsh: "7.6.6" })).map((display) => display.protocol), ["rfb"]);
+  const [, video] = await displaysOf({ pwsh: "7.6.6", openh264: "2.6.0" });
+  assert.deepEqual([video!.id, video!.label, video!.protocol, video!.resizable], ["video", "Desktop, as video", "selkies", true]);
+  const opened = await video!.open();
+  assert.deepEqual(opened.auth, { type: "none" });
+  assert.equal(opened.route.type, "command");
+  assert.equal(opened.route.type === "command" ? opened.route.argv.at(-1) : "", "& 'C:\\Program Files\\bb-box-tools\\bb-box-stream\\bb-box-stream.exe' connect");
 });
 
 test("the desktop resizes to the viewer's size, else to the listed mode that best covers it, set by Windows in the box user's session, and gives Windows' reason when it cannot", async () => {

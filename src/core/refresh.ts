@@ -364,6 +364,9 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       const buildId = newBuildId(now());
       const files: [string, string][] = [
         ["refresh.ps1", await readFile(join(options.setup, "windows", "refresh.ps1"), "utf8")],
+        // bb-box-stream.exe (060): its source, and its install, which the refresh runs when either changes.
+        ["bb-box-stream.cs", await readFile(join(options.setup, "windows", "bb-box-stream.cs"), "utf8")],
+        ["install-stream.ps1", await readFile(join(options.setup, "windows", "install-stream.ps1"), "utf8")],
         ["pins.json", `${JSON.stringify({ tools: pins }, null, 2)}\n`],
         ["image.json", `${JSON.stringify(windowsRecord(current, pins, buildId, now(), digest))}\n`],
       ];

@@ -108,6 +108,38 @@ Check 'Cua daemon in the desktop session' {
   $status = cua-driver status 2>&1 | Select-Object -First 1
   if ($LASTEXITCODE) { throw "$status" }; "session $($p.SessionId); $status"
 }
+# The desktop as video (060), as bb-box's relay reaches it: connect over SSH, which starts the server in the desktop
+# session through its task, an upgrade, START_VIDEO, then a key frame of the desktop. Windows on arm64 has no encoder.
+Check 'bb-box-stream: a key frame' {
+  if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { return 'none on arm64, whose desktop shows over VNC' }
+  $exe = 'C:\Program Files\bb-box-tools\bb-box-stream\bb-box-stream.exe'
+  if (-not (Get-ScheduledTask bb-box-stream -ErrorAction SilentlyContinue)) { throw 'no bb-box-stream task' }
+  $start = New-Object Diagnostics.ProcessStartInfo $exe, 'connect'
+  $start.UseShellExecute = $false; $start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true
+  $process = [Diagnostics.Process]::Start($start)
+  # A read that waits for ever ends when this stops the connection.
+  $deadline = Start-Job { param($id) Start-Sleep 25; Stop-Process -Id $id -Force -ErrorAction SilentlyContinue } -ArgumentList $process.Id
+  try {
+    $in = $process.StandardInput.BaseStream; $out = $process.StandardOutput.BaseStream
+    $hello = [Text.Encoding]::ASCII.GetBytes("GET / HTTP/1.1`r`nHost: localhost`r`nUpgrade: websocket`r`nConnection: Upgrade`r`nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==`r`nSec-WebSocket-Version: 13`r`n`r`n")
+    $in.Write($hello, 0, $hello.Length)
+    $ask = [Text.Encoding]::ASCII.GetBytes('START_VIDEO')
+    $frame = [byte[]](@(0x81, (0x80 + $ask.Length), 0, 0, 0, 0) + $ask); $in.Write($frame, 0, $frame.Length); $in.Flush()
+    $read = { param($n) $b = New-Object byte[] $n; $at = 0; while ($at -lt $n) { $got = $out.Read($b, $at, $n - $at); if ($got -le 0) { throw 'the server ended the connection' }; $at += $got }; $b }
+    $head = ''; while (-not $head.EndsWith("`r`n`r`n")) { $head += [char](& $read 1)[0] }
+    if ($head -notmatch '^HTTP/1.1 101') { throw "no upgrade: $($head.Split("`r")[0])" }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($clock.Elapsed.TotalSeconds -lt 20) {
+      $f = & $read 2; $n = $f[1] -band 127
+      if ($n -eq 126) { $x = & $read 2; $n = $x[0] * 256 + $x[1] } elseif ($n -eq 127) { $x = & $read 8; $n = 0; foreach ($byte in $x) { $n = $n * 256 + $byte } }
+      $payload = & $read $n
+      if (($f[0] -band 15) -eq 2 -and $payload[0] -eq 4 -and ($payload[1] -band 15) -eq 1) {
+        return "{0}x{1} in {2} ms, {3} KB" -f ($payload[6] * 256 + $payload[7]), ($payload[8] * 256 + $payload[9]), $clock.ElapsedMilliseconds, [int]($n / 1024)
+      }
+    }
+    throw 'no key frame within 20 s'
+  } finally { if (-not $process.HasExited) { $process.Kill() }; Remove-Job $deadline -Force }
+}
 Check 'Cua lists windows' { $w = @((Cua list_windows @{}).windows); if (-not $w.Count) { throw 'no windows' }; "$($w.Count) windows" }
 Check 'Edge page in the accessibility tree' {
   Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force
