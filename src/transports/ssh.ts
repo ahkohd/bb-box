@@ -57,9 +57,19 @@ export interface SshOptions {
   readonly shareDir?: string | null;
   /** How long a shared connection stays open with nothing using it. */
   readonly shareIdleMs?: number;
+  /** After a command's connection is lost, how long the box has to answer again before it counts as unreachable. */
+  readonly lostWaitMs?: number;
 }
 
 const SHARE_IDLE_MS = 120_000;
+/**
+ * A link that stalls, as a Mac's over Tailscale can for half a minute when
+ * its network changes, or a host too busy to answer at once, gets this long
+ * to answer again after it dropped a command, before it counts as gone.
+ */
+const LOST_WAIT_MS = 15_000;
+/** Between probes in that wait. */
+const LOST_PROBE_GAP_MS = 2_500;
 /** A shared connection this close to closing gets no new commands. */
 const SHARE_MARGIN_MS = 10_000;
 const SHARE_MAX_SESSIONS = 8;
@@ -122,6 +132,10 @@ export class Ssh {
     return this.#options.binary ?? "ssh";
   }
 
+  get lostWaitMs(): number {
+    return this.#options.lostWaitMs ?? LOST_WAIT_MS;
+  }
+
   /** Options for every dial to `access`, including the jump host. */
   options(access: SshAccess): string[] {
     const known = this.#options.knownHostsPath;
@@ -151,7 +165,8 @@ export class Ssh {
       "-o", "GlobalKnownHostsFile=/dev/null",
       "-o", "LogLevel=ERROR",
       "-o", "ServerAliveInterval=5",
-      "-o", "ServerAliveCountMax=3",
+      // A link that stalls for up to half a minute keeps its commands (#707).
+      "-o", "ServerAliveCountMax=6",
       ...jump,
     ];
   }
@@ -443,7 +458,30 @@ export class SshTransport implements CommandTransport {
 
   /** Exit 255 is also SSH's own failure, so it is checked with a probe. */
   async #reachable(exitCode: number | null, signal?: AbortSignal): Promise<void> {
-    if (exitCode === 255 && !(await this.probe(signal))) throw this.#unreachable();
+    if (exitCode === 255 && !(await this.#answersAgain(signal))) throw this.#unreachable();
+  }
+
+  /**
+   * Whether the box answers a probe within the Ssh's lost wait, probing
+   * every few seconds: a link that stalled answers again soon, and a box
+   * that is gone does not.
+   */
+  async #answersAgain(signal?: AbortSignal): Promise<boolean> {
+    const until = Date.now() + this.#ssh.lostWaitMs;
+    for (;;) {
+      if (await this.probe(signal)) return true;
+      const left = until - Date.now();
+      if (left <= 0 || signal?.aborted) return false;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, Math.min(LOST_PROBE_GAP_MS, left));
+        signal?.addEventListener("abort", done, { once: true });
+        function done() {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", done);
+          resolve();
+        }
+      });
+    }
   }
 
   async run(script: string, options: RunOptions = {}): Promise<RunResult> {
@@ -462,7 +500,7 @@ export class SshTransport implements CommandTransport {
     try {
       await this.#ssh.writeFile(this.#access, path, data, options, this.#os);
     } catch (error) {
-      if (error instanceof SshError && !(await this.probe(options.signal))) throw this.#unreachable();
+      if (error instanceof SshError && !(await this.#answersAgain(options.signal))) throw this.#unreachable();
       throw error;
     }
   }
@@ -471,7 +509,7 @@ export class SshTransport implements CommandTransport {
     try {
       return await this.#ssh.readFile(this.#access, path, options, this.#os);
     } catch (error) {
-      if (error instanceof SshError && !/larger than/.test(error.message) && !(await this.probe(options.signal))) throw this.#unreachable();
+      if (error instanceof SshError && !/larger than/.test(error.message) && !(await this.#answersAgain(options.signal))) throw this.#unreachable();
       throw error;
     }
   }

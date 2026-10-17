@@ -18,7 +18,7 @@ test("ssh dials once with a 2 s connect timeout and accepts a fresh box's first 
   assert.match(joined, /ConnectTimeout=2/);
   assert.match(joined, /ConnectionAttempts=1/);
   assert.match(joined, /BatchMode=yes/);
-  assert.match(joined, /ServerAliveInterval=5 -o ServerAliveCountMax=3/, "a box that dies unseen ends the connection within about 20 s");
+  assert.match(joined, /ServerAliveInterval=5 -o ServerAliveCountMax=6/, "a box that dies unseen ends the connection within about 35 s, and a link that stalls for 30 s keeps it");
   assert.match(joined, /StrictHostKeyChecking=no/);
   assert.match(joined, /UserKnownHostsFile=\/dev\/null/);
   assert.doesNotMatch(joined, /ProxyCommand/);
@@ -145,6 +145,16 @@ test("the SSH transport reports an unreachable box", async () => {
   const gone = new SshTransport(ssh, at("192.0.2.10"), "linux");
   await assert.rejects(gone.run("true"), (error: unknown) => error instanceof TransportError && error.code === "unreachable");
   await assert.rejects(gone.readFile("x", { maxBytes: 10 }), (error: unknown) => error instanceof TransportError && error.code === "unreachable");
+});
+
+test("a box whose link dropped a command but answers again within the lost wait is not unreachable (#707)", async () => {
+  const { ssh, upAfter, log } = fakeSsh({ lostWaitMs: 4_000 });
+  const box = new SshTransport(ssh, at("192.0.2.11"), "linux");
+  // The command's own dial and the first probe fail; the second probe answers.
+  upAfter("192.0.2.11", 2);
+  const result = await box.run("true");
+  assert.equal(result.exitCode, 255, "the command's result stands");
+  assert.equal(log().filter((entry) => entry.target.endsWith("192.0.2.11")).length, 3, "the command, a probe that failed and one that answered");
 });
 
 test("a Windows box runs each script in PowerShell, base64-encoded, so no quote reaches its command line", async () => {

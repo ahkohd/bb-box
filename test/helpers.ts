@@ -98,7 +98,7 @@ export function at(host: string): SshAccess {
 
 /** Points the fake ssh at a fresh directory. Tests in one file run one at a time, so the environment variable is safe. */
 /** A fake ssh client. `share` gives commands to one box a shared connection. */
-export function fakeSsh(options: { share?: boolean } = {}) {
+export function fakeSsh(options: { share?: boolean; lostWaitMs?: number } = {}) {
   const dir = tempDir("fake-ssh");
   process.env.FAKE_SSH_DIR = dir;
   fakeGroup();
@@ -109,7 +109,7 @@ export function fakeSsh(options: { share?: boolean } = {}) {
   mkdirSync(join(dir, "windows"));
   mkdirSync(join(dir, "powershell"));
   writeFileSync(join(dir, "log"), "");
-  const ssh = new Ssh({ keyPath: "/nonexistent/key", binary: FAKE_SSH_BINARY, shareDir: options.share ? join(dir, "shared") : null });
+  const ssh = new Ssh({ keyPath: "/nonexistent/key", binary: FAKE_SSH_BINARY, shareDir: options.share ? join(dir, "shared") : null, lostWaitMs: options.lostWaitMs ?? 0 });
   return {
     dir,
     ssh,
