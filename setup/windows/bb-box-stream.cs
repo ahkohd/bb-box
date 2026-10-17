@@ -937,20 +937,51 @@ class Server {
         Input.ScaleX = 1; Input.ScaleY = 1;
         Program.Log("capturing " + capture.Width + "x" + capture.Height + (capture.Duplicating ? " with Desktop Duplication" : " with GDI"));
         keyAsked = true;
-        bool have = false;
-        int again = 0;
-        Stopwatch still = Stopwatch.StartNew();
-        while (AnyWantsVideo()) {
-          bool changed = capture.Next(50);
-          if (changed) { have = true; again = 2; still.Restart(); }
-          bool sharpen = !changed && have && again > 0 && still.ElapsedMilliseconds >= Program.STILL_MS * (3 - again);
-          if (!changed && !sharpen && !(keyAsked && have)) continue;
-          if (sharpen) again--;
-          bool key = keyAsked;
-          keyAsked = false;
-          bool isKey;
-          byte[] data = encoder.Encode(showsCursor ? capture.WithPointer() : capture.Frame, capture.Width * 4, key, out isKey);
-          if (data != null) Send(data, isKey, encoder.Width, encoder.Height);
+        // A thread of its own copies the screen while this one encodes the frame before (060): GDI's copy on the
+        // Basic Display adapter takes about 20 ms. It keeps only the newest frame for this one to take.
+        Capture source = capture;
+        object gate = new object();
+        byte[] newest = null;
+        Exception failed = null;
+        bool running = true;
+        AutoResetEvent ready = new AutoResetEvent(false);
+        Thread copier = new Thread(() => {
+          try {
+            while (running) {
+              if (!source.Next(50)) continue;
+              byte[] frame = showsCursor ? source.WithPointer() : (byte[])source.Frame.Clone();
+              lock (gate) newest = frame;
+              ready.Set();
+            }
+          } catch (Exception error) {
+            failed = error;
+            ready.Set();
+          }
+        }) { IsBackground = true, Name = "copier" };
+        copier.Start();
+        try {
+          byte[] last = null;
+          int again = 0;
+          Stopwatch still = Stopwatch.StartNew();
+          while (AnyWantsVideo()) {
+            bool woken = ready.WaitOne(50);
+            if (failed != null) throw new Exception("the copy of the screen failed: " + failed.Message, failed);
+            byte[] frame = null;
+            if (woken) lock (gate) { frame = newest; newest = null; }
+            bool changed = frame != null;
+            if (changed) { last = frame; again = 2; still.Restart(); }
+            bool sharpen = !changed && last != null && again > 0 && still.ElapsedMilliseconds >= Program.STILL_MS * (3 - again);
+            if (!changed && !sharpen && !(keyAsked && last != null)) continue;
+            if (sharpen) again--;
+            bool key = keyAsked;
+            keyAsked = false;
+            bool isKey;
+            byte[] data = encoder.Encode(last, capture.Width * 4, key, out isKey);
+            if (data != null) Send(data, isKey, encoder.Width, encoder.Height);
+          }
+        } finally {
+          running = false;
+          copier.Join(2000);
         }
       } catch (Exception error) {
         Program.Log("capture: " + error);
