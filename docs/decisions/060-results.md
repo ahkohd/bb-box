@@ -201,6 +201,26 @@ takes the last frame before the drag, however old, or the scene's own
 place. The lags above are recomputed from the same runs; nothing else
 changed.
 
+## The pointer over video, 17 October 2026
+
+While a person holds control, the video leaves the box's pointer out and
+the browser shows its shape instead (#772, #773). Checked by hand through
+the panel, with one tab in control and one watching:
+
+- The pool Mac and Linux drawn by the CPU follow it in both tabs: no
+  pointer in the video while the person holds control, and the pointer in
+  it with "Show the box's pointer" on or while the agent holds control.
+- Windows does not. bb-box-stream.exe leaves the pointer out when told,
+  but the pointer is already in the image Desktop Duplication returns. The
+  VM's display adapter is the VirtIO GPU's display-only driver, which has
+  no hardware cursor, so Windows draws the pointer into the desktop image.
+  Windows video does not offer the option until a display device whose
+  driver has a hardware cursor leaves it out.
+- On Linux, each change of control or of the option restarts Selkies'
+  capture. Once, with the pointer still, the watching tab kept the frame
+  from before the restart until the screen changed. With the pointer
+  moving it did not happen. Not fixed.
+
 ## Limits
 
 - Only the pool Mac is measured at 2x: Linux and Windows boxes run at 1x,
