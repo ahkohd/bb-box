@@ -154,17 +154,41 @@ each, with Chrome showing the scene at 50% page zoom.
   7 ms a frame and a tenth of a core; at 2x, 19 ms. The software encoder
   takes 11 and 35 ms and two cores at 1080p.
 - **Keys alone, in Chrome:** none of the 15 keys showed on video, in two
-  runs, though frames came. In the VM, ScreenCaptureKit reported most
-  frames after a key in Chrome as unchanged, while a screenshot showed the
-  change. Keys while scrolling showed, as the page changed anyway. TextEdit
-  and Safari are not affected: frames come 15 to 40 ms after each key. VNC
-  reads the VM's screen from outside it, so it is not affected. Not yet
-  known: why, and whether a pool Mac's Chrome escapes it only because the
-  Mac has a GPU of its own.
+  runs, though frames came. In the VM, ScreenCaptureKit's stream holds back
+  a small change in Chrome until something asks the window server for the
+  screen: with an 8x8 screenshot 50 ms after each key, every key showed in
+  the stream; without it, none did. TextEdit and Safari are not affected.
+  VNC reads the VM's screen from outside it, so it is not affected. The fix
+  is below.
 - **The wheel** scrolls through the stream, in Chrome and in Safari.
 - **Through the panel:** the box opens as video. Show as VNC and back,
   control, typing with Shift and Cmd+S, the wheel, and pasting both ways
   work.
+
+## Tart Mac: Chrome's keys on video, 17 October 2026
+
+bb-box-stream now takes a tiny screenshot, in a VM only, while a viewer
+watches: every 30 ms for 200 ms after input, unless the stream sent a frame
+in the last 30 ms, as in a drag, and every 250 ms otherwise. Measured with
+the harness on a medium box (6 cores) with the server built in it and
+Tart's video field on for the runs, as above.
+
+| | Video, run 1 | Video, run 2 | VNC |
+| --- | --- | --- | --- |
+| Keys alone, shown | 15 of 15 | 15 of 15 | 15 of 15 |
+| Key p50 / p95, alone | 57 / 76 ms | 58 / 146 ms | 31 / 95 ms |
+| Key p50, while scrolling | 54 ms | 89 ms | 70 ms |
+| Drag fps, lag p50 / p95 | 56, 50 / 75 ms | 57, 54 / 67 ms | 52, 34 / 53 ms |
+| Scroll Mbit/s | 1.2 | 1.4 | 20.3 |
+| Box cores, idle with a viewer | 0.61 | 0.48 | 0.36 |
+
+- These runs took a screenshot after every pointer move too: about 1.2
+  cores while dragging. Skipping it while the stream sends frames anyway
+  halves that. Moving the pointer 60 times a second in the box, the whole
+  VM went from 18.5% to 9.5% of its 6 cores, with the same frames, and
+  frames still came 0 to 45 ms after each key.
+- Tart's image needs a rebuild to carry the fix. Until then, and until the
+  video field is turned on, Tart Macs show VNC only.
 
 ## Corrected, 17 October 2026
 

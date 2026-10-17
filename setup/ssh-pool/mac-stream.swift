@@ -38,6 +38,22 @@ let H264: UInt8 = 1
 let BEHIND_BYTES = 16 << 20
 /** How long the screen is still before the last frame is encoded again, to sharpen it. */
 let STILL_SECONDS = 0.3
+/**
+ * In a Mac VM, ScreenCaptureKit's stream reports a small change in Chrome,
+ * such as a typed key, as no change, until something asks the window server
+ * for the screen. A tiny screenshot does, so while a viewer watches, the
+ * server takes one this often, and more often for a while after input, but
+ * not while the stream sends frames anyway, as in a drag (060).
+ */
+let KICK_SECONDS = 0.25
+let KICK_INPUT_SECONDS = 0.03
+let KICK_AFTER_INPUT_SECONDS = 0.2
+/** Whether this Mac is a VM, as macOS says. */
+let IN_VM: Bool = {
+  var value: Int32 = 0
+  var size = MemoryLayout<Int32>.size
+  return sysctlbyname("kern.hv_vmm_present", &value, &size, nil, 0) == 0 && value == 1
+}()
 /** How long the server stays up with no client. */
 let IDLE_EXIT_SECONDS = 60.0
 /** BB_STREAM_TRACE=1 logs each pointer event's wait before it is posted. */
@@ -515,6 +531,13 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
   private var lastClientAt = Date()
   private let input = Input()
   private var pasteboardCount = NSPasteboard.general.changeCount
+  /** The capture's filter, for the tiny screenshots in a VM, and their timer. */
+  private var kickFilter: SCContentFilter?
+  private var kickTimer: DispatchSourceTimer?
+  private var kicking = false
+  private var lastKick = Date.distantPast
+  private var lastFrame = Date.distantPast
+  private var lastInput = Date.distantPast
   private var clipboardParts: [String: Data] = [:]
 
   func start(path: String) {
@@ -627,16 +650,19 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
         if let last { encodeLast(last) }
       }
     case "kd", "ku":
+      inputCame()
       DispatchQueue.main.async { self.input.key(number(1), down: verb == "kd") }
     case "kr":
       DispatchQueue.main.async { self.input.releaseKeys() }
     case "m":
+      inputCame()
       let at = Date()
       DispatchQueue.main.async {
         self.input.pointer(px: Double(number(1)), py: Double(number(2)), next: number(3))
         if TRACE { log("m \(number(1)) at +\(Int(Date().timeIntervalSince(at) * 1000)) ms, \(Int(Date().timeIntervalSince1970 * 1000) % 100000)") }
       }
     case "m2":
+      inputCame()
       DispatchQueue.main.async { self.input.wheel(next: number(3), count: number(4)) }
     case "cw":
       if fields.count > 1, let data = Data(base64Encoded: fields[1]) { paste(data) }
@@ -671,6 +697,9 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
     } else if !wanted, let stream {
       self.stream = nil
       capturing = nil
+      kickTimer?.cancel()
+      kickTimer = nil
+      kickFilter = nil
       stream.stopCapture { _ in }
       encoder?.stop()
       encoder = nil
@@ -706,6 +735,8 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
         starting = false
         stream = made
         capturing = (width, height)
+        kickFilter = filter
+        startKicks()
         log("capturing \(width)x\(height)")
         if !clients.values.contains(where: { $0.wantsVideo }) { updateCapture() }
       }
@@ -715,6 +746,39 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
         starting = false
         for client in clients.values { client.close() }
       }
+    }
+  }
+
+  /** Input from a viewer: in a VM, tiny screenshots follow it for a while. */
+  private func inputCame() {
+    guard IN_VM else { return }
+    queue.async { self.lastInput = Date() }
+  }
+
+  /** In a VM, the timer of tiny screenshots while the capture runs. On the server's queue. */
+  private func startKicks() {
+    guard IN_VM, kickTimer == nil else { return }
+    let timer = DispatchSource.makeTimerSource(queue: queue)
+    timer.schedule(deadline: .now(), repeating: KICK_INPUT_SECONDS)
+    timer.setEventHandler { [weak self] in self?.kickIfDue() }
+    timer.resume()
+    kickTimer = timer
+  }
+
+  /** A tiny screenshot, one at a time, often after input and every KICK_SECONDS otherwise. On the server's queue. */
+  private func kickIfDue() {
+    guard let filter = kickFilter, !kicking else { return }
+    let now = Date()
+    if now.timeIntervalSince(lastFrame) < KICK_INPUT_SECONDS { return }
+    guard now.timeIntervalSince(lastInput) < KICK_AFTER_INPUT_SECONDS || now.timeIntervalSince(lastKick) >= KICK_SECONDS else { return }
+    kicking = true
+    lastKick = now
+    let tiny = SCStreamConfiguration()
+    tiny.sourceRect = CGRect(x: 0, y: 0, width: 8, height: 8)
+    tiny.width = 16
+    tiny.height = 16
+    SCScreenshotManager.captureSampleBuffer(contentFilter: filter, configuration: tiny) { [weak self] _, _ in
+      self?.queue.async { self?.kicking = false }
     }
   }
 
@@ -734,6 +798,7 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
     else { return }
     let frame = (buffer: buffer, time: CMSampleBufferGetPresentationTimeStamp(sample))
     last = frame
+    lastFrame = Date()
     encodeLast(frame)
     // A still screen: the same frame twice more, which sharpens it.
     still?.cancel()
