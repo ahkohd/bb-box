@@ -373,7 +373,7 @@ function rpc(boxes, options = {}) {
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
     state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null }),
-    desktop: ({ box: ref }) => ({ box: find(ref) ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
+    desktop: ({ box: ref }) => ({ box: find(ref) ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, sharp: options.sharp ?? null }),
     ping: () => null,
     allBoxes: () => [
       ...(options.machines ?? []).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
@@ -864,7 +864,7 @@ export const scenes = {
     height: 480,
     props: { threadId: THREAD, params: { box: "box_2" } },
     // This tab holds control: the holder is read when the RPC answers, by which time the tab's viewer ID is in sessionStorage.
-    rpc: rpc([{ ...desktop, control: { owner: "human", get holder() { return sessionStorage.getItem("bb-box:viewer:box_2") ?? "viewer"; }, takenFrom: null } }]),
+    rpc: rpc([{ ...desktop, control: { owner: "human", get holder() { return sessionStorage.getItem("bb-box:viewer:box_2") ?? "viewer"; }, takenFrom: null } }], { sharp: false }),
     after: async (root) => {
       await wait(300);
       try {

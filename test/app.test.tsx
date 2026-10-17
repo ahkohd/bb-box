@@ -17,7 +17,7 @@ import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
-import { CLIPBOARD_MAX_BYTES, SelkiesSession } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, SelkiesSession, forgetFullColour, spsCodec } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -418,7 +418,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -442,7 +442,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null }),
-    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false }),
+    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, sharp: options.sharp ?? null }),
     profile: async () => ({ lines: [] }),
     "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
     "images.list": () => ({ images: options.rebuildable ?? [] }),
@@ -450,6 +450,10 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     "images.refresh": () => {
       changes.push("images.refresh");
       return options.refusal ? { started: false, message: options.refusal } : { started: true, message: null };
+    },
+    "desktop.sharp": ({ on }) => {
+      changes.push(`desktop.sharp ${on}`);
+      return { error: null };
     },
     "setup.desktop": ({ hostId, size }) => {
       changes.push(`setup.desktop ${hostId}${size ? ` ${JSON.stringify(size)}` : ""}`);
@@ -2135,14 +2139,21 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
 /** WebCodecs, which jsdom lacks: each decoder shows each chunk at once, as a 1280x800 frame. */
 class FakeDecoder {
   static made: FakeDecoder[] = [];
+  /** Whether this browser decodes 4:4:4, as isConfigSupported answers. */
+  static fullColour = true;
+  static async isConfigSupported(config: { codec: string }) {
+    return { supported: !/^avc1\.f4/i.test(config.codec) || FakeDecoder.fullColour, config };
+  }
   state = "unconfigured";
+  readonly codecs: string[] = [];
   readonly chunks: { type: string; timestamp: number }[] = [];
   readonly #output: (frame: unknown) => void;
   constructor(init: { output: (frame: unknown) => void }) {
     this.#output = init.output;
     FakeDecoder.made.push(this);
   }
-  configure() {
+  configure(config: { codec: string }) {
+    this.codecs.push(config.codec);
     this.state = "configured";
   }
   decode(chunk: { type: string; timestamp: number }) {
@@ -2157,6 +2168,8 @@ class FakeDecoder {
 /** Puts WebCodecs and a secure context in place for a test that shows video, and takes them away after. */
 function withVideo() {
   FakeDecoder.made = [];
+  FakeDecoder.fullColour = true;
+  forgetFullColour();
   vi.stubGlobal("VideoDecoder", FakeDecoder);
   vi.stubGlobal("EncodedVideoChunk", class {
     readonly type: string;
@@ -2347,6 +2360,60 @@ test("a video viewer keeps the desktop's size as it takes control and as its vid
     session.dispose();
   } finally {
     vi.useRealTimers();
+    undo();
+  }
+});
+
+test("a desktop that can be Sharp offers it in its menu, with its cost; one that cannot does not", async () => {
+  const { handlers, changes } = server([desktopBox()], { sharp: false });
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  act(() => void novnc.FakeRfb.made[0]!.dispatchEvent(new Event("connect")));
+  const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+  const item = within(menu).getByRole("menuitemcheckbox", { name: /^Sharp/ });
+  expect(item.getAttribute("aria-checked")).toBe("false");
+  expect(item.textContent).toContain("About three times the CPU while shown; best with 8 cores or more.");
+  fireEvent.click(item);
+  await waitFor(() => expect(changes).toContain("desktop.sharp true"));
+  cleanup();
+  dropAllKept();
+  const none = desktopTab(server([desktopBox()]).handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made.length).toBeGreaterThan(1));
+  act(() => void novnc.FakeRfb.made.at(-1)!.dispatchEvent(new Event("connect")));
+  const other = await openMenu(none.getByRole("button", { name: "Desktop actions" }));
+  expect(within(other).queryByRole("menuitemcheckbox", { name: /^Sharp/ })).toBeNull();
+});
+
+test("the codec of a key frame comes from its SPS, so a 4:4:4 stream gets a decoder for its profile", () => {
+  const sps = (profile: number, flags: number, level: number) => new Uint8Array([0, 0, 0, 1, 0x67, profile, flags, level, 0x91, 0, 0, 0, 1, 0x68, 0xee]);
+  expect(spsCodec(sps(0xf4, 0x00, 0x2a))).toBe("avc1.F4002A");
+  expect(spsCodec(sps(0x42, 0xe0, 0x1f))).toBe("avc1.42E01F");
+  expect(spsCodec(new Uint8Array([0, 0, 0, 1, 0x65, 1, 2, 3]))).toBeNull();
+});
+
+test("a video viewer says whether its browser decodes 4:4:4, and its decoder follows a key frame's profile", async () => {
+  const undo = withVideo();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    await waitFor(() => expect(socket.sent).toContain("BB_FULLCOLOR,1"));
+    // A 4:4:4 key frame: the decoder is set up again for its profile, and decodes it.
+    const frame = new Uint8Array([4, 0x11, 0, 7, 0, 0, 7, 128, 4, 56, 0, 0, 0, 0, 0, 1, 0x67, 0xf4, 0x00, 0x2a, 0x91]);
+    socket.onmessage?.({ data: frame.buffer });
+    const decoder = FakeDecoder.made.at(-1)!;
+    expect(decoder.codecs).toEqual(["avc1.42E01F", "avc1.F4002A"]);
+    expect(decoder.chunks.map((chunk) => chunk.type)).toEqual(["key"]);
+    session.dispose();
+    // A browser without 4:4:4 says so.
+    forgetFullColour();
+    FakeDecoder.fullColour = false;
+    const other = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=w&stream=selkies");
+    const second = FakeSocket.made.at(-1)!;
+    act(() => second.open());
+    await waitFor(() => expect(second.sent).toContain("BB_FULLCOLOR,0"));
+    other.dispose();
+  } finally {
     undo();
   }
 });

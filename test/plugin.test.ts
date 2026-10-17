@@ -2535,7 +2535,7 @@ test("the desktop route relays a box's desktop, and only the viewer with control
   assert.match(sentTo(noId).subarray(12).toString(), /The viewer gave no viewer ID/);
 
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
-  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false });
+  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false, sharp: null });
 });
 
 test("the desktop route carries a box's Selkies stream message by message, and only the viewer with control reaches the box, sizes it and gets its clipboard (056)", async (t) => {
@@ -2967,6 +2967,91 @@ async function desktopBox(options: { computer?: SetupOptions["computer"]; kind?:
   writeFileSync(file, JSON.stringify(tasksDesktop()));
   return { ...started, box, file };
 }
+
+test("Sharp doubles a Linux desktop's pixels with Xfce at 2x, keeps them through a resize in control, and goes back with Xfce's own theme", async (t) => {
+  // Xfce's settings, as xfconf-query keeps them, in a file in the box's home; the panel's restarts counted.
+  const bin = tempDir("xfce");
+  const shims: Record<string, string> = {
+    "xfconf-query": `echo "$*" >> "$HOME/xfconf.log"; case "$*" in *"/general/theme") echo Arc ;; esac`,
+    "xfce4-panel": `echo restart >> "$HOME/panel.log"`,
+  };
+  for (const [name, script] of Object.entries(shims)) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  const { harness, box, world, tool } = await desktopBox({ kind: FAKE_SELKIES_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  const home = /stdout:\n(.*)\n/.exec(text(await tool("box_run", { box: box.name, command: "pwd" })))![1]!;
+  const rfb = world.backend!.rfb;
+  const sharp = async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { sharp: boolean | null }).sharp;
+  const set = async (on: boolean) => (await harness.behavior.callRpc("desktop.sharp", { threadId: THREAD, box: box.id, on })) as { error: string | null };
+  assert.equal(await sharp(), false);
+  assert.deepEqual([rfb.width, rfb.height], [1280, 800]);
+
+  assert.deepEqual(await set(true), { error: null });
+  assert.deepEqual([rfb.width, rfb.height], [2560, 1600], "twice the pixels");
+  assert.equal(await sharp(), true);
+  const log = () => readFileSync(join(home, "xfconf.log"), "utf8").trim().split("\n");
+  assert.deepEqual(log(), ["-c xfwm4 -p /general/theme", "-c xsettings -p /Gdk/WindowScalingFactor -s 2", "-c xfwm4 -p /general/theme -s Default-xhdpi"]);
+  assert.deepEqual(await set(true), { error: null }, "on again changes nothing");
+  assert.equal(log().length, 3);
+
+  // A resize in control keeps the density: the viewer's CSS pixels, twice over.
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
+  await until("Selkies' first message", async () => session.sent.includes("MODE websockets"));
+  await world.backend!.selkies.frame(1, true, 2560, 1600);
+  await until("the frame", async () => session.sent.some((message) => typeof message !== "string"));
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  assert.deepEqual([rfb.width, rfb.height], [2560, 1600], "taking control changes nothing");
+  await session.receive("r,1000x700");
+  await until("the resize at twice the size", async () => rfb.width === 2000 && rfb.height === 1400);
+  await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
+  await until("the size the agent had, at Sharp's density", async () => rfb.width === 2560 && rfb.height === 1600);
+  await session.close();
+
+  assert.deepEqual(await set(false), { error: null });
+  assert.deepEqual([rfb.width, rfb.height], [1280, 800]);
+  assert.equal(await sharp(), false);
+  assert.deepEqual(log().slice(3), ["-c xsettings -p /Gdk/WindowScalingFactor -s 1", "-c xfwm4 -p /general/theme -s Arc"]);
+  await until("the panel restarted each time", async () => readFileSync(join(home, "panel.log"), "utf8").trim().split("\n").length === 2);
+});
+
+test("a desktop that cannot be Sharp says so, and refuses it", async (t) => {
+  const { harness, box } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  assert.equal(((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { sharp: boolean | null }).sharp, null);
+  assert.match(((await harness.behavior.callRpc("desktop.sharp", { threadId: THREAD, box: box.id, on: true })) as { error: string }).error, /cannot be Sharp: only Linux desktops drawn by the CPU can/);
+});
+
+test("a box streams in 4:4:4 while every viewer's browser decodes it, and in 4:2:0 once one cannot", async (t) => {
+  const { harness, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  const selkies = world.backend!.selkies;
+  const colour = (on: boolean) => `SETTINGS,${JSON.stringify({ displayId: "primary", video_fullcolor: on })}`;
+  const settings = () => selkies.pages.filter((page) => page.role === "controller").flatMap((page) => page.received.filter((message) => typeof message === "string" && message.includes("video_fullcolor")));
+  const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-one-0001&stream=selkies`);
+  await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));
+  await one.receive("BB_FULLCOLOR,1");
+  await until("4:4:4", async () => settings().length === 1);
+  assert.deepEqual(settings(), [colour(true)]);
+  const two = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-two-0002&stream=selkies`);
+  await until("the second viewer", async () => two.sent.includes("MODE websockets"));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.deepEqual(settings(), [colour(true)], "nothing changes before the new viewer says");
+  await two.receive("BB_FULLCOLOR,0");
+  await until("4:2:0", async () => settings().length === 2);
+  await two.close();
+  await until("4:4:4 again, with that viewer gone", async () => settings().length === 3);
+  assert.deepEqual(settings(), [colour(true), colour(false), colour(true)]);
+  assert.ok(!selkies.pages.some((page) => page.received.some((message) => typeof message === "string" && message.startsWith("BB_FULLCOLOR"))), "Selkies never sees bb-box's own message");
+  await one.close();
+});
 
 test("a macOS desktop whose server moves no clipboard has it through pbcopy and pbpaste in the box, as UTF-8, for the viewer with control only (#464)", async (t) => {
   // The pasteboard, as a Mac's pbcopy and pbpaste have it, kept in a file in the box's home.

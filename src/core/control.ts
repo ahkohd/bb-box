@@ -248,6 +248,14 @@ export class Control {
     if (state.owner === "agent" && !state.resized) state.size = size;
   }
 
+  /** The desktop changed density, as Sharp does: the size to restore keeps up, so hand-back keeps the density. */
+  rescale(boxId: string, factor: number): void {
+    const state = this.#boxes.get(boxId);
+    if (!state?.size) return;
+    state.size = { width: Math.round(state.size.width * factor), height: Math.round(state.size.height * factor) };
+    this.#store();
+  }
+
   /** A resize the relay passed from the holder. */
   resized(boxId: string, viewer: string, screen: Screen | null): void {
     const state = this.#boxes.get(boxId);

@@ -553,6 +553,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   };
   const video = state?.video ?? null;
   const videoPossible = video === true && !videoFailed && canShowVideo();
+  /** Whether the desktop is Sharp, twice the pixels at twice the scale; null where it cannot be. */
+  const sharp = state?.sharp ?? null;
   useEffect(() => {
     if (video === null) return;
     if (!videoPossible) {
@@ -673,8 +675,9 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
 
   // In the commit that shows who has control, so the toolbar never says "You have control" while input is still off (#116).
   useLayoutEffect(() => {
-    session.current?.setControl(mine, resizable);
-  }, [mine, resizable, connection]);
+    // A Sharp desktop keeps its density through the video viewer's resizes; noVNC would ask for its pane's own size, so it asks for none.
+    session.current?.setControl(mine, resizable && !(sharp === true && stream === "rfb"));
+  }, [mine, resizable, connection, sharp, stream]);
   const guestOs = box?.os ?? null;
   useLayoutEffect(() => {
     if (guestOs) session.current?.setGuest(guestOs);
@@ -741,6 +744,17 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     setActing(true);
     try {
       setProblem((await task()).error);
+    } catch (caught) {
+      setProblem(message(caught));
+    } finally {
+      setActing(false);
+    }
+    await refresh();
+  };
+  const toggleSharp = async (on: boolean) => {
+    setActing(true);
+    try {
+      setProblem((await rpc.call("desktop.sharp", { threadId, box: boxId, on })).error);
     } catch (caught) {
       setProblem(message(caught));
     } finally {
@@ -908,6 +922,16 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                   >
                     <MonitorGlyph />
                     Show as VNC
+                  </DropdownMenuCheckboxItem>
+                ) : null}
+                {showing && sharp !== null ? (
+                  // Sharp (the owner's note of 16 October 2026): twice the pixels at twice Xfce's scale, so text is sharp on a 2x screen.
+                  <DropdownMenuCheckboxItem className="items-start gap-2" checked={sharp} disabled={acting} onCheckedChange={(checked) => void toggleSharp(checked)}>
+                    <MonitorGlyph />
+                    <span className="min-w-0">
+                      <span className="block">Sharp</span>
+                      <span className="block text-2xs leading-snug text-muted-foreground">Twice the pixels, for sharp text. About three times the CPU while shown; best with 8 cores or more.</span>
+                    </span>
                   </DropdownMenuCheckboxItem>
                 ) : null}
                 {showing ? (
