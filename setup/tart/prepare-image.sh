@@ -5,7 +5,8 @@
 #   ./prepare-image.sh --key '<bb-box public key>' [--key <another>]... [--from <image>] [--name <vm>] [--bb-url <url>] [--replace]
 #
 # It clones the base image to <name>-build, boots it, runs guest/customize.sh,
-# guest/xcode.sh and guest/launcher.sh in it as its user, shuts it down, grants
+# guest/xcode.sh and guest/launcher.sh in it as its user, builds bb-box-stream
+# from ../ssh-pool/mac-stream.swift there (060), shuts it down, grants
 # Cua Driver Accessibility and Screen
 # Recording on its disk (grant-tcc.sh), boots it again to check the grants,
 # shuts it down and renames it to <name>. Boxes cloned from an image it
@@ -47,6 +48,8 @@ done
 [ -n "$key" ] || die "give bb-box's public key with --key, as bb box doctor shows it"
 
 here=$(cd "$(dirname "$0")" && pwd)
+stream_source=$here/../ssh-pool/mac-stream.swift
+[ -f "$stream_source" ] || die "found no $stream_source: run this from a whole copy of setup/"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:/run/current-system/sw/bin:$PATH" TART_NO_AUTO_PRUNE=1
 command -v tart >/dev/null || die "install Tart first: brew install openai/tools/tart"
 [ "$(uname -m)" = arm64 ] || die "Tart runs macOS VMs on Apple silicon only"
@@ -117,6 +120,14 @@ tart exec -i "$build" /bin/sh -s <"$here/guest/xcode.sh" >"$work/xcode.txt" || {
 grep -v '^[a-z-]*=' "$work/xcode.txt" || :
 step "building bb-box's launcher for desktop commands in $build"
 tart exec -i "$build" /bin/sh -s <"$here/guest/launcher.sh" || die "building bb-box's launcher failed"
+# 060: bb-box-stream, each box's desktop as H.264 video for the panel, from
+# VideoToolbox's hardware encoder, which the VM passes to the Mac's. It runs
+# over SSH in the desktop session, with the grants SSH has there. Built with
+# the image's Xcode, as setup-mac.sh builds it on a pool Mac.
+step "building bb-box-stream in $build"
+tart exec -i "$build" /bin/sh -c 'set -e; d=$(mktemp -d); cat >"$d/mac-stream.swift"; swiftc -O -swift-version 5 -o "$d/bb-box-stream" "$d/mac-stream.swift" 2>"$d/log" || { cat "$d/log" >&2; exit 1; }; sudo -n install -d -m 0755 /usr/local/bin; sudo -n install -m 0755 -o root -g wheel "$d/bb-box-stream" /usr/local/bin/bb-box-stream; rm -rf "$d"' \
+  <"$stream_source" || die "building bb-box-stream failed"
+stream=$(shasum -a 256 "$stream_source" | cut -c1-12)
 # The pins' SHA-256 is of this script's pin lines, as bb-box hashes them.
 step "recording $build_id in $build"
 os=$(tart exec "$build" sw_vers -productVersion)
@@ -126,8 +137,8 @@ pins=$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/prepare-image.sh" | sh
 quoted() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf null; fi; }
 # Xcode's, the iOS Simulator's and Metal's versions, where the base has Xcode.
 xcode_tools=$(for tool in xcode ios-simulator metal; do v=$(sed -n "s/^$tool=//p" "$work/xcode.txt"); [ -z "$v" ] || printf ',"%s":"%s"' "$tool" "$v"; done)
-record=$(printf '{"contract":1,"image":"standard","kind":"macos","arch":"arm64","build":"%s","built":"%s","base":null,"os":"macOS %s","aptSnapshot":null,"pins":"%s","bbApp":%s,"tools":{"cua-driver":"%s","blackhole":"%s"%s},"nvidia":null,"layer":null,"sizeGiB":null}' \
-  "$build_id" "$built" "$os" "$pins" "$(quoted "$app")" "$CUA_VERSION" "$BLACKHOLE_VERSION" "${node:+,\"node\":\"$node\"}$xcode_tools")
+record=$(printf '{"contract":1,"image":"standard","kind":"macos","arch":"arm64","build":"%s","built":"%s","base":null,"os":"macOS %s","aptSnapshot":null,"pins":"%s","bbApp":%s,"tools":{"cua-driver":"%s","blackhole":"%s","bb-box-stream":"%s"%s},"nvidia":null,"layer":null,"sizeGiB":null}' \
+  "$build_id" "$built" "$os" "$pins" "$(quoted "$app")" "$CUA_VERSION" "$BLACKHOLE_VERSION" "$stream" "${node:+,\"node\":\"$node\"}$xcode_tools")
 printf '%s\n' "$record" | tart exec -i "$build" sudo -n sh -c 'mkdir -p /usr/local/share/bb-box && cat >/usr/local/share/bb-box/image.json && chmod 0644 /usr/local/share/bb-box/image.json'
 step "shutting $build down"
 shutdown
@@ -150,6 +161,7 @@ done
 cat "$work/permissions.json"
 grep -q '"accessibility": *true' "$work/permissions.json" || die "Cua Driver has no Accessibility in $build"
 grep -q '"screen_recording": *true' "$work/permissions.json" || die "Cua Driver has no Screen Recording in $build"
+tart exec "$build" test -x /usr/local/bin/bb-box-stream || die "$build has no bb-box-stream"
 tart exec "$build" system_profiler SPAudioDataType | grep -A 8 'BlackHole 2ch:' | grep -q 'Input Channels: 2' ||
   die "BlackHole gives $build no input device"
 shutdown

@@ -118,6 +118,9 @@ this PR leaves it: OpenH264 at most QP 26, and standard font smoothing.
   show the same spread of the window's edge down its rows in about half
   their frames: Windows draws a moving window so, and video's frames are
   whole captures of the compositor, so it is the screen's, not a tear.
+- **Torn frames:** the drag check counted 2 torn frames on video. They
+  have not been examined, so it is not known whether they come from the
+  stream or from how Windows draws a moving window.
 - **Bitrate:** about 20 kbit/s watching a still screen, which sends a key
   frame and two sharpening frames, then nothing; 1.6 Mbit/s for a page
   that moves every frame, at 24 fps.

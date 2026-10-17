@@ -35,6 +35,7 @@ import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { setupDir } from "../setup-dir.ts";
 import { startMacInput } from "../../core/mac-input.ts";
+import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { EXIT, grantInput, parseGrant, parseGranted } from "../ssh-pool/protocol.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -193,14 +194,17 @@ const RECORD_PATH: Readonly<Record<string, string>> = { linux: "/usr/share/bb-bo
 
 /**
  * A macOS box's checks as its user (049), as its image has no check of its
- * own: the tools and Cua Driver, and Xcode where its record says it has it
- * (#475), a line per check, with ok or FAIL.
+ * own: the tools and Cua Driver, and Xcode and bb-box-stream where its
+ * record says it has them (#475, 060), a line per check, with ok or FAIL.
  */
 export const MAC_CHECK = String.raw`t() { name=$1; shift; if out=$("$@" 2>&1); then echo "$name ok   $(echo "$out" | head -n 1)"; else echo "$name FAIL $(echo "$out" | head -n 1)"; fi; }
 t node node --version
 t git git --version
 t cua-driver /usr/local/bin/cua-driver --version
 t "image record" test -s /usr/local/share/bb-box/image.json
+if grep -q '"bb-box-stream"' /usr/local/share/bb-box/image.json 2>/dev/null; then
+  t bb-box-stream test -x /usr/local/bin/bb-box-stream
+fi
 if grep -q '"xcode"' /usr/local/share/bb-box/image.json 2>/dev/null; then
   t xcode xcodebuild -version
   t "xcode licence and first launch" sh -c 'xcodebuild -license check && xcodebuild -checkFirstLaunchStatus'
@@ -245,6 +249,8 @@ export interface TartBackendOptions {
   readonly readyTimeoutMs?: number;
   /** What runs the Mac helper's VM commands in a macOS VM, instead of machine-mac.sh through sudo: a fake, in tests. */
   readonly macHelper?: string;
+  /** Where a macOS VM's bb-box-stream is, instead of MAC_STREAM: a fake, in tests. */
+  readonly macStream?: string;
 }
 
 interface SshKeys {
@@ -410,6 +416,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         features: [],
         command: SSH_COMMAND,
         // Tart's VNC server shares the pasteboard with its host only (#464).
+        // And video, once every Mac's image has bb-box-stream (060): #states.
         displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" }],
         computerUse: cua,
         enrol: true,
@@ -612,6 +619,8 @@ export class TartBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Each VM's address while bb-box knows it: learnt when it starts, forgotten when it stops. */
   readonly #addresses = new Map<string, string>();
+  /** Whether each macOS VM has bb-box-stream, as its image gives it or not. */
+  readonly #streams = new Map<string, boolean>();
   /** The command that runs machine-mac.sh in a macOS VM, made once, for its grants (058). */
   #macHelper: string | null = null;
   /** VMs being started for boxes or warm pools, by VM, until they run or their start ends. */
@@ -668,6 +677,25 @@ export class TartBackend implements Backend {
     return this.#kinds;
   }
 
+  /**
+   * Declares macos-desktop's video, from bb-box-stream (060), while every Mac
+   * that answered has it in its image's record, as the SSH host pool does from
+   * every Mac's survey; and stops declaring it when one does not.
+   */
+  #declareVideo(states: ReadonlyMap<string, MacState | Error>): void {
+    const index = this.#kinds.findIndex((kind) => kind.id === "macos-desktop");
+    const image = this.#config.kinds["macos-desktop"].image;
+    if (index < 0 || !image) return;
+    const answered = [...states.values()].filter((state): state is MacState => !(state instanceof Error));
+    if (!answered.length) return;
+    const video = answered.every((state) => state.records.get(image)?.tools?.["bb-box-stream"] !== undefined);
+    const kind = this.#kinds[index]!;
+    const has = kind.capabilities.displays.some((display) => display.protocol === "selkies");
+    if (video === has) return;
+    const displays = video ? [...kind.capabilities.displays, MAC_VIDEO] : kind.capabilities.displays.filter((display) => display.protocol !== "selkies");
+    this.#kinds[index] = { ...kind, capabilities: { ...kind.capabilities, displays } };
+  }
+
   #kind(id: string): BoxKind {
     const kind = this.#kinds.find((candidate) => candidate.id === id);
     if (!kind) throw new BackendError("unsupported", `${this.label} does not offer ${id} boxes.`);
@@ -707,7 +735,9 @@ export class TartBackend implements Backend {
     const entries = await Promise.all(
       this.#config.hosts.map(async (host) => [host.name, await this.#state(host, signal).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))))] as const),
     );
-    return new Map(entries);
+    const states = new Map(entries);
+    this.#declareVideo(states);
+    return states;
   }
 
   /**
@@ -1622,31 +1652,38 @@ export class TartBackend implements Backend {
     const os = guestOsOf(kind);
     const access = this.#vm(mac, address, os);
     const command = new SshTransport(ssh, access, os);
-    const displays = (capabilities?.displays ?? []).map(
-      (display): Display => ({
-        ...display,
-        label: "Desktop",
-        open: async (signal) => {
-          // A Linux desktop's own VNC server, through SSH to the VM.
-          if (os === "linux") {
-            const password = await this.#linuxVncPassword(command, signal);
-            return { route: ssh.route(access, LINUX_VNC_PORT), auth: password ? { type: "vnc-password", password } : { type: "none" } };
-          }
-          // A macOS desktop is Tart's VNC server, through the run's holder,
-          // which keeps the run's one connection to it (#406). The server
-          // drops the wheel, so its notches go to the input helper in the
-          // VM's desktop session, which posts them as a mouse's.
-          const held = await this.#held(host, mac, guest.ref, ssh, signal);
-          return {
-            ...held,
-            inputTakes: "wheel" as const,
-            input: (events: DisplayInputEvents, inputSignal?: AbortSignal) =>
-              startMacInput(command, events, `The desktop's wheel helper did not start in ${guest.ref}: its user may not be signed in to the desktop.`, inputSignal),
-          };
+    // Video where the kind declares it and this VM has bb-box-stream: a box of an older build, or of a project's image, may not.
+    const video = os === "macos" && (capabilities?.displays ?? []).some((display) => display.protocol === "selkies") && (await this.#hasStream(guest.ref, command));
+    const displays = (capabilities?.displays ?? []).flatMap((display): Display[] => {
+      if (display.protocol === "selkies") {
+        return video ? [{ ...display, label: "Desktop, as video", open: async () => ({ route: ssh.commandRoute(access, macStreamCommand()), auth: { type: "none" } }) }] : [];
+      }
+      return [
+        {
+          ...display,
+          label: "Desktop",
+          open: async (signal) => {
+            // A Linux desktop's own VNC server, through SSH to the VM.
+            if (os === "linux") {
+              const password = await this.#linuxVncPassword(command, signal);
+              return { route: ssh.route(access, LINUX_VNC_PORT), auth: password ? { type: "vnc-password", password } : { type: "none" } };
+            }
+            // A macOS desktop is Tart's VNC server, through the run's holder,
+            // which keeps the run's one connection to it (#406). The server
+            // drops the wheel, so its notches go to the input helper in the
+            // VM's desktop session, which posts them as a mouse's.
+            const held = await this.#held(host, mac, guest.ref, ssh, signal);
+            return {
+              ...held,
+              inputTakes: "wheel" as const,
+              input: (events: DisplayInputEvents, inputSignal?: AbortSignal) =>
+                startMacInput(command, events, `The desktop's wheel helper did not start in ${guest.ref}: its user may not be signed in to the desktop.`, inputSignal),
+            };
+          },
+          ...(os === "linux" ? { minSize: MIN_DESKTOP } : {}),
         },
-        ...(os === "linux" ? { minSize: MIN_DESKTOP } : {}),
-      }),
-    );
+      ];
+    });
     return { command, displays, access: { ssh: access, dockerHost: null } };
   }
 
@@ -2148,6 +2185,16 @@ export class TartBackend implements Backend {
     if (result.exitCode !== 0) throw new Error(`${vm} on ${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
   }
 
+  /** Whether a macOS VM has bb-box-stream, asked once a VM: a box keeps its image's. False, not kept, when it cannot be asked. */
+  async #hasStream(vm: string, command: SshTransport): Promise<boolean> {
+    const known = this.#streams.get(vm);
+    if (known !== undefined) return known;
+    const result = await command.run(`test -x ${quote(this.#options.macStream ?? MAC_STREAM)}`, { timeoutMs: 15_000, maxOutputBytes: 1024 }).catch(() => null);
+    if (!result) return false;
+    this.#streams.set(vm, result.exitCode === 0);
+    return result.exitCode === 0;
+  }
+
   /** The password a Linux desktop made at its first boot, or null when it asks for none. */
   async #linuxVncPassword(command: SshTransport, signal?: AbortSignal): Promise<string | null> {
     const result = await command.run(`cat ${LINUX_VNC_PASSWORD_FILE} 2>/dev/null || :`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 });
@@ -2387,7 +2434,8 @@ export class TartBackend implements Backend {
     const stamp = Date.now().toString(36);
     const vm = `${VM_PREFIX}img-refresh-${stamp}`;
     const dir = `.bb-box/tart/setup-${stamp}`;
-    const tar = spawnSync("tar", ["-C", setup, "-czf", "-", "tart", "proxmox-lxc"], { maxBuffer: 64 * 1024 * 1024 });
+    // bb-box-stream's source is the pool Mac's (060).
+    const tar = spawnSync("tar", ["-C", setup, "-czf", "-", "tart", "proxmox-lxc", "ssh-pool/mac-stream.swift"], { maxBuffer: 64 * 1024 * 1024 });
     if (tar.status !== 0) throw new Error(`tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
     const mac = new SshTransport(ssh, await this.#mac(host), "macos");
     const owner = ownerText({ install: this.#context.installId, kind: current.kind, "image-build": "standard", created: Date.now() });
