@@ -588,8 +588,9 @@ function HighResolutionItem({ checked, disabled, onChange }: { checked: boolean;
           <HighResolutionGlyph />
           High resolution
           <TooltipTrigger asChild>
-            <span data-testid="high-resolution-info" className="inline-flex text-muted-foreground" onPointerEnter={() => setOpen(true)} onPointerLeave={() => setOpen(false)}>
-              <Icon name="Info" className="size-3.5" aria-hidden />
+            {/* The size of the menu's 12 px text and of BB Box's other inline info icons; the padding, taken back by the margin, keeps a 20 px target to point at. */}
+            <span data-testid="high-resolution-info" className="-m-1 inline-flex items-center p-1 text-muted-foreground" onPointerEnter={() => setOpen(true)} onPointerLeave={() => setOpen(false)}>
+              <Icon name="Info" className="size-3" aria-hidden />
             </span>
           </TooltipTrigger>
           <span id={id} className="sr-only">
