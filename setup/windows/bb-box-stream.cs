@@ -574,11 +574,41 @@ class Capture : IDisposable {
   /** The screen into Frame, through GDI. */
   void CopyScreen() {
     if (GetSystemMetrics(0) != Width || GetSystemMetrics(1) != Height) throw new Exception("the screen's size changed");
-    GCHandle pin = GCHandle.Alloc(Frame, GCHandleType.Pinned);
-    try {
-      using (Bitmap bitmap = new Bitmap(Width, Height, Width * 4, PixelFormat.Format32bppRgb, pin.AddrOfPinnedObject()))
-      using (Graphics g = Graphics.FromImage(bitmap)) g.CopyFromScreen(0, 0, 0, 0, new Size(Width, Height));
-    } finally { pin.Free(); }
+    // BitBlt into a DIB section made once, about 10% quicker than GDI+'s CopyFromScreen, which makes and copies back a
+    // DIB of its own each time (060). Reading the screen takes about 16 ms however little of it is read.
+    if (copyDib == IntPtr.Zero) {
+      byte[] header = new byte[40];
+      BitConverter.GetBytes(40).CopyTo(header, 0);
+      BitConverter.GetBytes(Width).CopyTo(header, 4);
+      BitConverter.GetBytes(-Height).CopyTo(header, 8);
+      BitConverter.GetBytes((short)1).CopyTo(header, 12);
+      BitConverter.GetBytes((short)32).CopyTo(header, 14);
+      screenDc = GetDC(IntPtr.Zero);
+      copyDc = CreateCompatibleDC(screenDc);
+      copyDib = CreateDIBSection(screenDc, header, 0, out copyBits, IntPtr.Zero, 0);
+      if (copyDib == IntPtr.Zero) throw new Exception("GDI could not make a DIB section to copy the screen into");
+      SelectObject(copyDc, copyDib);
+    }
+    if (!BitBlt(copyDc, 0, 0, Width, Height, screenDc, 0, 0, SRCCOPY)) throw new Exception("GDI could not copy the screen");
+    GdiFlush();
+    Marshal.Copy(copyBits, Frame, 0, Frame.Length);
+  }
+
+  [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr window);
+  [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr window, IntPtr dc);
+  [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+  [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+  [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
+  [DllImport("gdi32.dll")] static extern bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
+  [DllImport("gdi32.dll")] static extern IntPtr CreateDIBSection(IntPtr dc, byte[] info, uint usage, out IntPtr bits, IntPtr section, uint offset);
+  [DllImport("gdi32.dll")] static extern bool GdiFlush();
+  const uint SRCCOPY = 0x00CC0020;
+  IntPtr screenDc, copyDc, copyDib, copyBits;
+
+  void StopCopy() {
+    if (copyDc != IntPtr.Zero) { DeleteDC(copyDc); copyDc = IntPtr.Zero; }
+    if (copyDib != IntPtr.Zero) { DeleteObject(copyDib); copyDib = IntPtr.Zero; }
+    if (screenDc != IntPtr.Zero) { ReleaseDC(IntPtr.Zero, screenDc); screenDc = IntPtr.Zero; }
   }
 
   /** The pointer's cursor now, or zero while it is hidden. */
@@ -625,7 +655,7 @@ class Capture : IDisposable {
     return copy;
   }
 
-  public void Dispose() { StopDuplication(); }
+  public void Dispose() { StopDuplication(); StopCopy(); }
 }
 
 // MARK: Encoder
