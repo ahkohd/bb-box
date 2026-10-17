@@ -275,6 +275,8 @@ interface Placing {
 
 /** The longest a standard image's prepare script may run. */
 const BUILD_TIMEOUT_MS = 60 * 60_000;
+/** How old an image refresh's build VM or an image box is before the upkeep removes it as left over: older than any refresh or try runs. */
+const LEFTOVER_MS = 4 * 60 * 60_000;
 /** How long the Mac may be out of reach while its prepare script runs, before the build counts as lost (#707). */
 const BUILD_LOST_MS = 10 * 60_000;
 /** How often bb-box looks at a running build's log. */
@@ -1372,9 +1374,47 @@ export class TartBackend implements Backend {
   // for Windows, saved by QEMU (046), which hold no VM slot and no memory,
   // only disk, until a box takes one and resumes or restores it.
 
-  /** Retires warm VMs that serve no pool now, or beyond their pool's count, then fills what is missing. */
-  maintain(signal?: AbortSignal): Promise<void> {
-    return this.#upkeep.run(signal ?? this.#stopping.signal);
+  /**
+   * Retires warm VMs that serve no pool now, or beyond their pool's count,
+   * and fills what is missing, then removes what an image refresh or try
+   * left when it could not reach the Mac to clean up.
+   */
+  async maintain(signal?: AbortSignal): Promise<void> {
+    try {
+      await this.#upkeep.run(signal ?? this.#stopping.signal);
+    } finally {
+      await this.#leftovers(signal).catch((error) => this.#context.logError("image leftovers", error));
+    }
+  }
+
+  /**
+   * Deletes this install's refresh build VMs, and its image boxes, older
+   * than LEFTOVER_MS (#707): a refresh or try removes them as it ends, but
+   * not when the Mac was out of reach then, and a running one holds one of
+   * the Mac's two macOS slots. A refresh build's name holds its start, and
+   * its prepare script's own VM is the name with -build, which has no owner
+   * file. Builds of projects' images are the bakes' to remove.
+   */
+  async #leftovers(signal?: AbortSignal): Promise<void> {
+    const states = await this.#states(signal);
+    const now = Date.now();
+    for (const host of this.#on()) {
+      const state = states.get(host.name);
+      if (!state || state instanceof Error) continue;
+      const names = new Set([...state.vms.map((vm) => vm.name), ...state.owners.keys()]);
+      for (const vm of names) {
+        signal?.throwIfAborted();
+        const fields = state.owners.get(vm);
+        if (fields && fields.install !== this.#context.installId) continue;
+        const refresh = new RegExp(`^${VM_PREFIX}img-refresh-([0-9a-z]+)(?:-build)?$`).exec(vm);
+        const created = refresh ? parseInt(refresh[1]!, 36) : fields?.["image-box"] ? Number(fields.created) : NaN;
+        if (!Number.isFinite(created) || now - created < LEFTOVER_MS) continue;
+        const os = guestOsOf(fields?.kind ?? "macos");
+        await this.#delete(host, vm, os, null, signal);
+        await this.#run(host, forgetImageScript(vm), { timeoutMs: 30_000, signal });
+        this.#context.log?.(`Removed ${vm} on ${host.name}: ${refresh ? "an image refresh's build" : `an image box (${fields!["image-box"]})`} left ${Math.round((now - created) / 3_600_000)} h ago, as its run could not clean up.`);
+      }
+    }
   }
 
   /** Tops the pool up in the background after a box takes a warm VM. */
