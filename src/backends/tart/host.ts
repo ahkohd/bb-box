@@ -487,7 +487,10 @@ echo @config; tr -d '\n' < "$home/vms/$vm/config.json"; echo
  * when Tart exits first, exits 3 with its output, such as the system's limit
  * on VMs. The last run's output and exit are kept. A macOS VM's VNC holder
  * starts with its run, so it makes the run's first and only connection to
- * Tart's VNC server (#406).
+ * Tart's VNC server (#406). A suspended VM's saved state is read through
+ * once first: Virtualization reads it in small pieces, about 165 MB/s, so a
+ * 4.4 GiB state not in the Mac's file cache took 27 s to restore, where a
+ * read through takes 2 s, or 0.3 s when cached (#707).
  */
 export function startScript(vm: string, waitSeconds: number): string {
   return script(String.raw`vm=${quote(vm)}; out="$d/run/$vm.out"; x="$d/run/$vm.exit"
@@ -504,6 +507,8 @@ if [ "$(os_of "$vm")" = linux ]; then
 else
   set -- tart run --no-graphics --vnc-experimental --suspendable "$vm"
   up() { grep -q 'VNC server is running' "$out"; }
+  h=$HOME/.tart; [ -z "$TART_HOME" ] || h=$TART_HOME
+  [ ! -f "$h/vms/$vm/state.vzvmsave" ] || cat "$h/vms/$vm/state.vzvmsave" > /dev/null 2>&1 || :
 fi
 detach "$out" "$x" "$@" || { echo "tart run did not start for $vm." >&2; exit 1; }
 i=0

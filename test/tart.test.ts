@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
-import { baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
+import { baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
@@ -795,6 +795,14 @@ test("the upkeep removes an image refresh's build VMs and image boxes of this in
   ].sort(), "a recent refresh or box, another install's, and a project's build stay");
   assert.ok(!existsSync(join(owners, `bb-box-img-refresh-${old}`)));
   assert.ok(!existsSync(join(owners, "bb-box-image-0123456789ab")));
+});
+
+test("a suspended macOS VM's saved state is read through once before Tart restores it, which reads it in small pieces (#707)", () => {
+  const script = startScript("bb-box-warm-0123456789ab", 60);
+  const read = script.indexOf('cat "$h/vms/$vm/state.vzvmsave" > /dev/null');
+  assert.ok(read > 0, "the read is there");
+  assert.ok(read > script.indexOf("--suspendable") && read < script.indexOf("detach \"$out\""), "for a macOS VM, before its run starts");
+  assert.ok(script.indexOf('cat "$h/vms/$vm/state.vzvmsave"') > script.indexOf("tart run --no-graphics \"$vm\""), "not for a Linux VM, which Tart does not suspend");
 });
 
 test("the doctor judges each Tart image by the record beside it (049)", async () => {
