@@ -262,6 +262,11 @@ scene in Edge.
   frames a second where it showed about 35: still above VNC's 13. Encoding
   one frame while copying the next would win some of that back.
 - The 2 torn frames of the first Windows drag run, above, were these.
+- **Copying while encoding:** a thread of its own now copies the screen
+  while the frame before is encoded. On build.20261017-213805-cd97, two
+  runs each: a drag went from 25 and 28 frames a second to 34 and 34, a
+  scroll from 22 and 23 to 24 and 22, with no torn frame in either. While
+  Edge scrolls, the copy itself is the limit.
 - The box's CPU log read too low to be trusted in these runs, so they give
   no CPU figures.
 
