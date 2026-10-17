@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
-import { baseScript, crashSummary, endReason, parseEnded, parseState, parseVnc, pruneBaseScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
+import { baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
@@ -764,6 +764,37 @@ test("a standard image's prepare script runs detached on the Mac, so its build o
   assert.deepEqual(lines, ["before the drop: café", "after the drop"], "each line once, whole, across the drop");
   assert.ok(!existsSync(join(ssh.dir, "down", MAC)));
   assert.deepEqual(readdirSync(join(mac, ".bb-box", "tart")).filter((name) => name.startsWith("setup-")), [], "the build's directory, log and all, goes");
+});
+
+test("the upkeep removes an image refresh's build VMs and image boxes of this install's left over hours ago, and leaves the rest (#707)", async () => {
+  const { mac, owners, backend } = setup();
+  const hours = (n: number) => Date.now() - n * 3_600_000;
+  const stamp = (at: number) => at.toString(36);
+  const vm = (name: string, owner?: Record<string, string | number>) => {
+    addImage(mac, name);
+    if (owner) writeFileSync(join(owners, name), ownerText(owner));
+  };
+  mkdirSync(owners, { recursive: true });
+  const old = stamp(hours(6));
+  const recent = stamp(hours(1));
+  const others = hours(7);
+  vm(`bb-box-img-refresh-${old}`, { install: "test", kind: "macos", "image-build": "standard", created: hours(6) });
+  vm(`bb-box-img-refresh-${old}-build`);
+  vm(`bb-box-img-refresh-${recent}`, { install: "test", kind: "macos", "image-build": "standard", created: hours(1) });
+  vm("bb-box-image-0123456789ab", { install: "test", kind: "macos", "image-box": "answer time of build.x", created: hours(5) });
+  vm("bb-box-image-ba9876543210", { install: "test", kind: "macos", "image-box": "trial of build.y", created: hours(1) });
+  vm(`bb-box-img-refresh-${stamp(others)}`, { install: "another", kind: "macos", "image-build": "standard", created: others });
+  vm("bb-box-img-myimage-20261001-000000-abcd", { install: "test", kind: "macos", "image-build": "myimage", created: hours(30) });
+  await backend.maintain(AbortSignal.timeout(30_000));
+  const left = readdirSync(join(mac, ".tart", "vms")).filter((name) => name !== "bb-box-macos").sort();
+  assert.deepEqual(left, [
+    `bb-box-img-refresh-${recent}`,
+    `bb-box-img-refresh-${stamp(others)}`,
+    "bb-box-image-ba9876543210",
+    "bb-box-img-myimage-20261001-000000-abcd",
+  ].sort(), "a recent refresh or box, another install's, and a project's build stay");
+  assert.ok(!existsSync(join(owners, `bb-box-img-refresh-${old}`)));
+  assert.ok(!existsSync(join(owners, "bb-box-image-0123456789ab")));
 });
 
 test("the doctor judges each Tart image by the record beside it (049)", async () => {

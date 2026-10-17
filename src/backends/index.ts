@@ -268,6 +268,7 @@ export class Backends {
       storage,
       installId: this.#installId,
       logError: this.#logError,
+      log: this.#log,
       ...(this.#machines ? { machines: this.#machines } : {}),
       ...(this.#images ? { images: this.#images } : {}),
       warm: (kind) => {
