@@ -2807,7 +2807,42 @@ test("a desktop tab says when its box is not running or gone, and starts a stopp
   expect(await stopped.findByText("Connecting to the desktop…")).toBeTruthy();
   cleanup();
   const gone = desktopTab(server([]).handlers);
-  expect(await gone.findByText("This box has been released.")).toBeTruthy();
+  expect(await gone.findByText(/has been released\.$/)).toBeTruthy();
+  expect(gone.getByText("Released")).toBeTruthy();
+});
+
+test("a desktop tab whose box is released while it is open says Released, keeps the box's name, and offers nothing that needs the box", async () => {
+  const { handlers } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  act(() => void novnc.FakeRfb.made[0]!.dispatchEvent(new Event("connect")));
+  expect(await slot.findByRole("button", { name: "Take control" })).toBeTruthy();
+  // The thread's agent releases the box.
+  await handlers.release!({ threadId: THREAD, box: "box_2" } as never);
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  expect(await slot.findByText("bold-heron has been released.")).toBeTruthy();
+  expect(slot.getByText("Close this tab when you are done with it.")).toBeTruthy();
+  expect(slot.getByText("Released")).toBeTruthy();
+  expect(slot.getAllByText("bold-heron").length).toBeGreaterThan(0);
+  expect(slot.queryByText("Loading…")).toBeNull();
+  expect(slot.queryByRole("button", { name: "Take control" })).toBeNull();
+  expect(slot.queryByRole("button", { name: "Desktop actions" })).toBeNull();
+});
+
+test("a desktop tab whose box is gone or failed says so, with no Take control and no desktop items in its menu", async () => {
+  for (const [state, words] of [
+    ["gone", "Gone"],
+    ["failed", "Failed"],
+  ] as const) {
+    const slot = desktopTab(server([desktopBox({ state, ...(state === "failed" ? { error: "it did not start" } : {}) })]).handlers);
+    expect(await slot.findByText(words)).toBeTruthy();
+    expect(slot.queryByText("Loading…")).toBeNull();
+    expect(slot.queryByRole("button", { name: "Take control" })).toBeNull();
+    const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual(["Open in browser"]);
+    cleanup();
+    dropAllKept();
+  }
 });
 
 test("the Desktop tab opened bare opens the thread's one desktop, lists several, and offers the Box panel with none", async () => {
