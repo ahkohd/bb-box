@@ -66,6 +66,16 @@ export function MonitorGlyph(props: Props) {
   );
 }
 
+/** High resolution: an HD badge, apart from the monitor of the display's other items. */
+export function HighResolutionGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M7 9v6M7 12h3.5M10.5 9v6M13.5 9v6h1.5a3 3 0 0 0 0-6z" />
+    </Stroked>
+  );
+}
+
 /** A terminal. */
 export function TerminalGlyph(props: Props) {
   return (

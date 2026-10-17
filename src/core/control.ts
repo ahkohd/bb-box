@@ -248,7 +248,7 @@ export class Control {
     if (state.owner === "agent" && !state.resized) state.size = size;
   }
 
-  /** The desktop changed density, as Sharp does: the size to restore keeps up, so hand-back keeps the density. */
+  /** The desktop changed density, as High resolution does: the size to restore keeps up, so hand-back keeps the density. */
   rescale(boxId: string, factor: number): void {
     const state = this.#boxes.get(boxId);
     if (!state?.size) return;

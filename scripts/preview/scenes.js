@@ -875,6 +875,47 @@ export const scenes = {
       await wait(300);
     },
   },
+  // The Display submenu (the owner's notes of 17 October 2026): Show as VNC and High resolution, its info icon's tooltip showing.
+  "desktop-menu-display": {
+    slot: "desktop",
+    chrome: desktopChrome("bold-heron"),
+    width: 920,
+    height: 480,
+    props: { threadId: THREAD, params: { box: "box_2" } },
+    rpc: rpc([{ ...desktop, control: { owner: "human", get holder() { return sessionStorage.getItem("bb-box:viewer:box_2") ?? "viewer"; }, takenFrom: null } }], { sharp: false, video: true }),
+    after: async (root) => {
+      await wait(300);
+      openMenu(root, "Desktop actions");
+      await wait(300);
+      const display = [...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent.trim() === "Display");
+      if (!display) throw new Error(`No Display item: ${[...document.querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent.trim())}`);
+      display.focus();
+      display.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      await wait(400);
+    },
+  },
+  "desktop-menu-display-info": {
+    slot: "desktop",
+    chrome: desktopChrome("bold-heron"),
+    width: 920,
+    height: 480,
+    props: { threadId: THREAD, params: { box: "box_2" } },
+    rpc: rpc([{ ...desktop, control: { owner: "human", get holder() { return sessionStorage.getItem("bb-box:viewer:box_2") ?? "viewer"; }, takenFrom: null } }], { sharp: false, video: true }),
+    after: async (root) => {
+      await wait(300);
+      openMenu(root, "Desktop actions");
+      await wait(300);
+      const display = [...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent.trim() === "Display");
+      if (!display) throw new Error(`No Display item: ${[...document.querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent.trim())}`);
+      display.focus();
+      display.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      await wait(400);
+      const info = document.querySelector('[data-testid="high-resolution-info"]');
+      if (!info) throw new Error("No High resolution item");
+      info.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      await wait(500);
+    },
+  },
   "desktop-stopped": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([{ ...desktop, state: "stopped" }]) },
   "desktop-released": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([]) },
   "desktop-chooser": { slot: "desktop", chrome: desktopChrome("Desktop"), width: 560, props: { threadId: THREAD, params: null }, rpc: rpc([desktop, { ...desktop, id: "box_8", name: "wild-cove", kindLabel: "Linux desktop", gpu: false, state: "stopped" }]) },
