@@ -27,7 +27,40 @@
 // key that types it there, and the box's own layout then decides what it
 // types. Characters with no key on a US keyboard are dropped.
 
-import type { ByteChannel, DisplayInput, DisplayInputEvents } from "../transports/types.ts";
+import { pause } from "../transports/ready.ts";
+import type { ByteChannel, CommandTransport, DisplayInput, DisplayInputEvents } from "../transports/types.ts";
+import { command as inBoxCommand } from "./in-box.ts";
+
+/** How long the helper may take to say it reads events. */
+const INPUT_START_MS = 15_000;
+
+/**
+ * Starts the input helper in the box user's desktop session over `command`,
+ * for one viewer, and waits until it reads events. `failed` says why there is
+ * none, for an error.
+ */
+export async function startMacInput(command: CommandTransport, events: DisplayInputEvents, failed: string, signal?: AbortSignal): Promise<DisplayInput> {
+  const why = (error: unknown) => `${failed} ${error instanceof Error ? error.message : String(error)}`;
+  if (!command.spawn) throw new Error(`${failed} Its commands cannot keep a helper running.`);
+  const channel = await command.spawn(inBoxCommand("macos", macInputCommand(), { session: "desktop" }), signal).catch((error: unknown) => {
+    throw new Error(why(error));
+  });
+  const input = new MacInput(channel, events);
+  let ended = failed;
+  const started = await Promise.race([
+    input.ready.then(() => true),
+    input.ended.then(
+      () => false,
+      (error: unknown) => ((ended = why(error)), false),
+    ),
+    pause(INPUT_START_MS, signal).then(() => false),
+  ]);
+  if (!started) {
+    await input.close().catch(() => undefined);
+    throw new Error(ended);
+  }
+  return input;
+}
 
 /** How often the helper looks at the box's pasteboard, while a viewer has it. */
 const CLIPBOARD_POLL_MS = 1_000;

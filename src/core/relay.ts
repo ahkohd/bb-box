@@ -57,7 +57,13 @@ export interface Viewer {
 /** Opens a connection to the box's display, with the authentication it expects. */
 export type OpenDisplay = (
   signal: AbortSignal,
-) => Promise<{ readonly channel: ByteChannel; readonly auth: DisplayAuth; readonly input?: DisplayOpened["input"]; readonly restart?: (signal: AbortSignal) => Promise<void> }>;
+) => Promise<{
+  readonly channel: ByteChannel;
+  readonly auth: DisplayAuth;
+  readonly input?: DisplayOpened["input"];
+  readonly inputTakes?: DisplayOpened["inputTakes"];
+  readonly restart?: (signal: AbortSignal) => Promise<void>;
+}>;
 
 export interface Size {
   readonly width: number;
@@ -89,7 +95,11 @@ interface BoxConnection {
   readonly reader: StreamReader;
   readonly writer: WritableStreamDefaultWriter<Uint8Array>;
   readonly input?: DisplayOpened["input"];
+  readonly inputTakes?: DisplayOpened["inputTakes"];
 }
+
+/** RFB's buttons 4 to 7: the wheel's notches, up, down, left and right. */
+const WHEEL = 0x78;
 
 /**
  * Opens the box's display and does its security handshake. Closes the
@@ -100,7 +110,7 @@ interface BoxConnection {
 export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_MS, stallMs = STALL_MS): Promise<BoxConnection> {
   const signal = AbortSignal.timeout(timeoutMs);
   for (let restarted = false; ; restarted = true) {
-    const { channel, auth, input, restart } = await open(signal);
+    const { channel, auth, input, inputTakes, restart } = await open(signal);
     const reader = new StreamReader(channel.readable);
     const writer = channel.writable.getWriter();
     let stall: ReturnType<typeof setTimeout> | undefined;
@@ -112,7 +122,7 @@ export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_
     handshake.catch(() => undefined);
     try {
       if (signal.aborted) throw new RfbError("The box's desktop did not finish its handshake in time.");
-      if ((await Promise.race([handshake, timedOut])) === "done") return { channel, reader, writer, input };
+      if ((await Promise.race([handshake, timedOut])) === "done") return { channel, reader, writer, input, ...(inputTakes ? { inputTakes } : {}) };
     } catch (error) {
       await channel.close().catch(() => undefined);
       throw error;
@@ -173,6 +183,8 @@ export class RfbRelay {
   #size: Size = { width: 0, height: 0 };
   /** The display's own input, once this viewer's first input opens it (#406). */
   #input: Promise<DisplayInput | null> | null = null;
+  /** The wheel's buttons the display's input last had, where it takes only the wheel. */
+  #wheel = 0;
 
   constructor(options: RelayOptions) {
     this.#options = options;
@@ -260,7 +272,17 @@ export class RfbRelay {
     for (const message of messages) {
       const bytes = this.#passing(message);
       if (!bytes) continue;
-      if (connection.input && isInput(message)) await this.#toInput(connection, message);
+      if (connection.input && isInput(message) && connection.inputTakes === "wheel") {
+        // The stream server takes all but the wheel; the display's input
+        // takes the wheel's buttons, down and up, as a notch is each one going down.
+        if (message.type !== "pointer" || (message.mask & WHEEL) === this.#wheel) {
+          passing.push(bytes);
+          continue;
+        }
+        this.#wheel = message.mask & WHEEL;
+        passing.push(pointerEvent(message.mask & ~WHEEL, message.x, message.y));
+        await this.#toInput(connection, { ...message, mask: this.#wheel });
+      } else if (connection.input && isInput(message)) await this.#toInput(connection, message);
       else passing.push(bytes);
     }
     if (passing.length) await connection.writer.write(passing.reduce(concat));
@@ -349,7 +371,7 @@ export class RfbRelay {
       this.#pointer = { ...this.#pointer, mask: 0 };
     }
     if (!messages.length) return;
-    if (!connection.input) {
+    if (!connection.input || connection.inputTakes === "wheel") {
       await connection.writer.write(messages.reduce(concat));
       return;
     }
@@ -401,8 +423,8 @@ export class RfbRelay {
 /** Opens a box's display through its route. */
 export function displayOpener(display: Display): OpenDisplay {
   return async (signal) => {
-    const { route, auth, input } = await display.open(signal);
-    return { channel: await openRoute(route, signal), auth, input, ...(display.restartServer ? { restart: (each: AbortSignal) => display.restartServer!(each) } : {}) };
+    const { route, auth, input, inputTakes } = await display.open(signal);
+    return { channel: await openRoute(route, signal), auth, input, ...(inputTakes ? { inputTakes } : {}), ...(display.restartServer ? { restart: (each: AbortSignal) => display.restartServer!(each) } : {}) };
   };
 }
 

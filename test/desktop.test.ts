@@ -106,7 +106,10 @@ async function failure(reader: StreamReader): Promise<string> {
   return new TextDecoder().decode(await reader.read(length));
 }
 
-function relayTo(server: FakeRfb, options: Partial<RelayOptions> & { password?: string; auth?: DisplayAuth; displayInput?: DisplayOpened["input"] } = {}) {
+function relayTo(
+  server: FakeRfb,
+  options: Partial<RelayOptions> & { password?: string; auth?: DisplayAuth; displayInput?: DisplayOpened["input"]; inputTakes?: DisplayOpened["inputTakes"] } = {},
+) {
   const viewer = fakeViewer();
   let control = false;
   const ends: string[] = [];
@@ -115,6 +118,7 @@ function relayTo(server: FakeRfb, options: Partial<RelayOptions> & { password?: 
     channel: server.channel(),
     auth: options.auth ?? (options.password === undefined ? { type: "none" } : { type: "vnc-password", password: options.password }),
     input: options.displayInput,
+    ...(options.inputTakes ? { inputTakes: options.inputTakes } : {}),
   });
   const relay = new RfbRelay({
     viewer,
@@ -223,6 +227,35 @@ test("a display with an input of its own gets the holder's keys, pointer and cli
   assert.deepEqual(calls.slice(4), ["key false 97", "pointer 0 5 5"], "closing lets go of what the viewer held down, through the input");
   assert.ok(closed, "and closes the input");
   assert.equal(hex(box!.received), hex(UPDATE_REQUEST));
+});
+
+test("a display whose input takes only the wheel gets the wheel's notches, and the stream server everything else, the pointer's moves and buttons included", async () => {
+  const server = new FakeRfb();
+  const calls: string[] = [];
+  const input: DisplayInput = {
+    key: async (down, keysym) => (calls.push(`key ${down} ${keysym}`), true),
+    pointer: async (mask, x, y) => void calls.push(`pointer ${mask} ${x} ${y}`),
+    clipboard: async (value) => void calls.push(`clipboard ${value}`),
+    size: async (width, height) => void calls.push(`size ${width}x${height}`),
+    ping: async () => undefined,
+    close: async () => undefined,
+  };
+  const relay = relayTo(server, { displayInput: async () => input, inputTakes: "wheel" });
+  await relay.init();
+  const [box] = server.connections;
+  relay.give(true);
+  // A key, a click, then a notch down with the left button held, as noVNC sends them: button 5 down and up.
+  const sent = [keyEvent(true, 0x61), pointerEvent(1, 5, 5), pointerEvent(1 | 16, 6, 7), pointerEvent(1, 6, 7)];
+  await relay.relay.receive(sent.reduce(concat));
+  await until("the wheel's notch", () => calls.length >= 3);
+  assert.deepEqual(calls, ["size 1280x800", "pointer 16 6 7", "pointer 0 6 7"], "only the wheel goes to the input: its button down, then up");
+  const expected = [keyEvent(true, 0x61), pointerEvent(1, 5, 5), pointerEvent(1, 6, 7), pointerEvent(1, 6, 7)].reduce(concat);
+  await until("the rest", () => box!.received.byteLength >= expected.byteLength);
+  assert.equal(hex(box!.received), hex(expected), "the stream server gets the key and the pointer, without the wheel's button");
+  // Letting go at the end goes to the stream server, as without an input.
+  await relay.relay.close();
+  assert.deepEqual(calls, ["size 1280x800", "pointer 16 6 7", "pointer 0 6 7"]);
+  assert.equal(hex(box!.received.subarray(expected.byteLength)), hex([keyEvent(false, 0x61), pointerEvent(0, 6, 7)].reduce(concat)));
 });
 
 test("an input that cannot open is reported, and the desktop still streams (#406)", async () => {

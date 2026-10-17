@@ -61,8 +61,7 @@ import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import type { Arch, Display, DisplayInput, DisplayInputEvents, DisplayOpened, RunResult, SshAccess } from "../../transports/types.ts";
-import { command as inBoxCommand } from "../../core/in-box.ts";
-import { MacInput, macInputCommand } from "../../core/mac-input.ts";
+import { startMacInput } from "../../core/mac-input.ts";
 import { CUA_VERSION } from "../tart/backend.ts";
 import { EXAMPLE, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, parseDisplay, parseGrant, parseGranted, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
@@ -91,8 +90,6 @@ const MAC_SILENCE_MS = 5 * 60_000;
 /** A Mac's claim waits for SSH, the box user at the console and, for a desktop, Cua's socket (047). */
 const MAC_READY_TIMEOUT_MS = 3 * 60_000;
 const MAC_READY_POLL_MS = 1_000;
-/** How long the input helper may take to start in the box user's desktop session. */
-const INPUT_START_MS = 15_000;
 
 /** Screen Sharing, which a Mac's display reaches through the box user's SSH. */
 const SCREEN_SHARING_PORT = 5900;
@@ -853,26 +850,7 @@ export class SshPoolBackend implements Backend {
   /** The input helper in the box user's desktop session, for one viewer (#406). */
   async #macInput(machine: SshPoolMachine, user: string, events: DisplayInputEvents, signal?: AbortSignal): Promise<DisplayInput> {
     const failed = `The desktop's input helper did not start on ${machine.name}: box user ${user} may not be signed in to the desktop.`;
-    const why = (error: unknown) => `${failed} ${error instanceof Error ? error.message : String(error)}`;
-    const command = await this.#command(machine, user);
-    const channel = await command.spawn(inBoxCommand("macos", macInputCommand(), { session: "desktop" }), signal).catch((error: unknown) => {
-      throw new Error(why(error));
-    });
-    const input = new MacInput(channel, events);
-    let ended = failed;
-    const started = await Promise.race([
-      input.ready.then(() => true),
-      input.ended.then(
-        () => false,
-        (error: unknown) => ((ended = why(error)), false),
-      ),
-      pause(INPUT_START_MS, signal).then(() => false),
-    ]);
-    if (!started) {
-      await input.close().catch(() => undefined);
-      throw new Error(ended);
-    }
-    return input;
+    return startMacInput(await this.#command(machine, user), events, failed, signal);
   }
 
   async members(signal?: AbortSignal): Promise<readonly PoolMember[]> {

@@ -94,6 +94,13 @@ export interface DisplayOpened {
   readonly auth: DisplayAuth;
   /** Opens the display's input for one viewer; core sends that viewer's input there instead of to the stream server. */
   readonly input?: (events: DisplayInputEvents, signal?: AbortSignal) => Promise<DisplayInput>;
+  /**
+   * What of the viewer's input goes to `input`: all of it (the default), or
+   * only the wheel, RFB's buttons 4 to 7, for a stream server that takes
+   * keys and clicks but drops the wheel, as Tart's macOS VMs' does. The rest
+   * goes to the stream server, as without `input`.
+   */
+  readonly inputTakes?: "all" | "wheel";
 }
 
 export interface Display {

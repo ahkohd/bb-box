@@ -34,6 +34,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { setupDir } from "../setup-dir.ts";
+import { startMacInput } from "../../core/mac-input.ts";
 import { EXIT, grantInput, parseGrant, parseGranted } from "../ssh-pool/protocol.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -41,6 +42,7 @@ import {
   MIN_DESKTOP,
   TransportError,
   type Display,
+  type DisplayInputEvents,
   type DisplayOpened,
   type DisplaySize,
   type GuestOs,
@@ -1631,8 +1633,16 @@ export class TartBackend implements Backend {
             return { route: ssh.route(access, LINUX_VNC_PORT), auth: password ? { type: "vnc-password", password } : { type: "none" } };
           }
           // A macOS desktop is Tart's VNC server, through the run's holder,
-          // which keeps the run's one connection to it (#406).
-          return this.#held(host, mac, guest.ref, ssh, signal);
+          // which keeps the run's one connection to it (#406). The server
+          // drops the wheel, so its notches go to the input helper in the
+          // VM's desktop session, which posts them as a mouse's.
+          const held = await this.#held(host, mac, guest.ref, ssh, signal);
+          return {
+            ...held,
+            inputTakes: "wheel" as const,
+            input: (events: DisplayInputEvents, inputSignal?: AbortSignal) =>
+              startMacInput(command, events, `The desktop's wheel helper did not start in ${guest.ref}: its user may not be signed in to the desktop.`, inputSignal),
+          };
         },
         ...(os === "linux" ? { minSize: MIN_DESKTOP } : {}),
       }),
