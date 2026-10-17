@@ -190,6 +190,47 @@ Tart's video field on for the runs, as above.
 - Tart's image needs a rebuild to carry the fix. Until then, and until the
   video field is turned on, Tart Macs show VNC only.
 
+## Linux Wayland: Selkies on Sway against wayvnc, 17 October 2026
+
+Selkies 2.0 can capture an existing wlroots compositor
+(`--wayland-host-display`): screencopy for frames, and the virtual keyboard
+and pointer protocols for input. So it streams the box's own Sway, and
+048's floating windows stay as they are. A linux-desktop-wayland-cpu box
+(4 cores, 1920x1080) ran the X11 image's Selkies 2.0.0 package with the
+X11 wrapper's flags and that option. wayvnc was measured through BB's
+server with viewer refresh, as the panel uses it. Selkies was measured
+directly, as the Wayland kind does not offer it, through a forwarder that
+drops the browser's Origin, as bb-box's relay does. Two runs of video.
+
+| | wayvnc via BB | Selkies on Sway, run 1 | Run 2 |
+| --- | --- | --- | --- |
+| Drag fps | 118 | 61 | 61 |
+| Drag lag p50 / p95 | 36 / 57 ms | 32 / 45 ms | 32 / 45 ms |
+| Torn frames | 0 | 0 | 0 |
+| Scroll fps | 123 | 61 | 62 |
+| Scroll Mbit/s | 20.5 | 2.9 | 3.0 |
+| Key p50, alone / while scrolling | 4 / 27 ms | 26 / 69 ms | 10 / 57 ms |
+| Text SSIM still, black on white / coloured | 1.0 / 1.0 | 0.987 / 0.985 | 0.987 / 0.984 |
+| Box cores, drag / idle with a viewer | 0.72 / 0.43 | 1.13 / 0.96 | 0.74 / 0.62 |
+
+- **Decision: wayvnc stays.** Video's gain is bandwidth, about a seventh
+  while scrolling, and a drag a little closer to the pointer. Keys are
+  slower, text is softer and the box works harder. Video is held to Sway's
+  60 frames a second; wayvnc's count is higher as it sends rectangles as
+  they change.
+- **Text** was 4:2:0 at CRF 25: Selkies ignores the full-colour message
+  that bb-box's relay acts on, so through the relay it would be sharper.
+- **Resize defect:** in host-capture mode, Selkies takes the desktop's
+  size from its own view, which starts at 1024x768 and does not follow
+  Sway, so each new viewer set Sway to 1024x768, even with
+  `--enable-resize=false`. `--manual-width` and `--manual-height` hold one
+  size, but each viewer then sets Sway back to it, undoing bb-box's own
+  sizing (021, 048). It needs Selkies or pixelflux to read the host's
+  output size.
+- Selkies admits one main client, so a second page evicts the first; the
+  harness leaves each run's page open, which spoiled three earlier runs.
+- Selkies' own compositor (labwc), in place of Sway, was not measured.
+
 ## Corrected, 17 October 2026
 
 The drag lags first given here for VNC were wrong, as were those in 056's
