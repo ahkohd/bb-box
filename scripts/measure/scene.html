@@ -1,0 +1,66 @@
+<!doctype html>
+<!--
+  The scene every desktop shows while it is measured (060), full screen in
+  the box's own browser. Its parts, at CSS pixels from the top left, which
+  the viewer scales by the desktop's pixel ratio:
+  - a red block, 480x320 at 100,200, that follows the pointer while a button
+    is down: the drag;
+  - a square, 60x60 at the bottom right, 20 from each edge, away from
+    menu bars and notifications, that turns white and black in turn at each
+    key: key-to-screen;
+  - a panel of fixed text, 560x260 at 640,200: sharpness;
+  - a list of 5,000 rows, 560x300 at 640,500, that the wheel scrolls, and
+    that goes back to its top at its end, so that it never stops.
+  A click on the background puts the block and the list back where they
+  started, so that each run starts from the same picture.
+-->
+<html><head><meta charset="utf-8"><title>bb-box measure</title><style>
+html,body{margin:0;height:100%;background:#1e2430;overflow:hidden;cursor:default;user-select:none}
+#block{position:absolute;left:100px;top:200px;width:480px;height:320px;background:#d01818}
+#key{position:absolute;right:20px;bottom:20px;width:60px;height:60px;background:#000}
+#text{position:absolute;left:640px;top:200px;width:544px;height:244px;padding:8px;background:#fff;color:#111;font:14px/18px "DejaVu Sans Mono",Menlo,Consolas,monospace;overflow:hidden;white-space:pre}
+#list{position:absolute;left:640px;top:500px;width:560px;height:300px;overflow-y:scroll;background:#f4f4f4;color:#222;font:14px/20px sans-serif}
+</style></head><body>
+<div id="block"></div><div id="key"></div>
+<div id="text">function measure(desktop) {
+  // Frame time, drag lag, key-to-screen,
+  // torn frames and text sharpness at 2x.
+  const frames = desktop.frames.filter(Boolean);
+  for (const frame of frames) {
+    if (frame.torn) report("torn", frame.id);
+  }
+  return { fps: frames.length / 10, ok: true };
+}
+The quick brown fox jumps over the lazy dog.
+THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG.
+0123456789 !@#$%^&amp;*()_+-=[]{};':",./&lt;&gt;?
+iIl1| oO0 rn m vv w ,.;: -_= ~`
+</div>
+<div id="list"></div>
+<script>
+const list = document.getElementById("list");
+list.innerHTML = Array.from({ length: 5000 }, (_, i) => `<div style="padding:0 8px;${i % 2 ? "background:#e6e9ef" : ""}">Row ${i + 1}: the list scrolls under the wheel</div>`).join("");
+list.addEventListener("scroll", () => {
+  if (list.scrollTop + list.clientHeight >= list.scrollHeight - 1) list.scrollTop = 0;
+});
+const block = document.getElementById("block");
+let grab = null;
+addEventListener("pointerdown", (event) => {
+  if (event.target === block) grab = event.clientX - block.offsetLeft;
+  if (event.target === document.body) {
+    block.style.left = "100px";
+    list.scrollTop = 0;
+  }
+});
+addEventListener("pointermove", (event) => {
+  if (grab !== null && event.buttons & 1) block.style.left = `${event.clientX - grab}px`;
+});
+addEventListener("pointerup", () => (grab = null));
+const key = document.getElementById("key");
+let white = false;
+addEventListener("keydown", (event) => {
+  event.preventDefault();
+  white = !white;
+  key.style.background = white ? "#fff" : "#000";
+});
+</script></body></html>

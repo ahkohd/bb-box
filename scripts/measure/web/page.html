@@ -1,0 +1,108 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#222;overflow:hidden}#screen{position:relative;width:100vw;height:100vh}.absolute{position:absolute}.inset-0{inset:0}</style></head><body><div id="screen"></div>
+<script type="module">
+// One viewer of a desktop showing scene.html (060), through BB's server:
+// video (the panel's SelkiesSession) or VNC (noVNC at the panel's quality
+// 2). The page's viewport is the desktop's size, so a pixel here is one of
+// the desktop's. Every frame drawn is logged: the red block's left edge on
+// a row near its top and one near its bottom, and the key square's colour.
+import "./client.js";
+const q = new URLSearchParams(location.search);
+const kind = q.get("kind"), s = Number(q.get("scale") ?? 1);
+const rows = [210 * s, 510 * s].map(Math.round);
+const key = [Math.round(innerWidth - 50 * s), Math.round(innerHeight - 50 * s)];
+window.log = []; window.moves = []; window.presses = []; window.bytes = [];
+const OW = WebSocket;
+// A real WebSocket, counted: noVNC checks its socket's own prototype, which a subclass's lacks.
+window.WebSocket = Object.assign(function (...a) { const socket = new OW(...a); socket.addEventListener("message", (e) => window.bytes.push([performance.now(), e.data.byteLength ?? e.data.size ?? e.data.length ?? 0])); return socket; }, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3, prototype: OW.prototype });
+Element.prototype.setPointerCapture = function () {};
+let canvas = null, ctx = null;
+const edge = (y) => {
+  const row = ctx.getImageData(0, y, Math.min(canvas.width, Math.round(1400 * s)), 1).data;
+  for (let x = 0; x < row.length / 4; x++) if (row[x * 4] > 150 && row[x * 4 + 1] < 90 && row[x * 4 + 2] < 90) return x;
+  return -1;
+};
+const sample = () => {
+  if (!canvas) return;
+  ctx ??= canvas.getContext("2d", { willReadFrequently: true });
+  window.log.push([performance.now(), edge(rows[0]), edge(rows[1]), ctx.getImageData(key[0], key[1], 1, 1).data[0]]);
+};
+const screen = document.getElementById("screen");
+if (kind === "video") {
+  const draw = CanvasRenderingContext2D.prototype.drawImage;
+  CanvasRenderingContext2D.prototype.drawImage = function (image, ...rest) { const out = draw.call(this, image, ...rest); if (typeof VideoFrame !== "undefined" && image instanceof VideoFrame) { canvas = this.canvas; queueMicrotask(sample); } return out; };
+  window.session = new SelkiesSession(`ws://${location.host}/bb?box=${q.get("box")}&viewer=${q.get("viewer")}&stream=selkies`);
+  screen.appendChild(window.session.element);
+  window.connected = () => window.session.connection.state === "connected";
+  window.control = () => window.session.setControl(true, false);
+  window.target = () => window.session.element.querySelector("canvas");
+} else {
+  const rfb = new RFB(screen, `ws://${location.host}/bb?box=${q.get("box")}&viewer=${q.get("viewer")}`, { shared: true });
+  rfb.qualityLevel = Number(q.get("quality") || 2); rfb.scaleViewport = true; rfb.viewOnly = true;
+  let ready = false;
+  // As the panel does for a box whose display says refresh "viewer" (wayvnc, QEMU): ask for a still area again losslessly.
+  if (q.get("refresh") === "viewer") refreshLosslessly(rfb);
+  rfb.addEventListener("connect", () => { ready = true; canvas = rfb._canvas; const d = rfb._display; const f = d.flip.bind(d); d.flip = (...a) => { const out = f(...a); sample(); return out; }; });
+  window.rfb = rfb;
+  window.connected = () => ready;
+  window.control = () => { rfb.viewOnly = false; };
+  window.target = () => rfb._canvas;
+}
+const pointer = (type, x, y, buttons) => {
+  const init = { clientX: x, clientY: y, button: type.endsWith("move") ? -1 : 0, buttons, bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", isPrimary: true };
+  if (kind === "video") window.target().dispatchEvent(new PointerEvent(type, init));
+  else window.target().dispatchEvent(new MouseEvent(type.replace("pointer", "mouse"), { ...init, button: 0 }));
+};
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const until = (at) => wait(Math.max(0, at - performance.now()));
+window.click = async (x, y) => { pointer("pointermove", x, y, 0); await wait(80); pointer("pointerdown", x, y, 1); await wait(80); pointer("pointerup", x, y, 0); };
+// Drags the block from its middle, `step` desktop pixels a move, 60 moves a second, 400 CSS pixels right and back.
+window.drag = async (seconds) => {
+  const x0 = Math.round(340 * s), y0 = Math.round(360 * s), step = Math.round(8 * s), span = Math.round(400 * s);
+  pointer("pointermove", x0, y0, 0); await wait(150); pointer("pointerdown", x0, y0, 1); await wait(150);
+  const start = performance.now(); let n = 0, x = x0, dir = 1;
+  while (performance.now() - start < seconds * 1000) {
+    x += dir * step; if (x >= x0 + span || x <= x0) dir = -dir;
+    pointer("pointermove", x, y0, 1); window.moves.push([performance.now(), x - x0]); n++;
+    await until(start + (n * 1000) / 60);
+  }
+  pointer("pointerup", x, y0, 0);
+};
+window.press = () => {
+  window.presses.push(performance.now());
+  const t = window.target();
+  for (const type of ["keydown", "keyup"]) t.dispatchEvent(new KeyboardEvent(type, { key: "x", code: "KeyX", keyCode: 88, which: 88, bubbles: true, cancelable: true }));
+};
+// Wheel notches over the list, 20 a second, with a key every 400 ms.
+window.scroll = async (seconds) => {
+  const x = Math.round(920 * s), y = Math.round(650 * s);
+  pointer("pointermove", x, y, 0); await wait(100);
+  const start = performance.now(); let n = 0, next = start + 200;
+  while (performance.now() - start < seconds * 1000) {
+    window.target().dispatchEvent(new WheelEvent("wheel", { clientX: x, clientY: y, deltaY: 100, deltaMode: 0, bubbles: true, cancelable: true }));
+    n++; if (performance.now() >= next) { window.press(); next += 400; }
+    await until(start + (n * 1000) / 20);
+  }
+};
+// SSIM of the text panel, grey, 8x8 windows, against ref.png: the box's own lossless screenshot.
+window.ssim = async () => {
+  const [x, y, w, h] = [640, 200, 560, 260].map((v) => Math.round(v * s));
+  const ref = new Image(); ref.src = "ref.png"; await ref.decode();
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  const grey = (src, sx, sy) => { g.clearRect(0, 0, w, h); g.drawImage(src, sx, sy, w, h, 0, 0, w, h); const d = g.getImageData(0, 0, w, h).data; const out = new Float64Array(w * h); for (let i = 0; i < w * h; i++) out[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; return out; };
+  const a = grey(canvas, x, y), b = grey(ref, x, y);
+  const C1 = (0.01 * 255) ** 2, C2 = (0.03 * 255) ** 2; let sum = 0, n = 0;
+  for (let by = 0; by + 8 <= h; by += 8) for (let bx = 0; bx + 8 <= w; bx += 8) {
+    let ma = 0, mb = 0; for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) { ma += a[(by + j) * w + bx + i]; mb += b[(by + j) * w + bx + i]; }
+    ma /= 64; mb /= 64; let va = 0, vb = 0, cov = 0;
+    for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) { const p = a[(by + j) * w + bx + i] - ma, r = b[(by + j) * w + bx + i] - mb; va += p * p; vb += r * r; cov += p * r; }
+    va /= 63; vb /= 63; cov /= 63;
+    sum += ((2 * ma * mb + C1) * (2 * cov + C2)) / ((ma * ma + mb * mb + C1) * (va + vb + C2)); n++;
+  }
+  // With the mean absolute difference in grey levels and the share of
+  // pixels more than 16 levels out, so that an SSIM near 1 can be checked.
+  let mad = 0, off = 0; for (let i = 0; i < w * h; i++) { const d = Math.abs(a[i] - b[i]); mad += d; if (d > 16) off++; }
+  return { ssim: Math.round((sum / n) * 10000) / 10000, mad: Math.round((mad / (w * h)) * 100) / 100, off: Math.round((off / (w * h)) * 10000) / 10000, refMean: Math.round(b.reduce((t, v) => t + v, 0) / (w * h)) };
+};
+window.ready = true;
+</script></body></html>

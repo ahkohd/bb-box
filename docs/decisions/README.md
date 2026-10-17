@@ -65,4 +65,4 @@ which records still stand as written. The current design as a whole is in
 | [057](057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md) | Linux boxes can be Proxmox VMs, for their own kernel | Proposed |
 | [058](058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md) | A Mac with SIP off grants its box users macOS permissions | Current |
 | [059](059-agents-record-their-desktop-box-with-box-record.md) | Agents record their desktop box with box_record | Accepted |
-| [060](060-every-desktop-streams-as-video-through-one-viewer.md) | Every desktop streams as video through one viewer | Proposed |
+| [060](060-every-desktop-streams-as-video-through-one-viewer.md) | Every desktop streams as video through one viewer | Accepted |
