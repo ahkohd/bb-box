@@ -47,6 +47,8 @@ export interface TartConfig {
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
   /** Windows boxes join BB as machines, unless set off, as on Proxmox QEMU (#539). */
   readonly windowsEnrol: boolean;
+  /** macOS desktops are offered as video too, from bb-box-stream, where every Mac's image has it (060). Off by default. */
+  readonly video: boolean;
 }
 
 export const TART_DEFAULTS = {
@@ -69,6 +71,7 @@ export const TART_KEYS = {
   linuxDesktopImage: "tart-linux-desktop-image",
   windowsImage: "tart-windows-image",
   windowsEnrol: "tart-windows-enrol",
+  video: "tart-video",
   vmsPerHost: "tart-vms-per-host",
   reserveMemoryMiB: "tart-reserve-memory-mib",
   reserveDiskGiB: "tart-reserve-disk-gib",
@@ -164,6 +167,13 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     label: "Tart: Windows boxes as BB machines",
     description: "Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only.",
     default: true,
+  },
+  [TART_KEYS.video]: {
+    type: "boolean",
+    label: "Tart: Video for macOS desktops",
+    description:
+      "macOS desktops are offered as video too, from bb-box-stream in the image. Off for now: in a VM, Chrome's small changes, such as a typed key, do not show until something else changes.",
+    default: false,
   },
   [TART_KEYS.vmsPerHost]: {
     type: "number",
@@ -298,6 +308,7 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
     ssh: { privateKey, vmUser },
     reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB },
     windowsEnrol: values[TART_KEYS.windowsEnrol] !== false,
+    video: values[TART_KEYS.video] === true,
   };
 }
 
@@ -322,6 +333,7 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.linuxDesktopImage, "boxes"],
     [TART_KEYS.windowsImage, "boxes"],
     [TART_KEYS.windowsEnrol, "boxes"],
+    [TART_KEYS.video, "boxes"],
     [TART_KEYS.vmUser, "advanced"],
     [TART_KEYS.vmsPerHost, "advanced"],
     [TART_KEYS.reserveMemoryMiB, "advanced"],

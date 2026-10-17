@@ -678,9 +678,10 @@ export class TartBackend implements Backend {
   }
 
   /**
-   * Declares macos-desktop's video, from bb-box-stream (060), while every Mac
-   * that answered has it in its image's record, as the SSH host pool does from
-   * every Mac's survey; and stops declaring it when one does not.
+   * Declares macos-desktop's video, from bb-box-stream (060), while the
+   * backend's video field is on and every Mac that answered has it in its
+   * image's record, as the SSH host pool does from every Mac's survey; and
+   * stops declaring it when one does not.
    */
   #declareVideo(states: ReadonlyMap<string, MacState | Error>): void {
     const index = this.#kinds.findIndex((kind) => kind.id === "macos-desktop");
@@ -688,7 +689,7 @@ export class TartBackend implements Backend {
     if (index < 0 || !image) return;
     const answered = [...states.values()].filter((state): state is MacState => !(state instanceof Error));
     if (!answered.length) return;
-    const video = answered.every((state) => state.records.get(image)?.tools?.["bb-box-stream"] !== undefined);
+    const video = this.#config.video && answered.every((state) => state.records.get(image)?.tools?.["bb-box-stream"] !== undefined);
     const kind = this.#kinds[index]!;
     const has = kind.capabilities.displays.some((display) => display.protocol === "selkies");
     if (video === has) return;

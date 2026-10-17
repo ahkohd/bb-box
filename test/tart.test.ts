@@ -83,6 +83,9 @@ test("parses Macs, one per line, and refuses what it cannot use", () => {
   assert.ok(parsed.problems.some((problem) => /host key/.test(problem)));
   assert.ok(parsed.problems.some((problem) => /VMs per Mac/.test(problem)));
   assert.deepEqual(parseTartSettings({}), { enabled: false });
+  // macOS desktops as video are off until set on (060).
+  assert.equal(tartConfig().video, false);
+  assert.equal(tartConfig({ "tart-video": true }).video, true);
 });
 
 test("offers macos and macos-desktop from the image, each only when it has one", () => {
@@ -196,23 +199,29 @@ test("a macOS desktop is Tart's VNC through the run's holder, which starts with 
   assert.equal(tart.connections, 1, "and it did not connect again");
 });
 
-test("a macOS desktop declares video while every Mac's image record lists bb-box-stream, and offers it in a VM that has it, through bb-box-stream connect in the desktop session (060)", async () => {
+test("a macOS desktop declares video while the video field is on and every Mac's image record lists bb-box-stream, and offers it in a VM that has it, through bb-box-stream connect in the desktop session (060)", async () => {
   const ssh = fakeSsh();
   const mac = ssh.home(MAC);
   fakeMacTools(mac);
   addImage(mac);
   const stream = join(mkdtempSync(join(tmpdir(), "bb-box-stream-")), "bb-box-stream");
-  const backend = new TartBackend(tartConfig(), testContext(new MemoryStorage()), { ...FAKES, macStream: stream });
-  made.push(backend);
-  const declared = async () => {
-    await backend.capacity("macos-desktop", SMALL, [], signal());
-    return backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays.map((display) => display.protocol);
+  const make = (video: boolean) => {
+    const tart = new TartBackend(tartConfig({ "tart-video": video }), testContext(new MemoryStorage()), { ...FAKES, macStream: stream });
+    made.push(tart);
+    return tart;
   };
+  const backend = make(true);
+  const declaredBy = async (by: TartBackend) => {
+    await by.capacity("macos-desktop", SMALL, [], signal());
+    return by.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays.map((display) => display.protocol);
+  };
+  const declared = () => declaredBy(backend);
   assert.deepEqual(await declared(), ["rfb"], "not while the image's record lacks it");
   const record = join(mac, ".bb-box", "tart", "images", "bb-box-macos.json");
   const without = readFileSync(record, "utf8");
   writeFileSync(record, `${JSON.stringify({ ...JSON.parse(without), tools: { "bb-box-stream": "0123456789ab" } })}\n`);
   assert.deepEqual(await declared(), ["rfb", "selkies"]);
+  assert.deepEqual(await declaredBy(make(false)), ["rfb"], "nor while the video field is off, its default");
 
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   // A VM without it, as a box of an older build may be, offers RFB alone.
