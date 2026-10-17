@@ -35,7 +35,6 @@ import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { setupDir } from "../setup-dir.ts";
 import { startMacInput } from "../../core/mac-input.ts";
-import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { EXIT, grantInput, parseGrant, parseGranted } from "../ssh-pool/protocol.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -411,8 +410,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         features: [],
         command: SSH_COMMAND,
         // Tart's VNC server shares the pasteboard with its host only (#464).
-        // Video where the image has bb-box-stream (060).
-        displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" }, MAC_VIDEO],
+        displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" }],
         computerUse: cua,
         enrol: true,
       },
@@ -614,8 +612,6 @@ export class TartBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Each VM's address while bb-box knows it: learnt when it starts, forgotten when it stops. */
   readonly #addresses = new Map<string, string>();
-  /** Whether each macOS VM has bb-box-stream, as its image gives it or not. */
-  readonly #streams = new Map<string, boolean>();
   /** The command that runs machine-mac.sh in a macOS VM, made once, for its grants (058). */
   #macHelper: string | null = null;
   /** VMs being started for boxes or warm pools, by VM, until they run or their start ends. */
@@ -1626,37 +1622,31 @@ export class TartBackend implements Backend {
     const os = guestOsOf(kind);
     const access = this.#vm(mac, address, os);
     const command = new SshTransport(ssh, access, os);
-    const video = os === "macos" && (capabilities?.displays ?? []).some((display) => display.protocol === "selkies") && (await this.#hasStream(guest.ref, command));
-    const displays = (capabilities?.displays ?? []).flatMap((display): Display[] => {
-      if (display.protocol === "selkies") {
-        return video ? [{ ...display, label: "Desktop, as video", open: async () => ({ route: ssh.commandRoute(access, macStreamCommand()), auth: { type: "none" } }) }] : [];
-      }
-      return [
-        {
-          ...display,
-          label: "Desktop",
-          open: async (signal) => {
-            // A Linux desktop's own VNC server, through SSH to the VM.
-            if (os === "linux") {
-              const password = await this.#linuxVncPassword(command, signal);
-              return { route: ssh.route(access, LINUX_VNC_PORT), auth: password ? { type: "vnc-password", password } : { type: "none" } };
-            }
-            // A macOS desktop is Tart's VNC server, through the run's holder,
-            // which keeps the run's one connection to it (#406). The server
-            // drops the wheel, so its notches go to the input helper in the
-            // VM's desktop session, which posts them as a mouse's.
-            const held = await this.#held(host, mac, guest.ref, ssh, signal);
-            return {
-              ...held,
-              inputTakes: "wheel" as const,
-              input: (events: DisplayInputEvents, inputSignal?: AbortSignal) =>
-                startMacInput(command, events, `The desktop's wheel helper did not start in ${guest.ref}: its user may not be signed in to the desktop.`, inputSignal),
-            };
-          },
-          ...(os === "linux" ? { minSize: MIN_DESKTOP } : {}),
+    const displays = (capabilities?.displays ?? []).map(
+      (display): Display => ({
+        ...display,
+        label: "Desktop",
+        open: async (signal) => {
+          // A Linux desktop's own VNC server, through SSH to the VM.
+          if (os === "linux") {
+            const password = await this.#linuxVncPassword(command, signal);
+            return { route: ssh.route(access, LINUX_VNC_PORT), auth: password ? { type: "vnc-password", password } : { type: "none" } };
+          }
+          // A macOS desktop is Tart's VNC server, through the run's holder,
+          // which keeps the run's one connection to it (#406). The server
+          // drops the wheel, so its notches go to the input helper in the
+          // VM's desktop session, which posts them as a mouse's.
+          const held = await this.#held(host, mac, guest.ref, ssh, signal);
+          return {
+            ...held,
+            inputTakes: "wheel" as const,
+            input: (events: DisplayInputEvents, inputSignal?: AbortSignal) =>
+              startMacInput(command, events, `The desktop's wheel helper did not start in ${guest.ref}: its user may not be signed in to the desktop.`, inputSignal),
+          };
         },
-      ];
-    });
+        ...(os === "linux" ? { minSize: MIN_DESKTOP } : {}),
+      }),
+    );
     return { command, displays, access: { ssh: access, dockerHost: null } };
   }
 
@@ -2156,16 +2146,6 @@ export class TartBackend implements Backend {
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "linux"), "linux");
     const result = await command.run(linuxDesktopScript(), { timeoutMs: 150_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) throw new Error(`${vm} on ${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
-  }
-
-  /** Whether a macOS VM has bb-box-stream, asked once a VM: a box keeps its image's. False, not kept, when it cannot be asked. */
-  async #hasStream(vm: string, command: SshTransport): Promise<boolean> {
-    const known = this.#streams.get(vm);
-    if (known !== undefined) return known;
-    const result = await command.run(`test -x ${MAC_STREAM}`, { timeoutMs: 15_000, maxOutputBytes: 1024 }).catch(() => null);
-    if (!result) return false;
-    this.#streams.set(vm, result.exitCode === 0);
-    return result.exitCode === 0;
   }
 
   /** The password a Linux desktop made at its first boot, or null when it asks for none. */

@@ -62,7 +62,7 @@ import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import type { Arch, Display, DisplayInput, DisplayInputEvents, DisplayOpened, RunResult, SshAccess } from "../../transports/types.ts";
 import { startMacInput } from "../../core/mac-input.ts";
-import { MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
+import { command as inBoxCommand } from "../../core/in-box.ts";
 import { CUA_VERSION } from "../tart/backend.ts";
 import { EXAMPLE, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, parseDisplay, parseGrant, parseGranted, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
@@ -121,6 +121,19 @@ function linuxOffer(docker: boolean): BoxKind {
     readyTimeoutMs: READY_TIMEOUT_MS,
   };
 }
+
+/**
+ * One connection to a Mac's video stream: bb-box-stream joins its stdin and stdout to the server in the box user's
+ * desktop session, starting the server first (060). Its socket is in the box user's home, which only they can open.
+ */
+export function macStreamCommand(): string {
+  return inBoxCommand("macos", `exec ${MAC_STREAM} connect`, { session: "desktop" });
+}
+
+/** The desktop as video, from bb-box-stream in the box user's desktop session (060), beside Screen Sharing's RFB. */
+const MAC_VIDEO = { id: "video", protocol: "selkies", resizable: false } as const;
+/** Where setup-mac.sh builds it. */
+const MAC_STREAM = "/usr/local/bin/bb-box-stream";
 
 /**
  * A Mac's offers (047): its box user at the console, with the desktop and computer use for macos-desktop, Xcode when
