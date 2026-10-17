@@ -43,8 +43,11 @@ for (const label of process.argv.slice(2)) {
         const m = moves.filter((mv) => mv[0] <= t && Math.abs(edge0 + mv[1] + offset - e) <= tol).at(-1);
         if (m && t - m[0] < 3000) lags.push(t - m[0]);
       }
-      // A torn frame: the block's edge differs down its height, as part of the frame is from before a move.
-      const torn = shown.filter((f) => f[2] > tol).length;
+      // A torn frame: the block's edge differs down its height more than in the drag's typical frame, as part of the
+      // frame is from before a move. A Mac draws a moving window with its rows a step apart in every frame, on the
+      // screen itself, which is no stream's tearing.
+      const usual = pct(shown.map((f) => f[2]), 50) ?? 0;
+      const torn = shown.filter((f) => f[2] > usual + tol).length;
       Object.assign(o, { lagP50: pct(lags, 50), lagP95: pct(lags, 95), lagMax: pct(lags, 100), lagSamples: lags.length, torn, tornShare: shown.length ? Math.round((torn / shown.length) * 1000) / 10 : null });
     }
     if (name === "scroll" || name === "keys") {

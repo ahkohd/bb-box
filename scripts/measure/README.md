@@ -40,6 +40,12 @@ torn frames, those whose 40 rows disagree on the block's edge; key-to-screen;
 and SSIM, in colour, of the fixed text, the coloured text, and the block's
 coloured text where the block is, still and halfway through the drag.
 
+To drag a real window instead of the scene's block, put a red window where
+the block is, with its title bar under `DRAG_Y`, in CSS pixels, and give
+the desktop a dark background. On a Mac, hide the Dock and turn off
+clicking the wallpaper to reveal the desktop, as the run's first click
+lands on the background.
+
 To test a stream server without BB's server, give the viewer its WebSocket
 URL as `WS`, for example through a local proxy to `bb-box-stream connect`.
 

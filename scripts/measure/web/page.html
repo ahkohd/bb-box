@@ -74,7 +74,7 @@ const until = (at) => wait(Math.max(0, at - performance.now()));
 window.click = async (x, y) => { pointer("pointermove", x, y, 0); await wait(80); pointer("pointerdown", x, y, 1); await wait(80); pointer("pointerup", x, y, 0); };
 // Drags the block from its middle, `step` desktop pixels a move, 60 moves a second, 400 CSS pixels right and back.
 window.drag = async (seconds) => {
-  const x0 = Math.round(340 * s), y0 = Math.round(360 * s), step = Math.round(8 * s), span = Math.round(400 * s);
+  const x0 = Math.round(340 * s), y0 = Math.round(Number(q.get("dragY") || 360) * s), step = Math.round(8 * s), span = Math.round(400 * s);
   pointer("pointermove", x0, y0, 0); await wait(150); pointer("pointerdown", x0, y0, 1); await wait(150);
   const start = performance.now(); let n = 0, x = x0, dir = 1;
   while (performance.now() - start < seconds * 1000) {

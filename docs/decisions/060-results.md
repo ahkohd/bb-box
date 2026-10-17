@@ -55,6 +55,49 @@ What they show:
   the tearing seen there; it needs a finer test before it can pass the
   Mac's video.
 
+## Pool Mac: video against VNC, 17 October 2026
+
+The pool Mac at 2x (3840x2160), through BB's server, after #759 gave it
+bb-box-stream. Same harness, one run each; the Mac's CPU is the whole
+Mac's.
+
+| | VNC (Screen Sharing) | Video (bb-box-stream) |
+| --- | --- | --- |
+| Drag fps | 12 | 49 |
+| Drag lag p50 / p95 | 101 / 142 ms | 58 / 71 ms |
+| Scroll fps | 27 | 50 |
+| Key p50, idle / while scrolling | 74 / 176 ms | 55 / 100 ms |
+| Scroll Mbit/s | 21.9 | 2.6 |
+| Text SSIM still, black on white / coloured | 0.9997 / 0.996 | 0.9994 / 0.991 |
+| Coloured text SSIM, halfway through the drag | 0.996 | 0.989 |
+| Mac's CPU while dragging | 1.3 cores | 1.4 cores |
+
+Video's 49 fps is the display's own rate: the HDMI dummy plug runs at
+50 Hz.
+
+**Tearing.** The owner saw it when dragging windows. A page's block dragged
+inside a browser shows none on either stream. A real window dragged by its
+title bar does show it on Screen Sharing:
+
+| | VNC | Video |
+| --- | --- | --- |
+| Torn frames | 29 of 220 (13%), rows up to 128 pixels apart | 0 of 510 |
+| Frames a second | 21 | 49 |
+| Drag lag p50 / p95 | 63 / 131 ms | 55 / 82 ms |
+
+The window was a red browser window on a dark background, with the Dock
+hidden and clicking the wallpaper to reveal the desktop turned off. The
+Mac draws a moving window with its rows one drag step (16 pixels) apart,
+on the screen itself and on both streams, so the harness counts a frame as
+torn only when its rows spread further than in the drag's typical frame.
+
+Against 060's measures, video ends the tearing and drags in about half
+VNC's lag, at four times the frames. It does not yet meet two of them: its
+median drag lag is 58 ms, not under 50, and its coloured text is a little
+softer than Screen Sharing's when still (0.991 against 0.996), as 4:2:0
+loses colour. It is the panel's default on pool Macs from #759, with Show
+as VNC in the Display menu.
+
 ## Corrected, 17 October 2026
 
 The drag lags first given here for VNC were wrong, as were those in 056's
