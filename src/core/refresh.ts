@@ -426,6 +426,8 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       made.push(trial.ref);
       return { trial, ms };
     };
+    // Where the backend times its steps, which of them took the time.
+    const stepsOf = (box: ImageBox) => (box.steps?.length ? ` (${box.steps.map((one) => `${one.name} ${(one.ms / 1000).toFixed(1)} s`).join(", ")})` : "");
     const baseline = await timed(current, `answer time of ${current.build ?? current.ref}`);
     await images.remove(baseline.trial.ref, signal);
     made.splice(made.indexOf(baseline.trial.ref), 1);
@@ -433,7 +435,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
     checks.push({
       name: "answers as quickly",
       ok: ms <= baseline.ms + SLOWER_MS,
-      detail: `A box of the new build answered in ${(ms / 1000).toFixed(1)} s, of the old in ${(baseline.ms / 1000).toFixed(1)} s.`,
+      detail: `A box of the new build answered in ${(ms / 1000).toFixed(1)} s${stepsOf(trial)}, of the old in ${(baseline.ms / 1000).toFixed(1)} s${stepsOf(baseline.trial)}.`,
     });
     const check = trialCheck(images, kind, windowsCheck);
     const ran = await trial.command.run(check.script, { timeoutMs: 10 * 60_000, signal, maxOutputBytes: 256 * 1024 });
