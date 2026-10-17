@@ -37,6 +37,8 @@ export const FAKE_TOKEN = { tokenId: "bb-box@pve!plugin", tokenSecret: "s3cret-t
 export class FakeProxmox {
   readonly node = "pve";
   readonly guests = new Map<number, FakeGuest>();
+  /** Volumes made for new disks, for their names. */
+  volumes = 0;
   /** VMIDs another pool claims: invisible to the token, but clone says "already exists". */
   readonly hidden = new Set<number>();
   readonly calls: FakeCall[] = [];
@@ -126,6 +128,7 @@ export class FakeProxmox {
       template: true,
       config: {
         scsi0: `local-lvm:base-${vmid}-disk-1,discard=on,iothread=1,size=64G`,
+        efidisk0: `local-lvm:base-${vmid}-disk-0,efitype=4m,ms-cert=2023k,pre-enrolled-keys=1,size=4M`,
         ide2: "none,media=cdrom",
         boot: "order=scsi0;ide2",
         net0: "virtio=BC:24:11:00:00:01,bridge=vmbr1",
@@ -307,8 +310,22 @@ export class FakeProxmox {
         if (match[1] === "qemu" && guest.config.lock && !params.delete?.split(",").includes("vmstate")) {
           return respond(500, `VM is locked (${guest.config.lock})`, { data: null });
         }
-        for (const [key, value] of Object.entries(params)) if (key !== "delete") guest.config[key] = value;
-        for (const key of params.delete?.split(",") ?? []) delete guest.config[key];
+        // A disk given as <storage>:<GiB> is a new volume, as Proxmox allocates one.
+        for (const [key, value] of Object.entries(params)) {
+          if (key === "delete") continue;
+          const fresh = /^efidisk\d$/.test(key) && typeof value === "string" ? /^([^:,]+):\d+(,.*)?$/.exec(value) : null;
+          guest.config[key] = fresh ? `${fresh[1]}:vm-${vmid}-disk-${++this.volumes},${(fresh[2] ?? ",").slice(1)}${fresh[2] ? "," : ""}size=4M` : value;
+        }
+        for (const key of params.delete?.split(",") ?? []) {
+          // A disk taken off a VM stays as an unused disk, which goes when it is deleted in turn.
+          const disk = /^efidisk\d$/.test(key) ? guest.config[key] : undefined;
+          delete guest.config[key];
+          if (disk) {
+            let n = 0;
+            while (guest.config[`unused${n}`] !== undefined) n++;
+            guest.config[`unused${n}`] = disk.split(",")[0]!;
+          }
+        }
         if (params.delete?.split(",").includes("vmstate")) delete guest.config.lock;
         if (params.hostname) guest.name = params.hostname;
         if (params.name) guest.name = params.name;

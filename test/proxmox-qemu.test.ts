@@ -1174,6 +1174,9 @@ test("image operations: a box from the Windows template, its capture as a templa
   assert.deepEqual([captured.ref, captured.build, captured.current, captured.record?.build], ["9700", "build.20261007-030000-5e1f", false, "build.20261007-030000-5e1f"]);
   assert.deepEqual([vm.template, vm.status, vm.name, vm.config.protection, vm.config.onboot], [true, "stopped", "bb-box-windows", "1", "0"]);
   assert.match(vm.config.smbios1!, /^uuid=[0-9a-f-]{36}$/, "no address in the template");
+  // A new EFI variable store with the old one's options, as deleted records pile up in OVMF's at each build's boots (060).
+  assert.match(vm.config.efidisk0!, /^local-lvm:vm-9700-disk-\d+,efitype=4m,ms-cert=2023k,pre-enrolled-keys=1,size=4M$/);
+  assert.deepEqual(Object.keys(vm.config).filter((key) => key.startsWith("unused")), [], "the old store goes");
   assert.deepEqual(parseTags(vm.config.tags), ["bb-box", "install.test", "image.standard", "kind.windows-desktop", "template.9104", "build.20261007-030000-5e1f"]);
   assert.deepEqual(recordInDescription(vm.config.description!), parseImageRecord(record));
   assert.equal(readFileSync(join(ssh.home("192.0.2.150"), "boot-log"), "utf8"), "cleared", "clones start with an empty boot log");
