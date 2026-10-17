@@ -5,14 +5,20 @@
 // 2). The page's viewport is the desktop's size, so a pixel here is one of
 // the desktop's. Every frame drawn is logged: the red block's left edge as
 // the median of 40 rows down its height, how far the rows' edges spread,
-// which is a torn frame's mark, and the key square's colour.
+// which is a torn frame's mark, and the key square's colour. And where the
+// scrolled list's rows change colour down a blank column of it: its rows are
+// 20 pixels and alternate two colours, so in a whole frame every change is
+// at one place in 20; a frame with two scroll positions in it has two.
 import "./client.js";
 const q = new URLSearchParams(location.search);
 const kind = q.get("kind"), s = Number(q.get("scale") ?? 1);
 // Every 8 pixels down the block, whose left 16 pixels are red on every row.
 const rows = Array.from({ length: 40 }, (_, i) => Math.round((204 + i * 8) * s));
 const key = [Math.round(innerWidth - 50 * s), Math.round(innerHeight - 50 * s)];
-window.log = []; window.moves = []; window.presses = []; window.bytes = [];
+// The list's blank column, right of its rows' text and left of its scroll bar, above where a taskbar may be, and its
+// rows' height.
+const listColumn = { x: Math.round(1060 * s), y: Math.round(502 * s), h: Math.round(240 * s), row: 20 * s };
+window.log = []; window.moves = []; window.presses = []; window.bytes = []; window.rowsLog = [];
 const OW = WebSocket;
 // A real WebSocket, counted: noVNC checks its socket's own prototype, which a subclass's lacks.
 window.WebSocket = Object.assign(function (...a) { const socket = new OW(...a); socket.addEventListener("message", (e) => window.bytes.push([performance.now(), e.data.byteLength ?? e.data.size ?? e.data.length ?? 0])); return socket; }, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3, prototype: OW.prototype });
@@ -41,6 +47,25 @@ const sample = () => {
   const edges = rows.map((_, i) => redFrom(data, i * strip.width * 4)).filter((x) => x >= 0).sort((a, b) => a - b);
   const median = edges.length ? edges[edges.length >> 1] : -1;
   window.log.push([performance.now(), median, edges.length ? edges.at(-1) - edges[0] : 0, data[rows.length * strip.width * 4]]);
+  sampleRows();
+};
+// The places, in 20, where the list's rows change colour down its column: one in a whole frame, two in a torn one.
+let column = null, columnCtx = null;
+const sampleRows = () => {
+  if (canvas.height < listColumn.y + listColumn.h) return;
+  if (!column) { column = new OffscreenCanvas(1, listColumn.h); columnCtx = column.getContext("2d", { willReadFrequently: true }); }
+  columnCtx.drawImage(canvas, listColumn.x, listColumn.y, 1, listColumn.h, 0, 0, 1, listColumn.h);
+  const data = columnCtx.getImageData(0, 0, 1, listColumn.h).data;
+  const light = (y) => 0.299 * data[y * 4] + 0.587 * data[y * 4 + 1] + 0.114 * data[y * 4 + 2] > 238;
+  const phases = [];
+  for (let y = 1; y < listColumn.h; y++) if (light(y) !== light(y - 1)) phases.push((y + listColumn.y) % listColumn.row);
+  // Places within 2 pixels of each other, round the 20, are one place.
+  const places = [];
+  for (const phase of phases.sort((a, b) => a - b)) {
+    const near = places.find((place) => Math.min(Math.abs(place - phase), listColumn.row - Math.abs(place - phase)) <= 2 * s);
+    if (near === undefined) places.push(phase);
+  }
+  window.rowsLog.push([performance.now(), places.length, phases.length]);
 };
 const screen = document.getElementById("screen");
 if (kind === "video") {

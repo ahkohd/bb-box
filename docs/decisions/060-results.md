@@ -231,6 +231,40 @@ drops the browser's Origin, as bb-box's relay does. Two runs of video.
   harness leaves each run's page open, which spoiled three earlier runs.
 - Selkies' own compositor (labwc), in place of Sway, was not measured.
 
+## Windows: torn frames while scrolling, 17 October 2026
+
+The owner saw video tear on Windows while scrolling. The harness now finds
+a scroll's torn frames too: the list's rows are 20 pixels in two colours,
+so in a whole frame they change colour at one place in 20 down a blank
+column, and in a torn frame at two. A windows-desktop box of
+build.20261017-191915-c934 at 1280x800, through BB's server, with the
+scene in Edge.
+
+| | Video before, 4 runs | Video after, 2 runs | VNC |
+| --- | --- | --- | --- |
+| Scroll frames torn | 47 of 354, 37 of 365, 3 of 286, 23 of 382 | 0 of 229, 0 of 240 | 0 of 133 |
+| Drag frames torn | 22, 28, 3, 1 | 0, 0 | 0 |
+| Scroll fps | 28 to 38 | 23 to 24 | 13 |
+| Drag fps | 30 to 55 | 24 to 26 | 23 |
+| Key p50, alone | 41 to 43 ms | 46 to 47 ms | 42 ms |
+
+- **Where:** the torn frames are in Desktop Duplication's image of the
+  screen on the Basic Display adapter. In the box, a copy of each
+  duplicated frame was torn now and then while Edge scrolled with the
+  wheel, though the image did not change while it was copied, and GDI's
+  copies of the screen at the same time never were (0 of 807). So it is
+  not Edge or DWM, nor bb-box-stream's copy, encoder or the viewer.
+- **Fix:** on that adapter the duplicated frame now only says the screen
+  changed, and GDI copies the screen once it is released.
+  `BB_STREAM_CAPTURE=map` copies the duplicated image as before.
+- **Cost:** GDI's copy takes about 20 ms a frame at 1280x800, against
+  0.9 ms to map and copy the duplicated image, so a scroll shows about 24
+  frames a second where it showed about 35: still above VNC's 13. Encoding
+  one frame while copying the next would win some of that back.
+- The 2 torn frames of the first Windows drag run, above, were these.
+- The box's CPU log read too low to be trusted in these runs, so they give
+  no CPU figures.
+
 ## Corrected, 17 October 2026
 
 The drag lags first given here for VNC were wrong, as were those in 056's

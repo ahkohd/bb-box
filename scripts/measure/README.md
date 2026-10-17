@@ -36,8 +36,9 @@ it. It needs two boxes, the desktop and a Linux desktop box as the viewer.
 
 What each run gives, per phase: frames a second and the gaps between them,
 kbit/s, the box's CPU; for the drag, its lag behind the pointer and its
-torn frames, those whose 40 rows disagree on the block's edge; key-to-screen;
-and SSIM, in colour, of the fixed text, the coloured text, and the block's
+torn frames, those whose 40 rows disagree on the block's edge; for the
+scroll, its torn frames, those where the list's rows change colour at two
+places in their 20 pixels down a blank column of it; key-to-screen; and SSIM, in colour, of the fixed text, the coloured text, and the block's
 coloured text where the block is, still and halfway through the drag.
 
 To drag a real window instead of the scene's block, put a red window where

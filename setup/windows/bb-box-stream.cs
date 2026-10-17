@@ -516,12 +516,17 @@ class Capture : IDisposable {
     int hr = Slot<Acquire>(duplication, 8)(duplication, (uint)timeoutMs, info, out resource);
     if (hr == WAIT_TIMEOUT) return false;
     Check(hr, "AcquireNextFrame");
-    bool changed = false;
+    bool changed = false, fromScreen = false;
     try {
       // A frame with only the pointer moved has no new image, but the pointer is drawn in, so it counts.
       changed = Marshal.ReadInt64(info, 0) != 0 || Marshal.ReadInt64(info, 8) != 0;
       // On the Basic Display adapter the image is in system memory, which a staging texture's copy reads as black.
-      if (Marshal.ReadInt64(info, 0) != 0 && systemMemory && Mode != "texture") {
+      // Its duplicated image is also now and then torn while a page scrolls, part of one frame and part of the next,
+      // where GDI's copy of the screen is whole (060), so the frame only says the screen changed, and GDI copies it,
+      // once the frame is released. BB_STREAM_CAPTURE=map copies the duplicated image instead.
+      if (Marshal.ReadInt64(info, 0) != 0 && systemMemory && Mode != "texture" && Mode != "map") {
+        fromScreen = true;
+      } else if (Marshal.ReadInt64(info, 0) != 0 && systemMemory && Mode != "texture") {
         step = "MapDesktopSurface";
         Check(Slot<MapSurface>(duplication, 12)(duplication, mapped), "MapDesktopSurface");
         int pitch = Marshal.ReadInt32(mapped, 0);
@@ -550,6 +555,10 @@ class Capture : IDisposable {
       // then, and the next AcquireNextFrame works, so it counts as released.
       try { Slot<Simple>(duplication, 14)(duplication); } catch (DivideByZeroException) { ReleaseFaults++; }
     }
+    if (fromScreen) {
+      step = "copy the screen";
+      CopyScreen();
+    }
     return changed;
   }
 
@@ -558,13 +567,18 @@ class Capture : IDisposable {
     TimeSpan wait = gdiNext - DateTime.UtcNow;
     if (wait > TimeSpan.Zero) Thread.Sleep(wait);
     gdiNext = DateTime.UtcNow.AddMilliseconds(33);
+    CopyScreen();
+    return true;
+  }
+
+  /** The screen into Frame, through GDI. */
+  void CopyScreen() {
     if (GetSystemMetrics(0) != Width || GetSystemMetrics(1) != Height) throw new Exception("the screen's size changed");
     GCHandle pin = GCHandle.Alloc(Frame, GCHandleType.Pinned);
     try {
       using (Bitmap bitmap = new Bitmap(Width, Height, Width * 4, PixelFormat.Format32bppRgb, pin.AddrOfPinnedObject()))
       using (Graphics g = Graphics.FromImage(bitmap)) g.CopyFromScreen(0, 0, 0, 0, new Size(Width, Height));
     } finally { pin.Free(); }
-    return true;
   }
 
   /** The pointer's cursor now, or zero while it is hidden. */
