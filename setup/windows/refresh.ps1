@@ -236,6 +236,8 @@ try {
       Step 'bb-box-stream.exe: built from its new source'
       & "$dir\install-stream.ps1" -Source "$dir\bb-box-stream.cs"
     } else { Step 'bb-box-stream.exe: as its source' }
+    # The pointer as the display's hardware cursor, so bb-box-stream can leave it out of the video, as the first logon has it.
+    & "$dir\hardware-cursor.ps1" | ForEach-Object { Step $_ }
   }
   # Rust's stable toolchain, the latest, as on Linux boxes.
   $rustup = Join-Path $env:USERPROFILE '.cargo\bin\rustup.exe'

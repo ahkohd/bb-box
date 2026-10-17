@@ -126,7 +126,7 @@ test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShe
   // The desktop as video (060), which a box's transports include only where its image has bb-box-stream.
   assert.deepEqual(kind!.capabilities.displays, [
     { id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" },
-    { id: "video", protocol: "selkies", resizable: true },
+    { id: "video", protocol: "selkies", resizable: true, cursor: "stream" },
   ]);
   assert.deepEqual(kind!.capabilities.computerUse, { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" });
 });
@@ -363,7 +363,7 @@ test("with Linux templates, linux boxes are VMs from them, with their own kernel
   assert.deepEqual(withKvm?.capabilities.features, ["docker", "kernel", "kvm"]);
 });
 
-test("a Windows box shows its desktop as video, through its pipe over SSH, only where its template's image record lists OpenH264 (060)", async () => {
+test("a Windows box shows its desktop as video, through its pipe over SSH, only where its template's image record lists OpenH264, and can leave the pointer out only where it lists the hardware cursor too (060)", async () => {
   const displaysOf = async (tools: Record<string, string> | null) => {
     const { backend, proxmox } = setup();
     if (tools) {
@@ -382,6 +382,10 @@ test("a Windows box shows its desktop as video, through its pipe over SSH, only 
   assert.deepEqual((await displaysOf({ pwsh: "7.6.6" })).map((display) => display.protocol), ["rfb"]);
   const [, video] = await displaysOf({ pwsh: "7.6.6", openh264: "2.6.0" });
   assert.deepEqual([video!.id, video!.label, video!.protocol, video!.resizable], ["video", "Desktop, as video", "selkies", true]);
+  assert.equal(video!.cursor, undefined, "an image without the hardware cursor has the pointer in its image, so its video cannot leave it out");
+  const [, withCursor] = await displaysOf({ pwsh: "7.6.6", openh264: "2.6.0", "hardware-cursor": "1" });
+  assert.equal(withCursor!.cursor, "stream", "an image with it can");
+  assert.deepEqual((await displaysOf({ pwsh: "7.6.6", "hardware-cursor": "1" })).map((display) => display.protocol), ["rfb"], "nor any video without bb-box-stream");
   const opened = await video!.open();
   assert.deepEqual(opened.auth, { type: "none" });
   assert.equal(opened.route.type, "command");

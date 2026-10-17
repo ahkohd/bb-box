@@ -144,6 +144,35 @@ Check 'bb-box-stream: a key frame' {
     throw 'no key frame within 20 s'
   } finally { if (-not $process.HasExited) { $process.Kill() }; Remove-Job $deadline -Force }
 }
+# The pointer out of the captured image (060), so the video can leave it out while a person holds control: the VirtIO
+# GPU's hardware cursor on (hardware-cursor.ps1), and bb-box-stream's pointer test saying so from the desktop session,
+# where a task of its own runs it as the stream's task runs the server.
+Check 'pointer out of the captured image' {
+  if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { return 'none on arm64, whose desktop shows over VNC' }
+  $gpu = Get-PnpDevice -Class Display -PresentOnly | Where-Object { (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_Service).Data -eq 'VioGpuDod' } | Select-Object -First 1
+  if (-not $gpu) { throw 'no VirtIO GPU' }
+  $driver = (Get-PnpDeviceProperty -InstanceId $gpu.InstanceId -KeyName DEVPKEY_Device_Driver).Data
+  $on = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$driver").HWCursor
+  if ($on -ne 1) { throw "HWCursor is $on" }
+  $exe = 'C:\Program Files\bb-box-tools\bb-box-stream\bb-box-stream.exe'
+  New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\bb-box" | Out-Null
+  $out = "$env:LOCALAPPDATA\bb-box\pointer.txt"
+  Remove-Item $out -ErrorAction SilentlyContinue
+  # A command line that starts with a quote loses its quotes through conhost, so it starts in the directory first.
+  $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" -Argument "--headless cmd.exe /c `"cd /d %LOCALAPPDATA%\bb-box & `"$exe`" pointer > pointer.txt 2>&1`""
+  $principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\box" -LogonType Interactive -RunLevel Limited
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName bb-box-pointer-check -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+  try {
+    Start-ScheduledTask -TaskName bb-box-pointer-check
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    # Done once its output is there and the task is no longer running.
+    do { Start-Sleep -Milliseconds 500 } while ((-not (Test-Path $out) -or (Get-ScheduledTask bb-box-pointer-check).State -ne 'Ready') -and $clock.Elapsed.TotalSeconds -lt 30)
+    $said = ((Get-Content $out -ErrorAction SilentlyContinue) -join ' ').Trim()
+    if ($said -ne 'the pointer is out of the image') { throw "bb-box-stream pointer: $(if ($said) { $said } else { 'nothing' })" }
+    "HWCursor 1; $said"
+  } finally { Unregister-ScheduledTask -TaskName bb-box-pointer-check -Confirm:$false -ErrorAction SilentlyContinue }
+}
 Check 'Cua lists windows' { $w = @((Cua list_windows @{}).windows); if (-not $w.Count) { throw 'no windows' }; "$($w.Count) windows" }
 Check 'Edge page in the accessibility tree' {
   Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force

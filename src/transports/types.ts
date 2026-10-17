@@ -108,6 +108,12 @@ export interface Display {
   readonly label: string;
   readonly protocol: DisplayProtocol;
   readonly resizable: boolean;
+  /**
+   * How a video display leaves the box's pointer out while a person holds
+   * control, as DisplayCapability's cursor says: here for this box, as its
+   * image can, where the kind's says what its images can at best.
+   */
+  readonly cursor?: "stream" | "selkies";
   /** Called once per viewer connection, because tickets can be single use. */
   open(signal?: AbortSignal): Promise<DisplayOpened>;
   /**

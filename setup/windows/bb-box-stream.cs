@@ -8,6 +8,8 @@
 //                               it first through its scheduled task
 //   bb-box-stream.exe test      captures for 3 s and encodes a key frame,
 //                               saying each step, in the desktop session
+//   bb-box-stream.exe pointer   says whether the pointer is in the captured
+//                               image, in the desktop session, for check.ps1
 //
 // The server listens on the named pipe bb-box-stream, which only box can open.
 // bb-box's relay opens each connection with `connect` over box's SSH, which
@@ -18,7 +20,8 @@
 //
 // Desktop Duplication captures whole frames, on the Direct3D 11 device of the
 // display adapter, mapped where its image is in system memory, as on the
-// Basic Display adapter; GDI does when it cannot. Desktop Duplication leaves out the pointer, which is drawn in.
+// Basic Display adapter; GDI does when it cannot. Desktop Duplication leaves out the pointer where the display has a
+// hardware cursor, as the image's VirtIO GPU does with HWCursor on (hardware-cursor.ps1), and it is drawn in.
 // Cisco's OpenH264, which the image downloads from Cisco, encodes them for
 // screen content in real time; when the screen stops changing, the last frame
 // is encoded twice more, which sharpens it. SendInput posts the input, and the
@@ -85,12 +88,51 @@ static class Program {
     }
   }
 
+  /**
+   * Whether the pointer is in the captured image, for a check, in the desktop session: the spot under the pointer, with
+   * the pointer on it, away from it and on it again. Where the display draws the pointer as a hardware cursor, the spot
+   * stays the same. Moves the pointer. 0 when it is out of the image, 1 when it is in, 2 when the screen kept changing.
+   */
+  static int PointerTest() {
+    using (Capture capture = new Capture()) {
+      if (!capture.Duplicating) { Console.WriteLine("GDI, not Desktop Duplication: cannot tell"); return 2; }
+      int x = capture.Width / 2, y = capture.Height / 2;
+      for (int attempt = 0; attempt < 3; attempt++) {
+        byte[] on = Spot(capture, x, y, x, y);
+        byte[] away = Spot(capture, x + capture.Width / 4, y + capture.Height / 4, x, y);
+        byte[] again = Spot(capture, x, y, x, y);
+        if (!Same(on, again)) continue;
+        bool outside = Same(on, away);
+        Console.WriteLine(outside ? "the pointer is out of the image" : "the pointer is in the image");
+        return outside ? 0 : 1;
+      }
+      Console.WriteLine("the screen kept changing");
+      return 2;
+    }
+  }
+
+  /** The 32x32 pixels around x, y, once the pointer is at px, py and the screen has had time to show it. */
+  static byte[] Spot(Capture capture, int px, int py, int x, int y) {
+    Input.Pointer(px, py, 0);
+    Stopwatch clock = Stopwatch.StartNew();
+    while (clock.ElapsedMilliseconds < 700) capture.Next(50);
+    byte[] spot = new byte[32 * 32 * 4];
+    for (int row = 0; row < 32; row++) Buffer.BlockCopy(capture.Frame, ((y - 16 + row) * capture.Width + x - 16) * 4, spot, row * 128, 128);
+    return spot;
+  }
+
+  static bool Same(byte[] a, byte[] b) {
+    for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
+    return true;
+  }
+
   static int Main(string[] args) {
     string mode = args.Length > 0 ? args[0] : "";
     if (mode == "connect") return Connect.Run();
     if (mode == "serve") return new Server().Run();
     if (mode == "test") return SelfTest();
-    Console.Error.WriteLine("usage: bb-box-stream.exe serve|connect");
+    if (mode == "pointer") return PointerTest();
+    Console.Error.WriteLine("usage: bb-box-stream.exe serve|connect|test|pointer");
     return 2;
   }
 }

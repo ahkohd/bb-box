@@ -227,6 +227,8 @@ export class FakeBackend implements Backend {
   #vnc: Promise<number> | null = null;
   /** Every desktop box's Selkies, for a kind with a Selkies display. */
   readonly selkies = new FakeSelkies();
+  /** Whether a box's video display leaves out the cursor its kind says, as a Windows image without the hardware cursor does. */
+  cursorless = false;
   #selkiesPort: Promise<number> | null = null;
   /** Each size a display's resize was asked for, in order. */
   readonly resizes: DisplaySize[] = [];
@@ -427,6 +429,7 @@ export class FakeBackend implements Backend {
         label: "Desktop",
         protocol: display.protocol,
         resizable: display.resizable,
+        ...(display.cursor && !this.cursorless ? { cursor: display.cursor } : {}),
         open: async () =>
           display.protocol === "selkies"
             ? { route: { type: "tcp", host: "127.0.0.1", port: await (this.#selkiesPort ??= this.selkies.listen()) }, auth: { type: "none" } }
