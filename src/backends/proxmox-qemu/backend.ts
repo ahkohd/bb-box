@@ -122,7 +122,7 @@ const DESKTOP_POLL_MS = 1_000;
  * The desktop as video (060): bb-box-stream.exe in box's desktop session, which a box's template has where its image
  * record lists OpenH264.
  */
-const WINDOWS_VIDEO = { id: "video", protocol: "selkies", resizable: true } as const;
+const WINDOWS_VIDEO = { id: "video", protocol: "selkies", resizable: true, cursor: "stream" } as const;
 /**
  * One connection to it, in the pwsh that box's SSH runs: the pipe to the server, started through its task if it is not
  * running, copied both ways with the SSH channel. pwsh copies, not bb-box-stream.exe connect: over SSH, a native
