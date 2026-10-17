@@ -657,6 +657,11 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const viewer = useViewerId(boxId);
   const { value: state, error, refresh } = useLive<DesktopState>(`${threadId}/${boxId}`, () => rpc.call("desktop", { threadId, box: boxId }), forThread(threadId));
   const box = state?.box ?? null;
+  /** The box's name as last seen, so a tab whose box was released still names it. */
+  const lastName = useRef<string | null>(null);
+  if (box) lastName.current = box.name;
+  /** The box is gone from bb-box's records, as once its thread or agent released it: the tab says so, and offers nothing that needs it. */
+  const released = state !== null && !box;
   const path = state?.desktopPath ?? null;
   const showing = box !== null && box.state === "ready" && box.display !== null;
   const mine = box?.control?.owner === "human" && box.control.holder === viewer;
@@ -970,6 +975,9 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   if (error) {
     tone = "bad";
     words = "Could not load";
+  } else if (released) {
+    tone = "off";
+    words = "Released";
   } else if (box && !box.display) {
     tone = "off";
     words = "No desktop";
@@ -991,7 +999,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
         {onBack ? <BackControl back={onBack} /> : null}
         <MonitorGlyph className="text-muted-foreground" />
-        <span className="font-medium text-foreground">{box?.name ?? "Desktop"}</span>
+        <span className="font-medium text-foreground">{box?.name ?? lastName.current ?? "Desktop"}</span>
         <span className={cn("inline-flex min-w-0 items-center gap-1.5", mine || taken ? "text-foreground" : "text-muted-foreground")}>
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
@@ -1114,7 +1122,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
         {error ? (
           <Notice>{error}</Notice>
         ) : !state ? null : !box ? (
-          <Notice>This box has been released.</Notice>
+          <Notice detail="Close this tab when you are done with it.">{lastName.current ? `${lastName.current} has been released.` : "This box has been released."}</Notice>
         ) : !box.display ? (
           <Notice>{box.name} has no desktop.</Notice>
         ) : box.state === "stopped" ? (
