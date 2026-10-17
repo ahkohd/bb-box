@@ -425,6 +425,20 @@ test("a Windows image's first logon and its refresh turn on the VirtIO GPU's har
   assert.match(readFileSync(join(SETUP, "windows", "bb-box-stream.cs"), "utf8"), /if \(mode == "pointer"\) return PointerTest\(\);/);
 });
 
+test("a Windows first logon whose build pins no OpenH264, as Tart's arm64 build, skips bb-box-stream and the hardware cursor, whose files that build does not copy", () => {
+  const firstLogon = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "firstlogon.ps1"), "utf8");
+  const tart = readFileSync(join(SETUP, "tart", "prepare-windows-image.sh"), "utf8");
+  const guarded = /\nif \(\$build\.openh264\) \{\n([\s\S]*?)\n\} else \{\n/.exec(firstLogon);
+  assert.ok(guarded, "the stream's steps are inside if ($build.openh264)");
+  const outside = firstLogon.replace(guarded[0], "\n");
+  for (const file of ["install-stream.ps1", "hardware-cursor.ps1", "bb-box-stream.cs"]) {
+    assert.ok(guarded[1]!.includes(`C:\\bb-box\\${file}`), `${file} inside`);
+    assert.ok(!outside.includes(`C:\\bb-box\\${file}`), `${file} nowhere else`);
+    assert.ok(!tart.includes(file), `Tart's build copies no ${file}`);
+  }
+  assert.ok(!/openh264/i.test(tart), "Tart's build pins no OpenH264");
+});
+
 test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {
   const pins = (JSON.parse(readFileSync(join(SETUP, "windows", "pins.json"), "utf8")) as { tools: { name: string; arch: string; version: string; url: string; sha256: string }[] }).tools;
   const common: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node", CLAUDE: "claude-code", CODEX: "codex", PI: "pi", FFMPEG: "ffmpeg" };

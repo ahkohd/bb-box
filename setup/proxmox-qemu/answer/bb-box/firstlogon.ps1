@@ -145,17 +145,24 @@ Remove-Item C:\bb-box\ffmpeg, $zip -Recurse -Force
 $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if ($path -notlike "*$to*") { [Environment]::SetEnvironmentVariable('Path', "$path;$to", 'Machine') }
 
-Step "bb-box-stream.exe, with OpenH264 $($build.openh264.version)"
-# The desktop as video (060): Cisco's OpenH264, downloaded from Cisco as its
-# licence asks, and the program, compiled here, with its task in box's
-# desktop session. Git's bzip2 unpacks the library, so Git comes first.
-$archive = 'C:\bb-box\openh264.dll.bz2'
-Get-Pinned $build.openh264.url $build.openh264.sha256 $archive
-& C:\bb-box\install-stream.ps1 -Source C:\bb-box\bb-box-stream.cs -Archive $archive -Version $build.openh264.version
-Remove-Item $archive
-# The pointer as the display's hardware cursor, so bb-box-stream can leave it
-# out of the video while a person holds control.
-& C:\bb-box\hardware-cursor.ps1
+# The desktop as video (060), where the build pins OpenH264: not on arm64,
+# whose desktop shows over VNC, and whose build (Tart's
+# prepare-windows-image.sh) has neither the encoder nor these scripts.
+if ($build.openh264) {
+  Step "bb-box-stream.exe, with OpenH264 $($build.openh264.version)"
+  # Cisco's OpenH264, downloaded from Cisco as its licence asks, and the
+  # program, compiled here, with its task in box's desktop session. Git's
+  # bzip2 unpacks the library, so Git comes first.
+  $archive = 'C:\bb-box\openh264.dll.bz2'
+  Get-Pinned $build.openh264.url $build.openh264.sha256 $archive
+  & C:\bb-box\install-stream.ps1 -Source C:\bb-box\bb-box-stream.cs -Archive $archive -Version $build.openh264.version
+  Remove-Item $archive
+  # The pointer as the display's hardware cursor, so bb-box-stream can leave
+  # it out of the video while a person holds control.
+  & C:\bb-box\hardware-cursor.ps1
+} else {
+  Step 'bb-box-stream.exe: none, as the build pins no OpenH264'
+}
 
 Step "Visual Studio Build Tools $($build.vs.version): $($build.vs.components -join ', ')"
 # The C++ build tools and the Windows SDK, which Rust's MSVC toolchain links
