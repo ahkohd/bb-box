@@ -373,7 +373,7 @@ function rpc(boxes, options = {}) {
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
     state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null }),
-    desktop: ({ box: ref }) => ({ box: find(ref) ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, sharp: options.sharp ?? null, pointer: options.pointer ?? false }),
+    desktop: ({ box: ref }) => ({ box: find(ref) ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, sharp: options.sharp ?? null }),
     ping: () => null,
     allBoxes: () => [
       ...(options.machines ?? []).map((entry) => ({ threadId: "operator", box: entry.box, owner: "yours" })),
@@ -883,25 +883,6 @@ export const scenes = {
     height: 480,
     props: { threadId: THREAD, params: { box: "box_2" } },
     rpc: rpc([{ ...desktop, control: { owner: "human", get holder() { return sessionStorage.getItem("bb-box:viewer:box_2") ?? "viewer"; }, takenFrom: null } }], { sharp: false, video: true }),
-    after: async (root) => {
-      await wait(300);
-      openMenu(root, "Desktop actions");
-      await wait(300);
-      const display = [...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent.trim() === "Display");
-      if (!display) throw new Error(`No Display item: ${[...document.querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent.trim())}`);
-      display.focus();
-      display.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-      await wait(400);
-    },
-  },
-  // The Display submenu on a video desktop whose stream can leave the box's pointer out (the owner's notes of 17 October 2026).
-  "desktop-menu-display-pointer": {
-    slot: "desktop",
-    chrome: desktopChrome("bold-heron"),
-    width: 920,
-    height: 480,
-    props: { threadId: THREAD, params: { box: "box_2" } },
-    rpc: rpc([{ ...desktop, control: { owner: "human", get holder() { return sessionStorage.getItem("bb-box:viewer:box_2") ?? "viewer"; }, takenFrom: null } }], { sharp: false, video: true, pointer: true }),
     after: async (root) => {
       await wait(300);
       openMenu(root, "Desktop actions");

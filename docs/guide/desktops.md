@@ -65,9 +65,9 @@ Everything else works the same with video: taking control, copying and pasting, 
 
 ### The pointer over video
 
-Video shows the box's pointer as the agent moves it, so you can see where it points while you watch. While you hold control, the video leaves the box's pointer out: your own pointer shows instead, with the box's shape (an arrow, a text cursor, a hand), so it never trails behind your hand. To see the box's own pointer in the video while you hold control, select **Show the box's pointer** under **Display** in the toolbar's menu; your choice lasts for that box in that tab. One picture serves everyone watching a box, so while one person holds control, others watching see no pointer in the video either.
+Video shows the box's pointer as the agent moves it, so you can see where it points while you watch. While you hold control, the video leaves the box's pointer out: your own pointer shows instead, with the box's shape (an arrow, a text cursor, a hand), so it never trails behind your hand. One picture serves everyone watching a box, so while one person holds control, others watching see no pointer in the video either.
 
-On Windows, this needs a box made from a recent image, which keeps the pointer apart from the picture. On a box from an older image, Windows draws the pointer into the picture, so the video always shows it and **Show the box's pointer** is not offered: while you hold control, you see your own pointer and, a little behind it, the box's.
+On Windows, this needs a box made from a recent image, which keeps the pointer apart from the picture. On a box from an older image, Windows draws the pointer into the picture, so the video always shows it: while you hold control, you see your own pointer and, a little behind it, the box's.
 
 Over VNC, a Windows box from a recent image shows no pointer in the picture at all, even while the agent moves it, so you cannot see where the agent points. While you hold control, your own pointer shows with the box's shape. To watch the agent's pointer, use video, which Windows desktops show by default.
 

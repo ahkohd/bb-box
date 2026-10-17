@@ -244,6 +244,12 @@ changed.
 
 ## The pointer over video, 17 October 2026
 
+"Show the box's pointer", the option these checks name, has since gone
+(the owner's note of 17 October 2026): the rule stays, with the box's
+pointer out of the video while a person holds control and in it while the
+agent does, and a box whose image cannot leave it out still shows it
+always.
+
 While a person holds control, the video leaves the box's pointer out and
 the browser shows its shape instead (#772, #773). Checked by hand through
 the panel, with one tab in control and one watching:

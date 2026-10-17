@@ -58,7 +58,7 @@ import {
   macBrowser,
   type Connection,
 } from "./viewer.ts";
-import { BoxGlyph, HighResolutionGlyph, MonitorGlyph, PasteGlyph, PointerGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph, HighResolutionGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { choices, filtering, NO_FILTERS, shown, type Filters, type Sort } from "./boxes-filter.ts";
 import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 
@@ -102,28 +102,6 @@ function storedChoice(boxId: string): Stream | null {
 function storeChoice(boxId: string, stream: Stream): void {
   try {
     window.sessionStorage.setItem(streamChoiceKey(boxId), stream);
-  } catch {
-    // Storage may be off: the choice lasts while the viewer is open.
-  }
-}
-
-/** Where the browser keeps a box's choice to see its own pointer in the video while in control. */
-function pointerChoiceKey(boxId: string): string {
-  return `bb-box:pointer:${boxId}`;
-}
-
-/** Whether the person chose to see the box's own pointer in its video while in control, kept as the stream's choice is. */
-function storedPointer(boxId: string): boolean {
-  try {
-    return window.sessionStorage.getItem(pointerChoiceKey(boxId)) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function storePointer(boxId: string, on: boolean): void {
-  try {
-    window.sessionStorage.setItem(pointerChoiceKey(boxId), on ? "1" : "0");
   } catch {
     // Storage may be off: the choice lasts while the viewer is open.
   }
@@ -554,13 +532,10 @@ function DisplayItems({
   compact,
   vnc,
   highResolution,
-  pointer,
 }: {
   compact: boolean;
   vnc: { checked: boolean; onChange: (checked: boolean) => void } | null;
   highResolution: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void } | null;
-  /** Show the box's pointer: its own pointer in the video while you hold control, where its video can leave it out. */
-  pointer?: { checked: boolean; onChange: (checked: boolean) => void } | null;
 }) {
   const items = (
     <>
@@ -572,12 +547,6 @@ function DisplayItems({
         </DropdownMenuCheckboxItem>
       ) : null}
       {highResolution ? <HighResolutionItem {...highResolution} /> : null}
-      {pointer ? (
-        <DropdownMenuCheckboxItem className="gap-2" checked={pointer.checked} onCheckedChange={pointer.onChange}>
-          <PointerGlyph />
-          Show the box's pointer
-        </DropdownMenuCheckboxItem>
-      ) : null}
     </>
   );
   if (compact) {
@@ -688,9 +657,6 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const videoPossible = video === true && !videoFailed && canShowVideo();
   /** Whether the desktop is at high resolution, twice the pixels at twice the scale; null where it cannot be. */
   const sharp = state?.sharp ?? null;
-  /** Whether the box's video can show or leave out its own pointer while you hold control, and what you chose. */
-  const pointerPossible = state?.pointer === true;
-  const [showPointer, setShowPointer] = useState(() => storedPointer(boxId));
   /** A small screen's menu is a sheet, which has no submenus: the display's items go in it under a label. */
   const compact = useIsCompactViewport();
   useEffect(() => {
@@ -750,7 +716,6 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     );
     const current = claimed.session;
     if (current instanceof SelkiesSession) {
-      current.showPointer(storedPointer(boxId));
       current.onFallback = (reason) => {
         flashFor("Video did not start, so this shows VNC.", reason, FALLBACK_NOTE_MS);
         setVideoFailed(true);
@@ -1067,18 +1032,6 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                         : null
                     }
                     highResolution={sharp !== null ? { checked: sharp, disabled: acting, onChange: (checked) => void toggleSharp(checked) } : null}
-                    pointer={
-                      pointerPossible && stream === "selkies"
-                        ? {
-                            checked: showPointer,
-                            onChange: (checked) => {
-                              storePointer(boxId, checked);
-                              setShowPointer(checked);
-                              if (session.current instanceof SelkiesSession) session.current.showPointer(checked);
-                            },
-                          }
-                        : null
-                    }
                   />
                 ) : null}
                 {showing ? (
