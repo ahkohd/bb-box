@@ -39,7 +39,7 @@ const CURRENT: ImageBuild = { ref: "9100", image: "standard", kind: "linux", bui
  * that answer the build script, the kind's check and BB's app, and a clock
  * that a box from the new build moves on by `slowerMs` more.
  */
-function fake(options: { buildExit?: number; check?: string; app?: string; captured?: ImageRecord; slowerMs?: number; full?: number } = {}) {
+function fake(options: { buildExit?: number; check?: string; app?: string; captured?: ImageRecord; slowerMs?: number; full?: number; steps?: boolean } = {}) {
   let full = options.full ?? 0;
   const events: string[] = [];
   let clock = 0;
@@ -74,8 +74,11 @@ function fake(options: { buildExit?: number; check?: string; app?: string; captu
       if (full-- > 0) throw new BackendError("no_capacity", "mac1 already runs as many VMs as macOS allows, two.");
       const ref = String(next++);
       events.push(`box ${ref} from ${build.ref}: ${label}`);
-      clock += build.ref === CURRENT.ref ? 1_000 : 1_000 + (options.slowerMs ?? 0);
-      return { ref, command: command(ref) } satisfies ImageBox;
+      const slower = build.ref === CURRENT.ref ? 0 : (options.slowerMs ?? 0);
+      clock += 1_000 + slower;
+      // A backend that times its steps: the new build's box is slower to come up.
+      const steps = options.steps ? [{ name: "clone", ms: 400 }, { name: "ssh", ms: 600 + slower }] : undefined;
+      return { ref, command: command(ref), ...(steps ? { steps } : {}) } satisfies ImageBox;
     },
     capture: async (box, from, image) => {
       events.push(`capture ${box.ref} from ${from.ref} as ${image}`);
@@ -168,6 +171,9 @@ test("a failed build, or a failed check, keeps the image and removes what the re
 
   const slow = await refresh(fake({ slowerMs: 5_001 }));
   assert.match(slow.reason!, /answers as quickly: A box of the new build answered in 6\.0 s, of the old in 1\.0 s\./);
+  // With the backend's steps, which of them took the time.
+  const timedSteps = await refresh(fake({ slowerMs: 5_001, steps: true }));
+  assert.match(timedSteps.reason!, /answered in 6\.0 s \(clone 0\.4 s, ssh 5\.6 s\), of the old in 1\.0 s \(clone 0\.4 s, ssh 0\.6 s\)\./);
 
   const app = await refresh(fake({ app: "b".repeat(64) }));
   assert.match(app.reason!, /BB's app: The box has BB's app bbbbbbbbbbbb, the record aaaaaaaaaaaa, the server aaaaaaaaaaaa\./);

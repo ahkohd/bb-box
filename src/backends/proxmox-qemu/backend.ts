@@ -1629,25 +1629,30 @@ export class ProxmoxQemuBackend implements Backend {
     const kind = LINUX_KINDS.find((linux) => linux.id === build.kind) ?? KIND;
     const os = kind.capabilities.os;
     let vmid: number | null = null;
+    // Each step's time, for the build's check that a box of it answers as quickly as one of the old.
+    const steps: { name: string; ms: number }[] = [];
+    const step = timed((name, ms) => steps.push({ name, ms }));
     try {
       const guests = await api.listPool(this.#config.proxmox.pool, signal);
       const description = `bb-box image box: ${label}\ninstall ${this.#context.installId}`;
-      vmid = await this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal, () => {});
+      vmid = await step("clone", () => this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal, () => {}));
       const id = vmid;
-      await api.configure(id, this.#settings(this.#context.kind(kind.id).defaultSize, id, await api.config(id, signal)), signal);
-      await api.configure(id, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
-      await api.start(id, signal);
+      await step("configure", async () => {
+        await api.configure(id, this.#settings(this.#context.kind(kind.id).defaultSize, id, await api.config(id, signal)), signal);
+        await api.configure(id, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
+      });
+      await step("start", () => api.start(id, signal));
       const timeoutMs = this.#options.readyTimeoutMs ?? kind.readyTimeoutMs;
-      await this.#waitReady(id, timeoutMs, signal, untimed, os);
+      await this.#waitReady(id, timeoutMs, signal, step, os);
       if (os === "windows") {
-        await this.#setClock(id, signal);
+        await step("clock", () => this.#setClock(id, signal));
         // The kind's check runs in the desktop session, which comes up soon after SSH.
-        await this.#desktopUp(id, timeoutMs, signal);
+        await step("desktop", () => this.#desktopUp(id, timeoutMs, signal));
       } else if (kind.capabilities.displays.length) {
         // As does a Linux desktop's check, once its display service is up.
-        await this.#linuxDisplay(id, timeoutMs, signal);
+        await step("display", () => this.#linuxDisplay(id, timeoutMs, signal));
       }
-      return { ref: String(id), command: await this.#command(id, os) };
+      return { ref: String(id), command: await this.#command(id, os), steps };
     } catch (error) {
       if (vmid !== null) {
         await this.#forget(vmid);

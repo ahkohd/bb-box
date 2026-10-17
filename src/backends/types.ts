@@ -648,6 +648,8 @@ export interface ImageBox {
   readonly ref: string;
   /** Commands as the box user, who has sudo without a password. */
   readonly command: CommandTransport;
+  /** How long each step of making it took, in order, where the backend times them: for a build's answer check. */
+  readonly steps?: readonly { readonly name: string; readonly ms: number }[];
 }
 
 /** A build of an image that a backend keeps: on Proxmox LXC, a template. */
