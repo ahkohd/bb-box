@@ -10,12 +10,15 @@
 // Selkies' own page does, which is how the relay paces this viewer.
 //
 // It cannot show a box without WebCodecs, and gives up, for RFB, when its
-// first connection ends before a frame: onFallback says why.
+// first connection ends before a frame, or brings none within FIRST_FRAME_MS
+// of asking for video: onFallback says why.
 
 import Keyboard from "@novnc/novnc/core/input/keyboard.js";
 import type { Kept } from "./kept.ts";
 import { MAX_RETRY_MS, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, isCommandKey, macBrowser, type Connection } from "./viewer.ts";
 
+/** How long a first connection may ask for video and get no frame before the viewer gives up, for RFB. */
+export const FIRST_FRAME_MS = 10_000;
 /** How often the viewer says which frame it has shown, as Selkies' own page does. */
 const ACK_MS = 50;
 /** A frame message: type 4, H.264. */
@@ -153,6 +156,8 @@ export class SelkiesSession implements Kept {
   #everShown = false;
   #failures = 0;
   #retry: ReturnType<typeof setTimeout> | undefined;
+  /** Gives up for RFB when a first connection asked for video and got no frame in time. */
+  #firstFrame: ReturnType<typeof setTimeout> | undefined;
   #mine = false;
   #resizable = false;
   /** Whether the desktop follows this tab's size: only once the tab's size changes while it has control, as the RFB viewer does. */
@@ -243,6 +248,21 @@ export class SelkiesSession implements Kept {
     this.#reset();
     this.#send("START_VIDEO");
     this.#send("REQUEST_KEYFRAME");
+    this.#awaitFirstFrame(this.#socket);
+  }
+
+  /**
+   * A stream that connects but sends no frame, as a box whose server cannot reach its screen, would leave the viewer
+   * waiting: before the first frame ever shown, it ends the connection and falls back to RFB after FIRST_FRAME_MS.
+   */
+  #awaitFirstFrame(socket: WebSocket): void {
+    clearTimeout(this.#firstFrame);
+    if (this.#everShown) return;
+    this.#firstFrame = setTimeout(() => {
+      if (this.#everShown || this.#socket !== socket || this.#stopped || this.#disposed) return;
+      this.#drop();
+      this.onFallback?.(`No video came within ${FIRST_FRAME_MS / 1000} s.`);
+    }, FIRST_FRAME_MS);
   }
 
   subscribe(listener: () => void): () => void {
@@ -267,6 +287,7 @@ export class SelkiesSession implements Kept {
       socket.send(`SETTINGS,${JSON.stringify({ displayId: "primary" })}`);
       this.#stopped = this.#hidden || document.visibilityState === "hidden";
       socket.send(this.#stopped ? "STOP_VIDEO" : "START_VIDEO");
+      if (!this.#stopped) this.#awaitFirstFrame(socket);
       // Whether this browser decodes 4:4:4: the box streams it while every viewer does (the relay keeps this message).
       void decodesFullColour().then((yes) => {
         if (this.#socket === socket && socket.readyState === WebSocket.OPEN) socket.send(`BB_FULLCOLOR,${yes ? 1 : 0}`);
@@ -471,6 +492,7 @@ export class SelkiesSession implements Kept {
       this.#canvas.getContext("2d")?.drawImage(frame, 0, 0);
       if (this.connection.state !== "connected") {
         this.#everShown = true;
+        clearTimeout(this.#firstFrame);
         this.#failures = 0;
         this.#set({ state: "connected" });
         this.#apply();
@@ -682,6 +704,7 @@ export class SelkiesSession implements Kept {
   dispose(): void {
     this.#disposed = true;
     clearTimeout(this.#retry);
+    clearTimeout(this.#firstFrame);
     clearTimeout(this.#settle);
     clearTimeout(this.#pasteWait);
     clearTimeout(this.#chord);

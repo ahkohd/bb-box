@@ -17,7 +17,7 @@ import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
-import { CLIPBOARD_MAX_BYTES, SelkiesSession, forgetFullColour, spsCodec } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, SelkiesSession, forgetFullColour, spsCodec } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -2298,6 +2298,37 @@ test("a desktop whose video does not start shows over VNC, and says why (056)", 
     const note = slot.getByText("Video did not start, so this shows VNC.");
     expect(note.getAttribute("title")).toBe("This box's desktop has no Selkies stream.");
   } finally {
+    undo();
+  }
+});
+
+test("a video session that connects but brings no frame gives up for RFB after FIRST_FRAME_MS, and one that brought a frame does not (060)", async () => {
+  const undo = withVideo();
+  vi.useFakeTimers();
+  try {
+    const silent = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const reasons: string[] = [];
+    silent.onFallback = (reason) => reasons.push(reason);
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    vi.advanceTimersByTime(FIRST_FRAME_MS - 1);
+    expect(reasons).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(reasons).toEqual([`No video came within ${FIRST_FRAME_MS / 1000} s.`]);
+    expect(socket.readyState).toBe(3);
+    silent.dispose();
+
+    const shown = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=w&stream=selkies");
+    shown.onFallback = (reason) => reasons.push(reason);
+    const other = FakeSocket.made.at(-1)!;
+    act(() => other.open());
+    other.onmessage?.({ data: videoFrame(1, true) });
+    vi.advanceTimersByTime(FIRST_FRAME_MS * 2);
+    expect(reasons).toHaveLength(1);
+    expect(shown.connection.state).toBe("connected");
+    shown.dispose();
+  } finally {
+    vi.useRealTimers();
     undo();
   }
 });
