@@ -363,7 +363,7 @@ test("with Linux templates, linux boxes are VMs from them, with their own kernel
   assert.deepEqual(withKvm?.capabilities.features, ["docker", "kernel", "kvm"]);
 });
 
-test("a Windows box shows its desktop as video, through bb-box-stream.exe connect over SSH, only where its template's image record lists OpenH264 (060)", async () => {
+test("a Windows box shows its desktop as video, through its pipe over SSH, only where its template's image record lists OpenH264 (060)", async () => {
   const displaysOf = async (tools: Record<string, string> | null) => {
     const { backend, proxmox } = setup();
     if (tools) {
@@ -385,7 +385,9 @@ test("a Windows box shows its desktop as video, through bb-box-stream.exe connec
   const opened = await video!.open();
   assert.deepEqual(opened.auth, { type: "none" });
   assert.equal(opened.route.type, "command");
-  assert.equal(opened.route.type === "command" ? opened.route.argv.at(-1) : "", "& 'C:\\Program Files\\bb-box-tools\\bb-box-stream\\bb-box-stream.exe' connect");
+  const script = opened.route.type === "command" ? opened.route.argv.at(-1)! : "";
+  assert.match(script, /NamedPipeClientStream\]::new\('\.', 'bb-box-stream'/, "pwsh joins the channel to the server's pipe");
+  assert.match(script, /schtasks\.exe \/run \/tn bb-box-stream/, "starting it through its task when it is not running");
 });
 
 test("the desktop resizes to the viewer's size, else to the listed mode that best covers it, set by Windows in the box user's session, and gives Windows' reason when it cannot", async () => {

@@ -111,10 +111,12 @@ static class Connect {
       return 1;
     }
     Stream input = Console.OpenStandardInput(), output = Console.OpenStandardOutput();
-    Thread down = new Thread(() => { Pump(pipe, output); Environment.Exit(0); });
+    string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "bb-box");
+    if (File.Exists(Path.Combine(folder, "trace"))) trace = new StreamWriter(Path.Combine(folder, "connect-" + Process.GetCurrentProcess().Id + ".log")) { AutoFlush = true };
+    Thread down = new Thread(() => { Pump(pipe, output, "out"); Environment.Exit(0); });
     down.IsBackground = true;
     down.Start();
-    Pump(input, pipe);
+    Pump(input, pipe, "in");
     try { pipe.WaitForPipeDrain(); } catch (Exception) { }
     Thread.Sleep(Timeout.Infinite);
     return 0;
@@ -132,14 +134,20 @@ static class Connect {
     }
   }
 
-  static void Pump(Stream from, Stream to) {
+  static StreamWriter trace;
+
+  static void Pump(Stream from, Stream to, string name) {
     byte[] buffer = new byte[1 << 16];
     try {
       for (int n; (n = from.Read(buffer, 0, buffer.Length)) > 0; ) {
+        if (trace != null) lock (trace) trace.WriteLine(DateTime.Now.ToString("HH:mm:ss.fff") + " " + name + " " + n);
         to.Write(buffer, 0, n);
         to.Flush();
       }
-    } catch (Exception) { }
+      if (trace != null) lock (trace) trace.WriteLine(DateTime.Now.ToString("HH:mm:ss.fff") + " " + name + " ended");
+    } catch (Exception error) {
+      if (trace != null) lock (trace) trace.WriteLine(name + " failed: " + error.Message);
+    }
   }
 }
 
@@ -707,7 +715,12 @@ class Server {
       if (client.Handshake()) {
         // Selkies speaks first; the relay waits for a first message.
         client.Text("MODE websockets");
-        for (string text; (text = client.NextText()) != null; ) if (text.Length > 0) Handle(text, client);
+        bool trace = File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "bb-box", "trace"));
+        for (string text; (text = client.NextText()) != null; ) {
+          if (trace) Program.Log("client " + client.Id + ": " + (text.Length > 60 ? text.Substring(0, 60) : text));
+          if (text.Length > 0) Handle(text, client);
+        }
+        if (trace) Program.Log("client " + client.Id + " ended");
       }
     } catch (Exception) { }
     client.Close();
