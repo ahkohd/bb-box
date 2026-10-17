@@ -3083,6 +3083,26 @@ for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_C
   });
 }
 
+test("a video desktop whose box's image cannot leave the cursor out is never told, and offers no pointer choice, whatever its kind says (060)", async (t) => {
+  const kind: BoxKind = {
+    ...FAKE_SELKIES_KIND,
+    capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" ? { ...display, cursor: "stream" as const } : display)) },
+  };
+  const { harness, box, world } = await desktopBox({ kind });
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.cursorless = true;
+  const selkies = world.backend!.selkies;
+  assert.equal(((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { pointer?: boolean }).pointer, false);
+  const viewer = "viewer-one-0001";
+  const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
+  await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  await one.receive("BB_SHOWPOINTER,1");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(!selkies.pages.some((page) => page.received.some((message) => typeof message === "string" && message.startsWith("BB_"))));
+  await one.close();
+});
+
 test("a video desktop that says nothing of its cursor is never told, and offers no pointer choice", async (t) => {
   const { harness, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
   t.after(() => harness.lifecycle.dispose());

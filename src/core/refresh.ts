@@ -12,7 +12,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { IMAGE_CONTRACT, parseImageRecord, pinsDigest, type ImageRecord } from "../backends/images.ts";
+import { IMAGE_CONTRACT, WINDOWS_HARDWARE_CURSOR, parseImageRecord, pinsDigest, type ImageRecord } from "../backends/images.ts";
 import { KIND_INFO } from "../backends/kinds.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../backends/types.ts";
 import { compareVersions, resolveVersions, stageSetup } from "../backends/versions.ts";
@@ -169,7 +169,8 @@ export async function windowsPins(setup: string, arch: string): Promise<WindowsP
 /**
  * A new Windows build's record (054): the old one's, with the new build ID,
  * the pinned tools' versions, and the pins digest of the build script whose
- * pins setup/windows/pins.json has.
+ * pins setup/windows/pins.json has. On x86_64, where the image has
+ * bb-box-stream, it lists the hardware cursor, which refresh.ps1 turns on.
  */
 export function windowsRecord(current: ImageBuild, pins: readonly WindowsPin[], buildId: string, built: number, digest: string): ImageRecord {
   const arch = KIND_INFO[current.kind]?.arch ?? "x86_64";
@@ -185,7 +186,7 @@ export function windowsRecord(current: ImageBuild, pins: readonly WindowsPin[], 
     aptSnapshot: null,
     pins: digest,
     bbApp: null,
-    tools: { ...current.record?.tools, ...Object.fromEntries(pins.map((pin) => [pin.name, pin.version])) },
+    tools: { ...current.record?.tools, ...Object.fromEntries(pins.map((pin) => [pin.name, pin.version])), ...(arch === "x86_64" ? { [WINDOWS_HARDWARE_CURSOR]: "1" } : {}) },
     nvidia: null,
     layer: null,
     sizeGiB: null,
@@ -367,6 +368,8 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
         // bb-box-stream.exe (060): its source, and its install, which the refresh runs when either changes.
         ["bb-box-stream.cs", await readFile(join(options.setup, "windows", "bb-box-stream.cs"), "utf8")],
         ["install-stream.ps1", await readFile(join(options.setup, "windows", "install-stream.ps1"), "utf8")],
+        // The pointer as the VirtIO GPU's hardware cursor, which bb-box-stream needs to leave it out of the video.
+        ["hardware-cursor.ps1", await readFile(join(options.setup, "windows", "hardware-cursor.ps1"), "utf8")],
         ["pins.json", `${JSON.stringify({ tools: pins }, null, 2)}\n`],
         ["image.json", `${JSON.stringify(windowsRecord(current, pins, buildId, now(), digest))}\n`],
       ];

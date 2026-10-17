@@ -8,6 +8,14 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+/**
+ * The entry a Windows image's record lists among its tools where its VirtIO
+ * GPU driver draws the pointer as a hardware cursor (060): Desktop
+ * Duplication then leaves the pointer out of the image, so bb-box-stream can
+ * leave it out of the video while a person holds control.
+ */
+export const WINDOWS_HARDWARE_CURSOR = "hardware-cursor";
+
 /** The contract an image must keep (049); a record with an older one fails the doctor. */
 export const IMAGE_CONTRACT = 1;
 

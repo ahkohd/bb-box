@@ -216,6 +216,14 @@ the panel, with one tab in control and one watching:
   no hardware cursor, so Windows draws the pointer into the desktop image.
   Windows video does not offer the option until a display device whose
   driver has a hardware cursor leaves it out.
+- That driver has one, off by default: its INF sets HWCursor to 0. With
+  HWCursor 1 in the display device's 2 keys and the device restarted,
+  Desktop Duplication leaves the pointer out, checked on a throwaway box
+  and through the panel. The image's first logon and refresh now turn it
+  on (hardware-cursor.ps1), its record lists "hardware-cursor", and only a
+  box of such an image offers the option. QEMU's VNC then sends the pointer
+  as a cursor shape, not in the picture, so a viewer watching over VNC sees
+  no pointer: accepted, as Windows shows video by default.
 - On Linux, each change of control or of the option restarts Selkies'
   capture. Once, with the pointer still, the watching tab kept the frame
   from before the restart until the screen changed. With the pointer

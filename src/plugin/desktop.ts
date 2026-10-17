@@ -117,6 +117,12 @@ export interface Desktops {
   sharp(boxId: string): Promise<boolean | null>;
   /** Makes the box's desktop High resolution, twice the pixels at twice Xfce's scale, or not. */
   setSharp(boxId: string, on: boolean): Promise<void>;
+  /**
+   * Whether the box's video can leave its pointer out while a person holds
+   * control, as its video display says: a Windows box's only where its image
+   * has the hardware cursor. False when it is not running.
+   */
+  pointer(boxId: string): Promise<boolean>;
   dispose(): Promise<void>;
 }
 
@@ -298,7 +304,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     const entry = selkiesBoxes.get(boxId);
     if (!entry || !entry.relays.size) return;
     void (async () => {
-      const how = (await boxes.find(boxId))?.capabilities.displays.find((display) => display.protocol === "selkies")?.cursor;
+      // The box's own video display, which says it where the box's image can, not the kind's.
+      const how = (await selkiesDisplay(boxes, boxId).catch(() => null))?.cursor;
       if (!how) return;
       const view = control.view(boxId);
       const want = view.owner !== "human" || (view.holder !== null && entry.pointers.get(view.holder) === true);
@@ -580,6 +587,9 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   return {
     control,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
+    async pointer(boxId) {
+      return !!(await selkiesDisplay(boxes, boxId).catch(() => null))?.cursor;
+    },
     async sharp(boxId) {
       const box = await boxes.find(boxId);
       if (!box || !sharpOffered(box)) return null;

@@ -78,7 +78,7 @@ import {
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
-import { judgeImage, recordFromJson, recordInDescription } from "../images.ts";
+import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, recordInDescription } from "../images.ts";
 import { displayReason } from "../proxmox-lxc/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
@@ -120,8 +120,8 @@ const DESKTOP_POLL_MS = 1_000;
 
 /**
  * The desktop as video (060): bb-box-stream.exe in box's desktop session, which a box's template has where its image
- * record lists OpenH264. No cursor yet: bb-box-stream.exe can leave the pointer out, but the VirtIO GPU's display-only
- * driver has no hardware cursor, so Windows draws the pointer into the image Desktop Duplication returns (060-results).
+ * record lists OpenH264. It leaves the pointer out while a person holds control (cursor "stream") only where the record
+ * also lists the hardware cursor: without it, Windows draws the pointer into the image Desktop Duplication returns.
  */
 const WINDOWS_VIDEO = { id: "video", protocol: "selkies", resizable: true } as const;
 /**
@@ -153,7 +153,8 @@ const KIND: BoxKind = {
     // QEMU's VNC server moves the clipboard only through the SPICE guest agent, which the template lacks, so bb-box
     // moves it with Get-Clipboard and Set-Clipboard in the desktop session (#461). A box whose image lacks
     // bb-box-stream has no video display among its transports, and the viewer falls back to VNC.
-    displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }, WINDOWS_VIDEO],
+    // The cursor as the hardware cursor makes it possible; a box's own video display says it only where its image has it.
+    displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }, { ...WINDOWS_VIDEO, cursor: "stream" }],
     computerUse: CUA_DRIVER,
     enrol: false,
   },
@@ -381,8 +382,8 @@ export class ProxmoxQemuBackend implements Backend {
   });
   readonly #stopping = new AbortController();
   readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
-  /** Whether each Windows template's image has bb-box-stream (060), and when that was read. */
-  readonly #streaming = new Map<number, { has: boolean; at: number }>();
+  /** Whether each Windows template's image has bb-box-stream (060) and the hardware cursor, and when that was read. */
+  readonly #streaming = new Map<number, { has: boolean; cursor: boolean; at: number }>();
   /** Image boxes (054) from before their clone until their capture or removal, which no sweep counts. */
   readonly #imageBoxes = new Set<number>();
 
@@ -798,24 +799,32 @@ export class ProxmoxQemuBackend implements Backend {
       minSize: MIN_DESKTOP,
     };
     const template = guest.data?.template;
-    if (typeof template !== "number" || !(await this.#streams(template))) return { command, displays: [desktop], access: { ssh: this.#access(vmid), dockerHost: null } };
+    const streams = typeof template === "number" ? await this.#streams(template) : null;
+    if (!streams?.has) return { command, displays: [desktop], access: { ssh: this.#access(vmid), dockerHost: null } };
     const { ssh } = await this.#keys();
     const video: Display = {
       ...WINDOWS_VIDEO,
+      ...(streams.cursor ? { cursor: "stream" as const } : {}),
       label: "Desktop, as video",
       open: async () => ({ route: ssh.commandRoute(this.#access(vmid), WINDOWS_STREAM), auth: { type: "none" } }),
     };
     return { command, displays: [desktop, video], access: { ssh: this.#access(vmid), dockerHost: null } };
   }
 
-  /** Whether a Windows template's image has bb-box-stream: its record lists OpenH264. Kept a minute. */
-  async #streams(template: number): Promise<boolean> {
+  /**
+   * Whether a Windows template's image has bb-box-stream, as its record lists OpenH264, and the hardware cursor, as it
+   * lists that too. Kept a minute.
+   */
+  async #streams(template: number): Promise<{ readonly has: boolean; readonly cursor: boolean }> {
     const known = this.#streaming.get(template);
-    if (known && Date.now() - known.at < STREAM_CHECK_MS) return known.has;
+    if (known && Date.now() - known.at < STREAM_CHECK_MS) return known;
     const config = await (await this.client()).config(template).catch(() => null);
-    const has = config ? recordInDescription(String(config.description ?? ""))?.tools?.openh264 !== undefined : (known?.has ?? false);
-    this.#streaming.set(template, { has, at: Date.now() });
-    return has;
+    const tools = config ? (recordInDescription(String(config.description ?? ""))?.tools ?? {}) : null;
+    const has = tools ? tools.openh264 !== undefined : (known?.has ?? false);
+    const cursor = tools ? has && tools[WINDOWS_HARDWARE_CURSOR] !== undefined : (known?.cursor ?? false);
+    const now = { has, cursor, at: Date.now() };
+    this.#streaming.set(template, now);
+    return now;
   }
 
   /**

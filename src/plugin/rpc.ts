@@ -70,7 +70,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       );
       const video = !!box && (app.configuration.document.general.video ?? GENERAL_DEFAULTS.video) && box.capabilities.displays.some((display) => display.protocol === "selkies");
       const sharp = box ? await app.desktops.sharp(box.id).catch(() => null) : null;
-      const pointer = video && !!box?.capabilities.displays.some((display) => display.protocol === "selkies" && !!display.cursor);
+      const pointer = video && !!box && (await app.desktops.pointer(box.id).catch(() => false));
       return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path, video, sharp, pointer };
     },
     "desktop.sharp": async ({ threadId, box: ref, on }) => {

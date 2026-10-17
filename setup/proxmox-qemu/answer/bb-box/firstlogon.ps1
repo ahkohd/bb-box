@@ -153,6 +153,9 @@ $archive = 'C:\bb-box\openh264.dll.bz2'
 Get-Pinned $build.openh264.url $build.openh264.sha256 $archive
 & C:\bb-box\install-stream.ps1 -Source C:\bb-box\bb-box-stream.cs -Archive $archive -Version $build.openh264.version
 Remove-Item $archive
+# The pointer as the display's hardware cursor, so bb-box-stream can leave it
+# out of the video while a person holds control.
+& C:\bb-box\hardware-cursor.ps1
 
 Step "Visual Studio Build Tools $($build.vs.version): $($build.vs.components -join ', ')"
 # The C++ build tools and the Windows SDK, which Rust's MSVC toolchain links

@@ -322,6 +322,7 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
     "write 7000 C:\\bb-box\\build\\refresh.ps1",
     "write 7000 C:\\bb-box\\build\\bb-box-stream.cs",
     "write 7000 C:\\bb-box\\build\\install-stream.ps1",
+    "write 7000 C:\\bb-box\\build\\hardware-cursor.ps1",
     "write 7000 C:\\bb-box\\build\\pins.json",
     "write 7000 C:\\bb-box\\build\\image.json",
     "stream 7000",
@@ -353,6 +354,7 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
   assert.deepEqual([written.kind, written.arch, written.os, written.pins], ["windows-desktop", "x86_64", "Windows 11 Pro", await pinsDigest(SETUP, "windows")]);
   assert.equal(written.tools.node, "24.21.0");
   assert.equal(written.tools.pwsh, pins.tools.find((pin) => pin.name === "pwsh")!.version);
+  assert.equal(written.tools["hardware-cursor"], "1", "refresh.ps1 turns on the hardware cursor, so the record lists it (060)");
   assert.equal(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\refresh.ps1")), readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8"));
 });
 
@@ -404,6 +406,23 @@ test("the Windows refresh gives an image built before the OneDrive policy what t
   assert.match(refresh, /New-ItemProperty -Path \$onedrive -Name DisableFileSyncNGSC -Value 1 -PropertyType DWord -Force/);
   assert.match(refresh, /Get-Process OneDrive -ErrorAction SilentlyContinue \| Stop-Process -Force/);
   assert.match(readFileSync(join(SETUP, "windows", "check.ps1"), "utf8"), /Check 'no OneDrive'/);
+});
+
+test("a Windows image's first logon and its refresh turn on the VirtIO GPU's hardware cursor, its record lists it, and its check sees the pointer out of the captured image (060)", () => {
+  const firstLogon = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "firstlogon.ps1"), "utf8");
+  const refresh = readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8");
+  const build = readFileSync(join(SETUP, "proxmox-qemu", "build.sh"), "utf8");
+  const script = readFileSync(join(SETUP, "windows", "hardware-cursor.ps1"), "utf8");
+  assert.match(firstLogon, /& C:\\bb-box\\hardware-cursor\.ps1/);
+  assert.match(refresh, /& "\$dir\\hardware-cursor\.ps1"/);
+  assert.match(build, /cp [^\n]*"\$here\/\.\.\/windows\/hardware-cursor\.ps1" "\$work\/answer\/bb-box\/"/);
+  assert.match(build, /openh264: \$openh264, "hardware-cursor": "1"\}/);
+  assert.match(script, /-Name HWCursor -Value 1 -PropertyType DWord/);
+  assert.match(script, /Control\\Class\\\$driver/);
+  assert.match(script, /Control\\Video\\\$video\\0000/);
+  assert.match(script, /pnputil \/restart-device/);
+  assert.match(readFileSync(join(SETUP, "windows", "check.ps1"), "utf8"), /Check 'pointer out of the captured image'[\s\S]*bb-box-stream\.exe[\s\S]*pointer > pointer\.txt/);
+  assert.match(readFileSync(join(SETUP, "windows", "bb-box-stream.cs"), "utf8"), /if \(mode == "pointer"\) return PointerTest\(\);/);
 });
 
 test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {

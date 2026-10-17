@@ -117,7 +117,7 @@ record=$(jq -cn --arg build "$build" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)
   --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" --arg node "$NODE_VERSION" --arg claude "$CLAUDE_VERSION" --arg codex "$CODEX_VERSION" --arg pi "$PI_VERSION" --arg ffmpeg "$FFMPEG_VERSION" --arg openh264 "$OPENH264_VERSION" \
   '{contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: $build, built: $built, base: null, os: $os,
     aptSnapshot: null, pins: $pins, bbApp: null,
-    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node, "claude-code": $claude, codex: $codex, pi: $pi, ffmpeg: $ffmpeg, openh264: $openh264},
+    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node, "claude-code": $claude, codex: $codex, pi: $pi, ffmpeg: $ffmpeg, openh264: $openh264, "hardware-cursor": "1"},
     nvidia: null, layer: null, sizeGiB: null}')
 linked_clones() { # vmid
   { grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null ||
@@ -175,8 +175,9 @@ trap 'exit 1' INT TERM
 
 password=$(python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(24)))')
 cp -r "$here/answer" "$work/answer"
-# bb-box-stream.exe's source (060), which the first logon compiles with the C# compiler Windows has.
-cp "$here/../windows/bb-box-stream.cs" "$here/../windows/install-stream.ps1" "$work/answer/bb-box/"
+# bb-box-stream.exe's source (060), which the first logon compiles with the C# compiler Windows has, and the
+# script that turns on the display's hardware cursor, so it can leave the pointer out of the video.
+cp "$here/../windows/bb-box-stream.cs" "$here/../windows/install-stream.ps1" "$here/../windows/hardware-cursor.ps1" "$work/answer/bb-box/"
 python3 - "$work/answer/autounattend.xml" "$password" "$BBBOX_WINDOWS_EDITION" "$BBBOX_WINDOWS_KEY" <<'EOF'
 import sys
 from xml.sax.saxutils import escape
