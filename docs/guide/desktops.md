@@ -63,6 +63,14 @@ If the video cannot start, the desktop shows over VNC, and the toolbar says 'Vid
 
 Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size. Copying and pasting carry images too, both ways: paste an image into the box, or copy one there and it comes to your computer. If your browser does not let BB Box write an image to your clipboard, the image shows so you can right-click it and copy it.
 
+## Sharp
+
+On a high-resolution screen, such as a Mac's, a desktop's text can look soft: each of its pixels is stretched over several of yours. Select **Sharp** in the toolbar's menu to give the desktop twice the pixels, with everything on it drawn twice the size, so it looks the same size but its text is sharp. It is ticked while it is on, and stays on for that box until you turn it off, even after the box starts again.
+
+Sharp takes about three times the processor while someone watches the desktop, and the box's apps draw four times the pixels, so scrolling in a browser costs more too. It works best on boxes with 8 cores or more. Only Linux desktops drawn by the CPU have it. While it is on, resizing your tab in control keeps the desktop's pixels doubled; over VNC, the desktop keeps its size.
+
+Video also keeps coloured text sharp: when every browser watching a desktop can decode full colour, as Chrome can, the video carries it, for a little more processor and no more bandwidth.
+
 ## When the desktop is not showing
 
 The screen tells you why, and what you can do. It uses the box's name, here calm-otter:

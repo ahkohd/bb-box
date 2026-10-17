@@ -21,8 +21,42 @@ const ACK_MS = 50;
 /** A frame message: type 4, H.264. */
 const VIDEO = 4;
 const H264 = 1;
-/** The decoder's codec. The frames are Annex B, so their parameters come with each key frame. */
+/** The decoder's codec until a key frame's SPS gives the stream's own. The frames are Annex B, so their parameters come with each key frame. */
 const CODEC = "avc1.42E01F";
+/** A 4:4:4 stream's codec (High 4:4:4 Predictive), as the box sends when every viewer can decode it. */
+const FULL_COLOUR_CODEC = "avc1.F4002A";
+
+/**
+ * The codec string of an H.264 key frame in Annex B, from its SPS: profile, constraint flags and level, as
+ * "avc1.PPCCLL". Null when it carries no SPS. A 4:4:4 stream needs its own profile: a decoder set up for Baseline
+ * fails on it.
+ */
+export function spsCodec(frame: Uint8Array): string | null {
+  for (let i = 0; i + 6 < frame.length; i++) {
+    if (frame[i] !== 0 || frame[i + 1] !== 0 || frame[i + 2] !== 1 || (frame[i + 3]! & 31) !== 7) continue;
+    const hex = (value: number) => value.toString(16).padStart(2, "0").toUpperCase();
+    return `avc1.${hex(frame[i + 4]!)}${hex(frame[i + 5]!)}${hex(frame[i + 6]!)}`;
+  }
+  return null;
+}
+
+let fullColour: Promise<boolean> | null = null;
+/** Whether this browser decodes 4:4:4 H.264, which keeps coloured text sharp: asked once. */
+export function decodesFullColour(): Promise<boolean> {
+  fullColour ??=
+    typeof VideoDecoder === "undefined" || typeof VideoDecoder.isConfigSupported !== "function"
+      ? Promise.resolve(false)
+      : VideoDecoder.isConfigSupported({ codec: FULL_COLOUR_CODEC, optimizeForLatency: true }).then(
+          (support) => support.supported === true,
+          () => false,
+        );
+  return fullColour;
+}
+
+/** Forgets what this browser decodes, for tests. */
+export function forgetFullColour(): void {
+  fullColour = null;
+}
 /** Notches of a wheel turned by pixels, as a mouse's are about this many pixels each. */
 const WHEEL_PIXELS = 50;
 /** The clipboard's chunk, as Selkies' own: bytes in one message, a multiple of 3 so each chunk's base64 stands alone. */
@@ -107,6 +141,8 @@ export class SelkiesSession implements Kept {
   readonly #keyboard: Keyboard;
   #socket: WebSocket | null = null;
   #decoder: VideoDecoder | null = null;
+  /** The codec the decoder is set up for: the last key frame's. */
+  #codec = CODEC;
   /** Frames are dropped until a key frame, after a connect, a reset or a decoder error. */
   #needKey = true;
   /** The frame received last, and the one last acknowledged: the relay paces this viewer by them, as Selkies' own page acknowledges what it received. */
@@ -231,6 +267,10 @@ export class SelkiesSession implements Kept {
       socket.send(`SETTINGS,${JSON.stringify({ displayId: "primary" })}`);
       this.#stopped = this.#hidden || document.visibilityState === "hidden";
       socket.send(this.#stopped ? "STOP_VIDEO" : "START_VIDEO");
+      // Whether this browser decodes 4:4:4: the box streams it while every viewer does (the relay keeps this message).
+      void decodesFullColour().then((yes) => {
+        if (this.#socket === socket && socket.readyState === WebSocket.OPEN) socket.send(`BB_FULLCOLOR,${yes ? 1 : 0}`);
+      });
     };
     socket.onmessage = (event: MessageEvent) => {
       if (this.#socket === socket) this.#message(event.data);
@@ -287,7 +327,7 @@ export class SelkiesSession implements Kept {
         this.#send("REQUEST_KEYFRAME");
       },
     });
-    this.#decoder.configure({ codec: CODEC, optimizeForLatency: true });
+    this.#decoder.configure({ codec: this.#codec, optimizeForLatency: true });
   }
 
   #message(data: unknown): void {
@@ -305,6 +345,12 @@ export class SelkiesSession implements Kept {
     this.#needKey = false;
     const decoder = this.#decoder;
     if (!decoder || decoder.state !== "configured") return;
+    // A key frame of another profile, as when the box turns 4:4:4 on or off: the decoder takes the stream's own.
+    const codec = key ? spsCodec(bytes.subarray(12)) : null;
+    if (codec && codec !== this.#codec) {
+      this.#codec = codec;
+      decoder.configure({ codec, optimizeForLatency: true });
+    }
     decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: id, data: bytes.subarray(12) }));
   }
 

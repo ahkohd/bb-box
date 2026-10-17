@@ -188,6 +188,15 @@ export class SelkiesBox {
   }
 
   /**
+   * Streams the display in 4:4:4 or 4:2:0. Selkies takes this from a controller only, for every page of the display, so
+   * bb-box asks for 4:4:4 while every viewer decodes it: coloured text keeps its edges, for about a tenth of a core
+   * more and the same bandwidth (measured 16 October 2026). Selkies restarts the capture, from a key frame.
+   */
+  async fullColour(on: boolean): Promise<void> {
+    await this.input(`SETTINGS,${JSON.stringify({ displayId: "primary", video_fullcolor: on })}`);
+  }
+
+  /**
    * Asks for a key frame over the input connection, a controller, which
    * Selkies lets ask four times a second. False when it is not open: the
    * viewer asks itself.
@@ -241,6 +250,8 @@ export interface SelkiesRelayOptions {
   onSize?(size: { readonly width: number; readonly height: number }): void;
   /** The viewer with control asked for its size (Selkies' `r,<W>x<H>`). The relay does not pass it on: bb-box sets the size. */
   onResize?(size: { readonly width: number; readonly height: number }): void;
+  /** Whether the viewer's browser decodes 4:4:4, as it says once connected (bb-box's `BB_FULLCOLOR,<0|1>`, which goes no further). */
+  onFullColour?(yes: boolean): void;
   onEnd?(by: "viewer" | "box", error: Error | null): void;
   readonly connectTimeoutMs?: number;
   /** How far behind the viewer may fall; LAG_MS by default. */
@@ -393,6 +404,11 @@ export class SelkiesRelay {
   /** A message from the viewer. */
   async receive(message: Message): Promise<void> {
     if (this.#ended || typeof message !== "string") return;
+    const colour = /^BB_FULLCOLOR,([01])$/.exec(message);
+    if (colour) {
+      this.#options.onFullColour?.(colour[1] === "1");
+      return;
+    }
     const resize = /^r,(\d{1,5})x(\d{1,5})$/.exec(message);
     if (resize) {
       if (this.#options.mayInput()) this.#options.onResize?.({ width: Number(resize[1]), height: Number(resize[2]) });

@@ -300,3 +300,24 @@ test("messages are told apart by their first field, and a pointer loses its sequ
   assert.equal(unsequenced("m2,1,2,0,0"), "m2,1,2,0,0");
   assert.equal(unsequenced("kd,65"), "kd,65");
 });
+
+test("a viewer's word on 4:4:4 goes to bb-box, not to Selkies; bb-box asks the display for it over its controller connection", async () => {
+  const { server, box } = setup();
+  const open = async () => server.channel();
+  const end = viewer();
+  const said: boolean[] = [];
+  const relay = new SelkiesRelay({ viewer: end.end, box, open, mayInput: () => false, onFullColour: (yes) => void said.push(yes) });
+  await until("the viewer's page", () => server.pages.length === 1);
+  const page = server.pages[0]!;
+  await relay.receive("BB_FULLCOLOR,1");
+  await relay.receive("BB_FULLCOLOR,0");
+  await relay.receive("BB_FULLCOLOR,2");
+  await relay.receive("STOP_VIDEO");
+  await until("the video request", () => page.received.at(-1) === "STOP_VIDEO");
+  assert.deepEqual(said, [true, false]);
+  assert.deepEqual(page.received, ["STOP_VIDEO"], "Selkies never sees bb-box's own message");
+  await box.fullColour(true);
+  await until("the setting", () => !!server.pages.find((one) => one.role === "controller")?.received.includes('SETTINGS,{"displayId":"primary","video_fullcolor":true}'));
+  await relay.close();
+  await box.close();
+});

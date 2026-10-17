@@ -30,6 +30,43 @@ const CLIPBOARD_TIMEOUT_MS = 10_000;
 const FOLLOW_AFTER_MS = 300;
 /** How long a box's video stays stopped for its capture to restart: Selkies stops a capture within milliseconds. */
 const RESTART_PAUSE_MS = 300;
+/** Each box whose desktop is Sharp: its xfwm theme before, and the size Sharp set (the owner's note of 16 October 2026). */
+const SHARP_PREFIX = "desktop-sharp/";
+/** Sharp's density: twice the pixels, with Xfce's UI scaled to match, so everything keeps its size and text is sharp on a 2x screen. */
+const SHARP_SCALE = 2;
+/** How long Xfce may take to change its scale. */
+const SHARP_TIMEOUT_MS = 30_000;
+/** The largest desktop Sharp sets: Xvnc's limit is far above it, Selkies' encoder is not. */
+const SHARP_MAX: Size = { width: 7680, height: 4320 };
+
+/** Xfce at Sharp's scale: GTK's window scale, xfwm's HiDPI theme, and the panel again so it takes the scale. Prints the theme before. */
+const SHARP_ON =
+  "t=$(xfconf-query -c xfwm4 -p /general/theme 2>/dev/null); " +
+  `xfconf-query -c xsettings -p /Gdk/WindowScalingFactor -s ${SHARP_SCALE} 2>/dev/null || xfconf-query -c xsettings -p /Gdk/WindowScalingFactor -n -t int -s ${SHARP_SCALE}; ` +
+  "xfconf-query -c xfwm4 -p /general/theme -s Default-xhdpi; (xfce4-panel -r >/dev/null 2>&1 &); printf '%s' \"$t\"";
+/** Xfce back at 1x, with the theme it had. */
+function sharpOff(theme: string): string {
+  const quoted = `'${theme.replaceAll("'", `'\\''`)}'`;
+  return `xfconf-query -c xsettings -p /Gdk/WindowScalingFactor -s 1; xfconf-query -c xfwm4 -p /general/theme -s ${quoted}; (xfce4-panel -r >/dev/null 2>&1 &)`;
+}
+
+interface SharpKept {
+  readonly theme: string;
+  readonly size: Size;
+}
+
+/** Whether a box's desktop can be Sharp: a Linux X11 desktop drawn by the CPU, which Selkies streams. */
+export function sharpOffered(box: BoxRecord): boolean {
+  return box.capabilities.os === "linux" && !box.capabilities.gpu && box.capabilities.displays.some((each) => each.protocol === "selkies");
+}
+
+/** `size` times `factor`, within Sharp's largest and at least 640x480. */
+function scaled(size: Size, factor: number): Size {
+  return {
+    width: Math.min(SHARP_MAX.width, Math.max(640, Math.round(size.width * factor))),
+    height: Math.min(SHARP_MAX.height, Math.max(480, Math.round(size.height * factor))),
+  };
+}
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 const isCount = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0;
@@ -76,6 +113,10 @@ export interface Desktops {
    * the box did not take it.
    */
   paste(boxId: string, viewer: string, text: string): Promise<void>;
+  /** Whether the box's desktop is Sharp, or null where it cannot be. */
+  sharp(boxId: string): Promise<boolean | null>;
+  /** Makes the box's desktop Sharp, twice the pixels at twice Xfce's scale, or not. */
+  setSharp(boxId: string, on: boolean): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -201,16 +242,49 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   });
   const relays = new Set<{ close(): Promise<void> }>();
   /** Each box's side of its Selkies viewers, and their relays, while any is connected. */
-  const selkiesBoxes = new Map<string, { box: SelkiesBox; viewers: number; relays: Set<SelkiesRelay> }>();
+  const selkiesBoxes = new Map<
+    string,
+    {
+      box: SelkiesBox;
+      viewers: number;
+      relays: Set<SelkiesRelay>;
+      /** Whether each viewer's browser decodes 4:4:4, as it said. */
+      colours: Map<SelkiesRelay, boolean>;
+      /** What the box was last asked to stream: 4:4:4 or not; null before any, as the display may keep the last viewers' choice. */
+      fullColour: boolean | null;
+    }
+  >();
   const selkiesBox = (boxId: string, open: OpenStream): SelkiesBox => {
-    const entry = selkiesBoxes.get(boxId) ?? { box: new SelkiesBox(open, { onError: (error) => deps.logError("open the Selkies input", error) }), viewers: 0, relays: new Set() };
+    const entry = selkiesBoxes.get(boxId) ?? {
+      box: new SelkiesBox(open, { onError: (error) => deps.logError("open the Selkies input", error) }),
+      viewers: 0,
+      relays: new Set(),
+      colours: new Map(),
+      fullColour: null,
+    };
     entry.viewers += 1;
     selkiesBoxes.set(boxId, entry);
     return entry.box;
   };
+  /**
+   * Streams a box's display in 4:4:4 while every viewer says it decodes it, and in 4:2:0 otherwise: Selkies sets it for
+   * the whole display. It waits for every viewer to say: one that has not, as a page from before this, keeps it as it is.
+   */
+  const colourFor = (boxId: string): void => {
+    const entry = selkiesBoxes.get(boxId);
+    if (!entry || !entry.relays.size || [...entry.relays].some((relay) => !entry.colours.has(relay))) return;
+    const want = [...entry.colours.values()].every(Boolean);
+    if (want === entry.fullColour) return;
+    entry.fullColour = want;
+    entry.box.fullColour(want).catch((error) => deps.logError("set the desktop's colour", error));
+  };
   const leftSelkies = (boxId: string, relay: SelkiesRelay | null) => {
     const entry = selkiesBoxes.get(boxId);
-    if (relay) entry?.relays.delete(relay);
+    if (relay) {
+      entry?.relays.delete(relay);
+      entry?.colours.delete(relay);
+    }
+    if (entry && entry.viewers > 1) colourFor(boxId);
     if (!entry || --entry.viewers > 0) return;
     selkiesBoxes.delete(boxId);
     frameSizes.delete(boxId);
@@ -269,6 +343,14 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
    * video to the other.
    */
   const sizeForSelkies = async (boxId: string, size: Size): Promise<void> => {
+    // A Sharp desktop keeps its density: the viewer's size, in its CSS pixels, at Sharp's scale.
+    const sharp = await kv.get<SharpKept>(`${SHARP_PREFIX}${boxId}`);
+    const wanted = sharp ? scaled(size, SHARP_SCALE) : size;
+    if (sharp) await kv.set(`${SHARP_PREFIX}${boxId}`, { ...sharp, size: wanted } satisfies SharpKept);
+    await setSize(boxId, wanted);
+  };
+  /** Sets a box's desktop to `size` through its RFB display, then has its video follow. */
+  const setSize = async (boxId: string, size: Size): Promise<void> => {
     const shown = await display(boxes, boxId);
     const min = shown.minSize;
     const step = (value: number, least: number, by: number) => Math.max(value, least) - (Math.max(value, least) % by);
@@ -360,9 +442,16 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 control.resized(boxId, viewer, SELKIES_SCREEN);
                 sizeForSelkies(boxId, size).catch((error) => deps.logError("resize the desktop", error));
               },
+              onFullColour: (yes) => {
+                const entry = selkiesBoxes.get(boxId);
+                if (!entry || !relay || !(relay instanceof SelkiesRelay)) return;
+                entry.colours.set(relay, yes);
+                colourFor(boxId);
+              },
               onEnd,
             });
             selkiesBoxes.get(boxId)?.relays.add(relay);
+            keepSharp(boxId);
           } else {
             const open: OpenDisplay = VIEWER_ID.test(viewer)
               ? async (signal) => displayOpener((shown = await display(boxes, boxId)))(signal)
@@ -396,6 +485,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
           }
           relays.add(relay);
           control.attach(boxId, connection);
+          if (!selkies) keepSharp(boxId);
         },
         async onMessage(socket, data) {
           if (relay instanceof SelkiesRelay) {
@@ -419,9 +509,70 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     { auth: "local" },
   );
 
+  /** Each box's Sharp change or check, while one runs: one at a time. */
+  const sharping = new Map<string, Promise<void>>();
+  const serialSharp = (boxId: string, task: () => Promise<void>): Promise<void> => {
+    const run = (sharping.get(boxId) ?? Promise.resolve()).catch(() => undefined).then(task);
+    const kept = run.finally(() => {
+      if (sharping.get(boxId) === kept) sharping.delete(boxId);
+    });
+    sharping.set(boxId, kept.catch(() => undefined));
+    return run;
+  };
+  /** Runs one of Sharp's Xfce scripts in the box's desktop session, and gives what it printed. */
+  const xfce = async (box: BoxRecord, script: string): Promise<string> => {
+    const result = await boxes.runOwn(box, script, { session: "desktop", timeoutMs: SHARP_TIMEOUT_MS, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) throw new Error(`Xfce in box ${box.name} did not change its scale: ${result.stderr.trim().split("\n").at(-1) || `exit code ${result.exitCode}`}`);
+    return result.stdout.trim();
+  };
+  /**
+   * A Sharp box's desktop as Sharp left it, as a viewer connects: a box that started again comes back at its first
+   * size, with Xfce still at 2x, so its size is set again, and Xfce's scale with it.
+   */
+  const keepSharp = (boxId: string): void => {
+    void serialSharp(boxId, async () => {
+      const kept = await kv.get<SharpKept>(`${SHARP_PREFIX}${boxId}`);
+      const box = kept ? await boxes.find(boxId) : null;
+      if (!kept || !box || box.state !== "ready") return;
+      const now = await desktopSize(displayOpener(await display(boxes, boxId)));
+      if (now.width === kept.size.width && now.height === kept.size.height) return;
+      await xfce(box, SHARP_ON);
+      await setSize(boxId, kept.size);
+    }).catch((error) => deps.logError("keep the desktop Sharp", error));
+  };
+
   return {
     control,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
+    async sharp(boxId) {
+      const box = await boxes.find(boxId);
+      if (!box || !sharpOffered(box)) return null;
+      return !!(await kv.get<SharpKept>(`${SHARP_PREFIX}${boxId}`));
+    },
+    setSharp(boxId, on) {
+      return serialSharp(boxId, async () => {
+        const box = await boxes.find(boxId);
+        if (!box || box.state !== "ready") throw new Error("The box is not running, so its desktop cannot change.");
+        if (!sharpOffered(box)) throw new Error(`Box ${box.name}'s desktop cannot be Sharp: only Linux desktops drawn by the CPU can.`);
+        const key = `${SHARP_PREFIX}${boxId}`;
+        const kept = await kv.get<SharpKept>(key);
+        if (on === !!kept) return;
+        const now = await desktopSize(displayOpener(await display(boxes, boxId)));
+        if (on) {
+          const theme = (await xfce(box, SHARP_ON)) || "Arc";
+          const size = scaled(now, SHARP_SCALE);
+          await kv.set(key, { theme, size } satisfies SharpKept);
+          control.rescale(boxId, SHARP_SCALE);
+          await setSize(boxId, size);
+        } else {
+          await xfce(box, sharpOff(kept!.theme));
+          await kv.delete(key);
+          control.rescale(boxId, 1 / SHARP_SCALE);
+          await setSize(boxId, scaled(now, 1 / SHARP_SCALE));
+        }
+        changed(boxId);
+      });
+    },
     async clipboard(boxId, viewer) {
       const box = viewer && control.mayInput(boxId, viewer) ? await byCommands(boxId) : null;
       if (box) {
