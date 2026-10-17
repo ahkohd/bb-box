@@ -335,21 +335,27 @@ desktop shows. Two runs each:
 | --- | --- | --- |
 | Drag: frames a second | 56 to 59 | 60 to 62 |
 | Drag: window positions shown a second | 46 to 48 | 49 to 51 |
-| Drag: lag behind the pointer, median | 179 to 244 ms | 19 to 23 ms |
-| Drag: lag, 95th percentile | 1382 to 1391 ms | 239 to 499 ms |
-| Drag: lag, worst | 1549 to 1572 ms | 504 to 919 ms |
+| Drag: lag behind the pointer, median | 25 to 26 ms | 19 to 23 ms |
+| Drag: lag, 95th percentile | 42 to 48 ms | 239 to 499 ms |
+| Drag: lag, worst | 202 to 791 ms | 504 to 919 ms |
 | Scroll: frames a second | 78 to 87 | 62 |
 | Key-to-screen while scrolling, median | 15 ms | 19 to 20 ms |
 | Key-to-screen idle, median | 10 ms | 10 to 13 ms |
 | Idle: frames sent a second | 0 | 60 |
 | Idle: Selkies' CPU | none | 18% of a core |
 
-Video drags with about a twentieth of VNC's median lag, and answers keys
-about as quickly, so the round trip no longer decides. Both streams' worst
-lags come from BB's server's event loop standing still, not from the box
-(request 25 in [What bb-box asks of BB](../bb-requests.md)). Tuning
-Selkies did not help: at 30 fps the drag was no better, and with its
-streaming mode off, which costs nothing idle, drags lagged as badly as VNC.
+Corrected on 17 October 2026: the VNC lags first given here were wrong.
+The analyser looked for the window's starting place in the 2 s before the
+drag, and VNC sends no frames while the screen is still, so each VNC frame
+was matched against the wrong place. The figures above are recomputed from
+the same runs ([060 results](060-results.md#corrected-17-october-2026)).
+
+Video and VNC drag with the same lag at the median, about 20 to 25 ms, and
+answer keys about as quickly. VNC's 95th percentile is lower. Both
+streams' worst lags come from BB's server's event loop standing still, not
+from the box (request 25 in [What bb-box asks of BB](../bb-requests.md)).
+At 30 fps, or with Selkies' streaming mode off, which costs nothing idle,
+the drag's lag was much the same: 22 to 29 ms at the median.
 
 ## Amended, 11 October 2026: out of trial, on by default
 
@@ -357,6 +363,8 @@ Video is no longer a trial, and `general.video` is on by default. An
 install that set it off keeps it off; one with no value takes the default.
 A desktop without a Selkies stream, or a browser that cannot decode video,
 shows over VNC as before, and **Show as VNC** stays in the viewer's menu.
-The reason is the comparison above: through BB's server, video drags with
-about a twentieth of VNC's median lag, and answers keys as quickly.
+The reason given was the comparison above, which said video drags with
+about a twentieth of VNC's median lag. Corrected on 17 October 2026, it
+shows the same median lag for both; video's whole frames are what remain
+in its favour.
 

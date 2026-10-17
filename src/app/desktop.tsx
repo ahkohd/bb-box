@@ -638,8 +638,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   const boxNow = useRef(box);
   boxNow.current = box;
   // The stream: video whenever the box may show as video (056) and this browser can decode it, unless the
-  // person chose VNC in the viewer's menu. Video that cannot start falls back to VNC. Through BB's server,
-  // video drags with a twentieth of VNC's median lag, and answers keys as quickly (056's comparison).
+  // person chose VNC in the viewer's menu. Video that cannot start falls back to VNC. Through BB's server, video
+  // drags and answers keys as quickly as VNC, in whole frames (056's comparison, corrected).
   const shown = `${boxId}:${viewer}`;
   const [stream, setStream] = useState<Stream | null>(() => lastStream.get(shown) ?? null);
   const [videoFailed, setVideoFailed] = useState(false);

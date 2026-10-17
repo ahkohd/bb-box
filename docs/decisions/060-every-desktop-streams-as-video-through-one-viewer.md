@@ -12,17 +12,19 @@ way ([architecture](../architecture.md#desktops-and-control)):
 | Desktop | Server | Stream | What the owner sees |
 | --- | --- | --- | --- |
 | Linux X11 | Xtigervnc, and Selkies 2.0 beside it | H.264 video by default ([056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)) | smooth, but pixelated text |
-| Linux Wayland | wayvnc 0.7.2 on Sway ([048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md)) | RFB | 60 fps through the relay; VNC's drag lag |
+| Linux Wayland | wayvnc 0.7.2 on Sway ([048](048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md)) | RFB | 60 fps through the relay |
 | macOS, pool Mac | Screen Sharing over SSH ([047](047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)), 2x with an HDMI dummy plug | RFB, ZRLE | sharp, but tears: a frame comes as many rectangles, at 4x the pixels |
 | macOS, Tart VM | the Virtualization framework's VNC, through a holder (#430) | RFB | as above, at 1x |
-| Windows on Proxmox | QEMU's VNC through Proxmox's `vncwebsocket` | RFB | WARP, no GPU; VNC's drag lag |
+| Windows on Proxmox | QEMU's VNC through Proxmox's `vncwebsocket` | RFB | WARP, no GPU; 20 fps when dragging |
 | Windows on a Mac | QEMU's VNC on the Mac's loopback (`virtio-gpu-pci`, `lossy=on`) | RFB | as above |
 
-Through BB's server, video already beat VNC on Linux: a dragged window
-trailed the pointer by about 20 ms at the median, against about 200 ms
-for VNC, and keys were as quick (056's comparison). The rest of a drag's
-lag is BB's server stalling, which no stream can fix (request 25 in
-[What bb-box asks of BB](../bb-requests.md)).
+Through BB's server on Linux, video and VNC drag with the same lag, about
+25 ms at the median, and keys are as quick (056's comparison, corrected on
+17 October 2026). The worst of a drag's lag is BB's server stalling, which
+no stream can fix (request 25 in
+[What bb-box asks of BB](../bb-requests.md)). Where VNC falls short is in
+frames: on the pool Mac at 2x it shows 14 a second
+([060 results](060-results.md)).
 
 Every desktop must still work for the agent: computer use drives each one
 through the Cua Driver in the box, which reads windows and takes its own
