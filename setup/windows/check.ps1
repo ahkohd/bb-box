@@ -92,6 +92,10 @@ Check 'address from the SMBIOS serial' {
   if ($line -notmatch ' address \d') { throw $line }; $line -replace '^\S+ ', ''
 }
 Check 'no BitLocker' { $s = (Get-BitLockerVolume -MountPoint C:).VolumeStatus; if ("$s" -ne 'FullyDecrypted') { throw "$s" }; "$s" }
+Check 'standard font smoothing' {
+  $d = Get-ItemProperty 'HKCU:\Control Panel\Desktop'
+  if ($d.FontSmoothing -ne '2' -or $d.FontSmoothingType -ne 1) { throw "FontSmoothing $($d.FontSmoothing), type $($d.FontSmoothingType)" }; 'on, not ClearType'
+}
 Check 'automatic logon' {
   $e = Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0 | Select-Object -First 1
   if (-not $e) { throw 'no desktop session' }; "$($e.UserName), session $($e.SessionId)"

@@ -181,8 +181,12 @@ counterpart, speaking the same subset:
   22 frames a second with a page moving every frame, against VNC's 20 when
   dragging and 13 when scrolling. GDI is the fallback. The pointer, which
   Desktop Duplication leaves out, is drawn in.
-- **Input and clipboard:** SendInput, which like any unelevated program
-  cannot reach an elevated window; the clipboard both ways.
+- **Input and clipboard:** SendInput, with each key's scan code, as WinUI
+  apps such as Notepad drop keys without one; like any unelevated program,
+  it cannot reach an elevated window. The clipboard goes both ways.
+- **Sharpness:** OpenH264 at most QP 26, and the image uses standard font
+  smoothing, not ClearType, whose coloured fringes 4:2:0 loses
+  ([060 results](060-results.md)).
 - **When it is offered:** every windows-desktop box lists the video display,
   and a box's transports include it only when its template's image record
   lists OpenH264. On an older image the viewer's video ends at once and it

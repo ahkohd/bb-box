@@ -98,6 +98,36 @@ softer than Screen Sharing's when still (0.991 against 0.996), as 4:2:0
 loses colour. It is the panel's default on pool Macs from #759, with Show
 as VNC in the Display menu.
 
+## Windows on Proxmox: video against VNC, 17 October 2026
+
+A windows-desktop box at 1280x800 of build.20261017-150621-a96f, the first
+with bb-box-stream.exe, through BB's server; VNC is QEMU's. Video is as
+this PR leaves it: OpenH264 at most QP 26, and standard font smoothing.
+
+| | VNC (QEMU) | Video (bb-box-stream.exe) |
+| --- | --- | --- |
+| Drag fps | 22 | 45 |
+| Drag lag p50 / p95 | 77 / 115 ms | 47 / 79 ms |
+| Scroll fps | 13 | 35 |
+| Key p50, idle / while scrolling | 47 / 151 ms | 44 / 56 ms |
+| Scroll Mbit/s | 1.0 | 1.0 |
+| Text SSIM still, black on white / coloured | 1.0 / 1.0 | 0.9988 / 0.9865 |
+
+- **Window drag:** a red Edge window dragged by its title bar, 22 fps and
+  84 / 112 ms behind on VNC against 36 fps and 56 / 81 ms on video. Both
+  show the same spread of the window's edge down its rows in about half
+  their frames: Windows draws a moving window so, and video's frames are
+  whole captures of the compositor, so it is the screen's, not a tear.
+- **Bitrate:** about 20 kbit/s watching a still screen, which sends a key
+  frame and two sharpening frames, then nothing; 1.6 Mbit/s for a page
+  that moves every frame, at 24 fps.
+- **CPU:** the server took 0.22 cores of the box's four while that page
+  moved. With no viewer there is no server: it exits a minute after the
+  last viewer leaves. Windows' processor counter over 10 s phases was too
+  noisy to give more.
+- **ClearType:** with it, text scored 0.979; its coloured fringes are what
+  4:2:0 loses. The image now uses standard font smoothing.
+
 ## Corrected, 17 October 2026
 
 The drag lags first given here for VNC were wrong, as were those in 056's
