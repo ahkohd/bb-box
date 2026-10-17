@@ -30,16 +30,16 @@ const CLIPBOARD_TIMEOUT_MS = 10_000;
 const FOLLOW_AFTER_MS = 300;
 /** How long a box's video stays stopped for its capture to restart: Selkies stops a capture within milliseconds. */
 const RESTART_PAUSE_MS = 300;
-/** Each box whose desktop is Sharp: its xfwm theme before, and the size Sharp set (the owner's note of 16 October 2026). */
+/** Each box whose desktop is High resolution: its xfwm theme before, and the size High resolution set (the owner's note of 16 October 2026). */
 const SHARP_PREFIX = "desktop-sharp/";
-/** Sharp's density: twice the pixels, with Xfce's UI scaled to match, so everything keeps its size and text is sharp on a 2x screen. */
+/** High resolution's density: twice the pixels, with Xfce's UI scaled to match, so everything keeps its size and text is sharp on a 2x screen. */
 const SHARP_SCALE = 2;
 /** How long Xfce may take to change its scale. */
 const SHARP_TIMEOUT_MS = 30_000;
-/** The largest desktop Sharp sets: Xvnc's limit is far above it, Selkies' encoder is not. */
+/** The largest desktop High resolution sets: Xvnc's limit is far above it, Selkies' encoder is not. */
 const SHARP_MAX: Size = { width: 7680, height: 4320 };
 
-/** Xfce at Sharp's scale: GTK's window scale, xfwm's HiDPI theme, and the panel again so it takes the scale. Prints the theme before. */
+/** Xfce at High resolution's scale: GTK's window scale, xfwm's HiDPI theme, and the panel again so it takes the scale. Prints the theme before. */
 const SHARP_ON =
   "t=$(xfconf-query -c xfwm4 -p /general/theme 2>/dev/null); " +
   `xfconf-query -c xsettings -p /Gdk/WindowScalingFactor -s ${SHARP_SCALE} 2>/dev/null || xfconf-query -c xsettings -p /Gdk/WindowScalingFactor -n -t int -s ${SHARP_SCALE}; ` +
@@ -55,12 +55,12 @@ interface SharpKept {
   readonly size: Size;
 }
 
-/** Whether a box's desktop can be Sharp: a Linux X11 desktop drawn by the CPU, which Selkies streams. */
+/** Whether a box's desktop can be High resolution: a Linux X11 desktop drawn by the CPU, which Selkies streams. */
 export function sharpOffered(box: BoxRecord): boolean {
   return box.capabilities.os === "linux" && !box.capabilities.gpu && box.capabilities.displays.some((each) => each.protocol === "selkies");
 }
 
-/** `size` times `factor`, within Sharp's largest and at least 640x480. */
+/** `size` times `factor`, within High resolution's largest and at least 640x480. */
 function scaled(size: Size, factor: number): Size {
   return {
     width: Math.min(SHARP_MAX.width, Math.max(640, Math.round(size.width * factor))),
@@ -113,9 +113,9 @@ export interface Desktops {
    * the box did not take it.
    */
   paste(boxId: string, viewer: string, text: string): Promise<void>;
-  /** Whether the box's desktop is Sharp, or null where it cannot be. */
+  /** Whether the box's desktop is High resolution, or null where it cannot be. */
   sharp(boxId: string): Promise<boolean | null>;
-  /** Makes the box's desktop Sharp, twice the pixels at twice Xfce's scale, or not. */
+  /** Makes the box's desktop High resolution, twice the pixels at twice Xfce's scale, or not. */
   setSharp(boxId: string, on: boolean): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -343,7 +343,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
    * video to the other.
    */
   const sizeForSelkies = async (boxId: string, size: Size): Promise<void> => {
-    // A Sharp desktop keeps its density: the viewer's size, in its CSS pixels, at Sharp's scale.
+    // A High resolution desktop keeps its density: the viewer's size, in its CSS pixels, at High resolution's scale.
     const sharp = await kv.get<SharpKept>(`${SHARP_PREFIX}${boxId}`);
     const wanted = sharp ? scaled(size, SHARP_SCALE) : size;
     if (sharp) await kv.set(`${SHARP_PREFIX}${boxId}`, { ...sharp, size: wanted } satisfies SharpKept);
@@ -509,7 +509,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     { auth: "local" },
   );
 
-  /** Each box's Sharp change or check, while one runs: one at a time. */
+  /** Each box's High resolution change or check, while one runs: one at a time. */
   const sharping = new Map<string, Promise<void>>();
   const serialSharp = (boxId: string, task: () => Promise<void>): Promise<void> => {
     const run = (sharping.get(boxId) ?? Promise.resolve()).catch(() => undefined).then(task);
@@ -519,14 +519,14 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     sharping.set(boxId, kept.catch(() => undefined));
     return run;
   };
-  /** Runs one of Sharp's Xfce scripts in the box's desktop session, and gives what it printed. */
+  /** Runs one of High resolution's Xfce scripts in the box's desktop session, and gives what it printed. */
   const xfce = async (box: BoxRecord, script: string): Promise<string> => {
     const result = await boxes.runOwn(box, script, { session: "desktop", timeoutMs: SHARP_TIMEOUT_MS, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) throw new Error(`Xfce in box ${box.name} did not change its scale: ${result.stderr.trim().split("\n").at(-1) || `exit code ${result.exitCode}`}`);
     return result.stdout.trim();
   };
   /**
-   * A Sharp box's desktop as Sharp left it, as a viewer connects: a box that started again comes back at its first
+   * A High resolution box's desktop as High resolution left it, as a viewer connects: a box that started again comes back at its first
    * size, with Xfce still at 2x, so its size is set again, and Xfce's scale with it.
    */
   const keepSharp = (boxId: string): void => {
@@ -538,7 +538,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       if (now.width === kept.size.width && now.height === kept.size.height) return;
       await xfce(box, SHARP_ON);
       await setSize(boxId, kept.size);
-    }).catch((error) => deps.logError("keep the desktop Sharp", error));
+    }).catch((error) => deps.logError("keep the desktop at high resolution", error));
   };
 
   return {
@@ -553,7 +553,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       return serialSharp(boxId, async () => {
         const box = await boxes.find(boxId);
         if (!box || box.state !== "ready") throw new Error("The box is not running, so its desktop cannot change.");
-        if (!sharpOffered(box)) throw new Error(`Box ${box.name}'s desktop cannot be Sharp: only Linux desktops drawn by the CPU can.`);
+        if (!sharpOffered(box)) throw new Error(`Box ${box.name}'s desktop cannot be at high resolution: only Linux desktops drawn by the CPU can.`);
         const key = `${SHARP_PREFIX}${boxId}`;
         const kept = await kv.get<SharpKept>(key);
         if (on === !!kept) return;

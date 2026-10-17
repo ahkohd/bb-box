@@ -2968,7 +2968,7 @@ async function desktopBox(options: { computer?: SetupOptions["computer"]; kind?:
   return { ...started, box, file };
 }
 
-test("Sharp doubles a Linux desktop's pixels with Xfce at 2x, keeps them through a resize in control, and goes back with Xfce's own theme", async (t) => {
+test("High resolution doubles a Linux desktop's pixels with Xfce at 2x, keeps them through a resize in control, and goes back with Xfce's own theme", async (t) => {
   // Xfce's settings, as xfconf-query keeps them, in a file in the box's home; the panel's restarts counted.
   const bin = tempDir("xfce");
   const shims: Record<string, string> = {
@@ -3022,11 +3022,11 @@ test("Sharp doubles a Linux desktop's pixels with Xfce at 2x, keeps them through
   await until("the panel restarted each time", async () => readFileSync(join(home, "panel.log"), "utf8").trim().split("\n").length === 2);
 });
 
-test("a desktop that cannot be Sharp says so, and refuses it", async (t) => {
+test("a desktop that cannot be at high resolution says so, and refuses it", async (t) => {
   const { harness, box } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   assert.equal(((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { sharp: boolean | null }).sharp, null);
-  assert.match(((await harness.behavior.callRpc("desktop.sharp", { threadId: THREAD, box: box.id, on: true })) as { error: string }).error, /cannot be Sharp: only Linux desktops drawn by the CPU can/);
+  assert.match(((await harness.behavior.callRpc("desktop.sharp", { threadId: THREAD, box: box.id, on: true })) as { error: string }).error, /cannot be at high resolution: only Linux desktops drawn by the CPU can/);
 });
 
 test("a box streams in 4:4:4 while every viewer's browser decodes it, and in 4:2:0 once one cannot", async (t) => {

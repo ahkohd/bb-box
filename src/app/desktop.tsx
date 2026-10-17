@@ -7,7 +7,7 @@
 
 import RFB from "@novnc/novnc";
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -18,7 +18,20 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
@@ -45,7 +58,7 @@ import {
   macBrowser,
   type Connection,
 } from "./viewer.ts";
-import { BoxGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph, HighResolutionGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { choices, filtering, NO_FILTERS, shown, type Filters, type Sort } from "./boxes-filter.ts";
 import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 
@@ -508,6 +521,89 @@ export class DesktopSession implements Kept {
   }
 }
 
+/** What High resolution does, and its cost, for its tooltip (the owner's notes of 17 October 2026). */
+export const HIGH_RESOLUTION_WORDS = "Twice the pixels, for sharp text on a high-resolution screen. About three times the CPU while shown; best with 8 cores or more.";
+
+/**
+ * The desktop menu's Display items (the owner's notes of 17 October 2026): Show as VNC and High resolution, each with
+ * its tick, in a submenu; on a small screen, whose menu is a sheet with no submenus, under a Display label.
+ */
+function DisplayItems({
+  compact,
+  vnc,
+  highResolution,
+}: {
+  compact: boolean;
+  vnc: { checked: boolean; onChange: (checked: boolean) => void } | null;
+  highResolution: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void } | null;
+}) {
+  const items = (
+    <>
+      {vnc ? (
+        // A glyph like the other items', so its words line up with theirs; BB's tick sits at the right.
+        <DropdownMenuCheckboxItem className="gap-2" checked={vnc.checked} onCheckedChange={vnc.onChange}>
+          <MonitorGlyph />
+          Show as VNC
+        </DropdownMenuCheckboxItem>
+      ) : null}
+      {highResolution ? <HighResolutionItem {...highResolution} /> : null}
+    </>
+  );
+  if (compact) {
+    return (
+      <>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Display</DropdownMenuLabel>
+        {items}
+      </>
+    );
+  }
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <MonitorGlyph />
+        Display
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="w-max min-w-44">{items}</DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
+/** High resolution, with an info icon whose tooltip says what it does and costs: on pointing at the icon, and as the item has the keyboard's focus. */
+function HighResolutionItem({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <TooltipProvider delayDuration={250}>
+      <Tooltip open={open}>
+        <DropdownMenuCheckboxItem
+          className="gap-2"
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={onChange}
+          aria-describedby={id}
+          onFocus={(event) => setOpen(event.currentTarget.matches(":focus-visible"))}
+          onBlur={() => setOpen(false)}
+        >
+          <HighResolutionGlyph />
+          High resolution
+          <TooltipTrigger asChild>
+            <span data-testid="high-resolution-info" className="inline-flex text-muted-foreground" onPointerEnter={() => setOpen(true)} onPointerLeave={() => setOpen(false)}>
+              <Icon name="Info" className="size-3.5" aria-hidden />
+            </span>
+          </TooltipTrigger>
+          <span id={id} className="sr-only">
+            {HIGH_RESOLUTION_WORDS}
+          </span>
+        </DropdownMenuCheckboxItem>
+        <TooltipContent side="bottom" align="end" className="max-w-64 text-xs leading-snug">
+          {HIGH_RESOLUTION_WORDS}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 /** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038); `resizable` says resizing this tab resizes the desktop while it holds control. */
 function controlText(box: BoxView, mine: boolean, taken: boolean, resizable: boolean): string {
   switch (box.control?.owner) {
@@ -553,8 +649,10 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   };
   const video = state?.video ?? null;
   const videoPossible = video === true && !videoFailed && canShowVideo();
-  /** Whether the desktop is Sharp, twice the pixels at twice the scale; null where it cannot be. */
+  /** Whether the desktop is at high resolution, twice the pixels at twice the scale; null where it cannot be. */
   const sharp = state?.sharp ?? null;
+  /** A small screen's menu is a sheet, which has no submenus: the display's items go in it under a label. */
+  const compact = useIsCompactViewport();
   useEffect(() => {
     if (video === null) return;
     if (!videoPossible) {
@@ -675,7 +773,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
 
   // In the commit that shows who has control, so the toolbar never says "You have control" while input is still off (#116).
   useLayoutEffect(() => {
-    // A Sharp desktop keeps its density through the video viewer's resizes; noVNC would ask for its pane's own size, so it asks for none.
+    // A desktop at high resolution keeps its density through the video viewer's resizes; noVNC would ask for its pane's own size, so it asks for none.
     session.current?.setControl(mine, resizable && !(sharp === true && stream === "rfb"));
   }, [mine, resizable, connection, sharp, stream]);
   const guestOs = box?.os ?? null;
@@ -908,31 +1006,24 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                     Reconnect
                   </DropdownMenuItem>
                 ) : null}
-                {showing && video === true && canShowVideo() && stream ? (
-                  // A glyph like the other items', so its words line up with theirs; BB's tick sits at the right.
-                  <DropdownMenuCheckboxItem
-                    className="gap-2"
-                    checked={stream === "rfb"}
-                    onCheckedChange={(checked) => {
-                      const next = checked ? "rfb" : "selkies";
-                      storeChoice(boxId, next);
-                      setVideoFailed(false);
-                      decide(next);
-                    }}
-                  >
-                    <MonitorGlyph />
-                    Show as VNC
-                  </DropdownMenuCheckboxItem>
-                ) : null}
-                {showing && sharp !== null ? (
-                  // Sharp (the owner's note of 16 October 2026): twice the pixels at twice Xfce's scale, so text is sharp on a 2x screen.
-                  <DropdownMenuCheckboxItem className="items-start gap-2" checked={sharp} disabled={acting} onCheckedChange={(checked) => void toggleSharp(checked)}>
-                    <MonitorGlyph />
-                    <span className="min-w-0">
-                      <span className="block">Sharp</span>
-                      <span className="block text-2xs leading-snug text-muted-foreground">Twice the pixels, for sharp text. About three times the CPU while shown; best with 8 cores or more.</span>
-                    </span>
-                  </DropdownMenuCheckboxItem>
+                {showing && ((video === true && canShowVideo() && stream) || sharp !== null) ? (
+                  <DisplayItems
+                    compact={compact}
+                    vnc={
+                      video === true && canShowVideo() && stream
+                        ? {
+                            checked: stream === "rfb",
+                            onChange: (checked) => {
+                              const next = checked ? "rfb" : "selkies";
+                              storeChoice(boxId, next);
+                              setVideoFailed(false);
+                              decide(next);
+                            },
+                          }
+                        : null
+                    }
+                    highResolution={sharp !== null ? { checked: sharp, disabled: acting, onChange: (checked) => void toggleSharp(checked) } : null}
+                  />
                 ) : null}
                 {showing ? (
                   <>

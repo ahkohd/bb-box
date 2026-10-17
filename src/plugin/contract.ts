@@ -71,7 +71,7 @@ export interface DesktopState {
    * round trip, or as the person chose.
    */
   readonly video: boolean;
-  /** Whether the desktop is Sharp, twice the pixels at twice the scale; null where it cannot be. Absent from older plugins. */
+  /** Whether the desktop is at high resolution, twice the pixels at twice the scale; null where it cannot be. Absent from older plugins. */
   readonly sharp?: boolean | null;
 }
 
@@ -150,7 +150,7 @@ export const contract = defineRpcContract({
   start: { input: oneBox, output: boxResult },
   refresh: { input: oneBox, output: boxResult },
   desktop: { input: oneBox, output: z.custom<DesktopState>() },
-  /** Makes the box's desktop Sharp, or not: twice the pixels at twice Xfce's scale. Refused, with why, where it cannot be. */
+  /** Puts the box's desktop at high resolution, or not: twice the pixels at twice Xfce's scale. Refused, with why, where it cannot be. */
   "desktop.sharp": { input: oneBox.extend({ on: z.boolean() }), output: z.custom<{ readonly error: string | null }>() },
   /** Answers at once: the viewer times it, for its round trip to BB's server (056). */
   ping: { input: z.null(), output: z.null() },

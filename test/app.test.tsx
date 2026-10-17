@@ -16,7 +16,7 @@ import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-off
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
-import { PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { CLIPBOARD_MAX_BYTES, SelkiesSession, forgetFullColour, spsCodec } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
@@ -679,6 +679,17 @@ function desktopBox(overrides: Partial<BoxView> = {}): BoxView {
 function openMenu(trigger: HTMLElement) {
   fireEvent.keyDown(trigger, { key: "Enter" });
   return screen.findByRole("menu");
+}
+
+/** The desktop menu's Display submenu, opened from the keyboard as Radix's tests do. */
+async function openDisplay(trigger: HTMLElement) {
+  const menu = await openMenu(trigger);
+  fireEvent.keyDown(within(menu).getByRole("menuitem", { name: "Display" }), { key: "ArrowRight" });
+  return waitFor(() => {
+    const menus = screen.getAllByRole("menu");
+    expect(menus.length).toBeGreaterThan(1);
+    return menus.at(-1)!;
+  });
 }
 
 test("the app registers the Boxes panel, a desktop tab, the Boxes page and the Backends settings section", () => {
@@ -2259,14 +2270,14 @@ test("with the setting on, a desktop shows as video whatever the round trip to B
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("from the box"));
 
     // The menu's "Show as VNC", unticked while video shows, turns it to VNC, which the tab keeps for this box only.
-    const item = within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as VNC" });
+    const item = within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as VNC" });
     expect(item.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(item);
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
     expect(window.sessionStorage.getItem(streamChoiceKey("box_2"))).toBe("rfb");
     expect(window.localStorage.length).toBe(0);
     expect(socket.readyState).toBe(3);
-    expect(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as VNC" }).getAttribute("aria-checked")).toBe("true");
+    expect(within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as VNC" }).getAttribute("aria-checked")).toBe("true");
   } finally {
     undo();
   }
@@ -2364,15 +2375,22 @@ test("a video viewer keeps the desktop's size as it takes control and as its vid
   }
 });
 
-test("a desktop that can be Sharp offers it in its menu, with its cost; one that cannot does not", async () => {
+test("a desktop that can be at high resolution offers it under Display, with an info icon whose tooltip says its cost; one that cannot does not", async () => {
   const { handlers, changes } = server([desktopBox()], { sharp: false });
   const slot = desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
   act(() => void novnc.FakeRfb.made[0]!.dispatchEvent(new Event("connect")));
+  // The top of the menu has Display, not the items themselves.
   const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
-  const item = within(menu).getByRole("menuitemcheckbox", { name: /^Sharp/ });
+  expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
+  act(() => void fireEvent.keyDown(menu, { key: "Escape" }));
+  const display = await openDisplay(slot.getByRole("button", { name: "Desktop actions" }));
+  const item = within(display).getByRole("menuitemcheckbox", { name: /^High resolution/ });
   expect(item.getAttribute("aria-checked")).toBe("false");
-  expect(item.textContent).toContain("About three times the CPU while shown; best with 8 cores or more.");
+  // No words in the item itself but its name; what it does and costs is its description, and the info icon's tooltip.
+  expect(document.getElementById(item.getAttribute("aria-describedby")!)?.textContent).toBe(HIGH_RESOLUTION_WORDS);
+  fireEvent.pointerEnter(within(item).getByTestId("high-resolution-info"));
+  expect((await screen.findAllByText(HIGH_RESOLUTION_WORDS)).length).toBeGreaterThan(1);
   fireEvent.click(item);
   await waitFor(() => expect(changes).toContain("desktop.sharp true"));
   cleanup();
@@ -2381,7 +2399,7 @@ test("a desktop that can be Sharp offers it in its menu, with its cost; one that
   await waitFor(() => expect(novnc.FakeRfb.made.length).toBeGreaterThan(1));
   act(() => void novnc.FakeRfb.made.at(-1)!.dispatchEvent(new Event("connect")));
   const other = await openMenu(none.getByRole("button", { name: "Desktop actions" }));
-  expect(within(other).queryByRole("menuitemcheckbox", { name: /^Sharp/ })).toBeNull();
+  expect(within(other).queryByRole("menuitem", { name: "Display" })).toBeNull();
 });
 
 test("the codec of a key frame comes from its SPS, so a 4:4:4 stream gets a decoder for its profile", () => {
