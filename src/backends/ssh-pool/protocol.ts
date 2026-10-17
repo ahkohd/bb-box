@@ -101,6 +101,8 @@ export interface MacStatus {
   readonly openHomes: readonly string[] | null;
   /** System Integrity Protection is on; false when the owner turned it off (058); null when the helper did not say. */
   readonly sip: boolean | null;
+  /** setup-mac.sh built bb-box-stream, which streams the desktop as video (060). */
+  readonly stream: boolean;
 }
 
 /** The Xcode xcode-select chooses on a Mac (047). */
@@ -206,6 +208,7 @@ export function parseStatus(stdout: string): MachineStatus {
             leftovers: values.has("leftovers") ? { count: whole(values.get("leftovers")) ?? 0, kib: whole(values.get("leftovers_kib")) ?? 0 } : null,
             openHomes: values.has("openhomes") ? words(values.get("openhomes")) : null,
             sip: values.get("sip") === "1" ? true : values.get("sip") === "0" ? false : null,
+            stream: values.get("stream") === "1",
           }
         : null,
   };

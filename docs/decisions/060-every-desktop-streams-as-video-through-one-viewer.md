@@ -131,3 +131,26 @@ SSIM at least VNC's when still.
 - OpenH264's CPU at 1920x1080 and at 2x on the Windows VMs, and whether
   Desktop Duplication works in their desktop session there.
 - Whether Selkies' Wayland mode keeps what 048 chose Sway for.
+
+## Amended, 17 October 2026: the pool Macs' server
+
+`bb-box-stream` ([setup/ssh-pool/mac-stream.swift](../../setup/ssh-pool/mac-stream.swift)),
+which setup-mac.sh builds with swiftc into /usr/local/bin:
+
+- **Where it listens:** a unix socket in the box user's home,
+  `~/.bb-box/stream.sock`, in a folder only the box user can open. It has no
+  TCP port. bb-box reaches it with `bb-box-stream connect` over the box
+  user's SSH, in the desktop session. That command starts the server if it
+  is not running, and the server exits a minute after its last viewer goes.
+- **Permissions:** it runs as the box user, charged to sshd-keygen-wrapper.
+  That process already has Screen Recording (058, with SIP off) and
+  Accessibility (granted at setup), so the server needs no grant of its own.
+- **What it sends:** whole frames from ScreenCaptureKit at the display's
+  pixels, only when the screen changes. VideoToolbox encodes them as H.264
+  High, in real time, with no frames reordered. When the screen stops
+  changing, the last frame is encoded twice more, which sharpens it.
+- **What it takes:** keys, the pointer and the wheel, posted as CGEvents;
+  and the pasteboard, both ways.
+- **When it is offered:** a macos-desktop box offers the video display while
+  every Mac serving the kind reports the server installed, as with Xcode.
+  The panel then shows video by default, and VNC stays in the menu.

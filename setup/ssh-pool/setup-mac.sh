@@ -18,6 +18,7 @@
 # - installs BlackHole 2ch, the box's audio input (#631)
 # - installs the agent CLIs BB runs threads with, Claude Code, Codex and Pi,
 #   pinned as the Linux images pin them (#561)
+# - builds bb-box-stream, each box's desktop as video (060), with swiftc
 # - clears BB's daemon lock and PID file in box homes at boot (017)
 # - keeps the Mac awake, starts it after a power failure, and turns off
 #   automatic macOS updates, which would restart a box, automatic App Store
@@ -251,6 +252,15 @@ if clang -O -framework ApplicationServices -o "$ROOT/usr/local/bin/bb-box-displa
   chmod 0755 "$ROOT/usr/local/bin/bb-box-display.new" && mv -f "$ROOT/usr/local/bin/bb-box-display.new" "$ROOT/usr/local/bin/bb-box-display" && display_built=1
 fi
 
+# 060: bb-box-stream streams each box user's desktop as H.264 video, for the
+# panel's video client. It runs over the box user's SSH in the desktop
+# session, so it has the Screen Recording and Accessibility that
+# sshd-keygen-wrapper has below. Built with the Command Line Tools' swiftc.
+stream_built=
+if swiftc -O -swift-version 5 -o "$ROOT/usr/local/bin/bb-box-stream.new" "$here/mac-stream.swift" 2>/dev/null; then
+  chmod 0755 "$ROOT/usr/local/bin/bb-box-stream.new" && mv -f "$ROOT/usr/local/bin/bb-box-stream.new" "$ROOT/usr/local/bin/bb-box-stream" && stream_built=1
+fi
+
 # 058: with System Integrity Protection off, a box's commands run over SSH,
 # charged to sshd-keygen-wrapper, get Screen Recording as they have
 # Accessibility, so they can capture the box's screen. A person grants the
@@ -300,6 +310,8 @@ warn() { warnings="$warnings
 - $*"; }
 [ -n "$display_built" ] ||
   warn "clang could not build bb-box-display, so desktops stay at 1x. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
+[ -n "$stream_built" ] ||
+  warn "swiftc could not build bb-box-stream, so desktops show over Screen Sharing only, not as video. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
 [ -n "$own_built" ] ||
   warn "clang could not build bb-box-own, so programs granted permissions cannot run as their own responsible process. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
 if csrutil status 2>/dev/null | grep -q 'status: disabled' && [ -z "$sip_granted" ]; then

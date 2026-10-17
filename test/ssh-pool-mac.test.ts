@@ -114,7 +114,7 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
     {
       helper: 1, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", owner: null, hook: false,
       docker: false, systemd: false, cores: 8, memoryMiB: 16384, diskGiB: null, missing: [], enrolment: { node: "24.9.0", lacks: [] }, dirty: null,
-      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] }, leftovers: null, openHomes: null, sip: true },
+      mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] }, leftovers: null, openHomes: null, sip: true, stream: false },
     },
   );
   const values = fields(result.stdout);
@@ -638,6 +638,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(statSync(join(mac.root, "private/var/bbbox-admin")).mode & 0o777, 0o700, "closed to box users, in staff (047)");
   // bb-box-own, which runs a granted program as its own responsible process (058).
   assert.ok(statSync(join(mac.root, "usr/local/bin/bb-box-own")).mode & 0o111, "bb-box-own is built");
+  assert.ok(statSync(join(mac.root, "usr/local/bin/bb-box-stream")).mode & 0o111, "bb-box-stream is built (060)");
   // bb-box-display, which gives each box user's desktop the 2x mode of its size.
   assert.ok(statSync(join(mac.root, "usr/local/bin/bb-box-display")).mode & 0o111, "bb-box-display is built");
   // The agent CLIs, pinned, linked from /usr/local/bin (#561).

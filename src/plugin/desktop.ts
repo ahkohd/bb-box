@@ -304,6 +304,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     await new Promise((resolve) => setTimeout(resolve, RESTART_PAUSE_MS));
     for (const relay of paused) relay.resume();
   };
+  /** Whether a box's video is Selkies on Linux, which follows its RFB desktop's size only when told; a Mac's follows its screen itself (060). */
+  const followsByRfb = async (boxId: string): Promise<boolean> => (await boxes.find(boxId))?.capabilities.os === "linux";
   /**
    * Has a box's Selkies capture its desktop at the size the desktop has now,
    * read through its RFB display, while it has Selkies viewers. Selkies
@@ -311,7 +313,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
    */
   const followSize = async (boxId: string, shown?: Display): Promise<void> => {
     const entry = selkiesBoxes.get(boxId);
-    if (!entry) return;
+    if (!entry || !(await followsByRfb(boxId))) return;
     const size = await desktopSize(displayOpener(shown ?? (await display(boxes, boxId))));
     await entry.box.follow(size);
     const seen = frameSizes.get(boxId);
@@ -324,7 +326,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     if (matching.has(boxId)) return;
     const check = (async () => {
       const entry = selkiesBoxes.get(boxId);
-      if (!entry) return;
+      if (!entry || !(await followsByRfb(boxId))) return;
       const desktop = await desktopSize(displayOpener(await display(boxes, boxId)));
       // Selkies makes a size even: a desktop an odd width or height has is one pixel larger than its video.
       if (desktop.width - (desktop.width % 2) !== size.width || desktop.height - (desktop.height % 2) !== size.height) {
