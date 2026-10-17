@@ -10,7 +10,7 @@ import type { Display, Route } from "../transports/types.ts";
 export const SELKIES_PORT = 5980;
 
 /** The display an X11 desktop kind lists after its RFB one. */
-export const SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "selkies", resizable: true };
+export const SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies" };
 
 /** The box's Selkies display, given its command transport's route to a port in the box. */
 export function selkiesDisplay(route: (port: number, signal?: AbortSignal) => Promise<Route>): Display {

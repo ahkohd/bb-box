@@ -513,6 +513,20 @@ final class Encoder: @unchecked Sendable {
   }
 }
 
+/** A cursor's image as PNG at its size in points, which the browser shows its CSS cursor at, or nil. */
+func cursorPNG(_ image: NSImage) -> Data? {
+  let width = Int(image.size.width.rounded()), height = Int(image.size.height.rounded())
+  guard width > 0, height > 0,
+    let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+  else { return nil }
+  bitmap.size = image.size
+  NSGraphicsContext.saveGraphicsState()
+  NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+  image.draw(in: NSRect(origin: .zero, size: image.size))
+  NSGraphicsContext.restoreGraphicsState()
+  return bitmap.representation(using: .png, properties: [:])
+}
+
 // MARK: Server
 
 final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
@@ -539,6 +553,12 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
   private var lastFrame = Date.distantPast
   private var lastInput = Date.distantPast
   private var clipboardParts: [String: Data] = [:]
+  /** Whether the video draws the cursor in, as bb-box's BB_CURSOR last said: not while a person holds control. */
+  private var showsCursor = true
+  /** The running capture's configuration, to change showsCursor without a restart. */
+  private var configuration: SCStreamConfiguration?
+  /** The cursor's shape as Selkies' cursor message, as last sent, for each new client. */
+  private var cursorMessage: String?
 
   func start(path: String) {
     // Another connection started a server first: it serves.
@@ -577,6 +597,19 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
       let message = "clipboard," + Data(text.utf8).base64EncodedString()
       queue.async { for client in self.clients.values { client.text(message) } }
     }
+    // The cursor's shape, to the clients, when it changes: the panel shows it on the
+    // browser's own pointer while its person holds control, as Selkies' cursor messages.
+    var lastShape = Data()
+    Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [self] _ in
+      guard let cursor = NSCursor.currentSystem, let png = cursorPNG(cursor.image), png != lastShape else { return }
+      lastShape = png
+      let spot = cursor.hotSpot
+      let message = "cursor,{\"curdata\":\"\(png.base64EncodedString())\",\"hotx\":\(Int(spot.x.rounded())),\"hoty\":\(Int(spot.y.rounded()))}"
+      queue.async {
+        self.cursorMessage = message
+        for client in self.clients.values { client.text(message) }
+      }
+    }
     // A new display mode, such as bb-box-display's 2x: the capture starts again at its size.
     Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [self] _ in
       guard let mode = CGDisplayCopyDisplayMode(CGMainDisplayID()) else { return }
@@ -614,6 +647,7 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
     }
     // Selkies speaks first; the relay waits for a first message.
     client.text("MODE websockets")
+    if let shape = queue.sync(execute: { cursorMessage }) { client.text(shape) }
     while let message = nextText(client) {
       guard let text = message else { continue }
       handle(text, from: client)
@@ -664,6 +698,19 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
     case "m2":
       inputCame()
       DispatchQueue.main.async { self.input.wheel(next: number(3), count: number(4)) }
+    case "BB_CURSOR":
+      // bb-box: the cursor out of the video while a person holds control, whose browser shows its shape.
+      let on = number(1) != 0
+      queue.async { [self] in
+        guard on != showsCursor else { return }
+        showsCursor = on
+        log("the cursor is \(on ? "in" : "out of") the video")
+        guard let stream, let configuration else { return }
+        configuration.showsCursor = on
+        stream.updateConfiguration(configuration) { error in
+          if let error { log("could not change the cursor in the video: \(error.localizedDescription)") }
+        }
+      }
     case "cw":
       if fields.count > 1, let data = Data(base64Encoded: fields[1]) { paste(data) }
     case "cws":
@@ -722,7 +769,7 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
       configuration.height = height
       configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
       configuration.queueDepth = 5
-      configuration.showsCursor = true
+      configuration.showsCursor = queue.sync { showsCursor }
       configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
       configuration.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
       let filter = SCContentFilter(display: display, excludingWindows: [])
@@ -734,6 +781,7 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
       queue.async { [self] in
         starting = false
         stream = made
+        self.configuration = configuration
         capturing = (width, height)
         kickFilter = filter
         startKicks()

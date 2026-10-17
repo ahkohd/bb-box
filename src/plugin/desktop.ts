@@ -214,6 +214,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       changed(boxId);
       // A person took control of a box with Selkies viewers: its input connection opens now, not at their first key.
       if (control.view(boxId).owner === "human") selkiesBoxes.get(boxId)?.box.warm();
+      cursorFor(boxId);
     },
     logError: deps.logError,
     staleMs: deps.staleMs,
@@ -252,6 +253,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       colours: Map<SelkiesRelay, boolean>;
       /** What the box was last asked to stream: 4:4:4 or not; null before any, as the display may keep the last viewers' choice. */
       fullColour: boolean | null;
+      /** Each viewer's choice to see the box's own pointer in the video while it holds control, by viewer ID. */
+      pointers: Map<string, boolean>;
+      /** Whether the box was last asked to draw its cursor into the video; null before any. */
+      cursor: boolean | null;
     }
   >();
   const selkiesBox = (boxId: string, open: OpenStream): SelkiesBox => {
@@ -261,6 +266,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       relays: new Set(),
       colours: new Map(),
       fullColour: null,
+      pointers: new Map(),
+      cursor: null,
     };
     entry.viewers += 1;
     selkiesBoxes.set(boxId, entry);
@@ -277,6 +284,28 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     if (want === entry.fullColour) return;
     entry.fullColour = want;
     entry.box.fullColour(want).catch((error) => deps.logError("set the desktop's colour", error));
+  };
+  /**
+   * The box's cursor in its video (the owner's notes of 17 October 2026): out
+   * while a person holds control, whose browser shows the cursor's shape, so
+   * the two do not drift apart, unless they chose to see the box's own
+   * pointer; in while the agent holds control, so a watcher sees where it
+   * points. One capture serves every viewer, so a person watching another
+   * person's control sees no cursor in the video either. Only a display that
+   * says how (its capability's cursor) is asked.
+   */
+  const cursorFor = (boxId: string): void => {
+    const entry = selkiesBoxes.get(boxId);
+    if (!entry || !entry.relays.size) return;
+    void (async () => {
+      const how = (await boxes.find(boxId))?.capabilities.displays.find((display) => display.protocol === "selkies")?.cursor;
+      if (!how) return;
+      const view = control.view(boxId);
+      const want = view.owner !== "human" || (view.holder !== null && entry.pointers.get(view.holder) === true);
+      if (want === entry.cursor) return;
+      entry.cursor = want;
+      await entry.box.cursorInVideo(want, how);
+    })().catch((error) => deps.logError("set the desktop's cursor", error));
   };
   const leftSelkies = (boxId: string, relay: SelkiesRelay | null) => {
     const entry = selkiesBoxes.get(boxId);
@@ -450,10 +479,15 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 entry.colours.set(relay, yes);
                 colourFor(boxId);
               },
+              onShowPointer: (yes) => {
+                selkiesBoxes.get(boxId)?.pointers.set(viewer, yes);
+                cursorFor(boxId);
+              },
               onEnd,
             });
             selkiesBoxes.get(boxId)?.relays.add(relay);
             keepSharp(boxId);
+            cursorFor(boxId);
           } else {
             const open: OpenDisplay = VIEWER_ID.test(viewer)
               ? async (signal) => displayOpener((shown = await display(boxes, boxId)))(signal)

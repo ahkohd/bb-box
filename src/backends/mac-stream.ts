@@ -10,6 +10,7 @@ export const MAC_VIDEO = {
   id: "video",
   protocol: "selkies",
   resizable: false,
+  cursor: "stream",
 } as const;
 /** Where it is built. */
 export const MAC_STREAM = "/usr/local/bin/bb-box-stream";

@@ -119,7 +119,7 @@ test("kinds lists only kinds with a template", () => {
     cpu.capabilities.displays,
     [
       { id: "desktop", protocol: "rfb", resizable: true },
-      { id: "selkies", protocol: "selkies", resizable: true },
+      { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies" },
     ],
     "Xtigervnc resizes, and Selkies streams it beside (056)",
   );

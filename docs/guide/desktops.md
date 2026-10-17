@@ -63,6 +63,10 @@ If the video cannot start, the desktop shows over VNC, and the toolbar says 'Vid
 
 Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size. Copying and pasting carry images too, both ways: paste an image into the box, or copy one there and it comes to your computer. If your browser does not let BB Box write an image to your clipboard, the image shows so you can right-click it and copy it.
 
+### The pointer over video
+
+Video shows the box's pointer as the agent moves it, so you can see where it points while you watch. While you hold control, the video leaves the box's pointer out: your own pointer shows instead, with the box's shape (an arrow, a text cursor, a hand), so it never trails behind your hand. To see the box's own pointer in the video while you hold control, select **Show the box's pointer** under **Display** in the toolbar's menu; your choice lasts for that box in that tab. One picture serves everyone watching a box, so while one person holds control, others watching see no pointer in the video either.
+
 ## High resolution
 
 On a high-resolution screen, such as a Mac's, a desktop's text can look soft: each of its pixels is stretched over several of yours. In the toolbar's menu, under **Display**, select **High resolution** to give the desktop twice the pixels, with everything on it drawn twice the size, so it looks the same size but its text is sharp. Point at its info icon to see what it costs. It is ticked while it is on, and stays on for that box until you turn it off, even after the box starts again.
