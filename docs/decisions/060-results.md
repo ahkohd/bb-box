@@ -131,6 +131,41 @@ this PR leaves it: OpenH264 at most QP 26, and standard font smoothing.
 - **ClearType:** with it, text scored 0.979; its coloured fringes are what
   4:2:0 loses. The image now uses standard font smoothing.
 
+## Tart Mac: video against VNC, 17 October 2026
+
+A small macos-desktop box (4 cores) of build.20261017-171050-80c3, the
+first with bb-box-stream, at 2048x1536, through BB's server. VNC is the
+Virtualization framework's, through bb-box's holder. Same harness, one run
+each, with Chrome showing the scene at 50% page zoom.
+
+| | VNC | Video (bb-box-stream) |
+| --- | --- | --- |
+| Drag fps | 55 | 56 |
+| Drag lag p50 / p95 | 40 / 44 ms | 50 / 63 ms |
+| Torn frames | 0 | 0 |
+| Scroll fps | 55 | 57 |
+| Drag / scroll Mbit/s | 7.6 / 20.6 | 0.25 / 1.3 |
+| Key p50, idle / while scrolling | 22 / 74 ms | none shown / 83 ms |
+| Text SSIM still, black on white / coloured | 1.0 / 1.0 | 0.9994 / 0.9857 |
+| Box cores, drag | 0.43 | 0.59 |
+
+- **Encoder:** VideoToolbox's hardware encoder works in the VM: the
+  Virtualization framework passes it to the Mac's. At 1080p it takes about
+  7 ms a frame and a tenth of a core; at 2x, 19 ms. The software encoder
+  takes 11 and 35 ms and two cores at 1080p.
+- **Keys alone, in Chrome:** none of the 15 keys showed on video, in two
+  runs, though frames came. In the VM, ScreenCaptureKit reported most
+  frames after a key in Chrome as unchanged, while a screenshot showed the
+  change. Keys while scrolling showed, as the page changed anyway. TextEdit
+  and Safari are not affected: frames come 15 to 40 ms after each key. VNC
+  reads the VM's screen from outside it, so it is not affected. Not yet
+  known: why, and whether a pool Mac's Chrome escapes it only because the
+  Mac has a GPU of its own.
+- **The wheel** scrolls through the stream, in Chrome and in Safari.
+- **Through the panel:** the box opens as video. Show as VNC and back,
+  control, typing with Shift and Cmd+S, the wheel, and pasting both ways
+  work.
+
 ## Corrected, 17 October 2026
 
 The drag lags first given here for VNC were wrong, as were those in 056's
@@ -147,7 +182,8 @@ changed.
 - Only the pool Mac is measured at 2x: Linux and Windows boxes run at 1x,
   and the Tart Mac's 1024x768 screen was measured at one pixel per CSS
   pixel (Chrome's page zoom at 50%) for the scene to fit.
-- On the Tart Mac the wheel did not scroll the page through VNC at all.
+- In the baselines, the wheel did not scroll the Tart Mac's page through
+  VNC at all; in the later Tart run above it does, at 55 frames a second.
 - The Wayland key times of 4 ms at the median are probably helped by the
   panel's lossless refresh, which asks for a frame soon after any change.
 - The box CPU on the pool Mac is the whole Mac's, which other users share.
