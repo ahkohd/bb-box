@@ -272,7 +272,8 @@ function fakeWindows(exits: number[], options: { readonly after?: (string | null
   const windowsCommand = (ref: string): CommandTransport => ({
     probe: async () => true,
     run: async (script) => {
-      const what = script.includes("LastBootUpTime") ? "booted" : script.startsWith("Restart-Computer") ? "restart" : script.startsWith("Remove-Item") ? "clean" : script.includes("Check 'Node.js") ? "check.ps1" : script;
+      // check.ps1 reads the boot time too, in its boot line, so it is told first.
+      const what = script.includes("Check 'Node.js") ? "check.ps1" : script.includes("LastBootUpTime") ? "booted" : script.startsWith("Restart-Computer") ? "restart" : script.startsWith("Remove-Item") ? "clean" : script;
       made.events.push(`run ${ref} ${what}`);
       if (what === "restart") {
         boots++;
