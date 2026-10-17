@@ -176,6 +176,11 @@ and the Metal toolchain), plus:
   macOS asks about it, in a prompt computer use can answer. A VM that can be
   suspended has no audio input device of its own, so BlackHole is the
   microphone;
+- bb-box-stream, built from `../ssh-pool/mac-stream.swift` with the
+  image's Xcode: the desktop as H.264 video for the panel, from
+  VideoToolbox's hardware encoder, which the VM passes to the Mac's (060).
+  It runs over SSH in the desktop session, with the grants SSH has there.
+  bb-box offers the video once every Mac's image record lists it;
 - BB's app, with `--bb-url`.
 
 At each macOS box's start, bb-box runs the SSH host pool's Mac helper,

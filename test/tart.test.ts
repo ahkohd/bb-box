@@ -172,7 +172,9 @@ test("a macOS desktop is Tart's VNC through the run's holder, which starts with 
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   // The holder connects as the run starts, before any viewer, however long python3 takes to start under load (#580).
   await tart.connected;
-  const [display] = (await backend.transports(guest, "macos-desktop")).displays;
+  const displays = (await backend.transports(guest, "macos-desktop")).displays;
+  assert.deepEqual(displays.map((one) => one.protocol), ["rfb"], "no video in a VM without bb-box-stream (060)");
+  const [display] = displays;
   for (let open = 0; open < 3; open++) {
     const opened = await display!.open(signal());
     assert.deepEqual(opened.auth, { type: "none" }, "the holder's socket is the host user's alone");
@@ -192,6 +194,48 @@ test("a macOS desktop is Tart's VNC through the run's holder, which starts with 
   await until(() => !existsSync(join(mac, ".bb-box", "tart", "run", `${guest.ref}.vnc`)));
   await assert.rejects(display!.open(signal()), /The desktop's stream for this run of bb-box-\S+ has ended: Tart's VNC server closed the connection, as when the run ends\. Stop and start the box to show its desktop again\./);
   assert.equal(tart.connections, 1, "and it did not connect again");
+});
+
+test("a macOS desktop declares video while every Mac's image record lists bb-box-stream, and offers it in a VM that has it, through bb-box-stream connect in the desktop session (060)", async () => {
+  const ssh = fakeSsh();
+  const mac = ssh.home(MAC);
+  fakeMacTools(mac);
+  addImage(mac);
+  const stream = join(mkdtempSync(join(tmpdir(), "bb-box-stream-")), "bb-box-stream");
+  const backend = new TartBackend(tartConfig(), testContext(new MemoryStorage()), { ...FAKES, macStream: stream });
+  made.push(backend);
+  const declared = async () => {
+    await backend.capacity("macos-desktop", SMALL, [], signal());
+    return backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays.map((display) => display.protocol);
+  };
+  assert.deepEqual(await declared(), ["rfb"], "not while the image's record lacks it");
+  const record = join(mac, ".bb-box", "tart", "images", "bb-box-macos.json");
+  const without = readFileSync(record, "utf8");
+  writeFileSync(record, `${JSON.stringify({ ...JSON.parse(without), tools: { "bb-box-stream": "0123456789ab" } })}\n`);
+  assert.deepEqual(await declared(), ["rfb", "selkies"]);
+
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  // A VM without it, as a box of an older build may be, offers RFB alone.
+  assert.deepEqual((await backend.transports(guest, "macos-desktop")).displays.map((display) => display.protocol), ["rfb"]);
+  const other = await backend.acquire(identity(), null, hooks().hooks, signal());
+  writeFileSync(stream, "#!/bin/sh\n", { mode: 0o755 });
+  const { displays } = await backend.transports(other, "macos-desktop");
+  assert.deepEqual(
+    displays.map((display) => [display.id, display.label, display.protocol, display.resizable]),
+    [
+      ["desktop", "Desktop", "rfb", false],
+      ["video", "Desktop, as video", "selkies", false],
+    ],
+  );
+  const opened = await displays[1]!.open(signal());
+  assert.deepEqual(opened.auth, { type: "none" });
+  assert.equal(opened.input, undefined, "bb-box-stream takes the viewer's input itself");
+  const remote = opened.route.type === "command" ? opened.route.argv.at(-1)! : "";
+  assert.match(remote, /exec \/usr\/local\/bin\/bb-box-stream connect/);
+  assert.match(remote, /launchctl asuser/, "in the box user's desktop session");
+
+  writeFileSync(record, without);
+  assert.deepEqual(await declared(), ["rfb"], "and no longer once a Mac's image lacks it");
 });
 
 test("a macOS box grants its programs macOS permissions through the Mac helper in the VM, refusing while SIP is on, and lists its grants (058)", async () => {
@@ -627,12 +671,16 @@ test("image operations on a Mac: an image box, its capture with its record besid
   const setupDir = join(dir, "setup");
   mkdirSync(join(setupDir, "tart"), { recursive: true });
   mkdirSync(join(setupDir, "proxmox-lxc"), { recursive: true });
+  mkdirSync(join(setupDir, "ssh-pool"), { recursive: true });
+  writeFileSync(join(setupDir, "ssh-pool", "mac-stream.swift"), "// bb-box-stream\n");
   writeFileSync(
     join(setupDir, "tart", "prepare-image.sh"),
     [
       "#!/bin/sh",
       "set -eu",
       'printf "%s\\n" "$@" > "$HOME/prepare-args"',
+      // The image builds bb-box-stream from the pool Mac's source (060), which comes with the copy of setup/.
+      'test -f ../ssh-pool/mac-stream.swift',
       'while [ $# -gt 0 ]; do case $1 in --name) name=$2; shift 2 ;; *) shift ;; esac; done',
       'export PATH="$HOME/.nix-profile/bin:$PATH"',
       'tart clone bb-box-macos "$name"',
