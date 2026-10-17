@@ -1,7 +1,8 @@
 // Sums up raw-<label>.json from drive.mjs (060): per phase, frames a second
 // and the gaps between them, kbit/s through BB's server; the drag's lag
 // behind the pointer per frame and its torn frames, whose rows disagree on
-// the block's edge; key-to-screen; the SSIM of the fixed, coloured and
+// the block's edge; the scroll's torn frames, whose list rows change colour
+// at two places in their 20 pixels; key-to-screen; the SSIM of the fixed, coloured and
 // moving text, still and halfway through the drag; and, given the box's CPU
 // log (epoch seconds, busy and total ticks, cores, as cpu.sh writes it),
 // the box's CPU in cores over each phase.
@@ -58,6 +59,13 @@ for (const label of process.argv.slice(2)) {
         if (hit && hit[0] - t < 3000) lat.push(hit[0] - t); else missed++;
       }
       Object.assign(o, { keyP50: pct(lat, 50), keyP95: pct(lat, 95), keyMissed: missed });
+    }
+    if (name === "scroll" && R.rowsLog) {
+      // A torn frame of the scroll: the list's rows change colour at two places in 20 down its column, as part of the
+      // frame is from another scroll position. Frames that show no change of colour, between rows, do not count.
+      const frames = R.rowsLog.filter((f) => f[0] >= span[0] && f[0] <= span[1] && f[2] > 0);
+      const rowsTorn = frames.filter((f) => f[1] > 1).length;
+      Object.assign(o, { rowsTorn, rowsFrames: frames.length, rowsTornShare: frames.length ? Math.round((rowsTorn / frames.length) * 1000) / 10 : null });
     }
     out[name] = o;
   }
