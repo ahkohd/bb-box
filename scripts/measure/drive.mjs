@@ -49,7 +49,7 @@ phases.keys = [await at()];
 for (let i = 0; i < 15; i++) { await ev("window.press(), true"); await sleep(400); }
 phases.keys.push(await at());
 await sleep(500);
-const raw = await ev("JSON.stringify({ log: window.log, moves: window.moves, presses: window.presses, bytes: window.bytes })");
+const raw = await ev("JSON.stringify({ log: window.log, moves: window.moves, presses: window.presses, bytes: window.bytes, encodings: window.encodings ?? null })");
 writeFileSync(`raw-${label}.json`, JSON.stringify({ label, kind, size, scale: s, clock, phases, ssim, ssimDrag, ...JSON.parse(raw) }));
 console.log(JSON.stringify({ label, kind, ssim, ssimDrag, clock }));
 process.exit(0);
