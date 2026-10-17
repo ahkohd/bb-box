@@ -3,7 +3,7 @@
 // against web/ref.png, a drag of the block, wheel scrolling with keys, and
 // keys alone. Sharpness is measured still and halfway through the drag.
 // Waits for ./go, made once the viewer has control. Writes raw-<label>.json.
-// usage: BOX=<id> VIEWER=<id> [REFRESH=viewer] [QUALITY=<0-9>] [WS=<url>] node drive.mjs <video|vnc> <label> <width>x<height> <scale>
+// usage: BOX=<id> VIEWER=<id> [REFRESH=viewer] [QUALITY=<0-9>] [WS=<url>] [DRAG_Y=<css px>] node drive.mjs <video|vnc> <label> <width>x<height> <scale>
 import { existsSync, writeFileSync } from "node:fs";
 const [kind, label, size, scale = "1"] = process.argv.slice(2);
 const [width, height] = size.split("x").map(Number);
@@ -18,7 +18,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await send("Page.enable"); await send("Runtime.enable");
 await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
 // REFRESH and QUALITY: the box's display refresh and quality, as the panel reads them.
-const q = new URLSearchParams({ kind, box: process.env.BOX, viewer: process.env.VIEWER, scale, refresh: process.env.REFRESH ?? "", quality: process.env.QUALITY ?? "", ...(process.env.WS ? { ws: process.env.WS } : {}) });
+const q = new URLSearchParams({ kind, box: process.env.BOX, viewer: process.env.VIEWER, scale, refresh: process.env.REFRESH ?? "", quality: process.env.QUALITY ?? "", dragY: process.env.DRAG_Y ?? "", ...(process.env.WS ? { ws: process.env.WS } : {}) });
 await send("Page.navigate", { url: `http://127.0.0.1:7000/page.html?${q}` });
 const t0 = Date.now();
 while (!(await ev("window.ready === true && window.connected()").catch(() => false))) {
