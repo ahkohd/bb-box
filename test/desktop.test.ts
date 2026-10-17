@@ -258,6 +258,26 @@ test("a display whose input takes only the wheel gets the wheel's notches, and t
   assert.equal(hex(box!.received.subarray(expected.byteLength)), hex([keyEvent(false, 0x61), pointerEvent(0, 6, 7)].reduce(concat)));
 });
 
+test("when a wheel-only input cannot start, keys and clicks still reach the stream server, and only the wheel is lost", async () => {
+  const server = new FakeRfb();
+  const problems: string[] = [];
+  const relay = relayTo(server, {
+    displayInput: async () => {
+      throw new Error("The desktop's wheel helper did not start.");
+    },
+    inputTakes: "wheel",
+    onInputError: (error) => problems.push(error.message),
+  });
+  await relay.init();
+  const [box] = server.connections;
+  relay.give(true);
+  await relay.relay.receive([keyEvent(true, 0x61), pointerEvent(16, 6, 7), pointerEvent(0, 6, 7), pointerEvent(1, 5, 5)].reduce(concat));
+  const expected = [keyEvent(true, 0x61), pointerEvent(0, 6, 7), pointerEvent(0, 6, 7), pointerEvent(1, 5, 5)].reduce(concat);
+  await until("the key and the click", () => box!.received.byteLength >= expected.byteLength);
+  assert.equal(hex(box!.received), hex(expected));
+  assert.deepEqual(problems, ["The desktop's wheel helper did not start."]);
+});
+
 test("an input that cannot open is reported, and the desktop still streams (#406)", async () => {
   const server = new FakeRfb();
   const problems: string[] = [];
