@@ -73,6 +73,8 @@ export interface DesktopState {
   readonly video: boolean;
   /** Whether the desktop is at high resolution, twice the pixels at twice the scale; null where it cannot be. Absent from older plugins. */
   readonly sharp?: boolean | null;
+  /** Whether its video can leave the box's pointer out while you hold control, and show it at your choice. Absent from older plugins. */
+  readonly pointer?: boolean;
 }
 
 /** A box in any thread, or one of your machines, for the Boxes page. */

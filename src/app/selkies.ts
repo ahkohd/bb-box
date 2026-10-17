@@ -174,6 +174,8 @@ export class SelkiesSession implements Kept {
   readonly #held = new Set<number>();
   /** The box's cursor as CSS, and whether it has a visible pixel. */
   #cursor: string | null = null;
+  /** Whether this viewer chose to see the box's own pointer in the video while it holds control, rather than its shape on the browser's. */
+  #showPointer = false;
   #cursorVisible = false;
   readonly #observer: ResizeObserver | null;
   #settle: ReturnType<typeof setTimeout> | undefined;
@@ -292,6 +294,8 @@ export class SelkiesSession implements Kept {
       void decodesFullColour().then((yes) => {
         if (this.#socket === socket && socket.readyState === WebSocket.OPEN) socket.send(`BB_FULLCOLOR,${yes ? 1 : 0}`);
       });
+      // Whether the box's pointer goes into the video while this viewer holds control (the relay keeps this message).
+      socket.send(`BB_SHOWPOINTER,${this.#showPointer ? 1 : 0}`);
     };
     socket.onmessage = (event: MessageEvent) => {
       if (this.#socket === socket) this.#message(event.data);
@@ -536,9 +540,26 @@ export class SelkiesSession implements Kept {
     this.#refreshCursor();
   }
 
-  /** The local arrow without control, and with it the box's cursor, unless it has no visible pixel (#467). */
+  /**
+   * Shows the box's own pointer in the video while this viewer holds control,
+   * or leaves it out, so only the browser's pointer shows, with the box's
+   * cursor's shape (the owner's notes of 17 October 2026). bb-box keeps the
+   * choice for the box's display.
+   */
+  showPointer(on: boolean): void {
+    if (on === this.#showPointer) return;
+    this.#showPointer = on;
+    this.#send(`BB_SHOWPOINTER,${on ? 1 : 0}`);
+    this.#refreshCursor();
+  }
+
+  /**
+   * The local arrow without control, and with it the box's cursor, unless it
+   * has no visible pixel (#467), or the box's own pointer is in the video, as
+   * this viewer chose: then the arrow, so the shape is not drawn twice.
+   */
   #refreshCursor(): void {
-    this.#canvas.style.cursor = this.#mine && this.#cursor && this.#cursorVisible ? this.#cursor : "default";
+    this.#canvas.style.cursor = this.#mine && !this.#showPointer && this.#cursor && this.#cursorVisible ? this.#cursor : "default";
   }
 
   /** The box's OS, for the paste chord and the Cmd mapping. */

@@ -82,6 +82,17 @@ export interface DisplayCapability {
    * text up, and 4 cost it no more (056). Left out, 2.
    */
   readonly quality?: number;
+  /**
+   * How bb-box has the display's video draw the box's cursor in, or leave it
+   * out: bb-box-stream's BB_CURSOR ("stream"), or Selkies' own
+   * SET_NATIVE_CURSOR_RENDERING ("selkies"). Both send the cursor's shape as
+   * Selkies' cursor messages. bb-box leaves the cursor out of the video while a
+   * person holds control, so the browser's own pointer, with the box's shape,
+   * does not trail a drawn one, and draws it in otherwise, so a watcher sees
+   * where the agent points (the owner's notes of 17 October 2026). Left out,
+   * the stream server decides.
+   */
+  readonly cursor?: "stream" | "selkies";
 }
 
 /**

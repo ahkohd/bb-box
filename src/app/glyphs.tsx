@@ -76,6 +76,15 @@ export function HighResolutionGlyph(props: Props) {
   );
 }
 
+/** The box's own pointer: an arrow. */
+export function PointerGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M6 3l12 8-5.5 1.5L15 19l-2.5 1-2.5-6.5L6 17z" />
+    </Stroked>
+  );
+}
+
 /** A terminal. */
 export function TerminalGlyph(props: Props) {
   return (

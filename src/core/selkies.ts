@@ -137,6 +137,8 @@ export class SelkiesBox {
   #ready: BoxWebSocket | null = null;
   #stopAsked = 0;
   #closed = false;
+  /** The message that last asked the box to draw its cursor into the video, or not, to send again on a new input connection. */
+  #cursor: string | null = null;
   readonly onError: (error: Error) => void;
 
   constructor(open: OpenStream, options: { onError?: (error: Error) => void; spacingMs?: number; clock?: Clock } = {}) {
@@ -164,6 +166,8 @@ export class SelkiesBox {
       const { socket, first } = await connect(this.#open, this.spacing, "", AbortSignal.timeout(20_000));
       if (first === null) throw new WebSocketError(`The box's Selkies closed the input connection${socket.closedWith ? ` (${socket.closedWith.code})` : ""}.`);
       await socket.send("STOP_VIDEO");
+      // A stream server that started again draws its cursor, as by default: it is told again.
+      if (this.#cursor !== null) await socket.send(this.#cursor);
       this.#ready = socket;
       void this.#drain(socket);
       return socket;
@@ -194,6 +198,24 @@ export class SelkiesBox {
    */
   async fullColour(on: boolean): Promise<void> {
     await this.input(`SETTINGS,${JSON.stringify({ displayId: "primary", video_fullcolor: on })}`);
+  }
+
+  /**
+   * Has the display's video draw the box's cursor in, or leave it out: out
+   * while a person holds control, whose browser shows the cursor's shape
+   * itself, so the two do not drift apart. bb-box-stream takes BB_CURSOR
+   * ("stream"); Selkies, SET_NATIVE_CURSOR_RENDERING ("selkies"), which
+   * restarts its capture.
+   */
+  async cursorInVideo(on: boolean, how: "stream" | "selkies"): Promise<void> {
+    if (this.#closed) return;
+    this.#cursor = how === "stream" ? `BB_CURSOR,${on ? 1 : 0}` : `SET_NATIVE_CURSOR_RENDERING,${on ? 1 : 0}`;
+    // A connection that opens now says it as it opens.
+    if (!this.#ready) {
+      await this.#connection();
+      return;
+    }
+    await this.#ready.send(this.#cursor);
   }
 
   /**
@@ -252,6 +274,8 @@ export interface SelkiesRelayOptions {
   onResize?(size: { readonly width: number; readonly height: number }): void;
   /** Whether the viewer's browser decodes 4:4:4, as it says once connected (bb-box's `BB_FULLCOLOR,<0|1>`, which goes no further). */
   onFullColour?(yes: boolean): void;
+  /** Whether this viewer wants the box's own pointer in the video while it holds control (bb-box's `BB_SHOWPOINTER,<0|1>`, which goes no further). */
+  onShowPointer?(yes: boolean): void;
   onEnd?(by: "viewer" | "box", error: Error | null): void;
   readonly connectTimeoutMs?: number;
   /** How far behind the viewer may fall; LAG_MS by default. */
@@ -407,6 +431,11 @@ export class SelkiesRelay {
     const colour = /^BB_FULLCOLOR,([01])$/.exec(message);
     if (colour) {
       this.#options.onFullColour?.(colour[1] === "1");
+      return;
+    }
+    const pointer = /^BB_SHOWPOINTER,([01])$/.exec(message);
+    if (pointer) {
+      this.#options.onShowPointer?.(pointer[1] === "1");
       return;
     }
     const resize = /^r,(\d{1,5})x(\d{1,5})$/.exec(message);
