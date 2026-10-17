@@ -285,6 +285,7 @@ static class Input {
   [StructLayout(LayoutKind.Explicit)] struct INPUT { [FieldOffset(0)] public int type; [FieldOffset(8)] public MOUSEINPUT mi; [FieldOffset(8)] public KEYBDINPUT ki; }
   [DllImport("user32.dll")] static extern uint SendInput(uint count, INPUT[] inputs, int size);
   [DllImport("user32.dll")] static extern short VkKeyScanW(char c);
+  [DllImport("user32.dll")] static extern uint MapVirtualKeyW(uint code, uint type);
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
 
   const int MOUSE_MOVE = 1, LEFT_DOWN = 2, LEFT_UP = 4, RIGHT_DOWN = 8, RIGHT_UP = 0x10, MIDDLE_DOWN = 0x20, MIDDLE_UP = 0x40, WHEEL = 0x800, VIRTUALDESK = 0x4000, ABSOLUTE = 0x8000;
@@ -323,6 +324,8 @@ static class Input {
   static void KeyEvent(ushort vk, bool down) {
     INPUT input = new INPUT { type = 1 };
     input.ki.wVk = vk;
+    // With its scan code, as a keyboard sends it: without one, WinUI apps such as Notepad drop keys and Shift.
+    input.ki.wScan = (ushort)MapVirtualKeyW(vk, 0);
     input.ki.dwFlags = (down ? 0 : KEY_UP) | (EXTENDED_KEYS.Contains(vk) ? EXTENDED : 0);
     Send(input);
   }
@@ -553,7 +556,12 @@ class Encoder : IDisposable {
   [DllImport("openh264.dll")] static extern int WelsCreateSVCEncoder(out IntPtr encoder);
   [DllImport("openh264.dll")] static extern void WelsDestroySVCEncoder(IntPtr encoder);
 
-  delegate int Init(IntPtr self, IntPtr param);
+  delegate int InitExt(IntPtr self, IntPtr param);
+  delegate int GetDefaults(IntPtr self, IntPtr param);
+  /** SEncParamExt's size in OpenH264 2.6, with room to spare. */
+  const int PARAM_EXT_SIZE = 1024;
+  /** The coarsest quantiser a frame may have: text stays sharp, at more bits for busy motion. */
+  const int MAX_QP = 26;
   delegate int Uninit(IntPtr self);
   delegate int EncodeFrame(IntPtr self, IntPtr source, IntPtr info);
   delegate int ForceIntra(IntPtr self, bool idr);
@@ -578,15 +586,30 @@ class Encoder : IDisposable {
     Width = width & ~1;
     Height = height & ~1;
     if (WelsCreateSVCEncoder(out encoder) != 0 || encoder == IntPtr.Zero) throw new Exception("OpenH264 could not make an encoder");
-    IntPtr param = Marshal.AllocHGlobal(32);
-    // SEncParamBase: screen content in real time, the size, a ceiling of 3 bits a pixel a second, bitrate control, 60 fps.
+    // SEncParamExt from OpenH264's defaults, at 2.6's offsets (codec_app_def.h): screen content in real time, at most
+    // QP 26 so text keeps its edges, bitrate control at 8 bits a pixel a second, no frames skipped, four threads.
+    IntPtr param = Marshal.AllocHGlobal(PARAM_EXT_SIZE);
+    for (int i = 0; i < PARAM_EXT_SIZE; i++) Marshal.WriteByte(param, i, 0);
+    Slot<GetDefaults>(encoder, 2)(encoder, param);
+    int bitrate = Math.Max(4000000, Width * Height * 8);
     Marshal.WriteInt32(param, 0, 1);
     Marshal.WriteInt32(param, 4, Width);
     Marshal.WriteInt32(param, 8, Height);
-    Marshal.WriteInt32(param, 12, Math.Max(2000000, Width * Height * 3));
+    Marshal.WriteInt32(param, 12, bitrate);
     Marshal.WriteInt32(param, 16, 1);
     Marshal.Copy(new[] { 60f }, 0, param + 20, 1);
-    int ok = Slot<Init>(encoder, 0)(encoder, param);
+    Marshal.WriteInt32(param, 28, 1);
+    Marshal.WriteInt32(param, 32, Width);
+    Marshal.WriteInt32(param, 36, Height);
+    Marshal.Copy(new[] { 60f }, 0, param + 40, 1);
+    Marshal.WriteInt32(param, 44, bitrate);
+    Marshal.WriteInt32(param, 48, bitrate * 2);
+    Marshal.WriteByte(param, 860, 0);
+    Marshal.WriteInt32(param, 864, bitrate * 2);
+    Marshal.WriteInt32(param, 868, MAX_QP);
+    Marshal.WriteInt32(param, 872, 10);
+    Marshal.WriteInt16(param, 892, 4);
+    int ok = Slot<InitExt>(encoder, 1)(encoder, param);
     Program.MaskFloatingPoint();
     Marshal.FreeHGlobal(param);
     if (ok != 0) throw new Exception("OpenH264 did not initialise: " + ok);

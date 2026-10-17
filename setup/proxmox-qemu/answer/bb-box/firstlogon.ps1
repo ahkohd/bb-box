@@ -196,6 +196,12 @@ if ([Environment]::GetEnvironmentVariable('Path', 'User') -notlike '*\.cargo\bin
 Step 'UTF-8 as the system code page'
 foreach ($name in 'ACP', 'OEMCP', 'MACCP') { Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage' -Name $name -Value '65001' }
 
+Step 'Standard font smoothing, not ClearType'
+# The desktop as video (060): ClearType's coloured fringes are what 4:2:0 H.264
+# loses, and text with them scored an SSIM of 0.979 against 0.999 without.
+Set-Reg 'HKCU:\Control Panel\Desktop' FontSmoothing '2' String
+Set-Reg 'HKCU:\Control Panel\Desktop' FontSmoothingType 1
+
 Step 'Automatic logon; no lock screen, sleep, screen saver, UAC prompt, updates, OneDrive or first-run screens'
 $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 Set-Reg $winlogon AutoAdminLogon '1' String

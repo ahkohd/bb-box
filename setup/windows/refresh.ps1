@@ -258,6 +258,11 @@ try {
   }
   & C:\bb-box\logon.ps1 -Shortcuts "$env:PUBLIC\Desktop", "$env:ProgramData\Microsoft\Windows\Start Menu\Programs"
 
+  # Standard font smoothing, not ClearType, as the first logon has it since 060: video's 4:2:0 loses ClearType's fringes.
+  Step 'Fonts: standard smoothing, not ClearType'
+  Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name FontSmoothing -Value '2'
+  New-ItemProperty 'HKCU:\Control Panel\Desktop' -Name FontSmoothingType -Value 1 -PropertyType DWord -Force | Out-Null
+
   # No OneDrive, as the first logon has it since #707: images built before
   # get the policy here, and the OneDrive their sign-in started ends now, so
   # check.ps1 need not wait for a restart.
