@@ -60,6 +60,10 @@ if (kind === "video") {
   if (q.get("refresh") === "viewer") refreshLosslessly(rfb);
   rfb.addEventListener("connect", () => { ready = true; canvas = rfb._canvas; const d = rfb._display; const f = d.flip.bind(d); d.flip = (...a) => { const out = f(...a); sample(); return out; }; });
   window.rfb = rfb;
+  // The RFB encodings the server used, by number, rectangles of each: 50 is Open H.264, which noVNC asks for first.
+  window.encodings = {};
+  const handleRect = rfb._handleRect.bind(rfb);
+  rfb._handleRect = () => { const done = handleRect(); if (done) window.encodings[rfb._FBU.encoding] = (window.encodings[rfb._FBU.encoding] ?? 0) + 1; return done; };
   window.connected = () => ready;
   window.control = () => { rfb.viewOnly = false; };
   window.target = () => rfb._canvas;
