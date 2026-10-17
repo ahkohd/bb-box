@@ -91,6 +91,10 @@ import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./con
 import {
   captureScript,
   claimScript,
+  detachedBuildScript,
+  followBuildScript,
+  parseFollow,
+  stopBuildScript,
   cloneScript,
   deleteScript,
   forgetImageScript,
@@ -268,6 +272,15 @@ interface Placing {
   /** A macOS VM, which counts against the Mac's two. */
   readonly macos: boolean;
 }
+
+/** The longest a standard image's prepare script may run. */
+const BUILD_TIMEOUT_MS = 60 * 60_000;
+/** How long the Mac may be out of reach while its prepare script runs, before the build counts as lost (#707). */
+const BUILD_LOST_MS = 10 * 60_000;
+/** How often bb-box looks at a running build's log. */
+const BUILD_POLL_MS = 2_000;
+/** The most of a build's log one look takes. */
+const BUILD_LOG_CHUNK = 256 * 1024;
 
 /** The prefix of a warm VM's name. A box that takes it keeps the name. */
 const WARM_PREFIX = "bb-box-warm-";
@@ -2440,6 +2453,8 @@ export class TartBackend implements Backend {
     if (tar.status !== 0) throw new Error(`tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
     const mac = new SshTransport(ssh, await this.#mac(host), "macos");
     const owner = ownerText({ install: this.#context.installId, kind: current.kind, "image-build": "standard", created: Date.now() });
+    // The detached prepare script's pid while it runs.
+    let pid: number | null = null;
     await this.#run(host, claimScript(vm, owner), { signal: options.signal });
     try {
       await mac.writeFile(`${dir}.tgz`, tar.stdout, { signal: options.signal });
@@ -2457,25 +2472,19 @@ export class TartBackend implements Backend {
         "--name", vm,
         ...(options.bbUrl ? ["--bb-url", options.bbUrl] : []),
       ];
-      const run = `cd "$HOME/${dir}" 2>/dev/null || { mkdir -p "$HOME/${dir}" && tar -xzf "$HOME/${dir}.tgz" -C "$HOME/${dir}"; }; cd "$HOME/${dir}/tart" && ${args.map(quote).join(" ")}`;
-      let rest = "";
-      const decoder = new TextDecoder();
-      const ran = await mac.stream(`exec /bin/sh -c ${quote(run)}`, {
-        timeoutMs: 60 * 60_000,
-        signal: options.signal,
-        onOutput: (chunk) => {
-          const lines = (rest + decoder.decode(chunk, { stream: true })).split(/\r?\n|\r/);
-          rest = lines.pop() ?? "";
-          for (const line of lines) if (line.trim()) options.log(line);
-        },
-      });
-      if (rest.trim()) options.log(rest);
-      if (ran.exitCode !== 0) throw new Error(`The prepare script on ${host.name} ${ran.timedOut ? "ran out of time" : `exited with ${ran.exitCode}`}.`);
+      const prepare = `cd "$HOME/${dir}" 2>/dev/null || { mkdir -p "$HOME/${dir}" && tar -xzf "$HOME/${dir}.tgz" -C "$HOME/${dir}"; }; cd "$HOME/${dir}/tart"`;
+      const started = await this.#run(host, detachedBuildScript(dir, prepare, args), { signal: options.signal });
+      pid = Number(/^pid=(\d+)$/m.exec(started.stdout)?.[1]) || null;
+      const status = await this.#follow(host, dir, BUILD_TIMEOUT_MS, options.log, options.signal);
+      pid = null;
+      if (status !== 0) throw new Error(`The prepare script on ${host.name} exited with ${status}.`);
       const state = await this.#state(host, options.signal);
       if (!state.vms.some((listed) => listed.name === vm)) throw new Error(`The prepare script on ${host.name} made no VM ${vm}.`);
       const record = state.records.get(vm) ?? null;
       return { ref: `${host.name}/${vm}`, image: "standard", kind: current.kind, build: record?.build ?? null, record, current: false };
     } catch (error) {
+      // A build that still runs, as after a cancel or when it ran out of time, stops first.
+      if (pid) await this.#run(host, stopBuildScript(pid)).catch(() => undefined);
       // What the prepare script left, its build VM too, goes.
       await this.#run(host, `exec /bin/sh -c ${quote(`PATH=/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:$PATH; tart delete ${quote(`${vm}-build`)} 2>/dev/null; :`)}`).catch(() => undefined);
       await this.#delete(host, vm, os, null).catch(() => undefined);
@@ -2483,6 +2492,51 @@ export class TartBackend implements Backend {
       throw error;
     } finally {
       await this.#run(host, `exec /bin/sh -c ${quote(`rm -rf "$HOME/${dir}" "$HOME/${dir}.tgz"`)}`).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Follows a build detachedBuildScript started in `dir` on the Mac until
+   * it ends, passing its output on line by line, and returns its exit
+   * status. Each look is a short command, so a link that drops or stalls
+   * costs only the looks it misses (#707); the Mac may be out of reach for
+   * BUILD_LOST_MS before the build counts as lost. Throws when the build
+   * runs past `timeoutMs`.
+   */
+  async #follow(host: TartHost, dir: string, timeoutMs: number, log: (line: string) => void, signal: AbortSignal): Promise<number> {
+    const sleep = this.#options.sleep ?? pause;
+    const deadline = Date.now() + timeoutMs;
+    const decoder = new TextDecoder();
+    let rest = "";
+    let offset = 0;
+    let heard = Date.now();
+    const lines = (text: string) => {
+      const all = (rest + text).split(/\r?\n|\r/);
+      rest = all.pop() ?? "";
+      for (const line of all) if (line.trim()) log(line);
+    };
+    for (;;) {
+      signal.throwIfAborted();
+      let more = false;
+      try {
+        const seen = parseFollow((await this.#run(host, followBuildScript(dir, offset, BUILD_LOG_CHUNK), { timeoutMs: 30_000, signal })).stdout);
+        heard = Date.now();
+        offset += seen.bytes.length;
+        lines(decoder.decode(seen.bytes, { stream: true }));
+        if (seen.status !== null && offset >= seen.size) {
+          lines(decoder.decode());
+          if (rest.trim()) log(rest);
+          return seen.status;
+        }
+        more = seen.bytes.length >= BUILD_LOG_CHUNK;
+      } catch (error) {
+        signal.throwIfAborted();
+        if (Date.now() - heard > BUILD_LOST_MS) {
+          throw new Error(`bb-box could not reach ${host.name} for ${Math.round(BUILD_LOST_MS / 60_000)} minutes while the prepare script ran there: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (Date.now() > deadline) throw new Error(`The prepare script on ${host.name} ran out of time.`);
+      if (!more) await sleep(BUILD_POLL_MS, signal);
     }
   }
 

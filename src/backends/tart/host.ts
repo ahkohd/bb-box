@@ -325,6 +325,50 @@ export function parseState(text: string): HostState {
 }
 
 /**
+ * Starts `command`, a long build such as prepare-image.sh, in `cwd` under
+ * the Mac user's home, detached from SSH (#707): its output goes to
+ * `dir`/build.log and its pid, then its exit status, to `dir`/build.exit,
+ * so the build outlives a link that drops. `prepare` runs first, in the
+ * same shell, as to unpack the build's files. Prints "pid=<pid>".
+ */
+export function detachedBuildScript(dir: string, prepare: string, command: readonly string[]): string {
+  return script(String.raw`${prepare} || exit 1
+detach "$HOME/${dir}/build.log" "$HOME/${dir}/build.exit" ${command.map(quote).join(" ")} || { echo "The build did not start." >&2; exit 1; }
+echo "pid=$pid"
+`);
+}
+
+/**
+ * What a detached build (detachedBuildScript) has done since byte `offset`
+ * of its log: its exit status once it ended, the log's size, then up to
+ * `max` bytes from `offset` in base64, so text cut mid-character survives.
+ * The status is read before the size, so a status means the size is final.
+ */
+export function followBuildScript(dir: string, offset: number, max: number): string {
+  return script(String.raw`x="$HOME/${dir}/build.exit"; f="$HOME/${dir}/build.log"
+echo "@status=$(sed -n 's/^status=//p' "$x" 2>/dev/null)"
+echo "@size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')"
+echo @log
+tail -c +${offset + 1} "$f" 2>/dev/null | head -c ${max} | base64
+`);
+}
+
+/** A detached build's progress, from followBuildScript. */
+export function parseFollow(text: string): { status: number | null; size: number; bytes: Uint8Array } {
+  const at = text.indexOf("@log\n");
+  const head = at < 0 ? text : text.slice(0, at);
+  const status = /^@status=(\d+)$/m.exec(head)?.[1];
+  const size = Number(/^@size=(\d+)$/m.exec(head)?.[1] ?? 0);
+  const bytes = at < 0 ? new Uint8Array() : new Uint8Array(Buffer.from(text.slice(at + 5).replace(/\s+/g, ""), "base64"));
+  return { status: status === undefined ? null : Number(status), size, bytes };
+}
+
+/** Stops a detached build, pid `pid`, and what it started, if it still runs. */
+export function stopBuildScript(pid: number): string {
+  return script(`kill -0 ${pid} 2>/dev/null || exit 0; pkill -TERM -P ${pid} 2>/dev/null; kill -TERM ${pid} 2>/dev/null; :\n`);
+}
+
+/**
  * Writes the VM's owner file unless one is there. Prints "claimed" when it
  * wrote it, or the file that is there.
  */

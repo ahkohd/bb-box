@@ -721,6 +721,51 @@ test("image operations on a Mac: an image box, its capture with its record besid
   assert.equal(images.check!("linux-arm64"), "bb-box-check-headless");
 });
 
+test("a standard image's prepare script runs detached on the Mac, so its build outlives a link that drops, and bb-box follows its log again (#707)", async () => {
+  const { mac, context, ssh } = setup();
+  const backend = new TartBackend(tartConfig({}), context, { ...FAKES, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 100))) });
+  made.push(backend);
+  const images = backend.images!;
+  const standard = (await images.list()).builds.find((build) => build.ref === "mac1/bb-box-macos")!;
+  const record = JSON.stringify({ contract: 1, image: "standard", kind: "macos", arch: "arm64", build: "build.20261017-090000-ab12", built: new Date().toISOString(), os: "macOS 27.0", tools: {} });
+  const setupDir = join(mac, "..", `detached-${counter++}`, "setup");
+  for (const sub of ["tart", "proxmox-lxc", "ssh-pool"]) mkdirSync(join(setupDir, sub), { recursive: true });
+  writeFileSync(join(setupDir, "ssh-pool", "mac-stream.swift"), "// bb-box-stream\n");
+  // The Mac drops off the network for 2 s mid-build, as a Mac's link over Tailscale can.
+  writeFileSync(
+    join(setupDir, "tart", "prepare-image.sh"),
+    [
+      "#!/bin/sh",
+      "set -eu",
+      'while [ $# -gt 0 ]; do case $1 in --name) name=$2; shift 2 ;; *) shift ;; esac; done',
+      'echo "before the drop: café"',
+      'touch "$HOME/dropping"; sleep 3',
+      'export PATH="$HOME/.nix-profile/bin:$PATH"',
+      'tart clone bb-box-macos "$name"',
+      'mkdir -p "$HOME/.bb-box/tart/images"',
+      `printf '%s\\n' '${record}' > "$HOME/.bb-box/tart/images/$name.json"`,
+      'echo "after the drop"',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const lines: string[] = [];
+  let dropped = false;
+  const drop = (async () => {
+    while (!existsSync(join(mac, "dropping"))) await new Promise((resolve) => setTimeout(resolve, 50));
+    ssh.down(MAC);
+    dropped = true;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    rmSync(join(ssh.dir, "down", MAC));
+  })();
+  const built = await images.build!(standard, setupDir, { bbUrl: null, log: (line) => lines.push(line), signal: AbortSignal.timeout(60_000) });
+  await drop;
+  assert.ok(dropped);
+  assert.equal(built.build, "build.20261017-090000-ab12");
+  assert.deepEqual(lines, ["before the drop: café", "after the drop"], "each line once, whole, across the drop");
+  assert.ok(!existsSync(join(ssh.dir, "down", MAC)));
+  assert.deepEqual(readdirSync(join(mac, ".bb-box", "tart")).filter((name) => name.startsWith("setup-")), [], "the build's directory, log and all, goes");
+});
+
 test("the doctor judges each Tart image by the record beside it (049)", async () => {
   const { mac, context, make } = linuxSetup();
   const day = 24 * 60 * 60 * 1000;
