@@ -98,7 +98,11 @@ test("offers macos and macos-desktop from the image, each only when it has one",
   assert.equal(desktop.gpu, false);
   assert.equal(desktop.command?.inDesktopSession, false);
   // Tart's VNC server moves no clipboard, so bb-box does with commands in the box (#464).
-  assert.deepEqual(desktop.displays, [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" }]);
+  // And video, from bb-box-stream, where a box's image has it (060).
+  assert.deepEqual(desktop.displays, [
+    { id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" },
+    { id: "video", protocol: "selkies", resizable: false },
+  ]);
   assert.equal(desktop.computerUse?.socket, "/Users/admin/Library/Caches/cua-driver/cua-driver.sock");
 });
 
@@ -172,7 +176,9 @@ test("a macOS desktop is Tart's VNC through the run's holder, which starts with 
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   // The holder connects as the run starts, before any viewer, however long python3 takes to start under load (#580).
   await tart.connected;
-  const [display] = (await backend.transports(guest, "macos-desktop")).displays;
+  const displays = (await backend.transports(guest, "macos-desktop")).displays;
+  assert.deepEqual(displays.map((one) => one.protocol), ["rfb"], "no video in a VM without bb-box-stream (060)");
+  const [display] = displays;
   for (let open = 0; open < 3; open++) {
     const opened = await display!.open(signal());
     assert.deepEqual(opened.auth, { type: "none" }, "the holder's socket is the host user's alone");
