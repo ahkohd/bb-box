@@ -62,6 +62,7 @@ import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import type { Arch, Display, DisplayInput, DisplayInputEvents, DisplayOpened, RunResult, SshAccess } from "../../transports/types.ts";
 import { startMacInput } from "../../core/mac-input.ts";
+import { command as inBoxCommand } from "../../core/in-box.ts";
 import { CUA_VERSION } from "../tart/backend.ts";
 import { EXAMPLE, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, parseDisplay, parseGrant, parseGranted, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
@@ -121,8 +122,24 @@ function linuxOffer(docker: boolean): BoxKind {
   };
 }
 
-/** A Mac's offers (047): its box user at the console, with the desktop and computer use for macos-desktop, and Xcode when every Mac has it. */
-function macOffer(desktop: boolean, features: readonly string[]): BoxKind {
+/**
+ * One connection to a Mac's video stream: bb-box-stream joins its stdin and stdout to the server in the box user's
+ * desktop session, starting the server first (060). Its socket is in the box user's home, which only they can open.
+ */
+export function macStreamCommand(): string {
+  return inBoxCommand("macos", `exec ${MAC_STREAM} connect`, { session: "desktop" });
+}
+
+/** The desktop as video, from bb-box-stream in the box user's desktop session (060), beside Screen Sharing's RFB. */
+const MAC_VIDEO = { id: "video", protocol: "selkies", resizable: false } as const;
+/** Where setup-mac.sh builds it. */
+const MAC_STREAM = "/usr/local/bin/bb-box-stream";
+
+/**
+ * A Mac's offers (047): its box user at the console, with the desktop and computer use for macos-desktop, Xcode when
+ * every Mac has it, and the desktop as video when every Mac has bb-box-stream.
+ */
+function macOffer(desktop: boolean, features: readonly string[], video = false): BoxKind {
   const tools = features.includes("ios-simulator") ? " It has Xcode and the iOS Simulator." : features.includes("xcode") ? " It has Xcode." : "";
   return {
     id: desktop ? "macos-desktop" : "macos",
@@ -137,7 +154,7 @@ function macOffer(desktop: boolean, features: readonly string[]): BoxKind {
       gpu: false,
       features,
       command: SSH_COMMAND,
-      displays: desktop ? [{ id: "desktop", protocol: "rfb", resizable: false }] : [],
+      displays: desktop ? [{ id: "desktop", protocol: "rfb", resizable: false }, ...(video ? [MAC_VIDEO] : [])] : [],
       computerUse: desktop ? MAC_CUA : null,
       enrol: true,
     },
@@ -393,7 +410,7 @@ export class SshPoolBackend implements Backend {
     return [
       ...(listed.has("linux") ? [linuxOffer(this.#docker)] : []),
       ...(listed.has("macos") ? [macOffer(false, this.#macFeatures("macos"))] : []),
-      ...(listed.has("macos-desktop") ? [macOffer(true, this.#macFeatures("macos-desktop"))] : []),
+      ...(listed.has("macos-desktop") ? [macOffer(true, this.#macFeatures("macos-desktop"), this.#macVideo())] : []),
     ];
   }
 
@@ -406,6 +423,12 @@ export class SshPoolBackend implements Backend {
     const xcodes = (this.#surveyed ?? []).filter((view) => view.probe.status?.mac && this.#lists(view.machine, kind)).map((view) => view.probe.status!.mac!.xcode);
     if (!xcodes.length || !xcodes.every((xcode) => xcode?.version)) return [];
     return xcodes.every((xcode) => iosRuntime(xcode)) ? ["xcode", "ios-simulator"] : ["xcode"];
+  }
+
+  /** Whether every Mac serving macos-desktop that answered the last survey has bb-box-stream, as #macFeatures does for Xcode. */
+  #macVideo(): boolean {
+    const macs = (this.#surveyed ?? []).filter((view) => view.probe.status?.mac && this.#lists(view.machine, "macos-desktop"));
+    return macs.length > 0 && macs.every((view) => view.probe.status!.mac!.stream);
   }
 
   /** The machines it lends whole, for the doctor's warning when a Mac is also a Tart host (047). One through a jump host is on another network. */
@@ -807,7 +830,10 @@ export class SshPoolBackend implements Backend {
     const host = access.host.includes(":") ? `[${access.host}]` : access.host;
     const { ssh } = await this.#keys();
     const displays = (machine.os === "macos" ? (offer?.capabilities.displays ?? []) : []).map(
-      (display): Display => ({ ...display, label: "Desktop", open: (signal) => this.#openDisplay(machine, guest, ssh, access, user, signal) }),
+      (display): Display =>
+        display.protocol === "selkies"
+          ? { ...display, label: "Desktop, as video", open: async () => ({ route: ssh.commandRoute(access, macStreamCommand()), auth: { type: "none" } }) }
+          : { ...display, label: "Desktop", open: (signal) => this.#openDisplay(machine, guest, ssh, access, user, signal) },
     );
     return {
       command: await this.#command(machine, user),

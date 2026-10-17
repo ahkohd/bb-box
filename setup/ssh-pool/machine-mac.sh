@@ -394,6 +394,8 @@ status() {
   if full_disk; then echo fulldisk=1; else echo fulldisk=0; fi
   # System Integrity Protection: off lets the helper grant permissions (058).
   case $(csrutil status 2>/dev/null) in *disabled*) echo sip=0 ;; *enabled*) echo sip=1 ;; *) echo sip= ;; esac
+  # The desktop as video (060), once setup-mac.sh has built it.
+  if [ -x /usr/local/bin/bb-box-stream ]; then echo stream=1; else echo stream=0; fi
   case ${1:-} in
     xcode) xcode ;;
     *) known_xcode ;;

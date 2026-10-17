@@ -33,6 +33,7 @@
 //   sip-off          status says System Integrity Protection is off (058), and grant grants
 //   display-user     the user display gives instead of the box user
 //   no-signing       granted says the box user has no signing identity
+//   stream           status says the Mac has bb-box-stream, its desktop as video (060)
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -91,7 +92,7 @@ function macLines(extra) {
     console = "root";
   }
   const lines = ["os=macos", "macos=26.0", `user=${user}`, `console=${console}`, `autologin=${flag("autologin") ?? user}`];
-  lines.push(`filevault=${flag("filevault-on") !== null ? 1 : 0}`, `screensharing=${flag("no-screensharing") !== null ? 0 : 1}`, `fulldisk=${flag("no-fulldisk") !== null ? 0 : 1}`, `sip=${flag("sip-off") !== null ? 0 : 1}`);
+  lines.push(`filevault=${flag("filevault-on") !== null ? 1 : 0}`, `screensharing=${flag("no-screensharing") !== null ? 0 : 1}`, `fulldisk=${flag("no-fulldisk") !== null ? 0 : 1}`, `sip=${flag("sip-off") !== null ? 0 : 1}`, `stream=${flag("stream") !== null ? 1 : 0}`);
   if (flag("no-status-xcode") === null) lines.push(...(extra === "xcode" ? foundXcode() : knownXcode()));
   if (extra === "grants") {
     const [accessibility, screenRecording, input = "1"] = (flag("grants") ?? "1,1,1").split(",");

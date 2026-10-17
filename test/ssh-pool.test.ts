@@ -842,6 +842,36 @@ describe("An SSH host pool of Macs (047)", () => {
     );
   });
 
+  it("offers the desktop as video while every Mac serving macos-desktop has bb-box-stream, through bb-box-stream connect in the box user's desktop session (060)", async () => {
+    const host = "192.0.2.84";
+    mac(host, { stream: "" });
+    mac("192.0.2.85");
+    cuaSocket(host);
+    const protocols = async (backend: Backend) => {
+      await backend.capacity("macos-desktop", sizeOf("macos-desktop"), []);
+      return backend.kinds()[0]!.capabilities.displays.map((display) => display.protocol);
+    };
+    assert.deepEqual(await protocols(pool("m 192.0.2.84 macos-desktop\nn 192.0.2.85 macos-desktop").backend), ["rfb"], "one Mac without it hides it");
+    const { backend } = pool("m 192.0.2.84 macos-desktop");
+    assert.deepEqual(await protocols(backend), ["rfb", "selkies"]);
+    const { guest } = await acquire(backend, "macos-desktop");
+    const { displays } = await backend.transports(guest, "macos-desktop");
+    assert.deepEqual(
+      displays.map((display) => [display.id, display.label, display.protocol, display.resizable]),
+      [
+        ["desktop", "Desktop", "rfb", false],
+        ["video", "Desktop, as video", "selkies", false],
+      ],
+    );
+    const opened = await displays[1]!.open();
+    assert.deepEqual(opened.auth, { type: "none" });
+    assert.equal(opened.input, undefined, "bb-box-stream takes the viewer's input itself");
+    assert.equal(opened.route.type, "command");
+    const remote = opened.route.type === "command" ? opened.route.argv.at(-1)! : "";
+    assert.match(remote, /exec \/usr\/local\/bin\/bb-box-stream connect/);
+    assert.match(remote, /launchctl asuser/, "in the box user's desktop session");
+  });
+
   it("shows the desktop through Screen Sharing over SSH as the box user, with the sign-in the helper gives at each open, and puts it nowhere else", async () => {
     const host = "192.0.2.83";
     mac(host, { password: "pw-0f3c9a" });
