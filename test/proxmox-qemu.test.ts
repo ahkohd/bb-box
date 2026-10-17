@@ -126,7 +126,7 @@ test("the driver makes VMs, and its kind is a Windows desktop that runs PowerShe
   // The desktop as video (060), which a box's transports include only where its image has bb-box-stream.
   assert.deepEqual(kind!.capabilities.displays, [
     { id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" },
-    { id: "video", protocol: "selkies", resizable: true, cursor: "stream" },
+    { id: "video", protocol: "selkies", resizable: true },
   ]);
   assert.deepEqual(kind!.capabilities.computerUse, { driver: "cua", version: "0.30.4", socket: "\\\\.\\pipe\\cua-driver" });
 });
