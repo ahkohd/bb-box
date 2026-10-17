@@ -87,6 +87,16 @@ Check 'C: has at least 20 GB free' {
   $free = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
   if ($free -lt 20) { throw "$free GB free" }; "$free GB free"
 }
+# How this boot went, to set beside the build's time for a box to answer: Windows' time up, the boot's type (0x1 is
+# Fast Startup's), how long the boot manager waited for a choice, and the firmware's boot order.
+Check 'boot' {
+  $up = (Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+  $boot = Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Boot'; Id = 27, 32 } -MaxEvents 2 -ErrorAction SilentlyContinue
+  $type = ($boot | Where-Object Id -eq 27 | Select-Object -First 1).Properties[0].Value
+  $waited = ($boot | Where-Object Id -eq 32 | Select-Object -First 1).Properties[0].Value
+  $order = ((bcdedit /enum '{fwbootmgr}' 2>$null | Select-String '^displayorder') -replace '^displayorder\s+', '').Trim()
+  'up {0:N1} s; type 0x{1:X}; boot manager waited {2} ms; firmware order {3}' -f $up.TotalSeconds, $type, $waited, $order
+}
 Check 'address from the SMBIOS serial' {
   $line = Get-Content C:\bb-box\boot.log -Tail 1
   if ($line -notmatch ' address \d') { throw $line }; $line -replace '^\S+ ', ''
