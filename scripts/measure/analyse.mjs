@@ -1,9 +1,10 @@
 // Sums up raw-<label>.json from drive.mjs (060): per phase, frames a second
 // and the gaps between them, kbit/s through BB's server; the drag's lag
-// behind the pointer per frame and its torn frames; key-to-screen; and the
-// text's SSIM when still and halfway through the drag; and, given the box's
-// CPU log (epoch seconds, busy and total ticks, cores, as cpu.sh writes
-// it), the box's CPU in cores over each phase.
+// behind the pointer per frame and its torn frames, whose rows disagree on
+// the block's edge; key-to-screen; the SSIM of the fixed, coloured and
+// moving text, still and halfway through the drag; and, given the box's CPU
+// log (epoch seconds, busy and total ticks, cores, as cpu.sh writes it),
+// the box's CPU in cores over each phase.
 // usage: [CPU=<cpu.log>] node analyse.mjs <label>...
 import { readFileSync } from "node:fs";
 const pct = (xs, p) => (xs.length ? Math.round([...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor((p / 100) * xs.length))]) : null);
@@ -30,17 +31,20 @@ for (const label of process.argv.slice(2)) {
     }
     if (name === "drag") {
       const shown = frames.filter((f) => f[1] >= 0);
-      const edge0 = within(R.log, [span[0] - 2000, span[0]]).filter((f) => f[1] >= 0).at(-1)?.[1] ?? null;
+      // Where the block was before the drag: the last frame before it, which may be long before, as a server that sends
+      // nothing while the screen is still does; else where the scene puts it.
+      const edge0 = R.log.filter((f) => f[0] < span[0] && f[1] >= 0).at(-1)?.[1] ?? Math.round(100 * R.scale);
       const moves = within(R.moves, span);
       const reach = Math.max(...moves.map((m) => m[1]));
-      const offset = edge0 === null || !shown.length ? 0 : Math.max(...shown.map((f) => f[1])) - edge0 - reach;
+      const offset = !shown.length ? 0 : Math.max(...shown.map((f) => f[1])) - edge0 - reach;
       const tol = Math.max(2, Math.round(4 * R.scale));
       const lags = [];
       for (const [t, e] of shown) {
         const m = moves.filter((mv) => mv[0] <= t && Math.abs(edge0 + mv[1] + offset - e) <= tol).at(-1);
         if (m && t - m[0] < 3000) lags.push(t - m[0]);
       }
-      const torn = shown.filter((f) => f[2] >= 0 && Math.abs(f[1] - f[2]) > tol).length;
+      // A torn frame: the block's edge differs down its height, as part of the frame is from before a move.
+      const torn = shown.filter((f) => f[2] > tol).length;
       Object.assign(o, { lagP50: pct(lags, 50), lagP95: pct(lags, 95), lagMax: pct(lags, 100), lagSamples: lags.length, torn, tornShare: shown.length ? Math.round((torn / shown.length) * 1000) / 10 : null });
     }
     if (name === "scroll" || name === "keys") {

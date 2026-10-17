@@ -6,8 +6,8 @@ it. It needs two boxes, the desktop and a Linux desktop box as the viewer.
 
 | File | What it is |
 | --- | --- |
-| `scene.html` | The page the desktop shows full screen: a block to drag, a key square, fixed text, a list to scroll |
-| `web/page.html` | The viewer: noVNC or the panel's video client, logging every frame it draws |
+| `scene.html` | The page the desktop shows full screen: a block of coloured text to drag, a key square, fixed text, coloured text, a list to scroll |
+| `web/page.html` | The viewer: noVNC or the panel's video client, logging every frame it draws: the block's edge on 40 rows, and the key square |
 | `entry.ts` | Builds `web/client.js` from the panel's own clients |
 | `proxy.mjs` | Serves `web` and passes `/bb` to BB's server |
 | `drive.mjs` | Drives one run in headless Chrome and writes `raw-<label>.json` |
@@ -33,6 +33,15 @@ it. It needs two boxes, the desktop and a Linux desktop box as the viewer.
    `bb plugin rpc call bb-box takeControl --input-file <file>`, where the
    file holds `{"threadId", "box", "viewer"}`. Then `touch go`.
 6. `CPU=<cpu log> node analyse.mjs <label>...`
+
+What each run gives, per phase: frames a second and the gaps between them,
+kbit/s, the box's CPU; for the drag, its lag behind the pointer and its
+torn frames, those whose 40 rows disagree on the block's edge; key-to-screen;
+and SSIM, in colour, of the fixed text, the coloured text, and the block's
+coloured text where the block is, still and halfway through the drag.
+
+To test a stream server without BB's server, give the viewer its WebSocket
+URL as `WS`, for example through a local proxy to `bb-box-stream connect`.
 
 The scene is 1200 by 800 CSS pixels. Where a screen is smaller in points,
 as on a Tart Mac, set the browser's page zoom so that a CSS pixel is a

@@ -3,12 +3,14 @@
 // One viewer of a desktop showing scene.html (060), through BB's server:
 // video (the panel's SelkiesSession) or VNC (noVNC at the panel's quality
 // 2). The page's viewport is the desktop's size, so a pixel here is one of
-// the desktop's. Every frame drawn is logged: the red block's left edge on
-// a row near its top and one near its bottom, and the key square's colour.
+// the desktop's. Every frame drawn is logged: the red block's left edge as
+// the median of 40 rows down its height, how far the rows' edges spread,
+// which is a torn frame's mark, and the key square's colour.
 import "./client.js";
 const q = new URLSearchParams(location.search);
 const kind = q.get("kind"), s = Number(q.get("scale") ?? 1);
-const rows = [210 * s, 510 * s].map(Math.round);
+// Every 8 pixels down the block, whose left 16 pixels are red on every row.
+const rows = Array.from({ length: 40 }, (_, i) => Math.round((204 + i * 8) * s));
 const key = [Math.round(innerWidth - 50 * s), Math.round(innerHeight - 50 * s)];
 window.log = []; window.moves = []; window.presses = []; window.bytes = [];
 const OW = WebSocket;
@@ -18,19 +20,34 @@ Element.prototype.setPointerCapture = function () {};
 let canvas = null, ctx = null;
 const edge = (y) => {
   const row = ctx.getImageData(0, y, Math.min(canvas.width, Math.round(1400 * s)), 1).data;
-  for (let x = 0; x < row.length / 4; x++) if (row[x * 4] > 150 && row[x * 4 + 1] < 90 && row[x * 4 + 2] < 90) return x;
+  return redFrom(row, 0);
+};
+const redFrom = (data, start) => {
+  const width = Math.round(1400 * s);
+  for (let x = 0; x < width; x++) { const i = start + x * 4; if (data[i] > 150 && data[i + 1] < 90 && data[i + 2] < 90) return x; }
   return -1;
 };
+// Each frame's rows and the key's pixel are copied into a small canvas, then read back at once: one readback a frame, as
+// one for each row of a 4K canvas stalls the page, and with it the drag it drives.
+let strip = null, stripCtx = null;
 const sample = () => {
   if (!canvas) return;
   ctx ??= canvas.getContext("2d", { willReadFrequently: true });
-  window.log.push([performance.now(), edge(rows[0]), edge(rows[1]), ctx.getImageData(key[0], key[1], 1, 1).data[0]]);
+  const width = Math.min(canvas.width, Math.round(1400 * s));
+  if (!strip) { strip = new OffscreenCanvas(Math.round(1400 * s), rows.length + 1); stripCtx = strip.getContext("2d", { willReadFrequently: true }); }
+  rows.forEach((y, i) => stripCtx.drawImage(canvas, 0, y, width, 1, 0, i, width, 1));
+  stripCtx.drawImage(canvas, key[0], key[1], 1, 1, 0, rows.length, 1, 1);
+  const data = stripCtx.getImageData(0, 0, strip.width, strip.height).data;
+  const edges = rows.map((_, i) => redFrom(data, i * strip.width * 4)).filter((x) => x >= 0).sort((a, b) => a - b);
+  const median = edges.length ? edges[edges.length >> 1] : -1;
+  window.log.push([performance.now(), median, edges.length ? edges.at(-1) - edges[0] : 0, data[rows.length * strip.width * 4]]);
 };
 const screen = document.getElementById("screen");
 if (kind === "video") {
   const draw = CanvasRenderingContext2D.prototype.drawImage;
   CanvasRenderingContext2D.prototype.drawImage = function (image, ...rest) { const out = draw.call(this, image, ...rest); if (typeof VideoFrame !== "undefined" && image instanceof VideoFrame) { canvas = this.canvas; queueMicrotask(sample); } return out; };
-  window.session = new SelkiesSession(`ws://${location.host}/bb?box=${q.get("box")}&viewer=${q.get("viewer")}&stream=selkies`);
+  // ws: a stream server reached directly, to test one without BB's server.
+  window.session = new SelkiesSession(q.get("ws") ?? `ws://${location.host}/bb?box=${q.get("box")}&viewer=${q.get("viewer")}&stream=selkies`);
   screen.appendChild(window.session.element);
   window.connected = () => window.session.connection.state === "connected";
   window.control = () => window.session.setControl(true, false);
@@ -83,14 +100,19 @@ window.scroll = async (seconds) => {
     await until(start + (n * 1000) / 20);
   }
 };
-// SSIM of the text panel, grey, 8x8 windows, against ref.png: the box's own lossless screenshot.
-window.ssim = async () => {
-  const [x, y, w, h] = [640, 200, 560, 260].map((v) => Math.round(v * s));
-  const ref = new Image(); ref.src = "ref.png"; await ref.decode();
-  const c = document.createElement("canvas"); c.width = w; c.height = h;
-  const g = c.getContext("2d", { willReadFrequently: true });
-  const grey = (src, sx, sy) => { g.clearRect(0, 0, w, h); g.drawImage(src, sx, sy, w, h, 0, 0, w, h); const d = g.getImageData(0, 0, w, h).data; const out = new Float64Array(w * h); for (let i = 0; i < w * h; i++) out[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]; return out; };
-  const a = grey(canvas, x, y), b = grey(ref, x, y);
+// SSIM against ref.png, the box's own lossless screenshot, in 8x8 windows,
+// the mean of the red, green and blue channels' so that colour lost to
+// 4:2:0 counts: the fixed text, the coloured text, and the coloured text in
+// the block where the block is now, which is at its place in ref.png
+// moved by the block's edge.
+const REGIONS = { text: [640, 200, 560, 260], colour: [100, 560, 480, 220], moving: [116, 216, 448, 288] };
+let refImage = null;
+const channels = (g, src, sx, sy, w, h) => {
+  g.clearRect(0, 0, w, h); g.drawImage(src, sx, sy, w, h, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data;
+  return [0, 1, 2].map((c) => { const out = new Float64Array(w * h); for (let i = 0; i < w * h; i++) out[i] = d[i * 4 + c]; return out; });
+};
+const ssimOf = (a, b, w, h) => {
   const C1 = (0.01 * 255) ** 2, C2 = (0.03 * 255) ** 2; let sum = 0, n = 0;
   for (let by = 0; by + 8 <= h; by += 8) for (let bx = 0; bx + 8 <= w; bx += 8) {
     let ma = 0, mb = 0; for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) { ma += a[(by + j) * w + bx + i]; mb += b[(by + j) * w + bx + i]; }
@@ -99,10 +121,22 @@ window.ssim = async () => {
     va /= 63; vb /= 63; cov /= 63;
     sum += ((2 * ma * mb + C1) * (2 * cov + C2)) / ((ma * ma + mb * mb + C1) * (va + vb + C2)); n++;
   }
-  // With the mean absolute difference in grey levels and the share of
-  // pixels more than 16 levels out, so that an SSIM near 1 can be checked.
-  let mad = 0, off = 0; for (let i = 0; i < w * h; i++) { const d = Math.abs(a[i] - b[i]); mad += d; if (d > 16) off++; }
-  return { ssim: Math.round((sum / n) * 10000) / 10000, mad: Math.round((mad / (w * h)) * 100) / 100, off: Math.round((off / (w * h)) * 10000) / 10000, refMean: Math.round(b.reduce((t, v) => t + v, 0) / (w * h)) };
+  return sum / n;
+};
+window.ssim = async (name = "text") => {
+  if (!refImage) { refImage = new Image(); refImage.src = "ref.png"; await refImage.decode(); }
+  ctx ??= canvas.getContext("2d", { willReadFrequently: true });
+  const [x, y, full, h] = REGIONS[name].map((v) => Math.round(v * s));
+  // The moving region is read where the block's edge is now, in the same frame, and only left of the text panel, which covers the block.
+  const dx = name === "moving" ? Math.max(0, edge(rows[20]) - Math.round(100 * s)) : 0;
+  const w = name === "moving" ? Math.min(full, Math.round(640 * s) - x - dx) : full;
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  const a = channels(g, canvas, x + dx, y, w, h), b = channels(g, refImage, x, y, w, h);
+  const value = (ssimOf(a[0], b[0], w, h) + ssimOf(a[1], b[1], w, h) + ssimOf(a[2], b[2], w, h)) / 3;
+  // With the mean absolute difference in levels and the share of values more than 16 levels out, so that an SSIM near 1 can be checked.
+  let mad = 0, off = 0; for (let c = 0; c < 3; c++) for (let i = 0; i < w * h; i++) { const d = Math.abs(a[c][i] - b[c][i]); mad += d; if (d > 16) off++; }
+  return { ssim: Math.round(value * 10000) / 10000, mad: Math.round((mad / (3 * w * h)) * 100) / 100, off: Math.round((off / (3 * w * h)) * 10000) / 10000, dx, w };
 };
 window.ready = true;
 </script></body></html>

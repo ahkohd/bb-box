@@ -4,11 +4,15 @@
   the box's own browser. Its parts, at CSS pixels from the top left, which
   the viewer scales by the desktop's pixel ratio:
   - a red block, 480x320 at 100,200, that follows the pointer while a button
-    is down: the drag;
+    is down: the drag. Its left 16 pixels are solid red on every row, for
+    the viewer to find its edge on many rows and so see a torn frame; inside
+    is coloured text on a dark panel, sharpness in motion;
   - a square, 60x60 at the bottom right, 20 from each edge, away from
     menu bars and notifications, that turns white and black in turn at each
     key: key-to-screen;
   - a panel of fixed text, 560x260 at 640,200: sharpness;
+  - a panel of coloured text on a dark ground, 480x220 at 100,560: sharpness
+    in colour, which 4:2:0 video loses;
   - a list of 5,000 rows, 560x300 at 640,500, that the wheel scrolls, and
     that goes back to its top at its end, so that it never stops.
   A click on the background puts the block and the list back where they
@@ -19,9 +23,18 @@ html,body{margin:0;height:100%;background:#1e2430;overflow:hidden;cursor:default
 #block{position:absolute;left:100px;top:200px;width:480px;height:320px;background:#d01818}
 #key{position:absolute;right:20px;bottom:20px;width:60px;height:60px;background:#000}
 #text{position:absolute;left:640px;top:200px;width:544px;height:244px;padding:8px;background:#fff;color:#111;font:14px/18px "DejaVu Sans Mono",Menlo,Consolas,monospace;overflow:hidden;white-space:pre}
+#block .panel,#colour{position:absolute;background:#1e1e1e;font:14px/18px "DejaVu Sans Mono",Menlo,Consolas,monospace;white-space:pre;overflow:hidden;color:#d4d4d4}
+#block .panel{left:16px;top:16px;right:16px;bottom:16px;padding:8px}
+#colour{left:100px;top:560px;width:464px;height:204px;padding:8px}
+.k{color:#569cd6}.v{color:#9cdcfe}.f{color:#dcdcaa}.s{color:#ce9178}.p{color:#4fc1ff}.n{color:#b5cea8}.c{color:#6a9955}
 #list{position:absolute;left:640px;top:500px;width:560px;height:300px;overflow-y:scroll;background:#f4f4f4;color:#222;font:14px/20px sans-serif}
 </style></head><body>
-<div id="block"></div><div id="key"></div>
+<div id="block"><div class="panel"><span class="k">const</span> <span class="v">frames</span> = <span class="f">capture</span>(<span class="s">"primary"</span>);
+<span class="k">for</span> (<span class="k">const</span> <span class="v">f</span> <span class="k">of</span> <span class="v">frames</span>) {
+  <span class="k">if</span> (<span class="v">f</span>.<span class="p">torn</span>) <span class="f">report</span>(<span class="s">'torn'</span>, <span class="n">42</span>);
+}
+<span class="c">// The quick brown fox, in colour.</span>
+<span class="k">return</span> { <span class="p">fps</span>: <span class="n">60</span>, <span class="p">ok</span>: <span class="k">true</span> };</div></div><div id="key"></div>
 <div id="text">function measure(desktop) {
   // Frame time, drag lag, key-to-screen,
   // torn frames and text sharpness at 2x.
@@ -37,6 +50,13 @@ THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG.
 iIl1| oO0 rn m vv w ,.;: -_= ~`
 </div>
 <div id="list"></div>
+<div id="colour"><span class="k">const</span> <span class="v">frames</span> = <span class="f">capture</span>(<span class="s">"primary"</span>);
+<span class="k">for</span> (<span class="k">const</span> <span class="v">f</span> <span class="k">of</span> <span class="v">frames</span>) {
+  <span class="k">if</span> (<span class="v">f</span>.<span class="p">torn</span>) <span class="f">report</span>(<span class="s">'torn'</span>, <span class="n">42</span>);
+}
+<span class="c">// The quick brown fox, in colour.</span>
+<span class="k">return</span> { <span class="p">fps</span>: <span class="n">60</span>, <span class="p">ok</span>: <span class="k">true</span> };
+<span class="s">red</span> <span class="n">green</span> <span class="k">blue</span> <span class="f">yellow</span> <span class="c">olive</span> <span class="v">cyan</span></div>
 <script>
 const list = document.getElementById("list");
 list.innerHTML = Array.from({ length: 5000 }, (_, i) => `<div style="padding:0 8px;${i % 2 ? "background:#e6e9ef" : ""}">Row ${i + 1}: the list scrolls under the wheel</div>`).join("");
@@ -46,7 +66,7 @@ list.addEventListener("scroll", () => {
 const block = document.getElementById("block");
 let grab = null;
 addEventListener("pointerdown", (event) => {
-  if (event.target === block) grab = event.clientX - block.offsetLeft;
+  if (block.contains(event.target)) grab = event.clientX - block.offsetLeft;
   if (event.target === document.body) {
     block.style.left = "100px";
     list.scrollTop = 0;
