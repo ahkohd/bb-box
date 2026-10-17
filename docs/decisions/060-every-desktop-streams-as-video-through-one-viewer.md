@@ -1,6 +1,7 @@
 # 060: Every desktop streams as video through one viewer
 
-Status: proposed, 16 October 2026. Not built.
+Status: accepted, 17 October 2026. The baselines are in
+[060 results](060-results.md); the streams are not built yet.
 
 ## Context
 
@@ -115,7 +116,9 @@ SSIM at least VNC's when still.
 
 ## Order
 
-1. The harness on every platform, with today's numbers as the baseline.
+1. The harness on every platform, with today's numbers as the baseline
+   ([scripts/measure](../../scripts/measure/README.md),
+   [060 results](060-results.md)).
 2. Linux X11 sharpness, which is under way.
 3. macOS on pool Macs, where the owner works most, and the tearing is.
 4. Windows: QEMU's Open H.264 if Proxmox has it, else the guest service.
