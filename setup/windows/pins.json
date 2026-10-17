@@ -88,6 +88,13 @@
       "sha256": "A0E45723C72141975F51D8666302E614711745F3102B704CA3F82C897A58D278"
     },
     {
+      "name": "openh264",
+      "arch": "x86_64",
+      "version": "2.6.0",
+      "url": "https://ciscobinary.openh264.org/openh264-2.6.0-win64.dll.bz2",
+      "sha256": "DAB5F2A872777F9A58B69BFA9FBCF20D9F82F2D6EC91383FD70BFF49BD34AC9F"
+    },
+    {
       "name": "pwsh",
       "arch": "arm64",
       "version": "7.6.6",

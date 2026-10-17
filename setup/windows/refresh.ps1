@@ -142,6 +142,7 @@ $versions = @{
   'codex' = { & "$tools\codex\codex.exe" --version }
   'pi' = { & "$tools\pi\pi.exe" --version }
   'ffmpeg' = { & "$tools\ffmpeg\ffmpeg.exe" -version }
+  'openh264' = { Get-Content "$tools\bb-box-stream\openh264.version" }
 }
 
 # Puts an agent CLI's program in its directory, in place of what was there, on the machine's PATH.
@@ -210,6 +211,8 @@ $installers = @{
     Copy-Item "$bin\ffprobe.exe" (Join-Path $tools ffmpeg)
     Remove-Item "$dir\ffmpeg" -Recurse -Force
   }
+  # bb-box-stream.exe's encoder (060), with the program built again beside it.
+  'openh264' = { param($pin, $file) & "$dir\install-stream.ps1" -Source "$dir\bb-box-stream.cs" -Archive $file -Version $pin.version }
 }
 
 try {
@@ -224,6 +227,15 @@ try {
     Get-Pinned $pin $file
     & $installers[$pin.name] $pin $file
     Remove-Item $file -Force -ErrorAction SilentlyContinue
+  }
+  # bb-box-stream.exe (060), built again when its source has changed, where the image has its encoder: not on arm64.
+  $stream = "$tools\bb-box-stream"
+  if (Test-Path "$stream\openh264.dll") {
+    $built = Get-Content "$stream\bb-box-stream.source" -ErrorAction SilentlyContinue
+    if ($built -ne (Get-FileHash "$dir\bb-box-stream.cs" -Algorithm SHA256).Hash -or -not (Test-Path "$stream\bb-box-stream.exe")) {
+      Step 'bb-box-stream.exe: built from its new source'
+      & "$dir\install-stream.ps1" -Source "$dir\bb-box-stream.cs"
+    } else { Step 'bb-box-stream.exe: as its source' }
   }
   # Rust's stable toolchain, the latest, as on Linux boxes.
   $rustup = Join-Path $env:USERPROFILE '.cargo\bin\rustup.exe'

@@ -156,3 +156,39 @@ which setup-mac.sh builds with swiftc into /usr/local/bin:
 - **When it is offered:** a macos-desktop box offers the video display while
   every Mac serving the kind reports the server installed, as with Xcode.
   The panel then shows video by default, and VNC stays in the menu.
+
+## Amended, 17 October 2026: Windows on Proxmox
+
+Proxmox's QEMU (11.0.3, pve-qemu-kvm 11.0.3-4) has no Open H.264: noVNC
+offers it, and QEMU answers in Tight. So Windows boxes on Proxmox get a
+server of their own,
+[`bb-box-stream.exe`](../../setup/windows/bb-box-stream.cs), the Mac's
+counterpart, speaking the same subset:
+
+- **Built in the image:** the C# compiler of .NET Framework 4.8, which every
+  Windows 11 has, compiles it at the first logon and in each refresh where
+  its source changed
+  ([`install-stream.ps1`](../../setup/windows/install-stream.ps1)).
+  Cisco's OpenH264 is pinned by version, URL and SHA-256 and downloaded from
+  Cisco at build, as its licence asks; bb-box does not ship it.
+- **Where it runs:** as box in box's desktop session, started on demand by a
+  scheduled task. It listens on the named pipe `bb-box-stream`, which only
+  box can open, and has no TCP port. bb-box reaches it with
+  `bb-box-stream.exe connect` over box's SSH. It exits a minute after its
+  last viewer.
+- **Capture:** Desktop Duplication on the Basic Display adapter, whose image
+  is in system memory: a staging texture's copy of it reads as black. About
+  22 frames a second with a page moving every frame, against VNC's 20 when
+  dragging and 13 when scrolling. GDI is the fallback. The pointer, which
+  Desktop Duplication leaves out, is drawn in.
+- **Input and clipboard:** SendInput, which like any unelevated program
+  cannot reach an elevated window; the clipboard both ways.
+- **When it is offered:** every windows-desktop box lists the video display,
+  and a box's transports include it only when its template's image record
+  lists OpenH264. On an older image the viewer's video ends at once and it
+  falls back to VNC.
+
+**Windows on a Mac (Tart, arm64) stays on VNC** for now: its image does not
+install bb-box-stream. Cisco does publish an arm64 Windows build of OpenH264
+2.6.0, so the server can follow there once it is built and measured on arm64.
+

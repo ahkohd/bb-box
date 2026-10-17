@@ -320,6 +320,8 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
   assert.deepEqual(made.events, [
     "box 7000 from 9200: refresh of 9200",
     "write 7000 C:\\bb-box\\build\\refresh.ps1",
+    "write 7000 C:\\bb-box\\build\\bb-box-stream.cs",
+    "write 7000 C:\\bb-box\\build\\install-stream.ps1",
     "write 7000 C:\\bb-box\\build\\pins.json",
     "write 7000 C:\\bb-box\\build\\image.json",
     "stream 7000",
@@ -406,8 +408,12 @@ test("the Windows refresh gives an image built before the OneDrive policy what t
 
 test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {
   const pins = (JSON.parse(readFileSync(join(SETUP, "windows", "pins.json"), "utf8")) as { tools: { name: string; arch: string; version: string; url: string; sha256: string }[] }).tools;
-  const names: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node", CLAUDE: "claude-code", CODEX: "codex", PI: "pi", FFMPEG: "ffmpeg" };
-  for (const [script, arch] of [["proxmox-qemu/build.sh", "x86_64"], ["tart/prepare-windows-image.sh", "arm64"]] as const) {
+  const common: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node", CLAUDE: "claude-code", CODEX: "codex", PI: "pi", FFMPEG: "ffmpeg" };
+  // bb-box-stream's encoder (060) only where the image has it: not on arm64, whose desktop shows over VNC.
+  for (const [script, arch, names] of [
+    ["proxmox-qemu/build.sh", "x86_64", { ...common, OPENH264: "openh264" }],
+    ["tart/prepare-windows-image.sh", "arm64", common],
+  ] as const) {
     const lines = Object.fromEntries([...readFileSync(join(SETUP, script), "utf8").matchAll(/^([A-Z0-9]+)_(VERSION|SHA256|URL)=(\S+)$/gm)].map((match) => [`${match[1]}_${match[2]}`, match[3]!]));
     const ours = pins.filter((pin) => pin.arch === arch);
     assert.deepEqual(ours.map((pin) => pin.name).sort(), Object.values(names).sort(), `${arch}: one pin per tool`);

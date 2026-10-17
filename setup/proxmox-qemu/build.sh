@@ -85,6 +85,11 @@ PI_SHA256=AAB2BA67BAF8FF97A52D05B62D88E9E65A840C6EA8FA1029A28D62D210D4E5FC
 FFMPEG_VERSION=9.0.2
 FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip
 FFMPEG_SHA256=A0E45723C72141975F51D8666302E614711745F3102B704CA3F82C897A58D278
+# bb-box-stream.exe's H.264 encoder (060): Cisco's own binary, which its licence
+# covers only when fetched from Cisco, so the build downloads it.
+OPENH264_VERSION=2.6.0
+OPENH264_URL=https://ciscobinary.openh264.org/openh264-2.6.0-win64.dll.bz2
+OPENH264_SHA256=DAB5F2A872777F9A58B69BFA9FBCF20D9F82F2D6EC91383FD70BFF49BD34AC9F
 
 for tool in genisoimage jq python3 ssh scp; do command -v "$tool" >/dev/null || die "$tool is required"; done
 [ -f "$BBBOX_SSH_KEY.pub" ] || die "no plugin key at $BBBOX_SSH_KEY.pub: run ../proxmox-lxc/host/setup-host.sh"
@@ -109,10 +114,10 @@ thin=
 record=$(jq -cn --arg build "$build" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg os "$BBBOX_WINDOWS_EDITION" \
   --arg pins "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/build.sh" | sha256sum | cut -d' ' -f1)" \
   --arg pwsh "$PWSH_VERSION" --arg git "$GIT_VERSION" --arg gh "$GH_VERSION" --arg cua "$CUA_VERSION" \
-  --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" --arg node "$NODE_VERSION" --arg claude "$CLAUDE_VERSION" --arg codex "$CODEX_VERSION" --arg pi "$PI_VERSION" --arg ffmpeg "$FFMPEG_VERSION" \
+  --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" --arg node "$NODE_VERSION" --arg claude "$CLAUDE_VERSION" --arg codex "$CODEX_VERSION" --arg pi "$PI_VERSION" --arg ffmpeg "$FFMPEG_VERSION" --arg openh264 "$OPENH264_VERSION" \
   '{contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: $build, built: $built, base: null, os: $os,
     aptSnapshot: null, pins: $pins, bbApp: null,
-    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node, "claude-code": $claude, codex: $codex, pi: $pi, ffmpeg: $ffmpeg},
+    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node, "claude-code": $claude, codex: $codex, pi: $pi, ffmpeg: $ffmpeg, openh264: $openh264},
     nvidia: null, layer: null, sizeGiB: null}')
 linked_clones() { # vmid
   { grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null ||
@@ -170,6 +175,8 @@ trap 'exit 1' INT TERM
 
 password=$(python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(24)))')
 cp -r "$here/answer" "$work/answer"
+# bb-box-stream.exe's source (060), which the first logon compiles with the C# compiler Windows has.
+cp "$here/../windows/bb-box-stream.cs" "$here/../windows/install-stream.ps1" "$work/answer/bb-box/"
 python3 - "$work/answer/autounattend.xml" "$password" "$BBBOX_WINDOWS_EDITION" "$BBBOX_WINDOWS_KEY" <<'EOF'
 import sys
 from xml.sax.saxutils import escape
@@ -212,6 +219,8 @@ json.dump({
            "url": "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-windows-x64.zip"},
     "ffmpeg": {"version": "$FFMPEG_VERSION", "sha256": "$FFMPEG_SHA256",
                "url": "$FFMPEG_URL"},
+    "openh264": {"version": "$OPENH264_VERSION", "sha256": "$OPENH264_SHA256",
+                 "url": "$OPENH264_URL"},
 }, open(sys.argv[1], "w"), indent=2)
 EOF
 genisoimage -quiet -J -r -V BBBOXANSWER -o "$answer_iso" "$work/answer"
@@ -335,7 +344,7 @@ qm destroy "$check_vm" --purge 1 >/dev/null
 check_vm=
 [ "$checked" = 0 ] || die "the check failed (above)"
 
-description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION, Node.js $NODE_VERSION, Claude Code $CLAUDE_VERSION, Codex $CODEX_VERSION, Pi $PI_VERSION, ffmpeg $FFMPEG_VERSION.
+description="bb-box windows template, built $(date -u +%F) from $(basename "$windows_iso"): $BBBOX_WINDOWS_EDITION, PowerShell $PWSH_VERSION, Git $GIT_VERSION, GitHub CLI $GH_VERSION, Cua Driver $CUA_VERSION, VS Build Tools $VS_VERSION, LLVM $LLVM_VERSION, rustup $RUSTUP_VERSION, Node.js $NODE_VERSION, Claude Code $CLAUDE_VERSION, Codex $CODEX_VERSION, Pi $PI_VERSION, ffmpeg $FFMPEG_VERSION, OpenH264 $OPENH264_VERSION.
 $record"
 # The pool's ACL lets the plugin's token delete guests in it; protection keeps
 # it from deleting templates. Clones inherit the flag, so the plugin clears it

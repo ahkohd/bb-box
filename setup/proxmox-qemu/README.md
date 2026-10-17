@@ -22,6 +22,8 @@ token and SSH key. How bb-box drives a box is in the
 | `answer/bb-box/logon.ps1` | Turns on browsers' full accessibility tree at each logon |
 | [`../windows/check.ps1`](../windows/check.ps1) | Checks a clone of the new template over SSH, and a refresh's trial box |
 | [`../windows/refresh.ps1`](../windows/refresh.ps1) | Refreshes the image in a box: Windows' updates and the pinned tools ([054](../../docs/decisions/054-windows-images-are-refreshed-in-a-box-of-the-current-build.md)) |
+| [`../windows/bb-box-stream.cs`](../windows/bb-box-stream.cs) | The desktop as H.264 video, compiled in the image ([060](../../docs/decisions/060-every-desktop-streams-as-video-through-one-viewer.md)) |
+| [`../windows/install-stream.ps1`](../windows/install-stream.ps1) | Installs it, with Cisco's OpenH264, from the first logon and the refresh |
 
 ## What you need
 

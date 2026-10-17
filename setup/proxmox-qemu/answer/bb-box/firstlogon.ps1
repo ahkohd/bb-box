@@ -145,6 +145,15 @@ Remove-Item C:\bb-box\ffmpeg, $zip -Recurse -Force
 $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if ($path -notlike "*$to*") { [Environment]::SetEnvironmentVariable('Path', "$path;$to", 'Machine') }
 
+Step "bb-box-stream.exe, with OpenH264 $($build.openh264.version)"
+# The desktop as video (060): Cisco's OpenH264, downloaded from Cisco as its
+# licence asks, and the program, compiled here, with its task in box's
+# desktop session. Git's bzip2 unpacks the library, so Git comes first.
+$archive = 'C:\bb-box\openh264.dll.bz2'
+Get-Pinned $build.openh264.url $build.openh264.sha256 $archive
+& C:\bb-box\install-stream.ps1 -Source C:\bb-box\bb-box-stream.cs -Archive $archive -Version $build.openh264.version
+Remove-Item $archive
+
 Step "Visual Studio Build Tools $($build.vs.version): $($build.vs.components -join ', ')"
 # The C++ build tools and the Windows SDK, which Rust's MSVC toolchain links
 # with. A fixed-version bootstrapper installs that version's components.

@@ -118,6 +118,15 @@ const WARM_NAME = "bb-box-warm";
 /** How often a fill checks whether Windows' desktop is up. */
 const DESKTOP_POLL_MS = 1_000;
 
+/**
+ * The desktop as video (060): bb-box-stream.exe in box's desktop session, which a box's template has where its image
+ * record lists OpenH264. Its connect joins the SSH channel to the server, starting it through its task.
+ */
+const WINDOWS_VIDEO = { id: "video", protocol: "selkies", resizable: true } as const;
+const WINDOWS_STREAM = "& 'C:\\Program Files\\bb-box-tools\\bb-box-stream\\bb-box-stream.exe' connect";
+/** How long a template's answer to whether it has bb-box-stream is kept. */
+const STREAM_CHECK_MS = 60_000;
+
 const KIND: BoxKind = {
   id: "windows-desktop",
   label: "Windows desktop",
@@ -131,8 +140,9 @@ const KIND: BoxKind = {
     features: [],
     command: { transport: "ssh", shell: "powershell", admin: true, inDesktopSession: false, streaming: true },
     // QEMU's VNC server moves the clipboard only through the SPICE guest agent, which the template lacks, so bb-box
-    // moves it with Get-Clipboard and Set-Clipboard in the desktop session (#461).
-    displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }],
+    // moves it with Get-Clipboard and Set-Clipboard in the desktop session (#461). A box whose image lacks
+    // bb-box-stream has no video display among its transports, and the viewer falls back to VNC.
+    displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }, WINDOWS_VIDEO],
     computerUse: CUA_DRIVER,
     enrol: false,
   },
@@ -360,6 +370,8 @@ export class ProxmoxQemuBackend implements Backend {
   });
   readonly #stopping = new AbortController();
   readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
+  /** Whether each Windows template's image has bb-box-stream (060), and when that was read. */
+  readonly #streaming = new Map<number, { has: boolean; at: number }>();
   /** Image boxes (054) from before their clone until their capture or removal, which no sweep counts. */
   readonly #imageBoxes = new Set<number>();
 
@@ -774,7 +786,25 @@ export class ProxmoxQemuBackend implements Backend {
       // QEMU passes a viewer's size on to the display driver, which offers it as a mode if it is at least 640x480.
       minSize: MIN_DESKTOP,
     };
-    return { command, displays: [desktop], access: { ssh: this.#access(vmid), dockerHost: null } };
+    const template = guest.data?.template;
+    if (typeof template !== "number" || !(await this.#streams(template))) return { command, displays: [desktop], access: { ssh: this.#access(vmid), dockerHost: null } };
+    const { ssh } = await this.#keys();
+    const video: Display = {
+      ...WINDOWS_VIDEO,
+      label: "Desktop, as video",
+      open: async () => ({ route: ssh.commandRoute(this.#access(vmid), WINDOWS_STREAM), auth: { type: "none" } }),
+    };
+    return { command, displays: [desktop, video], access: { ssh: this.#access(vmid), dockerHost: null } };
+  }
+
+  /** Whether a Windows template's image has bb-box-stream: its record lists OpenH264. Kept a minute. */
+  async #streams(template: number): Promise<boolean> {
+    const known = this.#streaming.get(template);
+    if (known && Date.now() - known.at < STREAM_CHECK_MS) return known.has;
+    const config = await (await this.client()).config(template).catch(() => null);
+    const has = config ? recordInDescription(String(config.description ?? ""))?.tools?.openh264 !== undefined : (known?.has ?? false);
+    this.#streaming.set(template, { has, at: Date.now() });
+    return has;
   }
 
   /**
