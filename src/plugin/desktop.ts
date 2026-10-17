@@ -117,12 +117,6 @@ export interface Desktops {
   sharp(boxId: string): Promise<boolean | null>;
   /** Makes the box's desktop High resolution, twice the pixels at twice Xfce's scale, or not. */
   setSharp(boxId: string, on: boolean): Promise<void>;
-  /**
-   * Whether the box's video can leave its pointer out while a person holds
-   * control, as its video display says: a Windows box's only where its image
-   * has the hardware cursor. False when it is not running.
-   */
-  pointer(boxId: string): Promise<boolean>;
   dispose(): Promise<void>;
 }
 
@@ -259,8 +253,6 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       colours: Map<SelkiesRelay, boolean>;
       /** What the box was last asked to stream: 4:4:4 or not; null before any, as the display may keep the last viewers' choice. */
       fullColour: boolean | null;
-      /** Each viewer's choice to see the box's own pointer in the video while it holds control, by viewer ID. */
-      pointers: Map<string, boolean>;
       /** Whether the box was last asked to draw its cursor into the video; null before any. */
       cursor: boolean | null;
     }
@@ -272,7 +264,6 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       relays: new Set(),
       colours: new Map(),
       fullColour: null,
-      pointers: new Map(),
       cursor: null,
     };
     entry.viewers += 1;
@@ -294,9 +285,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   /**
    * The box's cursor in its video (the owner's notes of 17 October 2026): out
    * while a person holds control, whose browser shows the cursor's shape, so
-   * the two do not drift apart, unless they chose to see the box's own
-   * pointer; in while the agent holds control, so a watcher sees where it
-   * points. One capture serves every viewer, so a person watching another
+   * the two do not drift apart; in while the agent holds control, so a
+   * watcher sees where it points. One capture serves every viewer, so a person watching another
    * person's control sees no cursor in the video either. Only a display that
    * says how (its capability's cursor) is asked.
    */
@@ -308,7 +298,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const how = (await selkiesDisplay(boxes, boxId).catch(() => null))?.cursor;
       if (!how) return;
       const view = control.view(boxId);
-      const want = view.owner !== "human" || (view.holder !== null && entry.pointers.get(view.holder) === true);
+      const want = view.owner !== "human";
       if (want === entry.cursor) return;
       entry.cursor = want;
       await entry.box.cursorInVideo(want, how);
@@ -486,10 +476,6 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 entry.colours.set(relay, yes);
                 colourFor(boxId);
               },
-              onShowPointer: (yes) => {
-                selkiesBoxes.get(boxId)?.pointers.set(viewer, yes);
-                cursorFor(boxId);
-              },
               onEnd,
             });
             selkiesBoxes.get(boxId)?.relays.add(relay);
@@ -587,9 +573,6 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   return {
     control,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
-    async pointer(boxId) {
-      return !!(await selkiesDisplay(boxes, boxId).catch(() => null))?.cursor;
-    },
     async sharp(boxId) {
       const box = await boxes.find(boxId);
       if (!box || !sharpOffered(box)) return null;

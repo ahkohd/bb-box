@@ -2535,7 +2535,7 @@ test("the desktop route relays a box's desktop, and only the viewer with control
   assert.match(sentTo(noId).subarray(12).toString(), /The viewer gave no viewer ID/);
 
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
-  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false, sharp: null, pointer: false });
+  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false, sharp: null });
 });
 
 test("the desktop route carries a box's Selkies stream message by message, and only the viewer with control reaches the box, sizes it and gets its clipboard (056)", async (t) => {
@@ -3054,7 +3054,7 @@ test("a box streams in 4:4:4 while every viewer's browser decodes it, and in 4:2
 });
 
 for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_CURSOR_RENDERING"]] as const) {
-  test(`a video desktop (cursor ${how}) leaves the box's cursor out while a person holds control, unless they chose to see it, and draws it while the agent has control`, async (t) => {
+  test(`a video desktop (cursor ${how}) leaves the box's cursor out while a person holds control, and draws it while the agent has control`, async (t) => {
     const kind: BoxKind = {
       ...FAKE_SELKIES_KIND,
       capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" ? { ...display, cursor: how } : display)) },
@@ -3063,27 +3063,25 @@ for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_C
     t.after(() => harness.lifecycle.dispose());
     const selkies = world.backend!.selkies;
     const cursors = () => selkies.pages.filter((page) => page.role === "controller").flatMap((page) => page.received.filter((sent) => typeof sent === "string" && sent.startsWith(message)));
-    assert.equal(((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { pointer?: boolean }).pointer, true, "the menu offers Show the box's pointer");
     const viewer = "viewer-one-0001";
     const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
     await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));
     await until("the cursor in the video, as the agent has control", async () => cursors().length === 1);
-    await one.receive("BB_SHOWPOINTER,0");
     await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
     await until("the cursor out, with a person in control", async () => cursors().length === 2);
+    // A page from before the choice went, asking for the box's pointer: it goes nowhere, and changes nothing.
     await one.receive("BB_SHOWPOINTER,1");
-    await until("the cursor in, as they chose", async () => cursors().length === 3);
-    await one.receive("BB_SHOWPOINTER,0");
-    await until("the cursor out again", async () => cursors().length === 4);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(cursors().length, 2);
     await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
-    await until("the cursor in, as the agent has control again", async () => cursors().length === 5);
-    assert.deepEqual(cursors(), [`${message},1`, `${message},0`, `${message},1`, `${message},0`, `${message},1`]);
-    assert.ok(!selkies.pages.some((page) => page.received.some((sent) => typeof sent === "string" && sent.startsWith("BB_SHOWPOINTER"))), "the stream never sees the viewer's message");
+    await until("the cursor in, as the agent has control again", async () => cursors().length === 3);
+    assert.deepEqual(cursors(), [`${message},1`, `${message},0`, `${message},1`]);
+    assert.ok(!selkies.pages.some((page) => page.received.some((sent) => typeof sent === "string" && sent.startsWith("BB_SHOWPOINTER"))), "the stream never sees the old page's message");
     await one.close();
   });
 }
 
-test("a video desktop whose box's image cannot leave the cursor out is never told, and offers no pointer choice, whatever its kind says (060)", async (t) => {
+test("a video desktop whose box's image cannot leave the cursor out is never told, whatever its kind says (060)", async (t) => {
   const kind: BoxKind = {
     ...FAKE_SELKIES_KIND,
     capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" ? { ...display, cursor: "stream" as const } : display)) },
@@ -3092,7 +3090,6 @@ test("a video desktop whose box's image cannot leave the cursor out is never tol
   t.after(() => harness.lifecycle.dispose());
   world.backend!.cursorless = true;
   const selkies = world.backend!.selkies;
-  assert.equal(((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { pointer?: boolean }).pointer, false);
   const viewer = "viewer-one-0001";
   const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
   await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));
@@ -3103,11 +3100,10 @@ test("a video desktop whose box's image cannot leave the cursor out is never tol
   await one.close();
 });
 
-test("a video desktop that says nothing of its cursor is never told, and offers no pointer choice", async (t) => {
+test("a video desktop that says nothing of its cursor is never told", async (t) => {
   const { harness, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
   t.after(() => harness.lifecycle.dispose());
   const selkies = world.backend!.selkies;
-  assert.equal(((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { pointer?: boolean }).pointer, false);
   const viewer = "viewer-one-0001";
   const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
   await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));

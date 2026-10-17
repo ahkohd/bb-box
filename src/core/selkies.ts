@@ -274,8 +274,6 @@ export interface SelkiesRelayOptions {
   onResize?(size: { readonly width: number; readonly height: number }): void;
   /** Whether the viewer's browser decodes 4:4:4, as it says once connected (bb-box's `BB_FULLCOLOR,<0|1>`, which goes no further). */
   onFullColour?(yes: boolean): void;
-  /** Whether this viewer wants the box's own pointer in the video while it holds control (bb-box's `BB_SHOWPOINTER,<0|1>`, which goes no further). */
-  onShowPointer?(yes: boolean): void;
   onEnd?(by: "viewer" | "box", error: Error | null): void;
   readonly connectTimeoutMs?: number;
   /** How far behind the viewer may fall; LAG_MS by default. */
@@ -431,11 +429,6 @@ export class SelkiesRelay {
     const colour = /^BB_FULLCOLOR,([01])$/.exec(message);
     if (colour) {
       this.#options.onFullColour?.(colour[1] === "1");
-      return;
-    }
-    const pointer = /^BB_SHOWPOINTER,([01])$/.exec(message);
-    if (pointer) {
-      this.#options.onShowPointer?.(pointer[1] === "1");
       return;
     }
     const resize = /^r,(\d{1,5})x(\d{1,5})$/.exec(message);

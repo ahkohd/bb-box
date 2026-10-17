@@ -418,7 +418,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; pointer?: boolean } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -442,7 +442,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null }),
-    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, sharp: options.sharp ?? null, pointer: options.pointer ?? false }),
+    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, sharp: options.sharp ?? null }),
     profile: async () => ({ lines: [] }),
     "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
     "images.list": () => ({ images: options.rebuildable ?? [] }),
@@ -2239,7 +2239,7 @@ test("with the setting on, a desktop shows as video whatever the round trip to B
     const url = new URL(socket.url);
     expect([url.pathname, url.searchParams.get("box")]).toEqual([DESKTOP_PATH, "box_2"]);
     act(() => socket.open());
-    expect(socket.sent).toEqual(['SETTINGS,{"displayId":"primary"}', "START_VIDEO", "BB_SHOWPOINTER,0"]);
+    expect(socket.sent).toEqual(['SETTINGS,{"displayId":"primary"}', "START_VIDEO"]);
     act(() => void socket.onmessage?.({ data: "MODE websockets" }));
     // A delta before the first key frame is dropped; the key frame shows, and the desktop is connected.
     act(() => void socket.onmessage?.({ data: videoFrame(4, false) }));
@@ -2283,11 +2283,11 @@ test("with the setting on, a desktop shows as video whatever the round trip to B
   }
 });
 
-test("Show the box's pointer, where the video can leave it out, puts the box's own pointer in the video while you hold control, and keeps the browser's arrow plain", async () => {
+test("a video desktop's Display holds Show as VNC, and no choice of the box's pointer: the video leaves it out while you hold control, with its shape on your own", async () => {
   const undo = withVideo();
   try {
     window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
-    const { handlers } = server([desktopBox()], { video: true, pointer: true });
+    const { handlers } = server([desktopBox()], { video: true });
     const slot = desktopTab(handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
     const socket = videoSocket();
@@ -2296,219 +2296,12 @@ test("Show the box's pointer, where the video can leave it out, puts the box's o
     act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
     fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
     await slot.findByText(/You have control/);
-    expect(socket.sent).toContain("BB_SHOWPOINTER,0");
-    const item = within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show the box's pointer" });
-    expect(item.getAttribute("aria-checked")).toBe("false");
-    fireEvent.click(item);
-    await waitFor(() => expect(socket.sent.at(-1)).toBe("BB_SHOWPOINTER,1"));
-    expect(window.sessionStorage.getItem("bb-box:pointer:box_2")).toBe("1");
-    expect(within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show the box's pointer" }).getAttribute("aria-checked")).toBe("true");
-  } finally {
-    undo();
-    window.sessionStorage.clear();
-  }
-});
-
-test("a video desktop that cannot leave its pointer out offers no Show the box's pointer", async () => {
-  const undo = withVideo();
-  try {
-    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
-    const { handlers } = server([desktopBox()], { video: true });
-    const slot = desktopTab(handlers);
-    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
-    const socket = videoSocket();
-    act(() => socket.open());
-    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
     const display = within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" })));
-    expect(display.getByRole("menuitemcheckbox", { name: "Show as VNC" })).toBeTruthy();
-    expect(display.queryByRole("menuitemcheckbox", { name: "Show the box's pointer" })).toBeNull();
+    expect(display.getAllByRole("menuitemcheckbox").map((item) => item.textContent?.trim())).toEqual(["Show as VNC"]);
+    expect(socket.sent.some((sent) => String(sent).startsWith("BB_SHOWPOINTER"))).toBe(false);
   } finally {
     undo();
     window.sessionStorage.clear();
-  }
-});
-
-test("a desktop whose video does not start shows over VNC, and says why (056)", async () => {
-  const undo = withVideo();
-  try {
-    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
-    const { handlers } = server([desktopBox()], { video: true });
-    const slot = desktopTab(handlers);
-    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
-    const socket = videoSocket();
-    act(() => socket.open());
-    act(() => socket.end(1011, "This box's desktop has no Selkies stream"));
-    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
-    // The outcome first, the reason in its tooltip.
-    const note = slot.getByText("Video did not start, so this shows VNC.");
-    expect(note.getAttribute("title")).toBe("This box's desktop has no Selkies stream.");
-  } finally {
-    undo();
-  }
-});
-
-test("a video session that connects but brings no frame gives up for RFB after FIRST_FRAME_MS, and one that brought a frame does not (060)", async () => {
-  const undo = withVideo();
-  vi.useFakeTimers();
-  try {
-    const silent = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
-    const reasons: string[] = [];
-    silent.onFallback = (reason) => reasons.push(reason);
-    const socket = FakeSocket.made.at(-1)!;
-    act(() => socket.open());
-    vi.advanceTimersByTime(FIRST_FRAME_MS - 1);
-    expect(reasons).toEqual([]);
-    vi.advanceTimersByTime(1);
-    expect(reasons).toEqual([`No video came within ${FIRST_FRAME_MS / 1000} s.`]);
-    expect(socket.readyState).toBe(3);
-    silent.dispose();
-
-    const shown = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=w&stream=selkies");
-    shown.onFallback = (reason) => reasons.push(reason);
-    const other = FakeSocket.made.at(-1)!;
-    act(() => other.open());
-    other.onmessage?.({ data: videoFrame(1, true) });
-    vi.advanceTimersByTime(FIRST_FRAME_MS * 2);
-    expect(reasons).toHaveLength(1);
-    expect(shown.connection.state).toBe("connected");
-    shown.dispose();
-  } finally {
-    vi.useRealTimers();
-    undo();
-  }
-});
-
-test("a video session stops its video while hidden, and starts again from a key frame; it pastes as Selkies' cw and the box's chord (056)", async () => {
-  const undo = withVideo();
-  vi.useFakeTimers();
-  try {
-    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
-    const socket = FakeSocket.made.at(-1)!;
-    act(() => socket.open());
-    socket.onmessage?.({ data: videoFrame(1, true) });
-    expect(session.connection.state).toBe("connected");
-    socket.sent.length = 0;
-    session.hidden = true;
-    expect(socket.sent).toEqual(["STOP_VIDEO"]);
-    session.hidden = false;
-    expect(socket.sent).toEqual(["STOP_VIDEO", "START_VIDEO", "REQUEST_KEYFRAME"]);
-    socket.sent.length = 0;
-    session.setControl(true, true);
-    session.paste("héllo");
-    vi.advanceTimersByTime(PASTE_CHORD_DELAY_MS);
-    // Acknowledgements go on meanwhile, every 50 ms.
-    expect(socket.sent.filter((sent) => !String(sent).startsWith("CLIENT_FRAME_ACK"))).toEqual([
-      `cw,${btoa(String.fromCharCode(...new TextEncoder().encode("héllo")))}`,
-      "kd,65507",
-      "kd,118",
-      "ku,118",
-      "ku,65507",
-    ]);
-    session.dispose();
-  } finally {
-    vi.useRealTimers();
-    undo();
-  }
-});
-
-test("a video viewer keeps the desktop's size as it takes control and as its video connects; it sends its size once the tab's size changes with control held", async () => {
-  const undo = withVideo();
-  vi.useFakeTimers();
-  try {
-    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
-    // jsdom lays nothing out: the viewer's size, as a browser gives it.
-    const size = (width: number, height: number) => {
-      Object.defineProperty(session.element, "clientWidth", { value: width, configurable: true });
-      Object.defineProperty(session.element, "clientHeight", { value: height, configurable: true });
-      act(() => FakeObserver.made.find((observer) => observer.targets.includes(session.element))!.resize(width, height));
-      vi.advanceTimersByTime(SETTLE_MS);
-    };
-    const socket = FakeSocket.made.at(-1)!;
-    const sizes = () => socket.sent.filter((sent) => String(sent).startsWith("r,"));
-    act(() => socket.open());
-    size(1366.5, 768);
-    session.setControl(true, true);
-    socket.onmessage?.({ data: videoFrame(1, true) });
-    expect(session.connection.state).toBe("connected");
-    // Taking control, and the video connecting with control held, leave the desktop's size as it is.
-    expect(sizes()).toEqual([]);
-    session.setControl(false, true);
-    session.setControl(true, true);
-    expect(sizes()).toEqual([]);
-    // The tab's size changes while it has control: the desktop follows, once the size holds.
-    size(1200, 700);
-    expect(sizes()).toEqual(["r,1200x700"]);
-    // Watching, a change sends nothing; nor where the desktop cannot follow.
-    session.setControl(false, true);
-    size(1100, 700);
-    session.setControl(true, false);
-    size(1000, 700);
-    expect(sizes()).toEqual(["r,1200x700"]);
-    session.dispose();
-  } finally {
-    vi.useRealTimers();
-    undo();
-  }
-});
-
-test("a desktop that can be at high resolution offers it under Display, with an info icon whose tooltip says its cost; one that cannot does not", async () => {
-  const { handlers, changes } = server([desktopBox()], { sharp: false });
-  const slot = desktopTab(handlers);
-  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
-  act(() => void novnc.FakeRfb.made[0]!.dispatchEvent(new Event("connect")));
-  // The top of the menu has Display, not the items themselves.
-  const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
-  expect(within(menu).queryByRole("menuitemcheckbox")).toBeNull();
-  act(() => void fireEvent.keyDown(menu, { key: "Escape" }));
-  const display = await openDisplay(slot.getByRole("button", { name: "Desktop actions" }));
-  const item = within(display).getByRole("menuitemcheckbox", { name: /^High resolution/ });
-  expect(item.getAttribute("aria-checked")).toBe("false");
-  // No words in the item itself but its name; what it does and costs is its description, and the info icon's tooltip.
-  expect(document.getElementById(item.getAttribute("aria-describedby")!)?.textContent).toBe(HIGH_RESOLUTION_WORDS);
-  fireEvent.pointerEnter(within(item).getByTestId("high-resolution-info"));
-  expect((await screen.findAllByText(HIGH_RESOLUTION_WORDS)).length).toBeGreaterThan(1);
-  fireEvent.click(item);
-  await waitFor(() => expect(changes).toContain("desktop.sharp true"));
-  cleanup();
-  dropAllKept();
-  const none = desktopTab(server([desktopBox()]).handlers);
-  await waitFor(() => expect(novnc.FakeRfb.made.length).toBeGreaterThan(1));
-  act(() => void novnc.FakeRfb.made.at(-1)!.dispatchEvent(new Event("connect")));
-  const other = await openMenu(none.getByRole("button", { name: "Desktop actions" }));
-  expect(within(other).queryByRole("menuitem", { name: "Display" })).toBeNull();
-});
-
-test("the codec of a key frame comes from its SPS, so a 4:4:4 stream gets a decoder for its profile", () => {
-  const sps = (profile: number, flags: number, level: number) => new Uint8Array([0, 0, 0, 1, 0x67, profile, flags, level, 0x91, 0, 0, 0, 1, 0x68, 0xee]);
-  expect(spsCodec(sps(0xf4, 0x00, 0x2a))).toBe("avc1.F4002A");
-  expect(spsCodec(sps(0x42, 0xe0, 0x1f))).toBe("avc1.42E01F");
-  expect(spsCodec(new Uint8Array([0, 0, 0, 1, 0x65, 1, 2, 3]))).toBeNull();
-});
-
-test("a video viewer says whether its browser decodes 4:4:4, and its decoder follows a key frame's profile", async () => {
-  const undo = withVideo();
-  try {
-    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
-    const socket = FakeSocket.made.at(-1)!;
-    act(() => socket.open());
-    await waitFor(() => expect(socket.sent).toContain("BB_FULLCOLOR,1"));
-    // A 4:4:4 key frame: the decoder is set up again for its profile, and decodes it.
-    const frame = new Uint8Array([4, 0x11, 0, 7, 0, 0, 7, 128, 4, 56, 0, 0, 0, 0, 0, 1, 0x67, 0xf4, 0x00, 0x2a, 0x91]);
-    socket.onmessage?.({ data: frame.buffer });
-    const decoder = FakeDecoder.made.at(-1)!;
-    expect(decoder.codecs).toEqual(["avc1.42E01F", "avc1.F4002A"]);
-    expect(decoder.chunks.map((chunk) => chunk.type)).toEqual(["key"]);
-    session.dispose();
-    // A browser without 4:4:4 says so.
-    forgetFullColour();
-    FakeDecoder.fullColour = false;
-    const other = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=w&stream=selkies");
-    const second = FakeSocket.made.at(-1)!;
-    act(() => second.open());
-    await waitFor(() => expect(second.sent).toContain("BB_FULLCOLOR,0"));
-    other.dispose();
-  } finally {
-    undo();
   }
 });
 
