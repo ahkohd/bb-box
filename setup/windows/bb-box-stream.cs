@@ -525,6 +525,29 @@ class Capture : IDisposable {
     return true;
   }
 
+  /** The pointer's cursor now, or zero while it is hidden. */
+  public static IntPtr CurrentCursor() {
+    CURSORINFO cursor = new CURSORINFO { size = Marshal.SizeOf(typeof(CURSORINFO)) };
+    return GetCursorInfo(ref cursor) && (cursor.flags & 1) != 0 ? cursor.cursor : IntPtr.Zero;
+  }
+
+  /** A cursor's shape as Selkies' cursor message, its image as PNG and its hot spot, for the panel to show on the browser's pointer; null when it cannot be read. */
+  public static string CursorShape(IntPtr cursor) {
+    ICONINFO icon;
+    if (cursor == IntPtr.Zero || !GetIconInfo(cursor, out icon)) return null;
+    if (icon.mask != IntPtr.Zero) DeleteObject(icon.mask);
+    if (icon.color != IntPtr.Zero) DeleteObject(icon.color);
+    try {
+      // ToBitmap keeps a colour cursor's alpha, and makes a monochrome one's mask transparent.
+      using (Icon shape = Icon.FromHandle(cursor))
+      using (Bitmap bitmap = shape.ToBitmap())
+      using (MemoryStream png = new MemoryStream()) {
+        bitmap.Save(png, ImageFormat.Png);
+        return "cursor,{\"curdata\":\"" + Convert.ToBase64String(png.ToArray()) + "\",\"hotx\":" + icon.hotX + ",\"hoty\":" + icon.hotY + "}";
+      }
+    } catch (Exception) { return null; }
+  }
+
   /** Draws the pointer into a copy of Frame, as it shows on the screen. */
   public byte[] WithPointer() {
     byte[] copy = (byte[])Frame.Clone();
@@ -696,6 +719,10 @@ class Server {
   int nextClient;
   DateTime lastClientAt = DateTime.UtcNow;
   volatile bool keyAsked = true;
+  /** Whether the video draws the pointer in, as bb-box's BB_CURSOR last said: not while a person holds control, whose browser shows its shape. */
+  volatile bool showsCursor = true;
+  /** The pointer's shape as Selkies' cursor message, as last sent, for each new client. */
+  volatile string cursorMessage;
   ushort frameId;
   Thread capturing;
   readonly Dictionary<string, MemoryStream> clipboardParts = new Dictionary<string, MemoryStream>();
@@ -710,6 +737,20 @@ class Server {
     if (!first) { Program.Log("another server is running"); return 0; }
     clipboard = new ClipboardThread(text => Broadcast("clipboard," + Convert.ToBase64String(Encoding.UTF8.GetBytes(text))));
     Program.Log("serving on \\\\.\\pipe\\" + Program.PIPE);
+    // The pointer's shape, to the clients, when it changes: the panel shows it on the browser's own pointer while its person holds control.
+    new Thread(() => {
+      IntPtr last = IntPtr.Zero;
+      while (true) {
+        Thread.Sleep(100);
+        IntPtr cursor = Capture.CurrentCursor();
+        if (cursor == IntPtr.Zero || cursor == last) continue;
+        last = cursor;
+        string message = Capture.CursorShape(cursor);
+        if (message == null) continue;
+        cursorMessage = message;
+        Broadcast(message);
+      }
+    }) { IsBackground = true }.Start();
     // The idle exit.
     new Thread(() => {
       while (true) {
@@ -738,6 +779,8 @@ class Server {
       if (client.Handshake()) {
         // Selkies speaks first; the relay waits for a first message.
         client.Text("MODE websockets");
+        string shape = cursorMessage;
+        if (shape != null) client.Text(shape);
         bool trace = File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "bb-box", "trace"));
         for (string text; (text = client.NextText()) != null; ) {
           if (trace) Program.Log("client " + client.Id + ": " + (text.Length > 60 ? text.Substring(0, 60) : text));
@@ -792,6 +835,11 @@ class Server {
       case "m2":
         Input.Wheel(Field(fields, 3), Field(fields, 4));
         break;
+      case "BB_CURSOR":
+        // bb-box: the pointer out of the video while a person holds control, whose browser shows its shape.
+        bool on = Field(fields, 1) != 0;
+        if (on != showsCursor) { showsCursor = on; keyAsked = true; Program.Log("the pointer is " + (on ? "in" : "out of") + " the video"); }
+        break;
       case "cw":
         if (fields.Length > 1) Paste(Convert.FromBase64String(fields[1]));
         break;
@@ -845,7 +893,7 @@ class Server {
           bool key = keyAsked;
           keyAsked = false;
           bool isKey;
-          byte[] data = encoder.Encode(capture.WithPointer(), capture.Width * 4, key, out isKey);
+          byte[] data = encoder.Encode(showsCursor ? capture.WithPointer() : capture.Frame, capture.Width * 4, key, out isKey);
           if (data != null) Send(data, isKey, encoder.Width, encoder.Height);
         }
       } catch (Exception error) {
