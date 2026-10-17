@@ -1684,6 +1684,7 @@ export class ProxmoxQemuBackend implements Backend {
     if (!linux) await box.command.run(`Clear-Content ${BOOT_LOG} -ErrorAction SilentlyContinue`, { timeoutMs: 15_000, signal });
     await this.#forget(vmid);
     await api.shutdown(vmid, 300, signal);
+    if (!linux) await this.#freshVariables(api, vmid, signal);
     await api.configure(
       vmid,
       {
@@ -1702,6 +1703,28 @@ export class ProxmoxQemuBackend implements Backend {
     await api.configure(vmid, { protection: true }, signal);
     this.#imageBoxes.delete(vmid);
     return { ref: String(vmid), image, kind: from.kind, build, record, current: false };
+  }
+
+  /**
+   * Gives a stopped Windows build a new EFI variable store with the same
+   * options (060). OVMF writes its console variables again at each boot,
+   * and every build boots its box and is captured with what its store
+   * gathered, so deleted records pile up from build to build, until the
+   * first boot of each box of a build spent 24 s more before Windows. A new
+   * store has the same Secure Boot keys; OVMF boots Windows from the disk's
+   * \EFI\BOOT\BOOTX64.EFI, and Windows writes its boot entry again. The old
+   * store, left unused by the change, goes.
+   */
+  async #freshVariables(api: Proxmox, vmid: number, signal: AbortSignal): Promise<void> {
+    const before = await api.config(vmid, signal);
+    if (typeof before.efidisk0 !== "string") return;
+    const [volume, ...options] = before.efidisk0.split(",");
+    const storage = volume!.split(":")[0];
+    await api.configure(vmid, { delete: ["efidisk0"] }, signal);
+    await api.configure(vmid, { efidisk0: [`${storage}:1`, ...options.filter((option) => !option.startsWith("size="))].join(",") }, signal);
+    const after = await api.config(vmid, signal);
+    const unused = Object.keys(after).filter((key) => /^unused\d+$/.test(key) && after[key] === volume);
+    if (unused.length) await api.configure(vmid, { delete: unused }, signal);
   }
 
   /**

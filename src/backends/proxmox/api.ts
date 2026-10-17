@@ -111,6 +111,8 @@ export interface GuestSettings {
   readonly onboot?: boolean;
   /** Whether Proxmox refuses to delete it, as bb-box's templates do. */
   readonly protection?: boolean;
+  /** A VM's EFI variable store, such as "local-lvm:1,efitype=4m" for a new one on that storage. */
+  readonly efidisk0?: string;
   /** Options to remove, such as "protection", which clones inherit from the template. */
   readonly delete?: readonly string[];
 }
@@ -325,6 +327,7 @@ export class Proxmox {
       description: settings.description,
       onboot: settings.onboot === undefined ? undefined : settings.onboot ? 1 : 0,
       protection: settings.protection === undefined ? undefined : settings.protection ? 1 : 0,
+      efidisk0: settings.efidisk0,
       delete: settings.delete?.length ? settings.delete.join(",") : undefined,
     };
     if (Object.values(params).every((value) => value === undefined)) return;
