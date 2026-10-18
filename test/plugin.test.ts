@@ -3236,6 +3236,13 @@ test("High resolution is offered for an X11 desktop with video, not a Wayland on
   assert.equal(sharpOffered(box("linux-desktop-wayland-cpu")), false);
 });
 
+test("High resolution is offered for Windows with video on x86_64, not on arm64 on a Mac, where it has not been tried (060)", () => {
+  const windows = (arch: string) =>
+    ({ kind: arch === "arm64" ? "windows-arm64-desktop" : "windows-desktop", capabilities: { os: "windows", arch, gpu: false, displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { id: "video", protocol: "selkies", resizable: true }] } }) as unknown as BoxRecord;
+  assert.equal(sharpOffered(windows("x86_64")), true);
+  assert.equal(sharpOffered(windows("arm64")), false);
+});
+
 test("a Wayland desktop's pointer script switches Sway's and GTK's cursor theme to the hidden one, or back, with the session bus whatever the caller's environment, and keeps wayvnc's input devices on the seat (#707)", () => {
   const hide = waylandPointerScript(false);
   // Without attach, the seat command detaches wayvnc's virtual pointer and keyboard: a person's clicks then go nowhere.
