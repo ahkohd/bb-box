@@ -135,6 +135,61 @@ $${variable} = [Reflection.Assembly]::LoadFile($bbDll).GetType('${type}')`;
 const DISPLAY_HELPER = helper("display", DISPLAY_SOURCE, "BbDisplay", "bbDisplay");
 
 /**
+ * Sets the monitor's scaling, as Windows' Settings app does, at once and with
+ * no sign-out: SPI_SETLOGICALDPIOVERRIDE takes a step up or down Windows'
+ * list of scales from the one it recommends, so it takes the step that gives
+ * the scale wanted, then checks the monitor's DPI until it is that, as
+ * Windows caps a scale a mode is too small for.
+ */
+const SCALE_SOURCE = String.raw`using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+public static class BbScale {
+  [StructLayout(LayoutKind.Sequential)] struct Point { public int X, Y; }
+  [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, int param, IntPtr value, uint flags);
+  [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+  [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(Point point, uint flags);
+  [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint x, out uint y);
+  static readonly int[] Scales = { 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500 };
+  static int Now() {
+    uint x, y;
+    GetDpiForMonitor(MonitorFromPoint(new Point(), 1), 0, out x, out y);
+    return (int)(x * 100 / 96);
+  }
+  public static string Set(int percent) {
+    SetThreadDpiAwarenessContext(new IntPtr(-4)); // the monitor's own DPI, not one scaled for an unaware thread
+    int target = Array.IndexOf(Scales, percent);
+    if (target < 0) return "Windows has no scale of " + percent + "%.";
+    // Windows recommends 100% for the VirtIO GPU's modes, whose screen has no size, so the step is the scale's place in the list;
+    // a step that lands elsewhere is put right from where it landed.
+    int step = target;
+    for (int attempt = 0; attempt < 3; attempt++) {
+      if (Now() == percent) return null;
+      if (!SystemParametersInfo(0x009F, step, IntPtr.Zero, 1)) return "Windows refused the scale of " + percent + "%."; // SPI_SETLOGICALDPIOVERRIDE, SPIF_UPDATEINIFILE
+      for (int i = 0; i < 60 && Now() != percent; i++) Thread.Sleep(50);
+      int landed = Array.IndexOf(Scales, Now());
+      if (landed < 0) break;
+      step += target - landed;
+    }
+    return Now() == percent ? null : "Windows is at " + Now() + "%, not " + percent + "%: the display's mode may be too small for it.";
+  }
+}`;
+
+/** Loads BbScale as $bbScale (helper). */
+const SCALE_HELPER = helper("scale", SCALE_SOURCE, "BbScale", "bbScale");
+
+/**
+ * Sets the scaling of the box's monitor to `percent`, in the box user's
+ * desktop session, as a script for a desktop command: High resolution's 200%
+ * at twice the pixels, and 100% back.
+ */
+export function scaleScript(percent: 100 | 200): string {
+  return `${SCALE_HELPER}
+$bbRefused = $bbScale::Set(${percent})
+if ($bbRefused) { [Console]::Error.WriteLine($bbRefused); exit 1 }`;
+}
+
+/**
  * Gives each window a person sees that has no title the title "<app>
  * (untitled)": visible, unowned, top-level, neither cloaked nor a tool
  * window, larger than a pixel, and not Cua's. Cua on Windows lists and reads

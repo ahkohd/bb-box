@@ -15,6 +15,7 @@ import { clipboardCommands } from "../core/in-box.ts";
 import { RfbRelay, desktopSize, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Screen } from "../core/rfb.ts";
 import { SelkiesBox, SelkiesRelay, type OpenStream } from "../core/selkies.ts";
+import { scaleScript } from "../backends/windows.ts";
 import { openRoute } from "../transports/route.ts";
 import type { Display } from "../transports/types.ts";
 
@@ -55,9 +56,13 @@ interface SharpKept {
   readonly size: Size;
 }
 
-/** Whether a box's desktop can be High resolution: a Linux X11 desktop drawn by the CPU, which Selkies streams. */
+/**
+ * Whether a box's desktop can be High resolution: a Linux X11 desktop drawn by the CPU, which Selkies streams, or a
+ * Windows desktop streamed as video, at 200% (the owner's note of 18 October 2026).
+ */
 export function sharpOffered(box: BoxRecord): boolean {
-  return box.capabilities.os === "linux" && !box.capabilities.gpu && box.capabilities.displays.some((each) => each.protocol === "selkies");
+  const video = box.capabilities.displays.some((each) => each.protocol === "selkies");
+  return video && ((box.capabilities.os === "linux" && !box.capabilities.gpu) || box.capabilities.os === "windows");
 }
 
 /** `size` times `factor`, within High resolution's largest and at least 640x480. */
@@ -548,11 +553,27 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     sharping.set(boxId, kept.catch(() => undefined));
     return run;
   };
-  /** Runs one of High resolution's Xfce scripts in the box's desktop session, and gives what it printed. */
+  /** Runs one of High resolution's scripts in the box's desktop session, Xfce's or Windows', and gives what it printed. */
   const xfce = async (box: BoxRecord, script: string): Promise<string> => {
     const result = await boxes.runOwn(box, script, { session: "desktop", timeoutMs: SHARP_TIMEOUT_MS, maxOutputBytes: 4096 });
-    if (result.exitCode !== 0) throw new Error(`Xfce in box ${box.name} did not change its scale: ${result.stderr.trim().split("\n").at(-1) || `exit code ${result.exitCode}`}`);
+    const who = box.capabilities.os === "windows" ? "Windows" : "Xfce";
+    if (result.exitCode !== 0) throw new Error(`${who} in box ${box.name} did not change its scale: ${result.stderr.trim().split("\n").at(-1) || `exit code ${result.exitCode}`}`);
     return result.stdout.trim();
+  };
+  /**
+   * The desktop at High resolution's scale. Windows caps its scaling by the
+   * display's mode, so it is set to twice the pixels first, then to 200%;
+   * Xfce takes its scale first. Gives the Xfce theme from before, or "".
+   */
+  const sharpOn = async (box: BoxRecord, boxId: string, size: Size): Promise<string> => {
+    if (box.capabilities.os === "windows") {
+      await setSize(boxId, size);
+      await xfce(box, scaleScript(200));
+      return "";
+    }
+    const theme = (await xfce(box, SHARP_ON)) || "Arc";
+    await setSize(boxId, size);
+    return theme;
   };
   /**
    * A High resolution box's desktop as High resolution left it, as a viewer connects: a box that started again comes back at its first
@@ -565,8 +586,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       if (!kept || !box || box.state !== "ready") return;
       const now = await desktopSize(displayOpener(await display(boxes, boxId)));
       if (now.width === kept.size.width && now.height === kept.size.height) return;
-      await xfce(box, SHARP_ON);
-      await setSize(boxId, kept.size);
+      await sharpOn(box, boxId, kept.size);
     }).catch((error) => deps.logError("keep the desktop at high resolution", error));
   };
 
@@ -582,19 +602,29 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       return serialSharp(boxId, async () => {
         const box = await boxes.find(boxId);
         if (!box || box.state !== "ready") throw new Error("The box is not running, so its desktop cannot change.");
-        if (!sharpOffered(box)) throw new Error(`Box ${box.name}'s desktop cannot be at high resolution: only Linux desktops drawn by the CPU can.`);
+        if (!sharpOffered(box)) throw new Error(`Box ${box.name}'s desktop cannot be at high resolution: only Linux desktops drawn by the CPU and Windows desktops shown as video can.`);
         const key = `${SHARP_PREFIX}${boxId}`;
         const kept = await kv.get<SharpKept>(key);
         if (on === !!kept) return;
         const now = await desktopSize(displayOpener(await display(boxes, boxId)));
         if (on) {
-          const theme = (await xfce(box, SHARP_ON)) || "Arc";
           const size = scaled(now, SHARP_SCALE);
-          await kv.set(key, { theme, size } satisfies SharpKept);
+          // Kept first, so a resize while it changes keeps the density; and forgotten if it fails.
+          await kv.set(key, { theme: "", size } satisfies SharpKept);
           control.rescale(boxId, SHARP_SCALE);
-          await setSize(boxId, size);
+          try {
+            const theme = await sharpOn(box, boxId, size);
+            await kv.set(key, { theme, size } satisfies SharpKept);
+          } catch (error) {
+            await kv.delete(key);
+            control.rescale(boxId, 1 / SHARP_SCALE);
+            // Windows took twice the pixels before its scale failed: its size back.
+            if (box.capabilities.os === "windows") await setSize(boxId, now).catch((cause) => deps.logError("put the desktop's size back", cause));
+            throw error;
+          }
         } else {
-          await xfce(box, sharpOff(kept!.theme));
+          // Windows at 100% first, as it caps the scale of a smaller mode.
+          await xfce(box, box.capabilities.os === "windows" ? scaleScript(100) : sharpOff(kept!.theme || "Arc"));
           await kv.delete(key);
           control.rescale(boxId, 1 / SHARP_SCALE);
           await setSize(boxId, scaled(now, 1 / SHARP_SCALE));

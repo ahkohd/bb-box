@@ -523,6 +523,9 @@ export class DesktopSession implements Kept {
 
 /** What High resolution does, and its cost, for its tooltip (the owner's notes of 17 October 2026). */
 export const HIGH_RESOLUTION_WORDS = "Twice the pixels, for sharp text on a high-resolution screen. About three times the CPU while shown; best with 8 cores or more.";
+/** The same on Windows, at 3840x2160 and 200%, where copying the screen is the limit (the owner's note of 18 October 2026). */
+export const WINDOWS_HIGH_RESOLUTION_WORDS =
+  "Twice the pixels, for sharp text on a high-resolution screen: laid out as 1920x1080. About half the frame rate, and keys about 120 ms, while on; more cores do not help.";
 
 /**
  * The desktop menu's Display items (the owner's notes of 17 October 2026): Show as VNC and High resolution, each with
@@ -535,7 +538,7 @@ function DisplayItems({
 }: {
   compact: boolean;
   vnc: { checked: boolean; onChange: (checked: boolean) => void } | null;
-  highResolution: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void } | null;
+  highResolution: { checked: boolean; disabled: boolean; words: string; onChange: (checked: boolean) => void } | null;
 }) {
   const items = (
     <>
@@ -570,7 +573,7 @@ function DisplayItems({
 }
 
 /** High resolution, with an info icon whose tooltip says what it does and costs: on pointing at the icon, and as the item has the keyboard's focus. */
-function HighResolutionItem({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
+function HighResolutionItem({ checked, disabled, words, onChange }: { checked: boolean; disabled: boolean; words: string; onChange: (checked: boolean) => void }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   return (
@@ -594,11 +597,11 @@ function HighResolutionItem({ checked, disabled, onChange }: { checked: boolean;
             </span>
           </TooltipTrigger>
           <span id={id} className="sr-only">
-            {HIGH_RESOLUTION_WORDS}
+            {words}
           </span>
         </DropdownMenuCheckboxItem>
         <TooltipContent side="bottom" align="end" className="max-w-64 text-xs leading-snug">
-          {HIGH_RESOLUTION_WORDS}
+          {words}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
@@ -1033,7 +1036,11 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                           }
                         : null
                     }
-                    highResolution={sharp !== null ? { checked: sharp, disabled: acting, onChange: (checked) => void toggleSharp(checked) } : null}
+                    highResolution={
+                      sharp !== null
+                        ? { checked: sharp, disabled: acting, words: guestOs === "windows" ? WINDOWS_HIGH_RESOLUTION_WORDS : HIGH_RESOLUTION_WORDS, onChange: (checked) => void toggleSharp(checked) }
+                        : null
+                    }
                   />
                 ) : null}
                 {showing ? (
