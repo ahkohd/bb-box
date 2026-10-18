@@ -169,6 +169,20 @@ async function ready(app: BbBox, box: BoxRecord, signal: AbortSignal): Promise<B
 }
 
 /** A kind's presets and largest size in words, for box_list. */
+/** Each form's words for box_list, where a kind's providers make it differently. */
+const FORM_PLURAL: Record<string, string> = { VM: "VMs", LXC: "LXC containers", Docker: "Docker containers", Physical: "physical machines" };
+
+/** A kind's providers, in acquire order: each with what its boxes are, where that differs between them or the provider says more. */
+export function offersText(kind: KindView): string {
+  const differ = new Set(kind.offers.map((offer) => offer.form)).size > 1;
+  return kind.offers
+    .map((offer) => {
+      const what = offer.note ?? (differ && offer.form ? FORM_PLURAL[offer.form] : null);
+      return what ? `${offer.name} (${what})` : offer.name;
+    })
+    .join(", ");
+}
+
 function kindSizesText(kind: KindView): string {
   const presets = kind.presets.map((preset) => `${preset.name} (${preset.words}${preset.name === kind.defaultPreset ? ", the default" : ""})`);
   return `${presets.join(", ")}; custom up to ${kind.largest.words}`;
@@ -363,7 +377,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")} On: ${kind.offers.map((offer) => offer.name).join(", ")}.${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         const hints = list.length

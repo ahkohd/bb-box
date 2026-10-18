@@ -405,6 +405,13 @@ export interface Backend {
    * machine: the panel asks on every load. Null until it has surveyed.
    */
   free?(kind: string): number | null;
+  /**
+   * What this backend's boxes of `kind` are, where box_list should say more
+   * than its form: a pool's physical machines, lent whole, with their sizes.
+   * From what the backend already holds, with no call to any machine. Never
+   * names a machine. Null when it has nothing to add.
+   */
+  offerNote?(kind: string): string | null;
 
   /**
    * Whether one more box of `kind` and `size` fits. `pending` gives the kind

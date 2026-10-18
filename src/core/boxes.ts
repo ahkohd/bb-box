@@ -1281,7 +1281,8 @@ export class Boxes {
     const providers = this.#deps.backends.active();
     const chosen = new Map<string, Backend>();
     for (const name of names) {
-      const key = foldName(name);
+      // box_list follows a provider's name with what its boxes are, in brackets, which an agent may copy whole.
+      const key = foldName(name.replace(/\s*\(.*\)\s*$/s, ""));
       const matched = providers.filter((backend) =>
         providerKeys(backend.id, { label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! }).includes(key),
       );

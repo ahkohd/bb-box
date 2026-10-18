@@ -178,6 +178,8 @@ export interface OfferView {
   readonly spareStarts?: boolean;
   /** Free machines for this kind on a real backend, from its last survey; null for a virtual one or before a survey. */
   readonly free: number | null;
+  /** What the backend's boxes of this kind are, where it says more than its form, as a pool's physical machines; absent otherwise. */
+  readonly note?: string;
   /** The box user can become root, or Administrator, on this backend. */
   readonly admin: boolean;
   /** Its desktop follows the viewer's size; null for a kind without a desktop. */
@@ -249,6 +251,7 @@ export function kindViews(
       ready: readyByBackend[key] ?? 0,
       ...(backend.keepsSession?.(kind.id) ? { spareStarts: true } : {}),
       free: backend.free?.(kind.id) ?? null,
+      ...(backend.offerNote?.(kind.id) ? { note: backend.offerNote(kind.id)! } : {}),
       admin,
       resizable: kind.capabilities.displays.length ? (kind.capabilities.displays[0]!.resizable ?? false) : null,
       typicalReadyMs: typical[key] ?? null,
@@ -436,6 +439,25 @@ function builtOn(build: string | null | undefined): string {
   return `${day.getUTCDate()} ${day.toLocaleString("en-GB", { month: "long", timeZone: "UTC" })}`;
 }
 
+/** What a box is, for its Form line: as its backend said of its machine, else as its backend's form makes it; null when unknown. */
+export function formLine(box: BoxRecord): string | null {
+  const said = box.guest?.facts?.find((fact) => fact.label === "Form")?.value;
+  if (said) return said;
+  const mac = box.capabilities.os === "macos";
+  switch (boxForm(box.backend)) {
+    case "Physical":
+      return mac ? "a physical Mac, lent whole" : "a physical machine, lent whole";
+    case "VM":
+      return mac ? "a macOS VM" : "a VM";
+    case "LXC":
+      return "an LXC container";
+    case "Docker":
+      return "a Docker container";
+    default:
+      return null;
+  }
+}
+
 export function boxDetail(box: BoxRecord, control?: ControlView): string {
   const capabilities = box.capabilities;
   const lines = [
@@ -443,6 +465,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     `State: ${STATE_WORDS[box.state]}${box.error ? `. ${box.error}` : ""}`,
     ...(box.unrequestedStop ? [`Last unrequested stop: ${stopWords(box)}`] : []),
     `Kind: ${box.kindLabel} (${box.kind}) from ${box.backendLabel}`,
+    ...(formLine(box) ? [`Form: ${formLine(box)}`] : []),
     ...(sizeWords(box) ? [`Size: ${sizeWords(box)}`] : []),
     `System: ${capabilities.os} ${capabilities.arch}${capabilities.gpu ? " with a GPU" : ""}${capabilities.displays.length ? ", with a desktop" : ""}`,
   ];
@@ -458,7 +481,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   if (extras.length) lines.push(`Also has: ${extras.join(", ")}`);
   if (box.image) lines.push(`Image: ${imageWords(box.image)}`);
   if (box.guest?.address) lines.push(`Address: ${box.guest.address}`);
-  for (const fact of box.guest?.facts ?? []) lines.push(`${fact.label}: ${fact.value}`);
+  for (const fact of box.guest?.facts ?? []) if (fact.label !== "Form") lines.push(`${fact.label}: ${fact.value}`);
   if (control && capabilities.displays.length) lines.push(`Desktop control: ${CONTROL_WORDS[control.owner]}`);
   const enrol: Record<EnrolState, string> = {
     off:

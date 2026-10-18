@@ -59,6 +59,12 @@ export interface MachineStatus {
   readonly cores: number | null;
   readonly memoryMiB: number | null;
   readonly diskGiB: number | null;
+  /**
+   * Whether the machine is itself virtual: "none" on bare metal, else the
+   * kind, as systemd-detect-virt names it ("kvm", "lxc"), or "vm" for a Mac
+   * in a VM. Null when the helper does not say, as one set up before it did.
+   */
+  readonly virt: string | null;
   /** Tools the helper or enrolment needs that the machine lacks. */
   readonly missing: readonly string[];
   /** Node.js, npm, git and gh, or null when the helper is too old to say. */
@@ -188,6 +194,7 @@ export function parseStatus(stdout: string): MachineStatus {
     cores: whole(values.get("cores")),
     memoryMiB: whole(values.get("memory")),
     diskGiB: whole(values.get("disk")),
+    virt: values.get("virt") || null,
     missing: words(values.get("missing")),
     enrolment: values.has("node") ? { node: values.get("node")?.replace(/^v/, "") || null, lacks: words(values.get("lacks")) } : null,
     dirty: values.get("dirty") || null,

@@ -364,6 +364,8 @@ status() {
   echo "cores=$(sysctl -n hw.ncpu 2>/dev/null)"
   echo "memory=$(sysctl -n hw.memsize 2>/dev/null | awk '{ print int($1 / 1048576) }')"
   echo "disk=$(df -Pk "$ROOT/Users" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }')"
+  # Whether the Mac is itself a VM: "vm" where the kernel says it runs under a hypervisor, else "none".
+  [ "$(sysctl -n kern.hv_vmm_present 2>/dev/null)" = 1 ] && echo virt=vm || echo virt=none
   missing=''
   for tool in sh tar perl dscl dseditgroup sysadminctl createhomedir launchctl pgrep pkill find ipcs visudo; do
     command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
