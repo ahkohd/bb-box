@@ -20,9 +20,13 @@ export const SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "se
  * sixth of the bandwidth (measured 18 October 2026). It says no way to leave
  * the cursor out: Sway paints the pointer into each frame, as for wayvnc, and
  * the hidden cursor theme takes it out while a person holds control (#707).
- * Selkies on Sway sends the browser an arrow.
+ * Selkies on Sway sends the browser an arrow. Selkies is told a new size
+ * before Sway takes it: told after, it sent black frames at the old size for
+ * about 0.7 s through BB, and its new size came 1.25 s after the viewer's;
+ * told first, it came in 0.05 to 0.2 s, with none black (measured 18 October
+ * 2026).
  */
-export const WAYLAND_SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "selkies", resizable: true };
+export const WAYLAND_SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "selkies", resizable: true, tellSize: "first" };
 
 /** Where a Wayland image runs Selkies from: an image built before it has none (060). */
 export const SELKIES_LAUNCHER = "/usr/local/libexec/bb-box/selkies";

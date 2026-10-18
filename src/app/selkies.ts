@@ -25,7 +25,7 @@ const ACK_MS = 50;
 export const HOLD_MAX_MS = 15_000;
 /** How long the box's desktop takes to draw at its new scale after its new size: about 0.6 s on a Proxmox LXC box (the owner's note of 18 October 2026). */
 export const HOLD_SETTLE_MS = 800;
-/** How long the viewer waits for the new size once the switch is over, before it shows the stream as it is. */
+/** How long the viewer waits for the new size once the switch is over, or once it asked the desktop for its size, before it shows the stream as it is. */
 export const HOLD_NO_SIZE_MS = 2_000;
 /** The cross-fade from the held picture to the new one. */
 const HOLD_FADE_MS = 150;
@@ -191,9 +191,18 @@ export class SelkiesSession implements Kept {
   readonly #onPasteEvent = (event: ClipboardEvent) => this.#takePaste(event);
   /**
    * The last picture, held over the video while High resolution switches, with the size it had: the box's desktop changes its scale
-   * and its size apart, so between them it shows the old picture in a corner of the new size, or its panel at the old scale.
+   * and its size apart, so between them it shows the old picture in a corner of the new size, or its panel at the old scale. Held
+   * too while the desktop takes this tab's new size, so the old picture is not shown at its old size, centred, until the new one
+   * comes. `settle`: how long after the first frame of another size it goes.
    */
-  #hold: { readonly still: HTMLCanvasElement; readonly size: string; released: number | null; resized: number | null; timer?: ReturnType<typeof setTimeout> } | null = null;
+  #hold: {
+    readonly still: HTMLCanvasElement;
+    readonly size: string;
+    readonly settle: number;
+    released: number | null;
+    resized: number | null;
+    timer?: ReturnType<typeof setTimeout>;
+  } | null = null;
   #holdLimit: ReturnType<typeof setTimeout> | undefined;
   /** A copy the box sends in parts, until its last. */
   #incoming: { readonly mime: string; readonly size: number; readonly parts: Uint8Array<ArrayBuffer>[]; received: number } | null = null;
@@ -224,7 +233,7 @@ export class SelkiesSession implements Kept {
             if (!moved || !this.#mine) return;
             this.#follow = true;
             clearTimeout(this.#settle);
-            this.#settle = setTimeout(() => this.#sendSize(), SETTLE_MS);
+            this.#settle = setTimeout(() => this.#sendSize(true), SETTLE_MS);
           });
     this.#observer?.observe(this.element);
     this.element.addEventListener("keydown", (event) => this.#interceptPaste(event), true);
@@ -630,12 +639,33 @@ export class SelkiesSession implements Kept {
     this.#send(`m2,0,0,${this.#mask},${count}`);
   }
 
-  /** The viewer's size, for the desktop to take, while it has control and the desktop can resize. */
-  #sendSize(): void {
+  /**
+   * The viewer's size, for the desktop to take, while it has control and the desktop can resize. `resized`: the tab's size changed,
+   * so the picture shown now is held, stretched to the tab, until a frame of the desktop's new size comes (the owner's note of
+   * 18 October 2026).
+   */
+  #sendSize(resized = false): void {
     if (!this.#mine || !this.#resizable || !this.#follow || this.connection.state !== "connected") return;
     const width = Math.floor(this.element.clientWidth);
     const height = Math.floor(this.element.clientHeight);
-    if (width > 0 && height > 0) this.#send(`r,${width}x${height}`);
+    if (width <= 0 || height <= 0) return;
+    if (resized && !this.#hold && !this.#hasSize(width, height)) {
+      this.#holdStill("fill", 0);
+      this.release();
+    }
+    this.#send(`r,${width}x${height}`);
+  }
+
+  /**
+   * Whether the desktop has the size it takes for this tab's `width` and `height` already: a width a multiple of 8 and an even height,
+   * as bb-box sets it, or twice that at High resolution.
+   */
+  #hasSize(width: number, height: number): boolean {
+    return [1, 2].some((scale) => {
+      const wide = width * scale;
+      const high = height * scale;
+      return wide - (wide % 8) === this.#width && high - (high % 2) === this.#height;
+    });
   }
 
   /** Puts text on the box's clipboard, as a viewer's paste does. */
@@ -728,14 +758,19 @@ export class SelkiesSession implements Kept {
    * desktop under it.
    */
   hold(): void {
+    this.#holdStill("contain", HOLD_SETTLE_MS);
+  }
+
+  /** Holds the picture shown now, fitted to the pane by `fit`, until it goes `settle` after the first frame of another size. */
+  #holdStill(fit: "contain" | "fill", settle: number): void {
     if (this.#disposed || this.#hold || !this.#width || this.connection.state !== "connected") return;
     const still = document.createElement("canvas");
     still.width = this.#canvas.width;
     still.height = this.#canvas.height;
     still.getContext("2d")?.drawImage(this.#canvas, 0, 0);
-    still.style.cssText = `position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;transition:opacity ${HOLD_FADE_MS}ms ease-out`;
+    still.style.cssText = `position:absolute;inset:0;width:100%;height:100%;object-fit:${fit};pointer-events:none;transition:opacity ${HOLD_FADE_MS}ms ease-out`;
     this.element.appendChild(still);
-    this.#hold = { still, size: `${this.#width}x${this.#height}`, released: null, resized: null };
+    this.#hold = { still, size: `${this.#width}x${this.#height}`, settle, released: null, resized: null };
     this.#holdLimit = setTimeout(() => this.#unhold(), HOLD_MAX_MS);
   }
 
@@ -755,7 +790,7 @@ export class SelkiesSession implements Kept {
     const hold = this.#hold;
     if (!hold || hold.released === null) return;
     clearTimeout(hold.timer);
-    const wait = hold.resized !== null ? hold.resized + HOLD_SETTLE_MS : hold.released + HOLD_NO_SIZE_MS;
+    const wait = hold.resized !== null ? hold.resized + hold.settle : hold.released + HOLD_NO_SIZE_MS;
     hold.timer = setTimeout(() => this.#unhold(), Math.max(0, wait - performance.now()));
   }
 

@@ -2469,6 +2469,63 @@ test("through a High resolution switch, the video holds its last picture until t
   }
 });
 
+test("as a desktop in your control takes the tab's new size, the video holds its last picture, stretched to the tab, until a frame of the new size comes (the owner's note of 18 October 2026)", async () => {
+  const undo = withVideo();
+  const size = FakeDecoder.size;
+  try {
+    FakeDecoder.size = { width: 800, height: 800 };
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const screen = slot.getByTestId("desktop-screen");
+    const video = screen.querySelector("canvas")!.parentElement!;
+    const observer = FakeObserver.made.find((made) => made.targets.includes(video))!;
+    const pictures = () => Array.from(screen.querySelectorAll("canvas"));
+    const tab = (width: number, height: number) => {
+      Object.defineProperty(video, "clientWidth", { value: width, configurable: true });
+      Object.defineProperty(video, "clientHeight", { value: height, configurable: true });
+      act(() => observer.resize(width, height));
+    };
+    tab(740, 800);
+
+    // Expand: the picture shown is held over the video, filling the tab, not left at its old size in the middle.
+    tab(1840, 800);
+    await waitFor(() => expect(socket.sent).toContain("r,1840x800"));
+    expect(pictures()).toHaveLength(2);
+    expect(pictures()[1]!.style.objectFit).toBe("fill");
+    // Frames of the old size, as Selkies may send while the desktop changes, stay under it.
+    act(() => void socket.onmessage?.({ data: videoFrame(6, true) }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(pictures()).toHaveLength(2);
+    // The first frame of the new size shows at once.
+    FakeDecoder.size = { width: 1840, height: 800 };
+    act(() => void socket.onmessage?.({ data: videoFrame(7, true) }));
+    await waitFor(() => expect(pictures()).toHaveLength(1));
+
+    // A tab whose size the desktop has already, once made a multiple of 8 wide, holds nothing.
+    tab(1845, 801);
+    await waitFor(() => expect(socket.sent).toContain("r,1845x801"));
+    expect(pictures()).toHaveLength(1);
+
+    // A size that never comes, as one below the desktop's smallest, lets go soon, so the view never freezes.
+    tab(700, 800);
+    await waitFor(() => expect(socket.sent).toContain("r,700x800"));
+    expect(pictures()).toHaveLength(2);
+    await waitFor(() => expect(pictures()).toHaveLength(1), { timeout: HOLD_NO_SIZE_MS * 2 });
+  } finally {
+    FakeDecoder.size = size;
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
 /** Bytes as Selkies sends them in a clipboard message: base64. */
 function b64(bytes: Uint8Array): string {
   let binary = "";

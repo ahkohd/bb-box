@@ -264,6 +264,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     },
     async restore(boxId, size, screen) {
       const shown = await display(boxes, boxId);
+      const resize = shown.resize;
+      if (resize && (await tellsSizeFirst(boxId))) {
+        await resizes.request(boxId, (each) => sizeFirst(boxId, each, resize), size);
+        return;
+      }
       // SetDesktopSize first, even when the backend resizes: a GPU desktop
       // can come back on the CPU after a stop and start, and take it (021).
       await restoreSize(displayOpener(shown), size, screen);
@@ -419,6 +424,25 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     await entry.box.follow(size);
     if (frameSizes.has(boxId)) await showSize(boxId, size);
   };
+  /** Whether a box's video is told a new size before its desktop takes it, as Selkies on Sway (060). */
+  const tellsSizeFirst = async (boxId: string): Promise<boolean> =>
+    (await boxes.find(boxId))?.capabilities.displays.some((each) => each.protocol === "selkies" && each.tellSize === "first") ?? false;
+  /**
+   * Sets a box's desktop to `size` with its backend's resize, having told its
+   * video the size first, while it has Selkies viewers. A resize that fails
+   * has the video follow the size the desktop kept.
+   */
+  const sizeFirst = async (boxId: string, size: Size, resize: NonNullable<Display["resize"]>): Promise<void> => {
+    const entry = selkiesBoxes.get(boxId);
+    if (entry) await entry.box.follow(size);
+    try {
+      await resize(size);
+    } catch (error) {
+      if (entry) await followSize(boxId).catch((caught) => deps.logError("have the video follow the desktop's size", caught));
+      throw error;
+    }
+    if (entry && frameSizes.has(boxId)) await showSize(boxId, size);
+  };
   /** Each box's check that its video has the desktop's size, while one runs. */
   const matching = new Map<string, Promise<void>>();
   /** A Selkies viewer's frames are `size`: when the desktop has another, as one that grew while no viewer had it follow, the video follows. */
@@ -457,6 +481,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     const min = shown.minSize;
     const step = (value: number, least: number, by: number) => Math.max(value, least) - (Math.max(value, least) % by);
     const raised = { width: step(size.width, min?.width ?? 0, 8), height: step(size.height, min?.height ?? 0, 2) };
+    const resize = shown.resize;
+    if (resize && (await tellsSizeFirst(boxId))) {
+      await resizes.request(boxId, (each) => sizeFirst(boxId, each, resize), raised);
+      return;
+    }
     await resizes.request(
       boxId,
       async (each) => {

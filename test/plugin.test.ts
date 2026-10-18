@@ -2659,6 +2659,46 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await until("the page closed", async () => page.closed);
 });
 
+test("a video display told a size first, as Selkies on Sway, hears it before the backend resizes the desktop, and the size the desktop kept after a resize that fails (the owner's note of 18 October 2026)", async (t) => {
+  const kind: BoxKind = {
+    ...FAKE_SELKIES_KIND,
+    capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" ? { ...display, tellSize: "first" as const } : display)) },
+  };
+  const { harness, app, world } = await start(undefined, { resize: "backend", kinds: [kind] });
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: kind.id });
+  await app.boxes.idle();
+  const box = await only(app);
+  const backend = world.backend!;
+  const selkies = backend.selkies;
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
+  await until("Selkies' first message", async () => session.sent.includes("MODE websockets"));
+  await selkies.frame(1, true, 1280, 800);
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  const input = await until("the input connection", async () => selkies.pages[1]);
+  const follow = (width: number, height: number) =>
+    `SETTINGS,${JSON.stringify({ displayId: "primary", manual_resolution: true, manual_width: width, manual_height: height, force_aligned_resolution: false })}`;
+  // The backend's resize waits: Selkies hears the size before it ends, so it never captures Sway at a size it was not told.
+  let open!: () => void;
+  backend.resizeGate = new Promise<void>((resolve) => (open = resolve));
+  await session.receive("r,1840x800");
+  await until("the video told the size", async () => input.received.includes(follow(1840, 800)));
+  assert.deepEqual(backend.resizes.at(-1), { width: 1840, height: 800 }, "the resize under way");
+  assert.deepEqual([backend.rfb.width, backend.rfb.height], [1280, 800], "the desktop not resized yet");
+  open();
+  backend.resizeGate = null;
+  await until("the resize", async () => backend.rfb.width === 1840);
+  await selkies.frame(2, true, 1840, 800);
+  await new Promise((resolve) => setTimeout(resolve, FOLLOW_FRAME_MS + 200));
+  assert.ok(!selkies.pages[0]!.received.includes("STOP_VIDEO"), "no restart once a frame of the size came");
+  // A size the desktop cannot take: the video follows the size it kept.
+  await session.receive("r,40000x800");
+  await until("the video told the size", async () => input.received.includes(follow(40000, 800)));
+  await until("the video following the size the desktop kept", async () => input.received.filter((message) => message === follow(1840, 800)).length === 2);
+  await session.close();
+});
+
 test("the backend resizes a desktop whose stream server cannot, one resize at a time and the latest last, and not below the display's smallest size (021)", async (t) => {
   const { harness, app, world } = await start(undefined, { resize: "backend", minSize: { width: 800, height: 600 } });
   t.after(() => harness.lifecycle.dispose());

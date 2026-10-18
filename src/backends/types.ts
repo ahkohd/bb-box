@@ -99,6 +99,15 @@ export interface DisplayCapability {
    * already smooth. Left out, video is the default where it can show.
    */
   readonly byChoice?: boolean;
+  /**
+   * "first" when bb-box tells the video display's stream server a new size
+   * before the desktop takes it: Selkies capturing Sway sends black frames at
+   * its old size from Sway's resize until it is told; told first, it waits
+   * for Sway and sends the new size at once (the owner's note of 18 October
+   * 2026). Left out, bb-box tells it once the desktop has the size, as
+   * Selkies on X11 needs.
+   */
+  readonly tellSize?: "first";
 }
 
 /**
