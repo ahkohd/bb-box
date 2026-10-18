@@ -1,0 +1,26 @@
+#!/bin/bash
+# bb-box: Selkies, the Wayland desktop's video stream (060), run as the box
+# user by bb-box-selkies.service, or by a Docker box's start, once Sway is up.
+#
+# It captures Sway as a client (--wayland-host-display): screencopy for its
+# frames, and Sway's virtual keyboard and pointer for input, so the desktop
+# is Sway's own, with its floating windows (048). It sends H.264 over
+# WebSockets on 127.0.0.1:5980 only: bb-box's relay reaches it through the
+# box's transport, and BB has signed the viewer in, so it has no sign-in of
+# its own. With no page connected it captures nothing.
+#
+# bb-box sizes Sway, and Selkies, patched at build (selkies-host-size.py),
+# streams it at Sway's size and never resizes it. Audio, the microphone, the
+# webcam, gamepads and their player slots, file transfers, printing and
+# commands are off, as on X11 (files/selkies). wayvnc stays on port 5900.
+set -u
+if [ -r /run/bb-box/display.env ]; then set -a; . /run/bb-box/display.env; set +a; fi
+[ -n "${WAYLAND_DISPLAY:-}" ] || { echo "selkies: no WAYLAND_DISPLAY in /run/bb-box/display.env" >&2; exit 1; }
+exec /usr/bin/selkies --wayland=true --wayland-host-display="$WAYLAND_DISPLAY" \
+  --addr=127.0.0.1 --port=5980 --mode=websockets \
+  --enable-basic-auth=false --enable-https=false \
+  --encoder=h264enc --use-cpu=true --enable-resize=false --second-screen=false \
+  --enable-binary-clipboard=true \
+  --audio-enabled=false --microphone-enabled=false --webcam-enabled=false --gamepad-enabled=false \
+  --file-transfers=none --printing-enabled=false --command-enabled=false --enable-dual-mode=false \
+  --enable-player2=false --enable-player3=false --enable-player4=false
