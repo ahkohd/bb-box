@@ -218,6 +218,10 @@ test("the record's checks: whole, and no tool older or missing than in the old b
   assert.equal(missing[1]!.detail, "claude-code is missing.");
   assert.equal(recordChecks(null, OLD, "linux")[0]!.ok, false);
   assert.equal(recordChecks(record("build.y", {}, { os: "" }), null, "linux")[0]!.ok, false);
+  // A tool named by a hash of its source has no order, so a new hash is not older (#771).
+  const hashed = { ...OLD, tools: { ...OLD.tools, "bb-box-stream": "464979ceb555" } };
+  const rebuilt = recordChecks(record("build.y", { node: "24.21.0", "claude-code": "2.1.288", pi: "1.0.0", "bb-box-stream": "bf343f0d36dc" }), hashed, "linux");
+  assert.ok(rebuilt.every((check) => check.ok), JSON.stringify(rebuilt));
 });
 
 test("the build script runs the guest scripts as build.sh does for each kind", () => {
