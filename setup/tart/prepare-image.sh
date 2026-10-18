@@ -133,9 +133,10 @@ tart exec -i "$build" /bin/sh -c 'set -e; d=$(mktemp -d); cat >"$d/mac-stream.sw
   <"$stream_source" || die "building bb-box-stream failed"
 stream=$(shasum -a 256 "$stream_source" | cut -c1-12)
 # Google Chrome, which agents mostly use: from Google's stable download, its
-# signature checked, with the Linux images' policies against first-run prompts.
+# signature checked, with the Linux images' policies against its prompts, and
+# admin's profile past its first run and What's New.
 step "installing Google Chrome in $build"
-tart exec -i "$build" sudo -n /bin/sh -s <"$chrome_source" >"$work/chrome.txt" || { cat "$work/chrome.txt"; die "installing Chrome failed"; }
+tart exec -i "$build" sudo -n /bin/sh -s /Users/admin <"$chrome_source" >"$work/chrome.txt" || { cat "$work/chrome.txt"; die "installing Chrome failed"; }
 chrome=$(sed -n 's/^chrome=//p' "$work/chrome.txt")
 [ -n "$chrome" ] || die "Chrome's install gave no version"
 # The pins' SHA-256 is of this script's pin lines, as bb-box hashes them.

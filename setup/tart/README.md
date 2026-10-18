@@ -166,9 +166,13 @@ and the Metal toolchain), plus:
   `../ssh-pool/mac-chrome.sh`, as setup-mac.sh installs it on a pool Mac.
   The download names no version, so its signature is the check: it must
   verify, Gatekeeper must accept it as notarised, and Google's team,
-  EQHXZ8M8AV, must have signed it. Its machine policies turn off first-run,
-  default-browser, promotion and sign-in prompts, as on Linux. The record
-  lists its version;
+  EQHXZ8M8AV, must have signed it. Its policies, in /Library/Preferences as
+  macOS empties /Library/Managed Preferences at boot without device
+  management, turn off its default-browser, promotion and sign-in prompts
+  and sync, as on Linux, at the recommended level. `admin`'s profile is past
+  Chrome's first run and its What's New, which no policy turns off. The
+  record lists its version, and the image's check reads the policies Chrome
+  applies, as chrome://policy lists them;
 - BlackHole 2ch, pinned by SHA-256, a virtual audio device that is the
   default input: what is played to its output comes back as the
   microphone, so a test can feed speech in with `say -a BlackHole`;
