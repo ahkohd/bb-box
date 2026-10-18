@@ -2625,6 +2625,8 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   const restarts = () => page.received.filter((message) => message === "STOP_VIDEO").length;
   await new Promise((resolve) => setTimeout(resolve, FOLLOW_FRAME_MS + 200));
   assert.equal(restarts(), 0, "no restart while the video showed each size it was told");
+  // The viewer has shown them, as a page says: the relay holds back frames from a viewer that has not.
+  await session.receive("CLIENT_FRAME_ACK 3 0");
   // Frames of another size than the desktop's, as from a capture that missed a resize, have the video follow the desktop. With no
   // frame of its size in time, as when Selkies stopped its capture for a person in control, the capture restarts, and again when a
   // restart brings none, until one does.
@@ -2633,6 +2635,7 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await until("the capture restarted", async () => page.received.join(" ").includes("STOP_VIDEO START_VIDEO REQUEST_KEYFRAME"));
   assert.equal(page.stopped, false, "the viewer's video runs again");
   await until("a second restart, as the first brought no frame of the size", async () => restarts() === 2);
+  await session.receive("CLIENT_FRAME_ACK 4 0");
   await selkies.frame(5, true, 1096, 700);
   await new Promise((resolve) => setTimeout(resolve, FOLLOW_FRAME_MS + 200));
   assert.equal(restarts(), 2, "no restart once a frame of the size came");

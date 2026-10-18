@@ -40,7 +40,7 @@ function viewer() {
 
 let marks = 0;
 
-function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number } = {}) {
+function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number; onSize?: (size: { width: number; height: number }) => void } = {}) {
   const server = new FakeSelkies({ refuse: options.refuse });
   const open = async () => server.channel();
   const clock = new FakeClock();
@@ -48,7 +48,7 @@ function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number } 
   let control: string | null = null;
   const relay = (name: string) => {
     const end = viewer();
-    const relay = new SelkiesRelay({ viewer: end.end, box, open, mayInput: () => control === name, lagMs: options.lagMs });
+    const relay = new SelkiesRelay({ viewer: end.end, box, open, mayInput: () => control === name, lagMs: options.lagMs, onSize: options.onSize });
     // Not spread: that would copy `closed` as it is now.
     return Object.assign(end, { relay });
   };
@@ -194,6 +194,42 @@ test("a viewer that falls behind gets no frames until it has caught up, then fro
   await server.frame(7, false);
   await until("the frames from the key frame", () => a.frames().length === 4);
   assert.deepEqual(a.frames(), [1, 2, 6, 7]);
+  await a.relay.close();
+  await box.close();
+});
+
+test("a capture that starts again numbers its frames from 0, and a frame the viewer had not acknowledged from the one before holds none of them back (the owner's note of 18 October 2026)", async () => {
+  const sizes: string[] = [];
+  const { server, box, clock, relay } = setup({ lagMs: 50, onSize: (size) => sizes.push(`${size.width}x${size.height}`) });
+  const a = relay("a");
+  await until("the page", () => server.pages.length === 1);
+  await server.frame(4999, true, 1920, 1080);
+  await server.frame(5000, false, 1920, 1080);
+  await until("two frames", () => a.frames().length === 2);
+  // The capture stops with frame 5000 not yet acknowledged, and Selkies starts the next, at a new size, after longer than the lag.
+  await a.relay.receive("CLIENT_FRAME_ACK 4999 0");
+  clock.advance(300);
+  await server.frame(0, true, 3840, 2160);
+  await server.frame(1, false, 3840, 2160);
+  await until("the new capture's frames", () => a.frames().length === 4);
+  assert.deepEqual(a.frames(), [4999, 5000, 0, 1]);
+  assert.deepEqual(sizes, ["1920x1080", "3840x2160"]);
+  await a.relay.close();
+  await box.close();
+});
+
+test("a frame held back from a viewer that is behind does not count as its size: the viewer shows nothing of it", async () => {
+  const sizes: string[] = [];
+  const { server, box, clock, relay, settle } = setup({ lagMs: 50, onSize: (size) => sizes.push(`${size.width}x${size.height}`) });
+  const a = relay("a");
+  await until("the page", () => server.pages.length === 1);
+  await server.frame(1, true, 1920, 1080);
+  await until("a frame", () => a.frames().length === 1);
+  clock.advance(80);
+  await server.frame(2, true, 3840, 2160);
+  await settle(a);
+  assert.deepEqual(a.frames(), [1]);
+  assert.deepEqual(sizes, ["1920x1080"], "not the size of the frame it did not get");
   await a.relay.close();
   await box.close();
 });
