@@ -14,8 +14,29 @@
 // of asking for video: onFallback says why.
 
 import Keyboard from "@novnc/novnc/core/input/keyboard.js";
+import keysyms from "@novnc/novnc/core/input/keysymdef.js";
 import type { Kept } from "./kept.ts";
 import { MAX_RETRY_MS, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, isCommandKey, macBrowser, type Connection } from "./viewer.ts";
+
+/** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
+let named: Map<number, number> | null = null;
+
+/**
+ * A character's keysym as its Unicode one, 0x1000000 and the code point, for a Windows box: its stream types a
+ * character its keyboard layout lacks by the character itself, and knows none of X's own names for them.
+ */
+export function unicodeKeysym(keysym: number): number {
+  if (named === null) {
+    named = new Map();
+    // noVNC's table names characters up to katakana.
+    for (let codepoint = 0x100; codepoint <= 0x30ff; codepoint++) {
+      const own = keysyms.lookup(codepoint);
+      if (own !== (0x1000000 | codepoint)) named.set(own, codepoint);
+    }
+  }
+  const codepoint = named.get(keysym);
+  return codepoint === undefined ? keysym : 0x1000000 | codepoint;
+}
 
 /** How long a first connection may ask for video and get no frame before the viewer gives up, for RFB. */
 export const FIRST_FRAME_MS = 10_000;
@@ -579,7 +600,8 @@ export class SelkiesSession implements Kept {
 
   #key(keysym: number, down: boolean): void {
     if (!this.#mine) return;
-    const sent = macBrowser() && this.guestOs !== "macos" && isCommandKey(keysym) ? XK_CONTROL_L : keysym;
+    const key = macBrowser() && this.guestOs !== "macos" && isCommandKey(keysym) ? XK_CONTROL_L : keysym;
+    const sent = this.guestOs === "windows" ? unicodeKeysym(key) : key;
     if (down) this.#held.add(sent);
     else this.#held.delete(sent);
     this.#send(`${down ? "kd" : "ku"},${sent}`);

@@ -337,7 +337,7 @@ static class Input {
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
 
   const int MOUSE_MOVE = 1, LEFT_DOWN = 2, LEFT_UP = 4, RIGHT_DOWN = 8, RIGHT_UP = 0x10, MIDDLE_DOWN = 0x20, MIDDLE_UP = 0x40, WHEEL = 0x800, VIRTUALDESK = 0x4000, ABSOLUTE = 0x8000;
-  const int KEY_UP = 2, EXTENDED = 1;
+  const int KEY_UP = 2, EXTENDED = 1, UNICODE = 4;
 
   /** Virtual keys of keys that type no character, by X keysym. */
   static readonly Dictionary<int, ushort> SPECIAL = new Dictionary<int, ushort> {
@@ -350,9 +350,16 @@ static class Input {
   static readonly HashSet<ushort> EXTENDED_KEYS = new HashSet<ushort> { 0x2E, 0x2D, 0x24, 0x25, 0x26, 0x27, 0x28, 0x21, 0x22, 0x23, 0xA3, 0xA5, 0x5B, 0x5C, 0x5D, 0x2C, 0x90 };
 
   static readonly HashSet<ushort> held = new HashSet<ushort>();
+  /** Keysyms whose key went down as the character itself, so it goes up so too. */
+  static readonly HashSet<int> typed = new HashSet<int>();
   static int mask;
   /** Frame pixels per virtual-screen pixel, should the frame differ from the screen. */
   public static double ScaleX = 1, ScaleY = 1;
+
+  /** The character a keysym types, or -1 for a key that types none. */
+  static int Character(int keysym) {
+    return keysym >= 0x1000000 ? keysym - 0x1000000 : keysym >= 0x20 && keysym <= 0xff ? keysym : -1;
+  }
 
   static ushort? VirtualKey(int keysym) {
     if (keysym >= 0xffbe && keysym <= 0xffc9) return (ushort)(0x70 + keysym - 0xffbe);
@@ -363,6 +370,41 @@ static class Input {
     short scan = VkKeyScanW((char)code);
     if (scan == -1) return null;
     return (ushort)(scan & 0xff);
+  }
+
+  static bool Holds(ushort left, ushort right) {
+    return held.Contains(left) || held.Contains(right);
+  }
+
+  /**
+   * Whether a character goes in as itself rather than as its key: one the box's
+   * layout has no key for, such as é on a US one, or one whose key needs a
+   * Shift, Ctrl or Alt the page does not hold, as for ! from a French
+   * keyboard, which the key alone would type as 1. Never while Ctrl, Alt or
+   * Windows is held, so a shortcut stays keys, nor for Space, so Shift+Space
+   * does too.
+   */
+  static bool AsCharacter(int keysym) {
+    int code = Character(keysym);
+    if (code <= 0x20) return false;
+    if (Holds(0xA2, 0xA3) || Holds(0xA4, 0xA5) || Holds(0x5B, 0x5C)) return false;
+    if (code > 0xffff) return true;
+    short scan = VkKeyScanW((char)code);
+    if (scan == -1) return true;
+    int state = (scan >> 8) & 0xff;
+    return (state & 6) != 0 || ((state & 1) != 0) != Holds(0xA0, 0xA1);
+  }
+
+  /** A character as a key event of its own, VK_PACKET, in UTF-16 code units as Windows takes it. */
+  static void CharacterEvent(int code, bool down) {
+    if (code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return;
+    string text = char.ConvertFromUtf32(code);
+    foreach (char unit in text) {
+      INPUT input = new INPUT { type = 1 };
+      input.ki.wScan = unit;
+      input.ki.dwFlags = UNICODE | (down ? 0 : KEY_UP);
+      Send(input);
+    }
   }
 
   static void Send(INPUT input) {
@@ -379,6 +421,11 @@ static class Input {
   }
 
   public static void Key(int keysym, bool down) {
+    if (down ? AsCharacter(keysym) : typed.Contains(keysym)) {
+      if (down) typed.Add(keysym); else typed.Remove(keysym);
+      CharacterEvent(Character(keysym), down);
+      return;
+    }
     ushort? vk = VirtualKey(keysym);
     if (vk == null) return;
     if (down) held.Add(vk.Value); else held.Remove(vk.Value);
@@ -388,6 +435,8 @@ static class Input {
   public static void ReleaseKeys() {
     foreach (ushort vk in held) KeyEvent(vk, false);
     held.Clear();
+    foreach (int keysym in typed) CharacterEvent(Character(keysym), false);
+    typed.Clear();
   }
 
   // Selkies' mask: 1 primary, 2 middle, 4 secondary.

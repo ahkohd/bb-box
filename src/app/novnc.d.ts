@@ -58,6 +58,11 @@ declare module "@novnc/novnc" {
   }
 }
 
+declare module "@novnc/novnc/core/input/keysymdef.js" {
+  const keysyms: { lookup(codepoint: number): number };
+  export default keysyms;
+}
+
 declare module "@novnc/novnc/core/input/keyboard.js" {
   export default class Keyboard {
     constructor(target: HTMLElement);
