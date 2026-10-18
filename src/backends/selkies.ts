@@ -14,13 +14,15 @@ export const SELKIES_PORT = 5980;
 export const SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies" };
 
 /**
- * The display a Wayland desktop kind lists after its RFB one (060), shown by
- * choice: VNC stays the default until video on Sway is measured through BB.
- * It says no way to leave the cursor out: Sway paints the pointer into each
- * frame, as for wayvnc, and the hidden cursor theme takes it out while a
- * person holds control (#707). Selkies on Sway sends the browser an arrow.
+ * The display a Wayland desktop kind lists after its RFB one (060), which the
+ * viewer opens by default, as on X11: through BB it followed a drag 13 ms
+ * closer on a LAN and 25 ms on a slow link than wayvnc, with no tearing and a
+ * sixth of the bandwidth (measured 18 October 2026). It says no way to leave
+ * the cursor out: Sway paints the pointer into each frame, as for wayvnc, and
+ * the hidden cursor theme takes it out while a person holds control (#707).
+ * Selkies on Sway sends the browser an arrow.
  */
-export const WAYLAND_SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "selkies", resizable: true, byChoice: true };
+export const WAYLAND_SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "selkies", resizable: true };
 
 /** Where a Wayland image runs Selkies from: an image built before it has none (060). */
 export const SELKIES_LAUNCHER = "/usr/local/libexec/bb-box/selkies";
