@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { toConfiguration } from "../scripts/smoke.ts";
 import { daemonOs, containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
@@ -161,7 +161,7 @@ test("offers kinds by image, and its offers agree with Proxmox LXC's", async () 
   assert.deepEqual(dockerKinds(dockerConfig({ privileged: false, "gpu-desktops": true })).map((kind) => kind.capabilities.features), [[], [], [], []]);
   assert.deepEqual(dockerKinds(dockerConfig(), true).map((kind) => kind.capabilities.features), [[], [], []]);
   // wayvnc sends no still area again, so the Wayland desktop's viewer asks for it; Xtigervnc does, and Selkies is no RFB (056).
-  assert.deepEqual(kinds.map((kind) => kind.capabilities.displays.map((display) => display.refresh ?? null)), [[], [null, null], [null], ["viewer"]]);
+  assert.deepEqual(kinds.map((kind) => kind.capabilities.displays.map((display) => display.refresh ?? null)), [[], [null, null], [null], ["viewer", null]]);
   for (const kind of kinds) {
     assert.equal(kind.capabilities.arch, "x86_64");
     assert.equal(kind.capabilities.command?.transport, "docker");
@@ -1031,8 +1031,9 @@ test("streams the desktop through socat under docker exec, with the box's VNC pa
 test("streams the Wayland desktop with Apple's sign-in, as wayvnc asks, and resizes it with its display script (048)", async () => {
   const { fake, backend } = setup();
   const box = await backend.acquire(identity("linux-desktop-wayland-cpu", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, hooks().hooks, signal());
-  const [display] = (await backend.transports(box, "linux-desktop-wayland-cpu")).displays;
+  const [display, ...others] = (await backend.transports(box, "linux-desktop-wayland-cpu")).displays;
   assert.deepEqual(display?.minSize, { width: 800, height: 600 });
+  assert.equal(others.length, 0, "an image without Selkies has no video (060)");
   const container = join(fake.root, "containers", box.ref);
   mkdirSync(join(container, "var-lib", "bb-box"), { recursive: true });
   writeFileSync(join(container, "var-lib", "bb-box", "vnc-password"), "s3cr3t\n");
@@ -1047,6 +1048,15 @@ test("streams the Wayland desktop with Apple's sign-in, as wayvnc asks, and resi
   await assert.rejects(display!.resize!({ width: 40000, height: 800 }, signal()), { message: "Sway could not set the desktop to 40000x800: Sway refused 40000x800." });
   await assert.rejects(display!.resize!({ width: 1280.5, height: 800 }, signal()), /cannot be 1280\.5 by 800 pixels/);
   assert.equal(readFileSync(join(container, "display.log"), "utf8"), "resize 1280x800\nresize 40000x800\n");
+
+  // A box of an image with Selkies has video too, by choice (060).
+  const video = await backend.acquire(identity("linux-desktop-wayland-cpu", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, hooks().hooks, signal());
+  const launcher = join(fake.root, "containers", video.ref, "libexec", "bb-box", "selkies");
+  mkdirSync(dirname(launcher), { recursive: true });
+  writeFileSync(launcher, "#!/bin/sh\n");
+  chmodSync(launcher, 0o755);
+  const shown = (await backend.transports(video, "linux-desktop-wayland-cpu")).displays;
+  assert.deepEqual(shown.map((each) => [each.protocol, each.label, each.cursor ?? null]), [["rfb", "Desktop", null], ["selkies", "Desktop, as video", null]]);
 });
 
 test("a box that changes hands keeps its new owner and name for the sweep, though its labels cannot change (036)", async () => {

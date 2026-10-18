@@ -18,7 +18,7 @@ import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases, removeStaleApp, setAsideOtherMachines } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
-import { FOLLOW_FRAME_MS } from "../src/plugin/desktop.ts";
+import { FOLLOW_FRAME_MS, sharpOffered } from "../src/plugin/desktop.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
@@ -3187,6 +3187,13 @@ test("a Wayland desktop's pointer leaves the picture while a person holds contro
   await until("the pointer back, as the agent has control again", async () => pointers.at(-1) === true);
   assert.deepEqual([pointers[0], pointers.includes(false), pointers.at(-1)], [true, true, true]);
   await one.close();
+});
+
+test("High resolution is offered for an X11 desktop with video, not a Wayland one, which has video too: the owner has it on hold (060)", () => {
+  const box = (kind: string) =>
+    ({ kind, capabilities: { os: "linux", gpu: false, displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { id: "selkies", protocol: "selkies", resizable: true }] } }) as unknown as BoxRecord;
+  assert.equal(sharpOffered(box("linux-desktop-cpu")), true);
+  assert.equal(sharpOffered(box("linux-desktop-wayland-cpu")), false);
 });
 
 test("a Wayland desktop's pointer script switches Sway's and GTK's cursor theme to the hidden one, or back, with the session bus whatever the caller's environment, and keeps wayvnc's input devices on the seat (#707)", () => {

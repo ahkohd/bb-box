@@ -15,6 +15,7 @@ import { clipboardCommands } from "../core/in-box.ts";
 import { RfbRelay, desktopSize, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Screen } from "../core/rfb.ts";
 import { SelkiesBox, SelkiesRelay, type OpenStream } from "../core/selkies.ts";
+import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { scaleScript } from "../backends/windows.ts";
 import { openRoute } from "../transports/route.ts";
 import type { Display } from "../transports/types.ts";
@@ -76,11 +77,13 @@ interface SharpKept {
 
 /**
  * Whether a box's desktop can be High resolution: a Linux X11 desktop drawn by the CPU, which Selkies streams, or a
- * Windows desktop streamed as video, at 200% (the owner's note of 18 October 2026).
+ * Windows desktop streamed as video, at 200% (the owner's note of 18 October 2026). Not a Wayland desktop, which has
+ * video too: the owner has it on hold (#707).
  */
 export function sharpOffered(box: BoxRecord): boolean {
   const video = box.capabilities.displays.some((each) => each.protocol === "selkies");
-  return video && ((box.capabilities.os === "linux" && !box.capabilities.gpu) || box.capabilities.os === "windows");
+  const x11 = kindInfo(currentKindId(box.kind)).windowing === "x11";
+  return video && ((box.capabilities.os === "linux" && !box.capabilities.gpu && x11) || box.capabilities.os === "windows");
 }
 
 /** `size` times `factor`, within High resolution's largest and at least 640x480. */
