@@ -25,7 +25,8 @@
 // Cisco's OpenH264, which the image downloads from Cisco, encodes them for
 // screen content in real time; when the screen stops changing, the last frame
 // is encoded twice more, which sharpens it. SendInput posts the input, and the
-// clipboard goes both ways.
+// clipboard goes both ways: text, and images as PNG, a pasted one put on the
+// clipboard as the very bytes it came as, never encoded again.
 //
 // C# 5, for the compiler in .NET Framework 4.8, which every Windows 11 has:
 //   csc /optimize /unsafe /platform:x64 /r:System.Drawing.dll /r:System.Windows.Forms.dll bb-box-stream.cs
@@ -52,6 +53,10 @@ static class Program {
   public const int BEHIND_BYTES = 16 << 20;
   /** How long the screen is still before the last frame is encoded again, to sharpen it. */
   public const int STILL_MS = 300;
+  /** The largest clipboard content either way, as the panel's video client takes: 64 MiB. */
+  public const int CLIPBOARD_MAX_BYTES = 64 << 20;
+  /** A copied image's bytes a message, in parts above it (Selkies' clipboard_start, clipboard_data, clipboard_finish). */
+  public const int CLIPBOARD_CHUNK = 192 << 10;
   /** How long the server stays up with no client. */
   public const int IDLE_EXIT_MS = 60000;
 
@@ -813,6 +818,8 @@ class Server {
   ushort frameId;
   Thread capturing;
   readonly Dictionary<string, MemoryStream> clipboardParts = new Dictionary<string, MemoryStream>();
+  /** Each binary paste's MIME type, by its transfer ID, as cbs gives it. */
+  readonly Dictionary<string, string> binaryTypes = new Dictionary<string, string>();
   ClipboardThread clipboard;
 
   static Mutex one;
@@ -822,7 +829,7 @@ class Server {
     bool first;
     one = new Mutex(true, "Global\\" + Program.PIPE, out first);
     if (!first) { Program.Log("another server is running"); return 0; }
-    clipboard = new ClipboardThread(text => Broadcast("clipboard," + Convert.ToBase64String(Encoding.UTF8.GetBytes(text))));
+    clipboard = new ClipboardThread(text => Broadcast("clipboard," + Convert.ToBase64String(Encoding.UTF8.GetBytes(text))), BroadcastImage);
     Program.Log("serving on \\\\.\\pipe\\" + Program.PIPE);
     // The pointer's shape, to the clients, when it changes: the panel shows it on the browser's own pointer while its person holds control.
     new Thread(() => {
@@ -889,6 +896,19 @@ class Server {
     foreach (Client client in all) client.Text(text);
   }
 
+  /** An image copied in the box, to the clients: in one message, or in parts as Selkies sends a large one. */
+  void BroadcastImage(string mime, byte[] data) {
+    if (data.Length <= Program.CLIPBOARD_CHUNK) {
+      Broadcast("clipboard_binary," + mime + "," + Convert.ToBase64String(data));
+      return;
+    }
+    Broadcast("clipboard_start," + mime + "," + data.Length);
+    for (int at = 0; at < data.Length; at += Program.CLIPBOARD_CHUNK) {
+      Broadcast("clipboard_data," + Convert.ToBase64String(data, at, Math.Min(Program.CLIPBOARD_CHUNK, data.Length - at)));
+    }
+    Broadcast("clipboard_finish");
+  }
+
   static int Field(string[] fields, int index) {
     int value;
     return index < fields.Length && int.TryParse(fields[index], out value) ? value : 0;
@@ -911,6 +931,8 @@ class Server {
         keyAsked = true;
         break;
       case "kd": case "ku":
+        // A paste's chord follows its content at once: the keys wait until it is on the clipboard, up to 5 s.
+        clipboard.WaitPasted(5000);
         Input.Key(Field(fields, 1), verb == "kd");
         break;
       case "kr":
@@ -939,6 +961,31 @@ class Server {
       case "cwe":
         if (fields.Length > 1) { MemoryStream part = null; lock (clipboardParts) if (clipboardParts.TryGetValue(fields[1], out part)) clipboardParts.Remove(fields[1]); if (part != null) Paste(part.ToArray()); }
         break;
+      // An image, or other binary content, from the viewer: cb,<mime>,<base64>, or cbs,<id>,<mime>,<size>, cbd,<id>,<base64>
+      // and cbe,<id> in parts, as the panel's video client sends a paste.
+      case "cb":
+        if (fields.Length > 2) PasteBinary(fields[1], Convert.FromBase64String(fields[2]));
+        break;
+      case "cbs":
+        if (fields.Length > 3 && Field(fields, 3) >= 0 && Field(fields, 3) <= Program.CLIPBOARD_MAX_BYTES) lock (clipboardParts) { clipboardParts[fields[1]] = new MemoryStream(); binaryTypes[fields[1]] = fields[2]; }
+        break;
+      case "cbd":
+        if (fields.Length > 2) lock (clipboardParts) {
+          MemoryStream part;
+          if (clipboardParts.TryGetValue(fields[1], out part)) {
+            byte[] data = Convert.FromBase64String(fields[2]);
+            if (part.Length + data.Length > Program.CLIPBOARD_MAX_BYTES) { clipboardParts.Remove(fields[1]); binaryTypes.Remove(fields[1]); }
+            else part.Write(data, 0, data.Length);
+          }
+        }
+        break;
+      case "cbe":
+        if (fields.Length > 1) {
+          MemoryStream part = null; string mime = null;
+          lock (clipboardParts) if (clipboardParts.TryGetValue(fields[1], out part)) { clipboardParts.Remove(fields[1]); binaryTypes.TryGetValue(fields[1], out mime); binaryTypes.Remove(fields[1]); }
+          if (part != null && mime != null) PasteBinary(mime, part.ToArray());
+        }
+        break;
       default:
         // SETTINGS, CLIENT_FRAME_ACK, a resize and the rest: the desktop keeps its own size and colour.
         break;
@@ -946,6 +993,10 @@ class Server {
   }
 
   void Paste(byte[] data) { clipboard.Set(Encoding.UTF8.GetString(data)); }
+
+  void PasteBinary(string mime, byte[] data) {
+    if (mime.StartsWith("image/") && data.Length <= Program.CLIPBOARD_MAX_BYTES) clipboard.SetImage(mime, data);
+  }
 
   bool AnyWantsVideo() { lock (gate) foreach (Client c in clients.Values) if (c.WantsVideo) return true; return false; }
 
@@ -1047,39 +1098,114 @@ class Server {
   }
 }
 
-/** The clipboard, on a thread of its own in a single-threaded apartment, as it needs: changes out, pastes in. */
+/**
+ * The clipboard, on a thread of its own in a single-threaded apartment, as it needs: changes out, pastes in. Text both
+ * ways; images both ways as PNG. A pasted PNG goes on the clipboard as the very bytes it came as, under Windows' PNG
+ * format, which browsers and Office read, and as a bitmap (CF_DIB) for apps that read only that, its pixels as they
+ * were: never encoded again, as a paste must be exact. A copied image goes out as the PNG an app put on the clipboard,
+ * or, where it put only a bitmap, as that bitmap encoded to PNG, which loses nothing.
+ */
 class ClipboardThread {
   [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
   readonly Action<string> changed;
-  readonly Queue<string> pastes = new Queue<string>();
+  readonly Action<string, byte[]> changedImage;
+  readonly Queue<Action> pastes = new Queue<Action>();
+  readonly AutoResetEvent wake = new AutoResetEvent(false);
+  /** Set while no paste waits to go on the clipboard. */
+  readonly ManualResetEvent pasted = new ManualResetEvent(true);
   uint seen;
 
-  public ClipboardThread(Action<string> changed) {
+  public ClipboardThread(Action<string> changed, Action<string, byte[]> changedImage) {
     this.changed = changed;
+    this.changedImage = changedImage;
     Thread thread = new Thread(Loop) { IsBackground = true };
     thread.SetApartmentState(ApartmentState.STA);
     thread.Start();
   }
 
-  public void Set(string text) { lock (pastes) pastes.Enqueue(text); }
+  public void Set(string text) { Queue(() => System.Windows.Forms.Clipboard.SetText(text.Length > 0 ? text : " ")); }
+
+  public void SetImage(string mime, byte[] data) {
+    Queue(() => {
+      System.Windows.Forms.DataObject content = new System.Windows.Forms.DataObject();
+      // The bytes as they came, under the format Windows apps know them by.
+      string format = mime == "image/png" ? "PNG" : mime == "image/jpeg" ? "JFIF" : mime == "image/gif" ? "GIF" : mime;
+      content.SetData(format, false, new MemoryStream(data));
+      // And the picture as a bitmap, where .NET can read it, for apps that take only that.
+      try {
+        using (MemoryStream read = new MemoryStream(data))
+        using (Image image = Image.FromStream(read)) content.SetData(System.Windows.Forms.DataFormats.Dib, false, Dib(image));
+      } catch (Exception error) { Program.Log("a pasted " + mime + " went on the clipboard as it came only: " + error.Message); }
+      System.Windows.Forms.Clipboard.SetDataObject(content, true);
+    });
+  }
+
+  /** Waits until any paste the viewer sent is on the clipboard, up to `ms`, so its chord pastes it. */
+  public void WaitPasted(int ms) { pasted.WaitOne(ms); }
+
+  void Queue(Action paste) {
+    lock (pastes) { pastes.Enqueue(paste); pasted.Reset(); }
+    wake.Set();
+  }
+
+  /** A packed device-independent bitmap of `image`, 32 bits a pixel, as CF_DIB has it: its header, then its rows, bottom up. */
+  static MemoryStream Dib(Image image) {
+    using (Bitmap bitmap = new Bitmap(image.Width, image.Height, PixelFormat.Format32bppArgb)) {
+      using (Graphics graphics = Graphics.FromImage(bitmap)) graphics.DrawImage(image, 0, 0, image.Width, image.Height);
+      BitmapData bits = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+      try {
+        MemoryStream dib = new MemoryStream();
+        BinaryWriter writer = new BinaryWriter(dib);
+        writer.Write(40); writer.Write(bitmap.Width); writer.Write(bitmap.Height); writer.Write((short)1); writer.Write((short)32);
+        writer.Write(0); writer.Write(bitmap.Width * 4 * bitmap.Height); writer.Write(0); writer.Write(0); writer.Write(0); writer.Write(0);
+        byte[] row = new byte[bitmap.Width * 4];
+        for (int y = bitmap.Height - 1; y >= 0; y--) {
+          Marshal.Copy(IntPtr.Add(bits.Scan0, y * bits.Stride), row, 0, row.Length);
+          writer.Write(row);
+        }
+        writer.Flush();
+        dib.Position = 0;
+        return dib;
+      } finally { bitmap.UnlockBits(bits); }
+    }
+  }
+
+  /** The image on the clipboard as PNG: the bytes an app put there as PNG, or its bitmap encoded to PNG; null for none. */
+  static byte[] CopiedPng() {
+    System.Windows.Forms.IDataObject content = System.Windows.Forms.Clipboard.GetDataObject();
+    if (content == null) return null;
+    MemoryStream png = content.GetDataPresent("PNG") ? content.GetData("PNG") as MemoryStream : null;
+    if (png != null) return png.ToArray();
+    if (!System.Windows.Forms.Clipboard.ContainsImage()) return null;
+    using (Image image = System.Windows.Forms.Clipboard.GetImage()) {
+      if (image == null) return null;
+      using (MemoryStream encoded = new MemoryStream()) { image.Save(encoded, ImageFormat.Png); return encoded.ToArray(); }
+    }
+  }
 
   void Loop() {
     seen = GetClipboardSequenceNumber();
     while (true) {
-      Thread.Sleep(250);
+      wake.WaitOne(250);
       try {
-        string paste = null;
+        Action paste = null;
         lock (pastes) if (pastes.Count > 0) paste = pastes.Dequeue();
         if (paste != null) {
-          System.Windows.Forms.Clipboard.SetText(paste.Length > 0 ? paste : " ");
+          try { paste(); } catch (Exception error) { Program.Log("could not paste: " + error.Message); }
           seen = GetClipboardSequenceNumber();
+          lock (pastes) if (pastes.Count == 0) pasted.Set(); else wake.Set();
           continue;
         }
         uint now = GetClipboardSequenceNumber();
         if (now == seen) continue;
         seen = now;
-        if (System.Windows.Forms.Clipboard.ContainsText()) changed(System.Windows.Forms.Clipboard.GetText());
-      } catch (Exception) { }
+        // Text where there is text, as an app that copies a table puts its picture there too; else an image.
+        if (System.Windows.Forms.Clipboard.ContainsText()) { changed(System.Windows.Forms.Clipboard.GetText()); continue; }
+        byte[] image = CopiedPng();
+        if (image == null) continue;
+        if (image.Length > Program.CLIPBOARD_MAX_BYTES) { Program.Log("a copied image of " + image.Length + " bytes is more than the viewer takes"); continue; }
+        changedImage("image/png", image);
+      } catch (Exception error) { Program.Log("clipboard: " + error.Message); }
     }
   }
 }
