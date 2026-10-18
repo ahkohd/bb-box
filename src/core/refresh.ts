@@ -193,9 +193,108 @@ export function windowsRecord(current: ImageBuild, pins: readonly WindowsPin[], 
   };
 }
 
-/** The script that runs refresh.ps1 in a Windows box, from the files the refresh put there. */
-export function windowsRefreshScript(): string {
-  return `& '${WINDOWS_DIR}\\refresh.ps1' -Pins '${WINDOWS_DIR}\\pins.json' -Record '${WINDOWS_DIR}\\image.json'; exit $LASTEXITCODE`;
+/**
+ * Starts refresh.ps1 detached from SSH (#707), with Start-Detached, so a
+ * link that drops does not end it: its output goes to refresh.log and its
+ * exit code to refresh.exit. Prints the PowerShell's process ID and start
+ * time, which tell it from a process of the same ID after a restart.
+ */
+export function windowsStartScript(): string {
+  const command = `& '${WINDOWS_DIR}\\refresh.ps1' -Pins '${WINDOWS_DIR}\\pins.json' -Record '${WINDOWS_DIR}\\image.json'; Set-Content -LiteralPath '${WINDOWS_DIR}\\refresh.exit' -Value $LASTEXITCODE`;
+  return [
+    `Remove-Item -LiteralPath '${WINDOWS_DIR}\\refresh.log', '${WINDOWS_DIR}\\refresh.exit' -Force -ErrorAction SilentlyContinue`,
+    `$id = Start-Detached -Command ${quotePs(command)} -Log '${WINDOWS_DIR}\\refresh.log'`,
+    `"pid=$id start=$((Get-Process -Id $id).StartTime.ToFileTimeUtc())"`,
+  ].join("\n");
+}
+
+/**
+ * What a detached refresh.ps1 has done since byte `offset` of its log:
+ * whether it runs, its exit code once it ended, the log's size, then up to
+ * `max` bytes from `offset` in base64. Whether it runs is read first, so a
+ * run that has ended has written its exit code by the time it is read.
+ */
+export function windowsFollowScript(run: { pid: number; start: string }, offset: number, max: number): string {
+  return [
+    `$f = '${WINDOWS_DIR}\\refresh.log'; $x = '${WINDOWS_DIR}\\refresh.exit'`,
+    `$p = Get-Process -Id ${run.pid} -ErrorAction SilentlyContinue`,
+    `$alive = [bool]($p -and $p.StartTime.ToFileTimeUtc() -eq ${run.start})`,
+    `$code = if (Test-Path -LiteralPath $x) { (Get-Content -LiteralPath $x -Raw).Trim() } else { '' }`,
+    `$size = if (Test-Path -LiteralPath $f) { (Get-Item -LiteralPath $f).Length } else { 0 }`,
+    `"@alive=$alive"; "@status=$code"; "@size=$size"; '@log'`,
+    `if ($size -gt ${offset}) { $s = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite, Delete'); try { [void]$s.Seek(${offset}, 'Begin'); $b = New-Object byte[] ([Math]::Min($size - ${offset}, ${max})); $n = $s.Read($b, 0, $b.Length); [Convert]::ToBase64String($b, 0, $n) } finally { $s.Close() } }`,
+  ].join("\n");
+}
+
+/** A Windows follow's answer. */
+export function parseWindowsFollow(text: string): { alive: boolean; status: number | null; size: number; bytes: Uint8Array } {
+  const at = text.indexOf("@log");
+  const head = at < 0 ? text : text.slice(0, at);
+  const status = /^@status=(-?\d+)\s*$/m.exec(head)?.[1];
+  return {
+    alive: /^@alive=True\s*$/m.test(head),
+    status: status === undefined ? null : Number(status),
+    size: Number(/^@size=(\d+)\s*$/m.exec(head)?.[1] ?? 0),
+    bytes: at < 0 ? new Uint8Array() : new Uint8Array(Buffer.from(text.slice(at + 4).replace(/\s+/g, ""), "base64")),
+  };
+}
+
+/** A string as a PowerShell literal. */
+function quotePs(text: string): string {
+  return `'${text.replaceAll("'", "''")}'`;
+}
+
+/** How much of refresh.ps1's log one look takes. */
+const WINDOWS_LOG_CHUNK = 256 * 1024;
+
+/**
+ * Runs refresh.ps1 detached in the box and follows its log until it ends,
+ * passing its lines on (#707). A look the link misses costs nothing; the
+ * box may be out of reach for the restart's timeout before the refresh
+ * counts as lost. Null when the run ended without an exit code, as when
+ * Windows restarted under it.
+ */
+async function followWindows(command: CommandTransport, timeoutMs: number, restart: WindowsRestart, signal: AbortSignal, say: (line: string) => void): Promise<{ exitCode: number | null; timedOut: boolean } | null> {
+  const started = await command.run(windowsStartScript(), { timeoutMs: 60_000, signal });
+  const ids = /pid=(\d+) start=(\d+)/.exec(started.stdout);
+  if (started.exitCode !== 0 || !ids) throw new Error(`refresh.ps1 did not start: ${started.stderr.trim() || started.stdout.trim() || `exit code ${started.exitCode}`}`);
+  const run = { pid: Number(ids[1]), start: ids[2]! };
+  const deadline = Date.now() + timeoutMs;
+  const decoder = new TextDecoder();
+  let rest = "";
+  let offset = 0;
+  let heard = Date.now();
+  const lines = (text: string) => {
+    const all = (rest + text).split(/\r?\n|\r/);
+    rest = all.pop() ?? "";
+    for (const line of all) if (line.trim()) say(line);
+  };
+  for (;;) {
+    signal.throwIfAborted();
+    let more = false;
+    try {
+      const looked = await command.run(windowsFollowScript(run, offset, WINDOWS_LOG_CHUNK), { timeoutMs: 30_000, signal });
+      if (looked.exitCode !== 0) throw new Error(`bb-box could not read refresh.ps1's log: ${looked.stderr.trim() || `exit code ${looked.exitCode}`}`);
+      heard = Date.now();
+      const seen = parseWindowsFollow(looked.stdout);
+      offset += seen.bytes.length;
+      lines(decoder.decode(seen.bytes, { stream: true }));
+      more = seen.bytes.length >= WINDOWS_LOG_CHUNK;
+      if (!more && (seen.status !== null || !seen.alive)) {
+        lines(decoder.decode());
+        if (rest.trim()) say(rest);
+        return seen.status === null ? null : { exitCode: seen.status, timedOut: false };
+      }
+    } catch (error) {
+      if (!(error instanceof TransportError) || error.code !== "unreachable") throw error;
+      if (Date.now() - heard > restart.timeoutMs) throw error;
+    }
+    if (Date.now() > deadline) {
+      await command.run(`taskkill /T /F /PID ${run.pid} *> $null`, { timeoutMs: 30_000, signal }).catch(() => undefined);
+      return { exitCode: null, timedOut: true };
+    }
+    if (!more) await sleep(restart.pollMs, undefined, { signal });
+  }
 }
 
 /** When a Windows box last started, as it says. */
@@ -386,14 +485,15 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       for (const [name, text] of files) await box.command.writeFile(`${WINDOWS_DIR}\\${name}`, new TextEncoder().encode(text), { signal });
       const restart = options.restart ?? { timeoutMs: 20 * 60_000, pollMs: 5_000 };
       for (let round = 1; ; round++) {
-        const built = await streamLines(box.command, windowsRefreshScript(), options.buildTimeoutMs ?? 3 * 60 * 60_000, signal, say).catch(async (error: unknown) => {
-          // The box went down under the round, as when Windows restarts by itself: wait for it, then the round runs again.
-          if (!(error instanceof TransportError) || error.code !== "unreachable" || round === WINDOWS_ROUNDS) throw error;
-          say(`the box stopped answering in round ${round}, as when Windows restarts by itself; waiting for it`);
+        // Detached, so a link that drops does not end the round (#707).
+        const built = await followWindows(box.command, options.buildTimeoutMs ?? 3 * 60 * 60_000, restart, signal, say);
+        if (built === null) {
+          // The run ended without an exit code, as when Windows restarts by itself: wait for the box, then the round runs again.
+          if (round === WINDOWS_ROUNDS) return end(false, null, `refresh.ps1 ended without an exit code in round ${round}, as when Windows restarts by itself.`);
+          say(`refresh.ps1 ended without an exit code in round ${round}, as when Windows restarts by itself; waiting for the box`);
           await steadyWindows(box.command, null, restart, say, signal);
-          return null;
-        });
-        if (built === null) continue;
+          continue;
+        }
         if (built.exitCode === 0) break;
         if (!restarts(built.exitCode)) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}`);
         if (round === WINDOWS_ROUNDS) return end(false, null, `Windows still wanted a restart after ${WINDOWS_ROUNDS} rounds of updates.`);
