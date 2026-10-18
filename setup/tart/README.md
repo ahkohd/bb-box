@@ -263,7 +263,7 @@ its boxes and takes no new ones. The backend's own fields:
 | `linux-desktop-image` | empty | The image of `linux-arm64-desktop-cpu` boxes, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
 | `windows-image` | empty | The image in `~/.bb-box/qemu/images` of `windows-arm64-desktop` boxes: the name `prepare-windows-image.sh` was given with `--name`, or its default. Empty, the default, turns them off |
 | `tart-windows-enrol` | on | Windows boxes join BB as machines, as the Proxmox QEMU backend's do. Off, they are boxes only |
-| `video` | off | macOS desktops are offered as video too, from bb-box-stream in the image (060). Off for now: in a VM, Chrome's small changes, such as a typed key, do not show until something else changes |
+| `video` | off | macOS desktops are offered as video too, from bb-box-stream in the image (060). Off by default: VNC is already smooth on a Tart Mac, at 52 to 55 frames a second. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31 |
 | `vm-user` | `admin` | The macOS images' user. Linux boxes work as `box` |
 | `vms-per-host` | 2 | At most 2 |
 | `reserve-memory-mib`, `reserve-disk-gib` | 16384, 50 | A new box is refused when the Mac would have less. With 16 GiB kept free, a 32 GiB Mac takes two 8 GiB boxes; lower it on a small Mac you do not use yourself |
