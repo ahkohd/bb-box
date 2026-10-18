@@ -91,6 +91,8 @@ t "viewer leaves at a resize" bash -c '
   [ "$got" = 1233x677 ] || { echo "a new viewer has $got"; ok=1; }
   resize_to "$before" >/dev/null || ok=1
   [ $ok = 0 ] && echo "a new viewer has $got, wayvnc runs on"; exit $ok'
+# Typing with a US keyboard (#707): Sway gives it a virtual keyboard, and text the layout lacks is left to paste.
+t "US keyboard for typing" sh -c 'printf "" | /usr/local/libexec/bb-box/type || { echo "no virtual keyboard"; exit 1; }; printf "\303\251" | /usr/local/libexec/bb-box/type; [ $? = 3 ] || { echo "typed a character the US layout lacks"; exit 1; }; echo "a virtual keyboard; non-ASCII left to paste"'
 # Selkies' video of Sway (060), patched to stream it at its own size.
 t "Selkies on 5980" sh -c 'for _ in $(seq 1 100); do code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5980/) && [ "$code" = 200 ] && break; sleep 0.1; done
   [ "$code" = 200 ] || { echo "no answer on 127.0.0.1:5980 (HTTP $code)"; exit 1; }

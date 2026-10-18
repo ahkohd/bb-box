@@ -506,5 +506,8 @@ an X server:
 - **No Xwayland and no `DISPLAY`**, so Cua Driver can see every window.
   X11-only apps, such as xterm, Java Swing, Wine and older Electron apps,
   need `linux-desktop-cpu`.
+- `/usr/local/libexec/bb-box/type`, built from `guest/files/bb-box-type.c`,
+  which types text with a virtual keyboard of a fixed US layout, for computer
+  use: wtype's keys lost characters in Chrome.
 - `wl-clipboard`, `grim`, `slurp` and `wtype` stand in for `xclip`, `scrot`
   and `xdotool`.
