@@ -102,7 +102,7 @@ import {
   type LxcFlavourConfig,
   type LxcTemplate,
 } from "./config.ts";
-import { restartWayvnc } from "../wayvnc.ts";
+import { restartWayvnc, waylandPointer } from "../wayvnc.ts";
 
 const WARM = "warm";
 const FILLING = "filling";
@@ -1087,7 +1087,7 @@ export class ProxmoxLxcBackend implements Backend {
                 };
               },
               ...(offer?.flavour === "desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
-              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal) } : {}),
+              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal), pointer: (shown: boolean, signal?: AbortSignal) => waylandPointer(command, shown, signal) } : {}),
               minSize: MIN_DESKTOP,
             },
     );

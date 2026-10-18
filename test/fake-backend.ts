@@ -229,6 +229,8 @@ export class FakeBackend implements Backend {
   readonly selkies = new FakeSelkies();
   /** Whether a box's video display leaves out the cursor its kind says, as a Windows image without the hardware cursor does. */
   cursorless = false;
+  /** When set, the VNC display takes its pointer out of the picture and puts it back, as Sway's does (#707), and each call is kept here. */
+  pointers: boolean[] | null = null;
   #selkiesPort: Promise<number> | null = null;
   /** Each size a display's resize was asked for, in order. */
   readonly resizes: DisplaySize[] = [];
@@ -438,6 +440,7 @@ export class FakeBackend implements Backend {
                 auth: this.#options.wayland ? { type: "apple", user: "box", password: "fakepass" } : { type: "vnc-password", password: "fakepass" },
               },
         ...(this.#options.resize === "backend" ? { resize: (size: DisplaySize) => this.#resize(size) } : {}),
+        ...(this.pointers && display.protocol === "rfb" ? { pointer: async (shown: boolean) => void this.pointers!.push(shown) } : {}),
         ...(this.#options.minSize ? { minSize: this.#options.minSize } : {}),
       }),
     );

@@ -23,6 +23,7 @@ import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { hostEntry } from "../src/host/entry.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
+import { waylandPointerScript } from "../src/backends/wayvnc.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { fakeDaemon, fakeFfmpeg, joined, tempDir } from "./helpers.ts";
@@ -3139,6 +3140,32 @@ for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_C
     await one.close();
   });
 }
+
+test("a Wayland desktop's pointer leaves the picture while a person holds control and comes back for the agent, as Sway paints it into each frame (#707)", async (t) => {
+  const { harness, box, world } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const pointers: boolean[] = [];
+  world.backend!.pointers = pointers;
+  const viewer = "viewer-one-0001";
+  const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await until("the pointer shown as a viewer connects, as the agent has control", async () => pointers.length === 1);
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  await until("the pointer out of the picture, with a person in control", async () => pointers.at(-1) === false);
+  await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
+  await until("the pointer back, as the agent has control again", async () => pointers.at(-1) === true);
+  assert.deepEqual([pointers[0], pointers.includes(false), pointers.at(-1)], [true, true, true]);
+  await one.close();
+});
+
+test("a Wayland desktop's pointer script switches Sway's and GTK's cursor theme to the hidden one, or back, with the session bus whatever the caller's environment (#707)", () => {
+  const hide = waylandPointerScript(false);
+  assert.match(hide, /swaymsg -s "\$SWAYSOCK" seat seat0 xcursor_theme bb-box-hidden >\/dev\/null \|\| exit 1/);
+  assert.match(hide, /gsettings set org\.gnome\.desktop\.interface cursor-theme bb-box-hidden/);
+  assert.match(hide, /DBUS_SESSION_BUS_ADDRESS="\$\{DBUS_SESSION_BUS_ADDRESS:-unix:path=\$XDG_RUNTIME_DIR\/bus\}"/);
+  const show = waylandPointerScript(true);
+  assert.match(show, /xcursor_theme default >/);
+  assert.match(show, /cursor-theme Adwaita$/);
+});
 
 test("a video desktop whose box's image cannot leave the cursor out is never told, whatever its kind says (060)", async (t) => {
   const kind: BoxKind = {

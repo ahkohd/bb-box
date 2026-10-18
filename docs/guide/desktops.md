@@ -73,6 +73,8 @@ On Windows, this needs a box made from a recent image, which keeps the pointer a
 
 Over VNC, a Windows box from a recent image shows no pointer in the picture at all, even while the agent moves it, so you cannot see where the agent points. While you hold control, your own pointer shows with the box's shape. To watch the agent's pointer, use video, which Windows desktops show by default.
 
+On a Linux desktop on Wayland, the box draws its pointer into the picture, which shows it as the agent moves it. While you hold control, the box leaves it out, so it does not trail behind your own. Your own pointer is then a plain arrow, whatever the box's shape: the Wayland desktop's VNC server does not send the box's pointer shape. This needs a Wayland box made from a recent image; on an older one, you see your own pointer and, a little behind it, the box's.
+
 ## High resolution
 
 On a high-resolution screen, such as a Mac's, a desktop's text can look soft: each of its pixels is stretched over several of yours. In the toolbar's menu, under **Display**, select **High resolution** to give the desktop twice the pixels, with everything on it drawn twice the size, so it looks the same size but its text is sharp. Point at its info icon to see what it costs. It is ticked while it is on, and stays on for that box until you turn it off, even after the box starts again.

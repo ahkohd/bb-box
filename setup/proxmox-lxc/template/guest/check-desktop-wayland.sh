@@ -36,6 +36,8 @@ if [ "$runtime" = docker ] && [ ! -e /dev/net/tun ]; then s "TUN device" "none f
 else t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'; fi
 if [ "$runtime" = systemd ]; then t "services" sh -c 'systemctl is-active bb-box-display bb-box-vnc | paste -sd " "'
 else s "services" "bb-box-start runs Sway and wayvnc, which the lines below check"; fi
+# The pointer leaves the picture while a person holds control, and comes back (#707).
+t "pointer hides and shows" sh -c 'test -e /usr/share/icons/bb-box-hidden/cursors/left_ptr || { echo "no hidden cursor theme"; exit 1; }; command -v gsettings >/dev/null || { echo "no gsettings"; exit 1; }; swaymsg -s "$SWAYSOCK" seat seat0 xcursor_theme bb-box-hidden >/dev/null && gsettings set org.gnome.desktop.interface cursor-theme bb-box-hidden && swaymsg -s "$SWAYSOCK" seat seat0 xcursor_theme default >/dev/null && gsettings set org.gnome.desktop.interface cursor-theme Adwaita && echo "hidden, then shown: $(gsettings get org.gnome.desktop.interface cursor-theme)"'
 t "display mode" sh -c 'echo "$(cat /run/bb-box/display-mode): $(cat /run/bb-box/display-reason)"'
 t "Sway and its output" sh -c 'swaymsg -r -t get_version | python3 -c "import json,sys; print(json.load(sys.stdin)[\"human_readable\"])" | tr "\n" " "; swaymsg -r -t get_outputs | python3 -c "import json,sys; o=json.load(sys.stdin)[0]; print(o[\"name\"], \"%dx%d\" % (o[\"rect\"][\"width\"], o[\"rect\"][\"height\"]))"'
 t "bar (Waybar)" sh -c 'pgrep -u "$(id -un)" -x waybar >/dev/null && echo waybar'
