@@ -348,8 +348,9 @@ export class SelkiesRelay {
     if ((message[0] === VIDEO || message[0] === JPEG) && message.byteLength >= 4) {
       const id = (message[2]! << 8) | message[3]!;
       const key = message[0] === VIDEO && (message[1]! & 15) === 1;
-      if (message[0] === VIDEO && message.byteLength >= 10) this.#sized((message[6]! << 8) | message[7]!, (message[8]! << 8) | message[9]!);
       if (!this.#pace(socket, id, key)) return;
+      // The size of a frame the viewer gets: one it does not get shows it nothing (the owner's note of 18 October 2026).
+      if (message[0] === VIDEO && message.byteLength >= 10) this.#sized((message[6]! << 8) | message[7]!, (message[8]! << 8) | message[9]!);
     }
     this.#options.viewer.send(message);
   }
@@ -369,6 +370,16 @@ export class SelkiesRelay {
    */
   #pace(socket: BoxWebSocket, id: number, key: boolean): boolean {
     const now = this.#options.box.clock.now();
+    // Selkies numbers a capture's frames from 0 again each time it starts one: a key frame that does not follow the last frame sent
+    // starts a new capture, which the frames the viewer has not acknowledged from the old one must not hold back for good.
+    if (key && this.#lastSent !== null) {
+      const step = ahead(this.#lastSent, id);
+      if (step === 0 || step >= 32768) {
+        this.#sent.clear();
+        this.#acked = null;
+        this.#behind = false;
+      }
+    }
     const oldest = this.#oldestUnacked();
     if (!this.#behind && oldest !== null && now - oldest > (this.#options.lagMs ?? LAG_MS)) this.#behind = true;
     if (this.#behind) {
