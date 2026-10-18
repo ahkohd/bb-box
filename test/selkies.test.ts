@@ -128,8 +128,9 @@ test("input reaches the box over the input connection only from the viewer with 
   assert.equal(server.pages.length, 3, "the input connection");
   const input = server.pages[2]!;
   assert.equal(input.role, "controller");
-  await until("the input", () => input.received.length === 4);
-  assert.deepEqual(input.received, ["STOP_VIDEO", "kd,120", "ku,120", "m,300,200,1,0"]);
+  await until("the input", () => input.received.length === 5);
+  // A SETTINGS that names the display only, so Selkies takes a cursor message on the connection at once.
+  assert.deepEqual(input.received, ['SETTINGS,{"displayId":"primary"}', "STOP_VIDEO", "kd,120", "ku,120", "m,300,200,1,0"]);
   // A frame to the input connection, as a new capture sends to every page: it asks for no video again.
   input.stopped = false;
   await input.send(videoFrame(9, true));
@@ -148,11 +149,11 @@ test("a viewer with control that goes lets go of what it holds down", async () =
   await a.relay.receive("m,50,60,1,0");
   await until("the input connection", () => server.pages.length === 2);
   const input = server.pages[1]!;
-  await until("the input", () => input.received.length === 4);
+  await until("the input", () => input.received.length === 5);
   assert.ok(a.relay.holding);
   await a.relay.close();
-  await until("the releases", () => input.received.length === 7);
-  assert.deepEqual(input.received.slice(4), ["ku,65507", "ku,99", "m,50,60,0,0"]);
+  await until("the releases", () => input.received.length === 8);
+  assert.deepEqual(input.received.slice(5), ["ku,65507", "ku,99", "m,50,60,0,0"]);
   await box.close();
 });
 

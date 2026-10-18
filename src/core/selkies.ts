@@ -165,6 +165,13 @@ export class SelkiesBox {
     this.#input ??= (async () => {
       const { socket, first } = await connect(this.#open, this.spacing, "", AbortSignal.timeout(20_000));
       if (first === null) throw new WebSocketError(`The box's Selkies closed the input connection${socket.closedWith ? ` (${socket.closedWith.code})` : ""}.`);
+      // Selkies ignores SET_NATIVE_CURSOR_RENDERING on a connection that has sent no SETTINGS yet, after waiting 15 s
+      // for them: so a viewer that connected while the agent held control saw no pointer in the video until control
+      // changed hands. A SETTINGS that names only the display keeps its size and lets the cursor message through. It
+      // starts a capture, so the STOP_VIDEO comes after it: before it, the capture ran with nobody watching, for about
+      // a fifth of a core on an idle box; after it, a watching page keeps its video without a restart (measured
+      // 18 October 2026).
+      await socket.send(`SETTINGS,${JSON.stringify({ displayId: "primary" })}`);
       await socket.send("STOP_VIDEO");
       // A stream server that started again draws its cursor, as by default: it is told again.
       if (this.#cursor !== null) await socket.send(this.#cursor);
