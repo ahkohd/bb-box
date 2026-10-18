@@ -29,6 +29,7 @@
 //
 // C# 5, for the compiler in .NET Framework 4.8, which every Windows 11 has:
 //   csc /optimize /unsafe /platform:x64 /r:System.Drawing.dll /r:System.Windows.Forms.dll bb-box-stream.cs
+// On arm64, AnyCPU with a manifest that lets it run natively (install-stream.ps1).
 
 using System;
 using System.Collections.Generic;
