@@ -20,7 +20,7 @@ import { namedImage, projectImage, withImage } from "../core/project-images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
-import { Computer, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
+import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { GENERAL_DEFAULTS, emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig } from "../core/document.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
@@ -657,7 +657,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (result.exitCode !== 0) throw new Error(`Naming the untitled windows failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
       return parseNamed(result.stdout);
     },
-    // Text on a Sway desktop goes in by paste, as typing loses characters (#707).
+    // Text on a Sway desktop goes in with the image's US keyboard, or by paste, as Cua's typing loses characters (#707).
+    async keyText(box, input, signal) {
+      if (box.capabilities.os !== "linux") return "unsupported";
+      const result = await boxes.runOwn(box, swayKeyboardScript(input.windowId, input.text), { timeoutMs: 120_000, signal, maxOutputBytes: 4096 });
+      if (result.exitCode === 3) return "unsupported";
+      if (result.exitCode !== 0) throw new Error(`Typing on the desktop failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+      return "typed";
+    },
     async stageText(box, input, signal) {
       if (box.capabilities.os !== "linux") return "unsupported";
       const result = await boxes.runOwn(box, swayStageScript(input.windowId, input.text), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
