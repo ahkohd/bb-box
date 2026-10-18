@@ -2613,6 +2613,10 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   const follow = (width: number, height: number) =>
     `SETTINGS,${JSON.stringify({ displayId: "primary", manual_resolution: true, manual_width: width, manual_height: height, force_aligned_resolution: false })}`;
   await until("the video following the size", async () => input.received.includes(follow(1024, 768)));
+  // Asking for video and stopping it first, so Selkies moves its capture to the size rather than stopping it, even after the
+  // pages' video stopped and started again, as for a restart or a hidden tab.
+  const told = input.received.indexOf(follow(1024, 768));
+  assert.deepEqual(input.received.slice(told - 2, told), ["START_VIDEO", "STOP_VIDEO"]);
   // Selkies shows the size it was told, here at once, as it does with no person in control.
   await selkies.frame(2, true, 1024, 768);
   // A width of a multiple of 8 and an even height, which Selkies keeps as they are.
