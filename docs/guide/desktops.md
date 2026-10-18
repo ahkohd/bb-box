@@ -61,7 +61,7 @@ Such a desktop opens as video. To see it over VNC instead, select **Show as VNC*
 
 A macOS desktop on a Tart Mac opens over VNC instead, as VNC is already smooth there, with **Show as VNC** ticked. Select it to see the desktop as video, which uses much less bandwidth, though a key shows a little later. Your choice lasts in the same way. The Tart backend's **Video by default for macOS desktops** setting makes such desktops open as video.
 
-A Linux desktop on Wayland opens over VNC too, with **Show as VNC** ticked. Select it to see the desktop as video, which follows a drag more closely, does not tear while you scroll, and uses about a seventh of the bandwidth while scrolling, though a key shows a little later. This needs a Wayland box made from a recent image; on an older one, the video does not start and the desktop stays on VNC. High resolution is not offered on Wayland.
+A Linux desktop on Wayland opens as video too, which follows a drag more closely than VNC, does not tear while you scroll, and uses about a sixth of the bandwidth, though a key on its own shows a little later. This needs a Wayland box made from a recent image; an older one shows over VNC. High resolution is not offered on Wayland.
 
 If the video cannot start, the desktop shows over VNC, and a notification says 'Video did not start, so this shows VNC.', with why under it: for example, the box was made before video came, or your browser cannot decode video, which needs a secure connection to BB.
 

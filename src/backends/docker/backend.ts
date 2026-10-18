@@ -364,7 +364,7 @@ function kindTable(docker: string[], gpuDocker: boolean): Record<DockerKind, Box
         features: docker,
         command: DOCKER_COMMAND,
         // wayvnc refuses a viewer's resize, so transports() gives this display
-        // a resize that runs the display script's (048). Video by choice, from
+        // a resize that runs the display script's (048). Video by default, from
         // Selkies on Sway, where the box's image has it (060).
         displays: [{ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" }, WAYLAND_SELKIES_DISPLAY],
         computerUse: CUA_DRIVER,
