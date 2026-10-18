@@ -211,7 +211,8 @@ if grep -q '"bb-box-stream"' /usr/local/share/bb-box/image.json 2>/dev/null; the
 fi
 if grep -q '"chrome"' /usr/local/share/bb-box/image.json 2>/dev/null; then
   t chrome "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
-  t "chrome policies" test -s "/Library/Managed Preferences/com.google.Chrome.plist"
+  t "chrome policies, as Chrome applies them" sh -c 'node /usr/local/libexec/bb-box/chrome-policies.mjs | grep -x "DefaultBrowserSettingEnabled false .* OK"'
+  t "chrome past its first run" test -e "$HOME/Library/Application Support/Google/Chrome/First Run"
 fi
 if grep -q '"xcode"' /usr/local/share/bb-box/image.json 2>/dev/null; then
   t xcode xcodebuild -version

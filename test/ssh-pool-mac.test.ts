@@ -709,7 +709,12 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.endsWith("/googlechrome.dmg")).length, 2, "Chrome is downloaded each time, and kept when as new");
   assert.equal(count(mac, "ditto "), 1, "and copied in once");
   assert.ok(existsSync(join(mac.root, "Applications/Google Chrome.app/Contents/Info.plist")));
-  assert.match(mac.file("/Library/Managed Preferences/com.google.Chrome.plist")!, /<key>DefaultBrowserSettingEnabled<\/key><false\/>/);
+  // Its policies where macOS keeps them without device management, and box users' profiles past its first run.
+  assert.ok(mac.calls().some((line) => /^defaults write \S*\/Library\/Preferences\/com\.google\.Chrome DefaultBrowserSettingEnabled -bool false$/.test(line)), "the default-browser prompt off");
+  assert.equal(existsSync(join(mac.root, "Library/Managed Preferences/com.google.Chrome.plist")), false, "nothing where macOS empties it at boot");
+  assert.equal(mac.file("/usr/local/share/bb-box/home/Library/Application Support/Google/Chrome/First Run"), "");
+  assert.equal(mac.file("/usr/local/share/bb-box/home/Library/Application Support/Google/Chrome/Local State"), '{"browser":{"last_whats_new_version":9999}}\n');
+  assert.match(mac.file("/usr/local/libexec/bb-box/chrome-policies.mjs")!, /chrome:\/\/policy/, "the reader the image's check runs");
   for (const file of ["/claude", "codex-aarch64-apple-darwin.tar.gz", "pi-darwin-arm64.tar.gz"]) {
     assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.endsWith(file)).length, 1, `${file} is downloaded once`);
   }

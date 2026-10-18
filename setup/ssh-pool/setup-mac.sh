@@ -17,8 +17,9 @@
 #   then Git, GitHub CLI and Node.js with it, and Cua Driver
 # - installs BlackHole 2ch, the box's audio input (#631)
 # - installs Google Chrome from Google's stable download, its signature
-#   checked, with the Linux images' policies against first-run prompts
-#   (mac-chrome.sh, which Tart's image shares)
+#   checked, with the Linux images' policies against its prompts, and box
+#   users' profiles past its first run (mac-chrome.sh, which Tart's image
+#   shares)
 # - installs the agent CLIs BB runs threads with, Claude Code, Codex and Pi,
 #   pinned as the Linux images pin them (#561)
 # - builds bb-box-stream, each box's desktop as video (060), with swiftc
@@ -195,7 +196,8 @@ ln -sf "$CUA_APP/Contents/MacOS/cua-driver" "$ROOT/usr/local/bin/cua-driver"
 
 # Google Chrome, which agents mostly use, as Tart's image has it: from
 # Google's stable download, its signature checked, kept where it is as new.
-ROOT=$ROOT sh "$here/mac-chrome.sh" >/dev/null || die "Could not install Google Chrome."
+# Box users' homes come from the template, which gets Chrome's profile past its first run and What's New.
+ROOT=$ROOT sh "$here/mac-chrome.sh" "$ROOT$SHARE/home" >/dev/null || die "Could not install Google Chrome."
 
 # The agent CLIs, so threads on a box can run (#561): each pinned by
 # version and SHA-256, in /usr/local/lib/bb-box/<name>-<version>, linked
