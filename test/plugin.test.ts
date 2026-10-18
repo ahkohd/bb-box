@@ -3189,13 +3189,14 @@ test("a Wayland desktop's pointer leaves the picture while a person holds contro
   await one.close();
 });
 
-test("a Wayland desktop's pointer script switches Sway's and GTK's cursor theme to the hidden one, or back, with the session bus whatever the caller's environment (#707)", () => {
+test("a Wayland desktop's pointer script switches Sway's and GTK's cursor theme to the hidden one, or back, with the session bus whatever the caller's environment, and keeps wayvnc's input devices on the seat (#707)", () => {
   const hide = waylandPointerScript(false);
-  assert.match(hide, /swaymsg -s "\$SWAYSOCK" seat seat0 xcursor_theme bb-box-hidden >\/dev\/null \|\| exit 1/);
+  // Without attach, the seat command detaches wayvnc's virtual pointer and keyboard: a person's clicks then go nowhere.
+  assert.match(hide, /swaymsg -s "\$SWAYSOCK" 'seat seat0 attach "\*"; seat seat0 xcursor_theme bb-box-hidden' >\/dev\/null \|\| exit 1/);
   assert.match(hide, /gsettings set org\.gnome\.desktop\.interface cursor-theme bb-box-hidden/);
   assert.match(hide, /DBUS_SESSION_BUS_ADDRESS="\$\{DBUS_SESSION_BUS_ADDRESS:-unix:path=\$XDG_RUNTIME_DIR\/bus\}"/);
   const show = waylandPointerScript(true);
-  assert.match(show, /xcursor_theme default >/);
+  assert.match(show, /seat seat0 attach "\*"; seat seat0 xcursor_theme default' >/);
   assert.match(show, /cursor-theme Adwaita$/);
 });
 
