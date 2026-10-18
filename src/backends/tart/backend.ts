@@ -673,6 +673,8 @@ export class TartBackend implements Backend {
   readonly #warm: ReadyPool<BoxIdentity>;
   readonly #stopping = new AbortController();
   readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
+  /** Whether a Mac has answered, so macos-desktop's video is declared as its image has it (060). */
+  #videoKnown = false;
 
   constructor(config: TartConfig, context: BackendContext, options: TartBackendOptions = {}) {
     this.id = context.id;
@@ -702,15 +704,29 @@ export class TartBackend implements Backend {
   #declareVideo(states: ReadonlyMap<string, MacState | Error>): void {
     const index = this.#kinds.findIndex((kind) => kind.id === "macos-desktop");
     const image = this.#config.kinds["macos-desktop"].image;
-    if (index < 0 || !image) return;
+    if (index < 0 || !image) {
+      this.#videoKnown = true;
+      return;
+    }
     const answered = [...states.values()].filter((state): state is MacState => !(state instanceof Error));
     if (!answered.length) return;
+    this.#videoKnown = true;
     const video = answered.every((state) => state.records.get(image)?.tools?.["bb-box-stream"] !== undefined);
     const kind = this.#kinds[index]!;
     const others = kind.capabilities.displays.filter((display) => display.protocol !== "selkies");
     const displays = video ? [...others, this.#config.video ? MAC_VIDEO : { ...MAC_VIDEO, byChoice: true }] : others;
     if (JSON.stringify(displays) === JSON.stringify(kind.capabilities.displays)) return;
     this.#kinds[index] = { ...kind, capabilities: { ...kind.capabilities, displays } };
+  }
+
+  /**
+   * A macOS desktop's video follows the Macs' image records, which bb-box
+   * reads only once a Mac answers, so before then, as just after bb-box
+   * starts, its boxes keep the video they have, as the SSH host pool's Mac
+   * boxes keep their features (047).
+   */
+  async asOffered(_guest: Guest, kind: string): Promise<boolean> {
+    return kind !== "macos-desktop" || this.#videoKnown;
   }
 
   #kind(id: string): BoxKind {
