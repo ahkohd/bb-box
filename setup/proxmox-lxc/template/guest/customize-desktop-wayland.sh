@@ -105,7 +105,7 @@ chmod 0755 /usr/local/libexec/bb-box/type
 selkies_ws=$(ls /opt/selkies/lib/python3*/site-packages/selkies/websockets_mode.py 2>/dev/null | head -1)
 [ -n "$selkies_ws" ] || die "Selkies' websockets_mode.py is missing"
 /opt/selkies/bin/python3 "$build/guest/files/selkies-host-size.py" "$selkies_ws" || die "Selkies could not be patched to keep Sway's size"
-grep -q _bb_box_host_output_size "$selkies_ws" || die "Selkies is not patched to keep Sway's size"
+grep -q _bb_box_host_output_size "$selkies_ws" && grep -q _bb_box_viewer_host_size "$selkies_ws" || die "Selkies is not patched to keep Sway's size"
 rm -rf "$(dirname "$selkies_ws")/__pycache__"
 for f in cua-probe.mjs cua-launch-probe.mjs rfb-probe.mjs; do
   install -m 0644 "$build/guest/files/$f" "/usr/local/libexec/bb-box/$f"
