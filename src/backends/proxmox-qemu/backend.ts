@@ -84,7 +84,7 @@ import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
-import { CUA_PIPE, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
 import type { QemuConfig } from "./config.ts";
 
 const MiB = 2 ** 20;
@@ -118,23 +118,6 @@ const WARM_NAME = "bb-box-warm";
 /** How often a fill checks whether Windows' desktop is up. */
 const DESKTOP_POLL_MS = 1_000;
 
-/**
- * The desktop as video (060): bb-box-stream.exe in box's desktop session, which a box's template has where its image
- * record lists OpenH264. It leaves the pointer out while a person holds control (cursor "stream") only where the record
- * also lists the hardware cursor: without it, Windows draws the pointer into the image Desktop Duplication returns.
- */
-const WINDOWS_VIDEO = { id: "video", protocol: "selkies", resizable: true } as const;
-/**
- * One connection to it, in the pwsh that box's SSH runs: the pipe to the server, started through its task if it is not
- * running, copied both ways with the SSH channel. pwsh copies, not bb-box-stream.exe connect: over SSH, a native
- * program pwsh starts gets only what reached its stdin before it started (measured 17 October 2026).
- */
-const WINDOWS_STREAM = [
-  "$p = [IO.Pipes.NamedPipeClientStream]::new('.', 'bb-box-stream', 'InOut', 'Asynchronous')",
-  "try { $p.Connect(500) } catch { schtasks.exe /run /tn bb-box-stream | Out-Null; $p.Connect(15000) }",
-  "$i = [Console]::OpenStandardInput(); $o = [Console]::OpenStandardOutput()",
-  "[void][Threading.Tasks.Task]::WaitAny(@($p.CopyToAsync($o), $i.CopyToAsync($p)))",
-].join("; ");
 /** How long a template's answer to whether it has bb-box-stream is kept. */
 const STREAM_CHECK_MS = 60_000;
 

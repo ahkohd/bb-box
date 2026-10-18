@@ -83,10 +83,10 @@ import {
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
-import { judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
+import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
-import { CUA_PIPE, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
   captureScript,
@@ -641,6 +641,8 @@ export class TartBackend implements Backend {
   readonly #addresses = new Map<string, string>();
   /** Whether each macOS VM has bb-box-stream, as its image gives it or not. */
   readonly #streams = new Map<string, boolean>();
+  /** Whether each Windows box has bb-box-stream.exe, as its image gives it or not (060). */
+  readonly #windowsStreams = new Map<string, boolean>();
   /** The command that runs machine-mac.sh in a macOS VM, made once, for its grants (058). */
   #macHelper: string | null = null;
   /** VMs being started for boxes or warm pools, by VM, until they run or their start ends. */
@@ -680,6 +682,8 @@ export class TartBackend implements Backend {
   readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
   /** Whether a Mac has answered, so macos-desktop's video is declared as its image has it (060). */
   #videoKnown = false;
+  /** Whether windows-arm64-desktop's video is known: once a Mac has answered, as for macos-desktop's. */
+  #windowsVideoKnown = false;
 
   constructor(config: TartConfig, context: BackendContext, options: TartBackendOptions = {}) {
     this.id = context.id;
@@ -707,6 +711,7 @@ export class TartBackend implements Backend {
    * opens VNC, and the person can choose video.
    */
   #declareVideo(states: ReadonlyMap<string, MacState | Error>): void {
+    this.#declareWindowsVideo(states);
     const index = this.#kinds.findIndex((kind) => kind.id === "macos-desktop");
     const image = this.#config.kinds["macos-desktop"].image;
     if (index < 0 || !image) {
@@ -731,7 +736,34 @@ export class TartBackend implements Backend {
    * boxes keep their features (047).
    */
   async asOffered(_guest: Guest, kind: string): Promise<boolean> {
+    if (kind === "windows-arm64-desktop") return this.#windowsVideoKnown;
     return kind !== "macos-desktop" || this.#videoKnown;
+  }
+
+  /**
+   * Declares windows-arm64-desktop's video, from bb-box-stream.exe (060),
+   * while every Mac that answered has OpenH264 in its Windows image's
+   * record, and leaves the pointer out of it while a person holds control
+   * where every record lists the hardware cursor too, as on Proxmox. Shown
+   * by choice: the desktop opens over VNC until video on a Mac is measured.
+   */
+  #declareWindowsVideo(states: ReadonlyMap<string, MacState | Error>): void {
+    const index = this.#kinds.findIndex((kind) => kind.id === "windows-arm64-desktop");
+    if (index < 0 || !this.#config.kinds["windows-arm64-desktop"].image) {
+      this.#windowsVideoKnown = true;
+      return;
+    }
+    const answered = [...states.values()].filter((state): state is MacState => !(state instanceof Error));
+    if (!answered.length) return;
+    this.#windowsVideoKnown = true;
+    const tools = answered.map((state) => state.qemu.image?.record?.tools ?? {});
+    const video = tools.every((each) => each.openh264 !== undefined);
+    const cursor = video && tools.every((each) => each[WINDOWS_HARDWARE_CURSOR] !== undefined);
+    const kind = this.#kinds[index]!;
+    const others = kind.capabilities.displays.filter((display) => display.protocol !== "selkies");
+    const displays = video ? [...others, { ...WINDOWS_VIDEO, byChoice: true, ...(cursor ? { cursor: "stream" as const } : {}) }] : others;
+    if (JSON.stringify(displays) === JSON.stringify(kind.capabilities.displays)) return;
+    this.#kinds[index] = { ...kind, capabilities: { ...kind.capabilities, displays } };
   }
 
   #kind(id: string): BoxKind {
@@ -1178,6 +1210,7 @@ export class TartBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const host = this.#hostOf(guest);
     const started = performance.now();
+    this.#windowsStreams.delete(this.#streamKey(guest));
     await this.#delete(host, guest.ref, this.#osOf(guest), this.#boxOf(guest), signal, this.#sshPort(guest));
     hooks.timing("delete", Math.round(performance.now() - started));
   }
@@ -1708,16 +1741,25 @@ export class TartBackend implements Backend {
       const ports = await this.#ports(host, guest);
       const access = this.#windows(mac, ports.ssh);
       const command = new SshTransport(ssh, access, "windows");
-      const displays = (capabilities?.displays ?? []).map(
-        (display): Display => ({
-          ...display,
-          label: "Desktop",
-          // QEMU's VNC server listens on the Mac's loopback only, so it asks for no password.
-          open: async () => ({ route: ssh.route(mac, ports.vnc), auth: { type: "none" } }),
-          resize: (size, signal) => this.#resizeWindows(guest.ref, command, size, signal),
-          minSize: MIN_DESKTOP,
-        }),
-      );
+      // Video where the kind declares it and this box has bb-box-stream.exe: a box of an older build may not (060).
+      const declared = (capabilities?.displays ?? []).some((display) => display.protocol === "selkies");
+      const video = declared && (await this.#hasWindowsStream(this.#streamKey(guest), command));
+      const displays = (capabilities?.displays ?? []).flatMap((display): Display[] => {
+        if (display.protocol === "selkies") {
+          const { byChoice: _byChoice, ...shown } = display;
+          return video ? [{ ...shown, label: "Desktop, as video", open: async () => ({ route: ssh.commandRoute(access, WINDOWS_STREAM), auth: { type: "none" } }) }] : [];
+        }
+        return [
+          {
+            ...display,
+            label: "Desktop",
+            // QEMU's VNC server listens on the Mac's loopback only, so it asks for no password.
+            open: async () => ({ route: ssh.route(mac, ports.vnc), auth: { type: "none" } }),
+            resize: (size, signal) => this.#resizeWindows(guest.ref, command, size, signal),
+            minSize: MIN_DESKTOP,
+          },
+        ];
+      });
       return { command, displays, access: { ssh: access, dockerHost: null } };
     }
     let address: string | null = this.#addresses.get(guest.ref) ?? null;
@@ -2259,6 +2301,21 @@ export class TartBackend implements Backend {
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "linux"), "linux");
     const result = await command.run(linuxDesktopScript(), { timeoutMs: 150_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) throw new Error(`${vm} on ${host.name}: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+  }
+
+  /** A Windows box as #windowsStreams knows it: its VM, whose name a box that takes a warm VM keeps, and its box (018). */
+  #streamKey(guest: Guest): string {
+    return `${guest.ref}:${this.#boxOf(guest) ?? ""}`;
+  }
+
+  /** Whether a Windows box has bb-box-stream.exe, asked once a box: a box keeps its image's. False, not kept, when it cannot be asked. */
+  async #hasWindowsStream(key: string, command: SshTransport): Promise<boolean> {
+    const known = this.#windowsStreams.get(key);
+    if (known !== undefined) return known;
+    const result = await command.run(`if (Test-Path -LiteralPath '${WINDOWS_STREAM_EXE}') { exit 0 } else { exit 3 }`, { timeoutMs: 30_000, maxOutputBytes: 1024 }).catch(() => null);
+    if (!result || (result.exitCode !== 0 && result.exitCode !== 3)) return false;
+    this.#windowsStreams.set(key, result.exitCode === 0);
+    return result.exitCode === 0;
   }
 
   /** Whether a macOS VM has bb-box-stream, asked once a VM: a box keeps its image's. False, not kept, when it cannot be asked. */

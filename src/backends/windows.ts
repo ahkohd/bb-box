@@ -9,6 +9,28 @@ import type { CommandTransport, DisplaySize } from "../transports/types.ts";
 
 /** The named pipe Cua's daemon listens on. A task at logon starts it, elevated, as SSH is (039). */
 export const CUA_PIPE = "\\\\.\\pipe\\cua-driver";
+
+/**
+ * The desktop as video (060): bb-box-stream.exe in box's desktop session, which a box's image has where its record
+ * lists OpenH264, on Proxmox and on a Mac. It leaves the pointer out while a person holds control (cursor "stream")
+ * only where the record also lists the hardware cursor: without it, Windows draws the pointer into the image Desktop
+ * Duplication returns.
+ */
+export const WINDOWS_VIDEO = { id: "video", protocol: "selkies", resizable: true } as const;
+/**
+ * One connection to it, in the pwsh that box's SSH runs: the pipe to the server, started through its task if it is not
+ * running, copied both ways with the SSH channel. pwsh copies, not bb-box-stream.exe connect: over SSH, a native
+ * program pwsh starts gets only what reached its stdin before it started (measured 17 October 2026).
+ */
+export const WINDOWS_STREAM = [
+  "$p = [IO.Pipes.NamedPipeClientStream]::new('.', 'bb-box-stream', 'InOut', 'Asynchronous')",
+  "try { $p.Connect(500) } catch { schtasks.exe /run /tn bb-box-stream | Out-Null; $p.Connect(15000) }",
+  "$i = [Console]::OpenStandardInput(); $o = [Console]::OpenStandardOutput()",
+  "[void][Threading.Tasks.Task]::WaitAny(@($p.CopyToAsync($o), $i.CopyToAsync($p)))",
+].join("; ");
+
+/** Where a Windows image has bb-box-stream.exe (setup/windows/install-stream.ps1). */
+export const WINDOWS_STREAM_EXE = "C:\\Program Files\\bb-box-tools\\bb-box-stream\\bb-box-stream.exe";
 /** How long setting the desktop's mode may take, in the desktop session. */
 const RESIZE_TIMEOUT_MS = 15_000;
 /** How long setting Windows' clock may take, over SSH. */

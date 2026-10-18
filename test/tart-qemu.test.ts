@@ -59,6 +59,8 @@ function setup(values: Record<string, unknown> = {}, options: TartBackendOptions
       `  *Resize-Partition*) echo extended >> "$HOME/extend"; exit 0;;`,
       `  *"Get-Process explorer"*) n=$(cat "$HOME/desktop" 2>/dev/null || echo 0); echo $((n + 1)) > "$HOME/desktop"; [ ! -f "$HOME/no-desktop" ] && [ "$n" -ge 2 ];;`,
       `  *Add-Type*) echo compiled >> "$HOME/compiled"; exit 0;;`,
+      // Whether the box has bb-box-stream.exe (060): where $HOME/stream is.
+      `  *"Test-Path -LiteralPath"*bb-box-stream.exe*) [ -f "$HOME/stream" ] && exit 0; exit 3;;`,
       `  *) exec sh -c "$1";;`,
       `esac`,
       ``,
@@ -296,6 +298,40 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
   assert.equal(existsSync(join(qemu, "vms", vm)), false);
   assert.equal(existsSync(join(owners, vm)), false);
   assert.equal(await backend.power(guest, signal()), null);
+});
+
+test("Windows on a Mac offers video by choice while every Mac's image records OpenH264, and a box shows it where it has bb-box-stream.exe (060)", async () => {
+  const { backend, ssh, build } = setup();
+  const kind = () => backend.kinds().find((candidate) => candidate.id === KIND)!;
+  assert.equal(await backend.asOffered({ ref: "x", host: MAC, address: null, size: null }, KIND), false, "unknown until a Mac answers");
+  await backend.capacity(KIND, SMALL, [], signal());
+  assert.equal(await backend.asOffered({ ref: "x", host: MAC, address: null, size: null }, KIND), true);
+  assert.equal(kind().capabilities.displays.length, 1, "an image without OpenH264 has no video");
+
+  // The Mac's image now has the stream and the hardware cursor, as prepare-windows-image.sh records them.
+  writeFileSync(join(build, "image.json"), `${imageRecord(KIND, { tools: { ...WINDOWS_TOOLS, openh264: "2.6.0", "hardware-cursor": "1" } })}\n`);
+  await backend.capacity(KIND, SMALL, [], signal());
+  assert.deepEqual(kind().capabilities.displays[1], { id: "video", protocol: "selkies", resizable: true, byChoice: true, cursor: "stream" }, "by choice: VNC opens until it is measured");
+
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.deepEqual((await backend.transports(guest, KIND)).displays.map((display) => display.protocol), ["rfb"], "a box without the program has none");
+  // Asked once a box, so another box with the program is asked afresh.
+  writeFileSync(join(ssh.home(GUEST), "stream"), "");
+  const other = { ...guest, data: { ...guest.data, box: "bx-another" } };
+  const shown = (await backend.transports(other, KIND)).displays;
+  assert.deepEqual(shown.map(({ open: _, resize: __, ...display }) => display), [
+    { id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4, minSize: { width: 800, height: 600 } },
+    { id: "video", label: "Desktop, as video", protocol: "selkies", resizable: true, cursor: "stream" },
+  ]);
+  const route = (await shown[1]!.open()).route;
+  assert.equal(route.type, "command");
+  assert.match(JSON.stringify(route), /bb-box-stream/, "the pipe to the server, through box's SSH");
+
+  // An image that loses it again stops the video.
+  writeFileSync(join(build, "image.json"), `${imageRecord(KIND, { tools: WINDOWS_TOOLS })}\n`);
+  await backend.capacity(KIND, SMALL, [], signal());
+  assert.equal(kind().capabilities.displays.length, 1);
+  await backend.release(guest, releasing, signal());
 });
 
 test("the desktop resizes to the listed mode that best covers the viewer, set by Windows in the box user's session, with one try at the viewer's size", async () => {
