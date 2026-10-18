@@ -31,6 +31,11 @@ const CLIPBOARD_TIMEOUT_MS = 10_000;
 const FOLLOW_AFTER_MS = 300;
 /** How long a box's video stays stopped for its capture to restart: Selkies stops a capture within milliseconds. */
 const RESTART_PAUSE_MS = 300;
+/**
+ * How long a box's video may take to show a size Selkies was told, before bb-box restarts its capture: Selkies restarts it
+ * itself, and a pause while it does breaks its reconfiguration, leaving its own monitor at the old size (the owner's note of 18 October 2026).
+ */
+export const FOLLOW_FRAME_MS = 1_500;
 /** Each box whose desktop is High resolution: its xfwm theme before, and the size High resolution set (the owner's note of 16 October 2026). */
 const SHARP_PREFIX = "desktop-sharp/";
 /** High resolution's density: twice the pixels, with Xfce's UI scaled to match, so everything keeps its size and text is sharp on a 2x screen. */
@@ -40,15 +45,24 @@ const SHARP_TIMEOUT_MS = 30_000;
 /** The largest desktop High resolution sets: Xvnc's limit is far above it, Selkies' encoder is not. */
 const SHARP_MAX: Size = { width: 7680, height: 4320 };
 
+/**
+ * Xfce's panel again, so it takes a new scale, in the background. A restarted panel runs itself again, and that one can find the old
+ * one still on D-Bus and quit; where no session manager starts it again, as on Docker, the panel is gone, and the next restart shows
+ * "Failed to restart the panel" (the owner's note of 18 October 2026). So only a running panel restarts, and one starts if none runs
+ * 3 s later.
+ */
+const PANEL_AGAIN =
+  '(if pgrep -u "$(id -u)" -x xfce4-panel >/dev/null; then xfce4-panel -r; fi; ' +
+  'sleep 3; pgrep -u "$(id -u)" -x xfce4-panel >/dev/null || setsid xfce4-panel </dev/null >/dev/null 2>&1 &) >/dev/null 2>&1 &';
 /** Xfce at High resolution's scale: GTK's window scale, xfwm's HiDPI theme, and the panel again so it takes the scale. Prints the theme before. */
 const SHARP_ON =
   "t=$(xfconf-query -c xfwm4 -p /general/theme 2>/dev/null); " +
   `xfconf-query -c xsettings -p /Gdk/WindowScalingFactor -s ${SHARP_SCALE} 2>/dev/null || xfconf-query -c xsettings -p /Gdk/WindowScalingFactor -n -t int -s ${SHARP_SCALE}; ` +
-  "xfconf-query -c xfwm4 -p /general/theme -s Default-xhdpi; (xfce4-panel -r >/dev/null 2>&1 &); printf '%s' \"$t\"";
+  `xfconf-query -c xfwm4 -p /general/theme -s Default-xhdpi; ${PANEL_AGAIN} printf '%s' "$t"`;
 /** Xfce back at 1x, with the theme it had. */
 function sharpOff(theme: string): string {
   const quoted = `'${theme.replaceAll("'", `'\\''`)}'`;
-  return `xfconf-query -c xsettings -p /Gdk/WindowScalingFactor -s 1; xfconf-query -c xfwm4 -p /general/theme -s ${quoted}; (xfce4-panel -r >/dev/null 2>&1 &)`;
+  return `xfconf-query -c xsettings -p /Gdk/WindowScalingFactor -s 1; xfconf-query -c xfwm4 -p /general/theme -s ${quoted}; ${PANEL_AGAIN}`;
 }
 
 interface SharpKept {
@@ -206,6 +220,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   };
   const resizes = new Resizes();
   const reconnectMs = deps.reconnectMs ?? RECONNECT_MS;
+  const followFrameMs = FOLLOW_FRAME_MS;
   const staleMs = deps.staleMs ?? STALE_MS;
   const kv = bb.storage.kv;
   /** Each person's control as stored, for the boxes still ready, read again as the first viewer connects (#318). */
@@ -340,6 +355,30 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   };
   /** The size of each box's video, as its frames last gave it. */
   const frameSizes = new Map<string, Size>();
+  /** What waits for each box's video to show a size. */
+  const frameWaits = new Map<string, Set<(size: Size) => void>>();
+  /** Whether a frame of the box's video shows `size`, as Selkies makes it even, within `ms`. */
+  const videoAt = (boxId: string, size: Size, ms: number): Promise<boolean> => {
+    const even = (each: Size) => `${each.width - (each.width % 2)}x${each.height - (each.height % 2)}`;
+    const want = even(size);
+    const now = frameSizes.get(boxId);
+    if (now && even(now) === want) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const waits = frameWaits.get(boxId) ?? new Set();
+      frameWaits.set(boxId, waits);
+      const done = (shown: boolean) => {
+        clearTimeout(timer);
+        waits.delete(wake);
+        if (!waits.size) frameWaits.delete(boxId);
+        resolve(shown);
+      };
+      const wake = (seen: Size) => {
+        if (even(seen) === want) done(true);
+      };
+      const timer = setTimeout(() => done(false), ms);
+      waits.add(wake);
+    });
+  };
   /**
    * Restarts a box's video capture, so it takes the desktop's size: Selkies
    * moves a running capture to a larger desktop without its encoder, so the
@@ -365,7 +404,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     const size = await desktopSize(displayOpener(shown ?? (await display(boxes, boxId))));
     await entry.box.follow(size);
     const seen = frameSizes.get(boxId);
-    if (seen && (size.width > seen.width || size.height > seen.height)) await restartVideo(boxId);
+    if (seen && (size.width > seen.width || size.height > seen.height) && !(await videoAt(boxId, size, followFrameMs))) await restartVideo(boxId);
   };
   /** Each box's check that its video has the desktop's size, while one runs. */
   const matching = new Map<string, Promise<void>>();
@@ -379,7 +418,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       // Selkies makes a size even: a desktop an odd width or height has is one pixel larger than its video.
       if (desktop.width - (desktop.width % 2) !== size.width || desktop.height - (desktop.height % 2) !== size.height) {
         await entry.box.follow(desktop);
-        await restartVideo(boxId);
+        if (!(await videoAt(boxId, desktop, followFrameMs))) await restartVideo(boxId);
       }
     })()
       .catch((error) => deps.logError("have the video follow the desktop's size", error))
@@ -486,6 +525,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               onSize: (size) => {
                 control.seen(boxId, size);
                 frameSizes.set(boxId, size);
+                for (const wake of [...(frameWaits.get(boxId) ?? [])]) wake(size);
                 matchSize(boxId, size);
               },
               onResize: (size) => {

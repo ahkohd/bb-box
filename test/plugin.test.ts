@@ -18,6 +18,7 @@ import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases, removeStaleApp, setAsideOtherMachines } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
+import { FOLLOW_FRAME_MS } from "../src/plugin/desktop.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
@@ -2621,6 +2622,14 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await until("the video following the desktop", async () => input.received.filter((message) => message === follow(1096, 700)).length === 2);
   await until("the capture restarted", async () => page.received.join(" ").includes("STOP_VIDEO START_VIDEO REQUEST_KEYFRAME"));
   assert.equal(page.stopped, false, "the viewer's video runs again");
+  // Told the size, Selkies restarts its capture itself: once a frame of that size comes, the video is not paused, as a pause
+  // during Selkies' own restart leaves its monitor at the old size (the owner's note of 18 October 2026).
+  const before = restarts();
+  await selkies.frame(3, true, 640, 480);
+  await until("the video following the desktop again", async () => input.received.filter((message) => message === follow(1096, 700)).length === 3);
+  await selkies.frame(4, true, 1096, 700);
+  await new Promise((resolve) => setTimeout(resolve, FOLLOW_FRAME_MS + 200));
+  assert.equal(restarts(), before, "no restart once the video has the desktop's size");
   await selkies.clipboard("copied again");
   await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied again").toString("base64")}`));
   // An image, both ways, in Selkies' parts and in order (#609).
@@ -2991,7 +3000,7 @@ test("High resolution doubles a Linux desktop's pixels with Xfce at 2x, keeps th
   const shims: Record<string, string> = {
     // Setting the scale takes a moment, as in a real box, so the desktop's state can be read mid-switch.
     "xfconf-query": `echo "$*" >> "$HOME/xfconf.log"; case "$*" in *"/general/theme") echo Arc ;; *"WindowScalingFactor -s 2") sleep 0.3 ;; esac`,
-    "xfce4-panel": `echo restart >> "$HOME/panel.log"`,
+    "xfce4-panel": `echo "panel $*" >> "$HOME/panel.log"`,
   };
   for (const [name, script] of Object.entries(shims)) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`);
@@ -3043,7 +3052,10 @@ test("High resolution doubles a Linux desktop's pixels with Xfce at 2x, keeps th
   assert.deepEqual([rfb.width, rfb.height], [1280, 800]);
   assert.equal(await sharp(), false);
   assert.deepEqual(log().slice(3), ["-c xsettings -p /Gdk/WindowScalingFactor -s 1", "-c xfwm4 -p /general/theme -s Arc"]);
-  await until("the panel restarted each time", async () => readFileSync(join(home, "panel.log"), "utf8").trim().split("\n").length === 2);
+  // No panel runs here, so none is asked to restart, which would show "Failed to restart the panel": one starts each time instead.
+  const panel = () => (existsSync(join(home, "panel.log")) ? readFileSync(join(home, "panel.log"), "utf8").trim().split("\n").map((line) => line.trim()) : []);
+  await until("a panel each time", async () => panel().length === 2);
+  assert.deepEqual(panel(), ["panel", "panel"]);
 });
 
 test("High resolution on Windows: twice the pixels, then 200%, and 100% before the size goes back; a scale Windows refuses leaves it off at its size", async (t) => {
