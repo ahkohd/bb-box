@@ -13,8 +13,8 @@
 # - In a desktop box, starts the display, the XFCE session, Cua Driver and
 #   Selkies (056) as the box user, and starts each again when it exits, as
 #   their units do. In a Wayland desktop box (048), Sway is the display and
-#   the session, and Cua Driver and wayvnc start each time it is up and stop
-#   with it.
+#   the session, and Cua Driver, wayvnc and Selkies (060) start each time it
+#   is up and stop with it.
 # - Then writes /run/bb-box/ready, which bb-box waits for, once Docker's
 #   socket is the docker group's. /run is a tmpfs, so the file is new at each
 #   start.
@@ -109,10 +109,17 @@ if [ -x /usr/local/libexec/bb-box/display ]; then
         sleep 0.1
       done
     }
-    # Sway, and with it Cua Driver and wayvnc, which stop when it exits, as
-    # their units do in an LXC box.
+    # Selkies' video of Sway (060), again a second after it exits, as its unit does.
+    video() {
+      while :; do
+        as_box env "${bus_env[@]}" /usr/local/libexec/bb-box/selkies
+        sleep 1
+      done
+    }
+    # Sway, and with it Cua Driver, wayvnc and Selkies, which stop when it
+    # exits, as their units do in an LXC box.
     wayland() {
-      local sway cua= vnc=
+      local sway cua= vnc= selkies=
       as_box env "${display_env[@]}" "${bus_env[@]}" /usr/local/libexec/bb-box/display &
       sway=$!
       if as_box /usr/local/libexec/bb-box/display wait; then
@@ -121,10 +128,13 @@ if [ -x /usr/local/libexec/bb-box/display ]; then
         cua=$!
         stream &
         vnc=$!
+        video &
+        selkies=$!
       fi
       wait "$sway"
-      kill $vnc $cua 2>/dev/null
+      kill $vnc $selkies $cua 2>/dev/null
       pkill -u "$user" -x wayvnc
+      pkill -u "$user" -f '^/opt/selkies/bin/python3 /usr/bin/selkies'
     }
     keep wayland &
   else

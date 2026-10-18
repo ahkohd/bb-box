@@ -34,8 +34,8 @@ d "first docker command" sh -c 's=$(date +%s%N); docker version --format "{{.Ser
 # Docker box has its host's, where the host has one.
 if [ "$runtime" = docker ] && [ ! -e /dev/net/tun ]; then s "TUN device" "none from this Docker host, so Tailscale runs in userspace (050)"
 else t "TUN device" sh -c 'test -c /dev/net/tun || { echo "no /dev/net/tun"; exit 1; }; exec 3<>/dev/net/tun && echo "/dev/net/tun opens"'; fi
-if [ "$runtime" = systemd ]; then t "services" sh -c 'systemctl is-active bb-box-display bb-box-vnc | paste -sd " "'
-else s "services" "bb-box-start runs Sway and wayvnc, which the lines below check"; fi
+if [ "$runtime" = systemd ]; then t "services" sh -c 'systemctl is-active bb-box-display bb-box-vnc bb-box-selkies | paste -sd " "'
+else s "services" "bb-box-start runs Sway, wayvnc and Selkies, which the lines below check"; fi
 # The pointer leaves the picture while a person holds control, and comes back (#707).
 t "pointer hides and shows" sh -c 'test -e /usr/share/icons/bb-box-hidden/cursors/left_ptr || { echo "no hidden cursor theme"; exit 1; }; command -v gsettings >/dev/null || { echo "no gsettings"; exit 1; }; swaymsg -s "$SWAYSOCK" "seat seat0 attach \"*\"; seat seat0 xcursor_theme bb-box-hidden" >/dev/null && gsettings set org.gnome.desktop.interface cursor-theme bb-box-hidden && swaymsg -s "$SWAYSOCK" "seat seat0 attach \"*\"; seat seat0 xcursor_theme default" >/dev/null && gsettings set org.gnome.desktop.interface cursor-theme Adwaita && echo "hidden, then shown: $(gsettings get org.gnome.desktop.interface cursor-theme)"'
 t "display mode" sh -c 'echo "$(cat /run/bb-box/display-mode): $(cat /run/bb-box/display-reason)"'
@@ -91,6 +91,11 @@ t "viewer leaves at a resize" bash -c '
   [ "$got" = 1233x677 ] || { echo "a new viewer has $got"; ok=1; }
   resize_to "$before" >/dev/null || ok=1
   [ $ok = 0 ] && echo "a new viewer has $got, wayvnc runs on"; exit $ok'
+# Selkies' video of Sway (060), patched to stream it at its own size.
+t "Selkies on 5980" sh -c 'for _ in $(seq 1 100); do code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5980/) && [ "$code" = 200 ] && break; sleep 0.1; done
+  [ "$code" = 200 ] || { echo "no answer on 127.0.0.1:5980 (HTTP $code)"; exit 1; }
+  grep -qs _bb_box_host_output_size /opt/selkies/lib/python3*/site-packages/selkies/websockets_mode.py || { echo "Selkies is not patched to keep the size of Sway"; exit 1; }
+  echo "HTTP $code, $(/usr/bin/selkies --version 2>&1 | head -1), patched to keep the size of Sway"'
 t "at-spi bus" sh -c 'n=$(pgrep -u "$(id -un)" -c at-spi-bus-laun); a=$(busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress) || exit 1; [ "$n" -le 1 ] || { echo "$n bus launchers"; exit 1; }; echo "$a" | cut -c1-60'
 t "Cua Driver daemon" sh -c 'if [ -d /run/systemd/system ]; then systemctl --user is-active bb-box-cua-driver; else pgrep -u "$(id -un)" -x cua-driver >/dev/null && echo "started by bb-box-start"; fi && cua-driver telemetry status | sed -n 1p'
 # Cua's get_screen_size is X11's; on Wayland it lists the windows through Sway.

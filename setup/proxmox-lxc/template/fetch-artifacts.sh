@@ -103,9 +103,9 @@ case "$kind" in linux | headless) exit 0 ;; esac
 while IFS=$'\t' read -r name file url sha pin_arch; do
   case "$name" in '' | \#*) continue ;; esac
   [ "$pin_arch" = "$arch" ] || continue
-  # The Wayland desktop streams with wayvnc and has no GPU (048), and Selkies
-  # cannot capture Sway (056).
-  case "$kind:$name" in desktop-wayland-cpu:tigervnc | desktop-wayland-cpu:virtualgl | desktop-wayland-cpu:selkies) continue ;; esac
+  # The Wayland desktop streams with wayvnc, and Selkies capturing Sway
+  # (060), and has no GPU (048).
+  case "$kind:$name" in desktop-wayland-cpu:tigervnc | desktop-wayland-cpu:virtualgl) continue ;; esac
   [ "$url" = - ] || fetch "$url" "$sha" "$file"
 done <"$here/desktop-pins.tsv"
 [ "$kind" = desktop ] || exit 0

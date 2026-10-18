@@ -3,7 +3,8 @@
 # customize-base.sh and before finalize.sh; customize-desktop.sh hands over to
 # it when DESKTOP_SESSION=wayland. Sway, headless on the CPU, as the box user,
 # with floating windows, Waybar, a launcher (wofi) and a terminal (foot),
-# streamed by wayvnc on port 5900 with Apple's sign-in (type 30); Chrome
+# streamed by wayvnc on port 5900 with Apple's sign-in (type 30), and as
+# video by Selkies on 127.0.0.1:5980, capturing Sway (060); Chrome
 # native on Wayland, Mousepad, Ristretto, Evince, Thunar, Cua Driver with its
 # Wayland adapter, GPUI build dependencies and Rust. No Xwayland and no
 # DISPLAY: one X11 window breaks Cua on Sway.
@@ -58,6 +59,9 @@ desktop_packages="$desktop_packages fonts-noto-cjk"
 gpui_packages="clang cmake libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
   libfontconfig-dev libfreetype-dev libssl-dev libzstd-dev libvulkan-dev libasound2-dev"
 chrome=$(check chrome)
+# Selkies, the desktop's video (060): its package holds its own Python, in
+# /opt/selkies.
+selkies=$(check selkies)
 # A refresh of a built image (049) may have a newer Chrome already, which
 # Google's apt source brought: keep it rather than go back to the pin.
 installed=$(dpkg-query -W -f='${Status} ${Version}' google-chrome-stable 2>/dev/null | sed -n 's/^install ok installed //p' || true)
@@ -69,14 +73,14 @@ fi
 # baseline.sh; files already downloaded stay in apt's cache.
 # shellcheck disable=SC2086
 for try in 1 2 3 4 5; do
-  apt-get install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages ${chrome:+"$chrome"} && break
+  apt-get install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages "$selkies" ${chrome:+"$chrome"} && break
   [ "$try" = 5 ] && exit 1
   echo "customize-desktop-wayland: download failed (try $try of 5); retrying in $((try * 30)) s" >&2
   sleep $((try * 30))
 done
 # shellcheck disable=SC2086
-apt-get install -y -q --no-install-recommends $desktop_packages $gpui_packages ${chrome:+"$chrome"}
-for package in $desktop_packages $gpui_packages google-chrome-stable; do
+apt-get install -y -q --no-install-recommends $desktop_packages $gpui_packages "$selkies" ${chrome:+"$chrome"}
+for package in $desktop_packages $gpui_packages selkies google-chrome-stable; do
   [ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null)" = "install ok installed" ] || die "$package is not installed"
 done
 ! dpkg-query -W -f='${Status}' xwayland 2>/dev/null | grep -q "install ok installed" || die "xwayland is installed"
@@ -85,13 +89,20 @@ install -d -m 0755 /usr/share/bb-box
   echo "nvidia=none"
   echo "session=wayland"
   for package in sway wayvnc waybar; do echo "$package=$(dpkg-query -W -f='${Version}' "$package")"; done
-  for name in chrome cua-driver rustup; do echo "$name=$(file_of "$name")"; done
+  for name in selkies chrome cua-driver rustup; do echo "$name=$(file_of "$name")"; done
 } >"$build/extra-release"
 
 # The display, its stream and their settings.
 install -d -m 0755 /usr/local/libexec/bb-box /etc/bb-box
 install -m 0755 "$build/guest/files/display-wayland" /usr/local/libexec/bb-box/display
 install -m 0755 "$build/guest/files/vnc-password" /usr/local/libexec/bb-box/vnc-password
+install -m 0755 "$build/guest/files/selkies-wayland" /usr/local/libexec/bb-box/selkies
+# Selkies streams Sway at Sway's size and never resizes it (060).
+selkies_ws=$(ls /opt/selkies/lib/python3*/site-packages/selkies/websockets_mode.py 2>/dev/null | head -1)
+[ -n "$selkies_ws" ] || die "Selkies' websockets_mode.py is missing"
+/opt/selkies/bin/python3 "$build/guest/files/selkies-host-size.py" "$selkies_ws" || die "Selkies could not be patched to keep Sway's size"
+grep -q _bb_box_host_output_size "$selkies_ws" || die "Selkies is not patched to keep Sway's size"
+rm -rf "$(dirname "$selkies_ws")/__pycache__"
 for f in cua-probe.mjs cua-launch-probe.mjs rfb-probe.mjs; do
   install -m 0644 "$build/guest/files/$f" "/usr/local/libexec/bb-box/$f"
 done
@@ -179,8 +190,8 @@ cat >/etc/systemd/system/bb-box-display.service <<EOF
 Description=bb-box: the Wayland desktop (Sway, headless)
 After=systemd-user-sessions.service bb-box-vnc-password.service user@$uid.service
 Wants=bb-box-vnc-password.service user@$uid.service
-# Bring the stream back whenever the display is up again.
-Upholds=bb-box-vnc.service
+# Bring the streams back whenever the display is up again.
+Upholds=bb-box-vnc.service bb-box-selkies.service
 
 [Service]
 User=$user
@@ -226,7 +237,26 @@ RestartSec=100ms
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl enable bb-box-vnc-password.service bb-box-display.service bb-box-vnc.service >/dev/null
+# Selkies' video of Sway, which starts and stops with it (060).
+cat >/etc/systemd/system/bb-box-selkies.service <<EOF
+[Unit]
+Description=bb-box: Selkies' video of the Wayland desktop on 127.0.0.1:5980
+After=bb-box-display.service
+BindsTo=bb-box-display.service
+
+[Service]
+User=$user
+Group=$user
+Environment=XDG_RUNTIME_DIR=/run/user/$uid DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus
+WorkingDirectory=~
+ExecStart=/usr/local/libexec/bb-box/selkies
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable bb-box-vnc-password.service bb-box-display.service bb-box-vnc.service bb-box-selkies.service >/dev/null
 
 # The desktop's environment for the box user's SSH commands and login shells,
 # from /run/bb-box/display.env: WAYLAND_DISPLAY, SWAYSOCK and the session's

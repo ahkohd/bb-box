@@ -498,6 +498,11 @@ an X server:
   config is `/etc/bb-box/sway.conf`.
 - **wayvnc** on port 5900. It signs in user `box` with the password in
   `/var/lib/bb-box/vnc-password`.
+- **Selkies 2.0** on `127.0.0.1:5980`, in `bb-box-selkies.service`, which
+  streams Sway as H.264 video, capturing it as a client: screencopy for
+  frames, Sway's virtual keyboard and pointer for input. The build patches
+  it (`guest/files/selkies-host-size.py`) to stream Sway at Sway's own size:
+  unpatched, each viewer set Sway to 1024x768.
 - **No Xwayland and no `DISPLAY`**, so Cua Driver can see every window.
   X11-only apps, such as xterm, Java Swing, Wine and older Electron apps,
   need `linux-desktop-cpu`.
