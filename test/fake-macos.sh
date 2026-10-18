@@ -420,13 +420,14 @@ case $tool in
     ;;
   codesign)
     # codesign -dv <path> or codesign -d -r- <path>: from a signature file
-    # beside the program, <path>.sig, with lines identifier= and requirement=.
+    # beside the program, <path>.sig, with lines identifier=, requirement= and
+    # team=. codesign --verify passes where there is one.
     path=$(eval "echo \${$#}")
     sig=$path.sig
     [ -f "$sig" ] || { echo "$path: code object is not signed at all" >&2; exit 1; }
     case $2 in
       -r-) echo "designated => $(sed -n 's/^requirement=//p' "$sig")" >&2 ;;
-      *) echo "Identifier=$(sed -n 's/^identifier=//p' "$sig")" >&2 ;;
+      *) echo "Identifier=$(sed -n 's/^identifier=//p' "$sig")" >&2; sed -n 's/^team=/TeamIdentifier=/p' "$sig" >&2 ;;
     esac
     ;;
   csreq)
@@ -501,6 +502,16 @@ case $tool in
     cat >/dev/null
     ! flag bad-sha
     ;;
+  # hdiutil attach ... -mountpoint <dir> <image>: the image is a tar of what it holds. detach: nothing to do.
+  hdiutil)
+    if [ "$1" = attach ]; then
+      while [ $# -gt 1 ]; do [ "$1" != -mountpoint ] || dir=$2; shift; done
+      tar -xf "$1" -C "$dir"
+    fi
+    ;;
+  ditto) cp -R "$1" "$2" ;;
+  # Gatekeeper accepts what it is shown, unless flags/gatekeeper-refuses.
+  spctl) ! flag gatekeeper-refuses ;;
   # installer -pkg <pkg> -target / and killall coreaudiod: recorded only.
   installer | killall) : ;;
   *)

@@ -17,6 +17,7 @@ const TOOL_NAMES = [
   "pkill", "date", "shutdown", "node", "npm", "git", "gh", "brew", "pmset", "softwareupdate", "mdutil", "xcode-select",
   "xcodebuild", "xcrun", "DevToolsSecurity", "open", "scutil", "ipconfig", "curl", "shasum", "osascript",
   "dsmemberutil", "csrutil", "lsof", "plutil", "codesign", "csreq", "security", "clang", "swiftc", "installer", "killall",
+  "hdiutil", "ditto", "spctl",
 ];
 /** Where the Data volume's folders appear at the top of a Mac's disk. */
 const FIRMLINKS = ["Users", "private", "Library", "Applications", "opt", "usr"];
@@ -109,6 +110,8 @@ export function fakeMacos(options: { template?: boolean } = {}): FakeMacos {
   rewrite(join(POOL, "machine-mac.sh"), join(pool, "machine-mac.sh"), root, bin);
   rewrite(join(POOL, "setup-mac.sh"), join(pool, "setup-mac.sh"), root, bin);
   cpSync(join(POOL, "mac-home"), join(pool, "mac-home"), { recursive: true });
+  // It takes ROOT from setup-mac.sh, and the fake tools from its PATH.
+  cpSync(join(POOL, "mac-chrome.sh"), join(pool, "mac-chrome.sh"));
   if (options.template !== false) cpSync(join(POOL, "mac-home"), join(data, "usr", "local", "share", "bb-box", "home"), { recursive: true });
 
   const env = { FAKE_MAC_STATE: state, FAKE_MAC_ROOT: root, FAKE_MAC_BIN: bin, PATH: `${bin}:/usr/bin:/bin`, LC_ALL: "C" };

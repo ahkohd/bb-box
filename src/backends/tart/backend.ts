@@ -209,6 +209,10 @@ t "image record" test -s /usr/local/share/bb-box/image.json
 if grep -q '"bb-box-stream"' /usr/local/share/bb-box/image.json 2>/dev/null; then
   t bb-box-stream test -x /usr/local/bin/bb-box-stream
 fi
+if grep -q '"chrome"' /usr/local/share/bb-box/image.json 2>/dev/null; then
+  t chrome "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
+  t "chrome policies" test -s "/Library/Managed Preferences/com.google.Chrome.plist"
+fi
 if grep -q '"xcode"' /usr/local/share/bb-box/image.json 2>/dev/null; then
   t xcode xcodebuild -version
   t "xcode licence and first launch" sh -c 'xcodebuild -license check && xcodebuild -checkFirstLaunchStatus'
@@ -2506,7 +2510,7 @@ export class TartBackend implements Backend {
     const vm = `${VM_PREFIX}img-refresh-${stamp}`;
     const dir = `.bb-box/tart/setup-${stamp}`;
     // bb-box-stream's source is the pool Mac's (060).
-    const tar = spawnSync("tar", ["-C", setup, "-czf", "-", "tart", "proxmox-lxc", "ssh-pool/mac-stream.swift"], { maxBuffer: 64 * 1024 * 1024 });
+    const tar = spawnSync("tar", ["-C", setup, "-czf", "-", "tart", "proxmox-lxc", "ssh-pool/mac-stream.swift", "ssh-pool/mac-chrome.sh"], { maxBuffer: 64 * 1024 * 1024 });
     if (tar.status !== 0) throw new Error(`tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
     const mac = new SshTransport(ssh, await this.#mac(host), "macos");
     const owner = ownerText({ install: this.#context.installId, kind: current.kind, "image-build": "standard", created: Date.now() });

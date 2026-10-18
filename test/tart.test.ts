@@ -687,6 +687,7 @@ test("image operations on a Mac: an image box, its capture with its record besid
   mkdirSync(join(setupDir, "proxmox-lxc"), { recursive: true });
   mkdirSync(join(setupDir, "ssh-pool"), { recursive: true });
   writeFileSync(join(setupDir, "ssh-pool", "mac-stream.swift"), "// bb-box-stream\n");
+  writeFileSync(join(setupDir, "ssh-pool", "mac-chrome.sh"), "# Chrome\n");
   writeFileSync(
     join(setupDir, "tart", "prepare-image.sh"),
     [
@@ -695,6 +696,8 @@ test("image operations on a Mac: an image box, its capture with its record besid
       'printf "%s\\n" "$@" > "$HOME/prepare-args"',
       // The image builds bb-box-stream from the pool Mac's source (060), which comes with the copy of setup/.
       'test -f ../ssh-pool/mac-stream.swift',
+      // And installs Chrome as a pool Mac's setup does, with the script beside it.
+      'test -f ../ssh-pool/mac-chrome.sh',
       'while [ $# -gt 0 ]; do case $1 in --name) name=$2; shift 2 ;; *) shift ;; esac; done',
       'export PATH="$HOME/.nix-profile/bin:$PATH"',
       'tart clone bb-box-macos "$name"',
@@ -736,6 +739,7 @@ test("a standard image's prepare script runs detached on the Mac, so its build o
   const setupDir = join(mac, "..", `detached-${counter++}`, "setup");
   for (const sub of ["tart", "proxmox-lxc", "ssh-pool"]) mkdirSync(join(setupDir, sub), { recursive: true });
   writeFileSync(join(setupDir, "ssh-pool", "mac-stream.swift"), "// bb-box-stream\n");
+  writeFileSync(join(setupDir, "ssh-pool", "mac-chrome.sh"), "# Chrome\n");
   // The Mac drops off the network for 2 s mid-build, as a Mac's link over Tailscale can.
   writeFileSync(
     join(setupDir, "tart", "prepare-image.sh"),

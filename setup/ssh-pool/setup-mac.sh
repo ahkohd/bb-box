@@ -16,6 +16,9 @@
 # - installs Homebrew if it is missing, as the administrator who ran sudo,
 #   then Git, GitHub CLI and Node.js with it, and Cua Driver
 # - installs BlackHole 2ch, the box's audio input (#631)
+# - installs Google Chrome from Google's stable download, its signature
+#   checked, with the Linux images' policies against first-run prompts
+#   (mac-chrome.sh, which Tart's image shares)
 # - installs the agent CLIs BB runs threads with, Claude Code, Codex and Pi,
 #   pinned as the Linux images pin them (#561)
 # - builds bb-box-stream, each box's desktop as video (060), with swiftc
@@ -104,8 +107,8 @@ done
 [ -n "$keys" ] || die "Give --key the public key bb-box's doctor shows, starting ssh-ed25519."
 printf '%s\n' "$admin" | grep -Eq '^[a-z_][a-z0-9_-]{0,31}$' || die "--admin must be a user name."
 case $admin in bbx-*) die "bbx- names are for box users. Choose another admin user." ;; esac
-[ -f "$here/machine-mac.sh" ] && [ -d "$here/mac-home" ] ||
-  die "machine-mac.sh and mac-home must be beside setup-mac.sh. Copy the whole setup/ssh-pool directory."
+[ -f "$here/machine-mac.sh" ] && [ -d "$here/mac-home" ] && [ -f "$here/mac-chrome.sh" ] ||
+  die "machine-mac.sh, mac-chrome.sh and mac-home must be beside setup-mac.sh. Copy the whole setup/ssh-pool directory."
 fdesetup status 2>/dev/null | grep -qx 'FileVault is Off\.' ||
   die "FileVault is on, or fdesetup could not say. A Mac signs box users in by itself only with FileVault off. Turn it off in System Settings, Privacy and Security, wait until it has decrypted the disk, then run setup-mac.sh again."
 launchctl print system/com.openssh.sshd >/dev/null 2>&1 ||
@@ -189,6 +192,10 @@ if [ "$(cat "$ROOT$SHARE/cua-driver" 2>/dev/null)" != "$CUA_VERSION" ] || [ ! -e
 fi
 mkdir -p "$ROOT/usr/local/bin"
 ln -sf "$CUA_APP/Contents/MacOS/cua-driver" "$ROOT/usr/local/bin/cua-driver"
+
+# Google Chrome, which agents mostly use, as Tart's image has it: from
+# Google's stable download, its signature checked, kept where it is as new.
+ROOT=$ROOT sh "$here/mac-chrome.sh" >/dev/null || die "Could not install Google Chrome."
 
 # The agent CLIs, so threads on a box can run (#561): each pinned by
 # version and SHA-256, in /usr/local/lib/bb-box/<name>-<version>, linked

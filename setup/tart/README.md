@@ -162,6 +162,13 @@ and the Metal toolchain), plus:
   telemetry and update checks off. The script grants it Accessibility and
   Screen Recording in the stopped VM's disk, and approves its screen capture
   ahead, so nobody has to approve anything;
+- Google Chrome, from Google's stable download, with
+  `../ssh-pool/mac-chrome.sh`, as setup-mac.sh installs it on a pool Mac.
+  The download names no version, so its signature is the check: it must
+  verify, Gatekeeper must accept it as notarised, and Google's team,
+  EQHXZ8M8AV, must have signed it. Its machine policies turn off first-run,
+  default-browser, promotion and sign-in prompts, as on Linux. The record
+  lists its version;
 - BlackHole 2ch, pinned by SHA-256, a virtual audio device that is the
   default input: what is played to its output comes back as the
   microphone, so a test can feed speech in with `say -a BlackHole`;
