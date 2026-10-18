@@ -613,6 +613,12 @@ function setupMac(): FakeMacos {
   mkdirSync(join(work, "pi"));
   writeFileSync(join(work, "pi", "pi"), "#!/bin/sh\n", { mode: 0o755 });
   assert.equal(spawnSync("tar", ["-czf", join(mac.state, "flags", "pi-darwin-arm64.tar.gz"), "-C", work, "pi"]).status, 0);
+  // Chrome's disk image, as a tar of what it holds: the app, signed by Google's team, with its version.
+  const chrome = join(work, "chrome");
+  mkdirSync(join(chrome, "Google Chrome.app", "Contents"), { recursive: true });
+  writeFileSync(join(chrome, "Google Chrome.app", "Contents", "Info.plist"), "<plist><dict><key>CFBundleShortVersionString</key><string>155.0.8059.85</string></dict></plist>\n");
+  writeFileSync(join(chrome, "Google Chrome.app.sig"), "identifier=com.google.Chrome\nteam=EQHXZ8M8AV\n");
+  assert.equal(spawnSync("tar", ["-cf", join(mac.state, "flags", "googlechrome.dmg"), "-C", chrome, "Google Chrome.app", "Google Chrome.app.sig"]).status, 0);
   mac.flag("install.sh", true, 'mkdir -p "$FAKE_MAC_ROOT/opt/homebrew/bin" && ln -s "$FAKE_MAC_BIN/brew" "$FAKE_MAC_ROOT/opt/homebrew/bin/brew"\n');
   mac.flag("owner", true, "person\n");
   writeFileSync(join(mac.root, "etc/ssh/ssh_host_ed25519_key.pub"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMacHostKeyForTests root@mac\n");
@@ -700,6 +706,10 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(count(mac, "sudo -u person -H env NONINTERACTIVE=1"), 1, "Homebrew is installed once");
   assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.includes("cua-driver-rs")).length, 1, "Cua Driver is downloaded once");
   assert.equal(count(mac, "installer -pkg "), 1, "BlackHole is installed once");
+  assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.endsWith("/googlechrome.dmg")).length, 2, "Chrome is downloaded each time, and kept when as new");
+  assert.equal(count(mac, "ditto "), 1, "and copied in once");
+  assert.ok(existsSync(join(mac.root, "Applications/Google Chrome.app/Contents/Info.plist")));
+  assert.match(mac.file("/Library/Managed Preferences/com.google.Chrome.plist")!, /<key>DefaultBrowserSettingEnabled<\/key><false\/>/);
   for (const file of ["/claude", "codex-aarch64-apple-darwin.tar.gz", "pi-darwin-arm64.tar.gz"]) {
     assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.endsWith(file)).length, 1, `${file} is downloaded once`);
   }
@@ -739,6 +749,26 @@ test("setup-mac.sh refuses a Mac with FileVault on or Remote Login off, no key, 
   assert.equal(failed(tampered), "setup-mac.sh: Cua Driver's archive does not match its pin.\n");
   assert.equal(tampered.file("/Applications/CuaDriver.app/Contents/MacOS/cua-driver"), null);
   for (const mac of [encrypted, closed, taken]) assert.deepEqual(mac.users(), mac === taken ? ["bbbox-admin", "person"] : ["person"]);
+});
+
+test("setup-mac.sh refuses a Chrome that Gatekeeper does not accept, or that Google's team did not sign", () => {
+  for (const [flag, said] of [["gatekeeper-refuses", "Gatekeeper does not accept Chrome's app as notarised"], ["", "Chrome's app is not signed by Google's team, EQHXZ8M8AV"]] as const) {
+    const mac = setupMac();
+    if (flag) mac.flag(flag, true);
+    else {
+      // The same image, signed by another team.
+      const work = tempDir("chrome-other");
+      mkdirSync(join(work, "Google Chrome.app", "Contents"), { recursive: true });
+      writeFileSync(join(work, "Google Chrome.app", "Contents", "Info.plist"), "<plist><dict><key>CFBundleShortVersionString</key><string>155.0.8059.85</string></dict></plist>\n");
+      writeFileSync(join(work, "Google Chrome.app.sig"), "identifier=com.google.Chrome\nteam=SOMEONEELS\n");
+      assert.equal(spawnSync("tar", ["-cf", join(mac.state, "flags", "googlechrome.dmg"), "-C", work, "Google Chrome.app", "Google Chrome.app.sig"]).status, 0);
+    }
+    const result = mac.setup(["--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box"]);
+    assert.equal(result.status, 1);
+    assert.ok(result.stderr.includes(`mac-chrome.sh: ${said}`), result.stderr);
+    assert.ok(result.stderr.includes("Could not install Google Chrome."), result.stderr);
+    assert.equal(existsSync(join(mac.root, "Applications/Google Chrome.app")), false);
+  }
 });
 
 test("setup-mac.sh pins the Cua Driver that Tart's image pins", () => {

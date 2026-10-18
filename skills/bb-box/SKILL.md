@@ -74,6 +74,8 @@ bb-box restarts. Beyond those:
   is a BB machine.
 - On a Mac, only a desktop command (`desktop: true`) reaches the login
   keychain, which git's keychain helper and Xcode's signing use.
+- macOS boxes have Google Chrome as well as Safari, on Tart images and pool
+  Macs set up since Chrome was added. Chrome updates itself.
 - A macOS box's microphone is BlackHole 2ch, a virtual device: what is
   played to it comes back as the microphone. Feed an app speech with
   `say -a BlackHole "Hello"`; its system audio is what plays to the default
