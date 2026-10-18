@@ -23,6 +23,13 @@ exit 1`;
  * no cursor shape: a person in control saw that painted pointer trail their
  * own. Sway takes the theme for the cursors it draws, and GTK apps, which
  * draw their own, take it from GSettings; both apply it at once.
+ *
+ * A seat command makes Sway apply seat0's configuration again, which
+ * detaches every device the configuration does not attach: wayvnc's virtual
+ * pointer and keyboard, which a viewer's input goes through, so a person who
+ * had just taken control clicked and typed into nothing until a new VNC
+ * connection made new ones. `attach "*"` keeps them, in this switch and every
+ * later one.
  */
 export const HIDDEN_CURSOR_THEME = "bb-box-hidden";
 
@@ -31,7 +38,7 @@ export function waylandPointerScript(shown: boolean): string {
   const [sway, gtk] = shown ? ["default", "Adwaita"] : [HIDDEN_CURSOR_THEME, HIDDEN_CURSOR_THEME];
   return `export XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"; export DBUS_SESSION_BUS_ADDRESS="\${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
 set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
-swaymsg -s "$SWAYSOCK" seat seat0 xcursor_theme ${sway} >/dev/null || exit 1
+swaymsg -s "$SWAYSOCK" 'seat seat0 attach "*"; seat seat0 xcursor_theme ${sway}' >/dev/null || exit 1
 ! command -v gsettings >/dev/null || gsettings set org.gnome.desktop.interface cursor-theme ${gtk}`;
 }
 
