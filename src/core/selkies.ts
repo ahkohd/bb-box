@@ -185,9 +185,20 @@ export class SelkiesBox {
    * size, so a viewer sees a small picture, or part of the desktop. A
    * controller's SETTINGS with the size as its manual resolution moves the
    * capture at once, without a restart, and tells every page the new size.
+   *
+   * It moves it only while the controller wants video: otherwise it stops the
+   * capture and waits for a START_VIDEO, which bb-box's restart sends after
+   * about a second. The input connection wants none from its STOP_VIDEO, but
+   * Selkies counts it as wanting video while pages watch, until the last
+   * watching page stops its video, as for a restart of the capture or a hidden
+   * tab; then not again. So the input connection asks for video and stops it
+   * first: with pages watching, Selkies keeps the capture and the controller
+   * wants video, but sends it none (measured 18 October 2026).
    */
   async follow(size: { readonly width: number; readonly height: number }): Promise<void> {
     const settings = { displayId: "primary", manual_resolution: true, manual_width: size.width, manual_height: size.height, force_aligned_resolution: false };
+    await this.input("START_VIDEO");
+    await this.input("STOP_VIDEO");
     await this.input(`SETTINGS,${JSON.stringify(settings)}`);
   }
 
