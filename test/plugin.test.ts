@@ -2679,6 +2679,7 @@ test("a video display told a size first, as Selkies on Sway, hears it before the
   const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
   await until("Selkies' first message", async () => session.sent.includes("MODE websockets"));
   await selkies.frame(1, true, 1280, 800);
+  await until("the frame", async () => session.sent.some((message) => typeof message !== "string"));
   await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
   const input = await until("the input connection", async () => selkies.pages[1]);
   const follow = (width: number, height: number) =>
@@ -2700,6 +2701,16 @@ test("a video display told a size first, as Selkies on Sway, hears it before the
   await session.receive("r,40000x800");
   await until("the video told the size", async () => input.received.includes(follow(40000, 800)));
   await until("the video following the size the desktop kept", async () => input.received.filter((message) => message === follow(1840, 800)).length === 2);
+  // A hand-back with the tab hidden returns once the desktop is restored: no frame of its size comes, and none is waited for.
+  await session.receive("STOP_VIDEO");
+  const told = input.received.length;
+  const handing = Date.now();
+  await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.name });
+  assert.ok(Date.now() - handing < FOLLOW_FRAME_MS, `the hand-back took ${Date.now() - handing} ms`);
+  await until("the video told the size restored", async () =>
+    input.received.slice(told).some((message) => typeof message === "string" && message.startsWith("SETTINGS,") && message.includes('"manual_width":1280')),
+  );
+  await until("the size the agent had", async () => backend.rfb.width === 1280 && backend.rfb.height === 800);
   await session.close();
 });
 

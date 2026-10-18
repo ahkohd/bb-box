@@ -439,6 +439,11 @@ export class SelkiesRelay {
     return true;
   }
 
+  /** Whether this viewer wants video now: not while its tab is hidden. */
+  get wantsVideo(): boolean {
+    return !this.#ended && this.#wants;
+  }
+
   /** Starts this viewer's video again after `pause`, from a key frame, unless it has since asked for none. */
   resume(): void {
     if (this.#ended || !this.#wants) return;
