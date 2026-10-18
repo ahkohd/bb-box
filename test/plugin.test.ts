@@ -2535,7 +2535,7 @@ test("the desktop route relays a box's desktop, and only the viewer with control
   assert.match(sentTo(noId).subarray(12).toString(), /The viewer gave no viewer ID/);
 
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
-  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false, videoByDefault: false, sharp: null });
+  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false, videoByDefault: false, sharp: null, switching: false });
 });
 
 test("a box whose video is shown only by choice, as a Tart Mac's, offers video but opens VNC first; others open video", async (t) => {
@@ -2988,7 +2988,8 @@ test("High resolution doubles a Linux desktop's pixels with Xfce at 2x, keeps th
   // Xfce's settings, as xfconf-query keeps them, in a file in the box's home; the panel's restarts counted.
   const bin = tempDir("xfce");
   const shims: Record<string, string> = {
-    "xfconf-query": `echo "$*" >> "$HOME/xfconf.log"; case "$*" in *"/general/theme") echo Arc ;; esac`,
+    // Setting the scale takes a moment, as in a real box, so the desktop's state can be read mid-switch.
+    "xfconf-query": `echo "$*" >> "$HOME/xfconf.log"; case "$*" in *"/general/theme") echo Arc ;; *"WindowScalingFactor -s 2") sleep 0.3 ;; esac`,
     "xfce4-panel": `echo restart >> "$HOME/panel.log"`,
   };
   for (const [name, script] of Object.entries(shims)) {
@@ -3006,10 +3007,16 @@ test("High resolution doubles a Linux desktop's pixels with Xfce at 2x, keeps th
   const rfb = world.backend!.rfb;
   const sharp = async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { sharp: boolean | null }).sharp;
   const set = async (on: boolean) => (await harness.behavior.callRpc("desktop.sharp", { threadId: THREAD, box: box.id, on })) as { error: string | null };
+  const switching = async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { switching?: boolean }).switching;
   assert.equal(await sharp(), false);
+  assert.equal(await switching(), false);
   assert.deepEqual([rfb.width, rfb.height], [1280, 800]);
 
-  assert.deepEqual(await set(true), { error: null });
+  // While it switches, the desktop says so, for every viewer to hold its last picture; after, it does not.
+  const on = set(true);
+  await until("the desktop says it is switching", async () => (await switching()) === true);
+  assert.deepEqual(await on, { error: null });
+  assert.equal(await switching(), false);
   assert.deepEqual([rfb.width, rfb.height], [2560, 1600], "twice the pixels");
   assert.equal(await sharp(), true);
   const log = () => readFileSync(join(home, "xfconf.log"), "utf8").trim().split("\n");

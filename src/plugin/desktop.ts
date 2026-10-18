@@ -122,6 +122,8 @@ export interface Desktops {
   sharp(boxId: string): Promise<boolean | null>;
   /** Makes the box's desktop High resolution, twice the pixels at twice Xfce's scale, or not. */
   setSharp(boxId: string, on: boolean): Promise<void>;
+  /** Whether the box's desktop is switching High resolution on or off now: its viewers hold their last picture until it is done. */
+  switching(boxId: string): boolean;
   dispose(): Promise<void>;
 }
 
@@ -590,6 +592,9 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     }).catch((error) => deps.logError("keep the desktop at high resolution", error));
   };
 
+  /** Boxes whose desktop is switching High resolution now. */
+  const switching = new Set<string>();
+
   return {
     control,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
@@ -607,31 +612,39 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
         const kept = await kv.get<SharpKept>(key);
         if (on === !!kept) return;
         const now = await desktopSize(displayOpener(await display(boxes, boxId)));
-        if (on) {
-          const size = scaled(now, SHARP_SCALE);
-          // Kept first, so a resize while it changes keeps the density; and forgotten if it fails.
-          await kv.set(key, { theme: "", size } satisfies SharpKept);
-          control.rescale(boxId, SHARP_SCALE);
-          try {
-            const theme = await sharpOn(box, boxId, size);
-            await kv.set(key, { theme, size } satisfies SharpKept);
-          } catch (error) {
+        // Every viewer holds its last picture from here to the end, so the desktop half way between scales never shows.
+        switching.add(boxId);
+        changed(boxId);
+        try {
+          if (on) {
+            const size = scaled(now, SHARP_SCALE);
+            // Kept first, so a resize while it changes keeps the density; and forgotten if it fails.
+            await kv.set(key, { theme: "", size } satisfies SharpKept);
+            control.rescale(boxId, SHARP_SCALE);
+            try {
+              const theme = await sharpOn(box, boxId, size);
+              await kv.set(key, { theme, size } satisfies SharpKept);
+            } catch (error) {
+              await kv.delete(key);
+              control.rescale(boxId, 1 / SHARP_SCALE);
+              // Windows took twice the pixels before its scale failed: its size back.
+              if (box.capabilities.os === "windows") await setSize(boxId, now).catch((cause) => deps.logError("put the desktop's size back", cause));
+              throw error;
+            }
+          } else {
+            // Windows at 100% first, as it caps the scale of a smaller mode.
+            await xfce(box, box.capabilities.os === "windows" ? scaleScript(100) : sharpOff(kept!.theme || "Arc"));
             await kv.delete(key);
             control.rescale(boxId, 1 / SHARP_SCALE);
-            // Windows took twice the pixels before its scale failed: its size back.
-            if (box.capabilities.os === "windows") await setSize(boxId, now).catch((cause) => deps.logError("put the desktop's size back", cause));
-            throw error;
+            await setSize(boxId, scaled(now, 1 / SHARP_SCALE));
           }
-        } else {
-          // Windows at 100% first, as it caps the scale of a smaller mode.
-          await xfce(box, box.capabilities.os === "windows" ? scaleScript(100) : sharpOff(kept!.theme || "Arc"));
-          await kv.delete(key);
-          control.rescale(boxId, 1 / SHARP_SCALE);
-          await setSize(boxId, scaled(now, 1 / SHARP_SCALE));
+        } finally {
+          switching.delete(boxId);
+          changed(boxId);
         }
-        changed(boxId);
       });
     },
+    switching: (boxId) => switching.has(boxId),
     async clipboard(boxId, viewer) {
       const box = viewer && control.mayInput(boxId, viewer) ? await byCommands(boxId) : null;
       if (box) {
