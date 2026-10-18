@@ -2974,8 +2974,8 @@ function imageOf(result: PluginAgentToolResult): { data: string; mimeType: strin
 }
 
 /** A desktop box whose desktop has one Tasks window, window 100. */
-async function desktopBox(options: { computer?: SetupOptions["computer"]; kind?: BoxKind } = {}) {
-  const started = await start(undefined, { computer: { pauseWaitMs: 300, desktopWaitMs: 300, ...options.computer }, kinds: options.kind && [options.kind] });
+async function desktopBox(options: { computer?: SetupOptions["computer"]; kind?: BoxKind; shell?: string } = {}) {
+  const started = await start(undefined, { computer: { pauseWaitMs: 300, desktopWaitMs: 300, ...options.computer }, kinds: options.kind && [options.kind], ...(options.shell ? { shell: options.shell } : {}) });
   await started.harness.behavior.callRpc("acquire", { threadId: THREAD, kind: options.kind?.id ?? "linux-desktop" });
   await started.app.boxes.idle();
   const box = await only(started.app);
@@ -3038,11 +3038,54 @@ test("High resolution doubles a Linux desktop's pixels with Xfce at 2x, keeps th
   await until("the panel restarted each time", async () => readFileSync(join(home, "panel.log"), "utf8").trim().split("\n").length === 2);
 });
 
+test("High resolution on Windows: twice the pixels, then 200%, and 100% before the size goes back; a scale Windows refuses leaves it off at its size", async (t) => {
+  // A Windows box's PowerShell that takes High resolution's scale scripts, noting each, and refuses the rest.
+  const dir = tempDir("pwsh");
+  const shell = join(dir, "pwsh");
+  const scales = join(dir, "scale.log");
+  // bb-box's scripts reach PowerShell in base64, a desktop command's within its own, so the shell reads through each.
+  writeFileSync(
+    shell,
+    String.raw`#!/usr/bin/env node
+let text = process.argv[3] ?? "";
+for (let i = 0; i < 4; i++) text += [...text.matchAll(/FromBase64String\('{1,2}([A-Za-z0-9+\/=]+)'{1,2}\)/g)].map((m) => Buffer.from(m[1], "base64").toString("utf8")).join("\n");
+const scale = /\$bbScale::Set\((\d+)\)/.exec(text);
+if (scale) {
+  require("node:fs").appendFileSync(process.env.BB_TEST_SCALES, scale[1] + "\n");
+  process.exit(0);
+}
+process.exit(1);
+`.replace("process.env.BB_TEST_SCALES", JSON.stringify(scales)),
+  );
+  chmodSync(shell, 0o755);
+  const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays } };
+  const { harness, box, world } = await desktopBox({ kind, shell });
+  t.after(() => harness.lifecycle.dispose());
+  const rfb = world.backend!.rfb;
+  const sharp = async () => ((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { sharp: boolean | null }).sharp;
+  const set = async (on: boolean) => (await harness.behavior.callRpc("desktop.sharp", { threadId: THREAD, box: box.id, on })) as { error: string | null };
+  assert.equal(await sharp(), false, "offered on a Windows desktop shown as video");
+
+  assert.deepEqual(await set(true), { error: null });
+  assert.deepEqual([rfb.width, rfb.height], [2560, 1600], "twice the pixels");
+  assert.equal(await sharp(), true);
+  assert.deepEqual(await set(false), { error: null });
+  assert.deepEqual([rfb.width, rfb.height], [1280, 800]);
+  assert.equal(await sharp(), false);
+  assert.deepEqual(readFileSync(scales, "utf8").trim().split("\n"), ["200", "100"]);
+
+  // A scale Windows refuses: off again, at the size it had.
+  writeFileSync(shell, "#!/bin/sh\necho 'Windows is at 125%, not 200%' >&2\nexit 1\n");
+  assert.match((await set(true)).error ?? "", /Windows in box \S+ did not change its scale/);
+  assert.equal(await sharp(), false);
+  assert.deepEqual([rfb.width, rfb.height], [1280, 800]);
+});
+
 test("a desktop that cannot be at high resolution says so, and refuses it", async (t) => {
   const { harness, box } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   assert.equal(((await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { sharp: boolean | null }).sharp, null);
-  assert.match(((await harness.behavior.callRpc("desktop.sharp", { threadId: THREAD, box: box.id, on: true })) as { error: string }).error, /cannot be at high resolution: only Linux desktops drawn by the CPU can/);
+  assert.match(((await harness.behavior.callRpc("desktop.sharp", { threadId: THREAD, box: box.id, on: true })) as { error: string }).error, /cannot be at high resolution: only Linux desktops drawn by the CPU and Windows desktops shown as video can/);
 });
 
 test("a box streams in 4:4:4 while every viewer's browser decodes it, and in 4:2:0 once one cannot", async (t) => {

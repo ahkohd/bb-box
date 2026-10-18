@@ -16,7 +16,7 @@ import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-off
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
-import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, SelkiesSession, forgetFullColour, spsCodec } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
@@ -2334,6 +2334,21 @@ test("a video desktop's Display holds Show as VNC, and no choice of the box's po
     undo();
     window.sessionStorage.clear();
   }
+});
+
+test("High resolution's tooltip gives its cost for the box's system: Windows' frame rate and keys, Linux's CPU", async () => {
+  for (const [os, words] of [
+    ["windows", WINDOWS_HIGH_RESOLUTION_WORDS],
+    ["linux", HIGH_RESOLUTION_WORDS],
+  ] as const) {
+    const { handlers } = server([desktopBox({ os, kind: os === "windows" ? "windows-desktop" : "linux-desktop-cpu" })], { sharp: false });
+    const slot = desktopTab(handlers);
+    const display = within(await openDisplay(await slot.findByRole("button", { name: "Desktop actions" })));
+    const item = display.getByRole("menuitemcheckbox", { name: /High resolution/ });
+    expect(document.getElementById(item.getAttribute("aria-describedby")!)?.textContent).toBe(words);
+    cleanup();
+  }
+  expect(WINDOWS_HIGH_RESOLUTION_WORDS).toMatch(/half the frame rate, and keys about 120 ms, while on; more cores do not help/);
 });
 
 /** Bytes as Selkies sends them in a clipboard message: base64. */

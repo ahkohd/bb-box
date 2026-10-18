@@ -77,7 +77,11 @@ Over VNC, a Windows box from a recent image shows no pointer in the picture at a
 
 On a high-resolution screen, such as a Mac's, a desktop's text can look soft: each of its pixels is stretched over several of yours. In the toolbar's menu, under **Display**, select **High resolution** to give the desktop twice the pixels, with everything on it drawn twice the size, so it looks the same size but its text is sharp. Point at its info icon to see what it costs. It is ticked while it is on, and stays on for that box until you turn it off, even after the box starts again.
 
-High resolution takes about three times the processor while someone watches the desktop, and the box's apps draw four times the pixels, so scrolling in a browser costs more too. It works best on boxes with 8 cores or more. Only Linux desktops drawn by the CPU have it. While it is on, resizing your tab in control keeps the desktop's pixels doubled; over VNC, the desktop keeps its size.
+On a Linux desktop drawn by the CPU, High resolution takes about three times the processor while someone watches the desktop, and the box's apps draw four times the pixels, so scrolling in a browser costs more too. It works best on boxes with 8 cores or more.
+
+On a Windows desktop shown as video, High resolution sets the screen to 3840x2160 at 200% scaling, so the desktop is laid out as 1920x1080, larger than its usual 1280x800. The video then shows about half as many frames a second, and a key takes about 120 ms to show. More cores do not help, as copying the screen is the limit, so turn it on for what needs sharp text and off again after. Windows takes only the screen sizes its display driver lists, so while it is on, resizing your tab picks the nearest of them.
+
+Other desktops do not have it. While it is on, resizing your tab in control keeps the desktop's pixels doubled; over VNC, the desktop keeps its size.
 
 Video also keeps coloured text sharp: when every browser watching a desktop can decode full colour, as Chrome can, the video carries it, for a little more processor and no more bandwidth.
 
