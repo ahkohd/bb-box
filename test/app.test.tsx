@@ -17,7 +17,7 @@ import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
-import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, SelkiesSession, forgetFullColour, spsCodec } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, SelkiesSession, forgetFullColour, spsCodec } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -418,7 +418,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean } } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -442,7 +442,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null }),
-    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, videoByDefault: options.videoByDefault ?? options.video ?? false, sharp: options.sharp ?? null }),
+    desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, videoByDefault: options.videoByDefault ?? options.video ?? false, sharp: options.sharp ?? null, switching: options.switching?.on ?? false }),
     profile: async () => ({ lines: [] }),
     "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
     "images.list": () => ({ images: options.rebuildable ?? [] }),
@@ -2147,9 +2147,10 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
   expect(changes).toEqual(["takeControl box_2", "handBack box_2"]);
 });
 
-/** WebCodecs, which jsdom lacks: each decoder shows each chunk at once, as a 1280x800 frame. */
+/** WebCodecs, which jsdom lacks: each decoder shows each chunk at once, as a frame of the desktop's size, 1280x800 unless a test changes it. */
 class FakeDecoder {
   static made: FakeDecoder[] = [];
+  static size = { width: 1280, height: 800 };
   /** Whether this browser decodes 4:4:4, as isConfigSupported answers. */
   static fullColour = true;
   static async isConfigSupported(config: { codec: string }) {
@@ -2169,7 +2170,7 @@ class FakeDecoder {
   }
   decode(chunk: { type: string; timestamp: number }) {
     this.chunks.push(chunk);
-    this.#output({ displayWidth: 1280, displayHeight: 800, timestamp: chunk.timestamp, close() {} });
+    this.#output({ displayWidth: FakeDecoder.size.width, displayHeight: FakeDecoder.size.height, timestamp: chunk.timestamp, close() {} });
   }
   close() {
     this.state = "closed";
@@ -2180,6 +2181,7 @@ class FakeDecoder {
 function withVideo() {
   FakeDecoder.made = [];
   FakeDecoder.fullColour = true;
+  FakeDecoder.size = { width: 1280, height: 800 };
   forgetFullColour();
   vi.stubGlobal("VideoDecoder", FakeDecoder);
   vi.stubGlobal("EncodedVideoChunk", class {
@@ -2349,6 +2351,46 @@ test("High resolution's tooltip gives its cost for the box's system: Windows' fr
     cleanup();
   }
   expect(WINDOWS_HIGH_RESOLUTION_WORDS).toMatch(/half the frame rate, and keys about 85 ms, while on; more cores do not help/);
+});
+
+test("through a High resolution switch, the video holds its last picture until the desktop has its new size and has drawn at its new scale, here or in another tab (the owner's note of 18 October 2026)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const switching = { on: false };
+    const { handlers } = server([desktopBox()], { video: true, sharp: false, switching });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    await slot.findByText("The agent has control.");
+    const screen = slot.getByTestId("desktop-screen");
+    const pictures = () => screen.querySelectorAll("canvas").length;
+    expect(pictures()).toBe(1);
+
+    // Another tab switches it: this one holds its picture over the video while the box changes, and through the new size's first frames.
+    switching.on = true;
+    await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+    await waitFor(() => expect(pictures()).toBe(2));
+    FakeDecoder.size = { width: 2560, height: 1600 };
+    act(() => void socket.onmessage?.({ data: videoFrame(6, true) }));
+    switching.on = false;
+    await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+    await new Promise((resolve) => setTimeout(resolve, HOLD_SETTLE_MS / 2));
+    expect(pictures()).toBe(2);
+    // Once the desktop has had time to draw at its new scale, the new picture shows.
+    await waitFor(() => expect(pictures()).toBe(1), { timeout: HOLD_SETTLE_MS * 2 });
+
+    // Asked here, it holds at once; a switch whose new size never comes lets go soon after it ends, so the view never freezes.
+    fireEvent.click(within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: /High resolution/ }));
+    expect(pictures()).toBe(2);
+    await waitFor(() => expect(pictures()).toBe(1), { timeout: HOLD_NO_SIZE_MS * 2 });
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
 });
 
 /** Bytes as Selkies sends them in a clipboard message: base64. */

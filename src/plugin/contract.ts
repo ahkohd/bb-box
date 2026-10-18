@@ -79,6 +79,8 @@ export interface DesktopState {
   readonly videoByDefault?: boolean;
   /** Whether the desktop is at high resolution, twice the pixels at twice the scale; null where it cannot be. Absent from older plugins. */
   readonly sharp?: boolean | null;
+  /** Whether High resolution is switching on or off now: the video viewer holds its last picture until the desktop has its new size and scale. Absent from older plugins. */
+  readonly switching?: boolean;
 }
 
 /** A box in any thread, or one of your machines, for the Boxes page. */

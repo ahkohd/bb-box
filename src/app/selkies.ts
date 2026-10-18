@@ -21,6 +21,14 @@ import { MAX_RETRY_MS, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_
 export const FIRST_FRAME_MS = 10_000;
 /** How often the viewer says which frame it has shown, as Selkies' own page does. */
 const ACK_MS = 50;
+/** The longest the viewer holds its last picture through a High resolution switch, so a switch that fails never freezes the view. */
+export const HOLD_MAX_MS = 15_000;
+/** How long the box's desktop takes to draw at its new scale after its new size: about 0.6 s on a Proxmox LXC box (the owner's note of 18 October 2026). */
+export const HOLD_SETTLE_MS = 800;
+/** How long the viewer waits for the new size once the switch is over, before it shows the stream as it is. */
+export const HOLD_NO_SIZE_MS = 2_000;
+/** The cross-fade from the held picture to the new one. */
+const HOLD_FADE_MS = 150;
 /** A frame message: type 4, H.264. */
 const VIDEO = 4;
 const H264 = 1;
@@ -181,6 +189,12 @@ export class SelkiesSession implements Kept {
   #pasteWait: ReturnType<typeof setTimeout> | undefined;
   #chord: ReturnType<typeof setTimeout> | undefined;
   readonly #onPasteEvent = (event: ClipboardEvent) => this.#takePaste(event);
+  /**
+   * The last picture, held over the video while High resolution switches, with the size it had: the box's desktop changes its scale
+   * and its size apart, so between them it shows the old picture in a corner of the new size, or its panel at the old scale.
+   */
+  #hold: { readonly still: HTMLCanvasElement; readonly size: string; released: number | null; resized: number | null; timer?: ReturnType<typeof setTimeout> } | null = null;
+  #holdLimit: ReturnType<typeof setTimeout> | undefined;
   /** A copy the box sends in parts, until its last. */
   #incoming: { readonly mime: string; readonly size: number; readonly parts: Uint8Array<ArrayBuffer>[]; received: number } | null = null;
   #transfers = 0;
@@ -490,6 +504,10 @@ export class SelkiesSession implements Kept {
       this.#width = width;
       this.#height = height;
       this.#canvas.getContext("2d")?.drawImage(frame, 0, 0);
+      if (this.#hold && this.#hold.resized === null && this.#hold.size !== `${width}x${height}`) {
+        this.#hold.resized = performance.now();
+        this.#holdUntil();
+      }
       if (this.connection.state !== "connected") {
         this.#everShown = true;
         clearTimeout(this.#firstFrame);
@@ -705,7 +723,55 @@ export class SelkiesSession implements Kept {
     this.onPaste?.(null);
   }
 
+  /**
+   * Holds the picture shown now over the video, scaled to the pane as it is, while High resolution switches. Input still goes to the
+   * desktop under it.
+   */
+  hold(): void {
+    if (this.#disposed || this.#hold || !this.#width || this.connection.state !== "connected") return;
+    const still = document.createElement("canvas");
+    still.width = this.#canvas.width;
+    still.height = this.#canvas.height;
+    still.getContext("2d")?.drawImage(this.#canvas, 0, 0);
+    still.style.cssText = `position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;transition:opacity ${HOLD_FADE_MS}ms ease-out`;
+    this.element.appendChild(still);
+    this.#hold = { still, size: `${this.#width}x${this.#height}`, released: null, resized: null };
+    this.#holdLimit = setTimeout(() => this.#unhold(), HOLD_MAX_MS);
+  }
+
+  /** The switch is over on the box's side: the held picture goes once the new size has come and the desktop has drawn at its new scale. */
+  release(): void {
+    if (!this.#hold || this.#hold.released !== null) return;
+    this.#hold.released = performance.now();
+    this.#holdUntil();
+  }
+
+  /** Whether a picture is held now. */
+  get holding(): boolean {
+    return this.#hold !== null;
+  }
+
+  #holdUntil(): void {
+    const hold = this.#hold;
+    if (!hold || hold.released === null) return;
+    clearTimeout(hold.timer);
+    const wait = hold.resized !== null ? hold.resized + HOLD_SETTLE_MS : hold.released + HOLD_NO_SIZE_MS;
+    hold.timer = setTimeout(() => this.#unhold(), Math.max(0, wait - performance.now()));
+  }
+
+  /** The new picture shows, faded in over the held one. */
+  #unhold(): void {
+    const hold = this.#hold;
+    if (!hold) return;
+    this.#hold = null;
+    clearTimeout(hold.timer);
+    clearTimeout(this.#holdLimit);
+    hold.still.style.opacity = "0";
+    setTimeout(() => hold.still.remove(), HOLD_FADE_MS);
+  }
+
   dispose(): void {
+    this.#unhold();
     this.#disposed = true;
     clearTimeout(this.#retry);
     clearTimeout(this.#firstFrame);

@@ -682,6 +682,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   // A kept session shows at once, before the box's state has loaded; the state can only confirm or end it.
   const [connection, setConnection] = useState<Connection>(() => (key ? keptFree<ViewerSession>(key)?.connection : undefined) ?? { state: "connecting" });
   const [acting, setActing] = useState(false);
+  /** This tab asked for High resolution to switch, and has not yet heard that it is done. */
+  const [sharpAsked, setSharpAsked] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   /** The box's clipboard as last seen: text from its desktop's cut text or the RPC where its input reports it, or an image the video client brought (#609). */
   const [boxClipboard, setBoxClipboard] = useState<string | Blob | null>(null);
@@ -783,6 +785,15 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   }, [wanted, boxId, viewer, key, stream, rpc, threadId]);
 
   // In the commit that shows who has control, so the toolbar never says "You have control" while input is still off (#116).
+  // Through a High resolution switch, asked here or in another tab, the video holds its last picture until the desktop has its new
+  // size and scale, so the switch looks like one change (the owner's note of 18 October 2026).
+  const switching = sharpAsked || state?.switching === true;
+  useEffect(() => {
+    const current = session.current;
+    if (!(current instanceof SelkiesSession)) return;
+    if (switching) current.hold();
+    else current.release();
+  }, [switching]);
   useLayoutEffect(() => {
     // A desktop at high resolution keeps its density through the video viewer's resizes; noVNC would ask for its pane's own size, so it asks for none.
     session.current?.setControl(mine, resizable && !(sharp === true && stream === "rfb"));
@@ -862,6 +873,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   };
   const toggleSharp = async (on: boolean) => {
     setActing(true);
+    setSharpAsked(true);
     try {
       setProblem((await rpc.call("desktop.sharp", { threadId, box: boxId, on })).error);
     } catch (caught) {
@@ -870,6 +882,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       setActing(false);
     }
     await refresh();
+    setSharpAsked(false);
   };
   const take = () => act(() => rpc.call("takeControl", { threadId, box: boxId, viewer }));
   const handBack = () => act(() => rpc.call("handBack", { threadId, box: boxId }));
