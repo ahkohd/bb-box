@@ -97,6 +97,10 @@ install -d -m 0755 /usr/local/libexec/bb-box /etc/bb-box
 install -m 0755 "$build/guest/files/display-wayland" /usr/local/libexec/bb-box/display
 install -m 0755 "$build/guest/files/vnc-password" /usr/local/libexec/bb-box/vnc-password
 install -m 0755 "$build/guest/files/selkies-wayland" /usr/local/libexec/bb-box/selkies
+# Typing with a US keyboard, which computer use's text takes (#707).
+clang -O2 -Wall -Werror -o /usr/local/libexec/bb-box/type "$build/guest/files/bb-box-type.c" -lwayland-client -lxkbcommon ||
+  die "bb-box-type did not build"
+chmod 0755 /usr/local/libexec/bb-box/type
 # Selkies streams Sway at Sway's size and never resizes it (060).
 selkies_ws=$(ls /opt/selkies/lib/python3*/site-packages/selkies/websockets_mode.py 2>/dev/null | head -1)
 [ -n "$selkies_ws" ] || die "Selkies' websockets_mode.py is missing"
