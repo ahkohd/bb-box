@@ -69,8 +69,9 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         },
       );
       const video = !!box && (app.configuration.document.general.video ?? GENERAL_DEFAULTS.video) && box.capabilities.displays.some((display) => display.protocol === "selkies");
+      const videoByDefault = video && !box.capabilities.displays.some((display) => display.protocol === "selkies" && display.byChoice);
       const sharp = box ? await app.desktops.sharp(box.id).catch(() => null) : null;
-      return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path, video, sharp };
+      return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path, video, videoByDefault, sharp };
     },
     "desktop.sharp": async ({ threadId, box: ref, on }) => {
       try {

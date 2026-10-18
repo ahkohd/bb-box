@@ -47,7 +47,7 @@ export interface TartConfig {
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
   /** Windows boxes join BB as machines, unless set off, as on Proxmox QEMU (#539). */
   readonly windowsEnrol: boolean;
-  /** macOS desktops are offered as video too, from bb-box-stream, where every Mac's image has it (060). Off by default. */
+  /** macOS desktops open as video by default, where every Mac's image has bb-box-stream (060); else VNC, with video a choice. Off by default. */
   readonly video: boolean;
 }
 
@@ -170,9 +170,9 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
   },
   [TART_KEYS.video]: {
     type: "boolean",
-    label: "Tart: Video for macOS desktops",
+    label: "Tart: Video by default for macOS desktops",
     description:
-      "macOS desktops are offered as video too, from bb-box-stream in the image. Off by default: VNC is already smooth on a Tart Mac, at 52 to 55 frames a second. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31.",
+      "macOS desktops open as video, from bb-box-stream in the image, not VNC. Off by default: they open as VNC, which is already smooth on a Tart Mac, at 52 to 55 frames a second, and a person can choose video under Display. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31.",
     default: false,
   },
   [TART_KEYS.vmsPerHost]: {

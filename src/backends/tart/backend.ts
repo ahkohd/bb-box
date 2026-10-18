@@ -693,10 +693,11 @@ export class TartBackend implements Backend {
   }
 
   /**
-   * Declares macos-desktop's video, from bb-box-stream (060), while the
-   * backend's video field is on and every Mac that answered has it in its
-   * image's record, as the SSH host pool does from every Mac's survey; and
-   * stops declaring it when one does not.
+   * Declares macos-desktop's video, from bb-box-stream (060), while every Mac
+   * that answered has it in its image's record, as the SSH host pool does from
+   * every Mac's survey; and stops declaring it when one does not. The viewer
+   * opens it by default only while the backend's video field is on; else it
+   * opens VNC, and the person can choose video.
    */
   #declareVideo(states: ReadonlyMap<string, MacState | Error>): void {
     const index = this.#kinds.findIndex((kind) => kind.id === "macos-desktop");
@@ -704,11 +705,11 @@ export class TartBackend implements Backend {
     if (index < 0 || !image) return;
     const answered = [...states.values()].filter((state): state is MacState => !(state instanceof Error));
     if (!answered.length) return;
-    const video = this.#config.video && answered.every((state) => state.records.get(image)?.tools?.["bb-box-stream"] !== undefined);
+    const video = answered.every((state) => state.records.get(image)?.tools?.["bb-box-stream"] !== undefined);
     const kind = this.#kinds[index]!;
-    const has = kind.capabilities.displays.some((display) => display.protocol === "selkies");
-    if (video === has) return;
-    const displays = video ? [...kind.capabilities.displays, MAC_VIDEO] : kind.capabilities.displays.filter((display) => display.protocol !== "selkies");
+    const others = kind.capabilities.displays.filter((display) => display.protocol !== "selkies");
+    const displays = video ? [...others, this.#config.video ? MAC_VIDEO : { ...MAC_VIDEO, byChoice: true }] : others;
+    if (JSON.stringify(displays) === JSON.stringify(kind.capabilities.displays)) return;
     this.#kinds[index] = { ...kind, capabilities: { ...kind.capabilities, displays } };
   }
 
