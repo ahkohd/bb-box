@@ -220,6 +220,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       // A person took control of a box with Selkies viewers: its input connection opens now, not at their first key.
       if (control.view(boxId).owner === "human") selkiesBoxes.get(boxId)?.box.warm();
       cursorFor(boxId);
+      pointerFor(boxId);
     },
     logError: deps.logError,
     staleMs: deps.staleMs,
@@ -308,6 +309,20 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       entry.cursor = want;
       await entry.box.cursorInVideo(want, how);
     })().catch((error) => deps.logError("set the desktop's cursor", error));
+  };
+  /**
+   * The box's pointer in its VNC display's picture, where the display can
+   * take it out (its pointer, as on Sway, #707): out while a person holds
+   * control, so only their browser's pointer shows, not a painted one
+   * trailing it; in otherwise, so a watcher sees where the agent points.
+   * Asked at each change of control and as a viewer connects.
+   */
+  const pointerFor = (boxId: string): void => {
+    void (async () => {
+      const shown = await display(boxes, boxId).catch(() => null);
+      if (!shown?.pointer) return;
+      await shown.pointer(control.view(boxId).owner !== "human");
+    })().catch((error) => deps.logError("show or hide the desktop's pointer", error));
   };
   const leftSelkies = (boxId: string, relay: SelkiesRelay | null) => {
     const entry = selkiesBoxes.get(boxId);
@@ -519,7 +534,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
           }
           relays.add(relay);
           control.attach(boxId, connection);
-          if (!selkies) keepSharp(boxId);
+          if (!selkies) {
+            keepSharp(boxId);
+            pointerFor(boxId);
+          }
         },
         async onMessage(socket, data) {
           if (relay instanceof SelkiesRelay) {

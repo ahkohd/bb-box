@@ -132,6 +132,13 @@ export interface Display {
    */
   restartServer?(signal?: AbortSignal): Promise<void>;
   /**
+   * Puts the box's own pointer in the display's picture, or takes it out,
+   * for a server that cannot leave it out itself: Sway's headless output
+   * paints it into every frame wayvnc sends (#707). Out while a person
+   * holds control, whose browser draws its own; in otherwise.
+   */
+  pointer?(shown: boolean, signal?: AbortSignal): Promise<void>;
+  /**
    * The smallest size a viewer may set. Core raises a smaller SetDesktopSize
    * to it, and the viewer scales the desktop down to fit its pane. Xvnc sets
    * the raised size and says so, and noVNC asks again while that differs

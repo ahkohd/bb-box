@@ -42,9 +42,10 @@ check() { # pin name -> path of the checked artifact
 }
 
 # Packages, without recommends: Sway's include Xwayland, which stays out.
-# wf-recorder records the desktop for box_record (059).
+# wf-recorder records the desktop for box_record (059). gsettings
+# (libglib2.0-bin) switches GTK apps' cursor theme, to hide the pointer (#707).
 desktop_packages="sway swaybg waybar wayvnc foot wofi wl-clipboard grim slurp wf-recorder wtype wayland-utils
-  dbus-user-session at-spi2-core xdg-utils ffmpeg adwaita-icon-theme hicolor-icon-theme
+  dbus-user-session at-spi2-core xdg-utils ffmpeg adwaita-icon-theme hicolor-icon-theme libglib2.0-bin
   fonts-dejavu-core fonts-liberation fonts-noto-color-emoji libvulkan1 vulkan-tools mesa-vulkan-drivers
   libgl1-mesa-dri libegl1 libgl1 libgles2 libglvnd0 pciutils"
 # The small apps people and agents expect on a desktop, all GTK and so native
@@ -355,6 +356,26 @@ rm -f /var/tmp/rustup-init
 grep -q "^PATH=\"/home/$user/.cargo/bin:" /etc/environment ||
   sed -i "s|^PATH=\"|PATH=\"/home/$user/.cargo/bin:|" /etc/environment
 grep -q "^PATH=\"/home/$user/.cargo/bin:" /etc/environment || die "could not add cargo to PATH"
+
+# A cursor theme of transparent pointers, under every name Adwaita has (#707).
+# Sway's headless output paints the pointer into each frame wayvnc sends,
+# and wayvnc 0.7.2 sends no cursor shape, so while a person holds control
+# bb-box switches Sway and GTK to it: only their browser's pointer shows,
+# not a painted one trailing it.
+python3 - <<'PY'
+import os, struct
+d = "/usr/share/icons/bb-box-hidden/cursors"
+os.makedirs(d, exist_ok=True)
+image = struct.pack("<9I", 36, 0xFFFD0002, 24, 1, 1, 1, 0, 0, 0) + struct.pack("<I", 0)
+with open(f"{d}/default", "wb") as f:
+    f.write(b"Xcur" + struct.pack("<3I", 16, 0x10000, 1) + struct.pack("<3I", 0xFFFD0002, 24, 28) + image)
+for name in os.listdir("/usr/share/icons/Adwaita/cursors"):
+    if name != "default" and not os.path.lexists(f"{d}/{name}"):
+        os.symlink("default", f"{d}/{name}")
+with open("/usr/share/icons/bb-box-hidden/index.theme", "w") as f:
+    f.write("[Icon Theme]\nName=bb-box-hidden\nComment=Transparent pointers, which bb-box uses while a person holds control\n")
+PY
+[ -e /usr/share/icons/bb-box-hidden/cursors/left_ptr ] || die "the hidden cursor theme has no left_ptr"
 
 install -m 0755 "$build/guest/check-desktop-wayland.sh" /usr/local/bin/bb-box-check-desktop
 rm -rf /home/*/.config/google-chrome /root/.config/google-chrome
