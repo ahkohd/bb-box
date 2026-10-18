@@ -81,7 +81,7 @@ On a high-resolution screen, such as a Mac's, a desktop's text can look soft: ea
 
 On a Linux desktop drawn by the CPU, High resolution takes about three times the processor while someone watches the desktop, and the box's apps draw four times the pixels, so scrolling in a browser costs more too. It works best on boxes with 8 cores or more.
 
-On a Windows desktop shown as video, High resolution sets the screen to 3840x2160 at 200% scaling, so the desktop is laid out as 1920x1080, larger than its usual 1280x800. The video then shows about half as many frames a second, and a key takes about 120 ms to show. More cores do not help, as copying the screen is the limit, so turn it on for what needs sharp text and off again after. Windows takes only the screen sizes its display driver lists, so while it is on, resizing your tab picks the nearest of them.
+On a Windows desktop shown as video, High resolution sets the screen to twice the pixels, such as 2560x1600, at 200% scaling, so everything keeps its size. The video then shows about half as many frames a second, and a key takes about 85 ms to show. More cores do not help, as copying the screen is the limit, so turn it on for what needs sharp text and off again after.
 
 Other desktops do not have it. While it is on, resizing your tab in control keeps the desktop's pixels doubled; over VNC, the desktop keeps its size.
 

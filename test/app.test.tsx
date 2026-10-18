@@ -2348,7 +2348,7 @@ test("High resolution's tooltip gives its cost for the box's system: Windows' fr
     expect(document.getElementById(item.getAttribute("aria-describedby")!)?.textContent).toBe(words);
     cleanup();
   }
-  expect(WINDOWS_HIGH_RESOLUTION_WORDS).toMatch(/half the frame rate, and keys about 120 ms, while on; more cores do not help/);
+  expect(WINDOWS_HIGH_RESOLUTION_WORDS).toMatch(/half the frame rate, and keys about 85 ms, while on; more cores do not help/);
 });
 
 /** Bytes as Selkies sends them in a clipboard message: base64. */

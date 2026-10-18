@@ -595,7 +595,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   };
   /**
    * A High resolution box's desktop as High resolution left it, as a viewer connects: a box that started again comes back at its first
-   * size, with Xfce still at 2x, so its size is set again, and Xfce's scale with it.
+   * size, with Xfce still at 2x, so its size is set again, and Xfce's scale with it. Windows that started again keeps its size but
+   * may come back at 100%, so its scale is set again however its size is: the helper does nothing at 200%.
    */
   const keepSharp = (boxId: string): void => {
     void serialSharp(boxId, async () => {
@@ -603,7 +604,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const box = kept ? await boxes.find(boxId) : null;
       if (!kept || !box || box.state !== "ready") return;
       const now = await desktopSize(displayOpener(await display(boxes, boxId)));
-      if (now.width === kept.size.width && now.height === kept.size.height) return;
+      if (now.width === kept.size.width && now.height === kept.size.height) {
+        if (box.capabilities.os === "windows") await xfce(box, scaleScript(200));
+        return;
+      }
       await sharpOn(box, boxId, kept.size);
     }).catch((error) => deps.logError("keep the desktop at high resolution", error));
   };

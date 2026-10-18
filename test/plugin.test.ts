@@ -3070,10 +3070,14 @@ process.exit(1);
   assert.deepEqual(await set(true), { error: null });
   assert.deepEqual([rfb.width, rfb.height], [2560, 1600], "twice the pixels");
   assert.equal(await sharp(), true);
+  // Windows that started again keeps its size but may be at 100%: a viewer's connection sets 200% again.
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-one-0001&stream=selkies`);
+  await until("the scale set again", async () => existsSync(scales) && readFileSync(scales, "utf8").trim().split("\n").length === 2);
+  await session.close();
   assert.deepEqual(await set(false), { error: null });
   assert.deepEqual([rfb.width, rfb.height], [1280, 800]);
   assert.equal(await sharp(), false);
-  assert.deepEqual(readFileSync(scales, "utf8").trim().split("\n"), ["200", "100"]);
+  assert.deepEqual(readFileSync(scales, "utf8").trim().split("\n"), ["200", "200", "100"]);
 
   // A scale Windows refuses: off again, at the size it had.
   writeFileSync(shell, "#!/bin/sh\necho 'Windows is at 125%, not 200%' >&2\nexit 1\n");

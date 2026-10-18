@@ -523,9 +523,9 @@ export class DesktopSession implements Kept {
 
 /** What High resolution does, and its cost, for its tooltip (the owner's notes of 17 October 2026). */
 export const HIGH_RESOLUTION_WORDS = "Twice the pixels, for sharp text on a high-resolution screen. About three times the CPU while shown; best with 8 cores or more.";
-/** The same on Windows, at 3840x2160 and 200%, where copying the screen is the limit (the owner's note of 18 October 2026). */
+/** The same on Windows, at twice the pixels and 200%, where copying the screen is the limit (the owner's note of 18 October 2026). */
 export const WINDOWS_HIGH_RESOLUTION_WORDS =
-  "Twice the pixels, for sharp text on a high-resolution screen: laid out as 1920x1080. About half the frame rate, and keys about 120 ms, while on; more cores do not help.";
+  "Twice the pixels, for sharp text on a high-resolution screen. About half the frame rate, and keys about 85 ms, while on; more cores do not help.";
 
 /**
  * The desktop menu's Display items (the owner's notes of 17 October 2026): Show as VNC and High resolution, each with
