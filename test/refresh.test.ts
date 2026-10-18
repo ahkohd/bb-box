@@ -266,16 +266,40 @@ const WINDOWS: ImageBuild = { ref: "9200", image: "standard", kind: "windows-des
  * A fake backend with Windows boxes: refresh.ps1 exits with each of `exits`
  * in turn, and each restart moves the box's boot time on.
  */
-function fakeWindows(exits: number[], options: { readonly after?: (string | null)[]; readonly cut?: number; readonly steadyMs?: number } = {}) {
+function fakeWindows(exits: number[], options: { readonly after?: (string | null)[]; readonly cut?: number; readonly drops?: number; readonly steadyMs?: number } = {}) {
   const made = fake();
   let boots = 0;
   const left = [...exits];
   // What the box answers when asked its boot time after a restart, in turn, before its own: null for no answer.
   let after: (string | null)[] = [];
   let streams = 0;
+  let drops = options.drops ?? 0;
+  // The detached run of refresh.ps1 (#707): its exit code, or null when it ended without one, and its log.
+  let detached: { exit: number | null; log: string } = { exit: null, log: "" };
   const windowsCommand = (ref: string): CommandTransport => ({
     probe: async () => true,
     run: async (script) => {
+      if (script.includes("Start-Detached")) {
+        made.events.push(`start ${ref}`);
+        assert.match(script, /Start-Detached -Command '& ''C:\\bb-box\\build\\refresh\.ps1'' -Pins ''C:\\bb-box\\build\\pins\.json'' -Record ''C:\\bb-box\\build\\image\.json''; Set-Content -LiteralPath ''C:\\bb-box\\build\\refresh\.exit'' -Value \$LASTEXITCODE' -Log 'C:\\bb-box\\build\\refresh\.log'/);
+        if (++streams === options.cut) detached = { exit: null, log: "" };
+        else {
+          const exit = left.shift() ?? 0;
+          detached = { exit, log: exit === 3010 ? "12:00:00 a restart, then this again\n" : exit ? "12:00:00 FAILED: no network\n" : "12:00:00 Done\n" };
+        }
+        return { exitCode: 0, stdout: "pid=4321 start=133000000000000000\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult;
+      }
+      if (script.includes("@alive")) {
+        // The link drops for a few looks: the run goes on in the box.
+        if (drops > 0) {
+          drops--;
+          throw new TransportError("unreachable", "The box at 192.0.2.9 did not answer on SSH.");
+        }
+        const offset = Number(/Seek\((\d+), 'Begin'\)/.exec(script)![1]);
+        const bytes = Buffer.from(detached.log).subarray(offset);
+        const stdout = `@alive=False\n@status=${detached.exit ?? ""}\n@size=${Buffer.byteLength(detached.log)}\n@log\n${bytes.length ? bytes.toString("base64") : ""}\n`;
+        return { exitCode: 0, stdout, stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult;
+      }
       // check.ps1 reads the boot time too, in its boot line, so it is told first.
       const what = script.includes("Check 'Node.js") ? "check.ps1" : script.includes("LastBootUpTime") ? "booted" : script.startsWith("Restart-Computer") ? "restart" : script.startsWith("Remove-Item") ? "clean" : script;
       made.events.push(`run ${ref} ${what}`);
@@ -336,11 +360,11 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
     "write 7000 C:\\bb-box\\build\\hardware-cursor.ps1",
     "write 7000 C:\\bb-box\\build\\pins.json",
     "write 7000 C:\\bb-box\\build\\image.json",
-    "stream 7000",
+    "start 7000",
     "run 7000 booted",
     "run 7000 restart",
     "run 7000 booted",
-    "stream 7000",
+    "start 7000",
     "run 7000 clean",
     "capture 7000 from 9200 as standard",
     "box 7001 from 9200: answer time of build.20260901-020000-77aa",
@@ -377,17 +401,25 @@ test("a Windows refresh waits for the box to stay up after a restart, through th
   const said = result.output.join("\n");
   assert.match(said, /\nthe box answers again \d+ s after the restart; waiting for it to stay up 0 s, as Windows may restart again to finish its updates\nWindows restarted again by itself, as it finishes its updates: the box answers again \d+ s after the restart; waiting for it to stay up 0 s\n12:00:00 Done\n/);
   // The second round runs only once the box has answered with its last boot time.
-  const events = made.events.filter((event) => event === "run 7000 booted" || event === "stream 7000");
-  assert.equal(events.filter((event) => event === "stream 7000").length, 2);
-  assert.ok(events.indexOf("stream 7000", 1) > 5, events.join(", "));
+  const events = made.events.filter((event) => event === "run 7000 booted" || event === "start 7000");
+  assert.equal(events.filter((event) => event === "start 7000").length, 2);
+  assert.ok(events.indexOf("start 7000", 1) > 5, events.join(", "));
 });
 
 test("a Windows refresh round that finds the box gone waits for it to stay up, then runs again", async () => {
   const made = fakeWindows([3010, 0], { cut: 2 });
   const result = await made.run();
   assert.equal(result.ok, true, result.reason ?? "");
-  assert.ok(result.output.includes("the box stopped answering in round 2, as when Windows restarts by itself; waiting for it"), result.output.join("\n"));
-  assert.equal(made.events.filter((event) => event === "stream 7000").length, 3);
+  assert.ok(result.output.includes("refresh.ps1 ended without an exit code in round 2, as when Windows restarts by itself; waiting for the box"), result.output.join("\n"));
+  assert.equal(made.events.filter((event) => event === "start 7000").length, 3);
+});
+
+test("a Windows refresh's refresh.ps1 runs detached, so a link that drops for a few looks costs no round, and its lines come once (#707)", async () => {
+  const made = fakeWindows([0], { drops: 3 });
+  const result = await made.run();
+  assert.equal(result.ok, true, result.reason ?? "");
+  assert.equal(made.events.filter((event) => event === "start 7000").length, 1, "one round");
+  assert.equal(result.output.filter((line) => line === "12:00:00 Done").length, 1);
 });
 
 test("a Windows refresh takes 194, 3010 as ssh's 8-bit exit code gives it, as a restart (054)", async () => {
