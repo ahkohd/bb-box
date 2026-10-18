@@ -172,7 +172,7 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "boolean",
     label: "Tart: Video for macOS desktops",
     description:
-      "macOS desktops are offered as video too, from bb-box-stream in the image. Off for now: in a VM, Chrome's small changes, such as a typed key, do not show until something else changes.",
+      "macOS desktops are offered as video too, from bb-box-stream in the image. Off by default: VNC is already smooth on a Tart Mac, at 52 to 55 frames a second. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31.",
     default: false,
   },
   [TART_KEYS.vmsPerHost]: {
