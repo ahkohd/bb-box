@@ -39,7 +39,7 @@ On a Mac, Cmd works as Ctrl in a Linux or Windows box. So Cmd+C copies, Cmd+V pa
 
 ## Copying and pasting
 
-Copying and pasting between your computer and the box works while you have control. After you paste, or select Copy to this computer, the toolbar says 'Pasted' or 'Copied' for a few seconds.
+Copying and pasting between your computer and the box works while you have control. After you paste, or select Copy to this computer, a BB notification says 'Pasted' or 'Copied' for a few seconds. Notes like these come as notifications, not in the toolbar, and you can close one early.
 
 To paste text from your computer into the box, click where it should go and press Cmd+V on a Mac, or Ctrl+V elsewhere. You can also select **Paste from this computer** in the toolbar's menu. If your browser does not let BB Box read your clipboard, a field opens: paste your text there and select **Paste into the box**.
 
@@ -61,7 +61,7 @@ Such a desktop opens as video. To see it over VNC instead, select **Show as VNC*
 
 A macOS desktop on a Tart Mac opens over VNC instead, as VNC is already smooth there, with **Show as VNC** ticked. Select it to see the desktop as video, which uses much less bandwidth, though a key shows a little later. Your choice lasts in the same way. The Tart backend's **Video by default for macOS desktops** setting makes such desktops open as video.
 
-If the video cannot start, the desktop shows over VNC, and the toolbar says 'Video did not start, so this shows VNC.' Point at the note to see why: for example, the box was made before video came, or your browser cannot decode video, which needs a secure connection to BB.
+If the video cannot start, the desktop shows over VNC, and a notification says 'Video did not start, so this shows VNC.', with why under it: for example, the box was made before video came, or your browser cannot decode video, which needs a secure connection to BB.
 
 Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size. Copying and pasting carry images too, both ways: paste an image into the box, or copy one there and it comes to your computer. If your browser does not let BB Box write an image to your clipboard, the image shows so you can right-click it and copy it.
 

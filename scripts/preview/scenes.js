@@ -844,12 +844,13 @@ export const scenes = {
       await wait(300);
     },
   },
-  // Video that cannot start (056): the desktop shows over VNC, and the toolbar says so for a moment, the reason in its tooltip.
+  // Video that cannot start (056): the desktop shows over VNC, and BB's toast says so for a moment, the reason under it.
   "desktop-video-fallback": {
     slot: "desktop",
     chrome: desktopChrome("bold-heron"),
     width: 720,
     height: 480,
+    toaster: true,
     props: { threadId: THREAD, params: { box: "box_2" } },
     rpc: rpc([desktop], { video: true }),
     terminal: { videoFail: "This box's desktop has no Selkies stream" },
@@ -857,6 +858,35 @@ export const scenes = {
       await wait(600);
     },
   },
+  // Copy to this computer while the agent has control: nothing has come from the box, and the note says why, as BB's toast, so
+  // the toolbar keeps its height (the owner's note of 18 October 2026). At the panel's usual width and a narrow one.
+  ...Object.fromEntries(
+    [
+      ["desktop-copy-note", 720],
+      ["desktop-copy-note-narrow", 420],
+    ].map(([name, width]) => [
+      name,
+      {
+        slot: "desktop",
+        chrome: desktopChrome("bold-heron"),
+        width,
+        height: 480,
+        toaster: true,
+        props: { threadId: THREAD, params: { box: "box_2" } },
+        rpc: rpc([desktop], { video: true }),
+        terminal: { video: true },
+        after: async (root) => {
+          await wait(600);
+          openMenu(root, "Desktop actions");
+          await wait(300);
+          const copy = [...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent.trim() === "Copy to this computer");
+          if (!copy) throw new Error("No Copy to this computer");
+          copy.click();
+          await wait(900);
+        },
+      },
+    ]),
+  ),
   "desktop-menu": {
     slot: "desktop",
     chrome: desktopChrome("bold-heron"),

@@ -19,6 +19,8 @@ const [React, ReactDOMClient, ReactDOM, jsxRuntime, radixAlertDialog, radixDropd
   import("https://esm.sh/tailwind-merge@3.4.0"),
   import("https://esm.sh/class-variance-authority@0.7.1"),
 ]);
+// BB's toaster: the host gives plugins sonner's toast, and mounts one Toaster for the app (AppToaster).
+const sonner = await import(`https://esm.sh/sonner@1.7.4?${deps}`);
 const h = React.createElement;
 
 // BB's theme: its token blocks apply as they are, and its Tailwind @theme
@@ -110,6 +112,16 @@ class FakeTerminalSocket {
       }
       this.readyState = 1;
       this.onopen?.({});
+      // A video desktop that shows: Selkies' mode, then a key frame, which the fake decoder below turns into the scene's picture.
+      if (url.includes("stream=selkies") && terminal.video) {
+        this.onmessage?.({ data: "MODE websockets" });
+        const frame = new Uint8Array(20);
+        frame[0] = 4;
+        frame[1] = 0x11;
+        frame[3] = 1;
+        this.onmessage?.({ data: frame.buffer });
+        return;
+      }
       const text = terminal.output ?? "";
       this.onmessage?.({ data: new TextEncoder().encode(text).buffer });
       if (terminal.end) {
@@ -129,6 +141,40 @@ class FakeTerminalSocket {
   }
 }
 window.WebSocket = FakeTerminalSocket;
+
+// A decoder for the video scenes: each chunk is a 1280x800 picture of a desktop, so the viewer connects as with a box's video.
+class FakeVideoDecoder {
+  static async isConfigSupported(config) {
+    return { supported: true, config };
+  }
+  constructor(init) {
+    this.output = init.output;
+    this.state = "unconfigured";
+  }
+  configure() {
+    this.state = "configured";
+  }
+  decode(chunk) {
+    const picture = document.createElement("canvas");
+    picture.width = 1280;
+    picture.height = 800;
+    const g = picture.getContext("2d");
+    g.fillStyle = "#1e2a3a";
+    g.fillRect(0, 0, 1280, 800);
+    g.fillStyle = "#2b2b2b";
+    g.fillRect(0, 0, 1280, 28);
+    g.fillStyle = "#f4f4f4";
+    g.fillRect(140, 90, 1000, 620);
+    g.fillStyle = "#dfe6ef";
+    g.fillRect(140, 90, 1000, 40);
+    Object.assign(picture, { displayWidth: 1280, displayHeight: 800, timestamp: chunk.timestamp, close() {} });
+    this.output(picture);
+  }
+  close() {
+    this.state = "closed";
+  }
+}
+window.VideoDecoder = FakeVideoDecoder;
 
 // The fake runtime: the slots the bundle reads, and enough of the SDK.
 let scene = null;
@@ -180,6 +226,7 @@ globalThis.__bbPluginRuntime = {
   clsx,
   tailwindMerge,
   classVarianceAuthority: cva,
+  sonner,
 };
 
 await import("/dist/app.js");
@@ -224,6 +271,14 @@ if (scene.slot === "boxes-page") {
   chrome.className = "titlebar";
   chrome.innerHTML = `<span class="title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>${slot.title}</span><span class="spacer"></span><span class="header-content" data-bb-plugin="bb-box"></span><span class="bb-button">×</span><span class="bb-button">▢</span>`;
   if (slot.headerContent) ReactDOMClient.createRoot(chrome.querySelector(".header-content")).render(h(slot.headerContent, { subPath: scene.props?.subPath ?? "" }));
+}
+// BB's Toaster, as AppToaster mounts it: at the bottom right, in BB's theme. Inside the frame, which holds fixed elements, so a
+// toast shows where BB's would over a panel on the right of its window.
+if (scene.toaster) {
+  frame.style.transform = "translateZ(0)";
+  const toaster = document.createElement("div");
+  frame.appendChild(toaster);
+  ReactDOMClient.createRoot(toaster).render(h(sonner.Toaster, { theme: theme === "light" ? "light" : "dark", position: "bottom-right" }));
 }
 const reactRoot = ReactDOMClient.createRoot(root);
 reactRoot.render(h(slot.component, scene.props ?? { threadId: THREAD, params: null }));

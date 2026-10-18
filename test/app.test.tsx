@@ -3,6 +3,7 @@
 // vitest: npm run test:app.
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
@@ -229,12 +230,59 @@ function observerOf(client: { target: HTMLElement }): FakeObserver {
   return FakeObserver.made.find((observer) => observer.targets.includes(client.target))!;
 }
 
+/**
+ * BB's toaster, which the host gives plugins as sonner's `toast`: each toast in a polite live region, under its id, so the next with
+ * that id takes its place, with its description under it, until its duration has passed or it is dismissed.
+ */
+vi.mock("sonner", () => {
+  const shown = new Map<string | number, { readonly node: HTMLElement; readonly timer: ReturnType<typeof setTimeout> }>();
+  const dismiss = (id?: string | number) => {
+    for (const [key, entry] of shown) {
+      if (id !== undefined && key !== id) continue;
+      clearTimeout(entry.timer);
+      entry.node.remove();
+      shown.delete(key);
+    }
+  };
+  const toast = (message: string, options: { id?: string | number; description?: string; duration?: number } = {}) => {
+    const id = options.id ?? message;
+    dismiss(id);
+    let region = document.querySelector<HTMLElement>("section[data-toaster]");
+    if (!region) {
+      region = document.createElement("section");
+      region.dataset.toaster = "";
+      region.setAttribute("aria-live", "polite");
+      document.body.appendChild(region);
+    }
+    const node = document.createElement("li");
+    node.dataset.toastId = String(id);
+    const title = document.createElement("div");
+    title.textContent = message;
+    node.appendChild(title);
+    if (options.description) {
+      const description = document.createElement("div");
+      description.textContent = options.description;
+      node.appendChild(description);
+    }
+    region.appendChild(node);
+    shown.set(id, { node, timer: setTimeout(() => dismiss(id), options.duration ?? 4_000) });
+    return id;
+  };
+  return { toast: Object.assign(toast, { dismiss }) };
+});
+
+/** The toasts shown now, each as its text. */
+function toasts(): string[] {
+  return Array.from(document.querySelectorAll("section[data-toaster] li"), (node) => node.textContent ?? "");
+}
+
 const THREAD = "thr_panel";
 const DESKTOP_PATH = "/api/v1/plugins/bb-box/http/desktop";
 const TERMINAL_PATH = "/api/v1/plugins/bb-box/http/terminal";
 const app = await loadPluginApp(() => import("../app.tsx"));
 afterEach(() => {
   cleanup();
+  toast.dismiss();
   dropAllKept();
   forgetLive();
   vi.useRealTimers();
@@ -1937,7 +1985,8 @@ test("what the box copies reaches this computer's clipboard quietly; the menu's 
   // Nothing yet: Copy says to copy in the box first.
   let menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Copy to this computer" }));
-  expect((await slot.findByText("Nothing has come from the box's clipboard yet. Copy something in the box first.")).getAttribute("role")).toBe("status");
+  // A toast, BB's own, so the toolbar keeps its height (the owner's note of 18 October 2026).
+  expect((await slot.findByText("Nothing has come from the box's clipboard yet. Copy something in the box first.")).closest("[aria-live=polite]")).not.toBeNull();
   // The box's cut text, as noVNC gives it to the viewer with control: it can come with no copy of the person's, so no note.
   act(() => void client.dispatchEvent(new CustomEvent("clipboard", { detail: { text: "from the box" } })));
   await waitFor(() => expect(writeText).toHaveBeenCalledWith("from the box"));
@@ -1976,14 +2025,14 @@ test("clipboard outcomes are toolbar notes that go after about 3 s, never from t
   fireEvent.click(slot.getByRole("button", { name: "Take control" }));
   await slot.findByText(/You have control/);
   // Taking control tried this computer's empty clipboard, and says nothing of it.
-  expect(slot.queryByRole("status")).toBeNull();
+  expect(toasts()).toEqual([]);
   expect(slot.queryByRole("alert")).toBeNull();
 
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
     fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Paste from this computer" }));
     const note = await slot.findByText("This computer's clipboard has no text.");
-    expect(note.getAttribute("role")).toBe("status");
+    expect(note.closest("[aria-live=polite]")).not.toBeNull();
     expect(slot.queryByRole("alert")).toBeNull();
     act(() => void vi.advanceTimersByTime(3_000));
     expect(slot.queryByText("This computer's clipboard has no text.")).toBeNull();
@@ -2313,6 +2362,33 @@ test("a desktop whose video is shown only by choice, as a Tart Mac's, opens over
   } finally {
     window.sessionStorage.clear();
     undo();
+  }
+});
+
+test("a desktop's notes are BB's toasts, one at a time, with their reason under them, and the toolbar keeps its height (the owner's note of 18 October 2026)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const slot = desktopTab(server([desktopBox()], { video: true }).handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    // The video ends before its first frame: the desktop shows over VNC, and says why in a toast, not in its toolbar.
+    act(() => socket.end(1011, "Selkies is not running"));
+    await waitFor(() => expect(toasts()).toEqual(["Video did not start, so this shows VNC.Selkies is not running."]));
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const toolbar = slot.getByRole("button", { name: "Desktop actions" }).closest("div.border-b")!;
+    expect(toolbar.textContent).not.toContain("Video did not start");
+    // The next note of this tab takes its place.
+    act(() => void novnc.FakeRfb.made[0]!.dispatchEvent(new Event("connect")));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    fakeClipboard(() => Promise.resolve(""));
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Paste from this computer" }));
+    await waitFor(() => expect(toasts()).toEqual(["This computer's clipboard has no text."]));
+  } finally {
+    undo();
+    window.sessionStorage.clear();
   }
 });
 
