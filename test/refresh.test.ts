@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { pinsDigest, type ImageRecord } from "../src/backends/images.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../src/backends/types.ts";
-import { buildScript, recordChecks, refreshImage } from "../src/core/refresh.ts";
+import { buildScript, recordChecks, refreshImage, windowsRecord } from "../src/core/refresh.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../src/transports/types.ts";
 
 const SETUP = fileURLToPath(new URL("../setup/", import.meta.url));
@@ -481,6 +481,16 @@ test("a Windows first logon builds bb-box-stream and sets the hardware cursor wh
   }
   assert.match(tart, /^OPENH264_URL=https:\/\/ciscobinary\.openh264\.org\/openh264-2\.6\.0-win-arm64\.dll\.bz2$/m, "Tart's build pins Cisco's arm64 OpenH264");
   assert.match(tart, /pin openh264 "\$OPENH264_VERSION" "\$OPENH264_SHA256" "\$OPENH264_URL"/, "and hands it to the first logon");
+});
+
+test("a refreshed arm64 Windows record lists the hardware cursor once OpenH264 is pinned for it, as refresh.ps1 then turns it on (060)", () => {
+  const current = { kind: "windows-arm64-desktop", record: null } as unknown as Parameters<typeof windowsRecord>[0];
+  const pin = (name: string) => ({ name, arch: "arm64", version: "1", url: "https://example.invalid/x", sha256: "0" }) as unknown as Parameters<typeof windowsRecord>[1][number];
+  const without = windowsRecord(current, [pin("git")], "build.1", 0, "digest");
+  assert.equal(without.tools["hardware-cursor"], undefined, "no stream, no hardware cursor");
+  const withStream = windowsRecord(current, [pin("git"), pin("openh264")], "build.2", 0, "digest");
+  assert.equal(withStream.tools["hardware-cursor"], "1");
+  assert.equal(withStream.arch, "arm64");
 });
 
 test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {

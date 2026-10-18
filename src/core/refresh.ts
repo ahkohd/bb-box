@@ -169,11 +169,14 @@ export async function windowsPins(setup: string, arch: string): Promise<WindowsP
 /**
  * A new Windows build's record (054): the old one's, with the new build ID,
  * the pinned tools' versions, and the pins digest of the build script whose
- * pins setup/windows/pins.json has. On x86_64, where the image has
- * bb-box-stream, it lists the hardware cursor, which refresh.ps1 turns on.
+ * pins setup/windows/pins.json has. Where the image has bb-box-stream, as
+ * every x86_64 image does and an arm64 one does once OpenH264 is pinned for
+ * it (060), it lists the hardware cursor, which refresh.ps1 turns on: without
+ * it, bb-box does not leave the pointer out of the video.
  */
 export function windowsRecord(current: ImageBuild, pins: readonly WindowsPin[], buildId: string, built: number, digest: string): ImageRecord {
   const arch = KIND_INFO[current.kind]?.arch ?? "x86_64";
+  const stream = arch === "x86_64" || pins.some((pin) => pin.name === "openh264");
   return {
     contract: IMAGE_CONTRACT,
     image: "standard",
@@ -186,7 +189,7 @@ export function windowsRecord(current: ImageBuild, pins: readonly WindowsPin[], 
     aptSnapshot: null,
     pins: digest,
     bbApp: null,
-    tools: { ...current.record?.tools, ...Object.fromEntries(pins.map((pin) => [pin.name, pin.version])), ...(arch === "x86_64" ? { [WINDOWS_HARDWARE_CURSOR]: "1" } : {}) },
+    tools: { ...current.record?.tools, ...Object.fromEntries(pins.map((pin) => [pin.name, pin.version])), ...(stream ? { [WINDOWS_HARDWARE_CURSOR]: "1" } : {}) },
     nvidia: null,
     layer: null,
     sizeGiB: null,
