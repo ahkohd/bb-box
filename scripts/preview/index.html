@@ -28,6 +28,8 @@
   #root.padded { padding: 16px; }
   #root.flush { height: 100%; }
   [data-icon-root] { display: inline-block; }
+  /* Sonner's toasts ask for the system's UI font, which headless Chrome on Linux has as a monospace one: BB's font stands in. */
+  [data-sonner-toaster] { font-family: "Inter Variable", Inter, system-ui, sans-serif !important; }
 </style>
 <script type="module" src="./harness.js"></script>
 </head>

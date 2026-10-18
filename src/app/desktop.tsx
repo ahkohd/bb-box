@@ -8,6 +8,7 @@
 import RFB from "@novnc/novnc";
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -688,20 +689,17 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   /** The box's clipboard as last seen: text from its desktop's cut text or the RPC where its input reports it, or an image the video client brought (#609). */
   const [boxClipboard, setBoxClipboard] = useState<string | Blob | null>(null);
   /**
-   * A clipboard outcome of the person's own paste or copy, for a moment, in
-   * the toolbar: "Pasted", "Copied", or why nothing went. Never from an
-   * automatic attempt, and never a lasting problem line, which is for
-   * failures that need action. A sentence stays a little longer, to be read.
+   * A note for a moment, as BB's own toast, so the toolbar keeps its height (the owner's note of 18 October 2026): a clipboard
+   * outcome of the person's own paste or copy, "Pasted", "Copied" or why nothing went, or why video did not start. Never from an
+   * automatic attempt, and never a lasting problem line, which is for failures that need action. One at a time for this tab, the
+   * next in its place; a sentence stays a little longer, to be read.
    */
-  const [flash, setFlash] = useState<{ readonly words: string; readonly detail?: string } | null>(null);
-  const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  /** A note, with a detail its tooltip shows, for at least `ms`. */
+  const flashId = `bb-box-desktop:${shown}`;
+  /** A note, with a detail under it, for at least `ms`. */
   const flashFor = (words: string, detail?: string, ms = FLASH_MS) => {
-    setFlash({ words, detail });
-    clearTimeout(flashTimer.current);
-    flashTimer.current = setTimeout(() => setFlash(null), Math.max(ms, words.split(" ").length * 300));
+    toast(words, { id: flashId, description: detail, duration: Math.max(ms, words.split(" ").length * 300), closeButton: true });
   };
-  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  useEffect(() => () => void toast.dismiss(flashId), [flashId]);
   /** The field to paste into when this computer's clipboard cannot be read here: null closed, else its text. */
   const [pasteField, setPasteField] = useState<string | null>(null);
   /** The box's text shown to copy by hand, when this computer's clipboard cannot be written here. */
@@ -987,11 +985,6 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
         </span>
-        {flash ? (
-          <span role="status" title={flash.detail} className="min-w-0 text-muted-foreground">
-            {flash.words}
-          </span>
-        ) : null}
         <span className="ml-auto flex items-center gap-1.5">
           {showing && !mine ? (
             <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting || connection.state !== "connected"} onClick={() => void take()}>
