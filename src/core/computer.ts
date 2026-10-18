@@ -117,6 +117,16 @@ export interface ComputerDeps {
    * those it named. computer_windows and computer_launch ask it.
    */
   nameWindows?(box: BoxRecord, signal?: AbortSignal): Promise<readonly { readonly id: number; readonly title: string }[]>;
+  /**
+   * Puts text on the clipboard of a Sway desktop for a paste into window
+   * `windowId`, the clipboard's text saved (swayStageScript), as typing
+   * there loses characters (#707). Says whether the window is a terminal,
+   * which pastes with Ctrl+Shift+V, or "unsupported" on a box without Sway,
+   * which Cua types for.
+   */
+  stageText?(box: BoxRecord, input: { readonly windowId: number; readonly text: string }, signal?: AbortSignal): Promise<"terminal" | "app" | "unsupported">;
+  /** Puts back the clipboard's text that stageText saved (swayRestoreScript). */
+  restoreClipboard?(box: BoxRecord, signal?: AbortSignal): Promise<void>;
   /** Who controls the box's desktop now. */
   owner(boxId: string): Owner;
   /** Takes control of the box's desktop back from a person (038). False when the agent had it already. */
@@ -796,6 +806,54 @@ function flat(line: Line): string {
   return line.text.trim().replace(/^- /, "").replace(/\s*\n\s*/g, " ");
 }
 
+/** App IDs of terminals, which paste with Ctrl+Shift+V. */
+const TERMINALS = "foot|footclient|kitty|Alacritty|alacritty|org.wezfurlong.wezterm|xterm|XTerm|URxvt|konsole|org.kde.konsole|org.gnome.Terminal|org.gnome.Console|kgx|xfce4-terminal|Xfce4-terminal|terminator|Terminator|tilix|com.gexperts.Tilix|lxterminal|Lxterminal";
+
+const CLIPBOARD_ENV = `set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
+saved="\${XDG_RUNTIME_DIR:-$HOME}/.bb-box-clipboard"`;
+
+/**
+ * Puts `text` on the clipboard of a Sway desktop, as the box user, to be
+ * pasted into window `windowId` (Cua's window ID is Sway's container ID),
+ * after saving the clipboard's text for swayRestoreScript. Prints
+ * "terminal" when the window is a terminal, which pastes with
+ * Ctrl+Shift+V, and "app" otherwise. Exits 3 on a desktop without Sway,
+ * or without wl-copy. Typing text there loses characters in Chrome,
+ * whatever the form: wtype makes a keymap up as it goes, and Chrome
+ * mishandles some of its keycodes.
+ * Cua's `wtype -k Shift_L -- <text>` lost the "g" and "/" of
+ * "wikipedia.org/wiki", and ":"; `wtype -s 150` lost every space of a
+ * longer text. The paste key is Cua's, with its US keymap: GTK apps ignore
+ * a Ctrl+V from wtype's (#707).
+ */
+export function swayStageScript(windowId: number, text: string): string {
+  const encoded = Buffer.from(text, "utf8").toString("base64");
+  return `${CLIPBOARD_ENV}
+command -v wl-copy >/dev/null && tree=$(swaymsg -t get_tree 2>/dev/null) || exit 3
+umask 077; rm -f "$saved"
+if timeout 2 wl-paste -l 2>/dev/null | grep -qx -e 'text/plain;charset=utf-8' -e text/plain -e UTF8_STRING; then
+  timeout 2 wl-paste -n -t text > "$saved.new" 2>/dev/null && mv "$saved.new" "$saved"
+fi
+printf %s ${encoded} | base64 -d | wl-copy >/dev/null 2>&1 || exit 5
+app=$(printf %s "$tree" | python3 -c 'import json,sys
+def walk(n):
+    if n["id"]==${windowId}: print(n.get("app_id") or (n.get("window_properties") or {}).get("class") or "-"); return True
+    return any(walk(c) for c in n.get("nodes",[])+n.get("floating_nodes",[]))
+walk(json.load(sys.stdin))')
+case "$app" in ${TERMINALS}) echo terminal ;; *) echo app ;; esac`;
+}
+
+/**
+ * Puts back the clipboard's text that swayStageScript saved, or clears the
+ * clipboard if it held none, once the app has had time to read the paste.
+ */
+export function swayRestoreScript(): string {
+  return `${CLIPBOARD_ENV}
+sleep 0.5
+if [ -f "$saved" ]; then wl-copy < "$saved" >/dev/null 2>&1; rm -f "$saved"; else wl-copy --clear >/dev/null 2>&1; fi
+exit 0`;
+}
+
 /** The ref as the agent may write it: e12 or [e12]. */
 function refName(ref: string): string {
   return ref.trim().replace(/^\[(.*)\]$/, "$1");
@@ -1026,6 +1084,7 @@ export class Computer {
     let before: Snapshot | null = null;
     let readBack: string | null = null;
     let popup: Popup | undefined;
+    let target: Target | null = null;
     if (input.ref !== undefined) {
       const { snapshot, element } = await this.#element(use, input.ref);
       popup = use.state.popups.get(snapshot.window.id);
@@ -1033,6 +1092,7 @@ export class Computer {
       label = `${element.ref} (${describe(element.role, element.label)})`;
       before = snapshot;
       readBack = element.ref;
+      target = { args, label, snapshot, element };
     } else if (input.window === "desktop") {
       args = {};
       label = "whatever has the focus";
@@ -1073,14 +1133,56 @@ export class Computer {
     const overSelection = !keys && use.box.capabilities.os === "linux" && id !== undefined && use.state.selecting.has(id);
     this.#selecting(use, id, !!keys?.modifiers.length, !keys);
     if (chordOnWindows) await this.#call(use, "bring_to_front", { pid: args.pid, window_id: args.window_id }, { readOnly: true });
+    // On Linux, text for an element that Cua cannot type in the background goes
+    // through the real keyboard to its window, never to the element: Cua focuses
+    // the element through AT-SPI first, which Chrome's address bar refuses, and
+    // on Wayland once typed into the page instead, where "/" opened Wikipedia's
+    // search. The element is clicked first with the real pointer, as a person
+    // would, which focuses it and, in an address bar, selects what it holds,
+    // unless a chord there may have selected text a click would lose (#707).
+    // On Sway, the text is pasted: bb-box puts it on the clipboard, and Cua
+    // presses the paste key, as typing there loses characters.
+    if (!keys && use.box.capabilities.os === "linux" && id !== undefined) {
+      const window = { pid: args.pid, window_id: args.window_id };
+      let clicked = false;
+      if (!overSelection) {
+        const { result } = await this.#call(use, tool, { ...args, ...typed, delivery_mode: "background" }, { readOnly: false });
+        if (!refusedInBackground(result)) {
+          if (result.isError) {
+            if (codeOf(result) === "stale_element_token") this.#outdated(use.state, id);
+            throw new ComputerError("refused", `bb-box could not do it: ${explain(result)}`, adviceFor(codeOf(result)));
+          }
+          return this.#typed(use, `${what} into ${label}.`, before, readBack, args);
+        }
+        if (target?.element?.frame) {
+          await this.#centre(use, target, { button: "left", count: 1 });
+          clicked = true;
+        }
+      }
+      const staged = this.#deps.stageText ? await this.#deps.stageText(use.box, { windowId: id, text: input.text! }, use.signal) : "unsupported";
+      if (staged === "unsupported") await this.#deliver(use, tool, { ...(target ? window : args), ...typed }, "foreground");
+      else {
+        const modifiers = staged === "terminal" ? ["ctrl", "shift"] : ["ctrl"];
+        try {
+          await this.#deliver(use, "press_key", { ...window, key: "v", modifiers }, "foreground");
+        } finally {
+          await this.#deps.restoreClipboard?.(use.box, use.signal).catch((error: unknown) => this.#deps.logError("restoring the clipboard", error));
+        }
+      }
+      const paste = staged === "terminal" ? "Ctrl+Shift+V" : "Ctrl+V";
+      const how = staged === "unsupported" ? "with the real keyboard" : `pasting it with the real keyboard's ${paste}, as typing on Wayland loses characters, the clipboard's text put back after`;
+      return this.#typed(use, `${what} into ${label}, ${clicked ? "clicking it first, then " : ""}${how} (the desktop's focus may have moved).`, before, readBack, args);
+    }
     const { foreground } = await this.#deliver(use, tool, { ...args, ...typed }, chordOnWindows || overSelection ? "foreground" : true);
     const how = chordOnWindows ? `, with the real keyboard, its window brought to the front` : foreground ? KEYBOARD : "";
-    const lines = [`${what} ${keys ? "in" : "into"} ${label}${how}.`];
-    if (!before) {
-      return { text: lines.join("\n\n"), hints: [`Call computer_observe with window ${args.window_id} to see it.`] };
-    }
+    return this.#typed(use, `${what} ${keys ? "in" : "into"} ${label}${how}.`, before, readBack, args);
+  }
+
+  /** What typing said, and what changed in the window since `before`. */
+  async #typed(use: Use, said: string, before: Snapshot | null, readBack: string | null, args: Json): Promise<ComputerResult> {
+    if (!before) return { text: said, hints: [`Call computer_observe with window ${args.window_id} to see it.`] };
     const changed = await this.#changes(use, before, { readBack, popups: { element: null, right: false, result: null }, late: true });
-    return { text: [...lines, ...changed.parts].join("\n\n"), hints: changed.hints };
+    return { text: [said, ...changed.parts].join("\n\n"), hints: changed.hints };
   }
 
   /** Opens an app by name or path, or a URL in the default browser. */

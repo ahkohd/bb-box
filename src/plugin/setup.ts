@@ -20,7 +20,7 @@ import { namedImage, projectImage, withImage } from "../core/project-images.ts";
 import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
-import { Computer, type ComputerDeps } from "../core/computer.ts";
+import { Computer, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { GENERAL_DEFAULTS, emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig } from "../core/document.ts";
 import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
@@ -656,6 +656,18 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const { result } = await boxes.run(box.threadId, box.id, NAME_WINDOWS_SCRIPT, { session: "desktop", timeoutMs: 60_000, signal, waitForEnrolment: false, maxOutputBytes: 16 * 1024 });
       if (result.exitCode !== 0) throw new Error(`Naming the untitled windows failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
       return parseNamed(result.stdout);
+    },
+    // Text on a Sway desktop goes in by paste, as typing loses characters (#707).
+    async stageText(box, input, signal) {
+      if (box.capabilities.os !== "linux") return "unsupported";
+      const result = await boxes.runOwn(box, swayStageScript(input.windowId, input.text), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
+      if (result.exitCode === 3) return "unsupported";
+      if (result.exitCode !== 0) throw new Error(`Putting the text on the clipboard failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+      return result.stdout.trim() === "terminal" ? "terminal" : "app";
+    },
+    async restoreClipboard(box, signal) {
+      const result = await boxes.runOwn(box, swayRestoreScript(), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
+      if (result.exitCode !== 0) throw new Error(`Putting the clipboard back failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
     },
     owner: (boxId) => desktops?.control.view(boxId).owner ?? "agent",
     takeBack: (boxId) => desktops?.control.takeBack(boxId) ?? Promise.resolve(false),

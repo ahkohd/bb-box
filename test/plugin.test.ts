@@ -3343,6 +3343,45 @@ test("a click that opened another process's panel, which Cua on Windows calls a 
   assert.match(text(onDesktop), /\n\nThe click landed, and window \d+: explorer "Notification overflow", 200 by 120 came in front/);
 });
 
+test("on Sway, text an element refuses in the background is pasted with Cua's paste key, and the clipboard's text put back (#707)", async (t) => {
+  // wtype's own keys lose characters in Chrome: bb-box puts the text on the clipboard, Cua presses the paste key.
+  const bin = tempDir("sway");
+  const shims: Record<string, string> = {
+    "wl-paste": `case "$*" in *-l*) echo text/plain ;; *) printf 'old\nclip' ;; esac`,
+    "wl-copy": `if [ "$1" = --clear ]; then echo cleared >> "$HOME/copies"; else cat >> "$HOME/copies"; echo >> "$HOME/copies"; fi`,
+    swaymsg: `cat "$HOME/tree.json"`,
+  };
+  for (const [name, script] of Object.entries(shims)) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const home = /stdout:\n(.*)\n/.exec(text(await tool("box_run", { box: box.name, command: "pwd" })))![1]!;
+  const tree = (appId: string) => writeFileSync(join(home, "tree.json"), JSON.stringify({ id: 1, nodes: [{ id: 100, app_id: appId, nodes: [] }] }));
+  tree("tasks");
+  const field = refOf(text(await tool("computer_observe", { box: box.name, window: 100 })), '"New task"');
+  const url = "en.wikipedia.org/wiki/Sway_(window_manager) :?&=#~ é";
+
+  const typed = text(await tool("computer_type", { box: box.name, ref: field, text: url }));
+  assert.match(typed, /^Typed 52 characters into e\d+ \(text 'New task'\), clicking it first, then pasting it with the real keyboard's Ctrl\+V, as typing on Wayland loses characters, the clipboard's text put back after/);
+  const calls = readDesktop(file).calls;
+  assert.deepEqual(calls.filter((call) => call.tool === "type_text").map((call) => call.args.delivery_mode), ["background"], "no keys typed");
+  const paste = calls.filter((call) => call.tool === "press_key");
+  assert.deepEqual(paste.map((call) => [call.args.key, call.args.modifiers, call.args.delivery_mode, call.args.window_id]), [["v", ["ctrl"], "foreground", 100]]);
+  assert.equal(readFileSync(join(home, "copies"), "utf8"), `${url}\nold\nclip\n`, "the text, then the clipboard's own text again");
+
+  tree("foot");
+  const inTerminal = text(await tool("computer_type", { box: box.name, window: 100, text: "ls" }));
+  assert.match(inTerminal, /pasting it with the real keyboard's Ctrl\+Shift\+V/);
+  assert.deepEqual(readDesktop(file).calls.filter((call) => call.tool === "press_key").at(-1)!.args.modifiers, ["ctrl", "shift"]);
+});
+
 test("an agent reads a desktop box's window, acts on references and is told what changed", async (t) => {
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
@@ -3371,10 +3410,14 @@ test("an agent reads a desktop box's window, acts on references and is told what
   assert.equal(text(gone), `${deleteThree} (push button 'Delete Task 3') is no longer on screen. Call computer_observe again.`);
 
   const typed = text(await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" }));
-  assert.match(typed, /^Typed 8 characters into e\d+ \(text 'New task'\), with the real keyboard \(the desktop's focus may have moved\)\./);
+  // The field refuses background typing: it is clicked with the real pointer, then its window gets the real keyboard, never the element (#707).
+  assert.match(typed, /^Typed 8 characters into e\d+ \(text 'New task'\), clicking it first, then with the real keyboard \(the desktop's focus may have moved\)\./);
   assert.match(typed, new RegExp(`${field} now reads: \\[${field}\\] text "New task" value="Buy milk"`));
-  const types = readDesktop(file).calls.filter((call) => call.tool === "type_text").map((call) => call.args.delivery_mode);
-  assert.deepEqual(types, ["background", "foreground"]);
+  const typing = readDesktop(file).calls.filter((call) => call.tool === "type_text");
+  assert.deepEqual(typing.map((call) => call.args.delivery_mode), ["background", "foreground"]);
+  assert.equal(typing[1]!.args.element_token, undefined, "the real keyboard goes to the window, not to the element");
+  const calls = readDesktop(file).calls.map((call) => call.tool);
+  assert.ok(calls.lastIndexOf("click") > calls.indexOf("type_text") && calls.lastIndexOf("click") < calls.lastIndexOf("type_text"), "clicked between the two");
 
   const pressed = text(await tool("computer_type", { box: box.name, window: 100, keys: "Return" }));
   assert.match(pressed, /^Pressed Return in window 100\./);
