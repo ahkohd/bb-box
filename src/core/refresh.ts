@@ -264,7 +264,14 @@ async function steadyWindows(command: CommandTransport, before: string | null, o
 export function recordChecks(record: ImageRecord | null, old: ImageRecord | null, kind: string): RefreshCheck[] {
   if (!record) return [{ name: "the record", ok: false, detail: "The new build has no image record." }];
   const whole = record.contract === IMAGE_CONTRACT && !!record.os && !!record.pins && Object.keys(record.tools).length > 0;
-  const older = old ? Object.entries(old.tools).filter(([tool, version]) => record.tools[tool] !== undefined && compareVersions(record.tools[tool]!, version) < 0) : [];
+  // A tool named by a hash of its source, as bb-box-stream is, has no order: a new hash is not older.
+  const ordered = (version: string) => !/^[0-9a-f]{12,64}$/.test(version);
+  const older = old
+    ? Object.entries(old.tools).filter(([tool, version]) => {
+        const now = record.tools[tool];
+        return now !== undefined && ordered(now) && ordered(version) && compareVersions(now, version) < 0;
+      })
+    : [];
   const missing = old ? Object.keys(old.tools).filter((tool) => record.tools[tool] === undefined) : [];
   return [
     {
