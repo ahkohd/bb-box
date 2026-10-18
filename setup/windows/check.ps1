@@ -123,9 +123,8 @@ Check 'Cua daemon in the desktop session' {
   if ($LASTEXITCODE) { throw "$status" }; "session $($p.SessionId); $status"
 }
 # The desktop as video (060), as bb-box's relay reaches it: connect over SSH, which starts the server in the desktop
-# session through its task, an upgrade, START_VIDEO, then a key frame of the desktop. Windows on arm64 has no encoder.
+# session through its task, an upgrade, START_VIDEO, then a key frame of the desktop.
 Check 'bb-box-stream: a key frame' {
-  if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { return 'none on arm64, whose desktop shows over VNC' }
   $exe = 'C:\Program Files\bb-box-tools\bb-box-stream\bb-box-stream.exe'
   if (-not (Get-ScheduledTask bb-box-stream -ErrorAction SilentlyContinue)) { throw 'no bb-box-stream task' }
   $start = New-Object Diagnostics.ProcessStartInfo $exe, 'connect'
@@ -158,7 +157,6 @@ Check 'bb-box-stream: a key frame' {
 # GPU's hardware cursor on (hardware-cursor.ps1), and bb-box-stream's pointer test saying so from the desktop session,
 # where a task of its own runs it as the stream's task runs the server.
 Check 'pointer out of the captured image' {
-  if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { return 'none on arm64, whose desktop shows over VNC' }
   $gpu = Get-PnpDevice -Class Display -PresentOnly | Where-Object { (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_Service).Data -eq 'VioGpuDod' } | Select-Object -First 1
   if (-not $gpu) { throw 'no VirtIO GPU' }
   $driver = (Get-PnpDeviceProperty -InstanceId $gpu.InstanceId -KeyName DEVPKEY_Device_Driver).Data

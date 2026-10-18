@@ -181,6 +181,13 @@
       "version": "9.0.1",
       "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-winarm64-gpl-9.0.zip",
       "sha256": "7E6142AE4D04B35123EBA48D91BB2C559EF43B49A6B3857F7324BBCF7266D18B"
+    },
+    {
+      "name": "openh264",
+      "arch": "arm64",
+      "version": "2.6.0",
+      "url": "https://ciscobinary.openh264.org/openh264-2.6.0-win-arm64.dll.bz2",
+      "sha256": "6B57D3ECD06BD80B5F3EE1ABBB31D48798CA6D89EF1BC98CF2E6D1EBDDF5CF45"
     }
   ]
 }

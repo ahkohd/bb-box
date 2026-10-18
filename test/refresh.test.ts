@@ -468,7 +468,7 @@ test("a Windows image's first logon and its refresh turn on the VirtIO GPU's har
   assert.match(readFileSync(join(SETUP, "windows", "bb-box-stream.cs"), "utf8"), /if \(mode == "pointer"\) return PointerTest\(\);/);
 });
 
-test("a Windows first logon whose build pins no OpenH264, as Tart's arm64 build, skips bb-box-stream and the hardware cursor, whose files that build does not copy", () => {
+test("a Windows first logon builds bb-box-stream and sets the hardware cursor where its build pins OpenH264, as both builds do, Tart's arm64 one with its files copied (060)", () => {
   const firstLogon = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "firstlogon.ps1"), "utf8");
   const tart = readFileSync(join(SETUP, "tart", "prepare-windows-image.sh"), "utf8");
   const guarded = /\nif \(\$build\.openh264\) \{\n([\s\S]*?)\n\} else \{\n/.exec(firstLogon);
@@ -477,19 +477,20 @@ test("a Windows first logon whose build pins no OpenH264, as Tart's arm64 build,
   for (const file of ["install-stream.ps1", "hardware-cursor.ps1", "bb-box-stream.cs"]) {
     assert.ok(guarded[1]!.includes(`C:\\bb-box\\${file}`), `${file} inside`);
     assert.ok(!outside.includes(`C:\\bb-box\\${file}`), `${file} nowhere else`);
-    assert.ok(!tart.includes(file), `Tart's build copies no ${file}`);
+    assert.match(tart, new RegExp(`cp [^\n]*"\\$here/\\.\\./windows/${file.replace(".", "\\.")}"[^\n]*"\\$a/bb-box/"`), `Tart's build copies ${file} for the first logon`);
   }
-  assert.ok(!/openh264/i.test(tart), "Tart's build pins no OpenH264");
+  assert.match(tart, /^OPENH264_URL=https:\/\/ciscobinary\.openh264\.org\/openh264-2\.6\.0-win-arm64\.dll\.bz2$/m, "Tart's build pins Cisco's arm64 OpenH264");
+  assert.match(tart, /pin openh264 "\$OPENH264_VERSION" "\$OPENH264_SHA256" "\$OPENH264_URL"/, "and hands it to the first logon");
 });
 
 test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {
   const pins = (JSON.parse(readFileSync(join(SETUP, "windows", "pins.json"), "utf8")) as { tools: { name: string; arch: string; version: string; url: string; sha256: string }[] }).tools;
   const common: Record<string, string> = { PWSH: "pwsh", GIT: "git", GH: "gh", CUA: "cua-driver", VS: "vs-buildtools", LLVM: "llvm", RUSTUP: "rustup", NODE: "node", CLAUDE: "claude-code", CODEX: "codex", PI: "pi", FFMPEG: "ffmpeg" };
-  // bb-box-stream's encoder (060) only where the image has it: not on arm64, whose desktop shows over VNC.
+  // bb-box-stream's encoder (060) on both: Cisco's x64 and arm64 builds.
   for (const [script, arch, names] of [
     ["proxmox-qemu/build.sh", "x86_64", { ...common, OPENH264: "openh264" }],
-    ["tart/prepare-windows-image.sh", "arm64", common],
-  ] as const) {
+    ["tart/prepare-windows-image.sh", "arm64", { ...common, OPENH264: "openh264" }],
+  ] as [string, string, Record<string, string>][]) {
     const lines = Object.fromEntries([...readFileSync(join(SETUP, script), "utf8").matchAll(/^([A-Z0-9]+)_(VERSION|SHA256|URL)=(\S+)$/gm)].map((match) => [`${match[1]}_${match[2]}`, match[3]!]));
     const ours = pins.filter((pin) => pin.arch === arch);
     assert.deepEqual(ours.map((pin) => pin.name).sort(), Object.values(names).sort(), `${arch}: one pin per tool`);

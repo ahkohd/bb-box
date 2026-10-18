@@ -228,7 +228,7 @@ try {
     & $installers[$pin.name] $pin $file
     Remove-Item $file -Force -ErrorAction SilentlyContinue
   }
-  # bb-box-stream.exe (060), built again when its source has changed, where the image has its encoder: not on arm64.
+  # bb-box-stream.exe (060), built again when its source has changed, where the image has its encoder.
   $stream = "$tools\bb-box-stream"
   if (Test-Path "$stream\openh264.dll") {
     $built = Get-Content "$stream\bb-box-stream.source" -ErrorAction SilentlyContinue

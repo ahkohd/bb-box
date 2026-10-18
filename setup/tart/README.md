@@ -235,9 +235,10 @@ Download Windows 11 Arm64 in English (United States) from Microsoft
 ```
 
 It installs Windows unattended with the Proxmox Windows template's files,
-adapted for arm64, so a Windows box on a Mac has what one on Proxmox has. It
-then checks a clone of the image over SSH, saved and restored as bb-box stops
-and starts a box. It takes about 30 minutes, and needs about 40 GiB beyond
+adapted for arm64, so a Windows box on a Mac has what one on Proxmox has,
+bb-box-stream.exe too, with Cisco's arm64 OpenH264, for the desktop as video
+(060). It then checks a clone of the image over SSH, saved and restored as
+bb-box stops and starts a box. It takes about 30 minutes, and needs about 40 GiB beyond
 the reserve while it runs; the image keeps about 30 GiB. Watch Setup with a
 VNC viewer on the Mac, at the address the script prints.
 

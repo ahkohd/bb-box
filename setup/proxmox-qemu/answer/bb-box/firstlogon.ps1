@@ -145,9 +145,9 @@ Remove-Item C:\bb-box\ffmpeg, $zip -Recurse -Force
 $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 if ($path -notlike "*$to*") { [Environment]::SetEnvironmentVariable('Path', "$path;$to", 'Machine') }
 
-# The desktop as video (060), where the build pins OpenH264: not on arm64,
-# whose desktop shows over VNC, and whose build (Tart's
-# prepare-windows-image.sh) has neither the encoder nor these scripts.
+# The desktop as video (060), where the build pins OpenH264, as both builds
+# do: Cisco's x64 build here, and its arm64 one in Tart's
+# prepare-windows-image.sh.
 if ($build.openh264) {
   Step "bb-box-stream.exe, with OpenH264 $($build.openh264.version)"
   # Cisco's OpenH264, downloaded from Cisco as its licence asks, and the

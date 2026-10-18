@@ -7,7 +7,10 @@
 # pinned .dll.bz2, downloaded from Cisco, unpacked with Git for Windows'
 # bzip2. It compiles the program with the C# compiler of .NET Framework 4.8,
 # which every Windows 11 has, and registers the task that starts the server in
-# box's desktop session, which the program's connect runs.
+# box's desktop session, which the program's connect runs. On arm64 the
+# compiler has no arm64 platform: the program is AnyCPU, with a manifest that
+# says it runs on arm64, so .NET Framework 4.8.1 runs it natively, not as x64
+# under emulation, which could not load the arm64 OpenH264.
 param([Parameter(Mandatory)] [string] $Source, [string] $Archive, [string] $Version)
 $ErrorActionPreference = 'Stop'
 $to = 'C:\Program Files\bb-box-tools\bb-box-stream'
@@ -29,7 +32,23 @@ if ($Archive) {
 }
 
 $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-$out = & $csc /nologo /optimize /unsafe /platform:x64 /r:System.Drawing.dll /r:System.Windows.Forms.dll "/out:$to\bb-box-stream.exe" $Source 2>&1
+$platform = @('/platform:x64')
+if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
+  $manifest = Join-Path $to 'bb-box-stream.manifest'
+  Set-Content $manifest -Encoding UTF8 @'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity version="1.0.0.0" name="bb-box-stream"/>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings xmlns:ws2="http://schemas.microsoft.com/SMI/2024/WindowsSettings">
+      <ws2:supportedArchitectures>amd64 arm64</ws2:supportedArchitectures>
+    </windowsSettings>
+  </application>
+</assembly>
+'@
+  $platform = @('/platform:anycpu', "/win32manifest:$manifest")
+}
+$out = & $csc /nologo /optimize /unsafe @platform /r:System.Drawing.dll /r:System.Windows.Forms.dll "/out:$to\bb-box-stream.exe" $Source 2>&1
 if ($LASTEXITCODE) { throw "csc could not compile bb-box-stream.exe: $out" }
 # What the program was built from, so a refresh builds it again only when its source changes.
 Set-Content "$to\bb-box-stream.source" (Get-FileHash $Source -Algorithm SHA256).Hash

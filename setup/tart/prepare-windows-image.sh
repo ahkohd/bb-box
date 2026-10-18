@@ -14,9 +14,10 @@
 #
 # It downloads the virtio-win drivers, installs Windows from the ISO with them
 # (Setup, then the first logon, which installs OpenSSH, PowerShell 7, Git,
-# GitHub CLI, Cua Driver and the build tools: Visual Studio Build Tools for
-# C++, LLVM and Rust), boots it once as a box boots, and checks a clone
-# of it as the backend uses a box, saved and restored. The image is then
+# GitHub CLI, Cua Driver, the build tools: Visual Studio Build Tools for
+# C++, LLVM and Rust, and bb-box-stream.exe with Cisco's OpenH264, 060),
+# boots it once as a box boots, and checks a clone of it as the backend uses
+# a box, saved and restored. The image is then
 # ~/.bb-box/qemu/images/<name>/build.<time>, with a read-only disk.qcow2 and
 # vars.fd, and the link `current` names it. Its record (049) is in the image,
 # C:\bb-box\image.json, which the first logon writes, and beside it,
@@ -103,6 +104,12 @@ PI_SHA256=2E0D544999A765018EE5C2FF1A8B1A7E0F5D5B6B1E00B32D8C025D6C1DBCC833
 FFMPEG_VERSION=9.0.1
 FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-winarm64-gpl-9.0.zip
 FFMPEG_SHA256=7E6142AE4D04B35123EBA48D91BB2C559EF43B49A6B3857F7324BBCF7266D18B
+# bb-box-stream.exe's H.264 encoder (060): Cisco's own arm64 binary, which its
+# licence asks to be downloaded from Cisco, as ../proxmox-qemu/build.sh pins
+# its x64 one. The first logon compiles the program beside it.
+OPENH264_VERSION=2.6.0
+OPENH264_URL=https://ciscobinary.openh264.org/openh264-2.6.0-win-arm64.dll.bz2
+OPENH264_SHA256=6B57D3ECD06BD80B5F3EE1ABBB31D48798CA6D89EF1BC98CF2E6D1EBDDF5CF45
 # The drivers Setup needs for the disk, and Windows for the network and display.
 VIRTIO_VERSION=0.1.302
 VIRTIO_SHA256=303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d
@@ -148,9 +155,9 @@ free=$(kib)
 
 build=build.$(date -u +%Y%m%d-%H%M%S)
 # The image's record (049). The pins' SHA-256 is of this script's pin lines.
-record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","node":"%s","claude-code":"%s","codex":"%s","pi":"%s","ffmpeg":"%s","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
+record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","node":"%s","claude-code":"%s","codex":"%s","pi":"%s","ffmpeg":"%s","openh264":"%s","hardware-cursor":"1","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
   "$build" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$edition" "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/prepare-windows-image.sh" | shasum -a 256 | cut -d' ' -f1)" \
-  "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$NODE_VERSION" "$CLAUDE_VERSION" "$CODEX_VERSION" "$PI_VERSION" "$FFMPEG_VERSION" "$VIRTIO_VERSION")
+  "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$NODE_VERSION" "$CLAUDE_VERSION" "$CODEX_VERSION" "$PI_VERSION" "$FFMPEG_VERSION" "$OPENH264_VERSION" "$VIRTIO_VERSION")
 d=$images/$build.new
 # Kept on a failure, to look at: the screen and QEMU's output.
 png=$images/$build.png
@@ -277,6 +284,8 @@ awk '
   ! grep -Eq 'boot\.ps1|\$build\.(address|gateway|dns)|Win64' "$a/bb-box/firstlogon.ps1" ||
   die "../proxmox-qemu/answer/bb-box/firstlogon.ps1 has changed: adapt this script to it"
 cp "$template/answer/bb-box/logon.ps1" "$here/windows/clock.ps1" "$a/bb-box/"
+# bb-box-stream.exe's source (060), which the first logon compiles, its installer, and the hardware cursor's switch.
+cp "$here/../windows/bb-box-stream.cs" "$here/../windows/install-stream.ps1" "$here/../windows/hardware-cursor.ps1" "$a/bb-box/"
 # The check, with the clock's in place of the address's.
 awk -v clock="$here/windows/check-clock.ps1" '
   $0 == "Check '\''address from the SMBIOS serial'\'' {" { while ((getline line < clock) > 0) print line; drop = 1; n++; next }
@@ -313,6 +322,8 @@ pin() { printf '"%s": {"version": "%s", "sha256": "%s", "url": "%s"}' "$1" "$2" 
   pin pi "$PI_VERSION" "$PI_SHA256" "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-windows-arm64.zip"
   printf ',\n  '
   pin ffmpeg "$FFMPEG_VERSION" "$FFMPEG_SHA256" "$FFMPEG_URL"
+  printf ',\n  '
+  pin openh264 "$OPENH264_VERSION" "$OPENH264_SHA256" "$OPENH264_URL"
   printf ',\n  "record": "%s"' "$(json "$record")"
   printf '\n}\n'
 } >"$a/bb-box/build.json"
