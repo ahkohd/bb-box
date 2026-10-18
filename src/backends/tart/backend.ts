@@ -414,7 +414,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
     macos: {
       id: "macos",
       label: "macOS",
-      description: "A macOS VM on a Mac with Apple silicon, for builds and commands. Its desktop is not shown.",
+      description: "macOS on a Mac with Apple silicon, for builds and commands. Its desktop is not shown.",
       requires: [],
       capabilities: { os: "macos", arch: "arm64", gpu: false, features: [], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
       readyTimeoutMs: READY_TIMEOUT_MS,
@@ -422,7 +422,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
     "macos-desktop": {
       id: "macos-desktop",
       label: "macOS desktop",
-      description: "A macOS VM on a Mac with Apple silicon, with its desktop shown in the panel and computer use.",
+      description: "macOS on a Mac with Apple silicon, with its desktop shown in the panel and computer use.",
       requires: [],
       capabilities: {
         os: "macos",

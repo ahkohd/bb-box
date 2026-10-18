@@ -268,6 +268,28 @@ function hasWords(status: MachineStatus | null): string[] {
 }
 
 /** A machine's cores and memory. The disk is the machine's, so it is null. */
+/** Words for what systemd-detect-virt names a container, not a VM. */
+const CONTAINERS = new Set(["lxc", "lxc-libvirt", "systemd-nspawn", "docker", "podman", "openvz", "wsl", "rkt", "proot", "pouch"]);
+
+/**
+ * What a machine is, as its helper says, for a box's Form: "a physical Mac",
+ * "a physical machine", a VM such as a VPS, or a container; before its helper
+ * says, a whole machine of unknown form.
+ */
+function machineForm(machine: SshPoolMachine, status: MachineStatus | null): string {
+  const what = machine.os === "macos" ? "Mac" : "machine";
+  const virt = status?.virt ?? null;
+  if (virt === "none") return `a physical ${what}, lent whole`;
+  if (virt === "vm") return "a Mac VM, lent whole";
+  if (virt) return CONTAINERS.has(virt) ? `a container (${virt}), lent whole` : `a virtual machine (${virt}), as a VPS is, lent whole`;
+  return `a whole ${what}; its helper does not say whether it is physical`;
+}
+
+/** "18 cores, 36 GiB": a machine's size, as its helper says. */
+function machineSizeWords(status: MachineStatus): string | null {
+  return status.cores && status.memoryMiB ? `${plural(status.cores, "core")}, ${gib(status.memoryMiB)}` : null;
+}
+
 function machineSize(status: MachineStatus | null): BoxSize | null {
   return status?.cores && status.memoryMiB ? { cores: status.cores, memoryMiB: status.memoryMiB, diskGiB: null } : null;
 }
@@ -572,7 +594,7 @@ export class SshPoolBackend implements Backend {
         const { machine } = view;
         const generation = view.probe.status!.generation!;
         const user = `${USER_PREFIX}${generation}`;
-        const guest = this.#guest(machine, box.boxId, generation, user, machineSize(view.probe.status));
+        const guest = this.#guest(machine, box.boxId, generation, user, view.probe.status);
         await hooks.claim(guest);
         onClaim(guest);
         signal.throwIfAborted();
@@ -802,7 +824,7 @@ export class SshPoolBackend implements Backend {
       const user = marker.user ?? `${USER_PREFIX}${marker.generation}`;
       const owner = status.marker === "owner" ? markerOwner(marker) : null;
       // A machine part-way through its reset has no owner, so the sweep finishes the reset.
-      held.push({ ...this.#guest(machine, owner?.boxId ?? null, marker.generation, user, machineSize(status)), owner, power: "running" });
+      held.push({ ...this.#guest(machine, owner?.boxId ?? null, marker.generation, user, status), owner, power: "running" });
     }
     return held;
   }
@@ -1271,8 +1293,10 @@ export class SshPoolBackend implements Backend {
     return null;
   }
 
-  #guest(machine: SshPoolMachine, box: string | null, generation: number, user: string, size: BoxSize | null): Guest {
+  #guest(machine: SshPoolMachine, box: string | null, generation: number, user: string, status: MachineStatus | null): Guest {
+    const size = machineSize(status);
     const facts: GuestFact[] = [
+      { label: "Form", value: machineForm(machine, status) },
       { label: "Machine", value: machine.name },
       { label: "Reset", value: machine.reset === "machine" ? "Whole machine" : "User and home" },
       ...(machine.labels.length ? [{ label: "Labels", value: machine.labels.join(", ") }] : []),
@@ -1340,6 +1364,49 @@ export class SshPoolBackend implements Backend {
   free(kind: string): number | null {
     if (!this.#surveyed) return null;
     return this.#surveyed.filter((view) => this.#lists(view.machine, kind) && view.state === "free" && this.#ready(view, kind) === null).length;
+  }
+
+  /**
+   * What the pool's boxes of `kind` are, for box_list, from its last survey of
+   * the machines that serve it: physical or virtual, each lent whole, their
+   * sizes, a Mac's GPU and Xcode, root and the reset. Never a machine's name.
+   * Null before a survey.
+   */
+  offerNote(kind: string): string | null {
+    const views = (this.#surveyed ?? []).filter((view) => this.#lists(view.machine, kind) && view.probe.status);
+    if (!views.length) return null;
+    const mac = views[0]!.machine.os === "macos";
+    const thing = mac ? "Mac" : "machine";
+    const count = (n: number, word: string) => (n === 1 ? `1 ${word}` : `${n} ${word}s`);
+    const virts = views.map((view) => view.probe.status!.virt);
+    const physical = virts.filter((virt) => virt === "none").length;
+    const virtual = virts.filter((virt) => virt && virt !== "none");
+    const unknown = virts.filter((virt) => virt === null).length;
+    const what = [
+      ...(physical ? [count(physical, `physical ${thing}`)] : []),
+      ...(virtual.length ? [`${count(virtual.length, mac ? "Mac VM" : "virtual machine")} (${[...new Set(virtual)].join(", ")})`] : []),
+      ...(unknown ? [`${count(unknown, thing)} whose helper does not say whether it is physical`] : []),
+    ].join(" and ");
+    const sizes = [...new Set(views.map((view) => machineSizeWords(view.probe.status!)).filter((words): words is string => words !== null))];
+    const has: string[] = [];
+    if (mac) {
+      has.push("the Mac's own GPU");
+      const xcodes = views.map((view) => view.probe.status!.mac?.xcode ?? null);
+      if (xcodes.every((xcode) => xcode?.version)) {
+        const versions = [...new Set(xcodes.map((xcode) => xcode!.version!))].join(" or ");
+        has.push(`Xcode ${versions}${xcodes.every((xcode) => xcode!.runtimes.some((runtime) => /^iOS/i.test(runtime))) ? " and the iOS Simulator" : ""}`);
+      }
+    }
+    const roots = new Set(views.map((view) => view.machine.docker));
+    const root = roots.size > 1 ? "root on some" : roots.has(true) ? "root through sudo" : "no root";
+    const resets = new Set(views.map((view) => view.machine.reset));
+    const reset = resets.size > 1 ? "the whole machine, or the box user and home, reset after release" : resets.has("machine") ? "the whole machine reset after release" : "the box user and home reset after release";
+    return [
+      `${what}, ${views.length === 1 ? "" : "each "}lent whole${sizes.length ? ` (${sizes.join("; ")})` : ""}${has.length ? `, with ${has.join(", ")}` : ""}`,
+      `a size picks the smallest free ${thing} that has it`,
+      root,
+      reset,
+    ].join("; ");
   }
 
   /** `machine` as it is now. A state that its record does not have began at `now`, or for a held machine, when its box was made. */

@@ -296,6 +296,36 @@ describe("SSH host pool", () => {
     await backend.dispose();
   });
 
+  it("says what its machines are, physical or virtual, lent whole, in box_list's note and each box's Form, never naming one", async () => {
+    machine("192.0.2.46", { cores: "16", memory: "64000", disk: "500", virt: "none" });
+    machine("192.0.2.47", { cores: "4", memory: "7861", disk: "40", virt: "kvm" });
+    machine("192.0.2.48", { cores: "4", memory: "7861", disk: "40" });
+    const { backend } = pool("bare 192.0.2.46 linux\nvps 192.0.2.47 linux\nold 192.0.2.48 linux");
+    assert.equal(backend.offerNote("linux"), null, "nothing before a survey");
+    const size = { cores: 2, memoryMiB: 4096, diskGiB: null };
+    assert.equal((await backend.capacity("linux", size, [])).ok, true);
+    const note = backend.offerNote("linux")!;
+    assert.equal(
+      note,
+      "1 physical machine and 1 virtual machine (kvm) and 1 machine whose helper does not say whether it is physical, each lent whole (16 cores, 62.5 GiB; 4 cores, 7.7 GiB); a size picks the smallest free machine that has it; no root; the box user and home reset after release",
+    );
+    for (const name of ["bare", "vps", "old", "192.0.2"]) assert.ok(!note.includes(name), `no ${name} in the note`);
+    const forms: Record<string, string> = {};
+    const held = [];
+    for (let i = 0; i < 3; i++) {
+      const { guest } = await acquire(backend, "linux", size);
+      held.push(guest);
+      forms[guest.ref] = guest.facts!.find((fact) => fact.label === "Form")!.value;
+    }
+    assert.deepEqual(forms, {
+      bare: "a physical machine, lent whole",
+      vps: "a virtual machine (kvm), as a VPS is, lent whole",
+      old: "a whole machine; its helper does not say whether it is physical",
+    });
+    for (const guest of held) await backend.release(guest, releaseHooks().hooks);
+    await backend.dispose();
+  });
+
   it("the doctor warns about a machine that holds no preset of its kinds, counting 90% of the memory as all of it (#74)", async () => {
     machine("192.0.2.47", { cores: "4", memory: "7861", disk: "40" });
     machine("192.0.2.48", { cores: "2", memory: "2900", disk: "40" });
@@ -1043,6 +1073,17 @@ describe("An SSH host pool of Macs (047)", () => {
     assert.match(doctor.notes.join("\n"), /name it in \/var\/db\/bb-box\/owner\./);
     assert.match(doctor.notes.join("\n"), /On a Mac, a release removes the box's user, .* It keeps macOS, apps, Homebrew and Cua Driver's grants\./);
     assert.doesNotMatch(doctor.notes.join("\n"), /none of them has Docker/);
+  });
+
+  it("says in box_list that its Macs are physical, lent whole, with their own GPU and Xcode", async () => {
+    mac("192.0.2.74", { xcode: "26.0", virt: "none", cores: "18", memory: "36864" });
+    const { backend } = pool("studio 192.0.2.74 macos,macos-desktop");
+    await backend.capacity("macos-desktop", sizeOf("macos-desktop"), []);
+    assert.equal(
+      backend.offerNote("macos-desktop"),
+      "1 physical Mac, lent whole (18 cores, 36 GiB), with the Mac's own GPU, Xcode 26.0; a size picks the smallest free Mac that has it; no root; the box user and home reset after release",
+    );
+    await backend.dispose();
   });
 
   it("offers xcode and ios-simulator while every Mac serving the kind that answered the last survey has them, and its doctor says which lack them", async () => {

@@ -110,6 +110,8 @@ function status(...args) {
   const lines = [`helper=${flag("helper") ?? 1}`, `arch=${flag("arch") ?? (mac ? "arm64" : "x86_64")}`, "boot=fake", `generation=${generation() ?? ""}`, `marker=${kind}`];
   if (kind !== "none") lines.push(...read(kind).trim().split("\n").map((line) => `marker.${line}`));
   lines.push(`hook=${flag("hook") !== null ? 1 : 0}`, `docker=${flag("docker") !== null ? 1 : 0}`, "systemd=0", `cores=${flag("cores") ?? 4}`, `memory=${flag("memory") ?? 7861}`, `disk=${flag("disk") ?? 40}`, `missing=${flag("missing") ?? ""}`);
+  // What the machine is: as a helper from before it said, nothing unless the test sets it.
+  if (flag("virt") !== null) lines.push(`virt=${flag("virt")}`);
   if (flag("no-enrolment") === null) lines.push(`node=${flag("node") ?? "v24.21.0"}`, `lacks=${flag("lacks") ?? ""}`);
   lines.push(`dirty=${kind === "none" ? (flag("dirty") ?? "") : ""}`);
   if (mac) lines.push(...macLines(args[0]));

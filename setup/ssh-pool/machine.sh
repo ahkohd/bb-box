@@ -190,6 +190,8 @@ status() {
   echo "cores=$(cores)"
   echo "memory=$(memory)"
   echo "disk=$(df -Pk /home 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }')"
+  # Whether the machine is itself virtual, as a VPS is: systemd-detect-virt's word, "none" on bare metal.
+  echo "virt=$(systemd-detect-virt 2>/dev/null)"
   missing=''
   for tool in sh tar flock setsid useradd userdel groupadd groupdel usermod pgrep pkill find getent; do
     command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"

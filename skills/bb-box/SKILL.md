@@ -24,6 +24,13 @@ tools do not.
 where it is built ahead, which its boxes claim at once (#440). The
 [kinds reference](../../docs/reference/kinds.md) describes every kind.
 
+- A kind's providers say what their boxes are, in brackets after each
+  name, where that differs: VMs, containers, or an SSH host pool's
+  physical machines, each lent whole with its own cores, memory and, on a
+  Mac, GPU and Xcode. Choose a physical Mac for its whole GPU and speed, and
+  a VM for root or a size of your own. `on` takes the
+  name, with or without the brackets. `box_acquire` and `box_status` say a
+  box's form on their Form line, such as "a physical Mac, lent whole".
 - Ask for the kind's default size when you can. A kind can keep spare boxes
   ready at that size, and then a box is ready at once. On Proxmox's Windows
   VMs and Tart's macOS and Windows VMs, a spare waits stopped, and it takes

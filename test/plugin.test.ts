@@ -2340,6 +2340,9 @@ test("box_acquire takes the provider in the words box_list gives after On:, and 
   assert.match(refused, /each kind's line ends with its providers/);
   const acquired = text(await tool("box_acquire", { kind: "linux", on: "fake host", wait: false }));
   assert.match(acquired, /^Acquiring box \S+ \(linux/);
+  // A provider copied with what box_list says of its boxes, in brackets, names it too.
+  const copied = text(await tool("box_acquire", { kind: "linux", on: "Fake host (physical machines, each lent whole)", wait: false }));
+  assert.match(copied, /^Acquiring box \S+ \(linux/);
 });
 
 test("with no backend on, the plugin asks for its settings, and a saved configuration takes effect at once", async (t) => {
