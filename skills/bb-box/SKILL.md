@@ -136,6 +136,11 @@ Open an app or a URL with `computer_launch`, then read a window with
   the tool says so: observe the window again.
 - When an app refuses input in the background, bb-box uses the real pointer
   or keyboard, and says so. The desktop's focus may then have moved.
+- On a Wayland desktop, text that goes through the real keyboard is pasted:
+  bb-box puts it on the box's clipboard, presses Ctrl+V (Ctrl+Shift+V in a
+  terminal), then puts the clipboard's text back. An app that reads key
+  presses rather than text, such as a game or a shortcut field, gets one
+  paste. Keys and chords, such as `Return` or `ctrl+a`, are still pressed.
 - On Windows, a window with no title gets the title "<app> (untitled)", as
   Cua reaches only windows with one: `computer_launch` names it at once, and
   `computer_windows` names it in the background and lists it on a later
