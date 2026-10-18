@@ -3411,6 +3411,45 @@ test("on Sway, text an element refuses in the background is pasted with Cua's pa
   assert.deepEqual(readDesktop(file).calls.filter((call) => call.tool === "press_key").at(-1)!.args.modifiers, ["ctrl", "shift"]);
 });
 
+test("on Sway, text goes in with the image's US keyboard where it has one, and is pasted where the text has a character the layout lacks (#707)", async (t) => {
+  // bb-box-type stands for /usr/local/libexec/bb-box/type: it records its text, and refuses é as the US layout lacks it.
+  const bin = tempDir("sway-keyboard");
+  const shims: Record<string, string> = {
+    "bb-box-type": `text=$(cat; printf x); case "$text" in *é*) exit 3 ;; esac; printf %s "\${text%x}" >> "$HOME/typed"; echo >> "$HOME/typed"`,
+    "wl-paste": `case "$*" in *-l*) echo text/plain ;; *) printf old ;; esac`,
+    "wl-copy": `if [ "$1" = --clear ]; then echo cleared >> "$HOME/copies"; else cat >> "$HOME/copies"; echo >> "$HOME/copies"; fi`,
+    swaymsg: `case "$*" in *get_tree*) cat "$HOME/tree.json" ;; *) echo "$*" >> "$HOME/swaymsg.log" ;; esac`,
+  };
+  for (const [name, script] of Object.entries(shims)) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const home = /stdout:\n(.*)\n/.exec(text(await tool("box_run", { box: box.name, command: "pwd" })))![1]!;
+  // Another window has Sway's focus, so the window is focused first.
+  writeFileSync(join(home, "tree.json"), JSON.stringify({ id: 1, nodes: [{ id: 100, app_id: "tasks", nodes: [] }, { id: 7, focused: true, app_id: "foot", nodes: [] }] }));
+  const field = refOf(text(await tool("computer_observe", { box: box.name, window: 100 })), '"New task"');
+  const url = "en.wikipedia.org/wiki/Sway_(window_manager) :?&=#~";
+
+  const typed = text(await tool("computer_type", { box: box.name, ref: field, text: url }));
+  assert.match(typed, /^Typed 50 characters into e\d+ \(text 'New task'\), clicking it first, then with the real keyboard, in a US layout \(/);
+  assert.equal(readFileSync(join(home, "typed"), "utf8"), `${url}\n`);
+  assert.equal(readFileSync(join(home, "swaymsg.log"), "utf8"), "[con_id=100] focus\n");
+  const calls = readDesktop(file).calls;
+  assert.equal(calls.filter((call) => call.tool === "press_key").length, 0, "no paste key");
+  assert.equal(existsSync(join(home, "copies")), false, "the clipboard is untouched");
+
+  const accented = text(await tool("computer_type", { box: box.name, window: 100, text: "café" }));
+  assert.match(accented, /pasting it with the real keyboard's Ctrl\+V/, "é is not on a US keyboard");
+  assert.equal(readFileSync(join(home, "copies"), "utf8"), "café\nold\n");
+});
+
 test("an agent reads a desktop box's window, acts on references and is told what changed", async (t) => {
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());

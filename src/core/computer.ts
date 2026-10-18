@@ -125,6 +125,13 @@ export interface ComputerDeps {
    * which Cua types for.
    */
   stageText?(box: BoxRecord, input: { readonly windowId: number; readonly text: string }, signal?: AbortSignal): Promise<"terminal" | "app" | "unsupported">;
+  /**
+   * Types text into window `windowId` on a Sway desktop with the image's US
+   * keyboard (swayKeyboardScript), focused first if it is not. "unsupported"
+   * where the image has none, or the text has a character the US layout
+   * lacks: stageText pastes it then (#707).
+   */
+  keyText?(box: BoxRecord, input: { readonly windowId: number; readonly text: string }, signal?: AbortSignal): Promise<"typed" | "unsupported">;
   /** Puts back the clipboard's text that stageText saved (swayRestoreScript). */
   restoreClipboard?(box: BoxRecord, signal?: AbortSignal): Promise<void>;
   /** Who controls the box's desktop now. */
@@ -809,6 +816,28 @@ function flat(line: Line): string {
 /** App IDs of terminals, which paste with Ctrl+Shift+V. */
 const TERMINALS = "foot|footclient|kitty|Alacritty|alacritty|org.wezfurlong.wezterm|xterm|XTerm|URxvt|konsole|org.kde.konsole|org.gnome.Terminal|org.gnome.Console|kgx|xfce4-terminal|Xfce4-terminal|terminator|Terminator|tilix|com.gexperts.Tilix|lxterminal|Lxterminal";
 
+/**
+ * Types `text` into Sway window `windowId` (Cua's window ID is Sway's
+ * container ID) with the Wayland image's US keyboard, bb-box-type, after
+ * focusing the window if it is not focused, as the box user. A bb-box-type
+ * on the PATH comes first, as tests give one. Exits 3 where the image has
+ * none or no Sway, or where the text has a character the US layout lacks,
+ * which bb-box-type types none of (#707).
+ */
+export function swayKeyboardScript(windowId: number, text: string): string {
+  const encoded = Buffer.from(text, "utf8").toString("base64");
+  return `set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
+tool=$(command -v bb-box-type || echo /usr/local/libexec/bb-box/type)
+[ -x "$tool" ] && tree=$(swaymsg -t get_tree 2>/dev/null) || exit 3
+focused=$(printf %s "$tree" | python3 -c 'import json,sys
+def walk(n):
+    if n.get("focused"): print(n["id"]); return True
+    return any(walk(c) for c in n.get("nodes",[])+n.get("floating_nodes",[]))
+walk(json.load(sys.stdin))')
+[ "$focused" = ${windowId} ] || swaymsg "[con_id=${windowId}] focus" >/dev/null || exit 4
+printf %s ${encoded} | base64 -d | "$tool"`;
+}
+
 const CLIPBOARD_ENV = `set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
 saved="\${XDG_RUNTIME_DIR:-$HOME}/.bb-box-clipboard"`;
 
@@ -1140,8 +1169,10 @@ export class Computer {
     // search. The element is clicked first with the real pointer, as a person
     // would, which focuses it and, in an address bar, selects what it holds,
     // unless a chord there may have selected text a click would lose (#707).
-    // On Sway, the text is pasted: bb-box puts it on the clipboard, and Cua
-    // presses the paste key, as typing there loses characters.
+    // On Sway, bb-box types the text with the image's US keyboard, or, where
+    // the image has none or the text has a character it lacks, pastes it:
+    // bb-box puts it on the clipboard, and Cua presses the paste key. Cua's
+    // own typing there loses characters.
     if (!keys && use.box.capabilities.os === "linux" && id !== undefined) {
       const window = { pid: args.pid, window_id: args.window_id };
       let clicked = false;
@@ -1159,9 +1190,10 @@ export class Computer {
           clicked = true;
         }
       }
-      const staged = this.#deps.stageText ? await this.#deps.stageText(use.box, { windowId: id, text: input.text! }, use.signal) : "unsupported";
+      const keyed = this.#deps.keyText ? await this.#deps.keyText(use.box, { windowId: id, text: input.text! }, use.signal) : "unsupported";
+      const staged = keyed === "typed" ? "keyed" : this.#deps.stageText ? await this.#deps.stageText(use.box, { windowId: id, text: input.text! }, use.signal) : "unsupported";
       if (staged === "unsupported") await this.#deliver(use, tool, { ...(target ? window : args), ...typed }, "foreground");
-      else {
+      else if (staged !== "keyed") {
         const modifiers = staged === "terminal" ? ["ctrl", "shift"] : ["ctrl"];
         try {
           await this.#deliver(use, "press_key", { ...window, key: "v", modifiers }, "foreground");
@@ -1170,7 +1202,12 @@ export class Computer {
         }
       }
       const paste = staged === "terminal" ? "Ctrl+Shift+V" : "Ctrl+V";
-      const how = staged === "unsupported" ? "with the real keyboard" : `pasting it with the real keyboard's ${paste}, as typing on Wayland loses characters, the clipboard's text put back after`;
+      const how =
+        staged === "unsupported"
+          ? "with the real keyboard"
+          : staged === "keyed"
+            ? "with the real keyboard, in a US layout"
+            : `pasting it with the real keyboard's ${paste}, as typing on Wayland loses characters, the clipboard's text put back after`;
       return this.#typed(use, `${what} into ${label}, ${clicked ? "clicking it first, then " : ""}${how} (the desktop's focus may have moved).`, before, readBack, args);
     }
     const { foreground } = await this.#deliver(use, tool, { ...args, ...typed }, chordOnWindows || overSelection ? "foreground" : true);
