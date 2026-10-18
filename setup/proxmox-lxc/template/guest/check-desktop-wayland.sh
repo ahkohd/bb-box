@@ -96,7 +96,7 @@ t "US keyboard for typing" sh -c 'printf "" | /usr/local/libexec/bb-box/type || 
 # Selkies' video of Sway (060), patched to stream it at its own size.
 t "Selkies on 5980" sh -c 'for _ in $(seq 1 100); do code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5980/) && [ "$code" = 200 ] && break; sleep 0.1; done
   [ "$code" = 200 ] || { echo "no answer on 127.0.0.1:5980 (HTTP $code)"; exit 1; }
-  grep -qs _bb_box_host_output_size /opt/selkies/lib/python3*/site-packages/selkies/websockets_mode.py || { echo "Selkies is not patched to keep the size of Sway"; exit 1; }
+  { grep -qs _bb_box_host_output_size /opt/selkies/lib/python3*/site-packages/selkies/websockets_mode.py && grep -qs _bb_box_viewer_host_size /opt/selkies/lib/python3*/site-packages/selkies/websockets_mode.py; } || { echo "Selkies is not patched to keep the size of Sway"; exit 1; }
   echo "HTTP $code, $(/usr/bin/selkies --version 2>&1 | head -1), patched to keep the size of Sway"'
 t "at-spi bus" sh -c 'n=$(pgrep -u "$(id -un)" -c at-spi-bus-laun); a=$(busctl --user call org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress) || exit 1; [ "$n" -le 1 ] || { echo "$n bus launchers"; exit 1; }; echo "$a" | cut -c1-60'
 t "Cua Driver daemon" sh -c 'if [ -d /run/systemd/system ]; then systemctl --user is-active bb-box-cua-driver; else pgrep -u "$(id -un)" -x cua-driver >/dev/null && echo "started by bb-box-start"; fi && cua-driver telemetry status | sed -n 1p'

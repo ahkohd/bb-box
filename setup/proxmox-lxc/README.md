@@ -502,7 +502,9 @@ an X server:
   streams Sway as H.264 video, capturing it as a client: screencopy for
   frames, Sway's virtual keyboard and pointer for input. The build patches
   it (`guest/files/selkies-host-size.py`) to stream Sway at Sway's own size:
-  unpatched, each viewer set Sway to 1024x768.
+  unpatched, each viewer set Sway to 1024x768, and a lone viewer's capture,
+  as the first on a fresh box, set it to 1024x768 or an earlier layout's
+  size.
 - **No Xwayland and no `DISPLAY`**, so Cua Driver can see every window.
   X11-only apps, such as xterm, Java Swing, Wine and older Electron apps,
   need `linux-desktop-cpu`.
