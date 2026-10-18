@@ -93,6 +93,12 @@ export interface DisplayCapability {
    * the stream server decides.
    */
   readonly cursor?: "stream" | "selkies";
+  /**
+   * A video display the viewer shows only once the person chooses it, by
+   * unticking Show as VNC: VNC is the default, as on a Tart Mac, where VNC is
+   * already smooth. Left out, video is the default where it can show.
+   */
+  readonly byChoice?: boolean;
 }
 
 /**

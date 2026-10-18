@@ -59,6 +59,8 @@ A Linux desktop can also show as video, which follows a dragged window far more 
 
 Such a desktop opens as video. To see it over VNC instead, select **Show as VNC** under **Display** in the toolbar's menu; it is ticked while the desktop shows over VNC. Your choice lasts for that box in that tab; select it again to go back to video.
 
+A macOS desktop on a Tart Mac opens over VNC instead, as VNC is already smooth there, with **Show as VNC** ticked. Select it to see the desktop as video, which uses much less bandwidth, though a key shows a little later. Your choice lasts in the same way. The Tart backend's **Video by default for macOS desktops** setting makes such desktops open as video.
+
 If the video cannot start, the desktop shows over VNC, and the toolbar says 'Video did not start, so this shows VNC.' Point at the note to see why: for example, the box was made before video came, or your browser cannot decode video, which needs a secure connection to BB.
 
 Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size. Copying and pasting carry images too, both ways: paste an image into the box, or copy one there and it comes to your computer. If your browser does not let BB Box write an image to your clipboard, the image shows so you can right-click it and copy it.

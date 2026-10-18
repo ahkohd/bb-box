@@ -2535,7 +2535,23 @@ test("the desktop route relays a box's desktop, and only the viewer with control
   assert.match(sentTo(noId).subarray(12).toString(), /The viewer gave no viewer ID/);
 
   assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
-  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false, sharp: null });
+  assert.deepEqual(await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id }), { box: null, desktopPath: state.desktopPath, terminalPath: "/api/v1/plugins/bb-box/http/terminal", video: false, videoByDefault: false, sharp: null });
+});
+
+test("a box whose video is shown only by choice, as a Tart Mac's, offers video but opens VNC first; others open video", async (t) => {
+  const state = async (kind: BoxKind) => {
+    const { harness, box } = await desktopBox({ kind });
+    t.after(() => harness.lifecycle.dispose());
+    return (await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { video: boolean; videoByDefault: boolean };
+  };
+  const byChoice: BoxKind = {
+    ...FAKE_SELKIES_KIND,
+    capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" ? { ...display, byChoice: true } : display)) },
+  };
+  const chosen = await state(byChoice);
+  assert.deepEqual([chosen.video, chosen.videoByDefault], [true, false]);
+  const usual = await state(FAKE_SELKIES_KIND);
+  assert.deepEqual([usual.video, usual.videoByDefault], [true, true]);
 });
 
 test("the desktop route carries a box's Selkies stream message by message, and only the viewer with control reaches the box, sizes it and gets its clipboard (056)", async (t) => {

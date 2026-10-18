@@ -655,6 +655,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   };
   const video = state?.video ?? null;
   const videoPossible = video === true && !videoFailed && canShowVideo();
+  /** What the viewer opens before the person chooses: VNC where the box's video is shown only by choice, as on a Tart Mac. */
+  const firstStream: Stream = state?.videoByDefault === false ? "rfb" : "selkies";
   /** Whether the desktop is at high resolution, twice the pixels at twice the scale; null where it cannot be. */
   const sharp = state?.sharp ?? null;
   /** A small screen's menu is a sheet, which has no submenus: the display's items go in it under a label. */
@@ -665,8 +667,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       decide("rfb");
       return;
     }
-    decide(storedChoice(boxId) ?? "selkies");
-  }, [video, videoPossible]);
+    decide(storedChoice(boxId) ?? firstStream);
+  }, [video, videoPossible, firstStream]);
   const key = stream ? `desktop:${shown}:${stream}` : null;
   // The session of a stream given up for another is ended, not kept.
   const keyBefore = useRef(key);

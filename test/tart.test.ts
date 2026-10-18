@@ -199,7 +199,7 @@ test("a macOS desktop is Tart's VNC through the run's holder, which starts with 
   assert.equal(tart.connections, 1, "and it did not connect again");
 });
 
-test("a macOS desktop declares video while the video field is on and every Mac's image record lists bb-box-stream, and offers it in a VM that has it, through bb-box-stream connect in the desktop session (060)", async () => {
+test("a macOS desktop declares video while every Mac's image record lists bb-box-stream, by choice unless the video field makes it the default, and offers it in a VM that has it, through bb-box-stream connect in the desktop session (060)", async () => {
   const ssh = fakeSsh();
   const mac = ssh.home(MAC);
   fakeMacTools(mac);
@@ -213,7 +213,7 @@ test("a macOS desktop declares video while the video field is on and every Mac's
   const backend = make(true);
   const declaredBy = async (by: TartBackend) => {
     await by.capacity("macos-desktop", SMALL, [], signal());
-    return by.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays.map((display) => display.protocol);
+    return by.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays.map((display) => (display.byChoice ? `${display.protocol} by choice` : display.protocol));
   };
   const declared = () => declaredBy(backend);
   assert.deepEqual(await declared(), ["rfb"], "not while the image's record lacks it");
@@ -221,7 +221,7 @@ test("a macOS desktop declares video while the video field is on and every Mac's
   const without = readFileSync(record, "utf8");
   writeFileSync(record, `${JSON.stringify({ ...JSON.parse(without), tools: { "bb-box-stream": "0123456789ab" } })}\n`);
   assert.deepEqual(await declared(), ["rfb", "selkies"]);
-  assert.deepEqual(await declaredBy(make(false)), ["rfb"], "nor while the video field is off, its default");
+  assert.deepEqual(await declaredBy(make(false)), ["rfb", "selkies by choice"], "and by choice while the video field is off, its default: the viewer opens VNC");
 
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   // A VM without it, as a box of an older build may be, offers RFB alone.

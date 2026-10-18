@@ -71,6 +71,12 @@ export interface DesktopState {
    * round trip, or as the person chose.
    */
   readonly video: boolean;
+  /**
+   * Whether the viewer opens the box as video, where it can, before the
+   * person chooses: false where its video is shown only by choice, as on a
+   * Tart Mac, which opens as VNC. Absent from older plugins, which open video.
+   */
+  readonly videoByDefault?: boolean;
   /** Whether the desktop is at high resolution, twice the pixels at twice the scale; null where it cannot be. Absent from older plugins. */
   readonly sharp?: boolean | null;
 }
