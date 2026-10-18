@@ -760,7 +760,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.background.service("bb-update-images", {
     async start(signal) {
       while (!signal.aborted) {
-        await imageJobs.afterBbUpdate(signal).catch((error) => logError("images after a BB update", error));
+        // Its wait ends when the plugin stops, as the sweeper's steps do: a backend's listing of its images through a
+        // machine BB no longer answers for a stopping plugin may never end, and kept the plugin from stopping on an
+        // update (18 October 2026). What it started finishes on its own.
+        await abortable(imageJobs.afterBbUpdate(signal), signal).catch((error) => {
+          if (!signal.aborted) logError("images after a BB update", error);
+        });
         await new Promise((resolve) => {
           const timer = setTimeout(resolve, BB_UPDATE_LOOK_MS);
           signal.addEventListener("abort", () => (clearTimeout(timer), resolve(null)), { once: true });
