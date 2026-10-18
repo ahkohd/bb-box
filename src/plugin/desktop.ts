@@ -32,10 +32,14 @@ const FOLLOW_AFTER_MS = 300;
 /** How long a box's video stays stopped for its capture to restart: Selkies stops a capture within milliseconds. */
 const RESTART_PAUSE_MS = 300;
 /**
- * How long a box's video may take to show a size Selkies was told, before bb-box restarts its capture: Selkies restarts it
- * itself, and a pause while it does breaks its reconfiguration, leaving its own monitor at the old size (the owner's note of 18 October 2026).
+ * How long a box's video may take to show a size Selkies was told, before bb-box restarts its capture. With no person in control,
+ * Selkies moves its capture to the new size itself, and a pause while it does breaks its reconfiguration, leaving its own monitor
+ * at the old size; with one, it stops its capture and waits to be restarted, whether the desktop grew or shrank (the owner's note
+ * of 18 October 2026).
  */
-export const FOLLOW_FRAME_MS = 1_500;
+export const FOLLOW_FRAME_MS = 1_000;
+/** How many times bb-box restarts a box's capture for a size before it leaves it: a restart now and then brings no frame. */
+const FOLLOW_TRIES = 3;
 /** Each box whose desktop is High resolution: its xfwm theme before, and the size High resolution set (the owner's note of 16 October 2026). */
 const SHARP_PREFIX = "desktop-sharp/";
 /** High resolution's density: twice the pixels, with Xfce's UI scaled to match, so everything keeps its size and text is sharp on a 2x screen. */
@@ -391,20 +395,26 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     await new Promise((resolve) => setTimeout(resolve, RESTART_PAUSE_MS));
     for (const relay of paused) relay.resume();
   };
+  /** Has a box's video show `size`, which Selkies was told: its capture restarts each time no frame of that size comes in time. */
+  const showSize = async (boxId: string, size: Size): Promise<void> => {
+    for (let tries = 0; tries < FOLLOW_TRIES; tries++) {
+      if (await videoAt(boxId, size, followFrameMs)) return;
+      await restartVideo(boxId);
+    }
+  };
   /** Whether a box's video is Selkies on Linux, which follows its RFB desktop's size only when told; a Mac's follows its screen itself (060). */
   const followsByRfb = async (boxId: string): Promise<boolean> => (await boxes.find(boxId))?.capabilities.os === "linux";
   /**
    * Has a box's Selkies capture its desktop at the size the desktop has now,
-   * read through its RFB display, while it has Selkies viewers. Selkies
-   * follows a desktop that shrinks, not one that grows.
+   * read through its RFB display, while it has Selkies viewers, and restarts
+   * the capture when the video does not show that size in time.
    */
   const followSize = async (boxId: string, shown?: Display): Promise<void> => {
     const entry = selkiesBoxes.get(boxId);
     if (!entry || !(await followsByRfb(boxId))) return;
     const size = await desktopSize(displayOpener(shown ?? (await display(boxes, boxId))));
     await entry.box.follow(size);
-    const seen = frameSizes.get(boxId);
-    if (seen && (size.width > seen.width || size.height > seen.height) && !(await videoAt(boxId, size, followFrameMs))) await restartVideo(boxId);
+    if (frameSizes.has(boxId)) await showSize(boxId, size);
   };
   /** Each box's check that its video has the desktop's size, while one runs. */
   const matching = new Map<string, Promise<void>>();
@@ -418,7 +428,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       // Selkies makes a size even: a desktop an odd width or height has is one pixel larger than its video.
       if (desktop.width - (desktop.width % 2) !== size.width || desktop.height - (desktop.height % 2) !== size.height) {
         await entry.box.follow(desktop);
-        if (!(await videoAt(boxId, desktop, followFrameMs))) await restartVideo(boxId);
+        await showSize(boxId, desktop);
       }
     })()
       .catch((error) => deps.logError("have the video follow the desktop's size", error))

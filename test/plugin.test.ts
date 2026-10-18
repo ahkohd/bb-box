@@ -2610,26 +2610,29 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   const follow = (width: number, height: number) =>
     `SETTINGS,${JSON.stringify({ displayId: "primary", manual_resolution: true, manual_width: width, manual_height: height, force_aligned_resolution: false })}`;
   await until("the video following the size", async () => input.received.includes(follow(1024, 768)));
+  // Selkies shows the size it was told, here at once, as it does with no person in control.
+  await selkies.frame(2, true, 1024, 768);
   // A width of a multiple of 8 and an even height, which Selkies keeps as they are.
   await session.receive("r,1101x701");
   await until("such a size", async () => rfb.width === 1096 && rfb.height === 700);
   await until("the video following it", async () => input.received.includes(follow(1096, 700)));
-  // Frames of another size than the desktop's, as from a capture that missed a resize, have the video follow the desktop,
-  // and restart: Selkies moves a running capture to a larger size without its encoder, and starts a stopped one afresh.
+  await selkies.frame(3, true, 1096, 700);
+  // Once a frame of the size comes, the video is not paused: a pause while Selkies moves its capture leaves its own monitor at the
+  // old size (the owner's note of 18 October 2026).
   const restarts = () => page.received.filter((message) => message === "STOP_VIDEO").length;
-  assert.equal(restarts(), 0, "no restart while the frames had the desktop's size or more");
-  await selkies.frame(2, true, 800, 600);
+  await new Promise((resolve) => setTimeout(resolve, FOLLOW_FRAME_MS + 200));
+  assert.equal(restarts(), 0, "no restart while the video showed each size it was told");
+  // Frames of another size than the desktop's, as from a capture that missed a resize, have the video follow the desktop. With no
+  // frame of its size in time, as when Selkies stopped its capture for a person in control, the capture restarts, and again when a
+  // restart brings none, until one does.
+  await selkies.frame(4, true, 800, 600);
   await until("the video following the desktop", async () => input.received.filter((message) => message === follow(1096, 700)).length === 2);
   await until("the capture restarted", async () => page.received.join(" ").includes("STOP_VIDEO START_VIDEO REQUEST_KEYFRAME"));
   assert.equal(page.stopped, false, "the viewer's video runs again");
-  // Told the size, Selkies restarts its capture itself: once a frame of that size comes, the video is not paused, as a pause
-  // during Selkies' own restart leaves its monitor at the old size (the owner's note of 18 October 2026).
-  const before = restarts();
-  await selkies.frame(3, true, 640, 480);
-  await until("the video following the desktop again", async () => input.received.filter((message) => message === follow(1096, 700)).length === 3);
-  await selkies.frame(4, true, 1096, 700);
+  await until("a second restart, as the first brought no frame of the size", async () => restarts() === 2);
+  await selkies.frame(5, true, 1096, 700);
   await new Promise((resolve) => setTimeout(resolve, FOLLOW_FRAME_MS + 200));
-  assert.equal(restarts(), before, "no restart once the video has the desktop's size");
+  assert.equal(restarts(), 2, "no restart once a frame of the size came");
   await selkies.clipboard("copied again");
   await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied again").toString("base64")}`));
   // An image, both ways, in Selkies' parts and in order (#609).
