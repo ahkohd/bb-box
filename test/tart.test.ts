@@ -211,12 +211,17 @@ test("a macOS desktop declares video while every Mac's image record lists bb-box
     return tart;
   };
   const backend = make(true);
+  // Before a Mac answers, as just after bb-box starts, a macOS desktop keeps the video it has: its kind does not yet say.
+  const someGuest = { ref: "a-vm", data: {} } as unknown as Parameters<TartBackend["asOffered"]>[0];
+  assert.equal(await backend.asOffered(someGuest, "macos-desktop"), false);
+  assert.equal(await backend.asOffered(someGuest, "macos"), true);
   const declaredBy = async (by: TartBackend) => {
     await by.capacity("macos-desktop", SMALL, [], signal());
     return by.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays.map((display) => (display.byChoice ? `${display.protocol} by choice` : display.protocol));
   };
   const declared = () => declaredBy(backend);
   assert.deepEqual(await declared(), ["rfb"], "not while the image's record lacks it");
+  assert.equal(await backend.asOffered(someGuest, "macos-desktop"), true, "once a Mac has answered, its kind says");
   const record = join(mac, ".bb-box", "tart", "images", "bb-box-macos.json");
   const without = readFileSync(record, "utf8");
   writeFileSync(record, `${JSON.stringify({ ...JSON.parse(without), tools: { "bb-box-stream": "0123456789ab" } })}\n`);
