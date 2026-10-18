@@ -315,6 +315,39 @@ the panel, with one tab in control and one watching:
   from before the restart until the screen changed. With the pointer
   moving it did not happen. Not fixed.
 
+## Windows on a Mac: video against VNC, 18 October 2026
+
+A windows-arm64-desktop box (4 cores, 1280x800) of a build with
+bb-box-stream.exe and Cisco's arm64 OpenH264 2.6.0, through BB's server,
+3 runs each, against QEMU's VNC on the same kind (p50 / p95).
+
+| | VNC, LAN | Video, LAN | VNC, 20 Mbit/s, 40 ms | Video, 20 Mbit/s, 40 ms |
+| --- | --- | --- | --- | --- |
+| Drag fps | 49-52 | 27-29 | 27-28 | 23-28 |
+| Drag lag | 76-79 / 115-130 ms | 53-59 / 75-84 ms | 133-135 / 194-206 ms | 102-109 / 183-259 ms |
+| Scroll fps | 52-58 | 20-22 | 25-27 | 20-21 |
+| Scroll Mbit/s | 9.6-10.8 | 0.6 | 3.0-3.2 | 0.6 |
+| Scroll torn frames | 3-7% | 0% | 2-4% | 0% |
+| Key alone | 92-98 ms | 54-62 ms | 127-137 ms | 99-113 ms |
+
+- **Decision: VNC stays the default on a Mac, video by choice.** Video is
+  closer to the pointer and quicker for a key, but shows half VNC's
+  frames on a LAN.
+- **The limit is the capture, not the encoder.** Converting and encoding
+  a 1280x800 frame takes 7.6 ms on arm64 (1.4 ms to I420, 6.2 ms in
+  OpenH264), about 118 frames a second; x64 takes 5.6-6.3 ms. With Edge
+  drawing 65 frames a second, Desktop Duplication on the Mac's VirtIO GPU
+  DOD driver signalled 2-7 a second, mapped or read through GDI alike,
+  and a full-screen GDI copy takes 26.7 ms. QEMU's VNC reads the guest's
+  framebuffer from the host, about 50 updates a second.
+- **Parked: a host-side bridge.** A program on the Mac that reads QEMU's
+  VNC framebuffer on loopback, as the VNC display does, and encodes it
+  with VideoToolbox, as bb-box-stream does for macOS desktops, served to
+  the panel's video client. It would not need Windows' capture and would
+  keep the encoder off the guest's cores. Copying only Duplication's
+  dirty rectangles was considered and dropped: Duplication's own signal
+  is the lower bound.
+
 ## Limits
 
 - Only the pool Mac is measured at 2x: Linux and Windows boxes run at 1x,
