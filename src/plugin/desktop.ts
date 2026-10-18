@@ -77,13 +77,14 @@ interface SharpKept {
 
 /**
  * Whether a box's desktop can be High resolution: a Linux X11 desktop drawn by the CPU, which Selkies streams, or a
- * Windows desktop streamed as video, at 200% (the owner's note of 18 October 2026). Not a Wayland desktop, which has
- * video too: the owner has it on hold (#707).
+ * Windows desktop on x86_64 streamed as video, at 200% (the owner's note of 18 October 2026). Not a Wayland desktop,
+ * which has video too: the owner has it on hold (#707). Nor Windows on arm64, on a Mac: it has not been tried there, and
+ * its encoder already limits the video at 1x (060).
  */
 export function sharpOffered(box: BoxRecord): boolean {
   const video = box.capabilities.displays.some((each) => each.protocol === "selkies");
   const x11 = kindInfo(currentKindId(box.kind)).windowing === "x11";
-  return video && ((box.capabilities.os === "linux" && !box.capabilities.gpu && x11) || box.capabilities.os === "windows");
+  return video && ((box.capabilities.os === "linux" && !box.capabilities.gpu && x11) || (box.capabilities.os === "windows" && box.capabilities.arch === "x86_64"));
 }
 
 /** `size` times `factor`, within High resolution's largest and at least 640x480. */
