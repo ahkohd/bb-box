@@ -404,9 +404,14 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     await new Promise((resolve) => setTimeout(resolve, RESTART_PAUSE_MS));
     for (const relay of paused) relay.resume();
   };
-  /** Has a box's video show `size`, which Selkies was told: its capture restarts each time no frame of that size comes in time. */
+  /**
+   * Has a box's video show `size`, which Selkies was told: its capture restarts each time no frame of that size comes in time. With
+   * no viewer wanting video, as with every tab hidden, no frame comes and none is waited for: the next capture starts at the
+   * desktop's size, and a hand-back returns once the desktop is restored.
+   */
   const showSize = async (boxId: string, size: Size): Promise<void> => {
-    for (let tries = 0; tries < FOLLOW_TRIES; tries++) {
+    const watched = () => [...(selkiesBoxes.get(boxId)?.relays ?? [])].some((relay) => relay.wantsVideo);
+    for (let tries = 0; tries < FOLLOW_TRIES && watched(); tries++) {
       if (await videoAt(boxId, size, followFrameMs)) return;
       await restartVideo(boxId);
     }
