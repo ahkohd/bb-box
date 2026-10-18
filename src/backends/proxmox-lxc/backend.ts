@@ -87,7 +87,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
-import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
+import { SELKIES_DISPLAY, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -235,8 +235,9 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
       features: ["docker"],
       command: SSH_COMMAND,
       // wayvnc refuses a viewer's resize, so transports() gives this display
-      // a resize that runs the display script's (048).
-      displays: [{ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" }],
+      // a resize that runs the display script's (048). Video by choice, from
+      // Selkies on Sway, where the box's image has it (060).
+      displays: [{ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" }, WAYLAND_SELKIES_DISPLAY],
       computerUse: CUA_DRIVER,
       enrol: true,
     },
@@ -331,6 +332,8 @@ export interface LxcBackendOptions {
   readonly fetch?: FetchLike;
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly sshBinary?: string;
+  /** Where a Wayland box's image has Selkies' launcher, instead of SELKIES_LAUNCHER: a file the fake SSH finds, in tests. */
+  readonly selkiesLauncher?: string;
   /** Replaces the TCP check for port 22, for tests. */
   readonly portCheck?: PortCheck;
   /** Replaces each kind's readyTimeoutMs, for tests. */
@@ -540,6 +543,11 @@ export function displayReason(reason: string): string {
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
+/** A guest as SelkiesPresence knows it: its VMID, which a later box may reuse, and the box it holds (018). */
+function presenceKey(guest: Guest): string {
+  return `${guest.ref}:${String(guest.data?.box ?? "")}`;
+}
+
 export class ProxmoxLxcBackend implements Backend {
   readonly id: string;
   readonly nature = "virtual" as const;
@@ -551,6 +559,8 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #options: LxcBackendOptions;
   readonly #http: { fetch: FetchLike; close(): Promise<void> };
   readonly #keyFile = new KeyFile();
+  /** Whether each Wayland box's image has Selkies (060). */
+  readonly #selkies: SelkiesPresence;
   readonly #warmStore: WarmStore;
   readonly #warm: ReadyPool<BoxIdentity>;
   /** VMIDs this process is cloning into. */
@@ -607,6 +617,7 @@ export class ProxmoxLxcBackend implements Backend {
     this.#config = config;
     this.#context = context;
     this.#options = options;
+    this.#selkies = new SelkiesPresence(options.selkiesLauncher);
     this.#http = options.fetch
       ? { fetch: options.fetch, close: async () => {} }
       : proxmoxFetch({ ca: config.proxmox.caCertificate, fingerprint: config.proxmox.tlsFingerprint });
@@ -951,6 +962,7 @@ export class ProxmoxLxcBackend implements Backend {
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
+    this.#selkies.forget(presenceKey(guest));
     await this.#forget(this.#vmid(guest));
     const api = await this.client();
     if (await this.#still(api, guest, signal)) await api.destroy(this.#vmid(guest), signal);
@@ -1072,10 +1084,12 @@ export class ProxmoxLxcBackend implements Backend {
     const command = await this.#command(vmid);
     // wayvnc offers Apple's sign-in, not a VNC password (048).
     const wayland = offer?.flavour === "desktop-wayland-cpu";
-    const displays = (capabilities?.displays ?? []).map(
+    // A Wayland box of an image built before Selkies was in it has no video (060).
+    const video = !wayland || (await this.#selkies.has(presenceKey(guest), command));
+    const displays = (capabilities?.displays ?? []).filter((display) => video || display.protocol !== "selkies").map(
       (display): Display =>
         display.protocol === "selkies"
-          ? selkiesDisplay((port) => command.route(port))
+          ? selkiesDisplay((port) => command.route(port), display)
           : {
               ...display,
               label: "Desktop",

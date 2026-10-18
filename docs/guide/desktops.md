@@ -55,11 +55,13 @@ Without control, your own pointer shows over the desktop. With control, the poin
 
 ## Video
 
-A Linux desktop can also show as video, which follows a dragged window far more closely than the usual stream (VNC), and stays smooth on a slow connection where VNC falls to a few frames a second. It is on unless **Linux desktops as video** is off in [settings](settings.md#general), and works only for X11 desktops drawn by the CPU. Other desktops show as before.
+A Linux desktop can also show as video, which follows a dragged window far more closely than the usual stream (VNC), and stays smooth on a slow connection where VNC falls to a few frames a second. It is on unless **Linux desktops as video** is off in [settings](settings.md#general), and works only for Linux desktops drawn by the CPU, X11 and Wayland. Other desktops show as before.
 
 Such a desktop opens as video. To see it over VNC instead, select **Show as VNC** under **Display** in the toolbar's menu; it is ticked while the desktop shows over VNC. Your choice lasts for that box in that tab; select it again to go back to video.
 
 A macOS desktop on a Tart Mac opens over VNC instead, as VNC is already smooth there, with **Show as VNC** ticked. Select it to see the desktop as video, which uses much less bandwidth, though a key shows a little later. Your choice lasts in the same way. The Tart backend's **Video by default for macOS desktops** setting makes such desktops open as video.
+
+A Linux desktop on Wayland opens over VNC too, with **Show as VNC** ticked. Select it to see the desktop as video, which follows a drag more closely, does not tear while you scroll, and uses about a seventh of the bandwidth while scrolling, though a key shows a little later. This needs a Wayland box made from a recent image; on an older one, the video does not start and the desktop stays on VNC. High resolution is not offered on Wayland.
 
 If the video cannot start, the desktop shows over VNC, and a notification says 'Video did not start, so this shows VNC.', with why under it: for example, the box was made before video came, or your browser cannot decode video, which needs a secure connection to BB.
 
@@ -73,7 +75,7 @@ On Windows, this needs a box made from a recent image, which keeps the pointer a
 
 Over VNC, a Windows box from a recent image shows no pointer in the picture at all, even while the agent moves it, so you cannot see where the agent points. While you hold control, your own pointer shows with the box's shape. To watch the agent's pointer, use video, which Windows desktops show by default.
 
-On a Linux desktop on Wayland, the box draws its pointer into the picture, which shows it as the agent moves it. While you hold control, the box leaves it out, so it does not trail behind your own. Your own pointer is then a plain arrow, whatever the box's shape: the Wayland desktop's VNC server does not send the box's pointer shape. This needs a Wayland box made from a recent image; on an older one, you see your own pointer and, a little behind it, the box's.
+On a Linux desktop on Wayland, the box draws its pointer into the picture, which shows it as the agent moves it. While you hold control, the box leaves it out, so it does not trail behind your own. Your own pointer is then a plain arrow, whatever the box's shape, over VNC and over video alike: neither stream sends the box's pointer shape on Wayland. This needs a Wayland box made from a recent image; on an older one, you see your own pointer and, a little behind it, the box's.
 
 ## High resolution
 

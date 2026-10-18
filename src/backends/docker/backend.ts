@@ -55,7 +55,7 @@ import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
-import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
+import { SELKIES_DISPLAY, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, waylandPointer } from "../wayvnc.ts";
 
@@ -91,6 +91,8 @@ export interface DockerBackendOptions {
   readonly binary?: string;
   /** The ssh client the docker CLI runs for an ssh:// host, instead of `ssh` on the PATH. */
   readonly ssh?: string;
+  /** Where a Wayland box's image has Selkies' launcher, instead of SELKIES_LAUNCHER: a file the fake docker finds, in tests. */
+  readonly selkiesLauncher?: string;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
   /** Runs setup/docker/build.sh with `args`, for tests; bash by default. Resolves with its exit code. */
@@ -362,8 +364,9 @@ function kindTable(docker: string[], gpuDocker: boolean): Record<DockerKind, Box
         features: docker,
         command: DOCKER_COMMAND,
         // wayvnc refuses a viewer's resize, so transports() gives this display
-        // a resize that runs the display script's (048).
-        displays: [{ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" }],
+        // a resize that runs the display script's (048). Video by choice, from
+        // Selkies on Sway, where the box's image has it (060).
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" }, WAYLAND_SELKIES_DISPLAY],
         computerUse: CUA_DRIVER,
         enrol: true,
       },
@@ -403,6 +406,8 @@ export class DockerBackend implements Backend {
   #knownOs: GuestOs | null = null;
   /** Containers being acquired, by box ID, until their acquire ends. */
   readonly #placing = new Map<string, Placing>();
+  /** Whether each Wayland box's image has Selkies (060). */
+  readonly #selkies: SelkiesPresence;
 
   /**
    * Image operations (049): a container from an image, its commit as an
@@ -428,6 +433,7 @@ export class DockerBackend implements Backend {
     this.#config = config;
     this.#context = context;
     this.#options = options;
+    this.#selkies = new SelkiesPresence(options.selkiesLauncher);
     this.#kinds = dockerKinds(config);
     this.#rootlessKinds = dockerKinds(config, true);
     this.#oldDesktopKinds = dockerKinds(config, false, false);
@@ -736,6 +742,7 @@ export class DockerBackend implements Backend {
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
+    this.#selkies.forget(guest.ref);
     await this.#remove(guest.ref, this.#boxOf(guest), signal);
     await this.#context.storage.delete(relabelKey(guest.ref));
     hooks.timing("delete", Math.round(performance.now() - started));
@@ -819,10 +826,12 @@ export class DockerBackend implements Backend {
     const capabilities = this.kinds().find((candidate) => candidate.id === kind)?.capabilities;
     // wayvnc offers Apple's sign-in, not a VNC password (048).
     const wayland = kind === "linux-desktop-wayland-cpu";
-    const displays = (capabilities?.displays ?? []).map(
+    // A Wayland box of an image built before Selkies was in it has no video (060).
+    const video = !wayland || (await this.#selkies.has(guest.ref, command));
+    const displays = (capabilities?.displays ?? []).filter((display) => video || display.protocol !== "selkies").map(
       (display): Display =>
         display.protocol === "selkies"
-          ? selkiesDisplay((port) => command.route(port))
+          ? selkiesDisplay((port) => command.route(port), display)
           : {
               ...display,
               label: "Desktop",

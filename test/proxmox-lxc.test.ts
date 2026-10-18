@@ -130,8 +130,11 @@ test("kinds lists only kinds with a template", () => {
   assert.deepEqual(wayland.capabilities.features, ["docker"]);
   assert.deepEqual(
     wayland.capabilities.displays,
-    [{ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" }],
-    "Sway resizes through the backend (048), and wayvnc sends no still area again, so the viewer asks (056)",
+    [
+      { id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" },
+      { id: "selkies", protocol: "selkies", resizable: true, byChoice: true },
+    ],
+    "Sway resizes through the backend (048), and wayvnc sends no still area again, so the viewer asks (056); video by choice, with no way to leave the cursor out (060)",
   );
   assert.deepEqual(wayland.capabilities.computerUse, desktop.capabilities.computerUse);
 });
@@ -1224,6 +1227,7 @@ test("a Wayland desktop signs in as box with Apple's sign-in, and its display sc
     `#!/bin/sh
 case "$*" in
   *vnc-password*) echo hunter2; exit 0;;
+  *"test -x "*"/usr/local/libexec/bb-box/selkies"*) [ -e "${dir}/selkies" ]; exit $?;;
   *"/usr/local/libexec/bb-box/display resize "*) printf '%s\\n' "$*" >>"${log}"; case "$*" in *40000x800*) echo "${refusal}" >&2; exit 1;; esac; exit 0;;
 esac
 exec "${FAKE_SSH_BINARY}" "$@"
@@ -1246,6 +1250,20 @@ exec "${FAKE_SSH_BINARY}" "$@"
 
   const check = (await backend.doctor()).checks.find((candidate) => candidate.id === "template.9004");
   assert.deepEqual([check?.name, check?.status], ["CPU Wayland desktop template 9004", "ok"]);
+
+  // A box of an image with Selkies has video too, by choice (060); the box above keeps its image's answer.
+  writeFileSync(join(dir, "selkies"), "");
+  const video = await backend.acquire(identity("linux-desktop-wayland-cpu"), null, hooks().value, signal());
+  const shown = (await backend.transports(video, "linux-desktop-wayland-cpu")).displays;
+  assert.deepEqual(shown.map((each) => [each.protocol, each.label, each.cursor ?? null]), [["rfb", "Desktop", null], ["selkies", "Desktop, as video", null]], "Sway paints the pointer: the hidden theme takes it out, not Selkies");
+  assert.equal((await backend.transports(box, "linux-desktop-wayland-cpu")).displays.length, 1, "asked once a box");
+
+  // A VMID is reused: a later box of another image on the same VMID is asked again, both ways.
+  const reused = { ...box, data: { ...box.data, box: "bx-later-box" } };
+  assert.equal((await backend.transports(reused, "linux-desktop-wayland-cpu")).displays.length, 2, "the later box's image has Selkies");
+  rmSync(join(dir, "selkies"));
+  const again = { ...video, data: { ...video.data, box: "bx-older-image" } };
+  assert.equal((await backend.transports(again, "linux-desktop-wayland-cpu")).displays.length, 1, "and one whose image has none has no video");
 });
 
 test("the warm pool fills, hands out a ready guest and refills", async () => {

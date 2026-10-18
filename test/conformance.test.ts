@@ -80,6 +80,8 @@ await conformance({
       sshBinary: FAKE_SSH_BINARY,
       portCheck: async () => true,
       readyTimeoutMs: 0,
+      // The fake SSH runs commands on the test machine, where this is: a Wayland box's image has Selkies (060).
+      selkiesLauncher: "/bin/sh",
     }),
   // The backend's search for a free VMID starts where its storage says.
   reuse: async (storage, ref) => storage.set("next-vmid", Number(ref)),
@@ -140,7 +142,7 @@ const dockerSettings = dockerConfig();
 await conformance({
   name: "Docker on a fake host",
   storage: new MemoryStorage(),
-  create: (storage, installId) => new DockerBackend(dockerSettings, testContext(storage, installId), { binary: docker.binary, readyTimeoutMs: 20_000 }),
+  create: (storage, installId) => new DockerBackend(dockerSettings, testContext(storage, installId), { binary: docker.binary, readyTimeoutMs: 20_000, selkiesLauncher: "/bin/sh" }),
   bb: fakeBb(),
   skip: {
     arch: "the fake docker runs commands on the test machine",
