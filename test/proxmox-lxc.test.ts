@@ -132,9 +132,9 @@ test("kinds lists only kinds with a template", () => {
     wayland.capabilities.displays,
     [
       { id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" },
-      { id: "selkies", protocol: "selkies", resizable: true },
+      { id: "selkies", protocol: "selkies", resizable: true, tellSize: "first" },
     ],
-    "Sway resizes through the backend (048), and wayvnc sends no still area again, so the viewer asks (056); video by default, with no way to leave the cursor out (060)",
+    "Sway resizes through the backend (048), and wayvnc sends no still area again, so the viewer asks (056); video by default, with no way to leave the cursor out, and Selkies told a size before Sway takes it (060)",
   );
   assert.deepEqual(wayland.capabilities.computerUse, desktop.capabilities.computerUse);
 });

@@ -31,7 +31,7 @@ If you ask an agent to carry on while you have control, it can take control back
 
 ### The desktop's size
 
-Taking control does not change what you see: the desktop keeps its size. While you have control, resizing your tab or window resizes most desktops to fit it, and the toolbar says so. A macOS desktop on a Mac keeps its own size. When you hand back after resizing, the desktop goes back to the size the agent had.
+Taking control does not change what you see: the desktop keeps its size. While you have control, resizing your tab or window resizes most desktops to fit it, and the toolbar says so. On video, the last picture stretches to fill the new space until the desktop has its new size, so you see one change. A macOS desktop on a Mac keeps its own size. When you hand back after resizing, the desktop goes back to the size the agent had.
 
 ## Your keyboard
 
