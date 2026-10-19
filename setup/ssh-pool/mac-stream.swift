@@ -15,7 +15,7 @@
 // ScreenCaptureKit captures whole frames of the main display at its pixels,
 // so a frame never tears; VideoToolbox encodes them in hardware, in real
 // time, with no frames reordered; CGEvent posts the input; and the
-// pasteboard goes both ways. When the screen stops changing, the last frame
+// pasteboard goes both ways, text and images. When the screen stops changing, the last frame
 // is encoded twice more, so a still screen sharpens. Its permissions are its
 // responsible process's: Screen Recording and Accessibility (058).
 //
@@ -313,6 +313,11 @@ func nextText(_ client: Client) -> String?? {
   }
 }
 
+/** The largest image the clipboard takes either way, as Selkies' and the panel's limit. */
+let CLIPBOARD_MAX_BYTES = 64 << 20
+/** A copied image's bytes a message, in parts above it (Selkies' clipboard_start, clipboard_data, clipboard_finish). */
+let CLIPBOARD_CHUNK = 192 << 10
+
 // MARK: Input
 
 /** macOS virtual key codes of keys that type no character, by X keysym; as bb-box's mac-input.ts maps them. */
@@ -588,6 +593,8 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
   private var lastFrame = Date.distantPast
   private var lastInput = Date.distantPast
   private var clipboardParts: [String: Data] = [:]
+  /** Each image coming in parts: its type, as cbs named it. */
+  private var binaryTypes: [String: String] = [:]
   /** Whether the video draws the cursor in, as bb-box's BB_CURSOR last said: not while a person holds control. */
   private var showsCursor = true
   /** The running capture's configuration, to change showsCursor without a restart. */
@@ -623,14 +630,23 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
         Thread { self.serve(client) }.start()
       }
     }.start()
-    // The box's pasteboard, to the clients, when it changes.
+    // The box's pasteboard, to the clients, when it changes: text where there is text, as an app that copies a table
+    // puts its picture there too; else an image, as PNG, the very bytes where the app put PNG.
     Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [self] _ in
       let board = NSPasteboard.general
       guard board.changeCount != pasteboardCount else { return }
       pasteboardCount = board.changeCount
-      guard let text = board.string(forType: .string) else { return }
-      let message = "clipboard," + Data(text.utf8).base64EncodedString()
-      queue.async { for client in self.clients.values { client.text(message) } }
+      if let text = board.string(forType: .string) {
+        let message = "clipboard," + Data(text.utf8).base64EncodedString()
+        queue.async { for client in self.clients.values { client.text(message) } }
+        return
+      }
+      guard let image = board.data(forType: .png) ?? board.data(forType: .tiff).flatMap({ NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }) else { return }
+      guard image.count <= CLIPBOARD_MAX_BYTES else {
+        log("a copied image of \(image.count) bytes is more than the viewer takes")
+        return
+      }
+      queue.async { self.sendImage("image/png", image) }
     }
     // The cursor's shape, to the clients, when it changes: the panel shows it on the
     // browser's own pointer while its person holds control, as Selkies' cursor messages.
@@ -746,6 +762,26 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
           if let error { log("could not change the cursor in the video: \(error.localizedDescription)") }
         }
       }
+    // An image from the viewer: cb,<mime>,<base64>, or cbs,<id>,<mime>,<size>, cbd,<id>,<base64> and cbe,<id> in
+    // parts, as the panel's video client sends a paste.
+    case "cb":
+      if fields.count > 2, let data = Data(base64Encoded: fields[2]) { pasteImage(fields[1], data) }
+    case "cbs":
+      if fields.count > 3, let size = Int(fields[3]), size >= 0, size <= CLIPBOARD_MAX_BYTES {
+        clipboardParts[fields[1]] = Data()
+        binaryTypes[fields[1]] = fields[2]
+      }
+    case "cbd":
+      if fields.count > 2, let data = Data(base64Encoded: fields[2]), let part = clipboardParts[fields[1]] {
+        if part.count + data.count > CLIPBOARD_MAX_BYTES {
+          clipboardParts[fields[1]] = nil
+          binaryTypes[fields[1]] = nil
+        } else {
+          clipboardParts[fields[1]]?.append(data)
+        }
+      }
+    case "cbe":
+      if fields.count > 1, let mime = binaryTypes.removeValue(forKey: fields[1]), let data = clipboardParts.removeValue(forKey: fields[1]) { pasteImage(mime, data) }
     case "cw":
       if fields.count > 1, let data = Data(base64Encoded: fields[1]) { paste(data) }
     case "cws":
@@ -758,6 +794,37 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
       // SETTINGS, CLIENT_FRAME_ACK, a resize and the rest: the Mac keeps its own size and colour.
       break
     }
+  }
+
+  /**
+   * An image for the pasteboard: PNG as the very bytes, never compressed again, beside TIFF for apps that take only
+   * that; another type as both, from its picture.
+   */
+  private func pasteImage(_ mime: String, _ data: Data) {
+    guard mime.hasPrefix("image/"), data.count <= CLIPBOARD_MAX_BYTES, let picture = NSBitmapImageRep(data: data) else { return }
+    let png = mime == "image/png" ? data : picture.representation(using: .png, properties: [:])
+    DispatchQueue.main.async { [self] in
+      let board = NSPasteboard.general
+      board.clearContents()
+      if let png { board.setData(png, forType: .png) }
+      if let tiff = picture.tiffRepresentation { board.setData(tiff, forType: .tiff) }
+      pasteboardCount = board.changeCount
+    }
+  }
+
+  /** An image copied in the box, to the clients: in one message, or in parts as Selkies sends a large one. On the server's queue. */
+  private func sendImage(_ mime: String, _ data: Data) {
+    var messages: [String]
+    if data.count <= CLIPBOARD_CHUNK {
+      messages = ["clipboard_binary,\(mime),\(data.base64EncodedString())"]
+    } else {
+      messages = ["clipboard_start,\(mime),\(data.count)"]
+      for at in stride(from: 0, to: data.count, by: CLIPBOARD_CHUNK) {
+        messages.append("clipboard_data," + data.subdata(in: at..<min(at + CLIPBOARD_CHUNK, data.count)).base64EncodedString())
+      }
+      messages.append("clipboard_finish")
+    }
+    for client in clients.values { for message in messages { client.text(message) } }
   }
 
   private func paste(_ data: Data) {

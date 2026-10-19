@@ -67,7 +67,7 @@ A Linux desktop on Wayland also opens as video, which follows a drag more closel
 
 If the video cannot start, the desktop shows over VNC, and a notification says 'Video did not start, so this shows VNC.', with why under it: for example, the box was made before video came, or your browser cannot decode video, which needs a secure connection to BB.
 
-Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size. Copying and pasting carry images too, both ways: paste an image into the box, or copy one there and it comes to your computer. If your browser does not let BB Box write an image to your clipboard, the image shows so you can right-click it and copy it. On Windows, a pasted image reaches the box's clipboard as the very file you pasted, not compressed again, which browsers and Office paste, and as a picture for apps that take only that; this needs a box made from a recent image.
+Everything else works the same with video: taking control, copying and pasting, your keyboard, the pointer and the desktop's size. Copying and pasting carry images too, both ways: paste an image into the box, or copy one there and it comes to your computer. If your browser does not let BB Box write an image to your clipboard, the image shows so you can right-click it and copy it. On Windows, a pasted image reaches the box's clipboard as the very file you pasted, not compressed again, which browsers and Office paste, and as a picture for apps that take only that; this needs a box made from a recent image. On a Mac it is the same; this needs a Tart Mac made from a recent image, or a pool Mac whose owner has run setup-mac.sh again since.
 
 ### The pointer over video
 
