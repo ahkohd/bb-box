@@ -677,12 +677,11 @@ function HighResolutionItem({ checked, disabled, words, onChange }: { checked: b
   );
 }
 
-/** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038); `resizable` says resizing this tab resizes the desktop while it holds control. */
-function controlText(box: BoxView, mine: boolean, taken: boolean, resizable: boolean): string {
+/** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038). */
+function controlText(box: BoxView, mine: boolean, taken: boolean): string {
   switch (box.control?.owner) {
     case "human":
-      if (!mine) return "Another viewer has control.";
-      return resizable ? "You have control. Resizing this tab resizes the desktop." : "You have control.";
+      return mine ? "You have control." : "Another viewer has control.";
     case "none":
       return "Control is changing hands…";
     default:
@@ -1048,7 +1047,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     words = "Disconnected";
   } else if (box) {
     tone = "ok";
-    words = controlText(box, mine, taken, resizable);
+    words = controlText(box, mine, taken);
   }
 
   return (

@@ -1743,7 +1743,7 @@ function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") 
   return renderSlot(action!, { threadId: THREAD, params: { box: boxId } }, { rpc: handlers, pluginId: "bb-box" });
 }
 
-test("a desktop that cannot be resized says only that you have control, and noVNC does not resize it", async () => {
+test("a desktop that cannot be resized says you have control, and noVNC does not resize it", async () => {
   const { handlers } = server([desktopBox({ kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null, quality: null, macKeys: null } })]);
   const slot = desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
@@ -1830,7 +1830,7 @@ test("taking control keeps the desktop's size; once the tab's size changes and h
   vi.useRealTimers();
 
   fireEvent.click(slot.getByRole("button", { name: "Take control" }));
-  expect(await slot.findByText("You have control. Resizing this tab resizes the desktop.")).toBeTruthy();
+  expect(await slot.findByText("You have control.")).toBeTruthy();
   // Taking control leaves the desktop's size as it is, so the picture stays as it was (the owner's note of 16 October 2026).
   expect(client!.resizeSession).toBe(false);
   const taken = client!.resizeChecks;
@@ -2222,7 +2222,7 @@ test("a desktop tab shows the box through the relay, and takes and hands back co
   expect(slot.queryByText("Connecting to the desktop…")).toBeNull();
   expect(slot.getByText("The agent has control.")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Take control" }));
-  expect(await slot.findByText("You have control. Resizing this tab resizes the desktop.")).toBeTruthy();
+  expect(await slot.findByText("You have control.")).toBeTruthy();
   expect(slot.inspection.rpcCalls.find((call) => call.method === "takeControl")?.input).toEqual({ threadId: THREAD, box: "box_2", viewer });
   // Input goes to the box now; the desktop keeps its size until this tab's size changes (the owner's note of 16 October 2026).
   expect([client!.viewOnly, client!.resizeSession, client!.focused]).toEqual([false, false, 1]);
@@ -3005,7 +3005,7 @@ test("the tab the agent took control back from says so, and takes it again; anot
     otherClient!.dispatchEvent(new Event("connect"));
   });
   fireEvent.click(mine.getByRole("button", { name: "Take control" }));
-  expect(await mine.findByText("You have control. Resizing this tab resizes the desktop.")).toBeTruthy();
+  expect(await mine.findByText("You have control.")).toBeTruthy();
 
   takenFrom = viewer;
   await slot.behavior.emitRealtime("changed", { threadId: THREAD });
@@ -3017,7 +3017,7 @@ test("the tab the agent took control back from says so, and takes it again; anot
   expect(theirs.getByRole("button", { name: "Take control" })).toBeTruthy();
 
   fireEvent.click(mine.getByRole("button", { name: "Take control again" }));
-  expect(await mine.findByText("You have control. Resizing this tab resizes the desktop.")).toBeTruthy();
+  expect(await mine.findByText("You have control.")).toBeTruthy();
   expect(slot.inspection.rpcCalls.filter((call) => call.method === "takeControl").map((call) => call.input)).toEqual([
     { threadId: THREAD, box: "box_2", viewer },
     { threadId: THREAD, box: "box_2", viewer },
@@ -3052,7 +3052,7 @@ test("a hidden desktop tab keeps its stream, hands control back after a minute, 
   const [client] = novnc.FakeRfb.made;
   act(() => void client!.dispatchEvent(new Event("connect")));
   fireEvent.click(slot.getByRole("button", { name: "Take control" }));
-  await slot.findByText("You have control. Resizing this tab resizes the desktop.");
+  await slot.findByText("You have control.");
 
   vi.useFakeTimers();
   slot.unmount();
@@ -3070,14 +3070,14 @@ test("a hidden desktop tab keeps its stream, hands control back after a minute, 
   const [, next] = novnc.FakeRfb.made;
   act(() => void next!.dispatchEvent(new Event("connect")));
   fireEvent.click(back.getByRole("button", { name: "Take control" }));
-  await back.findByText("You have control. Resizing this tab resizes the desktop.");
+  await back.findByText("You have control.");
   vi.useFakeTimers();
   back.unmount();
   vi.advanceTimersByTime(HAND_BACK_MS / 2);
   const returned = desktopTab(handlers);
   // The tab's state loads over promises; give the fake clock a few turns before the minute runs out.
   for (let turn = 0; turn < 5; turn++) await act(() => vi.advanceTimersByTimeAsync(5));
-  expect(returned.getByText("You have control. Resizing this tab resizes the desktop.")).toBeTruthy();
+  expect(returned.getByText("You have control.")).toBeTruthy();
   await vi.advanceTimersByTimeAsync(HAND_BACK_MS);
   expect(changes).toEqual(["takeControl box_2", "handBack box_2", "takeControl box_2"]);
   expect(novnc.FakeRfb.made).toHaveLength(2);
