@@ -100,6 +100,13 @@ interface BoxConnection {
   readonly typesAsCharacter?: DisplayOpened["typesAsCharacter"];
 }
 
+/**
+ * How long a key that goes to the display's input as its character waits after keys went to the server: they
+ * reach the box a little later by the server than a character by the input. On a Tart Mac, a burst of keys with no
+ * gap at all came out of order, and with 10 ms between keys in order (measured 19 October 2026).
+ */
+const CHARACTER_AFTER_KEYS_MS = 15;
+
 /** RFB's buttons 4 to 7: the wheel's notches, up, down, left and right. */
 const WHEEL = 0x78;
 
@@ -189,6 +196,8 @@ export class RfbRelay {
   #wheel = 0;
   /** The keysyms of keys down as their character in the display's own input (typesAsCharacter). */
   readonly #typed = new Set<number>();
+  /** When the viewer's input last went to the server, for a character to the display's input after it. */
+  #wroteAt = 0;
   /** The keysym of each key down by QEMU's key event, by its scancode. */
   readonly #heldQemu = new Map<number, number>();
   /** The viewer's bytes so far, each taken once those before it are. */
@@ -298,7 +307,13 @@ export class RfbRelay {
           if (message.down) this.#typed.add(message.keysym);
           else this.#typed.delete(message.keysym);
           // Keys before it reach the server first, and the helper posts it before the keys after it go.
-          if (passing.length) await connection.writer.write(passing.splice(0).reduce(concat));
+          if (passing.length) {
+            await connection.writer.write(passing.splice(0).reduce(concat));
+            this.#wroteAt = Date.now();
+          }
+          // The server's path into the box is a little slower than the input's: keys it just took land first.
+          const since = Date.now() - this.#wroteAt;
+          if (since < CHARACTER_AFTER_KEYS_MS) await new Promise((resolve) => setTimeout(resolve, CHARACTER_AFTER_KEYS_MS - since));
           const input = await this.#opened(connection);
           if (input && !this.#ended) await input.character?.(message.down, message.keysym);
           continue;
@@ -315,7 +330,10 @@ export class RfbRelay {
       } else if (connection.input && isInput(message)) await this.#toInput(connection, message);
       else passing.push(bytes);
     }
-    if (passing.length) await connection.writer.write(passing.reduce(concat));
+    if (passing.length) {
+      await connection.writer.write(passing.reduce(concat));
+      this.#wroteAt = Date.now();
+    }
   }
 
   /** The keysyms of the keys this viewer holds down in the box. */

@@ -299,11 +299,13 @@ test("over Tart's VNC server, a character it has no key for, or that needs anoth
 test("over Tart's VNC server, a character between two keys in one read goes after the first and before the second", async () => {
   const server = new FakeRfb();
   const seen: number[] = [];
+  let calledAt = 0;
   let box: FakeRfb["connections"][number] | undefined;
   const input: DisplayInput = {
     key: async () => true,
     // What the server has when the helper posts the character; the relay sends the next key only once it has.
     character: async () => {
+      calledAt = Date.now();
       await until("the key before it", () => (box?.received.byteLength ?? 0) >= 8);
       await new Promise((resolve) => setTimeout(resolve, 30));
       seen.push(box!.received.byteLength);
@@ -318,7 +320,10 @@ test("over Tart's VNC server, a character between two keys in one read goes afte
   await relay.init();
   [box] = server.connections;
   relay.give(true);
+  const sentAt = Date.now();
   await relay.relay.receive([keyEvent(true, 0x7a), keyEvent(true, 0xe9), keyEvent(true, 0x78)].reduce(concat));
+  // The first key reaches the box a little later by the server: the character waits for it.
+  assert.ok(calledAt - sentAt >= 14, `the character waited ${calledAt - sentAt} ms after the key before it`);
   await until("the second key", () => box!.received.byteLength >= 16);
   assert.deepEqual(seen, [8], "the character was posted with only the first key at the server");
   assert.equal(hex(box!.received), hex([keyEvent(true, 0x7a), keyEvent(true, 0x78)].reduce(concat)));
