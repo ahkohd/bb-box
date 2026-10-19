@@ -426,6 +426,9 @@ export function windowsTypesAsCharacter(keysym: number, held: ReadonlySet<number
   return shifted === undefined || shifted !== shift;
 }
 
+/** How long QEMU's VNC server spaces the key events it takes: its key-delay-ms, which neither Proxmox nor Tart sets. */
+export const QEMU_KEY_DELAY_MS = 10;
+
 /** How long the first character waits for bb-box-stream to say it takes BB_PING, before it is taken for one that does not. */
 const FIRST_PONG_MS = 1_000;
 /** How long a character waits for bb-box-stream to say it has typed it. */

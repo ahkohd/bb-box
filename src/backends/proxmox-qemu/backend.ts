@@ -84,7 +84,7 @@ import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
-import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
 import { openRoute } from "../../transports/route.ts";
 import type { QemuConfig } from "./config.ts";
@@ -805,6 +805,7 @@ export class ProxmoxQemuBackend implements Backend {
         input: async () => windowsCharacterInput(stream),
         inputTakes: "characters" as const,
         typesAsCharacter: windowsTypesAsCharacter,
+        keyDelayMs: QEMU_KEY_DELAY_MS,
       }),
     };
     return { command, displays: [typing, video], access: { ssh: this.#access(vmid), dockerHost: null } };

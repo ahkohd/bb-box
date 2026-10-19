@@ -65,3 +65,25 @@ test("where bb-box-stream does not answer, as from an older image, characters go
   await input.close();
   await server.close();
 });
+
+test("a stream whose input connection takes long to open, as over SSH, is still taken for one that answers BB_PING", async () => {
+  const server = new FakeSelkies({});
+  const input = windowsCharacterInput(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    return server.channel();
+  });
+  const answering = (async () => {
+    for (let answered = 0; answered < 2; ) {
+      await until("a ping", () => (server.pages[0]?.received.filter((message) => typeof message === "string" && message.startsWith("BB_PING,")).length ?? 0) > answered);
+      const ping = server.pages[0]!.received.filter((message): message is string => typeof message === "string" && message.startsWith("BB_PING,"))[answered]!;
+      await server.pages[0]!.send(`BB_PONG,${ping.slice(8)}`);
+      answered += 1;
+    }
+  })();
+  await input.character!(true, 0x3d);
+  await answering;
+  const sent = server.pages[0]!.received.filter((message): message is string => typeof message === "string" && /^(cd|cu|kd|ku),/.test(message));
+  assert.deepEqual(sent, ["cd,61"], "= as itself, which a German keyboard's Shift+0 needs");
+  await input.close();
+  await server.close();
+});
