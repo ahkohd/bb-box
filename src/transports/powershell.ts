@@ -184,7 +184,22 @@ export const DESKTOP_EXITS = { noSession: 69, refused: 77 } as const;
  * `timeoutMs` the command and everything it started end. Task Scheduler
  * leaves the task of a user who is not logged on as it was, with the result
  * SCHED_S_TASK_HAS_NOT_RUN.
+ *
+ * What Task Scheduler says of a task just run lags: it can say the task is
+ * neither running nor queued, with a result of 0, before it starts, longer
+ * on a busy VM. Windows on a Mac failed its enrolment so, and with a busy
+ * CPU 3 of 15 desktop commands did (the desktop sweep). So the batch file
+ * first writes a file that says it started, and the command is taken to
+ * have ended only once it started and Task Scheduler says it ended, for a
+ * second without its exit status; to have found no session only after
+ * UNSTARTED_GRACE_MS without starting, saying it has not run; and to have
+ * failed to start after UNSTARTED_LIMIT_MS.
  */
+/** How long a desktop command's task may not start, saying it has not run, before no desktop session is taken to be why. */
+const UNSTARTED_GRACE_MS = 5_000;
+/** How long a desktop command's task may take to start at all. */
+const UNSTARTED_LIMIT_MS = 60_000;
+
 export function desktopScript(script: string, timeoutMs: number | undefined): string {
   const timeout =
     timeoutMs === undefined
@@ -203,10 +218,11 @@ $bbFile = [IO.File]::Create("$bbDir\in")
 [Console]::OpenStandardInput().CopyTo($bbFile)
 $bbFile.Close()
 Set-Content -LiteralPath "$bbDir\run.ps1" -Value ${literal(powershellCommand(script))}
-Set-Content -LiteralPath "$bbDir\run.cmd" -Value (
-  '@"' + [Environment]::ProcessPath + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $bbDir + '\run.ps1" <"' + $bbDir + '\in" >"' + $bbDir + '\out" 2>"' + $bbDir + '\err"'),
+Set-Content -LiteralPath "$bbDir\run.cmd" -Value @(
+  ('@type nul >"' + $bbDir + '\started"'),
+  ('@"' + [Environment]::ProcessPath + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $bbDir + '\run.ps1" <"' + $bbDir + '\in" >"' + $bbDir + '\out" 2>"' + $bbDir + '\err"'),
   ('@>"' + $bbDir + '\code.tmp" echo %errorlevel%'),
-  ('@move /y "' + $bbDir + '\code.tmp" "' + $bbDir + '\code" >nul')
+  ('@move /y "' + $bbDir + '\code.tmp" "' + $bbDir + '\code" >nul'))
 $bbService = New-Object -ComObject Schedule.Service
 $bbService.Connect()
 $bbFolder = $bbService.GetFolder('\')
@@ -223,16 +239,26 @@ $bbRegistered = $bbFolder.RegisterTaskDefinition($bbId, $bbTask, 6, $null, $null
 $null = $bbRegistered.Run($null)
 $bbClock = [Diagnostics.Stopwatch]::StartNew()
 $bbExit = $null
+$bbEnded = $null
 while ($null -eq $bbExit) {
+  $bbStarted = Test-Path -LiteralPath "$bbDir\started"
   if (Test-Path -LiteralPath "$bbDir\code") { $bbExit = [int](Get-Content -LiteralPath "$bbDir\code" -Raw).Trim() }
-  elseif ($bbRegistered.State -ne 4 -and -not (Test-Path -LiteralPath "$bbDir\code")) {
-    if ($bbRegistered.LastTaskResult -eq 0x41303) {
-      [Console]::Error.WriteLine("bb-box: there is no desktop session to join: $([Environment]::UserName) is not logged in to the desktop.")
-      $bbExit = ${DESKTOP_EXITS.noSession}
-    } else {
+  elseif (-not $bbStarted -and $bbRegistered.LastTaskResult -eq 0x41303 -and $bbRegistered.State -ne 2 -and $bbClock.ElapsedMilliseconds -ge ${UNSTARTED_GRACE_MS}) {
+    [Console]::Error.WriteLine("bb-box: there is no desktop session to join: $([Environment]::UserName) is not logged in to the desktop.")
+    $bbExit = ${DESKTOP_EXITS.noSession}
+  }
+  elseif (-not $bbStarted -and $bbClock.ElapsedMilliseconds -ge ${UNSTARTED_LIMIT_MS}) {
+    [Console]::Error.WriteLine('bb-box: the desktop command did not start. Task Scheduler gave {0:x}.' -f $bbRegistered.LastTaskResult)
+    $bbExit = 1
+  }
+  elseif ($bbStarted -and $bbRegistered.State -ne 4 -and $bbRegistered.LastTaskResult -ne 0x41301) {
+    # Ended, by Task Scheduler's word: the exit status may still be on its way, so it has a moment.
+    if ($null -eq $bbEnded) { $bbEnded = $bbClock.ElapsedMilliseconds; Start-Sleep -Milliseconds 50 }
+    elseif ($bbClock.ElapsedMilliseconds - $bbEnded -ge 1000) {
       [Console]::Error.WriteLine('bb-box: the desktop command ended without an exit status. Task Scheduler gave {0:x}.' -f $bbRegistered.LastTaskResult)
       $bbExit = 1
     }
+    else { Start-Sleep -Milliseconds 50 }
   }
 ${timeout}  else { Start-Sleep -Milliseconds 50 }
 }

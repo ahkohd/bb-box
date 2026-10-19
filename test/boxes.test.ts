@@ -1187,7 +1187,12 @@ test("a Windows desktop command runs as a one-off scheduled task in the box user
   assert.ok(script.includes("elseif ($bbClock.ElapsedMilliseconds -ge 1500) {\n"));
   const plain = command("windows", "Get-Process", { session: "desktop" });
   assert.ok(plain.startsWith("$ErrorActionPreference = 'Stop'\n"), "no env file to write");
-  assert.ok(!plain.includes("$bbClock.ElapsedMilliseconds -ge"), "no timeout");
+  assert.ok(!plain.includes("elseif ($bbClock.ElapsedMilliseconds -ge"), "no timeout");
+  // Task Scheduler's word lags as a task starts, which on a busy VM failed commands that ran: the batch file says it
+  // started, and only a started task is taken to have ended without its exit status (the desktop sweep).
+  assert.ok(plain.includes(`('@type nul >"' + $bbDir + '\\started"'),`), "the batch file says it started first");
+  assert.ok(plain.includes("elseif ($bbStarted -and $bbRegistered.State -ne 4 -and $bbRegistered.LastTaskResult -ne 0x41301) {"));
+  assert.ok(plain.includes("elseif (-not $bbStarted -and $bbRegistered.LastTaskResult -eq 0x41303 -and $bbRegistered.State -ne 2 -and $bbClock.ElapsedMilliseconds -ge 5000) {"));
 
   const desktop: BoxKind = {
     ...FAKE_KINDS[1]!,
