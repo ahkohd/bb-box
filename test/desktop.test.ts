@@ -23,6 +23,7 @@ import {
 import type { DisplayAuth, DisplayInput, DisplayInputEvents, DisplayOpened } from "../src/transports/types.ts";
 import { FakeRfb, until } from "./fake-rfb.ts";
 import { tartTypesAsCharacter } from "../src/core/mac-input.ts";
+import { windowsTypesAsCharacter } from "../src/backends/windows.ts";
 
 const bytes = (...values: number[]) => Uint8Array.of(...values);
 const text = (value: string) => new TextEncoder().encode(value);
@@ -351,6 +352,43 @@ test("the viewer's reads go in turn: a key in a later read waits for a character
   await Promise.all([first, second]);
   await until("the key", () => box!.received.byteLength >= 8);
   assert.deepEqual(seen, [0], "the character was posted before the next read's key reached the server");
+  await relay.relay.close();
+});
+
+test("over QEMU's VNC server on Windows, a key typed otherwise than on a US keyboard goes to the display's input as its character, and the rest, the pointer included, to the server (the desktop sweep)", async () => {
+  const server = new FakeRfb();
+  const calls: string[] = [];
+  const input: DisplayInput = {
+    key: async (down, keysym) => (calls.push(`key ${down} ${keysym}`), true),
+    character: async (down, keysym) => void calls.push(`character ${down} ${keysym.toString(16)}`),
+    pointer: async (mask) => void calls.push(`pointer ${mask}`),
+    clipboard: async () => undefined,
+    size: async () => undefined,
+    ping: async () => undefined,
+    close: async () => undefined,
+  };
+  const relay = relayTo(server, { displayInput: async () => input, inputTakes: "characters", typesAsCharacter: windowsTypesAsCharacter });
+  await relay.init();
+  const [box] = server.connections;
+  relay.give(true);
+  // AZERTY: a on the Q key, then Shift and 1 on the 1 key; then a US q, Ctrl+A on the Q key, and a wheel notch.
+  const sent = [
+    qemuKeyEvent(true, 0x61, 0x10), qemuKeyEvent(false, 0x61, 0x10),
+    qemuKeyEvent(true, 0xffe1, 0x2a), qemuKeyEvent(true, 0x31, 0x02), qemuKeyEvent(false, 0x31, 0x02), qemuKeyEvent(false, 0xffe1, 0x2a),
+    qemuKeyEvent(true, 0x71, 0x10), qemuKeyEvent(false, 0x71, 0x10),
+    qemuKeyEvent(true, 0xffe3, 0x1d), qemuKeyEvent(true, 0x61, 0x10), qemuKeyEvent(false, 0x61, 0x10), qemuKeyEvent(false, 0xffe3, 0x1d),
+    pointerEvent(16, 5, 5), pointerEvent(0, 5, 5),
+  ];
+  await relay.relay.receive(sent.reduce(concat));
+  const expected = [
+    qemuKeyEvent(true, 0xffe1, 0x2a), qemuKeyEvent(false, 0xffe1, 0x2a),
+    qemuKeyEvent(true, 0x71, 0x10), qemuKeyEvent(false, 0x71, 0x10),
+    qemuKeyEvent(true, 0xffe3, 0x1d), qemuKeyEvent(true, 0x61, 0x10), qemuKeyEvent(false, 0x61, 0x10), qemuKeyEvent(false, 0xffe3, 0x1d),
+    pointerEvent(16, 5, 5), pointerEvent(0, 5, 5),
+  ].reduce(concat);
+  await until("the server's keys", () => box!.received.byteLength >= expected.byteLength);
+  assert.deepEqual(calls, ["character true 61", "character false 61", "character true 31", "character false 31"]);
+  assert.equal(hex(box!.received), hex(expected), "a US q, Ctrl+A and the wheel stay the server's");
   await relay.relay.close();
 });
 

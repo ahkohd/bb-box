@@ -4,8 +4,10 @@
 // mode and Windows' clock, and to see that the desktop is up.
 
 import { createHash } from "node:crypto";
+import { SelkiesBox, type OpenStream } from "../core/selkies.ts";
 import { desktopScript } from "../transports/powershell.ts";
-import type { CommandTransport, DisplaySize } from "../transports/types.ts";
+import { pause } from "../transports/ready.ts";
+import type { CommandTransport, DisplayInput, DisplaySize } from "../transports/types.ts";
 
 /** The named pipe Cua's daemon listens on. A task at logon starts it, elevated, as SSH is (039). */
 export const CUA_PIPE = "\\\\.\\pipe\\cua-driver";
@@ -384,6 +386,80 @@ $bbPointer::${shown ? "Show" : "Hide"}()`;
 
 /** How long Windows may take to show or hide its pointer, its helper compiled the first time. */
 const POINTER_TIMEOUT_MS = 30_000;
+
+/** Each printable key of a US keyboard by its XT scancode, as QEMU takes it: its character, then with Shift. */
+const US_SCANCODES: ReadonlyArray<readonly [number, string]> = [
+  [0x02, "1!"], [0x03, "2@"], [0x04, "3#"], [0x05, "4$"], [0x06, "5%"], [0x07, "6^"], [0x08, "7&"], [0x09, "8*"], [0x0a, "9("], [0x0b, "0)"],
+  [0x0c, "-_"], [0x0d, "=+"], [0x10, "qQ"], [0x11, "wW"], [0x12, "eE"], [0x13, "rR"], [0x14, "tT"], [0x15, "yY"], [0x16, "uU"], [0x17, "iI"],
+  [0x18, "oO"], [0x19, "pP"], [0x1a, "[{"], [0x1b, "]}"], [0x1e, "aA"], [0x1f, "sS"], [0x20, "dD"], [0x21, "fF"], [0x22, "gG"], [0x23, "hH"],
+  [0x24, "jJ"], [0x25, "kK"], [0x26, "lL"], [0x27, ";:"], [0x28, "'\""], [0x29, "`~"], [0x2b, "\\|"], [0x2c, "zZ"], [0x2d, "xX"], [0x2e, "cC"],
+  [0x2f, "vV"], [0x30, "bB"], [0x31, "nN"], [0x32, "mM"], [0x33, ",<"], [0x34, ".>"], [0x35, "/?"], [0x56, "\\|"],
+];
+const US_BY_SCANCODE = new Map(US_SCANCODES.map(([code, chars]) => [code, [chars.codePointAt(0)!, chars.codePointAt(1)!] as const]));
+/** Each character a US keyboard types, and whether it takes Shift. */
+const US_CHARACTERS = new Map(US_SCANCODES.flatMap(([, chars]) => [[chars.codePointAt(0)!, false] as const, [chars.codePointAt(1)!, true] as const]));
+const SHIFT_KEYS = [0xffe1, 0xffe2];
+/** Ctrl, Alt and the Windows key, as noVNC names them: a key with one held is a shortcut, which stays a key. */
+const SHORTCUT_KEYS = [0xffe3, 0xffe4, 0xffe9, 0xffea, 0xffe7, 0xffe8, 0xffeb, 0xffec];
+
+/**
+ * Whether a key goes to bb-box-stream as its character rather than to QEMU's
+ * VNC server, which types by key on the box's US layout: QEMU's key event by
+ * its scancode, so é from a Mac's Option+E then E typed e, AZERTY's a typed
+ * q and a French ! typed /; a plain key event by the key a US keyboard types
+ * it with, dropping é and typing a French ! as 1. A printable key goes as
+ * its character when it is not what its key types on a US keyboard with the
+ * Shift held, or a US keyboard has no key for it; never Space, nor with Ctrl,
+ * Alt or the Windows key held, so a US keyboard's keys, shortcuts and games
+ * keep QEMU's keys.
+ */
+export function windowsTypesAsCharacter(keysym: number, held: ReadonlySet<number>, scancode?: number): boolean {
+  if (SHORTCUT_KEYS.some((key) => held.has(key))) return false;
+  const codePoint = keysym >= 0x1000000 ? keysym - 0x1000000 : keysym > 0x20 && keysym <= 0xff ? keysym : null;
+  if (codePoint === null || codePoint <= 0x20 || codePoint > 0x10ffff) return false;
+  const shift = SHIFT_KEYS.some((key) => held.has(key));
+  if (scancode !== undefined) {
+    const key = US_BY_SCANCODE.get(scancode);
+    return !key || key[shift ? 1 : 0] !== codePoint;
+  }
+  const shifted = US_CHARACTERS.get(codePoint);
+  return shifted === undefined || shifted !== shift;
+}
+
+/** How long the first character waits for bb-box-stream to say it takes BB_PING, before it is taken for one that does not. */
+const FIRST_PONG_MS = 1_000;
+/** How long a character waits for bb-box-stream to say it has typed it. */
+const PONG_MS = 2_000;
+/** What a character waits instead, on a box whose bb-box-stream does not say: QEMU's next key must not overtake it. */
+const UNSAID_WAIT_MS = 50;
+
+/**
+ * Types the characters windowsTypesAsCharacter picks with bb-box-stream, over
+ * an input connection of its own, for the VNC display's relay. Where it
+ * answers BB_PING, as from the image with BB_PONG, as cd and cu, always as the
+ * character, and each once it has typed it; else as a Unicode keysym's kd
+ * and ku, which it types as the character where its key would type another,
+ * and each with a short wait.
+ */
+export function windowsCharacterInput(open: OpenStream): DisplayInput {
+  const box = new SelkiesBox(open);
+  let says: Promise<boolean> | null = null;
+  return {
+    key: async () => false,
+    async character(down, keysym) {
+      says ??= box.ping(FIRST_PONG_MS);
+      const answers = await says;
+      const codePoint = keysym >= 0x1000000 ? keysym - 0x1000000 : keysym;
+      await box.input(answers ? `${down ? "cd" : "cu"},${codePoint}` : `${down ? "kd" : "ku"},${0x1000000 | codePoint}`);
+      if (!answers || !(await box.ping(PONG_MS))) await pause(UNSAID_WAIT_MS);
+    },
+    pointer: async () => undefined,
+    clipboard: async () => undefined,
+    size: async () => undefined,
+    ping: async () => undefined,
+    close: () => box.close(),
+  };
+}
 
 /** Sets Windows' clock from BB's server's. */
 export async function setClock(command: CommandTransport, signal?: AbortSignal): Promise<void> {

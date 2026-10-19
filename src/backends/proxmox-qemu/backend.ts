@@ -84,7 +84,9 @@ import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
-import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, windowsPointer } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
+import type { OpenStream } from "../../core/selkies.ts";
+import { openRoute } from "../../transports/route.ts";
 import type { QemuConfig } from "./config.ts";
 
 const MiB = 2 ** 20;
@@ -794,7 +796,18 @@ export class ProxmoxQemuBackend implements Backend {
       label: "Desktop, as video",
       open: async () => ({ route: ssh.commandRoute(this.#access(vmid), WINDOWS_STREAM), auth: { type: "none" } }),
     };
-    return { command, displays: [desktop, video], access: { ssh: this.#access(vmid), dockerHost: null } };
+    // QEMU types a person's keys by key on a US layout: a character it would type wrong goes to bb-box-stream.
+    const stream: OpenStream = (signal) => openRoute(ssh.commandRoute(this.#access(vmid), WINDOWS_STREAM), signal);
+    const typing: Display = {
+      ...desktop,
+      open: async (signal) => ({
+        ...(await this.#console(vmid, signal)),
+        input: async () => windowsCharacterInput(stream),
+        inputTakes: "characters" as const,
+        typesAsCharacter: windowsTypesAsCharacter,
+      }),
+    };
+    return { command, displays: [typing, video], access: { ssh: this.#access(vmid), dockerHost: null } };
   }
 
   /**

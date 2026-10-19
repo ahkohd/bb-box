@@ -189,6 +189,8 @@ export class RfbRelay {
   #wheel = 0;
   /** The keysyms of keys down as their character in the display's own input (typesAsCharacter). */
   readonly #typed = new Set<number>();
+  /** The keysym of each key down by QEMU's key event, by its scancode. */
+  readonly #heldQemu = new Map<number, number>();
   /** The viewer's bytes so far, each taken once those before it are. */
   #received: Promise<void> = Promise.resolve();
 
@@ -285,11 +287,14 @@ export class RfbRelay {
     for (const message of messages) {
       const bytes = this.#passing(message);
       if (!bytes) continue;
-      if (connection.input && isInput(message) && connection.inputTakes === "wheel") {
+      if (connection.input && isInput(message) && (connection.inputTakes === "wheel" || connection.inputTakes === "characters")) {
         // A character the stream server would type wrong or not at all goes
         // to the display's input as itself, down and up.
-        if (message.type === "key" && (message.down ? connection.typesAsCharacter?.(message.keysym, this.#heldKeysyms()) : this.#typed.has(message.keysym))) {
-          this.#held.delete(`k${message.keysym}`);
+        const key = message.type === "key" || message.type === "qemu-key";
+        const scancode = message.type === "qemu-key" ? message.keycode : undefined;
+        if (key && (message.down ? connection.typesAsCharacter?.(message.keysym, this.#heldKeysyms(), scancode) : this.#typed.has(message.keysym))) {
+          this.#held.delete(message.type === "key" ? `k${message.keysym}` : `q${message.keycode}`);
+          this.#heldQemu.delete(scancode ?? -1);
           if (message.down) this.#typed.add(message.keysym);
           else this.#typed.delete(message.keysym);
           // Keys before it reach the server first, and the helper posts it before the keys after it go.
@@ -300,7 +305,7 @@ export class RfbRelay {
         }
         // The stream server takes all but the wheel; the display's input
         // takes the wheel's buttons, down and up, as a notch is each one going down.
-        if (message.type !== "pointer" || (message.mask & WHEEL) === this.#wheel) {
+        if (connection.inputTakes === "characters" || message.type !== "pointer" || (message.mask & WHEEL) === this.#wheel) {
           passing.push(bytes);
           continue;
         }
@@ -315,7 +320,7 @@ export class RfbRelay {
 
   /** The keysyms of the keys this viewer holds down in the box. */
   #heldKeysyms(): ReadonlySet<number> {
-    const keysyms = new Set<number>();
+    const keysyms = new Set<number>(this.#heldQemu.values());
     for (const key of this.#held.keys()) if (key.startsWith("k")) keysyms.add(Number(key.slice(1)));
     return keysyms;
   }
@@ -366,8 +371,13 @@ export class RfbRelay {
         else this.#held.delete(`k${message.keysym}`);
         break;
       case "qemu-key":
-        if (message.down) this.#held.set(`q${message.keycode}`, qemuKeyEvent(false, message.keysym, message.keycode));
-        else this.#held.delete(`q${message.keycode}`);
+        if (message.down) {
+          this.#held.set(`q${message.keycode}`, qemuKeyEvent(false, message.keysym, message.keycode));
+          this.#heldQemu.set(message.keycode, message.keysym);
+        } else {
+          this.#held.delete(`q${message.keycode}`);
+          this.#heldQemu.delete(message.keycode);
+        }
         break;
       case "pointer":
         this.#pointer = { mask: message.mask, x: message.x, y: message.y };
@@ -398,6 +408,7 @@ export class RfbRelay {
     if (!connection || this.#phase !== "messages") return;
     const messages = [...this.#held.values()];
     this.#held.clear();
+    this.#heldQemu.clear();
     const typed = [...this.#typed];
     this.#typed.clear();
     if (typed.length) {
@@ -409,7 +420,7 @@ export class RfbRelay {
       this.#pointer = { ...this.#pointer, mask: 0 };
     }
     if (!messages.length) return;
-    if (!connection.input || connection.inputTakes === "wheel") {
+    if (!connection.input || connection.inputTakes === "wheel" || connection.inputTakes === "characters") {
       await connection.writer.write(messages.reduce(concat));
       return;
     }

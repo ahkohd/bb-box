@@ -138,8 +138,9 @@ class Viewer extends RFB {
   override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
     // The code too: with QEMU's key events the box takes the scancode, not the keysym.
     const key = boxKey(keysym, code, this.guestOs, macBrowser(), this.macKeys);
-    // A Mac's input types a character it has no key for by the character, and knows none of X's own names for them.
-    super._handleKeyEvent(this.guestOs === "macos" ? unicodeKeysym(key.keysym) : key.keysym, key.code, down, numlock, capslock);
+    // A Mac's input and Windows' bb-box-stream type a character the box's layout lacks by the character, and know none
+    // of X's own names for them.
+    super._handleKeyEvent(this.guestOs === "macos" || this.guestOs === "windows" ? unicodeKeysym(key.keysym) : key.keysym, key.code, down, numlock, capslock);
   }
 
   /**

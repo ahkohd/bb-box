@@ -86,7 +86,9 @@ import { sizesCheck } from "../fit.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
-import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, windowsPointer } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
+import type { OpenStream } from "../../core/selkies.ts";
+import { openRoute } from "../../transports/route.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
   captureScript,
@@ -1750,12 +1752,18 @@ export class TartBackend implements Backend {
           const { byChoice: _byChoice, ...shown } = display;
           return video ? [{ ...shown, label: "Desktop, as video", open: async () => ({ route: ssh.commandRoute(access, WINDOWS_STREAM), auth: { type: "none" } }) }] : [];
         }
+        // QEMU types a person's keys by key on a US layout: a character it would type wrong goes to bb-box-stream.
+        const stream: OpenStream = (signal) => openRoute(ssh.commandRoute(access, WINDOWS_STREAM), signal);
         return [
           {
             ...display,
             label: "Desktop",
             // QEMU's VNC server listens on the Mac's loopback only, so it asks for no password.
-            open: async () => ({ route: ssh.route(mac, ports.vnc), auth: { type: "none" } }),
+            open: async () => ({
+              route: ssh.route(mac, ports.vnc),
+              auth: { type: "none" },
+              ...(video ? { input: async () => windowsCharacterInput(stream), inputTakes: "characters" as const, typesAsCharacter: windowsTypesAsCharacter } : {}),
+            }),
             resize: (size, signal) => this.#resizeWindows(guest.ref, command, size, signal),
             // QEMU's VNC shows the pointer Windows draws once a mouse has moved: out while a person in control watches it.
             pointer: (shown, signal) => windowsPointer(command, shown, signal),
