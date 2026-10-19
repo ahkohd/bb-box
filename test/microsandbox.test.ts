@@ -219,6 +219,8 @@ test("on a Mac, the backend offers the arm64 kinds, checks the Hypervisor framew
   const report = await backend.doctor(signal());
   assert.deepEqual(backend.kinds().map((kind) => kind.id), ["linux-arm64", "linux-arm64-desktop-cpu"]);
   assert.ok(backend.kinds().every((kind) => kind.capabilities.arch === "arm64"));
+  // The desktop has Selkies beside its VNC server, as on x86_64: video by choice (060).
+  assert.deepEqual(backend.kinds().find((kind) => kind.id === "linux-arm64-desktop-cpu")!.capabilities.displays.map((display) => [display.protocol, display.byChoice ?? false]), [["rfb", false], ["selkies", true]]);
   assert.equal(backend.hostOs, "macos");
   const by = Object.fromEntries(report.checks.map((check) => [check.id, check]));
   assert.match(by["microsandbox.host"]!.detail, /It offers the arm64 kinds\./);
