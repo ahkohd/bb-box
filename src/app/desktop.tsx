@@ -55,9 +55,10 @@ import {
   XK_CONTROL_L,
   XK_META_L,
   XK_V,
-  isCommandKey,
+  boxKey,
   macBrowser,
   type Connection,
+  type MacKeys,
 } from "./viewer.ts";
 import { BoxGlyph, HighResolutionGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { choices, filtering, NO_FILTERS, shown, type Filters, type Sort } from "./boxes-filter.ts";
@@ -124,12 +125,10 @@ export function forgetStreams(): void {
  * pixels, as the request is made, a size that holds is asked for once.
  */
 class Viewer extends RFB {
-  /**
-   * Cmd stands for Ctrl in the box: a Mac browser showing a Linux or Windows
-   * desktop, where Cmd+C, Cmd+V, Cmd+A, Cmd+Z and the rest are the box's
-   * Ctrl shortcuts, not Super ones (the operator's note of 4 October 2026).
-   */
-  commandAsControl = false;
+  /** The box's OS, for the keys Cmd and Option go as (boxKey). */
+  guestOs = "linux";
+  /** How a macOS desktop's server names Command and Option. */
+  macKeys: MacKeys | null = null;
 
   override _screenSize(): { w: number; h: number } {
     const size = super._screenSize();
@@ -137,12 +136,9 @@ class Viewer extends RFB {
   }
 
   override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
-    if (this.commandAsControl && isCommandKey(keysym)) {
-      // The code too: with QEMU's key events the box takes the scancode, not the keysym.
-      super._handleKeyEvent(XK_CONTROL_L, "ControlLeft", down, numlock, capslock);
-      return;
-    }
-    super._handleKeyEvent(keysym, code, down, numlock, capslock);
+    // The code too: with QEMU's key events the box takes the scancode, not the keysym.
+    const key = boxKey(keysym, code, this.guestOs, macBrowser(), this.macKeys);
+    super._handleKeyEvent(key.keysym, key.code, down, numlock, capslock);
   }
 
   /**
@@ -268,6 +264,7 @@ export class DesktopSession implements Kept {
   #viewerRefresh = false;
   /** The JPEG quality the viewer asks for: its display's, else QUALITY_LEVEL. */
   #quality = QUALITY_LEVEL;
+  #macKeys: MacKeys | null = null;
   readonly #observer: ResizeObserver | null;
   #settle: ReturnType<typeof setTimeout> | undefined;
   /** The viewer's size as last observed, so the first observation, at mount, is not taken for a move. */
@@ -350,7 +347,8 @@ export class DesktopSession implements Kept {
     client.scaleViewport = true;
     client.viewOnly = !this.#mine;
     client.resizeSession = this.#mine && this.#resizable && this.#follow;
-    client.commandAsControl = macBrowser() && this.guestOs !== "macos";
+    client.guestOs = this.guestOs;
+    client.macKeys = this.#macKeys;
     client.addEventListener("clipboard", (event: Event) => {
       if (this.#client !== client) return;
       const text = (event as CustomEvent<{ text?: string }>).detail?.text;
@@ -405,7 +403,8 @@ export class DesktopSession implements Kept {
     if (!client || this.connection.state !== "connected") return;
     client.viewOnly = !this.#mine;
     client.resizeSession = this.#mine && this.#resizable && this.#follow;
-    client.commandAsControl = macBrowser() && this.guestOs !== "macos";
+    client.guestOs = this.guestOs;
+    client.macKeys = this.#macKeys;
     client.refreshCursor();
     if (this.#mine) client.focus({ preventScroll: true });
   }
@@ -425,6 +424,12 @@ export class DesktopSession implements Kept {
   /** The box's OS, for the paste chord and the Cmd mapping. */
   setGuest(os: string): void {
     this.guestOs = os;
+    this.#apply();
+  }
+
+  /** How a macOS desktop's server names Command and Option, for its keys. */
+  setMacKeys(keys: MacKeys | null): void {
+    this.#macKeys = keys;
     this.#apply();
   }
 
@@ -809,6 +814,11 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   useLayoutEffect(() => {
     if (session.current instanceof DesktopSession) session.current.setQuality(quality);
   }, [quality, connection]);
+  // RFB's own: video goes through bb-box's own input, which names them as most do.
+  const macKeys = box?.display?.macKeys ?? null;
+  useLayoutEffect(() => {
+    if (session.current instanceof DesktopSession) session.current.setMacKeys(macKeys);
+  }, [macKeys, connection]);
 
   // A box that stops or goes takes its stream with it.
   useEffect(() => {

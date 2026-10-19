@@ -100,8 +100,8 @@ test("offers macos and macos-desktop from the image, each only when it has one",
   assert.equal(desktop.arch, "arm64");
   assert.equal(desktop.gpu, false);
   assert.equal(desktop.command?.inDesktopSession, false);
-  // Tart's VNC server moves no clipboard, so bb-box does with commands in the box (#464).
-  assert.deepEqual(desktop.displays, [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" }]);
+  // Tart's VNC server moves no clipboard, so bb-box does with commands in the box (#464), and takes Alt as Command.
+  assert.deepEqual(desktop.displays, [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands", macKeys: "alt-command" }]);
   assert.equal(desktop.computerUse?.socket, "/Users/admin/Library/Caches/cua-driver/cua-driver.sock");
 });
 

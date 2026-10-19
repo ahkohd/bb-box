@@ -435,9 +435,10 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         gpu: false,
         features: [],
         command: SSH_COMMAND,
-        // Tart's VNC server shares the pasteboard with its host only (#464).
+        // Tart's VNC server shares the pasteboard with its host only (#464),
+        // and takes Alt as Command and Meta as Option.
         // And video, once every Mac's image has bb-box-stream (060): #states.
-        displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" }],
+        displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands", macKeys: "alt-command" }],
         computerUse: cua,
         enrol: true,
       },

@@ -481,9 +481,10 @@ test("a box's view says whether its desktop's viewer asks for a still area again
   const control = { owner: "agent", holder: null } as const;
   const withDisplay = (display: DisplayCapability) => boxView({ ...box, capabilities: { ...box.capabilities, displays: [display] } }, true, control).display;
   assert.equal(boxView(box, true, control).display, null, "no desktop");
-  assert.deepEqual(withDisplay({ id: "desktop", protocol: "rfb", resizable: true }), { protocol: "rfb", resizable: true, clipboard: null, refresh: null, quality: null });
+  assert.deepEqual(withDisplay({ id: "desktop", protocol: "rfb", resizable: true }), { protocol: "rfb", resizable: true, clipboard: null, refresh: null, quality: null, macKeys: null });
   assert.equal(withDisplay({ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" })?.refresh, "viewer");
   assert.equal(withDisplay({ id: "desktop", protocol: "rfb", resizable: true, quality: 4 })?.quality, 4);
+  assert.equal(withDisplay({ id: "desktop", protocol: "rfb", resizable: false, macKeys: "alt-command" })?.macKeys, "alt-command");
 });
 
 test("box details and kind lists say whether the box user can become root", async () => {
