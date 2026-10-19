@@ -1020,6 +1020,8 @@ final class RfbClient: @unchecked Sendable {
   /** The desktop, BGRX: 32 bits a pixel, little-endian, red at bit 16. */
   private(set) var pixels: [UInt8] = []
   private let writeLock = NSLock()
+  /** Closed: its socket's number may already be a new connection's, so nothing more is written to it. */
+  private var closed = false
 
   init?(port: Int) {
     fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -1058,8 +1060,24 @@ final class RfbClient: @unchecked Sendable {
 
   func send(_ data: Data) {
     writeLock.lock()
-    _ = writeAll(fd, data)
+    if !closed { _ = writeAll(fd, data) }
     writeLock.unlock()
+  }
+
+  /** Closes its socket, after any write under way, and writes nothing more. */
+  func close() {
+    writeLock.lock()
+    if !closed {
+      closed = true
+      Darwin.close(fd)
+    }
+    writeLock.unlock()
+  }
+
+  /** The pointer at `x`, `y` with the buttons in `mask`, as QEMU's tablet takes it: 1 left, 2 middle, 4 right, 8 and 16 the wheel. */
+  func pointer(x: Int, y: Int, mask: Int) {
+    let x = max(0, min(width - 1, x)), y = max(0, min(height - 1, y))
+    send(Data([5, UInt8(mask & 255), UInt8(x >> 8), UInt8(x & 255), UInt8(y >> 8), UInt8(y & 255)]))
   }
 
   /** Asks for the changes since the last update, or with `whole` the whole desktop. */
@@ -1112,9 +1130,10 @@ final class RfbClient: @unchecked Sendable {
 
 /**
  * A Windows VM's desktop as video, from QEMU's VNC server (#865): Desktop Duplication in the guest gives a few frames a
- * second on the Mac's VirtIO GPU, where QEMU reads the framebuffer from the host at its own refresh. It serves video
- * only: the input, the clipboard and the pointer's shape go through the guest's bb-box-stream.exe. It ends when QEMU's
- * server does, as when the VM stops, and when no client has come for IDLE_EXIT_SECONDS.
+ * second on the Mac's VirtIO GPU, where QEMU reads the framebuffer from the host at its own refresh. It takes the
+ * pointer too, for QEMU's tablet, as the VNC display gives it: QEMU refreshes its picture at once again only when a
+ * client sends it input. Keys, the clipboard and the pointer's shape go through the guest's bb-box-stream.exe. It ends
+ * when QEMU's server does, as when the VM stops, and when no client has come for IDLE_EXIT_SECONDS.
  */
 final class QemuServer: @unchecked Sendable {
   private let queue = DispatchQueue(label: "bb-box-stream.qemu")
@@ -1133,6 +1152,7 @@ final class QemuServer: @unchecked Sendable {
   private let started = Date()
   /** When a whole desktop was asked for and has not come. */
   private var wholeAsked: Date?
+  private var reconnectSignal: DispatchSourceSignal?
 
   init(port: Int) {
     self.port = port
@@ -1189,6 +1209,16 @@ final class QemuServer: @unchecked Sendable {
         if watched { rfb.request(whole: false) }
       }
     }
+    // SIGUSR1 has it connect to QEMU again, as the watchdog does: to check that path.
+    signal(SIGUSR1, SIG_IGN)
+    let again = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: queue)
+    again.setEventHandler { [self] in
+      guard let rfb else { return }
+      log("asked to connect again")
+      shutdown(rfb.fd, SHUT_RDWR)
+    }
+    again.resume()
+    reconnectSignal = again
     Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [self] _ in
       queue.async { [self] in
         if clients.isEmpty && Date().timeIntervalSince(lastClientAt) > IDLE_EXIT_SECONDS {
@@ -1205,7 +1235,10 @@ final class QemuServer: @unchecked Sendable {
     var current = first
     while true {
       while current.next(onUpdate: { frame(from: current) }) {}
-      Darwin.close(current.fd)
+      // Nothing more goes to it, and it is closed before the next connection opens: a write to its socket's number after
+      // that went into the next connection's handshake, which QEMU then never answered, again and again (20 October 2026).
+      queue.sync { if rfb === current { rfb = nil } }
+      current.close()
       Thread.sleep(forTimeInterval: 0.2)
       guard let again = RfbClient(port: port) else {
         log("QEMU's VNC server is gone; exiting")
@@ -1310,10 +1343,32 @@ final class QemuServer: @unchecked Sendable {
       return client
     }
     client.text("MODE websockets")
+    // Where this client's pointer is and the buttons it holds down, which go up as it goes.
+    var at = (x: 0, y: 0, mask: 0)
     while let message = nextText(client) {
       guard let text = message else { continue }
-      let verb = text.split(separator: ",").first.map(String.init) ?? ""
+      let fields = text.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+      let verb = fields.first ?? ""
+      let number = { (index: Int) -> Int in index < fields.count ? Int(fields[index]) ?? 0 : 0 }
       switch verb {
+      case "m":
+        at = (number(1), number(2), number(3) & 7)
+        let now = at
+        queue.async { [self] in rfb?.pointer(x: now.x, y: now.y, mask: now.mask) }
+      case "m2":
+        // The panel's wheel: bit 3 of the mask is down and bit 4 up, a notch for each of the fifth field. QEMU's are
+        // buttons 5 and 4, a press and a release a notch.
+        let wheel = number(3) & 8 != 0 ? 16 : number(3) & 16 != 0 ? 8 : 0
+        let notches = max(1, min(number(4), 64))
+        let held = at
+        if wheel != 0 {
+          queue.async { [self] in
+            for _ in 0..<notches {
+              rfb?.pointer(x: held.x, y: held.y, mask: held.mask | wheel)
+              rfb?.pointer(x: held.x, y: held.y, mask: held.mask)
+            }
+          }
+        }
       case "START_VIDEO", "REQUEST_KEYFRAME":
         queue.async { [self] in
           if verb == "START_VIDEO" {
@@ -1328,15 +1383,17 @@ final class QemuServer: @unchecked Sendable {
       case "STOP_VIDEO":
         queue.async { client.wantsVideo = false }
       default:
-        // Input, the clipboard and the rest go to the guest's bb-box-stream.exe, not here.
+        // Keys, the clipboard and the rest go to the guest's bb-box-stream.exe, not here.
         break
       }
     }
     client.close()
     Darwin.close(fd)
+    let held = at
     queue.async { [self] in
       clients[client.id] = nil
       lastClientAt = Date()
+      if held.mask != 0 { rfb?.pointer(x: held.x, y: held.y, mask: 0) }
     }
   }
 }

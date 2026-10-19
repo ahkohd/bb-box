@@ -485,6 +485,13 @@ test("a Windows image's first logon and its refresh turn on the VirtIO GPU's har
   assert.match(readFileSync(join(SETUP, "windows", "bb-box-stream.cs"), "utf8"), /if \(mode == "pointer"\) return PointerTest\(\);/);
 });
 
+test("bb-box-stream.exe says where the pointer is only to a client that follows it, as Proxmox's video draws it in (#865)", () => {
+  const source = readFileSync(join(SETUP, "windows", "bb-box-stream.cs"), "utf8");
+  assert.match(source, /case "BB_POINTER_FOLLOW":\n\s+client\.FollowsPointer = true;\n\s+client\.Text\(pointerMessage \?\? Capture\.PointerAt\(\)\);/, "it asks, and gets where it is at once");
+  assert.match(source, /foreach \(Client client in all\) if \(client\.FollowsPointer\) client\.Text\(message\);/, "then each move, to followers only");
+  assert.match(source, /return "BB_POINTER," \+ \(cursor\.at\.x - GetSystemMetrics\(76\)\) \+ "," \+ \(cursor\.at\.y - GetSystemMetrics\(77\)\);/, "in the desktop's pixels");
+});
+
 test("a Windows first logon builds bb-box-stream and sets the hardware cursor where its build pins OpenH264, as both builds do, Tart's arm64 one with its files copied (060)", () => {
   const firstLogon = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "firstlogon.ps1"), "utf8");
   const tart = readFileSync(join(SETUP, "tart", "prepare-windows-image.sh"), "utf8");

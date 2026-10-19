@@ -127,7 +127,9 @@ export type BoxPointer =
   /** Where its hotspot is, in the desktop's pixels. */
   | { readonly type: "position"; readonly x: number; readonly y: number }
   /** A new image: width*height pixels of 32-bit ARGB, little-endian, and its hotspot. */
-  | { readonly type: "image"; readonly width: number; readonly height: number; readonly hotX: number; readonly hotY: number; readonly argb: Uint8Array };
+  | { readonly type: "image"; readonly width: number; readonly height: number; readonly hotX: number; readonly hotY: number; readonly argb: Uint8Array }
+  /** A new image as Selkies' own cursor message, as bb-box-stream.exe sends it (#865). */
+  | { readonly type: "shape"; readonly message: string };
 
 export interface Display {
   readonly id: string;
@@ -145,8 +147,9 @@ export interface Display {
   /**
    * For a video display whose video comes from elsewhere than the box's own
    * stream server, as a Windows VM's from QEMU on its Mac (#865): opens the
-   * box's stream server, which takes the input and sends the clipboard and
-   * the pointer's shape, while `open` gives each viewer its video.
+   * box's stream server, which takes the keys and sends the clipboard and
+   * the pointer's shape, while `open` gives each viewer its video and takes
+   * its pointer.
    */
   openInput?(signal?: AbortSignal): Promise<DisplayOpened>;
   /**

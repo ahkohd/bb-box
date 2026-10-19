@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SelkiesBox, SelkiesRelay, Spacing, classify, unsequenced, type Clock } from "../src/core/selkies.ts";
 import type { Message } from "../src/core/websocket.ts";
+import { followWindowsPointer } from "../src/backends/windows.ts";
+import type { BoxPointer } from "../src/transports/types.ts";
 import { FakeSelkies, videoFrame } from "./fake-selkies.ts";
 import { until } from "./fake-rfb.ts";
 
@@ -195,7 +197,7 @@ test("the box's clipboard reaches only the viewer with control", async () => {
   await box.close();
 });
 
-test("where the video comes from elsewhere, the box's server takes the input and gives the clipboard and the pointer's shape to the viewers, and is asked for no video (#865)", async () => {
+test("where the video comes from elsewhere, the box's server takes the keys and gives the clipboard and the pointer's shape to the viewers, and is asked for no video, while the pointer goes to the video's source (#865)", async () => {
   // The video's source, as bb-box-stream on a Mac for a Windows VM, and the box's own server, as bb-box-stream.exe.
   const video = new FakeSelkies();
   const server = new FakeSelkies();
@@ -205,16 +207,26 @@ test("where the video comes from elsewhere, the box's server takes the input and
   const box = new SelkiesBox(async () => server.channel(), { spacingMs: 0, clock, apart: () => true, onText: (message) => relays.forEach((relay) => relay.fromBox(message)) });
   const join = (mayInput: () => boolean) => {
     const end = viewer();
-    const relay = new SelkiesRelay({ viewer: end.end, box, open: async () => video.channel(), mayInput, ownCursor: () => own });
+    const relay = new SelkiesRelay({ viewer: end.end, box, open: async () => video.channel(), mayInput, ownCursor: () => own, pointerApart: () => true });
     relays.add(relay);
     return Object.assign(end, { relay });
   };
   const a = join(() => true);
   const b = join(() => false);
   await until("the viewers' pages, on the video's source", () => video.pages.length === 2);
-  await a.relay.receive("m,10,20,1,0");
-  await until("the input on the box's server", () => !!server.pages[0]?.received.includes("m,10,20,1,0"));
-  assert.ok(!video.pages.some((page) => page.received.some((message) => typeof message === "string" && message.startsWith("m,"))), "none to the video's source");
+  // The pointer goes to the viewer's own connection, the video's source, as QEMU's tablet takes it; keys to the box's server.
+  await a.relay.receive("m,10,20,1,0,7");
+  await until("the pointer on the video's source", () => video.pages.some((page) => page.received.includes("m,10,20,1,0")));
+  const source = video.pages.find((page) => page.received.includes("m,10,20,1,0"))!;
+  await a.relay.receive("kd,97");
+  await until("the key on the box's server", () => !!server.pages[0]?.received.includes("kd,97"));
+  assert.ok(!server.pages[0]!.received.some((message) => typeof message === "string" && message.startsWith("m,")), "no pointer to the box's server");
+  // After a key, the pointer as it is goes to the video's source again, for QEMU's refresh: the same place and buttons.
+  await until("the pointer again", () => source.received.filter((message) => message === "m,10,20,1,0").length === 2);
+  // A viewer that goes lets go of its buttons where it pressed them.
+  await a.relay.release();
+  await until("the button let go on the video's source", () => source.received.includes("m,10,20,0,0"));
+  assert.ok(server.pages[0]!.received.includes("ku,97"), "and of its keys on the box's server");
 
   await server.clipboard("copied in the box");
   const cursor = 'cursor,{"curdata":"","hotx":1,"hoty":2}';
@@ -441,4 +453,20 @@ test("a viewer's word on 4:4:4 goes to bb-box, not to Selkies; bb-box asks the d
   await until("the setting", () => !!server.pages.find((one) => one.role === "controller")?.received.includes('SETTINGS,{"displayId":"primary","video_fullcolor":true}'));
   await relay.close();
   await box.close();
+});
+
+test("bb-box follows a Windows box's pointer through bb-box-stream.exe, which says where it is once asked, and what it looks like (#865)", async () => {
+  const server = new FakeSelkies();
+  const events: BoxPointer[] = [];
+  const stop = new AbortController();
+  const following = followWindowsPointer(async () => server.channel(), (event) => void events.push(event), stop.signal);
+  await until("the request", () => !!server.pages[0]?.received.includes("BB_POINTER_FOLLOW"));
+  const page = server.pages[0]!;
+  const shape = 'cursor,{"curdata":"AAAA","hotx":1,"hoty":2}';
+  for (const message of ["BB_POINTER,10,20", shape, "BB_POINTER,", "BB_POINTER,x,y", "clipboard,aGk="]) await page.send(message);
+  await until("the events", () => events.length === 3);
+  assert.deepEqual(events, [{ type: "position", x: 10, y: 20 }, { type: "shape", message: shape }, { type: "leave" }], "nothing else");
+  stop.abort();
+  await following;
+  await until("the connection closed", () => page.closed);
 });

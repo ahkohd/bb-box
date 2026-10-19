@@ -213,6 +213,8 @@ class Client {
   public volatile bool WantsVideo;
   /** Its frames were dropped: it gets none until a key frame. */
   public volatile bool NeedsKey = true;
+  /** Whether it asked where the pointer is (BB_POINTER_FOLLOW): bb-box draws it for people watching (#865). */
+  public volatile bool FollowsPointer;
 
   public Client(int id, Stream stream) { Id = id; this.stream = stream; }
 
@@ -679,6 +681,16 @@ class Capture : IDisposable {
     return GetCursorInfo(ref cursor) && (cursor.flags & 1) != 0 ? cursor.cursor : IntPtr.Zero;
   }
 
+  /**
+   * Where the pointer's hot spot is, in the desktop's pixels, as bb-box's BB_POINTER,<x>,<y>; BB_POINTER, while it is
+   * hidden (#865).
+   */
+  public static string PointerAt() {
+    CURSORINFO cursor = new CURSORINFO { size = Marshal.SizeOf(typeof(CURSORINFO)) };
+    if (!GetCursorInfo(ref cursor) || (cursor.flags & 1) == 0) return "BB_POINTER,";
+    return "BB_POINTER," + (cursor.at.x - GetSystemMetrics(76)) + "," + (cursor.at.y - GetSystemMetrics(77));
+  }
+
   /** A cursor's shape as Selkies' cursor message, its image as PNG and its hot spot, for the panel to show on the browser's pointer; null when it cannot be read. */
   public static string CursorShape(IntPtr cursor) {
     ICONINFO icon;
@@ -919,6 +931,8 @@ class Server {
   volatile bool showsCursor = true;
   /** The pointer's shape as Selkies' cursor message, as last sent, for each new client. */
   volatile string cursorMessage;
+  /** Where the pointer is, as last sent to the clients that follow it. */
+  volatile string pointerMessage;
   ushort frameId;
   Thread capturing;
   readonly Dictionary<string, MemoryStream> clipboardParts = new Dictionary<string, MemoryStream>();
@@ -947,6 +961,19 @@ class Server {
         if (message == null) continue;
         cursorMessage = message;
         Broadcast(message);
+      }
+    }) { IsBackground = true }.Start();
+    // Where the pointer is, to the clients that follow it, when it moves: a video that comes from elsewhere, as a Windows
+    // VM's from QEMU on its Mac, has no pointer in it, so bb-box draws it for people watching (#865).
+    new Thread(() => {
+      while (true) {
+        Thread.Sleep(33);
+        string message = Capture.PointerAt();
+        if (message == pointerMessage) continue;
+        pointerMessage = message;
+        List<Client> all;
+        lock (gate) all = new List<Client>(clients.Values);
+        foreach (Client client in all) if (client.FollowsPointer) client.Text(message);
       }
     }) { IsBackground = true }.Start();
     // The idle exit.
@@ -1050,6 +1077,11 @@ class Server {
       // bb-box: says when the messages before it are handled, so a key QEMU takes after a character cannot overtake it.
       case "BB_PING":
         if (fields.Length > 1) client.Text("BB_PONG," + fields[1]);
+        break;
+      // bb-box: where the pointer is, now and as it moves, for a video that has none in it (#865).
+      case "BB_POINTER_FOLLOW":
+        client.FollowsPointer = true;
+        client.Text(pointerMessage ?? Capture.PointerAt());
         break;
       case "m":
         Input.Pointer(Field(fields, 1), Field(fields, 2), Field(fields, 3));

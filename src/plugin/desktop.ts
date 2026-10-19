@@ -400,6 +400,9 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const png = rgbaPng(event.width, event.height, argbToRgba(event.argb)).toString("base64");
       message = `cursor,${JSON.stringify({ curdata: png, hotx: event.hotX, hoty: event.hotY })}`;
       entry.image = message;
+    } else if (event.type === "shape") {
+      message = event.message;
+      entry.image = message;
     } else if (event.type === "position") {
       message = `${POINTER_VERB},${event.x},${event.y}`;
       entry.at = message;
@@ -754,8 +757,13 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 fitSharp(boxId);
               },
               ownCursor: () => pointers.get(boxId)?.own ?? false,
+              pointerApart: () => videoApart.has(boxId),
               onEnd,
             });
+            // Whether the video comes from elsewhere, which then takes the pointer too, known before the first input.
+            void selkiesDisplay(boxes, boxId)
+              .then((shownDisplay) => (shownDisplay.openInput ? videoApart.add(boxId) : videoApart.delete(boxId)))
+              .catch(() => undefined);
             selkiesBoxes.get(boxId)?.relays.add(relay);
             // The box's pointer from bb-box-cursor (060): as it is, then each change.
             const told = relay;

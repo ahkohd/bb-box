@@ -1,8 +1,9 @@
 // A Windows VM's desktop as video from the Mac (#865): bb-box-stream's qemu
 // mode reads the VM's QEMU VNC server on the Mac's loopback and encodes it
 // with VideoToolbox, as Desktop Duplication in the guest gives only a few
-// frames a second on the Mac's VirtIO GPU. The guest's bb-box-stream.exe
-// still takes the input, and sends the clipboard and the pointer's shape.
+// frames a second on the Mac's VirtIO GPU. It gives the person's pointer to
+// QEMU's tablet, as the VNC display does. The guest's bb-box-stream.exe still
+// takes the keys, and sends the clipboard and the pointer's shape.
 //
 // bb-box builds it on each Mac from setup/ssh-pool/mac-stream.swift, with the
 // Command Line Tools' swiftc, into ~/.bb-box/qemu/bin, which only the host

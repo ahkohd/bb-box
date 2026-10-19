@@ -352,6 +352,12 @@ export interface SelkiesRelayOptions {
    * whatever the shape on Sway, go no further.
    */
   ownCursor?(): boolean;
+  /**
+   * Whether the viewer's pointer goes to its own connection, the video's source, rather than the box's stream server:
+   * where the video comes from elsewhere, as a Windows VM's from QEMU on its Mac, which takes the pointer as its VNC
+   * display does (#865).
+   */
+  pointerApart?(): boolean;
   readonly connectTimeoutMs?: number;
   /** How far behind the viewer may fall; LAG_MS by default. */
   readonly lagMs?: number;
@@ -369,6 +375,8 @@ export class SelkiesRelay {
   /** Keys this viewer holds down in the box, by keysym. */
   readonly #held = new Set<string>();
   #pointer = { x: 0, y: 0, mask: 0 };
+  /** Whether this viewer's pointer went to the video's source, which then knows where it is (#865). */
+  #pointerSent = false;
   /** When each frame went to the viewer, by id, until it says it has shown it. */
   readonly #sent = new Map<number, number>();
   #lastSent: number | null = null;
@@ -560,11 +568,25 @@ export class SelkiesRelay {
         if (message === "START_VIDEO") this.#wants = true;
         await this.#toBox(message);
         return;
-      case "input":
+      case "input": {
         if (!this.#options.mayInput()) return;
         this.#track(message);
+        const pointer = verb(message) === "m" || verb(message) === "m2";
+        if (pointer && this.#options.pointerApart?.()) {
+          this.#pointerSent = true;
+          await this.#toBox(unsequenced(message));
+          return;
+        }
         await this.#options.box.input(unsequenced(message));
+        // QEMU's VNC server refreshes its picture every 30 ms while it changes, more slowly while it is still, up to every
+        // 3 s, and at once again only when a client sends it input (ui/vnc.c, vnc_refresh and protocol_client_msg). A key
+        // reaches the box by its stream server, not QEMU, so the pointer as it is, the same place and buttons, goes to the
+        // video's source after it: QEMU's tablet is told nothing new, and its picture of the key comes at the next 30 ms.
+        if ((verb(message) === "kd" || verb(message) === "ku") && this.#pointerSent && this.#options.pointerApart?.()) {
+          await this.#toBox(`m,${this.#pointer.x},${this.#pointer.y},${this.#pointer.mask},0`);
+        }
         return;
+      }
       case "drop":
         return;
     }
@@ -583,11 +605,14 @@ export class SelkiesRelay {
   async release(): Promise<void> {
     const messages = [...this.#held].map((keysym) => `ku,${keysym}`);
     this.#held.clear();
-    if (this.#pointer.mask !== 0) {
-      messages.push(`m,${this.#pointer.x},${this.#pointer.y},0,0`);
-      this.#pointer = { ...this.#pointer, mask: 0 };
-    }
     for (const message of messages) await this.#options.box.input(message);
+    if (this.#pointer.mask !== 0) {
+      const up = `m,${this.#pointer.x},${this.#pointer.y},0,0`;
+      this.#pointer = { ...this.#pointer, mask: 0 };
+      // Buttons let go where they were pressed: the video's source lets go of a client's own as it goes, too.
+      if (this.#options.pointerApart?.()) await this.#toBox(up);
+      else await this.#options.box.input(up);
+    }
   }
 
   get holding(): boolean {
