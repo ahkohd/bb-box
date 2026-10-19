@@ -324,6 +324,36 @@ test("over Tart's VNC server, a character between two keys in one read goes afte
   await relay.relay.close();
 });
 
+test("the viewer's reads go in turn: a key in a later read waits for a character in an earlier one, which waits for the input (the desktop sweep)", async () => {
+  const server = new FakeRfb();
+  const seen: number[] = [];
+  let box: FakeRfb["connections"][number] | undefined;
+  const input: DisplayInput = {
+    key: async () => true,
+    character: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      seen.push(box!.received.byteLength);
+    },
+    pointer: async () => undefined,
+    clipboard: async () => undefined,
+    size: async () => undefined,
+    ping: async () => undefined,
+    close: async () => undefined,
+  };
+  // The input starts slowly, as the helper in a Mac does.
+  const relay = relayTo(server, { displayInput: () => new Promise((resolve) => setTimeout(() => resolve(input), 80)), inputTakes: "wheel", typesAsCharacter: tartTypesAsCharacter });
+  await relay.init();
+  [box] = server.connections;
+  relay.give(true);
+  // Two reads, as two WebSocket messages, the second not waiting for the first.
+  const first = relay.relay.receive(keyEvent(true, 0xe9));
+  const second = relay.relay.receive(keyEvent(true, 0x78));
+  await Promise.all([first, second]);
+  await until("the key", () => box!.received.byteLength >= 8);
+  assert.deepEqual(seen, [0], "the character was posted before the next read's key reached the server");
+  await relay.relay.close();
+});
+
 test("when a wheel-only input cannot start, keys and clicks still reach the stream server, and only the wheel is lost", async () => {
   const server = new FakeRfb();
   const problems: string[] = [];
