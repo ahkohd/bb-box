@@ -46,7 +46,7 @@ import { NewBox, type SizeRequest } from "./new-box.tsx";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
 import { MachineRow } from "./settings-machines.tsx";
-import { SelkiesSession, canShowVideo } from "./selkies.ts";
+import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
 import {
   MAX_RETRY_MS,
   PASTE_CHORD_DELAY_MS,
@@ -138,7 +138,8 @@ class Viewer extends RFB {
   override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
     // The code too: with QEMU's key events the box takes the scancode, not the keysym.
     const key = boxKey(keysym, code, this.guestOs, macBrowser(), this.macKeys);
-    super._handleKeyEvent(key.keysym, key.code, down, numlock, capslock);
+    // A Mac's input types a character it has no key for by the character, and knows none of X's own names for them.
+    super._handleKeyEvent(this.guestOs === "macos" ? unicodeKeysym(key.keysym) : key.keysym, key.code, down, numlock, capslock);
   }
 
   /**

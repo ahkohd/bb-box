@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MAC_INPUT_SCRIPT, MacInput, macInputCommand, macKeyCode } from "../src/core/mac-input.ts";
+import { MAC_INPUT_SCRIPT, MacInput, macCharacter, macInputCommand, macKeyCode, tartTypesAsCharacter } from "../src/core/mac-input.ts";
 import type { ByteChannel } from "../src/transports/types.ts";
 
 test("keys map to the key that types them on a US keyboard, and a key it lacks maps to none", () => {
@@ -23,8 +23,8 @@ test("the helper's script goes in single quotes as it is", () => {
   assert.ok(macInputCommand().startsWith("exec /usr/bin/osascript -l JavaScript -e '"));
 });
 
-/** A channel whose far end the test plays: it reads the lines MacInput sends, and answers on its stdout. */
-function helper() {
+/** A channel whose far end the test plays: it reads the lines MacInput sends, and answers on its stdout; a character at once unless `holding`. */
+function helper(holding = false) {
   const lines: string[] = [];
   let answer!: ReadableStreamDefaultController<Uint8Array>;
   let closed = false;
@@ -39,8 +39,9 @@ function helper() {
         rest = parts.pop()!;
         for (const line of parts) {
           lines.push(line);
-          // It answers each ping once the lines before it are posted.
+          // It answers each ping once the lines before it are posted, and each character once it is.
           if (line.startsWith("t ")) answer.enqueue(new TextEncoder().encode(`${line}\n`));
+          if (line.startsWith("u ") && !holding) answer.enqueue(new TextEncoder().encode("u\n"));
         }
       },
     }),
@@ -81,6 +82,52 @@ test("the input sends one line per event, in order, and hears the box's clipboar
   await input.close();
   assert.equal(far.lines.at(-1), "t 2", "closing waits for what was sent to be posted");
   assert.ok(far.closed());
+});
+
+test("a character goes as itself when a US keyboard has no key for it, or its key needs another Shift, never during a shortcut (the desktop sweep)", () => {
+  const typed = (key: string | number, shift = false, shortcut = false) => macCharacter(typeof key === "number" ? key : key.codePointAt(0)!, shift, shortcut);
+  assert.deepEqual([typed("é"), typed(0x10020ac), typed(0x1000436)], [0xe9, 0x20ac, 0x436], "é, € and ж, which it has no key for");
+  assert.deepEqual([typed("!"), typed("Z")], [0x21, 0x5a], "! and Z with no Shift held, as from a French keyboard or with Caps Lock");
+  assert.equal(typed("1", true), 0x31, "1 with Shift held, as from a French keyboard");
+  assert.deepEqual([typed("a"), typed("!", true), typed("Z", true), typed(" "), typed(" ", true), typed(0xff0d)], [null, null, null, null, null, null], "keys as a US keyboard types them, Space and Return");
+  assert.deepEqual([typed("é", false, true), typed("Z", false, true)], [null, null], "a shortcut stays keys");
+  // Over Tart's VNC server, Command is Alt.
+  assert.equal(tartTypesAsCharacter(0xe9, new Set()), true);
+  assert.equal(tartTypesAsCharacter(0x5a, new Set([0xffe1])), false, "Shift+Z");
+  assert.equal(tartTypesAsCharacter(0x5a, new Set([0xffe9])), false, "Command+Z");
+  assert.equal(tartTypesAsCharacter(0xe9, new Set([0xffe7])), true, "with Option, as a Mac's Option+E then E gives é");
+});
+
+test("the input types a character it has no key for, or with the wrong Shift, as the character, and lets it go so", async () => {
+  const far = helper();
+  const input = new MacInput(far.channel);
+  far.say("ready");
+  await input.ready;
+  assert.equal(await input.key(true, 0xe9), true);
+  assert.equal(await input.key(false, 0xe9), true);
+  assert.equal(await input.key(true, 0xffe1), true, "Shift");
+  assert.equal(await input.key(true, 0x5a), true, "Z with Shift: its key");
+  assert.equal(await input.key(true, 0x31), true, "1 with Shift: the character");
+  assert.equal(await input.key(false, 0x31), true);
+  await input.ping();
+  assert.deepEqual(far.lines, ["u 1 233", "u 0 233", "k 1 56", "k 1 6", "u 1 49", "u 0 49", "t 1"]);
+  await input.close();
+});
+
+test("a character resolves once the helper says it posted it, so a key sent elsewhere after it cannot overtake it", async () => {
+  const far = helper(true);
+  const input = new MacInput(far.channel);
+  far.say("ready");
+  await input.ready;
+  let done = false;
+  const typing = input.character(true, 0xe9).then(() => void (done = true));
+  await until(() => far.lines.includes("u 1 233"));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(done, false, "sent, not yet posted");
+  far.say("u");
+  await typing;
+  assert.equal(done, true);
+  await input.close();
 });
 
 async function until(check: () => boolean): Promise<void> {

@@ -2081,9 +2081,12 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
     // Tart's VNC server takes Alt as Command and Meta as Option: Cmd goes as Alt, Option as Meta, and the paste chord is Alt+V.
     client._handleKeyEvent(0xffe9, "MetaLeft", true, null, null);
     client._handleKeyEvent(0xff7e, "AltLeft", true, null, null);
+    // € goes as its Unicode keysym, which bb-box's input in the Mac types as the character.
+    client._handleKeyEvent(0x20ac, "KeyE", true, null, null);
     expect(client.keyEvents).toEqual([
       { keysym: 0xffe9, code: "AltLeft", down: true },
       { keysym: 0xffe7, code: "MetaLeft", down: true },
+      { keysym: 0x10020ac, code: "KeyE", down: true },
     ]);
     const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));

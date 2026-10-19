@@ -12,6 +12,9 @@
 //   s <width> <height>      the framebuffer's size in pixels; the helper
 //                           scales pointer positions to the screen's points
 //   k <0|1> <key code>      a key up or down, as a macOS virtual key code
+//   u <0|1> <code point>    a character's key up or down, as the character
+//                           itself, whatever the keyboard's layout;
+//                           answered with "u" once posted
 //   p <mask> <x> <y>        the pointer, as RFB's PointerEvent has it:
 //                           buttons 1 to 3, and 4 to 7 as wheel notches
 //   c <base64>              the viewer's clipboard text, for the pasteboard
@@ -25,7 +28,9 @@
 //
 // Keys go by position on a US keyboard: the relay maps each X keysym to the
 // key that types it there, and the box's own layout then decides what it
-// types. Characters with no key on a US keyboard are dropped.
+// types. A character with no key on a US keyboard, such as é, or whose key
+// needs a Shift the viewer does not hold, as ! from a French keyboard, goes
+// as the character itself (macCharacter).
 
 import { pause } from "../transports/ready.ts";
 import type { ByteChannel, CommandTransport, DisplayInput, DisplayInputEvents } from "../transports/types.ts";
@@ -62,6 +67,8 @@ export async function startMacInput(command: CommandTransport, events: DisplayIn
   return input;
 }
 
+/** The longest a character waits for the helper to say it posted it. */
+const CHARACTER_WAIT_MS = 1_000;
 /** How often the helper looks at the box's pasteboard, while a viewer has it. */
 const CLIPBOARD_POLL_MS = 1_000;
 /** How long closing waits for the helper to post what it was sent: events still queued in it are lost when it exits. */
@@ -116,6 +123,16 @@ function run() {
       var code = Number(f[2]), down = f[1] === "1";
       if (code in MODIFIERS) { if (down) held[code] = 1; else delete held[code]; }
       post($.CGEventCreateKeyboardEvent($(), code, down));
+    } else if (f[0] === "u") {
+      // The character as the text the key types, in UTF-16 code units, with no modifier: Shift or Option already made it.
+      var text = $.NSString.stringWithString(String.fromCodePoint(Number(f[2])));
+      var units = Ref("unsigned short", text.length);
+      for (var i = 0; i < text.length; i++) units[i] = text.characterAtIndex(i);
+      var event = $.CGEventCreateKeyboardEvent($(), 0, f[1] === "1");
+      $.CGEventKeyboardSetUnicodeString(event, text.length, units);
+      $.CGEventSetFlags(event, 0);
+      $.CGEventPost($.kCGHIDEventTap, event);
+      say("u");
     } else if (f[0] === "p") pointer(Number(f[1]), Number(f[2]), Number(f[3]));
     else if (f[0] === "s") scale = Number(f[1]) / points || 1;
     else if (f[0] === "c") {
@@ -190,6 +207,39 @@ const US_KEYS: ReadonlyArray<readonly [number, string]> = [
   [49, "  "], [50, "`~"],
 ];
 const PRINTABLE = new Map<number, number>(US_KEYS.flatMap(([code, chars]) => [...chars].map((char) => [char.codePointAt(0)!, code] as const)));
+/** The characters a US keyboard types with Shift. */
+const SHIFTED = new Set(US_KEYS.filter(([code]) => code !== 49).map(([, chars]) => chars.codePointAt(1)!));
+
+/**
+ * The character a key types as itself, not as a key on a US keyboard, or
+ * null to send it as the key: one the keyboard has no key for, such as é, or
+ * whose key needs Shift when the viewer holds none, or none when it holds
+ * Shift, as from a French keyboard, where ! needs no Shift and 1 does. Never
+ * while Command or Control is held, so a shortcut stays keys, nor for Space.
+ */
+export function macCharacter(keysym: number, shift: boolean, shortcut: boolean): number | null {
+  // Latin-1 keysyms are their code points; Unicode keysyms carry one above 0x1000000.
+  const codePoint = keysym >= 0x1000000 ? keysym - 0x1000000 : keysym > 0x20 && keysym <= 0xff ? keysym : null;
+  if (codePoint === null || codePoint <= 0x20 || codePoint > 0x10ffff || shortcut) return null;
+  if (!PRINTABLE.has(codePoint)) return codePoint;
+  return SHIFTED.has(codePoint) === shift ? null : codePoint;
+}
+
+const SHIFT_KEYS = [0xffe1, 0xffe2];
+/** Control, and Command as Screen Sharing and this helper name it: Meta or Super. */
+const SHORTCUT_KEYS = [0xffe3, 0xffe4, 0xffe7, 0xffe8, 0xffeb, 0xffec];
+/** Control, and Command as Tart's VNC server names it: Alt. */
+const TART_SHORTCUT_KEYS = [0xffe3, 0xffe4, 0xffe9, 0xffea];
+
+/**
+ * Whether a key goes to the input helper as its character rather than to
+ * Tart's VNC server, which types by key on a US keyboard and drops what it
+ * has none for. `held` is the keysyms the viewer holds down.
+ */
+export function tartTypesAsCharacter(keysym: number, held: ReadonlySet<number>): boolean {
+  const holds = (keys: readonly number[]) => keys.some((key) => held.has(key));
+  return macCharacter(keysym, holds(SHIFT_KEYS), holds(TART_SHORTCUT_KEYS)) !== null;
+}
 
 /**
  * The macOS virtual key code of the key that types an X keysym on a US
@@ -210,6 +260,12 @@ export class MacInput implements DisplayInput {
   readonly #writer: WritableStreamDefaultWriter<Uint8Array>;
   readonly #encoder = new TextEncoder();
   readonly #pings = new Map<number, () => void>();
+  /** The keysyms of keys held down, as keys. */
+  readonly #held = new Set<number>();
+  /** The keysyms of keys down as their character, which go up so too. */
+  readonly #typed = new Set<number>();
+  /** Who waits for each character the helper has yet to say it posted, in order. */
+  readonly #posted: (() => void)[] = [];
   #ping = 0;
   #queue: Promise<void> = Promise.resolve();
   readonly #poll: ReturnType<typeof setInterval> | null = null;
@@ -245,6 +301,7 @@ export class MacInput implements DisplayInput {
         const kind = space < 0 ? line : line.slice(0, space);
         const value = space < 0 ? "" : line.slice(space + 1);
         if (line === "ready") ready();
+        else if (line === "u") this.#posted.shift()?.();
         else if (kind === "C") events.onClipboard?.(Buffer.from(value, "base64").toString("utf8"));
         else if (kind === "t") this.#pings.get(Number(value))?.();
         else if (kind === "e") events.onError?.(value);
@@ -262,12 +319,48 @@ export class MacInput implements DisplayInput {
     return this.#send(`s ${width} ${height}`);
   }
 
-  /** A key by its X keysym. False when no key on a US keyboard types it. */
+  /**
+   * A key by its X keysym: as the key that types it on a US keyboard, or as
+   * its character (macCharacter). False when it is neither.
+   */
   async key(down: boolean, keysym: number): Promise<boolean> {
+    const holds = (keys: readonly number[]) => keys.some((key) => this.#held.has(key));
+    if (down ? macCharacter(keysym, holds(SHIFT_KEYS), holds(SHORTCUT_KEYS)) !== null : this.#typed.has(keysym)) {
+      await this.character(down, keysym);
+      return true;
+    }
     const code = macKeyCode(keysym);
     if (code === null) return false;
+    if (down) this.#held.add(keysym);
+    else this.#held.delete(keysym);
     await this.#send(`k ${down ? 1 : 0} ${code}`);
     return true;
+  }
+
+  /**
+   * A key as its character, whatever key would type it. Resolves once the
+   * helper has posted it, so a key that goes to another server after it,
+   * as over Tart's VNC server, cannot reach the Mac first; or after
+   * CHARACTER_WAIT_MS, should the helper not say.
+   */
+  async character(down: boolean, keysym: number): Promise<void> {
+    const codePoint = keysym >= 0x1000000 ? keysym - 0x1000000 : keysym;
+    if (down) this.#typed.add(keysym);
+    else this.#typed.delete(keysym);
+    let wait: ReturnType<typeof setTimeout> | undefined;
+    const posted = new Promise<void>((resolve) => {
+      const said = () => {
+        clearTimeout(wait);
+        resolve();
+      };
+      this.#posted.push(said);
+      wait = setTimeout(() => {
+        this.#posted.splice(this.#posted.indexOf(said), 1);
+        resolve();
+      }, CHARACTER_WAIT_MS);
+    });
+    await this.#send(`u ${down ? 1 : 0} ${codePoint}`);
+    await posted;
   }
 
   pointer(mask: number, x: number, y: number): Promise<void> {

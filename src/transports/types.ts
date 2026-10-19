@@ -72,6 +72,8 @@ export interface DisplaySize {
 export interface DisplayInput {
   /** Resolves once sent; false when the box has no key that types the keysym. */
   key(down: boolean, keysym: number): Promise<boolean>;
+  /** A key as the character it types, whatever key would; for a display whose stream server drops it (typesAsCharacter). */
+  character?(down: boolean, keysym: number): Promise<void>;
   /** RFB's PointerEvent: a button mask and a position. */
   pointer(mask: number, x: number, y: number): Promise<void>;
   /** The viewer's clipboard text, for the box's. */
@@ -101,6 +103,12 @@ export interface DisplayOpened {
    * goes to the stream server, as without `input`.
    */
   readonly inputTakes?: "all" | "wheel";
+  /**
+   * With inputTakes "wheel": whether a key goes to `input` as its character
+   * instead of to the stream server, which would type it wrong or not at all,
+   * given the keysyms the viewer holds down.
+   */
+  readonly typesAsCharacter?: (keysym: number, held: ReadonlySet<number>) => boolean;
 }
 
 export interface Display {

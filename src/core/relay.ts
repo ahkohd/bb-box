@@ -62,6 +62,7 @@ export type OpenDisplay = (
   readonly auth: DisplayAuth;
   readonly input?: DisplayOpened["input"];
   readonly inputTakes?: DisplayOpened["inputTakes"];
+  readonly typesAsCharacter?: DisplayOpened["typesAsCharacter"];
   readonly restart?: (signal: AbortSignal) => Promise<void>;
 }>;
 
@@ -96,6 +97,7 @@ interface BoxConnection {
   readonly writer: WritableStreamDefaultWriter<Uint8Array>;
   readonly input?: DisplayOpened["input"];
   readonly inputTakes?: DisplayOpened["inputTakes"];
+  readonly typesAsCharacter?: DisplayOpened["typesAsCharacter"];
 }
 
 /** RFB's buttons 4 to 7: the wheel's notches, up, down, left and right. */
@@ -110,7 +112,7 @@ const WHEEL = 0x78;
 export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_MS, stallMs = STALL_MS): Promise<BoxConnection> {
   const signal = AbortSignal.timeout(timeoutMs);
   for (let restarted = false; ; restarted = true) {
-    const { channel, auth, input, inputTakes, restart } = await open(signal);
+    const { channel, auth, input, inputTakes, typesAsCharacter, restart } = await open(signal);
     const reader = new StreamReader(channel.readable);
     const writer = channel.writable.getWriter();
     let stall: ReturnType<typeof setTimeout> | undefined;
@@ -122,7 +124,7 @@ export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_
     handshake.catch(() => undefined);
     try {
       if (signal.aborted) throw new RfbError("The box's desktop did not finish its handshake in time.");
-      if ((await Promise.race([handshake, timedOut])) === "done") return { channel, reader, writer, input, ...(inputTakes ? { inputTakes } : {}) };
+      if ((await Promise.race([handshake, timedOut])) === "done") return { channel, reader, writer, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}) };
     } catch (error) {
       await channel.close().catch(() => undefined);
       throw error;
@@ -185,6 +187,8 @@ export class RfbRelay {
   #input: Promise<DisplayInput | null> | null = null;
   /** The wheel's buttons the display's input last had, where it takes only the wheel. */
   #wheel = 0;
+  /** The keysyms of keys down as their character in the display's own input (typesAsCharacter). */
+  readonly #typed = new Set<number>();
 
   constructor(options: RelayOptions) {
     this.#options = options;
@@ -273,6 +277,18 @@ export class RfbRelay {
       const bytes = this.#passing(message);
       if (!bytes) continue;
       if (connection.input && isInput(message) && connection.inputTakes === "wheel") {
+        // A character the stream server would type wrong or not at all goes
+        // to the display's input as itself, down and up.
+        if (message.type === "key" && (message.down ? connection.typesAsCharacter?.(message.keysym, this.#heldKeysyms()) : this.#typed.has(message.keysym))) {
+          this.#held.delete(`k${message.keysym}`);
+          if (message.down) this.#typed.add(message.keysym);
+          else this.#typed.delete(message.keysym);
+          // Keys before it reach the server first, and the helper posts it before the keys after it go.
+          if (passing.length) await connection.writer.write(passing.splice(0).reduce(concat));
+          const input = await this.#opened(connection);
+          if (input && !this.#ended) await input.character?.(message.down, message.keysym);
+          continue;
+        }
         // The stream server takes all but the wheel; the display's input
         // takes the wheel's buttons, down and up, as a notch is each one going down.
         if (message.type !== "pointer" || (message.mask & WHEEL) === this.#wheel) {
@@ -286,6 +302,13 @@ export class RfbRelay {
       else passing.push(bytes);
     }
     if (passing.length) await connection.writer.write(passing.reduce(concat));
+  }
+
+  /** The keysyms of the keys this viewer holds down in the box. */
+  #heldKeysyms(): ReadonlySet<number> {
+    const keysyms = new Set<number>();
+    for (const key of this.#held.keys()) if (key.startsWith("k")) keysyms.add(Number(key.slice(1)));
+    return keysyms;
   }
 
   /** The display's own input, opened at this viewer's first input; null when it cannot be opened. */
@@ -366,6 +389,12 @@ export class RfbRelay {
     if (!connection || this.#phase !== "messages") return;
     const messages = [...this.#held.values()];
     this.#held.clear();
+    const typed = [...this.#typed];
+    this.#typed.clear();
+    if (typed.length) {
+      const input = await (this.#input ?? Promise.resolve(null));
+      for (const keysym of typed) await input?.character?.(false, keysym);
+    }
     if (this.#pointer.mask !== 0) {
       messages.push(pointerEvent(0, this.#pointer.x, this.#pointer.y));
       this.#pointer = { ...this.#pointer, mask: 0 };
@@ -423,8 +452,8 @@ export class RfbRelay {
 /** Opens a box's display through its route. */
 export function displayOpener(display: Display): OpenDisplay {
   return async (signal) => {
-    const { route, auth, input, inputTakes } = await display.open(signal);
-    return { channel: await openRoute(route, signal), auth, input, ...(inputTakes ? { inputTakes } : {}), ...(display.restartServer ? { restart: (each: AbortSignal) => display.restartServer!(each) } : {}) };
+    const { route, auth, input, inputTakes, typesAsCharacter } = await display.open(signal);
+    return { channel: await openRoute(route, signal), auth, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}), ...(display.restartServer ? { restart: (each: AbortSignal) => display.restartServer!(each) } : {}) };
   };
 }
 

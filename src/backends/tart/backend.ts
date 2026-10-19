@@ -34,7 +34,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { setupDir } from "../setup-dir.ts";
-import { startMacInput } from "../../core/mac-input.ts";
+import { startMacInput, tartTypesAsCharacter } from "../../core/mac-input.ts";
 import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { EXIT, grantInput, parseGrant, parseGranted } from "../ssh-pool/protocol.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
@@ -1790,11 +1790,14 @@ export class TartBackend implements Backend {
             // A macOS desktop is Tart's VNC server, through the run's holder,
             // which keeps the run's one connection to it (#406). The server
             // drops the wheel, so its notches go to the input helper in the
-            // VM's desktop session, which posts them as a mouse's.
+            // VM's desktop session, which posts them as a mouse's. It types by
+            // key on a US keyboard, so a character it has no key for, or that
+            // needs a Shift the viewer does not hold, goes to the helper too.
             const held = await this.#held(host, mac, guest.ref, ssh, signal);
             return {
               ...held,
               inputTakes: "wheel" as const,
+              typesAsCharacter: tartTypesAsCharacter,
               input: (events: DisplayInputEvents, inputSignal?: AbortSignal) =>
                 startMacInput(command, events, `The desktop's wheel helper did not start in ${guest.ref}: its user may not be signed in to the desktop.`, inputSignal),
             };

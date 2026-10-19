@@ -22,8 +22,8 @@ import { MAX_RETRY_MS, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_
 let named: Map<number, number> | null = null;
 
 /**
- * A character's keysym as its Unicode one, 0x1000000 and the code point, for a Windows box: its stream types a
- * character its keyboard layout lacks by the character itself, and knows none of X's own names for them.
+ * A character's keysym as its Unicode one, 0x1000000 and the code point, for a Windows or Mac box: its stream types
+ * a character its keyboard layout lacks by the character itself, and knows none of X's own names for them.
  */
 export function unicodeKeysym(keysym: number): number {
   if (named === null) {
@@ -602,7 +602,7 @@ export class SelkiesSession implements Kept {
     if (!this.#mine) return;
     // bb-box's own Mac input names Command and Option as most servers do.
     const key = boxKey(keysym, "", this.guestOs, macBrowser(), null).keysym;
-    const sent = this.guestOs === "windows" ? unicodeKeysym(key) : key;
+    const sent = this.guestOs === "windows" || this.guestOs === "macos" ? unicodeKeysym(key) : key;
     if (down) this.#held.add(sent);
     else this.#held.delete(sent);
     this.#send(`${down ? "kd" : "ku"},${sent}`);
