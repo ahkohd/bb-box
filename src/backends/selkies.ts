@@ -32,24 +32,31 @@ export const WAYLAND_SELKIES_DISPLAY: DisplayCapability = { id: "selkies", proto
 export const SELKIES_LAUNCHER = "/usr/local/libexec/bb-box/selkies";
 
 /**
- * Whether each Wayland box's image has Selkies, asked once a box: a box keeps
- * its image's. Keyed by the box, not by a reference a later box of another
- * image may reuse, such as a VMID; forgotten as the box is released.
+ * Where a Wayland image with Sway 1.11 or later has bb-box-cursor (060): the
+ * box's pointer, where it is and what it looks like. An image without it,
+ * such as one on Ubuntu 24.04, has the pointer hidden from the picture while
+ * a person holds control (#707), as before.
  */
-export class SelkiesPresence {
-  readonly #known = new Map<string, boolean>();
-  readonly #launcher: string;
+export const CURSOR_HELPER = "/usr/local/libexec/bb-box/cursor";
 
-  /** `launcher`: where the image's launcher is, instead of SELKIES_LAUNCHER: one on the test machine, in tests. */
-  constructor(launcher = SELKIES_LAUNCHER) {
-    this.#launcher = launcher;
+/**
+ * Whether each Wayland box's image has an executable, asked once a box: a box
+ * keeps its image's. Keyed by the box, not by a reference a later box of
+ * another image may reuse, such as a VMID; forgotten as the box is released.
+ */
+export class ImageFile {
+  readonly #known = new Map<string, boolean>();
+  readonly #path: string;
+
+  constructor(path: string) {
+    this.#path = path;
   }
 
   /** False, not kept, when the box cannot be asked. */
   async has(key: string, command: CommandTransport, signal?: AbortSignal): Promise<boolean> {
     const known = this.#known.get(key);
     if (known !== undefined) return known;
-    const result = await command.run(`test -x '${this.#launcher.replaceAll("'", "'\\''")}'`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 }).catch(() => null);
+    const result = await command.run(`test -x '${this.#path.replaceAll("'", "'\\''")}'`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 }).catch(() => null);
     if (!result) return false;
     this.#known.set(key, result.exitCode === 0);
     return result.exitCode === 0;
@@ -57,6 +64,14 @@ export class SelkiesPresence {
 
   forget(key: string): void {
     this.#known.delete(key);
+  }
+}
+
+/** Whether each Wayland box's image has Selkies (060). */
+export class SelkiesPresence extends ImageFile {
+  /** `launcher`: where the image's launcher is, instead of SELKIES_LAUNCHER: one on the test machine, in tests. */
+  constructor(launcher = SELKIES_LAUNCHER) {
+    super(launcher);
   }
 }
 

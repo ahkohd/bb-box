@@ -55,7 +55,7 @@ import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
-import { SELKIES_DISPLAY, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
+import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, waylandPointer } from "../wayvnc.ts";
 
@@ -93,6 +93,8 @@ export interface DockerBackendOptions {
   readonly ssh?: string;
   /** Where a Wayland box's image has Selkies' launcher, instead of SELKIES_LAUNCHER: a file the fake docker finds, in tests. */
   readonly selkiesLauncher?: string;
+  /** Where a Wayland box's image has bb-box-cursor, instead of CURSOR_HELPER: a file the test finds, in tests. */
+  readonly cursorHelper?: string;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
   /** Runs setup/docker/build.sh with `args`, for tests; bash by default. Resolves with its exit code. */
@@ -408,6 +410,8 @@ export class DockerBackend implements Backend {
   readonly #placing = new Map<string, Placing>();
   /** Whether each Wayland box's image has Selkies (060). */
   readonly #selkies: SelkiesPresence;
+  /** Whether each Wayland box's image has bb-box-cursor (060). */
+  readonly #cursor: ImageFile;
 
   /**
    * Image operations (049): a container from an image, its commit as an
@@ -434,6 +438,7 @@ export class DockerBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#selkies = new SelkiesPresence(options.selkiesLauncher);
+    this.#cursor = new ImageFile(options.cursorHelper ?? CURSOR_HELPER);
     this.#kinds = dockerKinds(config);
     this.#rootlessKinds = dockerKinds(config, true);
     this.#oldDesktopKinds = dockerKinds(config, false, false);
@@ -743,6 +748,7 @@ export class DockerBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
     this.#selkies.forget(guest.ref);
+    this.#cursor.forget(guest.ref);
     await this.#remove(guest.ref, this.#boxOf(guest), signal);
     await this.#context.storage.delete(relabelKey(guest.ref));
     hooks.timing("delete", Math.round(performance.now() - started));
@@ -828,6 +834,9 @@ export class DockerBackend implements Backend {
     const wayland = kind === "linux-desktop-wayland-cpu";
     // A Wayland box of an image built before Selkies was in it has no video (060).
     const video = !wayland || (await this.#selkies.has(guest.ref, command));
+    // An image with bb-box-cursor (060): Sway 1.11, whose streams paint no pointer, so none is hidden, and Sway keeps a theme
+    // the cursor session and wayvnc send as the pointer's shape. One without keeps #707's hidden theme.
+    const sends = wayland && (await this.#cursor.has(guest.ref, command));
     const displays = (capabilities?.displays ?? []).filter((display) => video || display.protocol !== "selkies").map(
       (display): Display =>
         display.protocol === "selkies"
@@ -843,7 +852,7 @@ export class DockerBackend implements Backend {
                 };
               },
               ...(kind === "linux-desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
-              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal), pointer: (shown: boolean, signal?: AbortSignal) => waylandPointer(command, shown, signal) } : {}),
+              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal), pointer: (shown: boolean, signal?: AbortSignal) => waylandPointer(command, shown || sends, signal) } : {}),
               minSize: MIN_DESKTOP,
             },
     );

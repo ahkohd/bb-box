@@ -1228,6 +1228,8 @@ test("a Wayland desktop signs in as box with Apple's sign-in, and its display sc
 case "$*" in
   *vnc-password*) echo hunter2; exit 0;;
   *"test -x "*"/usr/local/libexec/bb-box/selkies"*) [ -e "${dir}/selkies" ]; exit $?;;
+  *"test -x "*"/usr/local/libexec/bb-box/cursor"*) [ -e "${dir}/cursor" ]; exit $?;;
+  *"seat seat0 attach"*) printf '%s\n' "$*" >>"${dir}/pointer"; exit 0;;
   *"/usr/local/libexec/bb-box/display resize "*) printf '%s\\n' "$*" >>"${log}"; case "$*" in *40000x800*) echo "${refusal}" >&2; exit 1;; esac; exit 0;;
 esac
 exec "${FAKE_SSH_BINARY}" "$@"
@@ -1264,6 +1266,21 @@ exec "${FAKE_SSH_BINARY}" "$@"
   rmSync(join(dir, "selkies"));
   const again = { ...video, data: { ...video.data, box: "bx-older-image" } };
   assert.equal((await backend.transports(again, "linux-desktop-wayland-cpu")).displays.length, 1, "and one whose image has none has no video");
+
+  // The pointer while a person holds control (#707, 060): an image without bb-box-cursor, as on 24.04, hides it from the
+  // picture, as before; one with it, Sway 1.11's, keeps Sway's theme, whose pointer neither stream paints.
+  const themes = async (record: typeof box) => {
+    const [rfb] = (await backend.transports(record, "linux-desktop-wayland-cpu")).displays;
+    rmSync(join(dir, "pointer"), { force: true });
+    await rfb!.pointer!(false);
+    await rfb!.pointer!(true);
+    return readFileSync(join(dir, "pointer"), "utf8").split("\n").flatMap((line) => /xcursor_theme (\S+?)'/.exec(line)?.[1] ?? []);
+  };
+  assert.deepEqual(await themes(box), ["bb-box-hidden", "default"], "an image without the helper hides the pointer, as before");
+  writeFileSync(join(dir, "cursor"), "");
+  const sends = { ...box, data: { ...box.data, box: "bx-sway-1-11" } };
+  assert.deepEqual(await themes(sends), ["default", "default"], "an image with the helper keeps Sway's theme");
+  assert.deepEqual(await themes(box), ["bb-box-hidden", "default"], "a box keeps its image's answer");
 });
 
 test("the warm pool fills, hands out a ready guest and refills", async () => {
