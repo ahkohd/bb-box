@@ -766,10 +766,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         await abortable(imageJobs.afterBbUpdate(signal), signal).catch((error) => {
           if (!signal.aborted) logError("images after a BB update", error);
         });
-        await new Promise((resolve) => {
-          const timer = setTimeout(resolve, BB_UPDATE_LOOK_MS);
-          signal.addEventListener("abort", () => (clearTimeout(timer), resolve(null)), { once: true });
-        });
+        // sleep sees an abort that came before it began, as one during the look above does: a listener added then
+        // would never hear it, and the plugin stopped only when the wait ran out (19 October 2026).
+        await sleep(BB_UPDATE_LOOK_MS, signal);
       }
     },
   });
