@@ -51,8 +51,14 @@ const novnc = vi.hoisted(() => {
     readonly url: string;
     readonly options: unknown;
     readonly target: HTMLElement;
+    /** How many of the next clients fail as noVNC makes them, as a client that cannot start would. */
+    static refuse = 0;
     constructor(target: HTMLElement, url: string, options: unknown) {
       super();
+      if (FakeRfb.refuse > 0) {
+        FakeRfb.refuse--;
+        throw new Error("noVNC could not start.");
+      }
       this.target = target;
       this.url = url;
       this.options = options;
@@ -2245,7 +2251,13 @@ class FakeDecoder {
   readonly #error: (error: unknown) => void;
   /** What the decoder's error callback threw, as a browser reports it and goes on. */
   static thrown: unknown[] = [];
+  /** How many of the next decoders fail as they are made, as a browser that cannot make one now would. */
+  static refuse = 0;
   constructor(init: { output: (frame: unknown) => void; error: (error: unknown) => void }) {
+    if (FakeDecoder.refuse > 0) {
+      FakeDecoder.refuse--;
+      throw new DOMException("No decoder now.", "NotSupportedError");
+    }
     this.#output = init.output;
     this.#error = init.error;
     FakeDecoder.made.push(this);
@@ -2278,6 +2290,7 @@ class FakeDecoder {
 function withVideo() {
   FakeDecoder.made = [];
   FakeDecoder.thrown = [];
+  FakeDecoder.refuse = 0;
   FakeDecoder.fullColour = true;
   FakeDecoder.size = { width: 1280, height: 800 };
   forgetFullColour();
@@ -2439,6 +2452,60 @@ test("a video desktop whose decoder failed shows again when its tab comes back, 
   } finally {
     undo();
     window.sessionStorage.clear();
+  }
+});
+
+test("a kept video session that fails as its tab comes back gives way to a fresh one, and the panel does not crash", async () => {
+  const undo = withVideo();
+  const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    let slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const first = videoSocket();
+    act(() => first.open());
+    act(() => void first.onmessage?.({ data: "MODE websockets" }));
+    act(() => void first.onmessage?.({ data: videoFrame(5, true) }));
+    await slot.findByText("The agent has control.");
+    cleanup();
+    // Back on the tab, the kept session starts its video again, and its new decoder cannot be made.
+    FakeDecoder.refuse = 1;
+    slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.filter((made) => made.url.includes("stream=selkies"))).toHaveLength(2));
+    expect(first.readyState).toBe(3);
+    expect((await slot.findAllByText(/Connecting/)).length).toBeGreaterThan(0);
+    expect(slot.queryByText(/crashed/)).toBeNull();
+    expect(logged.mock.calls.some(([words]) => String(words).includes("failed as it showed again, so a fresh one starts"))).toBe(true);
+  } finally {
+    logged.mockRestore();
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("a kept VNC session that fails as it connects again when its tab comes back gives way to a fresh one, and the panel does not crash", async () => {
+  const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    const { handlers } = server([desktopBox()]);
+    let slot = desktopTab(handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const [client] = novnc.FakeRfb.made;
+    act(() => void client!.dispatchEvent(new Event("connect")));
+    await slot.findByText("The agent has control.");
+    // Its connection ends, and the person switches to another tab before it connects again; back on the tab, connecting again
+    // fails as noVNC makes its client.
+    act(() => void client!.dispatchEvent(new CustomEvent("disconnect", { detail: { clean: false } })));
+    cleanup();
+    novnc.FakeRfb.refuse = 1;
+    slot = desktopTab(handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
+    act(() => void novnc.FakeRfb.made[1]!.dispatchEvent(new Event("connect")));
+    expect(await slot.findByText("The agent has control.")).toBeTruthy();
+    expect(logged.mock.calls.some(([words]) => String(words).includes("failed as it showed again, so a fresh one starts"))).toBe(true);
+  } finally {
+    novnc.FakeRfb.refuse = 0;
+    logged.mockRestore();
   }
 });
 

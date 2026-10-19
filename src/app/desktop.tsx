@@ -784,8 +784,13 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     if (!wanted || !screen || !key) return;
     const latestPath = pathNow.current;
     if (keptFree(key) === undefined && !latestPath) return;
-    const claimed = claimKept<ViewerSession>(key, () =>
-      stream === "selkies" ? new SelkiesSession(`${socketUrl(latestPath!, boxId, viewer)}&stream=selkies`) : new DesktopSession(socketUrl(latestPath!, boxId, viewer)),
+    const claimed = claimKept<ViewerSession>(
+      key,
+      () => (stream === "selkies" ? new SelkiesSession(`${socketUrl(latestPath!, boxId, viewer)}&stream=selkies`) : new DesktopSession(socketUrl(latestPath!, boxId, viewer))),
+      // It rested while the box was away, or lost its connection while hidden. A session that throws here is replaced by a fresh one.
+      (resumed) => {
+        if (resumed.connection.state === "disconnected") resumed.reconnect();
+      },
     );
     const current = claimed.session;
     if (current instanceof SelkiesSession) {
@@ -817,8 +822,6 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
     const unsubscribe = current.subscribe(() => setConnection(current.connection));
     setConnection(current.connection);
-    // It rested while the box was away, or lost its connection while hidden.
-    if (current.connection.state === "disconnected") current.reconnect();
     return () => {
       unsubscribe();
       current.onClipboard = undefined;
