@@ -143,10 +143,22 @@ export class SelkiesBox {
   /** The message that last asked the box to draw its cursor into the video, or not, to send again on a new input connection. */
   #cursor: string | null = null;
   readonly onError: (error: Error) => void;
+  /**
+   * Whether the box's video comes from elsewhere than this stream server (#865), as known once `open` has run: then
+   * it captures nothing, and what it sends the input connection of the clipboard and the pointer's shape goes to
+   * `onText`, for the viewers, which reach it no other way.
+   */
+  readonly #apart: () => boolean;
+  readonly #onText: (message: string) => void;
 
-  constructor(open: OpenStream, options: { onError?: (error: Error) => void; spacingMs?: number; clock?: Clock } = {}) {
+  constructor(
+    open: OpenStream,
+    options: { onError?: (error: Error) => void; spacingMs?: number; clock?: Clock; apart?: () => boolean; onText?: (message: string) => void } = {},
+  ) {
     this.#open = open;
     this.onError = options.onError ?? (() => undefined);
+    this.#apart = options.apart ?? (() => false);
+    this.#onText = options.onText ?? (() => undefined);
     this.clock = options.clock ?? SYSTEM_CLOCK;
     this.spacing = new Spacing(options.spacingMs ?? OPEN_SPACING_MS, this.clock);
   }
@@ -228,6 +240,8 @@ export class SelkiesBox {
    * wants video, but sends it none (measured 18 October 2026).
    */
   async follow(size: { readonly width: number; readonly height: number }): Promise<void> {
+    // Video from elsewhere follows the desktop itself; this server captures nothing.
+    if (await this.#videoApart()) return;
     const settings = { displayId: "primary", manual_resolution: true, manual_width: size.width, manual_height: size.height, force_aligned_resolution: false };
     await this.input("START_VIDEO");
     await this.input("STOP_VIDEO");
@@ -240,6 +254,7 @@ export class SelkiesBox {
    * more and the same bandwidth (measured 16 October 2026). Selkies restarts the capture, from a key frame.
    */
   async fullColour(on: boolean): Promise<void> {
+    if (await this.#videoApart()) return;
     await this.input(`SETTINGS,${JSON.stringify({ displayId: "primary", video_fullcolor: on })}`);
   }
 
@@ -268,9 +283,18 @@ export class SelkiesBox {
    */
   keyframe(): boolean {
     const socket = this.#ready;
+    // Video from elsewhere: each viewer asks its own source.
+    if (this.#apart()) return false;
     if (!socket || this.#closed) return false;
     socket.send("REQUEST_KEYFRAME").catch(() => undefined);
     return true;
+  }
+
+  /** Whether the video comes from elsewhere, once the input connection has opened, which tells. */
+  async #videoApart(): Promise<boolean> {
+    if (this.#closed) return false;
+    await this.#connection().catch(() => undefined);
+    return this.#apart();
   }
 
   /** Reads what Selkies sends the input connection. It asks for no video again whenever a frame comes, as a new capture sends to every page. */
@@ -278,6 +302,7 @@ export class SelkiesBox {
     try {
       for (let message = await socket.next(); message !== null; message = await socket.next()) {
         if (typeof message === "string" && message.startsWith("BB_PONG,")) this.#pongs.get(message.slice(8))?.();
+        else if (typeof message === "string" && this.#apart() && (CLIPBOARD_VERBS.has(verb(message)) || verb(message) === "cursor")) this.#onText(message);
         if (typeof message !== "string" && this.clock.now() - this.#stopAsked > STOP_ASK_MS) {
           this.#stopAsked = this.clock.now();
           await socket.send("STOP_VIDEO");
@@ -391,11 +416,20 @@ export class SelkiesRelay {
     }
   }
 
+  /**
+   * A message of the box's stream server that came by another connection than this viewer's, where its video comes
+   * from elsewhere (#865): the clipboard and the pointer's shape, as if it had come by this one.
+   */
+  fromBox(message: string): void {
+    if (this.#ended) return;
+    if (CLIPBOARD_VERBS.has(verb(message)) && !this.#options.mayInput()) return;
+    if (verb(message) === "cursor" && this.#options.ownCursor?.()) return;
+    this.#options.viewer.send(message);
+  }
+
   #toViewer(socket: BoxWebSocket, message: Message): void {
     if (typeof message === "string") {
-      if (CLIPBOARD_VERBS.has(verb(message)) && !this.#options.mayInput()) return;
-      if (verb(message) === "cursor" && this.#options.ownCursor?.()) return;
-      this.#options.viewer.send(message);
+      this.fromBox(message);
       return;
     }
     if ((message[0] === VIDEO || message[0] === JPEG) && message.byteLength >= 4) {

@@ -230,6 +230,12 @@ export class FakeBackend implements Backend {
   #vnc: Promise<number> | null = null;
   /** Every desktop box's Selkies, for a kind with a Selkies display. */
   readonly selkies = new FakeSelkies();
+  /**
+   * When set, the Selkies display's video comes from `selkies`, and this is the box's own stream server, which takes the
+   * input and sends the clipboard and the cursor's shape, as bb-box-stream.exe for a Windows VM on a Mac (#865).
+   */
+  apartInput: FakeSelkies | null = null;
+  #apartPort: Promise<number> | null = null;
   /** Whether a box's video display leaves out the cursor its kind says, as a Windows image without the hardware cursor does. */
   cursorless = false;
   /** When set, the VNC display takes its pointer out of the picture and puts it back, as Sway's does (#707), and each call is kept here. */
@@ -444,6 +450,9 @@ export class FakeBackend implements Backend {
                 route: { type: "tcp", host: "127.0.0.1", port: await (this.#vnc ??= this.rfb.listen()) },
                 auth: this.#options.wayland ? { type: "apple", user: "box", password: "fakepass" } : { type: "vnc-password", password: "fakepass" },
               },
+        ...(display.protocol === "selkies" && this.apartInput
+          ? { openInput: async () => ({ route: { type: "tcp" as const, host: "127.0.0.1", port: await (this.#apartPort ??= this.apartInput!.listen()) }, auth: { type: "none" as const } }) }
+          : {}),
         ...(this.#options.resize === "backend" ? { resize: (size: DisplaySize) => this.#resize(size) } : {}),
         ...(this.pointers && display.protocol === "rfb" ? { pointer: async (shown: boolean) => void this.pointers!.push(shown), ...(this.pointerWhileRfb ? { pointerWhile: "rfb" as const } : {}) } : {}),
         ...(this.#options.minSize ? { minSize: this.#options.minSize } : {}),
@@ -519,6 +528,9 @@ export class FakeBackend implements Backend {
     if (this.#selkiesPort) await this.#selkiesPort;
     this.#selkiesPort = null;
     await this.selkies.close();
+    if (this.#apartPort) await this.#apartPort;
+    this.#apartPort = null;
+    await this.apartInput?.close();
   }
 
   #kind(kind: string): BoxKind {

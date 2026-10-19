@@ -143,6 +143,13 @@ export interface Display {
   /** Called once per viewer connection, because tickets can be single use. */
   open(signal?: AbortSignal): Promise<DisplayOpened>;
   /**
+   * For a video display whose video comes from elsewhere than the box's own
+   * stream server, as a Windows VM's from QEMU on its Mac (#865): opens the
+   * box's stream server, which takes the input and sends the clipboard and
+   * the pointer's shape, while `open` gives each viewer its video.
+   */
+  openInput?(signal?: AbortSignal): Promise<DisplayOpened>;
+  /**
    * Sets the display's size the backend's own way, for a stream server that
    * may not act on a viewer's SetDesktopSize (021). A display with it is
    * resizable. Core sends the box a SetDesktopSize for the size first, so it

@@ -69,6 +69,7 @@ export const CHECKS = {
   "host.<mac>": { name: "Mac <mac>", from: ["tart"], what: "The Mac answers over SSH, is Apple silicon, and has Tart." },
   "image.<mac>.<kind>": { name: "<kind> image on <mac>", from: ["tart"], what: "The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old." },
   "qemu.<mac>": { name: "QEMU on <mac>", from: ["tart"], what: "QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac." },
+  "qemu-video.<mac>": { name: "Windows video on <mac>", from: ["tart"], what: "bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865)." },
   "capacity.<mac>": { name: "Room on <mac>", from: ["tart"], what: "Room on the Mac for a macOS box at its default size." },
   "sizes.<mac>": { name: "Room for each kind on <mac>", from: ["tart"], what: "The Mac holds a box of each kind at its default size." },
 

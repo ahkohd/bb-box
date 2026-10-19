@@ -30,6 +30,7 @@ import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { waylandPointerScript } from "../src/backends/wayvnc.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
+import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeDaemon, fakeFfmpeg, joined, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_one";
@@ -2605,6 +2606,34 @@ test("a box whose video is shown only by choice, as a Tart Mac's, offers video b
   assert.deepEqual([chosen.video, chosen.videoByDefault], [true, false]);
   const usual = await state(FAKE_SELKIES_KIND);
   assert.deepEqual([usual.video, usual.videoByDefault], [true, true]);
+});
+
+test("a box whose video comes from elsewhere, as a Windows VM's on a Mac, gets a viewer's input on its own server, which gives the viewer with control its clipboard, and is told no size (#865)", async (t) => {
+  const { harness, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  const own = new FakeSelkies();
+  world.backend!.apartInput = own;
+  const video = world.backend!.selkies;
+  const rfb = world.backend!.rfb;
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
+  await until("the viewer's page, on the video's source", async () => video.pages[0]);
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: null };
+  assert.equal(took.error, null);
+  const input = await until("the input connection, on the box's own server", async () => own.pages[0]);
+  assert.equal(video.pages.length, 1, "no input connection on the video's source");
+  await session.receive("kd,97");
+  await until("the key", async () => input.received.includes("kd,97"));
+  assert.ok(!video.pages[0]!.received.includes("kd,97"));
+  // The clipboard comes by the box's own server only, to the viewer with control.
+  await own.clipboard("copied");
+  await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied").toString("base64")}`));
+  // The video's source follows the desktop itself: the box's server is told no size.
+  await session.receive("r,1024x768");
+  await until("the resize", async () => rfb.width === 1024 && rfb.height === 768);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(!input.received.some((message) => typeof message === "string" && message.includes("manual_resolution")), JSON.stringify(input.received));
+  await session.close();
 });
 
 test("the desktop route carries a box's Selkies stream message by message, and only the viewer with control reaches the box, sizes it and gets its clipboard (056)", async (t) => {

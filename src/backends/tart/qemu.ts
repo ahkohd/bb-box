@@ -78,6 +78,15 @@ qmp() {
   return 1
 }
 qmp_close() { exec 3>&- 4<&-; kill "$qnc" 2>/dev/null; wait "$qnc" 2>/dev/null; }
+# Whether VM $1's video bridge runs (qemu-video.ts, #865): the PID in its video.pid, and the process there a bridge.
+qvideo() {
+  _p=$(cat "$q/vms/$1/video.pid" 2>/dev/null) && [ -n "$_p" ] && ps -ww -p "$_p" -o command= 2>/dev/null | grep -q '/bb-box-stream-[0-9a-f]* qemu '
+}
+# Ends VM $1's video bridge by that PID only: the Mac is its owner's.
+qvideostop() {
+  if qvideo "$1"; then kill "$(cat "$q/vms/$1/video.pid")" 2>/dev/null; fi
+  rm -f "$q/vms/$1/video.pid" "$q/vms/$1/video.sock"
+}
 # Whether QMP's answer $1 has "$2": "$3", however QEMU spaces it.
 qhas() { printf '%s' "$1" | tr -d ' ' | grep -qF "\"$2\":\"$3\""; }
 `;
@@ -85,6 +94,9 @@ qhas() { printf '%s' "$1" | tr -d ' ' | grep -qF "\"$2\":\"$3\""; }
 function qemu(body: string): string {
   return script(`${LIBRARY}${body}`);
 }
+
+/** A script with the QEMU scripts' functions, for qemu-video.ts. */
+export const qemuScript = qemu;
 
 /**
  * What the state script adds for QEMU: each VM's config and state, and, when
@@ -292,7 +304,8 @@ echo restored
  * to a file at full speed, then QEMU quits. A start restores it. One that
  * cannot be saved runs on, and the script fails.
  */
-const SAVE = String.raw`if qrunning "$vm"; then
+const SAVE = String.raw`qvideostop "$vm"
+if qrunning "$vm"; then
   pid=$(cat "$v/pid")
   qmp_open "$vm" || { echo "QEMU's monitor for $vm did not answer." >&2; exit 1; }
   failed() { rm -f "$v/state.part"; qmp '{"execute":"cont"}' >/dev/null; qmp_close; echo "QEMU could not save $vm: $1" >&2; exit 1; }
@@ -380,6 +393,7 @@ if qrunning "$vm"; then
   i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
   kill -9 "$pid" 2>/dev/null
 fi
+qvideostop "$vm"
 rm -rf "$v" "$v.new" || exit 1
 rm -f "$d/owners/$vm"
 echo deleted
@@ -442,6 +456,7 @@ if qrunning "$vm"; then
   fi
 fi
 qrunning "$vm" && { echo "$vm is still running." >&2; exit 1; }
+qvideostop "$vm"
 rm -rf "$t.new"; mkdir -p "$t.new" || exit 1
 qemu-img convert -O qcow2 "$v/disk.qcow2" "$t.new/disk.qcow2" || { rm -rf "$t.new"; exit 1; }
 cp "$v/vars.fd" "$t.new/vars.fd" || { rm -rf "$t.new"; exit 1; }

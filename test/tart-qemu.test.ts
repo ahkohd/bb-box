@@ -3,6 +3,7 @@
 // guest that the fake ssh reaches at its port on the Mac's loopback.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +13,7 @@ import { ownerText } from "../src/backends/tart/host.ts";
 import { parseQemuState } from "../src/backends/tart/qemu.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { CUA_PIPE, NAME_WINDOWS_SCRIPT, parseNamed } from "../src/backends/windows.ts";
-import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, WINDOWS_TOOLS, addImage, addWindowsImage, fakeMacTools, fakeQemu, imageRecord, tartConfig } from "./fake-mac.ts";
+import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, WINDOWS_TOOLS, addImage, addWindowsImage, fakeMacTools, fakeQemu, fakeSwift, imageRecord, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const MAC = FAKE_MAC;
@@ -300,16 +301,22 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
   assert.equal(await backend.power(guest, signal()), null);
 });
 
-test("Windows on a Mac offers video by choice while every Mac's image records OpenH264, and a box shows it where it has bb-box-stream.exe (060)", async () => {
-  const { backend, ssh, build } = setup();
+test("Windows on a Mac offers video by choice while every Mac's image records OpenH264 and every Mac has built bb-box-stream, and a box shows it where it has bb-box-stream.exe (060, #865)", async () => {
+  const { backend, ssh, build, mac, qemu } = setup({}, { qemuVideoSource: "// bb-box-stream, as a test gives it\n" });
+  fakeSwift(mac);
   const kind = () => backend.kinds().find((candidate) => candidate.id === KIND)!;
   assert.equal(await backend.asOffered({ ref: "x", host: MAC, address: null, size: null }, KIND), false, "unknown until a Mac answers");
   await backend.capacity(KIND, SMALL, [], signal());
   assert.equal(await backend.asOffered({ ref: "x", host: MAC, address: null, size: null }, KIND), true);
   assert.equal(kind().capabilities.displays.length, 1, "an image without OpenH264 has no video");
 
-  // The Mac's image now has the stream and the hardware cursor, as prepare-windows-image.sh records them.
+  // The Mac's image now has the stream and the hardware cursor, as prepare-windows-image.sh records them. The Mac built
+  // bb-box-stream as its state first said it had none, in the background, so the video comes once it has.
   writeFileSync(join(build, "image.json"), `${imageRecord(KIND, { tools: { ...WINDOWS_TOOLS, openh264: "2.6.0", "hardware-cursor": "1" } })}\n`);
+  const bin = join(mac, ".bb-box", "qemu", "bin");
+  await until(() => existsSync(bin) && readdirSync(bin).some((name) => name.endsWith(".sha256")), "the build of bb-box-stream");
+  assert.equal(statSync(bin).mode & 0o777, 0o700, "in a folder only the host user can open");
+  assert.deepEqual(readdirSync(bin).filter((name) => !name.endsWith(".lock")).length, 2, "the build and its hash, the source gone");
   await backend.capacity(KIND, SMALL, [], signal());
   assert.deepEqual(kind().capabilities.displays[1], { id: "video", protocol: "selkies", resizable: true, byChoice: true, cursor: "stream" }, "by choice: VNC opens until it is measured");
 
@@ -319,19 +326,71 @@ test("Windows on a Mac offers video by choice while every Mac's image records Op
   writeFileSync(join(ssh.home(GUEST), "stream"), "");
   const other = { ...guest, data: { ...guest.data, box: "bx-another" } };
   const shown = (await backend.transports(other, KIND)).displays;
-  assert.deepEqual(shown.map(({ open: _, resize: __, pointer: ___, ...display }) => display), [
+  assert.deepEqual(shown.map(({ open: _, openInput: __, resize: ___, pointer: ____, ...display }) => display), [
     { id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4, pointerWhile: "rfb", minSize: { width: 800, height: 600 } },
     { id: "video", label: "Desktop, as video", protocol: "selkies", resizable: true, cursor: "stream" },
   ]);
+  // The input, the clipboard and the pointer's shape go through the guest's bb-box-stream.exe.
+  const input = (await shown[1]!.openInput!()).route;
+  assert.match(JSON.stringify(input), /NamedPipeClientStream/, "the pipe to the guest's server, through box's SSH");
+
+  // The video comes from the Mac: its bridge starts for the VM once, and each viewer attaches to it.
   const route = (await shown[1]!.open()).route;
   assert.equal(route.type, "command");
-  assert.match(JSON.stringify(route), /bb-box-stream/, "the pipe to the server, through box's SSH");
+  const run = () => execFileSync(route.argv[0]!, route.argv.slice(1), { encoding: "utf8", timeout: 20_000 });
+  const vm = join(qemu, "vms", guest.ref);
+  assert.match(run(), /^attached .*\/video\.sock\n$/, "the viewer's connection joins the VM's bridge");
+  const pid = Number(readFileSync(join(vm, "video.pid"), "utf8"));
+  assert.ok(alive(pid), "the bridge runs");
+  assert.match(run(), /^attached /);
+  assert.equal(Number(readFileSync(join(vm, "video.pid"), "utf8")), pid, "one bridge for the VM, however many viewers");
+  // A build that is not whole does not run.
+  const binary = readdirSync(bin).find((name) => /^bb-box-stream-[0-9a-f]+$/.test(name))!;
+  writeFileSync(join(bin, `${binary}.sha256`), "0\n");
+  assert.throws(run, /not whole/);
 
   // An image that loses it again stops the video.
   writeFileSync(join(build, "image.json"), `${imageRecord(KIND, { tools: WINDOWS_TOOLS })}\n`);
   await backend.capacity(KIND, SMALL, [], signal());
   assert.equal(kind().capabilities.displays.length, 1);
+  // The bridge goes with the box, by its PID.
   await backend.release(guest, releasing, signal());
+  await until(() => !alive(pid), "the bridge to end");
+});
+
+test("Windows on a Mac shows over VNC only, and the doctor says why, while the Mac cannot build bb-box-stream (#865)", async () => {
+  const { backend, build, mac } = setup({}, { qemuVideoSource: "// bb-box-stream, as a test gives it\n" });
+  writeFileSync(join(build, "image.json"), `${imageRecord(KIND, { tools: { ...WINDOWS_TOOLS, openh264: "2.6.0" } })}\n`);
+  const kind = () => backend.kinds().find((candidate) => candidate.id === KIND)!;
+  const check = async () => (await backend.doctor(signal())).checks.find((each) => each.id === "qemu-video.mac1")!;
+
+  // No Command Line Tools.
+  await backend.capacity(KIND, SMALL, [], signal());
+  assert.equal(kind().capabilities.displays.length, 1, "no video");
+  let found = await check();
+  assert.equal(found.status, "warn");
+  assert.match(found.detail, /no swiftc from Xcode's Command Line Tools.*show over VNC only/);
+  assert.equal(found.fix, "Install them on the Mac: xcode-select --install.");
+
+  // swiftc fails: the doctor gives its error, and nothing half-built runs.
+  fakeSwift(mac, { fails: true });
+  await backend.capacity(KIND, SMALL, [], signal());
+  const bin = join(mac, ".bb-box", "qemu", "bin");
+  await until(() => existsSync(bin) && readdirSync(bin).some((name) => name.endsWith(".failed")), "the failed build");
+  found = await check();
+  assert.equal(found.status, "warn");
+  assert.match(found.detail, /swiftc could not build bb-box-stream: mac-stream\.swift:12:3: error: cannot find 'SCStream' in scope/);
+  assert.equal(kind().capabilities.displays.length, 1, "still no video");
+
+  // Once it builds, the video comes.
+  fakeSwift(mac);
+  rmSync(bin, { recursive: true });
+  await backend.capacity(KIND, SMALL, [], signal());
+  await until(() => existsSync(bin) && readdirSync(bin).some((name) => name.endsWith(".sha256")), "the build");
+  await backend.capacity(KIND, SMALL, [], signal());
+  assert.equal(kind().capabilities.displays.length, 2);
+  found = await check();
+  assert.equal(found.status, "ok");
 });
 
 test("the desktop resizes to the listed mode that best covers the viewer, set by Windows in the box user's session, with one try at the viewer's size", async () => {

@@ -6,6 +6,11 @@
 //   bb-box-stream serve [socket]     captures and serves, in the desktop session
 //   bb-box-stream connect [socket]   joins stdin and stdout to the server,
 //                                    starting it first if it is not running
+//   bb-box-stream qemu <port> <socket>
+//                                    serves a Windows VM's desktop from QEMU's
+//                                    VNC server on the Mac's loopback (#865)
+//   bb-box-stream attach <socket>    joins stdin and stdout to a running
+//                                    server, starting none
 //
 // The socket is ~/.bb-box/stream.sock by default, in a folder only the box
 // user can open, so only the box user's own commands reach it. bb-box's
@@ -19,7 +24,8 @@
 // is encoded twice more, so a still screen sharpens. Its permissions are its
 // responsible process's: Screen Recording and Accessibility (058).
 //
-// setup-mac.sh builds it into /usr/local/bin with swiftc.
+// setup-mac.sh builds it into /usr/local/bin with swiftc. The Tart backend
+// builds it on each Mac that runs Windows boxes, for `qemu` (#865).
 
 import AppKit
 import CoreGraphics
@@ -122,9 +128,9 @@ func pump(_ from: Int32, _ to: Int32) {
 
 // MARK: connect
 
-func runConnect(_ path: String) -> Never {
+func runConnect(_ path: String, start: Bool = true) -> Never {
   var fd = connectUnix(path)
-  if fd == nil {
+  if fd == nil && start {
     // Start the server, detached, and wait for its socket.
     let folder = (path as NSString).deletingLastPathComponent
     try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -1000,6 +1006,341 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
   }
 }
 
+// MARK: QEMU
+
+/**
+ * An RFB client of a Windows VM's QEMU VNC server on the Mac's loopback, which asks for no password (#865). It takes
+ * raw pixels in BGRX, as VideoToolbox takes them, and the desktop's new size. It asks for no cursor: QEMU draws none
+ * into the picture, and the guest's bb-box-stream.exe sends the pointer's shape.
+ */
+final class RfbClient: @unchecked Sendable {
+  let fd: Int32
+  private(set) var width = 0
+  private(set) var height = 0
+  /** The desktop, BGRX: 32 bits a pixel, little-endian, red at bit 16. */
+  private(set) var pixels: [UInt8] = []
+  private let writeLock = NSLock()
+
+  init?(port: Int) {
+    fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    var address = sockaddr_in()
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = in_port_t(UInt16(port).bigEndian)
+    address.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let connected = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+    }
+    var one: Int32 = 1
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, socklen_t(MemoryLayout<Int32>.size))
+    guard connected == 0, readExactly(fd, 12) != nil, writeAll(fd, Data("RFB 003.008\n".utf8)),
+      let count = readExactly(fd, 1), let types = readExactly(fd, Int(count[0])), types.contains(1), writeAll(fd, Data([1])),
+      let result = readExactly(fd, 4), result == Data([0, 0, 0, 0]),
+      // Shared: bb-box's VNC viewers stay connected beside it.
+      writeAll(fd, Data([1])), let serverInit = readExactly(fd, 24)
+    else {
+      Darwin.close(fd)
+      return nil
+    }
+    width = Int(serverInit[0]) << 8 | Int(serverInit[1])
+    height = Int(serverInit[2]) << 8 | Int(serverInit[3])
+    let nameLength = serverInit[20...23].reduce(0) { $0 << 8 | Int($1) }
+    guard readExactly(fd, nameLength) != nil else {
+      Darwin.close(fd)
+      return nil
+    }
+    pixels = [UInt8](repeating: 0, count: width * height * 4)
+    // SetPixelFormat: 32 bits, depth 24, little-endian, true colour, 255 a channel, red at 16, green at 8, blue at 0.
+    send(Data([0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0]))
+    // SetEncodings: Raw, and DesktopSize. Raw costs nothing on the loopback.
+    send(Data([2, 0, 0, 2, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0x21]))
+  }
+
+  func send(_ data: Data) {
+    writeLock.lock()
+    _ = writeAll(fd, data)
+    writeLock.unlock()
+  }
+
+  /** Asks for the changes since the last update, or with `whole` the whole desktop. */
+  func request(whole: Bool) {
+    send(Data([3, whole ? 0 : 1, 0, 0, 0, 0, UInt8(width >> 8), UInt8(width & 255), UInt8(height >> 8), UInt8(height & 255)]))
+  }
+
+  /** Reads one message from QEMU, and calls `onUpdate` after a whole update. False at the end, or on a message it cannot read. */
+  func next(onUpdate: () -> Void) -> Bool {
+    guard let type = readExactly(fd, 1) else { return false }
+    switch type[0] {
+    case 0:
+      guard let head = readExactly(fd, 3) else { return false }
+      for _ in 0..<(Int(head[1]) << 8 | Int(head[2])) {
+        guard let rect = readExactly(fd, 12) else { return false }
+        let x = Int(rect[0]) << 8 | Int(rect[1]), y = Int(rect[2]) << 8 | Int(rect[3])
+        let w = Int(rect[4]) << 8 | Int(rect[5]), h = Int(rect[6]) << 8 | Int(rect[7])
+        let encoding = rect[8...11].reduce(Int32(0)) { $0 << 8 | Int32($1) }
+        if encoding == 0 {
+          guard x + w <= width, y + h <= height, let data = readExactly(fd, w * h * 4) else { return false }
+          data.withUnsafeBytes { raw in
+            pixels.withUnsafeMutableBytes { desktop in
+              for row in 0..<h { memcpy(desktop.baseAddress! + ((y + row) * width + x) * 4, raw.baseAddress! + row * w * 4, w * 4) }
+            }
+          }
+        } else if encoding == -223 {
+          width = w
+          height = h
+          pixels = [UInt8](repeating: 0, count: w * h * 4)
+          log("the desktop is now \(w)x\(h)")
+        } else {
+          log("QEMU sent encoding \(encoding), which was not asked for")
+          return false
+        }
+      }
+      // The next request after this update: QEMU forgot one that came while it still sent (measured 19 October 2026).
+      request(whole: false)
+      onUpdate()
+    case 2:
+      break
+    case 3:
+      guard let head = readExactly(fd, 7), readExactly(fd, head[3...6].reduce(0) { $0 << 8 | Int($1) }) != nil else { return false }
+    default:
+      log("QEMU sent message \(type[0]), which this client does not read")
+      return false
+    }
+    return true
+  }
+}
+
+/**
+ * A Windows VM's desktop as video, from QEMU's VNC server (#865): Desktop Duplication in the guest gives a few frames a
+ * second on the Mac's VirtIO GPU, where QEMU reads the framebuffer from the host at its own refresh. It serves video
+ * only: the input, the clipboard and the pointer's shape go through the guest's bb-box-stream.exe. It ends when QEMU's
+ * server does, as when the VM stops, and when no client has come for IDLE_EXIT_SECONDS.
+ */
+final class QemuServer: @unchecked Sendable {
+  private let queue = DispatchQueue(label: "bb-box-stream.qemu")
+  private let port: Int
+  private var rfb: RfbClient?
+  private var clients: [Int: Client] = [:]
+  private var nextClient = 0
+  private var lastClientAt = Date()
+  private var encoder: Encoder?
+  private var frameId: UInt16 = 0
+  private var keyAsked = true
+  private var last: CVPixelBuffer?
+  private var still: DispatchWorkItem?
+  private var pool: CVPixelBufferPool?
+  private var poolSize = (0, 0)
+  private let started = Date()
+  /** When a whole desktop was asked for and has not come. */
+  private var wholeAsked: Date?
+
+  init(port: Int) {
+    self.port = port
+  }
+
+  private var watched: Bool { clients.values.contains { $0.wantsVideo } }
+
+  func start(path: String) {
+    if let running = connectUnix(path) {
+      Darwin.close(running)
+      log("a server is already running at \(path)")
+      exit(0)
+    }
+    guard let first = RfbClient(port: port) else {
+      log("QEMU's VNC server does not answer on port \(port)")
+      exit(1)
+    }
+    rfb = first
+    unlink(path)
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0, var address = unixAddress(path) else {
+      log("could not make the socket at \(path)")
+      exit(1)
+    }
+    let bound = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+    }
+    guard bound == 0, chmod(path, 0o600) == 0, Darwin.listen(fd, 16) == 0 else {
+      log("could not listen at \(path): \(String(cString: strerror(errno)))")
+      exit(1)
+    }
+    log("serving QEMU's VNC on port \(port) at \(path)")
+    Thread { [self] in
+      while true {
+        let client = Darwin.accept(fd, nil, nil)
+        if client < 0 { continue }
+        Thread { self.serve(client) }.start()
+      }
+    }.start()
+    Thread { [self] in readQemu(first) }.start()
+    Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [self] _ in
+      queue.async { [self] in
+        guard let rfb else { return }
+        // QEMU sometimes stops answering one client, after another VNC client came and went, though it still takes the
+        // client's input: why is not known (19 October 2026). A whole desktop asked for and not given within a second, it
+        // connects again.
+        if let asked = wholeAsked, Date().timeIntervalSince(asked) > 1 {
+          log("QEMU did not answer for a second; connecting again")
+          wholeAsked = nil
+          shutdown(rfb.fd, SHUT_RDWR)
+          return
+        }
+        // A request always waiting while anyone watches: QEMU slows its refresh while no client has one.
+        if watched { rfb.request(whole: false) }
+      }
+    }
+    Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [self] _ in
+      queue.async { [self] in
+        if clients.isEmpty && Date().timeIntervalSince(lastClientAt) > IDLE_EXIT_SECONDS {
+          log("no client for \(Int(IDLE_EXIT_SECONDS)) s; exiting")
+          unlink(path)
+          exit(0)
+        }
+      }
+    }
+  }
+
+  /** On a thread of its own: QEMU's messages, and a new connection when one ends, until QEMU's server is gone. */
+  private func readQemu(_ first: RfbClient) {
+    var current = first
+    while true {
+      while current.next(onUpdate: { frame(from: current) }) {}
+      Darwin.close(current.fd)
+      Thread.sleep(forTimeInterval: 0.2)
+      guard let again = RfbClient(port: port) else {
+        log("QEMU's VNC server is gone; exiting")
+        exit(0)
+      }
+      current = again
+      queue.sync {
+        rfb = again
+        wholeAsked = nil
+        if watched { askWhole() }
+      }
+    }
+  }
+
+  /** On the queue. */
+  private func askWhole() {
+    wholeAsked = wholeAsked ?? Date()
+    rfb?.request(whole: true)
+  }
+
+  /** On QEMU's thread, after an update: the desktop into a pixel buffer, encoded, while anyone watches. */
+  private func frame(from rfb: RfbClient) {
+    guard queue.sync(execute: { wholeAsked = nil; return watched }) else { return }
+    let width = rfb.width, height = rfb.height
+    if poolSize != (width, height) {
+      let attributes: [CFString: Any] = [
+        kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey: width, kCVPixelBufferHeightKey: height,
+        kCVPixelBufferIOSurfacePropertiesKey: [:] as [CFString: Any],
+      ]
+      var made: CVPixelBufferPool?
+      CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &made)
+      pool = made
+      poolSize = (width, height)
+    }
+    var made: CVPixelBuffer?
+    guard let pool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made) == kCVReturnSuccess, let buffer = made else { return }
+    CVPixelBufferLockBaseAddress(buffer, [])
+    let stride = CVPixelBufferGetBytesPerRow(buffer)
+    if let base = CVPixelBufferGetBaseAddress(buffer) {
+      rfb.pixels.withUnsafeBytes { desktop in
+        for row in 0..<height { memcpy(base + row * stride, desktop.baseAddress! + row * width * 4, width * 4) }
+      }
+    }
+    CVPixelBufferUnlockBaseAddress(buffer, [])
+    queue.async { [self] in
+      last = buffer
+      encode(buffer)
+      // A still desktop is encoded twice more, so it sharpens, as the Mac's own stream does.
+      still?.cancel()
+      let item = DispatchWorkItem { [self] in if let last { encode(last) } }
+      still = item
+      queue.asyncAfter(deadline: .now() + STILL_SECONDS, execute: item)
+      queue.asyncAfter(deadline: .now() + STILL_SECONDS * 2, execute: item)
+    }
+  }
+
+  /** On the queue. */
+  private func encode(_ buffer: CVPixelBuffer) {
+    let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+    if encoder?.width != width || encoder?.height != height {
+      encoder?.stop()
+      encoder = Encoder(width: width, height: height) { [weak self] data, key in
+        self?.queue.async { self?.broadcast(data, key: key, width: width, height: height) }
+      }
+      keyAsked = true
+    }
+    let key = keyAsked
+    keyAsked = false
+    encoder?.encode(buffer, at: CMTime(seconds: Date().timeIntervalSince(started), preferredTimescale: 1000), key: key)
+  }
+
+  /** On the queue, as the Mac's own stream sends a frame. */
+  private func broadcast(_ data: Data, key: Bool, width: Int, height: Int) {
+    frameId = frameId &+ 1
+    var message = Data([VIDEO, H264 << 4 | (key ? 1 : 0), UInt8(frameId >> 8), UInt8(frameId & 255), 0, 0,
+      UInt8(width >> 8), UInt8(width & 255), UInt8(height >> 8), UInt8(height & 255), 0, 0])
+    message.append(data)
+    for client in clients.values where client.wantsVideo {
+      if client.behind {
+        client.needsKey = true
+        continue
+      }
+      if client.needsKey && !key {
+        keyAsked = true
+        continue
+      }
+      client.needsKey = false
+      client.binary(message)
+    }
+  }
+
+  private func serve(_ fd: Int32) {
+    guard handshake(fd) else {
+      Darwin.close(fd)
+      return
+    }
+    let client: Client = queue.sync {
+      nextClient += 1
+      let client = Client(fd: fd, id: nextClient)
+      clients[client.id] = client
+      lastClientAt = Date()
+      return client
+    }
+    client.text("MODE websockets")
+    while let message = nextText(client) {
+      guard let text = message else { continue }
+      let verb = text.split(separator: ",").first.map(String.init) ?? ""
+      switch verb {
+      case "START_VIDEO", "REQUEST_KEYFRAME":
+        queue.async { [self] in
+          if verb == "START_VIDEO" {
+            client.wantsVideo = true
+            client.needsKey = true
+          }
+          keyAsked = true
+          if let last { encode(last) }
+          // QEMU sends nothing while the desktop is still: the whole of it, for a viewer that has none.
+          if verb == "START_VIDEO" { askWhole() }
+        }
+      case "STOP_VIDEO":
+        queue.async { client.wantsVideo = false }
+      default:
+        // Input, the clipboard and the rest go to the guest's bb-box-stream.exe, not here.
+        break
+      }
+    }
+    client.close()
+    Darwin.close(fd)
+    queue.async { [self] in
+      clients[client.id] = nil
+      lastClientAt = Date()
+    }
+  }
+}
+
 // MARK: Main
 
 let arguments = CommandLine.arguments
@@ -1009,6 +1350,18 @@ signal(SIGPIPE, SIG_IGN)
 switch mode {
 case "connect":
   runConnect(path)
+case "attach":
+  runConnect(path, start: false)
+case "qemu":
+  guard arguments.count == 4, let port = Int(arguments[2]), port > 0, port < 65536 else {
+    FileHandle.standardError.write("usage: bb-box-stream qemu <port> <socket>\n".data(using: .utf8)!)
+    exit(2)
+  }
+  let socketPath = arguments[3]
+  try? FileManager.default.createDirectory(atPath: (socketPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+  let server = QemuServer(port: port)
+  server.start(path: socketPath)
+  RunLoop.main.run()
 case "serve":
   try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
   _ = NSApplication.shared
@@ -1016,6 +1369,6 @@ case "serve":
   server.start(path: path)
   RunLoop.main.run()
 default:
-  FileHandle.standardError.write("usage: bb-box-stream serve|connect [socket]\n".data(using: .utf8)!)
+  FileHandle.standardError.write("usage: bb-box-stream serve|connect|attach [socket], or qemu <port> <socket>\n".data(using: .utf8)!)
   exit(2)
 }

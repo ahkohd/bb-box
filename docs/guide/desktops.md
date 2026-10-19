@@ -65,7 +65,7 @@ A macOS desktop on a Mac of the SSH host pool opens as video. One on a Tart Mac 
 
 A Linux desktop on a GPU opens over VNC, with **Show as VNC** ticked. Select it to see the desktop as video, encoded on the box's GPU (NVENC). This needs a GPU box made from a recent image; an older one shows over VNC only.
 
-A Windows desktop on a Mac opens over VNC too, with **Show as VNC** ticked. Select it to see the desktop as video, as a Windows desktop on Proxmox shows by default. This needs a box made from a recent image.
+A Windows desktop on a Mac opens over VNC too, with **Show as VNC** ticked. Select it to see the desktop as video, as a Windows desktop on Proxmox shows by default. The Mac makes the video from QEMU's own picture of the desktop, rather than Windows capturing it. This needs a box made from a recent image, and Xcode's Command Line Tools on the Mac; `bb box doctor` says when a Mac lacks them.
 
 A Linux desktop on Wayland, which runs Ubuntu 26.04, also opens as video, which follows a drag more closely than VNC, does not tear while you scroll, and uses about a sixth of the bandwidth, though a key on its own shows a little later. This needs a Wayland box made from a recent image; an older one shows over VNC. High resolution is not offered on Wayland.
 

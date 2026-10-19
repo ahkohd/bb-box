@@ -195,6 +195,50 @@ test("the box's clipboard reaches only the viewer with control", async () => {
   await box.close();
 });
 
+test("where the video comes from elsewhere, the box's server takes the input and gives the clipboard and the pointer's shape to the viewers, and is asked for no video (#865)", async () => {
+  // The video's source, as bb-box-stream on a Mac for a Windows VM, and the box's own server, as bb-box-stream.exe.
+  const video = new FakeSelkies();
+  const server = new FakeSelkies();
+  const clock = new FakeClock();
+  const relays = new Set<SelkiesRelay>();
+  let own = false;
+  const box = new SelkiesBox(async () => server.channel(), { spacingMs: 0, clock, apart: () => true, onText: (message) => relays.forEach((relay) => relay.fromBox(message)) });
+  const join = (mayInput: () => boolean) => {
+    const end = viewer();
+    const relay = new SelkiesRelay({ viewer: end.end, box, open: async () => video.channel(), mayInput, ownCursor: () => own });
+    relays.add(relay);
+    return Object.assign(end, { relay });
+  };
+  const a = join(() => true);
+  const b = join(() => false);
+  await until("the viewers' pages, on the video's source", () => video.pages.length === 2);
+  await a.relay.receive("m,10,20,1,0");
+  await until("the input on the box's server", () => !!server.pages[0]?.received.includes("m,10,20,1,0"));
+  assert.ok(!video.pages.some((page) => page.received.some((message) => typeof message === "string" && message.startsWith("m,"))), "none to the video's source");
+
+  await server.clipboard("copied in the box");
+  const cursor = 'cursor,{"curdata":"","hotx":1,"hoty":2}';
+  await server.pages[0]!.send(cursor);
+  await until("the clipboard and the cursor", () => a.got.includes(cursor) && b.got.includes(cursor));
+  const text = `clipboard,${Buffer.from("copied in the box").toString("base64")}`;
+  assert.ok(a.got.includes(text), "the viewer with control gets the clipboard");
+  assert.ok(!b.got.includes(text), "a viewer without control does not");
+  own = true;
+  await server.pages[0]!.send('cursor,{"curdata":"x","hotx":0,"hoty":0}');
+  await server.pages[0]!.send("BB_PONG,1");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(!a.got.some((message) => typeof message === "string" && (message.includes('"curdata":"x"') || message.startsWith("BB_PONG"))), "bb-box's own cursor wins, and the rest stays");
+
+  // The box's server captures nothing: it is asked for no size, colour or key frame, which the viewers ask their source.
+  const before = [...server.pages[0]!.received];
+  await box.follow({ width: 1600, height: 900 });
+  await box.fullColour(true);
+  assert.equal(box.keyframe(), false);
+  assert.deepEqual(server.pages[0]!.received, before);
+  for (const relay of relays) await relay.close();
+  await box.close();
+});
+
 test("a viewer that falls behind gets no frames until it has caught up, then from a key frame, which the relay asks for only then", async () => {
   const { server, box, clock, relay, settle } = setup({ lagMs: 50 });
   const a = relay("a");
