@@ -4109,6 +4109,46 @@ test("computer_launch of a single-instance app already open, which opens no new 
   assert.equal(readDesktop(file).windows.filter((window) => window.app === "editor").length, 1);
 });
 
+test("computer_launch on macOS opens Finder, which always runs, in a new window, apps outside the folders Cua looks in by their bundle IDs, and an app open already by bringing its window forward (#712)", async (t) => {
+  const kind: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities: { ...FAKE_KINDS[1]!.capabilities, os: "macos" } };
+  const { harness, box, file, tool } = await desktopBox({ computer: { launchWaitMs: 5_000 }, kind });
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.mac = true;
+  });
+  const launched = () => lastCall(file, "launch_app")?.args;
+
+  // Finder opens a window only for a folder: each launch, by name or path, opens one at home.
+  for (const app of ["Finder", "/System/Library/CoreServices/Finder.app"]) {
+    const opened = text(await tool("computer_launch", { box: box.name, app }));
+    assert.match(opened, /^Opened .*Finder.*\. Its window:\n- window (\d+): Finder "box", 640 by 480\n\nNext: Call computer_observe with window \1 to read it\.$/);
+    assert.deepEqual(launched(), { bundle_id: "com.apple.finder", urls: ["~"] });
+  }
+  assert.equal(readDesktop(file).windows.filter((window) => window.app === "Finder").length, 2);
+
+  // Cua finds no Archive Utility by name, in /System/Library/CoreServices; list_apps gives its bundle ID.
+  assert.match(text(await tool("computer_launch", { box: box.name, app: "archive utility" })), /^Opened archive utility\. Its window:\n- window \d+: Archive Utility "Archive Utility"/);
+  assert.deepEqual(launched(), { bundle_id: "com.apple.archiveutility" });
+  // Cua takes no path on macOS: the bundle ID of the app at that path.
+  const calculator = text(await tool("computer_launch", { box: box.name, app: "/System/Applications/Calculator.app/" }));
+  const id = Number(/window (\d+): Calculator "Calculator"/.exec(calculator)?.[1]);
+  assert.deepEqual(launched(), { bundle_id: "com.apple.calculator" });
+
+  // Launched again, Calculator opens no window: its own, brought forward, without waiting for a new one.
+  const began = Date.now();
+  const again = text(await tool("computer_launch", { box: box.name, app: "calculator" }));
+  assert.ok(Date.now() - began < 2_000);
+  assert.equal(
+    again,
+    `calculator was already open, and opening it again opened no new window. bb-box brought its window to the front:\n- window ${id}: Calculator "Calculator", 640 by 480\n\nNext: Call computer_observe with window ${id} to read it.`,
+  );
+  assert.equal(lastCall(file, "bring_to_front")?.args.window_id, id);
+
+  const missing = await tool("computer_launch", { box: box.name, app: "Nope" });
+  assert.equal(isError(missing), true);
+  assert.match(text(missing), /^bb-box could not open Nope: No installed macOS app found for name 'Nope'\. Apps installed in the box: Archive Utility, Calculator, Finder, TextEdit\./);
+});
+
 test("a web page's runs of text are one line each, and the limit counts every line shown", async (t) => {
   const { harness, box, tool } = await desktopBox({ computer: { launchWaitMs: 2_000 } });
   t.after(() => harness.lifecycle.dispose());

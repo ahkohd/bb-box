@@ -31,6 +31,13 @@
 // Its page gives each word, and each letter, of some text a line of its own,
 // as Chrome does, and has names made only of U+FFFC.
 //
+// With mac, it is like Cua on macOS: launch_app takes a name or bundle ID,
+// not a path, and finds by name only apps in /Applications and
+// /System/Applications, not Finder or Archive Utility in
+// /System/Library/CoreServices. Finder always runs, and opens a new window
+// only for a folder in urls. Calculator, launched again while open, opens
+// no window and gives its window as the launch's.
+//
 // Like Cua, it finds a window's tree by where the window is: of two windows
 // of one app within 20 pixels of each other, a read of either gives the
 // first's tree. set_window_frame moves a window, unless it is maximised.
@@ -100,6 +107,8 @@ export interface FakeDesktop {
   menusInWindow?: boolean;
   /** Cua is on Wayland. */
   wayland?: boolean;
+  /** Cua is on macOS. */
+  mac?: boolean;
   /** How many more launches by name Windows' shell cannot look up yet, as just after a box starts. */
   lookupBusy?: number;
   /** As Cua on Windows: a window with no title is neither listed nor read (#365). */
@@ -731,6 +740,7 @@ export class FakeCua {
   }
 
   #launch(args: Args): Result {
+    if (this.#load().mac) return this.#launchMac(args);
     if (Array.isArray(args.urls)) return this.#openUrl(String(args.urls[0]));
     const name = String(args.name ?? args.launch_path ?? "").toLowerCase();
     if (name === "missing") {
@@ -795,6 +805,28 @@ export class FakeCua {
     });
   }
 
+  #launchMac(args: Args): Result {
+    const byName: Record<string, string> = { calculator: "com.apple.calculator", textedit: "com.apple.TextEdit" };
+    const known = ["com.apple.finder", "com.apple.archiveutility", ...Object.values(byName)];
+    if (args.bundle_id === undefined && args.name === undefined) return text("Provide either bundle_id or name to identify the app to launch.", undefined, true);
+    const bundle = args.bundle_id !== undefined ? String(args.bundle_id) : (byName[String(args.name).toLowerCase()] ?? known.find((id) => id === args.name));
+    if (!bundle || !known.includes(bundle)) {
+      const [field, value] = args.bundle_id !== undefined ? ["bundle_id", args.bundle_id] : ["name", args.name];
+      return text(`No installed macOS app found for ${field} '${String(value)}'.`, { error: "APP_NOT_INSTALLED", [field]: value }, true);
+    }
+    return this.#change((desktop) => {
+      const app = { "com.apple.finder": "Finder", "com.apple.archiveutility": "Archive Utility", "com.apple.calculator": "Calculator", "com.apple.TextEdit": "TextEdit" }[bundle]!;
+      const open = desktop.windows.find((window) => window.app === app);
+      const pid = open?.pid ?? (app === "Finder" ? 400 : desktop.nextPid++);
+      const urls = Array.isArray(args.urls) ? args.urls.map(String) : [];
+      if (open && !(app === "Finder" && urls.length)) return text(`Launched ${app}.`, { pid, bundle_id: bundle, running: true, windows: [this.#windowJson(open)] });
+      if (app === "Finder" && !urls.length) return text("Launched Finder.", { pid, bundle_id: bundle, running: true, windows: [] });
+      const window: FakeWindow = { id: desktop.nextWindow++, pid, app, title: app === "Finder" ? "box" : app, x: 0, y: 0, width: 640, height: 480, onScreen: true };
+      desktop.windows.push(window);
+      return text(`Launched ${app}.`, { pid, bundle_id: bundle, running: true, windows: [this.#windowJson(window)] });
+    });
+  }
+
   /** Opens a URL in the browser window already open, or in a new one a little later. */
   #openUrl(url: string): Result {
     return this.#change((desktop) => {
@@ -828,6 +860,15 @@ export class FakeCua {
   }
 
   #apps(): Result {
+    if (this.#load().mac) {
+      const apps = [
+        { name: "Finder", bundle_id: "com.apple.finder", launch_path: "/System/Library/CoreServices/Finder.app", running: true },
+        { name: "Archive Utility", bundle_id: "com.apple.archiveutility", launch_path: "/System/Library/CoreServices/Applications/Archive Utility.app", running: false },
+        { name: "Calculator", bundle_id: "com.apple.calculator", launch_path: "/System/Applications/Calculator.app", running: false },
+        { name: "TextEdit", bundle_id: "com.apple.TextEdit", launch_path: "/System/Applications/TextEdit.app", running: false },
+      ].map((app) => ({ ...app, kind: "desktop" }));
+      return text(`${apps.length} apps.`, { apps });
+    }
     const installed = ["Tasks", "Editor", "Browser", "Wide", "Editor"].map((name) => ({ name, kind: "desktop", bundle_id: name.toLowerCase(), launch_path: name.toLowerCase(), running: false }));
     const apps = [
       ...installed,
