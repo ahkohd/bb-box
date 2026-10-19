@@ -166,7 +166,19 @@ export class SelkiesSession implements Kept {
   readonly #onVisibility = () => this.#video();
   onEnded?: () => void;
   /** The box cannot be shown as video here, with why, in a sentence; the viewer shows it over RFB instead. */
-  onFallback?: (reason: string) => void;
+  #onFallback: ((reason: string) => void) | undefined;
+  /** Why video gave way while no tab listened, as when it failed while its tab was away: the next tab hears it. */
+  #fallback: string | null = null;
+  get onFallback(): ((reason: string) => void) | undefined {
+    return this.#onFallback;
+  }
+  set onFallback(handler: ((reason: string) => void) | undefined) {
+    this.#onFallback = handler;
+    const reason = this.#fallback;
+    if (!handler || reason === null) return;
+    this.#fallback = null;
+    queueMicrotask(() => handler(reason));
+  }
   connection: Connection = { state: "connecting" };
   /** The box's OS: the paste chord is Cmd+V on macOS and Ctrl+V elsewhere, and a Mac browser's Cmd stands for Ctrl there. */
   guestOs = "linux";
@@ -275,7 +287,7 @@ export class SelkiesSession implements Kept {
     document.addEventListener("visibilitychange", this.#onVisibility);
     if (!canShowVideo()) {
       this.connection = { state: "disconnected", reason: "This browser cannot decode video here.", retryMs: 0 };
-      queueMicrotask(() => this.onFallback?.("This browser cannot decode video here."));
+      queueMicrotask(() => this.#fallBack("This browser cannot decode video here."));
       return;
     }
     this.connect();
@@ -318,7 +330,7 @@ export class SelkiesSession implements Kept {
     this.#firstFrame = setTimeout(() => {
       if (this.#everShown || this.#socket !== socket || this.#stopped || this.#disposed) return;
       this.#drop();
-      this.onFallback?.(`No video came within ${FIRST_FRAME_MS / 1000} s.`);
+      this.#fallBack(`No video came within ${FIRST_FRAME_MS / 1000} s.`);
     }, FIRST_FRAME_MS);
   }
 
@@ -376,11 +388,17 @@ export class SelkiesSession implements Kept {
     this.#decoder = null;
   }
 
+  /** Video gives way to VNC, for `reason`: the tab showing it hears now, or the next tab to show it. */
+  #fallBack(reason: string): void {
+    if (this.#onFallback) this.#onFallback(reason);
+    else this.#fallback = reason;
+  }
+
   #ended(reason: string): void {
     this.#drop();
     if (this.#disposed) return;
     if (!this.#everShown) {
-      this.onFallback?.(reason ? reason.replace(/\.?$/, ".") : "The connection ended before the first frame.");
+      this.#fallBack(reason ? reason.replace(/\.?$/, ".") : "The connection ended before the first frame.");
       return;
     }
     const wait = Math.min(MAX_RETRY_MS, 1000 * 2 ** this.#failures);
@@ -399,7 +417,14 @@ export class SelkiesSession implements Kept {
     this.#needKey = true;
     this.#decoder = new VideoDecoder({
       output: (frame) => this.#draw(frame),
-      error: () => {
+      error: (error) => {
+        // A decoder this browser cannot make for the stream's codec, as Safari's for H.264 past level 5.2, fails again however often
+        // it is made, and making it again at once spun (19 October 2026): the desktop shows over VNC instead, which any size suits.
+        if (error?.name === "NotSupportedError") {
+          this.#drop();
+          this.#fallBack(`This browser cannot decode the desktop's video at its size (${this.#codec}).`);
+          return;
+        }
         // A frame it could not decode: start again from a key frame.
         this.#reset();
         this.#send("REQUEST_KEYFRAME");

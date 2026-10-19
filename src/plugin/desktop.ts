@@ -59,6 +59,11 @@ const SHARP_SCALE = 2;
 const SHARP_TIMEOUT_MS = 30_000;
 /** The largest desktop High resolution sets: Xvnc's limit is far above it, Selkies' encoder is not. */
 const SHARP_MAX: Size = { width: 7680, height: 4320 };
+/**
+ * The most 16x16 macroblocks a High resolution desktop's frame has: H.264 level 5.2's largest frame, 4096x2304. Past it the stream
+ * is level 6, which Safari's decoder refuses, so its video stopped (the owner's note of 19 October 2026).
+ */
+const SHARP_MAX_MACROBLOCKS = 36_864;
 
 /**
  * Xfce's panel again, so it takes a new scale, in the background. A restarted panel runs itself again, and that one can find the old
@@ -99,10 +104,13 @@ export function sharpOffered(box: BoxRecord): boolean {
 
 /** `size` times `factor`, within High resolution's largest and at least 640x480. */
 function scaled(size: Size, factor: number): Size {
-  return {
-    width: Math.min(SHARP_MAX.width, Math.max(640, Math.round(size.width * factor))),
-    height: Math.min(SHARP_MAX.height, Math.max(480, Math.round(size.height * factor))),
-  };
+  const width = Math.min(SHARP_MAX.width, Math.max(640, Math.round(size.width * factor)));
+  const height = Math.min(SHARP_MAX.height, Math.max(480, Math.round(size.height * factor)));
+  // Within the largest frame Safari decodes: smaller in proportion, in whole macroblocks.
+  const over = Math.ceil(width / 16) * Math.ceil(height / 16) / SHARP_MAX_MACROBLOCKS;
+  if (over <= 1) return { width, height };
+  const shrink = Math.sqrt(1 / over);
+  return { width: Math.floor((width * shrink) / 16) * 16, height: Math.floor((height * shrink) / 16) * 16 };
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;

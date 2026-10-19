@@ -114,10 +114,13 @@ function storeChoice(boxId: string, stream: Stream): void {
 
 /** The stream each viewer showed last, so a remount finds its kept session before the box's state loads. */
 const lastStream = new Map<string, Stream>();
+/** Each tab's desktop whose video gave way to VNC, by box and viewer. */
+const failedVideo = new Set<string>();
 
-/** Forgets every viewer's last stream, for tests. */
+/** Forgets every viewer's last stream, and video that gave way, for tests. */
 export function forgetStreams(): void {
   lastStream.clear();
+  failedVideo.clear();
 }
 
 /**
@@ -720,7 +723,14 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   // drags and answers keys as quickly as VNC, in whole frames (056's comparison, corrected).
   const shown = `${boxId}:${viewer}`;
   const [stream, setStream] = useState<Stream | null>(() => lastStream.get(shown) ?? null);
-  const [videoFailed, setVideoFailed] = useState(false);
+  // Video that gave way to VNC stays given way for this tab when it comes back, so its return is instant rather than a new try that
+  // fails again (the owner's note of 19 October 2026), until the person chooses video again.
+  const [videoFailed, setVideoFailedNow] = useState(() => failedVideo.has(shown));
+  const setVideoFailed = (failed: boolean) => {
+    if (failed) failedVideo.add(shown);
+    else failedVideo.delete(shown);
+    setVideoFailedNow(failed);
+  };
   const decide = (next: Stream) => {
     lastStream.set(shown, next);
     setStream(next);
