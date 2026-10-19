@@ -444,6 +444,70 @@ still, black on white and coloured: 0.9999 and 0.9998 over VNC, 0.998 and
   0.31-0.38 s), the held picture covering the change; hand-back with the
   tab hidden restores 1920x1080 in 0.64-0.85 s.
 
+## Windows on a Mac: video from QEMU, 19 October 2026
+
+Windows' own capture on the Mac's VirtIO GPU gave video a few frames a
+second (above). bb-box-stream gained a mode for the Mac itself (#865): it
+reads the VM's QEMU VNC server on the Mac's loopback, raw pixels, and
+encodes them with VideoToolbox, as the macOS stream does. The Tart backend
+builds it on each Mac from mac-stream.swift with the Command Line Tools'
+swiftc. The person's pointer goes to QEMU's tablet through it, as the VNC
+display gives it; keys, typing and the clipboard go to the guest's
+bb-box-stream.exe, which also says where the pointer is for people
+watching.
+
+Measured through BB, on a Tart Windows box (4 cores, 1280x800, image
+build.20261019-190106-a539) and a Linux viewer box, three runs of each,
+interleaved, each run closing its viewer before the next (p50, p95 in
+brackets). Frame rates count only the frames in which the dragged block
+moved, as both streams send frames that change nothing (below).
+
+| | Video, LAN | VNC, LAN | Video, 20 Mbit/s, 40 ms | VNC, 20 Mbit/s, 40 ms |
+| --- | --- | --- | --- | --- |
+| Moves a second, dragging | 25-29 | 25-29 | 25-29 | 14-15 |
+| Drag lag | 58-60 (76-519) ms | 73-74 (111-119) ms | 101-102 (118-452) ms | 121-133 (187-199) ms |
+| Drag Mbit/s | 0.07-0.13 | 4.5-5.8 | 0.08-0.14 | 1.8-2.0 |
+| Scroll Mbit/s | 0.6-0.7 | 8.9-10.9 | 0.6-0.7 | 2.6-3.6 |
+| Scroll frames torn | 0% | 3-8% | 0% | 2-6% |
+| Key alone | 95-116 ms | 85-98 ms | 142-144 ms | 130-135 ms |
+| Text SSIM still, black / coloured | 0.998-1.0 / 0.975-0.988 | 1.0 / 1.0 | 0.998-1.0 / 0.975-0.986 | 1.0 / 1.0 |
+
+- **On a LAN, video keeps up with VNC**, 15 ms closer to the pointer, with no
+  torn frames, at a fifteenth of the bandwidth. A key alone shows within
+  about 15 ms of VNC's.
+- **On a slow link, video is clearly ahead**: nearly twice VNC's moves a
+  second, and 20-30 ms closer.
+- **QEMU's refresh is the limit for both.** Its VNC server refreshes every
+  30 ms while the picture changes, so about 33 a second at most; while it
+  is still, more slowly, up to every 3 s; and at once again only when a
+  client sends input (ui/vnc.c, vnc_refresh and protocol_client_msg). With
+  the input through the guest, a key alone first showed in 150-186 ms. So
+  the pointer goes through QEMU, and after each key the pointer as it is
+  goes to QEMU again.
+- **On the Mac**, a frame takes about 4 ms to encode and the bridge under 2%
+  of a core. In the guest, Windows' capture and encoder no longer run.
+- **QEMU sometimes stops answering one client** after another VNC client
+  came and went; why is not known. The bridge connects again when a whole
+  picture asked for has not come within a second. A first version of that
+  reconnection wrote to the old socket's number after it was reused, and
+  stalled the video while a VNC viewer joined; fixed (#881). Since then, a
+  video viewer that joined as a VNC viewer joined got its video in 18 of 19
+  tries.
+- **People watching see the agent's pointer**, over video and over VNC:
+  bb-box-stream.exe says where it is to a client that asks, and bb-box
+  draws it, as on Wayland. Neither stream has it in the picture, as
+  Windows puts it on the GPU's cursor plane.
+
+## Corrected, 19 October 2026
+
+The VNC frame rates for Windows on a Mac, in the baselines (32 dragging, 56
+scrolling) and in the section of 18 October (49-52 and 52-58), count every
+frame noVNC drew. The panel asks QEMU to send still areas again losslessly,
+and each of those answers is a frame in which nothing on the scene moved.
+Counting only the frames in which the dragged block moved, as above, VNC on
+the same kind gives 25-29 a second on a LAN. The lags, key times and
+bandwidth of those runs are as they were.
+
 ## Limits
 
 - Only the pool Mac is measured at 2x: Linux and Windows boxes run at 1x,
