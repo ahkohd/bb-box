@@ -38,16 +38,24 @@ function drop(key: string): void {
   entries.delete(key);
   clearTimeout(entry.expiry);
   clearTimeout(entry.handBack);
-  entry.kept.dispose();
+  try {
+    entry.kept.dispose();
+  } catch (error) {
+    console.error(`bb-box: a kept session (${key}) failed as it closed.`, error);
+  }
 }
 
 /**
  * The session kept under `key`, made with `make` when there is none, or a
  * private one when the kept one is on screen elsewhere. `kept` says which:
  * a kept session is given back with `releaseKept`; a private one is the
- * caller's to dispose.
+ * caller's to dispose. `resume` runs on the session it gives, once it shows.
+ *
+ * A kept session that throws as it shows again or resumes is closed, and a
+ * fresh one made in its place: the tab claims it in a layout effect, where a
+ * throw would take the whole panel down (19 October 2026).
  */
-export function claimKept<K extends Kept>(key: string, make: () => K): { readonly session: K; readonly kept: boolean } {
+export function claimKept<K extends Kept>(key: string, make: () => K, resume?: (session: K) => void): { readonly session: K; readonly kept: boolean } {
   const entry = entries.get(key);
   if (entry && !entry.inUse) {
     entry.inUse = true;
@@ -55,10 +63,19 @@ export function claimKept<K extends Kept>(key: string, make: () => K): { readonl
     clearTimeout(entry.handBack);
     entry.expiry = undefined;
     entry.handBack = undefined;
-    entry.kept.hidden = false;
-    return { session: entry.kept as K, kept: true };
+    try {
+      entry.kept.hidden = false;
+      resume?.(entry.kept as K);
+      return { session: entry.kept as K, kept: true };
+    } catch (error) {
+      console.error(`bb-box: a kept session (${key}) failed as it showed again, so a fresh one starts.`, error);
+      drop(key);
+    }
+  } else if (entry) {
+    const session = make();
+    resume?.(session);
+    return { session, kept: false };
   }
-  if (entry) return { session: make(), kept: false };
   const session = make();
   session.hidden = false;
   session.onEnded = () => {
@@ -66,15 +83,22 @@ export function claimKept<K extends Kept>(key: string, make: () => K): { readonl
     if (current?.kept === session && !current.inUse) drop(key);
   };
   entries.set(key, { kept: session, inUse: true });
+  resume?.(session);
   return { session, kept: true };
 }
 
-/** The tab went; the session rests hidden, and `handBack` runs after a minute unless a tab claims it first. */
+/** The tab went; the session rests hidden, and `handBack` runs after a minute unless a tab claims it first. One that throws as it hides is closed. */
 export function releaseKept(key: string, options: { handBack?: () => Promise<void> } = {}): void {
   const entry = entries.get(key);
   if (!entry) return;
   entry.inUse = false;
-  entry.kept.hidden = true;
+  try {
+    entry.kept.hidden = true;
+  } catch (error) {
+    console.error(`bb-box: a kept session (${key}) failed as it was hidden, so it closes.`, error);
+    drop(key);
+    return;
+  }
   entry.expiry = setTimeout(() => drop(key), HIDDEN_MS);
   if (options.handBack) {
     const handBack = options.handBack;
