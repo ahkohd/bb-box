@@ -159,6 +159,8 @@ export interface BbBox {
   workspace(threadId: string, signal?: AbortSignal): Promise<{ hostId: string; path: string | null }>;
   /** The thread's own storage folder, $BB_THREAD_STORAGE, and its host (#482); null when BB gives none. */
   threadStorage(threadId: string, signal?: AbortSignal): Promise<{ hostId: string; path: string } | null>;
+  /** The storage folders of the thread's parent, its parent's parent and so on, nearest first, up to `limit`. */
+  ancestorStorages(threadId: string, limit: number, signal?: AbortSignal): Promise<{ threadId: string; hostId: string; path: string }[]>;
   /** A thread's project, for boxes the panel or the CLI acquires. */
   projectOf(threadId: string): Promise<string | null>;
   /**
@@ -1134,6 +1136,16 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     async threadStorage(threadId, signal) {
       const location = await bb.sdk.threads.storageLocation({ threadId, signal }).catch(() => null);
       return location ? { hostId: location.hostId, path: location.storageRootPath } : null;
+    },
+    async ancestorStorages(threadId, limit, signal) {
+      const found: { threadId: string; hostId: string; path: string }[] = [];
+      let parent = (await bb.sdk.threads.get({ threadId, signal }).catch(() => null))?.parentThreadId ?? null;
+      while (parent && found.length < limit && !found.some((one) => one.threadId === parent)) {
+        const location = await bb.sdk.threads.storageLocation({ threadId: parent, signal }).catch(() => null);
+        if (location) found.push({ threadId: parent, hostId: location.hostId, path: location.storageRootPath });
+        parent = (await bb.sdk.threads.get({ threadId: parent, signal }).catch(() => null))?.parentThreadId ?? null;
+      }
+      return found;
     },
     projectOf,
     async runsOn(threadId, signal) {
