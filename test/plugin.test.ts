@@ -19,7 +19,7 @@ import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases, removeStaleApp, setAsideOtherMachines } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
-import { FOLLOW_FRAME_MS, sharpOffered } from "../src/plugin/desktop.ts";
+import { FOLLOW_FRAME_MS, POINTER_NONE, sharpOffered } from "../src/plugin/desktop.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { boxPath, workspacePath } from "../src/plugin/tools.ts";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
@@ -2763,6 +2763,55 @@ test("a box whose image has bb-box-cursor gives each video viewer its pointer's 
   await one.close();
   await two.close();
   await until("the helper ended", async () => runs[0]!.ended);
+});
+
+test("a VNC viewer's pointer stream gets the box's pointer from the same helper as video viewers, and ends at once on a box without one (060)", async (t) => {
+  const runs: { emit: (event: BoxPointer) => void; ended: boolean }[] = [];
+  const pointer = (onEvent: (event: BoxPointer) => void, signal: AbortSignal) =>
+    new Promise<void>((resolve) => {
+      const run = { emit: onEvent, ended: false };
+      runs.push(run);
+      signal.addEventListener("abort", () => {
+        run.ended = true;
+        resolve();
+      });
+    });
+  const { harness, app } = await start(undefined, { kinds: [FAKE_SELKIES_KIND], pointer });
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: FAKE_SELKIES_KIND.id });
+  await app.boxes.idle();
+  const box = await only(app);
+  const said = (session: { sent: readonly (string | Uint8Array)[] }) => session.sent.filter((message): message is string => typeof message === "string");
+  // A VNC viewer's own stream of the pointer: it alone starts the helper.
+  const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+  await until("the helper running", async () => runs.length === 1);
+  runs[0]!.emit({ type: "image", width: 1, height: 1, hotX: 0, hotY: 0, argb: Uint8Array.from([0, 0, 255, 255]) });
+  runs[0]!.emit({ type: "position", x: 10, y: 20 });
+  await until("the pointer", async () => said(vnc).includes("BB_POINTER,10,20"));
+  assert.ok(said(vnc).some((message) => message.startsWith("cursor,")), "its shape too");
+  // A video viewer shares the run, and gets the pointer as it is.
+  const video = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-video-0001&stream=selkies`);
+  await until("the video viewer's pointer", async () => said(video).includes("BB_POINTER,10,20"));
+  assert.equal(runs.length, 1, "one helper for the box");
+  runs[0]!.emit({ type: "position", x: 11, y: 20 });
+  await until("both told", async () => said(vnc).includes("BB_POINTER,11,20") && said(video).includes("BB_POINTER,11,20"));
+  // Input on the pointer stream goes nowhere, and it is not a viewer of the desktop: it neither takes nor holds control.
+  await vnc.receive("kd,97");
+  assert.equal(vnc.closeCalls.length, 0);
+  await video.close();
+  assert.equal(runs[0]!.ended, false, "the VNC viewer still listens");
+  await vnc.close();
+  await until("the helper ended", async () => runs[0]!.ended);
+
+  // A box whose image has no helper: the stream ends at once, saying why, and the VNC picture is as before.
+  const plain = await start(undefined, { kinds: [FAKE_SELKIES_KIND] });
+  t.after(() => plain.harness.lifecycle.dispose());
+  await plain.harness.behavior.callRpc("acquire", { threadId: THREAD, kind: FAKE_SELKIES_KIND.id });
+  await plain.app.boxes.idle();
+  const older = await only(plain.app);
+  const none = await plain.harness.behavior.experimental_openWebSocket(`/desktop?box=${older.id}&viewer=viewer-vnc-00002&stream=pointer`);
+  await until("the stream ended", async () => none.closeCalls.length > 0);
+  assert.deepEqual(none.closeCalls[0], { code: 1000, reason: POINTER_NONE });
 });
 
 test("a box whose image has no bb-box-cursor, as every Wayland box of a 24.04 image, keeps Selkies' own cursor messages and gets no pointer of bb-box's (#707, 060)", async (t) => {

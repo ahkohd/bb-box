@@ -77,7 +77,7 @@ On Windows, this needs a box made from a recent image, which keeps the pointer a
 
 Over VNC, a Windows box shows no pointer in the picture until a mouse has moved in it, its own or yours; from then on the picture shows where the box's pointer is. While you hold control and watch over VNC, Windows' pointer is hidden, so only your own pointer shows, as a plain arrow, not the box's trailing behind it; it comes back when you hand control back or stop watching over VNC. To see the agent's pointer from the start, use video, which Windows desktops on Proxmox show by default.
 
-On a Linux desktop on Wayland made from a recent image, video shows the box's pointer as the agent moves it, in its own shape. While you hold control, your own pointer takes the box's shape, over video and over VNC alike, and other people watching over video see where you point. Over VNC, people watching do not see the box's pointer.
+On a Linux desktop on Wayland made from a recent image, video and VNC both show the box's pointer as the agent moves it, in its own shape. While you hold control, your own pointer takes the box's shape, and other people watching see where you point.
 
 On a Wayland box made from an older image, the box draws its pointer into the picture, which shows it as the agent moves it. While you hold control, the box leaves it out, so it does not trail behind your own, and your own pointer is then a plain arrow, whatever the box's shape. On a box from an older image still, you see your own pointer and, a little behind it, the box's.
 
