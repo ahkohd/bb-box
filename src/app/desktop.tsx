@@ -56,6 +56,7 @@ import {
   SETTLE_MS,
   XK_CONTROL_L,
   XK_V,
+  OptionComposer,
   boxKey,
   commandKey,
   macBrowser,
@@ -137,12 +138,19 @@ class Viewer extends RFB {
     return { w: Math.floor(size.w), h: Math.floor(size.h) };
   }
 
+  readonly #option = new OptionComposer();
+
   override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
     // The code too: with QEMU's key events the box takes the scancode, not the keysym.
-    const key = boxKey(keysym, code, this.guestOs, macBrowser(), this.macKeys);
+    const mac = macBrowser();
+    const key = boxKey(keysym, code, this.guestOs, mac, this.macKeys);
+    const keys = mac && this.guestOs !== "macos" ? this.#option.keys(key, down) : [{ key, down }];
     // A Mac's input and Windows' bb-box-stream type a character the box's layout lacks by the character, and know none
     // of X's own names for them.
-    super._handleKeyEvent(this.guestOs === "macos" || this.guestOs === "windows" ? unicodeKeysym(key.keysym) : key.keysym, key.code, down, numlock, capslock);
+    for (const each of keys) {
+      const sent = this.guestOs === "macos" || this.guestOs === "windows" ? unicodeKeysym(each.key.keysym) : each.key.keysym;
+      super._handleKeyEvent(sent, each.key.code, each.down, numlock, capslock);
+    }
   }
 
   /**

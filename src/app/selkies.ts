@@ -18,7 +18,7 @@ import keysyms from "@novnc/novnc/core/input/keysymdef.js";
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { MAX_RETRY_MS, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, type Connection } from "./viewer.ts";
+import { MAX_RETRY_MS, OptionComposer, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, type Connection } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -242,7 +242,7 @@ export class SelkiesSession implements Kept {
     this.#canvas.tabIndex = -1;
     this.element.appendChild(this.#canvas);
     this.#keyboard = new Keyboard(this.#canvas);
-    this.#keyboard.onkeyevent = (keysym, _code, down) => this.#key(keysym, down);
+    this.#keyboard.onkeyevent = (keysym, code, down) => this.#key(keysym, code, down);
     for (const type of ["pointerdown", "pointerup", "pointermove"] as const) this.#canvas.addEventListener(type, (event) => this.#pointerEvent(event));
     this.#canvas.addEventListener("wheel", (event) => this.#wheelEvent(event), { passive: false });
     this.#canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -628,20 +628,26 @@ export class SelkiesSession implements Kept {
     this.guestOs = os;
   }
 
-  #key(keysym: number, down: boolean): void {
+  readonly #option = new OptionComposer();
+
+  #key(keysym: number, code: string, down: boolean): void {
     if (!this.#mine) return;
     // bb-box's own Mac input names Command and Option as most servers do.
-    const key = boxKey(keysym, "", this.guestOs, macBrowser(), null).keysym;
-    const sent = this.guestOs === "windows" || this.guestOs === "macos" ? unicodeKeysym(key) : key;
-    if (down) this.#held.add(sent);
-    else this.#held.delete(sent);
-    this.#send(`${down ? "kd" : "ku"},${sent}`);
+    const mac = macBrowser();
+    const key = boxKey(keysym, code, this.guestOs, mac, null);
+    for (const each of mac && this.guestOs !== "macos" ? this.#option.keys(key, down) : [{ key, down }]) {
+      const sent = this.guestOs === "windows" || this.guestOs === "macos" ? unicodeKeysym(each.key.keysym) : each.key.keysym;
+      if (each.down) this.#held.add(sent);
+      else this.#held.delete(sent);
+      this.#send(`${each.down ? "kd" : "ku"},${sent}`);
+    }
   }
 
   /** Lets go of what this viewer holds down in the box. */
   #release(): void {
     for (const keysym of this.#held) this.#send(`ku,${keysym}`);
     this.#held.clear();
+    this.#option.reset();
     if (this.#mask) {
       this.#mask = 0;
       this.#send(`m,${this.#pointer.x},${this.#pointer.y},0,0`);
