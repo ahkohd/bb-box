@@ -32,7 +32,7 @@
   },
   "scripts": {
     "typecheck": "tsc",
-    "test": "node --test test/*.test.ts && vitest run",
+    "test": "node --import ./test/exit-guard.ts --test --test-timeout=120000 test/*.test.ts && vitest run",
     "build": "bb plugin build",
     "smoke": "node scripts/smoke.ts",
     "conformance": "node scripts/conformance.ts",

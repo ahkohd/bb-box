@@ -379,8 +379,9 @@ function text(result: PluginAgentToolResult): string {
   return typeof result === "string" ? result : result.content.map((part) => ("text" in part ? part.text : "")).join("");
 }
 
-test("box_image_set and bb box image set, list, show and remove keep a project's image in the configuration (049)", async () => {
+test("box_image_set and bb box image set, list, show and remove keep a project's image in the configuration (049)", async (t) => {
   const { app, harness, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
   const set = await tool("box_image_set", { name: "rust-tools", kinds: ["linux"], script: "#!/bin/bash\necho rust\n", check: "cargo --version\n", script_path: ".bb/box-setup.sh", check_path: ".bb/box-check.sh" });
   assert.match(text(set), /^Set image rust-tools for linux boxes in this thread's project\./);
   const image = app.configuration.exported().images?.["rust-tools"];
@@ -1168,9 +1169,13 @@ test("the images-after-a-BB-update service ends within a second when the plugin 
   const asked: ServerResponse[] = [];
   const server = createServer((_request, response) => void asked.push(response));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => (asked.forEach((response) => response.destroy()), server.close()));
   const { harness, app } = await start(undefined, { appUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}` });
-  t.after(() => harness.lifecycle.dispose());
+  // The plugin first, as it can ask again until it stops; then every connection, as the server answers none, and the server.
+  t.after(async () => {
+    await harness.lifecycle.dispose();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  });
   const { kinds: _, ...rest } = app.configuration.exported();
   const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, general: { ...rest.general, nightlyImages: true } }, revision: rest.revision })) as { ok: boolean };
   assert.ok(applied.ok, JSON.stringify(applied));
