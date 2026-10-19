@@ -318,6 +318,8 @@ export interface SelkiesRelayOptions {
   onResize?(size: { readonly width: number; readonly height: number }): void;
   /** Whether the viewer's browser decodes 4:4:4, as it says once connected (bb-box's `BB_FULLCOLOR,<0|1>`, which goes no further). */
   onFullColour?(yes: boolean): void;
+  /** The largest frame the viewer's browser decodes, in macroblocks, as it says once connected (bb-box's `BB_DECODES,<n>`, which goes no further). */
+  onDecodes?(macroblocks: number): void;
   onEnd?(by: "viewer" | "box", error: Error | null): void;
   /**
    * Whether bb-box sends this viewer the box's cursor itself, from
@@ -501,6 +503,11 @@ export class SelkiesRelay {
     const colour = /^BB_FULLCOLOR,([01])$/.exec(message);
     if (colour) {
       this.#options.onFullColour?.(colour[1] === "1");
+      return;
+    }
+    const decodes = /^BB_DECODES,(\d{1,7})$/.exec(message);
+    if (decodes) {
+      this.#options.onDecodes?.(Number(decodes[1]));
       return;
     }
     const resize = /^r,(\d{1,5})x(\d{1,5})$/.exec(message);

@@ -15,6 +15,7 @@
 
 import Keyboard from "@novnc/novnc/core/input/keyboard.js";
 import keysyms from "@novnc/novnc/core/input/keysymdef.js";
+import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
@@ -44,6 +45,8 @@ export function unicodeKeysym(keysym: number): number {
 export const FIRST_FRAME_MS = 10_000;
 /** How often the viewer says which frame it has shown, as Selkies' own page does. */
 const ACK_MS = 50;
+/** How long a viewer waits for a frame it decodes, while its stream is larger than its browser decodes, before it shows VNC. */
+export const FIT_WAIT_MS = 15_000;
 /** The longest the viewer holds its last picture through a High resolution switch, so a switch that fails never freezes the view. */
 export const HOLD_MAX_MS = 15_000;
 /** How long the box's desktop takes to draw at its new scale after its new size: about 0.6 s on a Proxmox LXC box (the owner's note of 18 October 2026). */
@@ -87,9 +90,32 @@ export function decodesFullColour(): Promise<boolean> {
   return fullColour;
 }
 
+let largest: Promise<number> | null = null;
+/**
+ * The largest frame this browser decodes as the box's video, in macroblocks at 60 frames a second (#864): past level 5.2 only where
+ * it decodes the level's stream, in 4:4:4 too when it decodes 4:4:4, as the box streams it then. Asked once.
+ */
+export function decodesMacroblocks(): Promise<number> {
+  largest ??= (async () => {
+    if (typeof VideoDecoder === "undefined" || typeof VideoDecoder.isConfigSupported !== "function") return LEVEL_52_MACROBLOCKS;
+    const supported = (codec: string) =>
+      VideoDecoder.isConfigSupported({ codec, optimizeForLatency: true }).then(
+        (support) => support.supported === true,
+        () => false,
+      );
+    const colour = await decodesFullColour();
+    for (const level of LEVELS_PAST_52) {
+      if ((await supported(level.codec)) && (!colour || (await supported(`avc1.F400${level.codec.slice(-2)}`)))) return level.macroblocks;
+    }
+    return LEVEL_52_MACROBLOCKS;
+  })();
+  return largest;
+}
+
 /** Forgets what this browser decodes, for tests. */
 export function forgetFullColour(): void {
   fullColour = null;
+  largest = null;
 }
 /** Notches of a wheel turned by pixels, as a mouse's are about this many pixels each. */
 const WHEEL_PIXELS = 50;
@@ -169,6 +195,12 @@ export class SelkiesSession implements Kept {
   };
   onEnded?: () => void;
   /** The box cannot be shown as video here, with why, in a sentence; the viewer shows it over RFB instead. */
+  /** The largest frame this browser decodes, in macroblocks, once known; level 5.2's until then. */
+  #decodes = LEVEL_52_MACROBLOCKS;
+  /** The stream's frame, in macroblocks, as its frames' headers give it. */
+  #streamMacroblocks = 0;
+  /** While the stream is larger than this browser decodes, as the box shrinks it for this viewer: the wait for a frame it decodes. */
+  #fitting: ReturnType<typeof setTimeout> | undefined;
   #onFallback: ((reason: string) => void) | undefined;
   /** Why video gave way while no tab listened, as when it failed while its tab was away: the next tab hears it. */
   #fallback: string | null = null;
@@ -376,6 +408,11 @@ export class SelkiesSession implements Kept {
       void decodesFullColour().then((yes) => {
         if (this.#socket === socket && socket.readyState === WebSocket.OPEN) socket.send(`BB_FULLCOLOR,${yes ? 1 : 0}`);
       });
+      // The largest frame it decodes: the box keeps High resolution within what every viewer does (#864).
+      void decodesMacroblocks().then((most) => {
+        this.#decodes = most;
+        if (this.#socket === socket && socket.readyState === WebSocket.OPEN) socket.send(`${DECODES_VERB},${most}`);
+      });
     };
     socket.onmessage = (event: MessageEvent) => {
       if (this.#socket === socket) this.#message(event.data);
@@ -395,6 +432,8 @@ export class SelkiesSession implements Kept {
 
   /** Forgets the connection and its decoder, without ending the session. */
   #drop(): void {
+    clearTimeout(this.#fitting);
+    this.#fitting = undefined;
     const socket = this.#socket;
     this.#socket = null;
     clearInterval(this.#ackTimer);
@@ -436,6 +475,17 @@ export class SelkiesSession implements Kept {
         // A decoder this browser cannot make for the stream's codec, as Safari's for H.264 past level 5.2, fails again however often
         // it is made, and making it again at once spun (19 October 2026): the desktop shows over VNC instead, which any size suits.
         if (error?.name === "NotSupportedError") {
+          // A stream larger than this browser decodes, as while the box makes it smaller for this viewer (#864): the decoder waits
+          // for a key frame of a size it decodes, for a while.
+          if (this.#streamMacroblocks > this.#decodes && this.#fitting === undefined) {
+            const codec = this.#codec;
+            this.#fitting = setTimeout(() => {
+              this.#fitting = undefined;
+              this.#drop();
+              this.#fallBack(`This browser cannot decode the desktop's video at its size (${codec}).`);
+            }, FIT_WAIT_MS);
+            return;
+          }
           this.#drop();
           this.#fallBack(`This browser cannot decode the desktop's video at its size (${this.#codec}).`);
           return;
@@ -459,6 +509,13 @@ export class SelkiesSession implements Kept {
     const key = (bytes[1]! & 15) === 1;
     const id = (bytes[2]! << 8) | bytes[3]!;
     this.#received = id;
+    this.#streamMacroblocks = macroblocks((bytes[6]! << 8) | bytes[7]!, (bytes[8]! << 8) | bytes[9]!);
+    if (this.#fitting !== undefined) {
+      if (!key || this.#streamMacroblocks > this.#decodes) return;
+      clearTimeout(this.#fitting);
+      this.#fitting = undefined;
+      this.#reset();
+    }
     if (this.#needKey && !key) return;
     this.#needKey = false;
     const decoder = this.#decoder;

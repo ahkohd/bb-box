@@ -360,6 +360,24 @@ test("messages are told apart by their first field, and a pointer loses its sequ
   assert.equal(unsequenced("kd,65"), "kd,65");
 });
 
+test("a viewer's word on the largest frame it decodes goes to bb-box, not to Selkies (#864)", async () => {
+  const { server, box } = setup();
+  const open = async () => server.channel();
+  const end = viewer();
+  const said: number[] = [];
+  const relay = new SelkiesRelay({ viewer: end.end, box, open, mayInput: () => false, onDecodes: (most) => void said.push(most) });
+  await until("the viewer's page", () => server.pages.length === 1);
+  const page = server.pages[0]!;
+  await relay.receive("BB_DECODES,139264");
+  await relay.receive("BB_DECODES,many");
+  await relay.receive("STOP_VIDEO");
+  await until("the video request", () => page.received.at(-1) === "STOP_VIDEO");
+  assert.deepEqual(said, [139264]);
+  assert.ok(!page.received.some((message) => typeof message === "string" && message.startsWith("BB_DECODES")), "Selkies never sees bb-box's own message");
+  await relay.close();
+  await box.close();
+});
+
 test("a viewer's word on 4:4:4 goes to bb-box, not to Selkies; bb-box asks the display for it over its controller connection", async () => {
   const { server, box } = setup();
   const open = async () => server.channel();
