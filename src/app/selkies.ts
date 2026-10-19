@@ -53,6 +53,12 @@ export const HOLD_MAX_MS = 15_000;
 export const HOLD_SETTLE_MS = 800;
 /** How long the viewer waits for the new size once the switch is over, or once it asked the desktop for its size, before it shows the stream as it is. */
 export const HOLD_NO_SIZE_MS = 2_000;
+/** How often the viewer checks that its video still moves. */
+const WATCH_MS = 1_000;
+/** How long frames may come with none shown, or input go with no frame back, before the video starts again from a key frame. */
+export const STALL_MS = 3_000;
+/** The least time between two such starts, or a start as the window regains focus: each costs the box a key frame. */
+export const RESTART_GAP_MS = 10_000;
 /** The cross-fade from the held picture to the new one. */
 const HOLD_FADE_MS = 150;
 /** A frame message: type 4, H.264. */
@@ -193,6 +199,10 @@ export class SelkiesSession implements Kept {
     if (document.visibilityState === "hidden") this.#letGo();
     this.#video();
   };
+  /** The window regains focus, as after the person was away: the video starts again, as a tab coming back does. */
+  readonly #onFocus = () => {
+    if (this.connection.state === "connected" && performance.now() - this.#restarted >= RESTART_GAP_MS) this.#restart();
+  };
   onEnded?: () => void;
   /** The box cannot be shown as video here, with why, in a sentence; the viewer shows it over RFB instead. */
   /** The largest frame this browser decodes, in macroblocks, once known; level 5.2's until then. */
@@ -238,6 +248,15 @@ export class SelkiesSession implements Kept {
   #received: number | null = null;
   #acked: number | null = null;
   #ackTimer: ReturnType<typeof setInterval> | undefined;
+  /**
+   * The watch on the video, while it should show: since when frames have come with none shown, and since when input has gone with no
+   * frame back. Either for STALL_MS, the video starts again. A page left long in the background, in Chromium (the owner's note of
+   * 19 October 2026), showed nothing new as control was taken, until its tab was switched away and back.
+   */
+  #watchTimer: ReturnType<typeof setInterval> | undefined;
+  #undrawnSince: number | null = null;
+  #unansweredSince: number | null = null;
+  #restarted = -Infinity;
   /** A frame was shown since this session began: a later end reconnects rather than falls back. */
   #everShown = false;
   #failures = 0;
@@ -320,6 +339,7 @@ export class SelkiesSession implements Kept {
     this.element.addEventListener("keydown", (event) => this.#interceptPaste(event), true);
     document.addEventListener("paste", this.#onPasteEvent, true);
     document.addEventListener("visibilitychange", this.#onVisibility);
+    window.addEventListener("focus", this.#onFocus);
     if (!canShowVideo()) {
       this.connection = { state: "disconnected", reason: "This browser cannot decode video here.", retryMs: 0 };
       queueMicrotask(() => this.#fallBack("This browser cannot decode video here."));
@@ -361,10 +381,34 @@ export class SelkiesSession implements Kept {
       this.#send("STOP_VIDEO");
       return;
     }
+    this.#restart();
+    this.#awaitFirstFrame(this.#socket);
+  }
+
+  /**
+   * Starts the video again from a key frame, with a new decoder, and says which frame came last: as a tab coming back, the page
+   * coming back into view, control taken, the window regaining focus, or the watch on the video finding it stalled.
+   */
+  #restart(): void {
+    if (this.#stopped || !this.#socket || this.#socket.readyState !== WebSocket.OPEN) return;
+    this.#restarted = performance.now();
+    this.#undrawnSince = null;
+    this.#unansweredSince = null;
     this.#reset();
+    this.#acked = null;
+    this.#ack();
     this.#send("START_VIDEO");
     this.#send("REQUEST_KEYFRAME");
-    this.#awaitFirstFrame(this.#socket);
+  }
+
+  /** Starts the video again when frames come and none shows, or input goes and no frame comes back, while it should show. */
+  #watch(): void {
+    // While the stream is larger than this browser decodes, frames come and none shows until the box makes it smaller (#864).
+    if (this.#stopped || this.#fitting !== undefined || this.connection.state !== "connected") return;
+    const now = performance.now();
+    if (now - this.#restarted < RESTART_GAP_MS) return;
+    const since = Math.min(this.#undrawnSince ?? Infinity, this.#unansweredSince ?? Infinity);
+    if (now - since >= STALL_MS) this.#restart();
   }
 
   /**
@@ -422,6 +466,8 @@ export class SelkiesSession implements Kept {
     };
     clearInterval(this.#ackTimer);
     this.#ackTimer = setInterval(() => this.#ack(), ACK_MS);
+    clearInterval(this.#watchTimer);
+    this.#watchTimer = setInterval(() => this.#watch(), WATCH_MS);
   }
 
   reconnect(): void {
@@ -437,6 +483,9 @@ export class SelkiesSession implements Kept {
     const socket = this.#socket;
     this.#socket = null;
     clearInterval(this.#ackTimer);
+    clearInterval(this.#watchTimer);
+    this.#undrawnSince = null;
+    this.#unansweredSince = null;
     socket?.close();
     closeDecoder(this.#decoder);
     this.#decoder = null;
@@ -509,6 +558,8 @@ export class SelkiesSession implements Kept {
     const key = (bytes[1]! & 15) === 1;
     const id = (bytes[2]! << 8) | bytes[3]!;
     this.#received = id;
+    this.#undrawnSince ??= performance.now();
+    this.#unansweredSince = null;
     this.#streamMacroblocks = macroblocks((bytes[6]! << 8) | bytes[7]!, (bytes[8]! << 8) | bytes[9]!);
     if (this.#fitting !== undefined) {
       if (!key || this.#streamMacroblocks > this.#decodes) return;
@@ -652,6 +703,7 @@ export class SelkiesSession implements Kept {
       this.#height = height;
       if (resized) this.#drawPointer();
       this.#canvas.getContext("2d")?.drawImage(frame, 0, 0);
+      this.#undrawnSince = null;
       if (this.#hold && this.#hold.resized === null && this.#hold.size !== `${width}x${height}`) {
         this.#hold.resized = performance.now();
         this.#holdUntil();
@@ -680,7 +732,9 @@ export class SelkiesSession implements Kept {
 
   #send(message: string): void {
     const socket = this.#socket;
-    if (socket && socket.readyState === WebSocket.OPEN) socket.send(message);
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(message);
+    if (/^(m|kd|ku),/.test(message)) this.#unansweredSince ??= performance.now();
   }
 
   /** Input and resizing follow control. The relay drops input from a viewer without control anyway; this keeps it from being sent. */
@@ -689,6 +743,8 @@ export class SelkiesSession implements Kept {
     this.#mine = mine;
     this.#resizable = resizable;
     if (was && !mine) this.#release();
+    // Control taken: what the person does shows from a fresh key frame, whatever became of the video while they were away.
+    if (mine && !was && this.connection.state === "connected") this.#restart();
     this.#apply();
     // Control taken, or lost: the desktop keeps its size until this tab's size changes while it has control.
     if (mine !== was) this.#follow = false;
@@ -979,6 +1035,7 @@ export class SelkiesSession implements Kept {
     clearTimeout(this.#chord);
     document.removeEventListener("paste", this.#onPasteEvent, true);
     document.removeEventListener("visibilitychange", this.#onVisibility);
+    window.removeEventListener("focus", this.#onFocus);
     this.#observer?.disconnect();
     this.#keyboard.ungrab();
     this.#drop();

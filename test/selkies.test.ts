@@ -63,8 +63,10 @@ function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number; o
     const mark = `mark-${++marks}`;
     for (const page of server.pages) if (!page.closed) await page.send(mark);
     await until("the viewers to have it all", () => ends.every((end) => end.got.includes(mark)));
-    for (const end of ends) await end.relay.receive("START_VIDEO");
-    await until("Selkies to have it all", () => server.pages.filter((page) => page.role === "viewer" && !page.closed).every((page) => page.received.at(-1) === "START_VIDEO"));
+    // A video message, which goes to Selkies in turn: not START_VIDEO or REQUEST_KEYFRAME, which start the viewer's pacing again.
+    const settings = `SETTINGS,${JSON.stringify({ mark })}`;
+    for (const end of ends) await end.relay.receive(settings);
+    await until("Selkies to have it all", () => server.pages.filter((page) => page.role === "viewer" && !page.closed).every((page) => page.received.at(-1) === settings));
   };
   return { server, box, clock, relay, settle, give: (name: string | null) => void (control = name) };
 }
@@ -293,6 +295,33 @@ test("a capture that starts again numbers its frames from 0, and a frame the vie
   await until("the new capture's frames", () => a.frames().length === 4);
   assert.deepEqual(a.frames(), [4999, 5000, 0, 1]);
   assert.deepEqual(sizes, ["1920x1080", "3840x2160"]);
+  await a.relay.close();
+  await box.close();
+});
+
+test("a viewer that starts its video again is paced afresh: a frame it never got, or an acknowledgement that never came, holds it back no more (the owner's note of 19 October 2026)", async () => {
+  const { server, box, clock, relay, settle } = setup({ lagMs: 50 });
+  const a = relay("a");
+  await until("the page", () => server.pages.length === 1);
+  const page = server.pages[0]!;
+  await server.frame(1, true);
+  await server.frame(2, false);
+  await until("two frames", () => a.frames().length === 2);
+  // It says it has shown frame 1 only, as if frame 2's acknowledgement were lost, and falls behind for good: no ack will come.
+  await a.relay.receive("CLIENT_FRAME_ACK 1 0");
+  clock.advance(80);
+  await server.frame(3, false);
+  await server.frame(4, true);
+  await settle(a);
+  assert.deepEqual(a.frames(), [1, 2]);
+  // It starts its video again, as a tab coming back, control taken or its watch does.
+  await a.relay.receive("START_VIDEO");
+  await a.relay.receive("REQUEST_KEYFRAME");
+  await until("Selkies to have both", () => page.received.at(-1) === "REQUEST_KEYFRAME");
+  await server.frame(5, true);
+  await server.frame(6, false);
+  await until("the frames after", () => a.frames().length === 4);
+  assert.deepEqual(a.frames(), [1, 2, 5, 6]);
   await a.relay.close();
   await box.close();
 });
