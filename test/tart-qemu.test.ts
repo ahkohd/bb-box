@@ -314,9 +314,11 @@ test("Windows on a Mac offers video by choice while every Mac's image records Op
   // bb-box-stream as its state first said it had none, in the background, so the video comes once it has.
   writeFileSync(join(build, "image.json"), `${imageRecord(KIND, { tools: { ...WINDOWS_TOOLS, openh264: "2.6.0", "hardware-cursor": "1" } })}\n`);
   const bin = join(mac, ".bb-box", "qemu", "bin");
-  await until(() => existsSync(bin) && readdirSync(bin).some((name) => name.endsWith(".sha256")), "the build of bb-box-stream");
+  // Until the build has its hash and its source has gone: the hash comes before the source goes.
+  const built = () => readdirSync(bin).filter((name) => !name.endsWith(".lock"));
+  await until(() => existsSync(bin) && built().some((name) => name.endsWith(".sha256")) && built().length === 2, "the build of bb-box-stream");
   assert.equal(statSync(bin).mode & 0o777, 0o700, "in a folder only the host user can open");
-  assert.deepEqual(readdirSync(bin).filter((name) => !name.endsWith(".lock")).length, 2, "the build and its hash, the source gone");
+  assert.deepEqual(built().length, 2, "the build and its hash, the source gone");
   await backend.capacity(KIND, SMALL, [], signal());
   assert.deepEqual(kind().capabilities.displays[1], { id: "video", protocol: "selkies", resizable: true, byChoice: true, cursor: "stream" }, "by choice: VNC opens until it is measured");
 
