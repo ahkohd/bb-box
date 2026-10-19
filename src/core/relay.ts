@@ -189,6 +189,8 @@ export class RfbRelay {
   #wheel = 0;
   /** The keysyms of keys down as their character in the display's own input (typesAsCharacter). */
   readonly #typed = new Set<number>();
+  /** The viewer's bytes so far, each taken once those before it are. */
+  #received: Promise<void> = Promise.resolve();
 
   constructor(options: RelayOptions) {
     this.#options = options;
@@ -197,14 +199,21 @@ export class RfbRelay {
     options.viewer.send(new TextEncoder().encode(VERSION_3_8));
   }
 
-  /** Bytes from the viewer. Resolves once the box has taken them, so the viewer's pace follows the box's. */
-  async receive(bytes: Uint8Array): Promise<void> {
-    if (this.#phase === "ended") return;
-    try {
-      await this.#receive(bytes);
-    } catch (error) {
-      await this.#end("box", error instanceof Error ? error : new Error(String(error)));
-    }
+  /**
+   * Bytes from the viewer. Resolves once the box has taken them, so the viewer's pace follows the box's. Each takes its
+   * turn after those before it, which the caller need not wait for: a key that goes to the display's input, as a
+   * character over Tart's VNC server, may wait for it, and the keys after it must not reach the box first.
+   */
+  receive(bytes: Uint8Array): Promise<void> {
+    this.#received = this.#received.then(async () => {
+      if (this.#phase === "ended") return;
+      try {
+        await this.#receive(bytes);
+      } catch (error) {
+        await this.#end("box", error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    return this.#received;
   }
 
   async #receive(bytes: Uint8Array): Promise<void> {
