@@ -88,6 +88,7 @@ import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
 import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
+import { SELKIES_DISPLAY, SELKIES_LAUNCHER, selkiesDisplay } from "../selkies.ts";
 import { openRoute } from "../../transports/route.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
@@ -262,6 +263,8 @@ export interface TartBackendOptions {
   readonly macHelper?: string;
   /** Where a macOS VM's bb-box-stream is, instead of MAC_STREAM: a fake, in tests. */
   readonly macStream?: string;
+  /** Where a Linux desktop's image has Selkies' launcher, instead of SELKIES_LAUNCHER: a file the test finds, in tests. */
+  readonly selkiesLauncher?: string;
 }
 
 interface SshKeys {
@@ -466,8 +469,9 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         gpu: false,
         features: ["docker"],
         command: SSH_COMMAND,
-        // Xtigervnc takes a viewer's SetDesktopSize itself, as on the Proxmox CPU desktop.
-        displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+        // Xtigervnc takes a viewer's SetDesktopSize itself, as on the Proxmox CPU desktop. Selkies beside it, as on the X11
+        // images; video by choice until it is measured on arm64 (060).
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { ...SELKIES_DISPLAY, byChoice: true }],
         computerUse: LINUX_CUA,
         enrol: true,
       },
@@ -1782,11 +1786,16 @@ export class TartBackend implements Backend {
     const os = guestOsOf(kind);
     const access = this.#vm(mac, address, os);
     const command = new SshTransport(ssh, access, os);
-    // Video where the kind declares it and this VM has bb-box-stream: a box of an older build, or of a project's image, may not.
-    const video = os === "macos" && (capabilities?.displays ?? []).some((display) => display.protocol === "selkies") && (await this.#hasStream(guest.ref, command));
+    // Video where the kind declares it and this VM has its stream: bb-box-stream on macOS, Selkies' launcher on a Linux
+    // desktop (060). A box of an older build, or of a project's image, may not.
+    const stream = os === "macos" ? (this.#options.macStream ?? MAC_STREAM) : (this.#options.selkiesLauncher ?? SELKIES_LAUNCHER);
+    const video = (capabilities?.displays ?? []).some((display) => display.protocol === "selkies") && (await this.#hasStream(guest.ref, command, stream));
     const displays = (capabilities?.displays ?? []).flatMap((display): Display[] => {
       if (display.protocol === "selkies") {
-        return video ? [{ ...display, label: "Desktop, as video", open: async () => ({ route: ssh.commandRoute(access, macStreamCommand()), auth: { type: "none" } }) }] : [];
+        if (!video) return [];
+        // A Linux desktop's Selkies listens on the VM's loopback, as its VNC server's port is reached: through SSH to the VM.
+        if (os === "linux") return [selkiesDisplay(async (port) => ssh.route(access, port), display)];
+        return [{ ...display, label: "Desktop, as video", open: async () => ({ route: ssh.commandRoute(access, macStreamCommand()), auth: { type: "none" } }) }];
       }
       return [
         {
@@ -2333,11 +2342,14 @@ export class TartBackend implements Backend {
     return result.exitCode === 0;
   }
 
-  /** Whether a macOS VM has bb-box-stream, asked once a VM: a box keeps its image's. False, not kept, when it cannot be asked. */
-  async #hasStream(vm: string, command: SshTransport): Promise<boolean> {
+  /**
+   * Whether a VM has its video stream, `path`: bb-box-stream on macOS, Selkies' launcher on a Linux desktop. Asked once a VM:
+   * a box keeps its image's. False, not kept, when it cannot be asked.
+   */
+  async #hasStream(vm: string, command: SshTransport, path: string): Promise<boolean> {
     const known = this.#streams.get(vm);
     if (known !== undefined) return known;
-    const result = await command.run(`test -x ${quote(this.#options.macStream ?? MAC_STREAM)}`, { timeoutMs: 15_000, maxOutputBytes: 1024 }).catch(() => null);
+    const result = await command.run(`test -x ${quote(path)}`, { timeoutMs: 15_000, maxOutputBytes: 1024 }).catch(() => null);
     if (!result) return false;
     this.#streams.set(vm, result.exitCode === 0);
     return result.exitCode === 0;

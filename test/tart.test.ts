@@ -418,10 +418,14 @@ test("each new instance, as after a restart, reaches a Linux box as box from its
 test("a Linux desktop box waits for its desktop, and opens it through SSH to the VM's own VNC server (040)", async () => {
   const off = new TartBackend(tartConfig({ "tart-linux-image": "bb-box-linux" }), testContext()).kinds();
   assert.ok(!off.some((kind) => kind.id === "linux-arm64-desktop-cpu"), "off until it has an image of its own");
-  const { ssh, mac, backend } = linuxSetup({ "tart-linux-desktop-image": "bb-box-linux-desktop" });
+  const { ssh, mac, backend, context } = linuxSetup({ "tart-linux-desktop-image": "bb-box-linux-desktop" });
   addImage(mac, "bb-box-linux-desktop", "linux");
   const kind = backend.kinds().find((candidate) => candidate.id === "linux-arm64-desktop-cpu")!;
-  assert.deepEqual([kind.capabilities.os, kind.capabilities.arch, kind.capabilities.displays], ["linux", "arm64", [{ id: "desktop", protocol: "rfb", resizable: true }]]);
+  // Selkies beside the VNC server, video by choice (060).
+  assert.deepEqual(
+    [kind.capabilities.os, kind.capabilities.arch, kind.capabilities.displays],
+    ["linux", "arm64", [{ id: "desktop", protocol: "rfb", resizable: true }, { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies", byChoice: true }]],
+  );
   assert.equal(kind.capabilities.computerUse?.socket, "/home/box/.cache/cua-driver/cua-driver.sock");
 
   const recorded = hooks();
@@ -432,7 +436,7 @@ test("a Linux desktop box waits for its desktop, and opens it through SSH to the
   assert.equal(waits(), 1);
 
   const { displays } = await backend.transports(guest, "linux-arm64-desktop-cpu");
-  assert.deepEqual(displays.map((display) => [display.id, display.resizable, Boolean(display.resize), display.minSize]), [["desktop", true, false, { width: 800, height: 600 }]]);
+  assert.deepEqual(displays.map((display) => [display.id, display.resizable, Boolean(display.resize), display.minSize]), [["desktop", true, false, { width: 800, height: 600 }]], "no video for an image without Selkies' launcher");
   const { route, auth } = await displays[0]!.open(signal());
   assert.equal(route.type, "command");
   const argv = route.type === "command" ? route.argv : [];
@@ -440,6 +444,14 @@ test("a Linux desktop box waits for its desktop, and opens it through SSH to the
   // The test machine has no desktop, so no password file.
   assert.deepEqual(auth, { type: "none" });
   assert.ok(ssh.log().some((entry) => entry.target === `box@${guest.address}` && entry.command.includes("/var/lib/bb-box/vnc-password")));
+
+  // A box whose image has Selkies' launcher has video too, through SSH to Selkies on the VM's loopback (060).
+  const withSelkies = new TartBackend(tartConfig({ "tart-linux-image": "bb-box-linux", "tart-linux-desktop-image": "bb-box-linux-desktop" }), context, { ...FAKES, selkiesLauncher: "/bin/sh" });
+  made.push(withSelkies);
+  const video = (await withSelkies.transports(guest, "linux-arm64-desktop-cpu")).displays;
+  assert.deepEqual(video.map((display) => [display.id, display.label, display.cursor ?? null]), [["desktop", "Desktop", null], ["selkies", "Desktop, as video", "selkies"]]);
+  const opened = await video[1]!.open(signal());
+  assert.deepEqual(opened.route.type === "command" && opened.route.argv.slice(-3), ["-W", "127.0.0.1:5980", `box@${guest.address}`]);
 
   // It waits for the desktop again when it boots again.
   await backend.stop(guest);
