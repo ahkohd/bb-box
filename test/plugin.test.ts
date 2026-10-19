@@ -3250,10 +3250,10 @@ test("High resolution doubles a Linux desktop's pixels with Xfce at 2x, keeps th
   assert.deepEqual([rfb.width, rfb.height], [2560, 1600], "taking control changes nothing");
   await session.receive("r,1000x700");
   await until("the resize at twice the size", async () => rfb.width === 2000 && rfb.height === 1400);
-  // A wide tab: twice its size would pass H.264 level 5.2's largest frame, past which Safari's decoder refuses the video, so the
+  // A wide tab: twice its size would pass what H.264 level 5.2 takes at 60 frames a second, past which Safari's decoder refuses the video, so the
   // desktop is as large as fits, in proportion (the owner's note of 19 October 2026).
   await session.receive("r,2600x1500");
-  await until("the resize within level 5.2", async () => rfb.width === 4032 && rfb.height === 2320);
+  await until("the resize within level 5.2 at 60 frames a second", async () => rfb.width === 3904 && rfb.height === 2256);
   await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
   await until("the size the agent had, at Sharp's density", async () => rfb.width === 2560 && rfb.height === 1600);
   await session.close();
