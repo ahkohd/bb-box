@@ -82,6 +82,8 @@ async function start(
     root,
     workspace,
     storage,
+    /** Other threads' storage folders, by thread ID; a thread not here has `storage`. */
+    storages: new Map<string, string>(),
     threads,
     hosts,
     backend: null as FakeBackend | null,
@@ -179,7 +181,7 @@ async function start(
           return makeThreadResponse({ id: (args as { threadId: string }).threadId, projectId: PROJECT });
         },
         list: async ({ hostId }: { hostId?: string }) => (hostId ? (world.onHost.get(hostId) ?? []) : []) as never,
-        storageLocation: async () => ({ hostId: world.workspaceHost, storageRootPath: storage }),
+        storageLocation: async ({ threadId }: { threadId: string }) => ({ hostId: world.workspaceHost, storageRootPath: world.storages.get(threadId) ?? storage }),
         defaultExecutionOptions: async () =>
           world.parentModel ? { model: world.parentModel, permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/turn/requested" } : null,
         spawn: async (args: unknown) => {
@@ -746,6 +748,26 @@ test("box_record records a Linux desktop, and stop puts the clip and a page that
   assert.ok(said.includes(`::inline-vis{source="thread-storage" file="${name}.html" height="368"}`), said);
   assert.equal(readFileSync(join(world.storage, `${name}.mp4`), "utf8"), "mp4data");
   assert.ok(readFileSync(join(world.storage, `${name}.html`), "utf8").includes(`<video src="${name.split("/").pop()}.mp4"`));
+  assert.match(said, /It shows the clip in this thread only:/);
+
+  // A child thread's recording: its parent, and the parent's parent, get a copy, as a parent passes on its child's
+  // report with the line, which shows a file of the storage folder of the thread it is in.
+  const parents = [join(world.root, "thread-storage", "thr_parent"), join(world.root, "thread-storage", "thr_grand")];
+  world.storages.set("thr_parent", parents[0]!);
+  world.storages.set("thr_grand", parents[1]!);
+  world.threads.set(THREAD, { ...world.threads.get(THREAD)!, parentThreadId: "thr_parent" });
+  world.threads.set("thr_parent", makeThreadResponse({ id: "thr_parent", projectId: PROJECT, parentThreadId: "thr_grand" }));
+  world.threads.set("thr_grand", makeThreadResponse({ id: "thr_grand", projectId: PROJECT }));
+  await tool("box_run", { box: desktop.name, command: "mkdir -p .local/state/bb-box/recording && echo capture > .local/state/bb-box/recording/capture.mkv" });
+  const child = text(await tool("box_record", { box: desktop.name, action: "stop" }));
+  const clip = /\$BB_THREAD_STORAGE\/(recordings\/[^ ,]+)\.mp4/.exec(child)?.[1];
+  assert.ok(clip, child);
+  assert.match(child, /and in the storage folder of its parent threads, 2 of them\./);
+  assert.match(child, /It shows the clip in this thread and in its parent threads, which have a copy, so a parent can pass the line on:/);
+  for (const folder of [world.storage, ...parents]) {
+    assert.equal(readFileSync(join(folder, `${clip}.mp4`), "utf8"), "mp4data", folder);
+    assert.ok(readFileSync(join(folder, `${clip}.html`), "utf8").includes(`<video src="${clip!.split("/").pop()}.mp4"`), folder);
+  }
 });
 
 test("box_copy takes files in the thread's storage folder both ways, by its variable or its path (#482)", async (t) => {

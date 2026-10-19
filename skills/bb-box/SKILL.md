@@ -166,7 +166,10 @@ Open an app or a URL with `computer_launch`, then read a window with
 `box_record` records a desktop box's screen, on Linux, macOS or Windows,
 so you can show your work in the thread rather than describe it. Start it, do what the
 video should show, then stop it. Its answer gives a line that plays the
-clip in the thread: put it on its own in your reply. Still stretches are
+clip in the thread: put it on its own in your reply. The line shows a file
+of the storage folder of the thread it is in, so bb-box copies the clip to
+your parent threads too: a parent can pass the line on in its own report as
+it is. Do not write an absolute path into it. Still stretches are
 cut by default, so a long session makes a short clip.
 
 - Before you start a recording, clear or dismiss notifications, and close

@@ -632,6 +632,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
+  /** How many parent threads up a recording is copied, so each can show it in a report it passes on. */
+  const RECORD_PARENTS = 5;
+
   bb.agents.registerTool({
     name: "box_record",
     description:
@@ -683,13 +686,28 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         if (!made) throw new BoxError("unreachable", `Making the clip in box ${found.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
         const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
         const name = `recordings/${found.name}-${stamp}`;
-        const paths = pathsOf(storage.path);
-        const file = (path: string): ThreadFile => ({ hostId: storage.hostId, path: paths.join(storage.path, path), rootPath: storage.path, stored: true });
-        await fromBox(owner, found.id, `${RECORD_DIR}/clip.mp4`, file(`${name}.mp4`), signal);
-        // The page loads the clip beside it, so a clip of any size plays in the thread.
-        const page = file(`${name}.html`);
-        const html = recordPage(`Box ${found.name}`, paths.basename(`${name}.mp4`));
-        await bb.sdk.files.write({ hostId: page.hostId, path: page.path, rootPath: page.rootPath, content: Buffer.from(html).toString("base64"), contentEncoding: "base64", createParents: true });
+        const html = recordPage(`Box ${found.name}`, pathsOf(storage.path).basename(`${name}.mp4`));
+        // The clip and its page in a storage folder: the page loads the clip beside it, so a clip of any size plays.
+        const put = async (folder: { hostId: string; path: string }) => {
+          const paths = pathsOf(folder.path);
+          const file = (path: string): ThreadFile => ({ hostId: folder.hostId, path: paths.join(folder.path, path), rootPath: folder.path, stored: true });
+          await fromBox(owner, found.id, `${RECORD_DIR}/clip.mp4`, file(`${name}.mp4`), signal);
+          const page = file(`${name}.html`);
+          await bb.sdk.files.write({ hostId: page.hostId, path: page.path, rootPath: page.rootPath, content: Buffer.from(html).toString("base64"), contentEncoding: "base64", createParents: true });
+        };
+        await put(storage);
+        // A thread's line resolves in the storage folder of the thread it is in: a parent that passes on its child's
+        // report shows the clip only with a copy in its own (the owner's note of 19 October 2026).
+        const parents = await app.ancestorStorages(id, RECORD_PARENTS, signal).catch(() => []);
+        let copied = 0;
+        for (const parent of parents) {
+          try {
+            await put(parent);
+            copied += 1;
+          } catch {
+            // The line still shows the clip in this thread.
+          }
+        }
         const cut = stills === "keep" ? 0 : Math.max(0, made.recorded - made.clip * times);
         const parts = [
           `a ${made.clip.toFixed(1)} s clip of ${made.recorded.toFixed(1)} s recorded`,
@@ -698,9 +716,10 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           `${made.size}, ${Math.max(1, Math.round(made.bytes / 1024))} KB`,
         ];
         const limit = made.ended === "limit" ? ` It reached the ${RECORD_LIMIT_S / 60}-minute limit and ended by itself.` : "";
-        const where = `The MP4 is in this thread's storage folder: $BB_THREAD_STORAGE/${name}.mp4.`;
+        const where = `The MP4 is in this thread's storage folder: $BB_THREAD_STORAGE/${name}.mp4${copied ? `, and in the storage folder of its parent thread${copied === 1 ? "" : `s, ${copied} of them`}` : ""}.`;
         const directive = `::inline-vis{source="thread-storage" file="${name}.html" height="${previewHeight(made.size)}"}`;
-        return `Recorded box ${found.name}: ${parts.join(", ")}.${limit} ${where}${next(`To show it in the thread, put this line on its own in your reply, outside any code block:\n${directive}`)}`;
+        const shows = copied ? "this thread and in its parent threads, which have a copy, so a parent can pass the line on" : "this thread only";
+        return `Recorded box ${found.name}: ${parts.join(", ")}.${limit} ${where}${next(`To show it in the thread, put this line on its own in your reply, outside any code block. It shows the clip in ${shows}:\n${directive}`)}`;
       } catch (error) {
         return failure(error, "Recording the desktop");
       }
