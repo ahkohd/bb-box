@@ -703,18 +703,66 @@ class Capture : IDisposable {
     if (!GetCursorInfo(ref cursor) || (cursor.flags & 1) == 0 || cursor.cursor == IntPtr.Zero) return copy;
     ICONINFO icon;
     if (!GetIconInfo(cursor.cursor, out icon)) return copy;
+    int left = cursor.at.x - icon.hotX - GetSystemMetrics(76), top = cursor.at.y - icon.hotY - GetSystemMetrics(77);
+    bool monochrome = icon.color == IntPtr.Zero && icon.mask != IntPtr.Zero;
+    if (monochrome) {
+      try { DrawMonochrome(copy, cursor.cursor, icon.mask, left, top); } catch (Exception) { }
+    }
     if (icon.mask != IntPtr.Zero) DeleteObject(icon.mask);
     if (icon.color != IntPtr.Zero) DeleteObject(icon.color);
+    if (monochrome) return copy;
     GCHandle pin = GCHandle.Alloc(copy, GCHandleType.Pinned);
     try {
       using (Bitmap bitmap = new Bitmap(Width, Height, Width * 4, PixelFormat.Format32bppRgb, pin.AddrOfPinnedObject()))
       using (Graphics g = Graphics.FromImage(bitmap)) {
         IntPtr hdc = g.GetHdc();
-        DrawIconEx(hdc, cursor.at.x - icon.hotX - GetSystemMetrics(76), cursor.at.y - icon.hotY - GetSystemMetrics(77), cursor.cursor, 0, 0, 0, IntPtr.Zero, 3);
+        DrawIconEx(hdc, left, top, cursor.cursor, 0, 0, 0, IntPtr.Zero, 3);
         g.ReleaseHdc(hdc);
       }
     } finally { pin.Free(); }
     return copy;
+  }
+
+  /** The last monochrome cursor drawn, and its AND and XOR masks, read once for each cursor. */
+  IntPtr maskedCursor;
+  bool[] andMask, xorMask;
+  int maskWidth, maskHeight;
+
+  /**
+   * Draws a monochrome cursor as Windows does: each pixel ANDed with its AND mask, then XORed with its XOR mask, so
+   * the I-beam inverts what it is over. DrawIconEx through GDI+ left it nearly invisible on Windows on a Mac (the
+   * desktop sweep): the darkest of its pixels over white was 244.
+   */
+  void DrawMonochrome(byte[] frame, IntPtr cursor, IntPtr mask, int left, int top) {
+    if (cursor != maskedCursor) {
+      using (Bitmap bits = Image.FromHbitmap(mask)) {
+        maskWidth = bits.Width;
+        maskHeight = bits.Height / 2;
+        andMask = new bool[maskWidth * maskHeight];
+        xorMask = new bool[maskWidth * maskHeight];
+        for (int y = 0; y < maskHeight; y++) {
+          for (int x = 0; x < maskWidth; x++) {
+            andMask[y * maskWidth + x] = bits.GetPixel(x, y).GetBrightness() > 0.5f;
+            xorMask[y * maskWidth + x] = bits.GetPixel(x, y + maskHeight).GetBrightness() > 0.5f;
+          }
+        }
+      }
+      maskedCursor = cursor;
+    }
+    for (int y = 0; y < maskHeight; y++) {
+      int row = top + y;
+      if (row < 0 || row >= Height) continue;
+      for (int x = 0; x < maskWidth; x++) {
+        int column = left + x;
+        if (column < 0 || column >= Width) continue;
+        int at = (row * Width + column) * 4;
+        bool and = andMask[y * maskWidth + x], xor = xorMask[y * maskWidth + x];
+        for (int c = 0; c < 3; c++) {
+          int value = and ? frame[at + c] : 0;
+          frame[at + c] = (byte)(xor ? 255 - value : value);
+        }
+      }
+    }
   }
 
   public void Dispose() { StopDuplication(); StopCopy(); }
