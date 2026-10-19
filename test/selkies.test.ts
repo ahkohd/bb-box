@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SelkiesBox, SelkiesRelay, Spacing, classify, unsequenced, type Clock } from "../src/core/selkies.ts";
 import type { Message } from "../src/core/websocket.ts";
+import { followWindowsPointer } from "../src/backends/windows.ts";
+import type { BoxPointer } from "../src/transports/types.ts";
 import { FakeSelkies, videoFrame } from "./fake-selkies.ts";
 import { until } from "./fake-rfb.ts";
 
@@ -451,4 +453,20 @@ test("a viewer's word on 4:4:4 goes to bb-box, not to Selkies; bb-box asks the d
   await until("the setting", () => !!server.pages.find((one) => one.role === "controller")?.received.includes('SETTINGS,{"displayId":"primary","video_fullcolor":true}'));
   await relay.close();
   await box.close();
+});
+
+test("bb-box follows a Windows box's pointer through bb-box-stream.exe, which says where it is once asked, and what it looks like (#865)", async () => {
+  const server = new FakeSelkies();
+  const events: BoxPointer[] = [];
+  const stop = new AbortController();
+  const following = followWindowsPointer(async () => server.channel(), (event) => void events.push(event), stop.signal);
+  await until("the request", () => !!server.pages[0]?.received.includes("BB_POINTER_FOLLOW"));
+  const page = server.pages[0]!;
+  const shape = 'cursor,{"curdata":"AAAA","hotx":1,"hoty":2}';
+  for (const message of ["BB_POINTER,10,20", shape, "BB_POINTER,", "BB_POINTER,x,y", "clipboard,aGk="]) await page.send(message);
+  await until("the events", () => events.length === 3);
+  assert.deepEqual(events, [{ type: "position", x: 10, y: 20 }, { type: "shape", message: shape }, { type: "leave" }], "nothing else");
+  stop.abort();
+  await following;
+  await until("the connection closed", () => page.closed);
 });

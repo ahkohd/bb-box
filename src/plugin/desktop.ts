@@ -400,6 +400,9 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const png = rgbaPng(event.width, event.height, argbToRgba(event.argb)).toString("base64");
       message = `cursor,${JSON.stringify({ curdata: png, hotx: event.hotX, hoty: event.hotY })}`;
       entry.image = message;
+    } else if (event.type === "shape") {
+      message = event.message;
+      entry.image = message;
     } else if (event.type === "position") {
       message = `${POINTER_VERB},${event.x},${event.y}`;
       entry.at = message;

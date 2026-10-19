@@ -6,8 +6,10 @@
 import { createHash } from "node:crypto";
 import { SelkiesBox, type OpenStream } from "../core/selkies.ts";
 import { desktopScript } from "../transports/powershell.ts";
+import { POINTER_VERB } from "../core/pointer.ts";
+import { BoxWebSocket } from "../core/websocket.ts";
 import { pause } from "../transports/ready.ts";
-import type { CommandTransport, DisplayInput, DisplaySize } from "../transports/types.ts";
+import type { BoxPointer, CommandTransport, DisplayInput, DisplaySize } from "../transports/types.ts";
 
 /** The named pipe Cua's daemon listens on. A task at logon starts it, elevated, as SSH is (039). */
 export const CUA_PIPE = "\\\\.\\pipe\\cua-driver";
@@ -30,6 +32,32 @@ export const WINDOWS_STREAM = [
   "$i = [Console]::OpenStandardInput(); $o = [Console]::OpenStandardOutput()",
   "[void][Threading.Tasks.Task]::WaitAny(@($p.CopyToAsync($o), $i.CopyToAsync($p)))",
 ].join("; ");
+
+/**
+ * Follows the box's pointer through a connection of its own to bb-box-stream.exe, `open`, which says where it is
+ * (BB_POINTER_FOLLOW) and what it looks like, until `signal` ends it or the server does: a video from QEMU on a Mac has
+ * no pointer in it, nor has QEMU's VNC (#865). A server from before says nothing of where it is.
+ */
+export async function followWindowsPointer(open: OpenStream, onEvent: (event: BoxPointer) => void, signal: AbortSignal): Promise<void> {
+  const socket = await BoxWebSocket.upgrade(await open(signal), { host: "localhost", path: "/api/websockets", signal });
+  const end = () => void socket.close().catch(() => undefined);
+  signal.addEventListener("abort", end, { once: true });
+  try {
+    await socket.send("BB_POINTER_FOLLOW");
+    for (let message = await socket.next(); message !== null && !signal.aborted; message = await socket.next()) {
+      if (typeof message !== "string") continue;
+      if (message.startsWith("cursor,")) onEvent({ type: "shape", message });
+      else if (message === `${POINTER_VERB},`) onEvent({ type: "leave" });
+      else if (message.startsWith(`${POINTER_VERB},`)) {
+        const [x, y] = message.slice(POINTER_VERB.length + 1).split(",").map(Number);
+        if (Number.isInteger(x) && Number.isInteger(y)) onEvent({ type: "position", x: x!, y: y! });
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", end);
+    end();
+  }
+}
 
 /** Where a Windows image has bb-box-stream.exe (setup/windows/install-stream.ps1). */
 export const WINDOWS_STREAM_EXE = "C:\\Program Files\\bb-box-tools\\bb-box-stream\\bb-box-stream.exe";

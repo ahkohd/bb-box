@@ -321,12 +321,16 @@ test("Windows on a Mac offers video by choice while every Mac's image records Op
   assert.deepEqual(kind().capabilities.displays[1], { id: "video", protocol: "selkies", resizable: true, byChoice: true, cursor: "stream" }, "by choice: VNC opens until it is measured");
 
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
-  assert.deepEqual((await backend.transports(guest, KIND)).displays.map((display) => display.protocol), ["rfb"], "a box without the program has none");
+  const without = (await backend.transports(guest, KIND)).displays;
+  assert.deepEqual(without.map((display) => display.protocol), ["rfb"], "a box without the program has none");
+  assert.equal(without[0]!.followPointer, undefined, "nor where the pointer is");
   // Asked once a box, so another box with the program is asked afresh.
   writeFileSync(join(ssh.home(GUEST), "stream"), "");
   const other = { ...guest, data: { ...guest.data, box: "bx-another" } };
   const shown = (await backend.transports(other, KIND)).displays;
-  assert.deepEqual(shown.map(({ open: _, openInput: __, resize: ___, pointer: ____, ...display }) => display), [
+  // Where the pointer is, from bb-box-stream.exe, for people watching: neither the video nor QEMU's VNC has it (#865).
+  assert.equal(typeof shown[0]!.followPointer, "function");
+  assert.deepEqual(shown.map(({ open: _, openInput: __, resize: ___, pointer: ____, followPointer: _____, ...display }) => display), [
     { id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4, pointerWhile: "rfb", minSize: { width: 800, height: 600 } },
     { id: "video", label: "Desktop, as video", protocol: "selkies", resizable: true, cursor: "stream" },
   ]);
