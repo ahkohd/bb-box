@@ -316,9 +316,25 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       cursor: boolean | null;
     }
   >();
-  const selkiesBox = (boxId: string, open: OpenStream): SelkiesBox => {
+  /** Boxes whose video comes from elsewhere than their stream server, as their display said when its input opened (#865). */
+  const videoApart = new Set<string>();
+  const selkiesBox = (boxId: string): SelkiesBox => {
+    // The input goes to the box's stream server: the display's openInput where its video comes from elsewhere.
+    const open: OpenStream = async (signal) => {
+      const shown = await selkiesDisplay(boxes, boxId);
+      if (shown.openInput) videoApart.add(boxId);
+      else videoApart.delete(boxId);
+      return openRoute((await (shown.openInput ?? shown.open).call(shown, signal)).route, signal);
+    };
     const entry = selkiesBoxes.get(boxId) ?? {
-      box: new SelkiesBox(open, { onError: (error) => deps.logError("open the Selkies input", error) }),
+      box: new SelkiesBox(open, {
+        onError: (error) => deps.logError("open the Selkies input", error),
+        apart: () => videoApart.has(boxId),
+        // The clipboard and the pointer's shape, which reach the viewers no other way.
+        onText: (message) => {
+          for (const relay of selkiesBoxes.get(boxId)?.relays ?? []) relay.fromBox(message);
+        },
+      }),
       viewers: 0,
       relays: new Set(),
       colours: new Map(),
@@ -488,6 +504,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     }
     if (!entry || --entry.viewers > 0) return;
     selkiesBoxes.delete(boxId);
+    videoApart.delete(boxId);
     frameSizes.delete(boxId);
     void entry.box.close();
   };
@@ -711,7 +728,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
             const open: OpenStream = async (signal) => openRoute((await (await selkiesDisplay(boxes, boxId)).open(signal)).route, signal);
             relay = new SelkiesRelay({
               viewer: end,
-              box: selkiesBox(boxId, open),
+              box: selkiesBox(boxId),
               open,
               mayInput: () => control.mayInput(boxId, viewer),
               onSize: (size) => {

@@ -116,5 +116,6 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `host.<mac>` | Mac <mac> | The Mac answers over SSH, is Apple silicon, and has Tart. |
 | `image.<mac>.<kind>` | <kind> image on <mac> | The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. |
 | `qemu.<mac>` | QEMU on <mac> | QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac. |
+| `qemu-video.<mac>` | Windows video on <mac> | bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865). |
 | `capacity.<mac>` | Room on <mac> | Room on the Mac for a macOS box at its default size. |
 | `sizes.<mac>` | Room for each kind on <mac> | The Mac holds a box of each kind at its default size. |

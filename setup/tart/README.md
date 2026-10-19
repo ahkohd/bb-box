@@ -55,6 +55,11 @@ Mac. A clone boots to SSH in about 10 s and to a logged-in desktop in about
 - For a macOS desktop: `/usr/bin/python3` from Xcode's command line tools
   (`xcode-select --install`), which Homebrew needs anyway. It runs the holder
   that shares the desktop with viewers.
+- For a Windows desktop as video: `swiftc` from the same command line tools.
+  bb-box builds its bb-box-stream on the Mac with it, into
+  `~/.bb-box/qemu/bin`, which reads QEMU's VNC server and encodes the
+  desktop with the Mac's hardware encoder (#865). Without it, Windows
+  desktops show over VNC only, and `bb box doctor` says so.
 - The Mac must stay awake: a sleeping Mac pauses its VMs. On a Mac that only
   serves boxes, turn sleep off with `sudo pmset -a sleep 0`.
 

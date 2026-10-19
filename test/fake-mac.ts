@@ -40,6 +40,38 @@ export function fakeXcode(home: string): void {
 }
 
 /**
+ * Gives a fake Mac the Command Line Tools' swiftc, through xcrun, for the
+ * build of bb-box-stream that Windows video runs (#865). What it builds is a
+ * stand-in: `qemu <port> <socket>` listens on the socket until it is ended,
+ * and `attach <socket>` prints "attached <socket>". `fails`: swiftc fails
+ * with an error.
+ */
+export function fakeSwift(home: string, options: { fails?: boolean } = {}): void {
+  fakeXcode(home);
+  const bin = join(home, ".nix-profile", "bin");
+  const standIn = [
+    "#!/bin/sh",
+    'case "$1" in',
+    `  qemu) '${process.execPath}' -e 'require("node:net").createServer(() => {}).listen(process.argv[1])' "$3" & c=$!; trap 'kill $c; exit 0' TERM; wait $c ;;`,
+    '  attach) echo "attached $2" ;;',
+    "  *) exit 2 ;;",
+    "esac",
+    "",
+  ].join("\n");
+  writeFileSync(join(bin, "swift-stand-in"), standIn);
+  const swiftc = options.fails
+    ? 'echo "mac-stream.swift:12:3: error: cannot find \'SCStream\' in scope" >&2; exit 1'
+    : `while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done; cp "${join(bin, "swift-stand-in")}" "$out"`;
+  writeFileSync(join(bin, "xcrun"), `#!/bin/sh
+case "$1" in
+  --find) echo /Library/Developer/CommandLineTools/usr/bin/swiftc ;;
+  swiftc) shift; ${swiftc} ;;
+esac
+`);
+  chmodSync(join(bin, "xcrun"), 0o755);
+}
+
+/**
  * Puts the fake qemu-system-aarch64, qemu-img and nc in a fake Mac's
  * ~/.nix-profile/bin, and QEMU's firmware in its share/qemu, as a Nix
  * profile has them.

@@ -122,6 +122,7 @@ import {
   parseState,
   powerScript,
   startScript,
+  script,
   stateScript,
   stopScript,
   vmName,
@@ -151,6 +152,7 @@ import {
   type QemuState,
   type QemuVm,
 } from "./qemu.ts";
+import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScript, qemuVideoSource, qemuVideoSourcePath, qemuVideoStateBody, type QemuVideo } from "./qemu-video.ts";
 
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
@@ -192,7 +194,8 @@ function footprint(kind: string, size: BoxSize): number {
 }
 
 /** A Mac's state: Tart's VMs and the Mac's own (host.ts), and QEMU's VMs (qemu.ts). */
-type MacState = HostState & { readonly qemu: QemuState };
+/** `qemuVideo`: the Mac's build of bb-box-stream for Windows video (#865); null while Windows boxes are off. */
+type MacState = HostState & { readonly qemu: QemuState; readonly qemuVideo: QemuVideo | null };
 
 type Step = <T>(name: string, run: () => Promise<T>) => Promise<T>;
 
@@ -256,6 +259,8 @@ function tartCheck(kind: string): string {
 
 export interface TartBackendOptions {
   readonly sshBinary?: string;
+  /** bb-box-stream's source for Windows video (#865), instead of mac-stream.swift: a small one, in tests. */
+  readonly qemuVideoSource?: string;
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
@@ -692,6 +697,12 @@ export class TartBackend implements Backend {
   #videoKnown = false;
   /** Whether windows-arm64-desktop's video is known: once a Mac has answered, as for macos-desktop's. */
   #windowsVideoKnown = false;
+  /** The build of bb-box-stream that Windows video runs on each Mac (#865), from mac-stream.swift's source. */
+  #qemuVideo: { readonly source: string; readonly build: string } | null = null;
+  /** Each Mac's build of it, while it runs, so a Mac builds it once at a time. */
+  readonly #qemuVideoBuilds = new Map<string, Promise<void>>();
+  /** The Macs whose build is ready, as their state last said. */
+  readonly #qemuVideoReady = new Set<string>();
 
   constructor(config: TartConfig, context: BackendContext, options: TartBackendOptions = {}) {
     this.id = context.id;
@@ -749,11 +760,13 @@ export class TartBackend implements Backend {
   }
 
   /**
-   * Declares windows-arm64-desktop's video, from bb-box-stream.exe (060),
-   * while every Mac that answered has OpenH264 in its Windows image's
-   * record, and leaves the pointer out of it while a person holds control
-   * where every record lists the hardware cursor too, as on Proxmox. Shown
-   * by choice: the desktop opens over VNC until video on a Mac is measured.
+   * Declares windows-arm64-desktop's video (060), while every Mac that
+   * answered has bb-box-stream.exe in its Windows image, as OpenH264 in its
+   * record says, for the input and the clipboard, and its own build of
+   * bb-box-stream, which gives the video from QEMU (#865). Leaves the pointer
+   * out of it while a person holds control where every record lists the
+   * hardware cursor too, as on Proxmox. Shown by choice: the desktop opens
+   * over VNC until video from the Mac is measured.
    */
   #declareWindowsVideo(states: ReadonlyMap<string, MacState | Error>): void {
     const index = this.#kinds.findIndex((kind) => kind.id === "windows-arm64-desktop");
@@ -765,7 +778,7 @@ export class TartBackend implements Backend {
     if (!answered.length) return;
     this.#windowsVideoKnown = true;
     const tools = answered.map((state) => state.qemu.image?.record?.tools ?? {});
-    const video = tools.every((each) => each.openh264 !== undefined);
+    const video = tools.every((each) => each.openh264 !== undefined) && answered.every((state) => state.qemuVideo?.status === "ready");
     const cursor = video && tools.every((each) => each[WINDOWS_HARDWARE_CURSOR] !== undefined);
     const kind = this.#kinds[index]!;
     const others = kind.capabilities.displays.filter((display) => display.protocol !== "selkies");
@@ -1749,13 +1762,25 @@ export class TartBackend implements Backend {
       const ports = await this.#ports(host, guest);
       const access = this.#windows(mac, ports.ssh);
       const command = new SshTransport(ssh, access, "windows");
-      // Video where the kind declares it and this box has bb-box-stream.exe: a box of an older build may not (060).
+      // Video where the kind declares it and this box has bb-box-stream.exe, for the input and the clipboard: a box of an
+      // older build may not (060).
       const declared = (capabilities?.displays ?? []).some((display) => display.protocol === "selkies");
       const video = declared && (await this.#hasWindowsStream(this.#streamKey(guest), command));
+      // The video comes from QEMU's VNC server on the Mac, through the Mac's build of bb-box-stream (#865), where it is ready.
+      const fromMac = video && this.#qemuVideoReady.has(host.name);
       const displays = (capabilities?.displays ?? []).flatMap((display): Display[] => {
         if (display.protocol === "selkies") {
           const { byChoice: _byChoice, ...shown } = display;
-          return video ? [{ ...shown, label: "Desktop, as video", open: async () => ({ route: ssh.commandRoute(access, WINDOWS_STREAM), auth: { type: "none" } }) }] : [];
+          if (!fromMac) return [];
+          const { build } = this.#videoBuild();
+          return [
+            {
+              ...shown,
+              label: "Desktop, as video",
+              open: async () => ({ route: ssh.commandRoute(mac, qemuVideoOpenScript(guest.ref, ports.vnc, build)), auth: { type: "none" } }),
+              openInput: async () => ({ route: ssh.commandRoute(access, WINDOWS_STREAM), auth: { type: "none" } }),
+            },
+          ];
         }
         // QEMU types a person's keys by key on a US layout: a character it would type wrong goes to bb-box-stream.
         const stream: OpenStream = (signal) => openRoute(ssh.commandRoute(access, WINDOWS_STREAM), signal);
@@ -1914,6 +1939,7 @@ export class TartBackend implements Backend {
         push(id, name, "ok", `macOS ${state.macos} on Apple silicon${tart ? `, Tart ${state.version}` : ""}.`);
       }
       if (windowsImage) this.#doctorQemu(host, state.qemu, windowsImage, push, judge);
+      if (windowsImage && state.qemuVideo) this.#doctorQemuVideo(host, state.qemuVideo, push);
       for (const kind of images) {
         const image = this.#config.kinds[kind].image!;
         const listed = state.vms.find((vm) => vm.name === image);
@@ -2018,6 +2044,26 @@ export class TartBackend implements Backend {
     } else {
       const judged = judge("windows-arm64-desktop", image, qemu.image.record, host.name);
       push(imageId, imageName, judged.status, `${image}, build ${qemu.image.build}. ${judged.detail}`, judged.fix);
+    }
+  }
+
+  /** Whether the Mac can give Windows boxes video from QEMU (#865), and if not, why: the desktop shows over VNC only. */
+  #doctorQemuVideo(
+    host: TartHost,
+    video: QemuVideo,
+    push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void,
+  ): void {
+    const id = `qemu-video.${host.name}` as const;
+    const name = `Windows video on ${host.name}`;
+    const off = "Until then, Windows desktops show over VNC only.";
+    if (video.status === "ready") {
+      push(id, name, "ok", `bb-box's build of bb-box-stream, ${this.#videoBuild().build}, gives Windows desktops video from QEMU.`);
+    } else if (video.status === "no-tools") {
+      push(id, name, "warn", `${host.name} has no swiftc from Xcode's Command Line Tools, which bb-box builds bb-box-stream with. ${off}`, "Install them on the Mac: xcode-select --install.");
+    } else if (video.status === "failed") {
+      push(id, name, "warn", `swiftc could not build bb-box-stream: ${video.why} ${off}`, "Update Xcode's Command Line Tools on the Mac, then run the checks again.");
+    } else {
+      push(id, name, "warn", `bb-box is building bb-box-stream on ${host.name}, which takes about a minute. ${off}`, "Run the checks again in a minute.");
     }
   }
 
@@ -2131,8 +2177,44 @@ export class TartBackend implements Backend {
   /** The Mac's state, in one trip: Tart's VMs when a Tart kind has an image, and QEMU's always. */
   async #state(host: TartHost, signal?: AbortSignal): Promise<MacState> {
     const windowsImage = this.#config.kinds["windows-arm64-desktop"].image;
-    const text = (await this.#run(host, stateScript(this.#tart(), qemuStateBody(windowsImage)), { timeoutMs: 30_000, signal })).stdout;
-    return { ...parseState(text), qemu: parseQemuState(text) };
+    const video = windowsImage ? this.#videoBuild() : null;
+    const text = (await this.#run(host, stateScript(this.#tart(), `${qemuStateBody(windowsImage)}${video ? qemuVideoStateBody(video.build) : ""}`), { timeoutMs: 30_000, signal })).stdout;
+    const qemuVideo = video ? parseQemuVideo(text) : null;
+    if (qemuVideo?.status === "ready") this.#qemuVideoReady.add(host.name);
+    else this.#qemuVideoReady.delete(host.name);
+    if (qemuVideo?.status === "missing") this.#buildVideo(host);
+    return { ...parseState(text), qemu: parseQemuState(text), qemuVideo };
+  }
+
+  /** bb-box-stream's source and its build's name, read once. */
+  #videoBuild(): { readonly source: string; readonly build: string } {
+    if (!this.#qemuVideo) {
+      const source = this.#options.qemuVideoSource ?? qemuVideoSource();
+      this.#qemuVideo = { source, build: qemuVideoBuild(source) };
+    }
+    return this.#qemuVideo;
+  }
+
+  /**
+   * Builds bb-box-stream on the Mac for Windows video (#865), in the background, unless it builds there already. The
+   * Mac's state says how it went: the doctor shows why it failed, and Windows video waits for it.
+   */
+  #buildVideo(host: TartHost): void {
+    if (this.#qemuVideoBuilds.has(host.name)) return;
+    const { source, build } = this.#videoBuild();
+    const running = (async () => {
+      const { ssh } = await this.#keys();
+      const mac = new SshTransport(ssh, await this.#mac(host), "macos");
+      await this.#run(host, script('mkdir -p "$HOME/.bb-box/qemu/bin" && chmod 700 "$HOME/.bb-box/qemu" "$HOME/.bb-box/qemu/bin"'), { signal: this.#stopping.signal });
+      await mac.writeFile(qemuVideoSourcePath(build), new TextEncoder().encode(source), { mode: "600", signal: this.#stopping.signal });
+      await this.#run(host, qemuVideoBuildScript(build), { timeoutMs: 15 * 60_000, signal: this.#stopping.signal });
+      this.#qemuVideoReady.add(host.name);
+    })()
+      .catch((error: unknown) => {
+        if (!this.#stopping.signal.aborted) this.#context.logError("build bb-box-stream for Windows video", error instanceof Error ? error : new Error(String(error)));
+      })
+      .finally(() => this.#qemuVideoBuilds.delete(host.name));
+    this.#qemuVideoBuilds.set(host.name, running);
   }
 
   /**
