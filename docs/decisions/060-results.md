@@ -397,6 +397,53 @@ panel's own clients:
 | Clipboard, video | text (é 中 ✓) and a 62 KB PNG both ways, byte for byte | |
 | Clipboard, VNC | text both ways, exact; no images, as on 24.04 | |
 
+## Linux on arm64: video against VNC, 19 October 2026
+
+The two arm64 Linux desktop kinds, microsandbox and Tart, offer video by
+choice since #848, from the Selkies their X11 images already run. Each box
+had 4 cores and 8 GiB, at 1920x1080, through BB's server, with the same
+harness. The slow link is 20 ms more each way and 20 Mbit/s from the box.
+Two runs each on the LAN, one on the slow link (p50 / p95).
+
+| | VNC, LAN | Video, LAN | VNC, 20 Mbit/s, 40 ms | Video, 20 Mbit/s, 40 ms |
+| --- | --- | --- | --- | --- |
+| **microsandbox** | | | | |
+| Drag lag | 50 / 149-155 ms | 33-42 / 73-158 ms | 90 / 142 ms | 79 / 90 ms |
+| Scroll Mbit/s | 6.6-7.0 | 3.0-3.1 | 5.9 | 3.0 |
+| Key alone | 24-27 / 100-102 ms | 20-22 / 153-165 ms | 72 / 191 ms | 61 / 120 ms |
+| Key while scrolling | 66-67 ms | 52-64 ms | 116 ms | 97 ms |
+| Box cores, drag / watched idle | 0.9 / 0.1 | 1.7-1.9 / 0.4 | 1.1 / 0.1 | 1.8 / 0.3 |
+| **Tart** | | | | |
+| Drag lag | 34-37 / 54-58 ms | 28-34 / 38-45 ms | 78 / 101 ms | 78 / 531 ms |
+| Scroll Mbit/s | 7.6-8.1 | 2.9 | 5.4 | 2.7 |
+| Key alone | 37-39 / 45-446 ms | 22-23 / 29-80 ms | 77 / 1280 ms | 65 / 75 ms |
+| Key while scrolling | 28-33 ms | 34 ms | 91 ms | 75 ms |
+| Box cores, drag / watched idle | 1.3 / 0.06 | 1.7-1.8 / 0.9 | 1.1 / 0.04 | 1.7 / 0.9 |
+
+Both kinds, both streams: no torn frames (one scroll frame in one video
+run); video draws 60 frames a second, VNC 80 to 160 updates. Text SSIM
+still, black on white and coloured: 0.9999 and 0.9998 over VNC, 0.998 and
+0.996 over video, as on x64.
+
+- **Video is as close to the pointer as VNC, or closer, and quicker for a
+  key, at half the bandwidth.** On the slow link the gap widens on
+  microsandbox: a drag's p95 is 90 ms against 142, a key 61 ms against 72.
+- **Video costs CPU.** A drag takes about 0.8 of a core more. While
+  someone watches an idle desktop, Selkies goes on encoding, 35 frames a
+  second on microsandbox and 54 on Tart, for 0.4 and 0.9 of a core;
+  nobody watching, it stops (#821).
+- **The Tart VM stalls** for 0.5-0.65 s now and then, over both streams
+  alike, which gives its p95 and maximum figures on the slow link.
+- **Through the panel**, on both kinds: a first viewer leaves the screen at
+  1920x1080 (first frame in 358 ms on microsandbox); a watcher sees the
+  box's pointer in the video while the agent has control, in its shape
+  (arrow, I-beam), and none while a person has it, who sees their own in
+  the box's shape. Text (é 中 ✓) and a 62 KB PNG paste both ways over
+  video, byte for byte; over VNC, text both ways, no images, as on x64.
+  Five resizes after a hidden tab take 0.66-1.15 s (Wayland's took
+  0.31-0.38 s), the held picture covering the change; hand-back with the
+  tab hidden restores 1920x1080 in 0.64-0.85 s.
+
 ## Limits
 
 - Only the pool Mac is measured at 2x: Linux and Windows boxes run at 1x,
