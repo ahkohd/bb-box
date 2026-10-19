@@ -754,8 +754,13 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 fitSharp(boxId);
               },
               ownCursor: () => pointers.get(boxId)?.own ?? false,
+              pointerApart: () => videoApart.has(boxId),
               onEnd,
             });
+            // Whether the video comes from elsewhere, which then takes the pointer too, known before the first input.
+            void selkiesDisplay(boxes, boxId)
+              .then((shownDisplay) => (shownDisplay.openInput ? videoApart.add(boxId) : videoApart.delete(boxId)))
+              .catch(() => undefined);
             selkiesBoxes.get(boxId)?.relays.add(relay);
             // The box's pointer from bb-box-cursor (060): as it is, then each change.
             const told = relay;

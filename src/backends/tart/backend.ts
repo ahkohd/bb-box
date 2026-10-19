@@ -762,7 +762,7 @@ export class TartBackend implements Backend {
   /**
    * Declares windows-arm64-desktop's video (060), while every Mac that
    * answered has bb-box-stream.exe in its Windows image, as OpenH264 in its
-   * record says, for the input and the clipboard, and its own build of
+   * record says, for the keys and the clipboard, and its own build of
    * bb-box-stream, which gives the video from QEMU (#865). Leaves the pointer
    * out of it while a person holds control where every record lists the
    * hardware cursor too, as on Proxmox. Shown by choice: the desktop opens
@@ -1762,7 +1762,7 @@ export class TartBackend implements Backend {
       const ports = await this.#ports(host, guest);
       const access = this.#windows(mac, ports.ssh);
       const command = new SshTransport(ssh, access, "windows");
-      // Video where the kind declares it and this box has bb-box-stream.exe, for the input and the clipboard: a box of an
+      // Video where the kind declares it and this box has bb-box-stream.exe, for the keys and the clipboard: a box of an
       // older build may not (060).
       const declared = (capabilities?.displays ?? []).some((display) => display.protocol === "selkies");
       const video = declared && (await this.#hasWindowsStream(this.#streamKey(guest), command));

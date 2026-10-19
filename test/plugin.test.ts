@@ -2608,7 +2608,7 @@ test("a box whose video is shown only by choice, as a Tart Mac's, offers video b
   assert.deepEqual([usual.video, usual.videoByDefault], [true, true]);
 });
 
-test("a box whose video comes from elsewhere, as a Windows VM's on a Mac, gets a viewer's input on its own server, which gives the viewer with control its clipboard, and is told no size (#865)", async (t) => {
+test("a box whose video comes from elsewhere, as a Windows VM's on a Mac, gets a viewer's keys on its own server, which gives the viewer with control its clipboard, and is told no size, while the pointer goes to the video's source (#865)", async (t) => {
   const { harness, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
   t.after(() => harness.lifecycle.dispose());
   const own = new FakeSelkies();
@@ -2625,6 +2625,12 @@ test("a box whose video comes from elsewhere, as a Windows VM's on a Mac, gets a
   await session.receive("kd,97");
   await until("the key", async () => input.received.includes("kd,97"));
   assert.ok(!video.pages[0]!.received.includes("kd,97"));
+  // The pointer goes to the video's source, which gives it to QEMU's tablet, and again after a key, the same.
+  await session.receive("m,40,50,0,0,3");
+  await until("the pointer on the video's source", async () => video.pages[0]!.received.includes("m,40,50,0,0"));
+  await session.receive("kd,98");
+  await until("the pointer again after a key", async () => video.pages[0]!.received.filter((message) => message === "m,40,50,0,0").length === 2);
+  assert.ok(!input.received.some((message) => typeof message === "string" && message.startsWith("m,")), "no pointer to the box's own server");
   // The clipboard comes by the box's own server only, to the viewer with control.
   await own.clipboard("copied");
   await until("the clipboard", async () => session.sent.includes(`clipboard,${Buffer.from("copied").toString("base64")}`));

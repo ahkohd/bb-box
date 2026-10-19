@@ -145,8 +145,9 @@ export interface Display {
   /**
    * For a video display whose video comes from elsewhere than the box's own
    * stream server, as a Windows VM's from QEMU on its Mac (#865): opens the
-   * box's stream server, which takes the input and sends the clipboard and
-   * the pointer's shape, while `open` gives each viewer its video.
+   * box's stream server, which takes the keys and sends the clipboard and
+   * the pointer's shape, while `open` gives each viewer its video and takes
+   * its pointer.
    */
   openInput?(signal?: AbortSignal): Promise<DisplayOpened>;
   /**
