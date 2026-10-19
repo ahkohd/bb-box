@@ -19,6 +19,7 @@ import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, SelkiesSession, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
+import { boxKey, macBrowser } from "../src/app/viewer.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -713,7 +714,7 @@ function desktopBox(overrides: Partial<BoxView> = {}): BoxView {
     kindLabel: "Linux desktop",
     desktop: true,
     gpu: true,
-    display: { protocol: "rfb", resizable: true, clipboard: null, refresh: null, quality: null },
+    display: { protocol: "rfb", resizable: true, clipboard: null, refresh: null, quality: null, macKeys: null },
     control: { owner: "agent", holder: null },
     facts: [
       { label: "GPU", value: "GPU-0a1b" },
@@ -1736,7 +1737,7 @@ function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") 
 }
 
 test("a desktop that cannot be resized says only that you have control, and noVNC does not resize it", async () => {
-  const { handlers } = server([desktopBox({ kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null, quality: null } })]);
+  const { handlers } = server([desktopBox({ kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null, quality: null, macKeys: null } })]);
   const slot = desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
   const [client] = novnc.FakeRfb.made;
@@ -1766,7 +1767,7 @@ test("every desktop is asked for JPEG quality 2, and an X11 one, whose server se
 });
 
 test("a Wayland desktop's viewer asks for a still area it drew as JPEG again with no quality level, then for JPEG again (056)", async () => {
-  const wayland = desktopBox({ kind: "linux-desktop-wayland-cpu", gpu: false, display: { protocol: "rfb", resizable: true, clipboard: null, refresh: "viewer", quality: null } });
+  const wayland = desktopBox({ kind: "linux-desktop-wayland-cpu", gpu: false, display: { protocol: "rfb", resizable: true, clipboard: null, refresh: "viewer", quality: null, macKeys: null } });
   const { handlers } = server([wayland]);
   desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
@@ -1789,7 +1790,7 @@ test("a Wayland desktop's viewer asks for a still area it drew as JPEG again wit
 });
 
 test("a desktop whose display names a JPEG quality is asked for that one, as Windows on a Mac's 4 (056)", async () => {
-  const windows = desktopBox({ kind: "windows-arm64-desktop", os: "windows", gpu: false, display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4 } });
+  const windows = desktopBox({ kind: "windows-arm64-desktop", os: "windows", gpu: false, display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4, macKeys: null } });
   const { handlers } = server([windows]);
   desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
@@ -1892,12 +1893,17 @@ test("with control, Cmd+V on a Mac pastes this computer's text into a Linux box 
     expect(keyOnCanvas(slot, { key: "v", metaKey: true }).reached).toHaveBeenCalledTimes(1);
     fireEvent.click(slot.getByRole("button", { name: "Take control" }));
     await slot.findByText(/You have control/);
-    // Cmd is Ctrl in the box: noVNC's Meta becomes Control_L, code and all, so QEMU's scancode follows too.
-    client._handleKeyEvent(0xffe7, "MetaLeft", true, null, null);
+    // Cmd is Ctrl in the box, code and all, so QEMU's scancode follows too. In a Mac's browser noVNC sends the left
+    // Cmd as Alt_L and the right one as Super_L, as Safari on macOS showed; Option as Mode_switch stays noVNC's.
+    client._handleKeyEvent(0xffe9, "MetaLeft", true, null, null);
     client._handleKeyEvent(0x63, "KeyC", true, null, null);
+    client._handleKeyEvent(0xffeb, "MetaRight", true, null, null);
+    client._handleKeyEvent(0xff7e, "AltLeft", true, null, null);
     expect(client.keyEvents).toEqual([
       { keysym: 0xffe3, code: "ControlLeft", down: true },
       { keysym: 0x63, code: "KeyC", down: true },
+      { keysym: 0xffe4, code: "ControlRight", down: true },
+      { keysym: 0xff7e, code: "AltLeft", down: true },
     ]);
     // Cmd+V: kept from noVNC, left to the browser, whose paste event brings the text; the box gets it, then its own Ctrl+V.
     vi.useFakeTimers();
@@ -1940,8 +1946,15 @@ test("a macOS box keeps Cmd, and the menu's Paste reads this computer's clipboar
     act(() => void client.dispatchEvent(new Event("connect")));
     fireEvent.click(slot.getByRole("button", { name: "Take control" }));
     await slot.findByText(/You have control/);
-    client._handleKeyEvent(0xffe7, "MetaLeft", true, null, null);
-    expect(client.keyEvents).toEqual([{ keysym: 0xffe7, code: "MetaLeft", down: true }]);
+    // Cmd and Option go as Screen Sharing names Command and Option: Meta and Alt, not noVNC's Alt_L and Mode_switch.
+    client._handleKeyEvent(0xffe9, "MetaLeft", true, null, null);
+    client._handleKeyEvent(0xff7e, "AltLeft", true, null, null);
+    client._handleKeyEvent(0xfe03, "AltRight", true, null, null);
+    expect(client.keyEvents).toEqual([
+      { keysym: 0xffe7, code: "MetaLeft", down: true },
+      { keysym: 0xffe9, code: "AltLeft", down: true },
+      { keysym: 0xffea, code: "AltRight", down: true },
+    ]);
     const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
     await waitFor(() => expect(client.pasted).toEqual(["from the menu"]));
@@ -1999,7 +2012,7 @@ test("what the box copies reaches this computer's clipboard quietly; the menu's 
   cleanup();
   dropAllKept();
   // A Windows box through QEMU's console: the message says the console does not send it.
-  const windows = desktopTab(server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null, quality: null } })]).handlers, "box_7");
+  const windows = desktopTab(server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null, quality: null, macKeys: null } })]).handlers, "box_7");
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
   act(() => void novnc.FakeRfb.made[1]!.dispatchEvent(new Event("connect")));
   menu = await openMenu(windows.getByRole("button", { name: "Desktop actions" }));
@@ -2011,7 +2024,7 @@ test("what the box copies reaches this computer's clipboard quietly; the menu's 
 
 test("clipboard outcomes are toolbar notes that go after about 3 s, never from taking control; a paste the box refused is a lasting problem with Dismiss", async () => {
   fakeClipboard(() => Promise.resolve(""));
-  const { handlers } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null } })]);
+  const { handlers } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" } })]);
   const refusing: PluginRpcTestHandlers<Contract> = {
     ...handlers,
     desktopPaste: () => {
@@ -2054,7 +2067,7 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
   const { writeText } = fakeClipboard(() => Promise.resolve("héllo, wörld ✓ 日本"));
   try {
-    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null } })]);
+    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" } })]);
     const slot = desktopTab(handlers, "box_8");
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
     const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
@@ -2065,10 +2078,17 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
     // Taking control sends this computer's clipboard to the box, by RPC and not as noVNC's Latin-1 cut text.
     await waitFor(() => expect(changes).toContain(`desktopPaste box_8 ${viewer} héllo, wörld ✓ 日本`));
 
+    // Tart's VNC server takes Alt as Command and Meta as Option: Cmd goes as Alt, Option as Meta, and the paste chord is Alt+V.
+    client._handleKeyEvent(0xffe9, "MetaLeft", true, null, null);
+    client._handleKeyEvent(0xff7e, "AltLeft", true, null, null);
+    expect(client.keyEvents).toEqual([
+      { keysym: 0xffe9, code: "AltLeft", down: true },
+      { keysym: 0xffe7, code: "MetaLeft", down: true },
+    ]);
     const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
     await waitFor(() => expect(client.keys).toHaveLength(4));
-    expect(client.keys.map((key) => `${key.code}:${key.down ? "down" : "up"}`)).toEqual(["MetaLeft:down", "KeyV:down", "KeyV:up", "MetaLeft:up"]);
+    expect(client.keys.map((key) => `${key.code}:${key.down ? "down" : "up"}`)).toEqual(["AltLeft:down", "KeyV:down", "KeyV:up", "AltLeft:up"]);
     expect(await slot.findByText("Pasted")).toBeTruthy();
     expect(changes.filter((change) => change.startsWith("desktopPaste"))).toHaveLength(2);
 
@@ -2092,7 +2112,7 @@ test("a Windows box, whose QEMU console moves no clipboard, has it through bb-bo
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
   const { writeText } = fakeClipboard(() => Promise.resolve("from the Mac ✓"));
   try {
-    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: null, quality: null } })]);
+    const { handlers, changes, copyInBox } = server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: null, quality: null, macKeys: null } })]);
     const slot = desktopTab(handlers, "box_7");
     await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
     const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
@@ -2412,6 +2432,40 @@ test("a video desktop's Display holds Show as VNC, and no choice of the box's po
     undo();
     window.sessionStorage.clear();
   }
+});
+
+test("Cmd and Option reach a Mac as its server names Command and Option, from a Mac's browser or another, and Cmd is Ctrl elsewhere from a Mac", () => {
+  const keys = (keysym: number, code: string, os: string, mac: boolean, macKeys: "alt-command" | null) => {
+    const key = boxKey(keysym, code, os, mac, macKeys);
+    return `${key.keysym.toString(16)} ${key.code}`;
+  };
+  // From a Mac: noVNC's Alt_L (left Cmd), Super_L (right Cmd), Mode_switch (left Option), ISO_Level3_Shift (right Option).
+  expect([keys(0xffe9, "MetaLeft", "macos", true, null), keys(0xffeb, "MetaRight", "macos", true, null), keys(0xff7e, "AltLeft", "macos", true, null), keys(0xfe03, "AltRight", "macos", true, null)]).toEqual([
+    "ffe7 MetaLeft",
+    "ffe8 MetaRight",
+    "ffe9 AltLeft",
+    "ffea AltRight",
+  ]);
+  expect([keys(0xffe9, "MetaLeft", "macos", true, "alt-command"), keys(0xff7e, "AltLeft", "macos", true, "alt-command")]).toEqual(["ffe9 AltLeft", "ffe7 MetaLeft"]);
+  // From another browser: Alt is Option and the Windows key Command, on Tart's VNC as anywhere.
+  expect([keys(0xffe9, "AltLeft", "macos", false, null), keys(0xffeb, "MetaLeft", "macos", false, null)]).toEqual(["ffe9 AltLeft", "ffe7 MetaLeft"]);
+  expect([keys(0xffe9, "AltLeft", "macos", false, "alt-command"), keys(0xffeb, "MetaLeft", "macos", false, "alt-command")]).toEqual(["ffe7 MetaLeft", "ffe9 AltLeft"]);
+  // Chrome on a Mac says "macOS", Safari "MacIntel".
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("Linux x86_64");
+  Object.defineProperty(navigator, "userAgentData", { value: { platform: "macOS" }, configurable: true });
+  try {
+    expect(macBrowser()).toBe(true);
+  } finally {
+    delete (navigator as { userAgentData?: unknown }).userAgentData;
+    platform.mockRestore();
+  }
+  // Elsewhere: from a Mac, Cmd is Ctrl; from another browser, keys go as they are.
+  expect([keys(0xffe9, "MetaLeft", "linux", true, null), keys(0xffe9, "AltLeft", "windows", false, null), keys(0xffeb, "MetaLeft", "linux", false, null), keys(0x61, "KeyA", "macos", true, null)]).toEqual([
+    "ffe3 ControlLeft",
+    "ffe9 AltLeft",
+    "ffeb MetaLeft",
+    "61 KeyA",
+  ]);
 });
 
 test("a Windows box's video gets a character X names itself, such as €, as its Unicode keysym, and Latin-1 and keys as they are (the desktop sweep)", () => {

@@ -46,7 +46,7 @@ export interface BoxView {
   readonly docker: boolean;
   readonly desktop: boolean;
   /** The desktop the viewer shows, when the box has one. */
-  readonly display: { readonly protocol: DisplayProtocol; readonly resizable: boolean; readonly clipboard: "commands" | null; readonly refresh: "viewer" | null; readonly quality: number | null } | null;
+  readonly display: { readonly protocol: DisplayProtocol; readonly resizable: boolean; readonly clipboard: "commands" | null; readonly refresh: "viewer" | null; readonly quality: number | null; readonly macKeys: "alt-command" | null } | null;
   /** Who controls the desktop's input, when the box has one. */
   readonly control: ControlView | null;
   readonly computerUse: boolean;
@@ -95,7 +95,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     extras: extraFeatures(box),
     docker: box.capabilities.features.includes("docker"),
     desktop: box.capabilities.displays.length > 0,
-    display: display ? { protocol: display.protocol, resizable: display.resizable, clipboard: display.clipboard ?? null, refresh: display.refresh ?? null, quality: display.quality ?? null } : null,
+    display: display ? { protocol: display.protocol, resizable: display.resizable, clipboard: display.clipboard ?? null, refresh: display.refresh ?? null, quality: display.quality ?? null, macKeys: display.macKeys ?? null } : null,
     control: display ? control : null,
     computerUse: box.capabilities.computerUse !== null,
     terminal: box.state === "ready" && box.capabilities.command !== null,

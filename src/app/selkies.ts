@@ -16,7 +16,7 @@
 import Keyboard from "@novnc/novnc/core/input/keyboard.js";
 import keysyms from "@novnc/novnc/core/input/keysymdef.js";
 import type { Kept } from "./kept.ts";
-import { MAX_RETRY_MS, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, isCommandKey, macBrowser, type Connection } from "./viewer.ts";
+import { MAX_RETRY_MS, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, type Connection } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -600,7 +600,8 @@ export class SelkiesSession implements Kept {
 
   #key(keysym: number, down: boolean): void {
     if (!this.#mine) return;
-    const key = macBrowser() && this.guestOs !== "macos" && isCommandKey(keysym) ? XK_CONTROL_L : keysym;
+    // bb-box's own Mac input names Command and Option as most servers do.
+    const key = boxKey(keysym, "", this.guestOs, macBrowser(), null).keysym;
     const sent = this.guestOs === "windows" ? unicodeKeysym(key) : key;
     if (down) this.#held.add(sent);
     else this.#held.delete(sent);
