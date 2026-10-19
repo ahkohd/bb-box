@@ -432,6 +432,13 @@ static class Input {
     KeyEvent(vk.Value, down);
   }
 
+  /** A character as itself, whatever key would type it, as bb-box sends one QEMU's VNC server would type otherwise (cd, cu). */
+  public static void Character(int codePoint, bool down) {
+    int keysym = 0x1000000 | codePoint;
+    if (down) typed.Add(keysym); else typed.Remove(keysym);
+    CharacterEvent(codePoint, down);
+  }
+
   public static void ReleaseKeys() {
     foreach (ushort vk in held) KeyEvent(vk, false);
     held.Clear();
@@ -986,6 +993,15 @@ class Server {
         break;
       case "kr":
         Input.ReleaseKeys();
+        break;
+      // bb-box: a character as itself, for a key QEMU's VNC server would type otherwise.
+      case "cd": case "cu":
+        clipboard.WaitPasted(5000);
+        Input.Character(Field(fields, 1), verb == "cd");
+        break;
+      // bb-box: says when the messages before it are handled, so a key QEMU takes after a character cannot overtake it.
+      case "BB_PING":
+        if (fields.Length > 1) client.Text("BB_PONG," + fields[1]);
         break;
       case "m":
         Input.Pointer(Field(fields, 1), Field(fields, 2), Field(fields, 3));
