@@ -80,8 +80,10 @@ await conformance({
       sshBinary: FAKE_SSH_BINARY,
       portCheck: async () => true,
       readyTimeoutMs: 0,
-      // The fake SSH runs commands on the test machine, where this is: a Wayland box's image has Selkies (060).
+      // The fake SSH runs commands on the test machine, where this is: a Wayland box's image has Selkies (060), and a GPU
+      // desktop's encodes with NVENC (#863).
       selkiesLauncher: "/bin/sh",
+      gpuVideoMarker: "/bin/sh",
     }),
   // The backend's search for a free VMID starts where its storage says.
   reuse: async (storage, ref) => storage.set("next-vmid", Number(ref)),

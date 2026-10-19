@@ -111,7 +111,11 @@ test("kinds lists only kinds with a template", () => {
   assert.equal(kinds[0]!.capabilities.arch, "x86_64");
   assert.equal(kinds[0]!.readyTimeoutMs, 30_000);
   const desktop = setup().backend.kinds().find((kind) => kind.id === "linux-desktop")!;
-  assert.deepEqual(desktop.capabilities.displays, [{ id: "desktop", protocol: "rfb", resizable: true }], "xrandr resizes the GPU's screen");
+  assert.deepEqual(
+    desktop.capabilities.displays,
+    [{ id: "desktop", protocol: "rfb", resizable: true }, { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies", byChoice: true }],
+    "xrandr resizes the GPU's screen, and video with NVENC is there by choice (#863)",
+  );
   assert.equal(desktop.capabilities.gpu, true);
   const cpu = setup({ "proxmox-lxc-desktop-cpu-templates": "9003" }).backend.kinds().find((kind) => kind.id === "linux-desktop-cpu")!;
   assert.equal(cpu.capabilities.gpu, false);
@@ -1915,4 +1919,15 @@ test("a box comes from its template's current build until build.sh --replace swa
   assert.equal(await backend.fromCurrentBuild({ ...guest, data: { ...guest.data, template: 9999 } }, "linux"), false, "a template the kind no longer lists");
   const { build: _, ...data } = guest.data!;
   assert.equal(await backend.fromCurrentBuild({ ...guest, data }, "linux"), null, "no build recorded");
+});
+
+test("a GPU desktop shows as video only where its image encodes with NVENC, and by choice (#863)", async () => {
+  const displaysWith = async (marker: string) => {
+    const { backend } = setup({}, new MemoryStorage(), { gpuVideoMarker: marker });
+    const guest = await backend.acquire(identity("linux-desktop"), null, hooks().value, signal());
+    return (await backend.transports(guest, "linux-desktop")).displays.map((display) => display.protocol);
+  };
+  // The fake SSH runs commands on the test machine, where /bin/sh is and the other path is not.
+  assert.deepEqual(await displaysWith("/bin/sh"), ["rfb", "selkies"]);
+  assert.deepEqual(await displaysWith("/nonexistent/bb-box-nofbc.so"), ["rfb"], "an image built before has no video");
 });
