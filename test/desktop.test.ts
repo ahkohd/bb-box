@@ -116,6 +116,7 @@ function relayTo(
     displayInput?: DisplayOpened["input"];
     inputTakes?: DisplayOpened["inputTakes"];
     typesAsCharacter?: DisplayOpened["typesAsCharacter"];
+    keyDelayMs?: number;
   } = {},
 ) {
   const viewer = fakeViewer();
@@ -128,6 +129,7 @@ function relayTo(
     input: options.displayInput,
     ...(options.inputTakes ? { inputTakes: options.inputTakes } : {}),
     ...(options.typesAsCharacter ? { typesAsCharacter: options.typesAsCharacter } : {}),
+    ...(options.keyDelayMs ? { keyDelayMs: options.keyDelayMs } : {}),
   });
   const relay = new RfbRelay({
     viewer,
@@ -394,6 +396,30 @@ test("over QEMU's VNC server on Windows, a key typed otherwise than on a US keyb
   await until("the server's keys", () => box!.received.byteLength >= expected.byteLength);
   assert.deepEqual(calls, ["character true 61", "character false 61", "character true 31", "character false 31"]);
   assert.equal(hex(box!.received), hex(expected), "a US q, Ctrl+A and the wheel stay the server's");
+  await relay.relay.close();
+});
+
+test("a character after keys to a server that spaces its key events waits until it has typed them, as QEMU does each 10 ms (the desktop sweep)", async () => {
+  const server = new FakeRfb();
+  let calledAt = 0;
+  const input: DisplayInput = {
+    key: async () => true,
+    character: async () => void (calledAt = calledAt || Date.now()),
+    pointer: async () => undefined,
+    clipboard: async () => undefined,
+    size: async () => undefined,
+    ping: async () => undefined,
+    close: async () => undefined,
+  };
+  const relay = relayTo(server, { displayInput: async () => input, inputTakes: "characters", typesAsCharacter: windowsTypesAsCharacter, keyDelayMs: 10 });
+  await relay.init();
+  relay.give(true);
+  // d and e, down and up, then Shift and a German : on the period key: five key events QEMU types 10 ms apart.
+  const sentAt = Date.now();
+  await relay.relay.receive(
+    [qemuKeyEvent(true, 0x64, 0x20), qemuKeyEvent(false, 0x64, 0x20), qemuKeyEvent(true, 0x65, 0x12), qemuKeyEvent(false, 0x65, 0x12), qemuKeyEvent(true, 0xffe1, 0x2a), qemuKeyEvent(true, 0x3a, 0x34)].reduce(concat),
+  );
+  assert.ok(calledAt - sentAt >= 60, `the character waited ${calledAt - sentAt} ms for QEMU's five key events`);
   await relay.relay.close();
 });
 

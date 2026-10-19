@@ -111,6 +111,12 @@ export interface DisplayOpened {
    * QEMU key event, the key's scancode (XT, as QEMU takes it).
    */
   readonly typesAsCharacter?: (keysym: number, held: ReadonlySet<number>, scancode?: number) => boolean;
+  /**
+   * How long the stream server spaces the key events it takes, which a
+   * character sent to `input` waits out: QEMU's VNC server types each key
+   * event 10 ms after the one before (its key-delay-ms), so a burst queues.
+   */
+  readonly keyDelayMs?: number;
 }
 
 /** A change of the box's pointer, from bb-box-cursor (060). */

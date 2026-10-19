@@ -86,7 +86,7 @@ import { sizesCheck } from "../fit.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
-import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
 import { openRoute } from "../../transports/route.ts";
 import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
@@ -1762,7 +1762,7 @@ export class TartBackend implements Backend {
             open: async () => ({
               route: ssh.route(mac, ports.vnc),
               auth: { type: "none" },
-              ...(video ? { input: async () => windowsCharacterInput(stream), inputTakes: "characters" as const, typesAsCharacter: windowsTypesAsCharacter } : {}),
+              ...(video ? { input: async () => windowsCharacterInput(stream), inputTakes: "characters" as const, typesAsCharacter: windowsTypesAsCharacter, keyDelayMs: QEMU_KEY_DELAY_MS } : {}),
             }),
             resize: (size, signal) => this.#resizeWindows(guest.ref, command, size, signal),
             // QEMU's VNC shows the pointer Windows draws once a mouse has moved: out while a person in control watches it.

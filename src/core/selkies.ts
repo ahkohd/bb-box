@@ -172,12 +172,13 @@ export class SelkiesBox {
   async ping(timeoutMs: number): Promise<boolean> {
     const id = String(++this.#pinged);
     let wait: ReturnType<typeof setTimeout> | undefined;
-    const answered = new Promise<boolean>((resolve) => {
-      this.#pongs.set(id, () => resolve(true));
-      wait = setTimeout(() => resolve(false), timeoutMs);
-    });
+    let settle!: (answered: boolean) => void;
+    const answered = new Promise<boolean>((resolve) => (settle = resolve));
+    this.#pongs.set(id, () => settle(true));
     try {
+      // The wait starts once it is sent: opening the input connection, over SSH, is not the server's answer.
       await this.input(`BB_PING,${id}`);
+      wait = setTimeout(() => settle(false), timeoutMs);
       return await answered;
     } finally {
       clearTimeout(wait);

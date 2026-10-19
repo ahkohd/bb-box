@@ -63,6 +63,7 @@ export type OpenDisplay = (
   readonly input?: DisplayOpened["input"];
   readonly inputTakes?: DisplayOpened["inputTakes"];
   readonly typesAsCharacter?: DisplayOpened["typesAsCharacter"];
+  readonly keyDelayMs?: DisplayOpened["keyDelayMs"];
   readonly restart?: (signal: AbortSignal) => Promise<void>;
 }>;
 
@@ -98,6 +99,7 @@ interface BoxConnection {
   readonly input?: DisplayOpened["input"];
   readonly inputTakes?: DisplayOpened["inputTakes"];
   readonly typesAsCharacter?: DisplayOpened["typesAsCharacter"];
+  readonly keyDelayMs?: DisplayOpened["keyDelayMs"];
 }
 
 /**
@@ -119,7 +121,7 @@ const WHEEL = 0x78;
 export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_MS, stallMs = STALL_MS): Promise<BoxConnection> {
   const signal = AbortSignal.timeout(timeoutMs);
   for (let restarted = false; ; restarted = true) {
-    const { channel, auth, input, inputTakes, typesAsCharacter, restart } = await open(signal);
+    const { channel, auth, input, inputTakes, typesAsCharacter, keyDelayMs, restart } = await open(signal);
     const reader = new StreamReader(channel.readable);
     const writer = channel.writable.getWriter();
     let stall: ReturnType<typeof setTimeout> | undefined;
@@ -131,7 +133,7 @@ export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_
     handshake.catch(() => undefined);
     try {
       if (signal.aborted) throw new RfbError("The box's desktop did not finish its handshake in time.");
-      if ((await Promise.race([handshake, timedOut])) === "done") return { channel, reader, writer, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}) };
+      if ((await Promise.race([handshake, timedOut])) === "done") return { channel, reader, writer, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}), ...(keyDelayMs ? { keyDelayMs } : {}) };
     } catch (error) {
       await channel.close().catch(() => undefined);
       throw error;
@@ -198,6 +200,8 @@ export class RfbRelay {
   readonly #typed = new Set<number>();
   /** When the viewer's input last went to the server, for a character to the display's input after it. */
   #wroteAt = 0;
+  /** Until when a server that spaces its key events is typing the ones it has (keyDelayMs). */
+  #keysUntil = 0;
   /** The keysym of each key down by QEMU's key event, by its scancode. */
   readonly #heldQemu = new Map<number, number>();
   /** The viewer's bytes so far, each taken once those before it are. */
@@ -307,13 +311,11 @@ export class RfbRelay {
           if (message.down) this.#typed.add(message.keysym);
           else this.#typed.delete(message.keysym);
           // Keys before it reach the server first, and the helper posts it before the keys after it go.
-          if (passing.length) {
-            await connection.writer.write(passing.splice(0).reduce(concat));
-            this.#wroteAt = Date.now();
-          }
-          // The server's path into the box is a little slower than the input's: keys it just took land first.
-          const since = Date.now() - this.#wroteAt;
-          if (since < CHARACTER_AFTER_KEYS_MS) await new Promise((resolve) => setTimeout(resolve, CHARACTER_AFTER_KEYS_MS - since));
+          if (passing.length) await this.#write(connection, passing.splice(0));
+          // The server's path into the box is a little slower than the input's, and a server that spaces its key
+          // events has a queue of them: keys it took land first.
+          const wait = Math.max(this.#wroteAt + CHARACTER_AFTER_KEYS_MS, this.#keysUntil + CHARACTER_AFTER_KEYS_MS) - Date.now();
+          if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
           const input = await this.#opened(connection);
           if (input && !this.#ended) await input.character?.(message.down, message.keysym);
           continue;
@@ -330,10 +332,17 @@ export class RfbRelay {
       } else if (connection.input && isInput(message)) await this.#toInput(connection, message);
       else passing.push(bytes);
     }
-    if (passing.length) {
-      await connection.writer.write(passing.reduce(concat));
-      this.#wroteAt = Date.now();
-    }
+    if (passing.length) await this.#write(connection, passing);
+  }
+
+  /** Writes what passes to the server, noting when, and until when a server that spaces its key events types them. */
+  async #write(connection: BoxConnection, passing: Uint8Array[]): Promise<void> {
+    await connection.writer.write(passing.reduce(concat));
+    const now = Date.now();
+    this.#wroteAt = now;
+    if (!connection.keyDelayMs) return;
+    const keys = passing.reduce((count, bytes) => count + new ClientParser().push(bytes).filter((message) => message.type === "key" || message.type === "qemu-key").length, 0);
+    if (keys) this.#keysUntil = Math.max(now, this.#keysUntil) + keys * connection.keyDelayMs;
   }
 
   /** The keysyms of the keys this viewer holds down in the box. */
@@ -490,8 +499,8 @@ export class RfbRelay {
 /** Opens a box's display through its route. */
 export function displayOpener(display: Display): OpenDisplay {
   return async (signal) => {
-    const { route, auth, input, inputTakes, typesAsCharacter } = await display.open(signal);
-    return { channel: await openRoute(route, signal), auth, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}), ...(display.restartServer ? { restart: (each: AbortSignal) => display.restartServer!(each) } : {}) };
+    const { route, auth, input, inputTakes, typesAsCharacter, keyDelayMs } = await display.open(signal);
+    return { channel: await openRoute(route, signal), auth, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}), ...(keyDelayMs ? { keyDelayMs } : {}), ...(display.restartServer ? { restart: (each: AbortSignal) => display.restartServer!(each) } : {}) };
   };
 }
 
