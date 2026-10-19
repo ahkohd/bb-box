@@ -396,6 +396,8 @@ export type BoxErrorCode =
   | "in_use"
   /** A resize needs a restart of the box, which the caller did not allow (061). */
   | "needs_restart"
+  /** A live shrink of a box's memory would leave less than a margin above what the box uses (061). */
+  | "memory_in_use"
   /** A name for one of your machines that is not a hostname label, or is taken. */
   | "invalid_name"
   /** The box this thread runs on belongs to another owner, who releases or stops it (036). */
@@ -1912,7 +1914,7 @@ export class Boxes {
     const margin = Math.max(RESIZE_MEMORY_MARGIN_MIB, Math.round(memoryMiB / 10));
     if (used + margin > memoryMiB) {
       throw new BoxError(
-        "invalid_size",
+        "memory_in_use",
         `Box ${box.name} uses ${formatMiB(used)} of memory now, so ${formatMiB(memoryMiB)} would leave less than ${formatMiB(margin)} free, and the kernel could end its processes. ` +
           `Give it at least ${formatMiB(Math.ceil((used + margin) / 1024) * 1024)}, or free memory in it first. bb-box changed nothing.`,
       );

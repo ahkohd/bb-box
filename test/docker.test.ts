@@ -1212,3 +1212,37 @@ test("a container comes from its kind's image's current build until a refresh mo
   assert.equal(await backend.fromCurrentBuild!(guest, "linux"), false);
   assert.equal(await backend.fromCurrentBuild!({ ...guest, ref: "bbbox-gone" }, "linux"), null, "a container that is gone cannot tell");
 });
+
+test("a container's cores and memory resize live with docker update, with room for what it grows by, and it has no disk to grow (061)", async () => {
+  const { fake, backend } = setup({}, { cpus: 8, memoryMiB: 16384 });
+  assert.deepEqual(backend.resizing("linux"), { cores: "live", memory: "live", disk: "no", shrinks: true });
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const to = { cores: 4, memoryMiB: 8192, diskGiB: null };
+
+  const plan = await backend.planResize(guest, "linux", to, [], signal());
+  assert.deepEqual(plan.parts, [
+    { part: "cores", from: 2, to: 4, way: "live" },
+    { part: "memory", from: 4096, to: 8192, way: "live" },
+  ]);
+  assert.equal(plan.room.ok, true);
+  assert.deepEqual((await backend.planResize(guest, "linux", { ...to, diskGiB: 40 }, [], signal())).parts.at(-1), { part: "disk", from: null, to: 40, way: "no" });
+
+  // 16 GiB, 4 of it this box's and 4 kept free: 8 GiB more fits, 9 GiB more does not; 10 cores are more than the host's.
+  const tight = await backend.planResize(guest, "linux", { ...to, memoryMiB: 13 * 1024 }, [], signal());
+  assert.equal(tight.room.message, "fake-docker has 12 GiB of memory free and keeps 4 GiB free, so the 9 GiB more the box needs does not fit. Ask for less memory, release a box, or lower the memory kept free in bb-box's settings.");
+  assert.equal((await backend.planResize(guest, "linux", { ...to, memoryMiB: 12 * 1024 }, [], signal())).room.ok, true);
+  assert.equal((await backend.planResize(guest, "linux", { ...to, cores: 10 }, [], signal())).room.message, "fake-docker has 8 cores, fewer than the 10 asked for. Ask for at most 8 cores.");
+
+  const grown = await backend.resize(guest, "linux", to, { restart: false }, signal());
+  assert.deepEqual(grown.size, to);
+  const update = fake.calls().find((args) => args[0] === "container" && args[1] === "update")!;
+  assert.deepEqual(update.slice(2, -1), ["--cpus", "4", "--memory", "8192m", "--memory-swap", "8192m"]);
+  // Down again: memory and swap go together, which Docker needs to lower memory.
+  assert.deepEqual((await backend.resize(guest, "linux", SMALL, { restart: false }, signal())).size, SMALL);
+  assert.equal((await backend.capacity("linux", SMALL, [], signal())).hosts[0]!.limits.find((limit) => limit.resource === "memory")!.used, 4096, "capacity counts the new limit");
+
+  await assert.rejects(backend.resize(guest, "linux", { ...SMALL, diskGiB: 40 }, { restart: false }, signal()), /no disk of its own/);
+  fake.set({ failUpdate: "the kernel refused" });
+  await assert.rejects(backend.resize(guest, "linux", to, { restart: false }, signal()), /the kernel refused/);
+  await assert.rejects(backend.resize({ ...guest, data: { ...guest.data, box: "bx_other" } }, "linux", to, { restart: false }, signal()), (error) => error instanceof BackendError && error.code === "gone");
+});

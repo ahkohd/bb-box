@@ -2142,7 +2142,7 @@ test("box_resize resizes a box live where its backend can, says first what it wo
   assert.equal(backend.resized.length, 0, "a check changes nothing");
 
   const grown = text(await tool("box_resize", { box: box.name, cores: 4, memory_gib: 8, disk_gib: 30 }));
-  assert.match(grown, new RegExp(`^Resized box ${box.name} from 2 cores, 4 GiB memory, 20 GiB disk to 4 cores, 8 GiB memory, 30 GiB disk in \\d+\\.\\d s\\.\\nLive, with everything in it still running: cores 2 to 4; memory 4 GiB to 8 GiB; disk 20 GiB to 30 GiB\\.\\nNew cores can take up to 15 s to show in the box\\.`));
+  assert.match(grown, new RegExp(`^Resized box ${box.name} from 2 cores, 4 GiB memory, 20 GiB disk to 4 cores, 8 GiB memory, 30 GiB disk in \\d+ ms\\.\\nLive, with everything in it still running: cores 2 to 4; memory 4 GiB to 8 GiB; disk 20 GiB to 30 GiB\\.\\nNew cores can take up to 15 s to show in the box\\.`));
   assert.deepEqual(backend.resized.map((resize) => [resize.to, resize.restart]), [[{ cores: 4, memoryMiB: 8192, diskGiB: 30 }, false]]);
   const status = text(await tool("box_status", { box: box.name }));
   assert.match(status, /\nSize: 4 cores, 8 GiB memory, 30 GiB disk\n/);
@@ -2173,7 +2173,7 @@ test("box_resize refuses a live shrink of memory below what the box uses, with a
   assert.ok(isError(refused));
   assert.match(
     text(refused),
-    new RegExp(`^Box ${box.name} uses 3\\.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes\\. Give it at least 5 GiB, or free memory in it first\\. bb-box changed nothing\\.`),
+    new RegExp(`^Box ${box.name} uses 3\\.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes\\. Give it at least 5 GiB, or free memory in it first\\. bb-box changed nothing\\.\\n\\nNext: Give the box at least the memory this names`),
   );
   assert.equal(world.backend!.resized.length, 0);
   assert.equal((await app.boxes.find(box.id))?.resize ?? null, null, "nothing was recorded");
