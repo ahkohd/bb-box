@@ -38,7 +38,9 @@ where it is built ahead, which its boxes claim at once (#440). The
 - Linux boxes run Ubuntu 24.04 with build tools, Git, Python with `uv`,
   Node.js with pnpm and Yarn, Docker, `gh`, `rg`, `fd`, `jj`, and the Claude
   Code, Codex and Pi CLIs. Desktops add XFCE, Chrome, Mousepad, Ristretto,
-  Evince and CJK fonts.
+  Evince and CJK fonts. Wayland desktops (`linux-desktop-wayland-cpu`) run
+  Ubuntu 26.04 with Sway instead of XFCE, and the same apps on Wayland; X11
+  apps do not run there.
 - `sudo apt-get install -y <package>` works at once. If apt answers 404 Not
   Found, run `sudo apt-get update` and try again. `box_status` says whether
   the box user can use `sudo`.
