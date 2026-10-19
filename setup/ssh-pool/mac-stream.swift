@@ -335,9 +335,24 @@ let PRINTABLE: [UInt32: CGKeyCode] = {
   for (code, chars) in US_KEYS { for scalar in chars.unicodeScalars { map[scalar.value] = code } }
   return map
 }()
+/** The characters a US keyboard types with Shift. */
+let SHIFTED: Set<UInt32> = Set(US_KEYS.filter { $0.0 != 49 }.compactMap { $0.1.unicodeScalars.dropFirst().first?.value })
 let MODIFIERS: [CGKeyCode: CGEventFlags] = [
   56: .maskShift, 60: .maskShift, 59: .maskControl, 62: .maskControl, 58: .maskAlternate, 61: .maskAlternate, 55: .maskCommand, 54: .maskCommand,
 ]
+
+/**
+ * The character a key types as itself, not as a key on a US keyboard, or nil to send it as the key; as bb-box's
+ * mac-input.ts decides: one the keyboard has no key for, such as é, or whose key needs another Shift than the one held,
+ * as from a French keyboard. Never while Command or Control is held, so a shortcut stays keys, nor for Space.
+ */
+func macCharacter(_ keysym: Int, shift: Bool, shortcut: Bool) -> UInt32? {
+  let codePoint: Int? = keysym >= 0x1000000 ? keysym - 0x1000000 : keysym > 0x20 && keysym <= 0xff ? keysym : nil
+  guard let codePoint, codePoint > 0x20, codePoint <= 0x10ffff, !shortcut else { return nil }
+  let value = UInt32(codePoint)
+  if PRINTABLE[value] == nil { return value }
+  return SHIFTED.contains(value) == shift ? nil : value
+}
 
 func macKeyCode(_ keysym: Int) -> CGKeyCode? {
   if keysym >= 0xffbe && keysym <= 0xffc9 { return FUNCTION_KEYS[keysym - 0xffbe] }
@@ -350,6 +365,8 @@ func macKeyCode(_ keysym: Int) -> CGKeyCode? {
 /** Posts the controlling viewer's keys and pointer, as a keyboard and mouse would. Positions come in the frame's pixels. */
 final class Input: @unchecked Sendable {
   private var held: [CGKeyCode: Int] = [:]
+  /** The keysyms of keys down as their character, which go up so too. */
+  private var typed: Set<Int> = []
   private var mask = 0
   private var x = 0.0, y = 0.0
   private var clicks = (at: 0.0, x: 0.0, y: 0.0, button: -1, count: 0)
@@ -369,14 +386,32 @@ final class Input: @unchecked Sendable {
   }
 
   func key(_ keysym: Int, down: Bool) {
+    let shift = held[56] != nil || held[60] != nil
+    let shortcut = [55, 54, 59, 62].contains { held[CGKeyCode($0)] != nil }
+    if down ? macCharacter(keysym, shift: shift, shortcut: shortcut) != nil : typed.contains(keysym) {
+      if down { typed.insert(keysym) } else { typed.remove(keysym) }
+      character(keysym >= 0x1000000 ? keysym - 0x1000000 : keysym, down: down)
+      return
+    }
     guard let code = macKeyCode(keysym) else { return }
     if down { held[code, default: 0] += 1 } else { held[code] = nil }
     post(CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down))
   }
 
+  /** A character as the text its key types, with no modifier: Shift or Option already made it. */
+  private func character(_ codePoint: Int, down: Bool) {
+    guard let scalar = Unicode.Scalar(UInt32(codePoint)), let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) else { return }
+    let units = Array(String(Character(scalar)).utf16)
+    event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+    event.flags = []
+    event.post(tap: .cghidEventTap)
+  }
+
   func releaseKeys() {
     for code in held.keys { post(CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false)) }
     held = [:]
+    for keysym in typed { character(keysym >= 0x1000000 ? keysym - 0x1000000 : keysym, down: false) }
+    typed = []
   }
 
   // Selkies' mask: 1 primary, 2 middle, 4 secondary. Each: the mask bit, the CoreGraphics button, and its down, up and dragged events.
