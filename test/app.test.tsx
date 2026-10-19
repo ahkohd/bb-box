@@ -2263,10 +2263,10 @@ class FakeDecoder {
     FakeDecoder.made.push(this);
   }
   /** A frame it cannot decode, or a decoder the browser takes back: as WebCodecs says, it closes, then calls its error callback. */
-  fail() {
+  fail(name = "EncodingError") {
     this.state = "closed";
     try {
-      this.#error(new DOMException("The decoder failed.", "EncodingError"));
+      this.#error(new DOMException("The decoder failed.", name));
     } catch (error) {
       FakeDecoder.thrown.push(error);
     }
@@ -2449,6 +2449,60 @@ test("a video desktop whose decoder failed shows again when its tab comes back, 
     expect(FakeDecoder.made.at(-1)!.state).toBe("configured");
     act(() => void socket.onmessage?.({ data: videoFrame(6, true) }));
     expect(FakeDecoder.made.at(-1)!.chunks).toEqual([{ type: "key", timestamp: 6 }]);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("a video desktop whose stream this browser cannot decode, as Safari past H.264 level 5.2, shows over VNC, and its decoder is not made again and again", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const slot = desktopTab(server([desktopBox()], { video: true }).handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    await slot.findByText("The agent has control.");
+    const made = FakeDecoder.made.length;
+    act(() => FakeDecoder.made.at(-1)!.fail("NotSupportedError"));
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    expect(FakeDecoder.made).toHaveLength(made);
+    expect(socket.readyState).toBe(3);
+    expect(toasts()).toEqual(["Video did not start, so this shows VNC.This browser cannot decode the desktop's video at its size (avc1.42E01F)."]);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("video that this browser cannot decode while its tab is away shows over VNC as the tab comes back, rather than a frozen picture", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    let slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    await slot.findByText("The agent has control.");
+    cleanup();
+    act(() => FakeDecoder.made.at(-1)!.fail("NotSupportedError"));
+    expect(novnc.FakeRfb.made).toHaveLength(0);
+    slot = desktopTab(handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    expect(toasts()).toEqual(["Video did not start, so this shows VNC.This browser cannot decode the desktop's video at its size (avc1.42E01F)."]);
+    // Back again later, it shows over VNC at once, its kept session, with no new try at video.
+    const videos = FakeSocket.made.filter((made) => made.url.includes("stream=selkies")).length;
+    cleanup();
+    slot = desktopTab(handlers);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(novnc.FakeRfb.made).toHaveLength(1);
+    expect(FakeSocket.made.filter((made) => made.url.includes("stream=selkies"))).toHaveLength(videos);
   } finally {
     undo();
     window.sessionStorage.clear();
