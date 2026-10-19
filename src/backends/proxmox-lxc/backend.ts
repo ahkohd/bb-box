@@ -87,7 +87,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
-import { SELKIES_DISPLAY, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
+import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -334,6 +334,8 @@ export interface LxcBackendOptions {
   readonly sshBinary?: string;
   /** Where a Wayland box's image has Selkies' launcher, instead of SELKIES_LAUNCHER: a file the fake SSH finds, in tests. */
   readonly selkiesLauncher?: string;
+  /** Where a Wayland box's image has bb-box-cursor, instead of CURSOR_HELPER: a file the test finds, in tests. */
+  readonly cursorHelper?: string;
   /** Replaces the TCP check for port 22, for tests. */
   readonly portCheck?: PortCheck;
   /** Replaces each kind's readyTimeoutMs, for tests. */
@@ -561,6 +563,8 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #keyFile = new KeyFile();
   /** Whether each Wayland box's image has Selkies (060). */
   readonly #selkies: SelkiesPresence;
+  /** Whether each Wayland box's image has bb-box-cursor (060). */
+  readonly #cursor: ImageFile;
   readonly #warmStore: WarmStore;
   readonly #warm: ReadyPool<BoxIdentity>;
   /** VMIDs this process is cloning into. */
@@ -618,6 +622,7 @@ export class ProxmoxLxcBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#selkies = new SelkiesPresence(options.selkiesLauncher);
+    this.#cursor = new ImageFile(options.cursorHelper ?? CURSOR_HELPER);
     this.#http = options.fetch
       ? { fetch: options.fetch, close: async () => {} }
       : proxmoxFetch({ ca: config.proxmox.caCertificate, fingerprint: config.proxmox.tlsFingerprint });
@@ -963,6 +968,7 @@ export class ProxmoxLxcBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
     this.#selkies.forget(presenceKey(guest));
+    this.#cursor.forget(presenceKey(guest));
     await this.#forget(this.#vmid(guest));
     const api = await this.client();
     if (await this.#still(api, guest, signal)) await api.destroy(this.#vmid(guest), signal);
@@ -1086,6 +1092,9 @@ export class ProxmoxLxcBackend implements Backend {
     const wayland = offer?.flavour === "desktop-wayland-cpu";
     // A Wayland box of an image built before Selkies was in it has no video (060).
     const video = !wayland || (await this.#selkies.has(presenceKey(guest), command));
+    // An image with bb-box-cursor (060): Sway 1.11, whose streams paint no pointer, so none is hidden, and Sway keeps a theme
+    // the cursor session and wayvnc send as the pointer's shape. One without keeps #707's hidden theme.
+    const sends = wayland && (await this.#cursor.has(presenceKey(guest), command));
     const displays = (capabilities?.displays ?? []).filter((display) => video || display.protocol !== "selkies").map(
       (display): Display =>
         display.protocol === "selkies"
@@ -1101,7 +1110,7 @@ export class ProxmoxLxcBackend implements Backend {
                 };
               },
               ...(offer?.flavour === "desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
-              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal), pointer: (shown: boolean, signal?: AbortSignal) => waylandPointer(command, shown, signal) } : {}),
+              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal), pointer: (shown: boolean, signal?: AbortSignal) => waylandPointer(command, shown || sends, signal) } : {}),
               minSize: MIN_DESKTOP,
             },
     );

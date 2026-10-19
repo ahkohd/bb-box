@@ -1055,8 +1055,38 @@ test("streams the Wayland desktop with Apple's sign-in, as wayvnc asks, and resi
   mkdirSync(dirname(launcher), { recursive: true });
   writeFileSync(launcher, "#!/bin/sh\n");
   chmodSync(launcher, 0o755);
+  // And bb-box-cursor, as an image with Sway 1.11 has (060).
+  const helper = join(dirname(launcher), "cursor");
+  writeFileSync(helper, "#!/bin/sh\n");
+  chmodSync(helper, 0o755);
   const shown = (await backend.transports(video, "linux-desktop-wayland-cpu")).displays;
   assert.deepEqual(shown.map((each) => [each.protocol, each.label, each.cursor ?? null]), [["rfb", "Desktop", null], ["selkies", "Desktop, as video", null]]);
+
+  // The pointer while a person holds control (#707, 060): an image without bb-box-cursor, as on 24.04, hides it from the
+  // picture, as before; one with it, Sway 1.11's, keeps Sway's theme, whose pointer neither stream paints. Sway's own command
+  // stands in, recording the themes it is given, and GSettings' does nothing.
+  const bin = join(fake.root, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "swaymsg"), `#!/bin/sh\nfor arg; do case "$arg" in *xcursor_theme*) echo "\${arg##* }" >>"${bin}/themes";; esac; done\n`);
+  chmodSync(join(bin, "swaymsg"), 0o755);
+  // GSettings too, which a test machine may have without its schemas.
+  writeFileSync(join(bin, "gsettings"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(bin, "gsettings"), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    const themes = async (ref: typeof box) => {
+      const [rfb] = (await backend.transports(ref, "linux-desktop-wayland-cpu")).displays;
+      rmSync(join(bin, "themes"), { force: true });
+      await rfb!.pointer!(false);
+      await rfb!.pointer!(true);
+      return readFileSync(join(bin, "themes"), "utf8").trim().split("\n");
+    };
+    assert.deepEqual(await themes(box), ["bb-box-hidden", "default"], "an image without the helper hides the pointer, as before");
+    assert.deepEqual(await themes(video), ["default", "default"], "an image with the helper keeps Sway's theme");
+  } finally {
+    process.env.PATH = path;
+  }
 });
 
 test("a box that changes hands keeps its new owner and name for the sweep, though its labels cannot change (036)", async () => {
