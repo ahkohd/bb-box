@@ -86,8 +86,8 @@ function stateOf(model: BackendRowModel): { tone: Tone; words: string; items: Re
 }
 
 /**
- * The name in a backend's ID, as a second backend of a type has ("microsandbox:homestead"), for a chip beside its label;
- * null when it has none, or its label already says it ("microsandbox on homestead").
+ * The name in a backend's ID, as a second backend of a type has ("microsandbox:mac-mini"), for a chip beside its label;
+ * null when it has none, or its label already says it ("microsandbox on mac-mini").
  */
 export function backendName(id: string, label: string): string | null {
   const named = id.includes(":") ? id.slice(id.indexOf(":") + 1) : null;

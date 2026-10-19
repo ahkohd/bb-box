@@ -149,7 +149,7 @@ test("a refresh waits for room for its boxes, saying so, and times only the box 
 });
 
 test("one stall on the host is not the build's: a second box of each, and the better of each, before answers as quickly fails (the nightly of 19 October 2026)", async () => {
-  // The build's box, the old build's, then the new build's stalls 38 s, as homestead's SSH did; its second does not.
+  // The build's box, the old build's, then the new build's stalls 38 s, as a Mac's SSH did; its second does not.
   const stalled = fake({ stalls: [0, 0, 38_000] });
   const result = await refresh(stalled, { replace: false });
   assert.equal(result.ok, true, result.reason ?? "");

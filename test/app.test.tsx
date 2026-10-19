@@ -3862,7 +3862,7 @@ test("New box's new-thread inputs offer the Image group with the project's image
 });
 
 test("a second backend of a type shows the name in its ID, unless its label already says it (053)", () => {
-  expect(backendName("microsandbox:homestead", "microsandbox on homestead")).toBeNull();
+  expect(backendName("microsandbox:mac-mini", "microsandbox on mac-mini")).toBeNull();
   expect(backendName("docker:attic", "Docker")).toBe("attic");
   expect(backendName("microsandbox", "microsandbox on behemoth")).toBeNull();
 });
