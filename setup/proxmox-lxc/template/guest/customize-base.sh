@@ -36,8 +36,10 @@ done
 rm -rf /etc/cloud /var/lib/cloud /snap /var/snap /var/lib/snapd
 
 # Baseline, Docker and everyday tools, from the pinned apt snapshot.
+# bind9-dnsutils is dig and nslookup: Ubuntu 24.04's dnsutils is only a
+# transitional name for it, which 26.04 dropped.
 docker_packages="docker.io docker-compose-v2 docker-buildx pigz postgresql-client redis-tools sqlite3"
-extra_packages="openssh-server sudo systemd-resolved less nano vim neovim iputils-ping iputils-arping dnsutils netcat-openbsd htop tmux file lsof strace"
+extra_packages="openssh-server sudo systemd-resolved less nano vim neovim iputils-ping iputils-arping bind9-dnsutils netcat-openbsd htop tmux file lsof strace"
 # Ubuntu's container image has no systemd. A Docker box does not run it, but
 # systemctl sets up the same units as in an LXC box, and the box's start script
 # makes the machine ID with it.

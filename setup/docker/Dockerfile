@@ -7,6 +7,12 @@
 # (proxmox-lxc/template/apt-snapshot): the build applies the snapshot's
 # updates, and apt does not take a package back to an older version.
 ARG UBUNTU=ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+# The Wayland desktop's base, which moves to Ubuntu 26.04 on its own, once a
+# 26.04 build has been tried. ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
+# (resolute-20260912, no newer than the snapshot) builds it there now
+# (--build-arg UBUNTU_WAYLAND=...). The guest scripts take the release from
+# the image.
+ARG UBUNTU_WAYLAND=${UBUNTU}
 
 # The artifacts the guest scripts install, each checked against its pinned
 # SHA-256, as fetch-artifacts.sh does on a Proxmox host. The pinned files are
@@ -91,7 +97,7 @@ LABEL bbbox.image-version="1" bbbox.gpu-bus-id="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]
 
 # The Wayland desktop (048): Sway on the CPU, streamed by wayvnc, with no GPU.
-FROM ${UBUNTU} AS desktop-wayland
+FROM ${UBUNTU_WAYLAND} AS desktop-wayland
 RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
     --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
     --mount=type=bind,from=fetch-desktop-wayland,source=/artifacts,target=/mnt/artifacts \

@@ -9,7 +9,8 @@ templates:
   over VNC, with Chrome and Cua Driver for computer use. Each carries one
   GPU.
 - **CPU desktop**: the desktop with no GPU, drawn by the CPU.
-- **Wayland desktop**: a Sway desktop on Wayland, drawn by the CPU.
+- **Wayland desktop**: a Sway desktop on Wayland, drawn by the CPU, on
+  Ubuntu 26.04, whose Sway and wayvnc carry the box's own pointer shapes.
 
 bb-box drives the host through the Proxmox API with a token of its own, and
 reaches inside boxes over SSH and VNC. A new box takes a few seconds; a warm
@@ -148,7 +149,8 @@ template/build.sh desktop 9103 --cpu                          # no GPU
 template/build.sh desktop 9105 --cpu --wayland                # Wayland, no GPU
 ```
 
-- `build.sh` makes a CT from Proxmox's Ubuntu 24.04 template, customises it,
+- `build.sh` makes a CT from Proxmox's Ubuntu 24.04 template, or for
+  `--wayland` its 26.04 template (`BBBOX_OS_TEMPLATE_WAYLAND`), customises it,
   boots it once and runs its checks as the box user. It then cleans it,
   makes it a template in `BBBOX_POOL` and protects it.
 - Only root can give a container device nodes or features, and a clone copies

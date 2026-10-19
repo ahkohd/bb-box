@@ -42,6 +42,11 @@ check() { # pin name -> path of the checked artifact
   echo "$f"
 }
 
+# The Ubuntu release: 24.04, or 26.04, whose Sway and wayvnc carry the box's
+# own pointer shapes. Some packages and pins differ between them.
+release=$(. /etc/os-release && echo "$VERSION_ID")
+case $release in 24.04 | 26.04) ;; *) die "the Wayland desktop is for Ubuntu 24.04 or 26.04, not $release" ;; esac
+
 # Packages, without recommends: Sway's include Xwayland, which stays out.
 # wf-recorder records the desktop for box_record (059). gsettings
 # (libglib2.0-bin) switches GTK apps' cursor theme, to hide the pointer (#707).
@@ -55,13 +60,19 @@ desktop_packages="sway swaybg waybar wayvnc foot wofi wl-clipboard grim slurp wf
 desktop_packages="$desktop_packages mousepad ristretto evince thunar gtk-4-examples"
 # Chinese, Japanese and Korean text, sans and serif, regular and bold (88 MiB).
 desktop_packages="$desktop_packages fonts-noto-cjk"
+# On 26.04, the Wayland protocols' XML, which bb-box's cursor helper builds
+# against (ext-image-copy-capture), for the pointer's shape on video.
+[ "$release" != 26.04 ] || desktop_packages="$desktop_packages wayland-protocols"
 # What Zed's GPUI needs to build on Linux.
 gpui_packages="clang cmake libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
   libfontconfig-dev libfreetype-dev libssl-dev libzstd-dev libvulkan-dev libasound2-dev"
 chrome=$(check chrome)
 # Selkies, the desktop's video (060): its package holds its own Python, in
-# /opt/selkies.
-selkies=$(check selkies)
+# /opt/selkies. Its package is built for each Ubuntu release: the pin for
+# 26.04 is selkies-ubuntu26.04, and for 24.04 selkies.
+selkies_pin=selkies
+[ "$release" != 26.04 ] || selkies_pin=selkies-ubuntu26.04
+selkies=$(check "$selkies_pin")
 # A refresh of a built image (049) may have a newer Chrome already, which
 # Google's apt source brought: keep it rather than go back to the pin.
 installed=$(dpkg-query -W -f='${Status} ${Version}' google-chrome-stable 2>/dev/null | sed -n 's/^install ok installed //p' || true)
@@ -89,7 +100,8 @@ install -d -m 0755 /usr/share/bb-box
   echo "nvidia=none"
   echo "session=wayland"
   for package in sway wayvnc waybar; do echo "$package=$(dpkg-query -W -f='${Version}' "$package")"; done
-  for name in selkies chrome cua-driver rustup; do echo "$name=$(file_of "$name")"; done
+  echo "selkies=$(file_of "$selkies_pin")"
+  for name in chrome cua-driver rustup; do echo "$name=$(file_of "$name")"; done
 } >"$build/extra-release"
 
 # The display, its stream and their settings.

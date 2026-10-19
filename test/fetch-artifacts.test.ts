@@ -80,3 +80,24 @@ test("a cached file that does not match its pin is downloaded again, and files n
   assert.match(out, /cache: removed tool-1\.0\.tar\.gz, which no pin names/);
   assert.deepEqual(readdirSync(w.cache).filter((name) => !name.includes(".part.")), ["tool-1.1.tar.gz"]);
 });
+
+test("only the Wayland desktop fetches the Ubuntu 26.04 pins, which the X11 desktops, on 24.04, leave", { skip: spawnSync("jq", ["--version"]).status !== 0 && "needs jq" }, () => {
+  const w = world({});
+  const files = { "selkies-2.0.0-ubuntu24.04-amd64.deb": "selkies for 24.04", "selkies-2.0.0-ubuntu26.04-amd64.deb": "selkies for 26.04" };
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(w.upstream, name), text);
+  const row = (name: string, file: string) => `${name}\t${file}\tfile://${join(w.upstream, file)}\t${sha256(files[file as keyof typeof files])}\tx86_64`;
+  writeFileSync(
+    join(w.root, "template", "desktop-pins.tsv"),
+    ["# name\tfile\turl\tsha256\tarch", row("selkies", "selkies-2.0.0-ubuntu24.04-amd64.deb"), row("selkies-ubuntu26.04", "selkies-2.0.0-ubuntu26.04-amd64.deb"), ""].join("\n"),
+  );
+  const fetched = (kind: string, art: string) => {
+    const ran = spawnSync("bash", [join(w.root, "template", "fetch-artifacts.sh"), w.art(art), kind, "x86_64"], {
+      encoding: "utf8",
+      env: { ...process.env, BBBOX_ENV: "/nonexistent", BBBOX_BB_URL: "", BBBOX_ARTIFACT_CACHE: "" },
+    });
+    assert.equal(ran.status, 0, ran.stderr);
+    return readdirSync(w.art(art)).sort();
+  };
+  assert.deepEqual(fetched("desktop-cpu", "x11"), ["selkies-2.0.0-ubuntu24.04-amd64.deb"]);
+  assert.deepEqual(fetched("desktop-wayland-cpu", "wayland"), ["selkies-2.0.0-ubuntu24.04-amd64.deb", "selkies-2.0.0-ubuntu26.04-amd64.deb"]);
+});
