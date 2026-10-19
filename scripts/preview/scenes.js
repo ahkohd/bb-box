@@ -1158,7 +1158,7 @@ export const scenes = {
           backends: [
             { id: "docker", type: "docker", enabled: true, fields: { host: "ssh://box@behemoth" } },
             { id: "microsandbox", type: "microsandbox", enabled: true, fields: { host: "ssh://box@behemoth" } },
-            { id: "microsandbox:homestead", type: "microsandbox", enabled: true, fields: { host: "bb:host_mac1", "memory-overcommit": 2 } },
+            { id: "microsandbox:mac-mini", type: "microsandbox", enabled: true, fields: { host: "bb:host_mac1", "memory-overcommit": 2 } },
           ],
           kinds: {},
           general: {},
@@ -1166,12 +1166,12 @@ export const scenes = {
         backends: [
           { id: "docker", type: "docker", label: "Docker on behemoth", form: "Docker", state: "active", problems: [], boxes: 1, kinds: ["linux", "linux-desktop-cpu"], doctor: { report: { ok: true, summary: "Docker 29.8 on behemoth", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
           { id: "microsandbox", type: "microsandbox", label: "microsandbox on behemoth", form: "microVM", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-desktop-cpu"], doctor: { report: { ok: true, summary: "msb 0.7.7 on behemoth", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
-          { id: "microsandbox:homestead", type: "microsandbox", label: "microsandbox on homestead", form: "microVM", state: "active", problems: [], boxes: 0, kinds: ["linux-arm64", "linux-arm64-desktop-cpu"], doctor: { report: { ok: true, summary: "msb 0.7.7 on homestead", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
+          { id: "microsandbox:mac-mini", type: "microsandbox", label: "microsandbox on mac-mini", form: "microVM", state: "active", problems: [], boxes: 0, kinds: ["linux-arm64", "linux-arm64-desktop-cpu"], doctor: { report: { ok: true, summary: "msb 0.7.7 on mac-mini", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
         ],
       },
     }),
     after: async (root) => {
-      root.querySelector('button[aria-label="Set up microsandbox on homestead"]')?.click();
+      root.querySelector('button[aria-label="Set up microsandbox on mac-mini"]')?.click();
       await wait(300);
       click(root, "button", "Advanced");
       await wait(300);
