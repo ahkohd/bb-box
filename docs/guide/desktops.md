@@ -91,7 +91,7 @@ On a Linux desktop drawn by the CPU, High resolution takes about three times the
 
 On a Windows desktop on Proxmox shown as video, High resolution sets the screen to twice the pixels, such as 2560x1600, at 200% scaling, so everything keeps its size. The video then shows about half as many frames a second, and a key takes about 85 ms to show. More cores do not help, as copying the screen is the limit, so turn it on for what needs sharp text and off again after.
 
-Other desktops do not have it. While it is on, resizing your tab in control keeps the desktop's pixels doubled; over VNC, the desktop keeps its size. The desktop is never larger than 4096x2304 pixels, or the same area in another shape, the largest video Safari can show: in a larger tab, it has a little less than twice the pixels. If your browser still cannot show the video, the desktop shows over VNC, and a notification says why.
+Other desktops do not have it. While it is on, resizing your tab in control keeps the desktop's pixels doubled; over VNC, the desktop keeps its size. The desktop is never larger than 3840x2304 pixels, or the same area in another shape, the largest video Safari can show at 60 frames a second: in a larger tab, it has a little less than twice the pixels. If your browser still cannot show the video, the desktop shows over VNC, and a notification says why.
 
 Video also keeps coloured text sharp: when every browser watching a desktop can decode full colour, as Chrome can, the video carries it, for a little more processor and no more bandwidth.
 

@@ -60,10 +60,11 @@ const SHARP_TIMEOUT_MS = 30_000;
 /** The largest desktop High resolution sets: Xvnc's limit is far above it, Selkies' encoder is not. */
 const SHARP_MAX: Size = { width: 7680, height: 4320 };
 /**
- * The most 16x16 macroblocks a High resolution desktop's frame has: H.264 level 5.2's largest frame, 4096x2304. Past it the stream
- * is level 6, which Safari's decoder refuses, so its video stopped (the owner's note of 19 October 2026).
+ * The most 16x16 macroblocks a High resolution desktop's frame has: as many as H.264 level 5.2 takes at the video's 60 frames a
+ * second, 2,073,600 a second, so 3840x2304 at most. Past it the stream is level 6, which Safari's decoder refuses, so its video
+ * stopped (the owner's notes of 19 October 2026): its largest frame, 4096x2304, is level 6 at 60 frames a second.
  */
-const SHARP_MAX_MACROBLOCKS = 36_864;
+const SHARP_MAX_MACROBLOCKS = 34_560;
 
 /**
  * Xfce's panel again, so it takes a new scale, in the background. A restarted panel runs itself again, and that one can find the old
