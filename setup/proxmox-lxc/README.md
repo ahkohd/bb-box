@@ -511,5 +511,12 @@ an X server:
 - `/usr/local/libexec/bb-box/type`, built from `guest/files/bb-box-type.c`,
   which types text with a virtual keyboard of a fixed US layout, for computer
   use: wtype's keys lost characters in Chrome.
+- `/usr/local/libexec/bb-box/cursor`, built from `guest/files/bb-box-cursor.c`
+  where Sway is 1.11 or later, which has ext-image-copy-capture: it reports
+  where the box's pointer is and what it looks like, from a pointer cursor
+  session, for bb-box to show the person with control the pointer's shape and
+  to draw the agent's pointer for people watching, as neither stream sends
+  either. An image with Sway 1.9 has none, and bb-box hides the pointer from
+  the picture while a person holds control (#707).
 - `wl-clipboard`, `grim`, `slurp` and `wtype` stand in for `xclip`, `scrot`
   and `xdotool`.

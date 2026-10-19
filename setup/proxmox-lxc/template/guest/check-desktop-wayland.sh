@@ -93,6 +93,12 @@ t "viewer leaves at a resize" bash -c '
   [ $ok = 0 ] && echo "a new viewer has $got, wayvnc runs on"; exit $ok'
 # Typing with a US keyboard (#707): Sway gives it a virtual keyboard, and text the layout lacks is left to paste.
 t "US keyboard for typing" sh -c 'printf "" | /usr/local/libexec/bb-box/type || { echo "no virtual keyboard"; exit 1; }; printf "\303\251" | /usr/local/libexec/bb-box/type; [ $? = 3 ] || { echo "typed a character the US layout lacks"; exit 1; }; echo "a virtual keyboard; non-ASCII left to paste"'
+# The box's pointer for viewers (060), where Sway has ext-image-copy-capture: the helper keeps a cursor session open.
+t "pointer for viewers" sh -c 'cursor=/usr/local/libexec/bb-box/cursor
+  [ -x "$cursor" ] || { echo "no helper: this Sway has no ext-image-copy-capture, so the pointer is hidden from the picture"; exit 0; }
+  out=$(timeout 2 "$cursor" 2>&1); code=$?
+  [ $code = 124 ] || { echo "the helper ended ($code): $(printf "%s" "$out" | head -c 200)"; exit 1; }
+  echo "a cursor session on the output"'
 # Selkies' video of Sway (060), patched to stream it at its own size.
 t "Selkies on 5980" sh -c 'for _ in $(seq 1 100); do code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5980/) && [ "$code" = 200 ] && break; sleep 0.1; done
   [ "$code" = 200 ] || { echo "no answer on 127.0.0.1:5980 (HTTP $code)"; exit 1; }
