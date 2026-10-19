@@ -1020,6 +1020,8 @@ final class RfbClient: @unchecked Sendable {
   /** The desktop, BGRX: 32 bits a pixel, little-endian, red at bit 16. */
   private(set) var pixels: [UInt8] = []
   private let writeLock = NSLock()
+  /** Closed: its socket's number may already be a new connection's, so nothing more is written to it. */
+  private var closed = false
 
   init?(port: Int) {
     fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -1058,7 +1060,17 @@ final class RfbClient: @unchecked Sendable {
 
   func send(_ data: Data) {
     writeLock.lock()
-    _ = writeAll(fd, data)
+    if !closed { _ = writeAll(fd, data) }
+    writeLock.unlock()
+  }
+
+  /** Closes its socket, after any write under way, and writes nothing more. */
+  func close() {
+    writeLock.lock()
+    if !closed {
+      closed = true
+      Darwin.close(fd)
+    }
     writeLock.unlock()
   }
 
@@ -1140,6 +1152,7 @@ final class QemuServer: @unchecked Sendable {
   private let started = Date()
   /** When a whole desktop was asked for and has not come. */
   private var wholeAsked: Date?
+  private var reconnectSignal: DispatchSourceSignal?
 
   init(port: Int) {
     self.port = port
@@ -1196,6 +1209,16 @@ final class QemuServer: @unchecked Sendable {
         if watched { rfb.request(whole: false) }
       }
     }
+    // SIGUSR1 has it connect to QEMU again, as the watchdog does: to check that path.
+    signal(SIGUSR1, SIG_IGN)
+    let again = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: queue)
+    again.setEventHandler { [self] in
+      guard let rfb else { return }
+      log("asked to connect again")
+      shutdown(rfb.fd, SHUT_RDWR)
+    }
+    again.resume()
+    reconnectSignal = again
     Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [self] _ in
       queue.async { [self] in
         if clients.isEmpty && Date().timeIntervalSince(lastClientAt) > IDLE_EXIT_SECONDS {
@@ -1212,7 +1235,10 @@ final class QemuServer: @unchecked Sendable {
     var current = first
     while true {
       while current.next(onUpdate: { frame(from: current) }) {}
-      Darwin.close(current.fd)
+      // Nothing more goes to it, and it is closed before the next connection opens: a write to its socket's number after
+      // that went into the next connection's handshake, which QEMU then never answered, again and again (20 October 2026).
+      queue.sync { if rfb === current { rfb = nil } }
+      current.close()
       Thread.sleep(forTimeInterval: 0.2)
       guard let again = RfbClient(port: port) else {
         log("QEMU's VNC server is gone; exiting")
