@@ -137,6 +137,9 @@ export class SelkiesBox {
   #ready: BoxWebSocket | null = null;
   #stopAsked = 0;
   #closed = false;
+  #pinged = 0;
+  /** Who waits for each BB_PONG, by its ID. */
+  readonly #pongs = new Map<string, () => void>();
   /** The message that last asked the box to draw its cursor into the video, or not, to send again on a new input connection. */
   #cursor: string | null = null;
   readonly onError: (error: Error) => void;
@@ -159,6 +162,27 @@ export class SelkiesBox {
     if (this.#closed) return;
     const socket = await this.#connection();
     await socket.send(message);
+  }
+
+  /**
+   * Whether the box's stream server has taken every message sent before this,
+   * as bb-box-stream on Windows says, answering BB_PING with BB_PONG; false
+   * after `timeoutMs` without its answer, as from a server that does not say.
+   */
+  async ping(timeoutMs: number): Promise<boolean> {
+    const id = String(++this.#pinged);
+    let wait: ReturnType<typeof setTimeout> | undefined;
+    const answered = new Promise<boolean>((resolve) => {
+      this.#pongs.set(id, () => resolve(true));
+      wait = setTimeout(() => resolve(false), timeoutMs);
+    });
+    try {
+      await this.input(`BB_PING,${id}`);
+      return await answered;
+    } finally {
+      clearTimeout(wait);
+      this.#pongs.delete(id);
+    }
   }
 
   #connection(): Promise<BoxWebSocket> {
@@ -252,6 +276,7 @@ export class SelkiesBox {
   async #drain(socket: BoxWebSocket): Promise<void> {
     try {
       for (let message = await socket.next(); message !== null; message = await socket.next()) {
+        if (typeof message === "string" && message.startsWith("BB_PONG,")) this.#pongs.get(message.slice(8))?.();
         if (typeof message !== "string" && this.clock.now() - this.#stopAsked > STOP_ASK_MS) {
           this.#stopAsked = this.clock.now();
           await socket.send("STOP_VIDEO");

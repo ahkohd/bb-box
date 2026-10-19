@@ -97,18 +97,20 @@ export interface DisplayOpened {
   /** Opens the display's input for one viewer; core sends that viewer's input there instead of to the stream server. */
   readonly input?: (events: DisplayInputEvents, signal?: AbortSignal) => Promise<DisplayInput>;
   /**
-   * What of the viewer's input goes to `input`: all of it (the default), or
+   * What of the viewer's input goes to `input`: all of it (the default);
    * only the wheel, RFB's buttons 4 to 7, for a stream server that takes
-   * keys and clicks but drops the wheel, as Tart's macOS VMs' does. The rest
-   * goes to the stream server, as without `input`.
+   * keys and clicks but drops the wheel, as Tart's macOS VMs' does; or only
+   * keys typesAsCharacter picks, as on Windows over QEMU's VNC server. The
+   * rest goes to the stream server, as without `input`.
    */
-  readonly inputTakes?: "all" | "wheel";
+  readonly inputTakes?: "all" | "wheel" | "characters";
   /**
-   * With inputTakes "wheel": whether a key goes to `input` as its character
-   * instead of to the stream server, which would type it wrong or not at all,
-   * given the keysyms the viewer holds down.
+   * With inputTakes "wheel" or "characters": whether a key goes to `input`
+   * as its character instead of to the stream server, which would type it
+   * wrong or not at all, given the keysyms the viewer holds down and, for a
+   * QEMU key event, the key's scancode (XT, as QEMU takes it).
    */
-  readonly typesAsCharacter?: (keysym: number, held: ReadonlySet<number>) => boolean;
+  readonly typesAsCharacter?: (keysym: number, held: ReadonlySet<number>, scancode?: number) => boolean;
 }
 
 /** A change of the box's pointer, from bb-box-cursor (060). */
