@@ -18,7 +18,7 @@ import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
-import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, SelkiesSession, forgetFullColour, spsCodec } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, SelkiesSession, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -2412,6 +2412,13 @@ test("a video desktop's Display holds Show as VNC, and no choice of the box's po
     undo();
     window.sessionStorage.clear();
   }
+});
+
+test("a Windows box's video gets a character X names itself, such as €, as its Unicode keysym, and Latin-1 and keys as they are (the desktop sweep)", () => {
+  expect(unicodeKeysym(0x20ac)).toBe(0x10020ac);
+  expect(unicodeKeysym(0x6d6)).toBe(0x1000436);
+  expect([unicodeKeysym(97), unicodeKeysym(0xe9), unicodeKeysym(0xff0d), unicodeKeysym(0xffe1)]).toEqual([97, 0xe9, 0xff0d, 0xffe1]);
+  expect(unicodeKeysym(0x100263a)).toBe(0x100263a);
 });
 
 test("High resolution's tooltip gives its cost for the box's system: Windows' frame rate and keys, Linux's CPU", async () => {
