@@ -13,17 +13,19 @@
 # gamepads and their player slots, file transfers, printing and commands
 # are off.
 #
-# On the GPU display path it waits instead, until Selkies with NVENC has
-# been measured (056).
+# bb-box: video on the GPU, with NVENC (#863). On the GPU display path it
+# encodes H.264 with NVENC on the box's GPU, which Selkies finds by itself
+# and leaves for x264 should it fail, with no NvFBC, which on this X screen
+# would hold each capture's start for 5 s (bb-box-nofbc.c). Elsewhere, x264
+# on the CPU.
 set -u
-if [ "$(cat /run/bb-box/display-mode 2>/dev/null)" = gpu ]; then
-  echo "selkies: waits on the GPU display path (056)" >&2
-  exec sleep infinity
-fi
+use_cpu=true
+[ "$(cat /run/bb-box/display-mode 2>/dev/null)" != gpu ] || use_cpu=false
 export DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority
+[ "$use_cpu" = true ] || export LD_PRELOAD=/usr/local/lib/bb-box-nofbc.so
 exec /usr/bin/selkies --addr=127.0.0.1 --port=5980 --mode=websockets \
   --enable-basic-auth=false --enable-https=false \
-  --encoder=h264enc --use-cpu=true --enable-resize=false --second-screen=false \
+  --encoder=h264enc --use-cpu="$use_cpu" --enable-resize=false --second-screen=false \
   --enable-binary-clipboard=true \
   --audio-enabled=false --microphone-enabled=false --webcam-enabled=false --gamepad-enabled=false \
   --file-transfers=none --printing-enabled=false --command-enabled=false --enable-dual-mode=false \

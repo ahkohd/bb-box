@@ -156,6 +156,11 @@ install -m 0755 "$build/guest/files/vnc-password" /usr/local/libexec/bb-box/vnc-
 install -m 0755 "$build/guest/files/selkies" /usr/local/libexec/bb-box/selkies
 install -m 0644 "$build/guest/files/chrome-gpu.mjs" /usr/local/libexec/bb-box/chrome-gpu.mjs
 install -m 0644 "$build/guest/files/cua-probe.mjs" /usr/local/libexec/bb-box/cua-probe.mjs
+install -m 0644 "$build/guest/files/selkies-probe.mjs" /usr/local/libexec/bb-box/selkies-probe.mjs
+# Selkies on the GPU path without NvFBC, which never answers on this X screen (#863).
+gcc -O2 -Wall -Werror -shared -fPIC -o /usr/local/lib/bb-box-nofbc.so "$build/guest/files/bb-box-nofbc.c" -ldl ||
+  die "bb-box-nofbc did not build"
+chmod 0644 /usr/local/lib/bb-box-nofbc.so
 display_mode=auto
 [ "$nvidia" != none ] || display_mode=cpu
 cat >/etc/bb-box/desktop.env <<EOF

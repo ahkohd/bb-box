@@ -446,9 +446,11 @@ The XFCE desktops add:
   password each box makes at first boot (`/var/lib/bb-box/vnc-password`);
 - Selkies 2.0, which streams `:99` as H.264 over WebSockets on
   `127.0.0.1:5980`, in `bb-box-selkies.service`, which starts and stops
-  with the display. It captures nothing while no viewer is connected, and
-  waits on the GPU path
-  ([056](../../docs/decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md));
+  with the display. It captures nothing while no viewer is connected
+  ([056](../../docs/decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)).
+  On a GPU desktop it encodes with NVENC on the box's GPU, without NvFBC,
+  which never answers on its X screen and would hold each viewer's first
+  frame for 5 s (#863);
 - on a GPU desktop, the NVIDIA userspace for the host's driver and
   VirtualGL; on every desktop, Vulkan and Mesa's CPU renderers;
 - Google Chrome, Mousepad, Ristretto, Evince and Noto CJK fonts;
