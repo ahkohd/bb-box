@@ -348,6 +348,55 @@ bb-box-stream.exe and Cisco's arm64 OpenH264 2.6.0, through BB's server,
   dirty rectangles was considered and dropped: Duplication's own signal
   is the lower bound.
 
+## Linux Wayland on Ubuntu 26.04, 19 October 2026
+
+The Wayland images (Proxmox LXC and Docker) moved from Ubuntu 24.04 to
+26.04, for the box's pointer. On 24.04's Sway 1.9 neither stream could
+send it: Sway paints the pointer into every frame, so bb-box hid it with
+a blank cursor theme while a person held control (#707), and the person's
+own pointer was a plain arrow whatever the box's shape. Sway 1.11 on
+26.04 (wlroots 0.19) has ext-image-copy-capture, whose pointer cursor
+session gives the pointer's image, hotspot and position apart from the
+frames.
+
+What changed:
+- **wayvnc 0.9.1** sends the pointer's shape to noVNC itself, and paints
+  none into its frames.
+- **Selkies 2.0.0's 26.04 build** paints no pointer either, but sends the
+  browser one arrow at connect and never its changes. Its painted mode
+  (`SET_NATIVE_CURSOR_RENDERING,1`) logged `cursor=painted` and painted
+  nothing in host-capture mode. #808's and #819's patches apply as they
+  are.
+- **bb-box-cursor** (#828), in the image, opens a pointer cursor session
+  and writes each change as a line. bb-box sends its shape to video viewers
+  as Selkies' own cursor message, and its position as `BB_POINTER` (#834).
+  The panel shows the person in control the box's shape, and draws the
+  pointer over the picture for people watching, over video (#836) and
+  over VNC, on a pointer stream of its own (#844).
+- **The blank theme** stays for an image without the helper, as every 24.04
+  box (#829).
+- **Coreutils and sudo** are uutils and sudo-rs on 26.04. The forms bb-box
+  runs in a box behave alike, except that `timeout -s KILL` exits 124, not
+  137, and sudo-rs ignores `sudo -E`; bb-box relies on neither (#826).
+- **wayvnc 0.9.1 still crashes** in neatvnc when a client connects after
+  Sway was resized with no client (#394). The display script's restart of
+  wayvnc after such a resize covers it, as on 24.04.
+
+Checked through BB on fresh boxes of each backend, 1920x1080, with the
+panel's own clients:
+
+| | Proxmox LXC (CT 9809) | Docker |
+| --- | --- | --- |
+| bb-box-check-desktop | every line ok | every line ok or skipped (no TUN, no units) |
+| Shape for the person in control, video and VNC | arrow, I-beam (Chrome and Mousepad, GTK3's own), hand, resize arrows | the same images |
+| Pointer drawn for a watcher, as the agent clicks | at the click less its hotspot, video and VNC | the same, video and VNC |
+| 5 resizes after a hidden tab | 0.31-0.38 s, no black frame | 0.31-0.36 s, no black frame |
+| Hand-back with the tab hidden | 0.72 s, size restored | 0.55 s, size restored |
+| VNC resize | 0.31-0.33 s | |
+| A first viewer | Sway kept 1920x1080 | |
+| Clipboard, video | text (é 中 ✓) and a 62 KB PNG both ways, byte for byte | |
+| Clipboard, VNC | text both ways, exact; no images, as on 24.04 | |
+
 ## Limits
 
 - Only the pool Mac is measured at 2x: Linux and Windows boxes run at 1x,
