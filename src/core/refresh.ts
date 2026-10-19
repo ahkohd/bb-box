@@ -542,11 +542,23 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
     await images.remove(baseline.trial.ref, signal);
     made.splice(made.indexOf(baseline.trial.ref), 1);
     const { trial, ms } = await timed(captured, `trial of ${captured.build}`);
-    checks.push({
-      name: "answers as quickly",
-      ok: ms <= baseline.ms + SLOWER_MS,
-      detail: `A box of the new build answered in ${(ms / 1000).toFixed(1)} s${stepsOf(trial)}, of the old in ${(baseline.ms / 1000).toFixed(1)} s${stepsOf(baseline.trial)}.`,
-    });
+    const sample = (box: ImageBox, time: number) => `${(time / 1000).toFixed(1)} s${stepsOf(box)}`;
+    let answered = { ok: ms <= baseline.ms + SLOWER_MS, detail: `A box of the new build answered in ${sample(trial, ms)}, of the old in ${sample(baseline.trial, baseline.ms)}.` };
+    if (!answered.ok) {
+      // One stall on the host, as a Mac's SSH can have, is not the build's: a second box of each, and the better of each.
+      say(`a box of the new build answered in ${(ms / 1000).toFixed(1)} s, of the old in ${(baseline.ms / 1000).toFixed(1)} s; timing a second box of each`);
+      const old = await timed(current, `second answer time of ${current.build ?? current.ref}`);
+      await images.remove(old.trial.ref, signal);
+      made.splice(made.indexOf(old.trial.ref), 1);
+      const again = await timed(captured, `second answer time of ${captured.build}`);
+      await images.remove(again.trial.ref, signal);
+      made.splice(made.indexOf(again.trial.ref), 1);
+      answered = {
+        ok: Math.min(ms, again.ms) <= Math.min(baseline.ms, old.ms) + SLOWER_MS,
+        detail: `Boxes of the new build answered in ${sample(trial, ms)} and ${sample(again.trial, again.ms)}, of the old in ${sample(baseline.trial, baseline.ms)} and ${sample(old.trial, old.ms)}.`,
+      };
+    }
+    checks.push({ name: "answers as quickly", ...answered });
     const check = trialCheck(images, kind, windowsCheck);
     const ran = await trial.command.run(check.script, { timeoutMs: 10 * 60_000, signal, maxOutputBytes: 256 * 1024 });
     const failed = ran.stdout.split("\n").filter((line) => /\bFAIL\b/.test(line));

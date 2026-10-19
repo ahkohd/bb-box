@@ -39,7 +39,9 @@ const CURRENT: ImageBuild = { ref: "9100", image: "standard", kind: "linux", bui
  * that answer the build script, the kind's check and BB's app, and a clock
  * that a box from the new build moves on by `slowerMs` more.
  */
-function fake(options: { buildExit?: number; check?: string; app?: string; captured?: ImageRecord; slowerMs?: number; full?: number; steps?: boolean } = {}) {
+function fake(options: { buildExit?: number; check?: string; app?: string; captured?: ImageRecord; slowerMs?: number; stalls?: number[]; full?: number; steps?: boolean } = {}) {
+  // Each box's own stall, in the order the boxes are made, as a host's SSH can have one.
+  const stalls = [...(options.stalls ?? [])];
   let full = options.full ?? 0;
   const events: string[] = [];
   let clock = 0;
@@ -75,7 +77,7 @@ function fake(options: { buildExit?: number; check?: string; app?: string; captu
       const ref = String(next++);
       events.push(`box ${ref} from ${build.ref}: ${label}`);
       const slower = build.ref === CURRENT.ref ? 0 : (options.slowerMs ?? 0);
-      clock += 1_000 + slower;
+      clock += 1_000 + slower + (stalls.shift() ?? 0);
       // A backend that times its steps: the new build's box is slower to come up.
       const steps = options.steps ? [{ name: "clone", ms: 400 }, { name: "ssh", ms: 600 + slower }] : undefined;
       return { ref, command: command(ref), ...(steps ? { steps } : {}) } satisfies ImageBox;
@@ -146,6 +148,20 @@ test("a refresh waits for room for its boxes, saying so, and times only the box 
   assert.deepEqual(full.events, [], "no box was made, and nothing was replaced");
 });
 
+test("one stall on the host is not the build's: a second box of each, and the better of each, before answers as quickly fails (the nightly of 19 October 2026)", async () => {
+  // The build's box, the old build's, then the new build's stalls 38 s, as homestead's SSH did; its second does not.
+  const stalled = fake({ stalls: [0, 0, 38_000] });
+  const result = await refresh(stalled, { replace: false });
+  assert.equal(result.ok, true, result.reason ?? "");
+  assert.deepEqual(
+    stalled.events.filter((event) => event.startsWith("box ")).map((event) => event.replace(/^box \d+ from \S+: /, "")),
+    ["refresh of 9100", `answer time of ${OLD.build}`, "trial of build.20261003-021500-3f9c", `second answer time of ${OLD.build}`, "second answer time of build.20261003-021500-3f9c"],
+  );
+  // The old build's box stalls instead: the new one is not slower.
+  const old = await refresh(fake({ stalls: [0, 38_000] }), { replace: false });
+  assert.equal(old.ok, true);
+});
+
 test("a try builds and checks, then removes the build, and the image stays", async () => {
   const made = fake();
   const result = await refresh(made, { replace: false });
@@ -170,10 +186,11 @@ test("a failed build, or a failed check, keeps the image and removes what the re
   assert.deepEqual(check.events.slice(-2), ["remove 7002", "remove 7000"], "the trial box, then the build");
 
   const slow = await refresh(fake({ slowerMs: 5_001 }));
-  assert.match(slow.reason!, /answers as quickly: A box of the new build answered in 6\.0 s, of the old in 1\.0 s\./);
+  // A build that is slower still fails on its second boxes, and says both of each.
+  assert.match(slow.reason!, /answers as quickly: Boxes of the new build answered in 6\.0 s and 6\.0 s, of the old in 1\.0 s and 1\.0 s\./);
   // With the backend's steps, which of them took the time.
   const timedSteps = await refresh(fake({ slowerMs: 5_001, steps: true }));
-  assert.match(timedSteps.reason!, /answered in 6\.0 s \(clone 0\.4 s, ssh 5\.6 s\), of the old in 1\.0 s \(clone 0\.4 s, ssh 0\.6 s\)\./);
+  assert.match(timedSteps.reason!, /answered in 6\.0 s \(clone 0\.4 s, ssh 5\.6 s\) and 6\.0 s \(clone 0\.4 s, ssh 5\.6 s\), of the old in 1\.0 s \(clone 0\.4 s, ssh 0\.6 s\) and 1\.0 s \(clone 0\.4 s, ssh 0\.6 s\)\./);
 
   const app = await refresh(fake({ app: "b".repeat(64) }));
   assert.match(app.reason!, /BB's app: The box has BB's app bbbbbbbbbbbb, the record aaaaaaaaaaaa, the server aaaaaaaaaaaa\./);
