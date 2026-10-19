@@ -48,6 +48,9 @@ const novnc = vi.hoisted(() => {
     resizeChecks = 0;
     focused = 0;
     disconnected = false;
+    /** How often noVNC's keyboard was told to let go of every key it holds. */
+    keysLetGo = 0;
+    readonly _keyboard = { _allKeysUp: () => void this.keysLetGo++ };
     readonly url: string;
     readonly options: unknown;
     readonly target: HTMLElement;
@@ -2503,6 +2506,44 @@ test("video that this browser cannot decode while its tab is away shows over VNC
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(novnc.FakeRfb.made).toHaveLength(1);
     expect(FakeSocket.made.filter((made) => made.url.includes("stream=selkies"))).toHaveLength(videos);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("a viewer in control lets go of the keys it holds down as its tab goes, so the box keeps no Ctrl held, over video and VNC", async () => {
+  const undo = withVideo();
+  try {
+    // Video: Ctrl goes down in the box; the tab goes before it comes up.
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    let slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const canvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
+    fireEvent.keyDown(canvas, { key: "Control", code: "ControlLeft" });
+    expect(socket.sent).toContain("kd,65507");
+    cleanup();
+    expect(socket.sent).toContain("ku,65507");
+    window.sessionStorage.clear();
+    dropAllKept();
+    forgetStreams();
+
+    // VNC: noVNC's keyboard lets go of what it holds as the tab goes, while this tab has control; not without.
+    slot = desktopTab(server([desktopBox()]).handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]!;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    cleanup();
+    expect(client.keysLetGo).toBe(1);
   } finally {
     undo();
     window.sessionStorage.clear();

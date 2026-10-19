@@ -263,7 +263,19 @@ function useViewerId(boxId: string): string {
  */
 export class DesktopSession implements Kept {
   readonly element = document.createElement("div");
-  hidden = false;
+  #hidden = false;
+  get hidden(): boolean {
+    return this.#hidden;
+  }
+  /**
+   * As its tab goes, it lets go in the box of the keys this viewer holds down: their ups would go nowhere, and a Ctrl the box kept
+   * held, from Cmd on a Mac, would turn every click and key that came after into a shortcut. noVNC lets go itself as the window
+   * loses focus.
+   */
+  set hidden(value: boolean) {
+    this.#hidden = value;
+    if (value && this.#mine && this.#client && this.connection.state === "connected") this.#client._keyboard._allKeysUp();
+  }
   /**
    * The box's pointer drawn over the picture for a viewer without control, where bb-box sends where it is (060): on a
    * Wayland desktop with bb-box-cursor the VNC picture has no pointer, and RFB has no place for where it is, so it comes on
