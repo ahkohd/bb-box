@@ -131,6 +131,18 @@ function clipboardText(mime: string, bytes: Uint8Array): string | null {
 }
 
 /** Whether a PNG has a visible pixel; true when the browser cannot tell. */
+/** A PNG's width and height, from its header, given as base64; null for what is not one. */
+function pngSize(data: string): { width: number; height: number } | null {
+  try {
+    const head = atob(data.slice(0, 32));
+    if (head.length < 24 || head.slice(1, 4) !== "PNG") return null;
+    const word = (at: number) => ((head.charCodeAt(at) << 24) | (head.charCodeAt(at + 1) << 16) | (head.charCodeAt(at + 2) << 8) | head.charCodeAt(at + 3)) >>> 0;
+    return { width: word(16), height: word(20) };
+  } catch {
+    return null;
+  }
+}
+
 async function visiblePng(data: string): Promise<boolean> {
   if (typeof createImageBitmap === "undefined" || typeof OffscreenCanvas === "undefined") return true;
   try {
@@ -203,6 +215,12 @@ export class SelkiesSession implements Kept {
   readonly #held = new Set<number>();
   /** The box's cursor as CSS, and whether it has a visible pixel. */
   #cursor: string | null = null;
+  /** The box's cursor's image, for drawing the box's pointer where bb-box says it is (060): its data URL, size and hotspot. */
+  #cursorImage: { readonly url: string; readonly width: number; readonly height: number; readonly hotX: number; readonly hotY: number } | null = null;
+  /** Where the box's pointer is, in the desktop's pixels, as bb-box says on a Wayland desktop with bb-box-cursor (060); null while it is off the desktop. */
+  #pointerAt: { readonly x: number; readonly y: number } | null = null;
+  /** The box's pointer drawn over the picture for a viewer without control, as the video has none in it (060). */
+  #pointerShown: HTMLImageElement | null = null;
   #cursorVisible = false;
   readonly #observer: ResizeObserver | null;
   #settle: ReturnType<typeof setTimeout> | undefined;
@@ -251,6 +269,7 @@ export class SelkiesSession implements Kept {
             const key = `${Math.round(size.width)}x${Math.round(size.height)}`;
             const moved = this.#lastSize !== null && this.#lastSize !== key;
             this.#lastSize = key;
+            this.#drawPointer();
             if (!moved || !this.#mine) return;
             this.#follow = true;
             clearTimeout(this.#settle);
@@ -479,6 +498,9 @@ export class SelkiesSession implements Kept {
           if (typeof cursor.curdata !== "string") break;
           const css = `url(data:image/png;base64,${cursor.curdata}) ${cursor.hotx ?? 0} ${cursor.hoty ?? 0}, default`;
           this.#cursor = css;
+          const size = pngSize(cursor.curdata);
+          this.#cursorImage = size && { url: `data:image/png;base64,${cursor.curdata}`, ...size, hotX: cursor.hotx ?? 0, hotY: cursor.hoty ?? 0 };
+          this.#drawPointer();
           void visiblePng(cursor.curdata).then((visible) => {
             if (this.#cursor !== css) return;
             this.#cursorVisible = visible;
@@ -491,6 +513,12 @@ export class SelkiesSession implements Kept {
       case "PIPELINE_RESETTING":
         this.#reset();
         break;
+      case "BB_POINTER": {
+        const [x, y] = rest.split(",").map(Number);
+        this.#pointerAt = rest && Number.isFinite(x) && Number.isFinite(y) ? { x: x!, y: y! } : null;
+        this.#drawPointer();
+        break;
+      }
     }
   }
 
@@ -527,12 +555,14 @@ export class SelkiesSession implements Kept {
       if (this.#disposed) return;
       const width = frame.displayWidth;
       const height = frame.displayHeight;
+      const resized = this.#width !== width || this.#height !== height;
       if (this.#canvas.width !== width || this.#canvas.height !== height) {
         this.#canvas.width = width;
         this.#canvas.height = height;
       }
       this.#width = width;
       this.#height = height;
+      if (resized) this.#drawPointer();
       this.#canvas.getContext("2d")?.drawImage(frame, 0, 0);
       if (this.#hold && this.#hold.resized === null && this.#hold.size !== `${width}x${height}`) {
         this.#hold.resized = performance.now();
@@ -591,6 +621,36 @@ export class SelkiesSession implements Kept {
    */
   #refreshCursor(): void {
     this.#canvas.style.cursor = this.#mine && this.#cursor && this.#cursorVisible ? this.#cursor : "default";
+    this.#drawPointer();
+  }
+
+  /**
+   * The box's pointer over the picture, where bb-box says it is, for a viewer without control: on a Wayland desktop with
+   * bb-box-cursor neither stream has it in its picture (060), so people watching the agent would not see where it points.
+   * Scaled and placed as the picture is, fitted to the pane. The viewer with control has their own pointer, in the box's
+   * shape, instead.
+   */
+  #drawPointer(): void {
+    const image = this.#cursorImage;
+    const at = this.#pointerAt;
+    const width = this.element.clientWidth;
+    const height = this.element.clientHeight;
+    if (this.#mine || !image || !at || !this.#width || !this.#height || !width || !height) {
+      if (this.#pointerShown) this.#pointerShown.style.display = "none";
+      return;
+    }
+    if (!this.#pointerShown) {
+      this.#pointerShown = document.createElement("img");
+      this.#pointerShown.alt = "";
+      this.#pointerShown.style.cssText = "position:absolute;pointer-events:none;z-index:1;image-rendering:auto";
+      this.element.appendChild(this.#pointerShown);
+    }
+    const shown = this.#pointerShown;
+    const scale = Math.min(width / this.#width, height / this.#height);
+    const left = (width - this.#width * scale) / 2 + (at.x - image.hotX) * scale;
+    const top = (height - this.#height * scale) / 2 + (at.y - image.hotY) * scale;
+    if (shown.getAttribute("src") !== image.url) shown.src = image.url;
+    Object.assign(shown.style, { display: "block", left: `${left}px`, top: `${top}px`, width: `${image.width * scale}px`, height: `${image.height * scale}px` });
   }
 
   /** The box's OS, for the paste chord and the Cmd mapping. */
