@@ -94,16 +94,19 @@ exec '${helper.replaceAll("'", "'\\''")}'`;
 export class ImageFile {
   readonly #known = new Map<string, boolean>();
   readonly #path: string;
+  readonly #test: "-x" | "-e";
 
-  constructor(path: string) {
+  /** `test`: -x for a program, the default, or -e for any file. */
+  constructor(path: string, test: "-x" | "-e" = "-x") {
     this.#path = path;
+    this.#test = test;
   }
 
   /** False, not kept, when the box cannot be asked. */
   async has(key: string, command: CommandTransport, signal?: AbortSignal): Promise<boolean> {
     const known = this.#known.get(key);
     if (known !== undefined) return known;
-    const result = await command.run(`test -x '${this.#path.replaceAll("'", "'\\''")}'`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 }).catch(() => null);
+    const result = await command.run(`test ${this.#test} '${this.#path.replaceAll("'", "'\\''")}'`, { timeoutMs: 15_000, signal, maxOutputBytes: 1024 }).catch(() => null);
     if (!result) return false;
     this.#known.set(key, result.exitCode === 0);
     return result.exitCode === 0;
@@ -113,6 +116,13 @@ export class ImageFile {
     this.#known.delete(key);
   }
 }
+
+/**
+ * Where a GPU desktop's image has what lets its Selkies encode with NVENC
+ * (#863): bb-box-nofbc, which its launcher preloads on the GPU path. An
+ * image built before has a launcher that waits there, with no video.
+ */
+export const GPU_VIDEO_MARKER = "/usr/local/lib/bb-box-nofbc.so";
 
 /** Whether each Wayland box's image has Selkies (060). */
 export class SelkiesPresence extends ImageFile {

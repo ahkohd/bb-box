@@ -87,7 +87,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
-import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
+import { CURSOR_HELPER, GPU_VIDEO_MARKER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -196,7 +196,8 @@ const OFFERS: readonly (Omit<BoxKind, "size"> & { readonly flavour: LxcFlavour }
       command: SSH_COMMAND,
       // x0vncserver refuses a viewer's resize on a screen with no RandR outputs
       // (006), so transports() gives this display a resize that runs xrandr (021).
-      displays: [{ id: "desktop", protocol: "rfb", resizable: true }],
+      // Video with NVENC (#863), by choice: a box of an image built before has none.
+      displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { ...SELKIES_DISPLAY, byChoice: true }],
       computerUse: CUA_DRIVER,
       enrol: true,
     },
@@ -336,6 +337,8 @@ export interface LxcBackendOptions {
   readonly selkiesLauncher?: string;
   /** Where a Wayland box's image has bb-box-cursor, instead of CURSOR_HELPER: a file the test finds, in tests. */
   readonly cursorHelper?: string;
+  /** Where a GPU desktop's image has what gives it video, instead of GPU_VIDEO_MARKER: a file the test finds, in tests. */
+  readonly gpuVideoMarker?: string;
   /** Replaces the TCP check for port 22, for tests. */
   readonly portCheck?: PortCheck;
   /** Replaces each kind's readyTimeoutMs, for tests. */
@@ -563,6 +566,8 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #keyFile = new KeyFile();
   /** Whether each Wayland box's image has Selkies (060). */
   readonly #selkies: SelkiesPresence;
+  /** Whether each GPU desktop's image has video with NVENC (#863). */
+  readonly #gpuVideo: ImageFile;
   /** Whether each Wayland box's image has bb-box-cursor (060). */
   readonly #cursor: ImageFile;
   readonly #cursorHelper: string;
@@ -623,6 +628,7 @@ export class ProxmoxLxcBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#selkies = new SelkiesPresence(options.selkiesLauncher);
+    this.#gpuVideo = new ImageFile(options.gpuVideoMarker ?? GPU_VIDEO_MARKER, "-e");
     this.#cursorHelper = options.cursorHelper ?? CURSOR_HELPER;
     this.#cursor = new ImageFile(this.#cursorHelper);
     this.#http = options.fetch
@@ -970,6 +976,7 @@ export class ProxmoxLxcBackend implements Backend {
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
     this.#selkies.forget(presenceKey(guest));
+    this.#gpuVideo.forget(presenceKey(guest));
     this.#cursor.forget(presenceKey(guest));
     await this.#forget(this.#vmid(guest));
     const api = await this.client();
@@ -1092,8 +1099,10 @@ export class ProxmoxLxcBackend implements Backend {
     const command = await this.#command(vmid);
     // wayvnc offers Apple's sign-in, not a VNC password (048).
     const wayland = offer?.flavour === "desktop-wayland-cpu";
-    // A Wayland box of an image built before Selkies was in it has no video (060).
-    const video = !wayland || (await this.#selkies.has(presenceKey(guest), command));
+    // A Wayland box of an image built before Selkies was in it has no video (060), nor a GPU desktop's of an image built
+    // before its Selkies encoded with NVENC (#863).
+    const video =
+      offer?.flavour === "desktop" ? await this.#gpuVideo.has(presenceKey(guest), command) : !wayland || (await this.#selkies.has(presenceKey(guest), command));
     // An image with bb-box-cursor (060): Sway 1.11, whose streams paint no pointer, so none is hidden, and Sway keeps a theme
     // the cursor session and wayvnc send as the pointer's shape. One without keeps #707's hidden theme.
     const sends = wayland && (await this.#cursor.has(presenceKey(guest), command));
