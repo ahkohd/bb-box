@@ -149,6 +149,14 @@ async function visiblePng(data: string): Promise<boolean> {
   }
 }
 
+/**
+ * Closes a decoder unless it is closed already: one that failed closed itself, as Safari's can after the window's size changes or
+ * while its tab is away, and closing it again throws. That throw, as a tab came back, crashed the panel (19 October 2026).
+ */
+function closeDecoder(decoder: VideoDecoder | null): void {
+  if (decoder && decoder.state !== "closed") decoder.close();
+}
+
 export class SelkiesSession implements Kept {
   readonly element = document.createElement("div");
   readonly #canvas = document.createElement("canvas");
@@ -364,7 +372,7 @@ export class SelkiesSession implements Kept {
     this.#socket = null;
     clearInterval(this.#ackTimer);
     socket?.close();
-    this.#decoder?.close();
+    closeDecoder(this.#decoder);
     this.#decoder = null;
   }
 
@@ -387,7 +395,7 @@ export class SelkiesSession implements Kept {
 
   /** A new decoder, which takes nothing until a key frame. */
   #reset(): void {
-    this.#decoder?.close();
+    closeDecoder(this.#decoder);
     this.#needKey = true;
     this.#decoder = new VideoDecoder({
       output: (frame) => this.#draw(frame),
