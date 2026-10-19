@@ -508,6 +508,75 @@ Counting only the frames in which the dragged block moved, as above, VNC on
 the same kind gives 25-29 a second on a LAN. The lags, key times and
 bandwidth of those runs are as they were.
 
+## Linux on a GPU: video with NVENC, 19 October 2026
+
+A GPU desktop (`linux-desktop`) offers video by choice since #871, encoded
+with NVENC on the box's GPU (#870). Two fixes to the image came before the
+runs below:
+- **4:2:0, locked.** A viewer asks for full colour, and NVENC's 4:4:4
+  session failed with `NV_ENC_ERR_OUT_OF_MEMORY` on a shared GPU. Selkies
+  then fell back to x264 on the box's CPU without telling the viewer.
+- **Text in greyscale.** Ubuntu's fontconfig draws text in an LCD's
+  subpixel colours, which 4:2:0 loses: NVENC's text scored 0.987 against
+  the box's screenshot. Drawn in greyscale, by `/etc/fonts/local.conf`, it
+  scores 0.9995. The setting is in every Proxmox LXC X11 desktop image.
+
+Each box had 4 cores and 8 GiB, at 1920x1080, through BB's server, with
+the same harness, beside a CPU desktop for comparison, whose video is x264
+at 4:4:4. The slow link is 20 ms more each way and 20 Mbit/s from the box.
+Two runs each on the LAN, one on the slow link (p50 / p95).
+
+| | VNC, LAN | Video, LAN | VNC, 20 Mbit/s, 40 ms | Video, 20 Mbit/s, 40 ms |
+| --- | --- | --- | --- | --- |
+| **GPU desktop** | | | | |
+| Drag lag | 29-32 / 47-54 ms | 16-22 / 122-305 ms | 72 / 95 ms | 71 / 251 ms |
+| Scroll Mbit/s | 6.8-6.9 | 0.6-0.8 | 6.1 | 0.7 |
+| Key alone | 14-17 / 105-817 ms | 10-11 / 142-551 ms | 54 / 162 ms | 58 / 77 ms |
+| Key while scrolling | 41-44 ms | 24-31 ms | 63 ms | 75 ms |
+| Text SSIM, black and coloured | 1.0 / 0.9999 | 0.9995 / 0.9893 | 1.0 / 0.9999 | 0.9995 / 0.9893 |
+| Box cores, drag / watched idle | | | 0.7 / 0.1 | 0.3 / 0.3 |
+| **CPU desktop** | | | | |
+| Drag lag | 24-29 / 47-49 ms | 30-31 / 39-41 ms | 69 / 87 ms | 80 / 95 ms |
+| Scroll Mbit/s | 6.8-7.0 | 1.8-1.9 | 7.0 | 1.8 |
+| Key alone | 12 / 13-14 ms | 12 / 35-53 ms | 52 / 377 ms | 62 / 80 ms |
+| Key while scrolling | 15-18 ms | 30-31 ms | 54 ms | 73 ms |
+| Text SSIM, black and coloured | 1.0 / 0.9999 | 0.9998-0.9999 / 0.9977-0.998 | 1.0 / 0.9999 | 0.9995 / 0.9956 |
+| Box cores, drag / watched idle | 0.2-0.7 / 0.1-0.5 | 0.6-0.7 / 0.5-0.7 | 0.3 / 0.1 | 1.2 / 0.4 |
+
+No torn frames over VNC; 0.2% to 0.3% of drag frames over the GPU's video.
+Video draws 60 frames a second, VNC about 105 to 110 updates.
+
+- **NVENC is the closest to the pointer at the median**, 16 to 22 ms, and
+  sends a ninth of VNC's bandwidth and under half of x264's. It uses a
+  third of a core where x264 uses 0.6 to 1.2.
+- **NVENC's video stalls once a run**, for 217 to 336 ms, with frames still
+  coming every 16 ms but the picture falling up to 0.5 s behind. That is
+  its p95. VNC on the same box had no such stall, and earlier NVENC runs
+  at the same settings, when the GPU had more memory free, had a p95 of
+  33 to 38 ms. It seems to follow the load of the GPU's other users.
+- **Coloured text on dark is softer over NVENC's 4:2:0**, 0.989 against
+  x264's 0.998 at 4:4:4. Black text on white is as sharp as x264's.
+- **A watched desktop's video takes about 710 MiB of GPU memory** while it
+  runs, freed when nobody watches. The GPUs had 680 to 960 MiB free during
+  these runs, and a new GPU desktop needs 384 MiB. When NVENC cannot get
+  the memory, Selkies falls back to x264 on the box's CPU.
+- **Through the panel**, on the GPU desktop: VNC's first frame in 1.6 s,
+  video's 0.45 s after the switch and 1.1 s after a reload, which keeps
+  the choice. The person in control sees the box's pointer shape, and the
+  plain cursor again at hand-back. Typed text, Shift, Enter and Ctrl+A
+  reached Mousepad, and no key stayed down after hand-back. The desktop
+  followed a viewer resized to 1280x800 in 0.5 s and back in 0.45 s, with
+  Selkies retargeting its capture live, and took back 1920x1080 at
+  hand-back. The clipboard was not checked: the panel's copy and paste use
+  the viewer's own clipboard.
+
+Recommendation: keep video by choice on GPU desktops, with VNC first.
+VNC there is already close to video on a LAN, with sharper coloured text
+and no stalls. Video is the better choice on a slow or metered link. Made
+the default, every watched GPU desktop would take about 710 MiB of a GPU
+that has less than that free, and could refuse new GPU desktops. Look again
+when GPUs have more room, or if NVENC's stalls go.
+
 ## Limits
 
 - Only the pool Mac is measured at 2x: Linux and Windows boxes run at 1x,
