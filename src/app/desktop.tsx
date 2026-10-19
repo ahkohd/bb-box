@@ -53,9 +53,9 @@ import {
   PASTE_EVENT_WAIT_MS,
   SETTLE_MS,
   XK_CONTROL_L,
-  XK_META_L,
   XK_V,
   boxKey,
+  commandKey,
   macBrowser,
   type Connection,
   type MacKeys,
@@ -427,7 +427,7 @@ export class DesktopSession implements Kept {
     this.#apply();
   }
 
-  /** How a macOS desktop's server names Command and Option, for its keys. */
+  /** How a macOS desktop's server names Command and Option, for its keys and the paste chord. */
   setMacKeys(keys: MacKeys | null): void {
     this.#macKeys = keys;
     this.#apply();
@@ -466,7 +466,7 @@ export class DesktopSession implements Kept {
     this.#chord = setTimeout(() => {
       const client = this.#client;
       if (!client || this.connection.state !== "connected") return;
-      const modifier = this.guestOs === "macos" ? { keysym: XK_META_L, code: "MetaLeft" } : { keysym: XK_CONTROL_L, code: "ControlLeft" };
+      const modifier = this.guestOs === "macos" ? commandKey(this.#macKeys) : { keysym: XK_CONTROL_L, code: "ControlLeft" };
       client.sendKey(modifier.keysym, modifier.code, true);
       client.sendKey(XK_V, "KeyV", true);
       client.sendKey(XK_V, "KeyV", false);

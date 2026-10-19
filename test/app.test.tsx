@@ -2078,7 +2078,7 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
     // Taking control sends this computer's clipboard to the box, by RPC and not as noVNC's Latin-1 cut text.
     await waitFor(() => expect(changes).toContain(`desktopPaste box_8 ${viewer} héllo, wörld ✓ 日本`));
 
-    // Tart's VNC server takes Alt as Command and Meta as Option: Cmd goes as Alt, and Option as Meta.
+    // Tart's VNC server takes Alt as Command and Meta as Option: Cmd goes as Alt, Option as Meta, and the paste chord is Alt+V.
     client._handleKeyEvent(0xffe9, "MetaLeft", true, null, null);
     client._handleKeyEvent(0xff7e, "AltLeft", true, null, null);
     expect(client.keyEvents).toEqual([
@@ -2088,7 +2088,7 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
     const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
     await waitFor(() => expect(client.keys).toHaveLength(4));
-    expect(client.keys.map((key) => `${key.code}:${key.down ? "down" : "up"}`)).toEqual(["MetaLeft:down", "KeyV:down", "KeyV:up", "MetaLeft:up"]);
+    expect(client.keys.map((key) => `${key.code}:${key.down ? "down" : "up"}`)).toEqual(["AltLeft:down", "KeyV:down", "KeyV:up", "AltLeft:up"]);
     expect(await slot.findByText("Pasted")).toBeTruthy();
     expect(changes.filter((change) => change.startsWith("desktopPaste"))).toHaveLength(2);
 

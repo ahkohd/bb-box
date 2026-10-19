@@ -69,6 +69,11 @@ const CONTROL: readonly [Key, Key] = [{ keysym: XK_CONTROL_L, code: "ControlLeft
 const META: readonly [Key, Key] = [{ keysym: XK_META_L, code: "MetaLeft" }, { keysym: XK_META_R, code: "MetaRight" }];
 const ALT: readonly [Key, Key] = [{ keysym: XK_ALT_L, code: "AltLeft" }, { keysym: XK_ALT_R, code: "AltRight" }];
 
+/** The key that is Command in a macOS desktop, as its server names it. */
+export function commandKey(macKeys: MacKeys | null): Key {
+  return (macKeys === "alt-command" ? ALT : META)[0];
+}
+
 /**
  * The key the box gets for one a person pressed. On a macOS desktop, Cmd and Option go as its server names Command
  * and Option, from a Mac or not, so Cmd+C copies and a Linux or Windows user's Alt is Option. Elsewhere, from a Mac,

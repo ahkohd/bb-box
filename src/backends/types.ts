@@ -111,7 +111,7 @@ export interface DisplayCapability {
   /**
    * "alt-command" for a macOS desktop whose stream server takes Alt as
    * Command and Meta as Option, as Tart's VNC server: the viewer sends Cmd and
-   * Option so. Left out, Meta is Command and
+   * Option, and the paste chord's Command, so. Left out, Meta is Command and
    * Alt Option, as Screen Sharing and bb-box's own Mac input take them.
    */
   readonly macKeys?: "alt-command";
