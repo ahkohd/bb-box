@@ -234,6 +234,8 @@ export class FakeBackend implements Backend {
   cursorless = false;
   /** When set, the VNC display takes its pointer out of the picture and puts it back, as Sway's does (#707), and each call is kept here. */
   pointers: boolean[] | null = null;
+  /** With pointers: the display hides it only while the person in control watches over RFB, as Windows'. */
+  pointerWhileRfb = false;
   #selkiesPort: Promise<number> | null = null;
   /** Each size a display's resize was asked for, in order. */
   readonly resizes: DisplaySize[] = [];
@@ -443,7 +445,7 @@ export class FakeBackend implements Backend {
                 auth: this.#options.wayland ? { type: "apple", user: "box", password: "fakepass" } : { type: "vnc-password", password: "fakepass" },
               },
         ...(this.#options.resize === "backend" ? { resize: (size: DisplaySize) => this.#resize(size) } : {}),
-        ...(this.pointers && display.protocol === "rfb" ? { pointer: async (shown: boolean) => void this.pointers!.push(shown) } : {}),
+        ...(this.pointers && display.protocol === "rfb" ? { pointer: async (shown: boolean) => void this.pointers!.push(shown), ...(this.pointerWhileRfb ? { pointerWhile: "rfb" as const } : {}) } : {}),
         ...(this.#options.minSize ? { minSize: this.#options.minSize } : {}),
         ...(this.#options.pointer && display.protocol === "rfb" ? { followPointer: this.#options.pointer } : {}),
       }),

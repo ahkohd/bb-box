@@ -157,6 +157,13 @@ export interface Display {
    */
   pointer?(shown: boolean, signal?: AbortSignal): Promise<void>;
   /**
+   * "rfb" when `pointer` takes the pointer out only while the person in
+   * control watches this display, not the video, which leaves it out
+   * itself and shows its shape on the person's own pointer: Windows, whose
+   * pointer comes out as blank ones, which the video would show too.
+   */
+  readonly pointerWhile?: "rfb";
+  /**
    * Follows the box's pointer, where its image has bb-box-cursor (060):
    * where it is and what it looks like, as it changes, until `signal` ends it
    * or the helper does. Neither of a Wayland desktop's streams sends either.

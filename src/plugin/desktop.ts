@@ -400,11 +400,32 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
    * Asked at each change of control and as a viewer connects.
    */
   const pointerFor = (boxId: string): void => {
-    void (async () => {
-      const shown = await display(boxes, boxId).catch(() => null);
-      if (!shown?.pointer) return;
-      await shown.pointer(control.view(boxId).owner !== "human");
-    })().catch((error) => deps.logError("show or hide the desktop's pointer", error));
+    const next = (pointerRuns.get(boxId) ?? Promise.resolve())
+      .then(async () => {
+        const shown = await display(boxes, boxId).catch(() => null);
+        if (!shown?.pointer) return;
+        const view = control.view(boxId);
+        // Where the display says so, only while the person watches it, by the viewer they took control with.
+        const watching = shown.pointerWhile !== "rfb" || (view.holder !== null && (rfbViewers.get(boxId)?.get(view.holder) ?? 0) > 0);
+        await shown.pointer(!(view.owner === "human" && watching));
+      })
+      .catch((error) => deps.logError("show or hide the desktop's pointer", error));
+    // One at a time for each box, each as control and viewers are when it runs.
+    pointerRuns.set(boxId, next);
+    void next.then(() => {
+      if (pointerRuns.get(boxId) === next) pointerRuns.delete(boxId);
+    });
+  };
+  /** Each box's RFB viewers, by viewer ID, with how many connections each has. */
+  const rfbViewers = new Map<string, Map<string, number>>();
+  const pointerRuns = new Map<string, Promise<void>>();
+  const rfbViewer = (boxId: string, viewer: string, change: 1 | -1): void => {
+    const viewers = rfbViewers.get(boxId) ?? new Map<string, number>();
+    const count = (viewers.get(viewer) ?? 0) + change;
+    if (count > 0) viewers.set(viewer, count);
+    else viewers.delete(viewer);
+    if (viewers.size) rfbViewers.set(boxId, viewers);
+    else rfbViewers.delete(boxId);
   };
   const leftSelkies = (boxId: string, relay: SelkiesRelay | null) => {
     const entry = selkiesBoxes.get(boxId);
@@ -597,6 +618,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const onEnd = (by: "viewer" | "box", error: Error | null) => {
         relays.delete(relay!);
         if (selkies) leftSelkies(boxId, relay instanceof SelkiesRelay ? relay : null);
+        else {
+          rfbViewer(boxId, viewer, -1);
+          pointerFor(boxId);
+        }
         // Control goes back to the agent unless the viewer connects again soon (020), so the log says why it may lose it.
         if (by === "box" && control.mayInput(boxId, viewer)) {
           const why = error?.message ?? "It closed the connection.";
@@ -648,6 +673,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
             for (const message of [entry?.pointer.image, entry?.pointer.at]) if (message) relay.tell(message);
             keepSharp(boxId);
             cursorFor(boxId);
+            // As after a restart of bb-box, the person in control may come back by video only.
+            pointerFor(boxId);
           } else {
             const open: OpenDisplay = VIEWER_ID.test(viewer)
               ? async (signal) => displayOpener((shown = await display(boxes, boxId)))(signal)
@@ -682,6 +709,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
           relays.add(relay);
           control.attach(boxId, connection);
           if (!selkies) {
+            rfbViewer(boxId, viewer, 1);
             keepSharp(boxId);
             pointerFor(boxId);
           }

@@ -313,8 +313,8 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.match(ssh.log().at(-1)!.command, /FromBase64String/, "commands go to PowerShell");
   assert.deepEqual(transports.access!.ssh, { host: "192.0.2.150", port: 22, user: "box", hostKeys: [] });
   assert.deepEqual(
-    transports.displays.map(({ open: _, resize: __, ...display }) => display),
-    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", minSize: { width: 800, height: 600 } }],
+    transports.displays.map(({ open: _, resize: __, pointer: ___, ...display }) => display),
+    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", pointerWhile: "rfb", minSize: { width: 800, height: 600 } }],
   );
 });
 

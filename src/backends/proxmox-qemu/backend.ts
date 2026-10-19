@@ -84,7 +84,7 @@ import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
-import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, windowsPointer } from "../windows.ts";
 import type { QemuConfig } from "./config.ts";
 
 const MiB = 2 ** 20;
@@ -778,6 +778,9 @@ export class ProxmoxQemuBackend implements Backend {
       label: "Desktop",
       open: (signal) => this.#console(vmid, signal),
       resize: (size, signal) => this.#resize(vmid, command, size, signal),
+      // QEMU's VNC shows the pointer Windows draws once a mouse has moved: out while a person in control watches it.
+      pointer: (shown, signal) => windowsPointer(command, shown, signal),
+      pointerWhile: "rfb",
       // QEMU passes a viewer's size on to the display driver, which offers it as a mode if it is at least 640x480.
       minSize: MIN_DESKTOP,
     };
