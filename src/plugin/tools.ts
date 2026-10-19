@@ -49,6 +49,7 @@ const HINTS: Record<BoxErrorCode, string> = {
   unreachable: "Call box_status. If the box still does not answer, release it and acquire a new one.",
   invalid_name: "Pick another name: a lower-case letter first, then letters, digits and \"-\".",
   not_owner: "Keep using it with box_run, box_copy and the other box tools; its owner releases or stops it.",
+  memory_in_use: "Give the box at least the memory this names, or end what uses memory in it first. box_resize with check says what a size would change.",
   needs_restart: "Call box_resize again with restart true only if ending everything running in the box is fine; otherwise pick parts that change live, or ask the user.",
   in_use: "Leave the box while that thread works. Ask the user if it should go anyway: they can release it from bb-box's panel.",
   restarting: "Run the command again in a minute, once bb-box is back.",

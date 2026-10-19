@@ -37,6 +37,8 @@ import {
   type BoxSize,
   type BoxTransports,
   type Capacity,
+  type ResizePlan,
+  type Resizing,
   type CommandCapability,
   type ComputerUse,
   type DoctorCheck,
@@ -789,6 +791,66 @@ export class DockerBackend implements Backend {
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) throw this.#gone(guest);
     await this.#cli.ok(["container", "stop", "--time", "10", found.id], { timeoutMs: 60_000, signal });
+  }
+
+  /**
+   * `docker update` changes a container's CPUs and memory while it runs,
+   * within seconds, as its cgroup's limits; a box has no disk of its own
+   * (028). `/dev/shm` keeps the size it had at create (061).
+   */
+  resizing(kind: string): Resizing | null {
+    return this.kinds().some((offer) => offer.id === kind) ? { cores: "live", memory: "live", disk: "no", shrinks: true } : null;
+  }
+
+  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+    this.#kind(kind);
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    const from = sizeOf(found) ?? guest.size;
+    if (!from) throw new Error(`Container ${found.name} has no CPU or memory limit, so bb-box cannot resize it.`);
+    const parts: ResizePlan["parts"][number][] = [];
+    if (to.cores !== from.cores) parts.push({ part: "cores", from: from.cores, to: to.cores, way: "live" });
+    if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way: "live" });
+    if (to.diskGiB !== null) parts.push({ part: "disk", from: null, to: to.diskGiB, way: "no" });
+    return { parts, room: await this.#resizeRoom(from, to, pending, signal), downSeconds: null };
+  }
+
+  /** Changes a container's CPUs and memory, swap with it, as `docker update` does at once, running or stopped (061). */
+  async resize(guest: Guest, _kind: string, to: BoxSize, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+    if (to.diskGiB !== null) throw new BackendError("unsupported", "A Docker box shares its host's disk, so it has no disk of its own to grow.");
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    const from = sizeOf(found);
+    if (!from || from.cores !== to.cores || from.memoryMiB !== to.memoryMiB) {
+      // Memory and swap together, as Docker refuses memory above the swap limit it has.
+      await this.#cli.ok(["container", "update", "--cpus", String(to.cores), "--memory", `${to.memoryMiB}m`, "--memory-swap", `${to.memoryMiB}m`, found.id], { timeoutMs: 60_000, signal });
+    }
+    const [now] = await this.#cli.inspect([found.id], signal);
+    return { ...guest, size: (now && sizeOf(now)) ?? to };
+  }
+
+  /** Room on the host for a container to grow from `from` to `to`: the memory it adds, kept within the reserve, and cores within the host's (061). */
+  async #resizeRoom(from: BoxSize, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+    const state = await this.#state(signal);
+    const { info, containers } = state;
+    const host = info.name || this.#host;
+    const active = containers.filter((container) => ACTIVE.has(container.status));
+    const memoryUsed = active.reduce((sum, container) => sum + (container.memoryMiB ?? 0), 0) + pending.reduce((sum, other) => sum + other.size.memoryMiB, 0);
+    const memoryFree = info.memoryMiB - memoryUsed;
+    const reserve = this.#config.reserveMemoryMiB;
+    const limits: Limit[] = [{ resource: "memory", used: memoryUsed, total: info.memoryMiB, reserve, unit: "MiB" }];
+    const grow = to.memoryMiB - from.memoryMiB;
+    let why: string | null = null;
+    if (info.cpus && to.cores > info.cpus) {
+      why = `${host} has ${info.cpus} cores, fewer than the ${to.cores} asked for. Ask for at most ${info.cpus} cores.`;
+    } else if (grow > 0 && memoryFree - grow < reserve) {
+      why =
+        grow > memoryFree
+          ? `${host} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(grow)} more the box needs. Ask for less memory or release a box.`
+          : `${host} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve)} free, so the ${formatMiB(grow)} more the box needs does not fit. ` +
+            "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings.";
+    }
+    return { ok: why === null, message: why, warm: null, hosts: [{ host, ok: why === null, limits }] };
   }
 
   /** Whether a container comes from the build its kind's image names now: false once a refresh has moved the tag (049); null without either. */

@@ -3,8 +3,9 @@
 // backend runs. Its daemon's state is under $FAKE_DOCKER_ROOT:
 //
 // - host.json: what `docker info` says, and switches: down (the daemon does
-//   not answer), failStart (a container stops as it starts) and neverReady
-//   (a container never writes its ready file).
+//   not answer), failStart (a container stops as it starts), neverReady
+//   (a container never writes its ready file) and failUpdate (an update
+//   fails with that message, and changes nothing).
 // - images.json: each image and its labels. image-ids.json: each image's ID,
 //   which a tag shares; an image without one has an ID of its name's.
 //   networks.json: each network and its labels.
@@ -169,6 +170,25 @@ function container(command, rest) {
       }
       save(found);
       return console.log(name);
+    }
+    case "update": {
+      // As Docker's: --cpus, --memory and --memory-swap, and memory never above memory-swap.
+      const options = {};
+      let i = 0;
+      for (; i < rest.length - 1 && rest[i].startsWith("--"); i += 2) options[rest[i]] = rest[i + 1];
+      const ref = rest.at(-1);
+      const found = find(ref) ?? fail(`Error response from daemon: No such container: ${ref}`);
+      if (host.failUpdate) fail(`Error response from daemon: Cannot update container ${found.Id}: ${host.failUpdate}`);
+      const config = { ...found.HostConfig };
+      if (options["--cpus"] !== undefined) config.NanoCpus = Math.round(Number(options["--cpus"]) * 1e9);
+      if (options["--memory"] !== undefined) config.Memory = Number.parseInt(options["--memory"], 10) * MiB;
+      if (options["--memory-swap"] !== undefined) config.MemorySwap = Number.parseInt(options["--memory-swap"], 10) * MiB;
+      if (config.MemorySwap > 0 && config.Memory > config.MemorySwap) {
+        fail(`Error response from daemon: Cannot update container ${found.Id}: Memory limit should be smaller than already set memoryswap limit, update the memoryswap at the same time`);
+      }
+      found.HostConfig = config;
+      save(found);
+      return console.log(ref);
     }
     case "stop": {
       const found = find(rest.at(-1)) ?? fail(`Error response from daemon: No such container: ${rest.at(-1)}`);

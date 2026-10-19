@@ -768,7 +768,7 @@ export function resizeText(answer: ResizeAnswer, checked: boolean): string {
     lines.push(plan.room.ok ? "Its host has room for it." : `Its host has no room for it: ${plan.room.message ?? "no reason given"}`);
     return lines.join("\n");
   }
-  const took = box.resize?.ms != null ? ` in ${(box.resize.ms / 1000).toFixed(1)} s` : "";
+  const took = box.resize?.ms != null ? ` in ${seconds(box.resize.ms)}` : "";
   lines.push(`Resized box ${box.name} from ${describeSize(from)} to ${describeSize(to)}${took}.`);
   if (live.length) lines.push(`Live, with everything in it still running: ${live.join("; ")}.`);
   if (restart.length) lines.push(`With a restart, which ended what was running in it: ${restart.join("; ")}.`);
