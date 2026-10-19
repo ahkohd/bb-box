@@ -3337,6 +3337,50 @@ process.exit(1);
   assert.deepEqual([rfb.width, rfb.height], [1280, 800]);
 });
 
+test("High resolution is as large as every viewer's browser decodes: smaller while one that decodes only level 5.2 watches, larger again when it goes (#864)", async (t) => {
+  const bin = tempDir("xfce");
+  for (const [name, script] of Object.entries({ "xfconf-query": `case "$*" in *"/general/theme") echo Arc ;; esac`, "xfce4-panel": ":" })) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  const { harness, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  const rfb = world.backend!.rfb;
+  const selkies = world.backend!.selkies;
+  assert.deepEqual(await harness.behavior.callRpc("desktop.sharp", { threadId: THREAD, box: box.id, on: true }), { error: null });
+  // A viewer whose browser decodes level 6.1, as Chrome's does, takes control and widens its tab: the desktop is twice its size.
+  const viewer = "viewer-one-0001";
+  const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
+  await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));
+  await one.receive("BB_DECODES,139264");
+  await selkies.frame(1, true, 2560, 1600);
+  await until("the frame", async () => one.sent.some((message) => typeof message !== "string"));
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  await one.receive("r,2600x1500");
+  await until("twice the tab's size, past level 5.2", async () => rfb.width === 5200 && rfb.height === 3000);
+  // A viewer whose browser decodes no more than level 5.2, as Safari's, watches: the desktop is as large as it decodes.
+  const two = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-two-0002&stream=selkies`);
+  await until("the second viewer", async () => two.sent.includes("MODE websockets"));
+  await two.receive("BB_DECODES,34560");
+  await until("within level 5.2", async () => rfb.width === 3904 && rfb.height === 2256);
+  // It goes: twice the tab's size again.
+  await two.close();
+  await until("twice the tab's size again", async () => rfb.width === 5200 && rfb.height === 3000);
+  assert.ok(!selkies.pages.some((page) => page.received.some((message) => typeof message === "string" && message.startsWith("BB_DECODES"))), "Selkies never sees bb-box's own message");
+  // A viewer that does not say, as a page from before this, counts as one that decodes level 5.2.
+  const three = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-three-0003&stream=selkies`);
+  await until("the third viewer", async () => three.sent.includes("MODE websockets"));
+  await one.receive("r,2600x1501");
+  await until("within level 5.2 for a viewer that has not said", async () => rfb.width === 3904 && rfb.height === 2256);
+  await three.close();
+  await one.close();
+});
+
 test("a desktop that cannot be at high resolution says so, and refuses it", async (t) => {
   const { harness, box } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());

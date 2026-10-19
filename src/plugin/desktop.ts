@@ -21,6 +21,7 @@ import { openRoute } from "../transports/route.ts";
 import type { BoxPointer, Display } from "../transports/types.ts";
 import { argbToRgba, rgbaPng } from "../core/png.ts";
 import { POINTER_NONE, POINTER_VERB } from "../core/pointer.ts";
+import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
 
 export const DESKTOP_ROUTE = "/desktop";
 const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -59,12 +60,6 @@ const SHARP_SCALE = 2;
 const SHARP_TIMEOUT_MS = 30_000;
 /** The largest desktop High resolution sets: Xvnc's limit is far above it, Selkies' encoder is not. */
 const SHARP_MAX: Size = { width: 7680, height: 4320 };
-/**
- * The most 16x16 macroblocks a High resolution desktop's frame has: as many as H.264 level 5.2 takes at the video's 60 frames a
- * second, 2,073,600 a second, so 3840x2304 at most. Past it the stream is level 6, which Safari's decoder refuses, so its video
- * stopped (the owner's notes of 19 October 2026): its largest frame, 4096x2304, is level 6 at 60 frames a second.
- */
-const SHARP_MAX_MACROBLOCKS = 34_560;
 
 /**
  * Xfce's panel again, so it takes a new scale, in the background. A restarted panel runs itself again, and that one can find the old
@@ -89,6 +84,8 @@ function sharpOff(theme: string): string {
 interface SharpKept {
   readonly theme: string;
   readonly size: Size;
+  /** The size it is High resolution of: the viewer's, or the desktop's before; its size is twice this, as viewers' browsers decode. */
+  readonly of?: Size;
 }
 
 /**
@@ -103,12 +100,15 @@ export function sharpOffered(box: BoxRecord): boolean {
   return video && ((box.capabilities.os === "linux" && !box.capabilities.gpu && x11) || (box.capabilities.os === "windows" && box.capabilities.arch === "x86_64"));
 }
 
-/** `size` times `factor`, within High resolution's largest and at least 640x480. */
-function scaled(size: Size, factor: number): Size {
+/**
+ * `size` times `factor`, within High resolution's largest and at least 640x480, and within `most` macroblocks a frame: the largest
+ * every viewer's browser decodes (#864), level 5.2's by default, as Safari's decoder refuses level 6 (the owner's notes of 19 October
+ * 2026). Smaller in proportion, in whole macroblocks.
+ */
+function scaled(size: Size, factor: number, most = LEVEL_52_MACROBLOCKS): Size {
   const width = Math.min(SHARP_MAX.width, Math.max(640, Math.round(size.width * factor)));
   const height = Math.min(SHARP_MAX.height, Math.max(480, Math.round(size.height * factor)));
-  // Within the largest frame Safari decodes: smaller in proportion, in whole macroblocks.
-  const over = Math.ceil(width / 16) * Math.ceil(height / 16) / SHARP_MAX_MACROBLOCKS;
+  const over = macroblocks(width, height) / most;
   if (over <= 1) return { width, height };
   const shrink = Math.sqrt(1 / over);
   return { width: Math.floor((width * shrink) / 16) * 16, height: Math.floor((height * shrink) / 16) * 16 };
@@ -308,6 +308,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       relays: Set<SelkiesRelay>;
       /** Whether each viewer's browser decodes 4:4:4, as it said. */
       colours: Map<SelkiesRelay, boolean>;
+      /** The largest frame each viewer's browser decodes, in macroblocks, as it said (#864). */
+      decodes: Map<SelkiesRelay, number>;
       /** What the box was last asked to stream: 4:4:4 or not; null before any, as the display may keep the last viewers' choice. */
       fullColour: boolean | null;
       /** Whether the box was last asked to draw its cursor into the video; null before any. */
@@ -320,6 +322,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       viewers: 0,
       relays: new Set(),
       colours: new Map(),
+      decodes: new Map(),
       fullColour: null,
       cursor: null,
     };
@@ -396,6 +399,15 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
    * Streams a box's display in 4:4:4 while every viewer says it decodes it, and in 4:2:0 otherwise: Selkies sets it for
    * the whole display. It waits for every viewer to say: one that has not, as a page from before this, keeps it as it is.
    */
+  /**
+   * The largest frame every viewer of a box's video decodes, in macroblocks: one that has not said, as a page from before this, or
+   * with none watching, level 5.2's, which every browser decodes (#864).
+   */
+  const decodesFor = (boxId: string): number => {
+    const entry = selkiesBoxes.get(boxId);
+    if (!entry?.relays.size) return LEVEL_52_MACROBLOCKS;
+    return Math.min(...[...entry.relays].map((relay) => entry.decodes.get(relay) ?? LEVEL_52_MACROBLOCKS));
+  };
   const colourFor = (boxId: string): void => {
     const entry = selkiesBoxes.get(boxId);
     if (!entry || !entry.relays.size || [...entry.relays].some((relay) => !entry.colours.has(relay))) return;
@@ -466,10 +478,14 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     if (relay) {
       entry?.relays.delete(relay);
       entry?.colours.delete(relay);
+      entry?.decodes.delete(relay);
       unlistens.get(relay)?.();
       unlistens.delete(relay);
     }
-    if (entry && entry.viewers > 1) colourFor(boxId);
+    if (entry && entry.viewers > 1) {
+      colourFor(boxId);
+      fitSharp(boxId);
+    }
     if (!entry || --entry.viewers > 0) return;
     selkiesBoxes.delete(boxId);
     frameSizes.delete(boxId);
@@ -586,8 +602,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const sizeForSelkies = async (boxId: string, size: Size): Promise<void> => {
     // A High resolution desktop keeps its density: the viewer's size, in its CSS pixels, at High resolution's scale.
     const sharp = await kv.get<SharpKept>(`${SHARP_PREFIX}${boxId}`);
-    const wanted = sharp ? scaled(size, SHARP_SCALE) : size;
-    if (sharp) await kv.set(`${SHARP_PREFIX}${boxId}`, { ...sharp, size: wanted } satisfies SharpKept);
+    const wanted = sharp ? scaled(size, SHARP_SCALE, decodesFor(boxId)) : size;
+    if (sharp) await kv.set(`${SHARP_PREFIX}${boxId}`, { ...sharp, size: wanted, of: size } satisfies SharpKept);
     await setSize(boxId, wanted);
   };
   /** Sets a box's desktop to `size` through its RFB display, then has its video follow. */
@@ -714,6 +730,12 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 entry.colours.set(relay, yes);
                 colourFor(boxId);
               },
+              onDecodes: (most) => {
+                const entry = selkiesBoxes.get(boxId);
+                if (!entry || !relay || !(relay instanceof SelkiesRelay)) return;
+                entry.decodes.set(relay, most);
+                fitSharp(boxId);
+              },
               ownCursor: () => pointers.get(boxId)?.own ?? false,
               onEnd,
             });
@@ -839,6 +861,32 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     }).catch((error) => deps.logError("keep the desktop at high resolution", error));
   };
 
+  /**
+   * A High resolution Linux desktop at the largest size every viewer of its video decodes (#864): smaller when one that decodes less
+   * comes, larger again when it goes, as one change, every viewer holding its picture meanwhile. Only while some viewer watches: the
+   * last to go leaves it as it is.
+   */
+  const fitSharp = (boxId: string): void => {
+    void serialSharp(boxId, async () => {
+      const key = `${SHARP_PREFIX}${boxId}`;
+      const kept = await kv.get<SharpKept>(key);
+      if (!kept || !selkiesBoxes.get(boxId)?.relays.size) return;
+      const box = await boxes.find(boxId);
+      if (!box || box.state !== "ready" || box.capabilities.os !== "linux") return;
+      const size = scaled(kept.of ?? scaled(kept.size, 1 / SHARP_SCALE, Infinity), SHARP_SCALE, decodesFor(boxId));
+      if (size.width === kept.size.width && size.height === kept.size.height) return;
+      switching.add(boxId);
+      changed(boxId);
+      try {
+        await kv.set(key, { ...kept, size } satisfies SharpKept);
+        await setSize(boxId, size);
+      } finally {
+        switching.delete(boxId);
+        changed(boxId);
+      }
+    }).catch((error) => deps.logError("fit the desktop to its viewers' video", error));
+  };
+
   /** Boxes whose desktop is switching High resolution now. */
   const switching = new Set<string>();
 
@@ -864,13 +912,13 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
         changed(boxId);
         try {
           if (on) {
-            const size = scaled(now, SHARP_SCALE);
+            const size = scaled(now, SHARP_SCALE, decodesFor(boxId));
             // Kept first, so a resize while it changes keeps the density; and forgotten if it fails.
-            await kv.set(key, { theme: "", size } satisfies SharpKept);
+            await kv.set(key, { theme: "", size, of: now } satisfies SharpKept);
             control.rescale(boxId, SHARP_SCALE);
             try {
               const theme = await sharpOn(box, boxId, size);
-              await kv.set(key, { theme, size } satisfies SharpKept);
+              await kv.set(key, { theme, size, of: now } satisfies SharpKept);
             } catch (error) {
               await kv.delete(key);
               control.rescale(boxId, 1 / SHARP_SCALE);

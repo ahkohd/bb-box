@@ -19,7 +19,7 @@ import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
-import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, SelkiesSession, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, SelkiesSession, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { OptionComposer, boxKey, macBrowser } from "../src/app/viewer.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
@@ -2241,8 +2241,10 @@ class FakeDecoder {
   static size = { width: 1280, height: 800 };
   /** Whether this browser decodes 4:4:4, as isConfigSupported answers. */
   static fullColour = true;
+  /** Codecs this browser does not decode, as Safari's level 6 (#864). */
+  static refused = new Set<string>();
   static async isConfigSupported(config: { codec: string }) {
-    return { supported: !/^avc1\.f4/i.test(config.codec) || FakeDecoder.fullColour, config };
+    return { supported: (!/^avc1\.f4/i.test(config.codec) || FakeDecoder.fullColour) && !FakeDecoder.refused.has(config.codec), config };
   }
   state = "unconfigured";
   readonly codecs: string[] = [];
@@ -2291,6 +2293,7 @@ function withVideo() {
   FakeDecoder.made = [];
   FakeDecoder.thrown = [];
   FakeDecoder.refuse = 0;
+  FakeDecoder.refused = new Set();
   FakeDecoder.fullColour = true;
   FakeDecoder.size = { width: 1280, height: 800 };
   forgetFullColour();
@@ -2311,13 +2314,17 @@ function withVideo() {
   };
 }
 
-/** A Selkies video message: type 4, H.264, its frame id. */
-function videoFrame(id: number, key: boolean): ArrayBuffer {
+/** A Selkies video message: type 4, H.264, its frame id, and the frame's size when given. */
+function videoFrame(id: number, key: boolean, width = 0, height = 0): ArrayBuffer {
   const bytes = new Uint8Array(20);
   bytes[0] = 4;
   bytes[1] = 0x10 | (key ? 1 : 0);
   bytes[2] = id >> 8;
   bytes[3] = id & 0xff;
+  bytes[6] = width >> 8;
+  bytes[7] = width & 0xff;
+  bytes[8] = height >> 8;
+  bytes[9] = height & 0xff;
   return bytes.buffer;
 }
 
@@ -2472,6 +2479,59 @@ test("a video desktop whose stream this browser cannot decode, as Safari past H.
     expect(FakeDecoder.made).toHaveLength(made);
     expect(socket.readyState).toBe(3);
     expect(toasts()).toEqual(["Video did not start, so this shows VNC.This browser cannot decode the desktop's video at its size (avc1.42E01F)."]);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("a video viewer says how large a frame its browser decodes, and waits for a frame it decodes while the box makes its desktop smaller for it (#864)", async () => {
+  const undo = withVideo();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    // A browser that decodes no more than level 5.2, as Safari.
+    FakeDecoder.refused = new Set(["avc1.42C03D", "avc1.42C03C"]);
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const slot = desktopTab(server([desktopBox()], { video: true }).handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    await waitFor(() => expect(socket.sent).toContain("BB_DECODES,34560"));
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true, 1920, 1080) }));
+    await slot.findByText("The agent has control.");
+    // The desktop is at twice a Chrome viewer's tab, past what this browser decodes: its decoder refuses it, and the viewer waits.
+    act(() => void socket.onmessage?.({ data: videoFrame(6, true, 5200, 3000) }));
+    act(() => FakeDecoder.made.at(-1)!.fail("NotSupportedError"));
+    act(() => void socket.onmessage?.({ data: videoFrame(7, true, 5200, 3000) }));
+    const made = FakeDecoder.made.length;
+    expect(novnc.FakeRfb.made).toHaveLength(0);
+    // The box makes it smaller: the next key frame of a size it decodes shows, with a decoder of its own.
+    act(() => void socket.onmessage?.({ data: videoFrame(8, true, 3904, 2256) }));
+    expect(FakeDecoder.made).toHaveLength(made + 1);
+    expect(FakeDecoder.made.at(-1)!.chunks).toEqual([{ type: "key", timestamp: 8 }]);
+    expect(novnc.FakeRfb.made).toHaveLength(0);
+    // Too large again, and no frame it decodes comes: after a while, the desktop shows over VNC.
+    act(() => void socket.onmessage?.({ data: videoFrame(9, true, 5200, 3000) }));
+    act(() => FakeDecoder.made.at(-1)!.fail("NotSupportedError"));
+    act(() => void vi.advanceTimersByTime(FIT_WAIT_MS));
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  } finally {
+    vi.useRealTimers();
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("a video viewer whose browser decodes level 6.1 says so (#864)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    desktopTab(server([desktopBox()], { video: true }).handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    await waitFor(() => expect(socket.sent).toContain("BB_DECODES,139264"));
   } finally {
     undo();
     window.sessionStorage.clear();
