@@ -470,7 +470,8 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         features: ["docker"],
         command: SSH_COMMAND,
         // Xtigervnc takes a viewer's SetDesktopSize itself, as on the Proxmox CPU desktop. Selkies beside it, as on the X11
-        // images; video by choice until it is measured on arm64 (060).
+        // images. Video by choice, as for every Tart desktop: it costs the Mac about 0.9 of a core while someone watches an
+        // idle desktop (060).
         displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { ...SELKIES_DISPLAY, byChoice: true }],
         computerUse: LINUX_CUA,
         enrol: true,
