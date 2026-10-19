@@ -7,12 +7,11 @@
 # (proxmox-lxc/template/apt-snapshot): the build applies the snapshot's
 # updates, and apt does not take a package back to an older version.
 ARG UBUNTU=ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
-# The Wayland desktop's base, which moves to Ubuntu 26.04 on its own, once a
-# 26.04 build has been tried. ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
-# (resolute-20260912, no newer than the snapshot) builds it there now
-# (--build-arg UBUNTU_WAYLAND=...). The guest scripts take the release from
-# the image.
-ARG UBUNTU_WAYLAND=${UBUNTU}
+# The Wayland desktop's base: Ubuntu 26.04, whose Sway and wayvnc carry the
+# box's own pointer shapes, as the Proxmox LXC Wayland template is.
+# resolute-20260912, pinned, and no newer than the apt snapshot, as above.
+# The guest scripts take the release from the image.
+ARG UBUNTU_WAYLAND=ubuntu:26.04@sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78
 
 # The artifacts the guest scripts install, each checked against its pinned
 # SHA-256, as fetch-artifacts.sh does on a Proxmox host. The pinned files are

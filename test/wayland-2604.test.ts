@@ -55,11 +55,11 @@ test("a Proxmox LXC Wayland template is built from Ubuntu 26.04, and the rest fr
   assert.doesNotMatch(build, /pct create "\$ct" "\$BBBOX_OS_TEMPLATE"/);
 });
 
-test("Docker's Wayland stage has a base of its own, 24.04 until a 26.04 build has been tried", () => {
+test("Docker's Wayland stage has a base of its own, Ubuntu 26.04, and the rest stay on 24.04", () => {
   const dockerfile = read("docker/Dockerfile");
-  assert.match(dockerfile, /^ARG UBUNTU_WAYLAND=\$\{UBUNTU\}$/m);
+  assert.match(dockerfile, /^ARG UBUNTU=ubuntu:24\.04@sha256:[0-9a-f]{64}$/m);
+  assert.match(dockerfile, /^ARG UBUNTU_WAYLAND=ubuntu:26\.04@sha256:[0-9a-f]{64}$/m);
   assert.match(dockerfile, /^FROM \$\{UBUNTU_WAYLAND\} AS desktop-wayland$/m);
-  assert.match(dockerfile, /ubuntu:26\.04@sha256:[0-9a-f]{64}/, "the 26.04 digest to try it with is named");
   for (const stage of ["fetch", "linux", "desktop"]) assert.match(dockerfile, new RegExp(`^FROM \\$\\{UBUNTU\\} AS ${stage}$`, "m"), `${stage} stays on UBUNTU`);
 });
 

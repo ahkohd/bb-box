@@ -11,9 +11,9 @@ offers four kinds:
 - **linux-desktop**: the same desktop on one of the host's NVIDIA GPUs (off by
   default);
 - **linux-desktop-wayland-cpu**: Sway on Wayland, drawn by the CPU. X11-only
-  apps do not run there. Its base is the Dockerfile's `UBUNTU_WAYLAND`, which
-  is 24.04 until a 26.04 build has been tried; the guest scripts build it on
-  either.
+  apps do not run there. It is on Ubuntu 26.04 (the Dockerfile's
+  `UBUNTU_WAYLAND`), whose Sway and wayvnc carry the box's own pointer
+  shapes, as the Proxmox LXC Wayland template is.
 
 Boxes join BB as machines, as Proxmox LXC boxes do. By default each box is a
 privileged container with a Docker daemon of its own, which its first
