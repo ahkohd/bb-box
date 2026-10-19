@@ -228,6 +228,8 @@ export class FakeBackend implements Backend {
   /** Every desktop box's VNC server: one server, with a password the viewer never sees. */
   readonly rfb: FakeRfb;
   #vnc: Promise<number> | null = null;
+  /** Once disposed, a display no longer opens: one opened later, as by a viewer reconnecting, would start a server nothing closes. */
+  #disposed = false;
   /** Every desktop box's Selkies, for a kind with a Selkies display. */
   readonly selkies = new FakeSelkies();
   /**
@@ -444,14 +446,15 @@ export class FakeBackend implements Backend {
         resizable: display.resizable,
         ...(display.cursor && !this.cursorless ? { cursor: display.cursor } : {}),
         open: async () =>
-          display.protocol === "selkies"
+          this.#open() ??
+          (display.protocol === "selkies"
             ? { route: { type: "tcp", host: "127.0.0.1", port: await (this.#selkiesPort ??= this.selkies.listen()) }, auth: { type: "none" } }
             : {
                 route: { type: "tcp", host: "127.0.0.1", port: await (this.#vnc ??= this.rfb.listen()) },
                 auth: this.#options.wayland ? { type: "apple", user: "box", password: "fakepass" } : { type: "vnc-password", password: "fakepass" },
-              },
+              }),
         ...(display.protocol === "selkies" && this.apartInput
-          ? { openInput: async () => ({ route: { type: "tcp" as const, host: "127.0.0.1", port: await (this.#apartPort ??= this.apartInput!.listen()) }, auth: { type: "none" as const } }) }
+          ? { openInput: async () => this.#open() ?? ({ route: { type: "tcp" as const, host: "127.0.0.1", port: await (this.#apartPort ??= this.apartInput!.listen()) }, auth: { type: "none" as const } }) }
           : {}),
         ...(this.#options.resize === "backend" ? { resize: (size: DisplaySize) => this.#resize(size) } : {}),
         ...(this.pointers && display.protocol === "rfb" ? { pointer: async (shown: boolean) => void this.pointers!.push(shown), ...(this.pointerWhileRfb ? { pointerWhile: "rfb" as const } : {}) } : {}),
@@ -521,7 +524,14 @@ export class FakeBackend implements Backend {
     }
   }
 
+  /** Throws once disposed; null before. */
+  #open(): null {
+    if (this.#disposed) throw new Error("The fake backend was disposed, so its displays no longer open.");
+    return null;
+  }
+
   async dispose(): Promise<void> {
+    this.#disposed = true;
     if (this.#vnc) await this.#vnc;
     this.#vnc = null;
     await this.rfb.close();
