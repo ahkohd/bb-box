@@ -1931,3 +1931,54 @@ test("a GPU desktop shows as video only where its image encodes with NVENC, and 
   assert.deepEqual(await displaysWith("/bin/sh"), ["rfb", "selkies"]);
   assert.deepEqual(await displaysWith("/nonexistent/bb-box-nofbc.so"), ["rfb"], "an image built before has no video");
 });
+
+test("a container resizes live in every part, with room for what it grows by, and its disk only grows (061)", async () => {
+  const { backend, proxmox } = setup();
+  assert.deepEqual(backend.resizing("linux"), { cores: "live", memory: "live", disk: "live", shrinks: true });
+  assert.equal(backend.resizing("macos"), null);
+  const guest = await backend.acquire(identity("linux"), null, hooks().value, signal());
+  const vmid = Number(guest.ref);
+  const to = { cores: 4, memoryMiB: 8192, diskGiB: 16 };
+
+  const plan = await backend.planResize(guest, "linux", to, [], signal());
+  assert.deepEqual(plan.parts, [
+    { part: "cores", from: 2, to: 4, way: "live" },
+    { part: "memory", from: 4096, to: 8192, way: "live" },
+    { part: "disk", from: 8, to: 16, way: "live" },
+  ]);
+  assert.equal(plan.room.ok, true);
+  assert.equal(plan.downSeconds, null);
+
+  // Only the growth needs room: 4 GiB more memory, kept within the reserve, and 8 GiB more disk.
+  proxmox.memory = { total: 64 * GiB, available: 7 * GiB };
+  const tight = await backend.planResize(guest, "linux", to, [], signal());
+  assert.equal(tight.room.ok, false);
+  assert.equal(tight.room.message, "pve has 7 GiB of memory free and keeps 4 GiB free, so the 4 GiB more the box needs does not fit. Release a box, ask for less memory, or lower the memory kept free in bb-box's settings.");
+  assert.equal((await backend.planResize(guest, "linux", { ...to, memoryMiB: 4096 }, [], signal())).room.ok, true, "the same memory needs none");
+  proxmox.memory = { total: 64 * GiB, available: 48 * GiB };
+  assert.equal((await backend.planResize(guest, "linux", { ...to, cores: 32 }, [], signal())).room.message, "pve has 16 CPU threads, fewer than the 32 cores asked for. Ask for at most 16 cores.");
+  proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 55 * GiB });
+  assert.match((await backend.planResize(guest, "linux", to, [], signal())).room.message!, /^The local-lvm storage on pve has 55 GiB free and keeps 50 GiB free, so 8 GiB more disk does not fit\./);
+  proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 500 * GiB });
+
+  const resized = await backend.resize(guest, "linux", to, { restart: false }, signal());
+  assert.deepEqual(resized.size, to);
+  const config = proxmox.guests.get(vmid)!.config;
+  assert.deepEqual([config.cores, config.memory, /size=([^,]+)/.exec(String(config.rootfs))?.[1]], ["4", "8192", "16G"]);
+
+  // Back down: cores and memory go down live, and the disk stays.
+  assert.deepEqual((await backend.resize(guest, "linux", { cores: 2, memoryMiB: 4096, diskGiB: 16 }, { restart: false }, signal())).size, { cores: 2, memoryMiB: 4096, diskGiB: 16 });
+  await assert.rejects(backend.planResize(guest, "linux", { cores: 2, memoryMiB: 4096, diskGiB: 12 }, [], signal()), (error) => error instanceof BackendError && /disk only grows, and this one's is 16 GiB/.test(error.message));
+  await assert.rejects(backend.resize(guest, "linux", { cores: 2, memoryMiB: 4096, diskGiB: 12 }, { restart: false }, signal()), /disk only grows/);
+});
+
+test("a container whose disk does not grow gets its cores and memory back, and another box's guest is gone (061)", async () => {
+  const { backend, proxmox } = setup();
+  const guest = await backend.acquire(identity("linux"), null, hooks().value, signal());
+  const vmid = Number(guest.ref);
+  proxmox.nextTaskExit.set("resize", "lvextend failed: insufficient free space");
+  await assert.rejects(backend.resize(guest, "linux", { cores: 4, memoryMiB: 8192, diskGiB: 40 }, { restart: false }, signal()), /insufficient free space/);
+  const config = proxmox.guests.get(vmid)!.config;
+  assert.deepEqual([String(config.cores), String(config.memory)], ["2", "4096"], "cores and memory went back");
+  await assert.rejects(backend.resize({ ...guest, data: { ...guest.data, box: "box_other" } }, "linux", { cores: 4, memoryMiB: 4096, diskGiB: null }, { restart: false }, signal()), (error) => error instanceof BackendError && error.code === "gone");
+});

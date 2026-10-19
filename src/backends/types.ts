@@ -166,6 +166,36 @@ export interface BoxSize {
   readonly diskGiB: number | null;
 }
 
+/**
+ * How a part of a box's size changes on an offer (061): while the box runs
+ * and everything in it goes on, with a clean shutdown and start that ends
+ * what runs in it, or not at all.
+ */
+export type ResizeWay = "live" | "restart" | "no";
+
+/** What an offer of a kind can resize, and how (061). */
+export interface Resizing {
+  readonly cores: ResizeWay;
+  readonly memory: ResizeWay;
+  /** The root disk, which only grows. */
+  readonly disk: ResizeWay;
+  /** Cores and memory can go down as well as up, the same way. */
+  readonly shrinks: boolean;
+}
+
+/** A part of a box's size a resize changes. */
+export type SizePart = "cores" | "memory" | "disk";
+
+/** What a resize of one box would do, before anything changes (061). */
+export interface ResizePlan {
+  /** Each part that changes, from what the box has, in cores, MiB or GiB (null: the base disk), and how. */
+  readonly parts: readonly { readonly part: SizePart; readonly from: number | null; readonly to: number; readonly way: ResizeWay }[];
+  /** Whether the box's host has room for what it grows by, as capacity says it for a new box. */
+  readonly room: Capacity;
+  /** About how long a restart takes, in seconds, when a part needs one. */
+  readonly downSeconds: number | null;
+}
+
 /** The box a backend acquires for, as the registry knows it. */
 export interface BoxIdentity {
   readonly boxId: string;
@@ -481,6 +511,35 @@ export interface Backend {
   start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<Started | void>;
   /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
+
+  /**
+   * What the offer of `kind` can resize, and how (061), from what the
+   * backend holds, with no call to any host. Null, or no method, when it
+   * resizes nothing.
+   */
+  resizing?(kind: string): Resizing | null;
+  /**
+   * What resizing `guest`, a box of `kind`, to `to` would do: each part's
+   * way for this box, and the room on its host for what it grows by, with
+   * `pending` counted as for capacity. Changes nothing. Only backends with
+   * `resizing`.
+   */
+  planResize?(
+    guest: Guest,
+    kind: string,
+    to: BoxSize,
+    pending: readonly { readonly kind: string; readonly size: BoxSize }[],
+    signal?: AbortSignal,
+  ): Promise<ResizePlan>;
+  /**
+   * Resizes `guest` to `to`, its disk with its file system, and returns the
+   * guest with its size read back from it. Safe to repeat: a part already
+   * at `to` is left alone. Refuses with BackendError("unsupported") a part
+   * that needs a restart unless `restart`, and a disk smaller than the
+   * box's. When a step fails, it puts back the parts it changed that can go
+   * back before it throws. Only backends with `resizing`.
+   */
+  resize?(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest>;
   /**
    * Whether `stop` saves a guest of the kind with its running session, as a
    * hibernate or a suspend does, so that it holds no memory while stopped

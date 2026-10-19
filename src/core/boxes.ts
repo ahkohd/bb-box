@@ -41,6 +41,9 @@ import {
   type MachineNature,
   type PowerState,
   type ReleaseHooks,
+  type ResizePlan,
+  type Resizing,
+  type SizePart,
   type StopReason,
 } from "../backends/types.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../transports/types.ts";
@@ -49,7 +52,7 @@ import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
 import { command, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
-import { chooseSize, defaultSize, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
+import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
 
 export type BoxState =
   /** Recorded; the backend is making or claiming the guest. */
@@ -141,7 +144,69 @@ export interface BoxRecord {
   readonly image?: BoxImage | null;
   /** The last time the box's guest stopped without bb-box's request (#406). A stop bb-box makes forgets it. */
   readonly unrequestedStop?: UnrequestedStop | null;
+  /** The box's last resize (061), recorded before it changes anything. */
+  readonly resize?: ResizeRecord | null;
 }
+
+/** A resize of a box (061): what it asked for, and how it went. */
+export interface ResizeRecord {
+  readonly from: BoxSize;
+  readonly to: BoxSize;
+  /** When it began, in ms since the epoch. */
+  readonly at: number;
+  readonly state: "resizing" | "done" | "failed";
+  /** How long it took, once it has ended. */
+  readonly ms: number | null;
+  /** It restarted the box. */
+  readonly restart: boolean;
+  readonly error: string | null;
+}
+
+/** What a resize did, or with `check`, would do (061). */
+export interface ResizeAnswer {
+  readonly box: BoxRecord;
+  readonly from: BoxSize;
+  readonly to: BoxSize;
+  /** Null when the box has that size already. */
+  readonly plan: ResizePlan | null;
+  /** It changed the box, as opposed to checking, or finding it had the size. */
+  readonly changed: boolean;
+}
+
+/**
+ * The memory a Linux box uses that it cannot give back at once, in MiB: its
+ * cgroup's use less the file cache it can drop, as a container's cgroup
+ * shows it, or else MemTotal less MemAvailable, as in a VM. BBBOX_CGROUP,
+ * which no box sets, lets a test give it a cgroup of its own.
+ */
+const MEMORY_IN_USE = String.raw`f=${"$"}{BBBOX_CGROUP:-/sys/fs/cgroup}
+if [ -r $f/memory.current ] && [ -r $f/memory.stat ]; then
+  c=$(cat $f/memory.current); i=$(awk '$1 == "inactive_file" { print $2 }' $f/memory.stat)
+  echo $(( (c - ${"$"}{i:-0}) / 1048576 ))
+else
+  awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } END { print int((t - a) / 1024) }' /proc/meminfo
+fi`;
+
+/** "cores", "cores and memory", "cores, memory and disk". */
+export function partWords(parts: readonly SizePart[]): string {
+  const words = parts.map((part) => part);
+  return words.length < 2 ? (words[0] ?? "") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
+/** What an offer can resize, in words (061): "Resize: cores, memory and disk live." */
+export function resizingWords(resizing: Resizing | null): string {
+  if (!resizing) return "Resize: no.";
+  const all: SizePart[] = ["cores", "memory", "disk"];
+  const way = (part: SizePart) => resizing[part];
+  const live = all.filter((part) => way(part) === "live");
+  const restart = all.filter((part) => way(part) === "restart");
+  if (!live.length && !restart.length) return "Resize: no.";
+  const said = [live.length ? `${partWords(live)} live` : "", restart.length ? `${partWords(restart)} with a restart` : ""].filter(Boolean).join("; ");
+  return `Resize: ${said}${resizing.disk !== "no" ? ", the disk only growing" : ""}.`;
+}
+
+/** What a live memory shrink must leave free above the memory in use: the larger of this and a tenth of the new size. */
+export const RESIZE_MEMORY_MARGIN_MIB = 512;
 
 /** A stop bb-box did not make, why, and what bb-box did about it (#406). */
 export interface UnrequestedStop {
@@ -329,6 +394,8 @@ export type BoxErrorCode =
   | "unreachable"
   /** A thread runs on the box's BB machine. */
   | "in_use"
+  /** A resize needs a restart of the box, which the caller did not allow (061). */
+  | "needs_restart"
   /** A name for one of your machines that is not a hostname label, or is taken. */
   | "invalid_name"
   /** The box this thread runs on belongs to another owner, who releases or stops it (036). */
@@ -1253,9 +1320,7 @@ export class Boxes {
     if (!candidate) return null;
     const general = await this.#deps.general();
     const size = defaultSize(kindSizes(kindId, general.sizes));
-    const acquiring = (await this.all()).filter((box) => box.backend === backendId && isAcquiring(box));
-    const pending = await Promise.all(acquiring.map(async (box) => ({ kind: box.kind, size: await this.#size(box) })));
-    return candidate.backend.capacity(kindId, size, pending, signal);
+    return candidate.backend.capacity(kindId, size, await this.#pending(backendId), signal);
   }
 
   #providerName(backend: Backend): string {
@@ -1340,13 +1405,11 @@ export class Boxes {
 
   /** The first backend with room for a box of the kind and size, and still the features asked for, or the reasons none has. */
   async #choose(offered: OfferedKind[], size: BoxSize, features: readonly string[]): Promise<OfferedKind> {
-    const all = await this.all();
     const reasons: string[] = [];
     const full: string[] = [];
     let lacking = 0;
     for (const candidate of offered) {
-      const acquiring = all.filter((box) => box.backend === candidate.backend.id && isAcquiring(box));
-      const pending = await Promise.all(acquiring.map(async (box) => ({ kind: box.kind, size: await this.#size(box) })));
+      const pending = await this.#pending(candidate.backend.id);
       try {
         const capacity = await candidate.backend.capacity(candidate.kind.id, size, pending);
         if (!capacity.ok) {
@@ -1754,6 +1817,126 @@ export class Boxes {
       this.#waitFor(started.id, this.#deps.reconnect(started).catch((error) => this.#deps.logError("reconnect", error)));
     }
     return started;
+  }
+
+  /**
+   * Resizes a box (061), or with `check`, says what a resize would do. The
+   * size is as box_acquire takes it, with parts left out kept as the box
+   * has them. Refuses a part the backend cannot change, a size with no room
+   * on the box's host, a restart unless `restart`, and a live shrink of
+   * memory below what the box uses. `beforeRestart` may refuse a restart
+   * by throwing, as for a person in control or threads at work. The resize
+   * is recorded on the box before anything changes.
+   */
+  async resize(
+    threadId: string,
+    ref: string,
+    request: SizeRequest,
+    options: { readonly restart?: boolean; readonly check?: boolean; readonly beforeRestart?: (box: BoxRecord) => Promise<void>; readonly signal?: AbortSignal } = {},
+  ): Promise<ResizeAnswer> {
+    const box = await this.get(threadId, ref);
+    if (!ownedByThread(box.threadId) && box.threadId !== OPERATOR) throw new BoxError("unsupported", `Box ${box.name} is a spare, which takes its size when it is claimed.`);
+    const backend = this.#deps.backends.get(box.backend);
+    const resizing = backend?.resizing?.(box.kind) ?? null;
+    if (!backend?.planResize || !backend.resize || !resizing || (resizing.cores === "no" && resizing.memory === "no" && resizing.disk === "no")) {
+      throw new BoxError("unsupported", `${box.backendLabel} cannot resize its ${box.kind} boxes, so box ${box.name} keeps its size.`);
+    }
+    const sizes = kindSizes(box.kind, (await this.#deps.general()).sizes);
+    const work = async (): Promise<ResizeAnswer> => {
+      const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, options.signal);
+      if (current.state !== "ready" && current.state !== "stopped") this.#require(current, "ready");
+      const from = current.guest!.size ?? (await this.#size(current));
+      const chosen = chooseResize(current.kind, sizes, from, request);
+      if (!chosen.ok) throw new BoxError("invalid_size", chosen.message);
+      const to = chosen.size;
+      if (sameSize(to, from)) return { box: current, from, to, plan: null, changed: false };
+      const pending = await this.#pending(current.backend, current.id);
+      const plan = await backend.planResize!(current.guest!, current.kind, to, pending, options.signal);
+      const cannot = plan.parts.filter((part) => part.way === "no");
+      if (cannot.length) {
+        throw new BoxError("unsupported", `${current.backendLabel} cannot change the ${partWords(cannot.map((part) => part.part))} of its ${current.kind} boxes. ${resizingWords(resizing)}`);
+      }
+      if (options.check) return { box: current, from, to, plan, changed: false };
+      if (!plan.room.ok) throw new BoxError("no_capacity", plan.room.message ?? `${current.backendLabel} has no room for box ${current.name} to grow.`);
+      const restart = plan.parts.some((part) => part.way === "restart");
+      if (restart && !options.restart) {
+        const parts = partWords(plan.parts.filter((part) => part.way === "restart").map((part) => part.part));
+        const down = plan.downSeconds !== null ? `, for about ${plan.downSeconds} s` : "";
+        throw new BoxError(
+          "needs_restart",
+          `Resizing box ${current.name} to ${describeSize(to)} needs a restart for its ${parts}: the box shuts down and starts again${down}, which ends everything running in it. bb-box changed nothing.`,
+        );
+      }
+      const shrinking = plan.parts.find((part) => part.part === "memory" && part.way === "live" && part.from !== null && part.to < part.from);
+      if (shrinking && current.state === "ready") await this.#roomToShrink(current, to.memoryMiB, options.signal);
+      if (restart) await options.beforeRestart?.(current);
+      const began = this.#now();
+      const record: ResizeRecord = { from, to, at: began, state: "resizing", ms: null, restart, error: null };
+      await this.update(current, () => ({ resize: record }));
+      try {
+        const guest = await backend.resize!(current.guest!, current.kind, to, { restart }, options.signal);
+        const done = await this.update(current, (latest) => ({
+          guest: { ...guest, facts: guest.facts ?? latest.guest?.facts },
+          size: to,
+          resize: { ...record, state: "done", ms: this.#now() - began },
+        }));
+        return { box: done ?? current, from, to, plan, changed: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.update(current, () => ({ resize: { ...record, state: "failed", ms: this.#now() - began, error: message } }));
+        throw error;
+      }
+    };
+    return options.check ? work() : this.#chain(box.id, work);
+  }
+
+  /** A resize bb-box stopped in the middle of, as for an update: the box has the size its guest says now (061). */
+  async #resizeCutShort(box: BoxRecord, guest: HeldGuest): Promise<void> {
+    const error = "bb-box restarted before the resize finished, so the box has the size its guest says now.";
+    await this.update(box, (current) => {
+      if (current.resize?.state !== "resizing" || !current.guest) return {};
+      const size = guest.size ?? current.guest.size;
+      return { guest: { ...current.guest, size }, ...(size ? { size } : {}), resize: { ...current.resize, state: "failed", error } };
+    });
+    this.#deps.log?.(`${describeBox(box)}: ${error}`);
+  }
+
+  /** Refuses a live shrink of a box's memory to `memoryMiB` when the box uses more than that, less a margin (061). */
+  async #roomToShrink(box: BoxRecord, memoryMiB: number, signal?: AbortSignal): Promise<void> {
+    if (box.capabilities.os !== "linux" || !box.capabilities.command) return;
+    const result = await this.runOwn(box, MEMORY_IN_USE, { timeoutMs: 15_000, maxOutputBytes: 256, signal });
+    const used = Number(result.stdout.trim());
+    if (result.exitCode !== 0 || !Number.isFinite(used) || used <= 0) {
+      throw new BoxError("unreachable", `bb-box could not read how much memory box ${box.name} uses, so it did not shrink it: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    }
+    const margin = Math.max(RESIZE_MEMORY_MARGIN_MIB, Math.round(memoryMiB / 10));
+    if (used + margin > memoryMiB) {
+      throw new BoxError(
+        "invalid_size",
+        `Box ${box.name} uses ${formatMiB(used)} of memory now, so ${formatMiB(memoryMiB)} would leave less than ${formatMiB(margin)} free, and the kernel could end its processes. ` +
+          `Give it at least ${formatMiB(Math.ceil((used + margin) / 1024) * 1024)}, or free memory in it first. bb-box changed nothing.`,
+      );
+    }
+  }
+
+  /**
+   * What is still to come on a backend, for its room: the boxes being
+   * acquired there, at their size, and those being resized, by what they
+   * grow (061). `except` is left out.
+   */
+  async #pending(backendId: string, except?: string): Promise<{ kind: string; size: BoxSize }[]> {
+    const all = (await this.all()).filter((box) => box.backend === backendId && box.id !== except);
+    const acquiring = await Promise.all(all.filter(isAcquiring).map(async (box) => ({ kind: box.kind, size: await this.#size(box) })));
+    const resizing = all
+      .filter((box) => box.resize?.state === "resizing")
+      .map((box) => {
+        const { from, to } = box.resize!;
+        const disk = to.diskGiB !== null ? Math.max(0, to.diskGiB - (from.diskGiB ?? to.diskGiB)) : null;
+        return { kind: box.kind, size: { cores: Math.max(0, to.cores - from.cores), memoryMiB: Math.max(0, to.memoryMiB - from.memoryMiB), diskGiB: disk } };
+      })
+      // Only a growth takes room; a shrink or a change of cores alone takes none.
+      .filter((growth) => growth.size.memoryMiB > 0 || (growth.size.diskGiB ?? 0) > 0);
+    return [...acquiring, ...resizing];
   }
 
   /**
@@ -2223,6 +2406,7 @@ export class Boxes {
           const record = byRef.get(guest.ref)?.find((box) => (guest.owner ? box.id === guest.owner.boxId : isAcquiring(box)));
           if (record) {
             seen.add(record.id);
+            if (record.resize?.state === "resizing" && !this.#work.has(record.id)) await this.#resizeCutShort(record, guest);
             if (!this.#work.has(record.id)) await this.#observe(record, { signal, power: guest.power });
             continue;
           }

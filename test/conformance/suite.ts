@@ -60,6 +60,8 @@ export type ConformanceCheck =
   | "installs"
   /** Measuring a box's cores, memory and disk in the box. */
   | "size"
+  /** Resizing a box live, larger then smaller, and measuring it in the box (061). */
+  | "resize"
   /** Booting an iOS Simulator device and running a command in it (047). */
   | "ios-simulator"
   /** Building a small image with the backend's image operations, which needs root in its box (049). */
@@ -950,6 +952,53 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           // A file system keeps some of its disk.
           const disk = size.diskGiB ?? (backend.nature === "real" ? asked.diskGiB : null);
           if (disk !== null) assert.ok(diskMiB >= disk * 1024 * 0.9, `${diskMiB} MiB of disk is about ${disk} GiB`);
+        });
+
+        const resizing = kind ? (backend.resizing?.(kind.id) ?? null) : null;
+        const live = resizing?.cores === "live" && resizing.memory === "live" && resizing.shrinks ? false : "the kind's cores and memory do not change live, larger and smaller";
+        it("resizes live, larger then smaller, with a process still running, and the box has each size within 15 s (061)", { timeout, skip: skip.resize ?? skip.size ?? (measurable || live) }, async (t) => {
+          assert.ok(guest?.size, "the box was acquired and read");
+          const from = guest.size;
+          const command = (await backend.transports(guest, kind!.id)).command!;
+          const sleeper = await command.run("nohup sleep 900 >/dev/null 2>&1 & echo $!", { timeoutMs: 30_000 });
+          const pid = sleeper.stdout.trim();
+          assert.match(pid, /^\d+$/, sleeper.stderr);
+          const larger: BoxSize = {
+            cores: from.cores + 1,
+            memoryMiB: from.memoryMiB + 1024,
+            diskGiB: resizing!.disk === "live" && from.diskGiB !== null ? from.diskGiB + 2 : from.diskGiB,
+          };
+          const plan = await backend.planResize!(guest, kind!.id, larger, [], signal());
+          if (!plan.room.ok) {
+            t.skip(`no room to grow: ${plan.room.message}`);
+            return;
+          }
+          assert.ok(plan.parts.every((part) => part.way === "live"), "every part changes live");
+          /** Measures the box until it has `size`, for up to 15 s, and says what it last had. */
+          const has = async (size: BoxSize): Promise<string> => {
+            const until = Date.now() + 15_000;
+            let last = "";
+            for (;;) {
+              const result = await command.run(MEASURE, { timeoutMs: 30_000 });
+              const [cores, memoryMiB, diskMiB] = result.stdout.trim().split(/\s+/).map(Number) as [number, number, number];
+              last = `${cores} cores, ${memoryMiB} MiB memory, ${diskMiB} MiB disk`;
+              const memory = memoryMiB >= size.memoryMiB * 0.9 && memoryMiB <= size.memoryMiB;
+              const disk = size.diskGiB === null || diskMiB >= size.diskGiB * 1024 * 0.9;
+              if (cores === size.cores && memory && disk) return last;
+              if (Date.now() >= until) assert.fail(`after 15 s the box has ${last}, not ${describeSize(size)}`);
+              await new Promise((resolve) => setTimeout(resolve, 1_000));
+            }
+          };
+          const grown = await backend.resize!(guest, kind!.id, larger, { restart: false }, signal());
+          assert.deepEqual(grown.size, larger, "the backend reads the new size back");
+          console.log(`# ${options.name} ${kind!.id}: grown to ${describeSize(larger)}; the box has ${await has(larger)}`);
+          const smaller: BoxSize = { ...from, diskGiB: larger.diskGiB };
+          const shrunk = await backend.resize!(grown, kind!.id, smaller, { restart: false }, signal());
+          assert.deepEqual(shrunk.size, smaller);
+          console.log(`# ${options.name} ${kind!.id}: shrunk to ${describeSize(smaller)}; the box has ${await has(smaller)}`);
+          const alive = await command.run(`kill -0 ${pid} && echo alive; kill ${pid} 2>/dev/null; true`, { timeoutMs: 30_000 });
+          assert.match(alive.stdout, /alive/, "the process started before the resize still runs");
+          guest = shrunk;
         });
 
         it("releases the box", { timeout }, async () => {
