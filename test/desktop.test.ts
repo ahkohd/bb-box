@@ -22,6 +22,7 @@ import {
 } from "../src/core/rfb.ts";
 import type { DisplayAuth, DisplayInput, DisplayInputEvents, DisplayOpened } from "../src/transports/types.ts";
 import { FakeRfb, until } from "./fake-rfb.ts";
+import { tartTypesAsCharacter } from "../src/core/mac-input.ts";
 
 const bytes = (...values: number[]) => Uint8Array.of(...values);
 const text = (value: string) => new TextEncoder().encode(value);
@@ -108,7 +109,13 @@ async function failure(reader: StreamReader): Promise<string> {
 
 function relayTo(
   server: FakeRfb,
-  options: Partial<RelayOptions> & { password?: string; auth?: DisplayAuth; displayInput?: DisplayOpened["input"]; inputTakes?: DisplayOpened["inputTakes"] } = {},
+  options: Partial<RelayOptions> & {
+    password?: string;
+    auth?: DisplayAuth;
+    displayInput?: DisplayOpened["input"];
+    inputTakes?: DisplayOpened["inputTakes"];
+    typesAsCharacter?: DisplayOpened["typesAsCharacter"];
+  } = {},
 ) {
   const viewer = fakeViewer();
   let control = false;
@@ -119,6 +126,7 @@ function relayTo(
     auth: options.auth ?? (options.password === undefined ? { type: "none" } : { type: "vnc-password", password: options.password }),
     input: options.displayInput,
     ...(options.inputTakes ? { inputTakes: options.inputTakes } : {}),
+    ...(options.typesAsCharacter ? { typesAsCharacter: options.typesAsCharacter } : {}),
   });
   const relay = new RfbRelay({
     viewer,
@@ -256,6 +264,64 @@ test("a display whose input takes only the wheel gets the wheel's notches, and t
   await relay.relay.close();
   assert.deepEqual(calls, ["size 1280x800", "pointer 16 6 7", "pointer 0 6 7"]);
   assert.equal(hex(box!.received.subarray(expected.byteLength)), hex([keyEvent(false, 0x61), pointerEvent(0, 6, 7)].reduce(concat)));
+});
+
+test("over Tart's VNC server, a character it has no key for, or that needs another Shift, goes to the display's input as itself, and the rest to the server (the desktop sweep)", async () => {
+  const server = new FakeRfb();
+  const calls: string[] = [];
+  const input: DisplayInput = {
+    key: async (down, keysym) => (calls.push(`key ${down} ${keysym}`), true),
+    character: async (down, keysym) => void calls.push(`character ${down} ${keysym.toString(16)}`),
+    pointer: async (mask, x, y) => void calls.push(`pointer ${mask} ${x} ${y}`),
+    clipboard: async () => undefined,
+    size: async () => undefined,
+    ping: async () => undefined,
+    close: async () => undefined,
+  };
+  const relay = relayTo(server, { displayInput: async () => input, inputTakes: "wheel", typesAsCharacter: tartTypesAsCharacter });
+  await relay.init();
+  const [box] = server.connections;
+  relay.give(true);
+  // a, é, then Shift with Z and with 1, as from a French keyboard; é's key is still down at the end.
+  const sent = [keyEvent(true, 0x61), keyEvent(false, 0x61), keyEvent(true, 0xe9), keyEvent(false, 0xe9), keyEvent(true, 0xe9), keyEvent(true, 0xffe1), keyEvent(true, 0x5a), keyEvent(false, 0x5a), keyEvent(true, 0x31), keyEvent(false, 0x31), keyEvent(false, 0xffe1)];
+  await relay.relay.receive(sent.reduce(concat));
+  await until("the characters", () => calls.length >= 5);
+  assert.deepEqual(calls, ["character true e9", "character false e9", "character true e9", "character true 31", "character false 31"]);
+  const expected = [keyEvent(true, 0x61), keyEvent(false, 0x61), keyEvent(true, 0xffe1), keyEvent(true, 0x5a), keyEvent(false, 0x5a), keyEvent(false, 0xffe1)].reduce(concat);
+  await until("the keys", () => box!.received.byteLength >= expected.byteLength);
+  assert.equal(hex(box!.received), hex(expected), "the server gets the keys it types right");
+  await relay.relay.close();
+  assert.equal(calls.at(-1), "character false e9", "closing lets go of a character still down, through the input");
+  assert.equal(box!.received.byteLength, expected.byteLength, "and sends the server nothing for it");
+});
+
+test("over Tart's VNC server, a character between two keys in one read goes after the first and before the second", async () => {
+  const server = new FakeRfb();
+  const seen: number[] = [];
+  let box: FakeRfb["connections"][number] | undefined;
+  const input: DisplayInput = {
+    key: async () => true,
+    // What the server has when the helper posts the character; the relay sends the next key only once it has.
+    character: async () => {
+      await until("the key before it", () => (box?.received.byteLength ?? 0) >= 8);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      seen.push(box!.received.byteLength);
+    },
+    pointer: async () => undefined,
+    clipboard: async () => undefined,
+    size: async () => undefined,
+    ping: async () => undefined,
+    close: async () => undefined,
+  };
+  const relay = relayTo(server, { displayInput: async () => input, inputTakes: "wheel", typesAsCharacter: tartTypesAsCharacter });
+  await relay.init();
+  [box] = server.connections;
+  relay.give(true);
+  await relay.relay.receive([keyEvent(true, 0x7a), keyEvent(true, 0xe9), keyEvent(true, 0x78)].reduce(concat));
+  await until("the second key", () => box!.received.byteLength >= 16);
+  assert.deepEqual(seen, [8], "the character was posted with only the first key at the server");
+  assert.equal(hex(box!.received), hex([keyEvent(true, 0x7a), keyEvent(true, 0x78)].reduce(concat)));
+  await relay.relay.close();
 });
 
 test("when a wheel-only input cannot start, keys and clicks still reach the stream server, and only the wheel is lost", async () => {
