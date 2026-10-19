@@ -2242,9 +2242,22 @@ class FakeDecoder {
   readonly codecs: string[] = [];
   readonly chunks: { type: string; timestamp: number }[] = [];
   readonly #output: (frame: unknown) => void;
-  constructor(init: { output: (frame: unknown) => void }) {
+  readonly #error: (error: unknown) => void;
+  /** What the decoder's error callback threw, as a browser reports it and goes on. */
+  static thrown: unknown[] = [];
+  constructor(init: { output: (frame: unknown) => void; error: (error: unknown) => void }) {
     this.#output = init.output;
+    this.#error = init.error;
     FakeDecoder.made.push(this);
+  }
+  /** A frame it cannot decode, or a decoder the browser takes back: as WebCodecs says, it closes, then calls its error callback. */
+  fail() {
+    this.state = "closed";
+    try {
+      this.#error(new DOMException("The decoder failed.", "EncodingError"));
+    } catch (error) {
+      FakeDecoder.thrown.push(error);
+    }
   }
   configure(config: { codec: string }) {
     this.codecs.push(config.codec);
@@ -2255,6 +2268,8 @@ class FakeDecoder {
     this.#output({ displayWidth: FakeDecoder.size.width, displayHeight: FakeDecoder.size.height, timestamp: chunk.timestamp, close() {} });
   }
   close() {
+    // As WebCodecs says: a closed decoder cannot be closed again.
+    if (this.state === "closed") throw new DOMException("The decoder is closed.", "InvalidStateError");
     this.state = "closed";
   }
 }
@@ -2262,6 +2277,7 @@ class FakeDecoder {
 /** Puts WebCodecs and a secure context in place for a test that shows video, and takes them away after. */
 function withVideo() {
   FakeDecoder.made = [];
+  FakeDecoder.thrown = [];
   FakeDecoder.fullColour = true;
   FakeDecoder.size = { width: 1280, height: 800 };
   forgetFullColour();
@@ -2395,6 +2411,34 @@ test("a desktop whose video is shown only by choice, as a Tart Mac's, opens over
   } finally {
     window.sessionStorage.clear();
     undo();
+  }
+});
+
+test("a video desktop whose decoder failed shows again when its tab comes back, rather than crashing the panel", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    let slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    await slot.findByText("The agent has control.");
+    // The decoder fails, as Safari's can after the window's size changes or while its tab is away, and closes.
+    act(() => FakeDecoder.made.at(-1)!.fail());
+    expect(FakeDecoder.thrown).toEqual([]);
+    // The person switches to another tab and back: the kept session shows again, with a decoder of its own.
+    cleanup();
+    slot = desktopTab(handlers);
+    expect(await slot.findByText("The agent has control.")).toBeTruthy();
+    expect(FakeDecoder.made.at(-1)!.state).toBe("configured");
+    act(() => void socket.onmessage?.({ data: videoFrame(6, true) }));
+    expect(FakeDecoder.made.at(-1)!.chunks).toEqual([{ type: "key", timestamp: 6 }]);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
   }
 });
 
