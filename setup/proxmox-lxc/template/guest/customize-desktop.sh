@@ -161,6 +161,18 @@ install -m 0644 "$build/guest/files/selkies-probe.mjs" /usr/local/libexec/bb-box
 gcc -O2 -Wall -Werror -shared -fPIC -o /usr/local/lib/bb-box-nofbc.so "$build/guest/files/bb-box-nofbc.c" -ldl ||
   die "bb-box-nofbc did not build"
 chmod 0644 /usr/local/lib/bb-box-nofbc.so
+# Text in greyscale, not in the colours of an LCD's subpixels, which Ubuntu
+# turns on: a viewer's screen has its own, and NVENC's 4:2:0 video lost them,
+# softening text to an SSIM of 0.987 against 0.9996 in greyscale (#863).
+cat >/etc/fonts/local.conf <<'EOF'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <match target="font">
+    <edit name="rgba" mode="assign"><const>none</const></edit>
+  </match>
+</fontconfig>
+EOF
 display_mode=auto
 [ "$nvidia" != none ] || display_mode=cpu
 cat >/etc/bb-box/desktop.env <<EOF
