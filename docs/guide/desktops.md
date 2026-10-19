@@ -77,7 +77,9 @@ On Windows, this needs a box made from a recent image, which keeps the pointer a
 
 Over VNC, a Windows box from a recent image shows no pointer in the picture at all, even while the agent moves it, so you cannot see where the agent points. While you hold control, your own pointer shows with the box's shape. To watch the agent's pointer, use video, which Windows desktops show by default.
 
-On a Linux desktop on Wayland, the box draws its pointer into the picture, which shows it as the agent moves it. While you hold control, the box leaves it out, so it does not trail behind your own. Your own pointer is then a plain arrow, whatever the box's shape, over VNC and over video alike: neither stream sends the box's pointer shape on Wayland. This needs a Wayland box made from a recent image; on an older one, you see your own pointer and, a little behind it, the box's.
+On a Linux desktop on Wayland made from a recent image, video shows the box's pointer as the agent moves it, in its own shape. While you hold control, your own pointer takes the box's shape, over video and over VNC alike, and other people watching over video see where you point. Over VNC, people watching do not see the box's pointer.
+
+On a Wayland box made from an older image, the box draws its pointer into the picture, which shows it as the agent moves it. While you hold control, the box leaves it out, so it does not trail behind your own, and your own pointer is then a plain arrow, whatever the box's shape. On a box from an older image still, you see your own pointer and, a little behind it, the box's.
 
 ## High resolution
 

@@ -18,6 +18,7 @@ import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, SelkiesSession, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { boxKey, macBrowser } from "../src/app/viewer.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
@@ -2583,6 +2584,54 @@ test("as a desktop in your control takes the tab's new size, the video holds its
     await waitFor(() => expect(socket.sent).toContain("r,700x800"));
     expect(pictures()).toHaveLength(2);
     await waitFor(() => expect(pictures()).toHaveLength(1), { timeout: HOLD_NO_SIZE_MS * 2 });
+  } finally {
+    FakeDecoder.size = size;
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("a person watching a Wayland desktop with bb-box-cursor sees the box's pointer drawn over the video, where bb-box says it is, scaled with the picture; the person in control does not (060)", async () => {
+  const undo = withVideo();
+  const size = FakeDecoder.size;
+  try {
+    FakeDecoder.size = { width: 1920, height: 1080 };
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    await slot.findByText("The agent has control.");
+    const screen = slot.getByTestId("desktop-screen");
+    const video = screen.querySelector("canvas")!.parentElement!;
+    // The pane, half the desktop's size: the picture fills it at half scale.
+    Object.defineProperty(video, "clientWidth", { value: 960, configurable: true });
+    Object.defineProperty(video, "clientHeight", { value: 540, configurable: true });
+    const drawn = () => video.querySelector("img");
+    // The box's cursor, a PNG of 2 by 1 with its hotspot at (1, 0), then where the pointer is.
+    const png = rgbaPng(2, 1, Uint8Array.from([255, 0, 0, 255, 0, 0, 0, 0])).toString("base64");
+    act(() => void socket.onmessage?.({ data: `cursor,${JSON.stringify({ curdata: png, hotx: 1, hoty: 0 })}` }));
+    act(() => void socket.onmessage?.({ data: "BB_POINTER,640,360" }));
+    await waitFor(() => expect(drawn()?.style.display).toBe("block"));
+    const style = drawn()!.style;
+    expect([style.left, style.top, style.width, style.height]).toEqual(["319.5px", "180px", "1px", "0.5px"]);
+    expect(drawn()!.getAttribute("src")).toBe(`data:image/png;base64,${png}`);
+    // It moves as the box's pointer does, and goes when it leaves the desktop.
+    act(() => void socket.onmessage?.({ data: "BB_POINTER,1001,1" }));
+    expect([drawn()!.style.left, drawn()!.style.top]).toEqual(["500px", "0.5px"]);
+    act(() => void socket.onmessage?.({ data: "BB_POINTER," }));
+    expect(drawn()!.style.display).toBe("none");
+    // The person in control has their own pointer, in the box's shape: none is drawn for them.
+    act(() => void socket.onmessage?.({ data: "BB_POINTER,640,360" }));
+    expect(drawn()!.style.display).toBe("block");
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    await waitFor(() => expect(drawn()!.style.display).toBe("none"));
+    act(() => void socket.onmessage?.({ data: "BB_POINTER,700,360" }));
+    expect(drawn()!.style.display).toBe("none");
   } finally {
     FakeDecoder.size = size;
     undo();
