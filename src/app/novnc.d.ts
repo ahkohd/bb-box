@@ -53,6 +53,8 @@ declare module "@novnc/novnc" {
     _rfbConnectionState: string;
     _canvas: HTMLCanvasElement;
     blur(): void;
+    /** noVNC's keyboard handler: `_allKeysUp` lets go of every key it holds down, through `_handleKeyEvent`, as when the window loses focus. */
+    _keyboard: { _allKeysUp(): void };
     /** The size of the element it draws in, which it asks the box for, floored; a subclass may measure it otherwise. */
     _screenSize(): { w: number; h: number };
   }
@@ -69,5 +71,7 @@ declare module "@novnc/novnc/core/input/keyboard.js" {
     onkeyevent: (keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null) => void;
     grab(): void;
     ungrab(): void;
+    /** Lets go of every key it holds down, through `onkeyevent`, as when the window loses focus. */
+    _allKeysUp(): void;
   }
 }

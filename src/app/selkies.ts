@@ -163,7 +163,10 @@ export class SelkiesSession implements Kept {
   #hidden = false;
   /** Whether the video is stopped, while no tab shows it or the browser hides the page. */
   #stopped = false;
-  readonly #onVisibility = () => this.#video();
+  readonly #onVisibility = () => {
+    if (document.visibilityState === "hidden") this.#letGo();
+    this.#video();
+  };
   onEnded?: () => void;
   /** The box cannot be shown as video here, with why, in a sentence; the viewer shows it over RFB instead. */
   #onFallback: ((reason: string) => void) | undefined;
@@ -300,7 +303,19 @@ export class SelkiesSession implements Kept {
 
   set hidden(value: boolean) {
     this.#hidden = value;
+    if (value) this.#letGo();
     this.#video();
+  }
+
+  /**
+   * Lets go in the box of what this viewer holds down, as its tab or page goes: the keys' ups would go nowhere, and a Ctrl the box
+   * kept held, from Cmd on a Mac, would turn every click and key that came after into a shortcut. As on hand-back; the window's own
+   * blur lets go through the keyboard handler.
+   */
+  #letGo(): void {
+    if (!this.#mine) return;
+    this.#keyboard._allKeysUp();
+    this.#release();
   }
 
   /** Stops the video while nobody can see it, and starts it again, from a key frame, when they can. */
