@@ -766,8 +766,9 @@ export class TartBackend implements Backend {
    * record says, for the keys and the clipboard, and its own build of
    * bb-box-stream, which gives the video from QEMU (#865). Leaves the pointer
    * out of it while a person holds control where every record lists the
-   * hardware cursor too, as on Proxmox. Shown by choice: the desktop opens
-   * over VNC until video from the Mac is measured.
+   * hardware cursor too, as on Proxmox. Opens as video: measured, it keeps
+   * up with VNC on a LAN and is ahead on a slow link, for under 2% of a core
+   * on the Mac (#865).
    */
   #declareWindowsVideo(states: ReadonlyMap<string, MacState | Error>): void {
     const index = this.#kinds.findIndex((kind) => kind.id === "windows-arm64-desktop");
@@ -783,7 +784,7 @@ export class TartBackend implements Backend {
     const cursor = video && tools.every((each) => each[WINDOWS_HARDWARE_CURSOR] !== undefined);
     const kind = this.#kinds[index]!;
     const others = kind.capabilities.displays.filter((display) => display.protocol !== "selkies");
-    const displays = video ? [...others, { ...WINDOWS_VIDEO, byChoice: true, ...(cursor ? { cursor: "stream" as const } : {}) }] : others;
+    const displays = video ? [...others, { ...WINDOWS_VIDEO, ...(cursor ? { cursor: "stream" as const } : {}) }] : others;
     if (JSON.stringify(displays) === JSON.stringify(kind.capabilities.displays)) return;
     this.#kinds[index] = { ...kind, capabilities: { ...kind.capabilities, displays } };
   }

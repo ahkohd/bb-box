@@ -320,7 +320,7 @@ test("Windows on a Mac offers video by choice while every Mac's image records Op
   assert.equal(statSync(bin).mode & 0o777, 0o700, "in a folder only the host user can open");
   assert.deepEqual(built().length, 2, "the build and its hash, the source gone");
   await backend.capacity(KIND, SMALL, [], signal());
-  assert.deepEqual(kind().capabilities.displays[1], { id: "video", protocol: "selkies", resizable: true, byChoice: true, cursor: "stream" }, "by choice: VNC opens until it is measured");
+  assert.deepEqual(kind().capabilities.displays[1], { id: "video", protocol: "selkies", resizable: true, cursor: "stream" }, "it opens as video (#865)");
 
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   const without = (await backend.transports(guest, KIND)).displays;
