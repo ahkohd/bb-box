@@ -36,6 +36,7 @@ is a log: bb-box does not file these with BB.
 | [Keep the server's event loop free](#25-keep-the-servers-event-loop-free) | not met | BB's server stops for up to 1.2 s, 10 to 16 times a minute, and every desktop's frames and input wait it out, so a drag lags by up to a second and a video viewer loses frames |
 | [Say what uninstalling a plugin keeps](#26-say-what-uninstalling-a-plugin-keeps) | not met | after an uninstall in BB's settings and a fresh install, bb-box came back with its old box records and its Docker backend on, though the dialog says it deletes the plugin's settings |
 | [Start a Windows machine's helpers without a window](#27-start-a-windows-machines-helpers-without-a-window) | not met | on a Windows box, Keep Awake's PowerShell opens a window over the desktop each time BB's daemon starts, which takes the focus and shows in box_record's clips |
+| [Refresh a machine's processors and memory when they change](#28-refresh-a-machines-processors-and-memory-when-they-change) | not met | after a live resize (061), BB keeps a machine's old processor count, and its automatic thread limit with it, until BB's daemon there restarts; bb-box restarts it when no thread works on the machine and no BB terminal is open there, and otherwise says how to set the limit by hand |
 
 ## 1. BB's host app on Windows
 
@@ -1041,6 +1042,53 @@ minimise the window before they record. bb-box changes nothing else on its
 side: hiding the console after it opens works only with Windows Console Host
 as the default, and would need a watcher, as BB starts the PowerShell again
 at each start.
+
+## 28. Refresh a machine's processors and memory when they change
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** A box can now be resized while it runs
+([061](decisions/061-a-box-can-be-resized-live-where-its-backend-can-and-restarted-only-when-asked.md)):
+on Proxmox LXC and Docker its cores and memory change in seconds, with
+everything in it still running. BB's automatic thread limit for a machine
+is one thread per processor, so it should follow.
+
+**What BB does now.** BB reads a machine's processor count when its daemon
+connects, and never again while it stays connected. Checked on 19 October
+2026, on a box enrolled as a BB machine with a thread working on it:
+
+- After a live resize from 2 to 4 cores, `nproc` in the box said 4 within
+  15 s, and `bb concurrency-limit status` still said "auto, 2 (2
+  processors, connected)" minutes later. The owner found the same on one
+  of their machines after a resize to 8 cores: it stayed limited to 4
+  threads until its agent set the limit by hand.
+- `bb machine reconnect` refuses a machine that is connected: "HTTP 409:
+  Machine is connected and doesn't need reconnecting".
+- Restarting BB's daemon (its systemd user service) makes BB count the new
+  processors within seconds. But the service's `KillMode` is
+  `control-group`, and a thread's agent runs as the daemon's child, so a
+  restart ends any turn running there, and any BB terminal open there,
+  whose shells are the daemon's children too. BB lists a machine's
+  terminals, each thread's and each environment's apart, so bb-box asks
+  for all three.
+
+**What we ask.**
+
+1. Refresh a connected machine's processors and memory when they change,
+   such as by having the daemon read them again every few minutes, or
+   when asked.
+2. Or give plugins a way to say a machine's size changed, such as
+   `hosts.refresh(hostId)`, which has the daemon read it again without
+   ending what runs there.
+3. Either way, let the automatic thread limit follow the new count. A
+   limit a person set stays as it is.
+
+**Until then.** After a live resize that changes a BB machine's cores,
+bb-box restarts BB's daemon there only when no thread is working on the
+machine and no BB terminal is open there. Otherwise its answer says that BB keeps the old count and thread
+limit until the machine's daemon restarts, and how to set the limit by hand
+(`bb concurrency-limit host <name> <n>`, then `auto` once BB counts the new
+cores). bb-box never changes a limit itself.
 
 ## Checked, no request needed
 

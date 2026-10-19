@@ -64,6 +64,8 @@ import {
   type BoxSize,
   type BoxTransports,
   type Capacity,
+  type ResizePlan,
+  type Resizing,
   type ComputerUse,
   type DoctorCheck,
   type DoctorReport,
@@ -263,6 +265,16 @@ function sizeOf(config: Record<string, unknown>): BoxSize | null {
   const disk = bootDisk(config);
   return { cores, memoryMiB, diskGiB: disk ? rootDiskGiB(config, disk) : null };
 }
+
+/** How long a resize's clean shutdown waits for the guest before Proxmox stops it (061). */
+const SHUTDOWN_WAIT_S = 120;
+
+/** Grows a Linux VM's root partition and file system over its disk, while it runs (061): growpart says NOCHANGE when there is nothing to grow. */
+const GROW_ROOT = String.raw`dev=$(findmnt -no SOURCE /)
+disk=/dev/$(lsblk -no PKNAME "$dev")
+part=$(cat "/sys/class/block/$(basename "$dev")/partition")
+sudo growpart "$disk" "$part" >/dev/null || :
+sudo resize2fs "$dev" >/dev/null`;
 
 function gone(vmid: number): BackendError {
   return new BackendError("gone", `The box's VM ${vmid} no longer exists.`);
@@ -696,6 +708,129 @@ export class ProxmoxQemuBackend implements Backend {
     await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step, os);
     // Linux keeps its clock with its own time service.
     if (os === "windows") await step("clock", () => this.#setClock(vmid, signal));
+  }
+
+  /**
+   * A VM's boot disk grows while it runs, and the guest's file system with
+   * it; its cores and memory change only when it boots again, as the
+   * templates have no CPU or memory hot-plug (061).
+   */
+  resizing(kind: string): Resizing | null {
+    return this.kinds().some((offer) => offer.id === kind) ? { cores: "restart", memory: "restart", disk: "live", shrinks: true } : null;
+  }
+
+  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+    this.#offer(kind);
+    const { config, from } = await this.#resizable(guest, to, signal);
+    const parts: ResizePlan["parts"][number][] = [];
+    if (to.cores !== from.cores) parts.push({ part: "cores", from: from.cores, to: to.cores, way: "restart" });
+    if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way: "restart" });
+    if (to.diskGiB !== null && to.diskGiB !== from.diskGiB) parts.push({ part: "disk", from: from.diskGiB, to: to.diskGiB, way: "live" });
+    const api = await this.client();
+    const disk = bootDisk(config);
+    const storage = disk ? String(config[disk] ?? "").split(":")[0] || null : null;
+    const room = await this.#resizeRoom(api, storage, from, to, pending, signal);
+    const downSeconds = parts.some((part) => part.way === "restart") ? (this.#osOf(guest.data?.template) === "windows" ? 20 : 10) : null;
+    return { parts, room, downSeconds };
+  }
+
+  /**
+   * Resizes a running VM (061). The disk alone grows live, and then the
+   * guest's root file system or C: over it. New cores or memory need
+   * `restart`: a clean shutdown, the new config, any larger disk, and a
+   * boot. When the VM does not come back at its new size, its old cores and
+   * memory go back and it boots again.
+   */
+  async resize(guest: Guest, _kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+    const vmid = this.#vmid(guest);
+    const api = await this.client();
+    const { config, from } = await this.#resizable(guest, to, signal);
+    const os = this.#osOf(guest.data?.template);
+    const restart = to.cores !== from.cores || to.memoryMiB !== from.memoryMiB;
+    if (restart && !options.restart) throw new BackendError("unsupported", "A VM's cores and memory change only with a restart.");
+    const grows = to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB);
+    if (!restart) {
+      if (grows && (await this.#grow(api, vmid, config, to.diskGiB, untimed, signal))) await this.#growRoot(vmid, os, signal);
+      return { ...guest, size: sizeOf(await api.config(vmid, signal)) ?? to };
+    }
+    await this.#forget(vmid);
+    await api.shutdown(vmid, SHUTDOWN_WAIT_S, signal);
+    await api.configure(vmid, { cores: to.cores, memory: to.memoryMiB }, signal);
+    let grew = false;
+    try {
+      if (grows) grew = await this.#grow(api, vmid, config, to.diskGiB, untimed, signal);
+      await this.start(guest, signal);
+    } catch (error) {
+      // Back to the cores and memory it had, and up again; a disk that grew stays.
+      await api.stop(vmid).catch(() => undefined);
+      await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+      await this.start(guest).catch((cause) => this.#context.logError("resize: start at the old size", cause));
+      throw error;
+    }
+    // A Linux VM's boot script grew its root file system; Windows extends C: now.
+    if (grew && os === "windows") await this.#extend(vmid, signal);
+    return { ...guest, size: sizeOf(await api.config(vmid, signal)) ?? to };
+  }
+
+  /** The VM's config and size, when it is the box's and runs, and the disk asked for is not smaller (061). */
+  async #resizable(guest: Guest, to: BoxSize, signal?: AbortSignal): Promise<{ config: Record<string, unknown>; from: BoxSize }> {
+    const vmid = this.#vmid(guest);
+    const api = await this.client();
+    const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
+    if (!status) throw gone(vmid);
+    // A hibernated VM's config cannot change, and its session would be lost.
+    if (status.status !== "running") throw new BackendError("unsupported", "A stopped VM is resized once it runs: start it first.");
+    const config = await api.config(vmid, signal);
+    const from = sizeOf(config);
+    if (!from) throw new Error(`VM ${vmid} does not say its cores and memory, so bb-box cannot resize it.`);
+    if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
+      throw new BackendError("unsupported", `A VM's disk only grows, and this one's is ${from.diskGiB} GiB.`);
+    }
+    return { config, from };
+  }
+
+  /** Grows the guest's root file system, or C:, over the space its disk grew by, while it runs (061). */
+  async #growRoot(vmid: number, os: GuestOs, signal?: AbortSignal): Promise<void> {
+    if (os === "windows") return this.#extend(vmid, signal);
+    const result = await (await this.#command(vmid, "linux")).run(GROW_ROOT, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) throw new Error(`The box's disk grew, but Linux could not grow its root file system: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+  }
+
+  /** Room on the node for a VM to grow from `from` to `to`: the memory and disk it adds, within the reserves, and cores within the node's (061). */
+  async #resizeRoom(api: Proxmox, storage: string | null, from: BoxSize, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+    const [node, disk] = await Promise.all([api.nodeStatus(signal), storage ? api.storageStatus(storage, signal) : Promise.resolve(null)]);
+    const reserve = this.#config.reserve;
+    const memoryTotal = Math.floor(node.memoryTotal / MiB);
+    const memoryUsed = memoryTotal - Math.floor(node.memoryAvailable / MiB) + pending.reduce((sum, other) => sum + other.size.memoryMiB, 0);
+    const memoryFree = memoryTotal - memoryUsed;
+    const limits: Limit[] = [{ resource: "memory", used: memoryUsed, total: memoryTotal, reserve: reserve.memoryMiB, unit: "MiB" }];
+    const problems: string[] = [];
+    if (node.cpus !== null && to.cores > node.cpus) problems.push(`${api.node} has ${node.cpus} CPU threads, fewer than the ${to.cores} cores asked for. Ask for at most ${node.cpus} cores.`);
+    const memory = to.memoryMiB - from.memoryMiB;
+    if (memory > 0 && memoryFree - memory < reserve.memoryMiB) {
+      problems.push(
+        memory > memoryFree
+          ? `${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(memory)} more the box needs. Release a box or ask for less memory.`
+          : `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(memory)} more the box needs does not fit. ` +
+              "Release a box, ask for less memory, or lower the memory kept free in bb-box's settings.",
+      );
+    }
+    const grow = to.diskGiB !== null ? Math.max(0, to.diskGiB - (from.diskGiB ?? to.diskGiB)) : 0;
+    if (disk) {
+      const diskTotal = Math.floor(disk.total / MiB);
+      const diskFree = Math.floor(disk.available / MiB);
+      limits.push({ resource: "disk", used: diskTotal - diskFree, total: diskTotal, reserve: reserve.diskGiB * 1024, unit: "MiB" });
+      if (grow > 0 && diskFree - grow * 1024 < reserve.diskGiB * 1024) {
+        const storageFree = `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free`;
+        problems.push(
+          grow * 1024 > diskFree
+            ? `${storageFree}, less than the ${grow} GiB more the disk needs. Ask for a smaller disk or release boxes.`
+            : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so ${grow} GiB more disk does not fit. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.`,
+        );
+      }
+    }
+    const ok = problems.length === 0;
+    return { ok, message: ok ? null : problems[0]!, warm: null, hosts: [{ host: api.node, ok, limits }] };
   }
 
   /** A stop hibernates the VM to disk, which frees its memory, and a start resumes it. */

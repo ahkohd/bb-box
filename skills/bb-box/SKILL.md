@@ -40,6 +40,11 @@ where it is built ahead, which its boxes claim at once (#440). The
   never for the box your thread runs on, and not while a person holds the
   desktop or a thread works on the box. `check: true` says what would
   change first. A live shrink of memory below what the box uses is refused.
+  BB counts a machine's processors only when its daemon connects, and sets
+  its automatic thread limit from them. After a live change of cores,
+  bb-box restarts BB's daemon on the box when no thread works there and
+  no BB terminal is open there;
+  otherwise its answer says how to set the limit by hand.
 - Ask for the kind's default size when you can. A kind can keep spare boxes
   ready at that size, and then a box is ready at once. On Proxmox's Windows
   VMs and Tart's macOS and Windows VMs, a spare waits stopped, and it takes

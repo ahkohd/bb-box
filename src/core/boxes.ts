@@ -1834,9 +1834,41 @@ export class Boxes {
     threadId: string,
     ref: string,
     request: SizeRequest,
-    options: { readonly restart?: boolean; readonly check?: boolean; readonly beforeRestart?: (box: BoxRecord) => Promise<void>; readonly signal?: AbortSignal } = {},
+    options: {
+      readonly restart?: boolean;
+      readonly check?: boolean;
+      readonly beforeRestart?: (box: BoxRecord) => Promise<void>;
+      /** Who asked, for the log: "the tool", "the CLI" or "the panel". */
+      readonly by?: string;
+      readonly signal?: AbortSignal;
+    } = {},
   ): Promise<ResizeAnswer> {
     const box = await this.get(threadId, ref);
+    const by = options.by ?? "a caller";
+    if (options.check) return this.#resize(box, request, options);
+    const asked = this.#now();
+    try {
+      const answer = await this.#chain(box.id, () => this.#resize(box, request, options));
+      if (answer.changed) {
+        const how = answer.box.resize?.restart ? "with a restart" : "live";
+        const took = answer.box.resize?.ms ?? 0;
+        this.#deps.log?.(`Resized ${describeBox(box)} from ${describeSize(answer.from)} to ${describeSize(answer.to)}, ${how}, as ${by} asked, in ${took} ms.`);
+      }
+      return answer;
+    } catch (error) {
+      const changed = (await this.#read(box.threadId, box.id))?.resize;
+      // A resize that began and failed, as opposed to one refused before it changed anything.
+      const what = changed?.state === "failed" && changed.at >= asked ? "Could not resize" : "Refused to resize";
+      this.#deps.log?.(`${what} ${describeBox(box)}, as ${by} asked: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  }
+
+  async #resize(
+    box: BoxRecord,
+    request: SizeRequest,
+    options: { readonly restart?: boolean; readonly check?: boolean; readonly beforeRestart?: (box: BoxRecord) => Promise<void>; readonly signal?: AbortSignal },
+  ): Promise<ResizeAnswer> {
     if (!ownedByThread(box.threadId) && box.threadId !== OPERATOR) throw new BoxError("unsupported", `Box ${box.name} is a spare, which takes its size when it is claimed.`);
     const backend = this.#deps.backends.get(box.backend);
     const resizing = backend?.resizing?.(box.kind) ?? null;
@@ -1844,7 +1876,7 @@ export class Boxes {
       throw new BoxError("unsupported", `${box.backendLabel} cannot resize its ${box.kind} boxes, so box ${box.name} keeps its size.`);
     }
     const sizes = kindSizes(box.kind, (await this.#deps.general()).sizes);
-    const work = async (): Promise<ResizeAnswer> => {
+    {
       const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, options.signal);
       if (current.state !== "ready" && current.state !== "stopped") this.#require(current, "ready");
       const from = current.guest!.size ?? (await this.#size(current));
@@ -1874,22 +1906,32 @@ export class Boxes {
       if (restart) await options.beforeRestart?.(current);
       const began = this.#now();
       const record: ResizeRecord = { from, to, at: began, state: "resizing", ms: null, restart, error: null };
-      await this.update(current, () => ({ resize: record }));
+      // A restart takes the box down: box_run waits while it starts again, as after a start.
+      const running = current.state === "ready";
+      await this.update(current, () => ({ resize: record, ...(restart && running ? { state: "starting" as const } : {}) }));
       try {
         const guest = await backend.resize!(current.guest!, current.kind, to, { restart }, options.signal);
         const done = await this.update(current, (latest) => ({
           guest: { ...guest, facts: guest.facts ?? latest.guest?.facts },
           size: to,
           resize: { ...record, state: "done", ms: this.#now() - began },
+          ...(restart && running && latest.state === "starting" ? { state: "ready" as const } : {}),
         }));
+        // The restart ended BB's daemon, as a stop does (017).
+        if (restart && done?.state === "ready" && done.enrol.state === "enrolled" && this.#deps.reconnect) {
+          this.#waitFor(done.id, this.#deps.reconnect(done).catch((error) => this.#deps.logError("reconnect", error)));
+        }
         return { box: done ?? current, from, to, plan, changed: true };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        await this.update(current, () => ({ resize: { ...record, state: "failed", ms: this.#now() - began, error: message } }));
+        await this.update(current, (latest) => ({
+          resize: { ...record, state: "failed", ms: this.#now() - began, error: message },
+          ...(restart && running && latest.state === "starting" ? { state: "ready" as const } : {}),
+        }));
+        if (restart) await this.#observe(current, { signal: options.signal }).catch(() => null);
         throw error;
       }
-    };
-    return options.check ? work() : this.#chain(box.id, work);
+    }
   }
 
   /** A resize bb-box stopped in the middle of, as for an update: the box has the size its guest says now (061). */

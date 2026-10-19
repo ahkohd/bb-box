@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { Backends, DRIVERS, boxForm, overlapChecks } from "../src/backends/index.ts";
@@ -1254,4 +1254,77 @@ test("a capture without the refresh's record is refused, and a failed image box 
   proxmox.nextTaskExit.set("qmstart", "start failed: QEMU exited with code 1");
   await assert.rejects(backend.images.box(standard, "refresh of 9104", signal()), /QEMU exited with code 1/);
   assert.deepEqual([...proxmox.guests.keys()].filter((vmid) => vmid >= 9700), [], "the clone that did not start is gone");
+});
+
+test("a Windows VM's disk grows live with C: extended over it, and its cores and memory change only with a restart: a clean shutdown and a boot (061)", async () => {
+  const { backend, proxmox, ssh } = setup();
+  // Extends C: and sets the clock as Windows would, and runs every other script with sh.
+  ssh.powershell("192.0.2.150", `case "$1" in\n  *Resize-Partition*) echo "$1" >> "$HOME/extended"; exit 0;;\n  *Set-Date*) exit 0;;\n  *) exec sh -c "$1";;\nesac\n`);
+  assert.deepEqual(backend.resizing(KIND), { cores: "restart", memory: "restart", disk: "live", shrinks: true });
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  const vm = proxmox.guests.get(9700)!;
+  const from = guest.size!;
+  const to = { cores: from.cores + 2, memoryMiB: from.memoryMiB * 2, diskGiB: from.diskGiB! + 8 };
+
+  const plan = await backend.planResize(guest, KIND, to, [], signal());
+  assert.deepEqual(plan.parts.map((part) => [part.part, part.way]), [["cores", "restart"], ["memory", "restart"], ["disk", "live"]]);
+  assert.equal(plan.downSeconds, 20);
+  assert.equal(plan.room.ok, true);
+
+  // The disk alone: live, with C: extended, and no shutdown.
+  const disk = await backend.resize(guest, KIND, { ...from, diskGiB: from.diskGiB! + 8 }, { restart: false }, signal());
+  assert.equal(disk.size?.diskGiB, from.diskGiB! + 8);
+  assert.equal(vm.status, "running");
+  assert.match(readFileSync(join(ssh.home("192.0.2.150"), "extended"), "utf8"), /Resize-Partition -DriveLetter C/);
+  const shutdowns = () => proxmox.calls.filter((call) => call.path.endsWith("/status/shutdown")).length;
+  assert.equal(shutdowns(), 0);
+
+  await assert.rejects(backend.resize(guest, KIND, to, { restart: false }, signal()), (error) => error instanceof BackendError && /only with a restart/.test(error.message));
+  const resized = await backend.resize(guest, KIND, to, { restart: true }, signal());
+  assert.deepEqual(resized.size, to);
+  assert.equal(shutdowns(), 1, "a clean shutdown, not a hibernate");
+  assert.deepEqual([vm.status, String(vm.config.cores), String(vm.config.memory)], ["running", String(to.cores), String(to.memoryMiB)]);
+  await assert.rejects(backend.planResize(guest, KIND, { ...to, diskGiB: 10 }, [], signal()), /disk only grows/);
+
+  // A hibernated VM is resized once it runs.
+  await backend.stop(guest, signal());
+  await assert.rejects(backend.planResize(guest, KIND, from, [], signal()), (error) => error instanceof BackendError && /start it first/.test(error.message));
+});
+
+test("a VM that does not boot at its new size gets its old cores and memory back and boots again (061)", async () => {
+  const { backend, proxmox, ssh } = setup();
+  ssh.powershell("192.0.2.150", extending("exit 0"));
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  const vm = proxmox.guests.get(9700)!;
+  const from = guest.size!;
+  proxmox.nextTaskExit.set("qmstart", "start failed: not enough memory");
+  await assert.rejects(backend.resize(guest, KIND, { ...from, memoryMiB: from.memoryMiB * 4 }, { restart: true }, signal()), /not enough memory/);
+  assert.deepEqual([vm.status, String(vm.config.memory)], ["running", String(from.memoryMiB)]);
+});
+
+test("a Linux VM's root file system grows live over its disk (061)", async () => {
+  const { backend, proxmox, ssh } = setup({ "linux-templates": "9120" });
+  proxmox.addVmTemplate(9120);
+  rmSync(join(ssh.dir, "windows", "192.0.2.150"));
+  const home = ssh.home("192.0.2.150");
+  // The disk tools, as the box would have them; sudo runs the command and logs it.
+  mkdirSync(join(home, "bin"), { recursive: true });
+  const tools: Record<string, string> = {
+    findmnt: "echo /dev/sda1",
+    lsblk: "echo sda",
+    sudo: `echo "$*" >> "$HOME/sudo.log"`,
+  };
+  for (const [name, script] of Object.entries(tools)) {
+    writeFileSync(join(home, "bin", name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(home, "bin", name), 0o755);
+  }
+  mkdirSync(join(home, "sys"), { recursive: true });
+  const guest = await backend.acquire(identity(sized(), "linux"), null, hooks().value, signal());
+  assert.deepEqual(backend.resizing("linux"), { cores: "restart", memory: "restart", disk: "live", shrinks: true });
+  assert.equal((await backend.planResize(guest, "linux", { ...guest.size!, cores: guest.size!.cores + 2 }, [], signal())).downSeconds, 10);
+  const grown = await backend.resize(guest, "linux", { ...guest.size!, diskGiB: guest.size!.diskGiB! + 8 }, { restart: false }, signal()).catch((error: Error) => error);
+  // The partition number comes from sysfs, which the test machine's own /sys gives or not: what matters is the order.
+  const log = existsSync(join(home, "sudo.log")) ? readFileSync(join(home, "sudo.log"), "utf8") : "";
+  if (grown instanceof Error) assert.fail(grown.message);
+  assert.match(log, /^growpart \/dev\/sda \S*\nresize2fs \/dev\/sda1\n$/);
 });
