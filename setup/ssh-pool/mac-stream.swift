@@ -1062,6 +1062,12 @@ final class RfbClient: @unchecked Sendable {
     writeLock.unlock()
   }
 
+  /** The pointer at `x`, `y` with the buttons in `mask`, as QEMU's tablet takes it: 1 left, 2 middle, 4 right, 8 and 16 the wheel. */
+  func pointer(x: Int, y: Int, mask: Int) {
+    let x = max(0, min(width - 1, x)), y = max(0, min(height - 1, y))
+    send(Data([5, UInt8(mask & 255), UInt8(x >> 8), UInt8(x & 255), UInt8(y >> 8), UInt8(y & 255)]))
+  }
+
   /** Asks for the changes since the last update, or with `whole` the whole desktop. */
   func request(whole: Bool) {
     send(Data([3, whole ? 0 : 1, 0, 0, 0, 0, UInt8(width >> 8), UInt8(width & 255), UInt8(height >> 8), UInt8(height & 255)]))
@@ -1112,9 +1118,10 @@ final class RfbClient: @unchecked Sendable {
 
 /**
  * A Windows VM's desktop as video, from QEMU's VNC server (#865): Desktop Duplication in the guest gives a few frames a
- * second on the Mac's VirtIO GPU, where QEMU reads the framebuffer from the host at its own refresh. It serves video
- * only: the input, the clipboard and the pointer's shape go through the guest's bb-box-stream.exe. It ends when QEMU's
- * server does, as when the VM stops, and when no client has come for IDLE_EXIT_SECONDS.
+ * second on the Mac's VirtIO GPU, where QEMU reads the framebuffer from the host at its own refresh. It takes the
+ * pointer too, for QEMU's tablet, as the VNC display gives it: QEMU refreshes its picture at once again only when a
+ * client sends it input. Keys, the clipboard and the pointer's shape go through the guest's bb-box-stream.exe. It ends
+ * when QEMU's server does, as when the VM stops, and when no client has come for IDLE_EXIT_SECONDS.
  */
 final class QemuServer: @unchecked Sendable {
   private let queue = DispatchQueue(label: "bb-box-stream.qemu")
@@ -1310,10 +1317,32 @@ final class QemuServer: @unchecked Sendable {
       return client
     }
     client.text("MODE websockets")
+    // Where this client's pointer is and the buttons it holds down, which go up as it goes.
+    var at = (x: 0, y: 0, mask: 0)
     while let message = nextText(client) {
       guard let text = message else { continue }
-      let verb = text.split(separator: ",").first.map(String.init) ?? ""
+      let fields = text.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+      let verb = fields.first ?? ""
+      let number = { (index: Int) -> Int in index < fields.count ? Int(fields[index]) ?? 0 : 0 }
       switch verb {
+      case "m":
+        at = (number(1), number(2), number(3) & 7)
+        let now = at
+        queue.async { [self] in rfb?.pointer(x: now.x, y: now.y, mask: now.mask) }
+      case "m2":
+        // The panel's wheel: bit 3 of the mask is down and bit 4 up, a notch for each of the fifth field. QEMU's are
+        // buttons 5 and 4, a press and a release a notch.
+        let wheel = number(3) & 8 != 0 ? 16 : number(3) & 16 != 0 ? 8 : 0
+        let notches = max(1, min(number(4), 64))
+        let held = at
+        if wheel != 0 {
+          queue.async { [self] in
+            for _ in 0..<notches {
+              rfb?.pointer(x: held.x, y: held.y, mask: held.mask | wheel)
+              rfb?.pointer(x: held.x, y: held.y, mask: held.mask)
+            }
+          }
+        }
       case "START_VIDEO", "REQUEST_KEYFRAME":
         queue.async { [self] in
           if verb == "START_VIDEO" {
@@ -1328,15 +1357,17 @@ final class QemuServer: @unchecked Sendable {
       case "STOP_VIDEO":
         queue.async { client.wantsVideo = false }
       default:
-        // Input, the clipboard and the rest go to the guest's bb-box-stream.exe, not here.
+        // Keys, the clipboard and the rest go to the guest's bb-box-stream.exe, not here.
         break
       }
     }
     client.close()
     Darwin.close(fd)
+    let held = at
     queue.async { [self] in
       clients[client.id] = nil
       lastClientAt = Date()
+      if held.mask != 0 { rfb?.pointer(x: held.x, y: held.y, mask: 0) }
     }
   }
 }
