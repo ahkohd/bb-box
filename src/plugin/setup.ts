@@ -190,7 +190,13 @@ export interface BbBox {
    * releasing or stopping it would end their work. Returns the idle threads
    * there, which lose their machine, for the answer to name.
    */
-  checkInUse(box: BoxRecord, action: "Releasing" | "Stopping"): Promise<ThreadOnBox[]>;
+  checkInUse(box: BoxRecord, action: "Releasing" | "Stopping" | "Restarting"): Promise<ThreadOnBox[]>;
+  /**
+   * Refuses a restart of a box for a resize (061) while a person holds its
+   * desktop's control, and, unless `force`, while threads are working on
+   * its BB machine. Returns the idle threads there.
+   */
+  checkRestart(box: BoxRecord, force: boolean): Promise<ThreadOnBox[]>;
 }
 
 
@@ -1194,6 +1200,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         );
       }
       return threads;
+    },
+    async checkRestart(box, force) {
+      if (box.capabilities.displays.length && api.control(box).owner === "human") {
+        throw new BoxError("in_use", `A person holds control of box ${box.name}'s desktop, and a restart would end what they are doing. Ask them to hand control back first.`);
+      }
+      return force ? api.threadsOn(box) : api.checkInUse(box, "Restarting");
     },
     async startThread({ threadId, box: ref, prompt, title, signal }) {
       let box = await boxes.get(threadId, ref);

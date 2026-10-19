@@ -16,6 +16,7 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | [`box_list`](#box_list) | List this thread's boxes and the kinds of box you can acquire. |
 | [`box_record`](#box_record) | Record a desktop box's screen, to show your work in the thread as a short video (059). |
 | [`box_release`](#box_release) | Release a box you no longer need. |
+| [`box_resize`](#box_resize) | Change a box's size: its cores, memory or disk, by a preset or by parts, where its backend can. |
 | [`box_run`](#box_run) | Run a shell script in a box, as its user, and wait for it. |
 | [`box_start`](#box_start) | Start a stopped box again, with its disk as it was, and wait up to 20 s more while it reconnects as a BB machine. |
 | [`box_status`](#box_status) | Show one box: its state, kind, address, whether it is a BB machine, and how long it took to start and to become one. |
@@ -135,6 +136,20 @@ Release a box you no longer need. Its disk and everything on it are deleted. Cop
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
+
+## box_resize
+
+Change a box's size: its cores, memory or disk, by a preset or by parts, where its backend can. Parts left out stay as they are, and the disk only grows. A change that needs a restart is made only with restart true. check true only says what would change.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
+| `size` | string | no | small, medium or large, from box_list: the preset's cores and memory. The disk stays as it is. |
+| `cores` | integer | no | Cores. Left out, the box keeps its own. |
+| `memory_gib` | integer | no | Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own. |
+| `disk_gib` | integer | no | Root disk in GiB, which only grows. Left out, the box keeps its own. |
+| `restart` | boolean | no | Allow a restart, which ends everything running in the box, where a part needs one. Defaults to false: bb-box then changes nothing and says so. |
+| `check` | boolean | no | Only say what the resize would change, how, and whether there is room. Defaults to false. |
 
 ## box_run
 

@@ -31,6 +31,15 @@ where it is built ahead, which its boxes claim at once (#440). The
   a VM for root or a size of your own. `on` takes the
   name, with or without the brackets. `box_acquire` and `box_status` say a
   box's form on their Form line, such as "a physical Mac, lent whole".
+- A box can change size after it is made with `box_resize`, where its
+  provider can: box_list says per kind what changes live and what needs a
+  restart (061). Parts you leave out stay as they are, and the disk only
+  grows. A live change keeps everything in the box running, so you can
+  resize the box your thread runs on. A change that needs a restart ends
+  everything running in the box: bb-box makes it only with `restart: true`,
+  never for the box your thread runs on, and not while a person holds the
+  desktop or a thread works on the box. `check: true` says what would
+  change first. A live shrink of memory below what the box uses is refused.
 - Ask for the kind's default size when you can. A kind can keep spare boxes
   ready at that size, and then a box is ready at once. On Proxmox's Windows
   VMs and Tart's macOS and Windows VMs, a spare waits stopped, and it takes

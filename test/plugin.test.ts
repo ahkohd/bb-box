@@ -2108,6 +2108,208 @@ test("a thread that runs on one of your machines sees it in box_list, uses it wi
   assert.equal((await app.boxes.find(machine.id))?.state, "ready");
 });
 
+/** A cgroup for box commands, as a container's shows its memory (061): `usedMiB` in use, `cacheMiB` of it file cache it can drop. */
+function fakeCgroup(t: { after(fn: () => void): void }, usedMiB: number, cacheMiB = 0): void {
+  const dir = tempDir("cgroup");
+  writeFileSync(join(dir, "memory.current"), `${(usedMiB + cacheMiB) * 1048576}\n`);
+  writeFileSync(join(dir, "memory.stat"), `anon ${usedMiB * 1048576}\ninactive_file ${cacheMiB * 1048576}\n`);
+  const before = process.env.BBBOX_CGROUP;
+  process.env.BBBOX_CGROUP = dir;
+  t.after(() => {
+    if (before === undefined) delete process.env.BBBOX_CGROUP;
+    else process.env.BBBOX_CGROUP = before;
+  });
+}
+
+test("box_resize resizes a box live where its backend can, says first what it would do with check, and records the resize (061)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const backend = world.backend!;
+  assert.doesNotMatch(text(await tool("box_list", {})), /Resize:/, "a kind no offer resizes says nothing of it");
+  backend.resizeWays = { cores: "live", memory: "live", disk: "live", shrinks: true };
+  assert.match(text(await tool("box_list", {})), /- linux: Linux\. .* Resize: cores, memory and disk live, the disk only growing\. On: /);
+  await tool("box_acquire", { kind: "linux", disk_gib: 20 });
+  const box = await only(app);
+  fakeCgroup(t, 1200, 2000);
+
+  const checked = text(await tool("box_resize", { box: box.name, cores: 4, memory_gib: 8, disk_gib: 30, check: true }));
+  assert.equal(
+    checked,
+    `Resizing box ${box.name} from 2 cores, 4 GiB memory, 20 GiB disk to 4 cores, 8 GiB memory, 30 GiB disk would change:\n` +
+      "- live, while everything in it runs on: cores 2 to 4; memory 4 GiB to 8 GiB; disk 20 GiB to 30 GiB\n" +
+      `Its host has room for it.\n\nNext: Call box_resize without check to make the change.`,
+  );
+  assert.equal(backend.resized.length, 0, "a check changes nothing");
+
+  const grown = text(await tool("box_resize", { box: box.name, cores: 4, memory_gib: 8, disk_gib: 30 }));
+  assert.match(grown, new RegExp(`^Resized box ${box.name} from 2 cores, 4 GiB memory, 20 GiB disk to 4 cores, 8 GiB memory, 30 GiB disk in \\d+\\.\\d s\\.\\nLive, with everything in it still running: cores 2 to 4; memory 4 GiB to 8 GiB; disk 20 GiB to 30 GiB\\.\\nNew cores can take up to 15 s to show in the box\\.`));
+  assert.deepEqual(backend.resized.map((resize) => [resize.to, resize.restart]), [[{ cores: 4, memoryMiB: 8192, diskGiB: 30 }, false]]);
+  const status = text(await tool("box_status", { box: box.name }));
+  assert.match(status, /\nSize: 4 cores, 8 GiB memory, 30 GiB disk\n/);
+  assert.match(status, /\nLast resize: to 4 cores, 8 GiB memory, 30 GiB disk, at \d{4}-\d\d-\d\d \d\d:\d\d UTC, done in /);
+  const record = (await app.boxes.find(box.id))!;
+  assert.deepEqual(record.size, { cores: 4, memoryMiB: 8192, diskGiB: 30 });
+  assert.equal(record.resize?.state, "done");
+
+  // A preset gives its cores and memory and leaves the disk; 1.2 GiB in use leaves room in 4 GiB.
+  assert.match(text(await tool("box_resize", { box: box.name, size: "small" })), /^Resized box .* to 2 cores, 4 GiB memory, 30 GiB disk in /);
+  assert.match(text(await tool("box_resize", { box: box.name, size: "small" })), /^Box .* is 2 cores, 4 GiB memory, 30 GiB disk already, so nothing changed\./);
+  const smaller = await tool("box_resize", { box: box.name, disk_gib: 25 });
+  assert.ok(isError(smaller));
+  assert.match(text(smaller), /^A box's disk only grows, and this box's is 30 GiB, more than the 25 GiB asked for\./);
+  assert.match(text(await tool("box_resize", { box: box.name, memory_gib: 1 })), /needs at least 2 GiB memory/);
+  assert.match(text(await tool("box_resize", { box: box.name, cores: 64 })), /can be at most 16 cores, 32 GiB memory, 256 GiB disk/);
+});
+
+test("box_resize refuses a live shrink of memory below what the box uses, with a margin, and changes nothing (061)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.resizeWays = { cores: "live", memory: "live", disk: "live", shrinks: true };
+  await tool("box_acquire", { kind: "linux", memory_gib: 8 });
+  const box = await only(app);
+  // 3.6 GiB in use, besides cache it can drop: 4 GiB leaves too little, and 5 GiB enough.
+  fakeCgroup(t, 3700, 4000);
+  const refused = await tool("box_resize", { box: box.name, memory_gib: 4 });
+  assert.ok(isError(refused));
+  assert.match(
+    text(refused),
+    new RegExp(`^Box ${box.name} uses 3\\.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes\\. Give it at least 5 GiB, or free memory in it first\\. bb-box changed nothing\\.`),
+  );
+  assert.equal(world.backend!.resized.length, 0);
+  assert.equal((await app.boxes.find(box.id))?.resize ?? null, null, "nothing was recorded");
+  assert.match(text(await tool("box_resize", { box: box.name, memory_gib: 5 })), /^Resized box .* to 2 cores, 5 GiB memory in /);
+});
+
+test("box_resize makes a change that needs a restart only when asked, and never of the box the thread runs on, or while a person or a thread works on it (061)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const backend = world.backend!;
+  backend.resizeWays = { cores: "restart", memory: "restart", disk: "live", shrinks: true };
+  await tool("box_acquire", { kind: "linux" });
+  const box = await only(app);
+
+  const asked = await tool("box_resize", { box: box.name, cores: 4 });
+  assert.ok(isError(asked));
+  assert.match(
+    text(asked),
+    new RegExp(`^Resizing box ${box.name} to 4 cores, 4 GiB memory needs a restart for its cores: the box shuts down and starts again, for about 8 s, which ends everything running in it\\. bb-box changed nothing\\.\\n\\nNext: Call box_resize again with restart true`),
+  );
+  // The disk alone is live.
+  assert.match(text(await tool("box_resize", { box: box.name, disk_gib: 40 })), /^Resized box .* to 2 cores, 4 GiB memory, 40 GiB disk in /);
+
+  // A thread works on the box's machine.
+  const thread = { id: "thr_worker", title: "Build the app", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null };
+  world.onHost.set(box.enrol.hostId!, [thread]);
+  const working = await tool("box_resize", { box: box.name, cores: 4, restart: true });
+  assert.ok(isError(working));
+  assert.match(text(working), /^Restarting box .* would end the work of thread "Build the app" \(thr_worker\), which is working on it\./);
+  world.onHost.set(box.enrol.hostId!, [{ ...thread, status: "idle" }]);
+
+  assert.match(text(await tool("box_resize", { box: box.name, disk_gib: 50 })), /^Resized box /);
+
+  const restarted = text(await tool("box_resize", { box: box.name, cores: 4, restart: true }));
+  assert.match(restarted, /^Resized box .* to 4 cores, 4 GiB memory, 50 GiB disk in .*\nWith a restart, which ended what was running in it: cores 2 to 4\./);
+  assert.deepEqual(backend.resized.at(-1), { ref: box.guest!.ref, to: { cores: 4, memoryMiB: 4096, diskGiB: 50 }, restart: true });
+  assert.match(text(await tool("box_status", { box: box.name })), /\nLast resize: to 4 cores, 4 GiB memory, 50 GiB disk, with a restart, at /);
+});
+
+test("an agent resizes the machine its thread runs on live, but not with a restart, which would end its own session (061)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.resizeWays = { cores: "live", memory: "restart", disk: "live", shrinks: true };
+  const machine = await addMachine(harness, app, { kind: "linux", name: "build-1" });
+  world.workspaceHost = machine.enrol.hostId!;
+  assert.match(text(await tool("box_resize", { box: "build-1", cores: 4 })), /^Resized box build-1 from 2 cores, 4 GiB memory to 4 cores, 4 GiB memory in /);
+  const own = await tool("box_resize", { box: "build-1", memory_gib: 8, restart: true });
+  assert.ok(isError(own));
+  assert.match(
+    text(own),
+    /^Resizing box build-1 needs a restart, which would end this thread's session on it\. Ask the user to resize it with bb box machines resize build-1 --restart and the size, from a terminal elsewhere, which restarts it; the thread's session comes back once it is up\./,
+  );
+  assert.equal((await app.boxes.find(machine.id))?.size?.memoryMiB, 4096);
+});
+
+test("box_resize does not restart a desktop box while a person holds its control, but resizes it live (061)", async (t) => {
+  const { harness, world, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.resizeWays = { cores: "live", memory: "restart", disk: "live", shrinks: true };
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null };
+  assert.equal(took.error, null);
+  const refused = await tool("box_resize", { box: box.name, memory_gib: 12, restart: true });
+  assert.ok(isError(refused));
+  assert.match(text(refused), new RegExp(`^A person holds control of box ${box.name}'s desktop, and a restart would end what they are doing\\. Ask them to hand control back first\\.`));
+  assert.match(text(await tool("box_resize", { box: box.name, cores: 6 })), /^Resized box .* to 6 cores, /);
+});
+
+test("bb box machines resize resizes one of your machines, checks first with --check, and restarts it only with --restart, and not while a thread works on it unless --force (061)", async (t) => {
+  const { harness, app, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.resizeWays = { cores: "live", memory: "restart", disk: "live", shrinks: true };
+  const machine = await addMachine(harness, app, { kind: "linux", name: "build-1" });
+  const checked = await harness.behavior.runCli(["machines", "resize", "build-1", "--cores", "4", "--memory-gib", "8", "--check"]);
+  assert.equal(checked.exitCode ?? 0, 0);
+  assert.match(String(checked.stdout), /would change:\n- live, while everything in it runs on: cores 2 to 4\n- with a restart of about 8 s, which ends everything running in it: memory 4 GiB to 8 GiB\n/);
+  const asked = await harness.behavior.runCli(["machines", "resize", "build-1", "--cores", "4", "--memory-gib", "8"]);
+  assert.equal(asked.exitCode, 1);
+  assert.match(String(asked.stderr), /needs a restart for its memory/);
+  world.onHost.set(machine.enrol.hostId!, [{ id: "thr_worker", title: "Build", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const busy = await harness.behavior.runCli(["machines", "resize", "build-1", "--memory-gib", "8", "--restart"]);
+  assert.equal(busy.exitCode, 1);
+  assert.match(String(busy.stderr), /Restarting box build-1 would end the work of thread "Build"/);
+  const forced = await harness.behavior.runCli(["machines", "resize", "build-1", "--memory-gib", "8", "--restart", "--force"]);
+  assert.equal(forced.exitCode ?? 0, 0, String(forced.stderr));
+  assert.match(String(forced.stdout), /^Resized box build-1 from 2 cores, 4 GiB memory to 2 cores, 8 GiB memory in /);
+  const thread = await harness.behavior.runCli(["resize", "nope", "--cores", "2"]);
+  assert.equal(thread.exitCode, 1);
+});
+
+test("box_resize refuses a size with no room, and a failed resize is recorded, with the box's size unchanged (061)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const backend = world.backend!;
+  backend.resizeWays = { cores: "live", memory: "live", disk: "no", shrinks: true };
+  await tool("box_acquire", { kind: "linux" });
+  const box = await only(app);
+  const disk = await tool("box_resize", { box: box.name, disk_gib: 40 });
+  assert.match(text(disk), /^Fake host cannot change the disk of its linux boxes\. Resize: cores and memory live\./);
+
+  backend.resizeRoom = { ok: false, message: "The host has 1 GiB of memory free, less than the 4 GiB more the box needs.", warm: null, hosts: [] };
+  const full = await tool("box_resize", { box: box.name, memory_gib: 8 });
+  assert.match(text(full), /^The host has 1 GiB of memory free, less than the 4 GiB more the box needs\.\n\nNext: Try again later/);
+  backend.resizeRoom = { ok: true, message: null, warm: null, hosts: [] };
+
+  backend.resizeFault = new Error("The provider said no.");
+  const failed = await tool("box_resize", { box: box.name, memory_gib: 8 });
+  assert.ok(isError(failed));
+  assert.match(text(failed), /^Resizing the box failed: The provider said no\./);
+  const record = (await app.boxes.find(box.id))!;
+  assert.deepEqual([record.resize?.state, record.resize?.error, record.size?.memoryMiB], ["failed", "The provider said no.", 4096]);
+  assert.match(text(await tool("box_status", { box: box.name })), /\nSize: 2 cores, 4 GiB memory\n[\s\S]*\nLast resize: to 2 cores, 8 GiB memory, at .* UTC, failed: The provider said no\./);
+});
+
+test("a resize bb-box restarted in the middle of ends at the next sweep with the size the guest says (061)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const backend = world.backend!;
+  backend.resizeWays = { cores: "live", memory: "live", disk: "live", shrinks: true };
+  await tool("box_acquire", { kind: "linux" });
+  const box = await only(app);
+  await tool("box_resize", { box: box.name, memory_gib: 6 });
+  // As if bb-box stopped after recording a resize to 8 GiB: the guest still has 6 GiB.
+  await app.boxes.update(box, (current) => ({ resize: { ...current.resize!, to: { cores: 2, memoryMiB: 8192, diskGiB: null }, state: "resizing", ms: null } }));
+  await app.boxes.sweep();
+  const record = (await app.boxes.find(box.id))!;
+  assert.equal(record.resize?.state, "failed");
+  assert.match(record.resize?.error ?? "", /^bb-box restarted before the resize finished/);
+  assert.equal(record.guest?.size?.memoryMiB, 6144);
+  assert.equal(record.size?.memoryMiB, 6144);
+});
+
 test("a thread found on a spare makes it yours at once, not at the next sweep (036)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
@@ -2953,13 +3155,13 @@ test("the backend resizes a desktop whose stream server cannot, one resize at a 
   assert.deepEqual(backend.resizes, [{ width: 1400, height: 900 }], "one resize runs; the rest wait");
   backend.resizeGate = null;
   open();
-  await until("the latest resize", async () => backend.resizes.length === 2 && backend.resizing === 0);
+  await until("the latest resize", async () => backend.resizes.length === 2 && backend.displayResizing === 0);
   assert.deepEqual(backend.resizes.at(-1), { width: 1600, height: 1000 }, "the latest waiting request replaced the one before");
-  assert.equal(backend.mostResizing, 1);
+  assert.equal(backend.mostDisplayResizing, 1);
   assert.deepEqual([backend.rfb.width, backend.rfb.height], [1600, 1000]);
 
   await session.receive(setDesktopSize(518, 722, screen));
-  await until("the smallest size", async () => backend.resizes.length === 3 && backend.resizing === 0);
+  await until("the smallest size", async () => backend.resizes.length === 3 && backend.displayResizing === 0);
   assert.deepEqual(backend.resizes.at(-1), { width: 800, height: 722 }, "a narrow pane gets the smallest width");
   assert.deepEqual([backend.rfb.width, backend.rfb.height], [800, 722]);
 

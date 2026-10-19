@@ -4,16 +4,16 @@
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
-import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GpuRoom, GuestOs, Windowing } from "../backends/types.ts";
+import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GpuRoom, GuestOs, Resizing, Windowing } from "../backends/types.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
 import type { ImageView } from "./images.ts";
-import { extraFeatures, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState } from "../core/boxes.ts";
+import { extraFeatures, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
-import { PRESETS, describeSize, kindSizes, type Preset, type SizeChange, type SizeChanges } from "../core/sizes.ts";
+import { PRESETS, describeSize, formatMiB, kindSizes, type Preset, type SizeChange, type SizeChanges } from "../core/sizes.ts";
 import type { ConfigState } from "./configuration.ts";
 import type { ThreadOnBox } from "./contract.ts";
 import type { DisplayProtocol } from "../transports/types.ts";
@@ -180,6 +180,8 @@ export interface OfferView {
   readonly free: number | null;
   /** What the backend's boxes of this kind are, where it says more than its form, as a pool's physical machines; absent otherwise. */
   readonly note?: string;
+  /** What a box of this offer can resize, and how (061); absent when nothing. */
+  readonly resizing?: Resizing;
   /** The box user can become root, or Administrator, on this backend. */
   readonly admin: boolean;
   /** Its desktop follows the viewer's size; null for a kind without a desktop. */
@@ -252,6 +254,7 @@ export function kindViews(
       ...(backend.keepsSession?.(kind.id) ? { spareStarts: true } : {}),
       free: backend.free?.(kind.id) ?? null,
       ...(backend.offerNote?.(kind.id) ? { note: backend.offerNote(kind.id)! } : {}),
+      ...(backend.resizing?.(kind.id) ? { resizing: backend.resizing(kind.id)! } : {}),
       admin,
       resizable: kind.capabilities.displays.length ? (kind.capabilities.displays[0]!.resizable ?? false) : null,
       typicalReadyMs: typical[key] ?? null,
@@ -502,6 +505,12 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   if (acquire.length) lines.push(`Timings: ${words(acquire)}`);
   const start = timings.flatMap(([step, ms]): [string, number][] => (step.startsWith(START) ? [[step.slice(START.length), ms]] : []));
   if (start.length) lines.push(`Last start: ${words(start)}`);
+  const resize = box.resize;
+  if (resize) {
+    const when = new Date(resize.at).toISOString().slice(0, 16).replace("T", " ");
+    const how = resize.state === "resizing" ? "under way" : resize.state === "done" ? `done${resize.ms !== null ? ` in ${seconds(resize.ms)}` : ""}` : `failed: ${resize.error ?? "no reason given"}`;
+    lines.push(`Last resize: to ${describeSize(resize.to)}${resize.restart ? ", with a restart" : ""}, at ${when} UTC, ${how}`);
+  }
   return lines.join("\n");
 }
 
@@ -735,4 +744,43 @@ export function idleWords(threads: readonly ThreadOnBox[], stopped: boolean): st
 export function threadsWords(threads: readonly ThreadOnBox[]): string {
   const each = threads.map((thread) => `${thread.title ? `"${thread.title}" ` : ""}(${thread.id})`);
   return `${threads.length === 1 ? "thread" : "threads"} ${each.join(", ")}`;
+}
+
+/** A part of a size, from and to, in words: "cores 4 to 6", "memory 8 GiB to 12 GiB", "disk 24 GiB to 32 GiB". */
+function partText(part: { part: string; from: number | null; to: number }): string {
+  if (part.part === "cores") return `cores ${part.from ?? "?"} to ${part.to}`;
+  if (part.part === "memory") return `memory ${part.from === null ? "?" : formatMiB(part.from)} to ${formatMiB(part.to)}`;
+  return `disk ${part.from === null ? "the base" : `${part.from} GiB`} to ${part.to} GiB`;
+}
+
+/** What box_resize did, or would do, in words (061). */
+export function resizeText(answer: ResizeAnswer, checked: boolean): string {
+  const { box, from, to, plan } = answer;
+  if (!plan) return `Box ${box.name} is ${describeSize(from)} already, so nothing changed.`;
+  const ways = (way: "live" | "restart") => plan.parts.filter((part) => part.way === way).map(partText);
+  const live = ways("live");
+  const restart = ways("restart");
+  const lines: string[] = [];
+  if (checked) {
+    lines.push(`Resizing box ${box.name} from ${describeSize(from)} to ${describeSize(to)} would change:`);
+    if (live.length) lines.push(`- live, while everything in it runs on: ${live.join("; ")}`);
+    if (restart.length) lines.push(`- with a restart${plan.downSeconds !== null ? ` of about ${plan.downSeconds} s` : ""}, which ends everything running in it: ${restart.join("; ")}`);
+    lines.push(plan.room.ok ? "Its host has room for it." : `Its host has no room for it: ${plan.room.message ?? "no reason given"}`);
+    return lines.join("\n");
+  }
+  const took = box.resize?.ms != null ? ` in ${(box.resize.ms / 1000).toFixed(1)} s` : "";
+  lines.push(`Resized box ${box.name} from ${describeSize(from)} to ${describeSize(to)}${took}.`);
+  if (live.length) lines.push(`Live, with everything in it still running: ${live.join("; ")}.`);
+  if (restart.length) lines.push(`With a restart, which ended what was running in it: ${restart.join("; ")}.`);
+  if (plan.parts.some((part) => part.part === "cores" && part.way === "live")) lines.push("New cores can take up to 15 s to show in the box.");
+  return lines.join("\n");
+}
+
+/** What a kind's boxes can resize, for box_list and bb box kinds (061): one sentence when every offer agrees, otherwise per provider; empty when none can. */
+export function kindResizeText(kind: KindView): string {
+  if (!kind.offers.some((offer) => offer.resizing)) return "";
+  const each = kind.offers.map((offer) => ({ name: offer.name, words: resizingWords(offer.resizing ?? null) }));
+  const same = new Set(each.map((offer) => offer.words));
+  if (same.size === 1) return each[0]?.words ?? "Resize: no.";
+  return `Resize: ${each.map((offer) => `on ${offer.name}, ${offer.words.replace(/^Resize: /, "").replace(/\.$/, "")}`).join("; ")}.`;
 }

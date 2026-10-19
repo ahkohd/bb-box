@@ -11,8 +11,10 @@
 | [`bb box list`](#bb-box-list) | List a thread's boxes, or every box with --all. |
 | [`bb box acquire`](#bb-box-acquire) | Acquire a box for a thread and wait until it answers. |
 | [`bb box status`](#bb-box-status) | Show one box, checking its power state with the backend. |
+| [`bb box resize`](#bb-box-resize) | Resize a thread's box: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
 | [`bb box machines`](#bb-box-machines) | List your machines: boxes you own, kept as BB machines, which no thread ending releases. |
 | [`bb box machines add`](#bb-box-machines-add) | Add a machine of your own: a box of the kind, kept as a BB machine under the name until you remove it. |
+| [`bb box machines resize`](#bb-box-machines-resize) | Resize one of your machines: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
 | [`bb box machines remove`](#bb-box-machines-remove) | Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force. |
 | [`bb box thread`](#bb-box-thread) | Start a child thread of a thread on one of its boxes, as a BB machine, with the thread's project. |
 | [`bb box release`](#bb-box-release) | Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. |
@@ -117,6 +119,29 @@ Options:
   --help, -h        Show this help and exit
 ```
 
+## bb box resize
+
+Resize a thread's box: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.
+
+```text
+Usage:
+  bb box resize <box> [--thread <value>] [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--restart] [--check] [--force]
+
+Arguments:
+  <box>  The box's name or ID. (required)
+
+Options:
+  --thread <value>             The thread whose boxes to use. Defaults to the thread this runs in.
+  --size <small|medium|large>  A preset: its cores and memory. The disk stays as it is.
+  --cores <1-1024>             Cores. Left out, the box keeps its own.
+  --memory-gib <1-65536>       Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own.
+  --disk-gib <1-65536>         Root disk in GiB, which only grows. Left out, the box keeps its own.
+  --restart                    Allow a restart, which ends everything running in the box, where a part needs one.
+  --check                      Only say what would change, how, and whether there is room.
+  --force                      Restart it even while threads are working on it, which ends their work.
+  --help, -h                   Show this help and exit
+```
+
 ## bb box machines
 
 List your machines: boxes you own, kept as BB machines, which no thread ending releases.
@@ -150,6 +175,28 @@ Options:
   --on <value>                 The provider to use, from bb box kinds, such as "Docker on devpc", or several with commas between (pve1,devpc) for the first with room among them: only they are tried. Without it, the first with room.
   --name <value>               Its name, which is also its BB machine's: a lower-case letter first, then letters, digits and "-". bb-box picks one when left out.
   --no-wait                    Return once the box is recorded.
+  --help, -h                   Show this help and exit
+```
+
+## bb box machines resize
+
+Resize one of your machines: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.
+
+```text
+Usage:
+  bb box machines resize <machine> [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--restart] [--check] [--force]
+
+Arguments:
+  <machine>  The machine's name or ID, from bb box machines. (required)
+
+Options:
+  --size <small|medium|large>  A preset: its cores and memory. The disk stays as it is.
+  --cores <1-1024>             Cores. Left out, the box keeps its own.
+  --memory-gib <1-65536>       Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own.
+  --disk-gib <1-65536>         Root disk in GiB, which only grows. Left out, the box keeps its own.
+  --restart                    Allow a restart, which ends everything running in the box, where a part needs one.
+  --check                      Only say what would change, how, and whether there is room.
+  --force                      Restart it even while threads are working on it, which ends their work.
   --help, -h                   Show this help and exit
 ```
 

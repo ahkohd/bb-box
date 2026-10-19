@@ -327,6 +327,46 @@ export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest 
   return { ok: true, size: chosen };
 }
 
+/**
+ * The size a resize asks a box of `current` size to take (061): parts left
+ * out keep what the box has, and a preset gives its cores and memory, and
+ * its disk only when it names one. The same limits as chooseSize, on the
+ * parts that change, and the disk only grows.
+ */
+export function chooseResize(kind: string, sizes: KindSizes, current: BoxSize, request: SizeRequest = {}): SizeChoice {
+  const presets = `Its presets are ${describePresets(sizes)}`;
+  const name = request.preset?.trim().toLowerCase();
+  if (name !== undefined && name !== "" && !PRESETS.includes(name as Preset)) {
+    return { ok: false, message: `There is no "${request.preset}" size for a ${kind} box. ${presets}, and the largest is ${describeSize(sizes.largest)}.` };
+  }
+  const parts = [request.cores, request.memoryGiB, request.diskGiB];
+  if (parts.some((part) => part !== undefined && !isWhole(part, 1))) {
+    return { ok: false, message: "Give cores, memory in GiB and disk in GiB as whole numbers of at least 1." };
+  }
+  const base = name ? sizes.presets[name as Preset] : current;
+  const chosen: BoxSize = {
+    cores: request.cores ?? base.cores,
+    memoryMiB: request.memoryGiB !== undefined ? request.memoryGiB * 1024 : base.memoryMiB,
+    diskGiB: request.diskGiB ?? base.diskGiB ?? current.diskGiB,
+  };
+  if (chosen.memoryMiB !== current.memoryMiB && chosen.memoryMiB < LINUX_LEAST_MEMORY_GIB * 1024 && kindInfo(currentKindId(kind)).os === "linux") {
+    return {
+      ok: false,
+      message: `A ${kind} box needs at least ${LINUX_LEAST_MEMORY_GIB} GiB memory, not ${formatMiB(chosen.memoryMiB)}: with less it can run out of memory as a BB machine. ${presets}.`,
+    };
+  }
+  const { largest } = sizes;
+  const over =
+    (chosen.cores !== current.cores && chosen.cores > largest.cores) ||
+    (chosen.memoryMiB !== current.memoryMiB && chosen.memoryMiB > largest.memoryMiB) ||
+    (chosen.diskGiB !== current.diskGiB && chosen.diskGiB !== null && largest.diskGiB !== null && chosen.diskGiB > largest.diskGiB);
+  if (over) return { ok: false, message: `A ${kind} box can be at most ${describeSize(largest)}, not ${describeSize(chosen)}. ${presets}.` };
+  if (chosen.diskGiB !== null && current.diskGiB !== null && chosen.diskGiB < current.diskGiB) {
+    return { ok: false, message: `A box's disk only grows, and this box's is ${current.diskGiB} GiB, more than the ${chosen.diskGiB} GiB asked for. Leave the disk out to keep it.` };
+  }
+  return { ok: true, size: chosen };
+}
+
 /** For example "4 cores, 8 GiB memory, 32 GiB disk". A disk of null, the base, is left out. */
 export function describeSize(size: BoxSize): string {
   const parts = [`${size.cores} ${size.cores === 1 ? "core" : "cores"}`, `${formatMiB(size.memoryMiB)} memory`];

@@ -49,6 +49,8 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type ResizePlan,
+  type Resizing,
   type Started,
   type StopReason,
 } from "../src/backends/types.ts";
@@ -248,10 +250,22 @@ export class FakeBackend implements Backend {
   /** Each size a display's resize was asked for, in order. */
   readonly resizes: DisplaySize[] = [];
   /** How many resizes run now, and the most that ran at once. */
-  resizing = 0;
-  mostResizing = 0;
+  displayResizing = 0;
+  mostDisplayResizing = 0;
   /** Resizes wait here while it is set. */
   resizeGate: Promise<void> | null = null;
+  /** What a box resize (061) can do here; null, the default, resizes nothing. */
+  resizeWays: Resizing | null = null;
+  /** The room planResize finds for a box's growth. */
+  resizeRoom: Capacity = { ok: true, message: null, warm: null, hosts: [] };
+  /** Each box resize, in order. */
+  readonly resized: { ref: string; to: BoxSize; restart: boolean }[] = [];
+  /** The next box resize fails with this, and changes nothing. */
+  resizeFault: Error | null = null;
+  /** Box resizes wait here while it is set. */
+  boxResizeGate: Promise<void> | null = null;
+  /** Each guest's size since its last resize, as a guest would say it. */
+  readonly #sizes = new Map<string, BoxSize>();
 
   constructor(options: FakeBackendOptions) {
     this.#options = options;
@@ -404,6 +418,35 @@ export class FakeBackend implements Backend {
     return (await this.#storage.get<GuestRecord>(`guest/${guest.ref}`))?.power ?? null;
   }
 
+  resizing(kind: string): Resizing | null {
+    return this.resizeWays && this.#kinds.some((candidate) => candidate.id === kind) ? this.resizeWays : null;
+  }
+
+  async planResize(guest: Guest, _kind: string, to: BoxSize): Promise<ResizePlan> {
+    const ways = this.resizeWays!;
+    const from = this.#sizes.get(guest.ref) ?? guest.size!;
+    const parts: ResizePlan["parts"][number][] = [];
+    if (to.cores !== from.cores) parts.push({ part: "cores", from: from.cores, to: to.cores, way: ways.cores });
+    if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way: ways.memory });
+    if (to.diskGiB !== null && to.diskGiB !== from.diskGiB) parts.push({ part: "disk", from: from.diskGiB, to: to.diskGiB, way: ways.disk });
+    return { parts, room: this.resizeRoom, downSeconds: parts.some((part) => part.way === "restart") ? 8 : null };
+  }
+
+  async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }): Promise<Guest> {
+    this.calls.push(`resize ${guest.ref}`);
+    if (this.boxResizeGate) await this.boxResizeGate;
+    const plan = await this.planResize(guest, kind, to);
+    if (plan.parts.some((part) => part.way === "restart") && !options.restart) throw new BackendError("unsupported", "A part needs a restart.");
+    const fault = this.resizeFault;
+    if (fault) {
+      this.resizeFault = null;
+      throw fault;
+    }
+    this.resized.push({ ref: guest.ref, to, restart: options.restart });
+    this.#sizes.set(guest.ref, to);
+    return { ...guest, size: to };
+  }
+
   async held(): Promise<HeldGuest[]> {
     const held: HeldGuest[] = [];
     const refs =
@@ -416,7 +459,7 @@ export class FakeBackend implements Backend {
       if (this.nature === "real" && !owner) continue;
       const generation = this.nature === "real" ? (await this.#pool.state(ref)).generation : null;
       // As a guest would say: a machine's own size, or what a guest was made at.
-      const size = this.nature === "real" ? this.#largest() : (owner?.size ?? null);
+      const size = this.nature === "real" ? this.#largest() : (this.#sizes.get(ref) ?? owner?.size ?? null);
       const guest = this.#guest(ref, generation, owner?.boxId ?? null, size);
       const power = await this.power(guest);
       if (!power) continue;
@@ -468,8 +511,8 @@ export class FakeBackend implements Backend {
 
   async #resize(size: DisplaySize): Promise<void> {
     this.resizes.push(size);
-    this.resizing += 1;
-    this.mostResizing = Math.max(this.mostResizing, this.resizing);
+    this.displayResizing += 1;
+    this.mostDisplayResizing = Math.max(this.mostDisplayResizing, this.displayResizing);
     try {
       await this.resizeGate;
       // X's limit, which xrandr reports as it exits.
@@ -479,7 +522,7 @@ export class FakeBackend implements Backend {
       this.rfb.width = size.width;
       this.rfb.height = size.height;
     } finally {
-      this.resizing -= 1;
+      this.displayResizing -= 1;
     }
   }
 
@@ -670,7 +713,8 @@ export class FakeTransport implements CommandTransport {
 
   constructor(home: string, power: () => Promise<PowerState | null>, gone: AbortSignal = new AbortController().signal, shell?: string) {
     this.#home = home;
-    const env = { PATH: process.env.PATH, HOME: home, ...(shell ? { SHELL: shell } : {}) };
+    // A test's cgroup for the memory a box uses (061), which no real box sets.
+    const env = { PATH: process.env.PATH, HOME: home, ...(shell ? { SHELL: shell } : {}), ...(process.env.BBBOX_CGROUP ? { BBBOX_CGROUP: process.env.BBBOX_CGROUP } : {}) };
     const sh = (script: string) => ["sh", "-c", script] as const;
     this.#line = new CommandLine({
       argv: (script) => {

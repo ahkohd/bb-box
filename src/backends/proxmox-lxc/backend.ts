@@ -68,6 +68,8 @@ import {
   type BoxSize,
   type BoxTransports,
   type Capacity,
+  type ResizePlan,
+  type Resizing,
   type CommandCapability,
   type ComputerUse,
   type DoctorCheck,
@@ -1020,6 +1022,117 @@ export class ProxmoxLxcBackend implements Backend {
     if (!status) throw gone(vmid);
     await this.#forget(vmid);
     if (status.status === "running") await api.stop(vmid, signal);
+  }
+
+  /**
+   * A container takes new cores and memory while it runs, and Proxmox grows
+   * its root disk and file system online, so every part of a resize is
+   * live (061). New memory shows at once; new cores when Proxmox next
+   * spreads its guests' CPUs, up to about 10 s later.
+   */
+  resizing(kind: string): Resizing | null {
+    return this.#offers().some((offer) => offer.kind.id === kind) ? { cores: "live", memory: "live", disk: "live", shrinks: true } : null;
+  }
+
+  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+    this.#offer(kind);
+    const api = await this.client();
+    const config = await this.#ownConfig(api, guest, signal);
+    const from = sizeOf(config);
+    if (!from) throw new Error(`Container ${this.#vmid(guest)} does not say its cores and memory, so bb-box cannot resize it.`);
+    if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
+      throw new BackendError("unsupported", `A container's disk only grows, and this one's is ${from.diskGiB} GiB.`);
+    }
+    const parts: ResizePlan["parts"][number][] = [];
+    if (to.cores !== from.cores) parts.push({ part: "cores", from: from.cores, to: to.cores, way: "live" });
+    if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way: "live" });
+    if (to.diskGiB !== null && to.diskGiB !== from.diskGiB) parts.push({ part: "disk", from: from.diskGiB, to: to.diskGiB, way: "live" });
+    const storage = String(config.rootfs ?? "").split(":")[0] || null;
+    const room = await this.#resizeRoom(api, storage, from, to, pending, signal);
+    return { parts, room, downSeconds: null };
+  }
+
+  /**
+   * Resizes a container while it runs, or while it is stopped, which then
+   * starts at the new size: cores and memory first, which can go back, then
+   * the disk, which cannot. When the disk fails, cores and memory go back
+   * to what they were (061).
+   */
+  async resize(guest: Guest, _kind: string, to: BoxSize, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+    const vmid = this.#vmid(guest);
+    const api = await this.client();
+    const from = sizeOf(await this.#ownConfig(api, guest, signal));
+    if (!from) throw new Error(`Container ${vmid} does not say its cores and memory, so bb-box cannot resize it.`);
+    if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
+      throw new BackendError("unsupported", `A container's disk only grows, and this one's is ${from.diskGiB} GiB.`);
+    }
+    const changed = to.cores !== from.cores || to.memoryMiB !== from.memoryMiB;
+    if (changed) await api.configure(vmid, { cores: to.cores, memory: to.memoryMiB }, signal);
+    if (to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB)) {
+      try {
+        await api.growRootDisk(vmid, to.diskGiB, signal);
+      } catch (error) {
+        if (changed) {
+          await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+        }
+        throw error;
+      }
+    }
+    return { ...guest, size: sizeOf(await api.config(vmid, signal)) ?? to };
+  }
+
+  /** The guest's config, when the guest at its VMID is still the box's (018); BackendError("gone") otherwise. */
+  async #ownConfig(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const config = await this.#guestConfig(api, this.#vmid(guest), signal);
+    const names = config ? namesOf(config) : null;
+    const box = typeof guest.data?.box === "string" ? guest.data.box : null;
+    if (!config || names!.install !== this.#context.installId || names!.box !== box) throw gone(this.#vmid(guest));
+    return config;
+  }
+
+  /**
+   * Room on the node for a container to grow from `from` to `to` (061):
+   * the memory and disk it adds, kept within the node's reserves, and cores
+   * within the node's CPU threads. A shrink always fits.
+   */
+  async #resizeRoom(api: Proxmox, storage: string | null, from: BoxSize, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+    const [node, disk] = await Promise.all([api.nodeStatus(signal), storage ? api.storageStatus(storage, signal) : Promise.resolve(null)]);
+    const reserve = this.#config.reserve;
+    const heldMiB = [...this.#acquiring.values()].reduce((sum, acquire) => sum + (acquire.held ?? 0), 0);
+    const pendingMiB = Math.max(0, pending.reduce((sum, other) => sum + other.size.memoryMiB, 0) - heldMiB);
+    const memoryTotal = Math.floor(node.memoryTotal / MiB);
+    const memoryUsed = memoryTotal - Math.floor(node.memoryAvailable / MiB) + pendingMiB;
+    const memoryFree = memoryTotal - memoryUsed;
+    const limits: Limit[] = [{ resource: "memory", used: memoryUsed, total: memoryTotal, reserve: reserve.memoryMiB, unit: "MiB" }];
+    const problems: string[] = [];
+    if (node.cpus !== null && to.cores > node.cpus) {
+      problems.push(`${api.node} has ${node.cpus} CPU threads, fewer than the ${to.cores} cores asked for. Ask for at most ${node.cpus} cores.`);
+    }
+    const memory = to.memoryMiB - from.memoryMiB;
+    if (memory > 0 && memoryFree - memory < reserve.memoryMiB) {
+      problems.push(
+        memory > memoryFree
+          ? `${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(memory)} more the box needs. Release a box or ask for less memory.`
+          : `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(memory)} more the box needs does not fit. ` +
+              "Release a box, ask for less memory, or lower the memory kept free in bb-box's settings.",
+      );
+    }
+    const grow = to.diskGiB !== null ? Math.max(0, to.diskGiB - (from.diskGiB ?? to.diskGiB)) : 0;
+    if (disk) {
+      const diskTotal = Math.floor(disk.total / MiB);
+      const diskFree = Math.floor(disk.available / MiB);
+      limits.push({ resource: "disk", used: diskTotal - diskFree, total: diskTotal, reserve: reserve.diskGiB * 1024, unit: "MiB" });
+      if (grow > 0 && diskFree - grow * 1024 < reserve.diskGiB * 1024) {
+        const storageFree = `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free`;
+        problems.push(
+          grow * 1024 > diskFree
+            ? `${storageFree}, less than the ${grow} GiB more the disk needs. Ask for a smaller disk or release boxes.`
+            : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so ${grow} GiB more disk does not fit. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.`,
+        );
+      }
+    }
+    const ok = problems.length === 0;
+    return { ok, message: ok ? null : problems[0]!, warm: null, hosts: [{ host: api.node, ok, limits }] };
   }
 
   /** Closes the shared SSH connection to a guest that is stopping or going, as another guest may take its address. */

@@ -17,7 +17,7 @@ import { GRANT_PERMISSIONS, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
+import { adminText, boxDetail, kindResizeText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -49,6 +49,7 @@ const HINTS: Record<BoxErrorCode, string> = {
   unreachable: "Call box_status. If the box still does not answer, release it and acquire a new one.",
   invalid_name: "Pick another name: a lower-case letter first, then letters, digits and \"-\".",
   not_owner: "Keep using it with box_run, box_copy and the other box tools; its owner releases or stops it.",
+  needs_restart: "Call box_resize again with restart true only if ending everything running in the box is fine; otherwise pick parts that change live, or ask the user.",
   in_use: "Leave the box while that thread works. Ask the user if it should go anyway: they can release it from bb-box's panel.",
   restarting: "Run the command again in a minute, once bb-box is back.",
   reconnecting: "Wait about 30 s and try again: bb-box is usually back within a minute. Do not release the box: it, and the commands and jobs in it, go on.",
@@ -228,6 +229,15 @@ function runsOnRefusal(box: BoxRecord, action: "release" | "stop"): BoxError {
   return new BoxError("not_owner", `Box ${box.name} is thread ${box.threadId}'s, and this thread runs on it. ${action === "release" ? "Release" : "Stop"} it from that thread.`);
 }
 
+/** Why the box this thread runs on is not restarted from here (061): the restart would end the call that asked for it. */
+function runsOnRestartRefusal(box: BoxRecord): BoxError {
+  const command = box.threadId === OPERATOR ? `bb box machines resize ${box.name} --restart` : `bb box resize ${box.name} --thread ${box.threadId} --restart`;
+  return new BoxError(
+    "needs_restart",
+    `Resizing box ${box.name} needs a restart, which would end this thread's session on it. Ask the user to resize it with ${command} and the size, from a terminal elsewhere, which restarts it; the thread's session comes back once it is up.`,
+  );
+}
+
 /** Whose the box a thread runs on is, for box_list. */
 function ownerWords(box: BoxRecord): string {
   if (box.threadId === OPERATOR) return "yours";
@@ -377,7 +387,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         const hints = list.length
@@ -758,6 +768,41 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         return `${boxDetail(box, app.control(box))}${next(...using(box))}`;
       } catch (error) {
         return failure(error, "Starting the box");
+      }
+    },
+  });
+
+  bb.agents.registerTool({
+    name: "box_resize",
+    description:
+      "Change a box's size: its cores, memory or disk, by a preset or by parts, where its backend can. Parts left out stay as they are, and the disk only grows. A change that needs a restart is made only with restart true. check true only says what would change.",
+    presentation: { label: { pending: "Resizing a box", completed: "Resized a box" } },
+    parameters: z.object({
+      box: boxParam,
+      size: z.string().min(1).optional().describe("small, medium or large, from box_list: the preset's cores and memory. The disk stays as it is."),
+      cores: z.number().int().positive().optional().describe("Cores. Left out, the box keeps its own."),
+      memory_gib: z.number().int().positive().optional().describe("Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own."),
+      disk_gib: z.number().int().positive().optional().describe("Root disk in GiB, which only grows. Left out, the box keeps its own."),
+      restart: z.boolean().optional().describe("Allow a restart, which ends everything running in the box, where a part needs one. Defaults to false: bb-box then changes nothing and says so."),
+      check: z.boolean().optional().describe("Only say what the resize would change, how, and whether there is room. Defaults to false."),
+    }),
+    async execute({ box: ref, size, cores, memory_gib, disk_gib, restart, check }, { threadId, signal }) {
+      try {
+        const { owner, box: found, runsOn } = await app.resolve(thread(threadId), ref, signal);
+        const answer = await boxes.resize(owner, found.id, { preset: size, cores, memoryGiB: memory_gib, diskGiB: disk_gib }, {
+          restart: restart === true,
+          check: check === true,
+          signal,
+          beforeRestart: async (box) => {
+            // A thread can run on a box of its own too, as one started on a new box (033).
+            if (runsOn || (await app.runsOn(thread(threadId), signal))?.id === box.id) throw runsOnRestartRefusal(box);
+            await app.checkRestart(box, false);
+          },
+        });
+        const hints = check ? [`Call box_resize without check to make the change.`] : [`Call box_status with box "${answer.box.name}" to see it.`];
+        return `${resizeText(answer, check === true)}${next(...hints)}`;
+      } catch (error) {
+        return failure(error, "Resizing the box");
       }
     },
   });

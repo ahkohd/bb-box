@@ -10,7 +10,7 @@ import type { ImageBake, Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, dockerText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
+import { adminText, boxDetail, dockerText, kindResizeText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
 import { setupDocker } from "./setup-docker.ts";
 
 const threadOption = {
@@ -18,6 +18,16 @@ const threadOption = {
 } as const;
 const jsonOption = { json: { type: "boolean", description: "Print JSON." } } as const;
 /** A preset and any parts of a custom size (028). bb-box refuses a size above the kind's largest. */
+/** A resize's size (061): parts left out stay as the box has them. */
+const resizeOptions = {
+  size: { type: "enum", values: PRESETS, description: "A preset: its cores and memory. The disk stays as it is." },
+  cores: { type: "integer", min: 1, max: 1024, description: "Cores. Left out, the box keeps its own." },
+  "memory-gib": { type: "integer", min: 1, max: 65536, description: "Memory in GiB: at least 2 for a Linux box. Left out, the box keeps its own." },
+  "disk-gib": { type: "integer", min: 1, max: 65536, description: "Root disk in GiB, which only grows. Left out, the box keeps its own." },
+  restart: { type: "boolean", description: "Allow a restart, which ends everything running in the box, where a part needs one." },
+  check: { type: "boolean", description: "Only say what would change, how, and whether there is room." },
+  force: { type: "boolean", description: "Restart it even while threads are working on it, which ends their work." },
+} as const;
 const sizeOptions = {
   size: { type: "enum", values: PRESETS, description: "A preset. Defaults to the kind's default preset; bb box kinds shows each kind's sizes." },
   cores: { type: "integer", min: 1, max: 1024, description: "Cores, for a custom size. Parts left out come from the preset." },
@@ -112,6 +122,22 @@ function refused(problems: readonly Problem[], what: string): PluginCliResult {
   return { exitCode: 1, stderr: `${what}\n${problemsText(problems)}\n` };
 }
 
+/** bb box resize and bb box machines resize (061): a restart asks nothing more, but is refused while a person holds control, and while threads work on the box unless --force. */
+async function resizeBox(
+  app: BbBox,
+  threadId: string,
+  ref: string,
+  options: { size?: string; cores?: number; "memory-gib"?: number; "disk-gib"?: number; restart?: boolean; check?: boolean; force?: boolean },
+) {
+  return app.boxes.resize(threadId, ref, { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] }, {
+    restart: options.restart === true,
+    check: options.check === true,
+    beforeRestart: async (box) => {
+      await app.checkRestart(box, options.force === true);
+    },
+  });
+}
+
 export function registerCli(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
   bb.cli.register(
@@ -139,7 +165,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               kinds
                 .map((kind) => {
                   const presets = kind.presets.map((preset) => `  ${preset.name}${preset.name === kind.defaultPreset ? " (default)" : ""}: ${preset.words}`);
-                  return [`${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}, on ${kind.offers.map((offer) => offer.name).join(", ")}. ${kind.description} ${[adminText(kind), dockerText(kind)].filter(Boolean).join(" ")}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
+                  return [`${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}, on ${kind.offers.map((offer) => offer.name).join(", ")}. ${kind.description} ${[adminText(kind), dockerText(kind), kindResizeText(kind)].filter(Boolean).join(" ")}`, ...presets, `  largest: ${kind.largest.words}`].join("\n");
                 })
                 .join("\n"),
             );
@@ -188,6 +214,16 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               return options.json ? json(app.view(box)) : out(boxDetail(box, app.control(box)));
             }),
         }),
+        resize: cliCommand({
+          summary: "Resize a thread's box: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
+          positionals: boxPositional,
+          options: { ...threadOption, ...resizeOptions },
+          run: ({ positionals, options }, ctx) =>
+            guard("Resizing the box", async () => {
+              const threadId = threadOf(options.thread, ctx);
+              return out(resizeText(await resizeBox(app, threadId, positionals.box, options), options.check === true));
+            }),
+        }),
         machines: cliCommand({
           summary: "List your machines: boxes you own, kept as BB machines, which no thread ending releases.",
           options: jsonOption,
@@ -210,6 +246,13 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               if (options.json) return json(app.view(box));
               return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n${options["no-wait"] ? "" : starting(box, boxes.stopping, "bb box machines")}` };
             }),
+        }),
+        "machines resize": cliCommand({
+          summary: "Resize one of your machines: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.",
+          positionals: [{ name: "machine", description: "The machine's name or ID, from bb box machines.", required: true }],
+          options: resizeOptions,
+          run: ({ positionals, options }) =>
+            guard("Resizing the machine", async () => out(resizeText(await resizeBox(app, OPERATOR, positionals.machine, options), options.check === true))),
         }),
         "machines remove": cliCommand({
           summary: "Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force.",
