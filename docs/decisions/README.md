@@ -66,3 +66,4 @@ which records still stand as written. The current design as a whole is in
 | [058](058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md) | A Mac with SIP off grants its box users macOS permissions | Current |
 | [059](059-agents-record-their-desktop-box-with-box-record.md) | Agents record their desktop box with box_record | Accepted |
 | [060](060-every-desktop-streams-as-video-through-one-viewer.md) | Every desktop streams as video through one viewer | Accepted |
+| [061](061-a-box-can-be-resized-live-where-its-backend-can-and-restarted-only-when-asked.md) | A box can be resized after it is made, live where its backend can, and restarted only when asked | Accepted |
