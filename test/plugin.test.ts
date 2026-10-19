@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { test } from "node:test";
@@ -66,7 +68,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -160,6 +162,7 @@ async function start(
       return world.hostEntry ? world.hostEntry(method, hostId, input) : { started: false, pid: null };
     },
     pluginId: "bb-box",
+    appUrl: options.appUrl ?? null,
     settings,
     sdk: {
       threads: {
@@ -1135,6 +1138,28 @@ test("the sweeper stops at once when the plugin stops, mid-reconnect or with BB 
   await second.done;
   assert.ok(Date.now() - stopped < 1_000, `the sweeper stopped in ${Date.now() - stopped} ms`);
   world.silent = false;
+});
+
+test("the images-after-a-BB-update service ends within a second when the plugin stops during its look at the images (#852)", async (t) => {
+  // BB's server takes the look's question about its app and never answers, as one that is going away.
+  const asked: ServerResponse[] = [];
+  const server = createServer((_request, response) => void asked.push(response));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => (asked.forEach((response) => response.destroy()), server.close()));
+  const { harness, app } = await start(undefined, { appUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}` });
+  t.after(() => harness.lifecycle.dispose());
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, general: { ...rest.general, nightlyImages: true } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+
+  const service = harness.behavior.runService("bb-update-images");
+  await until("the look to ask BB's server", async () => asked.length > 0);
+  const stopped = Date.now();
+  service.controller.abort(new Error("the plugin is stopping"));
+  // Before #852 it ended only when its wait for the next look ran out, about 5 minutes later.
+  const ended = await Promise.race([service.done.then(() => true), new Promise<boolean>((resolve) => setTimeout(resolve, 1_000, false).unref())]);
+  assert.ok(ended, "the service did not end within a second of the plugin stopping");
+  assert.ok(Date.now() - stopped < 1_000, `the service ended in ${Date.now() - stopped} ms`);
 });
 
 test("box_start waits for BB to show the box's machine connected again, but only so long", async (t) => {
