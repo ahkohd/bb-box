@@ -1,6 +1,6 @@
 # 061: A box can be resized after it is made, live where its backend can, and restarted only when asked
 
-Status: proposed, 19 October 2026 (#868). Extends
+Status: accepted, 19 October 2026 (#868), by the owner. Extends
 [028](028-a-box-size-is-chosen-when-it-is-made.md), which left changing a
 running box's size as a later step.
 
@@ -331,8 +331,8 @@ off than it found it:
 
 - Turning on hot-plug in the Proxmox QEMU templates, for live memory
   growth. It would need each VM's NUMA layout set at its first boot, and
-  CPUs brought online in Linux by bb-box or a udev rule. It is an image
-  change, so the owner decides.
+  CPUs brought online in Linux by bb-box or a udev rule. The owner decided
+  against it for now (19 October 2026): a VM's restart takes 8 to 20 s.
 - Starting microsandbox boxes with maximums above their size, once msb's
   runtime changes cores and memory live. msb 0.7.7's does not.
 - Growing a macOS box's disk, which needs its recovery partition moved.
