@@ -42,6 +42,7 @@ import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../tr
 import {
   MIN_DESKTOP,
   TransportError,
+  type BoxPointer,
   type Display,
   type DisplayInputEvents,
   type DisplayOpened,
@@ -86,7 +87,7 @@ import { sizesCheck } from "../fit.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
-import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, followWindowsPointer, compileDisplay, desktopUp, extendC, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
 import { SELKIES_DISPLAY, SELKIES_LAUNCHER, selkiesDisplay } from "../selkies.ts";
 import { openRoute } from "../../transports/route.ts";
@@ -1798,6 +1799,9 @@ export class TartBackend implements Backend {
             // QEMU's VNC shows the pointer Windows draws once a mouse has moved: out while a person in control watches it.
             pointer: (shown, signal) => windowsPointer(command, shown, signal),
             pointerWhile: "rfb",
+            // Where the pointer is, from bb-box-stream.exe, which bb-box draws for people watching: the video from the Mac
+            // has no pointer in it, nor has QEMU's VNC, as Windows puts it on the GPU's cursor plane (#865).
+            ...(video ? { followPointer: (onEvent: (event: BoxPointer) => void, signal: AbortSignal) => followWindowsPointer(stream, onEvent, signal) } : {}),
             minSize: MIN_DESKTOP,
           },
         ];
