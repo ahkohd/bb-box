@@ -57,6 +57,7 @@ import { openRoute } from "../src/transports/route.ts";
 import { openTerminal } from "../src/transports/terminal.ts";
 import {
   TransportError,
+  type BoxPointer,
   type ByteChannel,
   type CommandTransport,
   type Display,
@@ -108,6 +109,8 @@ export interface FakeBackendOptions {
   readonly shell?: string;
   /** Whether a stop keeps a guest's session, by kind, as a hibernate does (#539). Not by default. */
   readonly keepsSession?: (kind: string) => boolean;
+  /** Its desktops' pointer, as bb-box-cursor gives it on Sway 1.11 (060): the RFB display's followPointer. None by default. */
+  readonly pointer?: (onEvent: (event: BoxPointer) => void, signal: AbortSignal) => Promise<void>;
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -442,6 +445,7 @@ export class FakeBackend implements Backend {
         ...(this.#options.resize === "backend" ? { resize: (size: DisplaySize) => this.#resize(size) } : {}),
         ...(this.pointers && display.protocol === "rfb" ? { pointer: async (shown: boolean) => void this.pointers!.push(shown) } : {}),
         ...(this.#options.minSize ? { minSize: this.#options.minSize } : {}),
+        ...(this.#options.pointer && display.protocol === "rfb" ? { followPointer: this.#options.pointer } : {}),
       }),
     );
     const power = this.faults.silent === guest.ref ? async (): Promise<PowerState> => "unknown" : () => this.power(guest);

@@ -1281,6 +1281,9 @@ exec "${FAKE_SSH_BINARY}" "$@"
   const sends = { ...box, data: { ...box.data, box: "bx-sway-1-11" } };
   assert.deepEqual(await themes(sends), ["default", "default"], "an image with the helper keeps Sway's theme");
   assert.deepEqual(await themes(box), ["bb-box-hidden", "default"], "a box keeps its image's answer");
+  // And only a box with the helper has its pointer followed.
+  const follows = async (record: typeof box) => (await backend.transports(record, "linux-desktop-wayland-cpu")).displays[0]!.followPointer !== undefined;
+  assert.deepEqual([await follows(sends), await follows(box)], [true, false]);
 });
 
 test("the warm pool fills, hands out a ready guest and refills", async () => {

@@ -1084,6 +1084,9 @@ test("streams the Wayland desktop with Apple's sign-in, as wayvnc asks, and resi
     };
     assert.deepEqual(await themes(box), ["bb-box-hidden", "default"], "an image without the helper hides the pointer, as before");
     assert.deepEqual(await themes(video), ["default", "default"], "an image with the helper keeps Sway's theme");
+    // And only a box with the helper has its pointer followed.
+    const follows = async (ref: typeof box) => (await backend.transports(ref, "linux-desktop-wayland-cpu")).displays[0]!.followPointer !== undefined;
+    assert.deepEqual([await follows(video), await follows(box)], [true, false]);
   } finally {
     process.env.PATH = path;
   }

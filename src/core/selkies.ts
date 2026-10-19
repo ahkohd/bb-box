@@ -293,6 +293,12 @@ export interface SelkiesRelayOptions {
   /** Whether the viewer's browser decodes 4:4:4, as it says once connected (bb-box's `BB_FULLCOLOR,<0|1>`, which goes no further). */
   onFullColour?(yes: boolean): void;
   onEnd?(by: "viewer" | "box", error: Error | null): void;
+  /**
+   * Whether bb-box sends this viewer the box's cursor itself, from
+   * bb-box-cursor (060): then Selkies' own cursor messages, one arrow
+   * whatever the shape on Sway, go no further.
+   */
+  ownCursor?(): boolean;
   readonly connectTimeoutMs?: number;
   /** How far behind the viewer may fall; LAG_MS by default. */
   readonly lagMs?: number;
@@ -360,6 +366,7 @@ export class SelkiesRelay {
   #toViewer(socket: BoxWebSocket, message: Message): void {
     if (typeof message === "string") {
       if (CLIPBOARD_VERBS.has(verb(message)) && !this.#options.mayInput()) return;
+      if (verb(message) === "cursor" && this.#options.ownCursor?.()) return;
       this.#options.viewer.send(message);
       return;
     }
@@ -449,6 +456,11 @@ export class SelkiesRelay {
   /** Whether this viewer wants video now: not while its tab is hidden. */
   get wantsVideo(): boolean {
     return !this.#ended && this.#wants;
+  }
+
+  /** Sends the viewer a message of bb-box's own, such as the box's pointer (060), while it is connected. */
+  tell(message: string): void {
+    if (!this.#ended) this.#options.viewer.send(message);
   }
 
   /** Starts this viewer's video again after `pause`, from a key frame, unless it has since asked for none. */

@@ -5,7 +5,7 @@
 // Selkies follows, so it has no resize of its own.
 
 import type { DisplayCapability } from "./types.ts";
-import type { CommandTransport, Display, Route } from "../transports/types.ts";
+import type { BoxPointer, CommandTransport, Display, Route } from "../transports/types.ts";
 
 /** Where the image's bb-box-selkies.service listens, on 127.0.0.1 only. */
 export const SELKIES_PORT = 5980;
@@ -38,6 +38,53 @@ export const SELKIES_LAUNCHER = "/usr/local/libexec/bb-box/selkies";
  * a person holds control (#707), as before.
  */
 export const CURSOR_HELPER = "/usr/local/libexec/bb-box/cursor";
+
+/** A line bb-box-cursor writes, as a pointer event, or null for a line it cannot read. */
+export function pointerEvent(line: string): BoxPointer | null {
+  try {
+    const value = JSON.parse(line) as Record<string, unknown>;
+    if (value.enter === true) return { type: "enter" };
+    if (value.leave === true) return { type: "leave" };
+    const at = value.position;
+    if (Array.isArray(at) && at.length === 2 && at.every(Number.isInteger)) return { type: "position", x: at[0] as number, y: at[1] as number };
+    const image = value.image as Record<string, unknown> | undefined;
+    if (image && typeof image === "object") {
+      const { width, height, hotspot, argb } = image;
+      if (!Number.isInteger(width) || !Number.isInteger(height) || typeof argb !== "string" || !Array.isArray(hotspot) || hotspot.length !== 2) return null;
+      const bytes = Buffer.from(argb, "base64");
+      if (bytes.length !== (width as number) * (height as number) * 4) return null;
+      return { type: "image", width: width as number, height: height as number, hotX: Number(hotspot[0]), hotY: Number(hotspot[1]), argb: bytes };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Runs bb-box-cursor in the box's session, as the box user, and passes on
+ * each change of the pointer until `signal` ends it or the helper ends, as
+ * when the desktop restarts.
+ */
+export async function followPointer(command: CommandTransport, onEvent: (event: BoxPointer) => void, signal: AbortSignal, helper = CURSOR_HELPER): Promise<void> {
+  const script = `export XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
+exec '${helper.replaceAll("'", "'\\''")}'`;
+  let rest = "";
+  const decoder = new TextDecoder();
+  await command.stream(script, {
+    signal,
+    onOutput: (chunk, from) => {
+      if (from !== "stdout") return;
+      const lines = (rest + decoder.decode(chunk, { stream: true })).split("\n");
+      rest = lines.pop() ?? "";
+      for (const line of lines) {
+        const event = line ? pointerEvent(line) : null;
+        if (event) onEvent(event);
+      }
+    },
+  });
+}
 
 /**
  * Whether each Wayland box's image has an executable, asked once a box: a box

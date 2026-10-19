@@ -18,7 +18,8 @@ import { SelkiesBox, SelkiesRelay, type OpenStream } from "../core/selkies.ts";
 import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { scaleScript } from "../backends/windows.ts";
 import { openRoute } from "../transports/route.ts";
-import type { Display } from "../transports/types.ts";
+import type { BoxPointer, Display } from "../transports/types.ts";
+import { argbToRgba, rgbaPng } from "../core/png.ts";
 
 export const DESKTOP_ROUTE = "/desktop";
 const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -30,6 +31,10 @@ const MAX_CLIPBOARD_BYTES = 4 * 1024 * 1024;
 const CLIPBOARD_TIMEOUT_MS = 10_000;
 /** How long after a VNC viewer's resize its desktop's video viewers follow: the box takes a size in a few milliseconds. */
 const FOLLOW_AFTER_MS = 300;
+/** How long after bb-box-cursor ends, as when the desktop restarts, it runs again while the box has video viewers (060). */
+const POINTER_AGAIN_MS = 2_000;
+/** bb-box's message of where the box's pointer is, to a video viewer: `BB_POINTER,<x>,<y>`, or `BB_POINTER,` when it left the desktop (060). */
+export const POINTER_VERB = "BB_POINTER";
 /** How long a box's video stays stopped for its capture to restart: Selkies stops a capture within milliseconds. */
 const RESTART_PAUSE_MS = 300;
 /**
@@ -291,6 +296,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       fullColour: boolean | null;
       /** Whether the box was last asked to draw its cursor into the video; null before any. */
       cursor: boolean | null;
+      /**
+       * The box's pointer from bb-box-cursor, where its image has it (060): the helper's run while the box has video viewers,
+       * whether it runs, and the last image and position, as messages, for a viewer that connects later.
+       */
+      pointer: { feed: AbortController | null; own: boolean; image: string | null; at: string | null };
     }
   >();
   const selkiesBox = (boxId: string, open: OpenStream): SelkiesBox => {
@@ -301,10 +311,52 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       colours: new Map(),
       fullColour: null,
       cursor: null,
+      pointer: { feed: null, own: false, image: null, at: null },
     };
     entry.viewers += 1;
     selkiesBoxes.set(boxId, entry);
+    followBoxPointer(boxId);
     return entry.box;
+  };
+  /**
+   * Follows a box's pointer with bb-box-cursor while it has video viewers, where its image has it (060): Sway 1.11's
+   * streams send neither its shape nor where it is. Each viewer gets the shape as Selkies' own cursor message, which the
+   * panel shows the person with control, and where it is, which the panel draws for people watching. Selkies' own cursor
+   * messages, one arrow whatever the shape, then go no further. A helper that ends, as when the desktop restarts, runs again.
+   */
+  const followBoxPointer = (boxId: string): void => {
+    const entry = selkiesBoxes.get(boxId);
+    if (!entry || entry.pointer.feed) return;
+    const feed = new AbortController();
+    entry.pointer.feed = feed;
+    void (async () => {
+      const shown = await display(boxes, boxId).catch(() => null);
+      const follow = shown?.followPointer;
+      if (!follow || feed.signal.aborted) return;
+      entry.pointer.own = true;
+      while (!feed.signal.aborted) {
+        await follow((event) => boxPointer(entry, event), feed.signal).catch((error) => {
+          if (!feed.signal.aborted) deps.logError("follow the desktop's pointer", error);
+        });
+        if (!feed.signal.aborted) await new Promise((resolve) => setTimeout(resolve, POINTER_AGAIN_MS));
+      }
+    })();
+  };
+  /** A change of a box's pointer, to each of its video viewers, and kept for the next. */
+  const boxPointer = (entry: { relays: Set<SelkiesRelay>; pointer: { image: string | null; at: string | null } }, event: BoxPointer): void => {
+    let message: string;
+    if (event.type === "image") {
+      const png = rgbaPng(event.width, event.height, argbToRgba(event.argb)).toString("base64");
+      message = `cursor,${JSON.stringify({ curdata: png, hotx: event.hotX, hoty: event.hotY })}`;
+      entry.pointer.image = message;
+    } else if (event.type === "position") {
+      message = `${POINTER_VERB},${event.x},${event.y}`;
+      entry.pointer.at = message;
+    } else if (event.type === "leave") {
+      message = `${POINTER_VERB},`;
+      entry.pointer.at = message;
+    } else return;
+    for (const relay of entry.relays) relay.tell(message);
   };
   /**
    * Streams a box's display in 4:4:4 while every viewer says it decodes it, and in 4:2:0 otherwise: Selkies sets it for
@@ -362,6 +414,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     }
     if (entry && entry.viewers > 1) colourFor(boxId);
     if (!entry || --entry.viewers > 0) return;
+    entry.pointer.feed?.abort();
     selkiesBoxes.delete(boxId);
     frameSizes.delete(boxId);
     void entry.box.close();
@@ -586,9 +639,13 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                 entry.colours.set(relay, yes);
                 colourFor(boxId);
               },
+              ownCursor: () => selkiesBoxes.get(boxId)?.pointer.own ?? false,
               onEnd,
             });
-            selkiesBoxes.get(boxId)?.relays.add(relay);
+            const entry = selkiesBoxes.get(boxId);
+            entry?.relays.add(relay);
+            // The box's pointer as it is, from bb-box-cursor (060), before its next change.
+            for (const message of [entry?.pointer.image, entry?.pointer.at]) if (message) relay.tell(message);
             keepSharp(boxId);
             cursorFor(boxId);
           } else {
