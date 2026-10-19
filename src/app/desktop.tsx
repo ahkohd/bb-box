@@ -38,6 +38,8 @@ import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
 import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, osName, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
+import { POINTER_NONE } from "../core/pointer.ts";
+import { BoxPointer } from "./box-pointer.ts";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { refreshLosslessly, type LosslessRefresh } from "./rfb-refresh.ts";
 import { controlWord, statusOf } from "./status.ts";
@@ -251,6 +253,15 @@ function useViewerId(boxId: string): string {
 export class DesktopSession implements Kept {
   readonly element = document.createElement("div");
   hidden = false;
+  /**
+   * The box's pointer drawn over the picture for a viewer without control, where bb-box sends where it is (060): on a
+   * Wayland desktop with bb-box-cursor the VNC picture has no pointer, and RFB has no place for where it is, so it comes on
+   * a stream of its own, which ends at once for a desktop without the helper.
+   */
+  readonly #boxPointer = new BoxPointer(this.element);
+  #pointerStream: WebSocket | null = null;
+  /** The box's image has no bb-box-cursor: its pointer stream is not opened again. */
+  #pointerNone = false;
   onEnded?: () => void;
   connection: Connection = { state: "connecting" };
   readonly #url: string;
@@ -317,6 +328,7 @@ export class DesktopSession implements Kept {
             const key = `${Math.round(size.width)}x${Math.round(size.height)}`;
             const moved = this.#lastSize !== null && this.#lastSize !== key;
             this.#lastSize = key;
+            this.#drawPointer();
             if (moved && this.#mine) this.#follow = true;
             if (moved && this.#client) this.#client.resizeSession = false;
             this.#settle = setTimeout(() => this.#nudge(), SETTLE_MS);
@@ -361,6 +373,7 @@ export class DesktopSession implements Kept {
       this.#failures = 0;
       this.#set({ state: "connected" });
       this.#apply();
+      this.#openPointer();
     });
     client.addEventListener("securityfailure", (event: Event) => {
       this.#refused = (event as CustomEvent<{ reason?: string }>).detail.reason ?? "The relay refused the connection.";
@@ -369,6 +382,7 @@ export class DesktopSession implements Kept {
       client.stopRefreshing();
       if (this.#client !== client) return;
       this.#client = null;
+      this.#closePointer();
       const wait = Math.min(MAX_RETRY_MS, 1000 * 2 ** this.#failures);
       this.#failures += 1;
       this.#set({ state: "disconnected", reason: this.#refused ?? "The connection to the desktop ended.", retryMs: wait });
@@ -409,6 +423,44 @@ export class DesktopSession implements Kept {
     client.macKeys = this.#macKeys;
     client.refreshCursor();
     if (this.#mine) client.focus({ preventScroll: true });
+    this.#drawPointer();
+  }
+
+  /** Opens the box's pointer stream (060), unless the box's image has no helper. */
+  #openPointer(): void {
+    if (this.#pointerNone || this.#pointerStream || this.#disposed) return;
+    const stream = new WebSocket(`${this.#url}&stream=pointer`);
+    this.#pointerStream = stream;
+    stream.onmessage = (event: MessageEvent) => {
+      if (typeof event.data === "string" && this.#boxPointer.message(event.data)) this.#drawPointer();
+    };
+    stream.onclose = (event: CloseEvent) => {
+      if (this.#pointerStream === stream) this.#pointerStream = null;
+      if (event.reason === POINTER_NONE) this.#pointerNone = true;
+      this.#boxPointer.at("");
+      this.#drawPointer();
+    };
+  }
+
+  #closePointer(): void {
+    const stream = this.#pointerStream;
+    this.#pointerStream = null;
+    stream?.close();
+  }
+
+  /** The box's pointer over noVNC's canvas, wherever noVNC has fitted the picture, for a viewer without control. */
+  #drawPointer(): void {
+    const canvas = this.element.querySelector("canvas");
+    if (!canvas) {
+      this.#boxPointer.place(null, true);
+      return;
+    }
+    const outer = this.element.getBoundingClientRect();
+    const inner = canvas.getBoundingClientRect();
+    this.#boxPointer.place(
+      { left: inner.left - outer.left, top: inner.top - outer.top, width: inner.width, height: inner.height, desktopWidth: canvas.width, desktopHeight: canvas.height },
+      this.#mine,
+    );
   }
 
   /** Asks for still areas again losslessly from now on, for a desktop whose server sends none itself. */
@@ -521,6 +573,7 @@ export class DesktopSession implements Kept {
     clearTimeout(this.#chord);
     document.removeEventListener("paste", this.#onPasteEvent, true);
     this.#observer?.disconnect();
+    this.#closePointer();
     const client = this.#client;
     this.#client = null;
     client?.disconnect();

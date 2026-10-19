@@ -2639,6 +2639,47 @@ test("a person watching a Wayland desktop with bb-box-cursor sees the box's poin
   }
 });
 
+test("a person watching a Wayland desktop with bb-box-cursor over VNC sees the box's pointer drawn over the picture, from a pointer stream of its own, which a desktop without the helper ends for good (060)", async () => {
+  const { handlers } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const rfb = novnc.FakeRfb.made[0]!;
+  // noVNC's canvas, the desktop's 1920 by 1080 pixels fitted at half scale, 60 px down the pane.
+  const canvas = document.createElement("canvas");
+  canvas.width = 1920;
+  canvas.height = 1080;
+  rfb.target.appendChild(canvas);
+  const rect = (left: number, top: number, width: number, height: number) => () => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => null }) as DOMRect;
+  rfb.target.getBoundingClientRect = rect(0, 0, 960, 660);
+  canvas.getBoundingClientRect = rect(0, 60, 960, 540);
+  act(() => void rfb.dispatchEvent(new Event("connect")));
+  const stream = await waitFor(() => {
+    const made = FakeSocket.made.find((each) => each.url.endsWith("&stream=pointer"));
+    expect(made).toBeTruthy();
+    return made!;
+  });
+  expect(stream.url).toBe(`${rfb.url}&stream=pointer`);
+  act(() => stream.open());
+  const png = rgbaPng(2, 1, Uint8Array.from([255, 0, 0, 255, 0, 0, 0, 0])).toString("base64");
+  act(() => void stream.onmessage?.({ data: `cursor,${JSON.stringify({ curdata: png, hotx: 1, hoty: 0 })}` }));
+  act(() => void stream.onmessage?.({ data: "BB_POINTER,640,360" }));
+  const drawn = () => rfb.target.querySelector("img");
+  await waitFor(() => expect(drawn()?.style.display).toBe("block"));
+  expect([drawn()!.style.left, drawn()!.style.top, drawn()!.style.width, drawn()!.style.height]).toEqual(["319.5px", "240px", "1px", "0.5px"]);
+  // The person in control has their own pointer, in the box's shape from wayvnc: none is drawn for them.
+  fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  await waitFor(() => expect(drawn()!.style.display).toBe("none"));
+
+  // A desktop whose image has no helper ends the stream at once, saying so: the next connection opens none.
+  const before = FakeSocket.made.length;
+  act(() => stream.end(1000, "This desktop's pointer comes with its picture."));
+  act(() => void rfb.dispatchEvent(new Event("disconnect")));
+  await waitFor(() => expect(novnc.FakeRfb.made.length).toBeGreaterThan(1), { timeout: 5000 });
+  act(() => void novnc.FakeRfb.made.at(-1)!.dispatchEvent(new Event("connect")));
+  expect(FakeSocket.made.slice(before).some((each) => each.url.endsWith("&stream=pointer"))).toBe(false);
+});
+
 /** Bytes as Selkies sends them in a clipboard message: base64. */
 function b64(bytes: Uint8Array): string {
   let binary = "";
