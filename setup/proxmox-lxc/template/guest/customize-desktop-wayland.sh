@@ -101,6 +101,26 @@ install -m 0755 "$build/guest/files/selkies-wayland" /usr/local/libexec/bb-box/s
 clang -O2 -Wall -Werror -o /usr/local/libexec/bb-box/type "$build/guest/files/bb-box-type.c" -lwayland-client -lxkbcommon ||
   die "bb-box-type did not build"
 chmod 0755 /usr/local/libexec/bb-box/type
+# The box's pointer, where Sway has ext-image-copy-capture, from 1.11 (060):
+# its shape for the person in control, and the agent's pointer for people
+# watching, which neither stream sends. Built from the system's protocol XML.
+# 24.04's Sway 1.9 lacks the protocol, though its wayland-protocols has the
+# XML, so its image has no helper, and bb-box hides the pointer from the
+# picture as before (#707).
+protocols=/usr/share/wayland-protocols/staging
+if dpkg --compare-versions "$(dpkg-query -W -f='${Version}' sway)" ge 1.11 &&
+  [ -f "$protocols/ext-image-copy-capture/ext-image-copy-capture-v1.xml" ]; then
+  cursor_src=$(mktemp -d)
+  for xml in ext-image-copy-capture/ext-image-copy-capture-v1 ext-image-capture-source/ext-image-capture-source-v1 ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1; do
+    wayland-scanner client-header "$protocols/$xml.xml" "$cursor_src/${xml##*/}-client-protocol.h"
+    wayland-scanner private-code "$protocols/$xml.xml" "$cursor_src/${xml##*/}-protocol.c"
+  done
+  clang -O2 -Wall -Werror -I"$cursor_src" -o /usr/local/libexec/bb-box/cursor "$build/guest/files/bb-box-cursor.c" "$cursor_src"/*-protocol.c -lwayland-client ||
+    die "bb-box-cursor did not build"
+  chmod 0755 /usr/local/libexec/bb-box/cursor
+  rm -rf "$cursor_src"
+  echo "cursor=session" >>"$build/extra-release"
+fi
 # Selkies streams Sway at Sway's size and never resizes it (060).
 selkies_ws=$(ls /opt/selkies/lib/python3*/site-packages/selkies/websockets_mode.py 2>/dev/null | head -1)
 [ -n "$selkies_ws" ] || die "Selkies' websockets_mode.py is missing"
@@ -129,6 +149,9 @@ include /run/bb-box/sway-output.conf
 output HEADLESS-1 bg #2e3440 solid_color
 # One X11 window breaks Cua on Sway; X11-only apps need linux-desktop-cpu.
 xwayland disable
+# A pointer theme from the start: Sway 1.11 draws no pointer until its seat
+# has one, so the cursor session and wayvnc would have no image (060).
+seat * xcursor_theme default 24
 # A floating desktop: apps open at their own size, with title bars.
 for_window [all] floating enable
 default_border normal 2
