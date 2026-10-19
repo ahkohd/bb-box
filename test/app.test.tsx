@@ -20,7 +20,7 @@ import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.t
 import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, SelkiesSession, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
-import { boxKey, macBrowser } from "../src/app/viewer.ts";
+import { OptionComposer, boxKey, macBrowser } from "../src/app/viewer.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -1895,16 +1895,25 @@ test("with control, Cmd+V on a Mac pastes this computer's text into a Linux box 
     fireEvent.click(slot.getByRole("button", { name: "Take control" }));
     await slot.findByText(/You have control/);
     // Cmd is Ctrl in the box, code and all, so QEMU's scancode follows too. In a Mac's browser noVNC sends the left
-    // Cmd as Alt_L and the right one as Super_L, as Safari on macOS showed; Option as Mode_switch stays noVNC's.
+    // Cmd as Alt_L and the right one as Super_L, as Safari on macOS showed.
     client._handleKeyEvent(0xffe9, "MetaLeft", true, null, null);
     client._handleKeyEvent(0x63, "KeyC", true, null, null);
     client._handleKeyEvent(0xffeb, "MetaRight", true, null, null);
+    // The left Option (Mode_switch) composes: held back, then only the character it made; the right one is Alt.
+    client._handleKeyEvent(0xffe9, "MetaLeft", false, null, null);
+    client._handleKeyEvent(0xffeb, "MetaRight", false, null, null);
     client._handleKeyEvent(0xff7e, "AltLeft", true, null, null);
+    client._handleKeyEvent(0xe7, "KeyC", true, null, null);
+    client._handleKeyEvent(0xff7e, "AltLeft", false, null, null);
+    client._handleKeyEvent(0xfe03, "AltRight", true, null, null);
     expect(client.keyEvents).toEqual([
       { keysym: 0xffe3, code: "ControlLeft", down: true },
       { keysym: 0x63, code: "KeyC", down: true },
       { keysym: 0xffe4, code: "ControlRight", down: true },
-      { keysym: 0xff7e, code: "AltLeft", down: true },
+      { keysym: 0xffe3, code: "ControlLeft", down: false },
+      { keysym: 0xffe4, code: "ControlRight", down: false },
+      { keysym: 0xe7, code: "KeyC", down: true },
+      { keysym: 0xffea, code: "AltRight", down: true },
     ]);
     // Cmd+V: kept from noVNC, left to the browser, whose paste event brings the text; the box gets it, then its own Ctrl+V.
     vi.useFakeTimers();
@@ -2470,6 +2479,21 @@ test("Cmd and Option reach a Mac as its server names Command and Option, from a 
     "ffeb MetaLeft",
     "61 KeyA",
   ]);
+});
+
+test("a Mac's left Option on a desktop that is not a Mac composes: a character alone, Alt before any other key, nothing alone (the desktop sweep)", () => {
+  const option = new OptionComposer();
+  const sent = (keysym: number, code: string, down: boolean) => option.keys({ keysym, code }, down).map((each) => `${each.down ? "d" : "u"}:${each.key.keysym.toString(16)}`);
+  // Option+E then E: the dead key, which noVNC drops in Safari and gives no keysym in Chrome, sends nothing; é goes
+  // alone, and Option sends nothing.
+  expect([...sent(0xffe9, "AltLeft", true), ...sent(null as unknown as number, "KeyE", true), ...sent(0, "KeyE", false), ...sent(0xe9, "KeyE", true), ...sent(0xe9, "KeyE", false), ...sent(0xffe9, "AltLeft", false)]).toEqual(["d:e9", "u:e9"]);
+  // Option+Left: Alt, then the arrow, and Alt up after.
+  expect([...sent(0xffe9, "AltLeft", true), ...sent(0xff51, "ArrowLeft", true), ...sent(0xff51, "ArrowLeft", false), ...sent(0xffe9, "AltLeft", false)]).toEqual(["d:ffe9", "d:ff51", "u:ff51", "u:ffe9"]);
+  // The right Option is Alt, and a key with it goes as its US character: Alt+F, not the ƒ a Mac makes.
+  const plain = (keysym: number, code: string, down: boolean) => option.keys({ keysym, code }, down).map((each) => `${each.down ? "d" : "u"}:${each.key.keysym.toString(16)}`);
+  expect([...plain(0xffea, "AltRight", true), ...plain(0x8f6, "KeyF", true), ...plain(0x8f6, "KeyF", false), ...plain(0xffea, "AltRight", false)]).toEqual(["d:ffea", "d:66", "u:66", "u:ffea"]);
+  // With Ctrl (a Mac's Cmd) held, a letter is a shortcut: Ctrl+Alt+T.
+  expect([...sent(0xffe3, "ControlLeft", true), ...sent(0xffe9, "AltLeft", true), ...sent(0x74, "KeyT", true)]).toEqual(["d:ffe3", "d:ffe9", "d:74"]);
 });
 
 test("a Windows box's video gets a character X names itself, such as €, as its Unicode keysym, and Latin-1 and keys as they are (the desktop sweep)", () => {

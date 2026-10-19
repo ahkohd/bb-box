@@ -9,6 +9,8 @@ export const SETTLE_MS = 250;
 export const PASTE_CHORD_DELAY_MS = 150;
 /** How long a Cmd+V or Ctrl+V waits for the browser's paste event before the box pastes its own clipboard. */
 export const PASTE_EVENT_WAIT_MS = 150;
+export const XK_SHIFT_L = 0xffe1;
+export const XK_SHIFT_R = 0xffe2;
 export const XK_CONTROL_L = 0xffe3;
 export const XK_CONTROL_R = 0xffe4;
 export const XK_META_L = 0xffe7;
@@ -78,7 +80,7 @@ export function commandKey(macKeys: MacKeys | null): Key {
  * The key the box gets for one a person pressed. On a macOS desktop, Cmd and Option go as its server names Command
  * and Option, from a Mac or not, so Cmd+C copies and a Linux or Windows user's Alt is Option. Elsewhere, from a Mac,
  * Cmd goes as Ctrl, where Cmd+C, Cmd+V, Cmd+A and the rest are the box's Ctrl shortcuts (the operator's note of
- * 4 October 2026), and Option as noVNC sends it. Other keys go as they are.
+ * 4 October 2026), and Option as Alt, the left one through OptionComposer. Other keys go as they are.
  */
 export function boxKey(keysym: number, code: string, guestOs: string, mac: boolean, macKeys: MacKeys | null): Key {
   const modifier = modifierOf(keysym, mac);
@@ -90,5 +92,96 @@ export function boxKey(keysym: number, code: string, guestOs: string, mac: boole
     return (modifier.key === "command" ? command : option)[side];
   }
   if (mac && modifier.key === "command") return CONTROL[side];
+  if (mac && modifier.key === "option") return ALT[side];
   return { keysym, code };
+}
+
+/** Whether a keysym types a character: Latin-1, X's own names for characters past it, and Unicode keysyms. */
+function typesCharacter(keysym: number): boolean {
+  return (keysym > 0x20 && keysym < 0xfd00) || keysym >= 0x1000000;
+}
+
+/** The character each key of a US keyboard types, by its DOM code, without and with Shift. */
+const US_BY_CODE: Readonly<Record<string, string>> = {
+  ...Object.fromEntries([..."abcdefghijklmnopqrstuvwxyz"].map((letter) => [`Key${letter.toUpperCase()}`, letter + letter.toUpperCase()])),
+  ...Object.fromEntries([..."0123456789"].map((digit, index) => [`Digit${digit}`, digit + ")!@#$%^&*("[index]])),
+  Minus: "-_",
+  Equal: "=+",
+  BracketLeft: "[{",
+  BracketRight: "]}",
+  Backslash: "\\|",
+  Semicolon: ";:",
+  Quote: "'\"",
+  Backquote: "`~",
+  Comma: ",<",
+  Period: ".>",
+  Slash: "/?",
+};
+
+/**
+ * A Mac's left Option on a desktop that is not a Mac, where it would be Alt: on a Mac it composes, Option+E then E
+ * typing é, and as Alt it opened the app's menu on Windows instead (the desktop sweep). So it is held back: a
+ * character typed while it is held, which the browser composed, goes alone; any other key, such as an arrow, Tab or
+ * F4, or a key with Ctrl held, goes after Alt; and Option let go alone sends nothing. The right Option is plain Alt,
+ * for Alt+F and the rest of an app's menu keys, and a lone Alt: a key typed with it goes as the character its key
+ * types on a US keyboard, f and not the ƒ a Mac makes of Option+F.
+ */
+export class OptionComposer {
+  #held = false;
+  #altSent = false;
+  #control = new Set<number>();
+  #shift = new Set<number>();
+  #right = false;
+  /** The keysym each key went down as while the right Option was held, by its code, so it goes up as that. */
+  readonly #plain = new Map<string, number>();
+
+  /** The key events to send for one the person pressed, as boxKey mapped it. */
+  keys(key: Key, down: boolean): { readonly key: Key; readonly down: boolean }[] {
+    // A dead key, as Option+E is, which noVNC gives no keysym in Chrome: it types nothing, and would be Alt+E.
+    if (!key.keysym) return [];
+    if (key.keysym === XK_ALT_L) {
+      if (down) {
+        this.#held = true;
+        return [];
+      }
+      this.#held = false;
+      if (!this.#altSent) return [];
+      this.#altSent = false;
+      return [{ key: ALT[0], down: false }];
+    }
+    if (key.keysym === XK_CONTROL_L || key.keysym === XK_CONTROL_R) {
+      if (down) this.#control.add(key.keysym);
+      else this.#control.delete(key.keysym);
+    }
+    if (key.keysym === XK_SHIFT_L || key.keysym === XK_SHIFT_R) {
+      if (down) this.#shift.add(key.keysym);
+      else this.#shift.delete(key.keysym);
+    }
+    if (key.keysym === XK_ALT_R) this.#right = down;
+    const plain = this.#plain.get(key.code);
+    if (!down && plain !== undefined) {
+      this.#plain.delete(key.code);
+      key = { keysym: plain, code: key.code };
+    } else if (down && this.#right && typesCharacter(key.keysym) && US_BY_CODE[key.code]) {
+      key = { keysym: US_BY_CODE[key.code]!.codePointAt(this.#shift.size ? 1 : 0)!, code: key.code };
+      this.#plain.set(key.code, key.keysym);
+    }
+    if (!down || !this.#held || (typesCharacter(key.keysym) && this.#control.size === 0)) return [{ key, down }];
+    if (this.#altSent) return [{ key, down }];
+    this.#altSent = true;
+    return [
+      { key: ALT[0], down: true },
+      { key, down },
+    ];
+  }
+
+  /** Forgets what is held, once the viewer lets go of every key. */
+  reset(): void {
+    this.#held = false;
+    this.#altSent = false;
+    this.#right = false;
+    this.#control.clear();
+    this.#shift.clear();
+    this.#plain.clear();
+  }
 }
