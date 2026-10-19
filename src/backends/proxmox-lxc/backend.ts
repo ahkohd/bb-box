@@ -87,11 +87,11 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "../images.ts";
-import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
+import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
-import { MIN_DESKTOP, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
+import { MIN_DESKTOP, type BoxPointer, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
 import {
   FLAVOUR_KINDS,
   LXC_FLAVOURS,
@@ -565,6 +565,7 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #selkies: SelkiesPresence;
   /** Whether each Wayland box's image has bb-box-cursor (060). */
   readonly #cursor: ImageFile;
+  readonly #cursorHelper: string;
   readonly #warmStore: WarmStore;
   readonly #warm: ReadyPool<BoxIdentity>;
   /** VMIDs this process is cloning into. */
@@ -622,7 +623,8 @@ export class ProxmoxLxcBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#selkies = new SelkiesPresence(options.selkiesLauncher);
-    this.#cursor = new ImageFile(options.cursorHelper ?? CURSOR_HELPER);
+    this.#cursorHelper = options.cursorHelper ?? CURSOR_HELPER;
+    this.#cursor = new ImageFile(this.#cursorHelper);
     this.#http = options.fetch
       ? { fetch: options.fetch, close: async () => {} }
       : proxmoxFetch({ ca: config.proxmox.caCertificate, fingerprint: config.proxmox.tlsFingerprint });
@@ -1111,6 +1113,7 @@ export class ProxmoxLxcBackend implements Backend {
               },
               ...(offer?.flavour === "desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
               ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal), pointer: (shown: boolean, signal?: AbortSignal) => waylandPointer(command, shown || sends, signal) } : {}),
+              ...(sends ? { followPointer: (onEvent: (event: BoxPointer) => void, signal: AbortSignal) => followPointer(command, onEvent, signal, this.#cursorHelper) } : {}),
               minSize: MIN_DESKTOP,
             },
     );

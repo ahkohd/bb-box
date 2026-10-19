@@ -40,7 +40,7 @@ function viewer() {
 
 let marks = 0;
 
-function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number; onSize?: (size: { width: number; height: number }) => void } = {}) {
+function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number; onSize?: (size: { width: number; height: number }) => void; ownCursor?: () => boolean } = {}) {
   const server = new FakeSelkies({ refuse: options.refuse });
   const open = async () => server.channel();
   const clock = new FakeClock();
@@ -48,7 +48,7 @@ function setup(options: { refuse?: number; spacingMs?: number; lagMs?: number; o
   let control: string | null = null;
   const relay = (name: string) => {
     const end = viewer();
-    const relay = new SelkiesRelay({ viewer: end.end, box, open, mayInput: () => control === name, lagMs: options.lagMs, onSize: options.onSize });
+    const relay = new SelkiesRelay({ viewer: end.end, box, open, mayInput: () => control === name, lagMs: options.lagMs, onSize: options.onSize, ownCursor: options.ownCursor });
     // Not spread: that would copy `closed` as it is now.
     return Object.assign(end, { relay });
   };
@@ -90,6 +90,28 @@ test("a viewer joins as a Selkies viewer, gets what Selkies sends, and may only 
   await until("two frames", () => a.frames().length === 2);
   assert.deepEqual(a.frames(), [1, 2]);
   await a.relay.close();
+  await box.close();
+});
+
+test("Selkies' own cursor message reaches a viewer, unless bb-box sends the box's cursor itself; bb-box's own messages reach it whatever (060)", async () => {
+  let own = false;
+  const { server, box, relay, settle } = setup({ ownCursor: () => own });
+  const a = relay("a");
+  await until("Selkies' first message", () => a.got.includes("MODE websockets"));
+  const page = server.pages[0]!;
+  await page.send('cursor,{"curdata":"AA==","hotx":0,"hoty":0}');
+  await settle(a);
+  assert.ok(a.got.includes('cursor,{"curdata":"AA==","hotx":0,"hoty":0}'), "as X11's Selkies sends the box's cursor");
+  // bb-box-cursor's: Selkies on Sway sends one arrow, whatever the shape.
+  own = true;
+  await page.send('cursor,{"curdata":"Ag==","hotx":0,"hoty":0}');
+  await settle(a);
+  assert.ok(!a.got.some((message) => typeof message === "string" && message.includes("Ag==")), "Selkies' arrow goes no further");
+  a.relay.tell("BB_POINTER,10,20");
+  assert.ok(a.got.includes("BB_POINTER,10,20"));
+  await a.relay.close();
+  a.relay.tell("BB_POINTER,11,20");
+  assert.ok(!a.got.includes("BB_POINTER,11,20"), "nothing once it ended");
   await box.close();
 });
 

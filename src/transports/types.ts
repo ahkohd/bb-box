@@ -111,6 +111,16 @@ export interface DisplayOpened {
   readonly typesAsCharacter?: (keysym: number, held: ReadonlySet<number>) => boolean;
 }
 
+/** A change of the box's pointer, from bb-box-cursor (060). */
+export type BoxPointer =
+  | { readonly type: "enter" }
+  /** The pointer left the output, as when the seat's last pointer went. */
+  | { readonly type: "leave" }
+  /** Where its hotspot is, in the desktop's pixels. */
+  | { readonly type: "position"; readonly x: number; readonly y: number }
+  /** A new image: width*height pixels of 32-bit ARGB, little-endian, and its hotspot. */
+  | { readonly type: "image"; readonly width: number; readonly height: number; readonly hotX: number; readonly hotY: number; readonly argb: Uint8Array };
+
 export interface Display {
   readonly id: string;
   readonly label: string;
@@ -146,6 +156,12 @@ export interface Display {
    * holds control, whose browser draws its own; in otherwise.
    */
   pointer?(shown: boolean, signal?: AbortSignal): Promise<void>;
+  /**
+   * Follows the box's pointer, where its image has bb-box-cursor (060):
+   * where it is and what it looks like, as it changes, until `signal` ends it
+   * or the helper does. Neither of a Wayland desktop's streams sends either.
+   */
+  followPointer?(onEvent: (event: BoxPointer) => void, signal: AbortSignal): Promise<void>;
   /**
    * The smallest size a viewer may set. Core raises a smaller SetDesktopSize
    * to it, and the viewer scales the desktop down to fit its pane. Xvnc sets

@@ -13,6 +13,7 @@ import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-s
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
 import type { BackendDriver, BoxKind } from "../src/backends/types.ts";
+import type { BoxPointer } from "../src/transports/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
@@ -65,7 +66,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -352,7 +353,7 @@ async function start(
     },
   });
   const setupOptions: SetupOptions = {
-    drivers: [fakeDriver(root, world, { resize: options.resize, minSize: options.minSize, kinds: options.kinds, shell: options.shell, keepsSession: options.keepsSession }), ...(options.drivers ?? [])],
+    drivers: [fakeDriver(root, world, { resize: options.resize, minSize: options.minSize, kinds: options.kinds, shell: options.shell, keepsSession: options.keepsSession, pointer: options.pointer }), ...(options.drivers ?? [])],
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
@@ -2712,6 +2713,73 @@ test("a video display told a size first, as Selkies on Sway, hears it before the
   );
   await until("the size the agent had", async () => backend.rfb.width === 1280 && backend.rfb.height === 800);
   await session.close();
+});
+
+test("a box whose image has bb-box-cursor gives each video viewer its pointer's shape and where it is, and a later viewer the last of each; Selkies' own arrow goes no further (060)", async (t) => {
+  // The helper as a test drives it: each run, the events it is given, until bb-box ends it.
+  const runs: { emit: (event: BoxPointer) => void; ended: boolean }[] = [];
+  const pointer = (onEvent: (event: BoxPointer) => void, signal: AbortSignal) =>
+    new Promise<void>((resolve) => {
+      const run = { emit: onEvent, ended: false };
+      runs.push(run);
+      signal.addEventListener("abort", () => {
+        run.ended = true;
+        resolve();
+      });
+    });
+  const { harness, app, world } = await start(undefined, { kinds: [FAKE_SELKIES_KIND], pointer });
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: FAKE_SELKIES_KIND.id });
+  await app.boxes.idle();
+  const box = await only(app);
+  const selkies = world.backend!.selkies;
+  const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-one-0001&stream=selkies`);
+  await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));
+  await until("the helper running", async () => runs.length === 1);
+  const said = (session: typeof one) => session.sent.filter((message): message is string => typeof message === "string");
+  // Selkies on Sway sends one arrow, whatever the box's pointer looks like.
+  await selkies.pages[0]!.send('cursor,{"curdata":"QVJST1c=","hotx":0,"hoty":0}');
+  // A 2 by 1 image: an opaque red pixel, then a clear one, as the helper gives it.
+  runs[0]!.emit({ type: "image", width: 2, height: 1, hotX: 1, hotY: 0, argb: Uint8Array.from([0, 0, 255, 255, 0, 0, 0, 0]) });
+  runs[0]!.emit({ type: "position", x: 640, y: 360 });
+  await until("the pointer", async () => said(one).includes("BB_POINTER,640,360"));
+  const cursor = said(one).find((message) => message.startsWith("cursor,"))!;
+  const { curdata, hotx, hoty } = JSON.parse(cursor.slice("cursor,".length)) as { curdata: string; hotx: number; hoty: number };
+  const png = Buffer.from(curdata, "base64");
+  assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20), hotx, hoty], [2, 1, 1, 0], "the image as a PNG, 2 by 1, with its hotspot");
+  await selkies.frame(1, true);
+  await until("a frame after the arrow", async () => one.sent.some((message) => typeof message !== "string"));
+  assert.ok(!said(one).some((message) => message.includes("QVJST1c=")), "Selkies' arrow went no further");
+
+  // A viewer that connects later has the pointer as it is, before its next change.
+  const two = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-two-0002&stream=selkies`);
+  await until("the second viewer's pointer", async () => said(two).includes("BB_POINTER,640,360"));
+  assert.ok(said(two).includes(cursor));
+  assert.equal(runs.length, 1, "one helper for the box, whatever its viewers");
+  runs[0]!.emit({ type: "leave" });
+  await until("the pointer gone, for both", async () => said(one).includes("BB_POINTER,") && said(two).includes("BB_POINTER,"));
+
+  // With no viewer left, the helper ends.
+  await one.close();
+  await two.close();
+  await until("the helper ended", async () => runs[0]!.ended);
+});
+
+test("a box whose image has no bb-box-cursor, as every Wayland box of a 24.04 image, keeps Selkies' own cursor messages and gets no pointer of bb-box's (#707, 060)", async (t) => {
+  const { harness, app, world } = await start(undefined, { kinds: [FAKE_SELKIES_KIND] });
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: FAKE_SELKIES_KIND.id });
+  await app.boxes.idle();
+  const box = await only(app);
+  const selkies = world.backend!.selkies;
+  const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-one-0001&stream=selkies`);
+  await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));
+  await selkies.pages[0]!.send('cursor,{"curdata":"QVJST1c=","hotx":0,"hoty":0}');
+  await until("Selkies' cursor", async () => one.sent.includes('cursor,{"curdata":"QVJST1c=","hotx":0,"hoty":0}'));
+  await selkies.frame(1, true);
+  await until("a frame", async () => one.sent.some((message) => typeof message !== "string"));
+  assert.ok(!one.sent.some((message) => typeof message === "string" && message.startsWith("BB_POINTER")), "no pointer of bb-box's");
+  await one.close();
 });
 
 test("the backend resizes a desktop whose stream server cannot, one resize at a time and the latest last, and not below the display's smallest size (021)", async (t) => {

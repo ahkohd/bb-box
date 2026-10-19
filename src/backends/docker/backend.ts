@@ -23,7 +23,7 @@ import { randomBytes } from "node:crypto";
 import { hostname as localHostname } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { MIN_DESKTOP, type Display, type DisplaySize } from "../../transports/types.ts";
+import { MIN_DESKTOP, type BoxPointer, type Display, type DisplaySize } from "../../transports/types.ts";
 import {
   type GuestOs,
   BackendError,
@@ -55,7 +55,7 @@ import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
-import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
+import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, waylandPointer } from "../wayvnc.ts";
 
@@ -412,6 +412,7 @@ export class DockerBackend implements Backend {
   readonly #selkies: SelkiesPresence;
   /** Whether each Wayland box's image has bb-box-cursor (060). */
   readonly #cursor: ImageFile;
+  readonly #cursorHelper: string;
 
   /**
    * Image operations (049): a container from an image, its commit as an
@@ -438,7 +439,8 @@ export class DockerBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#selkies = new SelkiesPresence(options.selkiesLauncher);
-    this.#cursor = new ImageFile(options.cursorHelper ?? CURSOR_HELPER);
+    this.#cursorHelper = options.cursorHelper ?? CURSOR_HELPER;
+    this.#cursor = new ImageFile(this.#cursorHelper);
     this.#kinds = dockerKinds(config);
     this.#rootlessKinds = dockerKinds(config, true);
     this.#oldDesktopKinds = dockerKinds(config, false, false);
@@ -853,6 +855,7 @@ export class DockerBackend implements Backend {
               },
               ...(kind === "linux-desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
               ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal), pointer: (shown: boolean, signal?: AbortSignal) => waylandPointer(command, shown || sends, signal) } : {}),
+              ...(sends ? { followPointer: (onEvent: (event: BoxPointer) => void, signal: AbortSignal) => followPointer(command, onEvent, signal, this.#cursorHelper) } : {}),
               minSize: MIN_DESKTOP,
             },
     );
