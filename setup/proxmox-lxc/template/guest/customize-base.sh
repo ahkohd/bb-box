@@ -301,8 +301,10 @@ for command in git git-lfs gh node npm npx pnpm yarn python3 pip3 uv uvx rg fd j
   runuser -u "$user" -- env PATH="$box_path" sh -c 'command -v "$1" >/dev/null' sh "$command" ||
     die "$command is not on $user's PATH"
 done
-[ "$(runuser -u "$user" -- env HOME="$box_home" npm config get prefix)" = "$box_home/.local" ] || die "npm's global prefix for $user is not $box_home/.local"
-[ "$(env HOME=/root npm config get prefix)" = /usr/local ] || die "npm's global prefix for root is not /usr/local"
+# With a PATH of their own, as npm runs node by name: pct exec gives a 26.04
+# CT a PATH without /usr/local/bin.
+[ "$(runuser -u "$user" -- env HOME="$box_home" PATH="$box_path" npm config get prefix)" = "$box_home/.local" ] || die "npm's global prefix for $user is not $box_home/.local"
+[ "$(env HOME=/root PATH=/usr/local/bin:/usr/bin:/bin npm config get prefix)" = /usr/local ] || die "npm's global prefix for root is not /usr/local"
 docker compose version >/dev/null
 docker buildx version >/dev/null
 echo "customize-base: done"
