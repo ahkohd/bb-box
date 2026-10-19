@@ -62,3 +62,21 @@ test("Docker's Wayland stage has a base of its own, 24.04 until a 26.04 build ha
   assert.match(dockerfile, /ubuntu:26\.04@sha256:[0-9a-f]{64}/, "the 26.04 digest to try it with is named");
   for (const stage of ["fetch", "linux", "desktop"]) assert.match(dockerfile, new RegExp(`^FROM \\$\\{UBUNTU\\} AS ${stage}$`, "m"), `${stage} stays on UBUNTU`);
 });
+
+test("each command a guest script runs as the box user, or npm as root, has a PATH of its own: pct exec gives a 26.04 CT one without /usr/local/bin", async () => {
+  const { readdirSync } = await import("node:fs");
+  const guest = join(SETUP, "proxmox-lxc", "template", "guest");
+  const bare: string[] = [];
+  for (const name of readdirSync(guest).filter((file) => file.endsWith(".sh"))) {
+    for (const [index, line] of readFileSync(join(guest, name), "utf8").split("\n").entries()) {
+      if (/^\s*#/.test(line) || !/\brunuser -u /.test(line)) continue;
+      // What /usr/bin has on any PATH needs none.
+      if (/runuser -u "\$user" -- (mkdir|install|chmod|test) /.test(line)) continue;
+      if (!/\bPATH=/.test(line)) bare.push(`${name}:${index + 1}: ${line.trim()}`);
+    }
+  }
+  assert.deepEqual(bare, []);
+  const base = read("proxmox-lxc/template/guest/customize-base.sh");
+  assert.match(base, /env HOME="\$box_home" PATH="\$box_path" npm config get prefix/);
+  assert.match(base, /env HOME=\/root PATH=\/usr\/local\/bin:\/usr\/bin:\/bin npm config get prefix/);
+});
