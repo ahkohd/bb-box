@@ -106,6 +106,8 @@ while IFS=$'\t' read -r name file url sha pin_arch; do
   # The Wayland desktop streams with wayvnc, and Selkies capturing Sway
   # (060), and has no GPU (048).
   case "$kind:$name" in desktop-wayland-cpu:tigervnc | desktop-wayland-cpu:virtualgl) continue ;; esac
+  # Only the Wayland desktop moves to Ubuntu 26.04; the X11 desktops stay on 24.04.
+  case "$kind:$name" in desktop-wayland-cpu:*) ;; *-ubuntu26.04) continue ;; esac
   [ "$url" = - ] || fetch "$url" "$sha" "$file"
 done <"$here/desktop-pins.tsv"
 [ "$kind" = desktop ] || exit 0

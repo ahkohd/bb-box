@@ -1,5 +1,6 @@
 # Desktop artifacts, pinned by SHA-256. Columns (tab separated): name, file, URL, SHA-256, architecture (x86_64 or arm64).
 # The NVIDIA installer is not here: fetch-artifacts.sh downloads the host's own driver version and checks NVIDIA's published SHA-256.
+# A name ending -ubuntu26.04 is for the Wayland desktop on Ubuntu 26.04; the same name without it, for 24.04.
 # tigervnc: SHA-256 of the file whose MD5 SourceForge lists for the release. chrome: from Google's stable Packages index, InRelease signed by EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796. virtualgl and selkies: GitHub release asset digest.
 tigervnc	tigervncserver_1.16.2-1ubuntu1_amd64.deb	https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/ubuntu-24.04LTS/amd64/tigervncserver_1.16.2-1ubuntu1_amd64.deb/download	55048dedc7707b9a242740711569b3ab96178f968437d29d4f86bbad7cce6162	x86_64
 virtualgl	virtualgl_3.1.5_amd64.deb	https://github.com/VirtualGL/virtualgl/releases/download/3.1.5/virtualgl_3.1.5_amd64.deb	df3f7788ce41b182a47c0d298e5cd6d2d63579522cb41825970b7726e825485e	x86_64
@@ -8,6 +9,7 @@ cua-driver	cua-driver-rs-0.28.3-linux-x86_64-binary.tar.gz	https://github.com/tr
 cua-driver-binary	cua-driver	-	5744fc102c9f75d011f0ab00f998668ba1f77a5c913c78d5f900a81c7cfe28ea	x86_64
 rustup	rustup-init	https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init	dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71	x86_64
 selkies	selkies-2.0.0-ubuntu24.04-amd64.deb	https://github.com/selkies-project/selkies/releases/download/2.0.0/selkies-2.0.0-ubuntu24.04-amd64.deb	bbaa4d71012b9374a753b7dfddc1da07e31f34b04277fe4fb3d045f18fd88391	x86_64
+selkies-ubuntu26.04	selkies-2.0.0-ubuntu26.04-amd64.deb	https://github.com/selkies-project/selkies/releases/download/2.0.0/selkies-2.0.0-ubuntu26.04-amd64.deb	4f1fa49d89f7601b87480168fa38d4f879b5d609b5b3510cef25a88eb4ace753	x86_64
 tigervnc	tigervncserver_1.16.2-1ubuntu1_arm64.deb	https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/ubuntu-24.04LTS/arm64/tigervncserver_1.16.2-1ubuntu1_arm64.deb/download	d20c746bb7e0b2cca7c24229e9a6de2050674a550ea767ee6669f75f47e0a068	arm64
 virtualgl	virtualgl_3.1.5_arm64.deb	https://github.com/VirtualGL/virtualgl/releases/download/3.1.5/virtualgl_3.1.5_arm64.deb	9ac238e8a18c06d84ef65444a591a7a5bb4c4ce9e8cfdd92f8a2aea35edbb5d7	arm64
 chrome	google-chrome-stable_154.0.8037.92-1_arm64.deb	https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_154.0.8037.92-1_arm64.deb	986610bcbc1f58eeede94921086adbb3c1df2e6d3cb4da395b1a18e71b7deb77	arm64
@@ -15,3 +17,4 @@ cua-driver	cua-driver-rs-0.28.3-linux-arm64-binary.tar.gz	https://github.com/try
 cua-driver-binary	cua-driver	-	197fe727f1fbe6a549bdab60f1c19534083a7011c869458c3493aed8d0ab1133	arm64
 rustup	rustup-init	https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init	15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433	arm64
 selkies	selkies-2.0.0-ubuntu24.04-arm64.deb	https://github.com/selkies-project/selkies/releases/download/2.0.0/selkies-2.0.0-ubuntu24.04-arm64.deb	3900f3ba805898c495829629092553cc1cf4d5a864ffc4056f57d21646ad45e4	arm64
+selkies-ubuntu26.04	selkies-2.0.0-ubuntu26.04-arm64.deb	https://github.com/selkies-project/selkies/releases/download/2.0.0/selkies-2.0.0-ubuntu26.04-arm64.deb	ccc98374ae80b39eeca13011204a36e19d840b0bb424a6791dde7ec059db118d	arm64

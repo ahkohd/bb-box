@@ -29,10 +29,13 @@ printf 'APT::Snapshot "%s";\nAcquire::Retries "5";\n' "$snapshot" >/etc/apt/apt.
 # against the SHA-256 in the snapshot's signed index. The host differs from
 # the image's own sources so that the pin matches only this source, and the
 # file name sorts after ubuntu.sources because apt tries sources in that order.
-cat >/etc/apt/sources.list.d/zz-bb-box-build-fallback.sources <<'EOF'
+# The suites are the image's release's: noble for 24.04, resolute for 26.04.
+suite=$(. /etc/os-release && echo "$VERSION_CODENAME")
+[ -n "$suite" ] || { echo "baseline: /etc/os-release names no release" >&2; exit 1; }
+cat >/etc/apt/sources.list.d/zz-bb-box-build-fallback.sources <<EOF
 Types: deb
 URIs: http://gb.archive.ubuntu.com/ubuntu
-Suites: noble noble-updates noble-backports noble-security
+Suites: $suite $suite-updates $suite-backports $suite-security
 Components: main universe restricted multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 Snapshot: no

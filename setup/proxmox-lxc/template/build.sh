@@ -244,11 +244,14 @@ for f in "$cache"/*; do
   ln "$f" "$stage/artifacts/" 2>/dev/null || cp "$f" "$stage/artifacts/"
 done
 
-# The OS template.
-os=${BBBOX_OS_TEMPLATE#*:vztmpl/}
-if ! pveam list "${BBBOX_OS_TEMPLATE%%:*}" | grep -q "$os"; then
+# The OS template: Ubuntu 26.04 for the Wayland desktop, whose Sway and
+# wayvnc carry the box's own pointer shapes; 24.04 for the rest.
+os_template=$BBBOX_OS_TEMPLATE
+[ -z "$wayland" ] || os_template=$BBBOX_OS_TEMPLATE_WAYLAND
+os=${os_template#*:vztmpl/}
+if ! pveam list "${os_template%%:*}" | grep -q "$os"; then
   pveam update >/dev/null
-  pveam download "${BBBOX_OS_TEMPLATE%%:*}" "$os"
+  pveam download "${os_template%%:*}" "$os"
 fi
 
 # A template waits at its kinds' default size (028), so its warm boxes serve
@@ -259,7 +262,7 @@ lines=
 if [ "$kind" = desktop ] && [ -z "$cpu" ]; then lines=$(gpu_lines "$gpu"); fi
 [ -z "$cpu" ] || lines="# cpu only"
 [ -z "$wayland" ] || lines="# Wayland, cpu only"
-pct create "$ct" "$BBBOX_OS_TEMPLATE" --hostname "bb-box-$kind" --pool "$BBBOX_POOL" --unprivileged 1 \
+pct create "$ct" "$os_template" --hostname "bb-box-$kind" --pool "$BBBOX_POOL" --unprivileged 1 \
   --features nesting=1 --cores 16 --memory 16384 --swap 1024 --rootfs "$BBBOX_STORAGE:$size" --tags "$build" \
   --net0 "name=eth0,bridge=$BBBOX_BRIDGE,ip=$BBBOX_BUILD_ADDRESS/$BBBOX_PREFIX,gw=$BBBOX_GATEWAY,type=veth" \
   --nameserver "$BBBOX_DNS" --ostype ubuntu --onboot 0
