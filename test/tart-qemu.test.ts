@@ -319,8 +319,8 @@ test("Windows on a Mac offers video by choice while every Mac's image records Op
   writeFileSync(join(ssh.home(GUEST), "stream"), "");
   const other = { ...guest, data: { ...guest.data, box: "bx-another" } };
   const shown = (await backend.transports(other, KIND)).displays;
-  assert.deepEqual(shown.map(({ open: _, resize: __, ...display }) => display), [
-    { id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4, minSize: { width: 800, height: 600 } },
+  assert.deepEqual(shown.map(({ open: _, resize: __, pointer: ___, ...display }) => display), [
+    { id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4, pointerWhile: "rfb", minSize: { width: 800, height: 600 } },
     { id: "video", label: "Desktop, as video", protocol: "selkies", resizable: true, cursor: "stream" },
   ]);
   const route = (await shown[1]!.open()).route;
@@ -346,8 +346,8 @@ test("the desktop resizes to the listed mode that best covers the viewer, set by
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   const { displays } = await backend.transports(guest, KIND);
   assert.deepEqual(
-    displays.map(({ open: _, resize: __, ...display }) => display),
-    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4, minSize: { width: 800, height: 600 } }],
+    displays.map(({ open: _, resize: __, pointer: ___, ...display }) => display),
+    [{ id: "desktop", label: "Desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4, pointerWhile: "rfb", minSize: { width: 800, height: 600 } }],
   );
 
   // The acquire compiles the helper, and the first resize waits for it.

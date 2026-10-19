@@ -340,6 +340,51 @@ export async function setMode(command: CommandTransport, size: DisplaySize, sign
   }
 }
 
+/**
+ * Takes Windows' pointer out of the picture, or puts it back, for the VNC
+ * display: QEMU's and Tart's servers show what Windows draws, and once a
+ * mouse has moved Windows draws its pointer, so a person in control saw the
+ * box's pointer trail their browser's (the desktop sweep). Out, each of
+ * Windows' pointers is a blank one (SetSystemCursor); back, Windows loads
+ * the user's own (SPI_SETCURSORS). The blank ones last until then, or until
+ * the user signs in again.
+ */
+const POINTER_SOURCE = String.raw`using System;
+using System.Runtime.InteropServices;
+
+public static class BbPointer {
+  [DllImport("user32.dll")] static extern bool SetSystemCursor(IntPtr cursor, uint id);
+  [DllImport("user32.dll")] static extern IntPtr CreateCursor(IntPtr instance, int x, int y, int width, int height, byte[] and, byte[] xor);
+  [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, IntPtr value, uint winIni);
+  // The arrow, I-beam, wait, cross, up arrow, the four sizes and move, no, hand, app starting, help, pin and person.
+  static readonly uint[] CURSORS = { 32512, 32513, 32514, 32515, 32516, 32642, 32643, 32644, 32645, 32646, 32648, 32649, 32650, 32651, 32671, 32672 };
+  const uint SPI_SETCURSORS = 0x57;
+
+  public static void Hide() {
+    byte[] and = new byte[32 * 32 / 8], xor = new byte[32 * 32 / 8];
+    for (int i = 0; i < and.Length; i++) and[i] = 0xff;
+    foreach (uint id in CURSORS) SetSystemCursor(CreateCursor(IntPtr.Zero, 0, 0, 32, 32, and, xor), id);
+  }
+
+  public static void Show() {
+    SystemParametersInfo(SPI_SETCURSORS, 0, IntPtr.Zero, 0);
+  }
+}`;
+
+/** Loads BbPointer as $bbPointer (helper). */
+const POINTER_HELPER = helper("pointer", POINTER_SOURCE, "BbPointer", "bbPointer");
+
+/** Shows or hides Windows' pointer in the desktop's picture, in the box user's desktop session. */
+export async function windowsPointer(command: CommandTransport, shown: boolean, signal?: AbortSignal): Promise<void> {
+  const script = `${POINTER_HELPER}
+$bbPointer::${shown ? "Show" : "Hide"}()`;
+  const result = await command.run(desktopScript(script, POINTER_TIMEOUT_MS), { timeoutMs: POINTER_TIMEOUT_MS + 5_000, signal, maxOutputBytes: 4096 });
+  if (result.exitCode !== 0) throw new Error(`Windows' pointer could not be ${shown ? "shown" : "hidden"}: ${result.stderr.trim() || `exit code ${result.exitCode}.`}`);
+}
+
+/** How long Windows may take to show or hide its pointer, its helper compiled the first time. */
+const POINTER_TIMEOUT_MS = 30_000;
+
 /** Sets Windows' clock from BB's server's. */
 export async function setClock(command: CommandTransport, signal?: AbortSignal): Promise<void> {
   const result = await command.run(clockScript(Date.now()), { timeoutMs: CLOCK_TIMEOUT_MS, signal, maxOutputBytes: 4096 });

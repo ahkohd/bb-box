@@ -3312,6 +3312,30 @@ test("a Wayland desktop's pointer leaves the picture while a person holds contro
   await one.close();
 });
 
+test("a Windows desktop's pointer leaves the VNC picture only while the person in control watches it, not the video, and comes back as they leave it (the desktop sweep)", async (t) => {
+  const { harness, box, world } = await desktopBox({ kind: FAKE_SELKIES_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  const pointers: boolean[] = [];
+  world.backend!.pointers = pointers;
+  world.backend!.pointerWhileRfb = true;
+  // A person takes control by video: the video leaves the pointer out itself, so it stays.
+  const video = "viewer-video-0001";
+  const watching = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${video}&stream=selkies`);
+  await until("Selkies' first message", async () => watching.sent.includes("MODE websockets"));
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer: video });
+  await until("asked, with the person by video", async () => pointers.length >= 2);
+  assert.ok(!pointers.includes(false), "never out for a person watching by video");
+  // Over VNC: out while they hold control there.
+  const vnc = "viewer-vnc-0001";
+  const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${vnc}`);
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer: vnc });
+  await until("the pointer out, with the person watching over VNC", async () => pointers.at(-1) === false);
+  // Their VNC viewer goes while they still hold control: back, for the video's sake.
+  await one.close();
+  await until("the pointer back as the VNC viewer goes", async () => pointers.at(-1) === true);
+  await watching.close();
+});
+
 test("High resolution is offered for an X11 desktop with video, not a Wayland one, which has video too: the owner has it on hold (060)", () => {
   const box = (kind: string) =>
     ({ kind, capabilities: { os: "linux", gpu: false, displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { id: "selkies", protocol: "selkies", resizable: true }] } }) as unknown as BoxRecord;
