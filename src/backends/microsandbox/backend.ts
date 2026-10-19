@@ -338,8 +338,9 @@ export function msbKinds(config: MsbConfig, arch: Arch = "x86_64"): BoxKind[] {
         gpu: false,
         features: docker,
         command: MSB_COMMAND,
-        // Selkies beside Xtigervnc, as on x86_64; video by choice until it is measured on arm64 (060).
-        displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { ...SELKIES_DISPLAY, byChoice: true }],
+        // Selkies beside Xtigervnc, as on x86_64, and video by default: measured on arm64, it is as close as VNC at half the
+        // bandwidth, and closer on a slow link (060).
+        displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
         computerUse: CUA_DRIVER,
         enrol: true,
       },

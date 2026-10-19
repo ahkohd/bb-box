@@ -59,7 +59,7 @@ Without control, your own pointer shows over the desktop. With control, the poin
 
 A Linux desktop can also show as video, which follows a dragged window far more closely than the usual stream (VNC), and stays smooth on a slow connection where VNC falls to a few frames a second. It is on unless **Linux desktops as video** is off in [settings](settings.md#general), and works only for Linux desktops drawn by the CPU, X11 and Wayland. Other desktops show as before.
 
-Such a desktop opens as video, except on arm64, on a Mac, where it opens over VNC with **Show as VNC** ticked until video there is measured. To see it over VNC instead, select **Show as VNC** under **Display** in the toolbar's menu; it is ticked while the desktop shows over VNC. Your choice lasts for that box in that tab; select it again to go back to video.
+Such a desktop opens as video, on arm64 under microsandbox too. To see it over VNC instead, select **Show as VNC** under **Display** in the toolbar's menu; it is ticked while the desktop shows over VNC. Your choice lasts for that box in that tab; select it again to go back to video. A Linux desktop on a Tart Mac opens over VNC instead, as every Tart desktop does, with **Show as VNC** ticked; select it to see the desktop as video.
 
 A macOS desktop on a Mac of the SSH host pool opens as video. One on a Tart Mac opens over VNC instead, as VNC is already smooth there, with **Show as VNC** ticked. Select it to see the desktop as video, which uses much less bandwidth, though a key shows a little later. Your choice lasts in the same way. The Tart backend's **Video by default for macOS desktops** setting makes such desktops open as video.
 
