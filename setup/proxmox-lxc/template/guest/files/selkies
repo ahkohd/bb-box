@@ -18,14 +18,18 @@
 # and leaves for x264 should it fail, with no NvFBC, which on this X screen
 # would hold each capture's start for 5 s (bb-box-nofbc.c). Elsewhere, x264
 # on the CPU.
+#
+# On the GPU path, video stays 4:2:0, locked, whatever a viewer asks: NVENC's
+# 4:4:4 session needs more GPU memory than a shared GPU has left, failed
+# with NV_ENC_ERR_OUT_OF_MEMORY, and Selkies fell back to x264.
 set -u
-use_cpu=true
-[ "$(cat /run/bb-box/display-mode 2>/dev/null)" != gpu ] || use_cpu=false
+use_cpu=true fullcolor=false
+[ "$(cat /run/bb-box/display-mode 2>/dev/null)" != gpu ] || { use_cpu=false fullcolor="false|locked"; }
 export DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority
 [ "$use_cpu" = true ] || export LD_PRELOAD=/usr/local/lib/bb-box-nofbc.so
 exec /usr/bin/selkies --addr=127.0.0.1 --port=5980 --mode=websockets \
   --enable-basic-auth=false --enable-https=false \
-  --encoder=h264enc --use-cpu="$use_cpu" --enable-resize=false --second-screen=false \
+  --encoder=h264enc --use-cpu="$use_cpu" --video-fullcolor="$fullcolor" --enable-resize=false --second-screen=false \
   --enable-binary-clipboard=true \
   --audio-enabled=false --microphone-enabled=false --webcam-enabled=false --gamepad-enabled=false \
   --file-transfers=none --printing-enabled=false --command-enabled=false --enable-dual-mode=false \

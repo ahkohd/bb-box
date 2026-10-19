@@ -15,12 +15,18 @@ const read = (path: string) => readFileSync(join(GUEST, path), "utf8");
 test("Selkies' launcher encodes with NVENC on the GPU display path, without NvFBC, and with x264 on the CPU elsewhere", () => {
   const launcher = read("files/selkies");
   assert.doesNotMatch(launcher, /sleep infinity/, "it no longer waits on the GPU path");
-  assert.match(launcher, /^use_cpu=true\n\[ "\$\(cat \/run\/bb-box\/display-mode 2>\/dev\/null\)" != gpu \] \|\| use_cpu=false$/m);
+  assert.match(launcher, /^use_cpu=true fullcolor=false\n\[ "\$\(cat \/run\/bb-box\/display-mode 2>\/dev\/null\)" != gpu \] \|\| \{ use_cpu=false fullcolor="false\|locked"; \}$/m);
   assert.match(launcher, /^\[ "\$use_cpu" = true \] \|\| export LD_PRELOAD=\/usr\/local\/lib\/bb-box-nofbc\.so$/m);
-  assert.match(launcher, /--encoder=h264enc --use-cpu="\$use_cpu"/);
+  // NVENC's 4:4:4 session ran out of a shared GPU's memory, so a viewer cannot ask for it there.
+  assert.match(launcher, /--encoder=h264enc --use-cpu="\$use_cpu" --video-fullcolor="\$fullcolor"/);
   const customize = read("customize-desktop.sh");
   assert.match(customize, /gcc -O2 -Wall -Werror -shared -fPIC -o \/usr\/local\/lib\/bb-box-nofbc\.so "\$build\/guest\/files\/bb-box-nofbc\.c" -ldl/);
   assert.match(customize, /install -m 0644 "\$build\/guest\/files\/selkies-probe\.mjs" \/usr\/local\/libexec\/bb-box\/selkies-probe\.mjs/);
+});
+
+test("the desktop draws text in greyscale, which 4:2:0 video keeps, not in subpixel colours", () => {
+  const customize = read("customize-desktop.sh");
+  assert.match(customize, /cat >\/etc\/fonts\/local\.conf <<'EOF'\n[^]*?<match target="font">\n    <edit name="rgba" mode="assign"><const>none<\/const><\/edit>\n  <\/match>\n[^]*?\nEOF\n/);
 });
 
 test("the desktop check asks Selkies for video, and on the GPU path needs NVIDIA's encoder loaded", () => {
