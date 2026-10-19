@@ -720,10 +720,34 @@ const WINDOWS_CHROMIUM = /(^|[\\/])(msedge|chrome|brave|microsoft edge|google ch
 export function launchArgs(os: GuestOs, input: { app?: string; url?: string }): Json {
   if (input.url !== undefined) return { urls: [input.url] };
   const app = input.app!;
+  if (os === "macos" && isFinder(app)) return { bundle_id: FINDER, urls: ["~"] };
   const path = app.includes("/") || (os === "windows" && app.includes("\\"));
   const args: Json = path ? { launch_path: app } : { name: app };
   if (os === "windows" && WINDOWS_CHROMIUM.test(app.trim())) args.additional_arguments = ["--force-renderer-accessibility"];
   return args;
+}
+
+/**
+ * Finder on macOS: it always runs, from /System/Library/CoreServices, where
+ * Cua's lookup by name does not look, and opens a window only for a folder.
+ * So a launch gives its bundle ID and the home folder, which opens a new
+ * Finder window there (#712).
+ */
+const FINDER = "com.apple.finder";
+
+/** True for Finder, by name, bundle ID or path. */
+function isFinder(app: string): boolean {
+  return /^(finder|com\.apple\.finder)$/i.test(appName(app));
+}
+
+/** An app's name as a launch gives it: Finder for Finder.app or /System/Library/CoreServices/Finder.app/. */
+function appName(app: string): string {
+  return app.trim().replace(/[\\/]+$/, "").replace(/^.*[\\/]/, "").replace(/\.app$/i, "");
+}
+
+/** Cua on macOS found no app of that name or bundle ID where it looks. */
+function notInstalled(result: McpResult): boolean {
+  return !!result.isError && (obj(result.structuredContent).error === "APP_NOT_INSTALLED" || /\bNo installed macOS app found\b/i.test(rawText(result)));
 }
 
 /** True when a window is the app a launch named, by name or path: mousepad, Mousepad or /usr/bin/mousepad, or an app ID such as org.xfce.mousepad. */
@@ -1230,8 +1254,19 @@ export class Computer {
       }
       const what = input.url ?? input.app!;
       const before = await this.#listWindows(use);
-      const args = launchArgs(box.capabilities.os, input);
+      const mac = box.capabilities.os === "macos";
+      let args = launchArgs(box.capabilities.os, input);
+      // Cua on macOS opens apps by name or bundle ID, not by path.
+      if (mac && typeof args.launch_path === "string") args = (await this.#macApp(use, input.app!)) ?? { name: input.app! };
       let { result } = await this.#call(use, "launch_app", args, { readOnly: false });
+      // An app outside the folders Cua looks in by name, such as one in /System/Library/CoreServices, by the bundle ID list_apps gives it (#712).
+      if (mac && input.app !== undefined && args.name !== undefined && notInstalled(result)) {
+        const found = await this.#macApp(use, input.app);
+        if (found) {
+          args = found;
+          ({ result } = await this.#call(use, "launch_app", args, { readOnly: false }));
+        }
+      }
       const lookupUntil = Date.now() + (this.#deps.lookupWaitMs ?? LOOKUP_WAIT_MS);
       while (lookupBusy(result) && Date.now() < lookupUntil) {
         await sleep(Math.min(LOOKUP_POLL_MS, Math.max(0, lookupUntil - Date.now())), use.signal);
@@ -1262,6 +1297,11 @@ export class Computer {
       for (const window of windows) use.state.windows.set(window.id, window);
       // A URL can open in a browser window that was already open, which then changes its title.
       const launched = num(obj(result.structuredContent).pid);
+      // An app already running on macOS with a window opens no other: its window, brought to the front (#712).
+      if (mac && input.app !== undefined && args.urls === undefined && !windows.length && launched !== undefined && [...before.values()].some((window) => window.pid === launched)) {
+        const open = await this.#alreadyOpen(use, input.app, before, launched);
+        if (open) return open;
+      }
       const browser = (window: WindowInfo) => BROWSER.test(window.app) || (launched !== undefined && window.pid === launched);
       let reused: WindowInfo | null = null;
       const waited = this.#deps.launchWaitMs ?? LAUNCH_WAIT_MS;
@@ -1281,6 +1321,10 @@ export class Computer {
         if (input.url !== undefined) {
           reused = [...now.values()].find((window) => before.has(window.id) && before.get(window.id)!.title !== window.title && browser(window)) ?? null;
         }
+      }
+      if (!windows.length && !reused && input.app !== undefined) {
+        const open = await this.#alreadyOpen(use, input.app, before, launched);
+        if (open) return open;
       }
       if (!windows.length && !reused) {
         const where = input.url !== undefined ? " It may have opened in a browser window that was already open." : "";
@@ -1664,12 +1708,15 @@ export class Computer {
   /**
    * The window of an app that was already open, when opening it again only
    * handed the launch to it. A single-instance app, such as Mousepad, may
-   * show a new document in its window and open none. bb-box brings that
-   * window to the front, as a new window would be. Null when the app had no
-   * window before.
+   * show a new document in its window and open none, as does an app on
+   * macOS that has a window already. bb-box brings that window, of the app
+   * by name or of process `pid`, to the front, as a new window would be.
+   * Null when the app had no window before.
    */
-  async #alreadyOpen(use: Use, app: string, before: ReadonlyMap<number, WindowInfo>): Promise<ComputerResult | null> {
-    const own = [...(await this.#listWindows(use)).values()].filter((window) => before.has(window.id) && sameApp(window.app, app) && window.width > 1 && window.height > 1);
+  async #alreadyOpen(use: Use, app: string, before: ReadonlyMap<number, WindowInfo>, pid?: number): Promise<ComputerResult | null> {
+    const own = [...(await this.#listWindows(use)).values()].filter(
+      (window) => before.has(window.id) && (window.pid === pid || sameApp(window.app, app)) && window.width > 1 && window.height > 1,
+    );
     const window = own.find((candidate) => candidate.onScreen) ?? own[0];
     if (!window) return null;
     // Bringing a window to the front again does no harm, so a lost connection may retry it.
@@ -1679,6 +1726,31 @@ export class Computer {
     const was = before.get(window.id)!.title;
     if (was !== window.title) lines.push(`Its title was "${was}" before, so it may show a new document.`);
     return { text: lines.join("\n\n"), hints: [`Call computer_observe with window ${window.id} to read it.`] };
+  }
+
+  /**
+   * What launch_app takes for an app on macOS that Cua lists, by its name,
+   * bundle ID or path: its bundle ID, with the home folder for Finder. Null
+   * when Cua lists no such app, or cannot list them.
+   */
+  async #macApp(use: Use, app: string): Promise<Json | null> {
+    let listed: Json[];
+    try {
+      const { result } = await this.#call(use, "list_apps", {}, { readOnly: true });
+      if (result.isError) return null;
+      listed = arr(obj(result.structuredContent).apps).map(obj);
+    } catch (error) {
+      if (error instanceof ComputerError && error.code !== "driver") throw error;
+      return null;
+    }
+    const path = app.trim().replace(/\/+$/, "");
+    const name = appName(app).toLowerCase();
+    const found = path.includes("/")
+      ? listed.find((entry) => str(entry.launch_path)?.replace(/\/+$/, "") === path)
+      : listed.find((entry) => str(entry.name)?.trim().toLowerCase() === name || str(entry.bundle_id)?.toLowerCase() === name);
+    const id = found && str(found.bundle_id);
+    if (!id) return null;
+    return id === FINDER ? { bundle_id: id, urls: ["~"] } : { bundle_id: id };
   }
 
   /** The names of the apps installed in the box, as Cua lists them, without settings panels or session actions; none when it cannot. */
