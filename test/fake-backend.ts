@@ -447,15 +447,6 @@ export class FakeBackend implements Backend {
     return { ...guest, size: to };
   }
 
-  /** Guests held() says still have what their start lowered, by ref (#888); settle() takes each out, and is noted. */
-  readonly settling = new Set<string>();
-  readonly settled: string[] = [];
-
-  async settle(guest: Guest): Promise<void> {
-    this.settled.push(guest.ref);
-    this.settling.delete(guest.ref);
-  }
-
   async held(): Promise<HeldGuest[]> {
     const held: HeldGuest[] = [];
     const refs =
@@ -476,7 +467,6 @@ export class FakeBackend implements Backend {
         ...guest,
         owner: owner && { boxId: owner.boxId, threadId: owner.threadId, name: owner.name, kind: owner.kind, createdAt: owner.createdAt },
         power,
-        ...(this.settling.has(ref) ? { settling: true } : {}),
       });
     }
     return held;
