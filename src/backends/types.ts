@@ -266,8 +266,6 @@ export interface HeldGuest extends Guest {
   readonly owner: BoxOwner | null;
   /** May lag behind the guest: the sweep asks `power()` before it acts on a change. */
   readonly power: PowerState;
-  /** The backend lowered something while the guest started, such as its CPU weight, which `settle` puts back (#888). */
-  readonly settling?: boolean;
 }
 
 /** "unknown" when the provider cannot tell, for example a machine that does not answer. */
@@ -573,12 +571,6 @@ export interface Backend {
    * same install ID finds it: the sweep rebuilds lost records from it.
    */
   held(signal?: AbortSignal): Promise<HeldGuest[]>;
-
-  /**
-   * Puts back what the backend lowered while a guest started, as its CPU weight (#888): the sweep asks for a ready
-   * box's guest that held() said is `settling`, as after a restart of bb-box while it started.
-   */
-  settle?(guest: Guest, signal?: AbortSignal): Promise<void>;
 
   /**
    * For a box recorded before install IDs (018): records this install on its

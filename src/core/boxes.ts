@@ -2452,11 +2452,6 @@ export class Boxes {
             seen.add(record.id);
             if (record.resize?.state === "resizing" && !this.#work.has(record.id)) await this.#resizeCutShort(record, guest);
             if (!this.#work.has(record.id)) await this.#observe(record, { signal, power: guest.power });
-            // A ready box whose guest still has what its start lowered, as when bb-box restarted while it started (#888).
-            // A spare keeps it until a box takes it.
-            if (guest.settling && record.readyAt !== null && record.threadId !== SPARES && !this.#work.has(record.id)) {
-              await backend.settle?.(guest, signal).catch((error) => this.#deps.logError("put a box's CPU weight back", error));
-            }
             continue;
           }
           const owner = guest.owner;

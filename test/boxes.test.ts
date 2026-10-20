@@ -1475,23 +1475,6 @@ test("the sweep releases the boxes of ended threads and keeps live and unknown o
   assert.ok(world.backend.calls.includes("maintain"));
 });
 
-test("the sweep puts back what a ready box's guest still has lowered from its start, as after a restart, and leaves a spare's (#888)", async () => {
-  const world = setup();
-  world.threads.set("thr_live", "live");
-  const box = await world.boxes.acquire({ threadId: "thr_live", projectId: null, kind: "linux" });
-  const spare = await world.boxes.acquire({ threadId: SPARES, projectId: null, kind: "linux" });
-  await world.boxes.idle();
-  const ready = (await world.boxes.find(box.id))!;
-  const spareReady = (await world.boxes.find(spare.id))!;
-  assert.ok(ready.readyAt !== null && spareReady.readyAt !== null);
-  world.backend.settling.add(ready.guest!.ref);
-  world.backend.settling.add(spareReady.guest!.ref);
-  await world.boxes.sweep();
-  assert.deepEqual(world.backend.settled, [ready.guest!.ref], "the ready box's, once; the spare keeps its low weight until a box takes it");
-  await world.boxes.sweep();
-  assert.deepEqual(world.backend.settled, [ready.guest!.ref], "and not again");
-});
-
 test("a box goes for its thread ending only when BB says so at two sweeps running, so one wrong answer, as after a restart, takes no live thread's box", async () => {
   const logs: string[] = [];
   const world = setup({}, { log: (line) => logs.push(line) });

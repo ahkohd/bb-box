@@ -99,8 +99,6 @@ export interface GuestSettings {
   readonly hostname?: string;
   readonly name?: string;
   readonly cores?: number;
-  /** The guest's CPU weight against others: 100 by default, as when unset (#888). */
-  readonly cpuunits?: number;
   /** MiB */
   readonly memory?: number;
   /** MiB */
@@ -321,7 +319,6 @@ export class Proxmox {
       hostname: settings.hostname,
       name: settings.name,
       cores: settings.cores,
-      cpuunits: settings.cpuunits,
       memory: settings.memory,
       swap: settings.swap,
       net0: settings.net0,
