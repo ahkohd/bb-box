@@ -3,6 +3,14 @@
 
 /** The longest wait between attempts to reconnect to a desktop. */
 export const MAX_RETRY_MS = 15_000;
+/** Up to how much of a reconnect's wait is added at random, so the pages that lose the plugin together, as in a deploy, do not retry in step. */
+export const RETRY_JITTER = 0.25;
+
+/** The wait before the next attempt to reconnect, after `failures` in a row: 1 s, doubling up to MAX_RETRY_MS, and up to RETRY_JITTER more at random. */
+export function retryWait(failures: number, random: () => number = Math.random): number {
+  const wait = Math.min(MAX_RETRY_MS, 1000 * 2 ** failures);
+  return Math.round(wait * (1 + RETRY_JITTER * random()));
+}
 /** How long the viewer's size must hold before the desktop is asked for it again. */
 export const SETTLE_MS = 250;
 /** How long the paste chord waits after the text is sent, so a server that fetches the text (the extended clipboard) has it before the paste. */

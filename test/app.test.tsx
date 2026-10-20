@@ -17,10 +17,10 @@ import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-off
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
-import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, STALL_MS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
-import { OptionComposer, boxKey, macBrowser } from "../src/app/viewer.ts";
+import { MAX_RETRY_MS, OptionComposer, boxKey, macBrowser, retryWait } from "../src/app/viewer.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -3317,6 +3317,39 @@ test("a hidden desktop tab keeps its stream, hands control back after a minute, 
   expect(changes).toEqual(["takeControl box_2", "handBack box_2", "takeControl box_2"]);
   expect(novnc.FakeRfb.made).toHaveLength(2);
   returned.unmount();
+});
+
+test("a reconnect waits 1 s, doubling to MAX_RETRY_MS, and up to a quarter more at random, so pages that lose the plugin together do not retry in step", () => {
+  expect([0, 1, 2, 3, 4, 5].map((failures) => retryWait(failures, () => 0))).toEqual([1000, 2000, 4000, 8000, MAX_RETRY_MS, MAX_RETRY_MS]);
+  expect([0, 1, 4].map((failures) => retryWait(failures, () => 1))).toEqual([1250, 2500, MAX_RETRY_MS * 1.25]);
+  expect(retryWait(2, () => 0.5)).toBe(4500);
+});
+
+test("both viewers wait with jitter before they reconnect", async () => {
+  const undo = withVideo();
+  const random = vi.spyOn(Math, "random").mockReturnValue(1);
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    socket.onmessage?.({ data: videoFrame(0, true) });
+    await decodesMacroblocks();
+    socket.onclose?.({ code: 1012, reason: "Plugin reloaded" });
+    expect(session.connection).toMatchObject({ state: "disconnected", retryMs: 1250 });
+    session.dispose();
+  } finally {
+    random.mockRestore();
+    undo();
+  }
+  const random2 = vi.spyOn(Math, "random").mockReturnValue(1);
+  try {
+    const vnc = new DesktopSession("ws://bb/desktop?box=box_2&viewer=v");
+    act(() => void novnc.FakeRfb.made.at(-1)!.dispatchEvent(new CustomEvent("disconnect", { detail: { clean: false } })));
+    expect(vnc.connection).toMatchObject({ state: "disconnected", retryMs: 1250 });
+    vnc.dispose();
+  } finally {
+    random2.mockRestore();
+  }
 });
 
 test("a desktop tab shows why the desktop refused it, and reconnects", async () => {
