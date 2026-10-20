@@ -132,10 +132,17 @@ async function resizeBox(
   return app.boxes.resize(threadId, ref, { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] }, {
     restart: options.restart === true,
     check: options.check === true,
+    by: "the CLI",
     beforeRestart: async (box) => {
       await app.checkRestart(box, options.force === true);
     },
   });
+}
+
+/** A resize's answer, and what it means for the box's BB machine. */
+async function resizeWords(app: BbBox, answer: Awaited<ReturnType<typeof resizeBox>>, checked: boolean): Promise<string> {
+  const machine = checked ? null : await app.machineCores(answer);
+  return `${resizeText(answer, checked)}${machine ? `\n${machine}` : ""}`;
 }
 
 export function registerCli(bb: BbPluginApi, app: BbBox): void {
@@ -221,7 +228,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ positionals, options }, ctx) =>
             guard("Resizing the box", async () => {
               const threadId = threadOf(options.thread, ctx);
-              return out(resizeText(await resizeBox(app, threadId, positionals.box, options), options.check === true));
+              return out(await resizeWords(app, await resizeBox(app, threadId, positionals.box, options), options.check === true));
             }),
         }),
         machines: cliCommand({
@@ -252,7 +259,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           positionals: [{ name: "machine", description: "The machine's name or ID, from bb box machines.", required: true }],
           options: resizeOptions,
           run: ({ positionals, options }) =>
-            guard("Resizing the machine", async () => out(resizeText(await resizeBox(app, OPERATOR, positionals.machine, options), options.check === true))),
+            guard("Resizing the machine", async () => out(await resizeWords(app, await resizeBox(app, OPERATOR, positionals.machine, options), options.check === true))),
         }),
         "machines remove": cliCommand({
           summary: "Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force.",

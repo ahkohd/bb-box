@@ -776,11 +776,17 @@ export function resizeText(answer: ResizeAnswer, checked: boolean): string {
   return lines.join("\n");
 }
 
-/** What a kind's boxes can resize, for box_list and bb box kinds (061): one sentence when every offer agrees, otherwise per provider; empty when none can. */
+/**
+ * What a kind's boxes can resize, for box_list and bb box kinds (061): one
+ * sentence when every offer agrees, otherwise each offer that resizes, and
+ * once that the others cannot; empty when none can.
+ */
 export function kindResizeText(kind: KindView): string {
-  if (!kind.offers.some((offer) => offer.resizing)) return "";
-  const each = kind.offers.map((offer) => ({ name: offer.name, words: resizingWords(offer.resizing ?? null) }));
-  const same = new Set(each.map((offer) => offer.words));
-  if (same.size === 1) return each[0]?.words ?? "Resize: no.";
-  return `Resize: ${each.map((offer) => `on ${offer.name}, ${offer.words.replace(/^Resize: /, "").replace(/\.$/, "")}`).join("; ")}.`;
+  const able = kind.offers.filter((offer) => offer.resizing && resizingWords(offer.resizing) !== "Resize: no.");
+  if (!able.length) return "";
+  const words = (offer: OfferView) => resizingWords(offer.resizing!).replace(/^Resize: /, "").replace(/\.$/, "");
+  const same = new Set(able.map(words));
+  if (able.length === kind.offers.length && same.size === 1) return `Resize: ${words(able[0]!)}.`;
+  const others = able.length < kind.offers.length ? `; ${kind.offers.length - able.length === 1 ? "the other provider cannot" : "the other providers cannot"}` : "";
+  return `Resize: ${able.map((offer) => `on ${offer.name}, ${words(offer)}`).join("; ")}${others}.`;
 }

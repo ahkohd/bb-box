@@ -956,6 +956,22 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
 
         const resizing = kind ? (backend.resizing?.(kind.id) ?? null) : null;
         const live = resizing?.cores === "live" && resizing.memory === "live" && resizing.shrinks ? false : "the kind's cores and memory do not change live, larger and smaller";
+        const restarts = resizing?.cores === "restart" || resizing?.memory === "restart" ? false : "no part of the kind's size needs a restart";
+        /** Measures the box until it has `size`, for up to `ms`, and says what it last had; a command that fails, as while the box restarts, is tried again. */
+        const has = async (command: CommandTransport, size: BoxSize, ms = 15_000): Promise<string> => {
+          const until = Date.now() + ms;
+          let last = "";
+          for (;;) {
+            const result = await command.run(MEASURE, { timeoutMs: 30_000 }).catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: String(error) }));
+            const [cores, memoryMiB, diskMiB] = result.stdout.trim().split(/\s+/).map(Number) as [number, number, number];
+            last = result.exitCode === 0 ? `${cores} cores, ${memoryMiB} MiB memory, ${diskMiB} MiB disk` : `no answer: ${result.stderr.trim()}`;
+            const memory = memoryMiB >= size.memoryMiB * 0.9 && memoryMiB <= size.memoryMiB;
+            const disk = size.diskGiB === null || diskMiB >= size.diskGiB * 1024 * 0.9;
+            if (result.exitCode === 0 && cores === size.cores && memory && disk) return last;
+            if (Date.now() >= until) assert.fail(`after ${ms / 1000} s the box has ${last}, not ${describeSize(size)}`);
+            await new Promise((resolve) => setTimeout(resolve, 1_000));
+          }
+        };
         it("resizes live, larger then smaller, with a process still running, and the box has each size within 15 s (061)", { timeout, skip: skip.resize ?? skip.size ?? (measurable || live) }, async (t) => {
           assert.ok(guest?.size, "the box was acquired and read");
           const from = guest.size;
@@ -974,31 +990,35 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             return;
           }
           assert.ok(plan.parts.every((part) => part.way === "live"), "every part changes live");
-          /** Measures the box until it has `size`, for up to 15 s, and says what it last had. */
-          const has = async (size: BoxSize): Promise<string> => {
-            const until = Date.now() + 15_000;
-            let last = "";
-            for (;;) {
-              const result = await command.run(MEASURE, { timeoutMs: 30_000 });
-              const [cores, memoryMiB, diskMiB] = result.stdout.trim().split(/\s+/).map(Number) as [number, number, number];
-              last = `${cores} cores, ${memoryMiB} MiB memory, ${diskMiB} MiB disk`;
-              const memory = memoryMiB >= size.memoryMiB * 0.9 && memoryMiB <= size.memoryMiB;
-              const disk = size.diskGiB === null || diskMiB >= size.diskGiB * 1024 * 0.9;
-              if (cores === size.cores && memory && disk) return last;
-              if (Date.now() >= until) assert.fail(`after 15 s the box has ${last}, not ${describeSize(size)}`);
-              await new Promise((resolve) => setTimeout(resolve, 1_000));
-            }
-          };
           const grown = await backend.resize!(guest, kind!.id, larger, { restart: false }, signal());
           assert.deepEqual(grown.size, larger, "the backend reads the new size back");
-          console.log(`# ${options.name} ${kind!.id}: grown to ${describeSize(larger)}; the box has ${await has(larger)}`);
+          console.log(`# ${options.name} ${kind!.id}: grown to ${describeSize(larger)}; the box has ${await has(command, larger)}`);
           const smaller: BoxSize = { ...from, diskGiB: larger.diskGiB };
           const shrunk = await backend.resize!(grown, kind!.id, smaller, { restart: false }, signal());
           assert.deepEqual(shrunk.size, smaller);
-          console.log(`# ${options.name} ${kind!.id}: shrunk to ${describeSize(smaller)}; the box has ${await has(smaller)}`);
+          console.log(`# ${options.name} ${kind!.id}: shrunk to ${describeSize(smaller)}; the box has ${await has(command, smaller)}`);
           const alive = await command.run(`kill -0 ${pid} && echo alive; kill ${pid} 2>/dev/null; true`, { timeoutMs: 30_000 });
           assert.match(alive.stdout, /alive/, "the process started before the resize still runs");
           guest = shrunk;
+        });
+
+        it("resizes with a restart where a part needs one, refuses it without, and the box has the new size once it answers again (061)", { timeout, skip: skip.resize ?? skip.size ?? (measurable || restarts) }, async (t) => {
+          assert.ok(guest?.size, "the box was acquired and read");
+          const from = guest.size;
+          const larger: BoxSize = { cores: from.cores + 1, memoryMiB: from.memoryMiB + 1024, diskGiB: resizing!.disk !== "no" && from.diskGiB !== null ? from.diskGiB + 2 : from.diskGiB };
+          const plan = await backend.planResize!(guest, kind!.id, larger, [], signal());
+          if (!plan.room.ok) {
+            t.skip(`no room to grow: ${plan.room.message}`);
+            return;
+          }
+          assert.ok(plan.parts.some((part) => part.way === "restart") && plan.downSeconds !== null, "a restart, and about how long it takes");
+          await assert.rejects(backend.resize!(guest, kind!.id, larger, { restart: false }, signal()), "refused without restart");
+          const began = Date.now();
+          const grown = await backend.resize!(guest, kind!.id, larger, { restart: true }, signal());
+          assert.deepEqual(grown.size, larger, "the backend reads the new size back");
+          const command = (await backend.transports(grown, kind!.id)).command!;
+          console.log(`# ${options.name} ${kind!.id}: restarted at ${describeSize(larger)} in ${((Date.now() - began) / 1000).toFixed(1)} s, planned ${plan.downSeconds} s; the box has ${await has(command, larger, 120_000)}`);
+          guest = grown;
         });
 
         it("releases the box", { timeout }, async () => {

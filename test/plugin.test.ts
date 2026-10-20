@@ -146,7 +146,7 @@ async function start(
     /** How many threads run on each machine, by host ID. */
     hostThreads: new Map<string, number>(),
     /** BB's terminal sessions, by ID. */
-    terminals: new Map<string, { id: string; hostId: string; title: string; command: string; status: "starting" | "running" | "exited"; createdAt: number }>(),
+    terminals: new Map<string, { id: string; hostId: string; title: string; command: string; status: "starting" | "running" | "exited"; createdAt: number; threadId?: string; environmentId?: string }>(),
     /** Calls of bb-box's host entry, by method, with the machine and input. */
     hostCalls: [] as { method: string; hostId: string; input: unknown }[],
     /** Answers a call of bb-box's host entry, as its worker on the machine would. */
@@ -194,8 +194,17 @@ async function start(
         get: async () => ({ id: "env_one", hostId: world.workspaceHost, path: workspace }) as never,
       },
       terminals: {
-        list: async ({ scope }: { scope: { hostId: string } }) => ({
-          sessions: [...world.terminals.values()].filter((session) => session.hostId === scope.hostId).map((session) => terminal(session.id)),
+        // As BB's: each scope lists only its own sessions, a machine's those of no thread or environment.
+        list: async ({ scope }: { scope: { kind: string; hostId?: string; threadId?: string; environmentId?: string } }) => ({
+          sessions: [...world.terminals.values()]
+            .filter((session) =>
+              scope.kind === "thread"
+                ? session.threadId === scope.threadId
+                : scope.kind === "environment"
+                  ? session.environmentId === scope.environmentId
+                  : session.hostId === scope.hostId && !session.threadId && !session.environmentId,
+            )
+            .map((session) => terminal(session.id)),
         }),
         create: async ({ scope, start, title }: { scope: { hostId: string }; start: { command: string }; title: string }) => {
           const id = `term_${world.terminals.size + 1}`;
@@ -2266,6 +2275,39 @@ test("bb box machines resize resizes one of your machines, checks first with --c
   assert.match(String(forced.stdout), /^Resized box build-1 from 2 cores, 4 GiB memory to 2 cores, 8 GiB memory in /);
   const thread = await harness.behavior.runCli(["resize", "nope", "--cores", "2"]);
   assert.equal(thread.exitCode, 1);
+});
+
+test("after a live change of a BB machine's cores, box_resize says BB keeps the old count and how to set the thread limit, where it cannot restart BB's daemon there (061, BB request 28)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.resizeWays = { cores: "live", memory: "live", disk: "live", shrinks: true };
+  await tool("box_acquire", { kind: "linux" });
+  const box = await only(app);
+  assert.equal(box.enrol.state, "enrolled");
+  world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const busy = text(await tool("box_resize", { box: box.name, cores: 4 }));
+  assert.match(
+    busy,
+    new RegExp(
+      `\\nBB still counts 2 processors on machine ${box.name}, and its automatic thread limit stays at 2, until BB's daemon there restarts, as it does when the box next starts\\. ` +
+        `bb-box does not restart it while thread "Build" \\(thr_worker\\) works on the machine, as that would end its turn\\. ` +
+        `To raise the limit now: bb concurrency-limit host ${box.name} 4, and then bb concurrency-limit host ${box.name} auto once BB counts the new cores\\.\\n\\nNext:`,
+    ),
+  );
+  // An idle thread there, with a terminal of its own open, and then one of the machine's.
+  world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build", status: "idle", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const session = { hostId: box.enrol.hostId!, command: "sh", status: "running" as const, createdAt: 1 };
+  world.terminals.set("term_thread", { ...session, id: "term_thread", title: "Shell", threadId: "thr_worker" });
+  world.terminals.set("term_machine", { ...session, id: "term_machine", title: "Shell" });
+  assert.match(text(await tool("box_resize", { box: box.name, cores: 6 })), /\nBB still counts 4 processors .*\. bb-box does not restart it while 2 BB terminals are open on the machine, as that would end them\. To raise the limit now: bb concurrency-limit host .* 6,/);
+  world.terminals.get("term_thread")!.status = "exited";
+  assert.match(text(await tool("box_resize", { box: box.name, cores: 7 })), /bb-box does not restart it while a BB terminal is open on the machine, as that would end it\./);
+  // No thread works there and no terminal is open, so bb-box tries the restart: a test's fake box has no daemon of BB's to restart.
+  world.terminals.get("term_machine")!.status = "exited";
+  const idle = text(await tool("box_resize", { box: box.name, cores: 8 }));
+  assert.match(idle, /\nBB still counts 7 processors on machine .*, as it does when the box next starts\. To raise the limit now: bb concurrency-limit host .* 8,/);
+  assert.doesNotMatch(idle, /does not restart it while/);
+  assert.doesNotMatch(text(await tool("box_resize", { box: box.name, memory_gib: 6 })), /BB still counts/, "memory alone leaves the count alone");
 });
 
 test("box_resize refuses a size with no room, and a failed resize is recorded, with the box's size unchanged (061)", async (t) => {

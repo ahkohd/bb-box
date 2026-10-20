@@ -19,7 +19,7 @@ import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
 import { gpuRoomText } from "../src/plugin/tools.ts";
-import { adminText, boxDetail, boxView, gpuRooms, kindViews } from "../src/plugin/views.ts";
+import { adminText, boxDetail, boxView, gpuRooms, kindResizeText, kindViews, type KindView } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -2838,4 +2838,53 @@ test("the upkeep replaces a spare that waits stopped when its image has a newer 
   assert.deepEqual(states, [], "the old spare was not started to ask");
   assert.match(logs.join("\n"), /its linux image on .+ has a newer build/);
   assert.deepEqual(world.errors, []);
+});
+
+test("each resize is logged with the box, from and to, how, who asked and how long it took, and each refusal and failure with why (061)", async () => {
+  const logs: string[] = [];
+  const world = setup({}, { log: (line) => logs.push(line), reconnect: async (box) => void world.reconnected.push(box.id) });
+  world.backend.resizeWays = { cores: "restart", memory: "restart", disk: "live", shrinks: true };
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  await world.boxes.idle();
+  const resized = (line: string) => logs.filter((entry) => entry.includes(line));
+
+  await world.boxes.resize(THREAD, box.name, { diskGiB: 30 }, { by: "the tool" });
+  assert.match(resized("Resized")[0]!, new RegExp(`^Resized box ${box.name} of thread ${THREAD} from 2 cores, 4 GiB memory to 2 cores, 4 GiB memory, 30 GiB disk, live, as the tool asked, in \\d+ ms\\.$`));
+
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { cores: 4 }, { by: "the CLI" }), { code: "needs_restart" });
+  assert.match(resized("Refused to resize")[0]!, new RegExp(`^Refused to resize box ${box.name} of thread ${THREAD}, as the CLI asked: Resizing box ${box.name} to 4 cores, 4 GiB memory, 30 GiB disk needs a restart for its cores`));
+  assert.equal(await world.boxes.resize(THREAD, box.name, { cores: 4 }, { check: true }).then(() => logs.length), logs.length, "a check is not logged");
+
+  // A restart: the box is starting while it is down, ready after, and its BB machine reconnects.
+  const states: string[] = [];
+  world.backend.boxResizeGate = (async () => {
+    for (let i = 0; i < 50 && !states.length; i++) {
+      const state = (await world.boxes.find(box.id))?.state;
+      if (state === "starting") states.push(state);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  })();
+  const restarted = await world.boxes.resize(THREAD, box.name, { cores: 4 }, { restart: true, by: "the panel" });
+  world.backend.boxResizeGate = null;
+  assert.deepEqual([states, restarted.box.state], [["starting"], "ready"]);
+  assert.match(resized("with a restart, as the panel asked")[0]!, /^Resized box .* to 4 cores, 4 GiB memory, 30 GiB disk, with a restart, as the panel asked, in \d+ ms\.$/);
+  await world.boxes.idle();
+
+  world.backend.resizeFault = new Error("The provider said no.");
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { diskGiB: 40 }, { by: "the tool" }), /The provider said no/);
+  assert.equal(resized("Could not resize")[0], `Could not resize box ${box.name} of thread ${THREAD}, as the tool asked: The provider said no.`);
+});
+
+test("box_list's resize line names only the providers that resize, and says once that the others cannot (061)", () => {
+  const offer = (name: string, resizing?: KindView["offers"][number]["resizing"]) => ({ name, ...(resizing ? { resizing } : {}) }) as KindView["offers"][number];
+  const kind = (...offers: KindView["offers"][number][]) => ({ offers }) as unknown as KindView;
+  const lxc = { cores: "live", memory: "live", disk: "live", shrinks: true } as const;
+  const docker = { cores: "live", memory: "live", disk: "no", shrinks: true } as const;
+  assert.equal(kindResizeText(kind(offer("Pool"))), "");
+  assert.equal(kindResizeText(kind(offer("Proxmox LXC on pve", lxc))), "Resize: cores, memory and disk live, the disk only growing.");
+  assert.equal(
+    kindResizeText(kind(offer("Proxmox LXC on pve", lxc), offer("Pool"), offer("Docker on devpc", docker), offer("microsandbox on devpc"))),
+    "Resize: on Proxmox LXC on pve, cores, memory and disk live, the disk only growing; on Docker on devpc, cores and memory live; the other providers cannot.",
+  );
+  assert.equal(kindResizeText(kind(offer("Docker on a", docker), offer("Pool"))), "Resize: on Docker on a, cores and memory live; the other provider cannot.");
 });

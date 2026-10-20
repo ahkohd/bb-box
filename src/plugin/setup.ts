@@ -17,7 +17,7 @@ import { ImageBakes } from "./bakes.ts";
 import { BoxFiles } from "./box-files.ts";
 import { ImageJobs } from "./images.ts";
 import { namedImage, projectImage, withImage } from "../core/project-images.ts";
-import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer } from "../core/boxes.ts";
+import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer , type ResizeAnswer } from "../core/boxes.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
@@ -35,7 +35,7 @@ import { registerDesktop, type Desktops } from "./desktop.ts";
 import { LoopWatch } from "./loop-watch.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, MACHINE_PROVIDER_ID, type HostApi } from "./enrol.ts";
-import { CALL_TIMEOUT_MS, Holders, type RetiredTerminals } from "./holder.ts";
+import { CALL_TIMEOUT_MS, Holders, RETIRED_TITLE, type RetiredTerminals } from "./holder.ts";
 import { DockerCli, type DockerInfo } from "../backends/docker/cli.ts";
 import { dockerDriver } from "../backends/docker/index.ts";
 import { backendPart } from "../core/document.ts";
@@ -197,7 +197,27 @@ export interface BbBox {
    * its BB machine. Returns the idle threads there.
    */
   checkRestart(box: BoxRecord, force: boolean): Promise<ThreadOnBox[]>;
+  /**
+   * After a live resize that changed a BB machine's cores (061): BB counts
+   * a machine's processors only when its daemon connects, and sets its
+   * automatic thread limit from them (BB request 28). Restarts BB's daemon
+   * there when no thread works on the machine, as the restart ends a
+   * running turn, and says so; otherwise says how to set the limit by hand.
+   * Never changes a limit. Null when there is nothing to say.
+   */
+  machineCores(answer: ResizeAnswer): Promise<string | null>;
 }
+
+/**
+ * Restarts BB's daemon, a systemd user service, without waiting for it;
+ * exits 3 where there is none, as in a Docker box. Only as a box's own
+ * user, whose home is /home/box: never on a machine a test's fake box runs
+ * on, whose own daemon it would restart.
+ */
+const RESTART_DAEMON = String.raw`[ "$HOME" = /home/box ] || exit 3
+unit=$(systemctl --user list-units --plain --no-legend 'bb-host-daemon-*.service' 2>/dev/null | awk '{ print $1; exit }')
+[ -n "$unit" ] || exit 3
+systemctl --user restart --no-block "$unit"`;
 
 
 
@@ -865,6 +885,30 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   });
   /** Why a thread's desktop box was not made after its image was built (the setup plan's PR 4), by thread, until it asks again. */
   const desktopProblems = new Map<string, { message: string; at: number }>();
+  /**
+   * BB terminal sessions open on a machine (061): its own, and those of
+   * each thread on it and of each such thread's environment, which BB lists
+   * apart. bb-box's retired access terminal does not count.
+   */
+  const openTerminals = async (hostId: string): Promise<number> => {
+    const threads = await bb.sdk.threads.list({ hostId, archived: false, includeHidden: true });
+    const environments = [...new Set(threads.map((thread) => thread.environmentId).filter((id): id is string => typeof id === "string" && id.length > 0))];
+    const scopes = [
+      { kind: "host_path" as const, hostId },
+      ...threads.map((thread) => ({ kind: "thread" as const, threadId: thread.id })),
+      ...environments.map((environmentId) => ({ kind: "environment" as const, environmentId })),
+    ];
+    const seen = new Set<string>();
+    for (const scope of scopes) {
+      const { sessions } = await bb.sdk.terminals.list({ scope });
+      for (const session of sessions) {
+        if (session.hostId !== hostId || session.title === RETIRED_TITLE) continue;
+        if (session.status === "running" || session.status === "starting") seen.add(session.id);
+      }
+    }
+    return seen.size;
+  };
+
   const api: BbBox = {
     boxes,
     backends,
@@ -1200,6 +1244,28 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         );
       }
       return threads;
+    },
+    async machineCores(answer) {
+      const { box, from, to } = answer;
+      if (!answer.changed || box.resize?.restart || from.cores === to.cores) return null;
+      if (box.enrol.state !== "enrolled" || box.capabilities.os !== "linux" || box.capabilities.command?.shell !== "sh") return null;
+      const kept = (why: string) =>
+        `BB still counts ${from.cores} processors on machine ${box.name}, and its automatic thread limit stays at ${from.cores}, until BB's daemon there restarts, as it does when the box next starts${why}. ` +
+        `To raise the limit now: bb concurrency-limit host ${box.name} ${to.cores}, and then bb concurrency-limit host ${box.name} auto once BB counts the new cores.`;
+      const working = (await api.threadsOn(box).catch(() => [])).filter((thread) => thread.running);
+      if (working.length) {
+        const one = working.length === 1;
+        return kept(`. bb-box does not restart it while ${threadsWords(working)} ${one ? "works" : "work"} on the machine, as that would end ${one ? "its" : "their"} turn`);
+      }
+      // BB's terminals there are the daemon's too, and a restart would end them.
+      const terminals = await openTerminals(box.enrol.hostId!).catch(() => null);
+      if (terminals === null) return kept(". bb-box could not tell whether a BB terminal is open there, so it did not restart it");
+      if (terminals > 0) {
+        return kept(`. bb-box does not restart it while ${terminals === 1 ? "a BB terminal is" : `${terminals} BB terminals are`} open on the machine, as that would end ${terminals === 1 ? "it" : "them"}`);
+      }
+      const result = await boxes.runOwn(box, RESTART_DAEMON, { timeoutMs: 15_000, maxOutputBytes: 1024 }).catch(() => null);
+      if (!result || result.exitCode !== 0) return kept("");
+      return `BB's daemon on machine ${box.name} is restarting, so BB counts its ${to.cores} processors, and sets its automatic thread limit from them, within a few seconds. A limit a person set stays as it is.`;
     },
     async checkRestart(box, force) {
       if (box.capabilities.displays.length && api.control(box).owner === "human") {

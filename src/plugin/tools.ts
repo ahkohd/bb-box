@@ -794,6 +794,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           restart: restart === true,
           check: check === true,
           signal,
+          by: "the tool",
           beforeRestart: async (box) => {
             // A thread can run on a box of its own too, as one started on a new box (033).
             if (runsOn || (await app.runsOn(thread(threadId), signal))?.id === box.id) throw runsOnRestartRefusal(box);
@@ -801,7 +802,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           },
         });
         const hints = check ? [`Call box_resize without check to make the change.`] : [`Call box_status with box "${answer.box.name}" to see it.`];
-        return `${resizeText(answer, check === true)}${next(...hints)}`;
+        const machine = check ? null : await app.machineCores(answer);
+        return `${resizeText(answer, check === true)}${machine ? `\n${machine}` : ""}${next(...hints)}`;
       } catch (error) {
         return failure(error, "Resizing the box");
       }
