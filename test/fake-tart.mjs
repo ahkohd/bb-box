@@ -74,7 +74,21 @@ function tart() {
       const value = config(name);
       if (option("--cpu")) value.cpuCount = Number(option("--cpu"));
       if (option("--memory")) value.memorySize = Number(option("--memory")) * 1024 * 1024;
+      // As Tart's: the disk, in decimal GB, only grows; a VM keeps it in disk.img's size, here a file of its own.
+      if (option("--disk-size")) {
+        const was = existsSync(join(dir(name), "disk-gb")) ? Number(readFileSync(join(dir(name), "disk-gb"), "utf8")) : 64;
+        if (Number(option("--disk-size")) < was) fail("the disk size can only be increased");
+        writeFileSync(join(dir(name), "disk-gb"), option("--disk-size"));
+      }
       return writeFileSync(join(dir(name), "config.json"), JSON.stringify(value));
+    }
+    case "get": {
+      const [name] = rest;
+      if (!existsSync(dir(name))) fail(`the specified VM "${name}" does not exist`);
+      const value = config(name);
+      const disk = existsSync(join(dir(name), "disk-gb")) ? Number(readFileSync(join(dir(name), "disk-gb"), "utf8")) : 64;
+      const running = existsSync(join(dir(name), "running"));
+      return console.log(JSON.stringify({ CPU: value.cpuCount, Memory: Math.round(value.memorySize / 1024 / 1024), Disk: disk, DiskFormat: "raw", OS: value.os, Running: running, State: running ? "running" : "stopped" }));
     }
     case "run": {
       const name = rest[rest.length - 1];

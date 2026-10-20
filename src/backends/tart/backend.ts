@@ -64,6 +64,8 @@ import {
   type BoxSize,
   type BoxTransports,
   type Capacity,
+  type ResizePlan,
+  type Resizing,
   type CommandCapability,
   type ComputerUse,
   type DoctorCheck,
@@ -124,6 +126,7 @@ import {
   powerScript,
   startScript,
   script,
+  sizeScript,
   stateScript,
   stopScript,
   vmName,
@@ -403,6 +406,34 @@ function powerOf(state: string | undefined): PowerState {
   if (state === "running") return "running";
   if (state === "stopped" || state === "suspended") return "stopped";
   return "unknown";
+}
+
+/** About how long a Linux VM's resize restart takes: a shutdown, tart set and a boot, 4.5 s for the boot as measured (061). */
+const RESIZE_RESTART_S = 20;
+
+/** Grows a Linux VM's root partition and file system over its disk, while it runs (061): growpart says NOCHANGE when there is nothing to grow. */
+const GROW_ROOT = String.raw`dev=$(findmnt -no SOURCE /)
+disk=/dev/$(lsblk -no PKNAME "$dev")
+part=$(cat "/sys/class/block/$(basename "$dev")/partition")
+sudo growpart "$disk" "$part" >/dev/null || :
+sudo resize2fs "$dev" >/dev/null`;
+
+/** Tart's disk size, in decimal GB, for a disk of `gib` GiB: 70 GB is 65.2 GiB (061). */
+export function decimalGB(gib: number): number {
+  return Math.ceil((gib * 2 ** 30) / 1e9);
+}
+
+/** The size in `tart get --format json` after a line `@size`, its disk in whole GiB; null when it does not say. */
+export function parseTartSize(stdout: string): BoxSize | null {
+  const line = stdout.split("@size\n")[1]?.split("\n")[0];
+  if (!line) return null;
+  try {
+    const got = JSON.parse(line) as { CPU?: number; Memory?: number; Disk?: number };
+    if (!got.CPU || !got.Memory) return null;
+    return { cores: got.CPU, memoryMiB: got.Memory, diskGiB: got.Disk ? Math.floor((got.Disk * 1e9) / 2 ** 30) : null };
+  } catch {
+    return null;
+  }
 }
 
 /** The size a VM's config gives it. Tart keeps no disk size there, so the disk is the image's, as null. */
@@ -1354,6 +1385,115 @@ export class TartBackend implements Backend {
     if (os === "linux") await this.#linuxDesktop(host, guest.ref, address, signal);
     // A macOS VM resumes from its suspend with the time it stopped at.
     if (os === "macos") await this.#clock(host, address, signal);
+  }
+
+  /**
+   * Tart sizes a VM only while it is stopped, and a Linux VM, which a stop
+   * shuts down, takes its new CPUs, memory and disk when it boots: each
+   * part needs a restart (061). Its root partition then grows online. macOS
+   * and Windows VMs, whose stop keeps their session, come later.
+   */
+  resizing(kind: string): Resizing | null {
+    return guestOsOf(kind) === "linux" && this.kinds().some((offer) => offer.id === kind) ? { cores: "restart", memory: "restart", disk: "restart", shrinks: true } : null;
+  }
+
+  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+    if (!this.resizing(kind)) throw new BackendError("unsupported", `${this.label} cannot resize its ${kind} boxes yet.`);
+    const { host, from } = await this.#resizable(guest, to, signal);
+    const parts: ResizePlan["parts"][number][] = [];
+    if (to.cores !== from.cores) parts.push({ part: "cores", from: from.cores, to: to.cores, way: "restart" });
+    if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way: "restart" });
+    if (to.diskGiB !== null && to.diskGiB !== from.diskGiB) parts.push({ part: "disk", from: from.diskGiB, to: to.diskGiB, way: "restart" });
+    const state = await this.#state(host, signal).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
+    const room = this.#resizeRoom(host, state, from, to, pending);
+    return { parts, room, downSeconds: parts.length ? RESIZE_RESTART_S : null };
+  }
+
+  /**
+   * Resizes a running Linux VM (061): shuts it down, sets its CPUs, memory
+   * and disk with tart set, boots it, and grows its root partition and file
+   * system over a larger disk. When it does not come back, its old CPUs and
+   * memory go back and it boots again; a disk that grew stays.
+   */
+  async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+    if (!this.resizing(kind)) throw new BackendError("unsupported", `${this.label} cannot resize its ${kind} boxes yet.`);
+    const { host, from } = await this.#resizable(guest, to, signal);
+    if (!options.restart) throw new BackendError("unsupported", "A Tart VM changes size only with a restart.");
+    const grows = to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB);
+    const change = (size: BoxSize, diskGB: number | null) => this.#run(host, sizeScript(guest.ref, this.#context.installId, this.#boxOf(guest), { cpus: size.cores, memoryMiB: size.memoryMiB, diskGB }), { timeoutMs: 120_000, signal });
+    await this.stop(guest, signal);
+    const set = await change(to, grows ? decimalGB(to.diskGiB!) : null);
+    if (set.stdout.trim() === "gone") throw this.#gone(guest);
+    try {
+      await this.start(guest, signal);
+    } catch (error) {
+      await this.stop(guest).catch(() => undefined);
+      await change(from, null).catch((cause) => this.#context.logError("resize: put CPUs and memory back", cause));
+      await this.start(guest).catch((cause) => this.#context.logError("resize: start at the old size", cause));
+      throw error;
+    }
+    if (grows) {
+      const { ssh } = await this.#keys();
+      const deadline = Date.now() + READY_TIMEOUT_MS;
+      const address = await this.#address(host, guest.ref, deadline, signal);
+      const result = await new SshTransport(ssh, this.#vm(await this.#mac(host), address, "linux"), "linux").run(GROW_ROOT, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 });
+      if (result.exitCode !== 0) throw new Error(`The box's disk grew, but Linux could not grow its root file system: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    }
+    const read = (await this.#readSize(host, guest, signal)) ?? to;
+    return { ...guest, size: read };
+  }
+
+  /** A running Linux VM's Mac and size, when it is the box's and the disk asked for is not smaller (061). */
+  async #resizable(guest: Guest, to: BoxSize, signal?: AbortSignal): Promise<{ host: TartHost; from: BoxSize }> {
+    const host = this.#hostOf(guest);
+    const power = await this.power(guest, signal);
+    if (power === null) throw this.#gone(guest);
+    if (power !== "running") throw new BackendError("unsupported", "A stopped VM is resized once it runs: start it first.");
+    const from = await this.#readSize(host, guest, signal);
+    if (!from) throw new Error(`Tart did not say the size of ${guest.ref}, so bb-box cannot resize it.`);
+    if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
+      throw new BackendError("unsupported", `A VM's disk only grows, and this one's is ${from.diskGiB} GiB.`);
+    }
+    return { host, from };
+  }
+
+  /** A VM's size as `tart get` gives it, its disk in GiB; null when Tart does not say. */
+  async #readSize(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<BoxSize | null> {
+    const result = await this.#run(host, sizeScript(guest.ref, this.#context.installId, this.#boxOf(guest), null), { timeoutMs: 30_000, signal });
+    if (result.stdout.trim() === "gone") throw this.#gone(guest);
+    return parseTartSize(result.stdout);
+  }
+
+  /** Room on the Mac for a VM to grow from `from` to `to` (061): the memory it adds within the reserve, cores within the Mac's, and the disk it adds. */
+  #resizeRoom(host: TartHost, state: MacState | Error, from: BoxSize, to: BoxSize, pending: readonly Pending[]): Capacity {
+    if (state instanceof Error) return { ok: false, message: `${host.name} did not answer: ${state.message}`, warm: null, hosts: [{ host: host.name, ok: false, limits: [] }] };
+    const running = state.vms.filter((vm) => vm.running);
+    const memoryUsed =
+      running.reduce((sum, vm) => sum + (state.configs.get(vm.name)?.memoryMiB ?? 0), 0) +
+      [...state.qemu.vms].filter(([, vm]) => vm.power === "running").reduce((sum, [, vm]) => sum + vm.memoryMiB + QEMU_OVERHEAD_MIB, 0) +
+      pending.reduce((sum, other) => sum + other.size.memoryMiB, 0);
+    const memoryFree = state.memoryMiB - memoryUsed;
+    const reserve = this.#config.reserve;
+    const diskReserveMiB = reserve.diskGiB * MiB_PER_GiB;
+    const limits: Limit[] = [
+      { resource: "memory", used: memoryUsed, total: state.memoryMiB, reserve: reserve.memoryMiB, unit: "MiB" },
+      { resource: "disk", used: state.disk.totalMiB - state.disk.freeMiB, total: state.disk.totalMiB, reserve: diskReserveMiB, unit: "MiB" },
+    ];
+    const grow = to.memoryMiB - from.memoryMiB;
+    const disk = to.diskGiB !== null ? Math.max(0, to.diskGiB - (from.diskGiB ?? to.diskGiB)) : 0;
+    let why: string | null = null;
+    if (state.cpus && to.cores > state.cpus) {
+      why = `${host.name} has ${state.cpus} cores, fewer than the ${to.cores} asked for. Ask for at most ${state.cpus} cores.`;
+    } else if (grow > 0 && memoryFree - grow < reserve.memoryMiB) {
+      why =
+        grow > memoryFree
+          ? `${host.name} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(grow)} more the box needs. Ask for less memory or release a box.`
+          : `${host.name} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(grow)} more the box needs does not fit. ` +
+            "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings.";
+    } else if (disk > 0 && state.disk.freeMiB - disk * MiB_PER_GiB < diskReserveMiB) {
+      why = `${host.name} has ${diskFree(state.disk)} and keeps ${formatMiB(diskReserveMiB)} free, so ${disk} GiB more disk does not fit. Ask for a smaller disk or release boxes.`;
+    }
+    return { ok: why === null, message: why, warm: null, hosts: [{ host: host.name, ok: why === null, limits }] };
   }
 
   /** A stop suspends a macOS VM, and saves a Windows one through QEMU, which frees its memory and its slot. A Linux VM shuts down. */

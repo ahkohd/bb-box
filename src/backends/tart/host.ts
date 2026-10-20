@@ -755,6 +755,24 @@ echo stopped
 }
 
 /**
+ * Sizes a stopped VM, when its owner file names this install and box
+ * (061): `tart set` its CPUs, memory and, when `diskGB` is given, its disk,
+ * which Tart sizes in decimal GB and only grows. Prints the VM's size as
+ * `tart get` gives it after a line `@size`: the CPUs, memory in MiB and
+ * disk in GB. With no change asked, it only prints the size. Prints "gone"
+ * when the VM is another box's, and refuses a VM that runs.
+ */
+export function sizeScript(vm: string, installId: string, boxId: string | null, change: { cpus: number; memoryMiB: number; diskGB: number | null } | null): string {
+  const set = change ? `tart set "$vm" --cpu ${change.cpus} --memory ${change.memoryMiB}${change.diskGB !== null ? ` --disk-size ${change.diskGB}` : ""} || exit 1` : ":";
+  return script(String.raw`vm=${quote(vm)}
+mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} || { echo gone; exit 0; }
+${change ? `[ "$(state "$vm")" != running ] || { echo "$vm runs, so Tart cannot size it." >&2; exit 1; }` : ":"}
+${set}
+echo @size; tart get "$vm" --format json | tr -d '\n'; echo
+`);
+}
+
+/**
  * Deletes the VM when its owner file names this install and box, then its
  * run's output and, last, the owner file. Prints "gone" when the file names
  * another box, which leaves everything alone.
