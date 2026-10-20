@@ -2178,6 +2178,11 @@ test("box_resize refuses a live shrink of memory below what the box uses, with a
   const box = await only(app);
   // 3.6 GiB in use, besides cache it can drop: 4 GiB leaves too little, and 5 GiB enough.
   fakeCgroup(t, 3700, 4000);
+  // A check refuses it up front, as the panel's dialog asks one before Resize is pressed.
+  const checked = await tool("box_resize", { box: box.name, memory_gib: 4, check: true });
+  assert.ok(isError(checked));
+  assert.match(text(checked), new RegExp(`^Box ${box.name} uses 3\\.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free`));
+  assert.match(text(await tool("box_resize", { box: box.name, memory_gib: 5, check: true })), /would change:\n- live, while everything in it runs on: memory 8 GiB to 5 GiB\n/);
   const refused = await tool("box_resize", { box: box.name, memory_gib: 4 });
   assert.ok(isError(refused));
   assert.match(

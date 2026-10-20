@@ -11,7 +11,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, ut
 import { userInfo } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
+import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, restartSeconds, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, MAC_CLIPBOARD, MAC_LAUNCHER, WINDOWS_CLIPBOARD, accessCheck, accessSetup, accessSetupMs, clipboardCommands, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
 import { READER_SOURCE, READER_TYPE } from "../src/core/windows-access.ts";
@@ -2904,4 +2904,27 @@ test("box_list's resize line names only the providers that resize, and says once
     "Resize: on Proxmox LXC on pve, cores, memory and disk live, the disk only growing; on Docker on devpc, cores and memory live; the other providers cannot.",
   );
   assert.equal(kindResizeText(kind(offer("Docker on a", docker), offer("Pool"))), "Resize: on Docker on a, cores and memory live; the other provider cannot.");
+});
+
+test("a restart's estimate comes from the box's own last restart resize, or else its last start when it was a boot, rounded up, and the backend's guess without either (061)", async () => {
+  const world = setup();
+  world.backend.resizeWays = { cores: "restart", memory: "restart", disk: "live", shrinks: true };
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  await world.boxes.idle();
+  const down = async () => (await world.boxes.resize(THREAD, box.name, { cores: 4 }, { check: true })).plan?.downSeconds;
+  assert.equal(await down(), 8, "the backend's guess, with no figure of the box's own");
+  // A start that was a boot: twice over, for the shutdown before it.
+  await world.boxes.update(box, () => ({ timings: { "start.boot": 4_000, "start.total": 4_800 } }));
+  assert.equal(await down(), 10);
+  // A resume says nothing of a boot.
+  await world.boxes.update(box, () => ({ timings: { "start.resume": 1_500, "start.total": 1_800 } }));
+  assert.equal(await down(), 8);
+  // A restart resize it had: what it took, with a fifth more, rounded up.
+  const size = { cores: 2, memoryMiB: 4096, diskGiB: null };
+  const last = { from: size, to: size, at: 1, state: "done" as const, ms: 9_600, restart: true, error: null };
+  await world.boxes.update(box, () => ({ resize: last }));
+  assert.equal(await down(), 12);
+  assert.equal(restartSeconds({ ...box, resize: { ...last, restart: false } }, false), null, "a live resize says nothing of a restart");
+  assert.equal(restartSeconds({ ...box, resize: null, timings: { "start.total": 4_000 } }, true), null, "a backend whose stop keeps the session resumes, unless its timings name a boot");
+  assert.equal(restartSeconds({ ...box, resize: null, timings: { "start.total": 4_000, "start.boot": 3_000 } }, true), 8);
 });
