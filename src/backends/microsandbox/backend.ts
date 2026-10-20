@@ -50,6 +50,8 @@ import {
   type BoxSize,
   type BoxTransports,
   type Capacity,
+  type ResizePlan,
+  type Resizing,
   type CommandCapability,
   type DoctorCheck,
   type DoctorReport,
@@ -252,6 +254,9 @@ function powerOf(status: string): PowerState {
   if (word === "stopped" || word === "crashed" || word === "created" || word === "exited") return "stopped";
   return "unknown";
 }
+
+/** About how long a resize's restart takes, a stop and a start of the box: 1.8 s measured, with room for a slow host (061). */
+const RESIZE_RESTART_S = 5;
 
 function sizeOf(sandbox: SandboxInfo): BoxSize | null {
   if (!sandbox.cpus || !sandbox.memoryMiB) return null;
@@ -1150,6 +1155,101 @@ export class MsbBackend implements Backend {
     mark("boot");
     await this.#ready(guest.ref, deadline, signal);
     mark("ready");
+  }
+
+  /**
+   * msb 0.7.7 grows a sandbox's root disk while it runs, and the guest's
+   * file system with it, but changes its CPUs and memory only when it next
+   * starts: its runtime has no live CPU or memory resize yet (061). A
+   * stopped box takes every change for its next start.
+   */
+  resizing(kind: string): Resizing | null {
+    return this.kinds().some((offer) => offer.id === kind) ? { cores: "restart", memory: "restart", disk: "live", shrinks: true } : null;
+  }
+
+  async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<ResizePlan> {
+    this.#kind(kind);
+    const { found, from } = await this.#resizable(guest, to, signal);
+    const way = powerOf(found.status) === "running" ? "restart" : "live";
+    const parts: ResizePlan["parts"][number][] = [];
+    if (to.cores !== from.cores) parts.push({ part: "cores", from: from.cores, to: to.cores, way });
+    if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way });
+    if (to.diskGiB !== null && to.diskGiB !== from.diskGiB) parts.push({ part: "disk", from: from.diskGiB, to: to.diskGiB, way: "live" });
+    const room = await this.#resizeRoom(from, to, pending, signal);
+    return { parts, room, downSeconds: parts.some((part) => part.way === "restart") ? RESIZE_RESTART_S : null };
+  }
+
+  /**
+   * Resizes a sandbox (061): its root disk live with `msb modify`, and its
+   * CPUs and memory, when it runs, with `restart`: saved for its next start,
+   * then a stop and a start, which runs the box's own start as any start
+   * does. When it does not come back at its new size, its old CPUs and
+   * memory are saved again and it starts once more.
+   */
+  async resize(guest: Guest, _kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+    const { found, from } = await this.#resizable(guest, to, signal);
+    const running = powerOf(found.status) === "running";
+    const changes = to.cores !== from.cores || to.memoryMiB !== from.memoryMiB;
+    if (changes && running && !options.restart) throw new BackendError("unsupported", "A microVM's CPUs and memory change only with a restart.");
+    const modify = (args: readonly string[]) => this.#cli.ok(["modify", guest.ref, ...args, "--format", "json"], { timeoutMs: 120_000, signal });
+    if (to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB)) await modify(["--root-disk", `${to.diskGiB}G`]);
+    if (changes) {
+      const sized = (size: BoxSize) => ["--cpus", String(size.cores), "--memory", `${size.memoryMiB}M`];
+      if (!running) await modify(sized(to));
+      else {
+        await modify([...sized(to), "--next-start"]);
+        await this.stop(guest, signal);
+        try {
+          await this.start(guest, signal);
+        } catch (error) {
+          await modify([...sized(from), "--next-start"]).catch((cause) => this.#context.logError("resize: put CPUs and memory back", cause));
+          await this.stop(guest).catch(() => undefined);
+          await this.start(guest).catch((cause) => this.#context.logError("resize: start at the old size", cause));
+          throw error;
+        }
+      }
+    }
+    const now = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    return { ...guest, size: (now && sizeOf(now)) ?? to };
+  }
+
+  /** The box's sandbox and size, when it is the box's and the disk asked for is not smaller (061). */
+  async #resizable(guest: Guest, to: BoxSize, signal?: AbortSignal): Promise<{ found: SandboxInfo; from: BoxSize }> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    const from = sizeOf(found) ?? guest.size;
+    if (!from) throw new Error(`MicroVM ${guest.ref} does not say its CPUs and memory, so bb-box cannot resize it.`);
+    if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
+      throw new BackendError("unsupported", `A microVM's root disk only grows, and this one's is ${from.diskGiB} GiB.`);
+    }
+    return { found, from };
+  }
+
+  /**
+   * Room on the host for a box to grow from `from` to `to` (061): cores
+   * within the host's, the memory it adds within what the boxes may have,
+   * and the disk it adds within the host's free disk.
+   */
+  async #resizeRoom(from: BoxSize, to: BoxSize, pending: readonly { readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+    const state = await this.#state(signal);
+    const { facts, boxes } = state;
+    const host = this.#host;
+    const reserve = this.#config.reserveMemoryMiB;
+    const overcommit = this.#overcommit(facts);
+    const ceiling = Math.floor(overcommit * (facts.memoryMiB - reserve)) + reserve;
+    const memoryUsed = boxes.filter((box) => powerOf(box.status) === "running").reduce((sum, box) => sum + box.memoryMiB, 0) + pending.reduce((sum, other) => sum + other.size.memoryMiB, 0);
+    const limits: Limit[] = [{ resource: "memory", id: overcommit === 1 ? undefined : "committed", used: memoryUsed, total: ceiling, reserve, unit: "MiB" }];
+    const grow = to.memoryMiB - from.memoryMiB;
+    const disk = to.diskGiB !== null ? Math.max(0, to.diskGiB - (from.diskGiB ?? to.diskGiB)) : 0;
+    let why: string | null = null;
+    if (facts.cpus && to.cores > facts.cpus) {
+      why = `${host} has ${facts.cpus} cores, fewer than the ${to.cores} asked for. Ask for at most ${facts.cpus} cores.`;
+    } else if (grow > 0 && memoryUsed + grow > ceiling - reserve) {
+      why = `the boxes on ${host} may have ${formatMiB(ceiling - reserve)} of memory in all and have ${formatMiB(memoryUsed)}, so the ${formatMiB(grow)} more the box needs does not fit. Ask for less memory or release a box.`;
+    } else if (disk > facts.freeGiB) {
+      why = `${host} has ${facts.freeGiB} GiB free, less than the ${disk} GiB more the disk needs. Ask for a smaller disk.`;
+    }
+    return { ok: why === null, message: why, warm: null, hosts: [{ host, ok: why === null, limits }] };
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {

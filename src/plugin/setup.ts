@@ -214,7 +214,10 @@ export interface BbBox {
  * user, whose home is /home/box: never on a machine a test's fake box runs
  * on, whose own daemon it would restart.
  */
-const RESTART_DAEMON = String.raw`[ "$HOME" = /home/box ] || exit 3
+const restartDaemon = (cores: number) => String.raw`[ "$HOME" = /home/box ] || exit 3
+# The daemon reads the processors as it starts: wait, up to 15 s, until the box shows its new cores.
+i=0
+while [ "$(nproc)" -ne ${cores} ] && [ $i -lt 15 ]; do sleep 1; i=$((i + 1)); done
 unit=$(systemctl --user list-units --plain --no-legend 'bb-host-daemon-*.service' 2>/dev/null | awk '{ print $1; exit }')
 [ -n "$unit" ] || exit 3
 systemctl --user restart --no-block "$unit"`;
@@ -1263,7 +1266,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (terminals > 0) {
         return kept(`. bb-box does not restart it while ${terminals === 1 ? "a BB terminal is" : `${terminals} BB terminals are`} open on the machine, as that would end ${terminals === 1 ? "it" : "them"}`);
       }
-      const result = await boxes.runOwn(box, RESTART_DAEMON, { timeoutMs: 15_000, maxOutputBytes: 1024 }).catch(() => null);
+      const result = await boxes.runOwn(box, restartDaemon(to.cores), { timeoutMs: 30_000, maxOutputBytes: 1024 }).catch(() => null);
       if (!result || result.exitCode !== 0) return kept("");
       return `BB's daemon on machine ${box.name} is restarting, so BB counts its ${to.cores} processors, and sets its automatic thread limit from them, within a few seconds. A limit a person set stays as it is.`;
     },
