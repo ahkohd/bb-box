@@ -730,7 +730,7 @@ export class ProxmoxQemuBackend implements Backend {
     const disk = bootDisk(config);
     const storage = disk ? String(config[disk] ?? "").split(":")[0] || null : null;
     const room = await this.#resizeRoom(api, storage, from, to, pending, signal);
-    const downSeconds = parts.some((part) => part.way === "restart") ? (this.#osOf(guest.data?.template) === "windows" ? 20 : 10) : null;
+    const downSeconds = parts.some((part) => part.way === "restart") ? (this.#osOf(guest.data?.template) === "windows" ? 40 : 20) : null;
     return { parts, room, downSeconds };
   }
 

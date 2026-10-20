@@ -1268,7 +1268,7 @@ test("a Windows VM's disk grows live with C: extended over it, and its cores and
 
   const plan = await backend.planResize(guest, KIND, to, [], signal());
   assert.deepEqual(plan.parts.map((part) => [part.part, part.way]), [["cores", "restart"], ["memory", "restart"], ["disk", "live"]]);
-  assert.equal(plan.downSeconds, 20);
+  assert.equal(plan.downSeconds, 40, "a clean shutdown and a boot: 30 s measured");
   assert.equal(plan.room.ok, true);
 
   // The disk alone: live, with C: extended, and no shutdown.
@@ -1321,7 +1321,7 @@ test("a Linux VM's root file system grows live over its disk (061)", async () =>
   mkdirSync(join(home, "sys"), { recursive: true });
   const guest = await backend.acquire(identity(sized(), "linux"), null, hooks().value, signal());
   assert.deepEqual(backend.resizing("linux"), { cores: "restart", memory: "restart", disk: "live", shrinks: true });
-  assert.equal((await backend.planResize(guest, "linux", { ...guest.size!, cores: guest.size!.cores + 2 }, [], signal())).downSeconds, 10);
+  assert.equal((await backend.planResize(guest, "linux", { ...guest.size!, cores: guest.size!.cores + 2 }, [], signal())).downSeconds, 20);
   const grown = await backend.resize(guest, "linux", { ...guest.size!, diskGiB: guest.size!.diskGiB! + 8 }, { restart: false }, signal()).catch((error: Error) => error);
   // The partition number comes from sysfs, which the test machine's own /sys gives or not: what matters is the order.
   const log = existsSync(join(home, "sudo.log")) ? readFileSync(join(home, "sudo.log"), "utf8") : "";

@@ -2,8 +2,9 @@
 // A stand-in for bb-box's msb in tests, for the commands the microsandbox
 // backend runs. Its state is under $FAKE_MSB_ROOT:
 //
-// - host.json: switches: neverReady (a box never writes its ready file) and
-//   ghost (a name whose create fails as a failed create's leftover does).
+// - host.json: switches: neverReady (a box never writes its ready file),
+//   ghost (a name whose create fails as a failed create's leftover does)
+//   and failStart (a start fails with that message).
 // - images.json: each image msb has, and its labels.
 // - sandboxes/<name>/: a box. config.json is what `msb inspect` prints;
 //   home/ is the box user's home, run/ is /run, var-lib/ is /var/lib.
@@ -202,7 +203,13 @@ switch (command) {
     break;
   case "start": {
     const sandbox = found(rest.at(-1));
+    if (host.failStart) fail(`sandbox '${sandbox.name}' failed to start: ${host.failStart}`);
     mkdirSync(join(dir(sandbox.name), "run", "bb-box"), { recursive: true });
+    // Changes saved for the next start take effect now.
+    if (sandbox.pending) {
+      Object.assign(sandbox.config.resources, sandbox.pending);
+      delete sandbox.pending;
+    }
     sandbox.status = "Running";
     save(sandbox);
     break;
@@ -225,10 +232,29 @@ switch (command) {
     break;
   }
   case "modify": {
-    const { values, many } = flags(rest.slice(1), []);
+    const { values, many } = flags(rest.slice(1), ["--cpus", "--memory", "--root-disk", "--format"]);
     const sandbox = found(rest[0]);
-    // As msb's: a running box takes changes only with --next-start or --restart, and without them msb applies nothing but exits 0.
-    if (sandbox.status === "Running" && !values["--next-start"] && !values["--restart"]) {
+    const running = sandbox.status === "Running";
+    const later = values["--next-start"] || values["--restart"];
+    // As msb 0.7.7's: a root disk grows live; CPUs and memory change only for the next start, so on a running box
+    // without --next-start or --restart they are refused, with exit 1, and nothing is applied.
+    if (running && !later && (values["--cpus"] || values["--memory"])) {
+      process.stdout.write(JSON.stringify({ sandbox: sandbox.name, applied: false, warnings: [{ message: "live CPU and memory resize are not available in this runtime yet" }] }) + "\n");
+      process.exit(1);
+    }
+    if (values["--root-disk"]) sandbox.config.image.Oci.root_disk.size_mib = Number.parseInt(values["--root-disk"], 10) * 1024;
+    const resources = {
+      ...(values["--cpus"] ? { cpus: Number(values["--cpus"]) } : {}),
+      ...(values["--memory"] ? { memory_mib: Number.parseInt(values["--memory"], 10) * (values["--memory"].endsWith("G") ? 1024 : 1) } : {}),
+    };
+    // As msb's one desired config: a change saved for the next start, or made while stopped, replaces any saved before.
+    if (running && later) sandbox.pending = { ...(sandbox.pending ?? {}), ...resources };
+    else {
+      Object.assign(sandbox.config.resources, resources);
+      for (const key of Object.keys(resources)) delete sandbox.pending?.[key];
+    }
+    // As msb's: a running box takes other changes only with --next-start or --restart, and without them msb applies nothing but exits 0.
+    if (running && !later && !values["--root-disk"]) {
       process.stderr.write("  → no changes were applied\n");
       break;
     }

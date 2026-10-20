@@ -601,3 +601,47 @@ test("a microVM comes from its kind's image's current build until a refresh or a
   assert.equal(await backend.fromCurrentBuild!(guest, "linux"), false);
   assert.equal(await backend.fromCurrentBuild!({ ...guest, ref: "bbbox-gone" }, "linux"), null);
 });
+
+test("a microVM's root disk grows live with msb modify, and its CPUs and memory change with a restart, saved for its next start (061)", async () => {
+  const { fake, backend } = setup();
+  assert.deepEqual(backend.resizing("linux"), { cores: "restart", memory: "restart", disk: "live", shrinks: true });
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const from = guest.size!;
+  const disk = from.diskGiB!;
+  const to = { cores: 4, memoryMiB: 8192, diskGiB: disk + 8 };
+  const modifies = () => fake.calls().filter((args) => args[0] === "modify");
+
+  const plan = await backend.planResize(guest, "linux", to, [], signal());
+  assert.deepEqual(plan.parts.map((part) => [part.part, part.way]), [["cores", "restart"], ["memory", "restart"], ["disk", "live"]]);
+  assert.equal(plan.downSeconds, 5);
+  assert.equal(plan.room.ok, true);
+
+  // The disk alone: live, with no stop.
+  assert.equal((await backend.resize(guest, "linux", { ...from, diskGiB: disk + 8 }, { restart: false }, signal())).size?.diskGiB, disk + 8);
+  assert.deepEqual(modifies().at(-1)!.slice(1, 4), [guest.ref, "--root-disk", `${disk + 8}G`]);
+  assert.equal(fake.calls().filter((args) => args[0] === "stop").length, 0);
+
+  await assert.rejects(backend.resize(guest, "linux", to, { restart: false }, signal()), /only with a restart/);
+  const resized = await backend.resize(guest, "linux", to, { restart: true }, signal());
+  assert.deepEqual(resized.size, to);
+  assert.ok(modifies().some((args) => args.includes("--next-start") && args.includes("--cpus") && args.includes("4")), "saved for the next start");
+  assert.equal(await backend.power(guest, signal()), "running");
+  await assert.rejects(backend.planResize(guest, "linux", { ...to, diskGiB: disk }, [], signal()), /root disk only grows/);
+
+  // A stopped box takes every change for its next start, with no restart.
+  await backend.stop(guest, signal());
+  const stopped = await backend.planResize(guest, "linux", { ...to, cores: 2 }, [], signal());
+  assert.deepEqual(stopped.parts.map((part) => [part.part, part.way]), [["cores", "live"]]);
+  assert.equal((await backend.resize(guest, "linux", { ...to, cores: 2 }, { restart: false }, signal())).size?.cores, 2);
+  assert.equal(await backend.power(guest, signal()), "stopped");
+});
+
+test("a microVM that does not start at its new size gets its old CPUs and memory back (061)", async () => {
+  const { fake, backend } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  fake.set({ failStart: "not enough memory" });
+  await assert.rejects(backend.resize(guest, "linux", { ...guest.size!, memoryMiB: 8192 }, { restart: true }, signal()), /not enough memory/);
+  fake.set({ failStart: null });
+  await backend.start(guest, signal());
+  assert.equal((await backend.planResize(guest, "linux", guest.size!, [], signal())).parts.length, 0, "back at the size it had");
+});
