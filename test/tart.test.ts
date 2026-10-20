@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -1032,4 +1032,43 @@ test("prepare-image.sh's boot waits while macOS's two VM slots are taken, saying
   const stopped = await run(0);
   assert.equal(stopped.code, 1);
   assert.match(stopped.err, /^prepare-image: no macOS VM slot was free for bb-box-macos-build within 0 minutes: The number of VMs exceeds the system limit/m);
+});
+
+test("a Linux VM resizes with a restart: shut down, tart set, booted, and its root partition grown over a larger disk (061)", async () => {
+  const { ssh, mac, backend } = linuxSetup();
+  assert.deepEqual(backend.resizing("linux-arm64"), { cores: "restart", memory: "restart", disk: "restart", shrinks: true });
+  assert.equal(backend.resizing("macos"), null, "macOS comes later");
+  const guest = await backend.acquire(identity("linux-arm64", "thr_abc123", LINUX_SMALL), null, hooks().hooks, signal());
+  // The disk tools, as the VM would have them; sudo logs the command.
+  const home = ssh.home(guest.address!);
+  mkdirSync(join(home, "bin"), { recursive: true });
+  for (const [name, body] of Object.entries({ findmnt: "echo /dev/vda1", lsblk: "echo vda", sudo: `echo "$*" >> "$HOME/sudo.log"` })) {
+    writeFileSync(join(home, "bin", name), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(home, "bin", name), 0o755);
+  }
+  const from = { ...LINUX_SMALL, diskGiB: 59 };
+  const to = { cores: 4, memoryMiB: 8192, diskGiB: 70 };
+
+  const plan = await backend.planResize(guest, "linux-arm64", to, [], signal());
+  assert.deepEqual(plan.parts, [
+    { part: "cores", from: from.cores, to: 4, way: "restart" },
+    { part: "memory", from: from.memoryMiB, to: 8192, way: "restart" },
+    { part: "disk", from: 59, to: 70, way: "restart" },
+  ]);
+  assert.equal(plan.downSeconds, 20);
+  assert.equal(plan.room.ok, true);
+  assert.equal((await backend.planResize(guest, "linux-arm64", { ...to, cores: 64 }, [], signal())).room.message, "mac1 has 16 cores, fewer than the 64 asked for. Ask for at most 16 cores.");
+  await assert.rejects(backend.planResize(guest, "linux-arm64", { ...to, diskGiB: 40 }, [], signal()), /disk only grows, and this one's is 59 GiB/);
+  await assert.rejects(backend.resize(guest, "linux-arm64", to, { restart: false }, signal()), /only with a restart/);
+
+  const resized = await backend.resize(guest, "linux-arm64", to, { restart: true }, signal());
+  assert.deepEqual(resized.size, to, "70 GiB is 76 GB to Tart, and back");
+  const sets = tartCalls(mac).filter((call) => call[1] === "set" && call[2] === guest.ref);
+  assert.deepEqual(sets.at(-1), ["tart", "set", guest.ref, "--cpu", "4", "--memory", "8192", "--disk-size", "76"]);
+  assert.equal(await backend.power(guest, signal()), "running");
+  assert.match(readFileSync(join(home, "sudo.log"), "utf8"), /^growpart \/dev\/vda \S*\nresize2fs \/dev\/vda1\n$/);
+
+  // A stopped VM is resized once it runs.
+  await backend.stop(guest);
+  await assert.rejects(backend.planResize(guest, "linux-arm64", to, [], signal()), /start it first/);
 });
