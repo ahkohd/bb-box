@@ -372,6 +372,8 @@ function rpc(boxes, options = {}) {
     "machines.remove": ({ box: ref }) => ({ box: null, error: null }),
     "machines.stop": ({ box: ref }) => ({ box: null, error: null }),
     "machines.start": ({ box: ref }) => ({ box: null, error: null }),
+    resize: (input) => (options.resize ? options.resize(input) : { box: find(input.box), from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: null }),
+    "machines.resize": (input) => (options.resize ? options.resize(input) : { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: null }),
     state: () => ({ boxes, kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null }),
     desktop: ({ box: ref }) => ({ box: find(ref) ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, sharp: options.sharp ?? null }),
     ping: () => null,
@@ -394,6 +396,45 @@ function rpc(boxes, options = {}) {
     "config.apply": ({ draft, revision }) => ({ ok: true, state: configState({ ...options.config, document: { ...draft, revision: revision + 1 } }) }),
   };
 }
+
+/** A size as the panel's views give it. */
+const viewSize = (cores, memoryGiB, diskGiB = null) => ({ cores, memoryGiB, diskGiB, words: `${cores} cores, ${memoryGiB} GiB memory${diskGiB === null ? "" : `, ${diskGiB} GiB disk`}` });
+
+/**
+ * A box's backend resizing it (061), as the panel's RPC answers: `ways` per part, room unless `full`, and, as a real resize answers
+ * once it has looked in the box, a refusal for memory below what it uses (`inUseGiB`).
+ */
+function resizer(target, ways, options = {}) {
+  const presets = [{ name: "small", ...viewSize(2, 4) }, { name: "medium", ...viewSize(4, 8) }, { name: "large", ...viewSize(8, 16) }];
+  const largest = viewSize(16, 64, 512);
+  const now = target.sizeNow;
+  return (input) => {
+    const preset = presets.find((candidate) => candidate.name === input.size?.preset);
+    const to = viewSize(input.size?.cores ?? preset?.cores ?? now.cores, input.size?.memoryGiB ?? preset?.memoryGiB ?? now.memoryGiB, input.size?.diskGiB ?? now.diskGiB);
+    const base = { box: target, from: now, to, changed: false, machine: null, needsRestart: false, presets, largest, error: null };
+    const parts = [
+      { part: "cores", from: now.cores, to: to.cores, way: ways.cores },
+      { part: "memory", from: now.memoryGiB, to: to.memoryGiB, way: ways.memory },
+      { part: "disk", from: now.diskGiB, to: to.diskGiB, way: ways.disk },
+    ].filter((part) => part.from !== part.to);
+    if (!parts.length) return { ...base, plan: null };
+    const restart = parts.some((part) => part.way === "restart");
+    const plan = { parts, room: options.full ? { ok: false, message: options.full } : { ok: true, message: null }, downSeconds: restart ? (options.down ?? 8) : null };
+    if (input.check) return { ...base, plan };
+    if (options.inUseGiB !== undefined && to.memoryGiB < now.memoryGiB) {
+      return { ...base, plan: null, error: `Box ${target.name} uses ${options.inUseGiB} GiB of memory now, so ${to.memoryGiB} GiB would leave less than 512 MiB free, and the kernel could end its processes. Give it at least ${Math.ceil(options.inUseGiB + 0.5)} GiB, or free memory in it first. bb-box changed nothing.` };
+    }
+    return { ...base, plan, changed: true };
+  };
+}
+
+/** Types into a field of a React form, as a person would. */
+const typeInto = (root, label, value) => {
+  const input = root.querySelector(`input[aria-label="${label}"]`);
+  if (!input) throw new Error(`No field "${label}"`);
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+};
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const click = (root, role, name) => {
@@ -455,6 +496,69 @@ const openTab = (root, name) => [...root.querySelectorAll("[role=tab]")].find((t
 const boxesChrome = `<span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>Box</span><span>+</span>`;
 const terminalChrome = (name) => `<span>Box</span><span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>Terminal: ${name}</span><span>+</span>`;
 const desktopChrome = (name) => `<span>Box</span><span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>${name}</span><span>+</span>`;
+
+/**
+ * The Resize dialog (061), each at the panel's width and its narrow one: a live resize on a Proxmox LXC box, a VM's that needs a
+ * restart, the restart's question, and a refusal for memory below use on a Docker box.
+ */
+function resizeScenes() {
+  const lxc = box({ sizeNow: viewSize(2, 4, 24), size: "2 cores, 4 GiB memory, 24 GiB disk", resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } });
+  const vm = box({ id: "box_6", name: "steady-pine", backendLabel: "Proxmox QEMU on pve", form: "VM", sizeNow: viewSize(2, 4, 32), size: "2 cores, 4 GiB memory, 32 GiB disk", resizing: { cores: "restart", memory: "restart", disk: "live", shrinks: true } });
+  const docker = box({ id: "box_7", name: "lively-bay", backendLabel: "Docker on devpc", form: "Docker", sizeNow: viewSize(4, 8, null), size: "4 cores, 8 GiB memory", resizing: { cores: "live", memory: "live", disk: "no", shrinks: true } });
+  const open = async (root, name) => {
+    openMenu(root, `${name} actions`);
+    await wait(300);
+    click(document.body, "menuitem", "Resize…");
+    await wait(500);
+    return document.querySelector('[role="alertdialog"]');
+  };
+  const each = {
+    "panel-resize-live": {
+      rpc: rpc([lxc], { resize: resizer(lxc, lxc.resizing) }),
+      after: async (root) => {
+        const dialog = await open(root, "calm-otter");
+        typeInto(dialog, "Cores", "6");
+        typeInto(dialog, "Memory, GiB", "12");
+        typeInto(dialog, "Disk, GiB", "40");
+        await wait(700);
+      },
+    },
+    "panel-resize-restart": {
+      rpc: rpc([vm], { resize: resizer(vm, vm.resizing) }),
+      after: async (root) => {
+        await open(root, "steady-pine");
+        pick("radio", "Large");
+        await wait(700);
+      },
+    },
+    "panel-resize-confirm": {
+      rpc: rpc([vm], { resize: resizer(vm, vm.resizing) }),
+      after: async (root) => {
+        await open(root, "steady-pine");
+        pick("radio", "Large");
+        await wait(700);
+        click(document.body, "button", "Resize…");
+        await wait(400);
+      },
+    },
+    "panel-resize-refused": {
+      rpc: rpc([docker], { resize: resizer(docker, docker.resizing, { inUseGiB: 3.6 }) }),
+      after: async (root) => {
+        await open(root, "lively-bay");
+        pick("radio", "Small");
+        await wait(700);
+        click(document.body, "button", "Resize");
+        await wait(500);
+      },
+    },
+  };
+  return Object.fromEntries(
+    Object.entries(each).flatMap(([name, scene]) => [
+      [name, { slot: "boxes", chrome: boxesChrome, width: 788, height: 680, ...scene }],
+      [`${name}-narrow`, { slot: "boxes", chrome: boxesChrome, width: 568, height: 760, viewport: 600, ...scene }],
+    ]),
+  );
+}
 
 export const scenes = {
   "panel-empty": { slot: "boxes", chrome: boxesChrome, rpc: rpc([]) },
@@ -810,6 +914,7 @@ export const scenes = {
       await wait(400);
     },
   },
+  ...resizeScenes(),
   terminal: {
     slot: "terminal",
     chrome: terminalChrome("calm-otter"),

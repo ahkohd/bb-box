@@ -59,6 +59,23 @@ export interface BoxView {
   /** Its kind's boxes join BB as machines when enrolment is on; Windows kinds unless their backend's switch is off (#539). */
   readonly enrols: boolean;
   readonly canStopStart: boolean;
+  /** What the box has, in parts, or else what it was asked to be; null when neither is known (061's Resize). Absent from older plugins. */
+  readonly sizeNow?: SizeView | null;
+  /** What its backend can resize for its kind, and how (061); null when nothing. Absent from older plugins. */
+  readonly resizing?: Resizing | null;
+  /** Its last resize (061), or null. Absent from older plugins. */
+  readonly lastResize?: ResizeView | null;
+}
+
+/** A box's last resize (061), as the panel shows it. */
+export interface ResizeView {
+  readonly to: SizeView;
+  /** When it began, in ms since the epoch. */
+  readonly at: number;
+  readonly state: "resizing" | "done" | "failed";
+  readonly restart: boolean;
+  readonly ms: number | null;
+  readonly error: string | null;
 }
 
 /** What the box has, read from its guest, or else the size it was asked to be. */
@@ -71,7 +88,7 @@ function sizeWords(box: BoxRecord): string | null {
   return size ? describeSize(size) : null;
 }
 
-export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlView): BoxView {
+export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlView, resizing: Resizing | null = null): BoxView {
   const [display] = box.capabilities.displays;
   return {
     id: box.id,
@@ -105,6 +122,9 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     enrol: box.enrol,
     enrols: box.capabilities.enrol,
     canStopStart,
+    sizeNow: boxSize(box) ? sizeView(boxSize(box)!) : null,
+    resizing,
+    lastResize: box.resize ? { to: sizeView(box.resize.to), at: box.resize.at, state: box.resize.state, restart: box.resize.restart, ms: box.resize.ms, error: box.resize.error } : null,
   };
 }
 
@@ -116,7 +136,7 @@ export interface SizeView {
   readonly words: string;
 }
 
-function sizeView(size: BoxSize): SizeView {
+export function sizeView(size: BoxSize): SizeView {
   return { cores: size.cores, memoryGiB: size.memoryMiB / 1024, diskGiB: size.diskGiB, words: describeSize(size) };
 }
 

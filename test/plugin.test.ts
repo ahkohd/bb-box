@@ -2277,6 +2277,88 @@ test("bb box machines resize resizes one of your machines, checks first with --c
   assert.equal(thread.exitCode, 1);
 });
 
+test("the panel's resize plans first, asks before a restart, names the threads working on the box until forced, and logs it as the panel's (061)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const backend = world.backend!;
+  backend.resizeWays = { cores: "live", memory: "restart", disk: "live", shrinks: true };
+  await tool("box_acquire", { kind: "linux", disk_gib: 20 });
+  const box = await only(app);
+  type Result = { box: { sizeNow: unknown; resizing: unknown; lastResize: { state: string; restart: boolean } | null } | null; plan: { parts: unknown[]; room: { ok: boolean }; downSeconds: number | null } | null; changed: boolean; needsRestart: boolean; threads?: { id: string }[]; presets: { name: string }[]; largest: { cores: number } | null; error: string | null };
+  const resize = async (input: Record<string, unknown>) => (await harness.behavior.callRpc("resize", { threadId: THREAD, box: box.name, ...input })) as Result;
+
+  // The box's view says what it has and what its backend changes, for the dialog.
+  const opened = await resize({ check: true });
+  assert.deepEqual(opened.box?.sizeNow, { cores: 2, memoryGiB: 4, diskGiB: 20, words: "2 cores, 4 GiB memory, 20 GiB disk" });
+  assert.deepEqual(opened.box?.resizing, { cores: "live", memory: "restart", disk: "live", shrinks: true });
+  assert.equal(opened.plan, null, "the size it has changes nothing");
+  assert.deepEqual(opened.presets.map((preset) => preset.name), ["small", "medium", "large"]);
+  assert.equal(opened.largest?.cores, 16);
+
+  const planned = await resize({ size: { cores: 4, memoryGiB: 8, diskGiB: 30 }, check: true });
+  assert.deepEqual(planned.plan?.parts, [
+    { part: "cores", from: 2, to: 4, way: "live" },
+    { part: "memory", from: 4, to: 8, way: "restart" },
+    { part: "disk", from: 20, to: 30, way: "live" },
+  ]);
+  assert.equal(planned.plan?.room.ok, true);
+  assert.equal(planned.plan?.downSeconds, 8);
+  assert.equal(backend.resized.length, 0, "a check changes nothing");
+
+  // Without the person's yes to a restart, nothing changes, and the answer says why.
+  const asked = await resize({ size: { cores: 4, memoryGiB: 8 } });
+  assert.equal(asked.needsRestart, true);
+  assert.match(asked.error ?? "", /needs a restart for its memory/);
+  assert.equal(backend.resized.length, 0);
+
+  // A thread works on the box: the panel names it and asks again, then forces.
+  world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const working = await resize({ size: { cores: 4, memoryGiB: 8 }, restart: true });
+  assert.deepEqual(working.threads?.map((thread) => thread.id), ["thr_worker"]);
+  assert.equal(working.error, null);
+  assert.equal(backend.resized.length, 0);
+  const forced = await resize({ size: { cores: 4, memoryGiB: 8 }, restart: true, force: true });
+  assert.equal(forced.error, null);
+  assert.equal(forced.changed, true);
+  assert.deepEqual(forced.box?.lastResize && { state: forced.box.lastResize.state, restart: forced.box.lastResize.restart }, { state: "done", restart: true });
+  assert.ok(harness.inspection.logEntries.some((entry) => new RegExp(`^Resized box ${box.name} .* to 4 cores, 8 GiB memory, 20 GiB disk, with a restart, as the panel asked, in \\d+ ms\\.$`).test(entry.message)));
+
+  // Refusals come back in words, logged as the panel's.
+  const smaller = await resize({ size: { diskGiB: 10 } });
+  assert.match(smaller.error ?? "", /^A box's disk only grows/);
+  assert.equal(smaller.needsRestart, false);
+  assert.ok(harness.inspection.logEntries.some((entry) => entry.message.startsWith(`Refused to resize box ${box.name}`) && entry.message.includes("as the panel asked")));
+  const missing = await resize({ box: "nope", check: true });
+  assert.match(missing.error ?? "", /nope/);
+});
+
+test("the panel restarts a desktop box for a resize though a person holds its control: they are the one asking (061)", async (t) => {
+  const { harness, world, box } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.resizeWays = { cores: "live", memory: "restart", disk: "live", shrinks: true };
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  assert.equal(((await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null }).error, null);
+  const done = (await harness.behavior.callRpc("resize", { threadId: THREAD, box: box.id, size: { memoryGiB: 12 }, restart: true })) as { changed: boolean; error: string | null };
+  assert.deepEqual(done, { ...done, changed: true, error: null });
+});
+
+test("settings' Machines resizes one of your machines through machines.resize (061)", async (t) => {
+  const { harness, app, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.resizeWays = { cores: "live", memory: "live", disk: "live", shrinks: true };
+  const machine = await addMachine(harness, app, { kind: "linux", name: "build-1" });
+  const done = (await harness.behavior.callRpc("machines.resize", { box: "build-1", size: { cores: 4 } })) as { changed: boolean; to: { cores: number }; error: string | null; box: { id: string } };
+  assert.equal(done.error, null);
+  assert.equal(done.changed, true);
+  assert.equal(done.to.cores, 4);
+  assert.equal(done.box.id, machine.id);
+  assert.ok(harness.inspection.logEntries.some((entry) => entry.message.startsWith("Resized box build-1 ") && entry.message.includes("live, as the panel asked")));
+});
+
 test("after a live change of a BB machine's cores, box_resize says BB keeps the old count and how to set the thread limit, where it cannot restart BB's daemon there (061, BB request 28)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());

@@ -1020,7 +1020,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     computer: computing,
     configuration,
     general,
-    view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id)),
+    view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), backends.get(box.backend)?.resizing?.(box.kind) ?? null),
     control: (box) => control.view(box.id),
     async imageOptions(project) {
       const images = Object.entries(configuration.document.images ?? {});

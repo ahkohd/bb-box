@@ -8,7 +8,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
-import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ThreadOnBox } from "../src/plugin/contract.ts";
+import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { GpuRoom } from "../src/backends/types.ts";
@@ -477,7 +477,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean } } = {}) {
+function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -558,6 +558,14 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
       changes.push(`machines.stop${force ? " (forced)" : ""} ${ref}`);
       machines = machines.map((candidate) => (candidate === entry ? { ...candidate, box: { ...candidate.box, state: "stopped" } } : candidate));
       return result(entry ? { ...entry.box, state: "stopped" } : null);
+    },
+    resize: (input) => {
+      changes.push(`resize ${input.box} ${JSON.stringify({ ...input, threadId: undefined, box: undefined })}`);
+      return options.resize ? options.resize(input) : { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: "No resize in this test." };
+    },
+    "machines.resize": (input) => {
+      changes.push(`machines.resize ${input.box} ${JSON.stringify({ ...input, box: undefined })}`);
+      return options.resize ? options.resize(input) : { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: "No resize in this test." };
     },
     "machines.start": ({ box: ref }) => {
       changes.push(`machines.start ${ref}`);
@@ -1223,6 +1231,154 @@ test("a refused box stays in the form with the reason", async () => {
   fireEvent.click(await screen.findByRole("button", { name: "Create box" }));
   expect((await screen.findByRole("alert")).textContent).toBe("pve has no memory left. Release a box you no longer need.");
   expect(screen.getByRole("radiogroup", { name: "System" })).toBeTruthy();
+});
+
+type ResizeInput = { box: string; size?: { preset?: string; cores?: number; memoryGiB?: number; diskGiB?: number }; check?: boolean; restart?: boolean; force?: boolean };
+
+/**
+ * A backend's resize, as the panel's RPC answers it: `ways` per part, the box's size `now`, a host with room unless `full`,
+ * threads working on the box until forced, and a refusal for memory below use when it shrinks below `inUseGiB`.
+ */
+function fakeResizer(now: { cores: number; memoryGiB: number; diskGiB: number | null }, options: { ways: { cores: "live" | "restart" | "no"; memory: "live" | "restart" | "no"; disk: "live" | "restart" | "no" }; full?: string; threads?: ThreadOnBox[]; inUseGiB?: number; machine?: string }) {
+  const presets = [
+    { name: "small", ...size(2, 4) },
+    { name: "medium", ...size(4, 8) },
+    { name: "large", ...size(8, 16) },
+  ];
+  const largest = size(16, 32, 256);
+  const view = (parts: { cores: number; memoryGiB: number; diskGiB: number | null }) => ({ ...parts, words: `${parts.cores} cores, ${parts.memoryGiB} GiB memory${parts.diskGiB === null ? "" : `, ${parts.diskGiB} GiB disk`}` });
+  let current = now;
+  let resizedWith: { restart: boolean } | null = null;
+  const boxNow = () => box({ sizeNow: view(current), resizing: { ...options.ways, shrinks: true }, lastResize: resizedWith ? { to: view(current), at: Date.now(), state: "done", restart: resizedWith.restart, ms: 800, error: null } : null });
+  return (input: ResizeInput): ResizeResult => {
+    const preset = presets.find((candidate) => candidate.name === input.size?.preset);
+    const to = { cores: input.size?.cores ?? preset?.cores ?? current.cores, memoryGiB: input.size?.memoryGiB ?? preset?.memoryGiB ?? current.memoryGiB, diskGiB: input.size?.diskGiB ?? current.diskGiB };
+    const base = { box: boxNow(), from: view(current), to: view(to), changed: false, machine: null, needsRestart: false, presets, largest, error: null };
+    if (to.diskGiB !== null && current.diskGiB !== null && to.diskGiB < current.diskGiB) return { ...base, to: null, plan: null, error: `A box's disk only grows, and this box's is ${current.diskGiB} GiB, more than the ${to.diskGiB} GiB asked for.` };
+    const parts = (["cores", "memory", "disk"] as const)
+      .map((part) => {
+        const key = part === "memory" ? "memoryGiB" : part === "disk" ? "diskGiB" : "cores";
+        return { part, from: current[key], to: to[key]!, way: options.ways[part] };
+      })
+      .filter((part) => part.from !== part.to);
+    if (!parts.length) return { ...base, plan: null };
+    const restart = parts.some((part) => part.way === "restart");
+    const plan = { parts, room: options.full ? { ok: false, message: options.full } : { ok: true, message: null }, downSeconds: restart ? 8 : null };
+    if (input.check) return { ...base, plan };
+    if (options.full) return { ...base, plan: null, error: options.full };
+    if (options.inUseGiB !== undefined && to.memoryGiB < current.memoryGiB && to.memoryGiB - 0.5 < options.inUseGiB) {
+      return { ...base, plan: null, error: `Box calm-otter uses ${options.inUseGiB} GiB of memory now, so ${to.memoryGiB} GiB would leave less than 512 MiB free, and the kernel could end its processes. Give it at least ${Math.ceil(options.inUseGiB + 0.5)} GiB, or free memory in it first. bb-box changed nothing.` };
+    }
+    if (restart && !input.restart) return { ...base, plan: null, needsRestart: true, error: "Resizing box calm-otter needs a restart." };
+    if (restart && options.threads?.length && !input.force) return { ...base, plan: null, threads: options.threads };
+    current = to;
+    resizedWith = { restart };
+    return { ...base, box: boxNow(), plan, changed: true, machine: options.machine ?? null };
+  };
+}
+
+/** Opens a box's Resize dialog from its menu, and waits for its first check. */
+async function openResize(slot: ReturnType<typeof panel>, name = "calm-otter") {
+  const menu = await openMenu(slot.getByRole("button", { name: `${name} actions` }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Resize…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await waitFor(() => expect(within(dialog).getAllByRole("radio").map((radio) => radio.textContent)).toEqual(["Small2 cores · 4 GiB", "Medium4 cores · 8 GiB", "Large8 cores · 16 GiB", "Customup to 16 cores"]));
+  return dialog;
+}
+
+test("Resize changes a box live at once: the presets, cores, memory and disk within the kind's largest, and each part's way (061)", async () => {
+  const resize = fakeResizer({ cores: 2, memoryGiB: 4, diskGiB: 20 }, { ways: { cores: "live", memory: "live", disk: "live" } });
+  const { handlers, changes } = server([box({ sizeNow: size(2, 4, 20), resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } })], { resize });
+  const slot = panel(handlers);
+  await slot.findByText("calm-otter");
+  const dialog = await openResize(slot);
+  expect(within(dialog).getByText("Resize calm-otter")).toBeTruthy();
+  expect(within(dialog).getByText("Now 2 cores · 4 GiB · 20 GiB disk.")).toBeTruthy();
+  expect(within(dialog).getByText("Cores, memory and disk live. The disk only grows.")).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: "Resize" }).hasAttribute("disabled")).toBe(true);
+  expect(within(dialog).getByText("20 to 256")).toBeTruthy();
+
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Cores" }), { target: { value: "6" } });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Disk, GiB" }), { target: { value: "40" } });
+  const list = await within(dialog).findByRole("list", { name: "What changes" });
+  await waitFor(() => expect(within(list).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Cores2 → 6Live", "Disk20 GiB → 40 GiBLive"]));
+  expect(within(dialog).getByText("Changes at once. Everything running in calm-otter carries on.")).toBeTruthy();
+  expect(within(dialog).getByText("Its host has room for it to grow.")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Resize" }));
+  expect(await within(dialog).findByText("Resized calm-otter")).toBeTruthy();
+  expect(within(dialog).getByText("It has 6 cores · 4 GiB · 40 GiB disk now, changed live.")).toBeTruthy();
+  expect(changes.filter((change) => !change.includes('"check":true'))).toEqual(['resize box_1 {"size":{"cores":6,"diskGiB":40}}']);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+});
+
+test("Resize asks before a restart, in the record's words, then names the threads working on the box before it goes ahead anyway (061)", async () => {
+  const resize = fakeResizer({ cores: 2, memoryGiB: 4, diskGiB: 20 }, { ways: { cores: "restart", memory: "restart", disk: "live" }, threads: [{ id: "thr_worker", title: "Build the app", running: true }] });
+  const { handlers, changes } = server([box({ sizeNow: size(2, 4, 20), resizing: { cores: "restart", memory: "restart", disk: "live", shrinks: true } })], { resize });
+  const slot = panel(handlers);
+  await slot.findByText("calm-otter");
+  const dialog = await openResize(slot);
+  expect(within(dialog).getByText("Disk live; cores and memory with a restart. The disk only grows.")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("radio", { name: /Large/ }));
+  await waitFor(() => expect(within(dialog).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Cores2 → 8Restart", "Memory4 GiB → 16 GiBRestart"]));
+  expect(within(dialog).getByText("Needs a restart: everything running in calm-otter stops, for about 8 s.")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Resize…" }));
+  expect(within(dialog).getByText("Restart calm-otter to resize it?")).toBeTruthy();
+  expect(within(dialog).getByText("Everything running in it stops, and it is back in about 8 s.")).toBeTruthy();
+  expect(changes.filter((change) => !change.includes('"check":true'))).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Restart and resize" }));
+  expect(await within(dialog).findByText("Restart calm-otter anyway?")).toBeTruthy();
+  expect(within(dialog).getByText("Build the app is working on it, and its work stops while it restarts.")).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Restart anyway" }));
+  expect(await within(dialog).findByText("It has 8 cores · 16 GiB · 20 GiB disk now, after a restart.")).toBeTruthy();
+  expect(changes.filter((change) => !change.includes('"check":true'))).toEqual(['resize box_1 {"size":{"preset":"large"},"restart":true}', 'resize box_1 {"size":{"preset":"large"},"restart":true,"force":true}']);
+});
+
+test("Resize shows refusals plainly: no room, memory below use, and a disk that would shrink (061)", async () => {
+  const full = fakeResizer({ cores: 2, memoryGiB: 8, diskGiB: 20 }, { ways: { cores: "live", memory: "live", disk: "live" }, full: "pve has 2 GiB of memory left, and calm-otter would grow by 8 GiB. Release a box you no longer need." });
+  const first = server([box({ sizeNow: size(2, 8, 20), resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } })], { resize: full });
+  let slot = panel(first.handlers);
+  await slot.findByText("calm-otter");
+  let dialog = await openResize(slot);
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Memory, GiB" }), { target: { value: "16" } });
+  expect((await within(dialog).findByRole("alert")).textContent).toBe("pve has 2 GiB of memory left, and calm-otter would grow by 8 GiB. Release a box you no longer need.");
+  expect(within(dialog).getByRole("button", { name: "Resize" }).hasAttribute("disabled")).toBe(true);
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Disk, GiB" }), { target: { value: "10" } });
+  await waitFor(() => expect(within(dialog).getByRole("alert").textContent).toBe("A box's disk only grows, and this box's is 20 GiB, more than the 10 GiB asked for."));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  slot.unmount();
+
+  const using = fakeResizer({ cores: 2, memoryGiB: 8, diskGiB: 20 }, { ways: { cores: "live", memory: "live", disk: "live" }, inUseGiB: 3.6 });
+  const second = server([box({ sizeNow: size(2, 8, 20), resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } })], { resize: using });
+  slot = panel(second.handlers);
+  await slot.findByText("calm-otter");
+  dialog = await openResize(slot);
+  fireEvent.click(within(dialog).getByRole("radio", { name: /Small/ }));
+  await within(dialog).findByRole("list", { name: "What changes" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Resize" }));
+  expect((await within(dialog).findByRole("alert")).textContent).toBe(
+    "Box calm-otter uses 3.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes. Give it at least 5 GiB, or free memory in it first. bb-box changed nothing.",
+  );
+  expect(within(dialog).getByText("Resize calm-otter")).toBeTruthy();
+  // The same size again would be refused again: Resize waits for another.
+  expect(within(dialog).getByRole("button", { name: "Resize" }).hasAttribute("disabled")).toBe(true);
+});
+
+test("Resize is offered only where the box's backend changes a part, for a ready or stopped box (061)", async () => {
+  const { handlers } = server([
+    box({ id: "box_1", name: "calm-otter", resizing: { cores: "live", memory: "live", disk: "no", shrinks: true } }),
+    box({ id: "box_2", name: "bold-heron", resizing: { cores: "no", memory: "no", disk: "no", shrinks: false } }),
+    box({ id: "box_3", name: "busy-wren", state: "starting", resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } }),
+  ]);
+  const slot = panel(handlers);
+  await slot.findByText("calm-otter");
+  for (const [name, offered] of [["calm-otter", true], ["bold-heron", false], ["busy-wren", false]] as const) {
+    const menu = await openMenu(slot.getByRole("button", { name: `${name} actions` }));
+    expect(within(menu).queryByRole("menuitem", { name: "Resize…" }) !== null).toBe(offered);
+    fireEvent.keyDown(menu, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  }
 });
 
 test("releasing a box asks first", async () => {
@@ -3725,6 +3881,21 @@ test("on the Boxes page, a box another thread is working on is released only aft
   fireEvent.click(within(dialog).getByRole("button", { name: "Release anyway" }));
   await waitFor(() => expect(changes).toEqual(["release (forced) box_1"]));
   expect(list.inspection.rpcCalls.filter((call) => call.method === "release").at(-1)?.input).toEqual({ threadId: THREAD, box: "box_1", force: true });
+});
+
+test("settings' Machines resize one of your machines through machines.resize (061)", async () => {
+  const resize = fakeResizer({ cores: 2, memoryGiB: 4, diskGiB: 20 }, { ways: { cores: "live", memory: "live", disk: "live" }, machine: "BB's daemon on machine build-1 is restarting, so BB counts its 4 processors." });
+  const { handlers, changes } = server([], { machines: [machine({ sizeNow: size(2, 4, 20), resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } }, [])], resize });
+  const slot = settings(handlers);
+  const menu = await openMenu(await slot.findByRole("button", { name: "build-1 actions" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Resize…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText("Resize build-1")).toBeTruthy();
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Cores" }), { target: { value: "4" } });
+  await within(dialog).findByRole("list", { name: "What changes" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Resize" }));
+  expect(await within(dialog).findByText("BB's daemon on machine build-1 is restarting, so BB counts its 4 processors.")).toBeTruthy();
+  expect(changes.filter((change) => !change.includes('"check":true'))).toEqual(['machines.resize box_m1 {"size":{"cores":4}}']);
 });
 
 test("the Boxes page's Machines have settings' rows and warnings: Stop, Start and Remove, each asking when threads work there", async () => {

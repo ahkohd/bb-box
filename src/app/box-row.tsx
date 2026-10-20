@@ -25,6 +25,7 @@ import { JoinHelp } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { canResize, ResizeDialog } from "./resize.tsx";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh";
 
@@ -101,6 +102,7 @@ export function BoxRow({
   const openTerminal = opens?.terminal ?? terminalInPanel;
   const [busy, setBusy] = useState<BoxAction | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [resizing, setResizing] = useState(false);
   const rpc = useRpc<Contract>();
   /** The new-thread dialog: closed, or its prompt, whether it is starting and why it did not. */
   const [threading, setThreading] = useState<{ prompt: string; starting: boolean; error: string | null } | null>(null);
@@ -261,6 +263,12 @@ export function BoxRow({
                 Start
               </DropdownMenuItem>
             ) : null}
+            {!held && canResize(box) ? (
+              <DropdownMenuItem onSelect={() => setResizing(true)}>
+                <Icon name="Maximize2" aria-hidden />
+                Resize…
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem disabled={settling} onSelect={() => void run("refresh")}>
               <Icon name="ArrowReloadHorizontal" aria-hidden />
               Check now
@@ -302,6 +310,7 @@ export function BoxRow({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <ResizeDialog box={resizing ? box : null} threadId={threadId} onClose={() => setResizing(false)} />
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>

@@ -6,7 +6,8 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
-import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, ProviderProfile } from "./views.ts";
+import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, ProviderProfile, SizeView } from "./views.ts";
+import type { ResizeWay, SizePart } from "../backends/types.ts";
 
 export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 
@@ -106,6 +107,33 @@ export interface BoxResult {
   readonly threads?: readonly ThreadOnBox[];
 }
 
+/** What a resize did, or with `check`, would do (061); or why it did nothing. */
+export interface ResizeResult {
+  /** The box as it is now; null when it could not be found. */
+  readonly box: BoxView | null;
+  readonly from: SizeView | null;
+  readonly to: SizeView | null;
+  /** Each part that changes and how, the room on the box's host, and a restart's length; null when the box has that size already, or on a refusal. */
+  readonly plan: {
+    /** Memory in GiB; a disk from null is the base disk. */
+    readonly parts: readonly { readonly part: SizePart; readonly from: number | null; readonly to: number; readonly way: ResizeWay }[];
+    readonly room: { readonly ok: boolean; readonly message: string | null };
+    readonly downSeconds: number | null;
+  } | null;
+  /** It changed the box. */
+  readonly changed: boolean;
+  /** What a live change of cores means for BB's count of the machine's processors and its thread limit, or null. */
+  readonly machine: string | null;
+  /** Refused only because a part needs a restart, which the panel asks about, then sends `restart`. */
+  readonly needsRestart: boolean;
+  /** Threads working on the box, when a restart was refused for them. Ask, then send `force`. */
+  readonly threads?: readonly ThreadOnBox[];
+  /** The kind's presets and its largest size, for the picker; empty and null when the kind is not on offer now. */
+  readonly presets: readonly ({ readonly name: string } & SizeView)[];
+  readonly largest: SizeView | null;
+  readonly error: string | null;
+}
+
 /** A thread that runs on a box's BB machine. */
 export interface ThreadOnBox {
   readonly id: string;
@@ -137,6 +165,12 @@ const whole = z.number().int().positive().optional();
  * kind's default: RPC input must be JSON, so `size: undefined` is refused.
  */
 const size = z.object({ preset: z.string().min(1).optional(), cores: whole, memoryGiB: whole, diskGiB: whole });
+/**
+ * A resize (061): parts left out keep what the box has. `check` only plans it. `restart` allows a part that needs one, once the
+ * person has said yes; `force` restarts the box though threads work on it. A person holding the desktop's control is not
+ * refused: they are the one asking.
+ */
+const resizing = z.object({ size: size.optional(), check: z.boolean().optional(), restart: z.boolean().optional(), force: z.boolean().optional() });
 
 /** A whole configuration document as JSON (029). bb-box checks it. */
 const draft = z.unknown();
@@ -156,6 +190,7 @@ export const contract = defineRpcContract({
   release: { input: forceable, output: boxResult },
   stop: { input: forceable, output: boxResult },
   start: { input: oneBox, output: boxResult },
+  resize: { input: oneBox.merge(resizing), output: z.custom<ResizeResult>() },
   refresh: { input: oneBox, output: boxResult },
   desktop: { input: oneBox, output: z.custom<DesktopState>() },
   /** Puts the box's desktop at high resolution, or not: twice the pixels at twice Xfce's scale. Refused, with why, where it cannot be. */
@@ -186,6 +221,7 @@ export const contract = defineRpcContract({
   "machines.remove": { input: machineRef.extend({ force: z.boolean().optional() }), output: boxResult },
   "machines.stop": { input: machineRef.extend({ force: z.boolean().optional() }), output: boxResult },
   "machines.start": { input: machineRef, output: boxResult },
+  "machines.resize": { input: machineRef.merge(resizing), output: z.custom<ResizeResult>() },
   /** The kinds on offer now, for "New box" in BB's new-thread screen. */
   /** A provider's profile for the form's (i): data the plugin has, and one capacity call to the provider. Asked only when opened. */
   provider: { input: z.object({ backend: z.string().min(1) }), output: z.custom<ProviderProfile>() },
