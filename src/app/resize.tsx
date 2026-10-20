@@ -62,6 +62,11 @@ export function waysLine(ways: Resizing): string {
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}.${ways.disk !== "no" ? " The disk only grows." : ""}`;
 }
 
+/** A refusal while the person chooses: nothing was tried, so it does not say that nothing changed. */
+export function checkWords(text: string): string {
+  return text.replace(/\s*bb-box changed nothing\.\s*$/, "");
+}
+
 function whole(text: string): number | undefined {
   const trimmed = text.trim();
   if (!/^\d+$/.test(trimmed)) return undefined;
@@ -289,19 +294,26 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
               ) : ways ? (
                 <p className="text-xs text-muted-foreground">{waysLine(ways)}</p>
               ) : null}
-              {plan && restart ? (
+              {refusal !== null ? null : plan && restart ? (
                 <p className="text-xs leading-snug text-warning-text">
                   Needs a restart: everything running in {box.name} stops{plan.downSeconds !== null ? `, for about ${plan.downSeconds} s` : ""}.
                 </p>
               ) : plan ? (
                 <p className="text-xs leading-snug text-muted-foreground">Changes at once. Everything running in {box.name} carries on.</p>
               ) : null}
-              {plan?.room.ok && grows ? <p className="text-xs leading-snug text-muted-foreground">Its host has room for it to grow.</p> : null}
+              {refusal === null && plan?.room.ok && grows ? <p className="text-xs leading-snug text-muted-foreground">Its host has room for it to grow.</p> : null}
             </FormSection>
 
-            {answer?.error || refusal || (plan && !plan.room.ok) ? (
+            {refusal !== null ? (
+              // The answer to Resize: nothing changed, and why, in bb-box's words.
+              <div role="alert" className="space-y-0.5 text-xs leading-snug">
+                <p className="font-medium text-destructive-text">Not resized</p>
+                <p className="text-destructive-text">{refusal}</p>
+              </div>
+            ) : answer?.error || (plan && !plan.room.ok) ? (
+              // What stands in the way of the size chosen, before anything is tried.
               <p role="alert" className="text-xs leading-snug text-destructive-text">
-                {refusal ?? answer?.error ?? plan?.room.message ?? `There is no room for ${box.name} to grow.`}
+                {checkWords(answer?.error ?? plan?.room.message ?? `There is no room for ${box.name} to grow.`)}
               </p>
             ) : null}
           </div>
