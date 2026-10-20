@@ -205,6 +205,23 @@ export function resizingWords(resizing: Resizing | null): string {
   return `Resize: ${said}${resizing.disk !== "no" ? ", the disk only growing" : ""}.`;
 }
 
+/**
+ * About how long a restart of `box` takes, in whole seconds, from what its
+ * own restarts took (061): its last restart resize, with a fifth more, or
+ * else its last start, twice over for the shutdown before it, when that
+ * start was a boot. A start of a backend whose stop keeps the session
+ * (`resumes`) was a resume, unless its timings name a boot, and says
+ * nothing of a boot. Null when the box has no such figure.
+ */
+export function restartSeconds(box: BoxRecord, resumes: boolean): number | null {
+  const last = box.resize;
+  if (last?.restart && last.state === "done" && last.ms) return Math.max(1, Math.ceil((last.ms * 1.2) / 1000));
+  const start = box.timings["start.total"];
+  const booted = box.timings["start.boot"] !== undefined || (!resumes && box.timings["start.resume"] === undefined);
+  if (start && booted) return Math.max(1, Math.ceil((start * 2) / 1000));
+  return null;
+}
+
 /** What a live memory shrink must leave free above the memory in use: the larger of this and a tenth of the new size. */
 export const RESIZE_MEMORY_MARGIN_MIB = 512;
 
@@ -1885,11 +1902,17 @@ export class Boxes {
       const to = chosen.size;
       if (sameSize(to, from)) return { box: current, from, to, plan: null, changed: false };
       const pending = await this.#pending(current.backend, current.id);
-      const plan = await backend.planResize!(current.guest!, current.kind, to, pending, options.signal);
+      const planned = await backend.planResize!(current.guest!, current.kind, to, pending, options.signal);
+      // How long this box's restart took before, where it has a figure, rather than the backend's guess.
+      const measured = planned.downSeconds !== null ? restartSeconds(current, backend.keepsSession?.(current.kind) ?? false) : null;
+      const plan = measured !== null ? { ...planned, downSeconds: measured } : planned;
       const cannot = plan.parts.filter((part) => part.way === "no");
       if (cannot.length) {
         throw new BoxError("unsupported", `${current.backendLabel} cannot change the ${partWords(cannot.map((part) => part.part))} of its ${current.kind} boxes. ${resizingWords(resizing)}`);
       }
+      // A check says up front what the resize would refuse, a live shrink below use too: one short command in the box.
+      const shrinking = plan.parts.find((part) => part.part === "memory" && part.way === "live" && part.from !== null && part.to < part.from);
+      if (shrinking && current.state === "ready") await this.#roomToShrink(current, to.memoryMiB, options.signal);
       if (options.check) return { box: current, from, to, plan, changed: false };
       if (!plan.room.ok) throw new BoxError("no_capacity", plan.room.message ?? `${current.backendLabel} has no room for box ${current.name} to grow.`);
       const restart = plan.parts.some((part) => part.way === "restart");
@@ -1901,8 +1924,6 @@ export class Boxes {
           `Resizing box ${current.name} to ${describeSize(to)} needs a restart for its ${parts}: the box shuts down and starts again${down}, which ends everything running in it. bb-box changed nothing.`,
         );
       }
-      const shrinking = plan.parts.find((part) => part.part === "memory" && part.way === "live" && part.from !== null && part.to < part.from);
-      if (shrinking && current.state === "ready") await this.#roomToShrink(current, to.memoryMiB, options.signal);
       if (restart) await options.beforeRestart?.(current);
       const began = this.#now();
       const record: ResizeRecord = { from, to, at: began, state: "resizing", ms: null, restart, error: null };
