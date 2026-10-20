@@ -27,9 +27,11 @@
 // in memory until the VM resumes or goes. A claim resumes the VM, gives it
 // the box's tags, name and description, waits for SSH and sets the clock.
 
+import { SPARES } from "../../core/boxes.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest } from "../proxmox/api.ts";
+import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
   BUILD,
   TAG,
@@ -611,14 +613,17 @@ export class ProxmoxQemuBackend implements Backend {
         await hooks.starting();
         await step("resume", () => api.start(id, signal));
         // The tags first, as a running VM tagged warm is deleted. onboot was off while it was warm.
-        await step("relabel", () =>
-          api.configure(id, { tags: boxTags(box, installId, template), name: box.name, description: describe(box, installId), onboot: true }, signal),
-        );
+        await step("relabel", async () => {
+          // A warm VM keeps its low CPU weight, and the tag, until it is ready (#888).
+          const low = parseTags((await api.config(id, signal)).tags).includes(START_TAG);
+          await api.configure(id, { tags: withStartTag(boxTags(box, installId, template), low), name: box.name, description: describe(box, installId), onboot: true }, signal);
+        });
         const size = api.config(id, signal).then(sizeOf, () => null);
         await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal, step);
         await step("clock", () => this.#setClock(id, signal));
         this.#compileDisplay(id);
         this.#kick();
+        if (box.threadId !== SPARES) await this.#settle(api, id, signal);
         return this.#guest(api.node, id, template, box.boxId, await size, build);
       }
       if (vmid === null) {
@@ -638,12 +643,15 @@ export class ProxmoxQemuBackend implements Backend {
         }
       }
       const id = vmid;
+      // A low CPU weight until the box is ready (#888), where its config sets none of its own.
+      let low = false;
       const config = await step("configure", async () => {
         const current = await api.config(id, signal);
-        await api.configure(id, this.#settings(box.size, id, current), signal);
+        low = startsLow(current);
+        await api.configure(id, { ...this.#settings(box.size, id, current), ...(low ? LOW : {}) }, signal);
         return current;
       });
-      await step("tags", () => api.configure(id, { tags: boxTags(box, installId, template) }, signal));
+      await step("tags", () => api.configure(id, { tags: withStartTag(boxTags(box, installId, template), low) }, signal));
       const grew = await this.#grow(api, id, config, box.size.diskGiB, step, signal);
       await hooks.starting();
       await step("start", async () => {
@@ -661,6 +669,8 @@ export class ProxmoxQemuBackend implements Backend {
         if (grew || (resumed && box.size.diskGiB !== null)) await step("extend", () => this.#extend(id, signal));
         this.#compileDisplay(id);
       }
+      // A spare keeps its low weight until a box takes it: relabel() puts it back then.
+      if (box.threadId !== SPARES) await this.#settle(api, id, signal);
       return this.#guest(api.node, id, template, box.boxId, await size, build, display);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
@@ -869,7 +879,7 @@ export class ProxmoxQemuBackend implements Backend {
       }
       if (install !== this.#context.installId) continue;
       const found = this.#guest(guest.node || api.node, guest.vmid, templateFromTags(guest.tags), owner?.boxId ?? null, guest.size);
-      held.push({ ...found, owner, power: powerOf(guest.status) });
+      held.push({ ...found, owner, power: powerOf(guest.status), ...(guest.tags.includes(START_TAG) ? { settling: true } : {}) });
     }
     return held;
   }
@@ -879,9 +889,17 @@ export class ProxmoxQemuBackend implements Backend {
     const api = await this.client();
     const vmid = this.#vmid(guest);
     const installId = this.#context.installId;
-    const template = templateFromTags(parseTags((await api.config(vmid, signal)).tags));
+    const tags = parseTags((await api.config(vmid, signal)).tags);
+    const template = templateFromTags(tags);
     await api.configure(vmid, { name: box.name, description: describe(box, installId) }, signal);
-    await api.configure(vmid, { tags: boxTags(box, installId, template) }, signal);
+    // A spare's low CPU weight goes back as a box takes it (#888).
+    await api.configure(vmid, { tags: withStartTag(boxTags(box, installId, template), tags.includes(START_TAG)) }, signal);
+    await this.#settle(api, vmid, signal);
+  }
+
+  /** Puts back the CPU weight a box's VM had lowered while it started, as the sweep asks for a ready box (#888). */
+  async settle(guest: Guest, signal?: AbortSignal): Promise<void> {
+    await settle(await this.client(), this.#vmid(guest), signal);
   }
 
   async transports(guest: Guest): Promise<BoxTransports> {
@@ -1312,6 +1330,11 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** Config for a fresh clone at `vmid`, whose config is `current`. */
+  /** settle() for an acquire: a weight not put back now is put back by the sweep, so the box is ready either way. */
+  async #settle(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<void> {
+    await settle(api, vmid, signal).catch((error: unknown) => this.#context.logError("put a new box's CPU weight back", error instanceof Error ? error : new Error(String(error))));
+  }
+
   #settings(size: BoxSize, vmid: number, current: Record<string, unknown>): GuestSettings {
     const address = addressFor(this.#config, vmid);
     if (!address) throw new Error(`VMID ${vmid} is outside the box range.`);
@@ -1700,9 +1723,10 @@ export class ProxmoxQemuBackend implements Backend {
       vmid = await this.#clone(api, guests, template, WARM_NAME, description, before, signal, () => {});
       const id = vmid;
       const config = await api.config(id, signal);
-      // Off at the node's boot, as a warm VM that runs is deleted.
-      await api.configure(id, { ...this.#settings(size, id, config), onboot: false }, signal);
-      await api.configure(id, { tags: tags(FILLING) }, signal);
+      // Off at the node's boot, as a warm VM that runs is deleted. A low CPU weight until a box takes it and it is ready (#888).
+      const low = startsLow(config);
+      await api.configure(id, { ...this.#settings(size, id, config), onboot: false, ...(low ? LOW : {}) }, signal);
+      await api.configure(id, { tags: withStartTag(tags(FILLING), low) }, signal);
       const grew = await this.#grow(api, id, config, size.diskGiB, untimed, signal);
       await api.start(id, signal);
       const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
@@ -1710,7 +1734,7 @@ export class ProxmoxQemuBackend implements Backend {
       if (grew) await this.#extend(id, signal);
       await this.#desktopUp(id, Math.max(1_000, deadline - Date.now()), signal);
       await compileDisplay(await this.#command(id), signal);
-      await api.configure(id, { tags: tags(WARM) }, signal);
+      await api.configure(id, { tags: withStartTag(tags(WARM), low) }, signal);
       await this.#forget(id);
       await api.hibernate(id, signal);
     } catch (error) {

@@ -748,9 +748,13 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   const puts = proxmox.calls.filter((call) => call.method === "PUT" && call.path === "/nodes/pve/lxc/7000/config");
   assert.deepEqual(
     puts.map((call) => Object.keys(call.params).sort()),
-    [["cores", "delete", "memory", "net0", "onboot"], ["tags"]],
-    "tags go in a PUT of their own",
+    [["cores", "cpuunits", "delete", "memory", "net0", "onboot"], ["tags"], ["delete"], ["tags"]],
+    "tags go in a PUT of their own; the low CPU weight and its tag go once it is ready (#888)",
   );
+  assert.equal(puts[0]!.params.cpuunits, "10", "a tenth of the default weight while it starts");
+  assert.ok(parseTags(String(puts[1]!.params.tags)).includes("bb-box-starting"));
+  assert.equal(puts[2]!.params.delete, "cpuunits");
+  assert.equal(made.config.cpuunits, undefined, "the default weight once ready");
   const tags = parseTags(made.config.tags);
   assert.deepEqual(tags.slice(0, 2), ["bb-box", "install.test"]);
   assert.equal(tags.at(-1), "template.9000");
@@ -1295,7 +1299,8 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
   await backend.maintain();
   const warm = proxmox.guests.get(7000)!;
   assert.equal(warm.status, "running");
-  assert.deepEqual(parseTags(warm.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
+  assert.deepEqual(parseTags(warm.config.tags), ["bb-box", "install.test", "warm", "template.9000", "bb-box-starting"]);
+  assert.equal(warm.config.cpuunits, "10", "a warm guest keeps a low CPU weight until a box takes it (#888)");
   assert.equal(installFromDescription(warm.config.description), "test", "a warm guest names the install from its first write");
   assert.deepEqual(await backend.held(), [], "warm guests belong to no box");
 
@@ -1314,7 +1319,7 @@ test("the warm pool fills, hands out a ready guest and refills", async () => {
 
   // Claiming a warm guest starts a refill; maintain returns the one in flight.
   await backend.maintain();
-  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
+  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000", "bb-box-starting"]);
   const capacity = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.deepEqual(capacity.warm, { ready: 1, target: 1 });
 });
@@ -1533,7 +1538,7 @@ test("warm guests of a template that build.sh replaced are retired, not handed o
   template.pool = "bbbox";
   template.config.tags = "build.one";
   await backend.maintain();
-  assert.deepEqual(parseTags(proxmox.guests.get(7000)!.config.tags), ["bb-box", "install.test", "warm", "template.9000", "build.one"]);
+  assert.deepEqual(parseTags(proxmox.guests.get(7000)!.config.tags), ["bb-box", "install.test", "warm", "template.9000", "build.one", "bb-box-starting"]);
 
   // While build.sh --replace copies the new build to the template's VMID, that is not yet a template.
   template.template = false;
@@ -1550,7 +1555,7 @@ test("warm guests of a template that build.sh replaced are retired, not handed o
   const warm = [...proxmox.guests.values()].filter((other) => parseTags(other.config.tags).includes("warm"));
   assert.deepEqual(
     warm.map((other) => parseTags(other.config.tags)),
-    [["bb-box", "install.test", "warm", "template.9000", "build.two"]],
+    [["bb-box", "install.test", "warm", "template.9000", "build.two", "bb-box-starting"]],
   );
   assert.deepEqual(context.errors, []);
 });
@@ -1559,7 +1564,7 @@ test("a warm guest is not ready while its template is away, nor once a template 
   const { backend, proxmox, context } = setup({ "proxmox-lxc-linux-warm": 1 });
   // Outside the pool, so read on its own.
   await backend.maintain();
-  assert.deepEqual(parseTags(proxmox.guests.get(7000)!.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
+  assert.deepEqual(parseTags(proxmox.guests.get(7000)!.config.tags), ["bb-box", "install.test", "warm", "template.9000", "bb-box-starting"]);
   assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 1, target: 1 });
 
   // As between build.sh removing the old template and making the new one a template.
@@ -1576,7 +1581,7 @@ test("a warm guest is not ready while its template is away, nor once a template 
   assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 0, target: 1 });
   await backend.maintain();
   assert.equal(proxmox.guests.has(7000), false);
-  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000", "build.one"]);
+  assert.deepEqual(parseTags(proxmox.guests.get(7001)?.config.tags), ["bb-box", "install.test", "warm", "template.9000", "build.one", "bb-box-starting"]);
   assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 1, target: 1 });
   assert.deepEqual(context.errors, []);
 });
@@ -1589,7 +1594,7 @@ test("a warm guest stays ready while a backup locks its template", async () => {
   proxmox.guests.set(9000, { ...template, config: { ...template.config, lock: "backup" } });
   assert.deepEqual((await backend.capacity("linux", sized("linux"), waiting(), signal())).warm, { ready: 1, target: 1 });
   await backend.maintain();
-  assert.deepEqual(parseTags(proxmox.guests.get(7000)?.config.tags), ["bb-box", "install.test", "warm", "template.9000"]);
+  assert.deepEqual(parseTags(proxmox.guests.get(7000)?.config.tags), ["bb-box", "install.test", "warm", "template.9000", "bb-box-starting"]);
   assert.equal([...proxmox.guests.values()].filter((guest) => !guest.template).length, 1);
   assert.deepEqual(context.errors, []);
 });
@@ -1981,4 +1986,47 @@ test("a container whose disk does not grow gets its cores and memory back, and a
   const config = proxmox.guests.get(vmid)!.config;
   assert.deepEqual([String(config.cores), String(config.memory)], ["2", "4096"], "cores and memory went back");
   await assert.rejects(backend.resize({ ...guest, data: { ...guest.data, box: "box_other" } }, "linux", { cores: 4, memoryMiB: 4096, diskGiB: null }, { restart: false }, signal()), (error) => error instanceof BackendError && error.code === "gone");
+});
+
+test("a new box starts with a tenth of the CPU weight and has it back once ready; a weight set by hand is left alone (#888)", async () => {
+  const { backend, proxmox } = setup();
+  let atStart: string | undefined = "unread";
+  proxmox.intercept = (call) => {
+    if (call.method === "POST" && call.path.endsWith("/status/start")) atStart = proxmox.guests.get(Number(call.path.split("/")[4]))?.config.cpuunits;
+    return undefined;
+  };
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(atStart, "10", "low while it starts");
+  const made = proxmox.guests.get(Number(guest.ref))!;
+  assert.equal(made.config.cpuunits, undefined, "the default once ready");
+  assert.ok(!parseTags(made.config.tags).includes("bb-box-starting"));
+  assert.equal((await backend.held()).find((each) => each.ref === guest.ref)?.settling, undefined, "nothing left to put back");
+
+  // A template with a weight of its own, as one set by hand: never lowered, never changed.
+  proxmox.guests.get(9000)!.config.cpuunits = "50";
+  atStart = "unread";
+  const own = await backend.acquire(identity(), null, hooks().value, signal());
+  assert.equal(atStart, "50");
+  assert.equal(proxmox.guests.get(Number(own.ref))!.config.cpuunits, "50");
+  assert.ok(!parseTags(proxmox.guests.get(Number(own.ref))!.config.tags).includes("bb-box-starting"));
+});
+
+test("a spare keeps a low CPU weight until a box takes it, and held() says so, for the sweep (#888)", async () => {
+  const { backend, proxmox } = setup();
+  const spare = await backend.acquire(identity("linux", "spare"), null, hooks().value, signal());
+  const vm = proxmox.guests.get(Number(spare.ref))!;
+  assert.equal(vm.config.cpuunits, "10");
+  assert.ok(parseTags(vm.config.tags).includes("bb-box-starting"));
+  assert.equal((await backend.held()).find((each) => each.ref === spare.ref)?.settling, true);
+
+  // A box takes it: relabel() puts the weight back.
+  await backend.relabel!(spare, identity(), "calm-otter-spare", signal());
+  assert.equal(vm.config.cpuunits, undefined);
+  assert.ok(!parseTags(vm.config.tags).includes("bb-box-starting"));
+  assert.equal((await backend.held()).find((each) => each.ref === spare.ref)?.settling, undefined);
+
+  // settle() for the sweep leaves a guest bb-box did not lower as it is.
+  vm.config.cpuunits = "10";
+  await backend.settle!(spare, signal());
+  assert.equal(vm.config.cpuunits, "10", "without the tag, a weight of 10 is someone's own");
 });
