@@ -21,6 +21,7 @@ import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS,
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, STALL_MS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { MAX_RETRY_MS, OptionComposer, boxKey, macBrowser, retryWait } from "../src/app/viewer.ts";
+import { checkWords } from "../src/app/resize.tsx";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -1357,12 +1358,19 @@ test("Resize shows refusals plainly: no room, memory below use, and a disk that 
   fireEvent.click(within(dialog).getByRole("radio", { name: /Small/ }));
   await within(dialog).findByRole("list", { name: "What changes" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Resize" }));
+  // The answer to Resize, headed as one: the plan's "changes at once" goes, as nothing changed.
   expect((await within(dialog).findByRole("alert")).textContent).toBe(
-    "Box calm-otter uses 3.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes. Give it at least 5 GiB, or free memory in it first. bb-box changed nothing.",
+    "Not resizedBox calm-otter uses 3.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes. Give it at least 5 GiB, or free memory in it first. bb-box changed nothing.",
   );
+  expect(within(dialog).queryByText("Changes at once. Everything running in calm-otter carries on.")).toBeNull();
   expect(within(dialog).getByText("Resize calm-otter")).toBeTruthy();
   // The same size again would be refused again: Resize waits for another.
   expect(within(dialog).getByRole("button", { name: "Resize" }).hasAttribute("disabled")).toBe(true);
+});
+
+test("a refusal while the person chooses never says bb-box changed nothing: nothing was tried (061)", () => {
+  expect(checkWords("Resizing box calm-otter needs a restart for its memory. bb-box changed nothing.")).toBe("Resizing box calm-otter needs a restart for its memory.");
+  expect(checkWords("A box's disk only grows, and this box's is 20 GiB, more than the 10 GiB asked for.")).toBe("A box's disk only grows, and this box's is 20 GiB, more than the 10 GiB asked for.");
 });
 
 test("Resize is offered only where the box's backend changes a part, for a ready or stopped box (061)", async () => {
