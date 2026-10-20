@@ -50,7 +50,6 @@ import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-a
 import { MachineRow } from "./settings-machines.tsx";
 import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
 import {
-  MAX_RETRY_MS,
   PASTE_CHORD_DELAY_MS,
   PASTE_EVENT_WAIT_MS,
   SETTLE_MS,
@@ -60,6 +59,7 @@ import {
   boxKey,
   commandKey,
   macBrowser,
+  retryWait,
   type Connection,
   type MacKeys,
 } from "./viewer.ts";
@@ -406,7 +406,7 @@ export class DesktopSession implements Kept {
       if (this.#client !== client) return;
       this.#client = null;
       this.#closePointer();
-      const wait = Math.min(MAX_RETRY_MS, 1000 * 2 ** this.#failures);
+      const wait = retryWait(this.#failures);
       this.#failures += 1;
       this.#set({ state: "disconnected", reason: this.#refused ?? "The connection to the desktop ended.", retryMs: wait });
       if (this.hidden) {

@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { MAX_RETRY_MS, OptionComposer, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, type Connection } from "./viewer.ts";
+import { OptionComposer, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, retryWait, type Connection } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -504,7 +504,7 @@ export class SelkiesSession implements Kept {
       this.#fallBack(reason ? reason.replace(/\.?$/, ".") : "The connection ended before the first frame.");
       return;
     }
-    const wait = Math.min(MAX_RETRY_MS, 1000 * 2 ** this.#failures);
+    const wait = retryWait(this.#failures);
     this.#failures += 1;
     this.#set({ state: "disconnected", reason: reason || "The connection to the desktop ended.", retryMs: wait });
     if (this.hidden) {

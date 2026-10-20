@@ -179,6 +179,7 @@ window.VideoDecoder = FakeVideoDecoder;
 // The fake runtime: the slots the bundle reads, and enough of the SDK.
 let scene = null;
 const slots = { threadPanelActions: [], navPanels: [], settingsSections: [] };
+const rpcClient = { call: async (method, input) => structuredClone(await scene.rpc[method](input)) };
 const pluginSdkApp = {
   definePluginApp(setup) {
     setup({
@@ -197,7 +198,9 @@ const pluginSdkApp = {
   },
   experimental_Icon: Icon,
   experimental_usePluginId: () => "bb-box",
-  useRpc: () => ({ call: async (method, input) => structuredClone(await scene.rpc[method](input)) }),
+  // One client for every render, as BB's own useRpc gives: a new one each render re-ran every effect that depends on it, as the
+  // desktop tab's claim of its session, which reconnected at once whenever its connection ended.
+  useRpc: () => rpcClient,
   useRealtime() {},
   useRealtimeConnectionState: () => "connected",
   useBbNavigate: () => ({ openThreadPanel: log("openThreadPanel"), openUrl: log("openUrl"), toThread: log("toThread"), toPluginPanel: log("toPluginPanel"), toCompose: log("toCompose") }),
