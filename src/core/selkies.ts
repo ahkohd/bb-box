@@ -566,6 +566,14 @@ export class SelkiesRelay {
       case "video":
         if (message === "STOP_VIDEO") this.#wants = false;
         if (message === "START_VIDEO") this.#wants = true;
+        // The viewer starts its video again, from a key frame, with a new decoder: what it was sent before counts for nothing,
+        // shown or not, so nothing of it holds the video back. A frame it never got, or an acknowledgement of one that never
+        // came, would otherwise keep a viewer behind for good, until a capture started again (the owner's note of 19 October 2026).
+        if (message === "START_VIDEO" || message === "REQUEST_KEYFRAME") {
+          this.#sent.clear();
+          this.#acked = null;
+          this.#behind = false;
+        }
         await this.#toBox(message);
         return;
       case "input": {

@@ -19,7 +19,7 @@ import { buildStep, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
-import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, SelkiesSession, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, STALL_MS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { OptionComposer, boxKey, macBrowser } from "../src/app/viewer.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
@@ -2256,6 +2256,8 @@ class FakeDecoder {
   readonly #error: (error: unknown) => void;
   /** What the decoder's error callback threw, as a browser reports it and goes on. */
   static thrown: unknown[] = [];
+  /** Whether decoders take frames and give none back, with no error: a video that stalled. */
+  static silent = false;
   /** How many of the next decoders fail as they are made, as a browser that cannot make one now would. */
   static refuse = 0;
   constructor(init: { output: (frame: unknown) => void; error: (error: unknown) => void }) {
@@ -2282,6 +2284,7 @@ class FakeDecoder {
   }
   decode(chunk: { type: string; timestamp: number }) {
     this.chunks.push(chunk);
+    if (FakeDecoder.silent) return;
     this.#output({ displayWidth: FakeDecoder.size.width, displayHeight: FakeDecoder.size.height, timestamp: chunk.timestamp, close() {} });
   }
   close() {
@@ -2296,6 +2299,7 @@ function withVideo() {
   FakeDecoder.made = [];
   FakeDecoder.thrown = [];
   FakeDecoder.refuse = 0;
+  FakeDecoder.silent = false;
   FakeDecoder.refused = new Set();
   FakeDecoder.fullColour = true;
   FakeDecoder.size = { width: 1280, height: 800 };
@@ -2981,6 +2985,82 @@ function b64(bytes: Uint8Array): string {
 function fakePng(size: number): Uint8Array<ArrayBuffer> {
   return Uint8Array.from({ length: size }, (_, index) => index % 251);
 }
+
+test("the video client starts its video again when it stalls, as control is taken and as the window regains focus (the owner's note of 19 October 2026)", async () => {
+  const undo = withVideo();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance"] });
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    // What this browser decodes, asked as the socket opens.
+    await decodesMacroblocks();
+    let id = 0;
+    const frames = (ms: number) => {
+      for (let at = 0; at < ms; at += 100) {
+        socket.onmessage?.({ data: videoFrame(id, id === 0) });
+        id++;
+        act(() => vi.advanceTimersByTime(100));
+      }
+    };
+    const restarts = () => socket.sent.filter((sent) => sent === "REQUEST_KEYFRAME").length;
+    frames(5_000);
+    expect(session.connection.state).toBe("connected");
+    // Frames that come and show: the video is left alone.
+    expect(restarts()).toBe(0);
+
+    // Control taken: the video starts again, from a key frame, with a new decoder, and the viewer says which frame came last.
+    socket.sent.length = 0;
+    const decoders = FakeDecoder.made.length;
+    session.setControl(true, true);
+    expect(socket.sent).toEqual([`CLIENT_FRAME_ACK ${id - 1} 0`, "START_VIDEO", "REQUEST_KEYFRAME"]);
+    expect(FakeDecoder.made.length).toBe(decoders + 1);
+    id = 0;
+    frames(1_000);
+
+    // Frames come but the decoder shows none, with no error: after STALL_MS the video starts again; then not again within RESTART_GAP_MS.
+    FakeDecoder.silent = true;
+    socket.sent.length = 0;
+    // Within RESTART_GAP_MS of the last start it waits; then starts again.
+    frames(RESTART_GAP_MS - 1_000 - 200);
+    expect(restarts()).toBe(0);
+    frames(1_000);
+    expect(restarts()).toBe(1);
+    frames(RESTART_GAP_MS - 1_000);
+    expect(restarts()).toBe(1);
+    FakeDecoder.silent = false;
+    id = 0;
+    frames(1_000);
+
+    // Input goes and no frame comes back: after STALL_MS the video starts again.
+    act(() => vi.advanceTimersByTime(RESTART_GAP_MS));
+    socket.sent.length = 0;
+    session.element.querySelector("canvas")!.dispatchEvent(new MouseEvent("pointermove", { clientX: 10, clientY: 10 }));
+    expect(socket.sent.some((sent) => typeof sent === "string" && sent.startsWith("m,"))).toBe(true);
+    act(() => vi.advanceTimersByTime(STALL_MS - 1_000));
+    expect(restarts()).toBe(0);
+    // The watch looks each second.
+    act(() => vi.advanceTimersByTime(2_000));
+    expect(restarts()).toBe(1);
+
+    // The window regains focus: the video starts again, once in RESTART_GAP_MS.
+    id = 0;
+    frames(RESTART_GAP_MS);
+    socket.sent.length = 0;
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("focus"));
+    expect(restarts()).toBe(1);
+
+    // Disposed: no watch, no focus.
+    session.dispose();
+    act(() => vi.advanceTimersByTime(RESTART_GAP_MS));
+    window.dispatchEvent(new Event("focus"));
+    expect(restarts()).toBe(1);
+  } finally {
+    vi.useRealTimers();
+    undo();
+  }
+});
 
 test("the video client takes the box's images and long text from Selkies, whole or in parts, and the text beside copied markup (#609)", async () => {
   const undo = withVideo();
