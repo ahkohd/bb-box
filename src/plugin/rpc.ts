@@ -4,7 +4,9 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, SPARES, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
 import { ControlError } from "../core/control.ts";
-import { contract, type BoxResult } from "./contract.ts";
+import { contract, type BoxResult, type ResizeResult, type ThreadOnBox } from "./contract.ts";
+import { sizeView } from "./views.ts";
+import type { SizeRequest } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
 import { profileLoop } from "./profile.ts";
 import { GENERAL_DEFAULTS } from "../core/document.ts";
@@ -34,6 +36,53 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     return task();
   };
 
+  /** Threads working on a box, which a restart for a resize would stop: the panel names them and asks. */
+  class Working extends Error {
+    readonly threads: readonly ThreadOnBox[];
+    constructor(threads: readonly ThreadOnBox[]) {
+      super("Threads are working on the box.");
+      this.threads = threads;
+    }
+  }
+
+  /** A resize as the panel asks it (061): logged as the panel's, the person holding control not refused, threads asked about unless forced. */
+  const resize = async (threadId: string, ref: string, options: { size?: SizeRequest; check?: boolean; restart?: boolean; force?: boolean }): Promise<ResizeResult> => {
+    const empty = { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null };
+    let box: BoxRecord;
+    try {
+      box = await boxes.get(threadId, ref);
+    } catch (error) {
+      return { ...empty, error: describeError(error, "Resizing the box") };
+    }
+    const kind = (await app.kinds().catch(() => [])).find((each) => each.id === box.kind);
+    const picker = { presets: kind?.presets ?? [], largest: kind?.largest ?? null };
+    try {
+      const answer = await boxes.resize(threadId, box.id, options.size ?? {}, {
+        check: options.check === true,
+        restart: options.restart === true,
+        by: "the panel",
+        beforeRestart: async (found) => {
+          if (options.force) return;
+          const threads = (await app.threadsOn(found)).filter((thread) => thread.running);
+          if (threads.length) throw new Working(threads);
+        },
+      });
+      const gib = (part: string, value: number | null) => (value !== null && part === "memory" ? value / 1024 : value);
+      const plan = answer.plan && {
+        parts: answer.plan.parts.map((part) => ({ part: part.part, from: gib(part.part, part.from), to: gib(part.part, part.to)!, way: part.way })),
+        room: { ok: answer.plan.room.ok, message: answer.plan.room.message },
+        downSeconds: answer.plan.downSeconds,
+      };
+      const machine = options.check ? null : await app.machineCores(answer).catch(() => null);
+      return { ...empty, ...picker, box: app.view(answer.box), from: sizeView(answer.from), to: sizeView(answer.to), plan, changed: answer.changed, machine, error: null };
+    } catch (error) {
+      const now = await boxes.get(threadId, box.id).catch(() => box);
+      if (error instanceof Working) return { ...empty, ...picker, box: app.view(now), threads: error.threads, error: null };
+      const needsRestart = error instanceof BoxError && error.code === "needs_restart";
+      return { ...empty, ...picker, box: app.view(now), needsRestart, error: error instanceof Error ? error.message : describeError(error, "Resizing the box") };
+    }
+  };
+
   const desktopBox = async (threadId: string, ref: string): Promise<BoxRecord> => {
     const { box } = await app.resolve(threadId, ref);
     if (!box.capabilities.displays.length) throw new ControlError(`Box ${box.name} has no desktop.`);
@@ -58,6 +107,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     release: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Releasing the box", () => boxes.release(threadId, box, "released in BB Box's panel"))),
     stop: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Stopping the box", () => boxes.stop(threadId, box))),
     start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box)),
+    resize: ({ threadId, box, ...options }) => resize(threadId, box, options),
     refresh: ({ threadId, box }) => change("Checking the box", () => boxes.refresh(threadId, box)),
     async desktop({ threadId, box: ref }) {
       // A released box shows as gone, not as an error.
@@ -130,6 +180,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     "machines.remove": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Removing the machine", () => boxes.release(OPERATOR, box, "removed in BB Box's settings"))),
     "machines.stop": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Stopping the machine", () => boxes.stop(OPERATOR, box))),
     "machines.start": ({ box }) => change("Starting the machine", () => boxes.start(OPERATOR, box)),
+    "machines.resize": ({ box, ...options }) => resize(OPERATOR, box, options),
     async thread({ threadId, box, prompt }) {
       try {
         return { threadId: await app.startThread({ threadId, box, prompt }), error: null };

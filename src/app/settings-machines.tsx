@@ -5,6 +5,7 @@
 // machine", the New box popover with a name.
 
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ import { Section } from "./settings-fields.tsx";
 import { statusOf } from "./status.ts";
 import { canOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { canResize, ResizeDialog } from "./resize.tsx";
 
 
 
@@ -82,6 +84,7 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
   const openDesktop = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "desktop", back) });
   const openTerminal = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "terminal", back) });
   const acting = busy !== null && busy.endsWith(`:${box.id}`);
+  const [resizing, setResizing] = useState(false);
   return (
     // In settings' card, the first and last rows meet its own padding; on the Boxes page, in Automations' card, every row has the same
     // padding above and below, as Automations' rows do (the operator, 8 October 2026).
@@ -159,6 +162,12 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
                 Start
               </DropdownMenuItem>
             ) : null}
+            {canResize(box) ? (
+              <DropdownMenuItem onSelect={() => setResizing(true)}>
+                <Icon name="Maximize2" aria-hidden />
+                Resize…
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" disabled={box.state === "releasing"} onSelect={onRemove}>
               <Icon name="Trash2" aria-hidden />
@@ -167,6 +176,7 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
           </DropdownMenuContent>
         </DropdownMenu>
       </span>
+      <ResizeDialog box={resizing ? box : null} onClose={() => setResizing(false)} />
     </div>
   );
 }
