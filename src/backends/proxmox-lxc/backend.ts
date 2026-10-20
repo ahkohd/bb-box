@@ -32,6 +32,8 @@
 // away, is retired rather than claimed. Guests of other installs, or with no
 // install, count against capacity but are otherwise left alone.
 
+import { SPARES } from "../../core/boxes.ts";
+import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
@@ -918,8 +920,13 @@ export class ProxmoxLxcBackend implements Backend {
         const id = vmid;
         const template = acquiring.template;
         if (!warm) {
-          await step("configure", () => api.configure(id, this.#settings(box.size, id), signal));
-          await step("tags", () => api.configure(id, { tags: boxTags(box, this.#context.installId, template) }, signal));
+          // A low CPU weight until the box is ready (#888), where its config sets none of its own.
+          let low = false;
+          await step("configure", async () => {
+            low = startsLow(await api.config(id, signal));
+            await api.configure(id, { ...this.#settings(box.size, id), ...(low ? LOW : {}) }, signal);
+          });
+          await step("tags", () => api.configure(id, { tags: withStartTag(boxTags(box, this.#context.installId, template), low) }, signal));
         }
         if (!started) await hooks.starting();
         started = true;
@@ -936,6 +943,8 @@ export class ProxmoxLxcBackend implements Backend {
           : null;
         await this.#sawDisplay(template, display);
         if (!offer.kind.capabilities.gpu || display?.mode === "gpu") {
+          // A spare keeps its low weight until a box takes it: relabel() puts it back then.
+          if (box.threadId !== SPARES) await this.#settle(api, id, signal);
           const guest = this.#guest(api.node, id, template, box.boxId, display, await size, acquiring.build);
           // Claimed again, so the box's record shows the display's facts as it becomes ready.
           if (display) await hooks.claim(guest);
@@ -1172,7 +1181,7 @@ export class ProxmoxLxcBackend implements Backend {
       const size = guest.size && { ...guest.size, diskGiB: rootDiskGiB(config) ?? guest.size.diskGiB };
       const template = templateFromTags(guest.tags);
       const found = this.#guest(guest.node || api.node, guest.vmid, template, owner?.boxId ?? null, null, size);
-      held.push({ ...found, owner, power: powerOf(guest.status) });
+      held.push({ ...found, owner, power: powerOf(guest.status), ...(guest.tags.includes(START_TAG) ? { settling: true } : {}) });
     }
     return held;
   }
@@ -1586,8 +1595,10 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const vmid = Number(member.ref);
     const installId = this.#context.installId;
+    // A warm guest keeps its low CPU weight, and the tag, until the box is ready (#888).
+    const low = parseTags((await api.config(vmid, signal)).tags).includes(START_TAG);
     await api.configure(vmid, { hostname: box.name, memory: box.size.memoryMiB, description: describe(box, installId) }, signal);
-    await api.configure(vmid, { tags: boxTags(box, installId, template) }, signal);
+    await api.configure(vmid, { tags: withStartTag(boxTags(box, installId, template), low) }, signal);
   }
 
   #proxmox(node: string): Proxmox {
@@ -2071,10 +2082,23 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const vmid = Number(guest.ref);
     const installId = this.#context.installId;
-    const template = templateFromTags(parseTags((await api.config(vmid, signal)).tags));
+    const tags = parseTags((await api.config(vmid, signal)).tags);
+    const template = templateFromTags(tags);
     await api.configure(vmid, { hostname: box.name, description: describe(box, installId) }, signal);
-    await api.configure(vmid, { tags: boxTags(box, installId, template) }, signal);
+    await api.configure(vmid, { tags: withStartTag(boxTags(box, installId, template), tags.includes(START_TAG)) }, signal);
+    // A spare's low CPU weight goes back as a box takes it (#888).
+    await this.#settle(api, vmid, signal);
     if (from !== box.name) await this.#name(vmid, box.name, signal, from);
+  }
+
+  /** Puts back the CPU weight a box's guest had lowered while it started, as the sweep asks for a ready box (#888). */
+  async settle(guest: Guest, signal?: AbortSignal): Promise<void> {
+    await settle(await this.client(), this.#vmid(guest), signal);
+  }
+
+  /** settle() for an acquire or a claim: a weight not put back now is put back by the sweep. */
+  async #settle(api: Proxmox, vmid: number, signal?: AbortSignal): Promise<void> {
+    await settle(api, vmid, signal).catch((error: unknown) => this.#context.logError("put a new box's CPU weight back", error instanceof Error ? error : new Error(String(error))));
   }
 
   /** Names a claimed warm guest, or one named `from`, after its box inside. A failure is logged, and leaves the guest's name as it was. */
@@ -2446,9 +2470,10 @@ export class ProxmoxLxcBackend implements Backend {
         },
         signal,
       );
-      // At the template's size: a claim sets the box's.
-      await api.configure(vmid, this.#settings(null, vmid), signal);
-      await api.configure(vmid, { tags: tags(FILLING) }, signal);
+      // At the template's size: a claim sets the box's. A low CPU weight until a box takes it and it is ready (#888).
+      const low = startsLow(await api.config(vmid, signal));
+      await api.configure(vmid, { ...this.#settings(null, vmid), ...(low ? LOW : {}) }, signal);
+      await api.configure(vmid, { tags: withStartTag(tags(FILLING), low) }, signal);
       await api.start(vmid, signal);
       await this.#waitReady(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
       if (offer.kind.capabilities.gpu) {
@@ -2459,7 +2484,7 @@ export class ProxmoxLxcBackend implements Backend {
           throw new Error(`A warm linux-desktop box started without GPU ${this.#gpuOf(template) ?? "unknown"} (${display.reason || "no reason given"}), so bb-box released it.`);
         }
       }
-      await api.configure(vmid, { tags: tags(WARM) }, signal);
+      await api.configure(vmid, { tags: withStartTag(tags(WARM), low) }, signal);
     } catch (error) {
       if (vmid !== null) {
         await this.#forget(vmid);

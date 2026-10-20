@@ -845,7 +845,8 @@ test("the warm pool keeps hibernated VMs at the kind's default size, each filled
   await backend.maintain(signal());
   const vm = proxmox.guests.get(9700)!;
   assert.deepEqual([vm.status, vm.config.lock], ["stopped", "suspended"], "hibernated");
-  assert.deepEqual(parseTags(vm.config.tags), ["bb-box", "install.test", "warm", "template.9104"]);
+  assert.deepEqual(parseTags(vm.config.tags), ["bb-box", "install.test", "warm", "template.9104", "bb-box-starting"]);
+  assert.equal(vm.config.cpuunits, "10", "a low CPU weight until a box takes it and it is ready (#888)");
   assert.equal(vm.name, "bb-box-warm");
   assert.deepEqual([vm.config.cores, vm.config.memory, vm.config.onboot], ["4", "8192", "0"], "and not started at the node's boot");
   assert.equal(installFromDescription(vm.config.description), "test");
@@ -878,6 +879,11 @@ test("a claim resumes a warm VM as the box, gives it the box's tags and name, se
   assert.equal(vm.config.onboot, "1");
   const tags = parseTags(vm.config.tags);
   assert.equal(tags.includes("warm"), false);
+  // Its low CPU weight held through the claim, and went back once it was ready (#888).
+  const relabelled = proxmox.calls.find((call) => call.method === "PUT" && call.path === "/nodes/pve/qemu/9700/config" && String(call.params.tags ?? "").includes("box."));
+  assert.ok(parseTags(String(relabelled?.params.tags)).includes("bb-box-starting"), "kept as the claim relabels it");
+  assert.equal(vm.config.cpuunits, undefined);
+  assert.equal(tags.includes("bb-box-starting"), false);
   assert.deepEqual(ownerFromTags(tags), { boxId: box.boxId, threadId: box.threadId, name: null, kind: KIND, createdAt: box.createdAt });
   assert.equal(tags.at(-1), "template.9104");
   assert.equal(ownerFromDescription(vm.config.description)?.boxId, box.boxId);
@@ -948,7 +954,7 @@ test("the pool deletes warm VMs beyond the count, from a replaced build or a tem
   for (const vmid of [9104, 9105]) proxmox.guests.get(vmid)!.config.tags = "bbbox;windows;build.20260920-000000-aaaa";
   await backend.maintain(signal());
   assert.deepEqual(warmVms(proxmox), [9700, 9701]);
-  assert.deepEqual(parseTags(proxmox.guests.get(9701)!.config.tags).slice(-2), ["template.9105", "build.20260920-000000-aaaa"]);
+  assert.deepEqual(parseTags(proxmox.guests.get(9701)!.config.tags).slice(-3), ["template.9105", "build.20260920-000000-aaaa", "bb-box-starting"]);
 
   warm[KIND] = 1;
   await backend.maintain(signal());
@@ -961,7 +967,7 @@ test("the pool deletes warm VMs beyond the count, from a replaced build or a tem
   await backend.maintain(signal());
   assert.deepEqual(deleted(proxmox), [9701, 9700]);
   assert.deepEqual(warmVms(proxmox), [9703]);
-  assert.deepEqual(parseTags(proxmox.guests.get(9703)!.config.tags).slice(-2), ["template.9104", "build.20260925-000000-bbbb"], "filled from the new build");
+  assert.deepEqual(parseTags(proxmox.guests.get(9703)!.config.tags).slice(-3), ["template.9104", "build.20260925-000000-bbbb", "bb-box-starting"], "filled from the new build");
 
   const changes = [
     (vm: { status: string; config: Record<string, string> }) => (vm.config.cores = "8"),
@@ -986,7 +992,7 @@ test("the pool deletes warm VMs beyond the count, from a replaced build or a tem
   await unlisted.backend.maintain(signal());
   assert.deepEqual(deleted(unlisted.proxmox), [last]);
   const [fresh] = warmVms(unlisted.proxmox);
-  assert.equal(parseTags(unlisted.proxmox.guests.get(fresh!)!.config.tags).at(-1), "template.9105");
+  assert.equal(parseTags(unlisted.proxmox.guests.get(fresh!)!.config.tags).at(-2), "template.9105");
   assert.deepEqual(unlisted.context.errors, []);
 });
 
