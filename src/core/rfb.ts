@@ -34,6 +34,15 @@ export class RfbError extends Error {
   }
 }
 
+const isWholeWords = (bytes: number) => bytes % 8 === 0;
+
+export class ShortKeyError extends RfbError {
+  constructor(length: number) {
+    super(`The box's desktop sent a Diffie-Hellman key of ${length} bytes, a byte short, as neatvnc before 1.0 does about one sign-in in 256.`);
+    this.name = "ShortKeyError";
+  }
+}
+
 /** Reads exact numbers of bytes from a stream. */
 export class StreamReader {
   readonly #reader: ReadableStreamDefaultReader<Uint8Array>;
@@ -194,6 +203,7 @@ export async function boxHandshake(reader: StreamReader, write: (bytes: Uint8Arr
     if (auth.type !== "apple") throw new RfbError(APPLE_NONE);
     const head = await reader.read(4);
     const keyLength = new DataView(head.buffer, head.byteOffset, 4).getUint16(2);
+    if (!isWholeWords(keyLength)) throw new ShortKeyError(keyLength);
     const prime = await reader.read(keyLength);
     const serverKey = await reader.read(keyLength);
     await write(appleResponse(head.subarray(0, 2), prime, serverKey, auth.user, auth.password));
