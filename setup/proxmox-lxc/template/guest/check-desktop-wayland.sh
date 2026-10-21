@@ -50,31 +50,54 @@ t "no Xwayland, no DISPLAY" sh -c '
   ! grep -rqs "^DISPLAY=" /etc/environment /etc/environment.d || { echo "DISPLAY in /etc/environment"; exit 1; }
   [ ! -d /run/systemd/system ] || ! systemctl --user show-environment | grep -q "^DISPLAY=" || { echo "DISPLAY in the user manager"; exit 1; }
   echo "none; WAYLAND_DISPLAY=$WAYLAND_DISPLAY"'
-t "VNC sign-in, first frame" node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password
+# wayvnc can freeze at a viewer's sign-in, after the Diffie-Hellman
+# exchange, and answer no viewer after (#411): 0.9.1 did in about 1 of 20 of
+# these checks on Proxmox LXC, with its plain unit as with display vnc. The
+# relay restarts it then and signs in again (connectBox's stall), so a probe
+# here does the same, once, says so on stderr, and leaves a mark for a check
+# that wants the same wayvnc throughout.
+froze=/tmp/bb-box-check-froze-$(id -u)
+probe() { # rfb-probe's arguments
+  local old new
+  timeout 6 node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password "$@" && return 0
+  echo "wayvnc froze at a sign-in (#411), so it was started again, as the relay does" >&2
+  old=$(pgrep -u "$(id -u)" -x wayvnc | head -1)
+  [ -z "$old" ] || kill -KILL "$old"
+  for _ in $(seq 1 100); do
+    new=$(pgrep -u "$(id -u)" -x wayvnc | head -1)
+    [ -n "$new" ] && [ "$new" != "$old" ] && wayvncctl version >/dev/null 2>&1 && break
+    sleep 0.05
+  done
+  : >"$froze"
+  timeout 6 node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password "$@"
+}
+export -f probe; export froze libexec
+t "VNC sign-in, first frame" probe
 # As the backend resizes a viewer's desktop (021): display resize, then a new
 # connection's ServerInit has the size. Larger with no viewer connected, as the
 # conformance suite does; smaller while a viewer watches, as through the relay,
 # which must stay connected.
 size_of() { swaymsg -r -t get_outputs | python3 -c 'import json,sys; r=json.load(sys.stdin)[0]["rect"]; print("%dx%d" % (r["width"], r["height"]))'; }
-init_size() { node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password --init-only | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%dx%d" % (d["width"], d["height"]))'; }
+init_size() { probe --init-only | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%dx%d" % (d["width"], d["height"]))'; }
 resize_to() { # size: resizes, and prints the time and what a new viewer has
   local s got
   s=$(date +%s%N); $libexec/display resize "$1" || return 1
   echo "$1 in $(( ($(date +%s%N) - s) / 1000000 )) ms"
   got=$(init_size); [ "$got" = "$1" ] || { echo "a new viewer has $got"; return 1; }
 }
-export -f size_of init_size resize_to; export libexec
+export -f size_of init_size resize_to
 t "resize larger, no viewer" bash -c '
   before=$(size_of); w=${before%x*}; h=${before#*x}
   resize_to $((w + 128))x$((h + 64)); ok=$?; resize_to "$before" >/dev/null || ok=1; exit $ok'
 t "resize smaller, a viewer" bash -c '
-  before=$(size_of)
+  before=$(size_of); rm -f "$froze"
   hold=$(mktemp); node $libexec/rfb-probe.mjs --user "$(id -un)" --password-file /var/lib/bb-box/vnc-password --hold >"$hold" 2>&1 &
   viewer=$!
   for _ in $(seq 1 100); do [ -s "$hold" ] && break; sleep 0.1; done
   resize_to 1233x677; ok=$?
   resize_to "$before" >/dev/null || ok=1
-  kill -0 $viewer 2>/dev/null || { echo "the watching viewer was disconnected"; ok=1; }
+  # A probe that started wayvnc again, as it froze at the sign-in, disconnects the watching viewer too.
+  kill -0 $viewer 2>/dev/null || [ -e "$froze" ] || { echo "the watching viewer was disconnected"; ok=1; }
   kill $viewer 2>/dev/null; rm -f "$hold"; exit $ok'
 # A viewer that leaves just as the size changes, as the relay's own
 # connection can, must not leave wayvnc for the next viewer to crash (#394).
@@ -85,9 +108,10 @@ t "viewer leaves at a resize" bash -c '
   for _ in $(seq 1 100); do [ -s "$hold" ] && break; sleep 0.1; done
   $libexec/display resize 1233x677; ok=$?
   kill $viewer 2>/dev/null; wait $viewer 2>/dev/null; rm -f "$hold"
-  sleep 0.3; vnc=$(pgrep -u "$(id -u)" -x wayvnc)
+  sleep 0.3; vnc=$(pgrep -u "$(id -u)" -x wayvnc); rm -f "$froze"
   got=$(init_size); sleep 0.5
-  [ "$(pgrep -u "$(id -u)" -x wayvnc)" = "$vnc" ] || { echo "a new viewer ended wayvnc"; ok=1; }
+  # A wayvnc the probe started again, as it froze at the sign-in, is not one the viewer ended.
+  [ "$(pgrep -u "$(id -u)" -x wayvnc)" = "$vnc" ] || [ -e "$froze" ] || { echo "a new viewer ended wayvnc"; ok=1; }
   [ "$got" = 1233x677 ] || { echo "a new viewer has $got"; ok=1; }
   resize_to "$before" >/dev/null || ok=1
   [ $ok = 0 ] && echo "a new viewer has $got, wayvnc runs on"; exit $ok'
