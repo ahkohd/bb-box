@@ -53,3 +53,26 @@ export async function restartWayvnc(command: CommandTransport, signal?: AbortSig
   const result = await command.run(RESTART, { timeoutMs: 10_000, signal, maxOutputBytes: 4096 });
   if (result.exitCode !== 0) throw new Error(`wayvnc could not be started again: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
 }
+
+/** wayvnc's outputs as JSON: `[]` once wayvnc 0.9.1 has lost Sway and detached, which it does not come back from. */
+const OUTPUTS = `export XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"; wayvncctl --json output-list`;
+
+/**
+ * Whether the box user's wayvnc is still attached to Sway: false when it
+ * lists no output twice, 2 s apart, as wayvnc 0.9.1 does after it lost
+ * Sway; it then sends viewers a grey placeholder and never attaches again
+ * ("TODO: Re-attach" in its main.c). Twice, as a wayvnc a display resize
+ * restarts lists none for a moment. Null when wayvncctl does not answer,
+ * which says nothing either way. wayvnc 0.7.2 keeps its output listed after
+ * the same failure, so this cannot see it: it sends a new viewer no frame.
+ */
+export async function wayvncAttached(command: CommandTransport, signal?: AbortSignal): Promise<boolean | null> {
+  const read = async (): Promise<boolean | null> => {
+    const result = await command.run(OUTPUTS, { timeoutMs: 10_000, signal, maxOutputBytes: 4096 }).catch(() => null);
+    const out = result?.exitCode === 0 ? result.stdout.trim() : "";
+    return out === "[]" ? false : out.startsWith("[") ? true : null;
+  };
+  if ((await read()) !== false) return true;
+  await new Promise((resolve) => setTimeout(resolve, 2_000));
+  return (await read()) === false ? false : true;
+}

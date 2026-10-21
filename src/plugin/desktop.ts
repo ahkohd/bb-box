@@ -782,6 +782,16 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               viewer: end,
               open,
               mayInput: () => control.mayInput(boxId, viewer),
+              onServerRestart: (why, error) => {
+                void boxes
+                  .find(boxId)
+                  .then((box) =>
+                    bb.log.warn(
+                      `Box ${box?.name ?? boxId}'s desktop VNC server ${why}, so bb-box ${error ? `could not restart it: ${error.message}` : "restarted it, and the viewer connects again"}.`,
+                    ),
+                  )
+                  .catch((caught) => deps.logError("log a desktop server's restart", caught));
+              },
               onServerInit: (size) => control.seen(boxId, size),
               minSize: () => shown?.minSize ?? null,
               onResize: (size, screen) => {

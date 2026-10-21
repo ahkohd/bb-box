@@ -106,7 +106,7 @@ import {
   type LxcFlavourConfig,
   type LxcTemplate,
 } from "./config.ts";
-import { restartWayvnc, waylandPointer } from "../wayvnc.ts";
+import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 
 const WARM = "warm";
 const FILLING = "filling";
@@ -1243,7 +1243,7 @@ export class ProxmoxLxcBackend implements Backend {
                 };
               },
               ...(offer?.flavour === "desktop" ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resize(command, size, signal) } : {}),
-              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal), pointer: (shown: boolean, signal?: AbortSignal) => waylandPointer(command, shown || sends, signal) } : {}),
+              ...(wayland ? { resize: (size: DisplaySize, signal?: AbortSignal) => this.#resizeWayland(command, size, signal), restartServer: (signal?: AbortSignal) => restartWayvnc(command, signal), serverAttached: async (signal?: AbortSignal) => (await wayvncAttached(command, signal)) !== false, pointer: (shown: boolean, signal?: AbortSignal) => waylandPointer(command, shown || sends, signal) } : {}),
               ...(sends ? { followPointer: (onEvent: (event: BoxPointer) => void, signal: AbortSignal) => followPointer(command, onEvent, signal, this.#cursorHelper) } : {}),
               minSize: MIN_DESKTOP,
             },

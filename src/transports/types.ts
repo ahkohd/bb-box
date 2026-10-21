@@ -168,6 +168,13 @@ export interface Display {
    */
   restartServer?(signal?: AbortSignal): Promise<void>;
   /**
+   * Whether the display's server still has the desktop, for one that can
+   * lose it and stay up, sending no picture or a placeholder: wayvnc after
+   * it lost Sway. False when it has lost it, true when it has it or cannot
+   * tell. Only with restartServer, which brings a server that has it.
+   */
+  serverAttached?(signal?: AbortSignal): Promise<boolean>;
+  /**
    * Puts the box's own pointer in the display's picture, or takes it out,
    * for a server that cannot leave it out itself: Sway's headless output
    * paints it into every frame wayvnc sends (#707). Out while a person

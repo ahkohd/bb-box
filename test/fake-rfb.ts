@@ -40,6 +40,8 @@ export class FakeRfb {
   readonly password: string | null;
   readonly user: string | null;
   readonly acceptResize: boolean;
+  /** When set, it answers no update request, as a wayvnc that lost the desktop does (0.7.2). */
+  silent = false;
   readonly connections: RfbConnection[] = [];
   #server: Server | null = null;
 
@@ -150,7 +152,7 @@ export class FakeRfb {
           this.width = message.width;
           this.height = message.height;
         }
-        if (message.bytes[0] === 3) await writer.write(EMPTY_UPDATE);
+        if (message.bytes[0] === 3 && !this.silent) await writer.write(EMPTY_UPDATE);
       }
     }
     await connection.end();
