@@ -268,8 +268,8 @@ EnvironmentFile=-/etc/bb-box/desktop.env
 EnvironmentFile=/run/bb-box/display.env
 Environment=XDG_RUNTIME_DIR=/run/user/$uid
 ExecStartPre=/usr/local/libexec/bb-box/display vnc-config
-# 60 frames a second: wayvnc's default of 30 halves what a viewer sees.
-ExecStart=/usr/bin/wayvnc -f 60 -o HEADLESS-1 -C /run/bb-box/wayvnc.conf 0.0.0.0 5900
+# wayvnc at 60 frames a second, ended when it loses Sway, so it starts again.
+ExecStart=/usr/local/libexec/bb-box/display vnc
 Restart=always
 RestartSec=100ms
 

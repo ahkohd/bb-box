@@ -101,11 +101,12 @@ if [ -x /usr/local/libexec/bb-box/display ]; then
     keep as_box env "${bus_env[@]}" dbus-daemon --session --address="unix:path=/run/user/$uid/bus" --nofork --nopidfile &
     in_session() { as_box env "${bus_env[@]}" sh -c 'set -a; . /run/bb-box/display.env; set +a; exec "$@"' sh "$@"; }
     # wayvnc, again 100 ms after it exits: display resize ends it to take a
-    # new size when no viewer is connected, and waits for the next one.
+    # new size when no viewer is connected, and waits for the next one, and
+    # display vnc ends it when it loses Sway.
     stream() {
       while :; do
         in_session env "VNC_AUTH=${VNC_AUTH:-password}" sh -c '/usr/local/libexec/bb-box/display vnc-config &&
-          exec wayvnc -f 60 -o HEADLESS-1 -C /run/bb-box/wayvnc.conf 0.0.0.0 5900'
+          exec /usr/local/libexec/bb-box/display vnc'
         sleep 0.1
       done
     }

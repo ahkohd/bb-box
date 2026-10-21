@@ -39,6 +39,12 @@ import {
 const CONNECT_TIMEOUT_MS = 20_000;
 /** How long a sign-in may hang before a display that can restart its server has it restarted, once, and is tried again (#411). */
 export const STALL_MS = 4_000;
+/** How long a display that can restart its server has to answer a viewer's first full FramebufferUpdateRequest with any bytes: a full request always gets a frame, on an idle desktop too. */
+export const FRAME_WAIT_MS = 5_000;
+/** How often a display that can say whether its server still has the desktop is asked, while a viewer is connected. */
+export const ATTACHED_CHECK_MS = 30_000;
+/** How long a restart of a server that lost the desktop may take. */
+const SERVER_RESTART_MS = 20_000;
 /** How long closing waits for the box to take the releases of held keys and buttons. */
 const RELEASE_TIMEOUT_MS = 2_000;
 const CLIENT_CUT_TEXT = 6;
@@ -65,6 +71,7 @@ export type OpenDisplay = (
   readonly typesAsCharacter?: DisplayOpened["typesAsCharacter"];
   readonly keyDelayMs?: DisplayOpened["keyDelayMs"];
   readonly restart?: (signal: AbortSignal) => Promise<void>;
+  readonly attached?: (signal: AbortSignal) => Promise<boolean>;
 }>;
 
 export interface Size {
@@ -89,7 +96,11 @@ export interface RelayOptions {
   onInputError?(error: Error): void;
   /** The box's clipboard text changed, as the display's own input reports it. */
   onClipboard?(text: string): void;
+  /** The display's server had lost the desktop, as `why` says, and the relay restarted it and ends, so the viewer connects to the new one. */
+  onServerRestart?(why: string, error: Error | null): void;
   readonly connectTimeoutMs?: number;
+  readonly frameWaitMs?: number;
+  readonly attachedCheckMs?: number;
 }
 
 interface BoxConnection {
@@ -100,6 +111,8 @@ interface BoxConnection {
   readonly inputTakes?: DisplayOpened["inputTakes"];
   readonly typesAsCharacter?: DisplayOpened["typesAsCharacter"];
   readonly keyDelayMs?: DisplayOpened["keyDelayMs"];
+  readonly restart?: (signal: AbortSignal) => Promise<void>;
+  readonly attached?: (signal: AbortSignal) => Promise<boolean>;
 }
 
 /**
@@ -121,7 +134,7 @@ const WHEEL = 0x78;
 export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_MS, stallMs = STALL_MS): Promise<BoxConnection> {
   const signal = AbortSignal.timeout(timeoutMs);
   for (let restarted = false; ; restarted = true) {
-    const { channel, auth, input, inputTakes, typesAsCharacter, keyDelayMs, restart } = await open(signal);
+    const { channel, auth, input, inputTakes, typesAsCharacter, keyDelayMs, restart, attached } = await open(signal);
     const reader = new StreamReader(channel.readable);
     const writer = channel.writable.getWriter();
     let stall: ReturnType<typeof setTimeout> | undefined;
@@ -133,7 +146,9 @@ export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_
     handshake.catch(() => undefined);
     try {
       if (signal.aborted) throw new RfbError("The box's desktop did not finish its handshake in time.");
-      if ((await Promise.race([handshake, timedOut])) === "done") return { channel, reader, writer, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}), ...(keyDelayMs ? { keyDelayMs } : {}) };
+      if ((await Promise.race([handshake, timedOut])) === "done") {
+        return { channel, reader, writer, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}), ...(keyDelayMs ? { keyDelayMs } : {}), ...(restart ? { restart } : {}), ...(attached ? { attached } : {}) };
+      }
     } catch (error) {
       await channel.close().catch(() => undefined);
       throw error;
@@ -206,6 +221,14 @@ export class RfbRelay {
   readonly #heldQemu = new Map<number, number>();
   /** The viewer's bytes so far, each taken once those before it are. */
   #received: Promise<void> = Promise.resolve();
+  /** When the box's server last sent bytes. */
+  #heardAt = 0;
+  /** Whether the viewer's first full FramebufferUpdateRequest has been watched for an answer. */
+  #askedFull = false;
+  /** Timers watching the server: its first frame, and whether it still has the desktop. */
+  readonly #watch = new Set<ReturnType<typeof setTimeout>>();
+  /** Set once the relay found the server had lost the desktop. */
+  #dying = false;
 
   constructor(options: RelayOptions) {
     this.#options = options;
@@ -270,7 +293,9 @@ export class RfbRelay {
       this.#size = { width: init.width, height: init.height };
       this.#options.onServerInit?.({ width: init.width, height: init.height });
       this.#phase = "messages";
+      this.#heardAt = Date.now();
       void this.#pump(connection);
+      this.#watchAttached(connection);
       const rest = this.#pending;
       this.#pending = new Uint8Array(0);
       if (rest.byteLength) await this.#forward(this.#parser.push(rest));
@@ -283,6 +308,7 @@ export class RfbRelay {
         const chunk = await connection.reader.next();
         if (chunk === null) break;
         if (this.#ended) return;
+        this.#heardAt = Date.now();
         this.#options.viewer.send(chunk);
       }
       await this.#end("box", null);
@@ -298,6 +324,14 @@ export class RfbRelay {
     // rejects with nobody to catch it, which ends the plugin's process.
     const passing: Uint8Array[] = [];
     for (const message of messages) {
+      // A full FramebufferUpdateRequest always gets a frame: a server that sends nothing has lost the desktop (wayvnc 0.7.2).
+      if (!this.#askedFull && connection.restart && message.type === "other" && message.bytes[0] === 3 && message.bytes[1] === 0) {
+        this.#askedFull = true;
+        const asked = Date.now();
+        this.#after(this.#options.frameWaitMs ?? FRAME_WAIT_MS, () => {
+          if (this.#heardAt < asked) void this.#serverLost(connection, "sent no picture for a full update");
+        });
+      }
       const bytes = this.#passing(message);
       if (!bytes) continue;
       if (connection.input && isInput(message) && (connection.inputTakes === "wheel" || connection.inputTakes === "characters")) {
@@ -468,9 +502,47 @@ export class RfbRelay {
     return this.#end("viewer", null);
   }
 
+  /** Runs `task` after `ms`, unless the relay ends first. */
+  #after(ms: number, task: () => void): void {
+    const timer = setTimeout(() => {
+      this.#watch.delete(timer);
+      if (!this.#ended) task();
+    }, ms);
+    this.#watch.add(timer);
+  }
+
+  /** Asks, at once and then every ATTACHED_CHECK_MS, whether the display's server still has the desktop (wayvnc 0.9.1). */
+  #watchAttached(connection: BoxConnection): void {
+    if (!connection.restart || !connection.attached) return;
+    const check = async () => {
+      const has = await connection.attached!(AbortSignal.timeout(SERVER_RESTART_MS)).catch(() => true);
+      if (this.#ended) return;
+      if (!has) return this.#serverLost(connection, "lost the desktop");
+      this.#after(this.#options.attachedCheckMs ?? ATTACHED_CHECK_MS, () => void check());
+    };
+    void check();
+  }
+
+  /** Restarts a server that lost the desktop, and ends the relay, so the viewer connects to the new one. */
+  async #serverLost(connection: BoxConnection, why: string): Promise<void> {
+    if (this.#dying || this.#ended) return;
+    this.#dying = true;
+    let failed: Error | null = null;
+    try {
+      await connection.restart!(AbortSignal.timeout(SERVER_RESTART_MS));
+    } catch (error) {
+      failed = error instanceof Error ? error : new Error(String(error));
+    }
+    this.#options.onServerRestart?.(why, failed);
+    const words = failed ? `bb-box could not restart it: ${failed.message}` : "bb-box restarted it, and the viewer connects again";
+    await this.#end("box", new Error(`The desktop's VNC server ${why}, so ${words}.`));
+  }
+
   async #end(by: "viewer" | "box", error: Error | null): Promise<void> {
     if (this.#ended) return;
     this.#ended = true;
+    for (const timer of this.#watch) clearTimeout(timer);
+    this.#watch.clear();
     const connection = this.#connection;
     if (connection) {
       if (by === "viewer") await withTimeout(this.release().catch(() => undefined), RELEASE_TIMEOUT_MS);
@@ -500,7 +572,7 @@ export class RfbRelay {
 export function displayOpener(display: Display): OpenDisplay {
   return async (signal) => {
     const { route, auth, input, inputTakes, typesAsCharacter, keyDelayMs } = await display.open(signal);
-    return { channel: await openRoute(route, signal), auth, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}), ...(keyDelayMs ? { keyDelayMs } : {}), ...(display.restartServer ? { restart: (each: AbortSignal) => display.restartServer!(each) } : {}) };
+    return { channel: await openRoute(route, signal), auth, input, ...(inputTakes ? { inputTakes } : {}), ...(typesAsCharacter ? { typesAsCharacter } : {}), ...(keyDelayMs ? { keyDelayMs } : {}), ...(display.restartServer ? { restart: (each: AbortSignal) => display.restartServer!(each) } : {}), ...(display.restartServer && display.serverAttached ? { attached: (each: AbortSignal) => display.serverAttached!(each) } : {}) };
   };
 }
 

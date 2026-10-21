@@ -640,6 +640,80 @@ test("a sign-in that hangs has a display that can restart its server restart it,
   assert.equal(again, 1);
 });
 
+/** A FramebufferUpdateRequest for the whole 1280x800 desktop, full or incremental. */
+function updateRequest(incremental: boolean): Uint8Array {
+  return Uint8Array.of(3, incremental ? 1 : 0, 0, 0, 0, 0, 0x05, 0x00, 0x03, 0x20);
+}
+
+test("a server that sends no picture for a full update request is restarted, and the viewer connects again, but not one that answers, nor one that cannot restart (wayvnc 0.7.2)", async () => {
+  const server = new FakeRfb();
+  server.silent = true;
+  let restarts = 0;
+  const restarted: string[] = [];
+  const open: OpenDisplay = async () => ({ channel: server.channel(), auth: { type: "none" }, restart: async () => void restarts++ });
+  const dead = relayTo(server, { open, frameWaitMs: 50, onServerRestart: (why, error) => restarted.push(`${why}${error ? `: ${error.message}` : ""}`) });
+  await dead.init();
+  // An incremental request may wait for a change: only a full one must be answered.
+  await dead.relay.receive(updateRequest(true));
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(dead.viewer.closed, null);
+  await dead.relay.receive(updateRequest(false));
+  await until("the viewer to close", () => dead.viewer.closed !== null);
+  assert.equal(restarts, 1);
+  assert.deepEqual(restarted, ["sent no picture for a full update"]);
+  assert.deepEqual(dead.viewer.closed, { code: 1011, reason: "The desktop's VNC server sent no picture for a full update, so bb-box restarted it, and the viewer connects again." });
+
+  // A server that answers is left alone.
+  server.silent = false;
+  const alive = relayTo(server, { open, frameWaitMs: 50 });
+  await alive.init();
+  await alive.relay.receive(updateRequest(false));
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.deepEqual([alive.viewer.closed, restarts], [null, 1]);
+  await alive.relay.receive(updateRequest(false));
+  // A display that cannot restart its server is not watched.
+  server.silent = true;
+  const plain = relayTo(server, { frameWaitMs: 50 });
+  await plain.init();
+  await plain.relay.receive(updateRequest(false));
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(plain.viewer.closed, null);
+});
+
+test("a server that says it lost the desktop is restarted at once or within a check, with the viewer connected or new, and one that has it is asked again, never restarted (wayvnc 0.9.1)", async () => {
+  const server = new FakeRfb();
+  let restarts = 0;
+  let attached = true;
+  let asked = 0;
+  const open: OpenDisplay = async () => ({
+    channel: server.channel(),
+    auth: { type: "none" },
+    restart: async () => void restarts++,
+    attached: async () => {
+      asked++;
+      return attached;
+    },
+  });
+  const viewer = relayTo(server, { open, attachedCheckMs: 30 });
+  await viewer.init();
+  await until("a few checks", () => asked >= 3);
+  assert.deepEqual([viewer.viewer.closed, restarts], [null, 0], "an idle desktop that has its server is left alone");
+  attached = false;
+  await until("the viewer to close", () => viewer.viewer.closed !== null);
+  assert.equal(restarts, 1);
+  assert.match(viewer.viewer.closed!.reason, /^The desktop's VNC server lost the desktop, so bb-box restarted it/);
+  // A viewer that connects while it has lost it is told at once.
+  const fresh = relayTo(server, { open, attachedCheckMs: 60_000 });
+  await fresh.init();
+  await until("the new viewer to close", () => fresh.viewer.closed !== null);
+  assert.equal(restarts, 2);
+  // A restart that fails is said.
+  const failing = relayTo(server, { open: async () => ({ ...(await open(AbortSignal.timeout(1_000))), restart: async () => { throw new Error("wayvnc did not start again within 5 s"); } }), attachedCheckMs: 60_000 });
+  await failing.init();
+  await until("the failing viewer to close", () => failing.viewer.closed !== null);
+  assert.match(failing.viewer.closed!.reason, /could not restart it: wayvnc did not start again/);
+});
+
 test("restoring the size sets the desktop back over a connection of its own", async () => {
   const server = new FakeRfb({ password: "secret12", width: 1920, height: 1080 });
   const open: OpenDisplay = async () => ({ channel: server.channel(), auth: { type: "vnc-password", password: "secret12" } });

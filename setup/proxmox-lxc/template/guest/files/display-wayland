@@ -11,6 +11,8 @@
 #                        floating window into it, less the bar
 #   display vnc-config   write wayvnc's config from the box's VNC password
 #                        (bb-box-vnc.service's ExecStartPre)
+#   display vnc          run wayvnc, and end it when it loses Sway
+#                        (bb-box-vnc.service's main process)
 #
 # /run/bb-box/display.env has WAYLAND_DISPLAY, SWAYSOCK and the session's
 # XDG_ variables, and no DISPLAY: SSH commands, the units and Cua read it.
@@ -142,8 +144,40 @@ sys.exit(0 if o and "%dx%d" % (o[0]["width"], o[0]["height"]) == sys.argv[2] els
     fi
     exit 0
     ;;
+  vnc)
+    # wayvnc, at 60 frames a second: its default of 30 halves what a viewer
+    # sees. wayvnc 0.9.1 that loses Sway, as after a failed dispatch of its
+    # Wayland events, detaches and stays up, sending viewers a grey
+    # placeholder, and never attaches again ("TODO: Re-attach" in its
+    # main.c). So it ends when wayvncctl says it detached, and its unit, or
+    # a Docker box's loop, starts a fresh one.
+    wayvnc -f 60 -o "$output" -C "$run/wayvnc.conf" 0.0.0.0 5900 &
+    vnc=$!
+    # wayvncctl can connect before wayvnc has its control socket, or lose
+    # it, and end: it listens again for as long as this wayvnc runs.
+    (
+      while kill -0 "$vnc" 2>/dev/null; do
+        wayvncctl --wait --json event-receive 2>/dev/null | while read -r event; do
+          case "$event" in
+            *'"detached"'*)
+              echo "display: wayvnc lost Sway, so it ends, to start again" >&2
+              kill "$vnc" 2>/dev/null
+              ;;
+          esac
+        done
+        sleep 0.5
+      done
+    ) &
+    watch=$!
+    wait "$vnc"
+    status=$?
+    # The watcher's wayvncctl too, which would otherwise wait on for the next wayvnc.
+    pkill -P "$watch" 2>/dev/null
+    kill "$watch" 2>/dev/null
+    exit "$status"
+    ;;
   *)
-    echo "usage: display [wait | ready | resize <width>x<height> | vnc-config]" >&2
+    echo "usage: display [wait | ready | resize <width>x<height> | vnc-config | vnc]" >&2
     exit 2
     ;;
 esac
