@@ -30,6 +30,7 @@ import {
   securityFailure,
   setDesktopSize,
   setEncodings,
+  ShortKeyError,
   type ClientMessage,
   type Screen,
   type ServerInit,
@@ -45,6 +46,7 @@ export const FRAME_WAIT_MS = 5_000;
 export const ATTACHED_CHECK_MS = 30_000;
 /** How long a restart of a server that lost the desktop may take. */
 const SERVER_RESTART_MS = 20_000;
+const SHORT_KEY_RETRIES = 5;
 /** How long closing waits for the box to take the releases of held keys and buttons. */
 const RELEASE_TIMEOUT_MS = 2_000;
 const CLIENT_CUT_TEXT = 6;
@@ -133,7 +135,9 @@ const WHEEL = 0x78;
  */
 export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_MS, stallMs = STALL_MS): Promise<BoxConnection> {
   const signal = AbortSignal.timeout(timeoutMs);
-  for (let restarted = false; ; restarted = true) {
+  let restarted = false;
+  let shortKeys = 0;
+  for (;;) {
     const { channel, auth, input, inputTakes, typesAsCharacter, keyDelayMs, restart, attached } = await open(signal);
     const reader = new StreamReader(channel.readable);
     const writer = channel.writable.getWriter();
@@ -151,6 +155,8 @@ export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_
       }
     } catch (error) {
       await channel.close().catch(() => undefined);
+      const newKeyOnNewConnection = error instanceof ShortKeyError && ++shortKeys <= SHORT_KEY_RETRIES && !signal.aborted;
+      if (newKeyOnNewConnection) continue;
       throw error;
     } finally {
       clearTimeout(stall);
@@ -158,6 +164,7 @@ export async function connectBox(open: OpenDisplay, timeoutMs = CONNECT_TIMEOUT_
     }
     await channel.close().catch(() => undefined);
     await restart!(signal);
+    restarted = true;
   }
 }
 

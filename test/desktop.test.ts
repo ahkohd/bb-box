@@ -640,6 +640,23 @@ test("a sign-in that hangs has a display that can restart its server restart it,
   assert.equal(again, 1);
 });
 
+test("a server that sends its Diffie-Hellman key a byte short is signed in to again on a new connection, not restarted, a few times at most (neatvnc 0.9.1, #902)", async () => {
+  const server = new FakeRfb({ user: "boxuser", password: "pw" });
+  const auth = { type: "apple", user: "boxuser", password: "pw" } as const;
+  let opens = 0;
+  let restarts = 0;
+  const open: OpenDisplay = async () => (opens++, { channel: server.channel(), auth, restart: async () => void restarts++ });
+  server.shortKeys = 2;
+  const connection = await connectBox(open, 2_000, 1_000);
+  assert.deepEqual([opens, restarts, server.shortKeys], [3, 0, 0]);
+  await connection.channel.close();
+
+  opens = 0;
+  server.shortKeys = 10;
+  await assert.rejects(connectBox(open, 2_000, 1_000), /sent a Diffie-Hellman key of 127 bytes, a byte short/);
+  assert.deepEqual([opens, restarts], [6, 0]);
+});
+
 /** A FramebufferUpdateRequest for the whole 1280x800 desktop, full or incremental. */
 function updateRequest(incremental: boolean): Uint8Array {
   return Uint8Array.of(3, incremental ? 1 : 0, 0, 0, 0, 0, 0x05, 0x00, 0x03, 0x20);

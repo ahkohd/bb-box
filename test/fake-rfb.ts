@@ -42,6 +42,7 @@ export class FakeRfb {
   readonly acceptResize: boolean;
   /** When set, it answers no update request, as a wayvnc that lost the desktop does (0.7.2). */
   silent = false;
+  shortKeys = 0;
   readonly connections: RfbConnection[] = [];
   #server: Server | null = null;
 
@@ -169,8 +170,11 @@ export class FakeRfb {
     const padded = (bytes: Buffer) => Buffer.concat([Buffer.alloc(length - bytes.byteLength), bytes]);
     const head = new Uint8Array(4);
     new DataView(head.buffer).setUint16(0, dh.getGenerator().readUInt8(0));
-    new DataView(head.buffer).setUint16(2, length);
-    await writer.write(Buffer.concat([head, prime, padded(dh.generateKeys())]));
+    const short = this.shortKeys > 0;
+    if (short) this.shortKeys--;
+    new DataView(head.buffer).setUint16(2, short ? length - 1 : length);
+    const publicKey = padded(dh.generateKeys());
+    await writer.write(Buffer.concat([head, prime, short ? publicKey.subarray(0, length - 1) : publicKey]));
     const answer = await reader.read(128 + length);
     const key = createHash("md5").update(padded(dh.computeSecret(answer.subarray(128)))).digest();
     const decipher = createDecipheriv("aes-128-ecb", key, null).setAutoPadding(false);
