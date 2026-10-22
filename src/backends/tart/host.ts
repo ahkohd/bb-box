@@ -211,6 +211,8 @@ export interface TartVm {
   /** "running", "suspended" or "stopped". */
   readonly state: string;
   readonly running: boolean;
+  /** Its disk in decimal GB, as `tart list` gives it; null when it does not. */
+  readonly diskGB: number | null;
 }
 
 export interface VmConfig {
@@ -281,13 +283,14 @@ export function parseConfig(text: string): VmConfig | null {
 
 export function parseState(text: string): HostState {
   const parts = sections(text);
-  const list = JSON.parse(parts.get("list")?.trim() || "[]") as { Name?: unknown; State?: unknown; Running?: unknown }[];
+  const list = JSON.parse(parts.get("list")?.trim() || "[]") as { Name?: unknown; State?: unknown; Running?: unknown; Disk?: unknown }[];
   const vms = list
     .filter((vm) => typeof vm.Name === "string")
     .map((vm) => ({
       name: String(vm.Name),
       state: typeof vm.State === "string" ? vm.State : vm.Running ? "running" : "stopped",
       running: vm.Running === true,
+      diskGB: typeof vm.Disk === "number" && vm.Disk > 0 ? vm.Disk : null,
     }));
   const configs = new Map<string, VmConfig>();
   for (const [name, json] of named(parts.get("configs") ?? "")) {

@@ -145,7 +145,7 @@ test("reads Tart's pretty-printed listing and its VNC URL", () => {
       "27.0",
     ].join("\n"),
   );
-  assert.deepEqual(state.vms, [{ name: "bb-box-bx1", state: "running", running: true }]);
+  assert.deepEqual(state.vms, [{ name: "bb-box-bx1", state: "running", running: true, diskGB: null }]);
   assert.deepEqual(state.configs.get("bb-box-bx1"), { os: "darwin", macAddress: null, memoryMiB: 8192, cpus: 4 });
   assert.deepEqual(state.owners.get("bb-box-bx1"), { install: "k3v9q2m7xa", box: "bx1" });
   assert.equal(state.memoryMiB, 131072);
@@ -877,12 +877,12 @@ test("doctor says what is missing on the Mac", async () => {
   assert.equal(down.checks.find((check) => check.id === "image.mac1.macos")!.status, "skipped");
 });
 
-test("a box has the cores and memory it asks for, read from its config; capacity refuses what a Mac cannot give", async () => {
+test("a box has the cores and memory it asks for, read from its config, and its disk from the start, as tart get gives it; capacity refuses what a Mac cannot give", async () => {
   const { backend } = setup();
   const medium: BoxSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
   const guest = await backend.acquire(identity("macos", "thr_abc123", medium), null, hooks().hooks, signal());
-  assert.deepEqual(guest.size, medium);
-  assert.deepEqual((await backend.held()).find((held) => held.ref === guest.ref)?.size, medium, "held reads it from the VM's config");
+  assert.deepEqual(guest.size, { ...medium, diskGiB: 59 }, "64 GB, as tart list gives it, is 59 GiB, as a resize reads it");
+  assert.deepEqual((await backend.held()).find((held) => held.ref === guest.ref)?.size, { ...medium, diskGiB: 59 }, "held reads it from the VM's config and tart list");
   await backend.release(guest, releasing);
 
   const refused = async (size: BoxSize, pending: { kind: string; size: BoxSize }[] = []) => {

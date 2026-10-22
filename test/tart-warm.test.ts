@@ -129,7 +129,7 @@ test("a box at the default size takes a warm VM, and the pool fills again", asyn
   const recorded = hooks();
   const guest = await backend.acquire(box, null, recorded.hooks, signal());
   assert.equal(guest.ref, warm);
-  assert.deepEqual(guest.size, SMALL);
+  assert.deepEqual(guest.size, { ...SMALL, diskGiB: 59 });
   assert.ok("warm" in recorded.timings && "clock" in recorded.timings && !("clone" in recorded.timings), JSON.stringify(recorded.timings));
   assert.ok(!("grants" in recorded.timings), "the fill made the grants, so the claim pays nothing for them");
   assert.match(owner(warm!), new RegExp(`^box=${box.boxId}$`, "m"));
@@ -199,7 +199,7 @@ test("a box at another size clones, and leaves the warm VM", async () => {
   const box = identity("macos", MEDIUM);
   const guest = await backend.acquire(box, null, hooks().hooks, signal());
   assert.equal(guest.ref, `bb-box-${box.boxId}`);
-  assert.deepEqual(guest.size, MEDIUM);
+  assert.deepEqual(guest.size, { ...MEDIUM, diskGiB: 59 });
   assert.ok(suspended(warm!));
   await backend.release(guest, releasing);
 });

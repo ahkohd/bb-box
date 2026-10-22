@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { OptionComposer, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, retryWait, type Connection } from "./viewer.ts";
+import { KeysAfterPaste, OptionComposer, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, retryWait, type Connection } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -790,9 +790,15 @@ export class SelkiesSession implements Kept {
   }
 
   readonly #option = new OptionComposer();
+  readonly #afterPaste = new KeysAfterPaste<[number, string, boolean]>((key) => this.#sendKey(...key));
 
   #key(keysym: number, code: string, down: boolean): void {
     if (!this.#mine) return;
+    if (this.#afterPaste.keep([keysym, code, down])) return;
+    this.#sendKey(keysym, code, down);
+  }
+
+  #sendKey(keysym: number, code: string, down: boolean): void {
     // bb-box's own Mac input names Command and Option as most servers do.
     const mac = macBrowser();
     const key = boxKey(keysym, code, this.guestOs, mac, null);
@@ -899,6 +905,7 @@ export class SelkiesSession implements Kept {
   /** Puts text on the box's clipboard, then presses the box's own paste chord where the cursor is, and says so. */
   paste(text: string): void {
     if (this.connection.state !== "connected") return;
+    this.#afterPaste.hold();
     const put = this.putClipboard?.(text);
     if (!put) {
       this.#putOnBox("text/plain", new TextEncoder().encode(text));
@@ -911,7 +918,10 @@ export class SelkiesSession implements Kept {
         this.#pressPaste();
         this.onPaste?.(text);
       },
-      (error: unknown) => this.onPasteFailed?.(error),
+      (error: unknown) => {
+        this.#afterPaste.release();
+        this.onPasteFailed?.(error);
+      },
     );
   }
 
@@ -922,8 +932,12 @@ export class SelkiesSession implements Kept {
       this.onPasteFailed?.(new Error(`The image is ${Math.ceil(image.size / 1024 / 1024)} MiB, more than the ${CLIPBOARD_MAX_BYTES / 1024 / 1024} MiB the desktop takes.`));
       return;
     }
+    this.#afterPaste.hold();
     const bytes = new Uint8Array(await image.arrayBuffer());
-    if (this.connection.state !== "connected") return;
+    if (this.connection.state !== "connected") {
+      this.#afterPaste.drop();
+      return;
+    }
     this.#putOnBox(image.type || "image/png", bytes);
     this.#pressPaste();
     this.onPaste?.(image);
@@ -931,10 +945,15 @@ export class SelkiesSession implements Kept {
 
   #pressPaste(): void {
     clearTimeout(this.#chord);
+    this.#afterPaste.hold();
     this.#chord = setTimeout(() => {
-      if (this.connection.state !== "connected") return;
+      if (this.connection.state !== "connected") {
+        this.#afterPaste.drop();
+        return;
+      }
       const modifier = this.guestOs === "macos" ? XK_META_L : XK_CONTROL_L;
       for (const message of [`kd,${modifier}`, `kd,${XK_V}`, `ku,${XK_V}`, `ku,${modifier}`]) this.#send(message);
+      this.#afterPaste.release();
     }, PASTE_CHORD_DELAY_MS);
   }
 
@@ -945,6 +964,7 @@ export class SelkiesSession implements Kept {
     if (!(macBrowser() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
     event.stopPropagation();
     this.#pasteArmed = Date.now();
+    this.#afterPaste.hold();
     clearTimeout(this.#pasteWait);
     this.#pasteWait = setTimeout(() => {
       if (this.#pasteArmed === null) return;
@@ -1026,6 +1046,7 @@ export class SelkiesSession implements Kept {
   }
 
   dispose(): void {
+    this.#afterPaste.drop();
     this.#unhold();
     this.#disposed = true;
     clearTimeout(this.#retry);
