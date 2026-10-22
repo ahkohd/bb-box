@@ -34,7 +34,7 @@ import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { LoopWatch } from "./loop-watch.ts";
 import { stopForker } from "../transports/forker.ts";
-import { spawnTotals, takeLongestSpawn } from "../transports/spawns.ts";
+import { forPurpose, spawnTotals, takeLongestSpawn } from "../transports/spawns.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, MACHINE_PROVIDER_ID, type HostApi } from "./enrol.ts";
 import { CALL_TIMEOUT_MS, Holders, RETIRED_TITLE, type RetiredTerminals } from "./holder.ts";
@@ -779,11 +779,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   bb.events.on("thread.archived", ({ thread }) => {
     threadHosts.delete(thread.id);
-    void boxes.releaseThread(thread.id, "archived").catch((error) => logError("thread archived", error));
+    void forPurpose("thread archived", () => boxes.releaseThread(thread.id, "archived")).catch((error) => logError("thread archived", error));
   });
   bb.events.on("thread.deleted", ({ thread }) => {
     threadHosts.delete(thread.id);
-    void boxes.releaseThread(thread.id, "deleted").catch((error) => logError("thread deleted", error));
+    void forPurpose("thread deleted", () => boxes.releaseThread(thread.id, "deleted")).catch((error) => logError("thread deleted", error));
   });
   // A thread that starts on a spare's machine from BB's picker makes it yours
   // now, not at the next spare upkeep (036, #155). Its machine is known once
@@ -793,12 +793,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   };
   for (const event of ["thread.created", "thread.active"] as const) {
     bb.events.on(event, ({ thread }) => {
-      void startedOn(thread).catch((error) => logError(event, error));
+      void forPurpose(event, () => startedOn(thread)).catch((error) => logError(event, error));
     });
   }
   bb.events.on("experimental_host.deleted", ({ host }) => {
     holders.forget(host.id);
-    void enrolment.forgetHost(host.id).catch((error) => logError("host deleted", error));
+    void forPurpose("host deleted", () => enrolment.forgetHost(host.id)).catch((error) => logError("host deleted", error));
   });
 
   // The nightly rebuilds (049) behind General's switch: BB runs this schedule while bb-box is loaded, and a run goes on
@@ -807,7 +807,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     if (!(configuration.document.general.nightlyImages ?? GENERAL_DEFAULTS.nightlyImages)) return;
     if (imageJobs.running()) return;
     bb.log.info("Rebuilding the standard images that are due, as General's Rebuild images each night is on.");
-    void imageJobs.refreshAll({ limitMs: NIGHTLY_HOURS * 60 * 60_000 }).catch((error) => logError("nightly images", error));
+    void forPurpose("nightly images", () => imageJobs.refreshAll({ limitMs: NIGHTLY_HOURS * 60 * 60_000 })).catch((error) => logError("nightly images", error));
   });
 
   // After a BB update, the images with BB's old app are refreshed within the hour, while the nightly switch is on.
@@ -817,7 +817,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         // Its wait ends when the plugin stops, as the sweeper's steps do: a backend's listing of its images through a
         // machine BB no longer answers for a stopping plugin may never end, and kept the plugin from stopping on an
         // update (18 October 2026). What it started finishes on its own.
-        await abortable(imageJobs.afterBbUpdate(signal), signal).catch((error) => {
+        await abortable(forPurpose("images after a BB update", () => imageJobs.afterBbUpdate(signal)), signal).catch((error) => {
           if (!signal.aborted) logError("images after a BB update", error);
         });
         // sleep sees an abort that came before it began, as one during the look above does: a listener added then
@@ -832,18 +832,18 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       // Each step ends its wait when the plugin stops: BB may no longer answer
       // a stopping plugin, and a call to a machine through it, such as a Docker
       // host's relay, may never end. What a step started finishes on its own.
-      const step = async (operation: string, work: Promise<unknown>) => {
-        await abortable(work, signal).catch((error) => {
+      const step = async (operation: string, work: () => Promise<unknown>) => {
+        await abortable(forPurpose(operation, work), signal).catch((error) => {
           if (!signal.aborted) logError(operation, error);
         });
       };
-      await step("resume enrolment", enrolment.resume());
+      await step("resume enrolment", () => enrolment.resume());
       // What this release adds to a kind reaches boxes made before it (#215).
-      await step("capabilities", boxes.refreshCapabilities(signal));
+      await step("capabilities", () => boxes.refreshCapabilities(signal));
       while (!signal.aborted) {
-        await step("sweep", boxes.sweep(signal));
+        await step("sweep", () => boxes.sweep(signal));
         if (signal.aborted) break;
-        await step("sweep enrolment", enrolment.sweep(signal));
+        await step("sweep enrolment", () => enrolment.sweep(signal));
         // An abort during a sweep came before this sleep began: sleep sees it at once.
         await sleep(SWEEP_EVERY_MS, signal);
       }

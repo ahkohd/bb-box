@@ -1,6 +1,7 @@
 // The agent tools. Each result ends with "Next:" hints, and each refusal
 // says what to do instead, so an agent never has to guess.
 
+import { toolsForPurposes } from "./purposes.ts";
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { posix, win32 } from "node:path";
 import { Readable } from "node:stream";
@@ -260,6 +261,7 @@ export function grantsText(grants: BoxGrants): string {
 }
 
 export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: number; runWaitMs?: number } = {}): void {
+  const registerTool = toolsForPurposes(bb);
   const runWaitMs = options.runWaitMs ?? RUN_WAIT_MS;
   const { boxes } = app;
 
@@ -309,7 +311,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     if (running) bb.log.info(`Stopping, bb-box waited ${((Date.now() - began) / 1000).toFixed(2)} s for ${running} box_run ${running === 1 ? "command" : "commands"}, and stopped ${stopped}, which go on as jobs.`);
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_acquire",
     description:
       "Get a fresh box for this thread: a Linux or macOS computer for commands, builds, tests, servers or Docker, away from the thread's own machine. It starts in seconds and stays until you release it or the thread ends.",
@@ -375,7 +377,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_list",
     description: "List this thread's boxes and the kinds of box you can acquire.",
     presentation: { label: { pending: "Listing boxes", completed: "Listed boxes" } },
@@ -405,7 +407,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_status",
     description: "Show one box: its state, kind, address, whether it is a BB machine, and how long it took to start and to become one.",
     presentation: { label: { pending: "Checking a box", completed: "Checked a box" } },
@@ -433,7 +435,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_grant",
     description:
       "Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. On Tart's macOS boxes, and on Macs of the SSH host pool with SIP off; Linux and Windows boxes refuse. The program must be the box user's, or an app in /Applications, and signed: sign it with the box's identity, codesign -s \"bb-box local code signing\", so a rebuild keeps the grant. Commands box_run runs have the microphone and camera already.",
@@ -479,7 +481,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     return `${text}${next(`Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends.`)}`;
   };
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_run",
     description:
       "Run a shell script in a box, as its user, and wait for it. You get the exit code, stdout and stderr. box_status says whether the box user can use sudo.",
@@ -550,7 +552,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_job",
     description:
       "Get the exit code and output of a box_run command that went on in its box as a job: one still running after 270 s, or when bb-box restarted, as for an update. box_run's answer names the job.",
@@ -577,7 +579,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_copy",
     description:
       "Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. A file over 16 MiB streams through bb-box's worker on the thread's machine, and its SHA-256 is checked at both ends. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.",
@@ -650,7 +652,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   /** How many parent threads up a recording is copied, so each can show it in a report it passes on. */
   const RECORD_PARENTS = 5;
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_record",
     description:
       `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops.`,
@@ -741,7 +743,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_stop",
     description: "Stop a box to free its memory and CPU while keeping its disk. box_start starts it again.",
     presentation: { label: { pending: "Stopping a box", completed: "Stopped a box" } },
@@ -760,7 +762,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_start",
     description: "Start a stopped box again, with its disk as it was, and wait up to 20 s more while it reconnects as a BB machine.",
     presentation: { label: { pending: "Starting a box", completed: "Started a box" } },
@@ -777,7 +779,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_resize",
     description:
       "Change a box's size: its cores, memory or disk, by a preset or by parts, where its backend can. Parts left out stay as they are, and the disk only grows. A change that needs a restart is made only with restart true. check true only says what would change.",
@@ -814,7 +816,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_thread",
     description:
       "Start a child thread on a box, as a BB machine, in this thread's project, with the task as its prompt. It works in a worktree of the project's repository on the box, cloned there once, and is archived with this thread.",
@@ -836,7 +838,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_release",
     description: "Release a box you no longer need. Its disk and everything on it are deleted. Copy out anything you want to keep first.",
     presentation: { label: { pending: "Releasing a box", completed: "Released a box" } },
@@ -858,7 +860,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_image_draft",
     description:
       "Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. Read these from the repository and pass each one's path and text: " +
@@ -894,7 +896,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_image_try",
     description:
       "Try a project image's script as a build runs it (049), before box_image_set: in a new box of the kind's current standard image, on a backend that builds images, the script runs as root with BB_BOX_IMAGE, BB_BOX_KIND, BB_BOX_BACKEND and BB_BOX_ARCH, then the check as the box user, then finalizing, which empties /tmp, /var/tmp and the caches. " +
@@ -930,7 +932,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "box_image_set",
     description:
       "Set this thread's project's image (049): a shell script run as root on the standard image of its kinds, so the project's boxes start with what it needs, such as a language's toolchain. " +

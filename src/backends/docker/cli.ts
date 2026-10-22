@@ -262,7 +262,7 @@ export class DockerCli {
     const stderr = new Capture(64 * 1024);
     return new Promise((resolve, reject) => {
       options.signal?.throwIfAborted();
-      const child = startChild(binary, rest);
+      const child = startChild(binary, rest, { site: `docker ${args[0] ?? ""}`.trim() });
       let timedOut = false;
       const kill = () => child.kill("SIGKILL");
       const timer = setTimeout(() => {

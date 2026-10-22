@@ -15,6 +15,7 @@ import type { SizeRequest } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
 import { profileLoop, type CpuProfile, type HeapProfile } from "./profile.ts";
 import { GENERAL_DEFAULTS } from "../core/document.ts";
+import { withPurposes } from "../transports/spawns.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
 const PROFILES_KEPT = 5;
@@ -128,7 +129,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     return box;
   };
 
-  bb.rpc.register(contract, {
+  // What each method starts is counted as for it.
+  bb.rpc.register(contract, withPurposes("rpc", {
     async state({ threadId }) {
       const [list, kinds, machine, project, desktopOnDemand] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId), app.projectOf(threadId).catch(() => null), app.desktopOnDemand().catch(() => null)]);
       const imageOffer = !!project && !Object.values(app.configuration.exported().images ?? {}).some((image) => image.projects.includes(project));
@@ -268,5 +270,5 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       const result = await app.setDockerHost(hostId, enabled);
       return { result, hosts: await app.dockerHosts.list() };
     },
-  });
+  }));
 }

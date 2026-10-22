@@ -89,7 +89,7 @@ function message(error: unknown): string {
 
 function run(script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void): Promise<number | null> {
   return new Promise((resolve) => {
-    const child = timedSpawn(() => spawn("bash", [script, ...args], { env, stdio: ["ignore", "pipe", "pipe"] }));
+    const child = timedSpawn(() => spawn("bash", [script, ...args], { env, stdio: ["ignore", "pipe", "pipe"] }), "Docker image script");
     let rest = "";
     const read = (chunk: Buffer) => {
       const lines = (rest + chunk.toString("utf8")).split(/\r?\n|\r/);

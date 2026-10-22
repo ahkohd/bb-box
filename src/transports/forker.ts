@@ -49,7 +49,7 @@ process.on("message", (m) => {
   if (m.op === "spawn") {
     let child;
     try {
-      child = spawn(m.binary, m.args, { stdio: ["pipe", "pipe", "pipe"], env: m.env || process.env, cwd: m.cwd || undefined });
+      child = spawn(m.binary, m.args, { stdio: m.ignore ? "ignore" : ["pipe", "pipe", "pipe"], env: m.env || process.env, cwd: m.cwd || undefined });
     } catch (e) {
       send({ op: "error", id: m.id, message: e.message, code: e.code });
       send({ op: "close", id: m.id, code: null, signal: null });
@@ -57,9 +57,11 @@ process.on("message", (m) => {
     }
     children.set(m.id, child);
     child.on("spawn", () => send({ op: "spawn", id: m.id, pid: child.pid }));
-    child.stdout.on("data", (data) => send({ op: "out", id: m.id, data }, child));
-    child.stderr.on("data", (data) => send({ op: "err", id: m.id, data }, child));
-    child.stdin.on("error", () => {});
+    if (!m.ignore) {
+      child.stdout.on("data", (data) => send({ op: "out", id: m.id, data }, child));
+      child.stderr.on("data", (data) => send({ op: "err", id: m.id, data }, child));
+      child.stdin.on("error", () => {});
+    }
     child.on("error", (e) => send({ op: "error", id: m.id, message: e.message, code: e.code }));
     child.on("exit", (code, signal) => send({ op: "exit", id: m.id, code, signal }));
     child.on("close", (code, signal) => { child.bbClosed = true; children.delete(m.id); send({ op: "close", id: m.id, code, signal }); });
@@ -67,10 +69,10 @@ process.on("message", (m) => {
   }
   const child = children.get(m.id);
   if (!child) return;
-  if (m.op === "in") child.stdin.write(Buffer.from(m.data));
-  else if (m.op === "end") child.stdin.end();
+  if (m.op === "in") child.stdin?.write(Buffer.from(m.data));
+  else if (m.op === "end") child.stdin?.end();
   else if (m.op === "kill") { try { child.kill(m.signal); } catch {} }
-  else if (m.op === "drop") { child.stdout.destroy(); child.stderr.destroy(); }
+  else if (m.op === "drop") { child.stdout?.destroy(); child.stderr?.destroy(); }
 });
 process.on("message", (m) => { if (m.op === "stop") stop(); });
 const stop = () => {
@@ -171,6 +173,7 @@ class Helper {
   constructor(onEnd: () => void) {
     this.#process = timedSpawn(() =>
       spawn(process.execPath, ["-e", HELPER_SOURCE], { stdio: ["ignore", "ignore", "inherit", "ipc"], serialization: "advanced", env: process.env }),
+      "spawn helper",
     );
     this.#process.on("message", (message: Message) => {
       const child = this.#children.get(message.id);
@@ -205,13 +208,13 @@ class Helper {
     }
   }
 
-  start(binary: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv; cwd?: string }): ForkedChild {
+  start(binary: string, args: readonly string[], options: StartOptions): ForkedChild {
     const id = ++this.#next;
     const child = new ForkedChild(id, this);
     this.#children.set(id, child);
     if (this.#children.size === 1) this.#hold(true);
     // The environment as it is now, not as it was when the helper started.
-    this.send({ op: "spawn", id, binary, args: [...args], env: options.env ?? process.env, cwd: options.cwd ?? null });
+    this.send({ op: "spawn", id, binary, args: [...args], env: options.env ?? process.env, cwd: options.cwd ?? null, ignore: options.stdio === "ignore" });
     return child;
   }
 
@@ -250,24 +253,33 @@ const STOP_WAIT_MS = 2_000;
 /** Whether children go through the helper: not where BB_BOX_DIRECT_SPAWN=1, as to compare. */
 const useHelper = () => process.env.BB_BOX_DIRECT_SPAWN !== "1";
 
+export interface StartOptions {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly cwd?: string;
+  /** Where bb-box starts it, as the loop watch counts it, such as "ssh command". */
+  readonly site: string;
+  /** Its standard streams go nowhere, as for a process that stays in the background, rather than piped. */
+  readonly stdio?: "ignore";
+}
+
 /**
- * Starts `binary` with `args`, its three standard streams piped, from the helper, or directly when the helper is
- * not running.
+ * Starts `binary` with `args`, its three standard streams piped unless ignored, from the helper, or directly when
+ * the helper is not running.
  */
-export function startChild(binary: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv; cwd?: string } = {}): ChildLike {
+export function startChild(binary: string, args: readonly string[], options: StartOptions): ChildLike {
   if (useHelper() && Date.now() - endedAt >= RESTART_AFTER_MS) {
     try {
       helper ??= new Helper(() => {
         helper = null;
         endedAt = Date.now();
       });
-      if (helper.alive) return timedSpawn(() => helper!.start(binary, args, options), true);
+      if (helper.alive) return timedSpawn(() => helper!.start(binary, args, options), options.site, true);
     } catch {
       helper = null;
       endedAt = Date.now();
     }
   }
-  return timedSpawn(() => spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"], env: options.env, cwd: options.cwd }));
+  return timedSpawn(() => spawn(binary, args, { stdio: options.stdio ?? ["pipe", "pipe", "pipe"], env: options.env, cwd: options.cwd }) as ChildLike, options.site);
 }
 
 /** The helper's process ID, while it runs. */

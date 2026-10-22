@@ -2,6 +2,7 @@
 // their accessibility tree, and images when appearance matters. src/core/
 // computer.ts does the work; this file is the agent's side of it.
 
+import { toolsForPurposes } from "./purposes.ts";
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { ComputerError, TREE_LIMIT, TREE_LIMIT_MAX, type ComputerResult } from "../core/computer.ts";
@@ -40,9 +41,10 @@ function refusal(error: unknown, action: string): PluginAgentToolResult {
 }
 
 export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
+  const registerTool = toolsForPurposes(bb);
   const { boxes, computer } = app;
 
-  bb.agents.registerTool({
+  registerTool({
     name: "computer_windows",
     description: "List the windows on a desktop box's screen, with the window IDs the other computer tools take.",
     presentation: { label: { pending: "Listing windows", completed: "Listed windows" } },
@@ -56,7 +58,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "computer_observe",
     description:
       "Read a window on a desktop box as text: its accessibility tree, one element per line, with a reference such as e12 for each element you can act on. " +
@@ -85,7 +87,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "computer_screenshot",
     description:
       "Take an image of a window on a desktop box, or of the whole desktop. Use it when appearance matters or the tree does not show what you need. " +
@@ -104,7 +106,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "computer_act",
     description:
       "Click, double-click, right-click, scroll or set a value on a desktop box: on an element by its reference from computer_observe, " +
@@ -135,7 +137,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "computer_type",
     description:
       "Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. " +
@@ -160,7 +162,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "computer_launch",
     description:
       "Open an app on a desktop box by its name or path, or open a URL in the box's browser. Says which windows it opened; for a URL, waits up to 10 s for the page's title.",
@@ -179,7 +181,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     },
   });
 
-  bb.agents.registerTool({
+  registerTool({
     name: "computer_take_control",
     description:
       "Take control of a desktop box's desktop back from a person who took it in BB, so the computer tools work again. Keys they held down are let go, and the desktop gets back its size. " +

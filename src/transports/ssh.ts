@@ -22,7 +22,7 @@
 // instead, for the commands that follow.
 
 import { spawn } from "node:child_process";
-import { timedSpawn } from "./spawns.ts";
+import { startChild } from "./forker.ts";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -242,7 +242,8 @@ export class Ssh {
       users: 0,
       since: Date.now(),
       opened: new Promise<boolean>((resolve) => {
-        const child = timedSpawn(() => spawn(this.binary, argv, { stdio: "ignore" }));
+        // The master stays in the background with no pipe of the helper's held open.
+        const child = startChild(this.binary, argv, { stdio: "ignore", site: "ssh master open" });
         const timer = setTimeout(() => child.kill("SIGKILL"), SHARE_START_TIMEOUT_MS);
         const settle = (open: boolean) => {
           clearTimeout(timer);
@@ -275,7 +276,7 @@ export class Ssh {
   #close(shared: Shared): Promise<void> {
     shared.state = "retired";
     return new Promise((resolve) => {
-      const child = timedSpawn(() => spawn(this.binary, ["-o", `ControlPath=${shared.path}`, "-O", "exit", shared.target], { stdio: "ignore" }));
+      const child = startChild(this.binary, ["-o", `ControlPath=${shared.path}`, "-O", "exit", shared.target], { stdio: "ignore", site: "ssh master close" });
       const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
       const done = () => {
         clearTimeout(timer);
