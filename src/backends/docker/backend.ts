@@ -92,6 +92,7 @@ type Pending = { readonly kind: string; readonly size: BoxSize };
 export interface DockerBackendOptions {
   /** The docker CLI, instead of `docker` on the PATH. */
   readonly binary?: string;
+  readonly cliReachingAHostAnotherBackendMade?: DockerCli;
   /** The ssh client the docker CLI runs for an ssh:// host, instead of `ssh` on the PATH. */
   readonly ssh?: string;
   /** Where a Wayland box's image has Selkies' launcher, instead of SELKIES_LAUNCHER: a file the fake docker finds, in tests. */
@@ -449,12 +450,12 @@ export class DockerBackend implements Backend {
     this.#oldDesktopKinds = dockerKinds(config, false, false);
     const machine = config.machine;
     const machines = context.machines;
-    this.#cli = machine
+    this.#cli = options.cliReachingAHostAnotherBackendMade ?? (machine
       ? new DockerCli(machines?.dockerHost(machine) ?? null, options.binary, async () => {
           if (!machines) throw new Error(`bb-box reaches BB machine ${machine} only when it runs in BB.`);
           await machines.ready(machine);
         })
-      : new DockerCli(config.host, options.binary);
+      : new DockerCli(config.host, options.binary));
     void this.#recallName();
   }
 
