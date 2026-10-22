@@ -6,7 +6,7 @@ To open it, select the gear on the Boxes page, or open BB Box in BB's settings.
 
 ![BB Box's settings page](../design/mockups/built/settings-light.png)
 
-The page has 6 parts, in this order: Machines, Backends, Docker on BB machines, Kinds, General, and Files for every box. A switch saves at once. A form you open, such as a backend's setup, saves when you select **Save**.
+The page has 7 parts, in this order: Machines, Backends, Docker on BB machines, Kinds, General, Tailnet, and Files for every box. A switch saves at once. A form you open, such as a backend's setup, saves when you select **Save**.
 
 When no backend is on yet, the page starts with the same offer as the Box panel: where one of your BB machines has Docker, **Use Docker on this machine** turns it on and builds the Linux image. See [the Box panel](boxes.md).
 
@@ -79,6 +79,15 @@ The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md
 - Enrol boxes as BB machines: when on, each box joins BB as a machine, so the thread's commands and terminals can use it, with the thread's access.
 - Rebuild images each night: at 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates. After a BB update, it also refreshes the Linux images with BB's old app within the hour. **Rebuild now**, beside it, lists the images that are due and why, and starts the same rebuild at once, one image at a time, showing how far each is. It does not start while a rebuild goes on, and says so. See [images](images.md#standard-images-stay-up-to-date). Setting up Docker from the Box panel turns it on; otherwise it is off unless you turn it on.
 - Linux desktops as video: a Linux X11 desktop drawn by the CPU shows as video, with **Show as VNC** under **Display** in the viewer's menu to go back. See [video](desktops.md#video). On unless you turn it off.
+
+## Tailnet
+
+Tailnet is for machines BB Box rents and makes, such as Namespace Macs, when BB's server is on a Tailscale tailnet. Each such machine must join the tailnet to reach BB.
+
+- **No: BB is reached without one**: machines join no tailnet. Choose this when BB is reached through bb Connect or a public address.
+- **Yes, with a Tailscale OAuth client**: BB Box makes a single-use, pre-approved key for each machine with the OAuth client, and the machine leaves the tailnet when its box goes. Give the client's ID and secret, and the tags machines join with, `tag:bb-box` unless you change it. The client needs the `auth_keys` scope with those tags, and `devices:core` so BB Box can remove machines that went without leaving.
+
+The client's ID and secret are kept secret: the page shows only whether each is set. Select **Save** to save the Tailnet part.
 
 ## Files for every box
 

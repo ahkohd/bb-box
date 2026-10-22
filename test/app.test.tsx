@@ -5326,3 +5326,36 @@ test("over video, Ctrl+Shift+V from Linux pastes this computer's text into a Win
     platform.mockRestore();
   }
 });
+
+test("the tailnet saves its mode, tags and OAuth client as secrets; a set secret shows only as set and is kept until replaced; off saves none", async () => {
+  const fresh = server([]);
+  const slot = settings(fresh.handlers);
+  await slot.findByRole("combobox", { name: "Tailnet" });
+  await choose("Tailnet", "Yes, with a Tailscale OAuth client");
+  fireEvent.change(slot.getByLabelText("Tags"), { target: { value: "tag:bb-box, tag:bb-box-mac" } });
+  fireEvent.change(slot.getByLabelText("OAuth client ID"), { target: { value: "kCLIENTid" } });
+  fireEvent.change(slot.getByLabelText("OAuth client secret"), { target: { value: "tskey-client-SECRET" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save the tailnet" }));
+  await waitFor(() => expect(fresh.changes).toHaveLength(1));
+  expect(JSON.parse(fresh.changes[0]!.slice(fresh.changes[0]!.indexOf("{"))).general.tailnet).toEqual({
+    mode: "oauth",
+    tags: ["tag:bb-box", "tag:bb-box-mac"],
+    clientId: "kCLIENTid",
+    clientSecret: "tskey-client-SECRET",
+  });
+  cleanup();
+
+  const document = { ...configState({}).document, general: { tailnet: { mode: "oauth" as const, clientId: { set: true }, clientSecret: { set: true } } } };
+  const stored = server([], { config: configState({ document }) });
+  const again = settings(stored.handlers);
+  await again.findByRole("combobox", { name: "Tailnet" });
+  expect(again.getAllByText("Set")).toHaveLength(2);
+  expect(again.queryByDisplayValue(/tskey/)).toBeNull();
+  fireEvent.click(again.getByRole("button", { name: "Save the tailnet" }));
+  await waitFor(() => expect(stored.changes).toHaveLength(1));
+  expect(JSON.parse(stored.changes[0]!.slice(stored.changes[0]!.indexOf("{"))).general.tailnet).toEqual({ mode: "oauth", clientId: { set: true }, clientSecret: { set: true } });
+  await choose("Tailnet", "No: BB is reached without one");
+  fireEvent.click(again.getByRole("button", { name: "Save the tailnet" }));
+  await waitFor(() => expect(stored.changes).toHaveLength(2));
+  expect(JSON.parse(stored.changes[1]!.slice(stored.changes[1]!.indexOf("{"))).general.tailnet).toBeUndefined();
+});
