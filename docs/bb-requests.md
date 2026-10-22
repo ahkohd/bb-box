@@ -43,6 +43,7 @@ is a log: bb-box does not file these with BB.
 | [Give live agent sessions a plugin's tools back after it reloads](#32-give-live-agent-sessions-a-plugins-tools-back-after-it-reloads) | not met | after bb-box reloaded, running Claude Code sessions lost its tools until their agent runtime restarted, or for about an hour |
 | [Install BB's app on Windows in seconds](#33-install-bbs-app-on-windows-in-seconds) | not met | BB's installer takes 42 to 88 s on a Windows box, most of it npm installing bb-app; bb-box's Windows images pre-install the server's build, which helps until the server's next build (#916) |
 | [Keep one plugin's stylesheet from slowing another's panel](#34-keep-one-plugins-stylesheet-from-slowing-anothers-panel) | not met | a terminal in bb-box's panel took about 2.2 s to draw a prompt, as the shell-tasks plugin's stylesheet made each character's measurement about 100 times slower; bb-box is moving its terminals to xterm's WebGL renderer |
+| [Say what a machine needs before installing](#35-say-what-a-machine-needs-before-installing) | not met | on a fresh Ubuntu server, BB's machine installer stopped with "sh: node: not found" and its usage, and the guide for a cloud Docker host lists Node.js 22 as a step of its own |
 
 ## 1. BB's host app on Windows
 
@@ -1300,6 +1301,40 @@ change, though the exact rule was not isolated.
 **Until then.** bb-box is moving its terminals to xterm's WebGL renderer,
 which does not measure characters in the page. Other parts of its panels
 may still be slowed.
+
+## 35. Say what a machine needs before installing
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** A cloud server, or any fresh machine, that becomes a
+BB machine with the command BB's Add a machine dialog gives, and a clear
+message when it cannot.
+
+**What BB does now.** On 22 October 2026, on a new Hetzner server with
+Ubuntu 26.04 and nothing else installed, the Manual setup command failed
+with "sh: node: not found" and printed only its usage. BB's installer needs
+Node.js 22 or later, and says so nowhere in its output. Installing Node.js
+from Ubuntu's own packages (22.22.1) fixed it.
+
+Two more things slowed the same setup:
+
+- The command is shown once in the dialog and expires in 15 minutes.
+  `bb machine create --provider manual` makes the machine but does not
+  print the command, and the machine, opened afterwards in BB, says
+  "Machine is no longer paired".
+- The daemon should run as a user of its own, with lingering on, which the
+  dialog does not say.
+
+**What we ask.**
+- The installer installs Node.js where it can, or stops with one plain
+  line: which version it needs, and how to install it.
+- `bb machine create --provider manual` prints the command, as the dialog
+  shows it, so a machine can be set up from the CLI.
+- The dialog says which user to run the command as, and that lingering
+  keeps the daemon running after the user logs out.
+
+**Until then.** bb-box's guide for a cloud Docker host lists Node.js, the
+user and lingering as steps before the command.
 
 ## Checked, no request needed
 

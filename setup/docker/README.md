@@ -152,6 +152,12 @@ From a terminal, `bb box config show --json` prints the configuration, and
 `bb box config apply <file>` saves it. The Docker backend's entry is
 `{ "id": "docker", "type": "docker", "enabled": true, "fields": {} }`.
 
+#### A cloud server
+
+A server rented from a cloud provider, such as Hetzner Cloud, can be the
+Docker host as a BB machine, with nothing open to the internet: see
+[a cloud server as a Docker host](../../docs/guide/cloud-docker-host.md).
+
 #### Docker Desktop on a Windows PC
 
 A Windows PC with Docker Desktop can be the Docker host as a BB machine,
