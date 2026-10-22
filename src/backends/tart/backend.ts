@@ -164,6 +164,11 @@ import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScri
 
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
+/**
+ * How long no warm VM is filled after a box is ready, for its enrolment: a fill, a VM booting beside it, made BB's
+ * installer in a claimed Mac take 21.9 s, where it takes 3.3 s alone. None is filled while an acquire runs either.
+ */
+const FILL_QUIET_MS = 30_000;
 /** Cua Driver as the images pin it (015). The setup guide's image script installs this release. */
 export const CUA_VERSION = "0.30.4";
 const MiB_PER_GiB = 1024;
@@ -280,6 +285,8 @@ export interface TartBackendOptions {
   readonly selkiesLauncher?: string;
   /** How long a resize waits for Windows to shut down, instead of WINDOWS_SHUTDOWN_WAIT_S: a short time, in tests. */
   readonly windowsShutdownWaitS?: number;
+  /** How long fills wait after a box is ready, instead of FILL_QUIET_MS: none, in tests. */
+  readonly fillQuietMs?: number;
 }
 
 interface SshKeys {
@@ -752,6 +759,13 @@ export class TartBackend implements Backend {
   readonly #compiling = new Map<string, Promise<void>>();
   readonly #warm: ReadyPool<BoxIdentity>;
   readonly #stopping = new AbortController();
+  /** Acquires under way, during which no warm VM is filled (FILL_QUIET_MS). */
+  #acquiring = 0;
+  /** Until when fills wait after the last acquire ended. */
+  #quietUntil = 0;
+  /** Whether an upkeep left a fill for later because fills waited. */
+  #fillsHeld = false;
+  #quietKick: ReturnType<typeof setTimeout> | null = null;
   readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
   /** Whether a Mac has answered, so macos-desktop's video is declared as its image has it (060). */
   #videoKnown = false;
@@ -952,7 +966,7 @@ export class TartBackend implements Backend {
     } else if (os === "macos" && macos.length + starting >= this.#config.vmsPerHost) {
       const names = macos.map((vm) => this.#vmWords(vm.name, state.owners.get(vm.name))).join(", ");
       why =
-        `${host.name} runs ${macos.length + starting} of the ${this.#config.vmsPerHost} macOS VMs it may run${names ? ` (${names})` : ""}. ` +
+        `${this.#config.vmsPerHost === 2 ? "Two" : this.#config.vmsPerHost} macOS VMs already run on ${host.name}, Apple's limit${names ? ` (${names})` : ""}. ` +
         "Release or stop a macOS box, or stop another VM there";
     } else if (memoryFree - needed < reserve.memoryMiB) {
       // Leads with what binds: the box when it needs more than is free, otherwise the memory kept free.
@@ -1011,7 +1025,7 @@ export class TartBackend implements Backend {
    * from a project's image's build (049) is a clone on the build's Mac: warm
    * VMs and fills are of the standard image.
    */
-  #place(box: BoxIdentity, signal: AbortSignal): Promise<Placement> {
+  #place(box: BoxIdentity, signal: AbortSignal, cloneOnly = false): Promise<Placement> {
     return this.#chain(async (): Promise<Placement> => {
       const states = await this.#states(signal);
       const from = box.from ? this.#imageRef(box.from).host.name : null;
@@ -1021,12 +1035,23 @@ export class TartBackend implements Backend {
       const count = (host: TartHost, vm: string) => this.#placing.set(vm, { host: host.name, vm, memoryMiB: footprint(box.kind, box.size), macos: os === "macos" });
       for (const room of rooms) {
         const state = states.get(room.host.name)!;
-        if (!room.capacity.ok || state instanceof Error || from !== null) continue;
+        if (!room.capacity.ok || state instanceof Error || from !== null || cloneOnly) continue;
         const warm = this.#freeWarm(state).find((free) => free.kinds.includes(box.kind) && sameSize(free.size, box.size));
         if (warm) {
           count(room.host, warm.vm);
           return { how: "warm", host: room.host, vm: warm.vm, ready: warm.ready };
         }
+      }
+      // A free warm VM that only the Mac's fills keep from its slot: they stop, as a claim comes before a fill.
+      for (const room of rooms) {
+        const state = states.get(room.host.name)!;
+        if (state instanceof Error || from !== null || cloneOnly) continue;
+        if (!this.#freeWarm(state).some((free) => free.kinds.includes(box.kind) && sameSize(free.size, box.size))) continue;
+        const fills = [...this.#filling.entries()].filter(([, fill]) => !fill.adopted && fill.host === room.host.name);
+        const yielding = new Set(fills.map(([vm]) => vm));
+        if (!fills.length || !this.#room(room.host, state, box.size, NONE_UNPLACED, yielding, os).capacity.ok) continue;
+        for (const [, fill] of fills) fill.abort.abort(new Error("A box takes a warm VM, and needs the slot this one was taking."));
+        return { how: "wait", fills: fills.map(([, fill]) => fill) };
       }
       const chosen = rooms.find((room) => room.capacity.ok);
       if (chosen) {
@@ -1049,9 +1074,9 @@ export class TartBackend implements Backend {
   }
 
   /** Places a box, waiting once for fills it stopped to let go of their slot. */
-  async #placeBox(box: BoxIdentity, signal: AbortSignal): Promise<Exclude<Placement, { how: "wait" }>> {
+  async #placeBox(box: BoxIdentity, signal: AbortSignal, cloneOnly = false): Promise<Exclude<Placement, { how: "wait" }>> {
     for (let attempt = 0; ; attempt++) {
-      const placement = await this.#place(box, signal);
+      const placement = await this.#place(box, signal, cloneOnly);
       if (placement.how !== "wait") return placement;
       await Promise.all(placement.fills.map((fill) => fill.done));
       if (attempt > 0) throw new BackendError("no_capacity", `No Mac had room for this ${box.kind} box, even after stopping the warm VMs being made.`);
@@ -1059,6 +1084,17 @@ export class TartBackend implements Backend {
   }
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    this.#acquiring++;
+    try {
+      return await this.#acquireOne(box, previous, hooks, signal);
+    } finally {
+      this.#acquiring--;
+      this.#quietUntil = Date.now() + (this.#options.fillQuietMs ?? FILL_QUIET_MS);
+      if (this.#fillsHeld) this.#kickWhenQuiet();
+    }
+  }
+
+  async #acquireOne(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
     // A project's image's build, as images.list gives it, <Mac>/<VM>, else the kind's image.
     const image = box.from ? this.#imageRef(box.from).vm : this.#config.kinds[box.kind as TartKind].image!;
@@ -1081,9 +1117,9 @@ export class TartBackend implements Backend {
       if (!started) await hooks.starting();
       started = true;
     };
-    // A warm VM that fails to resume or answers as another VM gives way to a clone, once.
+    // A warm VM that fails to resume or answers as another VM gives way to a clone, once, not to another warm VM.
     for (let attempt = 0; ; attempt++) {
-      placement ??= await step("place", () => this.#placeBox(box, signal));
+      placement ??= await step("place", () => this.#placeBox(box, signal, attempt > 0));
       const { host, vm } = placement;
       // A Linux box says so, for its SSH user; a macOS box's data is as it was.
       const data: Readonly<Record<string, string>> = os === "linux" ? { box: box.boxId, os } : { box: box.boxId };
@@ -1134,13 +1170,13 @@ export class TartBackend implements Backend {
         await step("ssh", async () => this.#waitReady(host, vm, this.#vm(await this.#mac(host), address, os), os, deadline, signal));
         if (os === "linux" && kind.capabilities.displays.length) await step("desktop", () => this.#linuxDesktop(host, vm, address, signal));
         await step("identify", () => this.#identify(host, address, vm, os, signal));
-        // A warm VM's fill made the grants and the access already, before its suspend, so its claim pays nothing for them.
-        // Elsewhere they go beside the name, each in its own SSH session.
+        // A warm VM's fill made the grants already, before its suspend, so its claim pays nothing for them. Elsewhere
+        // they go beside the name, each in its own SSH session. A fresh Mac's access setup is left to its enrolment:
+        // beside these, on a Mac just booted, it took 8.1 s.
         const fresh = os === "macos" && !(placement.how === "warm" && placement.ready);
         await Promise.all([
           step("name", () => this.#rename(host, address, vm, os, box.name, signal)),
           ...(fresh ? [step("grants", () => this.#vmReady(host, address, vm, signal))] : []),
-          ...(fresh && this.#context.enrols?.() ? [step("access", () => this.#accessReady(host, address, vm, signal))] : []),
         ]);
         // A warm VM, or one held before a restart, resumed from a suspend with an old clock.
         if (os === "macos" && (placement.how === "warm" || placement.how === "resume")) await step("clock", () => this.#clock(host, address, signal));
@@ -1187,9 +1223,9 @@ export class TartBackend implements Backend {
       if (!started) await hooks.starting();
       started = true;
     };
-    // A warm VM that fails to restore gives way to a clone, once.
+    // A warm VM that fails to restore gives way to a clone, once, not to another warm VM.
     for (let attempt = 0; ; attempt++) {
-      placement ??= await step("place", () => this.#placeBox(box, signal));
+      placement ??= await step("place", () => this.#placeBox(box, signal, attempt > 0));
       const { host, vm } = placement;
       const guest = (made: QemuVm | null): Guest => ({
         ref: vm,
@@ -1744,6 +1780,23 @@ export class TartBackend implements Backend {
     this.maintain(this.#stopping.signal).catch((error) => this.#context.logError("warm pool", error));
   }
 
+  /** Whether fills wait now: while an acquire runs, and until FILL_QUIET_MS after the last ended. */
+  #fillsWait(): boolean {
+    return this.#acquiring > 0 || Date.now() < this.#quietUntil;
+  }
+
+  /** Fills the pools once fills no longer wait. */
+  #kickWhenQuiet(): void {
+    if (this.#quietKick) clearTimeout(this.#quietKick);
+    this.#quietKick = setTimeout(() => {
+      this.#quietKick = null;
+      if (this.#stopping.signal.aborted || this.#fillsWait()) return;
+      this.#fillsHeld = false;
+      this.#kick();
+    }, Math.max(0, this.#quietUntil - Date.now()));
+    this.#quietKick.unref?.();
+  }
+
   /**
    * The warm pools the configuration asks for now: kinds with an image, on,
    * whose default size has the image's disk, grouped by image, guest OS and
@@ -1870,6 +1923,12 @@ export class TartBackend implements Backend {
       let have = ready + filling;
       while (have < pool.target) {
         signal.throwIfAborted();
+        // A fill waits for acquires and the enrolments after them; the last acquire's end fills the pools again.
+        if (this.#fillsWait()) {
+          this.#fillsHeld = true;
+          if (this.#acquiring === 0) this.#kickWhenQuiet();
+          break;
+        }
         const made = await this.#fill(pool, signal);
         if (made === true) {
           have++;
@@ -2318,6 +2377,7 @@ export class TartBackend implements Backend {
 
   async dispose(): Promise<void> {
     this.#stopping.abort(new Error("bb-box is stopping."));
+    if (this.#quietKick) clearTimeout(this.#quietKick);
     await this.#upkeep.running?.catch(() => undefined);
     const pending = this.#ssh;
     this.#ssh = null;

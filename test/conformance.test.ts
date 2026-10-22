@@ -106,7 +106,7 @@ const tart = tartConfig();
 await conformance({
   name: "Tart on a fake Mac",
   storage: new MemoryStorage(),
-  create: (storage, installId) => new TartBackend(tart, testContext(storage, installId), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER }),
+  create: (storage, installId) => new TartBackend(tart, testContext(storage, installId), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER, fillQuietMs: 0 }),
   skip: {
     arch: "the fake SSH runs commands on the test machine",
     display: "the fake Mac has no VNC server to stream",

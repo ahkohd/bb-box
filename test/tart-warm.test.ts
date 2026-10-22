@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { afterEach, test } from "node:test";
 import { TartBackend } from "../src/backends/tart/backend.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
@@ -16,8 +16,10 @@ const SMALL: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
 const MEDIUM: BoxSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
 
 const made: TartBackend[] = [];
-after(async () => {
-  for (const backend of made) await backend.dispose();
+// Each test's backends end with it: the fake ssh serves the newest test's Mac, and a backend left running could fill
+// its pools there later, once fills no longer wait for an acquire.
+afterEach(async () => {
+  for (const backend of made.splice(0)) await backend.dispose();
 });
 
 function setup(warm: Record<string, number> = { macos: 1 }) {
@@ -32,7 +34,7 @@ function setup(warm: Record<string, number> = { macos: 1 }) {
   const make = (installId = "test", counts = warm, values: Record<string, unknown> = {}) => {
     const context = testContext(new MemoryStorage(), installId, { warm: counts });
     contexts.push(context);
-    const backend = new TartBackend(tartConfig(values), context, { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER });
+    const backend = new TartBackend(tartConfig(values), context, { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER, fillQuietMs: 0 });
     made.push(backend);
     return backend;
   };
@@ -141,7 +143,7 @@ test("a box at the default size takes a warm VM, and the pool fills again", asyn
   await backend.release(guest, releasing);
 });
 
-test("where boxes become BB machines, a fill readies the box's access before the suspend, so the claim's enrolment finds it done; a clone readies it beside the name and grants", async () => {
+test("where boxes become BB machines, a fill readies the box's access before the suspend, so the claim's enrolment finds it done; a clone leaves it to the enrolment", async () => {
   const { ssh, make, warmVms, contexts, nextAddress } = setup();
   const backend = make();
   Object.assign(contexts[0]!, { enrols: () => true });
@@ -157,8 +159,8 @@ test("where boxes become BB machines, a fill readies the box's access before the
 
   const cloned = hooks();
   const other = await backend.acquire(identity("macos", { cores: 2, memoryMiB: 4096, diskGiB: null }), null, cloned.hooks, signal());
-  assert.ok("clone" in cloned.timings && "access" in cloned.timings && "grants" in cloned.timings, JSON.stringify(cloned.timings));
-  assert.equal(done(ssh.home(other.address!)).length, 1);
+  // A fresh Mac's access setup is left to its enrolment: beside the name and grants, on a Mac just booted, it took 8.1 s.
+  assert.ok("clone" in cloned.timings && "grants" in cloned.timings && !("access" in cloned.timings), JSON.stringify(cloned.timings));
   await backend.release(other, releasing);
 });
 
@@ -205,7 +207,7 @@ test("a refusal names a claimed warm VM by its box, not by its warm name (#599)"
   const other = await backend.acquire(clone, null, hooks().hooks, signal());
   const capacity = await backend.capacity("macos", SMALL, []);
   assert.equal(capacity.ok, false);
-  assert.match(capacity.message!, /runs 2 of the 2 macOS VMs it may run \(box /);
+  assert.match(capacity.message!, /Two macOS VMs already run on mac1, Apple's limit \(box /);
   for (const named of [box, clone]) assert.match(capacity.message!, new RegExp(`box ${named.name} of thread thr_abc123[,)]`));
   assert.doesNotMatch(capacity.message!, /bb-box-warm-/);
   await backend.release(guest, releasing);
@@ -238,6 +240,47 @@ test("a warm VM that does not restore gives way to a clone, and goes", async () 
   assert.ok(contexts[0]!.errors.some((error) => /could not use VM [\s\S]*failed to restore/.test(error)), contexts[0]!.errors.join("\n"));
   await backend.maintain();
   await backend.release(guest, releasing);
+});
+
+test("after a warm VM that does not restore, the box clones rather than trying another warm VM, as the log says", async () => {
+  const { make, warmVms, vmsDir } = setup({ macos: 2 });
+  const backend = make();
+  await backend.maintain();
+  const spares = warmVms();
+  assert.equal(spares.length, 2);
+  for (const warm of spares) writeFileSync(join(vmsDir, warm, "state.vzvmsave"), "corrupt");
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.equal(guest.ref, `bb-box-${box.boxId}`);
+  assert.equal(warmVms().length, 1, "the other warm VM was left alone");
+  await backend.release(guest, releasing);
+});
+
+test("a claim takes a warm VM whose slot a fill holds: the fill stops for it, as a claim comes before a fill; then the Mac refuses a third", async () => {
+  const { ssh, vmsDir, make, warmVms, nextAddress, up } = setup({ macos: 2 });
+  const backend = make();
+  await backend.maintain();
+  const [taken, spare] = warmVms();
+  // One box runs, from one warm VM; the pool fills again, and that fill, whose VM does not answer, holds the Mac's
+  // second slot. A resumed warm VM keeps its address, so the fill's is the next.
+  const address = nextAddress();
+  ssh.down(address);
+  const running = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.ok([taken, spare].includes(running.ref));
+  const filling = backend.maintain().catch((error: unknown) => error);
+  await until(() => warmVms().some((vm) => existsSync(join(vmsDir, vm, "lease")) && readFileSync(join(vmsDir, vm, "lease"), "utf8").trim() === address), "the fill to wait for its VM");
+  const fill = warmVms().find((vm) => existsSync(join(vmsDir, vm, "lease")) && readFileSync(join(vmsDir, vm, "lease"), "utf8").trim() === address)!;
+  const left = [taken, spare].find((vm) => vm !== running.ref)!;
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  up(address);
+  assert.equal(guest.ref, left, "the box took the warm VM, not the fill and not a clone");
+  assert.ok(!warmVms().includes(fill), "the fill was stopped and its VM deleted");
+  const room = await backend.capacity("macos", SMALL, []);
+  assert.equal(room.ok, false);
+  assert.match(room.message!, /Two macOS VMs already run on mac1, Apple's limit/);
+  await filling;
+  await backend.release(guest, releasing);
+  await backend.release(running, releasing);
 });
 
 test("a box whose saved state does not restore boots afresh from its disk", async () => {
