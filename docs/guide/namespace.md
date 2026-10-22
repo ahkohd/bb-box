@@ -59,7 +59,7 @@ nsc token create \
   --grant '{"resource_type":"instance","resource_id":"*","actions":["create","destroy","get","list","refresh","wait","ssh","exec","dial_host","suspend","resume"]}'
 ```
 
-It prints the token once. Keep it for step 4, and do not save it anywhere else. The token lasts a year, the longest Namespace allows. Make a new one before then.
+It prints the token once, after `Bearer Token:`, below its `Token ID` and dates. Copy the value after `Bearer Token:` for step 4, and do not save it anywhere else. Keep the token ID too: you need it to revoke the token. The token lasts a year, the longest Namespace allows. Make a new one before then.
 
 ### 3. Choose where the Macs run
 
