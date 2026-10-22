@@ -507,9 +507,9 @@ route and carries messages, not bytes:
   and input, whether it is bb-box's, BB's or another plugin's. bb-box logs,
   at most once a minute, when the loop stood still for 250 ms or more, how
   much of it was garbage collection, and how many processes bb-box started
-  then and how long their spawn calls took; and once an hour the server's
-  memory, how many processes the helper started and which of bb-box's
-  functions started the most. Forking copies the parent's page tables on
+  then and how long their spawn calls took; and five minutes after a start,
+  then once an hour, the server's memory, how many processes the helper
+  started and which of bb-box's functions started the most. Forking copies the parent's page tables on
   the loop's thread, about 49 ms a spawn for a 3.5 GB server, so bb-box's
   commands, Docker's and msb's start from a small helper process, started
   once, which forks for them and passes their streams back over its IPC

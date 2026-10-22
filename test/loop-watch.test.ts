@@ -65,28 +65,34 @@ test("the minute's line tells the processes bb-box started and how long their sp
     "BB's server, which runs bb-box, stood still once in the last minute, for up to 300 ms: desktops' frames and input waited meanwhile. No garbage collection ran then: something else held the loop. " +
       "bb-box started 3 processes in that minute, the spawn calls taking 240 ms in all, 180 ms at most.",
   );
-  // The hour's line comes whatever happened, with the hour's processes.
+  // The memory line comes five minutes after the start, whatever happened, then each hour, with the processes since.
+  for (let i = 0; i < 2_400; i++) tick(100);
+  assert.equal(
+    lines.at(-1),
+    "BB's server, which runs bb-box: its heap held 2100 MiB of 2300 MiB, 400 MiB more was outside it, and the process 3500 MiB in all; bb-box started 3 processes in the last 5 minutes, the spawn calls taking 240 ms in all.",
+  );
+  spawned = { count: 14, ms: 300 };
   for (let i = 0; i < 36_000; i++) tick(100);
   assert.equal(
     lines.at(-1),
-    "BB's server, which runs bb-box: its heap held 2100 MiB of 2300 MiB, 400 MiB more was outside it, and the process 3500 MiB in all; bb-box started 3 processes in the last hour, the spawn calls taking 240 ms in all.",
+    "BB's server, which runs bb-box: its heap held 2100 MiB of 2300 MiB, 400 MiB more was outside it, and the process 3500 MiB in all; bb-box started 1 process in the last hour, the spawn calls taking 10 ms in all.",
   );
   watch.dispose();
 });
 
-test("the hour's line tells how many children the helper started and which callers started the most", () => {
+test("the memory line tells how many children the helper started and which callers started the most", () => {
   let now = 1_000;
   const lines: string[] = [];
   let spawned = { count: 10, ms: 50, helped: 4, byCaller: new Map([["a < b", 6]]) };
   const watch = new LoopWatch({ log: (line) => lines.push(line), now: () => now, manual: true, spawns: () => spawned });
   spawned = { count: 20, ms: 51, helped: 13, byCaller: new Map([["a < b", 9], ["c", 7], ["d", 1]]) };
-  for (let i = 0; i < 36_001; i++) {
+  for (let i = 0; i < 3_001; i++) {
     now += 100;
     watch.tick();
   }
   assert.equal(
     lines.at(-1),
-    "BB's server, which runs bb-box: bb-box started 10 processes in the last hour, the spawn calls taking 1 ms in all, 9 of them by the helper; the most from c (7), a < b (3), d (1).",
+    "BB's server, which runs bb-box: bb-box started 10 processes in the last 5 minutes, the spawn calls taking 1 ms in all, 9 of them by the helper; the most from c (7), a < b (3), d (1).",
   );
   watch.dispose();
 });
