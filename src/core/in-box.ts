@@ -236,7 +236,8 @@ function windowsJob(job: JobOptions, script: string, timeoutMs: number | undefin
     `' <'+${at("in")}+' >'+${at("out")}+' 2>'+${at("err")}+` +
     `' & echo !errorlevel!>'+${at("status.tmp")}+' & move /y '+${at("status.tmp")}+' '+${at("status")}+' >nul'+$q;`;
   const start = (command: string, what: string) =>
-    `$bbR=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${command};CurrentDirectory=(Get-Location -PSProvider FileSystem).ProviderPath};` +
+    // Its console hidden: in the desktop session it would be a window over the desktop (#916).
+    `$bbR=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${command};CurrentDirectory=(Get-Location -PSProvider FileSystem).ProviderPath;ProcessStartupInformation=(New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0})};` +
     `if($bbR.ReturnValue -ne 0 -or -not $bbR.ProcessId){[Console]::Error.WriteLine('bb-box: Windows did not start the ${what}: Win32_Process Create returned '+$bbR.ReturnValue+'.');exit 1};`;
   // The watchdog's own script: stop the job at its timeout, unless it ended first, and say it timed out.
   const dog =

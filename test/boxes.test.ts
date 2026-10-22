@@ -1139,6 +1139,8 @@ test("a Windows command with a job starts outside sshd's job, through WMI and cm
   assert.match(script, /if\(\$p\.ProcessName -ne ''cmd''\)\{\$p=\$null\};if\(\$p -and -not \$p\.WaitForExit\(1500\)\)\{taskkill \/T \/F \/PID \$p\.Id/, "the watchdog holds cmd's handle and stops its tree at the timeout");
   assert.match(script, /try\{\(Get-Process -Id \$bbCmd -ErrorAction Stop\)\.WaitForExit\(\)\}catch\{\};/, "the session waits on cmd's handle");
   assert.ok(!script.includes("Start-Detached"), "no Start-Detached, whose search for its process took 190 ms");
+  // Each WMI start hides its console, which in the desktop session would be a window over the desktop (#916).
+  assert.equal(script.match(/Win32_Process -MethodName Create -Arguments @\{[^}]*ProcessStartupInformation=\(New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @\{ShowWindow=\[uint16\]0\}\)\}/g)?.length, 2, "the job and its watchdog");
   assert.ok(!command("windows", "x", { job: { id: "0123456789ab", forget: [], prune: false } }).includes("taskkill"), "no timeout, no watchdog");
   assert.match(script, /exit \[int\]\(Get-Content -Raw -LiteralPath \$bbStatus\)$/);
   assert.ok(script.includes("Set-Content -LiteralPath $bbBoxEnv -NoNewline -Value '$env:FOO = ''bar'''"), "the env file is written before the job starts");
