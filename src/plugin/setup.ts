@@ -58,6 +58,7 @@ import { dockerKind } from "../backends/docker/backend.ts";
 import { DOCKER_KEYS } from "../backends/docker/config.ts";
 import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
+import { ReloadTimes } from "./reload-times.ts";
 import { registerTools } from "./tools.ts";
 import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type ProviderProfile } from "./views.ts";
 
@@ -327,6 +328,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   // cleared, and nothing listens to them: once the document exists they
   // drive nothing, so clearing them leaves the backends alone.
   const kv = bb.storage.kv;
+  const reloadTimes = new ReloadTimes((message) => bb.log.info(message), kv);
+  bb.onDispose(() => reloadTimes.stopped());
   const earlier = earlierSettings(drivers);
   const settings = (await kv.get<unknown>(CLEARED_KEY)) ? null : bb.settings.define(earlier);
   if (!(await kv.get<ConfigDocument>(DOCUMENT_KEY))) {
@@ -350,6 +353,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   // Each BB machine's OS, as bb-box's host entry there last reported it, kept across restarts.
   const machinePlatforms = new MachinePlatforms(kv);
   await machinePlatforms.load();
+  reloadTimes.phase("storage");
   const machineStates = new Map<string, { at: number; connected: boolean | null; offline: string | null }>();
   /**
    * Whether BB shows the machine connected and has heard from it lately, from
@@ -495,6 +499,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logError,
   });
   await configuration.configure();
+  reloadTimes.phase("configuration and backends");
   const general = async () => configuration.general();
 
   const projectOf = async (threadId: string): Promise<string | null> => {
@@ -1336,5 +1341,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   registerComputerTools(bb, api);
   registerRpc(bb, api);
   registerCli(bb, api);
+  reloadTimes.phase("the rest");
+  bb.onDispose(() => reloadTimes.stopping());
+  void reloadTimes.started();
   return api;
 }

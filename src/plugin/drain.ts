@@ -98,14 +98,17 @@ export class Drain {
     });
   }
 
-  /** Takes no new tasks, waits up to `ms` for those running, then stops the rest. */
-  async close(ms: number): Promise<void> {
+  /** Takes no new tasks, waits up to `ms` for those running, then stops the rest; says how many ran and were stopped. */
+  async close(ms: number): Promise<{ running: number; stopped: number }> {
     this.#closed = true;
-    if (!this.#running.size) return;
+    const running = this.#running.size;
+    if (!running) return { running, stopped: 0 };
     const settled = Promise.allSettled([...this.#running.keys()]);
-    if (await within(settled, ms)) return;
+    if (await within(settled, ms)) return { running, stopped: 0 };
+    const stopped = this.#running.size;
     for (const controller of this.#running.values()) controller.abort(new Restarted());
     await within(settled, STOP_MS);
+    return { running, stopped };
   }
 }
 
