@@ -182,10 +182,14 @@ test("offers windows-arm64-desktop only with a Windows image, as a Windows deskt
   assert.ok(off.filter((candidate) => candidate.id !== KIND).every((candidate) => candidate.capabilities.enrol));
 });
 
-test("QEMU shows a Windows VM's desktop through its D-Bus display, peer to peer, where asked, with VNC as before; a saved state restores under either (#885)", () => {
-  assert.match(qemuStartScript("vm", 60), /-display none -vnc /);
-  assert.match(qemuStartScript("vm", 60, "dbus"), /-display dbus,p2p=yes -vnc /);
-  assert.match(qemuStartScript("vm", 60, "dbus"), /-incoming defer/);
+test("QEMU shows a Windows VM's desktop through its D-Bus display where it has one, and through VNC alone where it has none or is told so; a saved state restores under either (#885)", async () => {
+  const { backend, mac } = setup();
+  writeFileSync(join(mac, ".fake-qemu-no-dbus"), "");
+  await backend.acquire(identity(), null, hooks().hooks, signal());
+  const [run] = runs(mac);
+  assert.ok(run!.join(" ").includes("-display none -vnc "), run!.join(" "));
+  assert.doesNotMatch(qemuStartScript("vm", 60, "none"), /dbus/);
+  assert.match(qemuStartScript("vm", 60), /-incoming defer/);
 });
 
 test("reads QEMU's VMs and its checks from the state script", () => {
@@ -267,7 +271,8 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
   assert.ok(line.includes("-machine virt-11.1 -accel hvf -cpu host -smp 4 -m 8192"), line);
   assert.ok(line.includes(`-drive if=pflash,format=raw,readonly=on,file=${firmware}`), line);
   assert.ok(line.includes(`hostfwd=tcp:127.0.0.1:${sshPort}-:22`), line);
-  assert.ok(line.includes(`-display none -vnc 127.0.0.1:${vncPort - 5900},lossy=on`), line);
+  // QEMU's D-Bus display, which the video reads, beside VNC (#885).
+  assert.ok(line.includes(`-display dbus,p2p=yes -vnc 127.0.0.1:${vncPort - 5900},lossy=on`), line);
   assert.ok(!line.includes("-daemonize") && !line.includes("-incoming"), line);
   assert.equal(await backend.power(guest, signal()), "running");
   assert.equal(await backend.power({ ...guest, data: { ...guest.data, box: "another" } }, signal()), null, "another box's VM is not this one's");
@@ -364,6 +369,16 @@ test("Windows on a Mac offers video by choice while every Mac's image records Op
   assert.ok(alive(pid), "the bridge runs");
   assert.match(run(), /^attached /);
   assert.equal(Number(readFileSync(join(vm, "video.pid"), "utf8")), pid, "one bridge for the VM, however many viewers");
+  // The bridge reads QEMU's D-Bus display, as the VM's QEMU runs one (#885); one that QEMU does not take gives way to VNC.
+  const streams = () => readFileSync(join(mac, ".fake-stream-log"), "utf8").trim().split("\n");
+  assert.deepEqual(streams().map((line) => line.split(" ").slice(2)), [[join(vm, "video.sock"), join(vm, "qmp")]]);
+  process.kill(pid);
+  await until(() => !alive(pid), "the bridge to end");
+  writeFileSync(join(mac, ".fake-stream-no-dbus"), "");
+  assert.match(run(), /^attached /);
+  assert.deepEqual(streams().slice(1).map((line) => line.split(" ").slice(2)), [[join(vm, "video.sock"), join(vm, "qmp")], [join(vm, "video.sock")]]);
+  assert.ok(existsSync(join(vm, "video-dbus.log")), "the D-Bus bridge's log is kept");
+  rmSync(join(mac, ".fake-stream-no-dbus"));
   // A build that is not whole does not run.
   const binary = readdirSync(bin).find((name) => /^bb-box-stream-[0-9a-f]+$/.test(name))!;
   writeFileSync(join(bin, `${binary}.sha256`), "0\n");

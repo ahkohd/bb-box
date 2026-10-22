@@ -42,9 +42,11 @@ export function fakeXcode(home: string): void {
 /**
  * Gives a fake Mac the Command Line Tools' swiftc, through xcrun, for the
  * build of bb-box-stream that Windows video runs (#865). What it builds is a
- * stand-in: `qemu <port> <socket>` listens on the socket until it is ended,
- * and `attach <socket>` prints "attached <socket>". `fails`: swiftc fails
- * with an error.
+ * stand-in: `qemu <port> <socket> [<qmp socket>]` notes its arguments in
+ * ~/.fake-stream-log and listens on the socket until it is ended, but with a
+ * QMP socket exits 1 while ~/.fake-stream-no-dbus is there, as with a QEMU
+ * that takes no D-Bus display client; `attach <socket>` prints "attached
+ * <socket>". `fails`: swiftc fails with an error.
  */
 export function fakeSwift(home: string, options: { fails?: boolean } = {}): void {
   fakeXcode(home);
@@ -52,7 +54,7 @@ export function fakeSwift(home: string, options: { fails?: boolean } = {}): void
   const standIn = [
     "#!/bin/sh",
     'case "$1" in',
-    `  qemu) '${process.execPath}' -e 'require("node:net").createServer(() => {}).listen(process.argv[1])' "$3" & c=$!; trap 'kill $c; exit 0' TERM; wait $c ;;`,
+    `  qemu) echo "$*" >> "$HOME/.fake-stream-log"; [ -z "$4" ] || [ ! -e "$HOME/.fake-stream-no-dbus" ] || exit 1; '${process.execPath}' -e 'require("node:net").createServer(() => {}).listen(process.argv[1])' "$3" & c=$!; trap 'kill $c; exit 0' TERM; wait $c ;;`,
     '  attach) echo "attached $2" ;;',
     "  *) exit 2 ;;",
     "esac",

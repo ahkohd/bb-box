@@ -258,11 +258,12 @@ export type QemuDisplay = "none" | "dbus";
  * does not restore, fails saying so. The last run's output and exit are
  * kept (host.ts).
  *
- * The display "dbus" adds QEMU's D-Bus display, peer to peer, which
- * bb-box-stream reads the desktop from (#885); VNC stays. A display is no
- * part of a saved state, so a state saved under either restores under either.
+ * The display "dbus", the default, adds QEMU's D-Bus display, peer to peer,
+ * which bb-box-stream reads the desktop from (#885), where this QEMU has it,
+ * as its `-display help` says; VNC stays. A display is no part of a saved
+ * state, so a state saved under either restores under either.
  */
-export function qemuStartScript(vm: string, waitSeconds: number, display: QemuDisplay = "none"): string {
+export function qemuStartScript(vm: string, waitSeconds: number, display: QemuDisplay = "dbus"): string {
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
 [ -f "$v/config" ] || { echo "There is no VM $vm." >&2; exit 1; }
 if qrunning "$vm"; then echo running; exit 0; fi
@@ -271,13 +272,15 @@ fw="$(qshare)/edk2-aarch64-code.fd"
 [ -f "$fw" ] || { echo "QEMU's firmware $fw is missing." >&2; exit 1; }
 val() { sed -n "s/^$1=//p" "$v/config" | head -n 1; }
 rm -f "$v/qmp" "$v/pid"
+display=none
+${display === "dbus" ? "qemu-system-aarch64 -display help 2>/dev/null | grep -qx dbus && display=dbus,p2p=yes" : ":"}
 # VNC with lossy=on, so a viewer that asks for JPEG, as the panel does, gets it (056).
 set -- -name "$vm" -machine "$(val machine)" -accel hvf -cpu host -smp "$(val cores)" -m "$(val memory)" \
   -drive "if=pflash,format=raw,readonly=on,file=$fw" -drive "if=pflash,format=raw,file=$v/vars.fd" \
   -device qemu-xhci -device usb-kbd -device usb-tablet \
   -drive "if=none,id=disk,file=$v/disk.qcow2,discard=unmap" -device virtio-blk-pci,drive=disk \
   -netdev "user,id=net,hostfwd=tcp:127.0.0.1:$(val ssh)-:22" -device virtio-net-pci,netdev=net \
-  -device virtio-gpu-pci -display ${display === "dbus" ? "dbus,p2p=yes" : "none"} -vnc "127.0.0.1:$(($(val vnc) - 5900)),lossy=on" \
+  -device virtio-gpu-pci -display "$display" -vnc "127.0.0.1:$(($(val vnc) - 5900)),lossy=on" \
   -qmp "unix:$v/qmp,server=on,wait=off" -pidfile "$v/pid"
 saved=; if [ -f "$v/state" ]; then saved=1; set -- "$@" -incoming defer; fi
 keep "$v/out" "$v/exit"

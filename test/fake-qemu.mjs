@@ -5,7 +5,8 @@
 //
 // - `qemu-system-aarch64 --version` says 11.1.0, or the version in
 //   ~/.fake-qemu-version, and `-machine help` that virt stands for virt-11.1,
-//   or the machine in ~/.fake-qemu-virt. A run writes its pid file and
+//   or the machine in ~/.fake-qemu-virt, and `-display help` that it has
+//   the D-Bus display, unless ~/.fake-qemu-no-dbus is there. A run writes its pid file and
 //   serves QMP on its -qmp socket, answering as QEMU does, with an event
 //   before some answers: stop, cont, migrate-set-parameters, migrate (to a
 //   file), query-migrate, query-status, migrate-incoming and quit. A save is
@@ -46,6 +47,10 @@ function qemu() {
     return console.log(
       ["Supported machines are:", "virt-11.0            QEMU 11.0 ARM Virtual Machine", `virt                 QEMU ARM Virtual Machine (alias of ${virt})`, `${virt}            QEMU ARM Virtual Machine`].join("\n"),
     );
+  }
+  if (option("-display") === "help") {
+    const displays = ["none", "curses", "cocoa", ...(existsSync(join(home, ".fake-qemu-no-dbus")) ? [] : ["dbus"])];
+    return console.log(["Available display backend types:", ...displays].join("\n"));
   }
   appendFileSync(join(home, ".fake-qemu-log"), `${JSON.stringify(args)}\n`);
   const pidfile = option("-pidfile");
