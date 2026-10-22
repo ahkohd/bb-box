@@ -212,18 +212,17 @@ export interface BbBox {
 }
 
 /**
- * Restarts BB's daemon, a systemd user service, without waiting for it;
- * exits 3 where there is none, as in a Docker box. Only as a box's own
- * user, whose home is /home/box: never on a machine a test's fake box runs
- * on, whose own daemon it would restart.
+ * Restarts BB's daemon, a systemd user service, once the box shows its new
+ * cores, as the daemon reads the processors as it starts: the wait, up to
+ * 15 s, and the restart run on in the box, detached, so the resize answers
+ * at once (#916). Exits 3 where there is no daemon, as in a Docker box. Only
+ * as a box's own user, whose home is /home/box: never on a machine a test's
+ * fake box runs on, whose own daemon it would restart.
  */
-const restartDaemon = (cores: number) => String.raw`[ "$HOME" = /home/box ] || exit 3
-# The daemon reads the processors as it starts: wait, up to 15 s, until the box shows its new cores.
-i=0
-while [ "$(nproc)" -ne ${cores} ] && [ $i -lt 15 ]; do sleep 1; i=$((i + 1)); done
+export const restartDaemon = (cores: number) => String.raw`[ "$HOME" = /home/box ] || exit 3
 unit=$(systemctl --user list-units --plain --no-legend 'bb-host-daemon-*.service' 2>/dev/null | awk '{ print $1; exit }')
 [ -n "$unit" ] || exit 3
-systemctl --user restart --no-block "$unit"`;
+setsid nohup sh -c 'i=0; while [ "$(nproc)" -ne ${cores} ] && [ $i -lt 15 ]; do sleep 1; i=$((i + 1)); done; systemctl --user restart --no-block "$1"' sh "$unit" </dev/null >/dev/null 2>&1 &`;
 
 
 
@@ -1298,7 +1297,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       }
       const result = await boxes.runOwn(box, restartDaemon(to.cores), { timeoutMs: 30_000, maxOutputBytes: 1024 }).catch(() => null);
       if (!result || result.exitCode !== 0) return kept("");
-      return `BB's daemon on machine ${box.name} is restarting, so BB counts its ${to.cores} processors, and sets its automatic thread limit from them, within a few seconds. A limit a person set stays as it is.`;
+      return `BB's daemon on machine ${box.name} restarts once the box shows its ${to.cores} cores, within about 15 s, so BB counts its ${to.cores} processors and sets its automatic thread limit from them. A limit a person set stays as it is.`;
     },
     async checkRestart(box, force) {
       if (box.capabilities.displays.length && api.control(box).owner === "human") {
