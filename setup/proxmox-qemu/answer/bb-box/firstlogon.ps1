@@ -212,6 +212,26 @@ Step 'Standard font smoothing, not ClearType'
 Set-Reg 'HKCU:\Control Panel\Desktop' FontSmoothing '2' String
 Set-Reg 'HKCU:\Control Panel\Desktop' FontSmoothingType 1
 
+Step 'A plain, still desktop: no Spotlight pictures, widgets or search-box pictures'
+# Spotlight changed the desktop's picture again and again for the first
+# minutes of a box, which its video sent as frames while nothing else moved
+# (#916): a solid colour, with Spotlight off and its "Learn about this
+# picture" icon gone, and no pictures in the search box.
+$cloud = 'HKCU:\Software\Policies\Microsoft\Windows\CloudContent'
+Set-Reg $cloud DisableWindowsSpotlightFeatures 1
+Set-Reg $cloud DisableSpotlightCollectionOnDesktop 1
+Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\DesktopSpotlight\Settings' EnabledState 0
+Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers' BackgroundType 1
+Set-Reg 'HKCU:\Control Panel\Desktop' Wallpaper '' String
+Set-Reg 'HKCU:\Control Panel\Colors' Background '32 32 32' String
+Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel' '{2cc5ca98-6485-489a-920e-b3e88a6ccce3}' 1
+Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search' EnableDynamicContentInWSB 0
+Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings' IsDynamicSearchBoxEnabled 0
+# The taskbar's widgets, the weather, change by themselves too. Windows
+# refuses even an administrator their policy key (Dsh), so their app goes.
+Get-AppxPackage -AllUsers MicrosoftWindows.Client.WebExperience | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq 'MicrosoftWindows.Client.WebExperience' | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
+
 Step 'Automatic logon; no lock screen, sleep, screen saver, UAC prompt, updates, OneDrive or first-run screens'
 $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 Set-Reg $winlogon AutoAdminLogon '1' String

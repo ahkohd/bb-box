@@ -116,6 +116,12 @@ Check 'no OneDrive' {
   if (Get-Process OneDrive -ErrorAction SilentlyContinue) { throw 'OneDrive is running' }
   'not running, by policy'
 }
+Check 'a plain, still desktop' {
+  if ((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers' -ErrorAction SilentlyContinue).BackgroundType -ne 1) { throw 'not a solid colour' }
+  if ((Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Windows\CloudContent' -ErrorAction SilentlyContinue).DisableWindowsSpotlightFeatures -ne 1) { throw 'Spotlight is on' }
+  if (Get-AppxPackage -AllUsers MicrosoftWindows.Client.WebExperience) { throw "the taskbar's widgets are there" }
+  'a solid colour, no Spotlight or widgets'
+}
 Check 'Cua daemon in the desktop session' {
   $p = Get-Process cua-driver -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0 | Select-Object -First 1
   if (-not $p) { throw 'not running in a desktop session' }

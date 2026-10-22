@@ -16,6 +16,11 @@ param([Parameter(Mandatory)] [string] $Pins, [Parameter(Mandatory)] [string] $Re
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 function Step($text) { Write-Output "$(Get-Date -Format HH:mm:ss) $text" }
+# New-Item -Force would empty a registry key that exists, so only make missing ones.
+function Set-Reg($path, $name, $value, $type = 'DWord') {
+  if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+  New-ItemProperty -Path $path -Name $name -Value $value -PropertyType $type -Force | Out-Null
+}
 $dir = 'C:\bb-box\build'
 $restart = $false
 
@@ -275,6 +280,26 @@ try {
   if (-not (Test-Path $onedrive)) { New-Item -Path $onedrive -Force | Out-Null }
   New-ItemProperty -Path $onedrive -Name DisableFileSyncNGSC -Value 1 -PropertyType DWord -Force | Out-Null
   Get-Process OneDrive -ErrorAction SilentlyContinue | Stop-Process -Force
+
+  Step 'A plain, still desktop: no Spotlight pictures, widgets or search-box pictures'
+  # Spotlight changed the desktop's picture again and again for the first
+  # minutes of a box, which its video sent as frames while nothing else moved
+  # (#916): a solid colour, with Spotlight off and its "Learn about this
+  # picture" icon gone, and no pictures in the search box.
+  $cloud = 'HKCU:\Software\Policies\Microsoft\Windows\CloudContent'
+  Set-Reg $cloud DisableWindowsSpotlightFeatures 1
+  Set-Reg $cloud DisableSpotlightCollectionOnDesktop 1
+  Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\DesktopSpotlight\Settings' EnabledState 0
+  Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers' BackgroundType 1
+  Set-Reg 'HKCU:\Control Panel\Desktop' Wallpaper '' String
+  Set-Reg 'HKCU:\Control Panel\Colors' Background '32 32 32' String
+  Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel' '{2cc5ca98-6485-489a-920e-b3e88a6ccce3}' 1
+  Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search' EnableDynamicContentInWSB 0
+  Set-Reg 'HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings' IsDynamicSearchBoxEnabled 0
+  # The taskbar's widgets, the weather, change by themselves too. Windows
+  # refuses even an administrator their policy key (Dsh), so their app goes.
+  Get-AppxPackage -AllUsers MicrosoftWindows.Client.WebExperience | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+  Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq 'MicrosoftWindows.Client.WebExperience' | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
 
   if ($restart) { Step 'a restart, then this again'; exit 3010 }
 
