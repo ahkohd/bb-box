@@ -329,6 +329,38 @@ export class Ssh {
     }
   }
 
+  /**
+   * The box user's login shell over `ssh -tt`, on the box's shared connection when there is one: a fresh connection's
+   * handshake was most of the shell's first output (#916). The place on it is given back as the terminal closes.
+   */
+  async terminal(access: SshAccess, size: TerminalSize, signal?: AbortSignal): Promise<Terminal> {
+    const lease = await this.#lease(access, undefined, signal);
+    let terminal: Terminal;
+    try {
+      terminal = await openTerminal([this.binary, ...this.options(access), ...(lease?.args ?? []), "-tt", `${access.user}@${access.host}`], size, signal);
+    } catch (error) {
+      lease?.done(true);
+      throw error;
+    }
+    if (!lease) return terminal;
+    let given = false;
+    const giveBack = () => {
+      if (given) return;
+      given = true;
+      lease.done(false);
+    };
+    return {
+      ...terminal,
+      close: async () => {
+        try {
+          await terminal.close();
+        } finally {
+          giveBack();
+        }
+      },
+    };
+  }
+
   /** A route to `port` inside the box, carried by `ssh -W`. */
   /** A route to what a command on the host serves on its stdin and stdout, such as a unix socket through `nc -U`. */
   commandRoute(access: SshAccess, command: string): Route {
@@ -525,7 +557,7 @@ export class SshTransport implements CommandTransport {
 
   /** The box user's login shell over `ssh -tt`, on a PTY here. ssh passes TERM and the size on. */
   terminal(size: TerminalSize, signal?: AbortSignal): Promise<Terminal> {
-    return openTerminal([this.#ssh.binary, ...this.#ssh.options(this.#access), "-tt", `${this.#access.user}@${this.#access.host}`], size, signal);
+    return this.#ssh.terminal(this.#access, size, signal);
   }
 }
 

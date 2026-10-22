@@ -13,8 +13,9 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Boxes } from "../core/boxes.ts";
 import { clampSize } from "../transports/terminal.ts";
 import type { Terminal, TerminalSize } from "../transports/types.ts";
+import { TERMINAL_ROUTE, terminalPath } from "./contract.ts";
 
-export const TERMINAL_ROUTE = "/terminal";
+export { TERMINAL_ROUTE };
 const SESSION_ID = /^[A-Za-z0-9_-]{8,64}$/;
 /** A WebSocket close reason holds at most 123 bytes of UTF-8; the server refuses a longer one. */
 const REASON_BYTES = 123;
@@ -350,7 +351,7 @@ export function registerTerminals(bb: BbPluginApi, deps: { boxes: Boxes; logErro
   );
 
   return {
-    path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${TERMINAL_ROUTE}`,
+    path: terminalPath(bb.pluginId),
     get live() {
       return sessions.size;
     },

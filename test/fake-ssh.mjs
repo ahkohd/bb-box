@@ -29,12 +29,14 @@ import { join } from "node:path";
 
 const args = process.argv.slice(2);
 const control = args.includes("-O") ? args[args.indexOf("-O") + 1] : args.includes("-N") ? "master" : null;
-const split = control ? args.length : args.indexOf("--");
+// `ssh -tt <target>`, as a terminal opens, has no command: the box user's shell, here sh.
+const interactive = !control && !args.includes("--");
+const split = control || interactive ? args.length : args.indexOf("--");
 const target = args[split - 1];
-const command = args.slice(split + 1).join(" ");
+const command = interactive ? "" : args.slice(split + 1).join(" ");
 const host = target.slice(target.indexOf("@") + 1);
 const root = process.env.FAKE_SSH_DIR;
-appendFileSync(join(root, "log"), JSON.stringify({ target, command, args: args.slice(0, split - 1), ...(control ? { control } : {}) }) + "\n");
+appendFileSync(join(root, "log"), JSON.stringify({ target, command, args: args.slice(0, split - 1), ...(control ? { control } : {}), ...(interactive ? { interactive: true } : {}) }) + "\n");
 const socket = args.find((arg) => arg.startsWith("ControlPath="))?.slice("ControlPath=".length);
 if (control === "exit") rmSync(socket, { force: true });
 if (control && control !== "master") process.exit(0);

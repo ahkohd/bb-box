@@ -3986,6 +3986,27 @@ test("the terminal tab streams the shell over the plugin's socket, sends what is
   expect(window.sessionStorage.getItem("bb-box:terminal:box_1")).toBe(next);
 });
 
+test("a terminal tab for a box the panel lists as ready connects at once, without waiting for the box's state (#916)", async () => {
+  const { handlers } = server([box({ id: "box_4", name: "quick-fox" })]);
+  const listing = panel(handlers);
+  expect(await listing.findByText("quick-fox")).toBeTruthy();
+  listing.unmount();
+  let answer!: () => void;
+  const slow: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    desktop: (input) => new Promise<DesktopState>((resolve) => (answer = () => resolve(handlers.desktop!(input) as DesktopState))),
+  };
+  const tab = terminalTab(slow, "box_4");
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  expect(answer).toBeTypeOf("function");
+  expect(new URL(FakeSocket.made[0]!.url).pathname).toBe(TERMINAL_PATH);
+  act(() => FakeSocket.made[0]!.open());
+  expect(tab.getByText("Connected")).toBeTruthy();
+  answer();
+  await waitFor(() => expect(tab.getByText("Connected")).toBeTruthy());
+  expect(FakeSocket.made).toHaveLength(1);
+});
+
 test("a remounted terminal tab attaches to the same shell, and a stopped box offers Start", async () => {
   const { handlers } = server([box()]);
   const first = terminalTab(handlers);
