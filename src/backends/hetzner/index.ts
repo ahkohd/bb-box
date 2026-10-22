@@ -11,7 +11,7 @@ export const hetznerDriver: BackendDriver<HetznerConfig> = {
   kinds: HETZNER_KINDS,
   fields: HETZNER_FIELDS,
   setup: {
-    guide: "docs/guide/cloud-docker-host.md",
+    guide: "docs/guide/hetzner.md",
     scripts: [],
   },
   parse: parseHetznerPart,
