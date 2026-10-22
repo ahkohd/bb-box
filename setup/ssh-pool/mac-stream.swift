@@ -20,8 +20,8 @@
 // desktop session, which carries an HTTP upgrade and then WebSocket frames.
 //
 // ScreenCaptureKit captures whole frames of the main display at its pixels,
-// so a frame never tears; VideoToolbox encodes them in hardware, in real
-// time, with no frames reordered; CGEvent posts the input; and the
+// so a frame never tears; VideoToolbox encodes them in hardware where the Mac
+// has it, else in software, in real time, with no frames reordered; CGEvent posts the input; and the
 // pasteboard goes both ways, text and images. When the screen stops changing, the last frame
 // is encoded twice more, so a still screen sharpens. Its permissions are its
 // responsible process's: Screen Recording and Accessibility (058).
@@ -466,7 +466,11 @@ final class Input: @unchecked Sendable {
 
 // MARK: Encoder
 
-/** H.264 in hardware, in real time, as Annex B with the parameter sets on each key frame. */
+/**
+ * H.264 in hardware, in real time, as Annex B with the parameter sets on each key frame. A Mac with no hardware
+ * encoder, as a Namespace Mac, a VM, has none, gets the software encoder without low-latency rate control, which only
+ * the hardware one offers: with it, every frame failed with -12915 (measured 22 October 2026).
+ */
 final class Encoder: @unchecked Sendable {
   let width: Int
   let height: Int
@@ -477,16 +481,13 @@ final class Encoder: @unchecked Sendable {
     self.width = width
     self.height = height
     self.output = output
-    let spec: [CFString: Any] = [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true, kVTVideoEncoderSpecification_EnableLowLatencyRateControl: true]
-    var made: VTCompressionSession?
-    let status = VTCompressionSessionCreate(
-      allocator: nil, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264,
-      encoderSpecification: spec as CFDictionary, imageBufferAttributes: nil, compressedDataAllocator: nil,
-      outputCallback: nil, refcon: nil, compressionSessionOut: &made)
-    guard status == noErr, let made else {
-      log("VideoToolbox could not make an H.264 encoder: \(status)")
-      return nil
+    var made = Encoder.session(width: width, height: height, lowLatency: true)
+    if let hardware = made, !Encoder.usesHardware(hardware) {
+      VTCompressionSessionInvalidate(hardware)
+      log("no hardware H.264 encoder: the software one, without low-latency rate control")
+      made = Encoder.session(width: width, height: height, lowLatency: false)
     }
+    guard let made else { return nil }
     session = made
     let pixels = Double(width * height)
     let properties: [CFString: Any] = [
@@ -507,6 +508,27 @@ final class Encoder: @unchecked Sendable {
       if set != noErr { log("VideoToolbox did not take \(key): \(set)") }
     }
     VTCompressionSessionPrepareToEncodeFrames(made)
+  }
+
+  private static func session(width: Int, height: Int, lowLatency: Bool) -> VTCompressionSession? {
+    var spec: [CFString: Any] = [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true]
+    if lowLatency { spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true }
+    var made: VTCompressionSession?
+    let status = VTCompressionSessionCreate(
+      allocator: nil, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264,
+      encoderSpecification: spec as CFDictionary, imageBufferAttributes: nil, compressedDataAllocator: nil,
+      outputCallback: nil, refcon: nil, compressionSessionOut: &made)
+    guard status == noErr, let made else {
+      log("VideoToolbox could not make an H.264 encoder: \(status)")
+      return nil
+    }
+    return made
+  }
+
+  private static func usesHardware(_ session: VTCompressionSession) -> Bool {
+    var value: CFTypeRef?
+    let status = VTSessionCopyProperty(session, key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder, allocator: nil, valueOut: &value)
+    return status == noErr && (value as? Bool) == true
   }
 
   func encode(_ buffer: CVImageBuffer, at time: CMTime, key: Bool) {
