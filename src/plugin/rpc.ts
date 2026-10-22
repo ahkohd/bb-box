@@ -1,6 +1,11 @@
 // The panel's RPC handlers. A failed change comes back as a message for the
 // panel to show, not as an RPC error.
 
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { freemem } from "node:os";
+import { dirname, join } from "node:path";
+import { performance } from "node:perf_hooks";
+import { writeHeapSnapshot } from "node:v8";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, SPARES, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
 import { ControlError } from "../core/control.ts";
@@ -8,8 +13,42 @@ import { contract, type BoxResult, type ResizeResult, type ThreadOnBox } from ".
 import { sizeView } from "./views.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import type { BbBox } from "./setup.ts";
-import { profileLoop } from "./profile.ts";
+import { profileLoop, type CpuProfile, type HeapProfile } from "./profile.ts";
 import { GENERAL_DEFAULTS } from "../core/document.ts";
+
+/** How many kept profiles stay: older ones go as a new one is kept. */
+const PROFILES_KEPT = 5;
+
+/** bb-box's own folder of BB's data, beside its database: profiles/. */
+async function profileFolder(bb: BbPluginApi): Promise<string> {
+  const folder = join(dirname(bb.storage.database().name), "profiles");
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  return folder;
+}
+
+/** Keeps a profile as profiles/<time>.<extension>, written without holding the loop; and the last five of each. */
+async function keepProfile(bb: BbPluginApi, profile: CpuProfile | HeapProfile, extension: "cpuprofile" | "heapprofile"): Promise<string> {
+  const folder = await profileFolder(bb);
+  const file = join(folder, `${new Date().toISOString().replace(/[:.]/g, "-")}.${extension}`);
+  await writeFile(file, JSON.stringify(profile), { mode: 0o600 });
+  const kept = (await readdir(folder)).filter((name) => name.endsWith(`.${extension}`)).sort();
+  for (const old of kept.slice(0, Math.max(0, kept.length - PROFILES_KEPT))) await rm(join(folder, old), { force: true });
+  return `kept at ${file}`;
+}
+
+/**
+ * A full heap snapshot, as profiles/<time>.heapsnapshot, refused unless the machine has as much free memory as the
+ * heap uses and a fifth more, as writing one may take about that. Only one is kept.
+ */
+async function heapSnapshot(bb: BbPluginApi): Promise<string> {
+  const used = process.memoryUsage().heapUsed;
+  if (freemem() < used * 1.2) throw new Error(`refused: the heap uses ${Math.round(used / 2 ** 20)} MiB and only ${Math.round(freemem() / 2 ** 20)} MiB is free`);
+  const folder = await profileFolder(bb);
+  for (const old of (await readdir(folder)).filter((name) => name.endsWith(".heapsnapshot"))) await rm(join(folder, old), { force: true });
+  const began = performance.now();
+  const file = writeHeapSnapshot(join(folder, `${new Date().toISOString().replace(/[:.]/g, "-")}.heapsnapshot`));
+  return `kept at ${file}, written in ${Math.round(performance.now() - began)} ms`;
+}
 
 export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
@@ -134,8 +173,12 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       }
     },
     ping: async () => null,
-    async profile({ seconds }) {
-      const lines = await profileLoop(seconds);
+    async profile({ seconds, keep, allocations, snapshot }) {
+      const lines = await profileLoop(seconds, {
+        ...(keep ? { save: (profile: CpuProfile) => keepProfile(bb, profile, "cpuprofile") } : {}),
+        ...(allocations ? { allocations: (profile: HeapProfile) => keepProfile(bb, profile, "heapprofile") } : {}),
+        ...(snapshot ? { snapshot: () => heapSnapshot(bb) } : {}),
+      });
       for (const line of lines) bb.log.info(line);
       return { lines };
     },

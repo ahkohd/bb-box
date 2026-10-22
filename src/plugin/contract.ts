@@ -197,8 +197,18 @@ export const contract = defineRpcContract({
   "desktop.sharp": { input: oneBox.extend({ on: z.boolean() }), output: z.custom<{ readonly error: string | null }>() },
   /** Answers at once: the viewer times it, for its round trip to BB's server (056). */
   ping: { input: z.null(), output: z.null() },
-  /** A CPU profile of BB's server process, which runs bb-box, for 1 to 30 s, summed up in lines that are logged too: functions' names, files, lines and times only. */
-  profile: { input: z.object({ seconds: z.number().int().min(1).max(30) }), output: z.object({ lines: z.array(z.string()) }) },
+  /**
+   * A CPU profile of BB's server process, which runs bb-box, for 1 to 60 s, summed up in lines that are logged too:
+   * functions' names, files, lines and times only, and the long garbage collections meanwhile. `keep` keeps the
+   * profile as a .cpuprofile file in bb-box's own folder of BB's data, the last five. `allocations` samples the heap's
+   * allocations meanwhile, kept as a .heapprofile. `snapshot` writes a full heap snapshot after: it holds BB's server
+   * still for as long as that takes, seconds or more on a large heap, and needs as much free memory as the heap uses,
+   * or it is refused.
+   */
+  profile: {
+    input: z.object({ seconds: z.number().int().min(1).max(60), keep: z.boolean().optional(), allocations: z.boolean().optional(), snapshot: z.boolean().optional() }),
+    output: z.object({ lines: z.array(z.string()) }),
+  },
   takeControl: { input: viewer, output: boxResult },
   handBack: { input: oneBox, output: boxResult },
   /**

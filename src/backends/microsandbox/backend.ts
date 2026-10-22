@@ -31,6 +31,7 @@
 
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
+import { timedSpawn } from "../../transports/spawns.ts";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -122,7 +123,7 @@ const BUILD_FREE_GIB = 80;
 /** `setup` as a gzipped tar of one folder, setup/, for a builder. */
 function setupArchive(setup: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn("tar", ["-czf", "-", "-C", dirname(setup.replace(/\/+$/, "")), basename(setup.replace(/\/+$/, ""))], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = timedSpawn(() => spawn("tar", ["-czf", "-", "-C", dirname(setup.replace(/\/+$/, "")), basename(setup.replace(/\/+$/, ""))], { stdio: ["ignore", "pipe", "pipe"] }));
     const parts: Buffer[] = [];
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => parts.push(chunk));

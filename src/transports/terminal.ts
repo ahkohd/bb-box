@@ -6,6 +6,7 @@
 // SIGWINCHes the command, and ssh and docker pass the size on to the shell.
 
 import { execFile, spawn } from "node:child_process";
+import { timedSpawn } from "./spawns.ts";
 import { quote } from "./process.ts";
 import type { Terminal, TerminalSize } from "./types.ts";
 
@@ -55,7 +56,7 @@ export function openTerminal(argv: readonly [string, ...string[]], size: Termina
   const inner = `tty; stty cols ${first.cols} rows ${first.rows}; exec ${argv.map(quote).join(" ")}`;
   const [binary, ...args] = scriptArgv(inner);
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, SHELL: "/bin/sh", TERM: "xterm-256color" } });
+    const child = timedSpawn(() => spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, SHELL: "/bin/sh", TERM: "xterm-256color" } }));
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = (stderr + chunk.toString("utf8")).slice(-2_000);

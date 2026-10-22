@@ -12,6 +12,7 @@
 // is built again: only its last layer, with the app, changes (#95).
 
 import { spawn } from "node:child_process";
+import { timedSpawn } from "../transports/spawns.ts";
 import { LABELS } from "../backends/docker/cli.ts";
 import { IMAGE_VERSION } from "../backends/docker/config.ts";
 import { IMAGE_CONTRACT, recordFromJson } from "../backends/images.ts";
@@ -88,7 +89,7 @@ function message(error: unknown): string {
 
 function run(script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void): Promise<number | null> {
   return new Promise((resolve) => {
-    const child = spawn("bash", [script, ...args], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = timedSpawn(() => spawn("bash", [script, ...args], { env, stdio: ["ignore", "pipe", "pipe"] }));
     let rest = "";
     const read = (chunk: Buffer) => {
       const lines = (rest + chunk.toString("utf8")).split(/\r?\n|\r/);

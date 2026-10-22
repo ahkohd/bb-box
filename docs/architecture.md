@@ -505,11 +505,19 @@ route and carries messages, not bytes:
 - Every relay runs on the event loop of BB's server, whose process runs
   bb-box, so code there that holds the loop holds every desktop's frames
   and input, whether it is bb-box's, BB's or another plugin's. bb-box logs,
-  at most once a minute, when the loop stood still for 250 ms or more, and
-  how much of it was garbage collection. A CPU profile of the process, 1 to
-  30 s, one at a time, names the code (`bb plugin rpc call bb-box profile` with
-  `{"seconds": 15}`). It logs only functions' names, files, lines and
-  times.
+  at most once a minute, when the loop stood still for 250 ms or more, how
+  much of it was garbage collection, and how many processes bb-box started
+  then and how long their spawn calls took, as each forks the server; and
+  once an hour the server's memory. A CPU profile of the process, 1 to
+  60 s, one at a time, names the code (`bb plugin rpc call bb-box profile` with
+  `{"seconds": 15}`), splits the busy time by whose code it ran under, notes
+  each long garbage collection with the heap after it, and times starting a
+  process. It logs only functions' names, files, lines and times. With
+  `"keep": true` it keeps the profile, with `"allocations": true` it samples
+  who allocates, and with `"snapshot": true` it writes a heap snapshot,
+  which holds the server still while it is written and is refused without
+  the free memory for it; each goes to `profiles/` beside bb-box's own
+  database in BB's data, the last five.
 - Selkies refuses a connection within 500 ms of another from the same
   address, and the relay's all come from the box's loopback, so it spaces
   them and tries again.

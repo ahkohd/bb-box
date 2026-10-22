@@ -33,6 +33,7 @@ import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { LoopWatch } from "./loop-watch.ts";
+import { spawnTotals, takeLongestSpawn } from "../transports/spawns.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, MACHINE_PROVIDER_ID, type HostApi } from "./enrol.ts";
 import { CALL_TIMEOUT_MS, Holders, RETIRED_TITLE, type RetiredTerminals } from "./holder.ts";
@@ -733,7 +734,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     changed: () => notify(null),
   });
   // Stalls of the event loop bb-box runs on, BB's server's, which hold up every desktop's frames and input.
-  const loopWatch = new LoopWatch({ log: (message) => bb.log.warn(message) });
+  const loopWatch = new LoopWatch({
+    log: (message) => bb.log.warn(message),
+    spawns: spawnTotals,
+    longestSpawn: takeLongestSpawn,
+    memory: () => process.memoryUsage(),
+  });
   bb.onDispose(() => loopWatch.dispose());
   bb.onDispose(() => imageJobs.stop());
   bb.onDispose(() => imageBakes.stop());
