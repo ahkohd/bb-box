@@ -3103,6 +3103,31 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await until("the page closed", async () => page.closed);
 });
 
+test("a video display the backend resizes, as the GPU desktop with xrandr, takes a controller's size and has the video follow it with no RFB connection, which starved its capture (#916)", async (t) => {
+  const { harness, app, world } = await start(undefined, { resize: "backend", kinds: [FAKE_SELKIES_KIND] });
+  t.after(() => harness.lifecycle.dispose());
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: FAKE_SELKIES_KIND.id });
+  await app.boxes.idle();
+  const box = await only(app);
+  const backend = world.backend!;
+  const selkies = backend.selkies;
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
+  await until("Selkies' first message", async () => session.sent.includes("MODE websockets"));
+  await selkies.frame(1, true, 1280, 800);
+  await until("the frame", async () => session.sent.some((message) => typeof message !== "string"));
+  await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
+  const input = await until("the input connection", async () => selkies.pages[1]);
+  const follow = (width: number, height: number) =>
+    `SETTINGS,${JSON.stringify({ displayId: "primary", manual_resolution: true, manual_width: width, manual_height: height, force_aligned_resolution: false })}`;
+  const rfbBefore = backend.rfb.connections.length;
+  await session.receive("r,1024x768");
+  await until("the video following the size", async () => input.received.includes(follow(1024, 768)));
+  assert.deepEqual(backend.resizes.at(-1), { width: 1024, height: 768 });
+  assert.equal(backend.rfb.connections.length, rfbBefore, "no RFB connection to set the size or read it back");
+  await session.close();
+});
+
 test("a video display told a size first, as Selkies on Sway, hears it before the backend resizes the desktop, and the size the desktop kept after a resize that fails (the owner's note of 18 October 2026)", async (t) => {
   const kind: BoxKind = {
     ...FAKE_SELKIES_KIND,

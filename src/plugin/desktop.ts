@@ -565,13 +565,14 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const followsByRfb = async (boxId: string): Promise<boolean> => (await boxes.find(boxId))?.capabilities.os === "linux";
   /**
    * Has a box's Selkies capture its desktop at the size the desktop has now,
-   * read through its RFB display, while it has Selkies viewers, and restarts
-   * the capture when the video does not show that size in time.
+   * as just set or read through its RFB display, while it has Selkies
+   * viewers, and restarts the capture when the video does not show that size
+   * in time.
    */
-  const followSize = async (boxId: string, shown?: Display): Promise<void> => {
+  const followSize = async (boxId: string, shown?: Display, set?: Size): Promise<void> => {
     const entry = selkiesBoxes.get(boxId);
     if (!entry || !(await followsByRfb(boxId))) return;
-    const size = await desktopSize(displayOpener(shown ?? (await display(boxes, boxId))));
+    const size = set ?? (await desktopSize(displayOpener(shown ?? (await display(boxes, boxId)))));
     await entry.box.follow(size);
     if (frameSizes.has(boxId)) await showSize(boxId, size);
   };
@@ -640,8 +641,12 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     await resizes.request(
       boxId,
       async (each) => {
+        if (shown.resize) {
+          await shown.resize(each);
+          await followSize(boxId, shown, each);
+          return;
+        }
         await restoreSize(displayOpener(shown), each, SELKIES_SCREEN);
-        if (shown.resize) await shown.resize(each);
         await followSize(boxId, shown);
       },
       raised,
