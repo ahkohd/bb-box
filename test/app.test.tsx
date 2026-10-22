@@ -3010,6 +3010,37 @@ test("a paste on its way as the stream switches to VNC is pressed before the vid
   }
 });
 
+test("with localStorage bb-box-keylog set to 1, the video viewer logs each key it sends and asks the relay to log them too; without it, neither (a diagnostic)", async () => {
+  const undo = withVideo();
+  const logged = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  try {
+    window.localStorage.setItem("bb-box-keylog", "1");
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    expect(new URL(FakeSocket.made.find((made) => made.url.includes("stream=selkies"))!.url).searchParams.get("keylog")).toBe("1");
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const canvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
+    fireEvent.keyDown(canvas, { key: "a", code: "KeyA" });
+    expect(logged.mock.calls.some(([line]) => /^bb-box key video: down 0x61 'a', held \[97\]|^bb-box key video: down 0x61 'a', held \[0x61\]/.test(String(line)))).toBe(true);
+    window.localStorage.removeItem("bb-box-keylog");
+    logged.mockClear();
+    fireEvent.keyUp(canvas, { key: "a", code: "KeyA" });
+    expect(logged).not.toHaveBeenCalled();
+  } finally {
+    window.localStorage.removeItem("bb-box-keylog");
+    logged.mockRestore();
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
 test("a viewer in control lets go of the keys it holds down as its tab goes, so the box keeps no Ctrl held, over video and VNC", async () => {
   const undo = withVideo();
   try {

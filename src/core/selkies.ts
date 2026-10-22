@@ -346,6 +346,8 @@ export interface SelkiesRelayOptions {
   /** The largest frame the viewer's browser decodes, in macroblocks, as it says once connected (bb-box's `BB_DECODES,<n>`, which goes no further). */
   onDecodes?(macroblocks: number): void;
   onEnd?(by: "viewer" | "box", error: Error | null): void;
+  /** Each key message as it goes to the box, for a viewer that asked for the key log (a diagnostic). */
+  keyLog?(line: string): void;
   /**
    * Whether bb-box sends this viewer the box's cursor itself, from
    * bb-box-cursor (060): then Selkies' own cursor messages, one arrow
@@ -577,7 +579,12 @@ export class SelkiesRelay {
         await this.#toBox(message);
         return;
       case "input": {
-        if (!this.#options.mayInput()) return;
+        const key = /^(kd|ku|kr)\b/.test(message);
+        if (!this.#options.mayInput()) {
+          if (key) this.#options.keyLog?.(`dropped, as the viewer has no control: ${message}`);
+          return;
+        }
+        if (key) this.#options.keyLog?.(`to the box: ${message}, held [${[...this.#held].join(" ")}], at ${Date.now() % 100_000} ms`);
         this.#track(message);
         const pointer = verb(message) === "m" || verb(message) === "m2";
         if (pointer && this.#options.pointerApart?.()) {
