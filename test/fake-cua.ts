@@ -35,8 +35,11 @@
 // not a path, and finds by name only apps in /Applications and
 // /System/Applications, not Finder or Archive Utility in
 // /System/Library/CoreServices. Finder always runs, and opens a new window
-// only for a folder in urls. Calculator, launched again while open, opens
-// no window and gives its window as the launch's.
+// only for a folder in urls that no window of its own shows already, a
+// little after the launch, which gives no new window. Each
+// Finder launch also has CursorUIViewService, another process, open a small
+// window off screen. Calculator, launched again while open, opens no window
+// and gives its window as the launch's.
 //
 // Like Cua, it finds a window's tree by where the window is: of two windows
 // of one app within 20 pixels of each other, a read of either gives the
@@ -820,8 +823,14 @@ export class FakeCua {
       const pid = open?.pid ?? (app === "Finder" ? 400 : desktop.nextPid++);
       const urls = Array.isArray(args.urls) ? args.urls.map(String) : [];
       if (open && !(app === "Finder" && urls.length)) return text(`Launched ${app}.`, { pid, bundle_id: bundle, running: true, windows: [this.#windowJson(open)] });
+      if (app === "Finder") desktop.windows.push({ id: desktop.nextWindow++, pid: 401, app: "CursorUIViewService", title: "", x: 0, y: 0, width: 64, height: 64, onScreen: false });
       if (app === "Finder" && !urls.length) return text("Launched Finder.", { pid, bundle_id: bundle, running: true, windows: [] });
+      if (app === "Finder" && desktop.windows.some((each) => each.app === "Finder" && each.title === "box")) return text("Launched Finder.", { pid, bundle_id: bundle, running: true, windows: [] });
       const window: FakeWindow = { id: desktop.nextWindow++, pid, app, title: app === "Finder" ? "box" : app, x: 0, y: 0, width: 640, height: 480, onScreen: true };
+      if (app === "Finder") {
+        setTimeout(() => this.#change((later) => void later.windows.push(window)), 300);
+        return text("Launched Finder.", { pid, bundle_id: bundle, running: true, windows: [] });
+      }
       desktop.windows.push(window);
       return text(`Launched ${app}.`, { pid, bundle_id: bundle, running: true, windows: [this.#windowJson(window)] });
     });

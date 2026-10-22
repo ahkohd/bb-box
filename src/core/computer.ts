@@ -35,6 +35,7 @@ const OPEN_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 30_000;
 const LAUNCH_WAIT_MS = 10_000;
 const LAUNCH_POLL_MS = 250;
+const FINDER_WINDOW_WAIT_MS = 3_000;
 /**
  * How long a launch on Wayland waits at most for its windows to be the
  * compositor's: Cua can list a new window from its accessibility side
@@ -1291,12 +1292,13 @@ export class Computer {
           "Give app as one of these names, or the path of a program in the box.",
         );
       }
-      let windows = arr(obj(result.structuredContent).windows)
-        .map(windowOf)
-        .filter((window): window is WindowInfo => !!window && !before.has(window.id));
-      for (const window of windows) use.state.windows.set(window.id, window);
       // A URL can open in a browser window that was already open, which then changes its title.
       const launched = num(obj(result.structuredContent).pid);
+      const ofLaunchedApp = (window: WindowInfo) => !mac || launched === undefined || window.pid === launched;
+      let windows = arr(obj(result.structuredContent).windows)
+        .map(windowOf)
+        .filter((window): window is WindowInfo => !!window && !before.has(window.id) && ofLaunchedApp(window));
+      for (const window of windows) use.state.windows.set(window.id, window);
       // An app already running on macOS with a window opens no other: its window, brought to the front (#712).
       if (mac && input.app !== undefined && args.urls === undefined && !windows.length && launched !== undefined && [...before.values()].some((window) => window.pid === launched)) {
         const open = await this.#alreadyOpen(use, input.app, before, launched);
@@ -1304,19 +1306,20 @@ export class Computer {
       }
       const browser = (window: WindowInfo) => BROWSER.test(window.app) || (launched !== undefined && window.pid === launched);
       let reused: WindowInfo | null = null;
-      const waited = this.#deps.launchWaitMs ?? LAUNCH_WAIT_MS;
+      const finderShowing = mac && args.urls !== undefined && [...before.values()].some((window) => window.pid === launched && window.onScreen);
+      const waited = Math.min(this.#deps.launchWaitMs ?? LAUNCH_WAIT_MS, finderShowing ? FINDER_WINDOW_WAIT_MS : Infinity);
       const deadline = Date.now() + waited;
       const named: { id: number; title: string }[] = [];
       while (!windows.length && !reused && Date.now() < deadline) {
         await sleep(LAUNCH_POLL_MS, use.signal);
         let now = await this.#listWindows(use);
-        windows = [...now.values()].filter((window) => !before.has(window.id) && window.width > 1 && window.height > 1);
+        windows = [...now.values()].filter((window) => !before.has(window.id) && window.width > 1 && window.height > 1 && ofLaunchedApp(window));
         // Cua on Windows lists only windows with a title: name those without one, and look again (#365).
         const naming = windows.length ? [] : await this.#name(use);
         if (naming.length) {
           named.push(...naming);
           now = await this.#listWindows(use);
-          windows = [...now.values()].filter((window) => !before.has(window.id) && window.width > 1 && window.height > 1);
+          windows = [...now.values()].filter((window) => !before.has(window.id) && window.width > 1 && window.height > 1 && ofLaunchedApp(window));
         }
         if (input.url !== undefined) {
           reused = [...now.values()].find((window) => before.has(window.id) && before.get(window.id)!.title !== window.title && browser(window)) ?? null;

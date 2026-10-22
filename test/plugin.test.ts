@@ -4533,13 +4533,27 @@ test("computer_launch on macOS opens Finder, which always runs, in a new window,
   });
   const launched = () => lastCall(file, "launch_app")?.args;
 
-  // Finder opens a window only for a folder: each launch, by name or path, opens one at home.
-  for (const app of ["Finder", "/System/Library/CoreServices/Finder.app"]) {
-    const opened = text(await tool("computer_launch", { box: box.name, app }));
-    assert.match(opened, /^Opened .*Finder.*\. Its window:\n- window (\d+): Finder "box", 640 by 480\n\nNext: Call computer_observe with window \1 to read it\.$/);
-    assert.deepEqual(launched(), { bundle_id: "com.apple.finder", urls: ["~"] });
-  }
-  assert.equal(readDesktop(file).windows.filter((window) => window.app === "Finder").length, 2);
+  // Finder opens a window only for a folder: a launch opens one at home, and not another process's window that came with it.
+  const opened = text(await tool("computer_launch", { box: box.name, app: "Finder" }));
+  const home = Number(/window (\d+)/.exec(opened)?.[1]);
+  assert.match(opened, /^Opened Finder\. Its window:\n- window (\d+): Finder "box", 640 by 480\n\nNext: Call computer_observe with window \1 to read it\.$/);
+  assert.deepEqual(launched(), { bundle_id: "com.apple.finder", urls: ["~"] });
+  // Launched again, by path, it opens none, as its window shows home already: that window, brought forward, within 3 s, not 5.
+  const finderBegan = Date.now();
+  const finderAgain = text(await tool("computer_launch", { box: box.name, app: "/System/Library/CoreServices/Finder.app" }));
+  assert.ok(Date.now() - finderBegan < 4_000);
+  assert.equal(
+    finderAgain,
+    `/System/Library/CoreServices/Finder.app was already open, and opening it again opened no new window. bb-box brought its window to the front:\n- window ${home}: Finder "box", 640 by 480\n\nNext: Call computer_observe with window ${home} to read it.`,
+  );
+  assert.deepEqual(launched(), { bundle_id: "com.apple.finder", urls: ["~"] });
+  assert.equal(lastCall(file, "bring_to_front")?.args.window_id, home);
+  assert.equal(readDesktop(file).windows.filter((window) => window.app === "Finder").length, 1);
+  // With its window gone to another folder, a launch opens a new one at home, which shows a little after the launch.
+  editDesktop(file, (desktop) => {
+    desktop.windows.find((window) => window.id === home)!.title = "Documents";
+  });
+  assert.match(text(await tool("computer_launch", { box: box.name, app: "Finder" })), /^Opened Finder\. Its window:\n- window \d+: Finder "box", 640 by 480\n/);
 
   // Cua finds no Archive Utility by name, in /System/Library/CoreServices; list_apps gives its bundle ID.
   assert.match(text(await tool("computer_launch", { box: box.name, app: "archive utility" })), /^Opened archive utility\. Its window:\n- window \d+: Archive Utility "Archive Utility"/);
