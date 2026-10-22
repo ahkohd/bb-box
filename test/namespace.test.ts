@@ -124,6 +124,17 @@ test("with the usage grant, capacity reads the workspace's Mac limits from Names
   assert.match(warned.fix!, /"resource_type":"tenant\/usage","resource_id":"\*","actions":\["get"\]/);
 });
 
+test("a cancelled acquire stops waiting for SSH at once, even with the tests' sleep that does not wait, and destroys the machine", async () => {
+  const { fake, backend } = setup();
+  writeFileSync(join(process.env.FAKE_SSH_DIR!, "down", "ssh.us.namespace.so"), "");
+  const controller = new AbortController();
+  const started = Date.now();
+  const acquiring = backend.acquire(box("b1"), null, { ...hooks().hooks, starting: async () => void setTimeout(() => controller.abort(new Error("cancelled")), 200) }, controller.signal);
+  await assert.rejects(acquiring, /cancelled/);
+  assert.ok(Date.now() - started < 5_000, `it stopped after ${Date.now() - started} ms: at the cancel, not the 20 s deadline`);
+  assert.deepEqual(fake.running(), [], "the machine was destroyed");
+});
+
 test("a Namespace Mac's user is an administrator who can use sudo", () => {
   const { backend } = setup();
   assert.ok(backend.kinds().every((kind) => kind.capabilities.command?.admin === true));

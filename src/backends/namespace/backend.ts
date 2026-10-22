@@ -515,7 +515,11 @@ export class NamespaceBackend implements Backend {
     const command = new SshTransport(ssh, this.#access(instance), "macos");
     let last = "";
     while (this.#now() < deadline) {
-      const result = await command.run("true", { timeoutMs: 20_000, signal }).catch((error: unknown) => ({ exitCode: -1, stderr: error instanceof Error ? error.message : String(error) }));
+      signal?.throwIfAborted();
+      const result = await command.run("true", { timeoutMs: 20_000, signal }).catch((error: unknown) => {
+        if (signal?.aborted) throw error;
+        return { exitCode: -1, stderr: error instanceof Error ? error.message : String(error) };
+      });
       if (result.exitCode === 0) return;
       last = result.stderr.trim();
       await this.#sleep(SSH_POLL_MS, signal);
