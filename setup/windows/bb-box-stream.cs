@@ -24,7 +24,8 @@
 // hardware cursor, as the image's VirtIO GPU does with HWCursor on (hardware-cursor.ps1), and it is drawn in.
 // Cisco's OpenH264, which the image downloads from Cisco, encodes them for
 // screen content in real time; when the screen stops changing, the last frame
-// is encoded twice more, which sharpens it. SendInput posts the input, and the
+// is encoded twice more, which sharpens it. SendInput posts the input, every
+// client's on one thread in the order it came, with keys paced; and the
 // clipboard goes both ways: text, and images as PNG, a pasted one put on the
 // clipboard as the very bytes it came as, never encoded again.
 //
@@ -33,6 +34,7 @@
 // On arm64, AnyCPU with a manifest that lets it run natively (install-stream.ps1).
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -337,6 +339,27 @@ static class Input {
   [DllImport("user32.dll")] static extern short VkKeyScanW(char c);
   [DllImport("user32.dll")] static extern uint MapVirtualKeyW(uint code, uint type);
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+  [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint ms);
+
+  /**
+   * The least time from one key event to the next. SendInput takes a burst at
+   * once, but an app such as Notepad reads Shift as it handles each key, after
+   * the burst: capitals came out small, shifted symbols as !, and keys went
+   * missing. 4 ms still lost one now and then.
+   */
+  const int KEY_GAP_MS = 8;
+  static readonly Stopwatch sinceKey = Stopwatch.StartNew();
+  static readonly BlockingCollection<Action> queued = new BlockingCollection<Action>();
+
+  /** Posts every client's input on one thread, in the order it came. */
+  public static void Start() {
+    timeBeginPeriod(1);
+    new Thread(() => { foreach (Action post in queued.GetConsumingEnumerable()) post(); }) { IsBackground = true, Name = "input" }.Start();
+  }
+
+  public static void Post(Action post) {
+    queued.Add(post);
+  }
 
   const int MOUSE_MOVE = 1, LEFT_DOWN = 2, LEFT_UP = 4, RIGHT_DOWN = 8, RIGHT_UP = 0x10, MIDDLE_DOWN = 0x20, MIDDLE_UP = 0x40, WHEEL = 0x800, VIRTUALDESK = 0x4000, ABSOLUTE = 0x8000;
   const int KEY_UP = 2, EXTENDED = 1, UNICODE = 4;
@@ -405,12 +428,19 @@ static class Input {
       INPUT input = new INPUT { type = 1 };
       input.ki.wScan = unit;
       input.ki.dwFlags = UNICODE | (down ? 0 : KEY_UP);
-      Send(input);
+      SendKey(input);
     }
   }
 
   static void Send(INPUT input) {
     SendInput(1, new[] { input }, Marshal.SizeOf(typeof(INPUT)));
+  }
+
+  static void SendKey(INPUT input) {
+    int wait = KEY_GAP_MS - (int)sinceKey.ElapsedMilliseconds;
+    if (wait > 0) Thread.Sleep(wait);
+    Send(input);
+    sinceKey.Restart();
   }
 
   static void KeyEvent(ushort vk, bool down) {
@@ -419,7 +449,7 @@ static class Input {
     // With its scan code, as a keyboard sends it: without one, WinUI apps such as Notepad drop keys and Shift.
     input.ki.wScan = (ushort)MapVirtualKeyW(vk, 0);
     input.ki.dwFlags = (down ? 0 : KEY_UP) | (EXTENDED_KEYS.Contains(vk) ? EXTENDED : 0);
-    Send(input);
+    SendKey(input);
   }
 
   public static void Key(int keysym, bool down) {
@@ -947,6 +977,7 @@ class Server {
     bool first;
     one = new Mutex(true, "Global\\" + Program.PIPE, out first);
     if (!first) { Program.Log("another server is running"); return 0; }
+    Input.Start();
     clipboard = new ClipboardThread(text => Broadcast("clipboard," + Convert.ToBase64String(Encoding.UTF8.GetBytes(text))), BroadcastImage);
     Program.Log("serving on \\\\.\\pipe\\" + Program.PIPE);
     // The pointer's shape, to the clients, when it changes: the panel shows it on the browser's own pointer while its person holds control.
@@ -1063,20 +1094,22 @@ class Server {
         break;
       case "kd": case "ku":
         // A paste's chord follows its content at once: the keys wait until it is on the clipboard, up to 5 s.
-        clipboard.WaitPasted(5000);
-        Input.Key(Field(fields, 1), verb == "kd");
+        int keysym = Field(fields, 1);
+        bool down = verb == "kd";
+        Input.Post(() => { clipboard.WaitPasted(5000); Input.Key(keysym, down); });
         break;
       case "kr":
-        Input.ReleaseKeys();
+        Input.Post(Input.ReleaseKeys);
         break;
       // bb-box: a character as itself, for a key QEMU's VNC server would type otherwise.
       case "cd": case "cu":
-        clipboard.WaitPasted(5000);
-        Input.Character(Field(fields, 1), verb == "cd");
+        int codePoint = Field(fields, 1);
+        bool pressed = verb == "cd";
+        Input.Post(() => { clipboard.WaitPasted(5000); Input.Character(codePoint, pressed); });
         break;
       // bb-box: says when the messages before it are handled, so a key QEMU takes after a character cannot overtake it.
       case "BB_PING":
-        if (fields.Length > 1) client.Text("BB_PONG," + fields[1]);
+        if (fields.Length > 1) Input.Post(() => client.Text("BB_PONG," + fields[1]));
         break;
       // bb-box: where the pointer is, now and as it moves, for a video that has none in it (#865).
       case "BB_POINTER_FOLLOW":
@@ -1084,10 +1117,12 @@ class Server {
         client.Text(pointerMessage ?? Capture.PointerAt());
         break;
       case "m":
-        Input.Pointer(Field(fields, 1), Field(fields, 2), Field(fields, 3));
+        int x = Field(fields, 1), y = Field(fields, 2), buttons = Field(fields, 3);
+        Input.Post(() => Input.Pointer(x, y, buttons));
         break;
       case "m2":
-        Input.Wheel(Field(fields, 3), Field(fields, 4));
+        int wheel = Field(fields, 3), notches = Field(fields, 4);
+        Input.Post(() => Input.Wheel(wheel, notches));
         break;
       case "BB_CURSOR":
         // bb-box: the pointer out of the video while a person holds control, whose browser shows its shape.
