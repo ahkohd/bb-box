@@ -86,7 +86,7 @@ Projects' images, by name (049).
 | [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
 | [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
 | [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu |
-| [`namespace`](#namespace) | Namespace | macos |
+| [`namespace`](#namespace) | Namespace | macos, macos-desktop |
 
 ### proxmox-lxc
 
