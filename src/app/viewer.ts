@@ -71,6 +71,8 @@ const leftShift = (down: boolean): LetterKey => ({ keysym: XK_SHIFT_L, code: "Sh
 
 /** The longest keys typed after a paste wait for its chord before they go anyway (#915). */
 export const PASTE_HOLD_MS = 5_000;
+/** How long keys typed after a paste wait once its chord went: an X app's first paste took up to 100 ms to land (#915). */
+export const PASTE_LANDS_MS = 250;
 
 /**
  * Keys typed while a paste is on its way, which wait for its chord so they land after the text, as typed (#915). A key
@@ -97,6 +99,12 @@ export class KeysAfterPaste<Key> {
     if (!this.#waiting) return false;
     this.#waiting.push(key);
     return true;
+  }
+
+  releaseIn(ms: number): void {
+    if (!this.#waiting) return;
+    clearTimeout(this.#limit);
+    this.#limit = setTimeout(() => this.release(), ms);
   }
 
   release(): void {

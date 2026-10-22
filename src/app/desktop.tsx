@@ -51,6 +51,7 @@ import { MachineRow } from "./settings-machines.tsx";
 import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
 import {
   KeysAfterPaste,
+  PASTE_LANDS_MS,
   ShiftedLetters,
   PASTE_CHORD_DELAY_MS,
   PASTE_EVENT_WAIT_MS,
@@ -570,7 +571,7 @@ export class DesktopSession implements Kept {
       client.sendKey(XK_V, "KeyV", true);
       client.sendKey(XK_V, "KeyV", false);
       client.sendKey(modifier.keysym, modifier.code, false);
-      client.afterPaste.release();
+      client.afterPaste.releaseIn(PASTE_LANDS_MS);
     }, PASTE_CHORD_DELAY_MS);
   }
 
