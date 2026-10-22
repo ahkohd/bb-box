@@ -37,19 +37,21 @@ Taking control does not change what you see: the desktop keeps its size. While y
 
 On a Mac, Cmd works as Ctrl in a Linux or Windows box. So Cmd+C copies, Cmd+V pastes, and Cmd+A, Cmd+Z, Cmd+F and Cmd+S do what Ctrl would. In a macOS box, Cmd stays Cmd. The left Option types accents and symbols as on your Mac, so Option+E then E gives é, and with an arrow, Tab or a function key it works as Alt; the right Option is always Alt, for an app's Alt+letter menu keys.
 
-Accented letters and other characters reach the box as your keyboard types them, such as é, ß or ж, whatever your keyboard's layout. Shortcuts go by the key you press, as on the box's own keyboard.
+Accented letters and other characters reach the box as your keyboard types them, such as é, ß or ж, whatever your keyboard's layout. Capitals arrive as capitals on every desktop, however your browser sends them, from a phone's or tablet's on-screen keyboard too. Shortcuts go by the key you press, as on the box's own keyboard.
 
 ## Copying and pasting
 
 Copying and pasting between your computer and the box works while you have control. After you paste, or select Copy to this computer, a BB notification says 'Pasted' or 'Copied' for a few seconds. Notes like these come as notifications, not in the toolbar, and you can close one early.
 
-To paste text from your computer into the box, click where it should go and press Cmd+V on a Mac, or Ctrl+V elsewhere. You can also select **Paste from this computer** in the toolbar's menu. If your browser does not let BB Box read your clipboard, a field opens: paste your text there and select **Paste into the box**.
+To paste text from your computer into the box, click where it should go and press Cmd+V on a Mac, or Ctrl+V elsewhere, into a macOS box too. You can also select **Paste from this computer** in the toolbar's menu. Keys you type straight after a paste wait for it, so they land after the pasted text, in the order you typed them. If your browser does not let BB Box read your clipboard, a field opens: paste your text there and select **Paste into the box**.
 
 When you copy text in the box, it comes to your computer's clipboard. You can also select **Copy to this computer** in the menu. If your browser does not let BB Box write to your clipboard, a field shows the text so you can copy it yourself.
 
 On Linux, and on any desktop shown as video, the text moves at once. Over VNC on a macOS desktop on a Mac, and on Windows, BB Box moves it with commands in the box, so it can take a moment: on Windows a few seconds, and up to about 8 seconds on Windows on a Mac.
 
 If nothing has come from the box, the menu's Copy says why: take control first, or copy something in the box first.
+
+A box's clipboard is its own. A Mac that runs boxes as virtual machines does not share its clipboard with them, so a box never holds what the Mac's owner copied.
 
 ## The pointer
 
@@ -65,7 +67,7 @@ A macOS desktop on a Mac of the SSH host pool opens as video. One on a Tart Mac 
 
 A Linux desktop on a GPU opens over VNC, with **Show as VNC** ticked. Select it to see the desktop as video, encoded on the box's GPU (NVENC). This needs a GPU box made from a recent image; an older one shows over VNC only.
 
-A Windows desktop on a Mac opens as video, as one on Proxmox does. The Mac makes the video from QEMU's own picture of the desktop, rather than Windows capturing it: it keeps up with VNC on a fast connection, is ahead of it on a slow one, never tears, and uses a fifteenth of the bandwidth. People watching see the agent's pointer, over video and over VNC. This needs a box made from a recent image, and Xcode's Command Line Tools on the Mac; `bb box doctor` says when a Mac lacks them.
+A Windows desktop on a Mac opens as video, as one on Proxmox does. The Mac makes the video from QEMU's own display of the desktop, rather than Windows capturing it: it shows about a third more frames a second than before, never tears, and uses far less bandwidth than VNC. Where the box's QEMU does not offer that display, the Mac makes the video from QEMU's VNC picture instead, as before. People watching see the agent's pointer, over video and over VNC. This needs a box made from a recent image, and Xcode's Command Line Tools on the Mac; `bb box doctor` says when a Mac lacks them.
 
 A Linux desktop on Wayland, which runs Ubuntu 26.04, also opens as video, which follows a drag more closely than VNC, does not tear while you scroll, and uses about a sixth of the bandwidth, though a key on its own shows a little later. This needs a Wayland box made from a recent image; an older one shows over VNC. High resolution is not offered on Wayland.
 
