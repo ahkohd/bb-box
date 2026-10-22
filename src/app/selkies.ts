@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { KeysAfterPaste, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, pasteChordKeys, retryWait, type Connection } from "./viewer.ts";
+import { KeysAfterPaste, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_SHIFT_L, XK_V, boxKey, macBrowser, pasteChordKeys, pasteShortcut, retryWait, type Connection, type PasteShortcut } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -284,10 +284,11 @@ export class SelkiesSession implements Kept {
   #cursorVisible = false;
   readonly #observer: ResizeObserver | null;
   #settle: ReturnType<typeof setTimeout> | undefined;
-  #pasteArmed: number | null = null;
+  /** A Cmd+V or Ctrl+V taken from the keyboard handler, with Shift or not, while the browser's paste event is awaited. */
+  #pasteArmed: PasteShortcut | null = null;
   #pasteWait: ReturnType<typeof setTimeout> | undefined;
-  /** Each paste's chord still to go: two pastes in quick succession press it twice. */
-  readonly #chords = new Set<ReturnType<typeof setTimeout>>();
+  /** Each paste's chord still to go, and whether it has Shift: two pastes in quick succession press it twice. */
+  readonly #chords = new Map<ReturnType<typeof setTimeout>, boolean>();
   /** Pastes whose text is still on its way to the box. */
   #putting = 0;
   readonly #onPasteEvent = (event: ClipboardEvent) => this.#takePaste(event);
@@ -313,7 +314,7 @@ export class SelkiesSession implements Kept {
   constructor(url: string) {
     this.#url = url;
     this.#afterPaste.join(tabOf(url));
-    this.#afterPaste.pressChord = () => this.#pressPaste();
+    this.#afterPaste.pressChord = (shifted) => this.#pressPaste(shifted);
     this.element.className = "absolute inset-0";
     // No colour of its own: the pane's, in the theme's neutral, shows around a picture that does not fill it, as it does for VNC.
     this.element.style.background = "transparent";
@@ -912,13 +913,13 @@ export class SelkiesSession implements Kept {
   }
 
   /** Puts text on the box's clipboard, then presses the box's own paste chord where the cursor is, and says so. */
-  paste(text: string): void {
+  paste(text: string, shifted = false): void {
     if (this.connection.state !== "connected") return;
     this.#afterPaste.hold();
     const put = this.putClipboard?.(text);
     if (!put) {
       this.#putOnBox("text/plain", new TextEncoder().encode(text));
-      this.#pressPaste();
+      this.#pressPaste(shifted);
       this.onPaste?.(text);
       return;
     }
@@ -927,8 +928,8 @@ export class SelkiesSession implements Kept {
       () => {
         this.#putting--;
         // The stream switched while the text was on its way: the tab's new session presses the chord.
-        if (this.#disposed) this.#afterPaste.handChord();
-        else this.#pressPaste();
+        if (this.#disposed) this.#afterPaste.handChord(shifted);
+        else this.#pressPaste(shifted);
         this.onPaste?.(text);
       },
       (error: unknown) => {
@@ -963,46 +964,49 @@ export class SelkiesSession implements Kept {
     this.onPaste?.(image);
   }
 
-  #pressPaste(): void {
+  #pressPaste(shifted = false): void {
     this.#afterPaste.hold();
     const chord = setTimeout(() => {
       this.#chords.delete(chord);
-      this.#sendChord();
+      this.#sendChord(shifted);
     }, PASTE_CHORD_DELAY_MS);
-    this.#chords.add(chord);
+    this.#chords.set(chord, shifted);
   }
 
-  #sendChord(): void {
+  #sendChord(shifted: boolean): void {
     if (this.connection.state !== "connected") {
       this.#afterPaste.drop();
       return;
     }
     const modifier = { keysym: this.guestOs === "macos" ? XK_META_L : XK_CONTROL_L };
     const held = [...this.#held].map((keysym) => ({ keysym }));
-    for (const { key, down } of pasteChordKeys(modifier, { keysym: XK_V }, held)) this.#send(`${down ? "kd" : "ku"},${key.keysym}`);
+    const modifiers = shifted ? [modifier, { keysym: XK_SHIFT_L }] : [modifier];
+    for (const { key, down } of pasteChordKeys(modifiers, { keysym: XK_V }, held)) this.#send(`${down ? "kd" : "ku"},${key.keysym}`);
     // Keys typed since wait for the last paste on its way.
     if (!this.#pasteDue()) this.#afterPaste.releaseIn(PASTE_LANDS_MS);
   }
 
-  /** A Cmd+V (Ctrl+V off a Mac) while this tab has control: kept from the keyboard handler, left to the browser, whose paste event brings the text. */
+  /** A Cmd+V (Ctrl+V off a Mac), or with Shift on a box that is not a Mac, while this tab has control: kept from the keyboard handler, left to the browser, whose paste event brings the text. */
   #interceptPaste(event: KeyboardEvent): void {
     if (!this.#mine || this.connection.state !== "connected" || this.pasteAllowed?.() === false) return;
-    if (event.key.toLowerCase() !== "v" || event.altKey || event.shiftKey) return;
-    if (!(macBrowser() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
+    const shortcut = pasteShortcut(event, this.guestOs, macBrowser());
+    if (!shortcut) return;
     event.stopPropagation();
-    this.#pasteArmed = Date.now();
+    this.#pasteArmed = shortcut;
     this.#afterPaste.hold();
     clearTimeout(this.#pasteWait);
     this.#pasteWait = setTimeout(() => {
       if (this.#pasteArmed === null) return;
+      const shifted = this.#pasteArmed === "shifted";
       this.#pasteArmed = null;
-      this.#pressPaste();
+      this.#pressPaste(shifted);
       this.onPaste?.(null);
     }, PASTE_EVENT_WAIT_MS);
   }
 
   #takePaste(event: ClipboardEvent): void {
     if (this.#pasteArmed === null) return;
+    const shifted = this.#pasteArmed === "shifted";
     this.#pasteArmed = null;
     clearTimeout(this.#pasteWait);
     const image = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
@@ -1013,10 +1017,10 @@ export class SelkiesSession implements Kept {
       return;
     }
     if (text) {
-      this.paste(text);
+      this.paste(text, shifted);
       return;
     }
-    this.#pressPaste();
+    this.#pressPaste(shifted);
     this.onPaste?.(null);
   }
 
@@ -1075,9 +1079,9 @@ export class SelkiesSession implements Kept {
   dispose(): void {
     const due = [...this.#chords];
     this.#chords.clear();
-    for (const chord of due) {
+    for (const [chord, shifted] of due) {
       clearTimeout(chord);
-      this.#sendChord();
+      this.#sendChord(shifted);
     }
     this.#afterPaste.close();
     this.#unhold();
