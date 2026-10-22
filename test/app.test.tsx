@@ -20,7 +20,7 @@ import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.t
 import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, STALL_MS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
-import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, retryWait } from "../src/app/viewer.ts";
+import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, pasteShortcut, retryWait } from "../src/app/viewer.ts";
 import { checkWords, forgetResizesAsked } from "../src/app/resize.tsx";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
@@ -5194,7 +5194,7 @@ test("a session that goes with its paste on its way hands the keys it held to th
     vnc.join("box_2:viewer-one");
     expect(vnc.keep("b")).toBe(true);
     // The text lands: VNC presses the chord, and sends the video's key, then its own, once that has landed.
-    video.handChord();
+    video.handChord(false);
     expect(pressed).toBe(1);
     expect(sent).toEqual([]);
     vnc.releaseIn(PASTE_LANDS_MS);
@@ -5205,5 +5205,93 @@ test("a session that goes with its paste on its way hands the keys it held to th
     vnc.close();
   } finally {
     vi.useRealTimers();
+  }
+});
+
+test("Ctrl+V, Cmd+V from a Mac, is a paste of this computer's clipboard, and with Shift too on a box that is not a Mac, as Linux terminals paste; Cmd+Shift+V on a Mac box is the person's own", () => {
+  const press = (init: Partial<KeyboardEvent>) => ({ key: "v", altKey: false, shiftKey: false, ctrlKey: false, metaKey: false, ...init });
+  for (const os of ["linux", "windows"]) {
+    expect(pasteShortcut(press({ ctrlKey: true }), os, false)).toBe("plain");
+    expect(pasteShortcut(press({ key: "V", ctrlKey: true, shiftKey: true }), os, false)).toBe("shifted");
+    expect(pasteShortcut(press({ key: "V", metaKey: true, shiftKey: true }), os, true)).toBe("shifted");
+    expect(pasteShortcut(press({ ctrlKey: true, altKey: true }), os, false)).toBeNull();
+  }
+  expect(pasteShortcut(press({ metaKey: true }), "macos", true)).toBe("plain");
+  expect(pasteShortcut(press({ ctrlKey: true }), "macos", false)).toBe("plain");
+  expect(pasteShortcut(press({ key: "V", metaKey: true, shiftKey: true }), "macos", true)).toBeNull();
+  expect(pasteShortcut(press({ key: "V", ctrlKey: true, shiftKey: true }), "macos", false)).toBeNull();
+  expect(pasteShortcut(press({ ctrlKey: true }), "linux", true)).toBeNull();
+});
+
+test("over VNC, Ctrl+Shift+V from Linux pastes this computer's text into a Linux box with the box's Ctrl+Shift+V, the person's own Ctrl and Shift up for it; on a Mac box Cmd+Shift+V goes to the box as typed", async () => {
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("Linux x86_64");
+  try {
+    const { handlers } = server([desktopBox()]);
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    client._handleKeyEvent(0xffe3, "ControlLeft", true, null, false);
+    client._handleKeyEvent(0xffe1, "ShiftLeft", true, null, false);
+    const { reached } = keyOnCanvas(slot, { key: "V", code: "KeyV", ctrlKey: true, shiftKey: true });
+    expect(reached).not.toHaveBeenCalled();
+    act(() => void document.dispatchEvent(pasteEvent("[TERMINAL]")));
+    await waitFor(() => expect(client.keys).toHaveLength(10));
+    expect(client.pasted).toContain("[TERMINAL]");
+    expect(client.keys.map((key) => `${key.code}${key.down ? "" : " up"}`)).toEqual([
+      "ControlLeft up",
+      "ShiftLeft up",
+      "ControlLeft",
+      "ShiftLeft",
+      "KeyV",
+      "KeyV up",
+      "ShiftLeft up",
+      "ControlLeft up",
+      "ControlLeft",
+      "ShiftLeft",
+    ]);
+  } finally {
+    platform.mockRestore();
+  }
+});
+
+test("on a Mac box, Cmd+Shift+V from a Mac goes to the box as the person's own keys, paste and match style, not a paste of this computer's clipboard", async () => {
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
+  try {
+    const { handlers } = server([desktopBox({ os: "macos", nature: "real", kind: "macos-desktop", kindLabel: "macOS desktop" })]);
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const { reached } = keyOnCanvas(slot, { key: "V", code: "KeyV", metaKey: true, shiftKey: true });
+    expect(reached).toHaveBeenCalled();
+    act(() => void document.dispatchEvent(pasteEvent("[TEXT]")));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(client.keys).toEqual([]);
+  } finally {
+    platform.mockRestore();
+  }
+});
+
+test("over video, Ctrl+Shift+V from Linux pastes this computer's text into a Windows box with the box's Ctrl+Shift+V", async () => {
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("Linux x86_64");
+  const undo = withVideo();
+  try {
+    const { handlers, changes } = server([desktopBox(KEYBOARD_MODES[1].box as Partial<BoxView>)], { video: true });
+    const { socket, canvas } = await videoInControl(handlers);
+    const keys = () => socket.sent.filter((sent): sent is string => typeof sent === "string" && /^k[du],/.test(sent));
+    fireEvent.keyDown(canvas, { key: "V", code: "KeyV", ctrlKey: true, shiftKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("[TERMINAL]")));
+    await waitFor(() => expect(keys()).toContain("ku,65507"));
+    expect(changes.some((change) => change.startsWith("desktopPaste") && change.endsWith("[TERMINAL]"))).toBe(true);
+    expect(keys()).toEqual(["kd,65507", "kd,65505", "kd,118", "ku,118", "ku,65505", "ku,65507"]);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+    platform.mockRestore();
   }
 });

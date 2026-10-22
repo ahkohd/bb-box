@@ -43,7 +43,7 @@ Accented letters and other characters reach the box as your keyboard types them,
 
 Copying and pasting between your computer and the box works while you have control. After you paste, or select Copy to this computer, a BB notification says 'Pasted' or 'Copied' for a few seconds. Notes like these come as notifications, not in the toolbar, and you can close one early.
 
-To paste text from your computer into the box, click where it should go and press Cmd+V on a Mac, or Ctrl+V elsewhere, into a macOS box too. You can also select **Paste from this computer** in the toolbar's menu. Keys you type straight after a paste wait for it, so they land after the pasted text, in the order you typed them. If your browser does not let BB Box read your clipboard, a field opens: paste your text there and select **Paste into the box**.
+To paste text from your computer into the box, click where it should go and press Cmd+V on a Mac, or Ctrl+V elsewhere, into a macOS box too. In a Linux or Windows box, Ctrl+Shift+V (Cmd+Shift+V on a Mac) pastes your text too, as a terminal expects. In a macOS box, Cmd+Shift+V goes to the box as you typed it, to paste and match style. You can also select **Paste from this computer** in the toolbar's menu. Keys you type straight after a paste wait for it, so they land after the pasted text, in the order you typed them. If your browser does not let BB Box read your clipboard, a field opens: paste your text there and select **Paste into the box**.
 
 When you copy text in the box, it comes to your computer's clipboard. You can also select **Copy to this computer** in the menu. If your browser does not let BB Box write to your clipboard, a field shows the text so you can copy it yourself.
 

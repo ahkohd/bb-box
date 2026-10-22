@@ -100,7 +100,7 @@ export class KeysAfterPaste<Key> {
   #limit: ReturnType<typeof setTimeout> | undefined;
   #tab: string | null = null;
   /** Presses the box's paste chord in this session, for a paste another session of the tab took and could not press. */
-  pressChord: (() => void) | null = null;
+  pressChord: ((shifted: boolean) => void) | null = null;
 
   constructor(send: (key: Key) => void, limitMs = PASTE_HOLD_MS) {
     this.#send = send;
@@ -157,13 +157,13 @@ export class KeysAfterPaste<Key> {
    * This session has gone, and the text of its paste has now landed on the box: the tab's newest session presses the
    * chord, and sends the keys held here after it. With no session left in the tab the paste and the keys go nowhere.
    */
-  handChord(): void {
+  handChord(shifted: boolean): void {
     const heir = this.#heir();
     if (!heir?.pressChord) {
       this.drop();
       return;
     }
-    heir.pressChord();
+    heir.pressChord(shifted);
     this.release();
   }
 
@@ -247,18 +247,34 @@ export function isModifier(keysym: number): boolean {
 /**
  * The box's paste chord as key events, alone: modifiers the box holds go up first and down again after. The person's
  * own Ctrl+V leaves their Ctrl down at the box while their release waits behind the chord (#915), and a Mac box would
- * take Control+Command+V, which pastes nothing.
+ * take Control+Command+V, which pastes nothing. `modifiers` go down in order and up in reverse, as Ctrl and Shift for
+ * a terminal's paste.
  */
-export function pasteChordKeys<K extends { readonly keysym: number }>(modifier: K, v: K, held: readonly K[]): { readonly key: K; readonly down: boolean }[] {
+export function pasteChordKeys<K extends { readonly keysym: number }>(modifiers: readonly K[], v: K, held: readonly K[]): { readonly key: K; readonly down: boolean }[] {
   const lifted = held.filter((key) => isModifier(key.keysym));
   return [
     ...lifted.map((key) => ({ key, down: false })),
-    { key: modifier, down: true },
+    ...modifiers.map((key) => ({ key, down: true })),
     { key: v, down: true },
     { key: v, down: false },
-    { key: modifier, down: false },
+    ...[...modifiers].reverse().map((key) => ({ key, down: false })),
     ...lifted.map((key) => ({ key, down: true })),
   ];
+}
+
+/** A paste the person asked for with a key press: "shifted" with Shift too, which the box gets as Ctrl+Shift+V. */
+export type PasteShortcut = "plain" | "shifted";
+
+/**
+ * Whether a key press is a paste of this computer's clipboard: Cmd+V in a Mac's browser and Ctrl+V elsewhere, and with
+ * Shift too, as Linux terminals paste, on a box that is not a Mac. On a Mac box Cmd+Shift+V is the person's own keys,
+ * to paste and match style with the box's clipboard.
+ */
+export function pasteShortcut(event: Pick<KeyboardEvent, "key" | "altKey" | "shiftKey" | "ctrlKey" | "metaKey">, guestOs: string, mac: boolean): PasteShortcut | null {
+  if (event.key.toLowerCase() !== "v" || event.altKey) return null;
+  if (!(mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return null;
+  if (!event.shiftKey) return "plain";
+  return guestOs === "macos" ? null : "shifted";
 }
 
 /**
