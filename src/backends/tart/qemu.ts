@@ -247,6 +247,9 @@ echo @config; cat "$v/config"
 `);
 }
 
+/** How QEMU shows a Windows VM's desktop besides VNC: not at all, or through its D-Bus display (#885). */
+export type QemuDisplay = "none" | "dbus";
+
 /**
  * Starts the VM unless it runs, detached from the SSH session, and waits for
  * QEMU's QMP socket. A VM with a saved state restores it, runs on, and drops
@@ -254,8 +257,12 @@ echo @config; cat "$v/config"
  * "restored". When QEMU exits first, exits 3 with its output; when a state
  * does not restore, fails saying so. The last run's output and exit are
  * kept (host.ts).
+ *
+ * The display "dbus" adds QEMU's D-Bus display, peer to peer, which
+ * bb-box-stream reads the desktop from (#885); VNC stays. A display is no
+ * part of a saved state, so a state saved under either restores under either.
  */
-export function qemuStartScript(vm: string, waitSeconds: number): string {
+export function qemuStartScript(vm: string, waitSeconds: number, display: QemuDisplay = "none"): string {
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
 [ -f "$v/config" ] || { echo "There is no VM $vm." >&2; exit 1; }
 if qrunning "$vm"; then echo running; exit 0; fi
@@ -270,7 +277,7 @@ set -- -name "$vm" -machine "$(val machine)" -accel hvf -cpu host -smp "$(val co
   -device qemu-xhci -device usb-kbd -device usb-tablet \
   -drive "if=none,id=disk,file=$v/disk.qcow2,discard=unmap" -device virtio-blk-pci,drive=disk \
   -netdev "user,id=net,hostfwd=tcp:127.0.0.1:$(val ssh)-:22" -device virtio-net-pci,netdev=net \
-  -device virtio-gpu-pci -display none -vnc "127.0.0.1:$(($(val vnc) - 5900)),lossy=on" \
+  -device virtio-gpu-pci -display ${display === "dbus" ? "dbus,p2p=yes" : "none"} -vnc "127.0.0.1:$(($(val vnc) - 5900)),lossy=on" \
   -qmp "unix:$v/qmp,server=on,wait=off" -pidfile "$v/pid"
 saved=; if [ -f "$v/state" ]; then saved=1; set -- "$@" -incoming defer; fi
 keep "$v/out" "$v/exit"

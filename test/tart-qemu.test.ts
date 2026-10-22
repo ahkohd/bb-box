@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
-import { parseQemuState } from "../src/backends/tart/qemu.ts";
+import { parseQemuState, qemuStartScript } from "../src/backends/tart/qemu.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { CUA_PIPE, NAME_WINDOWS_SCRIPT, parseNamed } from "../src/backends/windows.ts";
 import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, WINDOWS_TOOLS, addImage, addWindowsImage, fakeMacTools, fakeQemu, fakeSwift, imageRecord, tartConfig } from "./fake-mac.ts";
@@ -180,6 +180,12 @@ test("offers windows-arm64-desktop only with a Windows image, as a Windows deskt
   const off = new TartBackend(tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-windows-enrol": false }), testContext()).kinds();
   assert.equal(off.find((candidate) => candidate.id === KIND)?.capabilities.enrol, false);
   assert.ok(off.filter((candidate) => candidate.id !== KIND).every((candidate) => candidate.capabilities.enrol));
+});
+
+test("QEMU shows a Windows VM's desktop through its D-Bus display, peer to peer, where asked, with VNC as before; a saved state restores under either (#885)", () => {
+  assert.match(qemuStartScript("vm", 60), /-display none -vnc /);
+  assert.match(qemuStartScript("vm", 60, "dbus"), /-display dbus,p2p=yes -vnc /);
+  assert.match(qemuStartScript("vm", 60, "dbus"), /-incoming defer/);
 });
 
 test("reads QEMU's VMs and its checks from the state script", () => {
