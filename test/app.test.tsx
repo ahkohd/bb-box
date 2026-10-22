@@ -2103,11 +2103,14 @@ test("with control, Cmd+V on a Mac pastes this computer's text into a Linux box 
     expect(client.pasted).toEqual(["hello from the Mac"]);
     expect(client.keys).toEqual([]);
     act(() => void vi.advanceTimersByTime(PASTE_CHORD_DELAY_MS));
+    // The right Option, still held, goes up for the chord and down again after, so the box gets Ctrl+V alone.
     expect(client.keys).toEqual([
+      { keysym: 0xffea, code: "AltRight", down: false },
       { keysym: 0xffe3, code: "ControlLeft", down: true },
       { keysym: 0x76, code: "KeyV", down: true },
       { keysym: 0x76, code: "KeyV", down: false },
       { keysym: 0xffe3, code: "ControlLeft", down: false },
+      { keysym: 0xffea, code: "AltRight", down: true },
     ]);
     expect(slot.getByText("Pasted")).toBeTruthy();
     // A paste event meant for a field elsewhere is not the desktop's.
@@ -2142,6 +2145,9 @@ test("a macOS box keeps Cmd, and the menu's Paste reads this computer's clipboar
       { keysym: 0xffe9, code: "AltLeft", down: true },
       { keysym: 0xffea, code: "AltRight", down: true },
     ]);
+    client._handleKeyEvent(0xffe9, "MetaLeft", false, null, null);
+    client._handleKeyEvent(0xff7e, "AltLeft", false, null, null);
+    client._handleKeyEvent(0xfe03, "AltRight", false, null, null);
     const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
     await waitFor(() => expect(client.pasted).toEqual(["from the menu"]));
@@ -2275,6 +2281,8 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
       { keysym: 0xffe7, code: "MetaLeft", down: true },
       { keysym: 0x10020ac, code: "KeyE", down: true },
     ]);
+    client._handleKeyEvent(0xffe9, "MetaLeft", false, null, null);
+    client._handleKeyEvent(0xff7e, "AltLeft", false, null, null);
     const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
     await waitFor(() => expect(client.keys).toHaveLength(4));
@@ -2369,6 +2377,43 @@ test("keys typed straight after a paste land after it, though the box's clipboar
   await waitFor(() => expect(changes).toContain(`desktopPaste box_7 ${new URL(novnc.FakeRfb.made[0]!.url).searchParams.get("viewer")} [PASTE]`));
   await waitFor(() => expect(client.input).toHaveLength(8));
   expect(client.input).toEqual(["sent ControlLeft", "sent KeyV", "sent KeyV up", "sent ControlLeft up", "typed KeyX", "typed KeyX up", "typed Enter", "typed Enter up"]);
+});
+
+test("a person's Ctrl+V from Linux or Windows into a Mac on Tart pastes with Command+V alone: their Ctrl, still down at the box while its release waits behind the chord, goes up first and down again after (#915)", async () => {
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("Linux x86_64");
+  try {
+    const { handlers, changes } = server([desktopBox({ id: "box_8", name: "mac-8", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" } })]);
+    const slot = desktopTab(handlers, "box_8");
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    client.input.length = 0;
+
+    client._handleKeyEvent(0xffe3, "ControlLeft", true, null, null);
+    keyOnCanvas(slot, { key: "v", ctrlKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("[PASTE]")));
+    client._handleKeyEvent(0xffe3, "ControlLeft", false, null, null);
+    client._handleKeyEvent(0x78, "KeyX", true, null, null);
+    client._handleKeyEvent(0x78, "KeyX", false, null, null);
+    await waitFor(() => expect(client.input).toHaveLength(10));
+    expect(changes).toContain(`desktopPaste box_8 ${new URL(novnc.FakeRfb.made[0]!.url).searchParams.get("viewer")} [PASTE]`);
+    expect(client.input).toEqual([
+      "typed ControlLeft",
+      "sent ControlLeft up",
+      "sent AltLeft",
+      "sent KeyV",
+      "sent KeyV up",
+      "sent AltLeft up",
+      "sent ControlLeft",
+      "typed ControlLeft up",
+      "typed KeyX",
+      "typed KeyX up",
+    ]);
+  } finally {
+    platform.mockRestore();
+  }
 });
 
 test("over VNC, a letter typed with Shift held and Caps Lock off goes as its capital, released as pressed; with Caps Lock on it stays as named (#913)", async () => {
