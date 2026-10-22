@@ -64,6 +64,8 @@ The second grant lets BB Box read the workspace's limits: how many Mac cores and
 
 It prints the token once, after `Bearer Token:`, below its `Token ID` and dates. Copy the value after `Bearer Token:` for step 4, and do not save it anywhere else. Keep the token ID too: you need it to revoke the token. The token lasts a year, the longest Namespace allows. Make a new one before then.
 
+To replace a token, such as one made before the second grant, make the new one with another name, such as `--name bb-box-2`: Namespace refuses a name a token already has. Set the new token in BB Box's settings, then revoke the old one with `nsc token revoke --token_id` and its ID.
+
 ### 3. Choose where the Macs run
 
 Namespace puts a workspace's Macs where its regional preference says. You cannot choose a place for each Mac. On 22 October 2026, a new workspace's Macs ran in Namespace's sites in the eastern US.
