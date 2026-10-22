@@ -212,6 +212,7 @@ export class Backends {
   readonly #logError: (operation: string, error: unknown) => void;
   readonly #log: (message: string) => void;
   readonly #changed: () => void;
+  readonly #kindsChanged: () => void;
   readonly #entries = new Map<string, Entry>();
   /** Each backend's warm pools that are short for want of room, by ID, kept while it is built again. */
   readonly #short = new Map<string, WarmShortfalls>();
@@ -231,6 +232,8 @@ export class Backends {
     log?(message: string): void;
     /** Tells open pages that what they show changed, such as a pool's shortfall. */
     changed?(): void;
+    /** Says a backend changed a kind's capabilities by itself, so boxes of the kind take them (BackendContext.kindsChanged). */
+    kindsChanged?(): void;
     drivers?: readonly BackendDriver<any>[];
     /** BB machines backends reach through bb-box (042). */
     machines?: MachineAccess;
@@ -245,6 +248,7 @@ export class Backends {
     this.#logError = options.logError;
     this.#log = options.log ?? (() => {});
     this.#changed = options.changed ?? (() => {});
+    this.#kindsChanged = options.kindsChanged ?? (() => {});
   }
 
   get installId(): string {
@@ -280,6 +284,7 @@ export class Backends {
         return Math.max(0, (backend.warm?.[kind] ?? 0) - spares);
       },
       warmShortfalls: (short) => this.#shortfalls(id).set(short),
+      kindsChanged: () => this.#kindsChanged(),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
       kind: (kind) => {
         const document = this.#document;

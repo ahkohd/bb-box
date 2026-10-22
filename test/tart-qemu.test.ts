@@ -69,8 +69,10 @@ function setup(values: Record<string, unknown> = {}, options: TartBackendOptions
   );
   const config = tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": 0, ...values });
   /** A backend on the Mac: another install's, or this one's after a restart. */
+  // How often the backend said a kind changed by itself, so bb-box gives its boxes the change.
+  const kindsChanged = { count: 0 };
   const make = (installId = "test", counts = warm) => {
-    const context = testContext(new MemoryStorage(), installId, { warm: counts });
+    const context = { ...testContext(new MemoryStorage(), installId, { warm: counts }), kindsChanged: () => void kindsChanged.count++ };
     const backend = new TartBackend(config, context, { ...FAKES, ...options });
     made.push(backend);
     return { context, backend };
@@ -83,6 +85,7 @@ function setup(values: Record<string, unknown> = {}, options: TartBackendOptions
     context,
     backend,
     make,
+    kindsChanged,
     qemu: join(mac, ".bb-box", "qemu"),
     owners: join(mac, ".bb-box", "tart", "owners"),
     firmware: join(mac, ".nix-profile", "share", "qemu", "edk2-aarch64-code.fd"),
@@ -302,7 +305,7 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
 });
 
 test("Windows on a Mac offers video by choice while every Mac's image records OpenH264 and every Mac has built bb-box-stream, and a box shows it where it has bb-box-stream.exe (060, #865)", async () => {
-  const { backend, ssh, build, mac, qemu } = setup({}, { qemuVideoSource: "// bb-box-stream, as a test gives it\n" });
+  const { backend, ssh, build, mac, qemu, kindsChanged } = setup({}, { qemuVideoSource: "// bb-box-stream, as a test gives it\n" });
   fakeSwift(mac);
   const kind = () => backend.kinds().find((candidate) => candidate.id === KIND)!;
   assert.equal(await backend.asOffered({ ref: "x", host: MAC, address: null, size: null }, KIND), false, "unknown until a Mac answers");
@@ -319,8 +322,13 @@ test("Windows on a Mac offers video by choice while every Mac's image records Op
   await until(() => existsSync(bin) && built().some((name) => name.endsWith(".sha256")) && built().length === 2, "the build of bb-box-stream");
   assert.equal(statSync(bin).mode & 0o777, 0o700, "in a folder only the host user can open");
   assert.deepEqual(built().length, 2, "the build and its hash, the source gone");
+  const before = kindsChanged.count;
   await backend.capacity(KIND, SMALL, [], signal());
   assert.deepEqual(kind().capabilities.displays[1], { id: "video", protocol: "selkies", resizable: true, cursor: "stream" }, "it opens as video (#865)");
+  // So a box made before, as just after bb-box restarted while the Mac's video was not ready, gets it too.
+  assert.equal(kindsChanged.count, before + 1, "the backend says the kind changed");
+  await backend.capacity(KIND, SMALL, [], signal());
+  assert.equal(kindsChanged.count, before + 1, "and only when it does");
 
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   const without = (await backend.transports(guest, KIND)).displays;
@@ -359,6 +367,7 @@ test("Windows on a Mac offers video by choice while every Mac's image records Op
   writeFileSync(join(build, "image.json"), `${imageRecord(KIND, { tools: WINDOWS_TOOLS })}\n`);
   await backend.capacity(KIND, SMALL, [], signal());
   assert.equal(kind().capabilities.displays.length, 1);
+  assert.equal(kindsChanged.count, before + 2, "the backend says so again");
   // The bridge goes with the box, by its PID.
   await backend.release(guest, releasing, signal());
   await until(() => !alive(pid), "the bridge to end");

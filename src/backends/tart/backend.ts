@@ -805,6 +805,7 @@ export class TartBackend implements Backend {
     const displays = video ? [...others, this.#config.video ? MAC_VIDEO : { ...MAC_VIDEO, byChoice: true }] : others;
     if (JSON.stringify(displays) === JSON.stringify(kind.capabilities.displays)) return;
     this.#kinds[index] = { ...kind, capabilities: { ...kind.capabilities, displays } };
+    this.#context.kindsChanged?.();
   }
 
   /**
@@ -845,6 +846,8 @@ export class TartBackend implements Backend {
     const displays = video ? [...others, { ...WINDOWS_VIDEO, ...(cursor ? { cursor: "stream" as const } : {}) }] : others;
     if (JSON.stringify(displays) === JSON.stringify(kind.capabilities.displays)) return;
     this.#kinds[index] = { ...kind, capabilities: { ...kind.capabilities, displays } };
+    // Boxes made before, as just after bb-box restarted while the Mac's video was not ready, take it too.
+    this.#context.kindsChanged?.();
   }
 
   #kind(id: string): BoxKind {

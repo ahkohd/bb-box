@@ -471,12 +471,15 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
   };
 
+  // A kind a backend changed by itself, as when a Mac reports Windows video ready: its boxes take it, once there are boxes.
+  let kindsChanged = () => notify(null);
   const backends = new Backends({
     storage: kv,
     installId: await loadInstallId(kv),
     logError,
     log: (message) => bb.log.info(message),
     changed: () => notify(null),
+    kindsChanged: () => kindsChanged(),
     drivers,
     machines,
     images,
@@ -664,6 +667,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logError,
     log: (message) => bb.log.info(message),
   });
+  kindsChanged = () => {
+    notify(null);
+    void boxes.refreshCapabilities().catch((error) => logError("capabilities", error));
+  };
   files = new BoxFiles({ boxes, files: () => boxFilesOf(configuration.document.general.files, configuration.secrets), logError });
   void files.started().catch((error) => logError("write the files for every box", error));
   enrolment = new Enrolment({
