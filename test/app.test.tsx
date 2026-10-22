@@ -2403,16 +2403,25 @@ test("a Windows box, whose QEMU console moves no clipboard, has it through bb-bo
 
 test("keys typed straight after a paste land after it, though the box's clipboard takes a while; with no paste pending a key goes at once (#915)", async () => {
   const { handlers, changes } = server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: null, quality: null, macKeys: null } })]);
+  // Only the paste's own text waits for the test; the clipboard that goes to the box as control is taken answers at once, so
+  // under load it cannot take the paste's place. This computer's clipboard starts empty, whatever an earlier test left there.
+  fakeClipboard(() => Promise.resolve(""));
   let landed: (() => void) | null = null;
   const slow: PluginRpcTestHandlers<Contract> = {
     ...handlers,
-    desktopPaste: ({ box: ref, viewer, text }) =>
-      new Promise<null>((resolve) => {
+    desktopPaste: ({ box: ref, viewer, text }) => {
+      const land = () => changes.push(`desktopPaste ${ref} ${viewer} ${text}`);
+      if (text !== "[PASTE]") {
+        land();
+        return null;
+      }
+      return new Promise<null>((resolve) => {
         landed = () => {
-          changes.push(`desktopPaste ${ref} ${viewer} ${text}`);
+          land();
           resolve(null);
         };
-      }),
+      });
+    },
   };
   const slot = desktopTab(slow, "box_7");
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
