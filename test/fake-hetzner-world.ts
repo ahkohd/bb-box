@@ -18,6 +18,7 @@ export function hetznerConfig(overrides: Partial<HetznerConfig> = {}, dockerFiel
     mostHosts: 2,
     idleMinutes: 30,
     monthlyLimitEurosBeforeVat: null,
+    sshFrom: [],
     docker: dockerConfig({ "reserve-memory-mib": 2048, ...dockerFields }),
     ...overrides,
   };

@@ -1,4 +1,10 @@
+import { spawn } from "node:child_process";
+import { join } from "node:path";
 import type { CheckId } from "../../core/checks.ts";
+import { keyDescription, tailnetHostname } from "../../core/tailnet.ts";
+import { setupDir } from "../setup-dir.ts";
+import { hostUserData } from "./cloud-init.ts";
+import { HostReach } from "./reach.ts";
 import { DockerBackend, dockerKinds, type DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
 import type { DockerConfig } from "../docker/config.ts";
@@ -36,6 +42,7 @@ export interface HetznerConfig {
   readonly mostHosts: number;
   readonly idleMinutes: number;
   readonly monthlyLimitEurosBeforeVat: number | null;
+  readonly sshFrom: readonly string[];
   readonly docker: DockerConfig;
 }
 
@@ -43,7 +50,9 @@ export interface HetznerBackendOptions {
   readonly fetch?: HetznerFetch;
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly now?: () => number;
-  readonly reachHost: (host: HostRecord) => DockerCli;
+  readonly reachHost?: (host: HostRecord) => DockerCli;
+  readonly sshBinary?: string;
+  readonly buildImage?: (host: HostRecord, cli: DockerCli, image: string, target: string, log: (line: string) => void, signal: AbortSignal) => Promise<void>;
   readonly userData?: (hostId: string, serverName: string) => Promise<string> | string;
   readonly dockerOptions?: Omit<DockerBackendOptions, "cliReachingAHostAnotherBackendMade">;
   readonly hostAnswersWithinMs?: number;
@@ -54,6 +63,7 @@ type Pending = { readonly kind: string; readonly size: BoxSize };
 
 interface HostPart {
   readonly record: HostRecord;
+  readonly cli: DockerCli;
   readonly docker: DockerBackend;
 }
 
@@ -75,6 +85,9 @@ const SILENT_HOST_DELETED_AFTER_MS = 24 * 3_600_000;
 const ANSWERED_NOTED_EVERY_MS = 60_000;
 const OS_MEMORY_MiB = 1024;
 const NO_GPU_KINDS = (kind: BoxKind) => kind.id !== "linux-desktop";
+const PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS = 600_000;
+const SNAPSHOT_HOST_ANSWERS_WITHIN_MS = 180_000;
+const BUILD_TARGET: Readonly<Record<string, string>> = { linux: "linux", "linux-desktop-cpu": "desktop", "linux-desktop-wayland-cpu": "desktop-wayland" };
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -101,6 +114,8 @@ export class HetznerBackend implements Backend {
   readonly #kinds: BoxKind[];
   readonly #parts = new Map<string, HostPart>();
   readonly #making = new Map<string, Promise<HostPart>>();
+  readonly #building = new Map<string, Promise<void>>();
+  readonly #reach: HostReach | null;
   readonly #now: () => number;
   #placement: Promise<unknown> = Promise.resolve();
   #prices: { at: number; price: EurosBeforeVat } | null = null;
@@ -122,6 +137,13 @@ export class HetznerBackend implements Backend {
       whenGone: (record, goneAtMs) => this.#billEnded(record, goneAtMs),
     });
     this.#kinds = dockerKinds(config.docker).filter(NO_GPU_KINDS);
+    this.#reach = options.reachHost
+      ? null
+      : new HostReach({ api: this.#api, storage: context.storage, installId: context.installId, tailnet: () => context.tailnet?.() ?? null, sshFrom: config.sshFrom, sshBinary: options.sshBinary, dockerBinary: options.dockerOptions?.binary });
+  }
+
+  async dispose(): Promise<void> {
+    await this.#reach?.dispose();
   }
 
   get label(): string {
@@ -160,6 +182,10 @@ export class HetznerBackend implements Backend {
     if (!part) throw new BackendError("gone", `The Hetzner Cloud host of ${box.name} is gone.`);
     const own = (guest: Guest): Guest => ({ ...guest, host: part.record.serverName, data: { ...guest.data, [HOST_KEY]: part.record.hostId } });
     await this.hostRecords.markBusy(part.record.hostId);
+    if (!resumedOn) {
+      const started = performance.now();
+      if (await this.#imageReady(part, box.kind, signal)) hooks.timing("build image", Math.round(performance.now() - started));
+    }
     const made = await part.docker.acquire(box, previous ? { ...previous, data: { ...previous.data } } : null, { ...hooks, claim: (guest) => hooks.claim(own(guest)) }, signal);
     void this.#makeNextAhead().catch((error) => this.#context.logError("make the next Hetzner Cloud host ahead", error));
     return own(made);
@@ -243,6 +269,7 @@ export class HetznerBackend implements Backend {
 
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.hostRecords.sweep(signal);
+    await this.#removeFromTailnet("every one this install has no host for", signal);
     const idleMs = this.#config.idleMinutes * 60_000;
     for (const record of await this.hostRecords.records()) {
       if (record.state !== "ready" || this.hostRecords.isMakingInThisProcess(record.hostId)) continue;
@@ -291,6 +318,11 @@ export class HetznerBackend implements Backend {
       push("hetzner.api", "Hetzner Cloud API", "fail", message(error), unauthorised ? "Make a Read & Write API token in the project's Security page, and paste it into the backend's settings." : "Check that BB's server reaches api.hetzner.cloud.");
       push("hetzner.unclaimed", "Servers no host claims", "skipped", "Skipped until the checks above pass.");
     }
+
+    const unreachable = this.#reach?.canReach() ?? null;
+    const tailnetOn = (this.#context.tailnet?.() ?? null) !== null;
+    if (unreachable) push("hetzner.reach", "Reaching hosts", "fail", unreachable + ".", "Turn the tailnet on, or set SSH from.");
+    else push("hetzner.reach", "Reaching hosts", "ok", tailnetOn ? "Over the tailnet: each host joins it as it starts, with a key bb-box makes for it, and its SSH is closed to the internet." : `Over the internet, from ${this.#config.sshFrom.join(", ")}, with bb-box's own SSH key.`);
 
     const type = await this.#serverTypeNow(signal).catch((error: unknown) => error as Error);
     if (type instanceof Error || !type) {
@@ -373,6 +405,8 @@ export class HetznerBackend implements Backend {
   }
 
   async #whyNoNewHost(size: BoxSize, signal?: AbortSignal): Promise<string | null> {
+    const unreachable = this.#reach?.canReach() ?? null;
+    if (unreachable) return unreachable;
     if (size.diskGiB !== null) return `a Docker box shares its host's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk of its own. Ask for the base disk`;
     const live = (await this.hostRecords.records()).filter((record) => record.state !== "deleting");
     if (live.length >= this.#config.mostHosts) return `it has the ${this.#config.mostHosts} host${this.#config.mostHosts === 1 ? "" : "s"} it may have at once. Release a box, or raise the most hosts in the backend's settings`;
@@ -433,7 +467,9 @@ export class HetznerBackend implements Backend {
           location: this.#config.location,
           imageNameOrSnapshotId: this.#config.hostImage,
           imageLabel: this.#config.hostImageLabel,
-          userData: this.#options.userData,
+          sshKeys: this.#reach ? [await this.#reach.hetznerSshKeyId(signal)] : undefined,
+          firewalls: this.#reach ? [await this.#reach.firewallId(signal)] : undefined,
+          userData: this.#options.userData ?? ((_hostId, serverName) => this.#userData(serverName, signal)),
         },
         signal,
       );
@@ -452,8 +488,51 @@ export class HetznerBackend implements Backend {
     return making;
   }
 
+  async #userData(serverName: string, signal: AbortSignal | undefined): Promise<string> {
+    const tailnet = this.#context.tailnet?.() ?? null;
+    const minted = tailnet ? await tailnet.mintKey({ description: keyDescription(`bb-box host ${serverName}`) }, signal) : null;
+    return hostUserData({ serverName, tailnetKey: minted?.key ?? null });
+  }
+
+  async #imageReady(part: HostPart, kind: string, signal: AbortSignal): Promise<boolean> {
+    const image = this.#config.docker.images[kind as keyof DockerConfig["images"]];
+    const target = BUILD_TARGET[kind];
+    if (!image || !target) return false;
+    const has = await part.cli.run(["image", "inspect", "--format", "{{.Id}}", image], { timeoutMs: 60_000, signal });
+    if (has.exitCode === 0) return false;
+    const key = `${part.record.hostId}/${image}`;
+    let building = this.#building.get(key);
+    if (!building) {
+      building = this.#build(part, image, target, signal).finally(() => this.#building.delete(key));
+      this.#building.set(key, building);
+    }
+    await building;
+    return true;
+  }
+
+  async #build(part: HostPart, image: string, target: string, signal: AbortSignal): Promise<void> {
+    const log = (line: string) => this.#context.log?.(`${part.record.serverName}: ${line}`);
+    if (this.#options.buildImage) return this.#options.buildImage(part.record, part.cli, image, target, log, signal);
+    await part.cli.prepare(signal);
+    const args = [join(setupDir(), "docker", "build.sh"), "--tag", image, target];
+    const code = await new Promise<number | null>((resolve) => {
+      const child = spawn("bash", args, { env: { ...process.env, DOCKER_HOST: part.cli.host ?? "" }, stdio: ["ignore", "pipe", "pipe"], signal });
+      let rest = "";
+      const read = (chunk: Buffer) => {
+        const lines = (rest + chunk.toString("utf8")).split(/\r?\n|\r/);
+        rest = lines.pop() ?? "";
+        for (const line of lines) if (line.trim()) log(line);
+      };
+      child.stdout.on("data", read);
+      child.stderr.on("data", read);
+      child.on("error", () => resolve(null));
+      child.on("close", resolve);
+    });
+    if (code !== 0) throw new Error(`setup/docker/build.sh could not build ${image} on ${part.record.serverName}: it exited with ${code ?? "a signal"}.`);
+  }
+
   async #untilDockerAnswers(part: HostPart, signal: AbortSignal | undefined): Promise<void> {
-    const within = this.#options.hostAnswersWithinMs ?? 180_000;
+    const within = this.#options.hostAnswersWithinMs ?? (typeof this.#config.hostImage === "number" ? SNAPSHOT_HOST_ANSWERS_WITHIN_MS : PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS);
     const pollMs = this.#options.pollMs ?? 2_000;
     const sleep = this.#options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
     let last: unknown = null;
@@ -468,8 +547,27 @@ export class HetznerBackend implements Backend {
 
   async #deleteHost(record: HostRecord, signal?: AbortSignal): Promise<void> {
     this.#parts.delete(record.hostId);
+    await this.#reach?.forget(record.hostId);
     await this.hostRecords.delete(record.hostId, signal);
+    await this.#removeFromTailnet([record.serverName], signal);
     await this.#refreshNames();
+  }
+
+  async #removeFromTailnet(serverNames: readonly string[] | "every one this install has no host for", signal?: AbortSignal): Promise<void> {
+    const tailnet = this.#context.tailnet?.() ?? null;
+    if (!tailnet) return;
+    try {
+      const prefix = tailnetHostname(`bb-box-${this.#context.installId.replace(/-+$/, "")}-`);
+      const known = new Set((await this.hostRecords.records()).map((record) => tailnetHostname(record.serverName)));
+      const wanted = serverNames === "every one this install has no host for" ? null : new Set(serverNames.map(tailnetHostname));
+      for (const device of await tailnet.devices(signal)) {
+        const gone = wanted ? wanted.has(device.hostname) : device.hostname.startsWith(prefix) && !known.has(device.hostname);
+        if (gone) await tailnet.removeDevice(device.id, signal);
+      }
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#context.logError("remove a deleted Hetzner Cloud host from the tailnet", error);
+    }
   }
 
   #partFor(record: HostRecord): HostPart {
@@ -481,11 +579,12 @@ export class HetznerBackend implements Backend {
       storage: scopedStorage(this.#context.storage, `docker/${record.hostId}/`),
       machines: undefined,
     };
+    const cli = this.#options.reachHost ? this.#options.reachHost(record) : this.#reach!.cli(record);
     const docker = new DockerBackend({ ...this.#config.docker, host: `hetzner://${record.serverName}`, machine: null }, context, {
       ...this.#options.dockerOptions,
-      cliReachingAHostAnotherBackendMade: this.#options.reachHost(record),
+      cliReachingAHostAnotherBackendMade: cli,
     });
-    const part = { record, docker };
+    const part = { record, cli, docker };
     this.#parts.set(record.hostId, part);
     return part;
   }

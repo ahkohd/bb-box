@@ -85,6 +85,7 @@ Projects' images, by name (049).
 | [`tart`](#tart) | Tart | macos, macos-desktop, linux-arm64, linux-arm64-desktop-cpu, windows-arm64-desktop |
 | [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
 | [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
+| [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu |
 
 ### proxmox-lxc
 
@@ -230,3 +231,27 @@ Setup: [setup/microsandbox/README.md](../../setup/microsandbox/README.md).
 | `boxes` | Most boxes | number | advanced | `20` | The most bb-box microVMs on the host at once, running or stopped, counting those of every bb-box install that uses it. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | A new box is refused if the host would have less memory than this left, after the memory of the running boxes. |
 | `memory-overcommit` | Memory overcommit | number | advanced | `1` | How many times the host's memory the boxes may take in all, after the memory kept free: 1 to 4. At 1, each box counts at its full memory. Above 1, a new box also needs memory free on the host now. Raise it for mostly idle boxes. |
+
+### hetzner
+
+Hetzner Cloud: Linux boxes, with or without a desktop, as containers on Docker hosts that bb-box makes in a Hetzner Cloud project as boxes need them, and deletes once they are idle.
+
+Setup: [docs/guide/cloud-docker-host.md](../../docs/guide/cloud-docker-host.md).
+
+| Field | Label | Type | Group | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `token` | API token | string, secret | credentials |  | A Read & Write API token of the Hetzner Cloud project bb-box makes its hosts in, from the project's Security page. The project should hold nothing else. |
+| `location` | Location | string | connection | `nbg1` | Where hosts are made, such as nbg1 (Nuremberg), fsn1 (Falkenstein) or hel1 (Helsinki): near BB's server, as a desktop's stream crosses between them. |
+| `server-type` | Server type | string | boxes | `cpx42` | The type of every host, such as cpx42 (8 cores, 16 GB, 320 GB disk). A box at its largest must fit one, with the memory kept free. |
+| `most-hosts` | Most hosts | number | boxes | `2` | The most hosts at once. At this many, a box that fits on none of them is refused. |
+| `idle-minutes` | Idle minutes | number | boxes | `30` | A host with no box for this long is deleted. Hetzner bills by the started hour, so a shorter time saves little and makes acquires wait for a new host more often. |
+| `monthly-limit-eur` | Monthly limit (EUR) | number | boxes | `20` | bb-box makes no host that would take this calendar month's spend on hosts past this many euros before VAT. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too. |
+| `host-image` | Host image | string | advanced | `ubuntu-24.04` | The image a host starts from: a Hetzner image name such as ubuntu-24.04, or a snapshot's ID. On a plain image, a host installs Docker and Tailscale as it starts, and builds a kind's image the first time a box of the kind needs it. |
+| `ssh-from` | SSH from | string | advanced |  | Only with the tailnet off: the addresses, as CIDRs separated by commas, that may reach a host's SSH over the internet, such as BB's server's public address. With the tailnet on, a host's SSH is reached on the tailnet alone. |
+| `linux-image` | Linux image | string | boxes | `bbbox/linux:1` | The image linux boxes run. setup/docker/build.sh builds it. Empty turns them off. |
+| `desktop-image` | Desktop image | string | boxes | `bbbox/linux-desktop:1` | The image linux-desktop-cpu boxes, and linux-desktop boxes when GPU desktops are on, run. setup/docker/build.sh builds it. Empty turns them off. |
+| `wayland-desktop-image` | Wayland desktop image | string | boxes | `bbbox/linux-desktop-wayland:1` | The image linux-desktop-wayland-cpu boxes run: Sway on Wayland, drawn by the CPU. setup/docker/build.sh builds it. Empty turns them off. |
+| `privileged` | Docker in boxes | boolean | boxes | `true` | Give each box its own Docker daemon, started by its first docker command. Each runs as a privileged container, which can take over the Docker host. Off, or on rootless Docker, boxes say No Docker. |
+| `boxes` | Most boxes | number | advanced | `10` | The most bb-box containers on the host at once, running or stopped, counting those of every bb-box install that uses it. |
+| `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | A new box is refused if the host would have less memory than this left, after the memory limits of the running boxes. |
+| `network` | Network | string | advanced | `bbbox` | The Docker network bb-box makes for its boxes, apart from the host's other containers. |

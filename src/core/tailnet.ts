@@ -43,6 +43,7 @@ export interface TailnetDevice {
   readonly hostname: string;
   readonly tags: readonly string[];
   readonly lastSeen: number | null;
+  readonly addresses: readonly string[];
 }
 
 export type TailnetCheck = { readonly ok: true } | { readonly ok: false; readonly reason: string };
@@ -88,13 +89,14 @@ export class Tailnet {
     const answer = (await this.#call("GET", "/api/v2/tailnet/-/devices", "list the tailnet's devices", undefined, signal)) as { devices?: unknown };
     const listed = Array.isArray(answer.devices) ? answer.devices : [];
     return listed.flatMap((raw): TailnetDevice[] => {
-      const device = raw as { id?: unknown; nodeId?: unknown; hostname?: unknown; name?: unknown; tags?: unknown; lastSeen?: unknown };
+      const device = raw as { id?: unknown; nodeId?: unknown; hostname?: unknown; name?: unknown; tags?: unknown; lastSeen?: unknown; addresses?: unknown };
       const id = typeof device.nodeId === "string" ? device.nodeId : typeof device.id === "string" ? device.id : null;
       const tags = Array.isArray(device.tags) ? device.tags.filter((tag): tag is string => typeof tag === "string") : [];
       if (!id || !tags.some((tag) => this.tags.includes(tag))) return [];
       const hostname = typeof device.hostname === "string" ? device.hostname : typeof device.name === "string" ? device.name.split(".")[0]! : "";
       const lastSeen = typeof device.lastSeen === "string" ? Date.parse(device.lastSeen) : NaN;
-      return [{ id, hostname, tags, lastSeen: Number.isFinite(lastSeen) ? lastSeen : null }];
+      const addresses = Array.isArray(device.addresses) ? device.addresses.filter((address): address is string => typeof address === "string") : [];
+      return [{ id, hostname, tags, lastSeen: Number.isFinite(lastSeen) ? lastSeen : null, addresses }];
     });
   }
 

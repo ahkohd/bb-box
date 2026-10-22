@@ -162,6 +162,12 @@ export class FakeHetzner {
       return this.#ok({ action: this.#actionJson(action) });
     }
     if (path === "/ssh_keys" || /^\/ssh_keys\/\d+$/.test(path)) return this.#labelled(call, this.sshKeys, "ssh_key", (input) => ({ publicKey: String(input.public_key ?? "") }));
+    if (method === "POST" && (match = /^\/firewalls\/(\d+)\/actions\/set_rules$/.exec(path))) {
+      const found = this.firewalls.get(Number(match[1]));
+      if (!found) return this.#failure(404, "not_found", "firewall not found");
+      found.rules = (body?.rules as unknown[]) ?? [];
+      return this.#ok({ actions: [this.#actionJson(this.#action("set_firewall_rules", 0))] }, 201);
+    }
     if (path === "/firewalls" || /^\/firewalls\/\d+$/.test(path)) {
       if (method === "DELETE") {
         const id = Number(path.split("/")[2]);
