@@ -110,7 +110,7 @@ function openTcp(host: string, port: number, signal?: AbortSignal): Promise<Byte
 function openCommand(argv: readonly [string, ...string[]], signal?: AbortSignal): Promise<ByteChannel> {
   const [binary, ...args] = argv;
   return new Promise((resolve, reject) => {
-    const child = timedSpawn(() => spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"] }));
+    const child = timedSpawn(() => spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"] }), "route");
     // The signal is for opening only; a route in use is closed with close().
     const abort = () => child.kill("SIGTERM");
     signal?.addEventListener("abort", abort, { once: true });

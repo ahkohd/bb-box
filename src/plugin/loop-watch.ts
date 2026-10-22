@@ -60,7 +60,7 @@ function mostFromPart(now: SpawnTotals, before: SpawnTotals): string {
     .sort((a, b) => b[1] - a[1])
     .slice(0, MOST_FROM);
   if (!most.length) return "";
-  return `; the most from ${most.map(([caller, count]) => `${caller} (${count})`).join(", ")}`;
+  return `; the most: ${most.map(([caller, count]) => `${caller} (${count})`).join(", ")}`;
 }
 
 export class LoopWatch {

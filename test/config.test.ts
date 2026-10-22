@@ -1044,7 +1044,7 @@ async function endsWithin(pid: number): Promise<boolean> {
 
 test("a disposed bb-box leaves no spawn helper, nor any child the helper started", async () => {
   const { latest } = await start({});
-  const sleeper = startChild("sleep", ["30"]);
+  const sleeper = startChild("sleep", ["30"], { site: "test" });
   await new Promise((resolve) => sleeper.once("spawn", resolve));
   const helper = helperPid();
   assert.ok(helper, "the helper started the child");

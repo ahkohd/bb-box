@@ -130,7 +130,7 @@ fi`;
 /** Runs a script with bash, a line of its output at a time. */
 function runScript(script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void, signal: AbortSignal): Promise<number | null> {
   return new Promise((resolve) => {
-    const child = timedSpawn(() => spawn("bash", [script, ...args], { env, stdio: ["ignore", "pipe", "pipe"], signal }));
+    const child = timedSpawn(() => spawn("bash", [script, ...args], { env, stdio: ["ignore", "pipe", "pipe"], signal }), "Docker backend script");
     let rest = "";
     const read = (chunk: Buffer) => {
       const lines = (rest + chunk.toString("utf8")).split(/\r?\n|\r/);

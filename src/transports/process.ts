@@ -13,6 +13,7 @@
 // returns and stops the local command line, and the box keeps what the
 // script started.
 
+import { basename } from "node:path";
 import { startChild } from "./forker.ts";
 import { randomBytes } from "node:crypto";
 import type { RunOptions, RunResult, StreamOptions } from "./types.ts";
@@ -265,7 +266,7 @@ export class CommandLine {
     return new Promise((resolve, reject) => {
       options.signal?.throwIfAborted();
       // From the helper, which forks in place of BB's server (forker.ts).
-      const child = startChild(binary, args, { env: this.#options.env, cwd: this.#options.cwd });
+      const child = startChild(binary, args, { env: this.#options.env, cwd: this.#options.cwd, site: `${basename(binary)} command` });
       let timedOut = false;
       let killed = false;
       let settled = false;

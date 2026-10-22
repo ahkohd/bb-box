@@ -3,9 +3,12 @@
 // the parent's memory: BB's server, which runs bb-box, held 3.5 GB after ten
 // days. The loop watch tells the count and the time each minute, and the
 // memory each hour, so a stall can be laid at a spawn's door or not. Each
-// hour it tells too which of bb-box's functions started the most, by the names
-// on the stack, and how many the helper started (forker.ts).
+// hour it tells too how many the helper started (forker.ts), and which started
+// the most: each spawn by its site, such as "ssh command", and the work it was
+// for, such as "sweep" or "tool box_run", which forPurpose sets where the work
+// comes in. The bundle is minified, so the stack's names say nothing.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { performance } from "node:perf_hooks";
 
 export interface SpawnTotals {
@@ -15,7 +18,7 @@ export interface SpawnTotals {
   readonly ms: number;
   /** Of them, the children the helper started, so BB's server did not fork. */
   readonly helped?: number;
-  /** Children started, ever, by who started them. */
+  /** Children started, ever, by their site and the work they were for. */
   readonly byCaller?: ReadonlyMap<string, number>;
 }
 
@@ -28,8 +31,30 @@ const byCaller = new Map<string, number>();
 const CALLERS = 200;
 const OTHERS = "others";
 
-/** Runs `start`, a call that starts a child process, and counts its time; `viaHelper` when the helper forks. */
-export function timedSpawn<T>(start: () => T, viaHelper = false): T {
+const purposes = new AsyncLocalStorage<string>();
+
+/** Runs `work` with `purpose`, such as "sweep", as what the processes it starts are for. */
+export function forPurpose<T>(purpose: string, work: () => T): T {
+  return purposes.run(purpose, work);
+}
+
+/** `handlers` with each one run for the purpose `${prefix} ${its name}`. */
+export function withPurposes<H extends object>(prefix: string, handlers: H): H {
+  return Object.fromEntries(
+    Object.entries(handlers).map(([name, handler]) => [name, typeof handler === "function" ? (...args: unknown[]) => forPurpose(`${prefix} ${name}`, () => handler(...args)) : handler]),
+  ) as H;
+}
+
+/** What a spawn at `site` is counted as. */
+export function spawnLabel(site: string): string {
+  return `${site} for ${purposes.getStore() ?? "other work"}`;
+}
+
+/**
+ * Runs `start`, a call that starts a child process at `site`, such as "ssh command", and counts its time; `viaHelper`
+ * when the helper forks.
+ */
+export function timedSpawn<T>(start: () => T, site: string, viaHelper = false): T {
   const began = performance.now();
   try {
     return start();
@@ -39,39 +64,9 @@ export function timedSpawn<T>(start: () => T, viaHelper = false): T {
     ms += took;
     if (viaHelper) helped++;
     if (took > longest) longest = took;
-    const caller = spawnCaller();
+    const caller = spawnLabel(site);
     const key = byCaller.has(caller) || byCaller.size < CALLERS ? caller : OTHERS;
     byCaller.set(key, (byCaller.get(key) ?? 0) + 1);
-  }
-}
-
-/** Frames that only pass a spawn on, and say nothing of who wanted it. */
-const PLUMBING = new Set(["timedSpawn", "spawnCaller", "callStack", "startChild", "Promise", "Helper.start"]);
-const CALLER_FRAMES = 4;
-
-/**
- * Who started a child: the first named functions on the stack past the spawn's own plumbing, innermost first,
- * as "#spawn < ProcessTransport.run < ProxmoxHost.state < Sweep.run". The bundle keeps functions' names but
- * not their files.
- */
-export function spawnCaller(stack = callStack()): string {
-  const names: string[] = [];
-  for (const line of stack.split("\n").slice(1)) {
-    const name = /^\s*at (?:async )?(?:new )?([^\s(]+) \(/.exec(line)?.[1];
-    if (!name || PLUMBING.has(name)) continue;
-    names.push(name);
-    if (names.length === CALLER_FRAMES) break;
-  }
-  return names.join(" < ") || "unknown";
-}
-
-function callStack(): string {
-  const limit = Error.stackTraceLimit;
-  Error.stackTraceLimit = 16;
-  try {
-    return new Error().stack ?? "";
-  } finally {
-    Error.stackTraceLimit = limit;
   }
 }
 

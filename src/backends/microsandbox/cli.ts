@@ -153,7 +153,7 @@ export class MsbCli {
     const stderr = new Capture(64 * 1024);
     return new Promise((resolve, reject) => {
       options.signal?.throwIfAborted();
-      const child = startChild(binary, rest, { env: { ...process.env, ...env } });
+      const child = startChild(binary, rest, { env: { ...process.env, ...env }, site: `msb ${rest[0] ?? ""}`.trim() });
       let timedOut = false;
       const kill = () => child.kill("SIGKILL");
       const timer = setTimeout(() => {
