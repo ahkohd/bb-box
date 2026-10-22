@@ -53,7 +53,8 @@ test("an acquire claims the box before it makes the machine, labels it with its 
   assert.deepEqual(made.shape, { os: "macos", machineArch: "arm64", virtualCpu: 4, memoryMegabytes: 14336, selectors: [{ name: "macos.version", value: "26.x" }] });
   assert.equal(made.sshKeys.length, 1);
   assert.match(made.sshKeys[0]!, /^ssh-ed25519 /);
-  assert.deepEqual(guest.data, { box: "b1", instance: made.id, endsAt: now + 4 * 3600_000 });
+  assert.deepEqual(guest.data, { box: "b1", instance: made.id });
+  assert.equal(guest.endsAt, now + 4 * 3600_000);
   assert.deepEqual(guest.facts, [
     { label: "Ends", value: "04:00 UTC, the plan's longest life" },
     { label: "Runs in", value: "us" },

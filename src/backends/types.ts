@@ -236,6 +236,7 @@ export interface Guest {
   readonly data?: Readonly<Record<string, string | number | boolean>>;
   /** Short facts shown in order by status and the panel, such as a desktop's display mode. Stored with the box. Never a secret. */
   readonly facts?: readonly GuestFact[];
+  readonly endsAt?: number;
 }
 
 export interface GuestFact {

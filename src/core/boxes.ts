@@ -146,6 +146,7 @@ export interface BoxRecord {
   readonly unrequestedStop?: UnrequestedStop | null;
   /** The box's last resize (061), recorded before it changes anything. */
   readonly resize?: ResizeRecord | null;
+  readonly endToldAt?: number | null;
 }
 
 /** A resize of a box (061): what it asked for, and how it went. */
@@ -388,6 +389,7 @@ export interface BoxesDeps {
    * Null when it is not.
    */
   reconnecting?(box: BoxRecord): string | null;
+  tell?(threadId: string, text: string): Promise<void>;
   logError(operation: string, error: unknown): void;
   /** Records what the sweep did to a guest, and what became of spares, and why. */
   log?(message: string): void;
@@ -465,6 +467,17 @@ export function newBoxId(random: (bytes: number) => Uint8Array): string {
 /** Boxes that count against the per-thread limit and hold resources. */
 export function isActive(box: BoxRecord): boolean {
   return box.state !== "failed" && box.state !== "gone" && box.state !== "releasing";
+}
+
+export const END_NOTICE_MS = 3600_000;
+
+export function endingWords(box: Pick<BoxRecord, "name" | "kindLabel" | "backendLabel">, endsAt: number, now: number): string {
+  const minutes = Math.max(1, Math.round((endsAt - now) / 60_000));
+  const at = new Date(endsAt).toISOString().slice(11, 16);
+  return [
+    `Box ${box.name} (${box.kindLabel}) ends at ${at} UTC, in ${minutes} minutes: ${box.backendLabel} does not let a machine live longer, and bb-box cannot extend it.`,
+    `Everything on it goes then. Copy out what you need before that, with box_copy, and push work in progress. If you still need a box after that, ask for a new one with box_acquire.`,
+  ].join(" ");
 }
 
 /** A box as the log names it. */
@@ -2528,12 +2541,33 @@ export class Boxes {
     signal?.throwIfAborted();
     await this.keepSpares();
 
+    await this.#tellOfEnds(signal);
+
     // Every built backend, off ones too: an off backend's warm counts read 0, so its upkeep retires its warm guests (029).
     for (const backend of this.#deps.backends.active()) {
       signal?.throwIfAborted();
       await backend.maintain?.(signal).catch((error) => this.#deps.logError(`maintain ${backend.id}`, error));
     }
     return { released, leftovers, adopted, kept, ending: waiting, resumed };
+  }
+
+  async #tellOfEnds(signal?: AbortSignal): Promise<void> {
+    const tell = this.#deps.tell;
+    if (!tell) return;
+    const now = this.#now();
+    for (const box of await this.all()) {
+      signal?.throwIfAborted();
+      const endsAt = box.guest?.endsAt;
+      if (endsAt === undefined || box.endToldAt || !ownedByThread(box.threadId)) continue;
+      if (box.state !== "ready" && box.state !== "stopped") continue;
+      if (endsAt <= now || endsAt - now > END_NOTICE_MS) continue;
+      try {
+        await tell(box.threadId, endingWords(box, endsAt, now));
+        await this.update(box, () => ({ endToldAt: now }));
+      } catch (error) {
+        this.#deps.logError(`tell thread ${box.threadId} that box ${box.name} ends`, error);
+      }
+    }
   }
 
   /** Enrols a restored box whose guest did not answer at the restore, once it runs and answers (026). */

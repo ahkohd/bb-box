@@ -27,7 +27,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random" | "tell"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -1407,6 +1407,34 @@ test("release removes the BB machine first, then the guest", async () => {
   assert.deepEqual(await world.backend.held(), []);
   assert.equal(await world.boxes.find(box.id), null);
   await assert.rejects(world.boxes.release(THREAD, box.name, "the test asked"), /has no box/);
+});
+
+test("a box whose backend ends it at a set time has its thread told once, within the hour before, and again at the next sweep if telling failed", async () => {
+  const told: { threadId: string; text: string }[] = [];
+  let refuse = false;
+  const world = setup({}, {
+    tell: async (threadId, text) => {
+      if (refuse) throw new Error("BB is busy");
+      told.push({ threadId, text });
+    },
+  });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const endIn = (ms: number) => world.boxes.update(box, (current) => ({ guest: { ...current.guest!, endsAt: Date.now() + ms } }));
+  await endIn(2 * 3600_000);
+  await world.boxes.sweep();
+  assert.equal(told.length, 0, "not while the end is more than an hour away");
+  await endIn(50 * 60_000);
+  refuse = true;
+  await world.boxes.sweep();
+  assert.equal(told.length, 0);
+  assert.match(world.errors.at(-1)!, /BB is busy/);
+  refuse = false;
+  await world.boxes.sweep();
+  await world.boxes.sweep();
+  assert.equal(told.length, 1, "told once");
+  assert.equal(told[0]!.threadId, THREAD);
+  assert.match(told[0]!.text, new RegExp(`^Box ${box.name} \\(.+\\) ends at \\d\\d:\\d\\d UTC, in 50 minutes: .+ box_copy.+ box_acquire\\.$`));
+  assert.ok((await world.boxes.find(box.id))?.endToldAt);
 });
 
 test("a failed release keeps the box releasing with the reason, and the sweep finishes it", async () => {

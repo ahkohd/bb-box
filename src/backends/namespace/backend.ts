@@ -378,8 +378,9 @@ export class NamespaceBackend implements Backend {
       host: instance?.continent ?? null,
       address: null,
       size: shape ? { cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, diskGiB: macDiskGiB(shape) } : null,
-      data: { ...(boxId ? { box: boxId } : {}), ...(instance ? { instance: instance.id } : {}), ...(endsAt !== null ? { endsAt } : {}) },
+      data: { ...(boxId ? { box: boxId } : {}), ...(instance ? { instance: instance.id } : {}) },
       ...(facts.length ? { facts } : {}),
+      ...(endsAt !== null ? { endsAt } : {}),
     };
   }
 
