@@ -2,6 +2,7 @@
 // enrolment, thread events, the sweep, and the tools, RPC and CLI that use
 // them. server.ts calls setup with the built-in drivers; tests pass fakes.
 
+import { tailnetDoctor } from "../core/tailnet-doctor.ts";
 import { hostname } from "node:os";
 import { machineAccessProblem, machineSetups, type AccessConfig, type MachineAccessProblem, type MachineSetup } from "./setup-offer.ts";
 import type { SetupFacts } from "../host/relay.ts";
@@ -1158,6 +1159,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         }),
       );
       sections.push(...reports);
+      const tailnet = backends.tailnet();
+      if (tailnet) sections.push({ title: "Tailnet", report: await tailnetDoctor(tailnet, signal) });
       const offers = offerChecks(backends.kinds());
       if (offers.length) {
         sections.push({

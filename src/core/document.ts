@@ -9,6 +9,7 @@
 
 import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
 import { isSecret, type BackendDriver, type BackendPart, type BoxSize, type FieldDescriptor, type FieldValue } from "../backends/types.ts";
+import { exportedTailnet, keptTailnetSecrets, readTailnet, tailnetProblems, type TailnetSetting } from "./tailnet-settings.ts";
 import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathProblem, type BoxFileSetting } from "./box-files.ts";
 import { PRESETS, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
 
@@ -106,6 +107,12 @@ export interface GeneralSettings {
    * BB's server. Off unless set; first-run setup turns it on.
    */
   readonly nightlyImages?: boolean;
+  /**
+   * How bb-box joins machines it makes to the operator's tailnet: off, where BB is reached without one, or through a
+   * Tailscale OAuth client, from which it makes a single-use key for each machine. The client's ID and secret are
+   * general secrets.
+   */
+  readonly tailnet?: TailnetSetting;
 }
 
 export interface ConfigDocument {
@@ -267,7 +274,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
 
   const general: Record<string, unknown> = {};
   if (input.general !== undefined) {
-    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video and nightlyImages.");
+    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages and tailnet.");
     else {
       for (const [key, value] of Object.entries(input.general)) {
         if (value === undefined || value === null) continue;
@@ -289,7 +296,12 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "nightlyImages") {
           if (typeof value === "boolean") general[key] = value;
           else problem("general.nightlyImages", "nightlyImages is true or false.");
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video and nightlyImages.`);
+        } else if (key === "tailnet") {
+          const changes: Record<string, string | null> = {};
+          const tailnet = readTailnet(value, problem, changes);
+          if (tailnet) general[key] = tailnet;
+          if (Object.keys(changes).length) secrets[GENERAL_SECRETS] = { ...secrets[GENERAL_SECRETS], ...changes };
+        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages and tailnet.`);
       }
     }
   }
@@ -359,7 +371,7 @@ function readFiles(value: unknown, problem: (path: string, message: string) => v
     else changes[contentKey(path)] = content;
     files.push({ path });
   });
-  if (Object.keys(changes).length) secrets[GENERAL_SECRETS] = changes;
+  if (Object.keys(changes).length) secrets[GENERAL_SECRETS] = { ...secrets[GENERAL_SECRETS], ...changes };
   return files;
 }
 
@@ -637,6 +649,7 @@ export function withSecretChanges(stored: Secrets, changes: SecretChanges, docum
     const value = change === undefined ? stored[GENERAL_SECRETS]?.[key] : change;
     if (typeof value === "string") files[key] = value;
   }
+  Object.assign(files, keptTailnetSecrets(document.general.tailnet, stored[GENERAL_SECRETS] ?? {}, changes[GENERAL_SECRETS] ?? {}));
   if (Object.keys(files).length) next[GENERAL_SECRETS] = files;
   for (const backend of document.backends) {
     const values: Record<string, string> = { ...stored[backend.id] };
@@ -693,7 +706,11 @@ export function exported(document: ConfigDocument, secrets: Secrets, drivers: re
   const files = document.general.files?.map((file) => ({ path: file.path, content: { set: secrets[GENERAL_SECRETS]?.[contentKey(file.path)] !== undefined } }));
   return {
     ...document,
-    general: { ...document.general, ...(files ? { files } : {}) },
+    general: {
+      ...document.general,
+      ...(files ? { files } : {}),
+      ...(document.general.tailnet ? { tailnet: exportedTailnet(document.general.tailnet, secrets[GENERAL_SECRETS] ?? {}) } : {}),
+    },
     backends: document.backends.map((backend) => {
       const driver = drivers.find((candidate) => candidate.type === backend.type);
       const fields: Record<string, FieldValue | SecretState> = {};
@@ -709,9 +726,10 @@ export function exported(document: ConfigDocument, secrets: Secrets, drivers: re
 /** The document as stored: no secret field, and of the files for every box only their paths. */
 export function withoutSecrets(document: ConfigDocument, drivers: readonly BackendDriver<any>[]): ConfigDocument {
   const files = document.general.files?.map((file) => ({ path: file.path }));
+  const tailnet = document.general.tailnet;
   return {
     ...document,
-    general: { ...document.general, ...(files ? { files } : {}) },
+    general: { ...document.general, ...(files ? { files } : {}), ...(tailnet ? { tailnet: { mode: tailnet.mode, ...(tailnet.tags ? { tags: tailnet.tags } : {}) } } : {}) },
     backends: document.backends.map((backend) => {
       const driver = drivers.find((candidate) => candidate.type === backend.type);
       const fields: Record<string, FieldValue> = {};
@@ -767,6 +785,8 @@ export function checkDocument(
     }
     if (kind.spares !== undefined && !isWhole(kind.spares, 0, MAX_SPARES)) problem(`${path}.spares`, `Keep 0 to ${MAX_SPARES} spare ${id} boxes.`);
   }
+
+  for (const missing of tailnetProblems(document.general.tailnet, secrets[GENERAL_SECRETS] ?? {})) problem(missing.path, missing.message);
 
   const defaultKind = document.general.defaultKind;
   if (defaultKind !== undefined) {

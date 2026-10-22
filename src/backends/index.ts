@@ -16,6 +16,9 @@ import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
 import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall } from "./types.ts";
 import type { ImageFacts } from "./images.ts";
 import { WarmShortfalls } from "./warm.ts";
+import { GENERAL_SECRETS } from "../core/box-files.ts";
+import { Tailnet, type TailnetFetch } from "../core/tailnet.ts";
+import { tailnetUse } from "../core/tailnet-settings.ts";
 
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver, microsandboxDriver];
 
@@ -222,6 +225,8 @@ export class Backends {
   #statuses: BackendStatus[] = [];
   readonly #machines: MachineAccess | undefined;
   readonly #images: ImageFacts | undefined;
+  readonly #tailnetFetch: TailnetFetch | undefined;
+  #tailnetClient: { readonly made: string; readonly tailnet: Tailnet } | null = null;
 
   constructor(options: {
     storage: BackendStorage;
@@ -239,7 +244,9 @@ export class Backends {
     machines?: MachineAccess;
     /** What the doctor judges images by (049). */
     images?: ImageFacts;
+    tailnetFetch?: TailnetFetch;
   }) {
+    this.#tailnetFetch = options.tailnetFetch;
     this.#machines = options.machines;
     this.#images = options.images;
     this.#drivers = options.drivers ?? DRIVERS;
@@ -265,6 +272,16 @@ export class Backends {
     if (this.#document) await this.configure(this.#document, this.#secrets);
   }
 
+  tailnet(): Tailnet | null {
+    const use = tailnetUse(this.#document?.general.tailnet, this.#secrets[GENERAL_SECRETS] ?? {});
+    if (!use) return null;
+    const made = JSON.stringify([use.credentials.clientId, use.credentials.clientSecret, use.tags]);
+    if (this.#tailnetClient?.made !== made) {
+      this.#tailnetClient = { made, tailnet: new Tailnet({ credentials: use.credentials, tags: use.tags, ...(this.#tailnetFetch ? { fetch: this.#tailnetFetch } : {}) }) };
+    }
+    return this.#tailnetClient.tailnet;
+  }
+
   /** The context a backend of the configuration gets. Switches and warm counts are read live. */
   context(id: string, storage: BackendStorage = scopedStorage(this.#storage, `backend/${id}/`)): BackendContext {
     return {
@@ -285,6 +302,7 @@ export class Backends {
       },
       warmShortfalls: (short) => this.#shortfalls(id).set(short),
       enrols: () => this.#document?.general.enrol ?? GENERAL_DEFAULTS.enrol,
+      tailnet: () => this.tailnet(),
       kindsChanged: () => this.#kindsChanged(),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
       kind: (kind) => {

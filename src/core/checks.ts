@@ -64,6 +64,8 @@ export const CHECKS = {
   "microsandbox.sizes": { name: "Room for each kind", from: ["microsandbox"], what: "The host holds a box of each kind at its default size." },
 
   // Tart.
+  "tailnet.client": { name: "OAuth client", from: ["bb-box"], what: "Tailscale signs in the OAuth client in the General settings, with which bb-box makes a single-use key for each machine it makes." },
+  "tailnet.devices": { name: "Devices", from: ["bb-box"], what: "The tailnet's devices with bb-box's tags, which bb-box removes when their machine went without logging out." },
   "tart.ssh-key": { name: "SSH key", from: ["tart"], what: "bb-box's SSH key for the Macs reads, and its public key to install." },
   "tart.hosts": { name: "Macs", from: ["tart"], what: "At least one Mac is set up." },
   "host.<mac>": { name: "Mac <mac>", from: ["tart"], what: "The Mac answers over SSH, is Apple silicon, and has Tart." },
