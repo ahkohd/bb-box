@@ -149,10 +149,10 @@ function grant() {
   if (!/^\/(Users|Applications)\//.test(program)) quit(EXIT.refused, `${program} is not in the box user's home or /Applications.`);
   const client = program.endsWith(".app") ? `dev.example.${program.split("/").pop().slice(0, -4).toLowerCase()}` : program;
   for (const permission of permissions) {
-    if (["accessibility", "screen-recording", "input-monitoring", "microphone", "camera", "automation"].includes(permission)) {
+    if (["accessibility", "screen-recording", "input-monitoring", "microphone", "camera", "system-audio", "automation"].includes(permission)) {
       writeFileSync(join(state, "grants"), `${read("grants") ?? ""}${permission}\t${client}\tUNUSED\n`);
       console.log(`granted=${permission}`);
-    } else console.log(`refused=${permission} bb-box grants accessibility, screen-recording, input-monitoring, microphone, camera and automation.`);
+    } else console.log(`refused=${permission} bb-box grants accessibility, screen-recording, input-monitoring, microphone, camera, system-audio and automation.`);
   }
   console.log(`client=${client}`);
 }

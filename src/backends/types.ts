@@ -652,7 +652,7 @@ export interface Backend {
 }
 
 /** The macOS permissions bb-box can grant a program in a box (058). */
-export const GRANT_PERMISSIONS = ["accessibility", "screen-recording", "input-monitoring", "microphone", "camera", "automation"] as const;
+export const GRANT_PERMISSIONS = ["accessibility", "screen-recording", "input-monitoring", "microphone", "camera", "system-audio", "automation"] as const;
 export type GrantPermission = (typeof GRANT_PERMISSIONS)[number];
 
 /** What box_grant asks: a program in the box, and the permissions to grant it (058). */
