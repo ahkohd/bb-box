@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { after, afterEach, test } from "node:test";
 import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
@@ -17,11 +17,16 @@ const GiB = 2 ** 30;
 const MAC = FAKE_MAC;
 
 const made: TartBackend[] = [];
+// Each test's backends end with it: the fake ssh serves the newest test's Mac, and a backend left running could fill
+// its pools there later.
+afterEach(async () => {
+  for (const backend of made.splice(0)) await backend.dispose();
+});
 after(async () => {
   for (const backend of made) await backend.dispose();
 });
 
-const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER };
+const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER, fillQuietMs: 0 };
 
 function setup(values: Record<string, unknown> = {}) {
   const ssh = fakeSsh();
@@ -483,7 +488,7 @@ test("a Mac takes two macOS VMs; the third is refused with what to release", asy
   const second = await backend.acquire(identity("macos"), null, hooks().hooks, signal());
   const capacity = await backend.capacity("macos", SMALL, []);
   assert.equal(capacity.ok, false);
-  assert.match(capacity.message!, /mac1 runs 2 of the 2 macOS VMs/);
+  assert.match(capacity.message!, /Two macOS VMs already run on mac1, Apple's limit/);
   assert.match(capacity.message!, new RegExp(`box calm-otter-\\d+ of thread thr_abc123`), "names the box, not its VM");
   assert.doesNotMatch(capacity.message!, new RegExp(first.ref));
   const third = identity();

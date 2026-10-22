@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { after, test } from "node:test";
+import { after, afterEach, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
 import { parseQemuState, qemuStartScript } from "../src/backends/tart/qemu.ts";
@@ -23,10 +23,15 @@ const KIND = "windows-arm64-desktop";
 const SMALL: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
 const GiB = 1024;
 
-const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 };
+const FAKES: TartBackendOptions = { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, fillQuietMs: 0 };
 
 const made: TartBackend[] = [];
 const macs: string[] = [];
+// Each test's backends end with it: the fake ssh serves the newest test's Mac, and a backend left running could fill
+// its pools there later.
+afterEach(async () => {
+  for (const backend of made.splice(0)) await backend.dispose();
+});
 after(async () => {
   for (const backend of made) await backend.dispose();
   // Ends any fake QEMU a failed test left running.
