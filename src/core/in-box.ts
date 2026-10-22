@@ -2,7 +2,7 @@
 // for Linux and macOS, PowerShell for Windows. Backends never run these; the
 // core sends them through the box's command transport.
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { posix } from "node:path";
 import { DESKTOP_EXITS, desktopScript, powershellCommand } from "../transports/powershell.ts";
 import { LOADS_ENV } from "../transports/process.ts";
@@ -550,9 +550,19 @@ const DROP_OLD_HOOK =
  * there runs a zsh that is not a login shell, which reads only ~/.zshenv.
  * Prints how long it took in the box, in milliseconds, for the enrolment's
  * log, when the box's date can tell. A Windows box gets git's part (#560).
+ * Once it has run to its end, a file named by its own hash says so, and it
+ * does nothing again: a warm Mac's fill runs it before the claim, so the
+ * claim's enrolment, where it competed with BB's installer, need not.
  */
 export function accessSetup(os: GuestOs): string {
   if (os === "windows") return WINDOWS_ACCESS_SETUP;
+  const setup = unixAccessSetup(os);
+  const done = `"$HOME/.config/bb-box/access-${createHash("sha256").update(setup).digest("hex").slice(0, 12)}"`;
+  return `if [ -f ${done} ]; then echo 0; exit 0; fi
+${setup.replace(/exit "\$code"\n$/, `[ "$code" -ne 0 ] || { mkdir -p "$HOME/.config/bb-box" && : > ${done}; } || :\nexit "$code"\n`)}`;
+}
+
+function unixAccessSetup(os: "linux" | "macos"): string {
   // cp -p gives the new file the old one's mode, which writing it keeps.
   return String.raw`started=$(date +%s%N)
 f="$HOME/${os === "macos" ? ".zshenv" : ".bashrc"}"

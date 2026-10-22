@@ -276,7 +276,9 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
   assert.deepEqual(recorded.claimed.at(-1), guest, "claimed again with its address");
   assert.equal(recorded.claimed[0]!.ref, `bb-box-${box.boxId}`);
   assert.deepEqual(recorded.claimed[0]!.data, { box: box.boxId });
-  assert.deepEqual(Object.keys(recorded.timings), ["place", "clone", "start", "network", "ssh", "identify", "name", "grants"]);
+  // The name and the grants go side by side, so either may end first.
+  assert.deepEqual(Object.keys(recorded.timings).slice(0, 6), ["place", "clone", "start", "network", "ssh", "identify"]);
+  assert.deepEqual(Object.keys(recorded.timings).slice(6).sort(), ["grants", "name"]);
   assert.equal(guest.host, "mac1");
   assert.match(guest.address ?? "", /^192\.168\.64\.\d+$/);
   const owner = readFileSync(join(owners, guest.ref), "utf8");

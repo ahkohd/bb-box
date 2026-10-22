@@ -35,6 +35,7 @@ import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
 import { setupDir } from "../setup-dir.ts";
 import { startMacInput, tartTypesAsCharacter } from "../../core/mac-input.ts";
+import { accessSetup } from "../../core/in-box.ts";
 import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { EXIT, grantInput, parseGrant, parseGranted } from "../ssh-pool/protocol.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
@@ -1133,9 +1134,14 @@ export class TartBackend implements Backend {
         await step("ssh", async () => this.#waitReady(host, vm, this.#vm(await this.#mac(host), address, os), os, deadline, signal));
         if (os === "linux" && kind.capabilities.displays.length) await step("desktop", () => this.#linuxDesktop(host, vm, address, signal));
         await step("identify", () => this.#identify(host, address, vm, os, signal));
-        await step("name", () => this.#rename(host, address, vm, os, box.name, signal));
-        // A warm VM's fill ran it already, before its suspend, so its claim pays nothing for it.
-        if (os === "macos" && !(placement.how === "warm" && placement.ready)) await step("grants", () => this.#vmReady(host, address, vm, signal));
+        // A warm VM's fill made the grants and the access already, before its suspend, so its claim pays nothing for them.
+        // Elsewhere they go beside the name, each in its own SSH session.
+        const fresh = os === "macos" && !(placement.how === "warm" && placement.ready);
+        await Promise.all([
+          step("name", () => this.#rename(host, address, vm, os, box.name, signal)),
+          ...(fresh ? [step("grants", () => this.#vmReady(host, address, vm, signal))] : []),
+          ...(fresh && this.#context.enrols?.() ? [step("access", () => this.#accessReady(host, address, vm, signal))] : []),
+        ]);
         // A warm VM, or one held before a restart, resumed from a suspend with an old clock.
         if (os === "macos" && (placement.how === "warm" || placement.how === "resume")) await step("clock", () => this.#clock(host, address, signal));
         const now = await this.#state(host, signal);
@@ -1348,6 +1354,20 @@ export class TartBackend implements Backend {
       return false;
     }
     return true;
+  }
+
+  /**
+   * A macOS VM's access setup, which the box's enrolment runs as a BB machine and then finds done: run before, where the
+   * claim's enrolment would run it beside BB's installer, which slowed both. Best effort: the enrolment runs it if not.
+   */
+  async #accessReady(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "macos"), "macos");
+    const result = await command.run(accessSetup("macos"), { timeoutMs: 60_000, signal, maxOutputBytes: 4096 }).catch((error: unknown) => error);
+    if (result instanceof Error || (result as RunResult).exitCode !== 0) {
+      const why = result instanceof Error ? result.message : (result as RunResult).stderr.trim() || `exit code ${(result as RunResult).exitCode}`;
+      this.#context.logError("ready the box's access", new Error(`${vm} on ${host.name}: ${why}`));
+    }
   }
 
   /** The command transport of a macOS box, for its grants. */
@@ -1949,6 +1969,7 @@ export class TartBackend implements Backend {
         if (desktop.exitCode !== 0) throw new Error(`Warm VM ${vm} on ${host.name}: ${desktop.stderr.trim() || `exit code ${desktop.exitCode}`}`);
         // The signing identity and default grants, before the suspend, so the claim need not make them.
         granted = (await this.#vmReady(host, address, vm, fillSignal)) ? this.#helperHash() : null;
+        if (this.#context.enrols?.()) await this.#accessReady(host, address, vm, fillSignal);
       }
       ready.resolve(address);
       // In the chain, so an acquire that takes the VM over and this save never cross.
