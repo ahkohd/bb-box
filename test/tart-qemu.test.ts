@@ -253,7 +253,7 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
 
   const made = config(qemu, vm);
   const [sshPort, vncPort] = [Number(made.ssh), Number(made.vnc)];
-  assert.deepEqual(guest, { ref: vm, host: "mac1", address: null, size: SMALL, data: { box: box.boxId, os: "windows", ssh: sshPort, vnc: vncPort } });
+  assert.deepEqual(guest, { ref: vm, host: "mac1", address: null, size: { ...SMALL, diskGiB: 64 }, data: { box: box.boxId, os: "windows", ssh: sshPort, vnc: vncPort } });
   assert.deepEqual(events, ["claim", "starting", "claim"]);
   assert.deepEqual(claimed[0]!.data, { box: box.boxId, os: "windows" }, "claimed before anything is made");
   assert.equal(
@@ -301,7 +301,7 @@ test("acquires a Windows box: an owner file, an overlay on the image's build, tw
     ref: vm,
     host: "mac1",
     address: null,
-    size: SMALL,
+    size: { ...SMALL, diskGiB: 64 },
     data: guest.data,
     owner: { boxId: box.boxId, threadId: "thr_abc123", name: box.name, kind: KIND, createdAt: 1_790_000_000_000 },
     power: "running",
@@ -536,7 +536,7 @@ test("a Windows box that asks for a disk no larger than the image's keeps the im
   for (const diskGiB of [32, 64]) {
     const box = identity({ ...SMALL, diskGiB });
     const guest = await backend.acquire(box, null, hooks().hooks, signal());
-    assert.equal(guest.size?.diskGiB, null, `${diskGiB} GiB`);
+    assert.equal(guest.size?.diskGiB, 64, `${diskGiB} GiB: the image's disk, as QEMU reads it`);
     assert.equal(config(qemu, guest.ref).disk, undefined);
     assert.doesNotMatch(readFileSync(join(qemu, "vms", guest.ref, "disk.qcow2"), "utf8"), /size/);
     await backend.release(guest, releasing, signal());
@@ -897,7 +897,7 @@ test("a Windows box at the default size takes a warm VM, which QEMU restores, ha
   const recorded = hooks();
   const guest = await backend.acquire(box, null, recorded.hooks, signal());
   assert.equal(guest.ref, warm);
-  assert.deepEqual(guest.size, SMALL);
+  assert.deepEqual(guest.size, { ...SMALL, diskGiB: 64 });
   const made = config(qemu, warm!);
   assert.deepEqual(guest.data, { box: box.boxId, os: "windows", ssh: Number(made.ssh), vnc: Number(made.vnc) });
   assert.ok("warm" in recorded.timings && "clock" in recorded.timings && !("clone" in recorded.timings), JSON.stringify(recorded.timings));

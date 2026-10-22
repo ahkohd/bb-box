@@ -25,7 +25,7 @@ import { JoinHelp } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
-import { canResize, ResizeDialog } from "./resize.tsx";
+import { canResize, ResizeDialog, useResizeNote } from "./resize.tsx";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh";
 
@@ -103,6 +103,7 @@ export function BoxRow({
   const [busy, setBusy] = useState<BoxAction | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [resizing, setResizing] = useState(false);
+  const resizeNote = useResizeNote(box, resizing);
   const rpc = useRpc<Contract>();
   /** The new-thread dialog: closed, or its prompt, whether it is starting and why it did not. */
   const [threading, setThreading] = useState<{ prompt: string; starting: boolean; error: string | null } | null>(null);
@@ -155,6 +156,7 @@ export function BoxRow({
         </button>
         <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
         {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
+        {resizeNote ? <p className={cn("mt-0.5 text-xs leading-snug", resizeNote.failed ? "text-destructive-text" : "text-muted-foreground")}>{resizeNote.text}</p> : null}
         {ready && box.enrol.state === "failed" ? (
           <p className="mt-0.5 text-xs leading-snug text-warning-text">
             <JoinHelp words={box.enrol.error} />

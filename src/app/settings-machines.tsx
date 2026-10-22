@@ -19,7 +19,7 @@ import { Section } from "./settings-fields.tsx";
 import { statusOf } from "./status.ts";
 import { canOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
-import { canResize, ResizeDialog } from "./resize.tsx";
+import { canResize, ResizeDialog, useResizeNote } from "./resize.tsx";
 
 
 
@@ -85,6 +85,7 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
   const openTerminal = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "terminal", back) });
   const acting = busy !== null && busy.endsWith(`:${box.id}`);
   const [resizing, setResizing] = useState(false);
+  const resizeNote = useResizeNote(box, resizing);
   return (
     // In settings' card, the first and last rows meet its own padding; on the Boxes page, in Automations' card, every row has the same
     // padding above and below, as Automations' rows do (the operator, 8 October 2026).
@@ -112,6 +113,7 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
           />
         </div>
         {box.error ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
+        {resizeNote ? <p className={cn("mt-0.5 text-xs leading-snug", resizeNote.failed ? "text-destructive-text" : "text-muted-foreground")}>{resizeNote.text}</p> : null}
       </div>
       <span data-row-action className="flex shrink-0 items-center gap-0.5">
         {box.desktop && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={openDesktop} /> : null}

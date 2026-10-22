@@ -406,7 +406,7 @@ const viewSize = (cores, memoryGiB, diskGiB = null) => ({ cores, memoryGiB, disk
  */
 function resizer(target, ways, options = {}) {
   const presets = [{ name: "small", ...viewSize(2, 4) }, { name: "medium", ...viewSize(4, 8) }, { name: "large", ...viewSize(8, 16) }];
-  const largest = viewSize(16, 64, 512);
+  const largest = options.largest ?? viewSize(16, 64, 512);
   const now = target.sizeNow;
   return (input) => {
     const preset = presets.find((candidate) => candidate.name === input.size?.preset);
@@ -499,11 +499,18 @@ const desktopChrome = (name) => `<span>Box</span><span class="pill"><svg viewBox
 
 /**
  * The Resize dialog (061), each at the panel's width and its narrow one: a live resize on a Proxmox LXC box, a VM's that needs a
- * restart, the restart's question, and a refusal for memory below use on a Docker box.
+ * restart, the restart's question, and a refusal for memory below use on a Docker box. A box exactly a preset opens on it, as
+ * Windows on a Mac does, with the disk QEMU reads; rows say how a resize that ended while the panel reloaded went.
  */
 function resizeScenes() {
+  // Each theme's shot says the rows' notes afresh: the page keeps what it has said in its session.
+  for (const key of Object.keys(window.sessionStorage)) if (key.startsWith("bb-box:resize-seen:")) window.sessionStorage.removeItem(key);
   const lxc = box({ sizeNow: viewSize(2, 4, 24), size: "2 cores, 4 GiB memory, 24 GiB disk", resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } });
   const vm = box({ id: "box_6", name: "steady-pine", backendLabel: "Proxmox QEMU on pve", form: "VM", sizeNow: viewSize(2, 4, 32), size: "2 cores, 4 GiB memory, 32 GiB disk", resizing: { cores: "restart", memory: "restart", disk: "live", shrinks: true } });
+  const windowsWays = { cores: "restart", memory: "restart", disk: "restart", shrinks: false };
+  const windows = box({ id: "box_8", name: "brisk-alder", kind: "windows-arm64-desktop", kindLabel: "Windows desktop on arm64", backendLabel: "Tart on studio", form: "VM", os: "windows", arch: "arm64", desktop: true, extras: [], docker: false, sizeNow: viewSize(4, 8, 64), size: "4 cores, 8 GiB memory, 64 GiB disk", resizing: windowsWays });
+  const resizedLately = box({ id: "box_11", name: "brisk-alder", kind: "windows-arm64-desktop", kindLabel: "Windows desktop on arm64", backendLabel: "Tart on studio", form: "VM", os: "windows", arch: "arm64", desktop: true, extras: [], docker: false, sizeNow: viewSize(6, 16, 96), size: "6 cores, 16 GiB memory, 96 GiB disk", resizing: windowsWays, lastResize: { to: viewSize(6, 16, 96), at: now - 40_000, state: "done", restart: true, ms: 15_000, error: null } });
+  const refusedLately = box({ id: "box_12", name: "steady-pine", backendLabel: "Proxmox QEMU on pve", form: "VM", sizeNow: viewSize(2, 4, 32), size: "2 cores, 4 GiB memory, 32 GiB disk", resizing: { cores: "restart", memory: "restart", disk: "live", shrinks: true }, lastResize: { to: viewSize(8, 16, 32), at: now - 70_000, state: "failed", restart: true, ms: 9_000, error: "pve has 6 GiB of memory left, and steady-pine would grow by 12 GiB. Release a box you no longer need. bb-box changed nothing." } });
   const docker = box({ id: "box_7", name: "lively-bay", backendLabel: "Docker on devpc", form: "Docker", sizeNow: viewSize(4, 8, null), size: "4 cores, 8 GiB memory", resizing: { cores: "live", memory: "live", disk: "no", shrinks: true } });
   const open = async (root, name) => {
     openMenu(root, `${name} actions`);
@@ -517,6 +524,8 @@ function resizeScenes() {
       rpc: rpc([lxc], { resize: resizer(lxc, lxc.resizing) }),
       after: async (root) => {
         const dialog = await open(root, "calm-otter");
+        pick("radio", "Custom");
+        await wait(200);
         typeInto(dialog, "Cores", "6");
         typeInto(dialog, "Memory, GiB", "12");
         typeInto(dialog, "Disk, GiB", "40");
@@ -541,6 +550,22 @@ function resizeScenes() {
         await wait(400);
       },
     },
+    "panel-resize-preset": {
+      rpc: rpc([windows], { resize: resizer(windows, windowsWays, { largest: viewSize(12, 32, 256) }) }),
+      after: async (root) => {
+        await open(root, "brisk-alder");
+        await wait(700);
+      },
+    },
+    "panel-resize-windows-disk": {
+      rpc: rpc([windows], { resize: resizer(windows, windowsWays, { largest: viewSize(12, 32, 256) }) }),
+      after: async (root) => {
+        await open(root, "brisk-alder");
+        await wait(700);
+        pick("radio", "Custom");
+        await wait(700);
+      },
+    },
     "panel-resize-refused": {
       rpc: rpc([docker], { resize: resizer(docker, docker.resizing, { inUseGiB: 3.6 }) }),
       after: async (root) => {
@@ -552,12 +577,14 @@ function resizeScenes() {
       },
     },
   };
-  return Object.fromEntries(
-    Object.entries(each).flatMap(([name, scene]) => [
+  return Object.fromEntries([
+    ["panel-resize-note", { slot: "boxes", chrome: boxesChrome, width: 788, height: 360, rpc: rpc([resizedLately, refusedLately]) }],
+    ["panel-resize-note-narrow", { slot: "boxes", chrome: boxesChrome, width: 568, height: 400, viewport: 600, rpc: rpc([resizedLately, refusedLately]) }],
+    ...Object.entries(each).flatMap(([name, scene]) => [
       [name, { slot: "boxes", chrome: boxesChrome, width: 788, height: 680, ...scene }],
       [`${name}-narrow`, { slot: "boxes", chrome: boxesChrome, width: 568, height: 760, viewport: 600, ...scene }],
     ]),
-  );
+  ]);
 }
 
 export const scenes = {

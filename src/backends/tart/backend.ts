@@ -1256,6 +1256,11 @@ export class TartBackend implements Backend {
           // A VM filled by an older bb-box has an older helper.
           this.#compileDisplay(vm, access);
         }
+        // A VM at the image's disk has no disk in its config: its disk as QEMU reads it, so the box says its size (#916).
+        if (made && made.diskGiB === null) {
+          const read = await this.#readSize(host, guest(made), signal).catch(() => null);
+          if (read) made = { ...made, diskGiB: read.diskGiB };
+        }
         // Claimed again, so the box's record has the ports and size as it becomes ready.
         await hooks.claim(guest(made));
         return guest(made);
@@ -1642,7 +1647,8 @@ export class TartBackend implements Backend {
             ref: vm,
             host: host.name,
             address: null,
-            size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: made.diskGiB } : null,
+            // A VM at the image's disk has none in its config: the image's, which its disk is.
+            size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: made.diskGiB ?? state.qemu.image?.diskGiB ?? null } : null,
             data: owner ? { box: owner.boxId, os: "windows", ...(made ? { ssh: made.ssh, vnc: made.vnc } : {}) } : { os: "windows" },
             owner,
             power: made ? powerOf(made.power) : "stopped",

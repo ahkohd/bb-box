@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { ResizeWay, Resizing, SizePart } from "../backends/types.ts";
 import type { Contract, ResizeResult, ThreadOnBox } from "../plugin/contract.ts";
-import type { BoxView, SizeView } from "../plugin/views.ts";
+import type { BoxView, ResizeView, SizeView } from "../plugin/views.ts";
 import { FormSection, OptionCard } from "./box-form.tsx";
 import { message } from "./common.tsx";
 
@@ -96,6 +96,96 @@ function requestOf(choice: string, fields: Fields, now: Fields): Request | null 
   return request;
 }
 
+/** The preset whose cores and memory are exactly the box's, if one is. */
+function presetOfSize(presets: ResizeResult["presets"], size: SizeView | null | undefined): string | null {
+  if (!size) return null;
+  return presets.find((preset) => preset.cores === size.cores && preset.memoryGiB === size.memoryGiB)?.name ?? null;
+}
+
+/** How long after a resize ends its row still says how it went, for a panel that reloaded while it ran. */
+export const RESIZE_NOTE_MS = 2 * 60_000;
+
+function resizeSeenKey(boxId: string, at: number): string {
+  return `bb-box:resize-seen:${boxId}:${at}`;
+}
+
+/** This tab has said how the resize went, in the dialog or on the row, so a reload does not say it again. */
+function markResizeSeen(boxId: string, at: number): void {
+  try {
+    window.sessionStorage.setItem(resizeSeenKey(boxId, at), "1");
+  } catch {
+    // Storage may be off; then a reload may say it once more.
+  }
+}
+
+function wasResizeSeen(boxId: string, at: number): boolean {
+  try {
+    return window.sessionStorage.getItem(resizeSeenKey(boxId, at)) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** How long a resize asked for in this page's dialog keeps its row quiet, for a refusal that never began one. */
+const ASKED_QUIET_MS = 15 * 60_000;
+
+/** The boxes whose dialog asked for a resize in this page: their last resize's start then, and when it asked. The dialog says how a later one went. */
+const askedInThisPage = new Map<string, { readonly before: number; readonly askedAt: number }>();
+
+/** For tests: forgets the resizes this page asked for. */
+export function forgetResizesAsked(): void {
+  askedInThisPage.clear();
+}
+
+function endOf(resize: ResizeView): number {
+  return resize.at + (resize.ms ?? 0);
+}
+
+function tookWords(ms: number | null): string {
+  if (ms === null) return "";
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return seconds < 120 ? `, in ${seconds} s` : `, in ${Math.round(seconds / 60)} min`;
+}
+
+/** "Resized to 4 cores · 8 GiB · 64 GiB disk after a restart, in 15 s.", or why it was not. */
+export function resizeNoteWords(resize: ResizeView, ways: Resizing | null): { readonly text: string; readonly failed: boolean } {
+  const to = words(resize.to, ways);
+  if (resize.state === "failed") return { text: `Not resized to ${to}${resize.error ? `: ${checkWords(resize.error)}` : "."}`, failed: true };
+  return { text: `Resized to ${to} ${resize.restart ? "after a restart" : "live"}${tookWords(resize.ms)}.`, failed: false };
+}
+
+/**
+ * How a box's last resize went, once, on its row: for a resize that ended in the last two minutes that this tab has not
+ * already shown, as when a deploy reloaded the panel while the dialog waited. Quiet while `dialogOpen`, and for a resize its
+ * dialog asked for in this page, which said how it went.
+ */
+export function useResizeNote(box: BoxView, dialogOpen: boolean): { readonly text: string; readonly failed: boolean } | null {
+  const last = box.lastResize ?? null;
+  const ended = last && last.state !== "resizing" ? last : null;
+  const [showing, setShowing] = useState<number | null>(null);
+  useEffect(() => {
+    if (!ended || dialogOpen || showing === ended.at) return;
+    const asked = askedInThisPage.get(box.id);
+    if (asked && Date.now() - asked.askedAt > ASKED_QUIET_MS) askedInThisPage.delete(box.id);
+    else if (asked && ended.at > asked.before) {
+      askedInThisPage.delete(box.id);
+      markResizeSeen(box.id, ended.at);
+      return;
+    }
+    const left = endOf(ended) + RESIZE_NOTE_MS - Date.now();
+    if (left <= 0 || wasResizeSeen(box.id, ended.at)) return;
+    markResizeSeen(box.id, ended.at);
+    setShowing(ended.at);
+  }, [box.id, ended?.at, ended?.state, dialogOpen]);
+  useEffect(() => {
+    if (showing === null || !ended || ended.at !== showing) return;
+    const timer = setTimeout(() => setShowing(null), Math.max(0, endOf(ended) + RESIZE_NOTE_MS - Date.now()));
+    return () => clearTimeout(timer);
+  }, [showing, ended?.at]);
+  if (!ended || showing !== ended.at || dialogOpen) return null;
+  return resizeNoteWords(ended, box.resizing ?? null);
+}
+
 type Step = { readonly at: "pick" } | { readonly at: "confirm"; readonly down: number | null } | { readonly at: "threads"; readonly threads: readonly ThreadOnBox[] } | { readonly at: "done"; readonly answer: ResizeResult };
 
 /**
@@ -110,8 +200,10 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [presetAtOpen, setPresetAtOpen] = useState<string | null>(null);
   const [step, setStep] = useState<Step>({ at: "pick" });
   const asked = useRef(0);
+  const firstAnswered = useRef(false);
   const options = useRef<(HTMLButtonElement | null)[]>([]);
   const call = (input: Request & { check?: boolean; restart?: boolean; force?: boolean }) => {
     const { check, restart, force, ...size } = input;
@@ -124,6 +216,8 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
   useEffect(() => {
     if (!box) return;
     setChoice(CUSTOM);
+    setPresetAtOpen(null);
+    firstAnswered.current = false;
     setFields(fieldsOf(box.sizeNow));
     setAnswer(null);
     setRefusal(null);
@@ -136,6 +230,7 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
   useEffect(() => {
     if (!box || !request) return;
     const id = ++asked.current;
+    const asOpened = Object.keys(request).length === 0 && !firstAnswered.current;
     setChecking(true);
     const timer = setTimeout(() => {
       call({ ...request, check: true })
@@ -144,6 +239,12 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
           if (asked.current !== id) return;
           setAnswer((last) => ({ ...checked, presets: checked.presets.length ? checked.presets : (last?.presets ?? []), largest: checked.largest ?? last?.largest ?? null }));
           setChecking(false);
+          firstAnswered.current = true;
+          const same = asOpened ? presetOfSize(checked.presets, box.sizeNow) : null;
+          if (same) {
+            setPresetAtOpen(same);
+            setChoice(same);
+          }
         });
     }, RESIZE_CHECK_MS);
     return () => clearTimeout(timer);
@@ -156,7 +257,7 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
   const plan = answer?.error ? null : (answer?.plan ?? null);
   const restart = !!plan?.parts.some((part) => part.way === "restart");
   /** Nothing asked yet: the box's own size, as the dialog opens. */
-  const untouched = !!request && Object.keys(request).length === 0;
+  const untouched = (!!request && Object.keys(request).length === 0) || (presetAtOpen !== null && choice === presetAtOpen);
   const unchanged = !!answer && !answer.error && answer.plan === null && !checking;
   const blocked = !request || checking || !answer || !!answer.error || !plan || !plan.room.ok || refusal !== null;
   const grows = !!plan?.parts.some((part) => part.from === null || part.to > part.from);
@@ -183,6 +284,7 @@ export function ResizeDialog({ box, threadId, onClose, onResized }: { box: BoxVi
     if (!request) return;
     setApplying(true);
     setRefusal(null);
+    askedInThisPage.set(box!.id, { before: box!.lastResize?.at ?? 0, askedAt: Date.now() });
     try {
       const done = await call({ ...request, ...allow }).catch((error: unknown): ResizeResult => ({ box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: message(error) }));
       if (done.threads?.length) setStep({ at: "threads", threads: done.threads });
