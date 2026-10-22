@@ -279,7 +279,7 @@ export class Backends {
     if (!use) return null;
     const made = JSON.stringify([use.credentials.clientId, use.credentials.clientSecret, use.tags]);
     if (this.#tailnetClient?.made !== made) {
-      this.#tailnetClient = { made, tailnet: new Tailnet({ credentials: use.credentials, tags: use.tags, ...(this.#tailnetFetch ? { fetch: this.#tailnetFetch } : {}) }) };
+      this.#tailnetClient = { made, tailnet: new Tailnet({ credentials: use.credentials, tags: use.tags, log: this.#log, ...(this.#tailnetFetch ? { fetch: this.#tailnetFetch } : {}) }) };
     }
     return this.#tailnetClient.tailnet;
   }
