@@ -41,6 +41,7 @@ is a log: bb-box does not file these with BB.
 | [Serve a plugin's WebSocket route off the server's loop](#30-serve-a-plugins-websocket-route-off-the-servers-loop) | not met | every desktop's frames and input run on BB's server's event loop, so whatever holds that loop, BB's or a plugin's, holds them |
 | [Load a plugin's new version before unloading the old](#31-load-a-plugins-new-version-before-unloading-the-old) | not met | a plugin has no tools while its old version's dispose hooks run, so bb-box waits only 5 s for running commands at a deploy, and stops longer ones, which go on as jobs |
 | [Give live agent sessions a plugin's tools back after it reloads](#32-give-live-agent-sessions-a-plugins-tools-back-after-it-reloads) | not met | after bb-box reloaded, running Claude Code sessions lost its tools for good, until their agent runtime restarted |
+| [Install BB's app on Windows in seconds](#33-install-bbs-app-on-windows-in-seconds) | not met | BB's installer takes 42 to 88 s on a Windows box, most of it npm installing bb-app; bb-box's Windows images pre-install the server's build, which helps until the server's next build (#916) |
 
 ## 1. BB's host app on Windows
 
@@ -1238,6 +1239,32 @@ reconnects them, so they need no restart.
 **Until then.** An agent that loses bb-box's tools needs its thread stopped
 and a new message. bb-box keeps its reloads short, so fewer sessions catch
 one, but cannot bring the tools back to a session that lost them.
+
+## 33. Install BB's app on Windows in seconds
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** A Windows box joins BB as quickly as a Linux one.
+Agents wait for it: until then the box has none of the thread's access.
+
+**What BB does now.** On 22 October 2026, Windows boxes on Proxmox and on a
+Mac joined BB in 49 to 95 s after they were ready, of which BB's installer
+took 42 to 88 s. In one box the installer's npm install of bb-app took
+35 s: it wrote `install-machine-windows.mjs` at 03:41:31 and bb-app's
+launchers at 03:42:07, then started the daemon, which connected about 6 s
+later. The same npm install, run by hand on that 4-core arm64 VM, took
+16 s for 46 packages and 6,109 files. A Linux box with bb-app pre-installed
+enrols in about 5 s ([request 5](#5-enrol-quickly-when-bb-app-is-installed)).
+
+**What we ask.** On Windows, unpack a built bb-app, with its native add-ons
+for the machine's architecture, rather than run npm install, or say how a
+machine provider should install it ahead.
+
+**Until then.** bb-box's Windows images pre-install the server's bb-app
+when a template is refreshed, with its digest in `host-artifact.sha256`,
+as the macOS and Linux images do, so BB's installer finds it and skips the
+download and npm install. A box of a server that has built bb-app again
+since installs it as before (#916).
 
 ## Checked, no request needed
 

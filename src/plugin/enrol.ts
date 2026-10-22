@@ -571,6 +571,7 @@ export class Enrolment {
     this.#phases.set(box.id, phases);
     try {
       let current: BoxRecord = box;
+      let access: Promise<void> | null = null;
       if (!box.enrol.hostId) {
         const host = await this.#create(box);
         if (!host) return;
@@ -582,7 +583,12 @@ export class Enrolment {
           return;
         }
         current = recorded;
-        if (box.capabilities.os === "windows") await this.#enrolWindows(current, host.id, phases);
+        // The thread's access needs only the machine's ID, so on Windows too it is set up while BB's installer runs,
+        // which takes most of a minute there, not once it has.
+        if (box.capabilities.os === "windows") {
+          access = this.#setUpAccess(current, phases);
+          await this.#enrolWindows(current, host.id, phases);
+        }
         // BB still had the box's machine, as for a box the sweep restored,
         // and its daemon is not running. BB does not create the machine
         // again, so bootstrap with the same key starts the daemon.
@@ -592,7 +598,7 @@ export class Enrolment {
           phases.mark("bootstrapped");
         }
       }
-      await this.#follow(current, phases, this.#setUpAccess(current, phases));
+      await this.#follow(current, phases, access ?? this.#setUpAccess(current, phases));
     } catch (error) {
       this.#deps.logError("enrol", error);
       // A Windows box's manual machine is bb-box's to remove: none may stay in BB's list (#539).

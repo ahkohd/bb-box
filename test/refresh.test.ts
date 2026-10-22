@@ -318,6 +318,11 @@ function fakeWindows(exits: number[], options: { readonly after?: (string | null
         return { exitCode: 0, stdout, stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult;
       }
       // check.ps1 reads the boot time too, in its boot line, so it is told first.
+      // BB's app on the trial box, which refresh.ps1 installed (#916).
+      if (script.includes("host-artifact.sha256")) {
+        made.events.push(`run ${ref} BB's app`);
+        return { exitCode: 0, stdout: `${APP}\n`, stderr: "", timedOut: false, truncated: false, durationMs: 1 } satisfies RunResult;
+      }
       const what = script.includes("Check 'Node.js") ? "check.ps1" : script.includes("LastBootUpTime") ? "booted" : script.startsWith("Restart-Computer") ? "restart" : script.startsWith("Remove-Item") ? "clean" : script;
       made.events.push(`run ${ref} ${what}`);
       if (what === "restart") {
@@ -355,7 +360,9 @@ function fakeWindows(exits: number[], options: { readonly after?: (string | null
     capture: async (box, from, image) => {
       made.events.push(`capture ${box.ref} from ${from.ref} as ${image}`);
       const written = JSON.parse(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\image.json"))) as ImageRecord;
-      return { ref: box.ref, image, kind: from.kind, build: written.build, record: written, current: false };
+      // As refresh.ps1 writes it: with the digest of the BB app it installed, given the server's URL.
+      const bbApp = made.written.has("C:\\bb-box\\build\\bb-url") ? APP : written.bbApp;
+      return { ref: box.ref, image, kind: from.kind, build: written.build, record: { ...written, bbApp }, current: false };
     },
     // Tart's builds its Linux and macOS images with a script: a Windows refresh still takes a box.
     build: async () => assert.fail("a Windows refresh does not build with the backend's script"),
@@ -377,6 +384,7 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
     "write 7000 C:\\bb-box\\build\\hardware-cursor.ps1",
     "write 7000 C:\\bb-box\\build\\pins.json",
     "write 7000 C:\\bb-box\\build\\image.json",
+    "write 7000 C:\\bb-box\\build\\bb-url",
     "start 7000",
     "run 7000 booted",
     "run 7000 restart",
@@ -388,12 +396,15 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
     "remove 7001",
     `box 7002 from 7000: trial of ${result.build!.build}`,
     "run 7002 check.ps1",
+    "run 7002 BB's app",
     "remove 7002",
     "replace 9200 with 7000",
   ]);
+  assert.equal(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\bb-url")), "https://bb.example.com\n", "refresh.ps1 installs the server's BB app (#916)");
   assert.deepEqual(result.checks.map((check) => [check.name, check.ok]), [
     ["answers as quickly", true],
     ["the kind's check (check.ps1)", true],
+    ["BB's app", true],
     ["the record", true],
     ["no tool older", true],
   ]);

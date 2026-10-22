@@ -481,6 +481,8 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
         ["hardware-cursor.ps1", await readFile(join(options.setup, "windows", "hardware-cursor.ps1"), "utf8")],
         ["pins.json", `${JSON.stringify({ tools: pins }, null, 2)}\n`],
         ["image.json", `${JSON.stringify(windowsRecord(current, pins, buildId, now(), digest))}\n`],
+        // The server whose BB app refresh.ps1 installs, so a box enrols without installing it (#916).
+        ...(options.bbUrl ? [["bb-url", `${options.bbUrl}\n`] as [string, string]] : []),
       ];
       say(`building ${buildId} in a box of ${current.ref}`);
       const { box } = await boxOf(current, `refresh of ${current.ref}`);
@@ -568,9 +570,11 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       ok: ran.exitCode !== null && !failed.length && ran.stdout.trim() !== "",
       detail: failed.length ? failed.join(" | ").slice(0, 600) : ran.stdout.trim() ? `${ran.stdout.trim().split("\n").length} checks passed.` : `It printed nothing: ${ran.stderr.trim().slice(0, 300)}`,
     });
-    // Windows boxes have no BB app in the image yet.
-    if (options.bbUrl && !windows) {
-      const app = await trial.command.run("cat ~/.bb-machines/*/host-artifact.sha256 2>/dev/null | head -n 1", { timeoutMs: 15_000, signal });
+    if (options.bbUrl) {
+      const read = windows
+        ? "Get-Content \"$HOME\\.bb-machines\\*\\host-artifact.sha256\" -ErrorAction SilentlyContinue | Select-Object -First 1"
+        : "cat ~/.bb-machines/*/host-artifact.sha256 2>/dev/null | head -n 1";
+      const app = await trial.command.run(read, { timeoutMs: 15_000, signal });
       const has = app.stdout.trim();
       checks.push({
         name: "BB's app",

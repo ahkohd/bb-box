@@ -914,6 +914,26 @@ test("a Windows box on trial enrols as a machine of BB's manual provider, which 
   assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
 });
 
+test("a Windows box sets up the thread's access while BB's installer runs, not after it, as that takes most of a minute (#916)", async (t) => {
+  const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
+  const dir = tempDir("windows-shell");
+  const shell = join(dir, "pwsh");
+  const order = join(dir, "order");
+  // BB's installer, in the desktop session, takes a second; the access setup notes when it ran.
+  writeFileSync(
+    shell,
+    `#!/bin/sh\ncase "$2" in *Schedule.Service*) sleep 1; echo installed >> '${order}'; exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; *"gh auth setup-git"*) echo access >> '${order}'; echo 5; exit 0 ;; esac\nexit 1\n`,
+  );
+  chmodSync(shell, 0o755);
+  const { harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell });
+  t.after(() => harness.lifecycle.dispose());
+  world.windowsConnects = true;
+  await tool("box_acquire", { kind: "windows" });
+  const box = await only(app);
+  await until("the enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  assert.deepEqual(readFileSync(order, "utf8").trim().split("\n"), ["access", "installed"]);
+});
+
 test("a Windows box's release ends its threads' processes, waits for BB to finish removing its manual machine, and keeps its record of one BB is slow to remove (#539)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
   const dir = tempDir("windows-shell");
