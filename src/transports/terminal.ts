@@ -30,10 +30,34 @@ export function clampSize(size: TerminalSize): TerminalSize {
 
 const darwin = process.platform === "darwin";
 
-/** `script` runs `inner` in /bin/sh on a PTY of its own. util-linux and BSD spell it differently. */
-function scriptArgv(inner: string): [string, ...string[]] {
-  return darwin ? ["script", "-q", "/dev/null", "/bin/sh", "-c", inner] : ["script", "-qfc", inner, "/dev/null"];
+/**
+ * macOS's `script` gives up when its stdin is a socket, as Node's pipe to a
+ * child is: "tcgetattr/ioctl: Operation not supported on socket" (#914).
+ * util-linux's takes one. So on macOS this Perl, which macOS has, gives
+ * `script` a pipe: it copies its own stdin into the pipe, and exits with
+ * `script`'s status when `script` ends. On SIGTERM or SIGHUP it kills
+ * `script`, which hangs the PTY up, as killing `script` itself does.
+ */
+const PIPE_RELAY =
+  `my $pid; my $status = sub { $? & 127 ? 128 + ($? & 127) : $? >> 8 }; ` +
+  `$SIG{CHLD} = sub { exit $status->() if waitpid(-1, 0) > 0 }; ` +
+  `$SIG{TERM} = $SIG{HUP} = sub { kill "KILL", $pid if $pid; exit 129 }; ` +
+  `pipe(my $r, my $w) or die "pipe: $!\\n"; $pid = fork; defined $pid or die "fork: $!\\n"; ` +
+  `if (!$pid) { close $w; open(STDIN, "<&", $r) or die "stdin: $!\\n"; close $r; exec @ARGV or die "exec $ARGV[0]: $!\\n" } ` +
+  `close $r; $SIG{PIPE} = "IGNORE"; my $buf; while (sysread STDIN, $buf, 65536) { defined(syswrite $w, $buf) or last } ` +
+  `close $w; waitpid $pid, 0; exit $status->()`;
+
+/**
+ * `script` runs `inner` in /bin/sh on a PTY of its own, its stdin a pipe on
+ * macOS. util-linux and BSD spell it differently. src/host/msb.ts runs its
+ * terminals the same way.
+ */
+export function ptyArgv(inner: string, platform: NodeJS.Platform = process.platform): [string, ...string[]] {
+  return platform === "darwin" ? ["perl", "-e", PIPE_RELAY, "script", "-q", "/dev/null", "/bin/sh", "-c", inner] : ["script", "-qfc", inner, "/dev/null"];
 }
+
+/** What ends a ptyArgv run at once, hanging its PTY up: on macOS the relay passes SIGTERM on as a kill, which SIGKILL would not. */
+export const HANG_UP: NodeJS.Signals = darwin ? "SIGTERM" : "SIGKILL";
 
 function stty(pty: string, size: TerminalSize): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -54,7 +78,7 @@ export function openTerminal(argv: readonly [string, ...string[]], size: Termina
   if (signal?.aborted) return Promise.reject(signal.reason instanceof Error ? signal.reason : new TerminalError("Opening the terminal was cancelled."));
   const first = clampSize(size);
   const inner = `tty; stty cols ${first.cols} rows ${first.rows}; exec ${argv.map(quote).join(" ")}`;
-  const [binary, ...args] = scriptArgv(inner);
+  const [binary, ...args] = ptyArgv(inner);
   return new Promise((resolve, reject) => {
     const child = timedSpawn(() => spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, SHELL: "/bin/sh", TERM: "xterm-256color" } }));
     let stderr = "";
@@ -66,7 +90,7 @@ export function openTerminal(argv: readonly [string, ...string[]], size: Termina
     });
     const exited = new Promise<number | null>((done) => child.once("close", (code) => done(code)));
     const kill = () => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      if (child.exitCode === null && child.signalCode === null) child.kill(HANG_UP);
     };
     signal?.addEventListener("abort", kill, { once: true });
     let settled = false;
