@@ -843,6 +843,12 @@ export interface BackendContext {
   hostOn(name: string): boolean;
   /** What the configuration says now about a kind here. Read each time, like `warm`. */
   kind(id: string): KindSettings;
+  /**
+   * Whether bb-box makes new boxes BB machines, as the configuration says
+   * now, so a warm guest can be readied for that before its claim. Read each
+   * time, like `warm`. Absent where there is no BB.
+   */
+  enrols?(): boolean;
   /** BB machines bb-box reaches through BB (042). Absent where there is no BB, as in the conformance run. */
   readonly machines?: MachineAccess;
   /** What the doctor judges images by (049). Absent where bb-box cannot tell, as in the conformance run. */

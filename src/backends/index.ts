@@ -11,7 +11,7 @@ import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
 import { proxmoxQemuDriver } from "./proxmox-qemu/index.ts";
 import { sshPoolDriver } from "./ssh-pool/index.ts";
 import { tartDriver } from "./tart/index.ts";
-import { backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
+import { GENERAL_DEFAULTS, backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
 import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall } from "./types.ts";
 import type { ImageFacts } from "./images.ts";
@@ -284,6 +284,7 @@ export class Backends {
         return Math.max(0, (backend.warm?.[kind] ?? 0) - spares);
       },
       warmShortfalls: (short) => this.#shortfalls(id).set(short),
+      enrols: () => this.#document?.general.enrol ?? GENERAL_DEFAULTS.enrol,
       kindsChanged: () => this.#kindsChanged(),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
       kind: (kind) => {

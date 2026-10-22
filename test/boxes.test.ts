@@ -970,7 +970,14 @@ test("access setup puts the env file above ~/.bashrc's early return, once, and k
     `640\n${HOOK}\ncase $- in *i*) ;; *) return;; esac\nexport MINE=1\n${box.name}`,
   );
 
+  // Once it has run to its end, it does nothing again, as when a warm Mac's fill ran it before the claim's enrolment.
+  await world.boxes.writeFile(THREAD, box.name, ".bashrc", Buffer.from("export MINE=2\n"));
+  const { result: again } = await world.boxes.run(THREAD, box.name, `${accessSetup("linux")!}\ncat .bashrc`);
+  assert.deepEqual([again.exitCode, again.stdout], [0, "0\n"]);
+  assert.equal((await world.boxes.run(THREAD, box.name, "cat .bashrc")).result.stdout, "export MINE=2\n");
+
   // A date that cannot give nanoseconds leaves the time out, and the script's exit code as it was.
+  await world.boxes.run(THREAD, box.name, "rm -f .config/bb-box/access-*");
   const { result: untimed } = await world.boxes.run(THREAD, box.name, `date() { echo 1700000000N; }\n${accessSetup("linux")!}`);
   assert.deepEqual([untimed.exitCode, untimed.stdout, accessSetupMs(untimed.stdout)], [0, "", null]);
 });

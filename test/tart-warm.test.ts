@@ -141,6 +141,27 @@ test("a box at the default size takes a warm VM, and the pool fills again", asyn
   await backend.release(guest, releasing);
 });
 
+test("where boxes become BB machines, a fill readies the box's access before the suspend, so the claim's enrolment finds it done; a clone readies it beside the name and grants", async () => {
+  const { ssh, make, warmVms, contexts, nextAddress } = setup();
+  const backend = make();
+  Object.assign(contexts[0]!, { enrols: () => true });
+  const address = nextAddress();
+  await backend.maintain();
+  const done = (home: string) => readdirSync(join(home, ".config", "bb-box")).filter((name) => /^access-[0-9a-f]{12}$/.test(name));
+  assert.equal(done(ssh.home(address)).length, 1, "the fill ran the access setup to its end");
+  const recorded = hooks();
+  const guest = await backend.acquire(identity(), null, recorded.hooks, signal());
+  assert.equal(guest.ref, warmVms()[0]);
+  assert.ok(!("access" in recorded.timings), JSON.stringify(recorded.timings));
+  await backend.release(guest, releasing);
+
+  const cloned = hooks();
+  const other = await backend.acquire(identity("macos", { cores: 2, memoryMiB: 4096, diskGiB: null }), null, cloned.hooks, signal());
+  assert.ok("clone" in cloned.timings && "access" in cloned.timings && "grants" in cloned.timings, JSON.stringify(cloned.timings));
+  assert.equal(done(ssh.home(other.address!)).length, 1);
+  await backend.release(other, releasing);
+});
+
 test("a warm VM filled with another Mac helper gets its grants again at its claim (058)", async () => {
   const { owners, make, warmVms, owner } = setup();
   const backend = make();
