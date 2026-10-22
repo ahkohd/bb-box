@@ -42,6 +42,7 @@ is a log: bb-box does not file these with BB.
 | [Load a plugin's new version before unloading the old](#31-load-a-plugins-new-version-before-unloading-the-old) | not met | a plugin has no tools while its old version's dispose hooks run, so bb-box waits only 5 s for running commands at a deploy, and stops longer ones, which go on as jobs |
 | [Give live agent sessions a plugin's tools back after it reloads](#32-give-live-agent-sessions-a-plugins-tools-back-after-it-reloads) | not met | after bb-box reloaded, running Claude Code sessions lost its tools for good, until their agent runtime restarted |
 | [Install BB's app on Windows in seconds](#33-install-bbs-app-on-windows-in-seconds) | not met | BB's installer takes 42 to 88 s on a Windows box, most of it npm installing bb-app; bb-box's Windows images pre-install the server's build, which helps until the server's next build (#916) |
+| [Keep one plugin's stylesheet from slowing another's panel](#34-keep-one-plugins-stylesheet-from-slowing-anothers-panel) | not met | a terminal in bb-box's panel took about 2.2 s to draw a prompt, as the shell-tasks plugin's stylesheet made each character's measurement about 100 times slower; bb-box is moving its terminals to xterm's WebGL renderer |
 
 ## 1. BB's host app on Windows
 
@@ -1265,6 +1266,35 @@ when a template is refreshed, with its digest in `host-artifact.sha256`,
 as the macOS and Linux images do, so BB's installer finds it and skips the
 download and npm install. A box of a server that has built bb-app again
 since installs it as before (#916).
+
+## 34. Keep one plugin's stylesheet from slowing another's panel
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** Its panels to lay out and draw as fast inside BB as
+on a page of their own, whatever other plugins' stylesheets hold.
+
+**What BB does now.** BB loads every plugin's app stylesheet into the one
+page, and its rules reach every plugin's panel. On 22 October 2026, a
+terminal in bb-box's panel took about 2.2 s from the prompt arriving to
+drawing it. xterm's DOM renderer measures the width of each new character,
+and each measurement took about 30 ms in the panel, against 0.3 ms
+elsewhere. Turning stylesheets off one at a time found the cause: the
+`app.css` of shell-tasks, a plugin bundled with BB. Without it, the prompt
+took about 8 ms. That stylesheet has `:has()` rules, the likely cause, as a
+`:has()` rule can make the browser recheck styles across the page on each
+change, though the exact rule was not isolated.
+
+**What we ask.**
+- Scope each plugin's stylesheet to its own panels and slots, for example
+  in a cascade layer and under the plugin's root element, so one plugin's
+  rules neither match nor restyle another's elements.
+- Check shell-tasks' `:has()` rules, and keep any that must stay global to
+  selectors that cannot match outside its own elements.
+
+**Until then.** bb-box is moving its terminals to xterm's WebGL renderer,
+which does not measure characters in the page. Other parts of its panels
+may still be slowed.
 
 ## Checked, no request needed
 
