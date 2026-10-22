@@ -17,12 +17,8 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import {
-  terminalPath,
-  type Contract,
-  type DesktopState,
-  type PanelState,
-} from "../plugin/contract.ts";
+import type { Contract, DesktopState, PanelState } from "../plugin/contract.ts";
+import { terminalPath } from "../plugin/terminal-route.ts";
 import type { BoxView } from "../plugin/views.ts";
 import {
   rememberedLive,
