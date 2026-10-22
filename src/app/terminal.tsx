@@ -7,6 +7,7 @@
 // on its own.
 
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import {
   experimental_Icon as Icon,
@@ -247,6 +248,22 @@ export class TerminalClient implements Kept {
     this.#observer?.observe(this.element);
   }
 
+  /**
+   * Draws with WebGL, which measures each glyph once on a canvas. The DOM renderer measures each new character in the page,
+   * and BB's page can make each measurement slow: a first prompt waited 2 s for it. Where WebGL is missing or its context is
+   * lost, xterm draws with the DOM renderer again. Loaded once the element is in the page: loaded before, it sizes its canvas
+   * for a pixel ratio of 1 and draws a Retina screen's glyphs twice as large.
+   */
+  #drawWithWebgl(): void {
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      this.#view.loadAddon(webgl);
+    } catch {
+      // No WebGL 2 here: the DOM renderer stays.
+    }
+  }
+
   subscribe(listener: () => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
@@ -273,6 +290,7 @@ export class TerminalClient implements Kept {
   start(): void {
     if (this.#started || this.#disposed) return;
     this.#started = true;
+    this.#drawWithWebgl();
     this.fit();
     const socket = new WebSocket(
       this.#url({ cols: this.#view.cols || 80, rows: this.#view.rows || 24 }),
