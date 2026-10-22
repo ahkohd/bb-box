@@ -858,6 +858,26 @@ test("a kind a backend changes by itself, as when a Mac reports Windows video re
   await until("the box to take the kind's displays", async () => (await app.boxes.find(box.id))?.capabilities.displays.some((display) => display.id === "video") ?? false);
 });
 
+test("after a Windows box enrols, and after it reconnects, bb-box hides the windows of BB's daemon's consoles, which BB starts in front (bb-requests 27)", async (t) => {
+  const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
+  const shell = join(tempDir("windows-shell"), "pwsh");
+  // Each run in the desktop session, BB's installer and the hide alike, says it found and hid one console window.
+  writeFileSync(shell, `#!/bin/sh\ncase "$2" in *Schedule.Service*) echo "consoles=1 hidden=1"; exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; esac\nexit 1\n`);
+  chmodSync(shell, 0o755);
+  const { harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell, logonWaitMs: 100 });
+  t.after(() => harness.lifecycle.dispose());
+  world.windowsConnects = true;
+  const hid = (name: string) => harness.inspection.logEntries.filter((entry) => entry.message === `Hid 1 of BB's 1 console window on box ${name}'s desktop (bb-requests 27).`).length;
+  await tool("box_acquire", { kind: "windows" });
+  const box = await only(app);
+  await until("the hide after the enrolment", async () => hid(box.name) === 1);
+  const hostId = `host-${box.id}`;
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await tool("box_stop", { box: box.name });
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  await until("the hide after the reconnect", async () => hid(box.name) === 2);
+});
+
 test("a Windows box on trial enrols as a machine of BB's manual provider, which bb-box owns: release, a failure and the sweep remove it, and a start reconnects only a disconnected one (#539)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
   // A box's PowerShell that runs the desktop session's command as BB's installer would, and exits 0.

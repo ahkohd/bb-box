@@ -1082,11 +1082,14 @@ each new machine by hand, which does not suit boxes that come and go.
 
 **Until then.** A box does not need Keep Awake: its image turns sleep,
 hibernation and the screen's timeout off. Keep Awake's selection can leave
-boxes out only by listing every other machine. The skill tells agents to
-minimise the window before they record. bb-box changes nothing else on its
-side: hiding the console after it opens works only with Windows Console Host
-as the default, and would need a watcher, as BB starts the PowerShell again
-at each start.
+boxes out only by listing every other machine. After a Windows box enrols,
+and after each reconnect, bb-box hides the windows of the consoles of BB's
+processes once: it finds each from the process, not by title, and in Windows
+Terminal hides Terminal's own window, as hiding the console's pseudo window
+only minimises it. It minimises a window before it hides it, so the keyboard
+goes to the desktop: hidden alone, the window kept it, and a Ctrl+C could
+reach BB's daemon (#916). A console BB opens later, as when its daemon
+restarts by itself, stays until the next reconnect.
 
 ## 28. Refresh a machine's processors and memory when they change
 
