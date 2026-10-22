@@ -97,7 +97,12 @@ the VM runs.
   image's disk for now (028).
 - Windows on a Mac runs in QEMU through bb-box's own scripts (046), not
   Tart: its cores and memory are QEMU's arguments when it starts, and a
-  stop saves its memory to a file, which a new size cannot restore.
+  stop saves its memory to a file, which a new size cannot restore. So a
+  resize asks Windows to shut down (`Stop-Computer -Force`, 4 s on
+  Windows 11 on arm64, after which QEMU exits), writes the new size in the
+  VM's config, grows its overlay with `qemu-img resize`, and boots it
+  afresh: bb-box's start took 15.4 s, with the desktop and Cua working.
+  C: then grows over a larger disk, as at an acquire.
 
 **microsandbox** (msb 0.7.7, a box at 2 cores and 4 GiB). msb 0.7.7 has
 `msb modify`, which plans a change (`--dry-run`), applies what it can

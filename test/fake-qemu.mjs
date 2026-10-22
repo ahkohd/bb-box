@@ -16,7 +16,9 @@
 //   minutes, so no test leaves one running.
 // - `qemu-img create -f qcow2 -F qcow2 -b <base> <file> [<n>G]` writes an
 //   overlay that names its base, and its size when given. `qemu-img info -U
-//   <file>` says a disk is that size, or 64 GiB.
+//   <file>` says a disk is that size, or 64 GiB. `qemu-img resize -q <file>
+//   <n>G` grows it, and refuses to shrink it, as qemu-img does without
+//   --shrink.
 // - `nc -U <socket>` joins its input and output to a Unix socket; `nc -z
 //   <host> <port>` says whether something listens there.
 //
@@ -144,6 +146,13 @@ function qemuImg() {
     const [source, target] = rest.filter((arg, i) => !arg.startsWith("-") && rest[i - 1] !== "-O");
     if (!source || !target || !existsSync(source)) fail(`qemu-img: Could not open '${source}'`);
     return writeFileSync(target, `flattened from ${readFileSync(source, "utf8")}`);
+  }
+  if (command === "resize" && file && size) {
+    if (!existsSync(file) || !/^\d+G$/.test(size)) fail(`qemu-img: Could not open '${file}'`);
+    const text = readFileSync(file, "utf8");
+    const was = Number(/^size (\d+)G$/m.exec(text)?.[1] ?? 64);
+    if (Number.parseInt(size) < was) fail("qemu-img: Use the --shrink option to perform a shrink operation.");
+    return writeFileSync(file, `${text.replace(/^size \d+G\n/m, "")}size ${size}\n`);
   }
   if (command === "info" && file) {
     if (!existsSync(file)) fail(`qemu-img: Could not open '${file}': No such file or directory`);

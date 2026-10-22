@@ -449,6 +449,58 @@ test("a Windows box with a disk larger than the image's has an overlay of that s
   await backend.release(guest, releasing, signal());
 });
 
+test("a Windows VM resizes with a restart: Windows shuts down, its config and overlay take the new size, and it boots afresh and extends C: (061)", async () => {
+  const { backend, mac, qemu, ssh, context } = setup({}, { windowsShutdownWaitS: 1 });
+  assert.deepEqual(backend.resizing(KIND), { cores: "restart", memory: "restart", disk: "restart", shrinks: true });
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const dir = join(qemu, "vms", guest.ref);
+  // Windows, asked to shut down, ends its QEMU, as on the Mac.
+  ssh.powershell(
+    GUEST,
+    [
+      `case "$1" in`,
+      `  *Stop-Computer*) echo off >> "$HOME/off"; kill "$(cat '${dir}/pid')"; echo "powering off";;`,
+      `  *Resize-Partition*) echo extended >> "$HOME/extend"; exit 0;;`,
+      `  *"Get-Process explorer"*|*Add-Type*|*Set-Date*) exit 0;;`,
+      `  *) exec sh -c "$1";;`,
+      `esac`,
+      ``,
+    ].join("\n"),
+  );
+  const to: BoxSize = { cores: 6, memoryMiB: 12288, diskGiB: 80 };
+
+  const plan = await backend.planResize(guest, KIND, to, [], signal());
+  assert.deepEqual(plan.parts, [
+    { part: "cores", from: SMALL.cores, to: 6, way: "restart" },
+    { part: "memory", from: SMALL.memoryMiB, to: 12288, way: "restart" },
+    { part: "disk", from: 64, to: 80, way: "restart" },
+  ]);
+  assert.equal(plan.downSeconds, 40);
+  await assert.rejects(backend.planResize(guest, KIND, { ...to, diskGiB: 40 }, [], signal()), /disk only grows, and this one's is 64 GiB/);
+
+  const resized = await backend.resize(guest, KIND, to, { restart: true }, signal());
+  assert.deepEqual(resized.size, to);
+  assert.equal(readFileSync(join(ssh.home(GUEST), "off"), "utf8"), "off\n", "Windows was asked to shut down");
+  assert.deepEqual([config(qemu, guest.ref).cores, config(qemu, guest.ref).memory, config(qemu, guest.ref).disk], ["6", "12288", "80"]);
+  assert.match(readFileSync(join(dir, "disk.qcow2"), "utf8"), /\nsize 80G\n$/);
+  const booted = runs(mac).at(-1)!;
+  assert.ok(booted.join(" ").includes("-smp 6 -m 12288 "));
+  assert.ok(!booted.includes("-incoming"), "booted afresh, not restored");
+  assert.equal(existsSync(join(dir, "state")), false);
+  assert.equal(readFileSync(join(ssh.home(GUEST), "extend"), "utf8"), "extended\n", "C: grows over the larger disk");
+  assert.equal(await backend.power(guest, signal()), "running");
+
+  // Windows that does not shut down has its QEMU ended, and takes the size all the same.
+  const stuck = Number(readFileSync(join(dir, "pid"), "utf8"));
+  ssh.powershell(GUEST, [`case "$1" in`, `  *Stop-Computer*) echo "powering off";;`, `  *"Get-Process explorer"*|*Add-Type*|*Set-Date*) exit 0;;`, `  *) exec sh -c "$1";;`, `esac`, ``].join("\n"));
+  const back = await backend.resize(guest, KIND, { ...to, cores: 4 }, { restart: true }, signal());
+  assert.equal(back.size?.cores, 4);
+  assert.equal(alive(stuck), false);
+  assert.ok(runs(mac).at(-1)!.join(" ").includes("-smp 4 "));
+  assert.deepEqual(context.errors, []);
+  await backend.release(guest, releasing, signal());
+});
+
 test("a Windows box that asks for a disk no larger than the image's keeps the image's", async () => {
   const { backend, qemu, ssh } = setup();
   for (const diskGiB of [32, 64]) {

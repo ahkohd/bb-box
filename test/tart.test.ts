@@ -1071,7 +1071,7 @@ test("a macOS VM resizes its CPUs and memory with a restart: shut down, not susp
 test("a Linux VM resizes with a restart: shut down, tart set, booted, and its root partition grown over a larger disk (061)", async () => {
   const { ssh, mac, backend } = linuxSetup();
   assert.deepEqual(backend.resizing("linux-arm64"), { cores: "restart", memory: "restart", disk: "restart", shrinks: true });
-  assert.equal(backend.resizing("windows-arm64-desktop"), null, "Windows comes later");
+  assert.equal(backend.resizing("windows-arm64-desktop"), null, "a kind this backend does not offer");
   const guest = await backend.acquire(identity("linux-arm64", "thr_abc123", LINUX_SMALL), null, hooks().hooks, signal());
   // The disk tools, as the VM would have them; sudo logs the command.
   const home = ssh.home(guest.address!);
