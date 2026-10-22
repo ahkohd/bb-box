@@ -1453,6 +1453,11 @@ final class DbusDisplay: QemuDesktop, @unchecked Sendable {
         self.height = height
         self.stride = stride
         lock.unlock()
+        // A mode change is a new surface, with a new descriptor, which is mapped again: frame() then makes pixel
+        // buffers, and encode() a new encoder session with a key frame, at the new size. Windows' VirtIO GPU driver
+        // gives the surface its own size, not always the one asked for: asked for 1024x768 it made 1280x1024, as
+        // Windows itself then said (22 October 2026), so the size here is the desktop's, whatever was asked. It sends
+        // the old size's surface again first.
         log("D-Bus: the desktop is \(width)x\(height), shared")
         listener.reply(to: message)
         onUpdate()
@@ -1835,9 +1840,15 @@ final class QemuServer: @unchecked Sendable {
     guard let pool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made) == kCVReturnSuccess, let buffer = made else { return }
     CVPixelBufferLockBaseAddress(buffer, [])
     let stride = CVPixelBufferGetBytesPerRow(buffer)
-    // The desktop's size may have changed since it was read; a copy of another size waits for the next update.
-    if let base = CVPixelBufferGetBaseAddress(buffer), desktop.width == width, desktop.height == height { desktop.copy(into: base, stride: stride) }
+    // The desktop's size may have changed since it was read, as at a mode change: that frame is dropped, not encoded
+    // unwritten, and the new desktop's own update comes at once.
+    var copied = false
+    if let base = CVPixelBufferGetBaseAddress(buffer), desktop.width == width, desktop.height == height {
+      desktop.copy(into: base, stride: stride)
+      copied = true
+    }
     CVPixelBufferUnlockBaseAddress(buffer, [])
+    guard copied else { return }
     queue.async { [self] in
       last = buffer
       encode(buffer)
