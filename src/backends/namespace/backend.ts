@@ -286,11 +286,12 @@ export class NamespaceBackend implements Backend {
     });
   }
 
-  async maintain(signal?: AbortSignal): Promise<void> {
+  async maintain(signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void> {
     const held = await this.#held(signal);
     await this.#removeStaleDevices(held, signal).catch((error) => this.#context.logError("remove Namespace machines' leftover tailnet devices", error));
     for (const instance of held) {
       if (instance.status !== "running" || instance.createdAt === null) continue;
+      if (!recordedGuests?.has(this.#tag(instance.labels[LABELS.box] ?? instance.id))) continue;
       const ends = this.#endsAt(instance.createdAt);
       const ahead = Math.min(KEEP_AHEAD_MS, ends - this.#now());
       if (ahead <= 0 || (instance.deadline ?? 0) - this.#now() >= ahead - 5 * 60_000) continue;

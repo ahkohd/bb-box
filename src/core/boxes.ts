@@ -2544,9 +2544,11 @@ export class Boxes {
     await this.#tellOfEnds(signal);
 
     // Every built backend, off ones too: an off backend's warm counts read 0, so its upkeep retires its warm guests (029).
+    const boxes = await this.all();
     for (const backend of this.#deps.backends.active()) {
       signal?.throwIfAborted();
-      await backend.maintain?.(signal).catch((error) => this.#deps.logError(`maintain ${backend.id}`, error));
+      const recordedGuests = new Set(boxes.flatMap((box) => (box.backend === backend.id && box.guest ? [box.guest.ref] : [])));
+      await backend.maintain?.(signal, recordedGuests).catch((error) => this.#deps.logError(`maintain ${backend.id}`, error));
     }
     return { released, leftovers, adopted, kept, ending: waiting, resumed };
   }

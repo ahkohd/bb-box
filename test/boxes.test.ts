@@ -1437,6 +1437,13 @@ test("a box whose backend ends it at a set time has its thread told once, within
   assert.ok((await world.boxes.find(box.id))?.endToldAt);
 });
 
+test("the sweep tells each backend's upkeep which of its guests have a box, so a leftover is not kept alive", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  await world.boxes.sweep();
+  assert.deepEqual([...world.backend.recordedGuests!], [box.guest!.ref]);
+});
+
 test("a failed release keeps the box releasing with the reason, and the sweep finishes it", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
