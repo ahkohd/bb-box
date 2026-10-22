@@ -3709,10 +3709,33 @@ test("a desktop tab shows why the desktop refused it, and reconnects", async () 
     client!.dispatchEvent(new CustomEvent("disconnect", { detail: { clean: false } }));
   });
   expect(slot.getByText("The box's desktop refused its VNC password.")).toBeTruthy();
-  expect(slot.getByText("Trying again in 1 s")).toBeTruthy();
+  expect(slot.getByText(/^Trying again in [12] s$/)).toBeTruthy();
   expect(slot.getByText("Disconnected")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Reconnect now" }));
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
+});
+
+test("a desktop tab's note counts down to its next try, rather than show the same number throughout (#916)", async () => {
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  try {
+    const { handlers } = server([desktopBox()]);
+    const slot = desktopTab(handlers);
+    await slot.findByText("Connecting to the desktop…");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    // Three ends in a row: the waits are 1 s, 2 s and then 4 s.
+    for (let end = 0; end < 3; end++) {
+      act(() => void novnc.FakeRfb.made.at(-1)!.dispatchEvent(new CustomEvent("disconnect", { detail: { clean: false } })));
+      if (end < 2) act(() => vi.advanceTimersByTime(1000 * 2 ** end));
+    }
+    expect(slot.getByText("Trying again in 4 s")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(1000));
+    expect(slot.getByText("Trying again in 3 s")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(2000));
+    expect(slot.getByText("Trying again in 1 s")).toBeTruthy();
+  } finally {
+    vi.useRealTimers();
+    random.mockRestore();
+  }
 });
 
 test("a desktop tab says when its box is not running or gone, and starts a stopped box", async () => {
