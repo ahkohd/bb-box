@@ -1,0 +1,440 @@
+import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
+import { KeyFile, Ssh, SshTransport, generateKeyPair } from "../../transports/ssh.ts";
+import type { SshAccess } from "../../transports/types.ts";
+import {
+  BackendError,
+  type AcquireHooks,
+  type Backend,
+  type BackendContext,
+  type BoxIdentity,
+  type BoxKind,
+  type BoxSize,
+  type BoxTransports,
+  type Capacity,
+  type CommandCapability,
+  type DoctorCheck,
+  type DoctorReport,
+  type Guest,
+  type GuestFact,
+  type HeldGuest,
+  type PowerState,
+  type ReleaseHooks,
+} from "../types.ts";
+import { NamespaceApi, NamespaceError, type Instance, type InstanceShape, type NamespaceFetch } from "./api.ts";
+import type { NamespaceConfig, NamespaceKind } from "./config.ts";
+
+export const LABELS = {
+  install: "bbbox-install",
+  box: "bbbox-box",
+  thread: "bbbox-thread",
+  name: "bbbox-name",
+  kind: "bbbox-kind",
+  created: "bbbox-created",
+} as const;
+
+export const KEEP_AHEAD_MS = 60 * 60_000;
+const READY_TIMEOUT_MS = 5 * 60_000;
+const SSH_POLL_MS = 2_000;
+const SSH_KEY = "ssh-key";
+const STALE_DEVICE_MS = 15 * 60_000;
+const MAC_TAILSCALE = [
+  "set -eu",
+  'export PATH="/opt/homebrew/bin:$PATH"',
+  "command -v tailscale >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install --quiet tailscale >/dev/null",
+  'pgrep -x tailscaled >/dev/null || sudo -n sh -c "mkdir -p /var/lib/tailscale; $(command -v tailscaled) --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.socket >/var/log/tailscaled.log 2>&1 </dev/null &"',
+  "for attempt in 1 2 3 4 5 6 7 8 9 10; do tailscale status >/dev/null 2>&1 && break; [ -S /var/run/tailscaled.socket ] && break; sleep 1; done",
+].join("\n");
+const MIB_PER_GB = 1024;
+
+const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: false, inDesktopSession: false, streaming: true };
+
+export const MACOS_SHAPES: readonly { readonly cores: number; readonly memoryGB: number }[] = [
+  { cores: 4, memoryGB: 7 },
+  { cores: 4, memoryGB: 14 },
+  { cores: 6, memoryGB: 14 },
+  { cores: 6, memoryGB: 28 },
+  { cores: 8, memoryGB: 14 },
+  { cores: 8, memoryGB: 28 },
+  { cores: 12, memoryGB: 28 },
+  { cores: 12, memoryGB: 56 },
+  { cores: 16, memoryGB: 28 },
+  { cores: 16, memoryGB: 56 },
+];
+
+export function macDiskGiB(shape: { readonly cores: number; readonly memoryGB: number }): number {
+  return 48 + Math.max(shape.cores, shape.memoryGB / 2) * 8;
+}
+
+export function macShapeFor(size: BoxSize): { readonly cores: number; readonly memoryGB: number } | null {
+  const fits = MACOS_SHAPES.filter((shape) => shape.cores >= size.cores && shape.memoryGB * MIB_PER_GB >= size.memoryMiB && (size.diskGiB === null || macDiskGiB(shape) >= size.diskGiB));
+  return fits.sort((a, b) => a.cores * 100 + a.memoryGB - (b.cores * 100 + b.memoryGB))[0] ?? null;
+}
+
+export interface NamespaceBackendOptions {
+  readonly fetch?: NamespaceFetch;
+  readonly sshBinary?: string;
+  readonly now?: () => number;
+  readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  readonly readyTimeoutMs?: number;
+}
+
+function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => (clearTimeout(timer), reject(signal.reason)), { once: true });
+  });
+}
+
+function clock(ms: number): string {
+  return `${new Date(ms).toISOString().slice(11, 16)} UTC`;
+}
+
+export class NamespaceBackend implements Backend {
+  readonly id: string;
+  readonly label: string;
+  readonly nature = "virtual" as const;
+  readonly #config: NamespaceConfig;
+  readonly #context: BackendContext;
+  readonly #options: NamespaceBackendOptions;
+  readonly #api: NamespaceApi;
+  readonly #keyFile = new KeyFile();
+  readonly #now: () => number;
+  readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  readonly #placing = new Set<string>();
+  #ssh: Promise<{ ssh: Ssh; publicKey: string }> | null = null;
+
+  constructor(config: NamespaceConfig, context: BackendContext, options: NamespaceBackendOptions = {}) {
+    if (!config.token) throw new BackendError("unsupported", "Namespace has no API token: set it in BB Box's settings.");
+    this.#config = config;
+    this.#context = context;
+    this.#options = options;
+    this.id = context.id;
+    this.label = "Namespace";
+    this.#api = new NamespaceApi({ token: config.token, region: config.region, ...(options.fetch ? { fetch: options.fetch } : {}) });
+    this.#now = options.now ?? Date.now;
+    this.#sleep = options.sleep ?? sleepFor;
+  }
+
+  kinds(): readonly BoxKind[] {
+    return [
+      {
+        id: "macos",
+        label: "macOS",
+        description: "A Mac of its own on Namespace, for builds and Apple's tools, with Xcode. It lasts at most the workspace plan's longest life. Its desktop is not shown.",
+        requires: [],
+        capabilities: { os: "macos", arch: "arm64", gpu: false, features: ["xcode"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
+        readyTimeoutMs: this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+      },
+    ];
+  }
+
+  async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+    this.#kind(kind);
+    const host = "Namespace";
+    if (!macShapeFor(size)) return { ok: false, message: this.#tooBig(size), warm: null, hosts: [{ host, ok: false, limits: [] }] };
+    let held: Instance[];
+    try {
+      held = await this.#api.list({ [LABELS.install]: null }, signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return { ok: false, message: `Namespace did not answer: ${error instanceof Error ? error.message : String(error)}`, warm: null, hosts: [{ host, ok: false, limits: [] }] };
+    }
+    const used = held.length + Math.max(this.#placing.size, pending.length);
+    const ok = used < this.#config.machines;
+    return {
+      ok,
+      message: ok ? null : `Namespace has ${held.length} of the ${this.#config.machines} machines bb-box may have at once, counting every bb-box install's in the workspace. Release a box, or raise the most machines in BB Box's settings.`,
+      warm: null,
+      hosts: [{ host, ok, limits: [{ resource: "machines", used, total: this.#config.machines, reserve: 0, unit: "count" }] }],
+    };
+  }
+
+  async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    const kind = this.#kind(box.kind);
+    const shape = macShapeFor(box.size);
+    if (!shape) throw new BackendError("no_capacity", this.#tooBig(box.size));
+    const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+      const started = performance.now();
+      try {
+        return await run();
+      } finally {
+        hooks.timing(name, Math.round(performance.now() - started));
+      }
+    };
+    const tag = this.#tag(box.boxId);
+    const claimed = (instance: Instance | null): Guest => this.#guest(tag, box.boxId, instance, shape);
+    this.#placing.add(box.boxId);
+    let made: Instance | null = previous?.data?.instance && typeof previous.data.instance === "string" ? await this.#api.describe(previous.data.instance, signal).catch(() => null) : null;
+    try {
+      await hooks.claim(claimed(null));
+      const { publicKey } = await this.#keys();
+      const instanceShape: InstanceShape = { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } };
+      made = await step("create", () =>
+        this.#api.create(
+          {
+            shape: instanceShape,
+            labels: this.#labels(box, kind),
+            deadline: this.#now() + KEEP_AHEAD_MS,
+            purpose: `bb-box ${box.kind} box ${box.name}`,
+            uniqueTag: tag,
+            sshPublicKeys: [publicKey],
+          },
+          signal,
+        ),
+      );
+      await hooks.claim(claimed(made));
+      await hooks.starting();
+      const ready = await step("ready", () => this.#api.wait(made!.id, signal));
+      if (ready.status !== "running") throw new Error(`Namespace's machine ${ready.id} is ${ready.status}, not running.`);
+      await step("ssh", () => this.#answers(ready.id, this.#now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS), signal));
+      const tailnet = this.#context.tailnet?.() ?? null;
+      if (tailnet) await step("tailnet", () => this.#join(ready.id, box, tailnet, signal));
+      const guest = claimed(ready);
+      await hooks.claim(guest);
+      return guest;
+    } catch (error) {
+      const instance = made?.id ?? (await this.#find(box.boxId).catch(() => null))?.id;
+      if (instance) await this.#api.destroy(instance, "bb-box: the box did not start").catch((cause) => this.#context.logError("destroy after a failed acquire", cause));
+      if (error instanceof NamespaceError && error.kind === "full") throw new BackendError("no_capacity", error.message);
+      throw error;
+    } finally {
+      this.#placing.delete(box.boxId);
+    }
+  }
+
+  async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
+    const started = performance.now();
+    const instance = await this.#mine(guest, signal);
+    if (instance) {
+      if (instance.status === "running" && this.#context.tailnet?.()) await this.#leave(instance.id, signal);
+      await this.#api.destroy(instance.id, "bb-box: the box was released", signal);
+      await this.#forget(instance.id);
+    }
+    hooks.timing("destroy", Math.round(performance.now() - started));
+  }
+
+  async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
+    const described = await this.#mine(guest, signal);
+    if (!described || described.status === "destroyed" || described.status === "destroying") return null;
+    if (described.status === "running") return "running";
+    if (described.status === "suspended") return "stopped";
+    return "unknown";
+  }
+
+  async held(signal?: AbortSignal): Promise<HeldGuest[]> {
+    return (await this.#held(signal)).map((instance) => {
+      const boxId = instance.labels[LABELS.box] ?? null;
+      const created = Number(instance.labels[LABELS.created]);
+      const owner =
+        boxId && instance.labels[LABELS.thread]
+          ? {
+              boxId,
+              threadId: instance.labels[LABELS.thread]!,
+              name: instance.labels[LABELS.name] ?? null,
+              kind: instance.labels[LABELS.kind] ?? null,
+              createdAt: Number.isFinite(created) ? created : null,
+            }
+          : null;
+      const shape = instance.shape ? { cores: instance.shape.cores, memoryGB: Math.round(instance.shape.memoryMiB / MIB_PER_GB) } : null;
+      return { ...this.#guest(this.#tag(boxId ?? instance.id), boxId, instance, shape), owner, power: instance.status === "running" ? "running" : instance.status === "suspended" ? "stopped" : "unknown" };
+    });
+  }
+
+  async maintain(signal?: AbortSignal): Promise<void> {
+    const held = await this.#held(signal);
+    await this.#removeStaleDevices(held, signal).catch((error) => this.#context.logError("remove Namespace machines' leftover tailnet devices", error));
+    for (const instance of held) {
+      if (instance.status !== "running" || instance.createdAt === null) continue;
+      const ends = this.#endsAt(instance.createdAt);
+      const ahead = Math.min(KEEP_AHEAD_MS, ends - this.#now());
+      if (ahead <= 0 || (instance.deadline ?? 0) - this.#now() >= ahead - 5 * 60_000) continue;
+      await this.#api.extend(instance.id, ahead, signal).catch((error) => this.#context.logError(`keep Namespace machine ${instance.id} alive`, error));
+    }
+  }
+
+  async transports(guest: Guest): Promise<BoxTransports> {
+    const instance = typeof guest.data?.instance === "string" ? guest.data.instance : null;
+    if (!instance) throw new BackendError("gone", `Box ${guest.ref} has no Namespace machine.`);
+    const { ssh } = await this.#keys();
+    const access = this.#access(instance);
+    return { command: new SshTransport(ssh, access, "macos"), displays: [], access: { ssh: access, dockerHost: null } };
+  }
+
+  async doctor(signal?: AbortSignal): Promise<DoctorReport> {
+    const checks: DoctorCheck[] = [];
+    const notes: string[] = [];
+    let held: Instance[] = [];
+    try {
+      held = await this.#held(signal);
+      checks.push({ id: "namespace.token", name: "API token", status: "ok", detail: `Namespace's API in ${this.#config.region} answers to the token.`, fix: null });
+    } catch (error) {
+      checks.push({
+        id: "namespace.token",
+        name: "API token",
+        status: "fail",
+        detail: error instanceof Error ? error.message : String(error),
+        fix: "Make a token with nsc token create, as the guide shows, and set it in BB Box's settings.",
+      });
+    }
+    const now = this.#now();
+    const described = held.map((instance) => {
+      const ends = instance.createdAt === null ? null : this.#endsAt(instance.createdAt);
+      const age = instance.createdAt === null ? "" : `, ${Math.round((now - instance.createdAt) / 60_000)} min old`;
+      return `${instance.labels[LABELS.name] ?? instance.id}${age}${ends === null ? "" : `, ends ${clock(ends)}`}${instance.continent ? `, in ${instance.continent}` : ""}`;
+    });
+    const unclaimed = held.filter((instance) => !instance.labels[LABELS.box]);
+    checks.push({
+      id: "namespace.machines",
+      name: "Machines",
+      status: unclaimed.length ? "warn" : "ok",
+      detail: held.length ? `${held.length} of at most ${this.#config.machines}: ${described.join("; ")}.` : `None now; at most ${this.#config.machines} at once.`,
+      fix: unclaimed.length ? "bb-box's sweep destroys machines labelled for this install that no box claims." : null,
+    });
+    notes.push(`Each machine lives at most ${this.#config.longestLifeHours} hours, the plan's longest life, and its deadline is kept no more than an hour ahead, so a machine bb-box loses track of ends within the hour.`);
+    const failing = checks.some((check) => check.status === "fail");
+    return { ok: !failing, summary: failing ? "Namespace does not answer to the token." : `Namespace answers; ${held.length} machine${held.length === 1 ? "" : "s"}.`, checks, notes };
+  }
+
+  #endsAt(createdAt: number): number {
+    return createdAt + this.#config.longestLifeHours * 3600_000;
+  }
+
+  #guest(tag: string, boxId: string | null, instance: Instance | null, shape: { readonly cores: number; readonly memoryGB: number } | null): Guest {
+    const endsAt = instance?.createdAt != null ? this.#endsAt(instance.createdAt) : null;
+    const facts: GuestFact[] = [
+      ...(endsAt !== null ? [{ label: "Ends", value: `${clock(endsAt)}, the plan's longest life` }] : []),
+      ...(instance?.continent ? [{ label: "Runs in", value: instance.continent }] : []),
+    ];
+    return {
+      ref: tag,
+      host: instance?.continent ?? null,
+      address: null,
+      size: shape ? { cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, diskGiB: macDiskGiB(shape) } : null,
+      data: { ...(boxId ? { box: boxId } : {}), ...(instance ? { instance: instance.id } : {}), ...(endsAt !== null ? { endsAt } : {}) },
+      ...(facts.length ? { facts } : {}),
+    };
+  }
+
+  #labels(box: BoxIdentity, kind: NamespaceKind): Record<string, string> {
+    return {
+      [LABELS.install]: this.#context.installId,
+      [LABELS.box]: box.boxId,
+      [LABELS.thread]: box.threadId,
+      [LABELS.name]: box.name,
+      [LABELS.kind]: kind,
+      [LABELS.created]: String(box.createdAt),
+    };
+  }
+
+  #tag(boxId: string): string {
+    return `bbbox-${this.#context.installId}-${boxId}`.replace(/[^A-Za-z0-9-]+/g, "-").slice(0, 120);
+  }
+
+  #held(signal?: AbortSignal): Promise<Instance[]> {
+    return this.#api.list({ [LABELS.install]: this.#context.installId }, signal);
+  }
+
+  async #find(boxId: string, signal?: AbortSignal): Promise<Instance | null> {
+    const found = await this.#api.list({ [LABELS.install]: this.#context.installId, [LABELS.box]: boxId }, signal);
+    return found[0] ?? null;
+  }
+
+  async #mine(guest: Guest, signal?: AbortSignal): Promise<Instance | null> {
+    const boxId = typeof guest.data?.box === "string" ? guest.data.box : null;
+    const id = typeof guest.data?.instance === "string" ? guest.data.instance : boxId ? ((await this.#find(boxId, signal))?.id ?? null) : null;
+    if (!id) return null;
+    const described = await this.#api.describe(id, signal).catch((error: unknown) => {
+      if (error instanceof NamespaceError && error.kind === "gone") return null;
+      throw error;
+    });
+    return described && described.labels[LABELS.install] === this.#context.installId ? described : null;
+  }
+
+  async #answers(instance: string, deadline: number, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, this.#access(instance), "macos");
+    let last = "";
+    while (this.#now() < deadline) {
+      const result = await command.run("true", { timeoutMs: 20_000, signal }).catch((error: unknown) => ({ exitCode: -1, stderr: error instanceof Error ? error.message : String(error) }));
+      if (result.exitCode === 0) return;
+      last = result.stderr.trim();
+      await this.#sleep(SSH_POLL_MS, signal);
+    }
+    throw new Error(`Namespace's machine ${instance} did not answer SSH through ${this.#api.sshGateway} in time${last ? `: ${last}` : ""}.`);
+  }
+
+  #access(instance: string): SshAccess {
+    return { host: this.#api.sshGateway, port: 22, user: instance, hostKeys: [] };
+  }
+
+  async #join(instance: string, box: BoxIdentity, tailnet: Tailnet, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const command = new SshTransport(ssh, this.#access(instance), "macos");
+    const prepared = await command.run(MAC_TAILSCALE, { timeoutMs: 180_000, signal });
+    if (prepared.exitCode !== 0) throw new Error(`Tailscale did not start on Namespace's machine ${instance}: ${prepared.stderr.trim().slice(-300) || `exit ${prepared.exitCode}`}`);
+    const key = await tailnet.mintKey({ description: `bb-box Namespace ${box.name}` }, signal);
+    const joined = await command.run(joinScript(this.#tailnetHostname(box.name)), { stdin: key.key, timeoutMs: 90_000, signal });
+    if (joined.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not join the tailnet: ${joined.stderr.trim().slice(-300) || `exit ${joined.exitCode}`}`);
+  }
+
+  async #leave(instance: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    await new SshTransport(ssh, this.#access(instance), "macos").run(leaveScript(), { timeoutMs: 15_000, signal }).catch(() => undefined);
+  }
+
+  async #removeStaleDevices(held: readonly Instance[], signal?: AbortSignal): Promise<void> {
+    const tailnet = this.#context.tailnet?.();
+    if (!tailnet) return;
+    const live = new Set(held.map((instance) => this.#tailnetHostname(instance.labels[LABELS.name] ?? instance.id)));
+    for (const device of await tailnet.devices(signal)) {
+      if (!device.hostname.startsWith(this.#tailnetHostPrefix()) || live.has(device.hostname)) continue;
+      if (device.lastSeen !== null && this.#now() - device.lastSeen < STALE_DEVICE_MS) continue;
+      await tailnet.removeDevice(device.id, signal);
+      this.#context.log?.(`Removed tailnet device ${device.hostname}, whose Namespace machine is gone.`);
+    }
+  }
+
+  #tailnetHostPrefix(): string {
+    return `bb-box-ns-${tailnetHostname(this.#context.installId)}-`;
+  }
+
+  #tailnetHostname(name: string): string {
+    return tailnetHostname(`${this.#tailnetHostPrefix()}${name}`);
+  }
+
+  async #forget(instance: string): Promise<void> {
+    const { ssh } = await this.#keys();
+    await ssh.forget(this.#access(instance)).catch(() => undefined);
+  }
+
+  #kind(kind: string): NamespaceKind {
+    if (kind !== "macos") throw new BackendError("unsupported", `Namespace offers macos boxes, not ${kind}.`);
+    return kind;
+  }
+
+  #tooBig(size: BoxSize): string {
+    const largest = MACOS_SHAPES[MACOS_SHAPES.length - 1]!;
+    return `Namespace's largest Mac has ${largest.cores} cores and ${largest.memoryGB} GB of memory, less than the ${size.cores} cores and ${Math.round(size.memoryMiB / MIB_PER_GB)} GiB asked for.`;
+  }
+
+  #keys(): Promise<{ ssh: Ssh; publicKey: string }> {
+    if (!this.#ssh) {
+      const pending = (async () => {
+        let stored = await this.#context.storage.get<{ privateKey: string; publicKey: string }>(SSH_KEY);
+        if (!stored) {
+          stored = await generateKeyPair();
+          await this.#context.storage.set(SSH_KEY, stored);
+        }
+        const keyPath = await this.#keyFile.path(stored.privateKey);
+        const shareDir = await this.#keyFile.shareDir();
+        return { ssh: new Ssh({ keyPath, binary: this.#options.sshBinary, shareDir }), publicKey: stored.publicKey };
+      })();
+      this.#ssh = pending;
+      pending.catch(() => {
+        if (this.#ssh === pending) this.#ssh = null;
+      });
+    }
+    return this.#ssh;
+  }
+}

@@ -96,6 +96,7 @@ export class NamespaceApi {
   readonly #endpoint: string;
 
   constructor(options: NamespaceApiOptions) {
+    if (!options.token) throw new NamespaceError("refused", "Namespace has no API token: set it in BB Box's settings.");
     this.#token = options.token;
     this.region = options.region ?? "us";
     this.#fetch = options.fetch ?? ((url, init) => fetch(url, init));
@@ -128,11 +129,11 @@ export class NamespaceApi {
     return instanceFrom(answer.metadata);
   }
 
-  async list(labels: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<Instance[]> {
+  async list(labels: Readonly<Record<string, string | null>>, signal?: AbortSignal): Promise<Instance[]> {
     const found: Instance[] = [];
     let cursor: string | undefined;
     do {
-      const body = { maxEntries: LIST_PAGE, labelFilter: Object.entries(labels).map(([name, value]) => ({ name, value, op: "EQUAL" })), ...(cursor ? { paginationCursor: cursor } : {}) };
+      const body = { maxEntries: LIST_PAGE, labelFilter: Object.entries(labels).map(([name, value]) => (value === null ? { name, op: "EXIST" } : { name, value, op: "EQUAL" })), ...(cursor ? { paginationCursor: cursor } : {}) };
       const answer = (await this.#call("ListInstances", body, "list instances", signal)) as { instances?: unknown; paginationCursor?: unknown };
       for (const raw of Array.isArray(answer.instances) ? answer.instances : []) found.push(instanceFrom(raw));
       cursor = typeof answer.paginationCursor === "string" && answer.paginationCursor ? answer.paginationCursor : undefined;

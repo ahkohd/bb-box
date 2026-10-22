@@ -5,6 +5,7 @@
 
 import { DockerBackend } from "../src/backends/docker/backend.ts";
 import { MsbBackend } from "../src/backends/microsandbox/backend.ts";
+import { NamespaceBackend } from "../src/backends/namespace/backend.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
 import { TartBackend } from "../src/backends/tart/backend.ts";
 import type { CommandTransport } from "../src/transports/types.ts";
@@ -14,6 +15,7 @@ import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
 import { hetznerConfig, hetznerWorld } from "./fake-hetzner-world.ts";
 import { fakeMsbHost, msbConfig } from "./fake-msb.ts";
 import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
+import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
 
@@ -192,6 +194,28 @@ await conformance({
     "computer-use": "the fake microVM has no computer-use driver",
     size: "the fake msb runs commands on the test machine",
     images: "the microsandbox backend builds no images yet",
+  },
+  timeoutMs: 20_000,
+});
+
+const namespace = new FakeNamespace();
+await conformance({
+  name: "Namespace on a fake API",
+  storage: new MemoryStorage(),
+  create: (storage, installId) =>
+    new NamespaceBackend(
+      { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 4, longestLifeHours: 4 },
+      testContext(storage, installId),
+      { fetch: namespace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 },
+    ),
+  skip: {
+    arch: "the fake ssh runs commands on the test machine",
+    display: "the macos kind has no desktop yet",
+    "computer-use": "the macos kind has no desktop yet",
+    "desktop-session": "the fake ssh runs commands on the test machine, which has no launchctl",
+    size: "the fake ssh runs commands on the test machine",
+    images: "Namespace's machines start from its own macOS images",
+    "exact-size": "Namespace's Macs come only in fixed shapes, so a box gets the smallest with at least its cores and memory",
   },
   timeoutMs: 20_000,
 });
