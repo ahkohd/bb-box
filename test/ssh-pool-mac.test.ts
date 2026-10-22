@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { EXIT, fields, parseStatus } from "../src/backends/ssh-pool/protocol.ts";
 import { leftoverWords } from "../src/backends/ssh-pool/backend.ts";
+import { CUA_SHA256, CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { fakeMacos, type FakeMacos } from "./fake-macos.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -782,6 +783,7 @@ test("setup-mac.sh pins the Cua Driver that Tart's image pins", () => {
     return [/^CUA_VERSION=(.+)$/m.exec(text)?.[1], /^CUA_SHA256=(.+)$/m.exec(text)?.[1]];
   };
   assert.deepEqual(pins("../setup/ssh-pool/setup-mac.sh"), pins("../setup/tart/prepare-image.sh"));
+  assert.deepEqual(pins("../setup/ssh-pool/setup-mac.sh"), [CUA_VERSION, CUA_SHA256], "and the Namespace Macs install, as src/backends/tart/backend.ts pins it");
   assert.match(pins("../setup/ssh-pool/setup-mac.sh")[1]!, /^[0-9a-f]{64}$/);
 });
 
