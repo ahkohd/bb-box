@@ -63,7 +63,7 @@ Skip this step if BB's server is reachable without a tailnet.
 tailscale up
 ```
 
-Open the link it prints and approve the server. Or use an auth key, with `tailscale up --auth-key=<key>`, tagged as your tailnet's policy needs for machines that reach BB's server.
+Open the link it prints and approve the server. Or use an auth key, with `tailscale up --auth-key=<key>`, tagged as your tailnet's policy needs for machines that reach BB's server. [Joining cloud machines to your tailnet](tailnet.md) sets up the tag and policy BB Box's own cloud machines use, which suit this server too.
 
 ### 4. Make a user for BB's daemon
 
