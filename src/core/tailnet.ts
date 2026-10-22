@@ -1,10 +1,11 @@
 import { quote } from "../transports/process.ts";
+import { tailscaleFetch } from "./tailscale-fetch.ts";
 
 export const TAILSCALE_API = "https://api.tailscale.com";
 export const DEFAULT_TAILNET_TAGS: readonly string[] = ["tag:bb-box"];
 export const KEY_LIFETIME_SECONDS = 600;
 const TOKEN_EARLY_RENEWAL_MS = 60_000;
-const REQUEST_TIMEOUT_MS = 30_000;
+const ATTEMPT_TIMEOUT_MS = 15_000;
 const DESCRIPTION_LIMIT = 50;
 const HOSTNAME_LIMIT = 63;
 
@@ -30,6 +31,8 @@ export interface TailnetOptions {
   readonly fetch?: TailnetFetch;
   readonly now?: () => number;
   readonly apiUrl?: string;
+  readonly attemptTimeoutMs?: number;
+  readonly log?: (line: string) => void;
 }
 
 export interface MintedKey {
@@ -61,15 +64,17 @@ export class Tailnet {
   readonly #fetch: TailnetFetch;
   readonly #now: () => number;
   readonly #apiUrl: string;
+  readonly #attemptTimeoutMs: number;
   #token: { value: string; expiresAt: number } | null = null;
   #pendingToken: Promise<string> | null = null;
 
   constructor(options: TailnetOptions) {
     this.#credentials = options.credentials;
     this.tags = [...(options.tags?.length ? options.tags : DEFAULT_TAILNET_TAGS)];
-    this.#fetch = options.fetch ?? ((url, init) => fetch(url, init));
+    this.#fetch = options.fetch ?? tailscaleFetch(options.log);
     this.#now = options.now ?? Date.now;
     this.#apiUrl = (options.apiUrl ?? TAILSCALE_API).replace(/\/+$/, "");
+    this.#attemptTimeoutMs = options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS;
   }
 
   async mintKey(request: { readonly description: string; readonly expirySeconds?: number }, signal?: AbortSignal): Promise<MintedKey> {
@@ -161,13 +166,17 @@ export class Tailnet {
   }
 
   async #send(url: string, init: { method: string; headers: Record<string, string>; body?: string }, doing: string, signal?: AbortSignal): Promise<TailnetResponse> {
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-    try {
-      return await this.#fetch(url, { ...init, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
-    } catch (error) {
-      if (signal?.aborted) throw signal.reason;
-      const reason = timeout.aborted ? "it did not answer within 30 s" : this.#redact(error instanceof Error ? error.message : String(error));
-      throw new TailnetError(`Could not reach Tailscale to ${doing}: ${reason}.`);
+    for (let attempt = 1; ; attempt++) {
+      const timeout = AbortSignal.timeout(this.#attemptTimeoutMs);
+      try {
+        return await this.#fetch(url, { ...init, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+      } catch (error) {
+        if (signal?.aborted) throw signal.reason;
+        if (attempt < 2) continue;
+        const seconds = Math.round(this.#attemptTimeoutMs / 1000);
+        const reason = timeout.aborted ? `it did not answer within ${seconds} s, twice` : this.#redact(error instanceof Error ? error.message : String(error));
+        throw new TailnetError(`Could not reach Tailscale to ${doing}: ${reason}.`);
+      }
     }
   }
 
