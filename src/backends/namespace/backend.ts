@@ -1,6 +1,7 @@
 import { startMacInput } from "../../core/mac-input.ts";
 import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
 import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
+import { CUA_SHA256, CUA_VERSION } from "../tart/backend.ts";
 import { qemuVideoSource } from "../tart/qemu-video.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair } from "../../transports/ssh.ts";
 import type { SshAccess } from "../../transports/types.ts";
@@ -48,7 +49,7 @@ function largestAllowedIn(message: string): MacShape | null {
 }
 const SCREEN_SHARING_PORT = 5900;
 const MAC_DESKTOP_CLIENTS = ["/opt/namespace/vmguest", "/usr/bin/osascript", MAC_STREAM];
-const SCREEN_CAPTURE_CLIENTS = ["/opt/namespace/vmguest", MAC_STREAM];
+const SCREEN_CAPTURE_CLIENTS = ["/opt/namespace/vmguest", MAC_STREAM, "com.trycua.driver"];
 const MAC_DESKTOP_SERVICES = ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"];
 const MAC_DESKTOP = [
   "set -eu",
@@ -72,6 +73,52 @@ const MAC_DESKTOP = [
   "killall -u \"$(id -un)\" replayd 2>/dev/null || :",
   "sudo -n pmset -a displaysleep 0 sleep 0 >/dev/null",
   "caffeinate -u -t 1",
+].join("\n");
+const CUA_ARCHIVE = `cua-driver-rs-${CUA_VERSION}-darwin-arm64`;
+const CUA_APP = "/Applications/CuaDriver.app";
+const CUA_SOCKET = "/Users/runner/Library/Caches/cua-driver/cua-driver.sock";
+const CUA_AGENT = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.trycua.cua-driver</string>
+<key>ProgramArguments</key><array><string>${CUA_APP}/Contents/MacOS/cua-driver</string><string>serve</string></array>
+<key>EnvironmentVariables</key><dict>
+<key>CUA_DRIVER_RS_TELEMETRY_ENABLED</key><string>false</string>
+<key>CUA_DRIVER_RS_UPDATE_CHECK</key><string>false</string>
+</dict>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+<key>ProcessType</key><string>Interactive</string>
+</dict></plist>`;
+export const MAC_CUA = [
+  "set -eu",
+  'export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"',
+  'work=$(mktemp -d); trap \'rm -rf "$work"\' EXIT',
+  `curl -fsSL --retry 3 -o "$work/cua.tgz" "https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VERSION}/${CUA_ARCHIVE}.tar.gz" || { echo "Could not download Cua Driver ${CUA_VERSION}." >&2; exit 1; }`,
+  `echo "${CUA_SHA256}  $work/cua.tgz" | shasum -a 256 -c --quiet - >/dev/null 2>&1 || { echo "Cua Driver's archive does not match its pin." >&2; exit 1; }`,
+  'tar -xzf "$work/cua.tgz" -C "$work"',
+  `sudo -n rm -rf ${CUA_APP}`,
+  `sudo -n cp -R "$work/${CUA_ARCHIVE}/CuaDriver.app" /Applications/`,
+  "sudo -n mkdir -p /usr/local/bin",
+  `sudo -n ln -sf ${CUA_APP}/Contents/MacOS/cua-driver /usr/local/bin/cua-driver`,
+  "CUA_DRIVER_RS_TELEMETRY_ENABLED=false cua-driver telemetry disable >/dev/null 2>&1 || :",
+  `requirement=$(codesign -d -r- ${CUA_APP} 2>&1 | sed -n 's/^designated => //p' | head -n 1)`,
+  '[ -n "$requirement" ] || { echo "Cua Driver has no code requirement." >&2; exit 1; }',
+  'printf \'%s\' "$requirement" | csreq -r- -b "$work/cua.csreq"',
+  'csreq=$(xxd -p "$work/cua.csreq" | tr -d \'\\n\')',
+  'db="/Library/Application Support/com.apple.TCC/TCC.db"; now=$(date +%s)',
+  ...["kTCCServiceAccessibility", "kTCCServiceScreenCapture"].map(
+    (service) =>
+      `sudo -n sqlite3 "$db" "DELETE FROM access WHERE service = '${service}' AND client = 'com.trycua.driver'; INSERT INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded) VALUES ('${service}', 'com.trycua.driver', 0, 2, 4, 1, X'$csreq', NULL, 0, 'UNUSED', NULL, 0, $now, NULL, NULL, 'UNUSED', $now);"`,
+  ),
+  'agent="$HOME/Library/LaunchAgents/com.trycua.cua-driver.plist"',
+  'mkdir -p "$HOME/Library/LaunchAgents"',
+  `cat > "$agent" <<'PLIST'\n${CUA_AGENT}\nPLIST`,
+  'sudo -n launchctl bootstrap "gui/$(id -u)" "$agent"',
+  'socket="$HOME/Library/Caches/cua-driver/cua-driver.sock"',
+  'i=0; until [ -S "$socket" ]; do i=$((i + 1)); [ "$i" -lt 60 ] || { echo "Cua Driver did not listen at $socket within 30 s." >&2; exit 1; }; sleep 0.5; done',
+  'status=$(cua-driver permissions status --json 2>&1) || { echo "Cua Driver did not say its permissions: $status" >&2; exit 1; }',
+  'printf \'%s\' "$status" | grep -q \'"accessibility": *true\' && printf \'%s\' "$status" | grep -q \'"screen_recording": *true\' || { echo "Cua Driver lacks Accessibility or Screen Recording: $status" >&2; exit 1; }',
 ].join("\n");
 const STALE_DEVICE_MS = 15 * 60_000;
 const MAC_TAILSCALE = [
@@ -116,6 +163,7 @@ export interface NamespaceBackendOptions {
   readonly readyTimeoutMs?: number;
   readonly streamSource?: string;
   readonly desktopScript?: string;
+  readonly cuaScript?: string;
 }
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
@@ -179,7 +227,7 @@ export class NamespaceBackend implements Backend {
           features: ["xcode"],
           command: SSH_COMMAND,
           displays: [{ id: "desktop", protocol: "rfb", resizable: false }, MAC_VIDEO],
-          computerUse: null,
+          computerUse: { driver: "cua", version: CUA_VERSION, socket: CUA_SOCKET },
           enrol: true,
         },
         readyTimeoutMs,
@@ -248,7 +296,10 @@ export class NamespaceBackend implements Backend {
       const ready = await step("ready", () => this.#api.wait(made!.id, signal));
       if (ready.status !== "running") throw new Error(`Namespace's machine ${ready.id} is ${ready.status}, not running.`);
       await step("ssh", () => this.#answers(ready.id, this.#now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS), signal));
-      if (kind === "macos-desktop") await step("desktop", () => this.#prepareDesktop(ready.id, signal));
+      if (kind === "macos-desktop") {
+        await step("desktop", () => this.#prepareDesktop(ready.id, signal));
+        await step("computer use", () => this.#prepareComputerUse(ready.id, signal));
+      }
       const tailnet = this.#context.tailnet?.() ?? null;
       if (tailnet) await step("tailnet", () => this.#join(ready.id, box, tailnet, signal));
       const guest = claimed(ready);
@@ -507,6 +558,12 @@ export class NamespaceBackend implements Backend {
     const { ssh } = await this.#keys();
     const prepared = await new SshTransport(ssh, this.#access(instance), "macos").run(this.#options.desktopScript ?? MAC_DESKTOP, { stdin: this.#options.streamSource ?? qemuVideoSource(), timeoutMs: 300_000, signal });
     if (prepared.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not get its desktop ready: ${prepared.stderr.trim().slice(-400) || `exit ${prepared.exitCode}`}`);
+  }
+
+  async #prepareComputerUse(instance: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const prepared = await new SshTransport(ssh, this.#access(instance), "macos").run(this.#options.cuaScript ?? MAC_CUA, { timeoutMs: 300_000, signal });
+    if (prepared.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not get Cua Driver ready: ${prepared.stderr.trim().slice(-400) || `exit ${prepared.exitCode}`}`);
   }
 
   async #largestMachine(): Promise<MacShape | null> {

@@ -171,6 +171,7 @@ const READY_TIMEOUT_MS = 5 * 60_000;
 const FILL_QUIET_MS = 30_000;
 /** Cua Driver as the images pin it (015). The setup guide's image script installs this release. */
 export const CUA_VERSION = "0.30.4";
+export const CUA_SHA256 = "e270ea67388d794505031b0a15d8b58994c67e18e754a43634d7732251f595df";
 const MiB_PER_GiB = 1024;
 
 const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true };

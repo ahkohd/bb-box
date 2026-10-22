@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { KEEP_AHEAD_MS, LABELS, NamespaceBackend, macShapeFor } from "../src/backends/namespace/backend.ts";
+import { KEEP_AHEAD_MS, LABELS, MAC_CUA, NamespaceBackend, macShapeFor } from "../src/backends/namespace/backend.ts";
+import { CUA_SHA256, CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { parseNamespacePart, type NamespaceConfig } from "../src/backends/namespace/config.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
@@ -12,11 +14,11 @@ import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.
 
 const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
 
-function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number } = {}) {
+function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number; cuaScript?: string } = {}) {
   fakeSsh();
   const fake = new FakeNamespace({ ...(options.now ? { now: options.now } : {}), lifeCapMs: 4 * 3600_000, maxCores: 64 });
   const context = testContext(new MemoryStorage(), "inst1");
-  const backend = new NamespaceBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, ...(options.now ? { now: options.now } : {}) });
+  const backend = new NamespaceBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: options.cuaScript ?? ":", ...(options.now ? { now: options.now } : {}) });
   return { fake, backend, context };
 }
 
@@ -263,10 +265,10 @@ test("a macos-desktop box gets its desktop ready as it starts: the video helper 
     assert.ok(calls.includes("caffeinate -u -t 1"), calls.join("; "));
     const approvals = readFileSync(join(process.env.FAKE_SSH_DIR!, "home", "ssh.us.namespace.so", "Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"), "utf8");
     const hintYear = new Date().getUTCFullYear() + 5;
-    for (const client of ["/opt/namespace/vmguest", "/usr/local/bin/bb-box-stream"]) {
+    for (const client of ["/opt/namespace/vmguest", "/usr/local/bin/bb-box-stream", "com.trycua.driver"]) {
       assert.ok(approvals.includes(`<key>${client}</key><dict><key>kScreenCaptureAlertableUsageCount</key>`), `${client}'s notice put off`);
     }
-    assert.equal(approvals.match(new RegExp(`<key>kScreenCapturePrivacyHintDate</key><date>${hintYear}-01-01T00:00:00Z</date>`, "g"))?.length, 2);
+    assert.equal(approvals.match(new RegExp(`<key>kScreenCapturePrivacyHintDate</key><date>${hintYear}-01-01T00:00:00Z</date>`, "g"))?.length, 3);
     assert.ok(calls.some((call) => /^killall -u \S+ replayd$/.test(call)), "replayd reads them afresh");
 
     const transports = await backend.transports(desktop, "macos-desktop");
@@ -283,4 +285,49 @@ test("a macos-desktop box gets its desktop ready as it starts: the video helper 
   } finally {
     process.env.PATH = path;
   }
+});
+
+test("a macos-desktop box gets Cua Driver for computer use: the pinned release checked by its SHA-256, Accessibility and Screen Recording for its code requirement, and its LaunchAgent answering on its socket", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ns-cua-"));
+  const home = join(dir, "home");
+  const bin = join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(home);
+  const log = join(dir, "calls");
+  writeFileSync(log, "");
+  const tool = (name: string, body: string) => {
+    writeFileSync(join(bin, name), `#!/bin/sh\nprintf '%s\\n' "${name} $*" >> ${log}\n${body}\n`);
+    chmodSync(join(bin, name), 0o755);
+  };
+  const socket = join(home, "Library/Caches/cua-driver/cua-driver.sock");
+  tool("curl", 'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done; printf archive > "$out"');
+  tool("shasum", `read -r sum file; [ "$sum" = "${CUA_SHA256}" ] && [ -f "$file" ] && [ ! -e "${dir}/mismatch" ]`);
+  tool("tar", 'while [ $# -gt 0 ]; do [ "$1" = -C ] && into=$2; shift; done; mkdir -p "$into/cua-driver-rs-' + CUA_VERSION + '-darwin-arm64/CuaDriver.app"');
+  tool("codesign", 'echo \'designated => identifier "com.trycua.driver" and anchor apple generic\'');
+  tool("csreq", 'while [ $# -gt 0 ]; do [ "$1" = -b ] && out=$2; shift; done; printf req > "$out"');
+  tool("xxd", "echo 0a0b");
+  tool("sudo", `[ "$2" = launchctl ] && mkdir -p "${join(home, "Library/Caches/cua-driver")}" && python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "${socket}"; :`);
+  tool("cua-driver", '[ "$1" = permissions ] && echo \'{"accessibility": true, "screen_recording": true}\'; :');
+  const run = () => spawnSync("sh", ["-c", MAC_CUA], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: home }, encoding: "utf8" });
+  const done = run();
+  assert.equal(done.status, 0, done.stderr);
+  const calls = readFileSync(log, "utf8").trim().split("\n");
+  assert.ok(calls[0]!.includes(`https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VERSION}/cua-driver-rs-${CUA_VERSION}-darwin-arm64.tar.gz`), calls[0]);
+  assert.ok(calls.some((call) => /^sudo -n cp -R \S+\/CuaDriver\.app \/Applications\/$/.test(call)), calls.join("; "));
+  const grants = calls.filter((call) => call.startsWith("sudo -n sqlite3"));
+  for (const service of ["kTCCServiceAccessibility", "kTCCServiceScreenCapture"]) {
+    assert.ok(grants.some((grant) => grant.includes(`'${service}', 'com.trycua.driver', 0, 2, 4, 1, X'0a0b'`)), service);
+  }
+  assert.match(readFileSync(join(home, "Library/LaunchAgents/com.trycua.cua-driver.plist"), "utf8"), /<string>serve<\/string>/);
+  assert.ok(calls.some((call) => /^sudo -n launchctl bootstrap gui\/\d+ \S+com\.trycua\.cua-driver\.plist$/.test(call)), calls.join("; "));
+
+  rmSync(socket);
+  writeFileSync(join(dir, "mismatch"), "");
+  const refused = run();
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Cua Driver's archive does not match its pin\./);
+
+  const { backend } = setup();
+  assert.deepEqual(backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.computerUse, { driver: "cua", version: CUA_VERSION, socket: "/Users/runner/Library/Caches/cua-driver/cua-driver.sock" });
+  assert.equal(backend.kinds().find((kind) => kind.id === "macos")!.capabilities.computerUse, null);
 });

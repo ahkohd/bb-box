@@ -206,7 +206,7 @@ await conformance({
     new NamespaceBackend(
       { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 4, longestLifeHours: 4, largestMachine: null },
       testContext(storage, installId),
-      { fetch: namespace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, desktopScript: "cat >/dev/null" },
+      { fetch: namespace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, desktopScript: "cat >/dev/null", cuaScript: ":" },
     ),
   skip: {
     arch: "the fake ssh runs commands on the test machine",
