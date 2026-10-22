@@ -20,7 +20,7 @@ import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.t
 import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, STALL_MS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
-import { MAX_RETRY_MS, OptionComposer, boxKey, macBrowser, retryWait } from "../src/app/viewer.ts";
+import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, boxKey, macBrowser, retryWait } from "../src/app/viewer.ts";
 import { checkWords } from "../src/app/resize.tsx";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
@@ -81,7 +81,10 @@ const novnc = vi.hoisted(() => {
     pasted: string[] = [];
     /** What the keyboard handler's events became, after the viewer's own mapping. */
     keyEvents: { keysym: number; code: string; down: boolean }[] = [];
+    /** Keys sent with sendKey and the keyboard handler's events together, in the order they went. */
+    input: string[] = [];
     sendKey(keysym: number, code: string | null, down?: boolean) {
+      this.input.push(`sent ${code}${down === false ? " up" : ""}`);
       if (down === undefined) {
         this.keys.push({ keysym, code, down: true }, { keysym, code, down: false });
         return;
@@ -93,6 +96,7 @@ const novnc = vi.hoisted(() => {
     }
     _handleKeyEvent(keysym: number, code: string, down: boolean) {
       this.keyEvents.push({ keysym, code, down });
+      this.input.push(`typed ${code}${down ? "" : " up"}`);
     }
     /** noVNC's canvas and cursor state: the box's cursor is none until it sends one; the connection state is connected throughout. */
     _canvas = document.createElement("canvas");
@@ -2053,7 +2057,7 @@ function pasteEvent(text: string) {
   return event;
 }
 
-type FakeClient = { pasted: string[]; keys: { keysym: number; code: string | null; down: boolean }[]; keyEvents: { keysym: number; code: string; down: boolean }[]; _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void } & EventTarget;
+type FakeClient = { input: string[]; pasted: string[]; keys: { keysym: number; code: string | null; down: boolean }[]; keyEvents: { keysym: number; code: string; down: boolean }[]; _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void } & EventTarget;
 
 test("with control, Cmd+V on a Mac pastes this computer's text into a Linux box with the box's Ctrl+V, and Cmd stands for Ctrl there", async () => {
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
@@ -2328,6 +2332,43 @@ test("a Windows box, whose QEMU console moves no clipboard, has it through bb-bo
   } finally {
     platform.mockRestore();
   }
+});
+
+test("keys typed straight after a paste land after it, though the box's clipboard takes a while; with no paste pending a key goes at once (#915)", async () => {
+  const { handlers, changes } = server([desktopBox({ id: "box_7", name: "win-7", os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: null, quality: null, macKeys: null } })]);
+  let landed: (() => void) | null = null;
+  const slow: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    desktopPaste: ({ box: ref, viewer, text }) =>
+      new Promise<null>((resolve) => {
+        landed = () => {
+          changes.push(`desktopPaste ${ref} ${viewer} ${text}`);
+          resolve(null);
+        };
+      }),
+  };
+  const slot = desktopTab(slow, "box_7");
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+  act(() => void client.dispatchEvent(new Event("connect")));
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  client.input.length = 0;
+
+  client._handleKeyEvent(0x61, "KeyA", true, null, null);
+  expect(client.input).toEqual(["typed KeyA"]);
+  client._handleKeyEvent(0x61, "KeyA", false, null, null);
+
+  client.input.length = 0;
+  keyOnCanvas(slot, { key: "v", ctrlKey: true });
+  act(() => void document.dispatchEvent(pasteEvent("[PASTE]")));
+  await waitFor(() => expect(landed).not.toBeNull());
+  for (const [code, down] of [["KeyX", true], ["KeyX", false], ["Enter", true], ["Enter", false]] as const) client._handleKeyEvent(code === "Enter" ? 0xff0d : 0x78, code, down, null, null);
+  expect(client.input).toEqual([]);
+  landed!();
+  await waitFor(() => expect(changes).toContain(`desktopPaste box_7 ${new URL(novnc.FakeRfb.made[0]!.url).searchParams.get("viewer")} [PASTE]`));
+  await waitFor(() => expect(client.input).toHaveLength(8));
+  expect(client.input).toEqual(["sent ControlLeft", "sent KeyV", "sent KeyV up", "sent ControlLeft up", "typed KeyX", "typed KeyX up", "typed Enter", "typed Enter up"]);
 });
 
 test("the pointer over the desktop: the local arrow without control whatever the box sends, the box's cursor with control, and never an invisible one", async () => {
@@ -2734,6 +2775,33 @@ test("video that this browser cannot decode while its tab is away shows over VNC
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(novnc.FakeRfb.made).toHaveLength(1);
     expect(FakeSocket.made.filter((made) => made.url.includes("stream=selkies"))).toHaveLength(videos);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("over video, keys typed straight after a paste go after the box's paste chord (#915)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const canvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
+    fireEvent.keyDown(canvas, { key: "v", code: "KeyV", ctrlKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("[PASTE]")));
+    fireEvent.keyDown(canvas, { key: "x", code: "KeyX" });
+    expect(socket.sent).not.toContain("kd,120");
+    await waitFor(() => expect(socket.sent).toContain("kd,120"));
+    const keys = socket.sent.filter((sent): sent is string => typeof sent === "string" && /^k[du],/.test(sent));
+    expect(keys.slice(-5)).toEqual(["kd,65507", "kd,118", "ku,118", "ku,65507", "kd,120"]);
   } finally {
     undo();
     window.sessionStorage.clear();
@@ -3481,6 +3549,32 @@ test("a hidden desktop tab keeps its stream, hands control back after a minute, 
   expect(changes).toEqual(["takeControl box_2", "handBack box_2", "takeControl box_2"]);
   expect(novnc.FakeRfb.made).toHaveLength(2);
   returned.unmount();
+});
+
+test("keys typed while a paste is on its way wait for it, at most PASTE_HOLD_MS, and go in order; with none pending they go at once (#915)", () => {
+  vi.useFakeTimers();
+  try {
+    const sent: string[] = [];
+    const keys = new KeysAfterPaste<string>((key) => sent.push(key));
+    expect(keys.keep("a")).toBe(false);
+    keys.hold();
+    expect([keys.keep("b"), keys.keep("c")]).toEqual([true, true]);
+    keys.release();
+    expect(sent).toEqual(["b", "c"]);
+    keys.hold();
+    keys.keep("d");
+    vi.advanceTimersByTime(PASTE_HOLD_MS - 1);
+    expect(sent).toEqual(["b", "c"]);
+    vi.advanceTimersByTime(1);
+    expect(sent).toEqual(["b", "c", "d"]);
+    keys.hold();
+    keys.keep("e");
+    keys.drop();
+    vi.advanceTimersByTime(PASTE_HOLD_MS);
+    expect(sent).toEqual(["b", "c", "d"]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("a reconnect waits 1 s, doubling to MAX_RETRY_MS, and up to a quarter more at random, so pages that lose the plugin together do not retry in step", () => {

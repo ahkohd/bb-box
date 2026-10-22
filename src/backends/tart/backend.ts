@@ -442,17 +442,19 @@ export function parseTartSize(stdout: string): BoxSize | null {
   try {
     const got = JSON.parse(line) as { CPU?: number; Memory?: number; Disk?: number };
     if (!got.CPU || !got.Memory) return null;
-    return { cores: got.CPU, memoryMiB: got.Memory, diskGiB: got.Disk ? Math.floor((got.Disk * 1e9) / 2 ** 30) : null };
+    return { cores: got.CPU, memoryMiB: got.Memory, diskGiB: got.Disk ? gibOfTartGB(got.Disk) : null };
   } catch {
     return null;
   }
 }
 
-/** The size a VM's config gives it. Tart keeps no disk size there, so the disk is the image's, as null. */
-function sizeOf(config: VmConfig | null | undefined): BoxSize | null {
+/** The size a VM's config gives it, with the disk `tart list` gives, as `tart get` does; with none, the image's, as null. */
+function sizeOf(config: VmConfig | null | undefined, diskGB: number | null = null): BoxSize | null {
   if (!config || !config.cpus || !config.memoryMiB) return null;
-  return { cores: config.cpus, memoryMiB: config.memoryMiB, diskGiB: null };
+  return { cores: config.cpus, memoryMiB: config.memoryMiB, diskGiB: diskGB ? gibOfTartGB(diskGB) : null };
 }
+
+const gibOfTartGB = (gb: number) => Math.floor((gb * 1e9) / 2 ** 30);
 
 function ownerOf(fields: Readonly<Record<string, string>>): BoxOwner | null {
   if (!fields.box || !fields.thread) return null;
@@ -1133,7 +1135,8 @@ export class TartBackend implements Backend {
         if (os === "macos" && !(placement.how === "warm" && placement.ready)) await step("grants", () => this.#vmReady(host, address, vm, signal));
         // A warm VM, or one held before a restart, resumed from a suspend with an old clock.
         if (os === "macos" && (placement.how === "warm" || placement.how === "resume")) await step("clock", () => this.#clock(host, address, signal));
-        const size = sizeOf((await this.#state(host, signal)).configs.get(vm));
+        const now = await this.#state(host, signal);
+        const size = sizeOf(now.configs.get(vm), now.vms.find((candidate) => candidate.name === vm)?.diskGB ?? null);
         // Claimed again, so the box's record has the address and size as it becomes ready.
         await hooks.claim(guest(address, size));
         return guest(address, size);
@@ -1648,7 +1651,7 @@ export class TartBackend implements Backend {
           ref: vm,
           host: host.name,
           address: this.#addresses.get(vm) ?? null,
-          size: sizeOf(state.configs.get(vm)),
+          size: sizeOf(state.configs.get(vm), listed?.diskGB ?? null),
           data: owner ? (guestOsOf(fields.kind ?? "") === "linux" ? { box: owner.boxId, os: "linux" } : { box: owner.boxId }) : {},
           owner,
           // A VM not made yet, after an acquire cut short before its clone, counts as stopped.

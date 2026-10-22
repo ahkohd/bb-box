@@ -17,6 +17,48 @@ export const SETTLE_MS = 250;
 export const PASTE_CHORD_DELAY_MS = 150;
 /** How long a Cmd+V or Ctrl+V waits for the browser's paste event before the box pastes its own clipboard. */
 export const PASTE_EVENT_WAIT_MS = 150;
+/** The longest keys typed after a paste wait for its chord before they go anyway (#915). */
+export const PASTE_HOLD_MS = 5_000;
+
+/**
+ * Keys typed while a paste is on its way, which wait for its chord so they land after the text, as typed (#915). A key
+ * typed with no paste pending goes at once.
+ */
+export class KeysAfterPaste<Key> {
+  readonly #send: (key: Key) => void;
+  readonly #limitMs: number;
+  #waiting: Key[] | null = null;
+  #limit: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(send: (key: Key) => void, limitMs = PASTE_HOLD_MS) {
+    this.#send = send;
+    this.#limitMs = limitMs;
+  }
+
+  hold(): void {
+    this.#waiting ??= [];
+    clearTimeout(this.#limit);
+    this.#limit = setTimeout(() => this.release(), this.#limitMs);
+  }
+
+  keep(key: Key): boolean {
+    if (!this.#waiting) return false;
+    this.#waiting.push(key);
+    return true;
+  }
+
+  release(): void {
+    clearTimeout(this.#limit);
+    const keys = this.#waiting ?? [];
+    this.#waiting = null;
+    for (const key of keys) this.#send(key);
+  }
+
+  drop(): void {
+    clearTimeout(this.#limit);
+    this.#waiting = null;
+  }
+}
 export const XK_SHIFT_L = 0xffe1;
 export const XK_SHIFT_R = 0xffe2;
 export const XK_CONTROL_L = 0xffe3;

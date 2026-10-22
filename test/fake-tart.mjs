@@ -51,11 +51,12 @@ function tart() {
     case "--version":
       return console.log("2.30.0");
     case "list": {
-      const list = names().map((name) => ({ Source: "local", Name: name, Disk: 50, Size: 20, Accessed: "1 minute ago", Running: running(name), State: stateOf(name) }));
+      const diskOf = (name) => (existsSync(join(dir(name), "disk-gb")) ? Number(readFileSync(join(dir(name), "disk-gb"), "utf8")) : 64);
+      const list = names().map((name) => ({ Source: "local", Name: name, Disk: diskOf(name), Size: 20, Accessed: "1 minute ago", Running: running(name), State: stateOf(name) }));
       if (rest.includes("--quiet")) return list.forEach((vm) => console.log(vm.Name));
       if (option("--format") === "json") return console.log(JSON.stringify(list, null, 2).replaceAll('": ', '" : '));
       console.log("Source Name Disk Size Accessed State");
-      return list.forEach((vm) => console.log(`local ${vm.Name} 50 20 1 minute ago ${vm.State}`));
+      return list.forEach((vm) => console.log(`local ${vm.Name} ${vm.Disk} 20 1 minute ago ${vm.State}`));
     }
     case "clone": {
       const [from, to] = rest;

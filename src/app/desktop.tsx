@@ -50,6 +50,7 @@ import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-a
 import { MachineRow } from "./settings-machines.tsx";
 import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
 import {
+  KeysAfterPaste,
   PASTE_CHORD_DELAY_MS,
   PASTE_EVENT_WAIT_MS,
   SETTLE_MS,
@@ -142,8 +143,14 @@ class Viewer extends RFB {
   }
 
   readonly #option = new OptionComposer();
+  readonly afterPaste = new KeysAfterPaste<[number, string, boolean, boolean | null, boolean | null]>((key) => this.#keyEvent(...key));
 
   override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
+    if (this.afterPaste.keep([keysym, code, down, numlock, capslock])) return;
+    this.#keyEvent(keysym, code, down, numlock, capslock);
+  }
+
+  #keyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
     // The code too: with QEMU's key events the box takes the scancode, not the keysym.
     const mac = macBrowser();
     const key = boxKey(keysym, code, this.guestOs, mac, this.macKeys);
@@ -521,6 +528,7 @@ export class DesktopSession implements Kept {
   /** Puts text on the box's clipboard, then presses the box's own paste chord, Ctrl+V or Cmd+V, where the cursor is, and says so with onPaste or onPasteFailed. */
   paste(text: string): void {
     if (this.connection.state !== "connected" || !this.#client) return;
+    this.#client.afterPaste.hold();
     const put = this.putClipboard?.(text);
     if (!put) {
       this.#client.clipboardPasteFrom(text);
@@ -533,21 +541,29 @@ export class DesktopSession implements Kept {
         this.#pressPaste();
         this.onPaste?.(text);
       },
-      (error: unknown) => this.onPasteFailed?.(error),
+      (error: unknown) => {
+        this.#client?.afterPaste.release();
+        this.onPasteFailed?.(error);
+      },
     );
   }
 
-  /** The box's paste chord, after a short wait for the text to land; the modifier is pressed whether or not the person holds its browser twin. */
+  /** The box's paste chord, after a short wait for the text to land; the modifier is pressed whether or not the person holds its browser twin. Keys typed since go after it. */
   #pressPaste(): void {
     clearTimeout(this.#chord);
+    this.#client?.afterPaste.hold();
     this.#chord = setTimeout(() => {
       const client = this.#client;
-      if (!client || this.connection.state !== "connected") return;
+      if (!client || this.connection.state !== "connected") {
+        client?.afterPaste.drop();
+        return;
+      }
       const modifier = this.guestOs === "macos" ? commandKey(this.#macKeys) : { keysym: XK_CONTROL_L, code: "ControlLeft" };
       client.sendKey(modifier.keysym, modifier.code, true);
       client.sendKey(XK_V, "KeyV", true);
       client.sendKey(XK_V, "KeyV", false);
       client.sendKey(modifier.keysym, modifier.code, false);
+      client.afterPaste.release();
     }, PASTE_CHORD_DELAY_MS);
   }
 
@@ -558,6 +574,7 @@ export class DesktopSession implements Kept {
     if (!(macBrowser() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)) return;
     event.stopPropagation();
     this.#pasteArmed = Date.now();
+    this.#client?.afterPaste.hold();
     clearTimeout(this.#pasteWait);
     // No paste event follows when the clipboard has no text: the box pastes its own then.
     this.#pasteWait = setTimeout(() => {
@@ -594,6 +611,7 @@ export class DesktopSession implements Kept {
     clearTimeout(this.#settle);
     clearTimeout(this.#pasteWait);
     clearTimeout(this.#chord);
+    this.#client?.afterPaste.drop();
     document.removeEventListener("paste", this.#onPasteEvent, true);
     this.#observer?.disconnect();
     this.#closePointer();
