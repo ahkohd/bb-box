@@ -2920,6 +2920,37 @@ test("over video, a letter typed with Shift held and Caps Lock off goes as its c
   }
 });
 
+test("a paste on its way as the stream switches to VNC is pressed before the video goes, and keys typed over VNC go after it (#933)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const canvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
+    fireEvent.keyDown(canvas, { key: "v", code: "KeyV", ctrlKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("[PASTE]")));
+    fireEvent.click(within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as VNC" }));
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const keys = socket.sent.filter((message): message is string => typeof message === "string" && /^k[du],/.test(message));
+    expect(keys.slice(-4)).toEqual(["kd,65507", "kd,118", "ku,118", "ku,65507"]);
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    client._handleKeyEvent(0x78, "KeyX", true, null, false);
+    expect(client.keyEvents.some((key) => key.keysym === 0x78)).toBe(false);
+    await waitFor(() => expect(client.keyEvents.some((key) => key.keysym === 0x78)).toBe(true));
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
 test("a viewer in control lets go of the keys it holds down as its tab goes, so the box keeps no Ctrl held, over video and VNC", async () => {
   const undo = withVideo();
   try {
@@ -3661,6 +3692,33 @@ test("a hidden desktop tab keeps its stream, hands control back after a minute, 
   expect(changes).toEqual(["takeControl box_2", "handBack box_2", "takeControl box_2"]);
   expect(novnc.FakeRfb.made).toHaveLength(2);
   returned.unmount();
+});
+
+test("a paste in one of a tab's sessions holds the keys typed in another until its chord has gone, though the session goes meanwhile (#933)", () => {
+  vi.useFakeTimers();
+  try {
+    const sent: string[] = [];
+    const video = new KeysAfterPaste<string>((key) => sent.push(`video ${key}`));
+    const vnc = new KeysAfterPaste<string>((key) => sent.push(`vnc ${key}`));
+    const elsewhere = new KeysAfterPaste<string>((key) => sent.push(`elsewhere ${key}`));
+    video.join("box_2:viewer-one");
+    vnc.join("box_2:viewer-one");
+    elsewhere.join("box_9:viewer-two");
+    video.hold();
+    expect(vnc.keep("a")).toBe(true);
+    expect(elsewhere.keep("z")).toBe(false);
+    // The video session goes, as the stream switches, having sent its chord: the tab's keys wait for the paste to land.
+    video.releaseIn(PASTE_LANDS_MS);
+    video.close();
+    expect(vnc.keep("b")).toBe(true);
+    vi.advanceTimersByTime(PASTE_LANDS_MS);
+    expect(sent).toEqual(["vnc a", "vnc b"]);
+    expect(vnc.keep("c")).toBe(false);
+    vnc.close();
+    elsewhere.close();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("keys typed while a paste is on its way wait for it, at most PASTE_HOLD_MS, and go in order; with none pending they go at once (#915)", () => {

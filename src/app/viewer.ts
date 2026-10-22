@@ -74,28 +74,57 @@ export const PASTE_HOLD_MS = 5_000;
 /** How long keys typed after a paste wait once its chord went: an X app's first paste took up to 100 ms to land (#915). */
 export const PASTE_LANDS_MS = 250;
 
+/** The tab a desktop session's URL is for: its box and viewer, which every stream of the tab shares. */
+export function tabOf(url: string): string {
+  const params = new URL(url).searchParams;
+  return `${params.get("box") ?? ""}:${params.get("viewer") ?? ""}`;
+}
+
+/** Each tab's sessions, by tab: keys typed in any of them wait while a paste in any of them is on its way. */
+const tabs = new Map<string, Set<KeysAfterPaste<unknown>>>();
+
 /**
- * Keys typed while a paste is on its way, which wait for its chord so they land after the text, as typed (#915). A key
- * typed with no paste pending goes at once.
+ * Keys typed while a paste is on its way, which wait for its chord so they land after the text, as typed (#915). A
+ * paste in another session of the same tab holds them too, as when the stream switches in the middle of one: they go
+ * once that paste's chord has gone. A key typed with no paste pending goes at once.
  */
 export class KeysAfterPaste<Key> {
   readonly #send: (key: Key) => void;
   readonly #limitMs: number;
   #waiting: Key[] | null = null;
+  #pasting = false;
+  #leaving = false;
   #limit: ReturnType<typeof setTimeout> | undefined;
+  #tab: string | null = null;
 
   constructor(send: (key: Key) => void, limitMs = PASTE_HOLD_MS) {
     this.#send = send;
     this.#limitMs = limitMs;
   }
 
+  join(tab: string): void {
+    this.leave();
+    const sessions = tabs.get(tab) ?? new Set<KeysAfterPaste<unknown>>();
+    tabs.set(tab, sessions);
+    sessions.add(this as KeysAfterPaste<unknown>);
+    this.#tab = tab;
+  }
+
+  leave(): void {
+    if (this.#tab === null) return;
+    const sessions = tabs.get(this.#tab);
+    sessions?.delete(this as KeysAfterPaste<unknown>);
+    if (sessions && !sessions.size) tabs.delete(this.#tab);
+    this.#tab = null;
+  }
+
   hold(): void {
-    this.#waiting ??= [];
-    clearTimeout(this.#limit);
-    this.#limit = setTimeout(() => this.release(), this.#limitMs);
+    this.#pasting = true;
+    this.#wait();
   }
 
   keep(key: Key): boolean {
+    if (!this.#waiting && this.#pasteElsewhere()) this.#wait();
     if (!this.#waiting) return false;
     this.#waiting.push(key);
     return true;
@@ -109,14 +138,50 @@ export class KeysAfterPaste<Key> {
 
   release(): void {
     clearTimeout(this.#limit);
+    this.#pasting = false;
     const keys = this.#waiting ?? [];
     this.#waiting = null;
     for (const key of keys) this.#send(key);
+    this.#releaseOthers();
+    if (this.#leaving) {
+      this.#leaving = false;
+      this.leave();
+    }
+  }
+
+  /** The session goes: a paste of its own still on its way holds the tab's other sessions until it is released, and then it leaves. */
+  close(): void {
+    if (this.#pasting && this.#waiting) {
+      this.#leaving = true;
+      return;
+    }
+    this.drop();
+    this.leave();
   }
 
   drop(): void {
     clearTimeout(this.#limit);
+    this.#pasting = false;
     this.#waiting = null;
+    this.#releaseOthers();
+  }
+
+  #wait(): void {
+    this.#waiting ??= [];
+    clearTimeout(this.#limit);
+    this.#limit = setTimeout(() => this.release(), this.#limitMs);
+  }
+
+  #others(): KeysAfterPaste<unknown>[] {
+    return [...(this.#tab === null ? [] : (tabs.get(this.#tab) ?? []))].filter((other) => other !== (this as KeysAfterPaste<unknown>));
+  }
+
+  #pasteElsewhere(): boolean {
+    return this.#others().some((other) => other.#pasting);
+  }
+
+  #releaseOthers(): void {
+    for (const other of this.#others()) if (other.#waiting && !other.#pasting && !other.#pasteElsewhere()) other.release();
   }
 }
 export const XK_SHIFT_L = 0xffe1;
