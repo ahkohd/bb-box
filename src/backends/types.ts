@@ -639,7 +639,7 @@ export interface Backend {
    * and at once when the configuration changes (#355). A call during a run
    * starts another after it.
    */
-  maintain?(signal?: AbortSignal): Promise<void>;
+  maintain?(signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void>;
   /** Pool members and their state, for the panel. */
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;
   /** The GPUs a kind's boxes would use, as last read, without asking the provider (#603). Only backends with GPU desktops. */

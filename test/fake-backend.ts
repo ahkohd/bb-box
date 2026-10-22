@@ -573,8 +573,11 @@ export class FakeBackend implements Backend {
     while (Date.now() < end) await new Promise((resolve) => setTimeout(resolve, end - Date.now()));
   }
 
-  async maintain(): Promise<void> {
+  recordedGuests: ReadonlySet<string> | undefined;
+
+  async maintain(_signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void> {
     this.calls.push("maintain");
+    this.recordedGuests = recordedGuests;
     for (const kind of this.#kinds) {
       const target = this.#options.warm?.(kind.id) ?? 0;
       if (target) this.warmGuests.set(kind.id, target);

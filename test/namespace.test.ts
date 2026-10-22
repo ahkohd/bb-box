@@ -7,7 +7,7 @@ import { KEEP_AHEAD_MS, LABELS, NamespaceBackend, macShapeFor } from "../src/bac
 import { parseNamespacePart, type NamespaceConfig } from "../src/backends/namespace/config.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
-import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
+import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 4 };
@@ -82,23 +82,27 @@ test("Namespace refusing a machine for want of room is the backend having none",
   assert.ok(error instanceof BackendError && error.code === "no_capacity");
 });
 
-test("upkeep keeps each machine's deadline an hour ahead until the plan's longest life, and no further", async () => {
+test("upkeep keeps each recorded machine's deadline an hour ahead until the plan's longest life, and leaves one no box records to end at its own", async () => {
   let now = Date.parse("2030-01-01T00:00:00Z");
   const { fake, backend } = setup({ now: () => now });
-  await backend.acquire(box("b1"), null, hooks().hooks, new AbortController().signal);
-  const made = [...fake.instances.values()][0]!;
+  const guest = await backend.acquire(box("b1"), null, hooks().hooks, new AbortController().signal);
+  await backend.acquire(box("b2"), null, hooks().hooks, new AbortController().signal);
+  const [made, leftover] = [...fake.instances.values()] as [FakeInstance, FakeInstance];
+  const recorded = new Set([guest.ref]);
   now += 40 * 60_000;
-  await backend.maintain();
+  await backend.maintain(undefined, recorded);
   assert.equal(made.deadline, now + KEEP_AHEAD_MS);
+  assert.equal(leftover.deadline, Date.parse("2030-01-01T01:00:00Z"), "a machine no box records is not kept alive");
   now += 4 * 60_000;
-  await backend.maintain();
+  await backend.maintain(undefined, recorded);
   assert.equal(made.deadline, now - 4 * 60_000 + KEEP_AHEAD_MS, "a deadline still most of an hour ahead is left");
   while (now + 30 * 60_000 <= Date.parse("2030-01-01T03:50:00Z")) {
     now += 30 * 60_000;
-    await backend.maintain();
+    await backend.maintain(undefined, recorded);
     assert.equal(made.status, "RUNNING");
   }
   assert.equal(made.deadline, Date.parse("2030-01-01T04:00:00Z"), "never past the plan's longest life");
+  assert.equal(leftover.status, "DESTROYED", "the leftover ended at its first deadline");
 });
 
 test("held lists this install's machines with their owners, a release destroys the machine, and the sweep sees a machine no box claims", async () => {
