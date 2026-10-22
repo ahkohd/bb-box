@@ -41,7 +41,7 @@ import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
 import type { BackendStorage } from "../backends/types.ts";
-import { endThreadProcesses, runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
+import { daemonStarting, endThreadProcesses, runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 
@@ -193,6 +193,8 @@ export interface EnrolmentDeps {
   readonly fastPollMs?: number;
   /** How long to wait, once the machine connects, for a worker with the thread's variables. */
   readonly variablesWaitMs?: number;
+  /** How long a Windows box's daemon may take to connect by itself, as BB's logon entry starts it after a boot, before bb-box runs BB's reconnect (#917). */
+  readonly logonWaitMs?: number;
   /** How long to wait before asking BB again to add a box, when BB does not know bb-box's machine provider yet. */
   readonly providerRetryMs?: number;
   /** How long a release waits for BB to finish removing a Windows box's manual machine (#539). */
@@ -375,6 +377,7 @@ export class Enrolment {
   readonly #pollMs: number;
   readonly #fastPollMs: number;
   readonly #variablesWaitMs: number;
+  readonly #logonWaitMs: number;
   readonly #providerRetryMs: number;
   readonly #manualRemoveMs: number;
   /** Boxes whose enrolment this process is following. */
@@ -391,6 +394,7 @@ export class Enrolment {
     this.#fastPollMs = deps.fastPollMs ?? 100;
     // BB can give a new machine GH_TOKEN some seconds after it connects.
     this.#variablesWaitMs = deps.variablesWaitMs ?? 30_000;
+    this.#logonWaitMs = deps.logonWaitMs ?? 90_000;
     this.#providerRetryMs = deps.providerRetryMs ?? 6_000;
     this.#manualRemoveMs = deps.manualRemoveMs ?? 2 * 60_000;
   }
@@ -472,6 +476,16 @@ export class Enrolment {
       // BB's daemon runs on through a suspend, and its logon starts it after
       // a boot. BB refuses a reconnect while it shows the machine connected.
       if ((await this.#deps.hosts().get({ hostId })).status === "connected") return;
+      // After a boot BB's logon entry starts the daemon, and a resumed box's daemon connects again by itself: BB's
+      // reconnect command meanwhile could start a second supervisor beside it (#917). So bb-box waits for that first.
+      const starting = await daemonStarting(transport, hostId, { timeoutMs: 30_000, signal: request.signal }).catch((error: unknown) => {
+        this.#deps.logError("look for BB's daemon in a Windows box", error);
+        return null;
+      });
+      if (starting && (await this.#connectedWithin(hostId, this.#logonWaitMs, request.signal))) {
+        this.#deps.log?.(`BB's daemon in box ${box.name} connected by itself, ${starting === "logon" ? "started by its logon" : "as it ran already"}, so bb-box started no other.`);
+        return;
+      }
       // BB's reconnect command, in its Windows form (#539).
       const reconnect = await this.#deps
         .hosts()
@@ -891,6 +905,17 @@ export class Enrolment {
       if (connected !== null && !stop?.aborted) await this.#variables(reconnected, "the machine connected again", connected);
     } finally {
       this.#reconnecting.delete(box.id);
+    }
+  }
+
+  /** Whether BB shows machine `hostId` connected within `ms`. */
+  async #connectedWithin(hostId: string, ms: number, signal?: AbortSignal): Promise<boolean> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (signal?.aborted) return false;
+      if ((await abortable(this.#deps.hosts().get({ hostId }), signal)).status === "connected") return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, this.#pollMs));
     }
   }
 

@@ -79,6 +79,34 @@ export function runWindowsCommand(transport: CommandTransport, windowsCommand: s
   });
 }
 
+/**
+ * Whether BB's daemon in the box is on its way without bb-box (#917): its
+ * supervisor or BB's installer runs, as when a resumed box's daemon
+ * reconnects by itself, or BB's logon entry for machine `hostId` is about to
+ * start it, as in the first 2 minutes after the box user's logon. BB's
+ * reconnect command then would race it, and two supervisors could run.
+ * Prints `running`, `logon` or `none`.
+ */
+export function daemonStartingScript(hostId: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(hostId)) throw new Error(`Not a BB machine ID: ${hostId}`);
+  return `$ErrorActionPreference = 'Stop'
+$bbOwn = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe' OR Name = 'powershell.exe'" | Where-Object { "$($_.CommandLine)" -match 'bb-app\\.js"?\\s+host-daemon|install-machine-windows\\.mjs' })
+if ($bbOwn.Count) { 'running'; exit 0 }
+$bbRun = Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -ErrorAction SilentlyContinue
+$bbEntry = $bbRun -and @($bbRun.PSObject.Properties | Where-Object { $_.Name -like 'bb-host-daemon-*-${hostId}' }).Count
+$bbShell = @(Get-CimInstance Win32_Process -Filter "Name = 'explorer.exe'" | Sort-Object CreationDate | Select-Object -First 1)
+if ($bbEntry -and (-not $bbShell.Count -or ((Get-Date) - $bbShell[0].CreationDate).TotalSeconds -lt 120)) { 'logon'; exit 0 }
+'none'`;
+}
+
+/** Whether BB's daemon in the box is on its way without bb-box (daemonStartingScript): why, or null. */
+export async function daemonStarting(transport: CommandTransport, hostId: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<"running" | "logon" | null> {
+  const result = await transport.run(inBoxCommand("windows", daemonStartingScript(hostId), { timeoutMs: options.timeoutMs }), { timeoutMs: options.timeoutMs + 10_000, signal: options.signal });
+  if (result.exitCode !== 0) throw new Error(windowsFailure("Looking for BB's daemon in the box", result));
+  const said = result.stdout.trim().split("\n").at(-1)?.trim();
+  return said === "running" || said === "logon" ? said : null;
+}
+
 /** Why a run of BB's `windowsCommand` failed, from its last lines. */
 export function windowsFailure(what: string, result: RunResult): string {
   const tail = `${result.stdout}\n${result.stderr}`.trim().split("\n").slice(-8).join("\n");

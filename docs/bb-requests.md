@@ -35,8 +35,9 @@ is a log: bb-box does not file these with BB.
 | [End a thread's processes before removing its worktree on Windows](#24-end-a-threads-processes-before-removing-its-worktree-on-windows) | not met | bb-box ends the processes working in BB's worktrees in a Windows box before it asks BB to remove the box's machine, or BB's teardown fails with EBUSY and the machine stays "removing" (#539) |
 | [Keep the server's event loop free](#25-keep-the-servers-event-loop-free) | not met | BB's server stops for up to 1.2 s, 10 to 16 times a minute, and every desktop's frames and input wait it out, so a drag lags by up to a second and a video viewer loses frames |
 | [Say what uninstalling a plugin keeps](#26-say-what-uninstalling-a-plugin-keeps) | not met | after an uninstall in BB's settings and a fresh install, bb-box came back with its old box records and its Docker backend on, though the dialog says it deletes the plugin's settings |
-| [Start a Windows machine's helpers without a window](#27-start-a-windows-machines-helpers-without-a-window) | not met | on a Windows box, Keep Awake's PowerShell opens a window over the desktop each time BB's daemon starts, which takes the focus and shows in box_record's clips |
+| [Start a Windows machine's helpers without a window](#27-start-a-windows-machines-helpers-without-a-window) | not met | on a Windows box, Keep Awake's PowerShell opens a window over the desktop each time BB's daemon starts, and after a boot BB's daemon opens one of its own, which take the focus and show in box_record's clips |
 | [Refresh a machine's processors and memory when they change](#28-refresh-a-machines-processors-and-memory-when-they-change) | not met | after a live resize (061), BB keeps a machine's old processor count, and its automatic thread limit with it, until BB's daemon there restarts; bb-box restarts it when no thread works on the machine and no BB terminal is open there, and otherwise says how to set the limit by hand |
+| [Start one daemon however often it is started](#29-start-one-daemon-however-often-it-is-started) | not met | two starts of BB's daemon at once, such as its logon entry's and a reconnect's after a boot, can leave two supervisors running; bb-box waits for BB's own start after a boot before it reconnects a Windows box (#917) |
 
 ## 1. BB's host app on Windows
 
@@ -1017,11 +1018,22 @@ without hiding its console, so it opens a window:
   So bb-box cannot avoid it by choosing the terminal.
 
 A new window opens each time BB's daemon starts, such as when a box
-resumes. The daemon itself opens none: it starts from its `HKCU` `Run`
-entry through `powershell.exe -WindowStyle Hidden`, so it has a hidden
-console, and only the Keep Awake PowerShell it starts gets a visible
-window. bb-box's own helper in the same session, a Node process, opens
-none either.
+resumes. bb-box's own helper in the same session, a Node process, opens
+none.
+
+After a cold boot BB's daemon opens a window of its own too (#917; BB
+0.46.0, 22 October 2026). Its `HKCU` `Run` entry runs `powershell.exe
+-WindowStyle Hidden` with `install-machine-windows.mjs --start`, which
+starts `--run` through WMI with its window hidden. That starts the
+supervisor, `bb-app.js host-daemon --supervise`, detached, so it has no
+console. The supervisor then starts the daemon, `daemon-bundle.mjs`, with
+`spawn` and no `windowsHide`, so Windows gives the daemon a new console,
+and its window, titled "Windows PowerShell", stays on the desktop for as
+long as the daemon runs. It does so with Windows Terminal or Windows
+Console Host as the default, and with the `Run` entry itself started
+through `conhost.exe --headless`. A process started hidden, as
+`Start-Process -WindowStyle Hidden`, stays hidden with either default, so
+the console host is not the cause.
 
 Keep Awake's machine selection is "all" or a list of host IDs. An install
 that keeps "all" cannot leave boxes out, and one that lists hosts must add
@@ -1030,7 +1042,8 @@ each new machine by hand, which does not suit boxes that come and go.
 **What we ask.**
 
 1. Start helper processes on Windows with their windows hidden: Node's
-   `windowsHide: true`, or `CREATE_NO_WINDOW`.
+   `windowsHide: true`, or `CREATE_NO_WINDOW`. That includes the
+   supervisor's start of the daemon, in `spawnLoggedProcess`.
 2. Let a machine opt out of a plugin such as Keep Awake, so that a
    machine provider, such as bb-box, can leave its boxes out whatever a
    plugin's selection says.
@@ -1089,6 +1102,33 @@ machine and no BB terminal is open there. Otherwise its answer says that BB keep
 limit until the machine's daemon restarts, and how to set the limit by hand
 (`bb concurrency-limit host <name> <n>`, then `auto` once BB counts the new
 cores). bb-box never changes a limit itself.
+
+## 29. Start one daemon however often it is started
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** One BB daemon supervisor on a machine, however many
+times something asks for it to start.
+
+**What BB does now.** On Windows, `install-machine-windows.mjs --start`
+asks the daemon's port whether a daemon runs, and starts one when none
+answers. Two starts at once both find none, and both start a supervisor.
+After a cold boot of a Windows box, BB's `Run` entry starts the daemon at
+logon, and a reconnect of the machine, such as bb-box's after it started
+the box, can come within seconds of it. A box was seen with two
+supervisors started 4 s apart (#917). A start made once the first daemon
+answers says "The host daemon is already running", and starts nothing.
+
+**What we ask.** Make the start single-instance: take a lock, such as a
+named mutex or the data folder's lock file, before checking for a daemon,
+and hold it until the new daemon answers or fails. Or have a supervisor
+exit when another holds its machine's lock.
+
+**Until then.** Before it runs BB's reconnect command on a Windows box,
+bb-box asks the box whether BB's daemon is on its way: its supervisor or
+installer runs, or BB's `Run` entry for the machine is there and the
+logon is under 2 minutes old. It then waits up to 90 s for BB to show the
+machine connected, and reconnects only if it does not (#917).
 
 ## Checked, no request needed
 

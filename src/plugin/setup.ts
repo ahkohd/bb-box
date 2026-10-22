@@ -300,6 +300,8 @@ export interface SetupOptions {
   readonly terminalIdleMs?: number;
   /** How long an enrolment waits for a worker of BB's daemon with the thread's variables. */
   readonly variablesWaitMs?: number;
+  /** How long a Windows box's daemon may take to connect by itself after a start, before bb-box runs BB's reconnect (#917). */
+  readonly logonWaitMs?: number;
   /** How long an enrolment waits to ask BB again when BB does not know bb-box's machine provider yet. */
   readonly providerRetryMs?: number;
   /** How long a release waits for BB to finish removing a Windows box's manual machine. */
@@ -666,6 +668,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     log: (message) => bb.log.info(message),
     bbUrl: () => bb.server.experimental_appUrl,
     variablesWaitMs: options.variablesWaitMs,
+    logonWaitMs: options.logonWaitMs,
     providerRetryMs: options.providerRetryMs,
     manualRemoveMs: options.manualRemoveMs,
   });

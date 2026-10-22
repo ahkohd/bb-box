@@ -69,7 +69,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; logonWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -372,6 +372,7 @@ async function start(
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
+    logonWaitMs: options.logonWaitMs,
     providerRetryMs: options.providerRetryMs,
     manualRemoveMs: options.manualRemoveMs,
     controlReconnectMs: options.controlReconnectMs,
@@ -845,10 +846,14 @@ test("a Windows box on trial enrols as a machine of BB's manual provider, which 
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
   // A box's PowerShell that runs the desktop session's command as BB's installer would, and exits 0.
   // Its access check finds no BB daemon (#560); anything else fails.
-  const shell = join(tempDir("windows-shell"), "pwsh");
-  writeFileSync(shell, `#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; esac\nexit 1\n`);
+  const dir = tempDir("windows-shell");
+  const shell = join(dir, "pwsh");
+  // The look for BB's daemon on its way says what the file daemon says (#917): none to begin with.
+  const daemon = join(dir, "daemon");
+  writeFileSync(daemon, "none\n");
+  writeFileSync(shell, `#!/bin/sh\ncase "$2" in *Schedule.Service*) exit 0 ;; *"]::Daemon("*) exit ${ACCESS_CHECK_EXITS.noDaemon} ;; *install-machine-windows*) cat '${daemon}'; exit 0 ;; esac\nexit 1\n`);
   chmodSync(shell, 0o755);
-  const { bb, harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell });
+  const { bb, harness, app, world, tool } = await start({ "fake-enabled": true }, { kinds: [kind], shell, logonWaitMs: 400 });
   t.after(() => harness.lifecycle.dispose());
   world.windowsConnects = true;
   await tool("box_acquire", { kind: "windows" });
@@ -869,6 +874,22 @@ test("a Windows box on trial enrols as a machine of BB's manual provider, which 
   assert.ok(!isError(await tool("box_start", { box: box.name })));
   assert.ok(world.events.includes(`reconnect command ${hostId}`), world.events.join("\n"));
   assert.equal((await app.boxes.find(box.id))?.enrol.error, null);
+  // After a boot, BB's logon entry starts the daemon: bb-box waits for it to connect, and starts no second supervisor (#917).
+  const reconnects = () => world.events.filter((event) => event === `reconnect command ${hostId}`).length;
+  const before = reconnects();
+  writeFileSync(daemon, "logon\n");
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await tool("box_stop", { box: box.name });
+  setTimeout(() => world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "connected" }), 150);
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  await until("the daemon to connect", async () => world.hosts.get(hostId)?.status === "connected");
+  assert.equal(reconnects(), before, "no reconnect while the logon starts the daemon");
+  // A daemon on its way that never connects gets BB's reconnect once the wait is over.
+  writeFileSync(daemon, "running\n");
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await tool("box_stop", { box: box.name });
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  await until("the reconnect after the wait", async () => reconnects() === before + 1);
   // Releasing the box removes its machine, and bb-box's record of it.
   assert.ok(!isError(await tool("box_release", { box: box.name })));
   assert.equal(world.hosts.has(hostId), false);
