@@ -52,7 +52,7 @@ const HINTS: Record<BoxErrorCode, string> = {
   memory_in_use: "Give the box at least the memory this names, or end what uses memory in it first. box_resize with check says what a size would change.",
   needs_restart: "Call box_resize again with restart true only if ending everything running in the box is fine; otherwise pick parts that change live, or ask the user.",
   in_use: "Leave the box while that thread works. Ask the user if it should go anyway: they can release it from bb-box's panel.",
-  restarting: "Run the command again in a minute, once bb-box is back.",
+  restarting: "Run the command again in a few seconds, once bb-box is back.",
   reconnecting: "Wait about 30 s and try again: bb-box is usually back within a minute. Do not release the box: it, and the commands and jobs in it, go on.",
 };
 
@@ -66,7 +66,7 @@ function restarted(box: BoxRecord, job: string, sure: boolean, jobless: boolean)
   const text =
     jobless
       ? `bb-box restarted, as for an update, while the command ran in box ${box.name}. A Windows command in the desktop session ends with bb-box's connection, so it stopped.${next("Run it again.")}`
-      : `bb-box restarted, as for an update, while the command ran in box ${box.name}. It ${sure ? "goes" : "may go"} on there as job ${job}.${next(`Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is back within a minute; until then the box may not answer.`)}`;
+      : `bb-box restarted, as for an update, while the command ran in box ${box.name}. It ${sure ? "goes" : "may go"} on there as job ${job}.${next(`Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is usually back within seconds; until then the box may not answer.`)}`;
   return { content: [{ type: "text", text }], isError: true };
 }
 

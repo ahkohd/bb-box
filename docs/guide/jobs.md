@@ -6,7 +6,7 @@ Agents run commands in a box with the `box_run` tool. A command that takes longe
 
 BB ends an agent's tool call after about 5 minutes. So `box_run` waits for a command for 270 seconds at most. If the command is still running then, it goes on in the box as a job. The agent gets the output so far, and the job's name.
 
-A command also goes on as a job when BB Box restarts while it runs, for example for an update.
+A command also goes on as a job when BB Box restarts while it runs, for example for an update. BB Box waits 5 seconds for running commands to finish before it restarts, as agents cannot use its tools until it is back.
 
 On Windows, a command run in the desktop session does not go on as a job. It is stopped at 270 seconds, and the agent gets its output so far.
 

@@ -580,7 +580,7 @@ test("a deploy lets box_run's commands finish and takes no new ones, and a comma
 
   const refused = await tool("box_run", { box: box.name, command: "echo new" });
   assert.equal(isError(refused), true);
-  assert.equal(text(refused), "bb-box is restarting, as for an update, and takes no new commands until it is back, within a minute.\n\nNext: Run the command again in a minute, once bb-box is back.");
+  assert.equal(text(refused), "bb-box is restarting, as for an update, and takes no new commands until it is back, usually within seconds.\n\nNext: Run the command again in a few seconds, once bb-box is back.");
   const finished = await short;
   assert.equal(isError(finished), false, text(finished));
   assert.match(text(finished), /^Exit code 0 in box .*\n\nstdout:\nshort\n/);
@@ -589,7 +589,7 @@ test("a deploy lets box_run's commands finish and takes no new ones, and a comma
   assert.equal(isError(stopped), true);
   const job = /It goes on there as job ([0-9a-f]{12})\./.exec(text(stopped))?.[1];
   assert.ok(job, text(stopped));
-  assert.ok(text(stopped).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is back within a minute; until then the box may not answer.`), text(stopped));
+  assert.ok(text(stopped).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is usually back within seconds; until then the box may not answer.`), text(stopped));
   await disposing;
   assert.equal(readFileSync(join(home, ".local/state/bb-box/jobs", job, "out"), "utf8"), "long\n", "the command's output is in the box");
 });
@@ -635,7 +635,7 @@ test("a command whose box stops answering as bb-box stops for a deploy, as a Doc
   assert.equal(isError(answer), true);
   const job = /It may go on there as job ([0-9a-f]{12})\./.exec(text(answer))?.[1];
   assert.ok(job, text(answer));
-  assert.ok(text(answer).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is back within a minute; until then the box may not answer.`), text(answer));
+  assert.ok(text(answer).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is usually back within seconds; until then the box may not answer.`), text(answer));
 });
 
 test("box_job gives a job's output while it runs and its exit code once it ends, and the box's next command removes it (#405)", async (t) => {
@@ -3512,7 +3512,7 @@ for (const via of ["bb box acquire", "box_acquire"] as const) {
     await until("bb-box to stop", async () => app.boxes.stopping);
     open();
     const said = await acquiring;
-    const restarted = `bb-box restarted, as for an update, before box ${box.name} was ready. It goes on starting once bb-box is back, within a minute.`;
+    const restarted = `bb-box restarted, as for an update, before box ${box.name} was ready. It goes on starting once bb-box is back, usually within seconds.`;
     if (via === "box_acquire") assert.equal(said, `${restarted}\n\nNext: Call box_status with box "${box.name}" to see when it is ready.`);
     else assert.ok(said.startsWith(`Box ${box.name} (`) && said.endsWith(`\n\n${restarted} Follow it with: bb box status ${box.name} --thread ${THREAD}\n`), said);
   });

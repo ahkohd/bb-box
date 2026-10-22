@@ -4,7 +4,10 @@
 // that ends after the abort still gives the agent its result. So a command
 // does not stop on that abort: bb-box's first dispose hook takes no new
 // commands, waits a while for those running, then stops the rest, which go
-// on in their boxes as jobs. BB stops bb-box's worker on BB machines, and
+// on in their boxes as jobs. BB unloads the old version before it loads the
+// new one, so the wait is time in which agents have no box tools: a 60 s wait
+// kept them away for a minute at each deploy while commands ran (#916), so it
+// is 5 s, and a longer command's caller gets its job for box_job. BB stops bb-box's worker on BB machines, and
 // with it the relay to Docker there, before it aborts the calls, so a
 // command in a Docker box on a BB machine fails at once.
 
@@ -13,7 +16,7 @@ import { BoxError } from "../core/boxes.ts";
 /** BB's abort reason for a plugin's tool calls when it disposes the plugin. */
 export const PLUGIN_DISPOSED = "plugin-disposed";
 /** How long a deploy waits for commands still running. */
-export const DRAIN_MS = 60_000;
+export const DRAIN_MS = 5_000;
 /** How long stopped commands get to end once the wait is over. */
 const STOP_MS = 5_000;
 
@@ -50,7 +53,7 @@ export class Drain {
    */
   async run<T>(signal: AbortSignal, task: (signal: AbortSignal) => Promise<T>, options: { detachMs?: number } = {}): Promise<T> {
     if (this.#closed) {
-      throw new BoxError("restarting", "bb-box is restarting, as for an update, and takes no new commands until it is back, within a minute.");
+      throw new BoxError("restarting", "bb-box is restarting, as for an update, and takes no new commands until it is back, usually within seconds.");
     }
     const controller = new AbortController();
     const follow = () => {
