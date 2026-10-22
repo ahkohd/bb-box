@@ -14,8 +14,8 @@
 //   and libexec/ is /usr/local/libexec.
 //
 // `docker exec` runs the command on the test machine as the real user, in the
-// container's home, with /home/box, /run/bb-box/, /var/lib/bb-box/,
-// /usr/share/bb-box/ and /usr/local/libexec/bb-box/ in its arguments made the
+// container's home, with /home/box, /etc/environment, /run/bb-box/,
+// /var/lib/bb-box/, /usr/share/bb-box/ and /usr/local/libexec/bb-box/ in its arguments made the
 // container's own, in
 // the test process's group of fakes, through the command line $FAKE_GROUP
 // holds, so what it starts ends with the test process, though a timeout kills
@@ -250,6 +250,7 @@ function exec(rest) {
   const home = join(dir(name), "home");
   const own = (text) =>
     text
+      .replaceAll("/etc/environment", join(dir(name), "etc", "environment"))
       .replaceAll("/run/bb-box/", `${join(dir(name), "run", "bb-box")}/`)
       .replaceAll("/var/lib/bb-box/", `${join(dir(name), "var-lib", "bb-box")}/`)
       .replaceAll("/usr/share/bb-box/", `${join(dir(name), "usr-share", "bb-box")}/`)
