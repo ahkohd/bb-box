@@ -51,6 +51,7 @@ import { MachineRow } from "./settings-machines.tsx";
 import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
 import {
   KeysAfterPaste,
+  ShiftedLetters,
   PASTE_CHORD_DELAY_MS,
   PASTE_EVENT_WAIT_MS,
   SETTLE_MS,
@@ -145,9 +146,12 @@ class Viewer extends RFB {
   readonly #option = new OptionComposer();
   readonly afterPaste = new KeysAfterPaste<[number, string, boolean, boolean | null, boolean | null]>((key) => this.#keyEvent(...key));
 
+  readonly #letters = new ShiftedLetters();
+
   override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
-    if (this.afterPaste.keep([keysym, code, down, numlock, capslock])) return;
-    this.#keyEvent(keysym, code, down, numlock, capslock);
+    const sent = this.#letters.keysym(keysym, code, down, capslock);
+    if (this.afterPaste.keep([sent, code, down, numlock, capslock])) return;
+    this.#keyEvent(sent, code, down, numlock, capslock);
   }
 
   #keyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {

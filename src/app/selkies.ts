@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { KeysAfterPaste, OptionComposer, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, retryWait, type Connection } from "./viewer.ts";
+import { KeysAfterPaste, OptionComposer, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, retryWait, type Connection } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -316,7 +316,7 @@ export class SelkiesSession implements Kept {
     this.#canvas.tabIndex = -1;
     this.element.appendChild(this.#canvas);
     this.#keyboard = new Keyboard(this.#canvas);
-    this.#keyboard.onkeyevent = (keysym, code, down) => this.#key(keysym, code, down);
+    this.#keyboard.onkeyevent = (keysym, code, down, _numlock, capslock) => this.#key(this.#letters.keysym(keysym, code, down, capslock), code, down);
     for (const type of ["pointerdown", "pointerup", "pointermove"] as const) this.#canvas.addEventListener(type, (event) => this.#pointerEvent(event));
     this.#canvas.addEventListener("wheel", (event) => this.#wheelEvent(event), { passive: false });
     this.#canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -790,6 +790,7 @@ export class SelkiesSession implements Kept {
   }
 
   readonly #option = new OptionComposer();
+  readonly #letters = new ShiftedLetters();
   readonly #afterPaste = new KeysAfterPaste<[number, string, boolean]>((key) => this.#sendKey(...key));
 
   #key(keysym: number, code: string, down: boolean): void {
@@ -815,6 +816,7 @@ export class SelkiesSession implements Kept {
     for (const keysym of this.#held) this.#send(`ku,${keysym}`);
     this.#held.clear();
     this.#option.reset();
+    this.#letters.reset();
     if (this.#mask) {
       this.#mask = 0;
       this.#send(`m,${this.#pointer.x},${this.#pointer.y},0,0`);
