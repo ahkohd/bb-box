@@ -1,7 +1,7 @@
 import { DockerCli } from "../src/backends/docker/cli.ts";
-import { HetznerBackend, type HetznerConfig } from "../src/backends/hetzner/backend.ts";
+import { HetznerBackend, type HetznerBackendOptions, type HetznerConfig } from "../src/backends/hetzner/backend.ts";
 import type { HostRecord } from "../src/backends/hetzner/hosts.ts";
-import type { BackendStorage, FieldValue } from "../src/backends/types.ts";
+import type { BackendContext, BackendStorage, FieldValue } from "../src/backends/types.ts";
 import { dockerConfig, fakeDockerHost, type FakeDockerHost } from "./fake-docker.ts";
 import { FAKE_HETZNER_TOKEN, FakeHetzner } from "./fake-hetzner.ts";
 import { MemoryStorage, testContext } from "./helpers.ts";
@@ -36,14 +36,15 @@ export function hetznerWorld(hostFacts: Record<string, unknown> = {}) {
     }
     return new DockerCli(`unix:///run/bb-box/hetzner/${record.hostId}.sock`, host.binary, async () => {});
   };
-  const backend = (config: HetznerConfig = hetznerConfig(), storage: BackendStorage = new MemoryStorage(), installId = "test") =>
-    new HetznerBackend(config, testContext(storage, installId, { id: "hetzner" }), {
+  const backend = (config: HetznerConfig = hetznerConfig(), storage: BackendStorage = new MemoryStorage(), installId = "test", options: Partial<HetznerBackendOptions> = {}, context: Partial<BackendContext> = {}) =>
+    new HetznerBackend(config, { ...testContext(storage, installId, { id: "hetzner" }), ...context }, {
       fetch: api.fetch,
       sleep: async () => {},
       now: () => api.now,
       reachHost,
       dockerOptions: { readyTimeoutMs: 20_000, selkiesLauncher: "/bin/sh" },
       pollMs: 1,
+      ...options,
     });
   return { api, dockerHosts, silentFromTheStart, backend };
 }

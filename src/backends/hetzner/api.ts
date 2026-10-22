@@ -235,6 +235,16 @@ export class Hetzner {
     return "deleted";
   }
 
+  async shutDown(id: number, signal?: AbortSignal): Promise<void> {
+    const data = await this.#request<Json>("POST", `/servers/${id}/actions/shutdown`, {}, signal);
+    await this.waitAction(Number((data.action as Json).id), signal);
+  }
+
+  async powerOff(id: number, signal?: AbortSignal): Promise<void> {
+    const data = await this.#request<Json>("POST", `/servers/${id}/actions/poweroff`, {}, signal);
+    await this.waitAction(Number((data.action as Json).id), signal);
+  }
+
   async setServerLabels(id: number, labels: Labels, signal?: AbortSignal): Promise<void> {
     await this.#request("PUT", `/servers/${id}`, { labels }, signal);
   }

@@ -103,6 +103,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `hetzner.reach` | Reaching hosts | How bb-box reaches a host's Docker: over the tailnet, or over the internet from the addresses in SSH from. |
 | `hetzner.unclaimed` | Servers no host claims | Servers with this install's label that are not hosts bb-box knows. The sweep adopts a host's server, as after lost storage, and deletes any other 10 minutes after it was made. |
 | `hetzner.type` | Server type <type> | The hosts' server type is sold at the location, with its size and price. |
+| `hetzner.image` | Host image | The snapshot new hosts start from, with Docker, Tailscale and the box images in it: its age, the snapshots kept and their cost, and the last build. |
 | `hetzner.hosts` | Hosts | Each host bb-box made: its state, age, boxes and cost this month. |
 | `hetzner.spend` | This month's spend | What the hosts cost this month before VAT, against the monthly limit. |
 | `hetzner.host.<host>` | Docker on <host> | A host's Docker, as the Docker backend's checks find it. |

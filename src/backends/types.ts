@@ -852,6 +852,7 @@ export interface BackendContext {
    */
   enrols?(): boolean;
   tailnet?(): Tailnet | null;
+  bbUrl?(): string | null;
   /** BB machines bb-box reaches through BB (042). Absent where there is no BB, as in the conformance run. */
   readonly machines?: MachineAccess;
   /** What the doctor judges images by (049). Absent where bb-box cannot tell, as in the conformance run. */

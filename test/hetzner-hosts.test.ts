@@ -53,7 +53,7 @@ test("a host is claimed in storage before its server is asked for, named for the
   assert.equal(claimedBeforeCreate, true);
   assert.equal(host.state, "ready");
   assert.equal(host.serverName, serverNameFor("inst1", host.hostId));
-  assert.match(host.serverName, /^bb-box-inst1-[a-z0-9]{8}$/);
+  assert.match(host.serverName, /^bb-box-hz-inst1-[a-z0-9]{8}$/);
   const [server] = api.servers.values();
   assert.equal(server!.status, "running");
   assert.deepEqual(server!.labels, { [LABEL.install]: "inst1", [LABEL.host]: host.hostId, [LABEL.role]: "host", [LABEL.image]: "b1" });

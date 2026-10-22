@@ -38,6 +38,25 @@ export function firewallRules(tailnetOn: boolean, sshFrom: readonly string[]): F
   return rules;
 }
 
+function sshOptions(input: { keyPath: string; knownHostsPath: string }): string[] {
+  return [
+    "-i", input.keyPath,
+    "-o", "IdentitiesOnly=yes",
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", `UserKnownHostsFile=${input.knownHostsPath}`,
+    "-o", "ConnectTimeout=10",
+  ];
+}
+
+function rootAt(address: string): string {
+  return `root@${address.includes(":") ? `[${address}]` : address}`;
+}
+
+export function scriptArgs(input: { keyPath: string; knownHostsPath: string; address: string }): string[] {
+  return [...sshOptions(input), rootAt(input.address), "bash -s"];
+}
+
 export function forwardArgs(input: { keyPath: string; knownHostsPath: string; socket: string; address: string }): string[] {
   return [
     "-i", input.keyPath,
@@ -149,6 +168,23 @@ export class HostReach {
 
   cli(record: HostRecord): DockerCli {
     return new DockerCli(`unix://${this.#socketPath(record.hostId)}`, this.#options.dockerBinary, () => this.#forward(record));
+  }
+
+  async run(record: HostRecord, script: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+    const { keyPath } = await this.keys();
+    const { address } = await this.address(record, options.signal);
+    const knownHostsPath = join(this.#socketDir, `known_hosts-${record.hostId}`);
+    const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)]) : AbortSignal.timeout(options.timeoutMs);
+    return new Promise((resolve) => {
+      const child = timedSpawn(() => spawn(this.#options.sshBinary ?? "ssh", scriptArgs({ keyPath, knownHostsPath, address }), { stdio: ["pipe", "pipe", "pipe"], signal }), "Hetzner Cloud host's script");
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.on("data", (chunk: Buffer) => (stdout = (stdout + chunk.toString("utf8")).slice(-65_536)));
+      child.stderr?.on("data", (chunk: Buffer) => (stderr = (stderr + chunk.toString("utf8")).slice(-65_536)));
+      child.on("error", (error) => resolve({ exitCode: null, stdout, stderr: stderr + error.message }));
+      child.on("close", (code) => resolve({ exitCode: code, stdout, stderr }));
+      child.stdin?.end(script);
+    });
   }
 
   async forget(hostId: string): Promise<void> {

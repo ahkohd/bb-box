@@ -483,6 +483,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     drivers,
     machines,
     images,
+    bbUrl: () => bb.server.experimental_appUrl,
   });
   // The files for every box (#455), once the boxes are there.
   let files: BoxFiles | null = null;

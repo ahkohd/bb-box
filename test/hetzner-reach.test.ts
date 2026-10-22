@@ -69,7 +69,7 @@ test("the settings parse with their defaults, the token is a secret field, and a
   const config = parsed.config;
   assert.deepEqual(
     [config.location, config.serverType, config.hostImage, config.mostHosts, config.idleMinutes, config.monthlyLimitEurosBeforeVat, config.sshFrom, config.docker.images.linux, config.docker.images["linux-desktop"]],
-    ["nbg1", "cpx42", "ubuntu-24.04", 2, 30, 20, [], "bbbox/linux:1", null],
+    ["nbg1", "cpx42", "ubuntu-26.04", 2, 30, 20, [], "bbbox/linux:1", null],
   );
   const none = parseHetznerPart({ id: "hetzner", hosts: [], fields: { token: "a".repeat(64), "monthly-limit-eur": 0, "host-image": "123456", "ssh-from": "203.0.113.7/32, 2001:db8::/64" } });
   assert.ok(none.ok);
@@ -224,5 +224,16 @@ test("with the tailnet off and no SSH from, no host is made, and the offer says 
   assert.equal(fake.servers.size, 0);
   const doctor = await backend.doctor(signal());
   assert.equal(doctor.checks.find((each) => each.id === "hetzner.reach")!.status, "fail");
+  await backend.dispose();
+});
+
+test("maintain removes the tailnet devices of this install's hosts that are gone, by the Hetzner prefix and the one before it, and never another backend's or a person's", async () => {
+  const fake = new FakeHetzner();
+  const device = (hostname: string): TailnetDevice => ({ id: hostname, hostname, tags: ["tag:bb-box"], lastSeen: null, addresses: [] });
+  const { tailnet, removed } = fakeTailnet([device("bb-box-hz-test-gone0001"), device("bb-box-test-gone0002"), device("bb-box-ns-test-mac00001"), device("bb-box-hz-other-gone0003"), device("owners-laptop")]);
+  const context = { ...testContext(new MemoryStorage(), "test", { id: "hetzner" }), tailnet: () => tailnet };
+  const backend = new HetznerBackend(hetznerConfig({ hostImage: 4242, hostImageLabel: "snapshot-4242" }), context, { fetch: fake.fetch, sleep: async () => {}, now: () => fake.now });
+  await backend.maintain(signal());
+  assert.deepEqual(removed.sort(), ["bb-box-hz-test-gone0001", "bb-box-test-gone0002"]);
   await backend.dispose();
 });

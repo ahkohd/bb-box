@@ -150,7 +150,7 @@ test("held lists every host's boxes with their host, and leaves out only a host 
   for (let i = 0; i < 4; i++) guests.push(await hetzner.acquire(identity(), null, hooks().value, signal()));
   const held = await hetzner.held(signal());
   assert.deepEqual(held.map((each) => each.ref).sort(), guests.map((each) => each.ref).sort());
-  assert.ok(held.every((each) => typeof each.data?.hetznerHost === "string" && each.host?.startsWith("bb-box-test-")));
+  assert.ok(held.every((each) => typeof each.data?.hetznerHost === "string" && each.host?.startsWith("bb-box-hz-test-")));
   const lastHost = guests[3]!.data!.hetznerHost as string;
   dockerHosts.get(lastHost)!.set({ down: true });
   const answering = await hetzner.held(signal());
@@ -202,12 +202,12 @@ test("the doctor lists each host with its age, boxes and cost, the month's spend
   const report = await hetzner.doctor(signal());
   const byId = new Map(report.checks.map((each) => [each.id, each]));
   assert.equal(byId.get("hetzner.api")!.status, "ok");
-  assert.match(byId.get("hetzner.hosts")!.detail, /bb-box-test-[a-z0-9]{8}: ready, 90 minutes old, 1 box, EUR 0\.\d\d this month/);
+  assert.match(byId.get("hetzner.hosts")!.detail, /bb-box-hz-test-[a-z0-9]{8}: ready, 90 minutes old, 1 box, EUR 0\.\d\d this month/);
   assert.equal(byId.get("hetzner.unclaimed")!.status, "warn");
   assert.match(byId.get("hetzner.unclaimed")!.detail, /bb-box-test-stray0001/);
   assert.match(byId.get("hetzner.spend")!.detail, /EUR 0\.\d\d before VAT so far this month of the EUR 100\.00 limit\. An hour more of the 1 host and a new one would take it to EUR 0\.\d\d\./);
   assert.match(byId.get("hetzner.type")!.detail, /8 cores, 16 GB memory, 320 GB disk in nbg1, EUR 0\.11 an hour and at most EUR 69\.99 a month with its IPv4, before VAT/);
-  assert.ok([...byId.keys()].some((id) => id.startsWith("hetzner.host.bb-box-test-")));
+  assert.ok([...byId.keys()].some((id) => id.startsWith("hetzner.host.bb-box-hz-test-")));
   assert.doesNotMatch(JSON.stringify(report), new RegExp(FAKE_HETZNER_TOKEN));
 });
 

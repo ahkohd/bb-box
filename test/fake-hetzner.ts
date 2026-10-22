@@ -72,6 +72,8 @@ export class FakeHetzner {
   requestsLeftThisHour = 3600;
   readonly requestsPerHour = 3600;
   intercept?: (call: FakeHetznerCall) => Interception | undefined;
+  shutdownIgnored = false;
+  shutdownsAsked = 0;
   readonly #creatingAction = new Map<number, FakeAction>();
   #nextId = 1000;
   #clock = Date.parse("2026-10-22T10:00:00Z");
@@ -135,6 +137,16 @@ export class FakeHetzner {
         const action = this.#action("delete_server", this.pollsUntilOtherActionsFinish, () => this.servers.delete(found.id));
         return this.#ok({ action: this.#actionJson(action) });
       }
+    }
+    if (method === "POST" && (match = /^\/servers\/(\d+)\/actions\/(shutdown|poweroff)$/.exec(path))) {
+      const found = this.servers.get(Number(match[1]));
+      if (!found) return this.#failure(404, "not_found", "server not found");
+      const graceful = match[2] === "shutdown";
+      if (graceful) this.shutdownsAsked++;
+      const action = this.#action(graceful ? "shutdown_server" : "stop_server", this.pollsUntilOtherActionsFinish, () => {
+        if (!graceful || !this.shutdownIgnored) found.status = "off";
+      });
+      return this.#ok({ action: this.#actionJson(action) }, 201);
     }
     if (method === "POST" && (match = /^\/servers\/(\d+)\/actions\/create_image$/.exec(path))) {
       const found = this.servers.get(Number(match[1]));
