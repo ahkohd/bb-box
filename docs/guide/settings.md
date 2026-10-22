@@ -37,6 +37,7 @@ Select **Set up** on the row. Its settings open below it. Each backend needs dif
 - [SSH host pool](../../setup/ssh-pool/README.md)
 - [Docker](../../setup/docker/README.md), and [Docker in WSL on a Windows PC](../../setup/docker-wsl/README.md)
 - [Tart](../../setup/tart/README.md)
+- [Namespace](namespace.md), for Macs rented by the minute
 
 Every setting is also in the [configuration reference](../reference/configuration.md).
 

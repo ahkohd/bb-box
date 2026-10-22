@@ -99,4 +99,4 @@ If your BB server is reached through bb Connect, or at a public address, machine
 
 ## Next
 
-Set up the cloud machines themselves, such as [a cloud server as a Docker host](cloud-docker-host.md).
+Set up the cloud machines themselves, such as [Mac boxes on Namespace](namespace.md) or [a cloud server as a Docker host](cloud-docker-host.md).
