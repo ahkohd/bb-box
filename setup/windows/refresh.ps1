@@ -235,6 +235,8 @@ try {
     & $installers[$pin.name] $pin $file
     Remove-Item $file -Force -ErrorAction SilentlyContinue
   }
+  # The script that gives each clone its address at boot, as the setup has it now: the first logon put the first one in place.
+  if (Test-Path "$dir\boot.ps1") { Copy-Item "$dir\boot.ps1" 'C:\bb-box\boot.ps1' -Force; Step 'boot.ps1: as its source' }
   # bb-box-stream.exe (060), built again when its source has changed, where the image has its encoder.
   $stream = "$tools\bb-box-stream"
   if (Test-Path "$stream\openh264.dll") {

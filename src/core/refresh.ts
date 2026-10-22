@@ -479,6 +479,8 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
         ["install-stream.ps1", await readFile(join(options.setup, "windows", "install-stream.ps1"), "utf8")],
         // The pointer as the VirtIO GPU's hardware cursor, which bb-box-stream needs to leave it out of the video.
         ["hardware-cursor.ps1", await readFile(join(options.setup, "windows", "hardware-cursor.ps1"), "utf8")],
+        // Proxmox's boot.ps1, which gives each clone its address at boot: a refresh keeps the image's first logon's copy otherwise.
+        ...(kind === "windows-desktop" ? [["boot.ps1", await readFile(join(options.setup, "proxmox-qemu", "answer", "bb-box", "boot.ps1"), "utf8")] as [string, string]] : []),
         ["pins.json", `${JSON.stringify({ tools: pins }, null, 2)}\n`],
         ["image.json", `${JSON.stringify(windowsRecord(current, pins, buildId, now(), digest))}\n`],
         // The server whose BB app refresh.ps1 installs, so a box enrols without installing it (#916).
