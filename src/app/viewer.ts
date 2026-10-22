@@ -86,7 +86,10 @@ const tabs = new Map<string, Set<KeysAfterPaste<unknown>>>();
 /**
  * Keys typed while a paste is on its way, which wait for its chord so they land after the text, as typed (#915). A
  * paste in another session of the same tab holds them too, as when the stream switches in the middle of one: they go
- * once that paste's chord has gone. A key typed with no paste pending goes at once.
+ * once that paste's chord has gone. A key typed with no paste pending goes at once. A session that goes with its paste
+ * on its way stays in the tab until the paste is released, and then the keys it held go to the tab's newest session,
+ * before that session's own; a paste whose text lands once its session has gone is pressed there too (the review of
+ * 22 October 2026).
  */
 export class KeysAfterPaste<Key> {
   readonly #send: (key: Key) => void;
@@ -96,6 +99,8 @@ export class KeysAfterPaste<Key> {
   #leaving = false;
   #limit: ReturnType<typeof setTimeout> | undefined;
   #tab: string | null = null;
+  /** Presses the box's paste chord in this session, for a paste another session of the tab took and could not press. */
+  pressChord: (() => void) | null = null;
 
   constructor(send: (key: Key) => void, limitMs = PASTE_HOLD_MS) {
     this.#send = send;
@@ -111,7 +116,7 @@ export class KeysAfterPaste<Key> {
   }
 
   leave(): void {
-    if (this.#tab === null) return;
+    if (this.#tab === null || this.#leaving) return;
     const sessions = tabs.get(this.#tab);
     sessions?.delete(this as KeysAfterPaste<unknown>);
     if (sessions && !sessions.size) tabs.delete(this.#tab);
@@ -141,12 +146,25 @@ export class KeysAfterPaste<Key> {
     this.#pasting = false;
     const keys = this.#waiting ?? [];
     this.#waiting = null;
-    for (const key of keys) this.#send(key);
+    const heir = this.#leaving ? this.#heir() : undefined;
+    if (heir) heir.#adopt(keys);
+    else for (const key of keys) this.#send(key);
     this.#releaseOthers();
-    if (this.#leaving) {
-      this.#leaving = false;
-      this.leave();
+    this.#left();
+  }
+
+  /**
+   * This session has gone, and the text of its paste has now landed on the box: the tab's newest session presses the
+   * chord, and sends the keys held here after it. With no session left in the tab the paste and the keys go nowhere.
+   */
+  handChord(): void {
+    const heir = this.#heir();
+    if (!heir?.pressChord) {
+      this.drop();
+      return;
     }
+    heir.pressChord();
+    this.release();
   }
 
   /** The session goes: a paste of its own still on its way holds the tab's other sessions until it is released, and then it leaves. */
@@ -164,6 +182,28 @@ export class KeysAfterPaste<Key> {
     this.#pasting = false;
     this.#waiting = null;
     this.#releaseOthers();
+    this.#left();
+  }
+
+  /** A session that went with its paste on its way leaves the tab once the paste is done with. */
+  #left(): void {
+    if (!this.#leaving) return;
+    this.#leaving = false;
+    this.leave();
+  }
+
+  /** The tab's newest session that is not going, which takes what a session that went leaves. */
+  #heir(): KeysAfterPaste<unknown> | undefined {
+    return this.#others()
+      .filter((other) => !other.#leaving)
+      .at(-1);
+  }
+
+  /** Keys a session that went held, which go before any this one holds. */
+  #adopt(keys: readonly unknown[]): void {
+    if (!keys.length) return;
+    if (this.#waiting) this.#waiting.unshift(...(keys as Key[]));
+    else for (const key of keys as Key[]) this.#send(key);
   }
 
   #wait(): void {

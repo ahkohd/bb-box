@@ -351,9 +351,11 @@ export class DesktopSession implements Kept {
   pasteAllowed?: () => boolean;
   /** When a Cmd+V or Ctrl+V was taken from noVNC and the browser's paste event is awaited. */
   #pasteArmed: number | null = null;
-  #chordDue = false;
   #pasteWait: ReturnType<typeof setTimeout> | undefined;
-  #chord: ReturnType<typeof setTimeout> | undefined;
+  /** Each paste's chord still to go: two pastes in quick succession press it twice. */
+  readonly #chords = new Set<ReturnType<typeof setTimeout>>();
+  /** Pastes whose text is still on its way to the box. */
+  #putting = 0;
   readonly #onPasteEvent = (event: ClipboardEvent) => this.#takePaste(event);
 
   constructor(url: string) {
@@ -407,6 +409,7 @@ export class DesktopSession implements Kept {
     this.#refused = null;
     const client = new Viewer(this.element, this.#url, { shared: true });
     client.afterPaste.join(tabOf(this.#url));
+    client.afterPaste.pressChord = () => this.#pressPaste();
     // Not noVNC's dark grey: the pane's colour, in the theme's neutral, shows around a picture that does not fill it.
     client.background = "transparent";
     client.qualityLevel = this.#quality;
@@ -552,7 +555,8 @@ export class DesktopSession implements Kept {
   /** Puts text on the box's clipboard, then presses the box's own paste chord, Ctrl+V or Cmd+V, where the cursor is, and says so with onPaste or onPasteFailed. */
   paste(text: string): void {
     if (this.connection.state !== "connected" || !this.#client) return;
-    this.#client.afterPaste.hold();
+    const keys = this.#client.afterPaste;
+    keys.hold();
     const put = this.putClipboard?.(text);
     if (!put) {
       this.#client.clipboardPasteFrom(text);
@@ -560,28 +564,40 @@ export class DesktopSession implements Kept {
       this.onPaste?.(text);
       return;
     }
+    this.#putting++;
     put.then(
       () => {
-        this.#pressPaste();
+        this.#putting--;
+        // The stream switched while the text was on its way: the tab's new session presses the chord.
+        if (this.#disposed) keys.handChord();
+        else this.#pressPaste();
         this.onPaste?.(text);
       },
       (error: unknown) => {
-        this.#client?.afterPaste.release();
+        this.#putting--;
+        if (this.#disposed) keys.drop();
+        else if (!this.#pasteDue()) keys.release();
         this.onPasteFailed?.(error);
       },
     );
   }
 
+  /** Whether a paste's chord, or the text it waits for, is still to go. */
+  #pasteDue(): boolean {
+    return this.#chords.size > 0 || this.#putting > 0;
+  }
+
   /** The box's paste chord, after a short wait for the text to land; the modifier is pressed whether or not the person holds its browser twin. Keys typed since go after it. */
   #pressPaste(): void {
-    clearTimeout(this.#chord);
     this.#client?.afterPaste.hold();
-    this.#chordDue = true;
-    this.#chord = setTimeout(() => this.#sendChord(), PASTE_CHORD_DELAY_MS);
+    const chord = setTimeout(() => {
+      this.#chords.delete(chord);
+      this.#sendChord();
+    }, PASTE_CHORD_DELAY_MS);
+    this.#chords.add(chord);
   }
 
   #sendChord(): void {
-    this.#chordDue = false;
     const client = this.#client;
     if (!client || this.connection.state !== "connected") {
       client?.afterPaste.drop();
@@ -589,7 +605,8 @@ export class DesktopSession implements Kept {
     }
     const modifier = this.guestOs === "macos" ? commandKey(this.#macKeys) : { keysym: XK_CONTROL_L, code: "ControlLeft" };
     for (const { key, down } of pasteChordKeys(modifier, { keysym: XK_V, code: "KeyV" }, client.heldModifiers())) client.sendKey(key.keysym, key.code, down);
-    client.afterPaste.releaseIn(PASTE_LANDS_MS);
+    // Keys typed since wait for the last paste on its way.
+    if (!this.#pasteDue()) client.afterPaste.releaseIn(PASTE_LANDS_MS);
   }
 
   /** A Cmd+V (Ctrl+V off a Mac) on the desktop while this tab has control: kept from noVNC, left to the browser, whose paste event brings the text. */
@@ -635,8 +652,12 @@ export class DesktopSession implements Kept {
     clearTimeout(this.#retry);
     clearTimeout(this.#settle);
     clearTimeout(this.#pasteWait);
-    clearTimeout(this.#chord);
-    if (this.#chordDue) this.#sendChord();
+    const due = [...this.#chords];
+    this.#chords.clear();
+    for (const chord of due) {
+      clearTimeout(chord);
+      this.#sendChord();
+    }
     this.#client?.afterPaste.close();
     document.removeEventListener("paste", this.#onPasteEvent, true);
     this.#observer?.disconnect();
