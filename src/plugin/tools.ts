@@ -303,7 +303,11 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   // Registered after the core's hooks, so it runs first, while boxes and
   // backends still work (#405).
   const drain = new Drain();
-  bb.onDispose(() => drain.close(options.drainMs ?? DRAIN_MS));
+  bb.onDispose(async () => {
+    const began = Date.now();
+    const { running, stopped } = await drain.close(options.drainMs ?? DRAIN_MS);
+    if (running) bb.log.info(`Stopping, bb-box waited ${((Date.now() - began) / 1000).toFixed(2)} s for ${running} box_run ${running === 1 ? "command" : "commands"}, and stopped ${stopped}, which go on as jobs.`);
+  });
 
   bb.agents.registerTool({
     name: "box_acquire",

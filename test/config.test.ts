@@ -19,6 +19,7 @@ import type { BackendContext, BackendDriver, DoctorReport } from "../src/backend
 import { backendPart, checkDocument, exported, generalConfig, readDraft, upgradeDocument, withSecretChanges, type ConfigDocument, type Secrets } from "../src/core/document.ts";
 import { CLEARED_KEY, COPY_KEY, DOCUMENT_KEY, SECRETS_KEY, SIZES_ADOPTED_KEY, fromSettings, type MovedCopy } from "../src/core/move.ts";
 import { boundedDoctor, type ApplyResult, type CheckResult, type ConfigState } from "../src/plugin/configuration.ts";
+import { ReloadTimes, STARTED_AT_KEY, STOPPED_AT_KEY } from "../src/plugin/reload-times.ts";
 import { setup, type BbBox } from "../src/plugin/setup.ts";
 import { helperPid, startChild } from "../src/transports/forker.ts";
 import { FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
@@ -197,11 +198,11 @@ test.afterEach(async () => {
 /** The storage of the latest start. */
 const kvOf = (world: { kv: BbPluginApi["storage"]["kv"] }) => world.kv;
 
-/** Every storage key and value outside the configuration's own keys. */
+/** Every storage key and value outside the configuration's own keys and the times versions started and stopped. */
 async function outsideConfig(world: { kv: BbPluginApi["storage"]["kv"] }): Promise<Record<string, unknown>> {
   const kv = kvOf(world);
   const all: Record<string, unknown> = {};
-  for (const key of await kv.list("")) if (!key.startsWith("config/")) all[key] = await kv.get(key);
+  for (const key of await kv.list("")) if (!key.startsWith("config/") && key !== STOPPED_AT_KEY && key !== STARTED_AT_KEY) all[key] = await kv.get(key);
   return all;
 }
 
@@ -1054,4 +1055,31 @@ test("a disposed bb-box leaves no spawn helper, nor any child the helper started
   assert.equal(helperPid(), undefined);
   assert.ok(await endsWithin(helper), "the helper still runs");
   assert.ok(await endsWithin(child), "the helper's child still runs");
+});
+
+test("bb-box logs how long it took to stop, and to start by phase, and which came first", async () => {
+  const { harness, latest, restart } = await start({});
+  // BB's test host loads the new version, then disposes the old.
+  await restart();
+  await new Promise((resolve) => setImmediate(resolve));
+  const messages = (one: typeof harness) => one.inspection.logEntries.map((entry) => entry.message);
+  assert.ok(messages(latest()).some((line) => /^bb-box started in \d+\.\d\d s: storage \d+\.\d\d s, configuration and backends \d+\.\d\d s, the rest \d+\.\d\d s\.$/.test(line)));
+  assert.ok(messages(harness).some((line) => /^bb-box stopped in \d+\.\d\d s, -?\d+\.\d\d s after BB began the next version\.$/.test(line)));
+});
+
+test("a start after the last version stopped tells how long BB took between the two", async () => {
+  const lines: string[] = [];
+  const kv = new MemoryStorage() as unknown as BbPluginApi["storage"]["kv"];
+  let now = 10_000;
+  const old = new ReloadTimes((line) => lines.push(line), kv, () => now);
+  now += 1_000;
+  old.stopping();
+  now += 2_500;
+  await old.stopped();
+  now += 4_000;
+  const fresh = new ReloadTimes((line) => lines.push(line), kv, () => now);
+  now += 1_500;
+  fresh.phase("storage");
+  await fresh.started();
+  assert.deepEqual(lines, ["bb-box stopped in 2.50 s.", "bb-box started in 1.50 s: storage 1.50 s; BB began it 4.00 s after the last version stopped."]);
 });
