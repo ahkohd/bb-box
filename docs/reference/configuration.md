@@ -261,7 +261,7 @@ Setup: [docs/guide/cloud-docker-host.md](../../docs/guide/cloud-docker-host.md).
 
 Namespace: Macs rented by the minute from Namespace, one machine for each box, ended when the box is released or at the plan's longest life.
 
-Setup: [docs/research/cloud-hosts.md](../../docs/research/cloud-hosts.md).
+Setup: [docs/guide/namespace.md](../../docs/guide/namespace.md).
 
 | Field | Label | Type | Group | Default | Description |
 | --- | --- | --- | --- | --- | --- |

@@ -10,7 +10,7 @@ export const namespaceDriver: BackendDriver<NamespaceConfig> = {
   form: "VM",
   kinds: NAMESPACE_KINDS,
   fields: NAMESPACE_FIELDS,
-  setup: { guide: "docs/research/cloud-hosts.md", scripts: [] },
+  setup: { guide: "docs/guide/namespace.md", scripts: [] },
   parse: parseNamespacePart,
   create: (config, context) => new NamespaceBackend(config, context),
 };
