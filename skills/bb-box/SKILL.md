@@ -69,6 +69,14 @@ where it is built ahead, which its boxes claim at once (#440). The
   you need them.
 - A `linux-desktop` box always has its GPU. When no GPU is free, the refusal
   suggests `linux-desktop-cpu`.
+- Cloud providers cost money while a box exists, so release such a box as
+  soon as you are done. Hetzner Cloud's Linux boxes are containers on hosts
+  bb-box makes as boxes need them: a box on a host with room is ready in
+  seconds, and one that needs a new host in about a minute. A Namespace Mac
+  is a Mac of its own, ready in about 20 s, or about a minute with its
+  desktop, that ends at the plan's longest
+  life whatever you do: `box_status` says when ("Ends"), and the thread is
+  told an hour before. Copy out what you need before then.
 - Windows boxes have Visual Studio Build Tools (MSVC and the Windows SDK),
   LLVM (`clang`), Rust (`cargo`, `rustc`), Node.js, and the Claude Code,
   Codex and Pi CLIs. They have no GPU: DirectX apps render on WARP,

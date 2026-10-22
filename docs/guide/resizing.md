@@ -29,6 +29,8 @@ What can change, and how, depends on where the box runs:
 | Tart, macOS | restart | restart | cannot change |
 | Tart, Windows | restart | restart | restart |
 | SSH host pool | cannot change | cannot change | cannot change |
+| Hetzner Cloud | live | live | cannot change |
+| Namespace | cannot change | cannot change | cannot change |
 
 A live change takes effect at once. A restart shuts the box down, gives it its new size and starts it again: everything running in it stops, and a desktop's session ends. Some backends resize only a box that runs: if yours does, the dialog says to start the box first.
 
