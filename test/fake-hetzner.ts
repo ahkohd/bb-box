@@ -49,7 +49,7 @@ interface FakeImage {
   createdFrom: number;
 }
 
-export type Interception = { respond: HetznerResponse } | "hang" | "lose";
+export type Interception = { respond: HetznerResponse } | "hang" | "lose" | "hang after acting";
 
 export const FAKE_SERVER_TYPES = [
   { name: "cpx32", cores: 4, memory: 8, disk: 160, hourly: "0.0569000000", monthly: "35.4900000000" },
@@ -72,6 +72,7 @@ export class FakeHetzner {
   requestsLeftThisHour = 3600;
   readonly requestsPerHour = 3600;
   intercept?: (call: FakeHetznerCall) => Interception | undefined;
+  readonly #creatingAction = new Map<number, FakeAction>();
   #nextId = 1000;
   #clock = Date.parse("2026-10-22T10:00:00Z");
 
@@ -99,12 +100,13 @@ export class FakeHetzner {
         init.signal.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
       });
     }
-    if (interception && interception !== "lose") return interception.respond;
+    if (interception && typeof interception === "object") return interception.respond;
     if (call.auth !== `Bearer ${FAKE_HETZNER_TOKEN}`) return this.#failure(401, "unauthorized", "unable to authenticate");
     if (this.requestsLeftThisHour <= 0) return this.#failure(429, "rate_limit_exceeded", "limit of 3600 requests per hour reached", { "Retry-After": "1" });
     this.requestsLeftThisHour--;
     const response = this.#route(call);
     if (interception === "lose") throw new TypeError("fetch failed", { cause: new Error("socket hang up") });
+    if (interception === "hang after acting") return new Promise<HetznerResponse>(() => {});
     return response;
   };
 
@@ -119,7 +121,11 @@ export class FakeHetzner {
     if ((match = /^\/servers\/(\d+)$/.exec(path))) {
       const found = this.servers.get(Number(match[1]));
       if (!found) return this.#failure(404, "not_found", "server not found");
-      if (method === "GET") return this.#ok({ server: this.#server(found) });
+      if (method === "GET") {
+        const creating = this.#creatingAction.get(found.id);
+        if (creating) this.#tick(creating);
+        return this.#ok({ server: this.#server(found) });
+      }
       if (method === "PUT") {
         if (body?.labels) found.labels = { ...(body.labels as Record<string, string>) };
         return this.#ok({ server: this.#server(found) });
@@ -152,11 +158,7 @@ export class FakeHetzner {
     if (method === "GET" && (match = /^\/actions\/(\d+)$/.exec(path))) {
       const action = this.actions.get(Number(match[1]));
       if (!action) return this.#failure(404, "not_found", "action not found");
-      if (action.pollsLeft > 0) action.pollsLeft--;
-      if (action.pollsLeft === 0 && action.done) {
-        action.done();
-        action.done = undefined;
-      }
+      this.#tick(action);
       return this.#ok({ action: this.#actionJson(action) });
     }
     if (path === "/ssh_keys" || /^\/ssh_keys\/\d+$/.test(path)) return this.#labelled(call, this.sshKeys, "ssh_key", (input) => ({ publicKey: String(input.public_key ?? "") }));
@@ -245,7 +247,9 @@ export class FakeHetzner {
     this.servers.set(id, made);
     const action = this.#action("create_server", this.pollsUntilCreatedServerRuns, () => {
       if (this.servers.has(id)) made.status = "running";
+      this.#creatingAction.delete(id);
     });
+    if (action.done) this.#creatingAction.set(id, action);
     const start = this.#action("start_server", 0);
     return this.#ok({ server: this.#server(made), action: this.#actionJson(action), next_actions: [this.#actionJson(start)], root_password: null }, 201);
   }
@@ -322,6 +326,14 @@ export class FakeHetzner {
     action.error = { code, message };
     action.pollsLeft = 0;
     action.done = undefined;
+  }
+
+  #tick(action: FakeAction): void {
+    if (action.pollsLeft > 0) action.pollsLeft--;
+    if (action.pollsLeft === 0 && action.done) {
+      action.done();
+      action.done = undefined;
+    }
   }
 
   #actionJson(action: FakeAction): Record<string, unknown> {

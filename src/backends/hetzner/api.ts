@@ -254,6 +254,16 @@ export class Hetzner {
     }
   }
 
+  async waitUntilRunning(id: number, signal?: AbortSignal): Promise<HetznerServer> {
+    for (let waited = 0; ; waited += this.#actionPollMs) {
+      const found = await this.server(id, signal);
+      if (!found) throw new HetznerError("GET", `/servers/${id}`, 404, "not_found", "the server went before it ran");
+      if (found.status === "running") return found;
+      if (waited >= this.#actionTimeoutMs) throw new HetznerError("GET", `/servers/${id}`, 0, "timeout", `${found.name} was not running after ${Math.round(this.#actionTimeoutMs / 1000)} s`);
+      await this.#sleep(this.#actionPollMs, signal);
+    }
+  }
+
   async sshKeys(labels: Labels, signal?: AbortSignal): Promise<HetznerSshKey[]> {
     return (await this.#list("/ssh_keys", "ssh_keys", { label_selector: selectorMatchingAll(labels) }, signal)).map(sshKey);
   }
