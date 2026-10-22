@@ -4,6 +4,7 @@
 // with config.get and writes with config.apply.
 // The design is in docs/design/settings.md.
 
+import { TailnetSection } from "./settings-tailnet.tsx";
 import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useState, type ReactNode } from "react";
@@ -258,6 +259,12 @@ export function SettingsSection() {
         </GeneralRow>
         {rebuilding ? <RebuildNow /> : null}
       </Section>
+      <TailnetSection
+        key={JSON.stringify(document.general.tailnet ?? null)}
+        tailnet={document.general.tailnet}
+        problems={state.problems.filter((problem) => problem.path.startsWith("general.tailnet"))}
+        save={async (tailnet) => (await apply(withGeneral(document, { tailnet: tailnet as ConfigDocument["general"]["tailnet"] }))).saved}
+      />
       <BoxFilesSection
         files={document.general.files ?? []}
         problems={state.problems.filter((problem) => problem.path.startsWith("general.files"))}
