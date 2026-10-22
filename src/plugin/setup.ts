@@ -636,6 +636,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         return { state: isMissingThread(error) ? "missing" : "unknown", said: describeAnswer(error) };
       }
     },
+    async tell(threadId, text) {
+      await bb.sdk.threads.send({ threadId, input: [{ type: "text", text, mentions: [] }], mode: "queue-if-active" });
+    },
     projectOf,
     machineOf: (boxId) => newBoxHost({ list: (args) => bb.sdk.hosts.list(args), getResource: (hostId) => bb.experimental_machines.getResource(hostId) }, boxId),
     enrol: (box, options) => enrolment.enrol(box, { since: options?.restored ? "restored" : "ready" }),
