@@ -149,9 +149,10 @@ class Viewer extends RFB {
   readonly #letters = new ShiftedLetters();
 
   override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
-    const sent = this.#letters.keysym(keysym, code, down, capslock);
-    if (this.afterPaste.keep([sent, code, down, numlock, capslock])) return;
-    this.#keyEvent(sent, code, down, numlock, capslock);
+    for (const each of this.#letters.keys(keysym, code, down, capslock)) {
+      if (this.afterPaste.keep([each.keysym, each.code, each.down, numlock, capslock])) continue;
+      this.#keyEvent(each.keysym, each.code, each.down, numlock, capslock);
+    }
   }
 
   #keyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {

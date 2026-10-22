@@ -316,7 +316,9 @@ export class SelkiesSession implements Kept {
     this.#canvas.tabIndex = -1;
     this.element.appendChild(this.#canvas);
     this.#keyboard = new Keyboard(this.#canvas);
-    this.#keyboard.onkeyevent = (keysym, code, down, _numlock, capslock) => this.#key(this.#letters.keysym(keysym, code, down, capslock), code, down);
+    this.#keyboard.onkeyevent = (keysym, code, down, _numlock, capslock) => {
+      for (const each of this.#letters.keys(keysym, code, down, capslock)) this.#key(each.keysym, each.code, each.down);
+    };
     for (const type of ["pointerdown", "pointerup", "pointermove"] as const) this.#canvas.addEventListener(type, (event) => this.#pointerEvent(event));
     this.#canvas.addEventListener("wheel", (event) => this.#wheelEvent(event), { passive: false });
     this.#canvas.addEventListener("contextmenu", (event) => event.preventDefault());
