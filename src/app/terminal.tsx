@@ -315,6 +315,9 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
   const pluginId = experimental_usePluginId();
   const { value: state, error, refresh } = useLive<DesktopState>(`${threadId}/${boxId}/terminal`, () => rpc.call("desktop", { threadId, box: boxId }), forThread(threadId));
   const box = state?.box ?? null;
+  /** The box's name as last seen, so a tab whose box was released still names it, as the desktop's does. */
+  const lastName = useRef<string | null>(null);
+  if (box) lastName.current = box.name;
   const path = state?.terminalPath ?? null;
   const can = box !== null && canOpenTerminal(box);
   const [session, renewSession] = useSessionId(boxId);
@@ -381,6 +384,10 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
   if (error) {
     tone = "bad";
     words = "Could not load";
+  } else if (state && !box) {
+    // Released: as the desktop's tab says it, not "Connecting…".
+    tone = "off";
+    words = "Released";
   } else if (box && box.state !== "ready") {
     tone = box.state === "stopped" ? "off" : box.state === "failed" || box.state === "gone" ? "bad" : "busy";
     words = box.state === "stopped" ? "Stopped" : box.state === "acquiring" || box.state === "starting" ? "Starting" : box.state;
@@ -404,7 +411,7 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
         {onBack ? <BackControl back={onBack} /> : null}
         <TerminalGlyph className="text-muted-foreground" />
-        <span className="font-medium text-foreground">{box?.name ?? "Terminal"}</span>
+        <span className="font-medium text-foreground">{box?.name ?? lastName.current ?? "Terminal"}</span>
         <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
@@ -425,7 +432,7 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
         {error ? (
           <Notice>{error}</Notice>
         ) : !state ? null : !box ? (
-          <Notice>This box has been released.</Notice>
+          <Notice detail="Close this tab when you are done with it.">{lastName.current ? `${lastName.current} has been released.` : "This box has been released."}</Notice>
         ) : box.state === "stopped" ? (
           <Notice
             action={

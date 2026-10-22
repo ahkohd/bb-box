@@ -3661,6 +3661,20 @@ test("both viewers wait with jitter before they reconnect", async () => {
   }
 });
 
+test("both viewers leave the area around the picture to the pane, in the theme's neutral, not noVNC's dark grey (#916)", () => {
+  const undo = withVideo();
+  try {
+    const video = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    expect(video.element.style.background).toBe("transparent");
+    video.dispose();
+  } finally {
+    undo();
+  }
+  const vnc = new DesktopSession("ws://bb/desktop?box=box_2&viewer=v");
+  expect((novnc.FakeRfb.made.at(-1) as unknown as { background: string }).background).toBe("transparent");
+  vnc.dispose();
+});
+
 test("a desktop tab shows why the desktop refused it, and reconnects", async () => {
   const { handlers } = server([desktopBox()]);
   const slot = desktopTab(handlers);
@@ -3785,6 +3799,20 @@ function terminalTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_1")
   const action = app.threadPanelActions.find((candidate) => candidate.id === "terminal");
   return renderSlot(action!, { threadId: THREAD, params: { box: boxId } }, { rpc: handlers, pluginId: "bb-box" });
 }
+
+test("a terminal tab whose box is released while it is open names the box and says to close the tab, as the desktop's does (#916)", async () => {
+  const { handlers } = server([box()]);
+  const slot = terminalTab(handlers);
+  await waitFor(() => expect(FakeSocket.made).toHaveLength(1));
+  await handlers.release!({ threadId: THREAD, box: "box_1" } as never);
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  expect(await slot.findByText("calm-otter has been released.")).toBeTruthy();
+  expect(slot.getByText("Close this tab when you are done with it.")).toBeTruthy();
+  // Its header says so too, with the box's name, not "Connecting…".
+  expect(slot.getByText("Released")).toBeTruthy();
+  expect(slot.queryByText("Connecting…")).toBeNull();
+  expect(slot.getAllByText("calm-otter").length).toBeGreaterThan(0);
+});
 
 test("a row opens a box's terminal tab, named after the box", async () => {
   const slot = panel(server([box()]).handlers);

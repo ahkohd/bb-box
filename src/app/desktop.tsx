@@ -390,6 +390,8 @@ export class DesktopSession implements Kept {
     clearTimeout(this.#retry);
     this.#refused = null;
     const client = new Viewer(this.element, this.#url, { shared: true });
+    // Not noVNC's dark grey: the pane's colour, in the theme's neutral, shows around a picture that does not fill it.
+    client.background = "transparent";
     client.qualityLevel = this.#quality;
     if (this.#viewerRefresh) client.refreshLosslessly();
     client.scaleViewport = true;
