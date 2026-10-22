@@ -29,5 +29,5 @@ installs it, and `say -a BlackHole` feeds it speech in the same way. On a
 Mac with System Integrity Protection off, a command `box_run` runs has the
 microphone and the camera with no prompt. A program started as its own
 responsible process, such as an app opened with `open`, needs `box_grant`
-for them. The Mac has a camera only if one is attached, such as a USB
-webcam.
+for them, and `box_grant`'s `system-audio` to record the system's audio.
+The Mac has a camera only if one is attached, such as a USB webcam.

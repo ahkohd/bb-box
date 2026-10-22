@@ -801,6 +801,7 @@ service_of() {
     input-monitoring) echo "kTCCServiceListenEvent s" ;;
     microphone) echo "kTCCServiceMicrophone u" ;;
     camera) echo "kTCCServiceCamera u" ;;
+    system-audio) echo "kTCCServiceAudioCapture u" ;;
     automation) echo "kTCCServiceAppleEvents u" ;;
     *) return 1 ;;
   esac
@@ -879,7 +880,7 @@ grant() {
   user_db=$(user_tcc "$user")
   now=$(now)
   for permission in $permissions; do
-    entry=$(service_of "$permission") || { echo "refused=$permission bb-box grants accessibility, screen-recording, input-monitoring, microphone, camera and automation."; continue; }
+    entry=$(service_of "$permission") || { echo "refused=$permission bb-box grants accessibility, screen-recording, input-monitoring, microphone, camera, system-audio and automation."; continue; }
     service=${entry% *} where=${entry#* }
     db=$ROOT$TCC object=UNUSED object_type=0
     if [ "$where" = u ]; then

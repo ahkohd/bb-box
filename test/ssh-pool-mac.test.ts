@@ -858,13 +858,14 @@ test("with SIP off, the helper grants the box user's programs their permissions,
   const grant = (program: string, permissions: string[], box = "box_a") =>
     mac.helper(["grant"], `install=inst_a\nbox=${box}\nprogram=${program}\n${permissions.map((permission) => `permission=${permission}\n`).join("")}`);
 
-  const granted = grant("/Users/bbx-0/Applications/Probe.app", ["accessibility", "screen-recording", "microphone", "telepathy"]);
+  const granted = grant("/Users/bbx-0/Applications/Probe.app", ["accessibility", "screen-recording", "microphone", "system-audio", "telepathy"]);
   assert.equal(granted.status, 0, granted.stderr);
   assert.deepEqual(granted.stdout.split("\n").filter(Boolean), [
     "granted=accessibility",
     "granted=screen-recording",
     "granted=microphone",
-    "refused=telepathy bb-box grants accessibility, screen-recording, input-monitoring, microphone, camera and automation.",
+    "granted=system-audio",
+    "refused=telepathy bb-box grants accessibility, screen-recording, input-monitoring, microphone, camera, system-audio and automation.",
     "client=dev.example.probe",
   ]);
   assert.equal(
@@ -872,7 +873,11 @@ test("with SIP off, the helper grants the box user's programs their permissions,
     'kTCCServiceAccessibility|0|2|identifier "dev.example.probe" and certificate leaf = H"ab"\nkTCCServiceScreenCapture|0|2|identifier "dev.example.probe" and certificate leaf = H"ab"',
     "an app by bundle ID, with its requirement",
   );
-  assert.equal(sqlite(user, "select service || '|' || auth_value from access where client = 'dev.example.probe';"), "kTCCServiceMicrophone|2", "the microphone in the box user's database");
+  assert.equal(
+    sqlite(user, "select service || '|' || auth_value from access where client = 'dev.example.probe' order by service;"),
+    "kTCCServiceAudioCapture|2\nkTCCServiceMicrophone|2",
+    "the microphone and the system's audio in the box user's database",
+  );
   // A program signed only ad hoc, by its path alone, which a rebuild keeps.
   assert.equal(grant("/Users/bbx-0/project/target/release/tool", ["accessibility"]).stdout.split("\n")[0], "granted=accessibility");
   assert.equal(sqlite(system, "select client_type || '|' || ifnull(csreq, 'none') from access where client = '/Users/bbx-0/project/target/release/tool';"), "1|none");
@@ -883,6 +888,7 @@ test("with SIP off, the helper grants the box user's programs their permissions,
     "grant=accessibility\tdev.example.probe\tUNUSED",
     "grant=screen-recording\tdev.example.probe\tUNUSED",
     "grant=microphone\tdev.example.probe\tUNUSED",
+    "grant=system-audio\tdev.example.probe\tUNUSED",
     "grant=accessibility\t/Users/bbx-0/project/target/release/tool\tUNUSED",
   ]);
   assert.equal(mac.helper(["granted", "0"], RELEASE("box_b")).status, EXIT.notOurs);
