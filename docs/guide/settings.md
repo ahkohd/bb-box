@@ -54,6 +54,8 @@ Docker on BB machines lists your own BB machines that run Docker, such as a PC w
 
 A box on such a machine is a container with full access to the machine. So BB Box uses none of these machines until you turn it on. The row says whether the machine hosts boxes, could host them, is offline in BB, or has no Docker.
 
+A server you rent from a cloud provider can be one of these machines: see [a cloud server as a Docker host](cloud-docker-host.md).
+
 ## Kinds
 
 A kind is a type of box, such as a Linux desktop. A kind is offered when it is on and a backend that is on has it.

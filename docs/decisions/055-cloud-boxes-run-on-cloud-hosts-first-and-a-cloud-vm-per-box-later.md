@@ -1,7 +1,9 @@
 # 055: Cloud boxes run on cloud hosts first, and a cloud VM per box later
 
-Status: accepted, 7 October 2026. Research only: nothing is built, and no
-cloud account was used. Extends
+Status: accepted, 7 October 2026. Reviewed on 22 October 2026 against
+BB 0.46.0 and that day's code: see [Since 7 October](#since-7-october), and
+the plan for steps 1 and 2 in [Cloud hosts](../research/cloud-hosts.md).
+Research only: nothing is built, and no cloud account was used. Extends
 [042](042-a-docker-host-can-be-a-bb-machine.md): a cloud VM is a Docker
 host like any other; and
 [053](053-microsandbox-runs-light-linux-boxes-as-microvms.md): a cloud
@@ -22,7 +24,10 @@ accounts to test on. There are two ways to build it:
 
 What the providers give, from their documentation and price lists on
 7 October 2026 (prices excluding VAT; Hetzner's in Germany and Finland
-after its change of 15 June 2026, AWS's in us-east-1):
+after its change of 15 June 2026, AWS's in us-east-1). Hetzner's were read
+again on 22 October 2026: Hetzner now shows them with a public IPv4
+included, and they are 055's figures with its EUR 0.50 a month added. AWS's
+were not read again.
 
 | | Hetzner Cloud | Hetzner dedicated (AX) | AWS EC2 |
 | --- | --- | --- | --- |
@@ -30,14 +35,14 @@ after its change of 15 June 2026, AWS's in us-east-1):
 | A stopped server | billed in full until deleted | billed | instance free; its disk and Elastic IPs billed |
 | KVM in the guest | no: "not possible on cloud server" | yes, bare metal | C7i, M7i, R7i, C8i, M8i, R8i and kin with `CpuOptions` `NestedVirtualization=enabled`, since February 2026, at no extra cost; or `.metal` |
 | Create to SSH | about 15 to 30 s | ordered through the Robot API; delivery not immediate | about 7 s to running, 12 to 15 s to SSH on a stock image |
-| Small box: 2 vCPU, 4 GB | CX23 EUR 0.0088/h (EUR 5.49 a month) | | t3.medium $0.0416/h; c7i.large $0.089/h |
-| Desktop box: 4 vCPU, 8 GB | CX33 EUR 0.0136/h | | c7i.xlarge $0.179/h |
-| A host | CX53, 16 vCPU, 32 GB: EUR 0.0473/h | AX42, 8 cores, 64 GB: EUR 97.30 a month and EUR 49 setup | m7i.2xlarge, 8 vCPU, 32 GiB: $0.403/h ($0.174 spot); c7i.metal-24xl: $4.284/h |
-| Public IPv4 | EUR 0.50 a month | included | $0.005/h |
+| Small box: 2 vCPU, 4 GB | CX23 EUR 0.0088/h (EUR 5.49 a month); with its IPv4, EUR 0.0096/h (EUR 5.99). Out of stock on 22 October: CPX22 EUR 0.032/h with its IPv4 | | t3.medium $0.0416/h; c7i.large $0.089/h |
+| Desktop box: 4 vCPU, 8 GB | CX33 EUR 0.0136/h; with its IPv4, EUR 0.0144/h. CPX32 EUR 0.0577/h with its IPv4 | | c7i.xlarge $0.179/h |
+| A host | CX53, 16 vCPU, 32 GB: EUR 0.0473/h; with its IPv4, EUR 0.0481/h (EUR 29.99 a month). CX43, 8 vCPU, 16 GB, 160 GB: EUR 0.0264/h with its IPv4. With no CX in stock: CPX42, 8 vCPU, 16 GB, 320 GB, EUR 0.1122/h; CPX62, 16 vCPU, 32 GB, EUR 0.2091/h | AX42, 8 cores, 64 GB: EUR 97.30 a month and EUR 49 setup | m7i.2xlarge, 8 vCPU, 32 GiB: $0.403/h ($0.174 spot); c7i.metal-24xl: $4.284/h |
+| Public IPv4 | EUR 0.50 a month, now shown within each server's price | included | $0.005/h |
 | Disk images | snapshots, EUR 0.0143 per GB-month, compressed | | AMIs: EBS snapshots, $0.05 per GB-month; root disks gp3 $0.08 per GB-month |
 | Traffic out | 20 TB a month included (EU) | included | $0.09/GB after 100 GB a month |
 | Spending limits | cost alerts only; the account has a resource limit that Hetzner raises on request | | Budgets, with actions that stop instances or apply a deny policy; vCPU quotas per family |
-| API limits | 3,600 requests an hour per project | Robot API | per action, with retries |
+| API limits | 3,600 requests an hour per project, refilling one a second, with `RateLimit-*` headers; `resource_limit_exceeded` past the project's limits | Robot API | per action, with retries |
 | Records on a server | labels, listed by label selector; server names unique in a project | | tags set at launch (`TagSpecifications`); `ClientToken` makes a launch idempotent |
 
 From bb-box's own measurements: a Docker or microsandbox box is ready 0.3
@@ -53,7 +58,9 @@ enrols in BB about 5 s after it is ready.
 1. **Hosts made by hand, now, with no new code.** A cloud VM that runs
    Docker and is a BB machine is a Docker host through BB's relay
    ([042](042-a-docker-host-can-be-a-bb-machine.md)): it needs no inbound
-   port, and its boxes start in under a second. A Hetzner CX or CCX server
+   port, and its boxes start in under a second. Where BB's server is
+   reachable only on a tailnet, as it is for the operator's, the VM joins
+   the tailnet first. A Hetzner CX or CCX server
    serves Docker boxes; an AWS C7i or M7i instance with nested
    virtualization, or a Hetzner AX server, serves microsandbox boxes too,
    once 053's backend is built. The setup guide gains a page for it.
@@ -115,7 +122,7 @@ and would slow each call (see [The tools](#the-tools-opentofu-and-alchemy)).
 | Cost at rest, with no boxes | nothing | the hosts kept, until bb-box deletes them |
 | Images | a snapshot or AMI per provider, from our guest scripts | a host image with Docker, microsandbox and our OCI images loaded |
 | Reaching BB | each box reaches BB's server; on a tailnet, each joins it | the host reaches BB, and its boxes reach it through the host |
-| bb-box reaching boxes | SSH to each box's public address, or the tailnet | the host as a BB machine, through BB: no inbound port |
+| bb-box reaching boxes | SSH to each box's public address, or the tailnet | a host made by hand: as a BB machine, through BB (042). A host bb-box makes: one SSH connection over the tailnet, forwarding Docker's socket ([plan](../research/cloud-hosts.md#how-bb-box-reaches-a-host-it-made)). No inbound port either way |
 | Desktops | RFB through SSH to the box | RFB through `docker exec` or `msb exec`, through BB |
 | Tailscale (050) | each box joins, with a TUN device of its own | Docker boxes join through the host's TUN; microsandbox guests join, but reach peers through DERP (053) |
 | Leaks | every box is a server to sweep | the hosts are the servers to sweep |
@@ -187,8 +194,11 @@ tailnet, a cloud machine must join it first.
   `--net public,private`, as 053's spike found for a server on a
   100.64.0.0/10 address.
 
-bb-box reaches a host made a BB machine through BB, as 042 does, with no
-inbound port. A box of A is reached by SSH at its public address, with a
+bb-box reaches a host made by hand, a BB machine, through BB, as 042 does,
+with no inbound port. A host bb-box makes is not a BB machine: BB would list
+it for threads, as root on the host, and BB's installer adds about a minute
+to its start. bb-box reaches it over the tailnet instead, with one SSH
+connection that forwards Docker's socket to BB's server (see the plan). A box of A is reached by SSH at its public address, with a
 firewall that lets in only BB's server, which breaks when BB's address
 changes, or over the tailnet.
 
@@ -247,12 +257,14 @@ and leans on the providers' where they have them:
 
 ### What a user sets up
 
-- **B made by hand (step 1)**: a cloud VM with Docker, enrolled in BB, then
-  "Docker on BB machines" in BB Box's settings. About 10 minutes, and it
-  works today.
+- **B made by hand (step 1)**: a cloud VM with Docker, on the tailnet where
+  BB's server is reachable only there, enrolled in BB, then "Docker on BB
+  machines" in BB Box's settings. About 30 minutes, most of it bb-box
+  building its images there, and it works today.
 - **Hetzner, for steps 2 and 3**: a project and an API token with Read &
-  Write, pasted into BB Box's settings, and a location. bb-box makes its SSH
-  key, firewall and images.
+  Write, pasted into BB Box's settings, a location, and a way for hosts to
+  join the tailnet: a Tailscale auth key, or an OAuth client that makes a
+  one-off key for each host. bb-box makes its SSH key, firewall and images.
 - **AWS, for steps 2 and 3**: an IAM user or role with bb-box's policy, its
   keys in BB Box's settings unless BB runs on EC2 with a role, a region, and
   the default VPC or a subnet. bb-box makes its security group, key pair
@@ -396,15 +408,73 @@ to the account's own.
 - AWS's free 100 GB of traffic a month goes quickly with desktops.
 - A cloud host's boxes share one machine: a box that fills the host's disk
   or memory affects the others, as on any Docker host.
+- A privileged box is root on its host, and could read the server's user
+  data from the provider's metadata service, where a host gets its tailnet
+  key. The host image blocks containers from the metadata address, and a
+  one-off key per host makes a key read later useless.
+- Hetzner's pages showed every cloud server type as "currently
+  unavailable" on 22 October 2026. Whether that was the page or real stock
+  is for the Console to show on the day.
+
+## Since 7 October
+
+Read again on 22 October 2026:
+
+- **BB's server.** BB 0.46.0 lets machines reach its server by a direct
+  URL or through its bb Connect service. The operator's install uses a
+  direct URL on its tailnet, which public DNS answers with a tailnet
+  address too, so a cloud host and its boxes reach BB only through the
+  tailnet, or once the operator pairs bb Connect.
+- **Tailscale for boxes (050)** is designed, not built: nothing joins a
+  machine to the tailnet. Step 1 joins its host by hand; step 2 joins its
+  hosts itself.
+- **microsandbox (053)** is built, with a relay of its own for BB machines.
+- **Images (049)** are built on each Docker host through the relay: about
+  15 minutes and 36 GB of free disk for all three. A hand-made host needs a
+  CX43's 160 GB rather than a CX33's 80 GB.
+- **Spawns.** bb-box starts its commands from a helper process, so BB's
+  server no longer forks for each `docker` command. A Docker host over
+  `ssh://` still starts an `ssh` for each, which is why step 2 forwards one
+  socket a host instead.
+- **Resize (061)** changes a Docker box's cores and memory live, on any
+  Docker host.
+- **Prices.** Hetzner's are unchanged once IPv4 is counted (above).
+- **Stock.** Hetzner's create page now has three lines: Cost-Optimized (CX,
+  "limited availability"), Regular Performance (CPX) and General Purpose
+  (CCX). On 22 October no CX server was available in Nuremberg, Falkenstein
+  or Helsinki, so step 1's host was a CPX32, and step 2 cannot count on CX
+  types: a CPX costs about twice a CX of its size.
+- **Step 1, done by hand** on 22 October: Ubuntu 26.04, Docker from
+  `get.docker.com`, Tailscale, and Node.js 22 or later, which BB's
+  installer needs and does not say so
+  ([request 35](../bb-requests.md#35-say-what-a-machine-needs-before-installing)).
+  BB's daemon runs as a user of its own, in the `docker` group. bb-box's
+  Docker check answered in 0.1 s through the relay. The guide page is
+  [a cloud server as a Docker host](../guide/cloud-docker-host.md).
+- **Namespace**, which the owner's team uses, was compared as a second
+  provider: [Namespace, compared](../research/cloud-hosts.md#namespace-compared).
+  Its machines are a VM per box by the minute, with a deadline its plan
+  caps at 3 to 24 hours. It is 12 to 17 times Hetzner's price for Linux at
+  CX prices, and about 4 times at CPX prices, and offers macOS by the
+  minute. The plan's advice: Hetzner for Linux first,
+  then Namespace for macOS after a trial.
 
 ## Plan of PRs
 
+The plan of 22 October 2026 for steps 1 and 2, with what each PR proves, is
+in [Cloud hosts](../research/cloud-hosts.md#pull-requests). In short:
+
 1. The setup guide's page for a cloud VM as a Docker host through BB (step
    1), checked on a Hetzner test server.
-2. The cloud backend on Hetzner Cloud: hosts from a host image, Docker boxes
-   on them, idle deletion, labels, the sweep, limits and the doctor, tested
-   against a fake of Hetzner's API, then the test project.
-3. The host image build, and its refresh with the nightly rebuilds (049).
-4. AWS: the same, with microsandbox on instances with nested
-   virtualization once 053's backend is built.
-5. The OpenTofu module for AWS's policy and security group, in `setup/`.
+2. A Hetzner Cloud client and a fake of its API.
+3. The Docker backend's work on one host, made a part both backends use.
+4. Host records and the sweep.
+5. The Hetzner backend: placement, hosts made on demand and ahead, idle
+   deletion and limits, with the conformance suite, on the fake.
+6. Reaching hosts over the tailnet, and the first live run.
+7. The host image build, and its refresh with the nightly rebuilds (049).
+8. Settings and the guide page.
+
+Then AWS, with microsandbox on instances with nested virtualization, as
+053's backend is built now; and the OpenTofu module for AWS's policy and
+security group, in `setup/`.

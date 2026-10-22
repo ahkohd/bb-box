@@ -16,6 +16,7 @@ decided is in the [decisions](../decisions/README.md).
 | [Windows hosts](windows-hosts.md) | 1 October 2026 | built as [setup/docker-wsl](../../setup/docker-wsl/README.md) (#158) |
 | [A Wayland desktop](wayland-desktop.md) | 2 October 2026 | [048](../decisions/048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md) |
 | [RFB picture quality](rfb-quality.md) | 7 October 2026 | [056](../decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) |
+| [Cloud hosts: a plan for steps 1 and 2](cloud-hosts.md) | 22 October 2026 | [055](../decisions/055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md), not yet built |
 
 [computer-use-rig](computer-use-rig/README.md) is the test rig the computer
 use research ran in.
