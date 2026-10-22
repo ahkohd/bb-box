@@ -85,11 +85,12 @@ the VM runs.
   8 GiB. Tart's disk sizes are decimal: 70 GB is 65.2 GiB. Nothing in the
   image grew the partition at boot, and `growpart` with `resize2fs` grew
   it online afterwards.
-- macOS: not yet checked live, as no Mac had room while this was written.
-  A bb-box stop suspends a macOS VM, and keeps its memory in a saved
-  state, which a VM of another size cannot restore. bb-box already drops
-  a saved state that does not restore, and boots the VM afresh. So a new
-  size for macOS means a restart that loses the session. Its disk is
+- macOS: a bb-box stop suspends a macOS VM, and keeps its memory in a
+  saved state, which a VM of another size cannot restore. So a resize
+  shuts macOS down instead (`sudo shutdown -h now` from inside, 6 s on
+  macOS 26), sets the VM's size and boots it: bb-box's start booted it
+  afresh in 13.6 s, logged in with Cua working. A new size for macOS
+  means a restart that loses the session. Its disk is
   harder: macOS's recovery partition sits after the system's APFS
   container, and Tart's own advice for a larger disk is to delete it from
   recoveryOS, then grow the container. bb-box gives macOS boxes their
