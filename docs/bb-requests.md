@@ -33,11 +33,14 @@ is a log: bb-box does not file these with BB.
 | [Remove a machine whose host is gone](#22-remove-a-machine-whose-host-is-gone) | not met | a Windows box's machine stays in BB's list as "removing" when the box goes before BB has torn down the threads' environments on it, so bb-box waits up to 2 minutes for BB's removal before it releases a Windows box (#539) |
 | [Install commands for the machine's OS](#23-install-commands-for-the-machines-os) | not met | BB's install action for Cursor's CLI on a Windows machine is a bash script, which Windows cannot run (#561) |
 | [End a thread's processes before removing its worktree on Windows](#24-end-a-threads-processes-before-removing-its-worktree-on-windows) | not met | bb-box ends the processes working in BB's worktrees in a Windows box before it asks BB to remove the box's machine, or BB's teardown fails with EBUSY and the machine stays "removing" (#539) |
-| [Keep the server's event loop free](#25-keep-the-servers-event-loop-free) | not met | BB's server stops for up to 1.2 s, 10 to 16 times a minute, and every desktop's frames and input wait it out, so a drag lags by up to a second and a video viewer loses frames |
+| [Keep the server's event loop free](#25-keep-the-servers-event-loop-free) | not met | BB's server stops for up to 1.2 s, 6 to 20 times a minute, and every desktop's frames and input wait it out, so a drag lags by up to a second and a video viewer loses frames |
 | [Say what uninstalling a plugin keeps](#26-say-what-uninstalling-a-plugin-keeps) | not met | after an uninstall in BB's settings and a fresh install, bb-box came back with its old box records and its Docker backend on, though the dialog says it deletes the plugin's settings |
 | [Start a Windows machine's helpers without a window](#27-start-a-windows-machines-helpers-without-a-window) | not met | on a Windows box, Keep Awake's PowerShell opens a window over the desktop each time BB's daemon starts, and after a boot BB's daemon opens one of its own, which take the focus and show in box_record's clips |
 | [Refresh a machine's processors and memory when they change](#28-refresh-a-machines-processors-and-memory-when-they-change) | not met | after a live resize (061), BB keeps a machine's old processor count, and its automatic thread limit with it, until BB's daemon there restarts; bb-box restarts it when no thread works on the machine and no BB terminal is open there, and otherwise says how to set the limit by hand |
 | [Start one daemon however often it is started](#29-start-one-daemon-however-often-it-is-started) | not met | two starts of BB's daemon at once, such as its logon entry's and a reconnect's after a boot, can leave two supervisors running; bb-box waits for BB's own start after a boot before it reconnects a Windows box (#917) |
+| [Serve a plugin's WebSocket route off the server's loop](#30-serve-a-plugins-websocket-route-off-the-servers-loop) | not met | every desktop's frames and input run on BB's server's event loop, so whatever holds that loop, BB's or a plugin's, holds them |
+| [Load a plugin's new version before unloading the old](#31-load-a-plugins-new-version-before-unloading-the-old) | not met | a plugin has no tools while its old version's dispose hooks run, so bb-box waits only 5 s for running commands at a deploy, and stops longer ones, which go on as jobs |
+| [Give live agent sessions a plugin's tools back after it reloads](#32-give-live-agent-sessions-a-plugins-tools-back-after-it-reloads) | not met | after bb-box reloaded, running Claude Code sessions lost its tools for good, until their agent runtime restarted |
 
 ## 1. BB's host app on Windows
 
@@ -727,7 +730,7 @@ and a 95% zoom from the centre over 200 ms, the same on close.
 `motion-reduce:data-[state=open]:animate-none` and its closed twin so the
 dialog just appears and disappears under `prefers-reduced-motion`.
 
-**Until then.** bb-box's copy carries that motion ([#453](https://github.com/moonstead/bb-box/pull/453)),
+**Until then.** bb-box's copy carries that motion (#453),
 with a note in `components/ui/alert-dialog.tsx` that avoids spelling the
 dropped class names, since Tailwind scans comments and would emit them.
 
@@ -934,7 +937,7 @@ each process's working directory from its PEB.
 
 ## 25. Keep the server's event loop free
 
-**Status in BB 0.45.0: not met.**
+**Status in BB 0.46.0: not met.**
 
 **What bb-box needs.** BB's server's event loop free of long synchronous
 work. bb-box's desktop relays run on that loop, inside BB's server process,
@@ -958,10 +961,37 @@ server process over 20 s, with a desktop open, showed these busy spans:
 
 bb-box's own code had about 21 ms of its own in those 20 s.
 
+On 22 October 2026, BB 0.46.0's server held 3.5 GB, and bb-box's loop watch
+counted 6 to 20 stalls a minute, the longest 640 ms to 1142 ms, while agents
+used desktops. A CPU profile over 60 s, from bb-box's `profile` RPC, found:
+
+- Busy 33% of the time, with 37 spans of 100 ms or more.
+- Busy time by whose code: BB 7098 ms (36%), garbage collection 6620 ms
+  (33%), bb-box 3610 ms (18%), Node alone 1513 ms (8%), V8 and native code
+  992 ms (5%), other plugins 30 ms.
+- The five longest spans, 1023 ms to 1112 ms, all under BB's code: HTTP
+  `dispatch` and `cors2`, `runMicrotasks`, and SQLite:
+  `runTimedStatementOperation`, `runEventLoopWorkSync`, `db.transaction` and
+  `sqliteTransaction`.
+- Garbage collection: 11 major collections of 66 ms to 85 ms, 810 ms in
+  all, with 1.3 GB of the heap in use, of which 790 MiB was old space.
+  The process's other 2.2 GB is outside the JavaScript heap.
+
+bb-box's share was spawning: each child process forked the 3.5 GB server,
+holding the loop for about 49 ms, up to 124 ms, and bb-box started up to 62
+a minute. bb-box now starts its commands from a small helper process, which
+forks in about 0.1 ms, so that share is gone.
+
 **What we ask.**
 - Spawn `gh` off the main loop, or cache git credentials rather than
   resolving them on each host environment sweep and plugin host call.
 - Run `sweepMachineLifecycles`' SQL in smaller pieces, or off the loop.
+- Keep each SQLite transaction short, or run the database off the main
+  loop: transactions held it for up to a second.
+- Find what HTTP `dispatch` and `cors2` spend up to a second on per
+  request, and the microtasks that follow them.
+- Keep the heap smaller, so each major collection is shorter. A 3.5 GB
+  server forks slowly too, which any plugin that spawns pays for.
 
 **Until then.** Drags in a desktop lag in bursts, video or VNC. bb-box logs
 each minute in which the loop stood still for 250 ms or more, and the
@@ -1130,6 +1160,85 @@ installer runs, or BB's `Run` entry for the machine is there and the
 logon is under 2 minutes old. It then waits up to 90 s for BB to show the
 machine connected, and reconnects only if it does not (#917).
 
+## 30. Serve a plugin's WebSocket route off the server's loop
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** Its desktop relays off BB's server's event loop.
+Each relay passes a desktop's frames to its viewers and their input to the
+box, and must not wait on anything else.
+
+**What BB does now.** `bb.http.experimental_websocket` calls a plugin's
+handlers on the server's main loop. A plugin cannot hand the socket to a
+worker thread or another process. So a stall of that loop, from BB, from
+any plugin or from garbage collection, holds every desktop's frames and
+input (request 25). Profiled on 22 October 2026, the loop stood still for up
+to 1.1 s, 6 to 20 times a minute.
+
+**What we ask.** A WebSocket route that BB serves in a worker thread, or
+hands to a process of the plugin's own, still behind BB's auth. Or a way to
+pass an accepted socket to a plugin's worker.
+
+**Until then.** bb-box keeps its own work on the loop small, logs each
+minute in which the loop stood still, and can profile it. The only way off
+the loop would be a port of bb-box's own, which each install would have to
+expose.
+
+## 31. Load a plugin's new version before unloading the old
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** Its tools available while it is updated or reloaded.
+
+**What BB does now.** BB disposes of the old version, runs its dispose
+hooks, and only then loads the new one. Agents get no tools from the plugin
+in between. On 22 October 2026, a probe called `bb box kinds` every 2 s
+across three reloads of bb-box:
+
+| Reload | The CLI said "unknown command 'box'" | bb-box's lines |
+| --- | --- | --- |
+| 03:09:57 UTC | for 60 s, until 03:10:57 | none: before these lines were logged |
+| 03:12:08 UTC | for 63 s, until 03:13:11 | "started in 0.02 s" at 03:13:08 |
+| 03:14:32 UTC | not at all | "stopped in 0.43 s", then "started in 0.02 s; BB began it 0.08 s after the last version stopped" |
+
+The first two reloads waited on bb-box's dispose hook, which then waited up
+to 60 s for running `box_run` commands to end. BB's own test host
+(`createFakePluginHost`'s `reload`) does the opposite: it loads the new
+version, then disposes of the old.
+
+**What we ask.** Load and register the new version, then dispose of the old,
+as the test host does. Or say in the guide that a plugin's dispose time is
+time without its tools.
+
+**Until then.** bb-box waits only 5 s for running commands at a reload. A
+command still running then goes on in its box as a job, and the agent gets
+the job's ID for `box_job`.
+
+## 32. Give live agent sessions a plugin's tools back after it reloads
+
+**Status in BB 0.46.0: not met.**
+
+**What bb-box needs.** An agent that is working keeps bb-box's tools across
+a reload of bb-box.
+
+**What BB does now.** On 22 October 2026, bb-box reloaded several times
+between 03:23 and about 03:35 UTC. Claude Code sessions that were running
+then lost bb-box's tools and did not get them back. Their notice said the
+`box_*` and `computer_*` tools were "no longer available (MCP server
+disconnected)". BB's own bridge tools, such as canvas and task, stayed.
+bb-box itself was fine: `bb box` worked on the CLI, its host worker logged
+that it was ready, and the reload logged "started in 0.02 s". A session got
+the tools back only when its agent runtime restarted, with `bb thread stop`
+and then a new message.
+
+**What we ask.** When a plugin loads again, BB's bridge tells live sessions
+that its tools are back, with MCP's `notifications/tools/list_changed`, or
+reconnects them, so they need no restart.
+
+**Until then.** An agent that loses bb-box's tools needs its thread stopped
+and a new message. bb-box keeps its reloads short, so fewer sessions catch
+one, but cannot bring the tools back to a session that lost them.
+
 ## Checked, no request needed
 
 - **Subprotocols.** BB's WebSocket server answers with the first subprotocol
@@ -1148,13 +1257,6 @@ machine connected, and reconnects only if it does not (#917).
   finds the thread from `create`'s key, which BB sets to the thread's ID.
   That is not documented. bb-box would ask for the thread's ID, or none,
   in `create`'s context.
-- **A plugin WebSocket route served off the server's loop.** bb-box's
-  desktop relays run on BB's server's event loop, so anything that holds
-  it holds every desktop's frames and input (request 25). bb-box would ask
-  for a WebSocket route that BB serves in a worker thread, or in a process
-  of the plugin's own, still behind BB's auth. Without it, the only way off
-  the loop is a port of bb-box's own that each install would have to
-  expose, so bb-box waits for request 25 instead.
 - **Linger in the installer.** Where the installer makes a systemd user
   service, it could enable linger, so the service outlives the session that
   installed it. bb-box does this in its templates meanwhile.
