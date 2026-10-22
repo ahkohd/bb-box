@@ -76,6 +76,7 @@ export const CHECKS = {
   "tailnet.devices": { name: "Devices", from: ["bb-box"], what: "This install's devices on the tailnet, which bb-box removes when their machine went without logging out, and how many other devices carry the same tags, unnamed: bb-box leaves those alone." },
   "namespace.token": { name: "API token", from: ["namespace"], what: "Namespace's API answers to the token in BB Box's settings." },
   "namespace.machines": { name: "Machines", from: ["namespace"], what: "The Namespace machines bb-box has, each with its age and when it ends, and any no box claims." },
+  "namespace.limits": { name: "Workspace limits", from: ["namespace"], what: "The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which bb-box refuses a Mac up front; a warning when the token may not read them." },
 
   // Tart.
   "tart.ssh-key": { name: "SSH key", from: ["tart"], what: "bb-box's SSH key for the Macs reads, and its public key to install." },

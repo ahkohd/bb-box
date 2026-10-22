@@ -47,7 +47,7 @@ test("an acquire claims the box before it makes the machine, labels it with its 
   const recorded = hooks();
   const guest = await backend.acquire(box("b1"), null, recorded.hooks, new AbortController().signal);
   assert.equal(recorded.claims[0]?.data?.instance, undefined, "the first claim is made before the machine is");
-  assert.equal(fake.calls[0]?.method, "CreateInstance");
+  assert.deepEqual(fake.calls.slice(0, 2).map((call) => call.method), ["GetConcurrency", "CreateInstance"], "the workspace's limits are read, then the machine made");
   const made = [...fake.instances.values()][0]!;
   assert.deepEqual(made.labels, { [LABELS.install]: "inst1", [LABELS.box]: "b1", [LABELS.thread]: "thr_1", [LABELS.name]: "box-b1", [LABELS.kind]: "macos", [LABELS.created]: String(Date.parse("2030-01-01T00:00:00Z")) });
   assert.equal(made.uniqueTag, "bbbox-inst1-b1");
@@ -87,6 +87,7 @@ test("a workspace's largest Mac, set or learned from Namespace's refusal, is ref
   assert.equal(set.fake.calls.filter((call) => call.method === "CreateInstance").length, 0);
 
   const learned = setup();
+  learned.fake.usageGranted = false;
   assert.equal((await learned.backend.capacity("macos", medium, [])).ok, true, "nothing known yet");
   learned.fake.failNext("CreateInstance", "invalid_argument", "requesting more machine resources than workspace quota allows (requesting 6x28, maximum 6x14)");
   const error = await learned.backend.acquire(box("b1", medium), null, hooks().hooks, new AbortController().signal).catch((thrown: unknown) => thrown);
@@ -96,6 +97,31 @@ test("a workspace's largest Mac, set or learned from Namespace's refusal, is ref
   assert.equal((await learned.backend.capacity("macos", { cores: 4, memoryMiB: 8192, diskGiB: null }, [])).ok, true);
   assert.equal(parseNamespacePart({ fields: { token: FAKE_NAMESPACE_TOKEN, "largest-machine": "6 x 14" } } as never).ok, true);
   assert.equal(parseNamespacePart({ fields: { token: FAKE_NAMESPACE_TOKEN, "largest-machine": "big" } } as never).ok, false);
+});
+
+test("with the usage grant, capacity reads the workspace's Mac limits from Namespace: the largest Mac it allows, and whether its cores are taken, before asking for one", async () => {
+  const { fake, backend } = setup();
+  const small = { cores: 4, memoryMiB: 8192, diskGiB: null };
+  const workspace = new FakeNamespace({ maxCores: 6, maxMacMemoryMb: 14336 });
+  const limited = new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), { fetch: workspace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 });
+  const medium = await limited.capacity("macos", { cores: 6, memoryMiB: 16384, diskGiB: null }, []);
+  assert.equal(medium.ok, false);
+  assert.match(medium.message!, /at most 6 cores and 14 GB of memory, and 6 cores and 16 GiB needs its 6x28 Mac/);
+  assert.equal((await limited.capacity("macos", small, [])).ok, true);
+  await limited.acquire(box("b1", small), null, hooks().hooks, new AbortController().signal);
+  const full = await limited.capacity("macos", small, []);
+  assert.equal(full.ok, false);
+  assert.equal(full.message, "Namespace's workspace has 4 of its 6 Mac cores and 14 of its 14 GB of Mac memory in use, and this box needs a 4x14 Mac. Release a Mac box, or wait for one to end.");
+  assert.equal(workspace.calls.filter((call) => call.method === "CreateInstance").length, 1, "the second Mac was never asked for");
+  const doctor = await limited.doctor();
+  assert.equal(doctor.checks.find((check) => check.id === "namespace.limits")?.detail, "The workspace allows 6 Mac cores and 14 GB of Mac memory at once, 4 cores in use now; the largest Mac bb-box asks for is 6x14.");
+
+  fake.usageGranted = false;
+  assert.equal((await backend.capacity("macos", small, [])).ok, true, "without the grant, capacity goes on as before");
+  const warned = (await backend.doctor()).checks.find((check) => check.id === "namespace.limits")!;
+  assert.equal(warned.status, "warn");
+  assert.match(warned.detail, /^The token may not read the workspace's limits\./);
+  assert.match(warned.fix!, /"resource_type":"tenant\/usage","resource_id":"\*","actions":\["get"\]/);
 });
 
 test("a Namespace Mac's user is an administrator who can use sudo", () => {
