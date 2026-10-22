@@ -391,6 +391,7 @@ test("a Windows box shows its desktop as video, through its pipe over SSH, only 
   assert.equal(opened.route.type, "command");
   const script = opened.route.type === "command" ? opened.route.argv.at(-1)! : "";
   assert.match(script, /NamedPipeClientStream\]::new\('\.', 'bb-box-stream'/, "pwsh joins the channel to the server's pipe");
+  assert.match(script, /if \(-not \[IO\.File\]::Exists\('\\\\\.\\pipe\\bb-box-stream'\)\) \{ schtasks\.exe \/run \/tn bb-box-stream \| Out-Null \}; \$p\.Connect\(15000\)/, "asks the pipe's name whether the server runs, not a connect that waits 500 ms to fail (#916)");
   assert.match(script, /schtasks\.exe \/run \/tn bb-box-stream/, "starting it through its task when it is not running");
 });
 

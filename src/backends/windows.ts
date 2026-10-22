@@ -23,12 +23,14 @@ export const CUA_PIPE = "\\\\.\\pipe\\cua-driver";
 export const WINDOWS_VIDEO = { id: "video", protocol: "selkies", resizable: true } as const;
 /**
  * One connection to it, in the pwsh that box's SSH runs: the pipe to the server, started through its task if it is not
- * running, copied both ways with the SSH channel. pwsh copies, not bb-box-stream.exe connect: over SSH, a native
+ * running, copied both ways with the SSH channel. Whether it runs is asked of the pipe's name, at once: a connect that
+ * waited 500 ms to fail was a third of a cold first picture (#916). pwsh copies, not bb-box-stream.exe connect: over SSH, a native
  * program pwsh starts gets only what reached its stdin before it started (measured 17 October 2026).
  */
 export const WINDOWS_STREAM = [
   "$p = [IO.Pipes.NamedPipeClientStream]::new('.', 'bb-box-stream', 'InOut', 'Asynchronous')",
-  "try { $p.Connect(500) } catch { schtasks.exe /run /tn bb-box-stream | Out-Null; $p.Connect(15000) }",
+  "if (-not [IO.File]::Exists('\\\\.\\pipe\\bb-box-stream')) { schtasks.exe /run /tn bb-box-stream | Out-Null }",
+  "$p.Connect(15000)",
   "$i = [Console]::OpenStandardInput(); $o = [Console]::OpenStandardOutput()",
   "[void][Threading.Tasks.Task]::WaitAny(@($p.CopyToAsync($o), $i.CopyToAsync($p)))",
 ].join("; ");
