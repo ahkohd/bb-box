@@ -234,6 +234,13 @@ function sh(value: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+const CANNOT_REACH_BB = /curl: \((6|7|28)\)|Could not resolve host|Failed to connect|Connection timed out|Connection refused/i;
+
+export function withReachHint(message: string, backendLabel: string): string {
+  if (!CANNOT_REACH_BB.test(message)) return message;
+  return `BB's server is not reachable from ${backendLabel}: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). ${message}`;
+}
+
 /** Runs BB's installer commands in the box, as the box user, through its command transport. */
 export function executor(transport: CommandTransport, phases?: Phases): MachineExecutor {
   return {
@@ -427,7 +434,7 @@ export class Enrolment {
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
-          const message = describeError(error, `Enrolling box ${box.name}`);
+          const message = withReachHint(describeError(error, `Enrolling box ${box.name}`), box.backendLabel);
           // Kept on the box, so its row says why: BB removes the machine next, and that removal must not leave the box looking fine.
           await boxes.update(box, (current) => ({ enrol: { state: "failed", hostId: current.enrol.hostId, error: message } })).catch(() => null);
           return { status: "failed", message };

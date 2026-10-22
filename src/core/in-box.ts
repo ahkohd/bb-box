@@ -417,6 +417,7 @@ function accessLoader(access: Access): string {
   if (!names.length) return "";
   const pattern = sh(`^(${names.join("|")})=`);
   return String.raw`bb_box_access() (
+  PATH="${"$"}{PATH:+${"$"}PATH:}/usr/bin:/bin"
   ps -u "$(id -u)" -o pid= -o ppid= -o etimes= -o args= 2>/dev/null |
     awk -v parent=${sh(access.parent)} '{ up[$1] = $2; age[$1] = $3; program[$1] = $5 }
       END { for (pid in up) for (a = up[pid]; a in up; a = up[a]) if (index(program[a], parent)) { print age[pid], pid; break } }' |
@@ -449,6 +450,7 @@ function macAccessLoader(access: Access): string {
   const names = accessNames(access);
   if (!names.length) return "";
   return String.raw`bb_box_access() (
+  PATH="${"$"}{PATH:+${"$"}PATH:}/usr/bin:/bin"
   LC_ALL=en_US.UTF-8 ps -ww -U "$(id -u)" -o pid= -o ppid= -o etime= -o command= 2>/dev/null |
     LC_ALL=C awk -v parent=${sh(access.parent)} -v names=${sh(names.join(" "))} '
       function secs(t, p, n) { n = split(t, p, /[-:]/); return p[n] + 60 * p[n - 1] + 3600 * p[n - 2] + 86400 * p[n - 3] }

@@ -20,7 +20,7 @@ import type { BoxPointer } from "../src/transports/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
-import { Phases, removeStaleApp, setAsideOtherMachines } from "../src/plugin/enrol.ts";
+import { Phases, removeStaleApp, setAsideOtherMachines, withReachHint } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { FOLLOW_FRAME_MS, POINTER_NONE, sharpOffered } from "../src/plugin/desktop.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
@@ -5259,4 +5259,13 @@ test("before BB's installer, a box on an overlay root drops a pre-installed BB a
   assert.ok(has("old"), "a box whose root is not an overlay replaces its app in place, quickly");
   run();
   assert.deepEqual([has("old"), has("current")], [false, true]);
+});
+
+test("an enrolment that cannot reach BB's server says so, and how to fix it, before curl's words", () => {
+  const curl = "Enrolling box quiet-oak failed: curl: (28) Failed to connect to bb.example port 443 after 10002 ms: Timeout was reached";
+  assert.equal(
+    withReachHint(curl, "Namespace"),
+    `BB's server is not reachable from Namespace: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). ${curl}`,
+  );
+  assert.equal(withReachHint("Enrolling box quiet-oak failed: exit 1", "Namespace"), "Enrolling box quiet-oak failed: exit 1");
 });

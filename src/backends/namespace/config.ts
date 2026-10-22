@@ -12,6 +12,12 @@ export interface NamespaceConfig {
   readonly macosVersion: string;
   readonly machines: number;
   readonly longestLifeHours: number;
+  readonly largestMachine: MacShape | null;
+}
+
+export interface MacShape {
+  readonly cores: number;
+  readonly memoryGB: number;
 }
 
 export const NAMESPACE_DEFAULTS = {
@@ -27,6 +33,7 @@ export const NAMESPACE_KEYS = {
   macosVersion: "macos-version",
   machines: "machines",
   longestLifeHours: "longest-life-hours",
+  largestMachine: "largest-machine",
 } as const;
 
 export const NAMESPACE_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
@@ -65,9 +72,21 @@ export const NAMESPACE_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "boxes",
     default: NAMESPACE_DEFAULTS.longestLifeHours,
   },
+  [NAMESPACE_KEYS.largestMachine]: {
+    type: "string",
+    label: "Largest machine",
+    description: "The largest Mac the workspace's plan allows, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before bb-box asks Namespace, so another backend can take it. Empty: bb-box learns it the first time Namespace refuses a Mac for its size.",
+    group: "boxes",
+  },
 };
 
 const VERSION = /^[0-9]{2}(\.[0-9x]+)?$/;
+const SHAPE = /^([0-9]+)\s*x\s*([0-9]+)$/i;
+
+export function parseMacShape(text: string): MacShape | null {
+  const match = SHAPE.exec(text.trim());
+  return match ? { cores: Number(match[1]), memoryGB: Number(match[2]) } : null;
+}
 
 function text(values: Readonly<Record<string, unknown>>, key: string, fallback = ""): string {
   const value = values[key];
@@ -102,6 +121,10 @@ export function parseNamespacePart(part: BackendPart): ParsedBackend<NamespaceCo
   const longestLifeHours = number(values, NAMESPACE_KEYS.longestLifeHours, NAMESPACE_DEFAULTS.longestLifeHours);
   if (!(longestLifeHours >= 1 && longestLifeHours <= 24)) problem(NAMESPACE_KEYS.longestLifeHours, "Namespace: the longest life must be from 1 to 24 hours.");
 
+  const largestText = text(values, NAMESPACE_KEYS.largestMachine);
+  const largestMachine = largestText ? parseMacShape(largestText) : null;
+  if (largestText && !largestMachine) problem(NAMESPACE_KEYS.largestMachine, `Namespace: "${largestText}" is not a machine such as 6x14, cores x memory in GB.`);
+
   if (problems.length || !isRegion(region)) return { ok: false, problems };
-  return { ok: true, config: { token, region, macosVersion, machines, longestLifeHours } };
+  return { ok: true, config: { token, region, macosVersion, machines, longestLifeHours, largestMachine } };
 }

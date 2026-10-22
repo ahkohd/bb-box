@@ -270,3 +270,4 @@ Setup: [docs/guide/namespace.md](../../docs/guide/namespace.md).
 | `macos-version` | macOS version | string | boxes | `26.x` | The macOS a box runs, as Namespace's base images name it, such as 26.x. |
 | `machines` | Most machines | number | boxes | `2` | The most Namespace machines bb-box has at once. Each box is one machine, billed by the minute while it exists. |
 | `longest-life-hours` | Longest life (hours) | number | boxes | `3` | How long the workspace's plan lets a machine live: 3 hours on Developer, 5 on Team, up to 24 on Business. A box ends then, and its thread hears an hour ahead. |
+| `largest-machine` | Largest machine | string | boxes |  | The largest Mac the workspace's plan allows, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before bb-box asks Namespace, so another backend can take it. Empty: bb-box learns it the first time Namespace refuses a Mac for its size. |

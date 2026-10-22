@@ -744,6 +744,16 @@ test("commands in an enrolled box take the thread's access from BB's daemon as t
   assert.equal(asked.length, 2);
 });
 
+test("the access loader finds its tools in a shell started with no PATH, as a startup file may be read in one", async (t) => {
+  const daemon = await fakeDaemon([{ FOO: "value-one" }]);
+  t.after(daemon.stop);
+  const dir = tempDir("env");
+  writeFileSync(join(dir, "env"), envScript("linux", {}, { names: ["FOO"], parent: daemon.parent }));
+  const run = spawnSync("/bin/sh", ["-c", 'PATH=""; . ./env && printf %s "${FOO-unset}"'], { cwd: dir, encoding: "utf8", env: {} });
+  assert.equal(run.stderr, "");
+  assert.equal(run.stdout, "value-one");
+});
+
 test("a worker that ends between being counted and being read is passed over, not the cause of no access, and says nothing", async (t) => {
   const daemon = await fakeDaemon([{ FOO: "value-old" }, { FOO: "value-new" }]);
   t.after(daemon.stop);

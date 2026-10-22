@@ -24,7 +24,7 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { NamespaceApi, NamespaceError, type Instance, type InstanceShape, type NamespaceFetch } from "./api.ts";
-import type { NamespaceConfig, NamespaceKind } from "./config.ts";
+import type { MacShape, NamespaceConfig, NamespaceKind } from "./config.ts";
 
 export const LABELS = {
   install: "bbbox-install",
@@ -39,6 +39,13 @@ export const KEEP_AHEAD_MS = 60 * 60_000;
 const READY_TIMEOUT_MS = 5 * 60_000;
 const SSH_POLL_MS = 2_000;
 const SSH_KEY = "ssh-key";
+const LARGEST_MACHINE = "largest-machine";
+const LARGEST_ALLOWED = /maximum ([0-9]+)x([0-9]+)/;
+
+function largestAllowedIn(message: string): MacShape | null {
+  const match = LARGEST_ALLOWED.exec(message);
+  return match ? { cores: Number(match[1]), memoryGB: Number(match[2]) } : null;
+}
 const SCREEN_SHARING_PORT = 5900;
 const MAC_DESKTOP_CLIENTS = ["/opt/namespace/vmguest", "/usr/bin/osascript", MAC_STREAM];
 const MAC_DESKTOP_SERVICES = ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"];
@@ -70,7 +77,7 @@ const MAC_TAILSCALE = [
 ].join("\n");
 const MIB_PER_GB = 1024;
 
-const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: false, inDesktopSession: false, streaming: true };
+const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
 
 export const MACOS_SHAPES: readonly { readonly cores: number; readonly memoryGB: number }[] = [
   { cores: 4, memoryGB: 7 },
@@ -89,8 +96,9 @@ export function macDiskGiB(shape: { readonly cores: number; readonly memoryGB: n
   return 48 + Math.max(shape.cores, shape.memoryGB / 2) * 8;
 }
 
-export function macShapeFor(size: BoxSize): { readonly cores: number; readonly memoryGB: number } | null {
-  const fits = MACOS_SHAPES.filter((shape) => shape.cores >= size.cores && shape.memoryGB * MIB_PER_GB >= size.memoryMiB && (size.diskGiB === null || macDiskGiB(shape) >= size.diskGiB));
+export function macShapeFor(size: BoxSize, largest: MacShape | null = null): MacShape | null {
+  const allowed = largest ? MACOS_SHAPES.filter((shape) => shape.cores <= largest.cores && shape.memoryGB <= largest.memoryGB) : MACOS_SHAPES;
+  const fits = allowed.filter((shape) => shape.cores >= size.cores && shape.memoryGB * MIB_PER_GB >= size.memoryMiB && (size.diskGiB === null || macDiskGiB(shape) >= size.diskGiB));
   return fits.sort((a, b) => a.cores * 100 + a.memoryGB - (b.cores * 100 + b.memoryGB))[0] ?? null;
 }
 
@@ -176,7 +184,8 @@ export class NamespaceBackend implements Backend {
   async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
     this.#kind(kind);
     const host = "Namespace";
-    if (!macShapeFor(size)) return { ok: false, message: this.#tooBig(size), warm: null, hosts: [{ host, ok: false, limits: [] }] };
+    const largest = await this.#largestMachine();
+    if (!macShapeFor(size, largest)) return { ok: false, message: this.#tooBig(size, largest), warm: null, hosts: [{ host, ok: false, limits: [] }] };
     let held: Instance[];
     try {
       held = await this.#api.list({ [LABELS.install]: null }, signal);
@@ -196,8 +205,9 @@ export class NamespaceBackend implements Backend {
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
-    const shape = macShapeFor(box.size);
-    if (!shape) throw new BackendError("no_capacity", this.#tooBig(box.size));
+    const largest = await this.#largestMachine();
+    const shape = macShapeFor(box.size, largest);
+    if (!shape) throw new BackendError("no_capacity", this.#tooBig(box.size, largest));
     const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
       const started = performance.now();
       try {
@@ -241,6 +251,11 @@ export class NamespaceBackend implements Backend {
     } catch (error) {
       const instance = made?.id ?? (await this.#find(box.boxId).catch(() => null))?.id;
       if (instance) await this.#api.destroy(instance, "bb-box: the box did not start").catch((cause) => this.#context.logError("destroy after a failed acquire", cause));
+      const allowed = error instanceof NamespaceError ? largestAllowedIn(error.message) : null;
+      if (allowed) {
+        await this.#context.storage.set(LARGEST_MACHINE, allowed);
+        throw new BackendError("no_capacity", this.#tooBig(box.size, allowed));
+      }
       if (error instanceof NamespaceError && error.kind === "full") throw new BackendError("no_capacity", error.message);
       throw error;
     } finally {
@@ -488,9 +503,23 @@ export class NamespaceBackend implements Backend {
     if (prepared.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not get its desktop ready: ${prepared.stderr.trim().slice(-400) || `exit ${prepared.exitCode}`}`);
   }
 
-  #tooBig(size: BoxSize): string {
-    const largest = MACOS_SHAPES[MACOS_SHAPES.length - 1]!;
-    return `Namespace's largest Mac has ${largest.cores} cores and ${largest.memoryGB} GB of memory, less than the ${size.cores} cores and ${Math.round(size.memoryMiB / MIB_PER_GB)} GiB asked for.`;
+  async #largestMachine(): Promise<MacShape | null> {
+    return this.#config.largestMachine ?? (await this.#context.storage.get<MacShape>(LARGEST_MACHINE)) ?? null;
+  }
+
+  #tooBig(size: BoxSize, workspaceLargest: MacShape | null): string {
+    const asked = `${size.cores} cores and ${Math.round(size.memoryMiB / MIB_PER_GB)} GiB`;
+    if (!workspaceLargest) {
+      const largest = MACOS_SHAPES[MACOS_SHAPES.length - 1]!;
+      return `Namespace's largest Mac has ${largest.cores} cores and ${largest.memoryGB} GB of memory, less than the ${asked} asked for.`;
+    }
+    const needed = macShapeFor(size);
+    const instead = macShapeFor({ cores: Math.min(size.cores, workspaceLargest.cores), memoryMiB: Math.min(size.memoryMiB, workspaceLargest.memoryGB * MIB_PER_GB), diskGiB: null }, workspaceLargest);
+    return [
+      `Namespace's workspace allows Macs of at most ${workspaceLargest.cores} cores and ${workspaceLargest.memoryGB} GB of memory`,
+      needed ? `, and ${asked} needs its ${needed.cores}x${needed.memoryGB} Mac.` : `, less than the ${asked} asked for.`,
+      instead ? ` Ask for at most ${instead.cores} cores and ${instead.memoryGB} GiB, which gets its ${instead.cores}x${instead.memoryGB} Mac, or use another backend.` : "",
+    ].join("");
   }
 
   #keys(): Promise<{ ssh: Ssh; publicKey: string }> {
