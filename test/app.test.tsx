@@ -5335,6 +5335,7 @@ test("the tailnet saves its mode, tags and OAuth client as secrets; a set secret
   fireEvent.change(slot.getByLabelText("Tags"), { target: { value: "tag:bb-box, tag:bb-box-mac" } });
   fireEvent.change(slot.getByLabelText("OAuth client ID"), { target: { value: "kCLIENTid" } });
   fireEvent.change(slot.getByLabelText("OAuth client secret"), { target: { value: "tskey-client-SECRET" } });
+  expect(slot.getByLabelText("OAuth client secret").id).toBe("tailnet-oauth-client-secret");
   fireEvent.click(slot.getByRole("button", { name: "Save the tailnet" }));
   await waitFor(() => expect(fresh.changes).toHaveLength(1));
   expect(JSON.parse(fresh.changes[0]!.slice(fresh.changes[0]!.indexOf("{"))).general.tailnet).toEqual({

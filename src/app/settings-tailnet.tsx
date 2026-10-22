@@ -26,16 +26,21 @@ function tagsFrom(text: string): string[] {
     .filter(Boolean);
 }
 
+function inputIdFor(label: string): string {
+  return `tailnet-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
 function SecretRow({ label, set, value, onChange }: { label: string; set: boolean; value: string; onChange: (value: string) => void }) {
   const [replacing, setReplacing] = useState(!set);
+  const inputId = inputIdFor(label);
   return (
     <div className="flex items-center justify-between gap-3 py-2">
-      <label className="text-xs text-foreground" htmlFor={`tailnet-${label}`}>
+      <label className="text-xs text-foreground" htmlFor={inputId}>
         {label}
       </label>
       {replacing ? (
         <Input
-          id={`tailnet-${label}`}
+          id={inputId}
           type="password"
           autoComplete="new-password"
           aria-label={label}

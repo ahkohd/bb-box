@@ -37,7 +37,10 @@ In Tailscale's admin console, go to **Access controls**. In the policy file, add
 
 If `tagOwners` is already there, add only the `"tag:bb-box"` line to it.
 
-In the same file, let machines with `tag:bb-box` reach your BB server, on the port BB uses. How depends on how your policy is written: add a rule with `tag:bb-box` as the source and your BB server as the destination. Machines with the tag need nothing else.
+If your policy is still Tailscale's default, which lets every device reach every other, it needs no rule. If you have written your own rules, add two:
+
+- `tag:bb-box` reaches your BB server, on the port BB uses
+- your BB server reaches `tag:bb-box` on port 22, which bb-box uses to reach its cloud machines over SSH, such as the Docker hosts the Hetzner backend makes
 
 Select **Save**.
 
