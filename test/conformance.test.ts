@@ -11,6 +11,7 @@ import type { CommandTransport } from "../src/transports/types.ts";
 import { conformance, type ConformanceBb } from "./conformance/suite.ts";
 import { FakeBackend } from "./fake-backend.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
+import { hetznerConfig, hetznerWorld } from "./fake-hetzner-world.ts";
 import { fakeMsbHost, msbConfig } from "./fake-msb.ts";
 import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
@@ -153,6 +154,25 @@ await conformance({
     "computer-use": "the fake container has no computer-use driver",
     size: "the fake docker runs commands on the test machine",
     images: "the fake docker runs commands on the test machine, without root",
+  },
+  timeoutMs: 20_000,
+});
+
+// A Hetzner Cloud backend on a fake API, whose hosts are fake Docker hosts it makes as boxes need them.
+const hetzner = hetznerWorld();
+await conformance({
+  name: "Hetzner Cloud on a fake API and fake Docker hosts",
+  storage: new MemoryStorage(),
+  create: (storage, installId) => hetzner.backend(hetznerConfig(), storage, installId),
+  bb: fakeBb(),
+  skip: {
+    arch: "the fake docker runs commands on the test machine",
+    docker: "the fake docker runs commands on the test machine",
+    display: "the fake Docker host has no desktop to stream",
+    "computer-use": "the fake container has no computer-use driver",
+    size: "the fake docker runs commands on the test machine",
+    images: "the Hetzner Cloud backend builds no images yet",
+    installs: "each install makes hosts of its own, so one install's box takes no room from the other's; test/hetzner-backend.test.ts checks that they leave each other's boxes alone",
   },
   timeoutMs: 20_000,
 });
