@@ -228,6 +228,7 @@ export class Backends {
   readonly #machines: MachineAccess | undefined;
   readonly #images: ImageFacts | undefined;
   readonly #tailnetFetch: TailnetFetch | undefined;
+  readonly #bbUrl: (() => string | null) | undefined;
   #tailnetClient: { readonly made: string; readonly tailnet: Tailnet } | null = null;
 
   constructor(options: {
@@ -247,7 +248,9 @@ export class Backends {
     /** What the doctor judges images by (049). */
     images?: ImageFacts;
     tailnetFetch?: TailnetFetch;
+    bbUrl?: () => string | null;
   }) {
+    this.#bbUrl = options.bbUrl;
     this.#tailnetFetch = options.tailnetFetch;
     this.#machines = options.machines;
     this.#images = options.images;
@@ -305,6 +308,7 @@ export class Backends {
       warmShortfalls: (short) => this.#shortfalls(id).set(short),
       enrols: () => this.#document?.general.enrol ?? GENERAL_DEFAULTS.enrol,
       tailnet: () => this.tailnet(),
+      ...(this.#bbUrl ? { bbUrl: this.#bbUrl } : {}),
       kindsChanged: () => this.#kindsChanged(),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
       kind: (kind) => {

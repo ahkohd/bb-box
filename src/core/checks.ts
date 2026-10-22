@@ -57,6 +57,7 @@ export const CHECKS = {
   "hetzner.reach": { name: "Reaching hosts", from: ["hetzner"], what: "How bb-box reaches a host's Docker: over the tailnet, or over the internet from the addresses in SSH from." },
   "hetzner.unclaimed": { name: "Servers no host claims", from: ["hetzner"], what: "Servers with this install's label that are not hosts bb-box knows. The sweep adopts a host's server, as after lost storage, and deletes any other 10 minutes after it was made." },
   "hetzner.type": { name: "Server type <type>", from: ["hetzner"], what: "The hosts' server type is sold at the location, with its size and price." },
+  "hetzner.image": { name: "Host image", from: ["hetzner"], what: "The snapshot new hosts start from, with Docker, Tailscale and the box images in it: its age, the snapshots kept and their cost, and the last build." },
   "hetzner.hosts": { name: "Hosts", from: ["hetzner"], what: "Each host bb-box made: its state, age, boxes and cost this month." },
   "hetzner.spend": { name: "This month's spend", from: ["hetzner"], what: "What the hosts cost this month before VAT, against the monthly limit." },
   "hetzner.host.<host>": { name: "Docker on <host>", from: ["hetzner"], what: "A host's Docker, as the Docker backend's checks find it." },

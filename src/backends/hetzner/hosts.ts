@@ -46,7 +46,7 @@ export interface SweepOutcome {
 
 export const UNCLAIMED_SERVER_GRACE_MS = 10 * 60_000;
 
-const RECORD_PREFIX = "host:";
+export const IMAGE_BUILD_ROLE = "image-build";
 const HOST_ID_LETTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 export function newHostId(): string {
@@ -54,7 +54,15 @@ export function newHostId(): string {
 }
 
 export function serverNameFor(installId: string, hostId: string): string {
-  return `bb-box-${installId.replace(/-+$/, "")}-${hostId}`;
+  return `${serverNamePrefix(installId)}${hostId}`;
+}
+
+export function serverNamePrefix(installId: string): string {
+  return `bb-box-hz-${installId.replace(/-+$/, "")}-`;
+}
+
+export function serverNamePrefixBeforeHz(installId: string): string {
+  return `bb-box-${installId.replace(/-+$/, "")}-`;
 }
 
 export class HetznerHosts {
@@ -64,14 +72,42 @@ export class HetznerHosts {
   readonly #now: () => number;
   readonly #whenGone: (record: HostRecord, goneAtMs: number) => Promise<void>;
   readonly #inThisProcess = new Set<string>();
+  readonly #role: string;
+  readonly #rolesManagedElsewhere: readonly string[];
+  readonly #readyAbandonedAfterMs: number | null;
   #sweeping: Promise<SweepOutcome> | null = null;
 
-  constructor(options: { api: Hetzner; storage: BackendStorage; installId: string; now?: () => number; whenGone?: (record: HostRecord, goneAtMs: number) => Promise<void> }) {
+  constructor(options: {
+    api: Hetzner;
+    storage: BackendStorage;
+    installId: string;
+    now?: () => number;
+    whenGone?: (record: HostRecord, goneAtMs: number) => Promise<void>;
+    role?: string;
+    rolesManagedElsewhere?: readonly string[];
+    readyAbandonedAfterMs?: number;
+  }) {
     this.#api = options.api;
     this.#storage = options.storage;
     this.#installId = options.installId;
     this.#now = options.now ?? Date.now;
     this.#whenGone = options.whenGone ?? (async () => {});
+    this.#role = options.role ?? "host";
+    this.#rolesManagedElsewhere = options.rolesManagedElsewhere ?? [];
+    this.#readyAbandonedAfterMs = options.readyAbandonedAfterMs ?? null;
+  }
+
+  get #recordPrefix(): string {
+    return `${this.#role}:`;
+  }
+
+  get #adoptsUnclaimed(): boolean {
+    return this.#role === "host";
+  }
+
+  async #listed(signal?: AbortSignal): Promise<HetznerServer[]> {
+    if (this.#role !== "host") return this.#api.servers({ ...this.installLabels, [LABEL.role]: this.#role }, signal);
+    return (await this.#api.servers(this.installLabels, signal)).filter((server) => !this.#rolesManagedElsewhere.includes(server.labels[LABEL.role] ?? ""));
   }
 
   async markBusy(hostId: string): Promise<void> {
@@ -87,7 +123,7 @@ export class HetznerHosts {
   async adoptUnclaimedHosts(signal?: AbortSignal, listed?: readonly HetznerServer[]): Promise<string[]> {
     const adopted: string[] = [];
     for (const server of await this.unclaimedServers(signal, listed)) {
-      if (server.labels[LABEL.role] !== "host" || !server.labels[LABEL.host] || this.#inThisProcess.has(server.labels[LABEL.host]!)) continue;
+      if (!this.#adoptsUnclaimed || server.labels[LABEL.role] !== this.#role || !server.labels[LABEL.host] || this.#inThisProcess.has(server.labels[LABEL.host]!)) continue;
       if (await this.record(server.labels[LABEL.host]!)) continue;
       await this.#save({
         hostId: server.labels[LABEL.host]!,
@@ -116,13 +152,13 @@ export class HetznerHosts {
   }
 
   async records(): Promise<HostRecord[]> {
-    const keys = await this.#storage.list(RECORD_PREFIX);
+    const keys = await this.#storage.list(this.#recordPrefix);
     const found = await Promise.all(keys.map((key) => this.#storage.get<HostRecord>(key)));
     return found.filter((each): each is HostRecord => each !== undefined).sort((a, b) => a.claimedAtMs - b.claimedAtMs);
   }
 
   async record(hostId: string): Promise<HostRecord | null> {
-    return (await this.#storage.get<HostRecord>(RECORD_PREFIX + hostId)) ?? null;
+    return (await this.#storage.get<HostRecord>(this.#recordPrefix + hostId)) ?? null;
   }
 
   async create(spec: HostSpec, signal?: AbortSignal): Promise<HostRecord> {
@@ -192,7 +228,7 @@ export class HetznerHosts {
       droppedRecordsOfGoneServers: [] as string[],
       adoptedServers: [] as string[],
     };
-    const servers = await this.#api.servers(this.installLabels, signal);
+    const servers = await this.#listed(signal);
     const records = new Map((await this.records()).map((each) => [each.hostId, each]));
     const deleted = new Set<number>();
     const now = this.#now();
@@ -210,7 +246,7 @@ export class HetznerHosts {
         }
         continue;
       }
-      if (this.#inThisProcess.has(hostId) || record || server.labels[LABEL.role] === "host" || !pastGrace(server.createdAtMs)) continue;
+      if (this.#inThisProcess.has(hostId) || record || (this.#adoptsUnclaimed && server.labels[LABEL.role] === this.#role) || !pastGrace(server.createdAtMs)) continue;
       await this.#api.deleteServer(server.id, signal);
       deleted.add(server.id);
       outcome.deletedUnclaimedServers.push(server.name);
@@ -228,6 +264,9 @@ export class HetznerHosts {
       } else if (record.state === "creating" && pastGrace(record.claimedAtMs)) {
         await this.delete(record.hostId, signal);
         outcome.abandonedCreates.push(record.serverName);
+      } else if (record.state === "ready" && this.#readyAbandonedAfterMs !== null && now - record.claimedAtMs > this.#readyAbandonedAfterMs) {
+        await this.delete(record.hostId, signal);
+        outcome.abandonedCreates.push(record.serverName);
       } else if (record.state === "ready" && !server) {
         await this.#forget(record);
         outcome.droppedRecordsOfGoneServers.push(record.serverName);
@@ -237,13 +276,13 @@ export class HetznerHosts {
   }
 
   async unclaimedServers(signal?: AbortSignal, listed?: readonly HetznerServer[]): Promise<HetznerServer[]> {
-    const servers = listed ?? (await this.#api.servers(this.installLabels, signal));
+    const servers = listed ?? (await this.#listed(signal));
     const records = new Map((await this.records()).map((each) => [each.hostId, each]));
     return servers.filter((server) => records.get(server.labels[LABEL.host] ?? "")?.serverName !== server.name);
   }
 
   async #createOrFindServer(record: HostRecord, spec: HostSpec, signal?: AbortSignal): Promise<{ server: HetznerServer; startActions: number[] }> {
-    const labels = { ...this.installLabels, [LABEL.host]: record.hostId, [LABEL.role]: "host", [LABEL.image]: spec.imageLabel };
+    const labels = { ...this.installLabels, [LABEL.host]: record.hostId, [LABEL.role]: this.#role, [LABEL.image]: spec.imageLabel };
     try {
       return await this.#api.createServer(
         {
@@ -267,16 +306,16 @@ export class HetznerHosts {
   }
 
   async #serverOfHost(hostId: string, signal?: AbortSignal): Promise<HetznerServer | null> {
-    const [found] = await this.#api.servers({ ...this.installLabels, [LABEL.host]: hostId }, signal);
+    const [found] = await this.#api.servers({ ...this.installLabels, [LABEL.host]: hostId, [LABEL.role]: this.#role }, signal);
     return found ?? null;
   }
 
   async #forget(record: HostRecord): Promise<void> {
     await this.#whenGone(record, this.#now());
-    await this.#storage.delete(RECORD_PREFIX + record.hostId);
+    await this.#storage.delete(this.#recordPrefix + record.hostId);
   }
 
   async #save(record: HostRecord): Promise<void> {
-    await this.#storage.set(RECORD_PREFIX + record.hostId, record);
+    await this.#storage.set(this.#recordPrefix + record.hostId, record);
   }
 }

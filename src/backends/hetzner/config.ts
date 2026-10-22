@@ -7,7 +7,7 @@ export const HETZNER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop-wayla
 export const HETZNER_DEFAULTS = {
   location: "nbg1",
   serverType: "cpx42",
-  hostImage: "ubuntu-24.04",
+  hostImage: "ubuntu-26.04",
   mostHosts: 2,
   idleMinutes: 30,
   monthlyLimitEurosBeforeVat: 20,
@@ -72,7 +72,7 @@ export const HETZNER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [HETZNER_KEYS.hostImage]: {
     type: "string",
     label: "Host image",
-    description: "The image a host starts from: a Hetzner image name such as ubuntu-24.04, or a snapshot's ID. On a plain image, a host installs Docker and Tailscale as it starts, and builds a kind's image the first time a box of the kind needs it.",
+    description: "What hosts start from. An image name, such as ubuntu-26.04, is the base of the host image bb-box builds as a snapshot, with Docker, Tailscale and the box images in it, and rebuilds weekly or when its scripts change, keeping two; until the first is built, hosts start from the image itself. A snapshot's ID makes hosts start from that snapshot, and bb-box builds none.",
     group: "advanced",
     default: HETZNER_DEFAULTS.hostImage,
   },

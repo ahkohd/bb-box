@@ -1,9 +1,7 @@
-import { spawn } from "node:child_process";
-import { join } from "node:path";
 import type { CheckId } from "../../core/checks.ts";
 import { keyDescription, tailnetHostname } from "../../core/tailnet.ts";
-import { setupDir } from "../setup-dir.ts";
 import { hostUserData } from "./cloud-init.ts";
+import { BUILD_ABANDONED_AFTER_MS, HostImages, runBuildScript, type BuildImage } from "./host-image.ts";
 import { HostReach } from "./reach.ts";
 import { DockerBackend, dockerKinds, type DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
@@ -30,7 +28,7 @@ import {
   type Resizing,
 } from "../types.ts";
 import { Hetzner, HetznerError, type EurosBeforeVat, type HetznerFetch, type ServerType } from "./api.ts";
-import { HetznerHosts, type HostRecord } from "./hosts.ts";
+import { HetznerHosts, IMAGE_BUILD_ROLE, serverNamePrefix, serverNamePrefixBeforeHz, type HostRecord } from "./hosts.ts";
 import { euros, nextHourOf, serverAndIpv4, spentThisMonth, startOfMonthUtc, type BilledServer } from "./spend.ts";
 
 export interface HetznerConfig {
@@ -52,7 +50,9 @@ export interface HetznerBackendOptions {
   readonly now?: () => number;
   readonly reachHost?: (host: HostRecord) => DockerCli;
   readonly sshBinary?: string;
-  readonly buildImage?: (host: HostRecord, cli: DockerCli, image: string, target: string, log: (line: string) => void, signal: AbortSignal) => Promise<void>;
+  readonly hostImageFingerprint?: () => string;
+  readonly buildImage?: BuildImage;
+  readonly runOnHost?: (host: HostRecord, script: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<{ exitCode: number | null; stderr: string }>;
   readonly userData?: (hostId: string, serverName: string) => Promise<string> | string;
   readonly dockerOptions?: Omit<DockerBackendOptions, "cliReachingAHostAnotherBackendMade">;
   readonly hostAnswersWithinMs?: number;
@@ -86,8 +86,13 @@ const ANSWERED_NOTED_EVERY_MS = 60_000;
 const OS_MEMORY_MiB = 1024;
 const NO_GPU_KINDS = (kind: BoxKind) => kind.id !== "linux-desktop";
 const PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS = 600_000;
-const SNAPSHOT_HOST_ANSWERS_WITHIN_MS = 180_000;
+const HOST_IMAGE_CACHE_MS = 10 * 60_000;
+const HOST_IMAGE_FAILED_KEY = "host-image-failed-at";
+const HOST_IMAGE_RETRY_AFTER_MS = 24 * 3_600_000;
+const HOST_IMAGE_BUILD_HOURS = 2;
+const SNAPSHOT_EUROS_A_GB_A_MONTH = 0.0119;
 const BUILD_TARGET: Readonly<Record<string, string>> = { linux: "linux", "linux-desktop-cpu": "desktop", "linux-desktop-wayland-cpu": "desktop-wayland" };
+const DOCKER_TARGETS = ["linux", "linux-desktop-cpu", "linux-desktop-wayland-cpu"] as const;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -116,6 +121,9 @@ export class HetznerBackend implements Backend {
   readonly #making = new Map<string, Promise<HostPart>>();
   readonly #building = new Map<string, Promise<void>>();
   readonly #reach: HostReach | null;
+  readonly #hostImages: HostImages;
+  #newestHostImage: { at: number; image: { id: number; label: string } | null } | null = null;
+  #buildingHostImage: Promise<void> | null = null;
   readonly #now: () => number;
   #placement: Promise<unknown> = Promise.resolve();
   #prices: { at: number; price: EurosBeforeVat } | null = null;
@@ -134,6 +142,13 @@ export class HetznerBackend implements Backend {
       installId: context.installId,
       now: this.#now,
       whenGone: (record, goneAtMs) => this.#billEnded(record, goneAtMs),
+      rolesManagedElsewhere: [IMAGE_BUILD_ROLE],
+    });
+    this.#hostImages = new HostImages({
+      api: this.#api,
+      builds: new HetznerHosts({ api: this.#api, storage: context.storage, installId: context.installId, now: this.#now, whenGone: (record, goneAtMs) => this.#billEnded(record, goneAtMs), role: IMAGE_BUILD_ROLE, readyAbandonedAfterMs: BUILD_ABANDONED_AFTER_MS }),
+      installLabels: { "bbbox-install": context.installId },
+      fingerprint: options.hostImageFingerprint,
     });
     this.#kinds = dockerKinds(config.docker).filter(NO_GPU_KINDS);
     this.#reach = options.reachHost
@@ -264,6 +279,7 @@ export class HetznerBackend implements Backend {
 
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.hostRecords.sweep(signal);
+    await this.#hostImages.builds.sweep(signal);
     await this.#removeFromTailnet("every one this install has no host for", signal);
     const idleMs = this.#config.idleMinutes * 60_000;
     for (const record of await this.hostRecords.records()) {
@@ -283,6 +299,8 @@ export class HetznerBackend implements Backend {
       }
       await this.#deleteHost(record, signal);
     }
+    const due = await this.#hostImageBuildDue(signal).catch(() => null);
+    if (due) void this.buildHostImage(due).catch((error) => this.#context.logError("build a Hetzner Cloud host image", error));
   }
 
   async doctor(signal?: AbortSignal): Promise<DoctorReport> {
@@ -327,6 +345,8 @@ export class HetznerBackend implements Backend {
       const price = await this.#price(signal).catch(() => null);
       push("hetzner.type", `Server type ${type.name}`, "ok", `${type.cores} cores, ${type.memoryGB} GB memory, ${type.diskGB} GB disk in ${this.#config.location}${price ? `, ${euros(price.hourly)} an hour and at most ${euros(price.monthly)} a month with its IPv4, before VAT` : ""}.`);
     }
+
+    await this.#hostImageCheck(push, signal);
 
     const price = await this.#price(signal).catch(() => null);
     const live = records.filter((record) => record.state !== "deleting");
@@ -463,8 +483,7 @@ export class HetznerBackend implements Backend {
         {
           serverType: this.#config.serverType,
           location: this.#config.location,
-          imageNameOrSnapshotId: this.#config.hostImage,
-          imageLabel: this.#config.hostImageLabel,
+          ...(await this.#hostImageForNewHost(signal)),
           sshKeys: this.#reach ? [await this.#reach.hetznerSshKeyId(signal)] : undefined,
           firewalls: this.#reach ? [await this.#reach.firewallId(signal)] : undefined,
           userData: this.#options.userData ?? ((_hostId, serverName) => this.#userData(serverName, signal)),
@@ -509,27 +528,116 @@ export class HetznerBackend implements Backend {
 
   async #build(part: HostPart, image: string, target: string, signal: AbortSignal): Promise<void> {
     const log = (line: string) => this.#context.log?.(`${part.record.serverName}: ${line}`);
-    if (this.#options.buildImage) return this.#options.buildImage(part.record, part.cli, image, target, log, signal);
-    await part.cli.prepare(signal);
-    const args = [join(setupDir(), "docker", "build.sh"), "--tag", image, target];
-    const code = await new Promise<number | null>((resolve) => {
-      const child = spawn("bash", args, { env: { ...process.env, DOCKER_HOST: part.cli.host ?? "" }, stdio: ["ignore", "pipe", "pipe"], signal });
-      let rest = "";
-      const read = (chunk: Buffer) => {
-        const lines = (rest + chunk.toString("utf8")).split(/\r?\n|\r/);
-        rest = lines.pop() ?? "";
-        for (const line of lines) if (line.trim()) log(line);
-      };
-      child.stdout.on("data", read);
-      child.stderr.on("data", read);
-      child.on("error", () => resolve(null));
-      child.on("close", resolve);
-    });
-    if (code !== 0) throw new Error(`setup/docker/build.sh could not build ${image} on ${part.record.serverName}: it exited with ${code ?? "a signal"}.`);
+    await this.#buildImageOn(part.record, part.cli, image, target, log, signal);
+  }
+
+  readonly #buildImageOn: BuildImage = async (record, cli, image, target, log, signal) => {
+    if (this.#options.buildImage) return this.#options.buildImage(record, cli, image, target, log, signal);
+    await cli.prepare(signal);
+    const code = await runBuildScript(cli, image, target, this.#context.bbUrl?.() ?? null, log, signal);
+    if (code !== 0) throw new Error(`setup/docker/build.sh could not build ${image} on ${record.serverName}: it exited with ${code ?? "a signal"}.`);
+  };
+
+  async #hostImageCheck(push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
+    if (typeof this.#config.hostImage === "number") {
+      push("hetzner.image", "Host image", "ok", `Hosts start from snapshot ${this.#config.hostImage}, as the settings say; bb-box builds none.`);
+      return;
+    }
+    const snapshots = await this.#hostImages.snapshots(signal).catch((error: unknown) => error as Error);
+    if (snapshots instanceof Error) {
+      push("hetzner.image", "Host image", "skipped", `Hetzner Cloud did not list the snapshots: ${snapshots.message}`);
+      return;
+    }
+    const failedAt = await this.#context.storage.get<number>(HOST_IMAGE_FAILED_KEY);
+    const newest = snapshots[0] ?? null;
+    const sizes = snapshots.reduce((sum, each) => sum + (each.compressedSizeGB ?? 0), 0);
+    const kept = snapshots.length ? ` ${snapshots.length} kept, ${sizes.toFixed(1)} GB, about ${euros(sizes * SNAPSHOT_EUROS_A_GB_A_MONTH)} a month.` : "";
+    const building = this.#buildingHostImage ? " A new one is being built." : "";
+    const failed = failedAt !== undefined ? ` The last build failed at ${new Date(failedAt).toISOString()}; bb-box tries again a day after.` : "";
+    if (!newest) {
+      push("hetzner.image", "Host image", failedAt !== undefined ? "warn" : "ok", `None yet: hosts start from ${this.#config.hostImage} and install Docker and Tailscale, and build each kind's image, as they start.${building}${failed}`, failedAt !== undefined ? "See BB Box's log for the build's last lines." : null);
+      return;
+    }
+    const why = this.#hostImages.whyBuild(newest, this.#now(), await this.#bbApp(signal));
+    const days = Math.floor((this.#now() - newest.createdAtMs) / (24 * 3_600_000));
+    push("hetzner.image", "Host image", failedAt !== undefined ? "warn" : "ok", `Hosts start from snapshot ${newest.id}, built ${days} day${days === 1 ? "" : "s"} ago.${kept}${why ? ` A new one is due, as ${why}.` : ""}${building}${failed}`, failedAt !== undefined ? "See BB Box's log for the build's last lines." : null);
+  }
+
+  async #bbApp(signal?: AbortSignal): Promise<string | null> {
+    if (!this.#context.bbUrl?.()) return null;
+    return (await this.#context.images?.bbApp(signal).catch(() => null)) ?? null;
+  }
+
+  #buildsHostImages(): boolean {
+    return typeof this.#config.hostImage === "string" && (this.#reach !== null || this.#options.runOnHost !== undefined);
+  }
+
+  async #hostImageForNewHost(signal?: AbortSignal): Promise<{ imageNameOrSnapshotId: string | number; imageLabel: string }> {
+    if (typeof this.#config.hostImage === "number") return { imageNameOrSnapshotId: this.#config.hostImage, imageLabel: this.#config.hostImageLabel };
+    if (!this.#newestHostImage || this.#now() - this.#newestHostImage.at > HOST_IMAGE_CACHE_MS) {
+      const newest = await this.#hostImages.newest(signal).catch(() => null);
+      this.#newestHostImage = { at: this.#now(), image: newest ? { id: newest.id, label: `build-${newest.labels["bbbox-build"] ?? newest.id}` } : null };
+    }
+    const image = this.#newestHostImage.image;
+    return image ? { imageNameOrSnapshotId: image.id, imageLabel: image.label } : { imageNameOrSnapshotId: this.#config.hostImage, imageLabel: this.#config.hostImageLabel };
+  }
+
+  async #hostImageBuildDue(signal?: AbortSignal): Promise<string | null> {
+    if (!this.#buildsHostImages() || this.#buildingHostImage || (this.#reach?.canReach() ?? null) !== null) return null;
+    const failedAt = await this.#context.storage.get<number>(HOST_IMAGE_FAILED_KEY);
+    if (failedAt !== undefined && this.#now() - failedAt < HOST_IMAGE_RETRY_AFTER_MS) return null;
+    const why = this.#hostImages.whyBuild(await this.#hostImages.newest(signal), this.#now(), await this.#bbApp(signal));
+    if (!why) return null;
+    const limit = this.#config.monthlyLimitEurosBeforeVat;
+    if (limit !== null) {
+      const price = await this.#price(signal).catch(() => null);
+      if (!price || (await this.#spentThisMonth(price)) + HOST_IMAGE_BUILD_HOURS * price.hourly > limit) return null;
+    }
+    return why;
+  }
+
+  buildHostImage(why: string, signal?: AbortSignal): Promise<void> {
+    this.#buildingHostImage ??= (async () => {
+      this.#context.log?.(`Building a Hetzner Cloud host image, as ${why}.`);
+      const images = DOCKER_TARGETS.flatMap((kind) => {
+        const image = this.#config.docker.images[kind];
+        return image ? [{ image, target: BUILD_TARGET[kind]! }] : [];
+      });
+      try {
+        await this.#hostImages.build(
+          {
+            spec: {
+              serverType: this.#config.serverType,
+              location: this.#config.location,
+              imageNameOrSnapshotId: this.#config.hostImage,
+              imageLabel: this.#config.hostImageLabel,
+              sshKeys: this.#reach ? [await this.#reach.hetznerSshKeyId(signal)] : undefined,
+              firewalls: this.#reach ? [await this.#reach.firewallId(signal)] : undefined,
+              userData: this.#options.userData ?? ((_hostId, serverName) => this.#userData(serverName, signal)),
+            },
+            images,
+            cliOf: (record) => (this.#options.reachHost ? this.#options.reachHost(record) : this.#reach!.cli(record)),
+            run: (record, script, options) => (this.#options.runOnHost ? this.#options.runOnHost(record, script, options) : this.#reach!.run(record, script, options)),
+            buildImage: this.#buildImageOn,
+            appSha256: await this.#bbApp(signal),
+            log: (line) => this.#context.log?.(line),
+            sleep: this.#options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
+          },
+          signal ?? new AbortController().signal,
+        );
+        this.#newestHostImage = null;
+        await this.#hostImages.prune(undefined, signal);
+        await this.#context.storage.delete(HOST_IMAGE_FAILED_KEY);
+      } catch (error) {
+        await this.#context.storage.set(HOST_IMAGE_FAILED_KEY, this.#now());
+        throw error;
+      }
+    })().finally(() => (this.#buildingHostImage = null));
+    return this.#buildingHostImage;
   }
 
   async #untilDockerAnswers(part: HostPart, signal: AbortSignal | undefined): Promise<void> {
-    const within = this.#options.hostAnswersWithinMs ?? (typeof this.#config.hostImage === "number" ? SNAPSHOT_HOST_ANSWERS_WITHIN_MS : PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS);
+    const within = this.#options.hostAnswersWithinMs ?? PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS;
     const pollMs = this.#options.pollMs ?? 2_000;
     const sleep = this.#options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
     let last: unknown = null;
@@ -553,11 +661,12 @@ export class HetznerBackend implements Backend {
     const tailnet = this.#context.tailnet?.() ?? null;
     if (!tailnet) return;
     try {
-      const prefix = tailnetHostname(`bb-box-${this.#context.installId.replace(/-+$/, "")}-`);
-      const known = new Set((await this.hostRecords.records()).map((record) => tailnetHostname(record.serverName)));
+      const prefixes = [serverNamePrefix(this.#context.installId), serverNamePrefixBeforeHz(this.#context.installId)].map(tailnetHostname);
+      const records = [...(await this.hostRecords.records()), ...(await this.#hostImages.builds.records())];
+      const known = new Set(records.map((record) => tailnetHostname(record.serverName)));
       const wanted = serverNames === "every one this install has no host for" ? null : new Set(serverNames.map(tailnetHostname));
       for (const device of await tailnet.devices(signal)) {
-        const gone = wanted ? wanted.has(device.hostname) : device.hostname.startsWith(prefix) && !known.has(device.hostname);
+        const gone = wanted ? wanted.has(device.hostname) : prefixes.some((prefix) => device.hostname.startsWith(prefix)) && !known.has(device.hostname);
         if (gone) await tailnet.removeDevice(device.id, signal);
       }
     } catch (error) {
@@ -624,7 +733,8 @@ export class HetznerBackend implements Backend {
   async #spentThisMonth(price: EurosBeforeVat): Promise<number> {
     const now = this.#now();
     const ended = await Promise.all((await this.#context.storage.list(BILLED_PREFIX)).map((key) => this.#context.storage.get<BilledServer>(key)));
-    const running = (await this.hostRecords.records()).filter((record) => record.serverId !== null || record.state === "ready").map((record) => ({ hostId: record.hostId, startedAtMs: record.claimedAtMs, endedAtMs: null }));
+    const records = [...(await this.hostRecords.records()), ...(await this.#hostImages.builds.records())];
+    const running = records.filter((record) => record.serverId !== null || record.state === "ready").map((record) => ({ hostId: record.hostId, startedAtMs: record.claimedAtMs, endedAtMs: null }));
     return spentThisMonth([...ended.filter((each): each is BilledServer => each !== undefined), ...running], price, now);
   }
 
