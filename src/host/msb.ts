@@ -15,6 +15,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ExperimentalHostRpcContext, ExperimentalHostWorkerLease } from "@get-bb/plugin-sdk/host";
 import { Capture, quote } from "../transports/process.ts";
+import { HANG_UP, ptyArgv } from "../transports/terminal.ts";
 import { msbScript, scriptArgsOk } from "../backends/microsandbox/release.ts";
 import type { Channel } from "../relay/mux.ts";
 import { DATA_BYTES, FRAME, FrameReader, clamp, frame, parseRequest, type TtySize } from "../relay/msb.ts";
@@ -38,8 +39,7 @@ const darwin = process.platform === "darwin";
 
 /** The run's own PTY, as src/transports/terminal.ts makes one: `script`, which prints the PTY's path first. */
 function scriptArgv(binary: string, args: readonly string[], size: TtySize): [string, ...string[]] {
-  const inner = `tty; stty cols ${size.cols} rows ${size.rows}; exec ${[binary, ...args].map(quote).join(" ")}`;
-  return darwin ? ["script", "-q", "/dev/null", "/bin/sh", "-c", inner] : ["script", "-qfc", inner, "/dev/null"];
+  return ptyArgv(`tty; stty cols ${size.cols} rows ${size.rows}; exec ${[binary, ...args].map(quote).join(" ")}`);
 }
 
 /** Runs one request from `channel`, with `binary` as msb, until it exits or the channel goes. */
@@ -71,7 +71,7 @@ function serve(channel: Channel, binary: string): void {
   const stop = () => {
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
     // A PTY's run is a person's terminal: hung up at once, as terminal.ts does.
-    child.kill(pty ? "SIGKILL" : "SIGTERM");
+    child.kill(pty ? HANG_UP : "SIGTERM");
     const timer = setTimeout(() => child?.exitCode === null && child.signalCode === null && child.kill("SIGKILL"), KILL_MS);
     timer.unref?.();
   };

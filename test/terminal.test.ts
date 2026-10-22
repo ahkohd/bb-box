@@ -2,11 +2,12 @@
 // the sessions the plugin keeps for tabs that come and go (src/plugin/terminal.ts).
 
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { test } from "node:test";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Boxes } from "../src/core/boxes.ts";
 import { closeReason, registerTerminals, TerminalSessions, type TerminalViewer } from "../src/plugin/terminal.ts";
-import { clampSize, openTerminal } from "../src/transports/terminal.ts";
+import { clampSize, openTerminal, ptyArgv } from "../src/transports/terminal.ts";
 import type { CommandTransport, Terminal } from "../src/transports/types.ts";
 
 const skip = process.platform === "linux" ? false : "needs util-linux script";
@@ -259,4 +260,38 @@ test("a tab whose close throws does not keep the shell alive when its session en
   assert.equal(session.ended, true);
   assert.equal(sessions.size, 0);
   assert.deepEqual(errors, ["tell the terminal's tab: the socket is already closed"]);
+});
+
+test("on macOS a terminal's script gets its stdin as a pipe, which macOS's script takes where it refused Node's socket (#914)", { skip: spawnSync("perl", ["-v"]).status !== 0 && "needs perl" }, async () => {
+  const [perl, flag, relay, ...rest] = ptyArgv("tty", "darwin");
+  assert.deepEqual([perl, flag, ...rest], ["perl", "-e", "script", "-q", "/dev/null", "/bin/sh", "-c", "tty"]);
+  assert.deepEqual(ptyArgv("tty", "linux"), ["script", "-qfc", "tty", "/dev/null"]);
+  // The relay, with a command in place of macOS's script, run as Node runs a child: its stdin a socket.
+  const run = (script: string, input?: string) => {
+    const child = spawn("perl", ["-e", relay!, "sh", "-c", script], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
+    if (input !== undefined) child.stdin.write(input);
+    const exited = new Promise<number | null>((resolve) => child.once("close", (code) => resolve(code)));
+    return { child, exited, stdout: () => stdout };
+  };
+
+  const piped = run(`[ -p /dev/stdin ] && echo pipe; read line; echo "got $line"; exit 3`, "hi\n");
+  assert.equal(await piped.exited, 3, "it exits with the command's status");
+  assert.equal(piped.stdout(), "pipe\ngot hi\n");
+
+  // The command ends while the relay's own stdin stays open, as a PTY's does: the relay ends with it.
+  const quick = run("exit 0");
+  const ended = await Promise.race([quick.exited, new Promise((resolve) => setTimeout(resolve, 5_000, "still running").unref())]);
+  quick.child.kill("SIGKILL");
+  assert.equal(ended, 0);
+
+  // SIGTERM, as a closed terminal sends, kills the command at once.
+  const long = run("echo $$; exec sleep 30");
+  while (!long.stdout().includes("\n")) await new Promise((resolve) => setTimeout(resolve, 20));
+  const pid = Number(long.stdout().trim());
+  long.child.kill("SIGTERM");
+  assert.equal(await long.exited, 129);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.throws(() => process.kill(pid, 0), "the command is gone");
 });
