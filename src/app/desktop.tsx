@@ -7,7 +7,7 @@
 
 import RFB from "@novnc/novnc";
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -797,6 +797,10 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   }, [key]);
   // A kept session shows at once, before the box's state has loaded; the state can only confirm or end it.
   const [connection, setConnection] = useState<Connection>(() => (key ? keptFree<ViewerSession>(key)?.connection : undefined) ?? { state: "connecting" });
+  /** When the viewer tries again after the connection ended, so its note counts down to it rather than stand still. */
+  const retryAt = useMemo(() => (connection.state === "disconnected" ? Date.now() + connection.retryMs : null), [connection]);
+  const retryNow = useNow(retryAt !== null, 250);
+  const retryIn = retryAt === null ? 0 : Math.ceil((retryAt - retryNow) / 1000);
   const [acting, setActing] = useState(false);
   /** This tab asked for High resolution to switch, and has not yet heard that it is done. */
   const [sharpAsked, setSharpAsked] = useState(false);
@@ -1242,7 +1246,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
           <Notice>Connecting to the desktop…</Notice>
         ) : connection.state === "disconnected" ? (
           <Notice
-            detail={`Trying again in ${Math.max(1, Math.round(connection.retryMs / 1000))} s`}
+            detail={retryIn > 0 ? `Trying again in ${retryIn} s` : "Trying again…"}
             action={
               <Button type="button" variant="outline" size="sm" className="h-7" onClick={reconnect}>
                 Reconnect now
