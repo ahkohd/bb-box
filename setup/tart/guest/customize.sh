@@ -91,6 +91,18 @@ cat >"$home/Library/LaunchAgents/com.trycua.cua-driver.plist" <<PLIST
 </dict></plist>
 PLIST
 
+# tart-guest-agent without its clipboard (#911). Cirrus Labs' image runs it as
+# --run-agent, which is --run-vdagent, sharing the clipboard with the Mac, and
+# --run-rpc, which tart exec needs. A box's clipboard is its own: the Mac's is
+# its owner's, and Universal Clipboard links it to their other Macs. bb-box
+# also runs each VM with tart run's --no-clipboard.
+agent=/Library/LaunchAgents/org.cirruslabs.tart-guest-agent.plist
+if [ -f "$agent" ]; then
+  bin=$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:0" "$agent")
+  sudo /usr/libexec/PlistBuddy -c "Delete :ProgramArguments" -c "Add :ProgramArguments array" \
+    -c "Add :ProgramArguments:0 string $bin" -c "Add :ProgramArguments:1 string --run-rpc" "$agent"
+fi
+
 # BlackHole 2ch (#631), a virtual audio device with two channels in and out:
 # what is played to its output comes back on its input, which apps see as
 # the microphone, so a test can feed speech in. A VM that can be suspended

@@ -174,6 +174,9 @@ cat "$work/permissions.json"
 grep -q '"accessibility": *true' "$work/permissions.json" || die "Cua Driver has no Accessibility in $build"
 grep -q '"screen_recording": *true' "$work/permissions.json" || die "Cua Driver has no Screen Recording in $build"
 tart exec "$build" test -x /usr/local/bin/bb-box-stream || die "$build has no bb-box-stream"
+# tart-guest-agent shares no clipboard with the Mac (#911): RPC alone, for tart exec.
+tart exec "$build" /usr/libexec/PlistBuddy -c "Print :ProgramArguments" /Library/LaunchAgents/org.cirruslabs.tart-guest-agent.plist |
+  grep -q -e '--run-agent' -e '--run-vdagent' && die "tart-guest-agent in $build still shares the clipboard"
 tart exec "$build" system_profiler SPAudioDataType | grep -A 8 'BlackHole 2ch:' | grep -q 'Input Channels: 2' ||
   die "BlackHole gives $build no input device"
 shutdown
