@@ -21,7 +21,7 @@ import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS,
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, STALL_MS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, retryWait } from "../src/app/viewer.ts";
-import { checkWords } from "../src/app/resize.tsx";
+import { checkWords, forgetResizesAsked } from "../src/app/resize.tsx";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
 import { backendName } from "../src/app/settings-backends.tsx";
@@ -311,6 +311,7 @@ afterEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear();
   forgetStreams();
+  forgetResizesAsked();
 });
 
 function box(overrides: Partial<BoxView> = {}): BoxView {
@@ -566,7 +567,9 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
     },
     resize: (input) => {
       changes.push(`resize ${input.box} ${JSON.stringify({ ...input, threadId: undefined, box: undefined })}`);
-      return options.resize ? options.resize(input) : { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: "No resize in this test." };
+      const resized = options.resize?.(input);
+      if (resized?.changed && resized.box) boxes = boxes.map((candidate) => (candidate.id === resized.box!.id ? resized.box! : candidate));
+      return resized ?? { box: null, from: null, to: null, plan: null, changed: false, machine: null, needsRestart: false, presets: [], largest: null, error: "No resize in this test." };
     },
     "machines.resize": (input) => {
       changes.push(`machines.resize ${input.box} ${JSON.stringify({ ...input, box: undefined })}`);
@@ -1282,6 +1285,10 @@ function fakeResizer(now: { cores: number; memoryGiB: number; diskGiB: number | 
   };
 }
 
+function checkedRadio(dialog: HTMLElement): string | null {
+  return within(dialog).getAllByRole("radio").find((radio) => radio.getAttribute("aria-checked") === "true")?.textContent ?? null;
+}
+
 /** Opens a box's Resize dialog from its menu, and waits for its first check. */
 async function openResize(slot: ReturnType<typeof panel>, name = "calm-otter") {
   const menu = await openMenu(slot.getByRole("button", { name: `${name} actions` }));
@@ -1301,6 +1308,11 @@ test("Resize changes a box live at once: the presets, cores, memory and disk wit
   expect(within(dialog).getByText("Now 2 cores · 4 GiB · 20 GiB disk.")).toBeTruthy();
   expect(within(dialog).getByText("Cores, memory and disk live. The disk only grows.")).toBeTruthy();
   expect(within(dialog).getByRole("button", { name: "Resize" }).hasAttribute("disabled")).toBe(true);
+  // A box exactly a preset opens on it, and says so no more than Custom would.
+  await waitFor(() => expect(checkedRadio(dialog)).toBe("Small2 cores · 4 GiB"));
+  expect(within(dialog).getByText("Cores, memory and disk live. The disk only grows.")).toBeTruthy();
+  expect(within(dialog).queryByText("Nothing: the box has this size.")).toBeNull();
+  fireEvent.click(within(dialog).getByRole("radio", { name: /Custom/ }));
   expect(within(dialog).getByText("20 to 256")).toBeTruthy();
 
   fireEvent.change(within(dialog).getByRole("textbox", { name: "Cores" }), { target: { value: "6" } });
@@ -1315,6 +1327,35 @@ test("Resize changes a box live at once: the presets, cores, memory and disk wit
   expect(changes.filter((change) => !change.includes('"check":true'))).toEqual(['resize box_1 {"size":{"cores":6,"diskGiB":40}}']);
   fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  // The dialog said how it went, so its row does not say it again, though the panel refetches the box with it.
+  const calls = stateCalls(slot);
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(stateCalls(slot)).toBe(calls + 1));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(slot.queryByText(/^Resized to/)).toBeNull();
+});
+
+test("a row says once how a resize that ended in the last two minutes went, for a panel that reloaded while its dialog waited (061)", async () => {
+  const ended = (minutesAgo: number, state: "done" | "failed", error: string | null = null) => ({ to: size(4, 8, 64), at: Date.now() - minutesAgo * 60_000 - 15_000, state, restart: true, ms: 15_000, error });
+  const ways = { cores: "restart", memory: "restart", disk: "restart", shrinks: false } as const;
+  const boxes = [
+    box({ sizeNow: size(4, 8, 64), resizing: ways, lastResize: ended(0.5, "done") }),
+    box({ id: "box_2", name: "quiet-heron", sizeNow: size(2, 4, 64), resizing: ways, lastResize: ended(1, "failed", "The Mac has 2 GiB of memory left. bb-box changed nothing.") }),
+    box({ id: "box_3", name: "old-wren", sizeNow: size(4, 8, 64), resizing: ways, lastResize: ended(5, "done") }),
+    box({ id: "box_4", name: "busy-finch", sizeNow: size(2, 4, 64), resizing: ways, lastResize: { ...ended(0, "done"), state: "resizing", ms: null } }),
+  ];
+  const first = server(boxes);
+  let slot = panel(first.handlers);
+  expect(await slot.findByText("Resized to 4 cores · 8 GiB · 64 GiB disk after a restart, in 15 s.")).toBeTruthy();
+  expect(slot.getByText("Not resized to 4 cores · 8 GiB · 64 GiB disk: The Mac has 2 GiB of memory left.").className).toContain("text-destructive-text");
+  expect(slot.getAllByText(/^(Not r|R)esized to/)).toHaveLength(2);
+  slot.unmount();
+
+  // Said once: the same tab, reloaded again, keeps quiet.
+  slot = panel(server(boxes).handlers);
+  await slot.findByText("calm-otter");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(slot.queryByText(/^(Not r|R)esized to/)).toBeNull();
 });
 
 test("Resize asks before a restart, in the record's words, then names the threads working on the box before it goes ahead anyway (061)", async () => {
@@ -1345,6 +1386,7 @@ test("Resize shows refusals plainly: no room, memory below use, and a disk that 
   let slot = panel(first.handlers);
   await slot.findByText("calm-otter");
   let dialog = await openResize(slot);
+  expect(checkedRadio(dialog), "a box that is no preset opens on Custom").toBe("Customup to 16 cores");
   fireEvent.change(within(dialog).getByRole("textbox", { name: "Memory, GiB" }), { target: { value: "16" } });
   expect((await within(dialog).findByRole("alert")).textContent).toBe("pve has 2 GiB of memory left, and calm-otter would grow by 8 GiB. Release a box you no longer need.");
   expect(within(dialog).getByRole("button", { name: "Resize" }).hasAttribute("disabled")).toBe(true);
