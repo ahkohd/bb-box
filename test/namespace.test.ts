@@ -10,7 +10,7 @@ import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from ".
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
-const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 4 };
+const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
 
 function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number } = {}) {
   fakeSsh();
@@ -73,6 +73,32 @@ test("a box that does not start destroys its machine, and the most machines at o
   const full = await backend.capacity("macos", { cores: 4, memoryMiB: 8192, diskGiB: null }, []);
   assert.equal(full.ok, false);
   assert.match(full.message ?? "", /1 of the 1 machines bb-box may have at once/);
+});
+
+test("a workspace's largest Mac, set or learned from Namespace's refusal, is refused up front with what to ask for instead", async () => {
+  const medium = { cores: 6, memoryMiB: 16384, diskGiB: null };
+  const set = setup({ config: { largestMachine: { cores: 6, memoryGB: 14 } } });
+  const refused = await set.backend.capacity("macos", medium, []);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.message, "Namespace's workspace allows Macs of at most 6 cores and 14 GB of memory, and 6 cores and 16 GiB needs its 6x28 Mac. Ask for at most 6 cores and 14 GiB, which gets its 6x14 Mac, or use another backend.");
+  assert.equal((await set.backend.capacity("macos", { cores: 6, memoryMiB: 14336, diskGiB: null }, [])).ok, true);
+  assert.equal(set.fake.calls.filter((call) => call.method === "CreateInstance").length, 0);
+
+  const learned = setup();
+  assert.equal((await learned.backend.capacity("macos", medium, [])).ok, true, "nothing known yet");
+  learned.fake.failNext("CreateInstance", "invalid_argument", "requesting more machine resources than workspace quota allows (requesting 6x28, maximum 6x14)");
+  const error = await learned.backend.acquire(box("b1", medium), null, hooks().hooks, new AbortController().signal).catch((thrown: unknown) => thrown);
+  assert.ok(error instanceof BackendError && error.code === "no_capacity");
+  assert.match(error.message, /at most 6 cores and 14 GB/);
+  assert.equal((await learned.backend.capacity("macos", medium, [])).ok, false, "refused up front from then on");
+  assert.equal((await learned.backend.capacity("macos", { cores: 4, memoryMiB: 8192, diskGiB: null }, [])).ok, true);
+  assert.equal(parseNamespacePart({ fields: { token: FAKE_NAMESPACE_TOKEN, "largest-machine": "6 x 14" } } as never).ok, true);
+  assert.equal(parseNamespacePart({ fields: { token: FAKE_NAMESPACE_TOKEN, "largest-machine": "big" } } as never).ok, false);
+});
+
+test("a Namespace Mac's user is an administrator who can use sudo", () => {
+  const { backend } = setup();
+  assert.ok(backend.kinds().every((kind) => kind.capabilities.command?.admin === true));
 });
 
 test("Namespace refusing a machine for want of room is the backend having none", async () => {
@@ -144,7 +170,7 @@ test("the settings need a token, a known region and sane limits, each problem at
   assert.equal(parsed.ok, false);
   assert.deepEqual(parsed.ok ? [] : parsed.problems.map((problem) => problem.path), ["token", "region", "macos-version", "machines", "longest-life-hours"]);
   const fine = parseNamespacePart({ id: "namespace", hosts: [], fields: { token: FAKE_NAMESPACE_TOKEN } });
-  assert.deepEqual(fine.ok ? fine.config : null, { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 3 });
+  assert.deepEqual(fine.ok ? fine.config : null, { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 3, largestMachine: null });
 });
 
 function fakeTailscaleTools() {

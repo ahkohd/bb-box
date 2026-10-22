@@ -74,7 +74,8 @@ If BB's server is in Europe and you want the Macs near it, ask Namespace's suppo
 3. Set **API region** to `eu` if BB's server is in Europe, or leave it as `us`. It only says which of Namespace's API addresses BB Box calls.
 4. Set **Longest life (hours)** to your plan's limit: 3 on Developer, 5 on Team.
 5. Set **Most machines** to how many Mac boxes you are willing to pay for at once.
-6. Select **Save**, and turn the backend on.
+6. If you know the largest Mac your plan allows, set **Largest machine** to it, as cores x memory in GB: `6x14` on Namespace's trial. BB Box then refuses a box that needs a larger one before asking Namespace, and says what to ask for instead. If you leave it empty, BB Box learns it the first time Namespace refuses a Mac for its size.
+7. Select **Save**, and turn the backend on.
 
 The token is kept as a secret. BB Box's settings show only that it is set.
 
