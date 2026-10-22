@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { KeysAfterPaste, OptionComposer, PASTE_LANDS_MS, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, pasteChordKeys, retryWait, type Connection } from "./viewer.ts";
+import { KeysAfterPaste, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, pasteChordKeys, retryWait, type Connection } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -287,6 +287,7 @@ export class SelkiesSession implements Kept {
   #pasteArmed: number | null = null;
   #pasteWait: ReturnType<typeof setTimeout> | undefined;
   #chord: ReturnType<typeof setTimeout> | undefined;
+  #chordDue = false;
   readonly #onPasteEvent = (event: ClipboardEvent) => this.#takePaste(event);
   /**
    * The last picture, held over the video while High resolution switches, with the size it had: the box's desktop changes its scale
@@ -309,6 +310,7 @@ export class SelkiesSession implements Kept {
 
   constructor(url: string) {
     this.#url = url;
+    this.#afterPaste.join(tabOf(url));
     this.element.className = "absolute inset-0";
     // No colour of its own: the pane's, in the theme's neutral, shows around a picture that does not fill it, as it does for VNC.
     this.element.style.background = "transparent";
@@ -950,16 +952,20 @@ export class SelkiesSession implements Kept {
   #pressPaste(): void {
     clearTimeout(this.#chord);
     this.#afterPaste.hold();
-    this.#chord = setTimeout(() => {
-      if (this.connection.state !== "connected") {
-        this.#afterPaste.drop();
-        return;
-      }
-      const modifier = { keysym: this.guestOs === "macos" ? XK_META_L : XK_CONTROL_L };
-      const held = [...this.#held].map((keysym) => ({ keysym }));
-      for (const { key, down } of pasteChordKeys(modifier, { keysym: XK_V }, held)) this.#send(`${down ? "kd" : "ku"},${key.keysym}`);
-      this.#afterPaste.releaseIn(PASTE_LANDS_MS);
-    }, PASTE_CHORD_DELAY_MS);
+    this.#chordDue = true;
+    this.#chord = setTimeout(() => this.#sendChord(), PASTE_CHORD_DELAY_MS);
+  }
+
+  #sendChord(): void {
+    this.#chordDue = false;
+    if (this.connection.state !== "connected") {
+      this.#afterPaste.drop();
+      return;
+    }
+    const modifier = { keysym: this.guestOs === "macos" ? XK_META_L : XK_CONTROL_L };
+    const held = [...this.#held].map((keysym) => ({ keysym }));
+    for (const { key, down } of pasteChordKeys(modifier, { keysym: XK_V }, held)) this.#send(`${down ? "kd" : "ku"},${key.keysym}`);
+    this.#afterPaste.releaseIn(PASTE_LANDS_MS);
   }
 
   /** A Cmd+V (Ctrl+V off a Mac) while this tab has control: kept from the keyboard handler, left to the browser, whose paste event brings the text. */
@@ -1051,7 +1057,9 @@ export class SelkiesSession implements Kept {
   }
 
   dispose(): void {
-    this.#afterPaste.drop();
+    clearTimeout(this.#chord);
+    if (this.#chordDue) this.#sendChord();
+    this.#afterPaste.close();
     this.#unhold();
     this.#disposed = true;
     clearTimeout(this.#retry);

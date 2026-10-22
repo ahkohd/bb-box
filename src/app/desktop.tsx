@@ -52,6 +52,7 @@ import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
 import {
   KeysAfterPaste,
   PASTE_LANDS_MS,
+  tabOf,
   ShiftedLetters,
   isModifier,
   pasteChordKeys,
@@ -350,6 +351,7 @@ export class DesktopSession implements Kept {
   pasteAllowed?: () => boolean;
   /** When a Cmd+V or Ctrl+V was taken from noVNC and the browser's paste event is awaited. */
   #pasteArmed: number | null = null;
+  #chordDue = false;
   #pasteWait: ReturnType<typeof setTimeout> | undefined;
   #chord: ReturnType<typeof setTimeout> | undefined;
   readonly #onPasteEvent = (event: ClipboardEvent) => this.#takePaste(event);
@@ -404,6 +406,7 @@ export class DesktopSession implements Kept {
     clearTimeout(this.#retry);
     this.#refused = null;
     const client = new Viewer(this.element, this.#url, { shared: true });
+    client.afterPaste.join(tabOf(this.#url));
     // Not noVNC's dark grey: the pane's colour, in the theme's neutral, shows around a picture that does not fill it.
     client.background = "transparent";
     client.qualityLevel = this.#quality;
@@ -430,6 +433,7 @@ export class DesktopSession implements Kept {
     });
     client.addEventListener("disconnect", () => {
       client.stopRefreshing();
+      client.afterPaste.leave();
       if (this.#client !== client) return;
       this.#client = null;
       this.#closePointer();
@@ -572,16 +576,20 @@ export class DesktopSession implements Kept {
   #pressPaste(): void {
     clearTimeout(this.#chord);
     this.#client?.afterPaste.hold();
-    this.#chord = setTimeout(() => {
-      const client = this.#client;
-      if (!client || this.connection.state !== "connected") {
-        client?.afterPaste.drop();
-        return;
-      }
-      const modifier = this.guestOs === "macos" ? commandKey(this.#macKeys) : { keysym: XK_CONTROL_L, code: "ControlLeft" };
-      for (const { key, down } of pasteChordKeys(modifier, { keysym: XK_V, code: "KeyV" }, client.heldModifiers())) client.sendKey(key.keysym, key.code, down);
-      client.afterPaste.releaseIn(PASTE_LANDS_MS);
-    }, PASTE_CHORD_DELAY_MS);
+    this.#chordDue = true;
+    this.#chord = setTimeout(() => this.#sendChord(), PASTE_CHORD_DELAY_MS);
+  }
+
+  #sendChord(): void {
+    this.#chordDue = false;
+    const client = this.#client;
+    if (!client || this.connection.state !== "connected") {
+      client?.afterPaste.drop();
+      return;
+    }
+    const modifier = this.guestOs === "macos" ? commandKey(this.#macKeys) : { keysym: XK_CONTROL_L, code: "ControlLeft" };
+    for (const { key, down } of pasteChordKeys(modifier, { keysym: XK_V, code: "KeyV" }, client.heldModifiers())) client.sendKey(key.keysym, key.code, down);
+    client.afterPaste.releaseIn(PASTE_LANDS_MS);
   }
 
   /** A Cmd+V (Ctrl+V off a Mac) on the desktop while this tab has control: kept from noVNC, left to the browser, whose paste event brings the text. */
@@ -628,7 +636,8 @@ export class DesktopSession implements Kept {
     clearTimeout(this.#settle);
     clearTimeout(this.#pasteWait);
     clearTimeout(this.#chord);
-    this.#client?.afterPaste.drop();
+    if (this.#chordDue) this.#sendChord();
+    this.#client?.afterPaste.close();
     document.removeEventListener("paste", this.#onPasteEvent, true);
     this.#observer?.disconnect();
     this.#closePointer();
