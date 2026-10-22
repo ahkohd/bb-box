@@ -80,7 +80,8 @@ SLOT_POLL_SECONDS=30
 boot() {
   waited=0
   while :; do
-    tart run --no-graphics "$build" >"$work/run.log" 2>&1 &
+    # No clipboard shared with the Mac, whose clipboard is its owner's (#911).
+    tart run --no-graphics --no-clipboard "$build" >"$work/run.log" 2>&1 &
     pid=$!
     i=0
     until tart exec "$build" true >/dev/null 2>&1; do

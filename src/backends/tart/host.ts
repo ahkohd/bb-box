@@ -501,11 +501,12 @@ case "$(state "$vm")" in
   "") echo "There is no VM $vm." >&2; exit 1 ;;
 esac
 keep "$out" "$x"
+# No clipboard shared with the Mac (#911): the Mac's is its owner's, and Universal Clipboard links it to their other Macs.
 if [ "$(os_of "$vm")" = linux ]; then
-  set -- tart run --no-graphics "$vm"
+  set -- tart run --no-graphics --no-clipboard "$vm"
   up() { [ "$(state "$vm")" = running ]; }
 else
-  set -- tart run --no-graphics --vnc-experimental --suspendable "$vm"
+  set -- tart run --no-graphics --no-clipboard --vnc-experimental --suspendable "$vm"
   up() { grep -q 'VNC server is running' "$out"; }
   h=$HOME/.tart; [ -z "$TART_HOME" ] || h=$TART_HOME
   [ ! -f "$h/vms/$vm/state.vzvmsave" ] || cat "$h/vms/$vm/state.vzvmsave" > /dev/null 2>&1 || :
