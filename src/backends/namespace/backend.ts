@@ -117,8 +117,8 @@ export const MAC_CUA = [
   'sudo -n launchctl bootstrap "gui/$(id -u)" "$agent"',
   'socket="$HOME/Library/Caches/cua-driver/cua-driver.sock"',
   'i=0; until [ -S "$socket" ]; do i=$((i + 1)); [ "$i" -lt 60 ] || { echo "Cua Driver did not listen at $socket within 30 s." >&2; exit 1; }; sleep 0.5; done',
-  'status=$(cua-driver permissions status --json 2>&1) || { echo "Cua Driver did not say its permissions: $status" >&2; exit 1; }',
-  'printf \'%s\' "$status" | grep -q \'"accessibility": *true\' && printf \'%s\' "$status" | grep -q \'"screen_recording": *true\' || { echo "Cua Driver lacks Accessibility or Screen Recording: $status" >&2; exit 1; }',
+  'permissions=$(cua-driver permissions status --json 2>&1) || { echo "Cua Driver did not say its permissions: $permissions" >&2; exit 1; }',
+  'printf \'%s\' "$permissions" | grep -q \'"accessibility": *true\' && printf \'%s\' "$permissions" | grep -q \'"screen_recording": *true\' || { echo "Cua Driver lacks Accessibility or Screen Recording: $permissions" >&2; exit 1; }',
 ].join("\n");
 const STALE_DEVICE_MS = 15 * 60_000;
 const MAC_TAILSCALE = [
