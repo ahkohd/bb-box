@@ -18,6 +18,7 @@ A box belongs to a thread. It stays until you release it, or until its thread is
 - [Sound and the microphone on Mac boxes](mac-sound.md): feed speech to an app, and what agents' apps may use
 - [Settings](settings.md): set up backends, choose the kinds and sizes on offer, and the general settings
 - [A cloud server as a Docker host](cloud-docker-host.md): rent a server, such as one on Hetzner Cloud, and make Docker boxes there
+- [Joining cloud machines to your tailnet](tailnet.md): let the machines BB Box rents reach a BB server on a Tailscale tailnet
 
 ## Reference
 

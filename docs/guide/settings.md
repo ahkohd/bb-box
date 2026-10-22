@@ -87,7 +87,7 @@ Tailnet is for machines BB Box rents and makes, such as Namespace Macs, when BB'
 - **No: BB is reached without one**: machines join no tailnet. Choose this when BB is reached through bb Connect or a public address.
 - **Yes, with a Tailscale OAuth client**: BB Box makes a single-use, pre-approved key for each machine with the OAuth client, and the machine leaves the tailnet when its box goes. Give the client's ID and secret, and the tags machines join with, `tag:bb-box` unless you change it. The client needs the `auth_keys` scope with those tags, and `devices:core` so BB Box can remove machines that went without leaving.
 
-The client's ID and secret are kept secret: the page shows only whether each is set. Select **Save** to save the Tailnet part.
+The client's ID and secret are kept secret: the page shows only whether each is set. Select **Save** to save the Tailnet part. See [joining cloud machines to your tailnet](tailnet.md) for making the client.
 
 ## Files for every box
 
