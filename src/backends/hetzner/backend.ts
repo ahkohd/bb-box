@@ -31,7 +31,7 @@ import {
 } from "../types.ts";
 import { Hetzner, HetznerError, type EurosBeforeVat, type HetznerFetch, type ServerType } from "./api.ts";
 import { HetznerHosts, type HostRecord } from "./hosts.ts";
-import { euros, oneMoreToMonthEnd, serverAndIpv4, spentThisMonth, startOfMonthUtc, type BilledServer } from "./spend.ts";
+import { euros, nextHourOf, serverAndIpv4, spentThisMonth, startOfMonthUtc, type BilledServer } from "./spend.ts";
 
 export interface HetznerConfig {
   readonly token: string;
@@ -120,7 +120,6 @@ export class HetznerBackend implements Backend {
   #placement: Promise<unknown> = Promise.resolve();
   #prices: { at: number; price: EurosBeforeVat } | null = null;
   #serverType: ServerType | null = null;
-  #readyNames: string[] = [];
 
   constructor(config: HetznerConfig, context: BackendContext, options: HetznerBackendOptions) {
     this.id = context.id;
@@ -147,11 +146,7 @@ export class HetznerBackend implements Backend {
   }
 
   get label(): string {
-    return `Hetzner Cloud in ${this.#config.location}`;
-  }
-
-  get hosts(): readonly string[] {
-    return this.#readyNames;
+    return "Hetzner Cloud";
   }
 
   kinds(): BoxKind[] {
@@ -288,7 +283,6 @@ export class HetznerBackend implements Backend {
       }
       await this.#deleteHost(record, signal);
     }
-    await this.#refreshNames();
   }
 
   async doctor(signal?: AbortSignal): Promise<DoctorReport> {
@@ -354,7 +348,10 @@ export class HetznerBackend implements Backend {
       const spent = await this.#spentThisMonth(price);
       const limit = this.#config.monthlyLimitEurosBeforeVat;
       const status = limit !== null && spent >= limit ? "warn" : "ok";
-      push("hetzner.spend", "This month's spend", status, `${euros(spent)} before VAT so far this month${limit === null ? ", with no limit set" : ` of the ${euros(limit)} limit`}.`, status === "warn" ? "bb-box makes no host past the limit. Raise it in the backend's settings, or wait for next month." : null);
+      const running = live.length;
+      const projected = spent + nextHourOf(running + 1, price);
+      const projection = `An hour more of ${running ? `the ${running} host${running === 1 ? "" : "s"} and ` : ""}a new one would take it to ${euros(projected)}${limit !== null && projected > limit ? ", past the limit, so no new host is made now" : ""}.`;
+      push("hetzner.spend", "This month's spend", status, `${euros(spent)} before VAT so far this month${limit === null ? ", with no limit set" : ` of the ${euros(limit)} limit`}. ${projection}`, status === "warn" ? "bb-box makes no host past the limit. Raise it in the backend's settings, or wait for next month." : null);
     }
 
     for (const record of live.filter((each) => each.state === "ready")) {
@@ -421,8 +418,9 @@ export class HetznerBackend implements Backend {
       const price = await this.#price(signal).catch(() => null);
       if (!price) return "bb-box could not read Hetzner Cloud's prices to keep to the monthly limit";
       const spent = await this.#spentThisMonth(price);
-      const more = oneMoreToMonthEnd(price, this.#now());
-      if (spent + more > limit) return `another host would take this month's spend from ${euros(spent)} to ${euros(spent + more)}, past the ${euros(limit)} limit`;
+      const running = (await this.hostRecords.records()).filter((record) => record.state !== "deleting").length;
+      const more = nextHourOf(running + 1, price);
+      if (spent + more > limit) return `another host would take this month's spend from ${euros(spent)} to ${euros(spent + more)} within the hour, past the ${euros(limit)} limit`;
     }
     return null;
   }
@@ -477,7 +475,6 @@ export class HetznerBackend implements Backend {
         const part = this.#partFor(record);
         await this.#untilDockerAnswers(part, signal);
         await this.hostRecords.markAnswered(record.hostId);
-        await this.#refreshNames();
         return part;
       } catch (error) {
         await this.#deleteHost(record).catch((cause) => this.#context.logError(`delete Hetzner Cloud host ${record.serverName} that did not answer`, cause));
@@ -550,7 +547,6 @@ export class HetznerBackend implements Backend {
     await this.#reach?.forget(record.hostId);
     await this.hostRecords.delete(record.hostId, signal);
     await this.#removeFromTailnet([record.serverName], signal);
-    await this.#refreshNames();
   }
 
   async #removeFromTailnet(serverNames: readonly string[] | "every one this install has no host for", signal?: AbortSignal): Promise<void> {
@@ -611,9 +607,6 @@ export class HetznerBackend implements Backend {
     return part;
   }
 
-  async #refreshNames(): Promise<void> {
-    this.#readyNames = (await this.hostRecords.records()).filter((record) => record.state === "ready").map((record) => record.serverName);
-  }
 
   async #serverTypeNow(signal?: AbortSignal): Promise<ServerType | null> {
     this.#serverType ??= await this.#api.serverType(this.#config.serverType, signal);

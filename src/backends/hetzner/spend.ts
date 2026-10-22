@@ -21,16 +21,16 @@ export function startOfNextMonthUtc(atMs: number): number {
 export function billedThisMonth(server: BilledServer, price: EurosBeforeVat, nowMs: number): number {
   const from = Math.max(server.startedAtMs, startOfMonthUtc(nowMs));
   const to = Math.min(server.endedAtMs ?? nowMs, nowMs);
-  if (to <= from) return 0;
-  return Math.min(price.monthly, Math.ceil((to - from) / HOUR_MS) * price.hourly);
+  if (to < from || (server.endedAtMs !== null && server.endedAtMs <= startOfMonthUtc(nowMs))) return 0;
+  return Math.min(price.monthly, Math.max(1, Math.ceil((to - from) / HOUR_MS)) * price.hourly);
 }
 
 export function spentThisMonth(servers: readonly BilledServer[], price: EurosBeforeVat, nowMs: number): number {
   return servers.reduce((sum, server) => sum + billedThisMonth(server, price, nowMs), 0);
 }
 
-export function oneMoreToMonthEnd(price: EurosBeforeVat, nowMs: number): number {
-  return Math.min(price.monthly, Math.ceil((startOfNextMonthUtc(nowMs) - nowMs) / HOUR_MS) * price.hourly);
+export function nextHourOf(servers: number, price: EurosBeforeVat): number {
+  return servers * price.hourly;
 }
 
 export function serverAndIpv4(prices: { server: EurosBeforeVat; ipv4: EurosBeforeVat }): EurosBeforeVat {

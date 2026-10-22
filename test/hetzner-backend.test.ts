@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
-import { billedThisMonth, oneMoreToMonthEnd, spentThisMonth } from "../src/backends/hetzner/spend.ts";
+import { billedThisMonth, nextHourOf, spentThisMonth } from "../src/backends/hetzner/spend.ts";
 import { FAKE_HETZNER_TOKEN } from "./fake-hetzner.ts";
 import { hetznerConfig, hetznerWorld } from "./fake-hetzner-world.ts";
 
@@ -48,7 +48,8 @@ test("with no host, an offer says a new host will take the box, and the first ac
   assert.ok(timings["make a host"] !== undefined);
   assert.deepEqual(dockerHosts.get(record!.hostId)!.containers(), [guest.ref]);
   assert.equal([...api.servers.values()][0]!.status, "running");
-  assert.deepEqual(hetzner.hosts, [record!.serverName]);
+  assert.equal(hetzner.label, "Hetzner Cloud", "the provider's name, which on takes, does not change as hosts come and go");
+  assert.equal("hosts" in hetzner, false);
   assert.equal(hetzner.kinds().some((kind) => kind.id === "linux-desktop"), false, "a cloud host has no GPU");
 });
 
@@ -99,14 +100,20 @@ test("a box bigger than a host of the type can hold is refused with the reason",
   assert.match(cores.message!, /has 8 cores, fewer than the 12 asked for/);
 });
 
-test("the monthly limit refuses a host that would take the month's spend past it, saying the sums", async () => {
+test("the monthly limit refuses a host when the month's spend so far, and an hour more of every host with it, would pass the limit", async () => {
   const { api, backend } = hetznerWorld();
-  const low = await backend(hetznerConfig({ monthlyLimitEurosBeforeVat: 5 })).capacity("linux", box4, [], signal());
+  const low = await backend(hetznerConfig({ monthlyLimitEurosBeforeVat: 0.1 })).capacity("linux", box4, [], signal());
   assert.equal(low.ok, false);
-  assert.match(low.message!, /another host would take this month's spend from EUR 0\.00 to EUR \d+\.\d\d, past the EUR 5\.00 limit/);
-  const high = await backend(hetznerConfig({ monthlyLimitEurosBeforeVat: 200 })).capacity("linux", box4, [], signal());
-  assert.equal(high.ok, true);
-  assert.equal(api.servers.size, 0);
+  assert.match(low.message!, /another host would take this month's spend from EUR 0\.00 to EUR 0\.11 within the hour, past the EUR 0\.10 limit/);
+  const ten = backend(hetznerConfig({ monthlyLimitEurosBeforeVat: 10, mostHosts: 2 }));
+  assert.equal((await ten.capacity("linux", box4, [], signal())).ok, true, "a low limit still lets a host be made, as hosts go when idle");
+  for (let i = 0; i < 4; i++) await ten.acquire(identity(), null, hooks().value, signal());
+  assert.equal(api.servers.size, 2);
+  const tight = backend(hetznerConfig({ monthlyLimitEurosBeforeVat: 0.3, mostHosts: 3 }));
+  for (let i = 0; i < 3; i++) await tight.acquire(identity(), null, hooks().value, signal());
+  const refused = await tight.capacity("linux", box4, [], signal());
+  assert.equal(refused.ok, false, "the first host's started hour, and an hour more of it and of a second, pass EUR 0.30");
+  assert.match(refused.message!, /from EUR 0\.11 to EUR 0\.34 within the hour, past the EUR 0\.30 limit/);
 });
 
 test("Hetzner's project limit refuses a host with its reason, and leaves no record", async () => {
@@ -134,7 +141,6 @@ test("a host with no box for the idle time is deleted, a busy one and a recently
   api.advanceClock(2 * 60_000);
   await hetzner.maintain(signal());
   assert.deepEqual([...api.servers.values()].map((each) => each.name), [kept.host], "the idle host went; the one with boxes stays, however long ago it was last busy");
-  assert.deepEqual(hetzner.hosts, [kept.host]);
 });
 
 test("held lists every host's boxes with their host, and leaves out only a host that does not answer", async () => {
@@ -199,7 +205,7 @@ test("the doctor lists each host with its age, boxes and cost, the month's spend
   assert.match(byId.get("hetzner.hosts")!.detail, /bb-box-test-[a-z0-9]{8}: ready, 90 minutes old, 1 box, EUR 0\.\d\d this month/);
   assert.equal(byId.get("hetzner.unclaimed")!.status, "warn");
   assert.match(byId.get("hetzner.unclaimed")!.detail, /bb-box-test-stray0001/);
-  assert.match(byId.get("hetzner.spend")!.detail, /EUR 0\.\d\d before VAT so far this month of the EUR 100\.00 limit/);
+  assert.match(byId.get("hetzner.spend")!.detail, /EUR 0\.\d\d before VAT so far this month of the EUR 100\.00 limit\. An hour more of the 1 host and a new one would take it to EUR 0\.\d\d\./);
   assert.match(byId.get("hetzner.type")!.detail, /8 cores, 16 GB memory, 320 GB disk in nbg1, EUR 0\.11 an hour and at most EUR 69\.99 a month with its IPv4, before VAT/);
   assert.ok([...byId.keys()].some((id) => id.startsWith("hetzner.host.bb-box-test-")));
   assert.doesNotMatch(JSON.stringify(report), new RegExp(FAKE_HETZNER_TOKEN));
@@ -224,8 +230,8 @@ test("the month's spend counts each server's started hours at its hourly price, 
   assert.equal(billedThisMonth({ hostId: "c", startedAtMs: Date.UTC(2026, 8, 1), endedAtMs: Date.UTC(2026, 8, 30) }, price, now), 0, "last month's server costs nothing this month");
   assert.equal(billedThisMonth({ hostId: "d", startedAtMs: Date.UTC(2026, 8, 30, 23), endedAtMs: Date.UTC(2026, 9, 1, 2) }, price, now), 2 * 0.1122, "only this month's hours");
   assert.ok(Math.abs(spentThisMonth([{ hostId: "a", startedAtMs: now - 90 * 60_000, endedAtMs: null }, { hostId: "e", startedAtMs: now - 30 * 60_000, endedAtMs: now - 10 * 60_000 }], price, now) - 3 * 0.1122) < 1e-9);
-  assert.equal(oneMoreToMonthEnd(price, Date.UTC(2026, 9, 31, 22)), 2 * 0.1122);
-  assert.equal(oneMoreToMonthEnd(price, Date.UTC(2026, 9, 1)), 69.99);
+  assert.equal(nextHourOf(2, price), 2 * 0.1122);
+  assert.equal(billedThisMonth({ hostId: "f", startedAtMs: now, endedAtMs: null }, price, now), 0.1122, "a server just made has its first hour billed");
 });
 
 test("a host that never answers is deleted after the idle time; one that answered and went quiet is kept for a day", async () => {
