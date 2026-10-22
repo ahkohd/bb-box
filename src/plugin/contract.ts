@@ -11,6 +11,13 @@ import type { ResizeWay, SizePart } from "../backends/types.ts";
 
 export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 
+/** The terminal's WebSocket route, under the plugin's HTTP path, which a tab opens without waiting for the box's state (#916). */
+export const TERMINAL_ROUTE = "/terminal";
+
+export function terminalPath(pluginId: string): string {
+  return `/api/v1/plugins/${encodeURIComponent(pluginId)}/http${TERMINAL_ROUTE}`;
+}
+
 export interface PanelState {
   readonly boxes: readonly BoxView[];
   readonly kinds: readonly KindView[];

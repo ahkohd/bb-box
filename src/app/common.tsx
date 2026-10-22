@@ -50,6 +50,11 @@ export function useNow(active: boolean, everyMs = 100): number {
 /** The last value loaded for each key, so a tab that remounts starts from what it showed and does not go blank while it refetches (037). */
 const remembered = new Map<string, unknown>();
 
+/** The value last loaded under `key`, if any, as a view other than its own may want it before loading its own. */
+export function rememberedLive<T>(key: string): T | undefined {
+  return remembered.get(key) as T | undefined;
+}
+
 /** Forgets every remembered value, for tests. */
 export function forgetLive(): void {
   remembered.clear();

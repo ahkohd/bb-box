@@ -8,14 +8,44 @@
 
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import {
+  experimental_Icon as Icon,
+  experimental_usePluginId,
+  useBbNavigate,
+  useRpc,
+} from "@get-bb/plugin-sdk/app";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { Contract, DesktopState, PanelState } from "../plugin/contract.ts";
+import {
+  terminalPath,
+  type Contract,
+  type DesktopState,
+  type PanelState,
+} from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, IconButton, message, Notice, StatusDot, useLive, useNow, type Tone, BackControl, type BackTo } from "./common.tsx";
-import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
+import {
+  rememberedLive,
+  BOXES_ACTION,
+  EmptyPanel,
+  forThread,
+  IconButton,
+  message,
+  Notice,
+  StatusDot,
+  useLive,
+  useNow,
+  type Tone,
+  BackControl,
+  type BackTo,
+} from "./common.tsx";
+import {
+  claimKept,
+  dropKept,
+  keptFree,
+  releaseKept,
+  type Kept,
+} from "./kept.ts";
 import { BoxLine } from "./desktop.tsx";
 import { XTERM_CSS } from "./xterm-css.ts";
 import { TerminalGlyph } from "./glyphs.tsx";
@@ -34,7 +64,11 @@ export function terminalParams(boxId: string): { box: string } {
 export function useOpenTerminal(): (box: BoxView) => void {
   const navigate = useBbNavigate();
   return (box) => {
-    navigate.openThreadPanel({ actionId: TERMINAL_ACTION, title: `Terminal: ${box.name}`, params: terminalParams(box.id) });
+    navigate.openThreadPanel({
+      actionId: TERMINAL_ACTION,
+      title: `Terminal: ${box.name}`,
+      params: terminalParams(box.id),
+    });
   };
 }
 
@@ -48,10 +82,20 @@ function parseParams(params: unknown): string | null {
   return typeof box === "string" && box.length > 0 ? box : null;
 }
 
-function socketUrl(path: string, boxId: string, session: string, size: { cols: number; rows: number }): string {
+function socketUrl(
+  path: string,
+  boxId: string,
+  session: string,
+  size: { cols: number; rows: number },
+): string {
   const url = new URL(path, window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.search = new URLSearchParams({ box: boxId, session, cols: String(size.cols), rows: String(size.rows) }).toString();
+  url.search = new URLSearchParams({
+    box: boxId,
+    session,
+    cols: String(size.cols),
+    rows: String(size.rows),
+  }).toString();
   return url.toString();
 }
 
@@ -91,7 +135,9 @@ function tokenColor(token: string, fallback: string): string {
 const mounted = new Set<string>();
 
 function randomId(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
 }
 
 function storedSession(boxId: string): string | null {
@@ -136,7 +182,10 @@ function useSessionId(boxId: string): [string, () => void] {
   return [session, renew];
 }
 
-type Connection = { readonly state: "connecting" } | { readonly state: "connected" } | { readonly state: "ended"; readonly reason: string };
+type Connection =
+  | { readonly state: "connecting" }
+  | { readonly state: "connected" }
+  | { readonly state: "ended"; readonly reason: string };
 
 /**
  * One shell's terminal: xterm and the socket to the plugin, in an element of
@@ -165,16 +214,25 @@ export class TerminalClient implements Kept {
     ensureStyles();
     this.#view = new Terminal({
       cursorBlink: true,
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || "monospace",
+      fontFamily:
+        getComputedStyle(document.documentElement)
+          .getPropertyValue("--font-mono")
+          .trim() || "monospace",
       fontSize: 13,
       scrollback: 5000,
       allowProposedApi: true,
-      theme: { background: tokenColor("--canvas", "#1a1a1a"), foreground: tokenColor("--foreground", "#d0d0d0"), cursor: tokenColor("--foreground", "#d0d0d0"), selectionBackground: tokenColor("--surface-selected", "#44546a") },
+      theme: {
+        background: tokenColor("--canvas", "#1a1a1a"),
+        foreground: tokenColor("--foreground", "#d0d0d0"),
+        cursor: tokenColor("--foreground", "#d0d0d0"),
+        selectionBackground: tokenColor("--surface-selected", "#44546a"),
+      },
     });
     this.#view.loadAddon(this.#fit);
     this.#view.open(this.element);
     this.#view.onData((data) => {
-      if (this.#socket?.readyState === WebSocket.OPEN) this.#socket.send(encoder.encode(data));
+      if (this.#socket?.readyState === WebSocket.OPEN)
+        this.#socket.send(encoder.encode(data));
     });
     let last = { cols: this.#view.cols, rows: this.#view.rows };
     this.#view.onResize(({ cols, rows }) => {
@@ -182,10 +240,14 @@ export class TerminalClient implements Kept {
       last = { cols, rows };
       clearTimeout(this.#resizeTimer);
       this.#resizeTimer = setTimeout(() => {
-        if (this.#socket?.readyState === WebSocket.OPEN) this.#socket.send(JSON.stringify({ type: "resize", cols, rows }));
+        if (this.#socket?.readyState === WebSocket.OPEN)
+          this.#socket.send(JSON.stringify({ type: "resize", cols, rows }));
       }, RESIZE_MS);
     });
-    this.#observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this.fit());
+    this.#observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => this.fit());
     this.#observer?.observe(this.element);
   }
 
@@ -216,7 +278,9 @@ export class TerminalClient implements Kept {
     if (this.#started || this.#disposed) return;
     this.#started = true;
     this.fit();
-    const socket = new WebSocket(this.#url({ cols: this.#view.cols || 80, rows: this.#view.rows || 24 }));
+    const socket = new WebSocket(
+      this.#url({ cols: this.#view.cols || 80, rows: this.#view.rows || 24 }),
+    );
     socket.binaryType = "arraybuffer";
     socket.onopen = () => this.#set({ state: "connected" });
     socket.onmessage = (event: MessageEvent) => {
@@ -225,7 +289,10 @@ export class TerminalClient implements Kept {
     };
     socket.onclose = (event: CloseEvent) => {
       this.#socket = null;
-      this.#set({ state: "ended", reason: event.reason || "The connection to the terminal closed." });
+      this.#set({
+        state: "ended",
+        reason: event.reason || "The connection to the terminal closed.",
+      });
       if (this.hidden) this.onEnded?.();
     };
     socket.onerror = () => {
@@ -251,9 +318,16 @@ export class TerminalClient implements Kept {
 }
 
 /** The thread panel tab for one box's terminal. Opened bare from its launcher row, it opens the thread's box, picks among several, or offers the Box panel. */
-export function TerminalPanel({ threadId, params }: { threadId: string; params: unknown }) {
+export function TerminalPanel({
+  threadId,
+  params,
+}: {
+  threadId: string;
+  params: unknown;
+}) {
   const boxId = parseParams(params);
-  if (boxId) return <BoxTerminal key={boxId} threadId={threadId} boxId={boxId} />;
+  if (boxId)
+    return <BoxTerminal key={boxId} threadId={threadId} boxId={boxId} />;
   return <TerminalChooser threadId={threadId} />;
 }
 
@@ -267,22 +341,44 @@ function TerminalChooser({ threadId }: { threadId: string }) {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
   const open = useOpenTerminal();
-  const { value: state, error } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
+  const { value: state, error } = useLive<PanelState>(
+    threadId,
+    () => rpc.call("state", { threadId }),
+    forThread(threadId),
+  );
   // The box this thread runs on counts too (the operator, 4 October 2026): listed first, and alone it opens straight away.
   const runsOn = state?.runsOn?.box.terminal ? state.runsOn.box : null;
-  const boxes = [...(runsOn ? [runsOn] : []), ...(state?.boxes.filter((box) => box.terminal) ?? [])];
+  const boxes = [
+    ...(runsOn ? [runsOn] : []),
+    ...(state?.boxes.filter((box) => box.terminal) ?? []),
+  ];
   useNow(
     boxes.some((box) => box.state === "acquiring" || box.state === "starting"),
     1000,
   );
-  if (boxes.length === 1) return <BoxTerminal key={boxes[0]!.id} threadId={threadId} boxId={boxes[0]!.id} />;
+  if (boxes.length === 1)
+    return (
+      <BoxTerminal
+        key={boxes[0]!.id}
+        threadId={threadId}
+        boxId={boxes[0]!.id}
+      />
+    );
   return (
     <div className="p-4">
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
       {state && !boxes.length ? (
         <EmptyPanel title="No box with a terminal">
           <p className="mt-1">This thread has no box with a terminal.</p>
-          <Button type="button" variant="outline" size="sm" className="mt-3 h-7" onClick={() => navigate.openThreadPanel({ actionId: BOXES_ACTION, title: "Box" })}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-3 h-7"
+            onClick={() =>
+              navigate.openThreadPanel({ actionId: BOXES_ACTION, title: "Box" })
+            }
+          >
             Open the Box panel
           </Button>
         </EmptyPanel>
@@ -296,7 +392,13 @@ function TerminalChooser({ threadId }: { threadId: string }) {
                 box={box}
                 machine={box.id === runsOn?.id}
                 actions={
-                  <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => open(box)}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7"
+                    onClick={() => open(box)}
+                  >
                     Open
                   </Button>
                 }
@@ -310,25 +412,48 @@ function TerminalChooser({ threadId }: { threadId: string }) {
 }
 
 /** One box's terminal; `onBack` adds a back arrow, for the Boxes page. */
-export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; boxId: string; onBack?: BackTo }) {
+export function BoxTerminal({
+  threadId,
+  boxId,
+  onBack,
+}: {
+  threadId: string;
+  boxId: string;
+  onBack?: BackTo;
+}) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
-  const { value: state, error, refresh } = useLive<DesktopState>(`${threadId}/${boxId}/terminal`, () => rpc.call("desktop", { threadId, box: boxId }), forThread(threadId));
+  const {
+    value: state,
+    error,
+    refresh,
+  } = useLive<DesktopState>(
+    `${threadId}/${boxId}/terminal`,
+    () => rpc.call("desktop", { threadId, box: boxId }),
+    forThread(threadId),
+  );
   const box = state?.box ?? null;
   /** The box's name as last seen, so a tab whose box was released still names it, as the desktop's does. */
   const lastName = useRef<string | null>(null);
   if (box) lastName.current = box.name;
-  const path = state?.terminalPath ?? null;
+  const path = state?.terminalPath ?? terminalPath(pluginId);
   const can = box !== null && canOpenTerminal(box);
+  const listed = rememberedLive<PanelState>(threadId)?.boxes.find(
+    (each) => each.id === boxId,
+  );
+  const readyAsListed =
+    state === null && !error && listed !== undefined && canOpenTerminal(listed);
   const [session, renewSession] = useSessionId(boxId);
   const key = `terminal:${boxId}:${session}`;
 
   const holder = useRef<HTMLDivElement>(null);
   // A kept terminal shows at once, before the box's state has loaded; the state can only confirm or end it.
-  const [connection, setConnection] = useState<Connection>(() => keptFree<TerminalClient>(key)?.connection ?? { state: "connecting" });
+  const [connection, setConnection] = useState<Connection>(
+    () => keptFree<TerminalClient>(key)?.connection ?? { state: "connecting" },
+  );
   const [acting, setActing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const ready = can && path !== null;
+  const ready = can || readyAsListed;
   const pathNow = useRef(path);
   pathNow.current = path;
   const wanted = ready || keptFree(key) !== undefined;
@@ -340,10 +465,18 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
     if (!wanted || !screen) return;
     const latestPath = pathNow.current;
     if (keptFree(key) === undefined && !latestPath) return;
-    const claimed = claimKept(key, () => new TerminalClient((size) => socketUrl(latestPath!, boxId, session, size)));
+    const claimed = claimKept(
+      key,
+      () =>
+        new TerminalClient((size) =>
+          socketUrl(latestPath!, boxId, session, size),
+        ),
+    );
     const client = claimed.session;
     screen.appendChild(client.element);
-    const unsubscribe = client.subscribe(() => setConnection(client.connection));
+    const unsubscribe = client.subscribe(() =>
+      setConnection(client.connection),
+    );
     setProblem(null);
     setConnection(client.connection);
     client.start();
@@ -381,7 +514,10 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
 
   let tone: Tone = "busy";
   let words = "Loading…";
-  if (error) {
+  if (!state && !error && connection.state === "connected") {
+    tone = "ok";
+    words = "Connected";
+  } else if (error) {
     tone = "bad";
     words = "Could not load";
   } else if (state && !box) {
@@ -389,8 +525,18 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
     tone = "off";
     words = "Released";
   } else if (box && box.state !== "ready") {
-    tone = box.state === "stopped" ? "off" : box.state === "failed" || box.state === "gone" ? "bad" : "busy";
-    words = box.state === "stopped" ? "Stopped" : box.state === "acquiring" || box.state === "starting" ? "Starting" : box.state;
+    tone =
+      box.state === "stopped"
+        ? "off"
+        : box.state === "failed" || box.state === "gone"
+          ? "bad"
+          : "busy";
+    words =
+      box.state === "stopped"
+        ? "Stopped"
+        : box.state === "acquiring" || box.state === "starting"
+          ? "Starting"
+          : box.state;
   } else if (box && !box.terminal) {
     tone = "off";
     words = "No terminal";
@@ -411,33 +557,59 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
         {onBack ? <BackControl back={onBack} /> : null}
         <TerminalGlyph className="text-muted-foreground" />
-        <span className="font-medium text-foreground">{box?.name ?? lastName.current ?? "Terminal"}</span>
+        <span className="font-medium text-foreground">
+          {box?.name ?? lastName.current ?? "Terminal"}
+        </span>
         <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
         </span>
         {can && connection.state === "ended" ? (
-          <Button type="button" variant="outline" size="sm" className="ml-auto h-7" onClick={renew}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="ml-auto h-7"
+            onClick={renew}
+          >
             Start a new shell
           </Button>
         ) : null}
       </div>
       {problem ? (
-        <p role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive-text">
+        <p
+          role="alert"
+          className="border-b border-border px-3 py-1.5 text-xs text-destructive-text"
+        >
           {problem}
         </p>
       ) : null}
       <div className="relative min-h-0 flex-1 bg-background">
-        <div ref={holder} className={cn("absolute inset-0 p-2", !showing && "invisible")} data-testid="terminal-screen" />
+        <div
+          ref={holder}
+          className={cn("absolute inset-0 p-2", !showing && "invisible")}
+          data-testid="terminal-screen"
+        />
         {error ? (
           <Notice>{error}</Notice>
         ) : !state ? null : !box ? (
-          <Notice detail="Close this tab when you are done with it.">{lastName.current ? `${lastName.current} has been released.` : "This box has been released."}</Notice>
+          <Notice detail="Close this tab when you are done with it.">
+            {lastName.current
+              ? `${lastName.current} has been released.`
+              : "This box has been released."}
+          </Notice>
         ) : box.state === "stopped" ? (
           <Notice
             action={
               box.canStopStart ? (
-                <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting} onClick={() => void start()}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7"
+                  disabled={acting}
+                  onClick={() => void start()}
+                >
                   <Icon name="Play" aria-hidden />
                   Start
                 </Button>
@@ -448,15 +620,30 @@ export function BoxTerminal({ threadId, boxId, onBack }: { threadId: string; box
           </Notice>
         ) : box.state !== "ready" ? (
           <Notice>
-            {box.name} is {box.state === "acquiring" || box.state === "starting" ? "starting…" : box.state === "failed" ? "failed." : box.state === "gone" ? "gone." : "being released."}
+            {box.name} is{" "}
+            {box.state === "acquiring" || box.state === "starting"
+              ? "starting…"
+              : box.state === "failed"
+                ? "failed."
+                : box.state === "gone"
+                  ? "gone."
+                  : "being released."}
           </Notice>
         ) : !box.terminal ? (
-          <Notice detail="Its backend reaches it without a shell.">{box.name} has no terminal.</Notice>
+          <Notice detail="Its backend reaches it without a shell.">
+            {box.name} has no terminal.
+          </Notice>
         ) : connection.state === "ended" ? (
           <Notice
             detail={connection.reason}
             action={
-              <Button type="button" variant="outline" size="sm" className="h-7" onClick={renew}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7"
+                onClick={renew}
+              >
                 Start a new shell
               </Button>
             }

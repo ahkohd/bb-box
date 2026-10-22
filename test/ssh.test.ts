@@ -303,6 +303,24 @@ test("commands to one box share a connection that bb-box opens once", async () =
   assert.deepEqual(log().filter((entry) => entry.control === "exit").map((entry) => entry.target).sort(), ["box@192.0.2.20", "box@192.0.2.20", "box@192.0.2.21"]);
 });
 
+test("a terminal opens on the box's shared connection, with no handshake of its own (#916)", async () => {
+  const { ssh, log, dir } = fakeSsh({ share: true });
+  const box = at("192.0.2.20");
+  await ssh.run(box, "true");
+  const terminal = await ssh.terminal(box, { cols: 80, rows: 24 });
+  const opened = () => log().find((entry) => (entry as { interactive?: boolean }).interactive);
+  for (let tries = 0; tries < 100 && !opened(); tries++) await new Promise((resolve) => setTimeout(resolve, 20));
+  await terminal.close();
+  const entries = log();
+  const path = entries.find((entry) => entry.control === "master")!.args.find((arg) => arg.startsWith("ControlPath="))!;
+  assert.ok(path.startsWith(`ControlPath=${join(dir, "shared")}/`));
+  const shell = opened();
+  assert.ok(shell, JSON.stringify(entries));
+  assert.ok(shell.args.includes("ControlMaster=no") && shell.args.includes(path), "on the shared connection, not a handshake of its own");
+  assert.equal(entries.filter((entry) => entry.control === "master").length, 1);
+  await ssh.dispose();
+});
+
 test("forget closes only its own box's connection, when boxes behind one host share a user and address", async () => {
   const { ssh, log } = fakeSsh({ share: true });
   const vm = (port: number, mac: string) => ({ host: "127.0.0.1", port, user: "box", hostKeys: [], jump: at(mac) });
