@@ -1,3 +1,5 @@
+import { freshFetch } from "../../core/fresh-fetch.ts";
+
 export const COMPUTE_SERVICE = "namespace.cloud.compute.v1beta.ComputeService";
 export const USAGE_SERVICE = "namespace.cloud.compute.v1beta.UsageService";
 const MAC_PLATFORM = "macos/arm64";
@@ -21,6 +23,7 @@ export interface NamespaceApiOptions {
   readonly region?: string;
   readonly fetch?: NamespaceFetch;
   readonly endpoint?: string;
+  readonly log?: (line: string) => void;
 }
 
 export interface InstanceShape {
@@ -108,7 +111,7 @@ export class NamespaceApi {
     if (!options.token) throw new NamespaceError("refused", "Namespace has no API token: set it in BB Box's settings.");
     this.#token = options.token;
     this.region = options.region ?? "us";
-    this.#fetch = options.fetch ?? ((url, init) => fetch(url, init));
+    this.#fetch = options.fetch ?? freshFetch("Namespace", options.log);
     this.#endpoint = (options.endpoint ?? `https://${this.region}.compute.namespaceapis.com`).replace(/\/+$/, "");
   }
 

@@ -1,3 +1,4 @@
+import { freshFetch } from "../../core/fresh-fetch.ts";
 import { sleep } from "../proxmox/api.ts";
 
 export interface HetznerResponse {
@@ -22,6 +23,7 @@ export interface HetznerOptions {
   readonly actionTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
   readonly triesWhenRateLimited?: number;
+  readonly log?: (line: string) => void;
 }
 
 export const HETZNER_API_URL = "https://api.hetzner.cloud/v1";
@@ -182,7 +184,7 @@ export class Hetzner {
     this.#base = (options.apiUrl ?? HETZNER_API_URL).replace(/\/+$/, "");
     this.#token = options.token;
     this.#auth = `Bearer ${options.token}`;
-    this.#fetch = options.fetch ?? ((url, init) => fetch(url, init));
+    this.#fetch = options.fetch ?? freshFetch("Hetzner Cloud", options.log);
     this.#sleep = options.sleep ?? sleep;
     this.#actionPollMs = Math.max(ONE_REQUEST_REFILL_MS, options.actionPollMs ?? ONE_REQUEST_REFILL_MS);
     this.#actionTimeoutMs = options.actionTimeoutMs ?? 600_000;
