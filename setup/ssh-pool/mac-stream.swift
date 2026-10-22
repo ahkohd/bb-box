@@ -6,9 +6,11 @@
 //   bb-box-stream serve [socket]     captures and serves, in the desktop session
 //   bb-box-stream connect [socket]   joins stdin and stdout to the server,
 //                                    starting it first if it is not running
-//   bb-box-stream qemu <port> <socket>
+//   bb-box-stream qemu <port> <socket> [<qmp socket>]
 //                                    serves a Windows VM's desktop from QEMU's
-//                                    VNC server on the Mac's loopback (#865)
+//                                    VNC server on the Mac's loopback (#865),
+//                                    or, given the VM's QMP socket, from QEMU's
+//                                    D-Bus display, with VNC for the pointer (#885)
 //   bb-box-stream attach <socket>    joins stdin and stdout to a running
 //                                    server, starting none
 //
@@ -1009,11 +1011,511 @@ final class Server: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Senda
 // MARK: QEMU
 
 /**
+ * A peer-to-peer D-Bus connection over a socket, as QEMU's D-Bus display speaks it (#885): EXTERNAL authentication as
+ * the client, Unix file descriptors, and little-endian messages of the few shapes the display uses. No GLib, so nothing
+ * ties bb-box-stream to Nix's or Homebrew's paths on the Mac.
+ */
+final class DbusPeer: @unchecked Sendable {
+  struct Message {
+    var type: UInt8 = 0
+    var serial: UInt32 = 0
+    var path = "", interface = "", member = "", signature = ""
+    var body = Data()
+    var fds: [Int32] = []
+  }
+
+  let fd: Int32
+  private var buffer = Data()
+  private var fds: [Int32] = []
+  private var serial: UInt32 = 0
+  private let writeLock = NSLock()
+
+  /** Authenticates as the client: QEMU is the server on both of the display's connections. */
+  init?(fd: Int32) {
+    self.fd = fd
+    let uid = String(getuid()).utf8.map { String(format: "%02x", $0) }.joined()
+    guard writeAll(fd, Data([0]) + Data("AUTH EXTERNAL \(uid)\r\n".utf8)), line()?.hasPrefix("OK") == true,
+      writeAll(fd, Data("NEGOTIATE_UNIX_FD\r\n".utf8)), line()?.hasPrefix("AGREE_UNIX_FD") == true,
+      writeAll(fd, Data("BEGIN\r\n".utf8))
+    else { return nil }
+  }
+
+  private func line() -> String? {
+    var bytes = Data()
+    while !(bytes.count >= 2 && bytes[bytes.endIndex - 2] == 13 && bytes[bytes.endIndex - 1] == 10) {
+      guard let byte = readExactly(fd, 1) else { return nil }
+      bytes.append(byte)
+    }
+    return String(decoding: bytes, as: UTF8.self)
+  }
+
+  /** Reads more of the socket, with any file descriptors it carries. False at its end. */
+  private func fill() -> Bool {
+    var data = [UInt8](repeating: 0, count: 65536)
+    var control = [UInt8](repeating: 0, count: 256)
+    let got: Int = data.withUnsafeMutableBytes { raw in
+      control.withUnsafeMutableBytes { cbuf in
+        var vector = iovec(iov_base: raw.baseAddress, iov_len: raw.count)
+        return withUnsafeMutablePointer(to: &vector) { iov in
+          var header = msghdr(msg_name: nil, msg_namelen: 0, msg_iov: iov, msg_iovlen: 1, msg_control: cbuf.baseAddress,
+            msg_controllen: socklen_t(cbuf.count), msg_flags: 0)
+          let n = recvmsg(fd, &header, 0)
+          if n > 0, header.msg_controllen >= MemoryLayout<cmsghdr>.size {
+            var cmsg = UnsafeMutablePointer<cmsghdr>(OpaquePointer(cbuf.baseAddress!))
+            let end = cbuf.baseAddress! + Int(header.msg_controllen)
+            while UnsafeMutableRawPointer(cmsg) + MemoryLayout<cmsghdr>.size <= end {
+              if cmsg.pointee.cmsg_level == SOL_SOCKET && cmsg.pointee.cmsg_type == SCM_RIGHTS {
+                let count = (Int(cmsg.pointee.cmsg_len) - MemoryLayout<cmsghdr>.size) / MemoryLayout<Int32>.size
+                let first = (UnsafeMutableRawPointer(cmsg) + MemoryLayout<cmsghdr>.size).assumingMemoryBound(to: Int32.self)
+                for i in 0..<count { fds.append(first[i]) }
+              }
+              let length = (Int(cmsg.pointee.cmsg_len) + 3) & ~3
+              if length == 0 { break }
+              cmsg = UnsafeMutablePointer<cmsghdr>(OpaquePointer(UnsafeMutableRawPointer(cmsg) + length))
+            }
+          }
+          return n
+        }
+      }
+    }
+    if got <= 0 { return false }
+    buffer.append(contentsOf: data[0..<got])
+    return true
+  }
+
+  /** The next whole message, with its file descriptors, or nil at the connection's end. */
+  func receive() -> Message? {
+    while true {
+      if buffer.count >= 16 {
+        let bytes = [UInt8](buffer.prefix(16))
+        let u32 = { (at: Int) in UInt32(bytes[at]) | UInt32(bytes[at + 1]) << 8 | UInt32(bytes[at + 2]) << 16 | UInt32(bytes[at + 3]) << 24 }
+        guard bytes[0] == UInt8(ascii: "l") else {
+          log("D-Bus: a big-endian message, which this reader does not take")
+          return nil
+        }
+        let bodyLength = Int(u32(4)), fieldsLength = Int(u32(12))
+        let bodyAt = (16 + fieldsLength + 7) & ~7
+        if buffer.count >= bodyAt + bodyLength {
+          let whole = Data(buffer.prefix(bodyAt + bodyLength))
+          buffer.removeFirst(bodyAt + bodyLength)
+          var message = Message(type: bytes[1], serial: u32(8))
+          var reader = DbusReader(data: whole, at: 16)
+          var fdCount = 0
+          while reader.at < 16 + fieldsLength {
+            reader.align(8)
+            let code = reader.byte()
+            let signature = reader.signature()
+            switch (code, signature) {
+            case (1, "o"): message.path = reader.string()
+            case (2, "s"): message.interface = reader.string()
+            case (3, "s"): message.member = reader.string()
+            case (8, "g"): message.signature = reader.signature()
+            case (9, "u"): fdCount = Int(reader.u32())
+            case (_, "s"), (_, "o"): _ = reader.string()
+            case (_, "g"): _ = reader.signature()
+            case (_, "u"): _ = reader.u32()
+            default:
+              log("D-Bus: a header field of type \(signature), which this reader does not take")
+              return nil
+            }
+          }
+          message.body = Data(whole.suffix(from: whole.startIndex + bodyAt))
+          message.fds = Array(fds.prefix(fdCount))
+          fds.removeFirst(min(fdCount, fds.count))
+          return message
+        }
+      }
+      guard fill() else { return nil }
+    }
+  }
+
+  enum Field {
+    case path(String), interface(String), member(String), errorName(String), replySerial(UInt32), signature(String), fds(UInt32)
+  }
+
+  /** Sends a message, with `fds` as SCM_RIGHTS. */
+  @discardableResult
+  func send(type: UInt8, fields: [Field], body: Data = Data(), fds: [Int32] = []) -> Bool {
+    writeLock.lock()
+    defer { writeLock.unlock() }
+    serial += 1
+    var writer = DbusWriter()
+    writer.data.append(contentsOf: [UInt8(ascii: "l"), type, 0, 1])
+    writer.u32(UInt32(body.count))
+    writer.u32(serial)
+    var array = DbusWriter(at: 16)
+    for field in fields {
+      array.align(8)
+      switch field {
+      case .path(let value): array.byte(1); array.signature("o"); array.string(value)
+      case .interface(let value): array.byte(2); array.signature("s"); array.string(value)
+      case .member(let value): array.byte(3); array.signature("s"); array.string(value)
+      case .errorName(let value): array.byte(4); array.signature("s"); array.string(value)
+      case .replySerial(let value): array.byte(5); array.signature("u"); array.u32(value)
+      case .signature(let value): array.byte(8); array.signature("g"); array.signature(value)
+      case .fds(let value): array.byte(9); array.signature("u"); array.u32(value)
+      }
+    }
+    writer.u32(UInt32(array.data.count))
+    writer.data.append(array.data)
+    writer.align(8)
+    writer.data.append(body)
+    let data = writer.data
+    if fds.isEmpty { return writeAll(fd, data) }
+    var control = [UInt8](repeating: 0, count: MemoryLayout<cmsghdr>.size + MemoryLayout<Int32>.size * fds.count)
+    return data.withUnsafeBytes { raw in
+      control.withUnsafeMutableBytes { cbuf in
+        let cmsg = cbuf.baseAddress!.assumingMemoryBound(to: cmsghdr.self)
+        cmsg.pointee = cmsghdr(cmsg_len: socklen_t(cbuf.count), cmsg_level: SOL_SOCKET, cmsg_type: SCM_RIGHTS)
+        let slots = (cbuf.baseAddress! + MemoryLayout<cmsghdr>.size).assumingMemoryBound(to: Int32.self)
+        for (i, fd) in fds.enumerated() { slots[i] = fd }
+        var vector = iovec(iov_base: UnsafeMutableRawPointer(mutating: raw.baseAddress), iov_len: raw.count)
+        return withUnsafeMutablePointer(to: &vector) { iov in
+          var header = msghdr(msg_name: nil, msg_namelen: 0, msg_iov: iov, msg_iovlen: 1, msg_control: cbuf.baseAddress,
+            msg_controllen: socklen_t(cbuf.count), msg_flags: 0)
+          // The descriptors go with the message's first bytes; the rest follows as plain writes.
+          let sent = sendmsg(fd, &header, 0)
+          return sent == raw.count || (sent > 0 && writeAll(fd, Data(raw[sent...])))
+        }
+      }
+    }
+  }
+
+  /** A method's reply, with its body. */
+  func reply(to message: Message, signature: String = "", body: Data = Data()) {
+    var fields: [Field] = [.replySerial(message.serial)]
+    if !signature.isEmpty { fields.append(.signature(signature)) }
+    send(type: 2, fields: fields, body: body)
+  }
+
+  /** An error reply, so QEMU does not wait on a method the listener does not have. */
+  func refuse(_ message: Message) {
+    var body = DbusWriter()
+    body.string("this listener has no \(message.interface).\(message.member)")
+    send(type: 3, fields: [.replySerial(message.serial), .errorName("org.freedesktop.DBus.Error.UnknownMethod"), .signature("s")], body: body.data)
+  }
+}
+
+/** D-Bus's marshalling, little-endian, from a message's start, for alignment. */
+struct DbusWriter {
+  var data = Data()
+  var start = 0
+  init(at offset: Int = 0) { start = offset }
+  mutating func align(_ n: Int) { while (start + data.count) % n != 0 { data.append(0) } }
+  mutating func byte(_ value: UInt8) { data.append(value) }
+  mutating func u32(_ value: UInt32) {
+    align(4)
+    withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+  }
+  mutating func string(_ value: String) {
+    u32(UInt32(value.utf8.count))
+    data.append(contentsOf: value.utf8)
+    data.append(0)
+  }
+  /** Writes a u32 at `index` of `data`, as an array's length is, once it is known. */
+  mutating func patch(_ index: Int, _ value: UInt32) {
+    withUnsafeBytes(of: value.littleEndian) { data.replaceSubrange(index..<index + 4, with: $0) }
+  }
+  mutating func signature(_ value: String) {
+    data.append(UInt8(value.utf8.count))
+    data.append(contentsOf: value.utf8)
+    data.append(0)
+  }
+}
+
+struct DbusReader {
+  let data: Data
+  var at: Int
+  init(data: Data, at: Int = 0) {
+    self.data = data
+    self.at = at
+  }
+  mutating func align(_ n: Int) { at = (at + n - 1) / n * n }
+  mutating func byte() -> UInt8 {
+    defer { at += 1 }
+    return at < data.count ? data[data.startIndex + at] : 0
+  }
+  mutating func u32() -> UInt32 {
+    align(4)
+    guard at + 4 <= data.count else { at = data.count; return 0 }
+    let base = data.startIndex + at
+    at += 4
+    return UInt32(data[base]) | UInt32(data[base + 1]) << 8 | UInt32(data[base + 2]) << 16 | UInt32(data[base + 3]) << 24
+  }
+  mutating func i32() -> Int32 { Int32(bitPattern: u32()) }
+  mutating func string() -> String {
+    let length = Int(u32())
+    guard at + length < data.count + 1 else { at = data.count; return "" }
+    let base = data.startIndex + at
+    defer { at += length + 1 }
+    return String(decoding: data[base..<base + length], as: UTF8.self)
+  }
+  mutating func signature() -> String {
+    let length = Int(byte())
+    guard at + length <= data.count else { at = data.count; return "" }
+    let base = data.startIndex + at
+    defer { at += length + 1 }
+    return String(decoding: data[base..<base + length], as: UTF8.self)
+  }
+  /** An `ay`: its bytes, as a range of `data`. */
+  mutating func bytes() -> Range<Int> {
+    let length = Int(u32())
+    let base = data.startIndex + at
+    at += length
+    return base..<min(base + length, data.endIndex)
+  }
+}
+
+/** A Windows VM's desktop as QEMU gives it, from its VNC server or its D-Bus display, for QemuServer to encode. */
+protocol QemuDesktop: AnyObject {
+  var width: Int { get }
+  var height: Int { get }
+  /** Copies the desktop, BGRX, into `base`, `stride` bytes a row. */
+  func copy(into base: UnsafeMutableRawPointer, stride: Int)
+}
+
+/**
+ * A Windows VM's desktop from QEMU's D-Bus display (#885), which QEMU runs beside its VNC server with
+ * `-display dbus,p2p=yes`. Over the VM's QMP socket, `getfd` and `add_client` give QEMU one end of a socket pair as a
+ * display client; on it, `RegisterListener` gives QEMU a second socket, on which QEMU calls this listener. On macOS
+ * QEMU shares the screen: `ScanoutMap` passes a file descriptor of its pixels, which is mapped, and `UpdateMap` says
+ * which rectangle the guest flushed, without the pixels. There is no refresh timer: an update comes for every flush the
+ * guest makes, and nothing while the desktop is still. A QEMU that cannot share sends `Scanout` and `Update` with the
+ * pixels instead, which are copied into a desktop of its own.
+ */
+final class DbusDisplay: QemuDesktop, @unchecked Sendable {
+  private let display: DbusPeer
+  private let listener: DbusPeer
+  private let lock = NSLock()
+  private(set) var width = 0
+  private(set) var height = 0
+  private var stride = 0
+  /** The shared screen, mapped, and its length; or, from a QEMU that does not share, the pixels it sent. */
+  private var mapped: UnsafeMutableRawPointer?
+  private var mappedLength = 0
+  private var offset = 0
+  private var pixels = Data()
+
+  /** x8r8g8b8 in pixman's numbering: BGRX in memory, as VideoToolbox takes it. */
+  static let XRGB8888: UInt32 = 0x2002_0888
+
+  init?(qmp: String) {
+    // QMP takes one client at a time: bb-box's own scripts may hold it for a moment.
+    var control: Int32 = -1
+    for _ in 0..<50 {
+      if let fd = connectUnix(qmp) {
+        control = fd
+        break
+      }
+      Thread.sleep(forTimeInterval: 0.1)
+    }
+    guard control >= 0 else {
+      log("QEMU's QMP socket \(qmp) does not answer")
+      return nil
+    }
+    defer { Darwin.close(control) }
+    var pair: [Int32] = [0, 0], listening: [Int32] = [0, 0]
+    guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0, socketpair(AF_UNIX, SOCK_STREAM, 0, &listening) == 0 else { return nil }
+    guard DbusDisplay.qmp(control, nil, "{\"execute\":\"qmp_capabilities\"}"),
+      DbusDisplay.qmp(control, pair[1], "{\"execute\":\"getfd\",\"arguments\":{\"fdname\":\"bb-box-stream\"}}"),
+      DbusDisplay.qmp(control, nil, "{\"execute\":\"add_client\",\"arguments\":{\"protocol\":\"@dbus-display\",\"fdname\":\"bb-box-stream\"}}")
+    else {
+      log("QEMU did not take a D-Bus display client: is it running with -display dbus,p2p=yes?")
+      return nil
+    }
+    Darwin.close(pair[1])
+    guard let display = DbusPeer(fd: pair[0]) else {
+      log("QEMU's D-Bus display did not authenticate this client")
+      return nil
+    }
+    self.display = display
+    // QEMU answers RegisterListener only once its connection to the listener is up, so the reply is not waited for.
+    var body = DbusWriter()
+    body.u32(0)
+    display.send(type: 1, fields: [.path("/org/qemu/Display1/Console_0"), .interface("org.qemu.Display1.Console"), .member("RegisterListener"),
+      .signature("h"), .fds(1)], body: body.data, fds: [listening[1]])
+    Darwin.close(listening[1])
+    guard let listener = DbusPeer(fd: listening[0]) else {
+      log("QEMU did not connect to the listener")
+      return nil
+    }
+    self.listener = listener
+    // The display connection's messages, such as RegisterListener's reply, are read and dropped.
+    Thread { while display.receive() != nil {} }.start()
+  }
+
+  /** Sends a QMP command, with `fd` as SCM_RIGHTS, and reads until its return. False on an error or the end. */
+  private static func qmp(_ socket: Int32, _ fd: Int32?, _ command: String) -> Bool {
+    let control = socket
+    var sent = false
+    let data = Data(command.utf8)
+    if let fd {
+      var control = [UInt8](repeating: 0, count: MemoryLayout<cmsghdr>.size + MemoryLayout<Int32>.size)
+      sent = data.withUnsafeBytes { raw in
+        control.withUnsafeMutableBytes { cbuf in
+          let cmsg = cbuf.baseAddress!.assumingMemoryBound(to: cmsghdr.self)
+          cmsg.pointee = cmsghdr(cmsg_len: socklen_t(cbuf.count), cmsg_level: SOL_SOCKET, cmsg_type: SCM_RIGHTS)
+          (cbuf.baseAddress! + MemoryLayout<cmsghdr>.size).assumingMemoryBound(to: Int32.self).pointee = fd
+          var vector = iovec(iov_base: UnsafeMutableRawPointer(mutating: raw.baseAddress), iov_len: raw.count)
+          return withUnsafeMutablePointer(to: &vector) { iov in
+            var header = msghdr(msg_name: nil, msg_namelen: 0, msg_iov: iov, msg_iovlen: 1, msg_control: cbuf.baseAddress,
+              msg_controllen: socklen_t(cbuf.count), msg_flags: 0)
+            return sendmsg(socket, &header, 0) == raw.count
+          }
+        }
+      }
+    } else {
+      sent = writeAll(control, data)
+    }
+    guard sent else { return false }
+    // Lines until a return or an error; events and the greeting before them are skipped.
+    // As bytes: in Swift "\r\n" is one Character, so a String never has the suffix "\n".
+    var line = Data()
+    while true {
+      guard let byte = readExactly(control, 1) else { return false }
+      line.append(byte)
+      if byte.last == 10 {
+        let text = String(decoding: line, as: UTF8.self)
+        if text.contains("\"return\"") { return true }
+        if text.contains("\"error\"") {
+          log("QMP: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+          return false
+        }
+        line = Data()
+      }
+    }
+  }
+
+  /** On a thread of its own: QEMU's calls to the listener, until QEMU goes. Calls `onUpdate` after each change. */
+  func run(onUpdate: () -> Void) {
+    while let message = listener.receive() {
+      guard message.type == 1 else { continue }
+      var reader = DbusReader(data: message.body)
+      switch message.member {
+      case "ScanoutMap":
+        let index = Int(reader.u32())
+        let offset = Int(reader.u32()), width = Int(reader.u32()), height = Int(reader.u32()), stride = Int(reader.u32())
+        let format = reader.u32()
+        guard index < message.fds.count else {
+          log("D-Bus: ScanoutMap without its file descriptor")
+          listener.reply(to: message)
+          continue
+        }
+        let fd = message.fds[index]
+        // mmap's offset is in pages: the whole from the start, and the screen from `offset` in it.
+        let length = offset + stride * height
+        let pointer = mmap(nil, length, PROT_READ, MAP_SHARED, fd, 0)
+        Darwin.close(fd)
+        if format != DbusDisplay.XRGB8888 { log("D-Bus: the screen's format is \(String(format: "0x%08x", format)), not x8r8g8b8") }
+        lock.lock()
+        unmap()
+        if pointer != MAP_FAILED {
+          mapped = pointer
+          mappedLength = length
+          self.offset = offset
+        } else {
+          log("D-Bus: the shared screen did not map: \(String(cString: strerror(errno)))")
+        }
+        self.width = width
+        self.height = height
+        self.stride = stride
+        lock.unlock()
+        log("D-Bus: the desktop is \(width)x\(height), shared")
+        listener.reply(to: message)
+        onUpdate()
+      case "UpdateMap":
+        listener.reply(to: message)
+        onUpdate()
+      case "Scanout":
+        let width = Int(reader.u32()), height = Int(reader.u32()), stride = Int(reader.u32())
+        _ = reader.u32()
+        let range = reader.bytes()
+        lock.lock()
+        unmap()
+        self.width = width
+        self.height = height
+        self.stride = width * 4
+        pixels = Data(count: width * height * 4)
+        copyRows(from: message.body, range: range, stride: stride, x: 0, y: 0, w: width, h: height)
+        lock.unlock()
+        log("D-Bus: the desktop is \(width)x\(height), sent")
+        listener.reply(to: message)
+        onUpdate()
+      case "Update":
+        let x = Int(reader.i32()), y = Int(reader.i32()), w = Int(reader.i32()), h = Int(reader.i32())
+        let stride = Int(reader.u32())
+        _ = reader.u32()
+        let range = reader.bytes()
+        lock.lock()
+        if mapped == nil { copyRows(from: message.body, range: range, stride: stride, x: x, y: y, w: w, h: h) }
+        lock.unlock()
+        listener.reply(to: message)
+        onUpdate()
+      case "Get", "GetAll":
+        // The listener's Interfaces property: it maps the shared screen.
+        // a{sv} for GetAll, a v for Get: the variant is an `as` of one name.
+        var value = DbusWriter()
+        var entries = 0
+        if message.member == "GetAll" {
+          value.u32(0)
+          value.align(8)
+          entries = value.data.count
+          value.string("Interfaces")
+        }
+        value.signature("as")
+        value.u32(0)
+        let names = value.data.count
+        value.string("org.qemu.Display1.Listener.Unix.Map")
+        value.patch(names - 4, UInt32(value.data.count - names))
+        if message.member == "GetAll" { value.patch(0, UInt32(value.data.count - entries)) }
+        listener.reply(to: message, signature: message.member == "GetAll" ? "a{sv}" : "v", body: value.data)
+      case "Disable", "MouseSet", "CursorDefine":
+        listener.reply(to: message)
+      default:
+        listener.refuse(message)
+      }
+    }
+    log("QEMU's D-Bus display is gone")
+  }
+
+  /** On the reading thread, under the lock. */
+  private func unmap() {
+    if let mapped { munmap(mapped, mappedLength) }
+    mapped = nil
+    mappedLength = 0
+  }
+
+  /** Under the lock: rows of a sent rectangle into the desktop of its own. */
+  private func copyRows(from body: Data, range: Range<Int>, stride: Int, x: Int, y: Int, w: Int, h: Int) {
+    guard x >= 0, y >= 0, x + w <= width, y + h <= height, range.count >= stride * (h - 1) + w * 4 else { return }
+    body.withUnsafeBytes { raw in
+      pixels.withUnsafeMutableBytes { desktop in
+        let from = raw.baseAddress! + (range.lowerBound - body.startIndex)
+        for row in 0..<h { memcpy(desktop.baseAddress! + ((y + row) * width + x) * 4, from + row * stride, w * 4) }
+      }
+    }
+  }
+
+  func copy(into base: UnsafeMutableRawPointer, stride: Int) {
+    lock.lock()
+    defer { lock.unlock() }
+    if let mapped {
+      for row in 0..<height { memcpy(base + row * stride, mapped + offset + row * self.stride, width * 4) }
+    } else {
+      pixels.withUnsafeBytes { desktop in
+        for row in 0..<height { memcpy(base + row * stride, desktop.baseAddress! + row * width * 4, width * 4) }
+      }
+    }
+  }
+}
+
+
+/**
  * An RFB client of a Windows VM's QEMU VNC server on the Mac's loopback, which asks for no password (#865). It takes
  * raw pixels in BGRX, as VideoToolbox takes them, and the desktop's new size. It asks for no cursor: QEMU draws none
  * into the picture, and the guest's bb-box-stream.exe sends the pointer's shape.
  */
-final class RfbClient: @unchecked Sendable {
+final class RfbClient: QemuDesktop, @unchecked Sendable {
   let fd: Int32
   private(set) var width = 0
   private(set) var height = 0
@@ -1078,6 +1580,12 @@ final class RfbClient: @unchecked Sendable {
   func pointer(x: Int, y: Int, mask: Int) {
     let x = max(0, min(width - 1, x)), y = max(0, min(height - 1, y))
     send(Data([5, UInt8(mask & 255), UInt8(x >> 8), UInt8(x & 255), UInt8(y >> 8), UInt8(y & 255)]))
+  }
+
+  func copy(into base: UnsafeMutableRawPointer, stride: Int) {
+    pixels.withUnsafeBytes { desktop in
+      for row in 0..<height { memcpy(base + row * stride, desktop.baseAddress! + row * width * 4, width * 4) }
+    }
   }
 
   /** Asks for the changes since the last update, or with `whole` the whole desktop. */
@@ -1153,9 +1661,13 @@ final class QemuServer: @unchecked Sendable {
   /** When a whole desktop was asked for and has not come. */
   private var wholeAsked: Date?
   private var reconnectSignal: DispatchSourceSignal?
+  /** The VM's QMP socket, for the desktop from QEMU's D-Bus display (#885); nil for its VNC server's. */
+  private let qmp: String?
+  private var dbus: DbusDisplay?
 
-  init(port: Int) {
+  init(port: Int, qmp: String? = nil) {
     self.port = port
+    self.qmp = qmp
   }
 
   private var watched: Bool { clients.values.contains { $0.wantsVideo } }
@@ -1171,6 +1683,15 @@ final class QemuServer: @unchecked Sendable {
       exit(1)
     }
     rfb = first
+    if let qmp {
+      // The desktop from QEMU's D-Bus display; VNC stays for the pointer, and is asked for no picture.
+      guard let display = DbusDisplay(qmp: qmp) else { exit(1) }
+      dbus = display
+      Thread { [self] in
+        display.run { frame(from: display) }
+        exit(0)
+      }.start()
+    }
     unlink(path)
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0, var address = unixAddress(path) else {
@@ -1184,7 +1705,7 @@ final class QemuServer: @unchecked Sendable {
       log("could not listen at \(path): \(String(cString: strerror(errno)))")
       exit(1)
     }
-    log("serving QEMU's VNC on port \(port) at \(path)")
+    log(dbus == nil ? "serving QEMU's VNC on port \(port) at \(path)" : "serving QEMU's D-Bus display, with VNC on port \(port) for the pointer, at \(path)")
     Thread { [self] in
       while true {
         let client = Darwin.accept(fd, nil, nil)
@@ -1195,7 +1716,7 @@ final class QemuServer: @unchecked Sendable {
     Thread { [self] in readQemu(first) }.start()
     Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [self] _ in
       queue.async { [self] in
-        guard let rfb else { return }
+        guard let rfb, dbus == nil else { return }
         // QEMU sometimes stops answering one client, after another VNC client came and went, though it still takes the
         // client's input: why is not known (19 October 2026). A whole desktop asked for and not given within a second, it
         // connects again.
@@ -1248,7 +1769,7 @@ final class QemuServer: @unchecked Sendable {
       queue.sync {
         rfb = again
         wholeAsked = nil
-        if watched { askWhole() }
+        if watched && dbus == nil { askWhole() }
       }
     }
   }
@@ -1259,10 +1780,11 @@ final class QemuServer: @unchecked Sendable {
     rfb?.request(whole: true)
   }
 
-  /** On QEMU's thread, after an update: the desktop into a pixel buffer, encoded, while anyone watches. */
-  private func frame(from rfb: RfbClient) {
+  /** Off the queue, after an update: the desktop into a pixel buffer, encoded, while anyone watches. */
+  private func frame(from desktop: QemuDesktop) {
     guard queue.sync(execute: { wholeAsked = nil; return watched }) else { return }
-    let width = rfb.width, height = rfb.height
+    let width = desktop.width, height = desktop.height
+    guard width > 0, height > 0 else { return }
     if poolSize != (width, height) {
       let attributes: [CFString: Any] = [
         kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey: width, kCVPixelBufferHeightKey: height,
@@ -1277,11 +1799,8 @@ final class QemuServer: @unchecked Sendable {
     guard let pool, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made) == kCVReturnSuccess, let buffer = made else { return }
     CVPixelBufferLockBaseAddress(buffer, [])
     let stride = CVPixelBufferGetBytesPerRow(buffer)
-    if let base = CVPixelBufferGetBaseAddress(buffer) {
-      rfb.pixels.withUnsafeBytes { desktop in
-        for row in 0..<height { memcpy(base + row * stride, desktop.baseAddress! + row * width * 4, width * 4) }
-      }
-    }
+    // The desktop's size may have changed since it was read; a copy of another size waits for the next update.
+    if let base = CVPixelBufferGetBaseAddress(buffer), desktop.width == width, desktop.height == height { desktop.copy(into: base, stride: stride) }
     CVPixelBufferUnlockBaseAddress(buffer, [])
     queue.async { [self] in
       last = buffer
@@ -1378,7 +1897,9 @@ final class QemuServer: @unchecked Sendable {
           keyAsked = true
           if let last { encode(last) }
           // QEMU sends nothing while the desktop is still: the whole of it, for a viewer that has none.
-          if verb == "START_VIDEO" { askWhole() }
+          if verb == "START_VIDEO" {
+            if let dbus { DispatchQueue.global().async { self.frame(from: dbus) } } else { askWhole() }
+          }
         }
       case "STOP_VIDEO":
         queue.async { client.wantsVideo = false }
@@ -1410,13 +1931,13 @@ case "connect":
 case "attach":
   runConnect(path, start: false)
 case "qemu":
-  guard arguments.count == 4, let port = Int(arguments[2]), port > 0, port < 65536 else {
-    FileHandle.standardError.write("usage: bb-box-stream qemu <port> <socket>\n".data(using: .utf8)!)
+  guard arguments.count == 4 || arguments.count == 5, let port = Int(arguments[2]), port > 0, port < 65536 else {
+    FileHandle.standardError.write("usage: bb-box-stream qemu <port> <socket> [<qmp socket>]\n".data(using: .utf8)!)
     exit(2)
   }
   let socketPath = arguments[3]
   try? FileManager.default.createDirectory(atPath: (socketPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-  let server = QemuServer(port: port)
+  let server = QemuServer(port: port, qmp: arguments.count == 5 ? arguments[4] : nil)
   server.start(path: socketPath)
   RunLoop.main.run()
 case "serve":
