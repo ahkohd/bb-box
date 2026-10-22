@@ -1,5 +1,5 @@
 import { quote } from "../transports/process.ts";
-import { tailscaleFetch } from "./tailscale-fetch.ts";
+import { freshFetch } from "./fresh-fetch.ts";
 
 export const TAILSCALE_API = "https://api.tailscale.com";
 export const DEFAULT_TAILNET_TAGS: readonly string[] = ["tag:bb-box"];
@@ -71,7 +71,7 @@ export class Tailnet {
   constructor(options: TailnetOptions) {
     this.#credentials = options.credentials;
     this.tags = [...(options.tags?.length ? options.tags : DEFAULT_TAILNET_TAGS)];
-    this.#fetch = options.fetch ?? tailscaleFetch(options.log);
+    this.#fetch = options.fetch ?? freshFetch("Tailscale", options.log);
     this.#now = options.now ?? Date.now;
     this.#apiUrl = (options.apiUrl ?? TAILSCALE_API).replace(/\/+$/, "");
     this.#attemptTimeoutMs = options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS;

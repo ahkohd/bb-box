@@ -212,7 +212,7 @@ export class NamespaceBackend implements Backend {
     this.#options = options;
     this.id = context.id;
     this.label = "Namespace";
-    this.#api = new NamespaceApi({ token: config.token, region: config.region, ...(options.fetch ? { fetch: options.fetch } : {}) });
+    this.#api = new NamespaceApi({ token: config.token, region: config.region, ...(context.log ? { log: (line: string) => context.log!(line) } : {}), ...(options.fetch ? { fetch: options.fetch } : {}) });
     this.#now = options.now ?? Date.now;
     this.#sleep = options.sleep ?? sleepFor;
   }

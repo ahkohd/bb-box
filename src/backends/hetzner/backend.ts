@@ -127,7 +127,7 @@ export class HetznerBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.#now = options.now ?? Date.now;
-    this.#api = new Hetzner({ token: config.token, fetch: options.fetch, sleep: options.sleep });
+    this.#api = new Hetzner({ token: config.token, fetch: options.fetch, sleep: options.sleep, ...(context.log ? { log: (line: string) => context.log!(line) } : {}) });
     this.hostRecords = new HetznerHosts({
       api: this.#api,
       storage: context.storage,
