@@ -1,4 +1,7 @@
+import { startMacInput } from "../../core/mac-input.ts";
 import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
+import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
+import { qemuVideoSource } from "../tart/qemu-video.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair } from "../../transports/ssh.ts";
 import type { SshAccess } from "../../transports/types.ts";
 import {
@@ -36,10 +39,31 @@ export const KEEP_AHEAD_MS = 60 * 60_000;
 const READY_TIMEOUT_MS = 5 * 60_000;
 const SSH_POLL_MS = 2_000;
 const SSH_KEY = "ssh-key";
+const SCREEN_SHARING_PORT = 5900;
+const MAC_DESKTOP_CLIENTS = ["/opt/namespace/vmguest", "/usr/bin/osascript", MAC_STREAM];
+const MAC_DESKTOP_SERVICES = ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"];
+const MAC_DESKTOP = [
+  "set -eu",
+  'export PATH="$PATH:/opt/homebrew/bin"',
+  'work=$(mktemp -d); trap \'rm -rf "$work"\' EXIT',
+  'cat > "$work/stream.swift"',
+  'xcrun swiftc -O -swift-version 5 -o "$work/bb-box-stream" "$work/stream.swift" >"$work/build.log" 2>&1 || { tail -n 5 "$work/build.log" >&2; exit 1; }',
+  `sudo -n mkdir -p ${"$(dirname " + MAC_STREAM + ")"}`,
+  `sudo -n install -m 0755 "$work/bb-box-stream" ${MAC_STREAM}`,
+  'db="/Library/Application Support/com.apple.TCC/TCC.db"; now=$(date +%s)',
+  ...MAC_DESKTOP_CLIENTS.flatMap((client) =>
+    MAC_DESKTOP_SERVICES.map(
+      (service) =>
+        `sudo -n sqlite3 "$db" "DELETE FROM access WHERE service = '${service}' AND client = '${client}'; INSERT INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded) VALUES ('${service}', '${client}', 1, 2, 4, 1, NULL, NULL, 0, 'UNUSED', NULL, 0, $now, NULL, NULL, 'UNUSED', $now);"`,
+    ),
+  ),
+  "sudo -n pmset -a displaysleep 0 sleep 0 >/dev/null",
+  "caffeinate -u -t 1",
+].join("\n");
 const STALE_DEVICE_MS = 15 * 60_000;
 const MAC_TAILSCALE = [
   "set -eu",
-  'export PATH="/opt/homebrew/bin:$PATH"',
+  'export PATH="$PATH:/opt/homebrew/bin"',
   "command -v tailscale >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install --quiet tailscale >/dev/null",
   'pgrep -x tailscaled >/dev/null || sudo -n sh -c "mkdir -p /var/lib/tailscale; $(command -v tailscaled) --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.socket >/var/log/tailscaled.log 2>&1 </dev/null &"',
   "for attempt in 1 2 3 4 5 6 7 8 9 10; do tailscale status >/dev/null 2>&1 && break; [ -S /var/run/tailscaled.socket ] && break; sleep 1; done",
@@ -76,6 +100,8 @@ export interface NamespaceBackendOptions {
   readonly now?: () => number;
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly readyTimeoutMs?: number;
+  readonly streamSource?: string;
+  readonly desktopScript?: string;
 }
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
@@ -117,6 +143,7 @@ export class NamespaceBackend implements Backend {
   }
 
   kinds(): readonly BoxKind[] {
+    const readyTimeoutMs = this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS;
     return [
       {
         id: "macos",
@@ -124,7 +151,24 @@ export class NamespaceBackend implements Backend {
         description: "A Mac of its own on Namespace, for builds and Apple's tools, with Xcode. It lasts at most the workspace plan's longest life. Its desktop is not shown.",
         requires: [],
         capabilities: { os: "macos", arch: "arm64", gpu: false, features: ["xcode"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
-        readyTimeoutMs: this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS,
+        readyTimeoutMs,
+      },
+      {
+        id: "macos-desktop",
+        label: "macOS desktop",
+        description: "A Mac of its own on Namespace, with its desktop shown in the panel, as video or over Screen Sharing, for Apple's tools and apps, with Xcode. It lasts at most the workspace plan's longest life.",
+        requires: [],
+        capabilities: {
+          os: "macos",
+          arch: "arm64",
+          gpu: false,
+          features: ["xcode"],
+          command: SSH_COMMAND,
+          displays: [{ id: "desktop", protocol: "rfb", resizable: false }, MAC_VIDEO],
+          computerUse: null,
+          enrol: true,
+        },
+        readyTimeoutMs,
       },
     ];
   }
@@ -188,6 +232,7 @@ export class NamespaceBackend implements Backend {
       const ready = await step("ready", () => this.#api.wait(made!.id, signal));
       if (ready.status !== "running") throw new Error(`Namespace's machine ${ready.id} is ${ready.status}, not running.`);
       await step("ssh", () => this.#answers(ready.id, this.#now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS), signal));
+      if (kind === "macos-desktop") await step("desktop", () => this.#prepareDesktop(ready.id, signal));
       const tailnet = this.#context.tailnet?.() ?? null;
       if (tailnet) await step("tailnet", () => this.#join(ready.id, box, tailnet, signal));
       const guest = claimed(ready);
@@ -253,12 +298,34 @@ export class NamespaceBackend implements Backend {
     }
   }
 
-  async transports(guest: Guest): Promise<BoxTransports> {
+  async transports(guest: Guest, kind: string): Promise<BoxTransports> {
     const instance = typeof guest.data?.instance === "string" ? guest.data.instance : null;
     if (!instance) throw new BackendError("gone", `Box ${guest.ref} has no Namespace machine.`);
     const { ssh } = await this.#keys();
     const access = this.#access(instance);
-    return { command: new SshTransport(ssh, access, "macos"), displays: [], access: { ssh: access, dockerHost: null } };
+    const command = new SshTransport(ssh, access, "macos");
+    const displays =
+      kind === "macos-desktop"
+        ? [
+            {
+              id: "desktop",
+              label: "Desktop",
+              protocol: "rfb" as const,
+              resizable: false,
+              open: async (signal?: AbortSignal) => {
+                const signIn = await this.#api.vncSignIn(instance, signal);
+                return {
+                  route: ssh.route(access, SCREEN_SHARING_PORT),
+                  auth: { type: "apple" as const, user: signIn.user, password: signIn.password },
+                  input: (events: Parameters<typeof startMacInput>[1], inputSignal?: AbortSignal) =>
+                    startMacInput(command, events, `The desktop's input helper did not start on Namespace's machine ${instance}.`, inputSignal),
+                };
+              },
+            },
+            { ...MAC_VIDEO, label: "Desktop, as video", open: async () => ({ route: ssh.commandRoute(access, macStreamCommand()), auth: { type: "none" as const } }) },
+          ]
+        : [];
+    return { command, displays, access: { ssh: access, dockerHost: null } };
   }
 
   async doctor(signal?: AbortSignal): Promise<DoctorReport> {
@@ -409,8 +476,14 @@ export class NamespaceBackend implements Backend {
   }
 
   #kind(kind: string): NamespaceKind {
-    if (kind !== "macos") throw new BackendError("unsupported", `Namespace offers macos boxes, not ${kind}.`);
+    if (kind !== "macos" && kind !== "macos-desktop") throw new BackendError("unsupported", `Namespace offers macos and macos-desktop boxes, not ${kind}.`);
     return kind;
+  }
+
+  async #prepareDesktop(instance: string, signal?: AbortSignal): Promise<void> {
+    const { ssh } = await this.#keys();
+    const prepared = await new SshTransport(ssh, this.#access(instance), "macos").run(this.#options.desktopScript ?? MAC_DESKTOP, { stdin: this.#options.streamSource ?? qemuVideoSource(), timeoutMs: 300_000, signal });
+    if (prepared.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not get its desktop ready: ${prepared.stderr.trim().slice(-400) || `exit ${prepared.exitCode}`}`);
   }
 
   #tooBig(size: BoxSize): string {

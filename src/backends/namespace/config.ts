@@ -1,6 +1,6 @@
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 
-export const NAMESPACE_KINDS = ["macos"] as const;
+export const NAMESPACE_KINDS = ["macos", "macos-desktop"] as const;
 export type NamespaceKind = (typeof NAMESPACE_KINDS)[number];
 
 export const NAMESPACE_REGIONS = ["us", "eu"] as const;
