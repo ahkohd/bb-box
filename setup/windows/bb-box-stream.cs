@@ -1153,8 +1153,11 @@ class Server {
     }
   }
 
+  static readonly int[] RetryWaitsMs = { 20, 100, 500 };
+
   /** Captures and encodes while a client wants video; a new capture and encoder when the screen's size changes. */
   void CaptureLoop() {
+    int failures = 0;
     while (AnyWantsVideo()) {
       Capture capture = null;
       Encoder encoder = null;
@@ -1204,7 +1207,7 @@ class Server {
             keyAsked = false;
             bool isKey;
             byte[] data = encoder.Encode(last, capture.Width * 4, key, out isKey);
-            if (data != null) Send(data, isKey, encoder.Width, encoder.Height);
+            if (data != null) { Send(data, isKey, encoder.Width, encoder.Height); failures = 0; }
           }
         } finally {
           running = false;
@@ -1212,7 +1215,7 @@ class Server {
         }
       } catch (Exception error) {
         Program.Log("capture: " + error);
-        Thread.Sleep(500);
+        Thread.Sleep(RetryWaitsMs[Math.Min(failures++, RetryWaitsMs.Length - 1)]);
       } finally {
         if (encoder != null) encoder.Dispose();
         if (capture != null) capture.Dispose();
