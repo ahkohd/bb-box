@@ -8,7 +8,7 @@ Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own
 
 - **Each thread gets its own computers.** Boxes have the thread's Git access, its variables and BB itself.
 - **Keep boxes as your own machines.** Threads can run on them, such as an always-on agent with its own desktop.
-- **Any provider.** Docker, Proxmox, Micro Sandbox, Macs with Tart, or machines over SSH.
+- **Any provider.** Docker, Proxmox, Micro Sandbox, Macs with Tart, machines over SSH, or cloud machines from Hetzner Cloud and Namespace, made when boxes need them.
 - **Ready in seconds.** A warm box is ready at once.
 - **Shared desktops.** You and the agent use the same screen. The agent waits while you have control.
 
@@ -45,6 +45,8 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
 | [Proxmox QEMU](setup/proxmox-qemu/README.md) | Windows desktop; Linux with a kernel of its own, and KVM where the host allows | virtual machines on a Proxmox VE host |
 | [Tart](setup/tart/README.md) | macOS, with or without a desktop; Linux on arm64, with or without a desktop; Windows desktop on arm64 | virtual machines on your Macs with Apple silicon |
 | [SSH host pool](setup/ssh-pool/README.md) | Linux; macOS, with or without a desktop | machines over SSH, physical or a VPS |
+| [Hetzner Cloud](docs/guide/hetzner.md) | Linux; Linux desktop on the CPU; Wayland desktop on the CPU | containers on Docker hosts bb-box rents in your Hetzner Cloud project as boxes need them, and deletes when idle |
+| [Namespace](docs/guide/namespace.md) | macOS, with or without a desktop | a Namespace Mac for each box, rented by the minute in your Namespace workspace, within its plan's limits |
 
 Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md).
 
