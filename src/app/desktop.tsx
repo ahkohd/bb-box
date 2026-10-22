@@ -51,6 +51,8 @@ import { MachineRow } from "./settings-machines.tsx";
 import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
 import {
   KeysAfterPaste,
+  keyLog,
+  keyLogOn,
   PASTE_LANDS_MS,
   tabOf,
   ShiftedLetters,
@@ -163,6 +165,11 @@ class Viewer extends RFB {
     }
   }
 
+  override sendKey(keysym: number, code: string | null, down?: boolean): void {
+    keyLog("vnc", down ?? "press", keysym, this.#heldModifiers.keys());
+    super.sendKey(keysym, code, down);
+  }
+
   #keyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
     // The code too: with QEMU's key events the box takes the scancode, not the keysym.
     const mac = macBrowser();
@@ -242,7 +249,7 @@ export function desktopParams(boxId: string): { box: string } {
 function socketUrl(path: string, boxId: string, viewer: string): string {
   const url = new URL(path, window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.search = new URLSearchParams({ box: boxId, viewer }).toString();
+  url.search = new URLSearchParams({ box: boxId, viewer, ...(keyLogOn() ? { keylog: "1" } : {}) }).toString();
   return url.toString();
 }
 

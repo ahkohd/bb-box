@@ -69,6 +69,25 @@ const XK_UPPER_A = 0x41;
 const XK_UPPER_Z = 0x5a;
 const leftShift = (down: boolean): LetterKey => ({ keysym: XK_SHIFT_L, code: "ShiftLeft", down });
 
+/** Whether this browser logs each key a desktop viewer sends, as localStorage "bb-box-keylog" = "1" turns on: a diagnostic. */
+export function keyLogOn(): boolean {
+  try {
+    return window.localStorage.getItem(KEY_LOG) === "1";
+  } catch {
+    return false;
+  }
+}
+
+const KEY_LOG = "bb-box-keylog";
+
+/** Logs a key a desktop viewer sends, with the modifiers it holds, to the console, while keyLogOn. */
+export function keyLog(stream: string, down: boolean | "press", keysym: number, held: Iterable<number>): void {
+  if (!keyLogOn()) return;
+  const hex = (value: number) => `0x${value.toString(16)}`;
+  const shown = keysym >= 0x20 && keysym < 0x7f ? ` '${String.fromCharCode(keysym)}'` : "";
+  console.log(`bb-box key ${stream}: ${down === "press" ? "press" : down ? "down" : "up"} ${hex(keysym)}${shown}, held [${[...held].map(hex).join(" ")}], at ${Math.round(performance.now())} ms`);
+}
+
 /** The longest keys typed after a paste wait for its chord before they go anyway (#915). */
 export const PASTE_HOLD_MS = 5_000;
 /** How long keys typed after a paste wait once its chord went: an X app's first paste took up to 100 ms to land (#915). */

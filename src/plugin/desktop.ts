@@ -687,6 +687,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     ({ url }) => {
       const boxId = url.searchParams.get("box") ?? "";
       const viewer = url.searchParams.get("viewer") ?? "";
+      const keyLog = url.searchParams.get("keylog") === "1" ? (line: string) => bb.log.info(`key log, box ${boxId}, viewer ${viewer.slice(0, 8)}: ${line}`) : undefined;
       const selkies = url.searchParams.get("stream") === "selkies";
       // A VNC viewer's own stream of the box's pointer (060): it carries no picture and no input, only the pointer messages a
       // video viewer gets, as RFB has no place for where the box's pointer is.
@@ -739,6 +740,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               box: selkiesBox(boxId),
               open,
               mayInput: () => control.mayInput(boxId, viewer),
+              keyLog,
               onSize: (size) => {
                 control.seen(boxId, size);
                 frameSizes.set(boxId, size);
@@ -787,6 +789,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               viewer: end,
               open,
               mayInput: () => control.mayInput(boxId, viewer),
+              keyLog,
               onServerRestart: (why, error) => {
                 void boxes
                   .find(boxId)

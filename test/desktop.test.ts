@@ -617,6 +617,23 @@ test("the box closing its desktop closes the viewer", async () => {
   assert.deepEqual(relay.ends, ["box"]);
 });
 
+test("a viewer that asked for the key log has each key logged as it goes to the box, or as it is dropped without control (a diagnostic)", async () => {
+  const server = new FakeRfb();
+  const lines: string[] = [];
+  const relay = relayTo(server, { keyLog: (line) => lines.push(line) });
+  await relay.init();
+  await relay.relay.receive(keyEvent(true, 0x41));
+  relay.give(true);
+  await relay.relay.receive(concat(keyEvent(true, 0xffe1), keyEvent(true, 0x41)));
+  await relay.relay.receive(keyEvent(false, 0x41));
+  await until("the keys", () => lines.length >= 4);
+  assert.match(lines[0]!, /^dropped, as the viewer has no control: down 0x41, held \[\], at \d+ ms$/);
+  assert.match(lines[1]!, /^to the server: down 0xffe1, held \[0xffe1\]/);
+  assert.match(lines[2]!, /^to the server: down 0x41, held \[0xffe1 0x41\]/);
+  assert.match(lines[3]!, /^to the server: up 0x41, held \[0xffe1\]/);
+  await relay.relay.close();
+});
+
 test("a sign-in that hangs has a display that can restart its server restart it, once, and sign in again (#411)", async () => {
   const server = new FakeRfb({ password: "secret12" });
   const auth = { type: "vnc-password", password: "secret12" } as const;

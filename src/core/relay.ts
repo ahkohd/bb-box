@@ -96,6 +96,8 @@ export interface RelayOptions {
   onEnd?(by: "viewer" | "box", error: Error | null): void;
   /** The display's input could not be opened, or failed, so this viewer's input goes nowhere. */
   onInputError?(error: Error): void;
+  /** Each key as it goes to the box, and by which way, for a viewer that asked for the key log (a diagnostic). */
+  keyLog?(line: string): void;
   /** The box's clipboard text changed, as the display's own input reports it. */
   onClipboard?(text: string): void;
   /** The display's server had lost the desktop, as `why` says, and the relay restarted it and ends, so the viewer connects to the new one. */
@@ -340,7 +342,12 @@ export class RfbRelay {
         });
       }
       const bytes = this.#passing(message);
-      if (!bytes) continue;
+      const key = message.type === "key" || message.type === "qemu-key" ? message : null;
+      const logKey = (way: string) => key && this.#options.keyLog?.(`${way}: ${key.down ? "down" : "up"} 0x${key.keysym.toString(16)}${key.type === "qemu-key" ? ` scancode ${key.keycode}` : ""}, held [${[...this.#heldKeysyms()].map((held) => `0x${held.toString(16)}`).join(" ")}], at ${Date.now() % 100_000} ms`);
+      if (!bytes) {
+        logKey("dropped, as the viewer has no control");
+        continue;
+      }
       if (connection.input && isInput(message) && (connection.inputTakes === "wheel" || connection.inputTakes === "characters")) {
         // A character the stream server would type wrong or not at all goes
         // to the display's input as itself, down and up.
@@ -358,20 +365,27 @@ export class RfbRelay {
           const wait = Math.max(this.#wroteAt + CHARACTER_AFTER_KEYS_MS, this.#keysUntil + CHARACTER_AFTER_KEYS_MS) - Date.now();
           if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
           const input = await this.#opened(connection);
+          logKey(`to the input as a character, after ${Math.max(0, wait)} ms`);
           if (input && !this.#ended) await input.character?.(message.down, message.keysym);
           continue;
         }
         // The stream server takes all but the wheel; the display's input
         // takes the wheel's buttons, down and up, as a notch is each one going down.
         if (connection.inputTakes === "characters" || message.type !== "pointer" || (message.mask & WHEEL) === this.#wheel) {
+          logKey("to the server");
           passing.push(bytes);
           continue;
         }
         this.#wheel = message.mask & WHEEL;
         passing.push(pointerEvent(message.mask & ~WHEEL, message.x, message.y));
         await this.#toInput(connection, { ...message, mask: this.#wheel });
-      } else if (connection.input && isInput(message)) await this.#toInput(connection, message);
-      else passing.push(bytes);
+      } else if (connection.input && isInput(message)) {
+        logKey("to the input");
+        await this.#toInput(connection, message);
+      } else {
+        logKey("to the server");
+        passing.push(bytes);
+      }
     }
     if (passing.length) await this.#write(connection, passing);
   }
