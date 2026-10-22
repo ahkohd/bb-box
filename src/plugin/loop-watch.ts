@@ -7,8 +7,8 @@
 // log says whether the process stalls, and whether collecting garbage is
 // why. A CPU profile (profile.ts) names the code. One line a minute at most, and none while the loop keeps up;
 // it tells too how many processes bb-box started that minute, and how long the spawn calls held the loop, as each
-// forks BB's server. And once an hour, whatever happened, the server's memory: whether its heap grows, which makes
-// each major collection longer.
+// forks BB's server. And five minutes after a start, then once an hour, whatever happened, the server's memory:
+// whether its heap grows, which makes each major collection longer.
 
 import { PerformanceObserver, constants, performance } from "node:perf_hooks";
 import type { SpawnTotals } from "../transports/spawns.ts";
@@ -18,6 +18,8 @@ const TICK_MS = 100;
 const STALL_MS = 250;
 const REPORT_MS = 60_000;
 const MEMORY_MS = 60 * 60_000;
+/** The first memory line comes this soon after a start, as bb-box often reloads within the hour. */
+const FIRST_MEMORY_MS = 5 * 60_000;
 const MiB = 1024 * 1024;
 /** Garbage collections this long are counted. */
 const GC_MS = 10;
@@ -72,13 +74,16 @@ export class LoopWatch {
   #spawnedMinute: SpawnTotals = { count: 0, ms: 0 };
   #spawnedHour: SpawnTotals = { count: 0, ms: 0 };
   #memoryAt: number;
+  /** When the period the next memory line covers began. */
+  #memorySince: number;
   readonly #timer: ReturnType<typeof setInterval> | null = null;
   readonly #observer: PerformanceObserver | null = null;
 
   constructor(options: LoopWatchOptions) {
     this.#options = options;
     this.#now = options.now ?? (() => performance.now());
-    this.#last = this.#reported = this.#memoryAt = this.#now();
+    this.#last = this.#reported = this.#memorySince = this.#now();
+    this.#memoryAt = this.#memorySince - MEMORY_MS + FIRST_MEMORY_MS;
     this.#spawnedMinute = this.#spawnedHour = options.spawns?.() ?? { count: 0, ms: 0 };
     if (options.manual) return;
     this.#timer = setInterval(() => this.tick(), TICK_MS);
@@ -106,9 +111,11 @@ export class LoopWatch {
     this.#report(now);
   }
 
-  /** The hour's line: the server's memory, and the processes bb-box started. */
+  /** The hour's line, the first five minutes after a start: the server's memory, and the processes bb-box started. */
   #memory(now: number): void {
-    this.#memoryAt = now;
+    const minutes = Math.round((now - this.#memorySince) / 60_000);
+    const period = minutes === 60 ? "the last hour" : `the last ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+    this.#memoryAt = this.#memorySince = now;
     const memory = this.#options.memory?.();
     const spawns = this.#options.spawns?.();
     if (!memory && !spawns) return;
@@ -121,7 +128,7 @@ export class LoopWatch {
     if (spawns) {
       const count = spawns.count - this.#spawnedHour.count;
       parts.push(
-        `bb-box started ${count} ${count === 1 ? "process" : "processes"} in the last hour, the spawn calls taking ${Math.round(spawns.ms - this.#spawnedHour.ms)} ms in all` +
+        `bb-box started ${count} ${count === 1 ? "process" : "processes"} in ${period}, the spawn calls taking ${Math.round(spawns.ms - this.#spawnedHour.ms)} ms in all` +
           helpedPart(spawns, this.#spawnedHour) +
           mostFromPart(spawns, this.#spawnedHour),
       );
