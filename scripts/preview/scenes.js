@@ -951,6 +951,25 @@ export const scenes = {
     rpc: rpc([box()]),
     terminal: { output: "Welcome to Ubuntu 24.04 LTS (GNU/Linux 6.8.0 x86_64)\r\n\r\nbox@calm-otter:~$ ls\r\napp  node_modules  package.json  README.md\r\nbox@calm-otter:~$ " },
   },
+  // What the renderer draws: bold, italic and colours, wide characters, box drawing, a link the shell marked (OSC 8), and
+  // scrollback longer than the screen.
+  "terminal-render": {
+    slot: "terminal",
+    chrome: terminalChrome("calm-otter"),
+    width: 720,
+    height: 420,
+    props: { threadId: THREAD, params: { box: "box_1" } },
+    rpc: rpc([box()]),
+    terminal: {
+      output: [
+        ...Array.from({ length: 120 }, (_, index) => `line ${index + 1} of the build log`),
+        "\x1b[1mbold\x1b[0m \x1b[3mitalic\x1b[0m \x1b[4munderline\x1b[0m \x1b[31mred\x1b[0m \x1b[32mgreen\x1b[0m \x1b[1;34mbold blue\x1b[0m \x1b[7minverse\x1b[0m",
+        "wide: 漢字かな 한국어 | emoji: 🙂🚀 | box: ┌─┬─┐ │ │ └─┴─┘ | arrows: → ← ✓ ✗",
+        "a URL: https://example.com/docs and a link: \x1b]8;;https://example.com/marked\x1b\\the docs\x1b]8;;\x1b\\ here",
+        "box@calm-otter:~$ ",
+      ].join("\r\n"),
+    },
+  },
   "terminal-ended": {
     slot: "terminal",
     chrome: terminalChrome("calm-otter"),

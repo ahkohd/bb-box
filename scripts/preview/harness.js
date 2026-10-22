@@ -142,6 +142,16 @@ class FakeTerminalSocket {
 }
 window.WebSocket = FakeTerminalSocket;
 
+// Headless Chrome's emulated scale factor reports a canvas's device pixels unscaled, and xterm's WebGL renderer sizes its
+// canvas by them, so a shot drew a terminal's glyphs twice as large. Terminals draw with the DOM renderer here, as they do
+// where a browser has no WebGL; "?webgl" in the URL keeps WebGL, for a browser at a real scale factor.
+if (!new URLSearchParams(location.search).has("webgl")) {
+  const getContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {
+    return kind === "webgl2" ? null : getContext.call(this, kind, ...rest);
+  };
+}
+
 // A decoder for the video scenes: each chunk is a 1280x800 picture of a desktop, so the viewer connects as with a box's video.
 class FakeVideoDecoder {
   static async isConfigSupported(config) {

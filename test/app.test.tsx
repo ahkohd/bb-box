@@ -146,6 +146,19 @@ vi.mock("@novnc/novnc", () => ({ default: novnc.FakeRfb }));
 
 // xterm draws nothing in jsdom: a fake keeps what was written and lets a test type and resize.
 const xterm = vi.hoisted(() => {
+  /** xterm's WebGL addon: loading it fails where `FakeWebgl.missing`, as it does without WebGL 2; `lose` loses its context. */
+  class FakeWebgl {
+    static missing = false;
+    disposed = false;
+    lose: (() => void) | null = null;
+    onContextLoss(handler: () => void) {
+      this.lose = handler;
+      return { dispose: () => {} };
+    }
+    dispose() {
+      this.disposed = true;
+    }
+  }
   class FakeTerminal {
     static made: FakeTerminal[] = [];
     cols = 80;
@@ -160,7 +173,11 @@ const xterm = vi.hoisted(() => {
     open(target: HTMLElement) {
       this.target = target;
     }
-    loadAddon() {}
+    addons: unknown[] = [];
+    loadAddon(addon: unknown) {
+      if (addon instanceof FakeWebgl && FakeWebgl.missing) throw new Error("WebGL2 not supported");
+      this.addons.push(addon);
+    }
     focus() {}
     reset() {}
     dispose() {}
@@ -176,9 +193,10 @@ const xterm = vi.hoisted(() => {
       return { dispose: () => {} };
     }
   }
-  return { FakeTerminal };
+  return { FakeTerminal, FakeWebgl };
 });
 vi.mock("@xterm/xterm", () => ({ Terminal: xterm.FakeTerminal }));
+vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: xterm.FakeWebgl }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() {} } }));
 
 /** A WebSocket a test opens, feeds and closes. */
@@ -4105,6 +4123,26 @@ test("a terminal tab for a box the panel lists as ready connects at once, withou
   answer();
   await waitFor(() => expect(tab.getByText("Connected")).toBeTruthy());
   expect(FakeSocket.made).toHaveLength(1);
+});
+
+test("a terminal draws with WebGL, and with xterm's DOM renderer where WebGL is missing or its context is lost", async () => {
+  const { handlers } = server([box(), box({ id: "box_2", name: "bold-heron" })]);
+  terminalTab(handlers);
+  await waitFor(() => expect(xterm.FakeTerminal.made).toHaveLength(1));
+  const webgl = xterm.FakeTerminal.made[0]!.addons.find((addon) => addon instanceof xterm.FakeWebgl) as InstanceType<typeof xterm.FakeWebgl>;
+  expect(webgl).toBeTruthy();
+  webgl.lose!();
+  expect(webgl.disposed, "a lost context gives the terminal back to the DOM renderer").toBe(true);
+
+  xterm.FakeWebgl.missing = true;
+  try {
+    terminalTab(handlers, "box_2");
+    await waitFor(() => expect(xterm.FakeTerminal.made).toHaveLength(2));
+    expect(xterm.FakeTerminal.made[1]!.addons.some((addon) => addon instanceof xterm.FakeWebgl)).toBe(false);
+    await waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+  } finally {
+    xterm.FakeWebgl.missing = false;
+  }
 });
 
 test("a remounted terminal tab attaches to the same shell, and a stopped box offers Start", async () => {
