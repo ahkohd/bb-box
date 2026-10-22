@@ -220,7 +220,7 @@ export class FakeBackend implements Backend {
   readonly returnToService?: (ref: string) => Promise<void>;
   readonly stamp?: (boxId: string, guest: Guest) => Promise<Guest>;
   readonly #options: FakeBackendOptions;
-  readonly #kinds: readonly BoxKind[];
+  #kinds: readonly BoxKind[];
   readonly #installId: string;
   readonly #storage: BackendStorage;
   readonly #pool: KvPoolStore<Holder>;
@@ -305,6 +305,11 @@ export class FakeBackend implements Backend {
       address: `192.0.2.${index + 10}`,
       kinds: this.#kinds.map((kind) => kind.id),
     }));
+  }
+
+  /** Offers `kinds` from now on, as a backend whose offer changes by itself. */
+  offer(kinds: readonly BoxKind[]): void {
+    this.#kinds = kinds;
   }
 
   kinds(): BoxKind[] {

@@ -3,6 +3,7 @@
 // and settings.
 
 import assert from "node:assert/strict";
+import type { BackendContext } from "../src/backends/types.ts";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -88,6 +89,8 @@ async function start(
     threads,
     hosts,
     backend: null as FakeBackend | null,
+    /** The context bb-box gave each fake backend it made. */
+    contexts: [] as BackendContext[],
     /** Keys BB's bootstrap ran with, in order. */
     bootstraps: [] as string[],
     /** The script BB's installer runs in the box. */
@@ -840,6 +843,19 @@ test("box_copy streams a file too large for BB's file API through the thread's m
   assert.ok(!existsSync(join(world.workspace, "back.bin.bb-box-part")));
   // The worker's lease goes once bb-box closes the link.
   await until("the lease to go", async () => worker.experimental_getRetainedWorkerLeaseCount() === 0);
+});
+
+test("a kind a backend changes by itself, as when a Mac reports Windows video ready after a restart, reaches the boxes made before (#916)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", { kind: "linux" });
+  const box = await only(app);
+  const kind = world.backend!.kinds().find((candidate) => candidate.id === box.kind)!;
+  // The backend adds a display to the kind, as the Tart backend adds video once a Mac is ready, and says so.
+  const video = { id: "video", protocol: "selkies", resizable: true } as const;
+  world.backend!.offer(world.backend!.kinds().map((each) => (each.id === kind.id ? { ...each, capabilities: { ...each.capabilities, displays: [...each.capabilities.displays, video] } } : each)));
+  world.contexts.at(-1)!.kindsChanged!();
+  await until("the box to take the kind's displays", async () => (await app.boxes.find(box.id))?.capabilities.displays.some((display) => display.id === "video") ?? false);
 });
 
 test("a Windows box on trial enrols as a machine of BB's manual provider, which bb-box owns: release, a failure and the sweep remove it, and a start reconnects only a disconnected one (#539)", async (t) => {

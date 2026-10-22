@@ -855,6 +855,12 @@ export interface BackendContext {
   logError(operation: string, error: unknown): void;
   /** Says what the backend did by itself, as removing what a run left, for bb-box's log. */
   log?(message: string): void;
+  /**
+   * Says that a kind's capabilities changed by themselves, as when a host
+   * reports its video ready after bb-box restarted, so boxes of the kind
+   * take them, as they do at bb-box's start (#215), not only new boxes.
+   */
+  kindsChanged?(): void;
 }
 
 /**
