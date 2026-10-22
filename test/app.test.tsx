@@ -4931,3 +4931,242 @@ test("Docker on BB machines lists each machine with Docker's facts, and its swit
   await waitFor(() => expect(changes).toContain("docker.host.set host_b true"));
   expect(await within(row("devpc")).findByText("Hosts boxes")).toBeTruthy();
 });
+
+// The review of 22 October 2026: the paste hold, Shift and the stream switch together.
+
+/** The video tab in control, for the review's tests: its socket, canvas and slot. */
+async function videoInControl(handlers: PluginRpcTestHandlers<Contract>) {
+  window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+  const socket = videoSocket();
+  act(() => socket.open());
+  act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+  act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+  fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  const canvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
+  return { slot, socket, canvas };
+}
+
+test("keys typed over video after a paste, before the stream switches to VNC, reach the box over VNC after the chord, not the closed video (the review of 22 October 2026)", async () => {
+  const undo = withVideo();
+  try {
+    const { handlers } = server([desktopBox()], { video: true });
+    const { slot, socket, canvas } = await videoInControl(handlers);
+    fireEvent.keyDown(canvas, { key: "v", code: "KeyV", ctrlKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("[PASTE]")));
+    fireEvent.keyDown(canvas, { key: "y", code: "KeyY" });
+    fireEvent.keyUp(canvas, { key: "y", code: "KeyY" });
+    expect(socket.sent).not.toContain("kd,121");
+    fireEvent.click(within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as VNC" }));
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    await new Promise((resolve) => setTimeout(resolve, PASTE_LANDS_MS + 100));
+    expect([socket.sent.includes("kd,121"), client.keyEvents.some((key) => key.keysym === 0x79)]).toEqual([false, true]);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("a paste whose text is still on its way to the box as the stream switches to VNC is pressed over VNC once it lands (the review of 22 October 2026)", async () => {
+  const undo = withVideo();
+  try {
+    const { handlers } = server([desktopBox({ display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: null, quality: null, macKeys: null } })], { video: true });
+    let landed: (() => void) | null = null;
+    const slow: PluginRpcTestHandlers<Contract> = { ...handlers, desktopPaste: () => new Promise<null>((resolve) => (landed = () => resolve(null))) };
+    const { slot, socket, canvas } = await videoInControl(slow);
+    fireEvent.keyDown(canvas, { key: "v", code: "KeyV", ctrlKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("[PASTE]")));
+    await waitFor(() => expect(landed).not.toBeNull());
+    fireEvent.click(within(await openDisplay(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitemcheckbox", { name: "Show as VNC" }));
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    act(() => landed!());
+    await new Promise((resolve) => setTimeout(resolve, PASTE_CHORD_DELAY_MS + 100));
+    expect([socket.sent.includes("kd,118"), client.keys.some((key) => key.keysym === 0x76)]).toEqual([false, true]);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("two pastes in quick succession press the box's chord twice, not once (the review of 22 October 2026)", async () => {
+  const undo = withVideo();
+  try {
+    const { handlers } = server([desktopBox()], { video: true });
+    const { socket, canvas } = await videoInControl(handlers);
+    fireEvent.keyDown(canvas, { key: "v", code: "KeyV", ctrlKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("[ONE]")));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    fireEvent.keyDown(canvas, { key: "v", code: "KeyV", ctrlKey: true, repeat: true });
+    act(() => void document.dispatchEvent(pasteEvent("[ONE]")));
+    await new Promise((resolve) => setTimeout(resolve, PASTE_CHORD_DELAY_MS + PASTE_LANDS_MS + 100));
+    expect(socket.sent.filter((sent) => sent === "kd,118")).toHaveLength(2);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+/** The box keyboard modes the review covers: each box's system, and how a Mac's server names Command. */
+const KEYBOARD_MODES = [
+  { name: "a Linux box", box: {}, command: { keysym: 0xffe3, code: "ControlLeft" } },
+  {
+    name: "a Windows box",
+    box: { os: "windows", kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: true, clipboard: "commands", refresh: null, quality: null, macKeys: null } },
+    command: { keysym: 0xffe3, code: "ControlLeft" },
+  },
+  {
+    name: "a Mac on Tart",
+    box: { os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" } },
+    command: { keysym: 0xffe9, code: "AltLeft" },
+  },
+  { name: "a pool Mac", box: { os: "macos", nature: "real", kind: "macos-desktop", kindLabel: "macOS desktop" }, command: { keysym: 0xffe7, code: "MetaLeft" } },
+] as const;
+const BROWSERS = [
+  { name: "Linux", platform: "Linux x86_64" },
+  { name: "a Mac", platform: "MacIntel" },
+] as const;
+
+test.each(KEYBOARD_MODES.flatMap((mode) => BROWSERS.map((browser) => ({ mode, browser }))))(
+  "over VNC to $mode.name from $browser.name: Shift and AltGr held through a paste go up for the chord and down again, keys repeated while it is on its way follow it in order, and Shift and Caps Lock type capitals after it",
+  async ({ mode, browser }) => {
+    const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue(browser.platform);
+    fakeClipboard(() => Promise.resolve("[TEXT]"));
+    try {
+      const { handlers, changes } = server([desktopBox(mode.box as Partial<BoxView>)]);
+      const slot = desktopTab(handlers);
+      // The text is on its way once noVNC or bb-box's RPC has it.
+      const textSent = () => client.pasted.length + changes.filter((change) => change.startsWith("desktopPaste")).length;
+      await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+      const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+      act(() => void client.dispatchEvent(new Event("connect")));
+      fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+      await slot.findByText(/You have control/);
+      const keys = () => client.keys.map((key) => `${key.code}${key.down ? "" : " up"}`);
+      const typed = () => client.keyEvents.map((key) => `${key.keysym.toString(16)}${key.down ? "" : " up"}`);
+      const menuPaste = async () => fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Paste from this computer" }));
+      const command = mode.command.code;
+
+      // Shift held through the paste; X held down, its repeats while the paste is on its way.
+      client._handleKeyEvent(0xffe1, "ShiftLeft", true, null, false);
+      client.keyEvents.length = 0;
+      await menuPaste();
+      await waitFor(() => expect(textSent()).toBeGreaterThan(0));
+      for (let repeat = 0; repeat < 3; repeat++) client._handleKeyEvent(0x58, "KeyX", true, null, false);
+      client._handleKeyEvent(0x58, "KeyX", false, null, false);
+      expect(typed()).toEqual([]);
+      await waitFor(() => expect(typed()).toHaveLength(4));
+      expect(keys()).toEqual(["ShiftLeft up", command, "KeyV", "KeyV up", `${command} up`, "ShiftLeft"]);
+      expect(typed()).toEqual(["58", "58", "58", "58 up"]);
+      // A letter the browser names lower case with Shift held goes as its capital.
+      client.keyEvents.length = 0;
+      client._handleKeyEvent(0x61, "KeyA", true, null, false);
+      client._handleKeyEvent(0x61, "KeyA", false, null, false);
+      client._handleKeyEvent(0xffe1, "ShiftLeft", false, null, false);
+      // Caps Lock on, no Shift: the capital goes as named, with no Shift around it.
+      client._handleKeyEvent(0x42, "KeyB", true, null, true);
+      client._handleKeyEvent(0x42, "KeyB", false, null, true);
+      expect(typed()).toEqual(["41", "41 up", "ffe1 up", "42", "42 up"]);
+
+      // AltGr held from Linux, as noVNC names it there; from a Mac the right Option is plain Alt on a box that is not a Mac.
+      client.keys.length = 0;
+      client.keyEvents.length = 0;
+      client._handleKeyEvent(0xfe03, "AltRight", true, null, false);
+      const held = client.keyEvents.at(-1)!;
+      await menuPaste();
+      await waitFor(() => expect(client.keys).toHaveLength(6));
+      expect(keys()).toEqual([`${held.code} up`, command, "KeyV", "KeyV up", `${command} up`, held.code]);
+      expect(client.keys[0]!.keysym).toBe(held.keysym);
+    } finally {
+      platform.mockRestore();
+    }
+  },
+);
+
+
+test.each(KEYBOARD_MODES.flatMap((mode) => BROWSERS.map((browser) => ({ mode, browser }))))(
+  "over video to $mode.name from $browser.name: Shift and AltGr held through a paste go up for the chord and down again, keys repeated while it is on its way follow it in order, and Shift and Caps Lock type capitals after it",
+  async ({ mode, browser }) => {
+    const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue(browser.platform);
+    fakeClipboard(() => Promise.resolve("[TEXT]"));
+    const undo = withVideo();
+    try {
+      const { handlers, changes } = server([desktopBox(mode.box as Partial<BoxView>)], { video: true });
+      const { slot, socket, canvas } = await videoInControl(handlers);
+      const keys = () => socket.sent.filter((sent): sent is string => typeof sent === "string" && /^k[du],/.test(sent));
+      const menuPaste = async () => fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Paste from this computer" }));
+      const textSent = () => socket.sent.filter((sent) => typeof sent === "string" && /^c[bw]/.test(sent)).length + changes.filter((change) => change.startsWith("desktopPaste")).length;
+      // bb-box's own Mac input for video takes Meta as Command.
+      const command = (mode.box as Partial<BoxView>).os === "macos" ? 65511 : 65507;
+
+      fireEvent.keyDown(canvas, { key: "Shift", code: "ShiftLeft", shiftKey: true });
+      const shift = keys().at(-1)!.slice(3);
+      await menuPaste();
+      await waitFor(() => expect(textSent()).toBeGreaterThan(0));
+      const before = keys().length;
+      for (let repeat = 0; repeat < 3; repeat++) fireEvent.keyDown(canvas, { key: "X", code: "KeyX", shiftKey: true, repeat: repeat > 0 });
+      fireEvent.keyUp(canvas, { key: "X", code: "KeyX", shiftKey: true });
+      expect(keys()).toHaveLength(before);
+      await waitFor(() => expect(keys().length).toBeGreaterThanOrEqual(before + 10));
+      expect(keys().slice(before)).toEqual([`ku,${shift}`, `kd,${command}`, "kd,118", "ku,118", `ku,${command}`, `kd,${shift}`, "kd,88", "kd,88", "kd,88", "ku,88"]);
+
+      // A letter the browser names lower case with Shift held goes as its capital; with Caps Lock on, a capital as named.
+      fireEvent.keyDown(canvas, { key: "a", code: "KeyA", shiftKey: true });
+      fireEvent.keyUp(canvas, { key: "a", code: "KeyA", shiftKey: true });
+      fireEvent.keyUp(canvas, { key: "Shift", code: "ShiftLeft" });
+      fireEvent.keyDown(canvas, { key: "B", code: "KeyB", modifierCapsLock: true });
+      fireEvent.keyUp(canvas, { key: "B", code: "KeyB", modifierCapsLock: true });
+      expect(keys().slice(before + 10)).toEqual(["kd,65", "ku,65", `ku,${shift}`, "kd,66", "ku,66"]);
+
+      // AltGr held through a second paste.
+      fireEvent.keyDown(canvas, { key: "AltGraph", code: "AltRight" });
+      const altGr = keys().at(-1)!.slice(3);
+      const second = keys().length;
+      await menuPaste();
+      await waitFor(() => expect(keys().length).toBeGreaterThanOrEqual(second + 6));
+      expect(keys().slice(second)).toEqual([`ku,${altGr}`, `kd,${command}`, "kd,118", "ku,118", `ku,${command}`, `kd,${altGr}`]);
+    } finally {
+      undo();
+      window.sessionStorage.clear();
+      platform.mockRestore();
+    }
+  },
+);
+
+test("a session that goes with its paste on its way hands the keys it held to the tab's newest session, before that session's own, and the chord too once the text lands (the review of 22 October 2026)", () => {
+  vi.useFakeTimers();
+  try {
+    const sent: string[] = [];
+    const video = new KeysAfterPaste<string>((key) => sent.push(`video ${key}`));
+    video.join("box_2:viewer-one");
+    video.hold();
+    expect(video.keep("a")).toBe(true);
+    // The stream switches before the text lands: the video session goes, and VNC comes.
+    video.close();
+    const vnc = new KeysAfterPaste<string>((key) => sent.push(`vnc ${key}`));
+    let pressed = 0;
+    vnc.pressChord = () => {
+      pressed++;
+      vnc.hold();
+    };
+    vnc.join("box_2:viewer-one");
+    expect(vnc.keep("b")).toBe(true);
+    // The text lands: VNC presses the chord, and sends the video's key, then its own, once that has landed.
+    video.handChord();
+    expect(pressed).toBe(1);
+    expect(sent).toEqual([]);
+    vnc.releaseIn(PASTE_LANDS_MS);
+    vi.advanceTimersByTime(PASTE_LANDS_MS);
+    expect(sent).toEqual(["vnc a", "vnc b"]);
+    expect(vnc.keep("c")).toBe(false);
+    // The video session has left the tab: a new paste there holds only VNC's keys.
+    vnc.close();
+  } finally {
+    vi.useRealTimers();
+  }
+});

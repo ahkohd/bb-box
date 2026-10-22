@@ -286,8 +286,10 @@ export class SelkiesSession implements Kept {
   #settle: ReturnType<typeof setTimeout> | undefined;
   #pasteArmed: number | null = null;
   #pasteWait: ReturnType<typeof setTimeout> | undefined;
-  #chord: ReturnType<typeof setTimeout> | undefined;
-  #chordDue = false;
+  /** Each paste's chord still to go: two pastes in quick succession press it twice. */
+  readonly #chords = new Set<ReturnType<typeof setTimeout>>();
+  /** Pastes whose text is still on its way to the box. */
+  #putting = 0;
   readonly #onPasteEvent = (event: ClipboardEvent) => this.#takePaste(event);
   /**
    * The last picture, held over the video while High resolution switches, with the size it had: the box's desktop changes its scale
@@ -311,6 +313,7 @@ export class SelkiesSession implements Kept {
   constructor(url: string) {
     this.#url = url;
     this.#afterPaste.join(tabOf(url));
+    this.#afterPaste.pressChord = () => this.#pressPaste();
     this.element.className = "absolute inset-0";
     // No colour of its own: the pane's, in the theme's neutral, shows around a picture that does not fill it, as it does for VNC.
     this.element.style.background = "transparent";
@@ -919,16 +922,27 @@ export class SelkiesSession implements Kept {
       this.onPaste?.(text);
       return;
     }
+    this.#putting++;
     put.then(
       () => {
-        this.#pressPaste();
+        this.#putting--;
+        // The stream switched while the text was on its way: the tab's new session presses the chord.
+        if (this.#disposed) this.#afterPaste.handChord();
+        else this.#pressPaste();
         this.onPaste?.(text);
       },
       (error: unknown) => {
-        this.#afterPaste.release();
+        this.#putting--;
+        if (this.#disposed) this.#afterPaste.drop();
+        else if (!this.#pasteDue()) this.#afterPaste.release();
         this.onPasteFailed?.(error);
       },
     );
+  }
+
+  /** Whether a paste's chord, or the text it waits for, is still to go. */
+  #pasteDue(): boolean {
+    return this.#chords.size > 0 || this.#putting > 0;
   }
 
   /** Puts an image on the box's clipboard, then presses the box's paste chord, and says so (#609). */
@@ -940,7 +954,7 @@ export class SelkiesSession implements Kept {
     }
     this.#afterPaste.hold();
     const bytes = new Uint8Array(await image.arrayBuffer());
-    if (this.connection.state !== "connected") {
+    if (this.#disposed || this.connection.state !== "connected") {
       this.#afterPaste.drop();
       return;
     }
@@ -950,14 +964,15 @@ export class SelkiesSession implements Kept {
   }
 
   #pressPaste(): void {
-    clearTimeout(this.#chord);
     this.#afterPaste.hold();
-    this.#chordDue = true;
-    this.#chord = setTimeout(() => this.#sendChord(), PASTE_CHORD_DELAY_MS);
+    const chord = setTimeout(() => {
+      this.#chords.delete(chord);
+      this.#sendChord();
+    }, PASTE_CHORD_DELAY_MS);
+    this.#chords.add(chord);
   }
 
   #sendChord(): void {
-    this.#chordDue = false;
     if (this.connection.state !== "connected") {
       this.#afterPaste.drop();
       return;
@@ -965,7 +980,8 @@ export class SelkiesSession implements Kept {
     const modifier = { keysym: this.guestOs === "macos" ? XK_META_L : XK_CONTROL_L };
     const held = [...this.#held].map((keysym) => ({ keysym }));
     for (const { key, down } of pasteChordKeys(modifier, { keysym: XK_V }, held)) this.#send(`${down ? "kd" : "ku"},${key.keysym}`);
-    this.#afterPaste.releaseIn(PASTE_LANDS_MS);
+    // Keys typed since wait for the last paste on its way.
+    if (!this.#pasteDue()) this.#afterPaste.releaseIn(PASTE_LANDS_MS);
   }
 
   /** A Cmd+V (Ctrl+V off a Mac) while this tab has control: kept from the keyboard handler, left to the browser, whose paste event brings the text. */
@@ -1057,8 +1073,12 @@ export class SelkiesSession implements Kept {
   }
 
   dispose(): void {
-    clearTimeout(this.#chord);
-    if (this.#chordDue) this.#sendChord();
+    const due = [...this.#chords];
+    this.#chords.clear();
+    for (const chord of due) {
+      clearTimeout(chord);
+      this.#sendChord();
+    }
     this.#afterPaste.close();
     this.#unhold();
     this.#disposed = true;
@@ -1066,7 +1086,6 @@ export class SelkiesSession implements Kept {
     clearTimeout(this.#firstFrame);
     clearTimeout(this.#settle);
     clearTimeout(this.#pasteWait);
-    clearTimeout(this.#chord);
     document.removeEventListener("paste", this.#onPasteEvent, true);
     document.removeEventListener("visibilitychange", this.#onVisibility);
     window.removeEventListener("focus", this.#onFocus);
