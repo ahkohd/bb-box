@@ -48,6 +48,7 @@ function largestAllowedIn(message: string): MacShape | null {
 }
 const SCREEN_SHARING_PORT = 5900;
 const MAC_DESKTOP_CLIENTS = ["/opt/namespace/vmguest", "/usr/bin/osascript", MAC_STREAM];
+const SCREEN_CAPTURE_CLIENTS = ["/opt/namespace/vmguest", MAC_STREAM];
 const MAC_DESKTOP_SERVICES = ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"];
 const MAC_DESKTOP = [
   "set -eu",
@@ -64,6 +65,11 @@ const MAC_DESKTOP = [
         `sudo -n sqlite3 "$db" "DELETE FROM access WHERE service = '${service}' AND client = '${client}'; INSERT INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded) VALUES ('${service}', '${client}', 1, 2, 4, 1, NULL, NULL, 0, 'UNUSED', NULL, 0, $now, NULL, NULL, 'UNUSED', $now);"`,
     ),
   ),
+  'replayd="$HOME/Library/Group Containers/group.com.apple.replayd"; year=$(date -u +%Y)',
+  'mkdir -p "$replayd" && chmod 700 "$replayd"',
+  `{ printf '%s' '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>'; for client in ${SCREEN_CAPTURE_CLIENTS.join(" ")}; do printf '%s' "<key>$client</key><dict><key>kScreenCaptureAlertableUsageCount</key><integer>1</integer><key>kScreenCaptureApprovalLastAlerted</key><date>$(date -u +%Y-%m-%dT%H:%M:%SZ)</date><key>kScreenCaptureApprovalLastUsed</key><date>$(date -u +%Y-%m-%dT%H:%M:%SZ)</date><key>kScreenCapturePrivacyHintDate</key><date>$((year + 5))-01-01T00:00:00Z</date><key>kScreenCapturePrivacyHintPolicy</key><integer>2592000</integer></dict>"; done; printf '%s\\n' '</dict></plist>'; } > "$replayd/ScreenCaptureApprovals.plist"`,
+  'chmod 600 "$replayd/ScreenCaptureApprovals.plist"',
+  "killall -u \"$(id -un)\" replayd 2>/dev/null || :",
   "sudo -n pmset -a displaysleep 0 sleep 0 >/dev/null",
   "caffeinate -u -t 1",
 ].join("\n");
