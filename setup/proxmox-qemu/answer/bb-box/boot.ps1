@@ -21,15 +21,17 @@ Log "started: $ip/$prefix via $Gateway"
 
 $nic = $null
 for ($i = 0; $i -lt 120 -and -not $nic; $i++) {
-  $nic = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up' | Select-Object -First 1
+  $nic = Get-CimInstance Win32_NetworkAdapter -Filter 'PhysicalAdapter=True AND NetConnectionStatus=2' -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $nic) { Start-Sleep -Milliseconds 250 }
 }
 if (-not $nic) { Log 'no network adapter came up'; exit 1 }
-$current = @(Get-NetIPAddress -InterfaceIndex $nic.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object PrefixOrigin -eq 'Manual')
-if ($current.IPAddress -contains $ip) { Log "address $ip already set"; exit 0 }
-Set-NetIPInterface -InterfaceIndex $nic.ifIndex -Dhcp Disabled
-Get-NetIPAddress -InterfaceIndex $nic.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false
-Remove-NetRoute -InterfaceIndex $nic.ifIndex -DestinationPrefix 0.0.0.0/0 -Confirm:$false -ErrorAction SilentlyContinue
-New-NetIPAddress -InterfaceIndex $nic.ifIndex -IPAddress $ip -PrefixLength $prefix -DefaultGateway $Gateway | Out-Null
-Set-DnsClientServerAddress -InterfaceIndex $nic.ifIndex -ServerAddresses $Dns
+$index = $nic.InterfaceIndex
+Log "adapter $index is up"
+$config = Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "InterfaceIndex=$index"
+if (-not $config.DHCPEnabled -and $config.IPAddress -contains $ip) { Log "address $ip already set"; exit 0 }
+$mask = (0..3 | ForEach-Object { 256 - [math]::Pow(2, 8 - [math]::Max(0, [math]::Min(8, [int]$prefix - 8 * $_))) }) -join '.'
+netsh interface ipv4 set address name=$index source=static address=$ip mask=$mask gateway=$Gateway gwmetric=1 | Out-Null
+if ($LASTEXITCODE) { Log "netsh could not set $ip/$prefix"; exit 1 }
+netsh interface ipv4 set dnsservers name=$index source=static address=$($Dns[0]) register=none validate=no | Out-Null
+for ($n = 1; $n -lt $Dns.Count; $n++) { netsh interface ipv4 add dnsservers name=$index address=$($Dns[$n]) index=$($n + 1) validate=no | Out-Null }
 Log "address $ip/$prefix, gateway $Gateway, DNS $($Dns -join ' ')"
