@@ -99,10 +99,12 @@ fi
 }
 
 /**
- * Joins stdin and stdout to VM `vm`'s bridge, starting it first, for QEMU's
- * VNC server on `port`: one viewer's video. Prints nothing else on stdout.
- * Exits 3 when the build is not whole, and 1 when the VM is not there or the
- * bridge does not start.
+ * Joins stdin and stdout to VM `vm`'s bridge, starting it first: one
+ * viewer's video. The bridge reads the desktop from QEMU's D-Bus display
+ * where the VM's QEMU runs one (#885), and from its VNC server on `port`
+ * where it does not, or where the D-Bus bridge does not listen within 5 s.
+ * Prints nothing else on stdout. Exits 3 when the build is not whole, and 1
+ * when the VM is not there or the bridge does not start.
  */
 export function qemuVideoOpenScript(vm: string, port: number, build: string): string {
   return qemuScript(String.raw`${BIN}vm=${quote(vm)}; v="$q/vms/$vm"; b="$bin/"${quote(build)}; s="$v/video.sock"
@@ -111,9 +113,22 @@ vok "$b" || { echo "bb-box's build of bb-box-stream on the Mac is not whole: $b.
 if ! qvideo "$vm"; then
   i=0; until mkdir "$v/video.lock" 2>/dev/null; do i=$((i + 1)); [ "$i" -lt 50 ] || rm -rf "$v/video.lock"; sleep 0.1; done
   if ! qvideo "$vm"; then
-    rm -f "$s"
-    nohup "$b" qemu ${port} "$s" > "$v/video.log" 2>&1 < /dev/null &
-    echo $! > "$v/video.pid"
+    bridge() {
+      rm -f "$s"
+      nohup "$b" qemu ${port} "$s" "$@" > "$v/video.log" 2>&1 < /dev/null &
+      echo $! > "$v/video.pid"
+    }
+    if ps -ww -p "$(cat "$v/pid" 2>/dev/null)" -o command= 2>/dev/null | grep -q -- '-display dbus,p2p=yes'; then
+      bridge "$v/qmp"
+      i=0; while qvideo "$vm" && [ ! -S "$s" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+      if [ ! -S "$s" ]; then
+        qvideostop "$vm"
+        mv -f "$v/video.log" "$v/video-dbus.log"
+        bridge
+      fi
+    else
+      bridge
+    fi
   fi
   rmdir "$v/video.lock"
 fi
