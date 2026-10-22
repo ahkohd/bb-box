@@ -276,3 +276,36 @@ export class MachinePlatforms {
     return true;
   }
 }
+
+const NAMES_KEY = "machine-names";
+
+/**
+ * Each BB machine's name as BB last gave it, kept in storage, so a restart
+ * names a provider on a machine, "Docker on devpc", before bb-box has
+ * reached it again: until then it named it by the machine's ID (#916).
+ */
+export class MachineNames {
+  readonly #kv: BackendStorage;
+  readonly #known = new Map<string, string>();
+
+  constructor(kv: BackendStorage) {
+    this.#kv = kv;
+  }
+
+  /** Reads what the last run kept. */
+  async load(): Promise<void> {
+    const kept = await this.#kv.get<Record<string, string>>(NAMES_KEY).catch(() => null);
+    for (const [hostId, name] of Object.entries(kept ?? {})) if (typeof name === "string" && name) this.#known.set(hostId, name);
+  }
+
+  get(hostId: string): string | null {
+    return this.#known.get(hostId) ?? null;
+  }
+
+  /** Records the name BB gave, and keeps it when it is news. */
+  async learn(hostId: string, name: string): Promise<void> {
+    if (!name || this.#known.get(hostId) === name) return;
+    this.#known.set(hostId, name);
+    await this.#kv.set(NAMES_KEY, Object.fromEntries(this.#known)).catch(() => {});
+  }
+}

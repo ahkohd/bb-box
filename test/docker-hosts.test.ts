@@ -11,7 +11,7 @@ import type { DockerInfo } from "../src/backends/docker/cli.ts";
 import { DRIVERS } from "../src/backends/index.ts";
 import { checkDocument, emptyDocument, type ConfigDocument } from "../src/core/document.ts";
 import { hostEntry } from "../src/host/entry.ts";
-import { DockerHosts, MachinePlatforms, SILENT_MS, desktopsOnDemand, machineHosts, machineOffline, withDesktopImage, withDockerHost, type MachineRecord } from "../src/plugin/docker-hosts.ts";
+import { DockerHosts, MachineNames, MachinePlatforms, SILENT_MS, desktopsOnDemand, machineHosts, machineOffline, withDesktopImage, withDockerHost, type MachineRecord } from "../src/plugin/docker-hosts.ts";
 import { dockerKind, dockerKinds } from "../src/backends/docker/backend.ts";
 import { MemoryStorage } from "./helpers.ts";
 import { tempDir } from "./helpers.ts";
@@ -225,6 +225,22 @@ test("a BB machine's OS is kept in storage at the host entry's answer, so a rest
   assert.equal(await restarted.learn("host_m1", "linux"), true);
   assert.equal(restarted.get("host_m1"), "linux");
   assert.equal(restarted.get("host_m2"), null);
+});
+
+test("a BB machine's name is kept in storage as BB gives it, so a restart names its providers before bb-box reaches it again (#916)", async () => {
+  const kv = new MemoryStorage();
+  const names = new MachineNames(kv);
+  await names.load();
+  assert.equal(names.get("host_m1"), null, "unknown until BB gives it");
+  await names.learn("host_m1", "devpc");
+  assert.equal(names.get("host_m1"), "devpc");
+  const restarted = new MachineNames(kv);
+  await restarted.load();
+  assert.equal(restarted.get("host_m1"), "devpc", "known at once after a restart");
+  await restarted.learn("host_m1", "devpc-2");
+  assert.equal(restarted.get("host_m1"), "devpc-2", "a new name from BB wins");
+  await restarted.learn("host_m1", "");
+  assert.equal(restarted.get("host_m1"), "devpc-2", "an empty name is no name");
 });
 
 test("a desktop builds on demand where first-run setup left Docker's desktop image off, and stops being on demand once the image is set again", () => {

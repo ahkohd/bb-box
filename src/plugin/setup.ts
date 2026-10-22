@@ -49,7 +49,7 @@ import { FILE_ROUTE, FileRelay } from "../relay/files.ts";
 import { MSB_ROUTE, msbClientArgv, refuseMsb } from "../relay/msb.ts";
 import { NAME_WINDOWS_SCRIPT, parseNamed } from "../backends/windows.ts";
 import { abortable } from "../core/abortable.ts";
-import { DESKTOP_ON_DEMAND, DockerHosts, backendOn, desktopsOnDemand, machineOffline, withDesktopImage, withDockerHost, type MachineRecord, MachinePlatforms } from "./docker-hosts.ts";
+import { DESKTOP_ON_DEMAND, DockerHosts, backendOn, desktopsOnDemand, machineOffline, withDesktopImage, withDockerHost, type MachineRecord, MachineNames, MachinePlatforms } from "./docker-hosts.ts";
 import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
@@ -351,7 +351,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   // The Docker API relay (042): a socket per BB machine for the docker CLI, each
   // connection a channel on one WebSocket the machine's worker opens out to this route.
-  const machineNames = new Map<string, string>();
+  // Each BB machine's name, kept across restarts, and looked up again as bb-box starts.
+  const machineNames = new MachineNames(kv);
+  await machineNames.load();
   // Each BB machine's OS, as bb-box's host entry there last reported it, kept across restarts.
   const machinePlatforms = new MachinePlatforms(kv);
   await machinePlatforms.load();
@@ -368,7 +370,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     let connected: boolean | null;
     try {
       const found = await bb.sdk.hosts.get({ hostId });
-      machineNames.set(hostId, found.name);
+      await machineNames.learn(hostId, found.name);
       offline = machineOffline(found, Date.now());
       connected = offline === null;
     } catch (error) {
@@ -500,6 +502,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     logError,
   });
+  // The names of the BB machines providers run on, from BB, once as bb-box starts, in the background: a machine bb-box has not
+  // reached this run, or one renamed since, is named at once, not by its ID (#916).
+  for (const hostId of new Set(configuration.document.backends.map((backend) => backend.fields.host).filter((host): host is string => typeof host === "string" && host.startsWith("bb:")).map((host) => host.slice("bb:".length)))) {
+    void machineConnected(hostId).catch(() => {});
+  }
   await configuration.configure();
   reloadTimes.phase("configuration and backends");
   const general = async () => configuration.general();

@@ -933,6 +933,7 @@ export const scenes = {
     rpc: rpc([box()]),
     terminal: { output: "box@calm-otter:~$ exit\r\nlogout\r\n", end: "The shell exited." },
   },
+  "terminal-released": { slot: "terminal", chrome: terminalChrome("calm-otter"), width: 720, height: 420, props: { threadId: THREAD, params: { box: "box_1" } }, rpc: rpc([]) },
   "terminal-stopped": { slot: "terminal", chrome: terminalChrome("wild-cove"), width: 720, height: 420, props: { threadId: THREAD, params: { box: "box_4" } }, rpc: rpc([stopped]) },
   "desktop-connecting": { slot: "desktop", chrome: desktopChrome("bold-heron"), width: 720, height: 480, props: { threadId: THREAD, params: { box: "box_2" } }, rpc: rpc([desktop]) },
   // A desktop shown as video (056), as every viewer's is with the setting on; the menu's Show as VNC, unticked, goes back.
