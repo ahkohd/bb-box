@@ -2371,6 +2371,28 @@ test("keys typed straight after a paste land after it, though the box's clipboar
   expect(client.input).toEqual(["sent ControlLeft", "sent KeyV", "sent KeyV up", "sent ControlLeft up", "typed KeyX", "typed KeyX up", "typed Enter", "typed Enter up"]);
 });
 
+test("over VNC, a letter typed with Shift held and Caps Lock off goes as its capital, released as pressed; with Caps Lock on it stays as named (#913)", async () => {
+  const { handlers } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+  act(() => void client.dispatchEvent(new Event("connect")));
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  client.keyEvents.length = 0;
+  client._handleKeyEvent(0xffe1, "ShiftLeft", true, null, false);
+  client._handleKeyEvent(0x61, "KeyA", true, null, false);
+  client._handleKeyEvent(0xffe1, "ShiftLeft", false, null, false);
+  client._handleKeyEvent(0x61, "KeyA", false, null, false);
+  client._handleKeyEvent(0xffe1, "ShiftLeft", true, null, true);
+  client._handleKeyEvent(0x62, "KeyB", true, null, true);
+  client._handleKeyEvent(0x62, "KeyB", false, null, true);
+  client._handleKeyEvent(0xffe1, "ShiftLeft", false, null, true);
+  client._handleKeyEvent(0x63, "KeyC", true, null, false);
+  client._handleKeyEvent(0x63, "KeyC", false, null, false);
+  expect(client.keyEvents.map((key) => `${key.keysym.toString(16)}${key.down ? "" : " up"}`)).toEqual(["ffe1", "41", "ffe1 up", "41 up", "ffe1", "62", "62 up", "ffe1 up", "63", "63 up"]);
+});
+
 test("the pointer over the desktop: the local arrow without control whatever the box sends, the box's cursor with control, and never an invisible one", async () => {
   const { handlers } = server([desktopBox()]);
   const slot = desktopTab(handlers);
@@ -2802,6 +2824,35 @@ test("over video, keys typed straight after a paste go after the box's paste cho
     await waitFor(() => expect(socket.sent).toContain("kd,120"));
     const keys = socket.sent.filter((sent): sent is string => typeof sent === "string" && /^k[du],/.test(sent));
     expect(keys.slice(-5)).toEqual(["kd,65507", "kd,118", "ku,118", "ku,65507", "kd,120"]);
+  } finally {
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
+test("over video, a letter typed with Shift held and Caps Lock off goes as its capital; with Caps Lock on it stays as named (#913)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const canvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
+    const sent = socket.sent.length;
+    fireEvent.keyDown(canvas, { key: "Shift", code: "ShiftLeft", shiftKey: true });
+    fireEvent.keyDown(canvas, { key: "a", code: "KeyA", shiftKey: true });
+    fireEvent.keyUp(canvas, { key: "a", code: "KeyA", shiftKey: true });
+    fireEvent.keyDown(canvas, { key: "b", code: "KeyB", shiftKey: true, modifierCapsLock: true } as KeyboardEventInit);
+    fireEvent.keyUp(canvas, { key: "b", code: "KeyB", shiftKey: true, modifierCapsLock: true } as KeyboardEventInit);
+    fireEvent.keyUp(canvas, { key: "Shift", code: "ShiftLeft" });
+    const keys = socket.sent.slice(sent).filter((message): message is string => typeof message === "string" && /^k[du],/.test(message));
+    expect(keys).toEqual(["kd,65505", "kd,65", "ku,65", "kd,98", "ku,98", "ku,65505"]);
   } finally {
     undo();
     window.sessionStorage.clear();

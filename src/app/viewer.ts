@@ -17,6 +17,42 @@ export const SETTLE_MS = 250;
 export const PASTE_CHORD_DELAY_MS = 150;
 /** How long a Cmd+V or Ctrl+V waits for the browser's paste event before the box pastes its own clipboard. */
 export const PASTE_EVENT_WAIT_MS = 150;
+/**
+ * A letter typed with Shift held and Caps Lock off goes as its capital, whatever the browser named it (#913): Selkies
+ * and x0vncserver type the keysym they are given, where Xvnc and wayvnc apply the held Shift. A key's release goes as
+ * its press went.
+ */
+export class ShiftedLetters {
+  readonly #shifts = new Set<number>();
+  readonly #pressed = new Map<string, number>();
+
+  keysym(keysym: number, code: string, down: boolean, capslock: boolean | null): number {
+    if (keysym === XK_SHIFT_L || keysym === XK_SHIFT_R) {
+      if (down) this.#shifts.add(keysym);
+      else this.#shifts.delete(keysym);
+      return keysym;
+    }
+    const key = code || String(keysym);
+    if (!down) {
+      const pressed = this.#pressed.get(key);
+      this.#pressed.delete(key);
+      return pressed ?? keysym;
+    }
+    const capital = this.#shifts.size > 0 && capslock !== true && keysym >= XK_LOWER_A && keysym <= XK_LOWER_Z;
+    const sent = capital ? keysym - 0x20 : keysym;
+    this.#pressed.set(key, sent);
+    return sent;
+  }
+
+  reset(): void {
+    this.#shifts.clear();
+    this.#pressed.clear();
+  }
+}
+
+const XK_LOWER_A = 0x61;
+const XK_LOWER_Z = 0x7a;
+
 /** The longest keys typed after a paste wait for its chord before they go anyway (#915). */
 export const PASTE_HOLD_MS = 5_000;
 
