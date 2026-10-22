@@ -41,7 +41,7 @@ import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
 import type { BackendStorage } from "../backends/types.ts";
-import { daemonStarting, endThreadProcesses, runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
+import { daemonStarting, endThreadProcesses, hideBbConsoles, runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 
@@ -599,6 +599,7 @@ export class Enrolment {
         }
       }
       await this.#follow(current, phases, access ?? this.#setUpAccess(current, phases));
+      if (current.capabilities.os === "windows") void this.#hideConsoles(current);
     } catch (error) {
       this.#deps.logError("enrol", error);
       // A Windows box's manual machine is bb-box's to remove: none may stay in BB's list (#539).
@@ -909,8 +910,25 @@ export class Enrolment {
       if (reconnected?.enrol.hostId !== hostId || stop?.aborted) return;
       const connected = await this.#connected(reconnected, hostId, stop);
       if (connected !== null && !stop?.aborted) await this.#variables(reconnected, "the machine connected again", connected);
+      if (reconnected.capabilities.os === "windows" && !stop?.aborted) void this.#hideConsoles(reconnected);
     } finally {
       this.#reconnecting.delete(box.id);
+    }
+  }
+
+  /**
+   * Hides the windows of BB's daemon's consoles on a Windows box's desktop,
+   * which BB starts in front, so a person's first keys go to them and a
+   * Ctrl+C could stop the daemon, until BB starts them hidden (bb-requests
+   * 27). After an enrolment and each reconnect. Never throws.
+   */
+  async #hideConsoles(box: BoxRecord): Promise<void> {
+    try {
+      const transport = await this.#transport(box);
+      const { consoles, hidden } = await hideBbConsoles(transport, { timeoutMs: 60_000 });
+      if (hidden) this.#deps.log?.(`Hid ${hidden} of BB's ${consoles} console ${consoles === 1 ? "window" : "windows"} on box ${box.name}'s desktop (bb-requests 27).`);
+    } catch (error) {
+      this.#deps.logError("hide BB's console windows", error);
     }
   }
 

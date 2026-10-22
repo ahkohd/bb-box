@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseQemuPart } from "../src/backends/proxmox-qemu/config.ts";
-import { END_THREADS_SCRIPT, WINDOWS_COMMAND_SCRIPT, endThreadProcesses, runWindowsCommand, windowsFailure } from "../src/plugin/enrol-windows.ts";
+import { END_THREADS_SCRIPT, HIDE_CONSOLES_SCRIPT, WINDOWS_COMMAND_SCRIPT, endThreadProcesses, hideBbConsoles, runWindowsCommand, windowsFailure } from "../src/plugin/enrol-windows.ts";
 import type { CommandTransport, RunOptions, RunResult } from "../src/transports/types.ts";
 
 test("BB's Windows command runs in the desktop session, after Node.js is made sure of, and goes as stdin, never in the script", async () => {
@@ -62,4 +62,19 @@ test("the threads' processes end before a Windows box's machine is removed: each
   } as unknown as CommandTransport;
   assert.equal(await endThreadProcesses(transport, { timeoutMs: 60_000 }), 3);
   assert.ok(!sent[0]!.includes("Schedule.Service"), "over SSH, not in the desktop session");
+});
+
+test("bb-box hides BB's console windows in the desktop session, Windows Terminal's own where it hosts them, not a minimise (bb-requests 27)", async () => {
+  const sent: string[] = [];
+  const transport = { run: async (script: string) => (sent.push(script), { exitCode: 0, stdout: "consoles=1 hidden=1\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 }) } as unknown as CommandTransport;
+  assert.deepEqual(await hideBbConsoles(transport, { timeoutMs: 60_000 }), { consoles: 1, hidden: 1 });
+  assert.match(sent[0]!, /New-Object -ComObject Schedule\.Service/, "in the box user's desktop session, where BB's daemon and its consoles are");
+  // The console work runs in a child PowerShell, as attaching to another's console loses the output of the one that does.
+  const child = Buffer.from(/-EncodedCommand ([A-Za-z0-9+/=]+) \*> \$null/.exec(HIDE_CONSOLES_SCRIPT)![1]!, "base64").toString("utf16le");
+  assert.match(child, /"\$\(\$p\.CommandLine\)" -match '\\\\\\\.bb-machines\\\\'/, "BB's processes, by their data folder, and what they start");
+  assert.match(child, /AttachConsole\(\[uint32\]\$p\.ProcessId\)/, "each one's console, from the process, not a title");
+  assert.match(child, /\(Class \$h\) -eq 'PseudoConsoleWindow'.*GetWindow\(\$h, 4\).*'CASCADIA_HOSTING_WINDOW_CLASS'/, "Windows Terminal's window, which hiding its pseudo window only minimises");
+  assert.match(child, /ShowWindow\(\$h, 6\); \[void\]\[BbHide\.W\]::ShowWindow\(\$h, 0\)/, "minimised, which gives the keyboard to the next window, then hidden, SW_HIDE, so the taskbar does not bring it back");
+  assert.match(child, /-eq \[BbHide\.W\]::GetForegroundWindow\(\)/, "a hidden window that kept the keyboard too");
+  assert.match(HIDE_CONSOLES_SCRIPT, /if \(\$bbSaid -notmatch '\^consoles=0'\) \{ break \}/, "it waits a while for a console to appear");
 });

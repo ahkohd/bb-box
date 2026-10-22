@@ -107,6 +107,75 @@ export async function daemonStarting(transport: CommandTransport, hostId: string
   return said === "running" || said === "logon" ? said : null;
 }
 
+/**
+ * Run in a child PowerShell, as attaching to another process's console
+ * loses the output of the PowerShell that does: the windows of the consoles
+ * of BB's processes in the desktop session, those whose command line is in
+ * BB's data folder and what they start, hidden. In Windows Terminal, the
+ * default console host on Windows 11, a console's window is a pseudo window
+ * that Terminal only minimises, to the taskbar, so it hides Terminal's own
+ * window. A window is minimised, then hidden: hidden alone, it kept the
+ * keyboard. Writes `consoles=<n> hidden=<n>` to $env:BB_BOX_HIDE_RESULT.
+ */
+const HIDE_CONSOLES_CHILD = String.raw`$ProgressPreference = 'SilentlyContinue'
+Add-Type -Namespace BbHide -Name W -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern bool AttachConsole(uint p);
+[DllImport("kernel32.dll")] public static extern bool FreeConsole();
+[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+[DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint c);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+'@
+function Class($h) { $c = New-Object System.Text.StringBuilder 64; [void][BbHide.W]::GetClassName($h, $c, 64); "$c" }
+$session = (Get-Process -Id $PID).SessionId
+$all = @(Get-CimInstance Win32_Process)
+$bb = @{}; foreach ($p in $all) { if ("$($p.CommandLine)" -match '\\\.bb-machines\\') { $bb[[int]$p.ProcessId] = $true } }
+$ours = @($all | Where-Object { $_.SessionId -eq $session -and $_.ProcessId -ne $PID -and ($bb.ContainsKey([int]$_.ProcessId) -or $bb.ContainsKey([int]$_.ParentProcessId)) })
+$windows = @{}
+[void][BbHide.W]::FreeConsole()
+foreach ($p in $ours) {
+  if (-not [BbHide.W]::AttachConsole([uint32]$p.ProcessId)) { continue }
+  $h = [BbHide.W]::GetConsoleWindow()
+  [void][BbHide.W]::FreeConsole()
+  if ($h -eq [IntPtr]::Zero) { continue }
+  if ((Class $h) -eq 'PseudoConsoleWindow') { $o = [BbHide.W]::GetWindow($h, 4); if ($o -ne [IntPtr]::Zero -and (Class $o) -eq 'CASCADIA_HOSTING_WINDOW_CLASS') { $h = $o } else { continue } }
+  $windows[$h] = $true
+}
+$hidden = 0
+# Minimised first, which gives the keyboard to the next window: hidden alone, it kept it, so keys went to the console.
+foreach ($h in $windows.Keys) {
+  if ([BbHide.W]::IsWindowVisible($h) -or $h -eq [BbHide.W]::GetForegroundWindow()) { [void][BbHide.W]::ShowWindow($h, 6); [void][BbHide.W]::ShowWindow($h, 0); $hidden++ }
+}
+[IO.File]::WriteAllText($env:BB_BOX_HIDE_RESULT, "consoles=$($windows.Count) hidden=$hidden")`;
+
+/**
+ * Hides the windows of BB's daemon's consoles, which BB starts in front of
+ * the desktop until it fixes bb-requests 27, where a person's first keys
+ * went, and a Ctrl+C could stop the daemon. It waits up to 10 s for a
+ * console to appear. Prints `consoles=<n> hidden=<n>`.
+ */
+export const HIDE_CONSOLES_SCRIPT = `$ErrorActionPreference = 'Stop'
+$env:BB_BOX_HIDE_RESULT = [IO.Path]::GetTempFileName()
+try {
+  for ($bbTry = 0; $bbTry -lt 5; $bbTry++) {
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(HIDE_CONSOLES_CHILD, "utf16le").toString("base64")} *> $null
+    $bbSaid = Get-Content -Raw -LiteralPath $env:BB_BOX_HIDE_RESULT
+    if ($bbSaid -notmatch '^consoles=0') { break }
+    Start-Sleep -Seconds 2
+  }
+  $bbSaid
+} finally { Remove-Item -LiteralPath $env:BB_BOX_HIDE_RESULT -ErrorAction SilentlyContinue }`;
+
+/** Hides BB's daemon's console windows in the box's desktop session (HIDE_CONSOLES_SCRIPT): how many it found, and hid. */
+export async function hideBbConsoles(transport: CommandTransport, options: { timeoutMs: number; signal?: AbortSignal }): Promise<{ consoles: number; hidden: number }> {
+  const result = await transport.run(inBoxCommand("windows", HIDE_CONSOLES_SCRIPT, { session: "desktop", timeoutMs: options.timeoutMs }), { timeoutMs: options.timeoutMs + 30_000, signal: options.signal });
+  if (result.exitCode !== 0) throw new Error(windowsFailure("Hiding BB's console windows", result));
+  const said = /consoles=(\d+) hidden=(\d+)/.exec(result.stdout);
+  return { consoles: Number(said?.[1] ?? 0), hidden: Number(said?.[2] ?? 0) };
+}
+
 /** Why a run of BB's `windowsCommand` failed, from its last lines. */
 export function windowsFailure(what: string, result: RunResult): string {
   const tail = `${result.stdout}\n${result.stderr}`.trim().split("\n").slice(-8).join("\n");
