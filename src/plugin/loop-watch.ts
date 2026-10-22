@@ -5,7 +5,10 @@
 // lagged by up to a second. A timer that runs every 100 ms finds when the
 // loop could not run it, and garbage collection meanwhile is counted, so the
 // log says whether the process stalls, and whether collecting garbage is
-// why. A CPU profile (profile.ts) names the code. One line a minute at most, and none while the loop keeps up.
+// why. A CPU profile (profile.ts) names the code. One line a minute at most, and none while the loop keeps up;
+// it tells too how many processes bb-box started that minute, and how long the spawn calls held the loop, as each
+// forks BB's server. And once an hour, whatever happened, the server's memory: whether its heap grows, which makes
+// each major collection longer.
 
 import { PerformanceObserver, constants, performance } from "node:perf_hooks";
 
@@ -13,6 +16,8 @@ const TICK_MS = 100;
 /** A gap between ticks this long is a stall: the loop ran nothing else for that long, or ran something that long. */
 const STALL_MS = 250;
 const REPORT_MS = 60_000;
+const MEMORY_MS = 60 * 60_000;
+const MiB = 1024 * 1024;
 /** Garbage collections this long are counted. */
 const GC_MS = 10;
 
@@ -22,6 +27,11 @@ export interface LoopWatchOptions {
   now?(): number;
   /** Ticks and garbage collection come from the caller, for tests. */
   manual?: boolean;
+  /** The processes bb-box started, ever, and their spawn calls' time; and the longest call since last asked. */
+  spawns?(): { readonly count: number; readonly ms: number };
+  longestSpawn?(): number;
+  /** The process's memory, as process.memoryUsage() gives it. */
+  memory?(): { readonly rss: number; readonly heapUsed: number; readonly heapTotal: number; readonly external: number };
 }
 
 export interface GcEntry {
@@ -37,13 +47,18 @@ export class LoopWatch {
   #reported: number;
   #stalls: { start: number; end: number }[] = [];
   #gc: GcEntry[] = [];
+  /** The spawn totals at the last minute's line, and at the last memory line. */
+  #spawnedMinute = { count: 0, ms: 0 };
+  #spawnedHour = { count: 0, ms: 0 };
+  #memoryAt: number;
   readonly #timer: ReturnType<typeof setInterval> | null = null;
   readonly #observer: PerformanceObserver | null = null;
 
   constructor(options: LoopWatchOptions) {
     this.#options = options;
     this.#now = options.now ?? (() => performance.now());
-    this.#last = this.#reported = this.#now();
+    this.#last = this.#reported = this.#memoryAt = this.#now();
+    this.#spawnedMinute = this.#spawnedHour = options.spawns?.() ?? { count: 0, ms: 0 };
     if (options.manual) return;
     this.#timer = setInterval(() => this.tick(), TICK_MS);
     this.#timer.unref?.();
@@ -65,8 +80,29 @@ export class LoopWatch {
     const now = this.#now();
     if (now - this.#last >= STALL_MS) this.#stalls.push({ start: this.#last, end: now });
     this.#last = now;
+    if (now - this.#memoryAt >= MEMORY_MS) this.#memory(now);
     if (now - this.#reported < REPORT_MS) return;
     this.#report(now);
+  }
+
+  /** The hour's line: the server's memory, and the processes bb-box started. */
+  #memory(now: number): void {
+    this.#memoryAt = now;
+    const memory = this.#options.memory?.();
+    const spawns = this.#options.spawns?.();
+    if (!memory && !spawns) return;
+    const parts: string[] = [];
+    if (memory) {
+      parts.push(
+        `its heap held ${Math.round(memory.heapUsed / MiB)} MiB of ${Math.round(memory.heapTotal / MiB)} MiB, ${Math.round(memory.external / MiB)} MiB more was outside it, and the process ${Math.round(memory.rss / MiB)} MiB in all`,
+      );
+    }
+    if (spawns) {
+      const count = spawns.count - this.#spawnedHour.count;
+      parts.push(`bb-box started ${count} ${count === 1 ? "process" : "processes"} in the last hour, the spawn calls taking ${Math.round(spawns.ms - this.#spawnedHour.ms)} ms in all`);
+      this.#spawnedHour = spawns;
+    }
+    this.#options.log(`BB's server, which runs bb-box: ${parts.join("; ")}.`);
   }
 
   gc(entry: GcEntry): void {
@@ -79,6 +115,10 @@ export class LoopWatch {
     const gc = this.#gc;
     this.#stalls = [];
     this.#gc = [];
+    const spawns = this.#options.spawns?.();
+    const longestSpawn = this.#options.longestSpawn?.() ?? 0;
+    const spawned = spawns ? { count: spawns.count - this.#spawnedMinute.count, ms: spawns.ms - this.#spawnedMinute.ms } : null;
+    if (spawns) this.#spawnedMinute = spawns;
     if (!stalls.length) return;
     const longest = Math.max(...stalls.map((stall) => stall.end - stall.start));
     const inside = gc.filter((entry) => stalls.some((stall) => entry.startTime < stall.end && entry.startTime + entry.duration > stall.start));
@@ -89,7 +129,10 @@ export class LoopWatch {
       `BB's server, which runs bb-box, stood still ${times} in the last minute, for up to ${Math.round(longest)} ms: desktops' frames and input waited meanwhile. ` +
         (inside.length
           ? `Garbage collection ran for ${Math.round(gcMs)} ms of it, in ${inside.length} ${inside.length === 1 ? "collection" : "collections"}, ${major} of them major.`
-          : "No garbage collection ran then: something else held the loop."),
+          : "No garbage collection ran then: something else held the loop.") +
+        (spawned
+          ? ` bb-box started ${spawned.count} ${spawned.count === 1 ? "process" : "processes"} in that minute, the spawn calls taking ${Math.round(spawned.ms)} ms in all, ${Math.round(longestSpawn)} ms at most.`
+          : ""),
     );
   }
 

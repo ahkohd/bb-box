@@ -2,6 +2,7 @@
 // nothing here logs it, and errors name only its type and where it leads.
 
 import { spawn } from "node:child_process";
+import { timedSpawn } from "./spawns.ts";
 import { createHash } from "node:crypto";
 import { connect as tcpConnect, isIP, type Socket } from "node:net";
 import type { Readable, Writable } from "node:stream";
@@ -109,7 +110,7 @@ function openTcp(host: string, port: number, signal?: AbortSignal): Promise<Byte
 function openCommand(argv: readonly [string, ...string[]], signal?: AbortSignal): Promise<ByteChannel> {
   const [binary, ...args] = argv;
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = timedSpawn(() => spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"] }));
     // The signal is for opening only; a route in use is closed with close().
     const abort = () => child.kill("SIGTERM");
     signal?.addEventListener("abort", abort, { once: true });

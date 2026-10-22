@@ -19,6 +19,7 @@
 
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
+import { timedSpawn } from "../../transports/spawns.ts";
 import { randomBytes } from "node:crypto";
 import { hostname as localHostname } from "node:os";
 import { join } from "node:path";
@@ -129,7 +130,7 @@ fi`;
 /** Runs a script with bash, a line of its output at a time. */
 function runScript(script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void, signal: AbortSignal): Promise<number | null> {
   return new Promise((resolve) => {
-    const child = spawn("bash", [script, ...args], { env, stdio: ["ignore", "pipe", "pipe"], signal });
+    const child = timedSpawn(() => spawn("bash", [script, ...args], { env, stdio: ["ignore", "pipe", "pipe"], signal }));
     let rest = "";
     const read = (chunk: Buffer) => {
       const lines = (rest + chunk.toString("utf8")).split(/\r?\n|\r/);
