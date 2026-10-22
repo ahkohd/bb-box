@@ -51,7 +51,9 @@ const DETACHED =
  * file, not a pipe: PowerShell does not wait for a GUI program, such as an
  * Electron app, and a pipe would close under it with its output lost. It
  * returns the PowerShell's process ID, not cmd's. $q is a double quote,
- * which the command line cannot carry.
+ * which the command line cannot carry. cmd's console starts hidden: in the
+ * desktop session it was a window over the desktop for as long as the
+ * command ran (#916). A GUI program the command starts shows as usual.
  */
 const DETACH =
   "function Start-Detached{param([Parameter(Mandatory)][string]$Command,[string]$Log);" +
@@ -62,7 +64,7 @@ const DETACH =
   `$b='$f='''+($f -replace '''','''''')+''';${DETACHED.replaceAll("'", "''")}';` +
   "$q=[char]34;$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{" +
   "CommandLine=$q+$env:ComSpec+$q+' /d /s /c '+$q+$q+[Environment]::ProcessPath+$q+' -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($b))+' >'+$q+$o+$q+' 2>&1'+$q;" +
-  "CurrentDirectory=(Get-Location -PSProvider FileSystem).ProviderPath};" +
+  "CurrentDirectory=(Get-Location -PSProvider FileSystem).ProviderPath;ProcessStartupInformation=(New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0})};" +
   "if($r.ReturnValue){Remove-Item -LiteralPath $f;throw ('Cannot start the command: Win32_Process Create returned '+$r.ReturnValue)};" +
   "$n=[IO.Path]::GetFileName([Environment]::ProcessPath);$p=$null;" +
   "for($i=0;-not $p -and $i -lt 50;$i++){$p=(Get-CimInstance Win32_Process -Filter ('ParentProcessId='+$r.ProcessId+' and Name='+[char]39+$n+[char]39)).ProcessId|Select-Object -First 1;if(-not $p){Start-Sleep -Milliseconds 100}};" +
