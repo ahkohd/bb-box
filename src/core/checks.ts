@@ -73,7 +73,7 @@ export const CHECKS = {
   "microsandbox.sizes": { name: "Room for each kind", from: ["microsandbox"], what: "The host holds a box of each kind at its default size." },
 
   "tailnet.client": { name: "OAuth client", from: ["bb-box"], what: "Tailscale signs in the OAuth client in the General settings, with which bb-box makes a single-use key for each machine it makes." },
-  "tailnet.devices": { name: "Devices", from: ["bb-box"], what: "The tailnet's devices with bb-box's tags, which bb-box removes when their machine went without logging out." },
+  "tailnet.devices": { name: "Devices", from: ["bb-box"], what: "This install's devices on the tailnet, which bb-box removes when their machine went without logging out, and how many other devices carry the same tags, unnamed: bb-box leaves those alone." },
   "namespace.token": { name: "API token", from: ["namespace"], what: "Namespace's API answers to the token in BB Box's settings." },
   "namespace.machines": { name: "Machines", from: ["namespace"], what: "The Namespace machines bb-box has, each with its age and when it ends, and any no box claims." },
 

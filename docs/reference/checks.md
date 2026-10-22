@@ -21,7 +21,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `images.bake.<image>.<backend>.<kind>` | Build of <image> for <kind> on <backend> | A project image whose last build failed. Its boxes run its script as they start meanwhile. |
 | `spares.image.<image>.<backend>.<kind>` | Spare of <image> for <kind> on <backend> | A project image's spare whose build failed to start a box, so bb-box makes none of that build for a day. Its boxes start from the build meanwhile. |
 | `tailnet.client` | OAuth client | Tailscale signs in the OAuth client in the General settings, with which bb-box makes a single-use key for each machine it makes. |
-| `tailnet.devices` | Devices | The tailnet's devices with bb-box's tags, which bb-box removes when their machine went without logging out. |
+| `tailnet.devices` | Devices | This install's devices on the tailnet, which bb-box removes when their machine went without logging out, and how many other devices carry the same tags, unnamed: bb-box leaves those alone. |
 
 ## Proxmox LXC
 

@@ -205,6 +205,11 @@ export function keyDescription(text: string): string {
   return text.replace(/[^A-Za-z0-9 -]+/g, " ").replace(/\s+/g, " ").trim().slice(0, DESCRIPTION_LIMIT) || "bb-box";
 }
 
+export function isInstallDevice(hostname: string, installId: string): boolean {
+  const install = tailnetHostname(installId);
+  return [`bb-box-${install}-`, `bb-box-hz-${install}-`, `bb-box-ns-${install}-`].some((prefix) => hostname.startsWith(prefix));
+}
+
 export function tailnetHostname(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, HOSTNAME_LIMIT) || "bb-box";
 }

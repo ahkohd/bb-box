@@ -1163,7 +1163,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       );
       sections.push(...reports);
       const tailnet = backends.tailnet();
-      if (tailnet) sections.push({ title: "Tailnet", report: await tailnetDoctor(tailnet, signal) });
+      if (tailnet) sections.push({ title: "Tailnet", report: await tailnetDoctor(tailnet, backends.installId, signal) });
       const offers = offerChecks(backends.kinds());
       if (offers.length) {
         sections.push({
