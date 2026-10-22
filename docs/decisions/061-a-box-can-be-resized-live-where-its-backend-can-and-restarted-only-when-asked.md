@@ -85,18 +85,24 @@ the VM runs.
   8 GiB. Tart's disk sizes are decimal: 70 GB is 65.2 GiB. Nothing in the
   image grew the partition at boot, and `growpart` with `resize2fs` grew
   it online afterwards.
-- macOS: not yet checked live, as no Mac had room while this was written.
-  A bb-box stop suspends a macOS VM, and keeps its memory in a saved
-  state, which a VM of another size cannot restore. bb-box already drops
-  a saved state that does not restore, and boots the VM afresh. So a new
-  size for macOS means a restart that loses the session. Its disk is
+- macOS: a bb-box stop suspends a macOS VM, and keeps its memory in a
+  saved state, which a VM of another size cannot restore. So a resize
+  shuts macOS down instead (`sudo shutdown -h now` from inside, 6 s on
+  macOS 26), sets the VM's size and boots it: bb-box's start booted it
+  afresh in 13.6 s, logged in with Cua working. A new size for macOS
+  means a restart that loses the session. Its disk is
   harder: macOS's recovery partition sits after the system's APFS
   container, and Tart's own advice for a larger disk is to delete it from
   recoveryOS, then grow the container. bb-box gives macOS boxes their
   image's disk for now (028).
 - Windows on a Mac runs in QEMU through bb-box's own scripts (046), not
   Tart: its cores and memory are QEMU's arguments when it starts, and a
-  stop saves its memory to a file, which a new size cannot restore.
+  stop saves its memory to a file, which a new size cannot restore. So a
+  resize asks Windows to shut down (`Stop-Computer -Force`, 4 s on
+  Windows 11 on arm64, after which QEMU exits), writes the new size in the
+  VM's config, grows its overlay with `qemu-img resize`, and boots it
+  afresh: bb-box's start took 15.4 s, with the desktop and Cua working.
+  C: then grows over a larger disk, as at an acquire.
 
 **microsandbox** (msb 0.7.7, a box at 2 cores and 4 GiB). msb 0.7.7 has
 `msb modify`, which plans a change (`--dry-run`), applies what it can

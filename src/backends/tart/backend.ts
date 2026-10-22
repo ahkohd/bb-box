@@ -138,6 +138,7 @@ import {
 import { VNC_BRIDGE_PY } from "./vnc-holder.ts";
 import {
   parseQemuState,
+  parseQemuSize,
   parseQemuVm,
   qemuBuildsScript,
   qemuCaptureScript,
@@ -147,6 +148,8 @@ import {
   qemuReplaceScript,
   parseQemuBuilds,
   qemuDiscardScript,
+  qemuShutdownScript,
+  qemuSizeScript,
   qemuEndedScript,
   qemuPowerScript,
   qemuStartScript,
@@ -274,6 +277,8 @@ export interface TartBackendOptions {
   readonly macStream?: string;
   /** Where a Linux desktop's image has Selkies' launcher, instead of SELKIES_LAUNCHER: a file the test finds, in tests. */
   readonly selkiesLauncher?: string;
+  /** How long a resize waits for Windows to shut down, instead of WINDOWS_SHUTDOWN_WAIT_S: a short time, in tests. */
+  readonly windowsShutdownWaitS?: number;
 }
 
 interface SshKeys {
@@ -408,8 +413,15 @@ function powerOf(state: string | undefined): PowerState {
   return "unknown";
 }
 
-/** About how long a Linux VM's resize restart takes: a shutdown, tart set and a boot, 4.5 s for the boot as measured (061). */
-const RESIZE_RESTART_S = 20;
+/**
+ * About how long a VM's resize restart takes: a shutdown, the new size and a
+ * boot, as measured: a Linux VM boots in 4.5 s, macOS shuts down in 6 s and
+ * boots in 14 s, and Windows shuts down in 4 s and boots in 15 s, then
+ * shows its desktop (061).
+ */
+const RESIZE_RESTART_S: Readonly<Record<GuestOs, number>> = { linux: 20, macos: 30, windows: 40 };
+/** How long a resize waits for Windows, asked to shut down, to end its QEMU before QEMU is ended (061). */
+const WINDOWS_SHUTDOWN_WAIT_S = 120;
 
 /** Grows a Linux VM's root partition and file system over its disk, while it runs (061): growpart says NOCHANGE when there is nothing to grow. */
 const GROW_ROOT = String.raw`dev=$(findmnt -no SOURCE /)
@@ -647,6 +659,10 @@ export function macClockScript(now: number): string {
 sudo -n date -u ${stamp} >/dev/null`;
 }
 
+const WINDOWS_POWER_OFF = String.raw`if ((Get-CimInstance Win32_ComputerSystem).Manufacturer -ne 'QEMU') { 'not a VM'; exit 0 }
+Stop-Computer -Force
+'powering off'`;
+
 /**
  * Asks a Linux VM to shut itself down, after its file systems are written
  * out: `tart stop` does not wait for a Linux guest, and what the guest had not
@@ -660,6 +676,15 @@ export function powerOffScript(vm: string): string {
 [ "$(cat "$HOME/.config/bb-box/vm" 2>/dev/null)" = ${quote(vm)} ] || { echo "not ${vm}"; exit 0; }
 sync
 sudo -n systemctl poweroff --no-block && echo "powering off"`;
+}
+
+export function macPowerOffScript(vm: string): string {
+  return String.raw`case "$(sysctl -n hw.model 2>/dev/null)" in VirtualMac*) ;; *) echo "not a VM"; exit 0 ;; esac
+[ "$(cat "$HOME/.config/bb-box/vm" 2>/dev/null)" = ${quote(vm)} ] || { echo "not ${vm}"; exit 0; }
+sudo -n true || exit 1
+sync
+(sudo -n shutdown -h now >/dev/null 2>&1 &)
+echo "powering off"`;
 }
 
 /** A Mac that did not answer over SSH, or whose script failed. */
@@ -1388,13 +1413,17 @@ export class TartBackend implements Backend {
   }
 
   /**
-   * Tart sizes a VM only while it is stopped, and a Linux VM, which a stop
-   * shuts down, takes its new CPUs, memory and disk when it boots: each
-   * part needs a restart (061). Its root partition then grows online. macOS
-   * and Windows VMs, whose stop keeps their session, come later.
+   * Tart sizes a VM only while it is stopped, and a VM takes its new CPUs,
+   * memory and disk when it boots: each part needs a restart (061). A Linux
+   * VM's root partition then grows online. A macOS VM is shut down, not
+   * suspended, as its saved memory would not restore at another size, and
+   * keeps its disk: macOS's recovery partition sits after its system. A
+   * Windows VM is shut down, as its saved memory would not restore either,
+   * and C: grows over a larger disk once it runs.
    */
   resizing(kind: string): Resizing | null {
-    return guestOsOf(kind) === "linux" && this.kinds().some((offer) => offer.id === kind) ? { cores: "restart", memory: "restart", disk: "restart", shrinks: true } : null;
+    if (!this.kinds().some((offer) => offer.id === kind)) return null;
+    return { cores: "restart", memory: "restart", disk: guestOsOf(kind) === "macos" ? "no" : "restart", shrinks: true };
   }
 
   async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
@@ -1403,36 +1432,51 @@ export class TartBackend implements Backend {
     const parts: ResizePlan["parts"][number][] = [];
     if (to.cores !== from.cores) parts.push({ part: "cores", from: from.cores, to: to.cores, way: "restart" });
     if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way: "restart" });
-    if (to.diskGiB !== null && to.diskGiB !== from.diskGiB) parts.push({ part: "disk", from: from.diskGiB, to: to.diskGiB, way: "restart" });
+    const os = guestOsOf(kind);
+    if (to.diskGiB !== null && to.diskGiB !== from.diskGiB) parts.push({ part: "disk", from: from.diskGiB, to: to.diskGiB, way: os === "macos" ? "no" : "restart" });
     const state = await this.#state(host, signal).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
     const room = this.#resizeRoom(host, state, from, to, pending);
-    return { parts, room, downSeconds: parts.length ? RESIZE_RESTART_S : null };
+    return { parts, room, downSeconds: parts.length ? RESIZE_RESTART_S[os] : null };
   }
 
   /**
-   * Resizes a running Linux VM (061): shuts it down, sets its CPUs, memory
-   * and disk with tart set, boots it, and grows its root partition and file
-   * system over a larger disk. When it does not come back, its old CPUs and
-   * memory go back and it boots again; a disk that grew stays.
+   * Resizes a running VM (061): shuts it down, sets its CPUs, memory and a
+   * Linux or Windows VM's disk, with tart set or in its QEMU config, boots
+   * it, and grows a Linux VM's root file system or Windows' C: over a larger
+   * disk. When it does not come back, its old CPUs and memory go back and it
+   * boots again; a disk that grew stays.
    */
   async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     if (!this.resizing(kind)) throw new BackendError("unsupported", `${this.label} cannot resize its ${kind} boxes yet.`);
     const { host, from } = await this.#resizable(guest, to, signal);
     if (!options.restart) throw new BackendError("unsupported", "A Tart VM changes size only with a restart.");
+    const os = guestOsOf(kind);
     const grows = to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB);
-    const change = (size: BoxSize, diskGB: number | null) => this.#run(host, sizeScript(guest.ref, this.#context.installId, this.#boxOf(guest), { cpus: size.cores, memoryMiB: size.memoryMiB, diskGB }), { timeoutMs: 120_000, signal });
-    await this.stop(guest, signal);
-    const set = await change(to, grows ? decimalGB(to.diskGiB!) : null);
+    if (os === "macos" && grows) throw new BackendError("unsupported", `${this.label} cannot grow a macOS VM's disk.`);
+    const ref = guest.ref;
+    const box = this.#boxOf(guest);
+    const change = (size: BoxSize, disk: number | null) =>
+      os === "windows"
+        ? this.#run(host, qemuSizeScript(ref, this.#context.installId, box, { cores: size.cores, memoryMiB: size.memoryMiB, diskGiB: disk }), { timeoutMs: 120_000, signal })
+        : this.#run(host, sizeScript(ref, this.#context.installId, box, { cpus: size.cores, memoryMiB: size.memoryMiB, diskGB: disk === null ? null : decimalGB(disk) }), { timeoutMs: 120_000, signal });
+    const shutDown = (each?: AbortSignal) => (os === "macos" ? this.#shutDownMac(host, guest, each) : os === "windows" ? this.#shutDownWindows(host, guest, each) : this.stop(guest, each));
+    await shutDown(signal);
+    const set = await change(to, grows ? to.diskGiB : null);
     if (set.stdout.trim() === "gone") throw this.#gone(guest);
     try {
       await this.start(guest, signal);
     } catch (error) {
-      await this.stop(guest).catch(() => undefined);
+      await shutDown().catch(() => undefined);
       await change(from, null).catch((cause) => this.#context.logError("resize: put CPUs and memory back", cause));
       await this.start(guest).catch((cause) => this.#context.logError("resize: start at the old size", cause));
       throw error;
     }
-    if (grows) {
+    if (os === "windows") {
+      const access = this.#windows(await this.#mac(host), (await this.#ports(host, guest, signal)).ssh);
+      await this.#windowsDesktop(host, ref, access, Date.now() + WINDOWS_READY_TIMEOUT_MS, signal);
+      if (grows) await extendC(new SshTransport((await this.#keys()).ssh, access, "windows"), signal);
+      this.#compileDisplay(ref, access);
+    } else if (grows) {
       const { ssh } = await this.#keys();
       const deadline = Date.now() + READY_TIMEOUT_MS;
       const address = await this.#address(host, guest.ref, deadline, signal);
@@ -1443,7 +1487,29 @@ export class TartBackend implements Backend {
     return { ...guest, size: read };
   }
 
-  /** A running Linux VM's Mac and size, when it is the box's and the disk asked for is not smaller (061). */
+  async #shutDownWindows(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<void> {
+    const port = this.#sshPort(guest) ?? (await this.#ports(host, guest, signal)).ssh;
+    try {
+      const { ssh } = await this.#keys();
+      await new SshTransport(ssh, this.#windows(await this.#mac(host), port), "windows").run(WINDOWS_POWER_OFF, { timeoutMs: 20_000, signal, maxOutputBytes: 4096 });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+    }
+    await this.#forget(host, guest.ref, "windows", port);
+    const wait = this.#options.windowsShutdownWaitS ?? WINDOWS_SHUTDOWN_WAIT_S;
+    const result = await this.#run(host, qemuShutdownScript(guest.ref, this.#context.installId, this.#boxOf(guest), wait), { timeoutMs: (wait + 60) * 1000, signal });
+    if (result.stdout.trim() === "gone") throw this.#gone(guest);
+  }
+
+  async #shutDownMac(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<void> {
+    const asked = await this.#powerOff(host, guest, "macos", signal);
+    await this.#forget(host, guest.ref, "macos");
+    const result = await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), asked ? "shutdown" : "stop"), { timeoutMs: 240_000, signal });
+    if (result.stdout.trim() === "gone") throw this.#gone(guest);
+    await this.#run(host, discardStateScript(guest.ref), { timeoutMs: 30_000, signal });
+  }
+
+  /** A running VM's Mac and size, when it is the box's and the disk asked for is not smaller (061). */
   async #resizable(guest: Guest, to: BoxSize, signal?: AbortSignal): Promise<{ host: TartHost; from: BoxSize }> {
     const host = this.#hostOf(guest);
     const power = await this.power(guest, signal);
@@ -1457,8 +1523,13 @@ export class TartBackend implements Backend {
     return { host, from };
   }
 
-  /** A VM's size as `tart get` gives it, its disk in GiB; null when Tart does not say. */
+  /** A VM's size as `tart get` or its QEMU config gives it, its disk in GiB; null when neither says. */
   async #readSize(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<BoxSize | null> {
+    if (this.#osOf(guest) === "windows") {
+      const result = await this.#run(host, qemuSizeScript(guest.ref, this.#context.installId, this.#boxOf(guest), null), { timeoutMs: 30_000, signal });
+      if (result.stdout.trim() === "gone") throw this.#gone(guest);
+      return parseQemuSize(result.stdout);
+    }
     const result = await this.#run(host, sizeScript(guest.ref, this.#context.installId, this.#boxOf(guest), null), { timeoutMs: 30_000, signal });
     if (result.stdout.trim() === "gone") throw this.#gone(guest);
     return parseTartSize(result.stdout);
@@ -1519,7 +1590,7 @@ export class TartBackend implements Backend {
     if (os === "linux") {
       const power = await this.power(guest, signal);
       if (power === null) throw this.#gone(guest);
-      how = power === "running" && (await this.#powerOff(host, guest, signal)) ? "shutdown" : "stop";
+      how = power === "running" && (await this.#powerOff(host, guest, "linux", signal)) ? "shutdown" : "stop";
     }
     await this.#forget(host, guest.ref, os);
     const result = await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), how), { timeoutMs: 240_000, signal });
@@ -2591,13 +2662,13 @@ export class TartBackend implements Backend {
   }
 
   /** Asks a Linux box's VM to shut down (powerOffScript); false when it could not be asked. */
-  async #powerOff(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<boolean> {
+  async #powerOff(host: TartHost, guest: Guest, os: "linux" | "macos", signal?: AbortSignal): Promise<boolean> {
     try {
       const address = this.#addresses.get(guest.ref) ?? (await this.#lookup(host, guest.ref).catch(() => null)) ?? guest.address;
       if (!address) return false;
       const { ssh } = await this.#keys();
-      const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "linux"), "linux");
-      const result = await command.run(powerOffScript(guest.ref), { timeoutMs: 20_000, signal, maxOutputBytes: 4096 });
+      const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, os), os);
+      const result = await command.run(os === "macos" ? macPowerOffScript(guest.ref) : powerOffScript(guest.ref), { timeoutMs: 20_000, signal, maxOutputBytes: 4096 });
       return result.exitCode === 0 && result.stdout.includes("powering off");
     } catch (error) {
       if (signal?.aborted) throw error;

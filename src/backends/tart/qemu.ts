@@ -165,6 +165,14 @@ export function parseQemuVm(text: string): QemuVm | null {
   return { image: fields.image, build: fields.build ?? "", cores, memoryMiB, ssh, vnc, diskGiB, power: fields.power || "stopped" };
 }
 
+/** A VM's size from qemuSizeScript: its config's cores and memory, and its disk's bytes in whole GiB, rounded up; null when either is missing. */
+export function parseQemuSize(text: string): { cores: number; memoryMiB: number; diskGiB: number } | null {
+  const vm = parseQemuVm(text);
+  const bytes = Number(/^bytes=(\d+)$/m.exec(text)?.[1]);
+  if (!vm || !(bytes > 0)) return null;
+  return { cores: vm.cores, memoryMiB: vm.memoryMiB, diskGiB: Math.ceil(bytes / 2 ** 30) };
+}
+
 export function parseQemuState(text: string): QemuState {
   const parts = sections(text);
   const vms = new Map<string, QemuVm>();
@@ -372,6 +380,53 @@ export function qemuEndedScript(vm: string, installId: string, boxId: string | n
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
 mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} && [ -d "$v" ] || { echo gone; exit 0; }
 ended "$v/out" "$v/exit" qemu-system-aarch64
+`);
+}
+
+/**
+ * Waits for VM $vm, which was asked to shut down, to end its QEMU, for up to
+ * `waitSeconds`, then ends QEMU, and drops any saved state (061). Prints
+ * "stopped", "ended" when QEMU had to be ended, or "gone".
+ */
+export function qemuShutdownScript(vm: string, installId: string, boxId: string | null, waitSeconds: number): string {
+  return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
+mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} && [ -d "$v" ] || { echo gone; exit 0; }
+qvideostop "$vm"
+how=stopped
+if qrunning "$vm"; then
+  pid=$(cat "$v/pid")
+  i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt ${waitSeconds * 10} ]; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then
+    how=ended; kill "$pid"
+    i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+    kill -9 "$pid" 2>/dev/null
+  fi
+fi
+rm -f "$v/state"
+echo "$how"
+`);
+}
+
+/**
+ * Sizes a VM that does not run (061): its cores and memory in its config,
+ * and, when `diskGiB` is given, its overlay grown to that size, which
+ * qemu-img refuses to shrink. With no change asked, it only reads. Prints
+ * its config after a line `@config`, then its disk's size in bytes as
+ * `bytes=`, or "gone".
+ */
+export function qemuSizeScript(vm: string, installId: string, boxId: string | null, change: { cores: number; memoryMiB: number; diskGiB: number | null } | null): string {
+  const disk = change?.diskGiB == null ? null : Math.trunc(change.diskGiB);
+  const grow = disk === null ? "" : `qemu-img resize -q "$v/disk.qcow2" ${disk}G || exit 1\n`;
+  const lines = disk === null ? String.raw`cores=%s\nmemory=%s\n' ${change?.cores} ${change?.memoryMiB}` : String.raw`cores=%s\nmemory=%s\ndisk=%s\n' ${change?.cores} ${change?.memoryMiB} ${disk}`;
+  const set = change
+    ? String.raw`if qrunning "$vm"; then echo "$vm runs, so it cannot be sized." >&2; exit 1; fi
+${grow}sed -e '/^cores=/d' -e '/^memory=/d'${disk === null ? "" : " -e '/^disk=/d'"} "$v/config" > "$v/config.new" &&
+  printf '${lines} >> "$v/config.new" && mv -f "$v/config.new" "$v/config" || exit 1
+`
+    : "";
+  return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
+mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} && [ -f "$v/config" ] || { echo gone; exit 0; }
+${set}echo @config; cat "$v/config"; echo "bytes=$(qbytes "$v/disk.qcow2")"
 `);
 }
 

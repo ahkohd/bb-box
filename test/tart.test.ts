@@ -1034,10 +1034,44 @@ test("prepare-image.sh's boot waits while macOS's two VM slots are taken, saying
   assert.match(stopped.err, /^prepare-image: no macOS VM slot was free for bb-box-macos-build within 0 minutes: The number of VMs exceeds the system limit/m);
 });
 
+test("a macOS VM resizes its CPUs and memory with a restart: shut down, not suspended, tart set and booted, and keeps its disk (061)", async () => {
+  const { ssh, mac, backend } = setup();
+  assert.deepEqual(backend.resizing("macos"), { cores: "restart", memory: "restart", disk: "no", shrinks: true });
+  const guest = await backend.acquire(identity("macos", "thr_abc123", SMALL), null, hooks().hooks, signal());
+  const to: BoxSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
+
+  const plan = await backend.planResize(guest, "macos", to, [], signal());
+  assert.deepEqual(plan.parts, [
+    { part: "cores", from: 4, to: 6, way: "restart" },
+    { part: "memory", from: 8192, to: 16384, way: "restart" },
+  ]);
+  assert.equal(plan.downSeconds, 30);
+  const disk = (await backend.planResize(guest, "macos", { ...to, diskGiB: 500 }, [], signal())).parts.find((part) => part.part === "disk");
+  assert.equal(disk?.way, "no");
+  await assert.rejects(backend.resize(guest, "macos", { ...to, diskGiB: 500 }, { restart: true }, signal()), /cannot grow a macOS VM's disk/);
+
+  const before = tartCalls(mac).length;
+  const resized = await backend.resize(guest, "macos", to, { restart: true }, signal());
+  assert.deepEqual([resized.size?.cores, resized.size?.memoryMiB], [6, 16384]);
+  const calls = tartCalls(mac).slice(before).filter((call) => call.includes(guest.ref));
+  assert.deepEqual(
+    calls.filter((call) => call[1] !== "get" && call[1] !== "ip"),
+    [
+      ["tart", "stop", guest.ref, "--timeout", "30"],
+      ["tart", "set", guest.ref, "--cpu", "6", "--memory", "16384"],
+      ["tart", "run", "--no-graphics", "--vnc-experimental", "--suspendable", guest.ref],
+    ],
+    "stopped, not suspended, then sized and booted",
+  );
+  assert.ok(ssh.log().some((entry) => entry.command.includes("sudo -n shutdown -h now")), "macOS is asked to shut down first");
+  assert.equal(existsSync(join(mac, ".tart", "vms", guest.ref, "state.vzvmsave")), false);
+  assert.equal(await backend.power(guest, signal()), "running");
+});
+
 test("a Linux VM resizes with a restart: shut down, tart set, booted, and its root partition grown over a larger disk (061)", async () => {
   const { ssh, mac, backend } = linuxSetup();
   assert.deepEqual(backend.resizing("linux-arm64"), { cores: "restart", memory: "restart", disk: "restart", shrinks: true });
-  assert.equal(backend.resizing("macos"), null, "macOS comes later");
+  assert.equal(backend.resizing("windows-arm64-desktop"), null, "a kind this backend does not offer");
   const guest = await backend.acquire(identity("linux-arm64", "thr_abc123", LINUX_SMALL), null, hooks().hooks, signal());
   // The disk tools, as the VM would have them; sudo logs the command.
   const home = ssh.home(guest.address!);
