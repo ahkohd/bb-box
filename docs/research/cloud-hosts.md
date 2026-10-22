@@ -499,6 +499,92 @@ trial; the owner logs in, and a revokable token is made for the trial:
 **About $6 in all**, nothing if the free trial covers it. Windows needs the
 Team plan, at $100 a month, so it is left out.
 
+### The trial, 22 October 2026
+
+Run in the owner's Personal workspace, on Namespace's trial plan, so it cost
+nothing; at list prices the two instances, kept for the owner to check, come
+to about $16. Driven from a Linux box of bb-box's own with `nsc` 0.0.587.
+
+**Auth.** `nsc login --browser=false` printed a login link, which the owner
+approved in their browser. Then `nsc token create` made a token named for
+the trial, for 7 days, granted only `instance` (create, destroy, get, list,
+refresh, wait, ssh, exec, dial_host, suspend, resume) and `tenant/usage`
+(get). That token did everything below but one: `nsc proxy --service vnc`
+returned an address and the Mac user's VNC password, but the connection
+through it closed at once. The dashboard has no button to make a token, only
+a list, so a person makes bb-box's with `nsc`.
+
+**Region.** `--region eu` was accepted, but both instances' SSH gateways
+were in Namespace's US East sites. Where an instance runs, and whether
+Europe can be chosen for it, is for the backend's first PR to find out.
+
+**Linux**, 8 vCPU and 16 GB, `--bare`:
+
+| Step | Time | What it needed |
+| --- | --- | --- |
+| Create, to ready | 3.1 s | |
+| SSH through `ssh.eu.namespace.so` | 1.7 s | the key given at creation |
+| What is there | | root, on Wolfi Linux, with no systemd and no `sudo`; Docker 29.3; `/dev/kvm` and `/dev/net/tun`; 94 GB of disk |
+| Tailnet | about 3 minutes, mostly the owner's approval | Tailscale's static binaries, `tailscaled`, and `tailscale up` with a login link; then BB's server answered in 0.68 s |
+| Enrolment in BB | 7 s | Node.js 22 from Wolfi's packages, a `bb` user, and a `docker` group made by hand, as the socket was root's alone. With no systemd, BB's installer skipped its service, and the daemon ran as a plain process |
+| bb-box's desktop image, built in the instance's Docker | 15.5 minutes | 6.8 GB |
+| A box: our desktop image, privileged, with bb-box's own options | 2.0 s | Docker inside it answered in 1 s and ran `hello-world`; X and Selkies ran |
+
+**macOS**, 6 vCPU and 14 GB, macOS 26:
+
+| Step | Time | What it needed |
+| --- | --- | --- |
+| Create, to ready | 20.6 s | |
+| What is there | | macOS 26.3.1 on a virtual M5 Max; the user `runner`, an admin with `sudo`, signed in at the console; System Integrity Protection off; Xcode 26.1.1; Node.js 25 from Homebrew |
+| SSH | under 3 s | through Namespace's gateway, which runs commands under its own agent, `/opt/namespace/vmguest`, not `sshd` |
+| Tailnet | 9 s to install from Homebrew, then the owner's approval | `tailscaled` as root, and `tailscale up` started apart from the SSH session, as the first ended with it |
+| Enrolment in BB | 19 s | the command run as `runner`; BB installed its launch agent |
+| Its desktop over VNC | | Screen Sharing on port 5900, through an SSH tunnel, as on the owner's Macs; it signs in with `runner`'s password, which `nsc proxy` gives |
+| `bb-box-stream`, bb-box's video helper | built in 12 s | see below |
+
+Video from the Mac took four changes, all for bb-box to make:
+
+1. **Screen Recording for Namespace's agent.** With SIP off, bb-box grants
+   it as it does on the owner's Macs (058), but to `/opt/namespace/vmguest`,
+   which is signed ad hoc, by its path, rather than to `sshd-keygen-wrapper`.
+2. **The console session.** ScreenCaptureKit answered only for a process
+   started in `runner`'s session with `launchctl asuser`, as bb-box starts
+   Mac desktop commands (030).
+3. **A display that sleeps.** The Mac's one display, 1280 by 800 points,
+   slept when idle and capture then hung: `caffeinate -u` woke it and
+   `pmset displaysleep 0` kept it awake.
+4. **No hardware encoder.** The VM has none, and `bb-box-stream` asks for
+   low-latency rate control, which only the hardware encoder offers: every
+   frame failed with -12915. Without it, the software encoder sent 153
+   frames, 2.2 MB, in 10 seconds at 2560 by 1600, the first after 0.49 s.
+
+**Deadlines.** `nsc extend` took 0.6 s. A request for 48 hours was cut to 4
+hours from the instance's creation, this workspace's cap. An instance made
+with a deadline of 2 minutes was gone 2 minutes later.
+
+**A desktop box through BB.** With the Linux instance turned on under Docker
+on BB machines, a `linux-desktop-cpu` box (4 cores, 8 GiB) on it was ready in
+2.0 s: placing it 0.3 s, its network 0.4 s, making it 0.3 s, starting it
+0.3 s. It enrolled in BB 16.8 s after, and its desktop drew in BB's panel.
+From the box, BB's server answered HTTPS in 0.38 s and the internet in
+0.03 s, and a ping to BB's server took 92 ms on average, as the instance ran
+in the United States.
+
+Beside Hetzner's step 1, a CPX32 in Nuremberg, the same day:
+
+| | Namespace, Linux, 8 vCPU, 16 GB | Hetzner, CPX32, 4 vCPU, 8 GB |
+| --- | --- | --- |
+| A server, from asking to SSH | about 5 s | minutes, by hand in the Console |
+| bb-box's images, built on the host | 15.5 minutes, the desktop image alone | 50 minutes (3,003 s) for bb-box's build |
+| A box, ready | 2.0 s, a desktop box of 4 cores and 8 GiB | 1.3 s, a Linux box; 1.9 s, a desktop box of 2 cores and 4 GiB |
+| Enrolled in BB | 16.8 s | 5.6 s, the Linux box |
+| BB's server over HTTPS, from a box | 0.38 s | 0.16 s |
+| The host's life | 4 hours at most on this plan | until deleted |
+
+Hetzner's host is nearer BB's server, so its boxes enrol faster; Namespace's
+was in the United States. A Namespace instance in Europe, if one can be
+had, would close most of that gap.
+
 ### Which first
 
 **Hetzner for Linux first, then Namespace for macOS.**
@@ -510,10 +596,33 @@ Team plan, at $100 a month, so it is left out.
 - Namespace's strength is macOS by the minute. The owner's own Macs serve
   macOS boxes today, but only as many as there are Macs; Namespace would
   add Macs on demand, for short tasks, within its deadlines.
-- The trial above can run beside Hetzner's step 1, for about $6, and
-  decide whether a Namespace macOS backend is worth its own plan. Linux on
-  Namespace is worth building only if short, bursty boxes with nothing
-  idle turn out to matter more than the price.
+- The trial showed a Namespace Mac is a good box: ready in 20 seconds, an
+  admin at the console with SIP off, so bb-box can grant it what it needs,
+  and Xcode there. It needs four changes for video, above, one of them in
+  `bb-box-stream` that helps any Mac without a hardware encoder.
+- Linux on Namespace works too, and fast: ready in 3 seconds, with KVM and
+  TUN, and our images run there as they do on our hosts. It is worth
+  building for short, bursty boxes, or as a microsandbox host, as it has
+  KVM; for Linux boxes that run for hours, Hetzner costs less.
+
+**So: a Namespace backend for macOS next, beside Hetzner's step 2**, a
+machine per box (model A), within the plan's cap on an instance's life:
+
+1. `bb-box-stream` falls back to the software encoder without low-latency
+   rate control where there is no hardware encoder.
+2. A Namespace client through the Connect API and one `fetch`, with a fake,
+   as for Hetzner; a revokable token in BB Box's settings.
+3. The backend: acquire with labels and a deadline, extend while held,
+   release by destroy, the sweep by label; enrolment as BB machines, as
+   the trial did by hand.
+4. Each Mac prepared at acquire: Screen Recording granted to Namespace's
+   agent, the display kept awake, the video helper built, the desktop
+   reached over an SSH tunnel with `runner`'s password.
+5. The tailnet through Namespace's Tailscale integration, which needs the
+   owner to make a Tailscale trust credential for the workspace.
+
+Linux on Namespace can follow as the same backend's second kind, if bursty
+boxes or microsandbox hosts are wanted.
 
 ## What the live tests cost
 
