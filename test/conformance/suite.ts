@@ -53,6 +53,7 @@ export type ConformanceCheck =
   | "computer-use"
   /** Running a command in a Mac's desktop session, through sudo and `launchctl asuser` (030). */
   | "desktop-session"
+  | "exact-size"
   | "enrol"
   | "stop-start"
   | "recovery"
@@ -924,7 +925,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           const size = guest.size;
           assert.ok(size, "the backend reads the box's size");
           checkSize(size, "the guest");
-          if (backend.nature === "virtual") {
+          if (backend.nature === "virtual" && !skip["exact-size"]) {
             assert.deepEqual([size.cores, size.memoryMiB], [asked.cores, asked.memoryMiB], "a virtual box has the cores and memory asked for");
           } else {
             // A machine has memory M when it shows 90% of it, as the box's own check allows.

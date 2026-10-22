@@ -121,6 +121,13 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `microsandbox.capacity` | Room on <host> | Room on the host for a box at its default size. |
 | `microsandbox.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
 
+## Namespace
+
+| ID | Name | What it checks |
+| --- | --- | --- |
+| `namespace.token` | API token | Namespace's API answers to the token in BB Box's settings. |
+| `namespace.machines` | Machines | The Namespace machines bb-box has, each with its age and when it ends, and any no box claims. |
+
 ## Tart
 
 | ID | Name | What it checks |

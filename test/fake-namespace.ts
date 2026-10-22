@@ -96,8 +96,8 @@ export class FakeNamespace {
         return reply(200, { metadata: this.#metadata(found, true) });
       }
       case "ListInstances": {
-        const filters = (body.labelFilter ?? []) as { name: string; value: string }[];
-        const matching = this.running().filter((instance) => filters.every((filter) => instance.labels[filter.name] === filter.value));
+        const filters = (body.labelFilter ?? []) as { name: string; value?: string; op: string }[];
+        const matching = this.running().filter((instance) => filters.every((filter) => (filter.op === "EXIST" ? filter.name in instance.labels : instance.labels[filter.name] === filter.value)));
         return reply(200, { instances: matching.map((instance) => this.#metadata(instance, true)) });
       }
       case "ExtendInstance": {

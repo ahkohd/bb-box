@@ -86,6 +86,7 @@ Projects' images, by name (049).
 | [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
 | [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
 | [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu |
+| [`namespace`](#namespace) | Namespace | macos |
 
 ### proxmox-lxc
 
@@ -255,3 +256,17 @@ Setup: [docs/guide/cloud-docker-host.md](../../docs/guide/cloud-docker-host.md).
 | `boxes` | Most boxes | number | advanced | `10` | The most bb-box containers on the host at once, running or stopped, counting those of every bb-box install that uses it. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | A new box is refused if the host would have less memory than this left, after the memory limits of the running boxes. |
 | `network` | Network | string | advanced | `bbbox` | The Docker network bb-box makes for its boxes, apart from the host's other containers. |
+
+### namespace
+
+Namespace: Macs rented by the minute from Namespace, one machine for each box, ended when the box is released or at the plan's longest life.
+
+Setup: [docs/research/cloud-hosts.md](../../docs/research/cloud-hosts.md).
+
+| Field | Label | Type | Group | Default | Description |
+| --- | --- | --- | --- | --- | --- |
+| `token` | API token | string, secret | connection |  | A revocable token for the Namespace workspace, from nsc token create, granted the instance actions the guide lists. It is kept as a secret and never shown. |
+| `region` | API region | string | connection | `us` | us or eu: where bb-box calls Namespace's API and its SSH gateway. Where the machines run is the workspace's regional preference, which Namespace's support sets. |
+| `macos-version` | macOS version | string | boxes | `26.x` | The macOS a box runs, as Namespace's base images name it, such as 26.x. |
+| `machines` | Most machines | number | boxes | `2` | The most Namespace machines bb-box has at once. Each box is one machine, billed by the minute while it exists. |
+| `longest-life-hours` | Longest life (hours) | number | boxes | `3` | How long the workspace's plan lets a machine live: 3 hours on Developer, 5 on Team, up to 24 on Business. A box ends then, and its thread hears an hour ahead. |
