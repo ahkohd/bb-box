@@ -105,27 +105,6 @@ function presetOfSize(presets: ResizeResult["presets"], size: SizeView | null | 
 /** How long after a resize ends its row still says how it went, for a panel that reloaded while it ran. */
 export const RESIZE_NOTE_MS = 2 * 60_000;
 
-function resizeSeenKey(boxId: string, at: number): string {
-  return `bb-box:resize-seen:${boxId}:${at}`;
-}
-
-/** This tab has said how the resize went, in the dialog or on the row, so a reload does not say it again. */
-function markResizeSeen(boxId: string, at: number): void {
-  try {
-    window.sessionStorage.setItem(resizeSeenKey(boxId, at), "1");
-  } catch {
-    // Storage may be off; then a reload may say it once more.
-  }
-}
-
-function wasResizeSeen(boxId: string, at: number): boolean {
-  try {
-    return window.sessionStorage.getItem(resizeSeenKey(boxId, at)) !== null;
-  } catch {
-    return false;
-  }
-}
-
 /** How long a resize asked for in this page's dialog keeps its row quiet, for a refusal that never began one. */
 const ASKED_QUIET_MS = 15 * 60_000;
 
@@ -154,35 +133,33 @@ export function resizeNoteWords(resize: ResizeView, ways: Resizing | null): { re
   return { text: `Resized to ${to} ${resize.restart ? "after a restart" : "live"}${tookWords(resize.ms)}.`, failed: false };
 }
 
+/** Whether this page's dialog asked for `resize`, and so said how it went. */
+function askedHere(boxId: string, resize: ResizeView): boolean {
+  const asked = askedInThisPage.get(boxId);
+  if (!asked) return false;
+  if (Date.now() - asked.askedAt > ASKED_QUIET_MS) {
+    askedInThisPage.delete(boxId);
+    return false;
+  }
+  return resize.at > asked.before;
+}
+
 /**
- * How a box's last resize went, once, on its row: for a resize that ended in the last two minutes that this tab has not
- * already shown, as when a deploy reloaded the panel while the dialog waited. Quiet while `dialogOpen`, and for a resize its
- * dialog asked for in this page, which said how it went.
+ * How a box's last resize went, on its row, until two minutes after it ended: for a panel that reloaded while the dialog
+ * waited, as for a deploy, or a resize an agent made. Quiet while `dialogOpen`, and for a resize this page's dialog asked for,
+ * which said how it went. BB's panel can mount a row more than once, so each mount says it again within those minutes.
  */
 export function useResizeNote(box: BoxView, dialogOpen: boolean): { readonly text: string; readonly failed: boolean } | null {
   const last = box.lastResize ?? null;
   const ended = last && last.state !== "resizing" ? last : null;
-  const [showing, setShowing] = useState<number | null>(null);
+  const left = ended ? endOf(ended) + RESIZE_NOTE_MS - Date.now() : 0;
+  const [, expire] = useState(0);
   useEffect(() => {
-    if (!ended || dialogOpen || showing === ended.at) return;
-    const asked = askedInThisPage.get(box.id);
-    if (asked && Date.now() - asked.askedAt > ASKED_QUIET_MS) askedInThisPage.delete(box.id);
-    else if (asked && ended.at > asked.before) {
-      askedInThisPage.delete(box.id);
-      markResizeSeen(box.id, ended.at);
-      return;
-    }
-    const left = endOf(ended) + RESIZE_NOTE_MS - Date.now();
-    if (left <= 0 || wasResizeSeen(box.id, ended.at)) return;
-    markResizeSeen(box.id, ended.at);
-    setShowing(ended.at);
-  }, [box.id, ended?.at, ended?.state, dialogOpen]);
-  useEffect(() => {
-    if (showing === null || !ended || ended.at !== showing) return;
-    const timer = setTimeout(() => setShowing(null), Math.max(0, endOf(ended) + RESIZE_NOTE_MS - Date.now()));
+    if (left <= 0) return;
+    const timer = setTimeout(() => expire((count) => count + 1), left);
     return () => clearTimeout(timer);
-  }, [showing, ended?.at]);
-  if (!ended || showing !== ended.at || dialogOpen) return null;
+  }, [ended?.at, ended?.state, left > 0]);
+  if (!ended || left <= 0 || dialogOpen || askedHere(box.id, ended)) return null;
   return resizeNoteWords(ended, box.resizing ?? null);
 }
 

@@ -1353,7 +1353,7 @@ test("Resize changes a box live at once: the presets, cores, memory and disk wit
   expect(slot.queryByText(/^Resized to/)).toBeNull();
 });
 
-test("a row says once how a resize that ended in the last two minutes went, for a panel that reloaded while its dialog waited (061)", async () => {
+test("a row says how a resize that ended in the last two minutes went, for a panel that reloaded while its dialog waited (061)", async () => {
   const ended = (minutesAgo: number, state: "done" | "failed", error: string | null = null) => ({ to: size(4, 8, 64), at: Date.now() - minutesAgo * 60_000 - 15_000, state, restart: true, ms: 15_000, error });
   const ways = { cores: "restart", memory: "restart", disk: "restart", shrinks: false } as const;
   const boxes = [
@@ -1369,11 +1369,10 @@ test("a row says once how a resize that ended in the last two minutes went, for 
   expect(slot.getAllByText(/^(Not r|R)esized to/)).toHaveLength(2);
   slot.unmount();
 
-  // Said once: the same tab, reloaded again, keeps quiet.
+  // BB's panel can mount a row again: it says it again, within the two minutes (a row said it, was mounted again, and kept quiet).
   slot = panel(server(boxes).handlers);
-  await slot.findByText("calm-otter");
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(slot.queryByText(/^(Not r|R)esized to/)).toBeNull();
+  expect(await slot.findByText("Resized to 4 cores · 8 GiB · 64 GiB disk after a restart, in 15 s.")).toBeTruthy();
+  expect(slot.getAllByText(/^(Not r|R)esized to/)).toHaveLength(2);
 });
 
 test("Resize asks before a restart, in the record's words, then names the threads working on the box before it goes ahead anyway (061)", async () => {
