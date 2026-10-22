@@ -308,7 +308,8 @@ test("a macos-desktop box gets Cua Driver for computer use: the pinned release c
   tool("xxd", "echo 0a0b");
   tool("sudo", `[ "$2" = launchctl ] && mkdir -p "${join(home, "Library/Caches/cua-driver")}" && python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "${socket}"; :`);
   tool("cua-driver", '[ "$1" = permissions ] && echo \'{"accessibility": true, "screen_recording": true}\'; :');
-  const run = () => spawnSync("sh", ["-c", MAC_CUA], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: home }, encoding: "utf8" });
+  const shell = spawnSync("zsh", ["-fc", ":"]).status === 0 ? "zsh" : "sh";
+  const run = () => spawnSync(shell, ["-c", MAC_CUA], { env: { PATH: `${bin}:${process.env.PATH}`, HOME: home }, encoding: "utf8" });
   const done = run();
   assert.equal(done.status, 0, done.stderr);
   const calls = readFileSync(log, "utf8").trim().split("\n");
