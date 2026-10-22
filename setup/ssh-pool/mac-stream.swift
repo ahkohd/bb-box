@@ -10,7 +10,7 @@
 //                                    serves a Windows VM's desktop from QEMU's
 //                                    VNC server on the Mac's loopback (#865),
 //                                    or, given the VM's QMP socket, from QEMU's
-//                                    D-Bus display, with VNC for the pointer (#885)
+//                                    D-Bus display, the pointer through it too (#885)
 //   bb-box-stream attach <socket>    joins stdin and stdout to a running
 //                                    server, starting none
 //
@@ -1135,12 +1135,12 @@ final class DbusPeer: @unchecked Sendable {
 
   /** Sends a message, with `fds` as SCM_RIGHTS. */
   @discardableResult
-  func send(type: UInt8, fields: [Field], body: Data = Data(), fds: [Int32] = []) -> Bool {
+  func send(type: UInt8, fields: [Field], body: Data = Data(), fds: [Int32] = [], noReply: Bool = false) -> Bool {
     writeLock.lock()
     defer { writeLock.unlock() }
     serial += 1
     var writer = DbusWriter()
-    writer.data.append(contentsOf: [UInt8(ascii: "l"), type, 0, 1])
+    writer.data.append(contentsOf: [UInt8(ascii: "l"), type, noReply ? 1 : 0, 1])
     writer.u32(UInt32(body.count))
     writer.u32(serial)
     var array = DbusWriter(at: 16)
@@ -1179,6 +1179,11 @@ final class DbusPeer: @unchecked Sendable {
         }
       }
     }
+  }
+
+  /** Calls a method of QEMU's on the console, without waiting for, or asking for, its reply. */
+  func call(_ interface: String, _ member: String, _ signature: String, _ body: Data) {
+    send(type: 1, fields: [.path("/org/qemu/Display1/Console_0"), .interface(interface), .member(member), .signature(signature)], body: body, noReply: true)
   }
 
   /** A method's reply, with its body. */
@@ -1384,6 +1389,34 @@ final class DbusDisplay: QemuDesktop, @unchecked Sendable {
         line = Data()
       }
     }
+  }
+
+  /** The buttons the pointer holds down, as the panel gives them: 1 left, 2 middle, 4 right. */
+  private var buttons = 0
+
+  /**
+   * The person's pointer, through QEMU's D-Bus mouse (#885): its absolute position on QEMU's tablet, then each button
+   * that changed, as QEMU's InputButton numbers them: 0 left, 1 middle, 2 right.
+   */
+  func pointer(x: Int, y: Int, mask: Int) {
+    var position = DbusWriter()
+    position.u32(UInt32(max(0, min(width - 1, x))))
+    position.u32(UInt32(max(0, min(height - 1, y))))
+    display.call("org.qemu.Display1.Mouse", "SetAbsPosition", "uu", position.data)
+    for (bit, button) in [(1, 0), (2, 1), (4, 2)] where (mask ^ buttons) & bit != 0 {
+      var body = DbusWriter()
+      body.u32(UInt32(button))
+      display.call("org.qemu.Display1.Mouse", mask & bit != 0 ? "Press" : "Release", "u", body.data)
+    }
+    buttons = mask
+  }
+
+  /** A notch of the wheel: QEMU's buttons 3 up and 4 down, pressed and released. */
+  func wheel(up: Bool) {
+    var body = DbusWriter()
+    body.u32(up ? 3 : 4)
+    display.call("org.qemu.Display1.Mouse", "Press", "u", body.data)
+    display.call("org.qemu.Display1.Mouse", "Release", "u", body.data)
   }
 
   /** On a thread of its own: QEMU's calls to the listener, until QEMU goes. Calls `onUpdate` after each change. */
@@ -1678,19 +1711,22 @@ final class QemuServer: @unchecked Sendable {
       log("a server is already running at \(path)")
       exit(0)
     }
-    guard let first = RfbClient(port: port) else {
-      log("QEMU's VNC server does not answer on port \(port)")
-      exit(1)
-    }
-    rfb = first
+    var first: RfbClient?
     if let qmp {
-      // The desktop from QEMU's D-Bus display; VNC stays for the pointer, and is asked for no picture.
+      // The desktop from QEMU's D-Bus display, and the pointer through it: no VNC at all. It ends when QEMU's display does.
       guard let display = DbusDisplay(qmp: qmp) else { exit(1) }
       dbus = display
       Thread { [self] in
         display.run { frame(from: display) }
         exit(0)
       }.start()
+    } else {
+      guard let vnc = RfbClient(port: port) else {
+        log("QEMU's VNC server does not answer on port \(port)")
+        exit(1)
+      }
+      first = vnc
+      rfb = vnc
     }
     unlink(path)
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -1705,7 +1741,7 @@ final class QemuServer: @unchecked Sendable {
       log("could not listen at \(path): \(String(cString: strerror(errno)))")
       exit(1)
     }
-    log(dbus == nil ? "serving QEMU's VNC on port \(port) at \(path)" : "serving QEMU's D-Bus display, with VNC on port \(port) for the pointer, at \(path)")
+    log(dbus == nil ? "serving QEMU's VNC on port \(port) at \(path)" : "serving QEMU's D-Bus display at \(path)")
     Thread { [self] in
       while true {
         let client = Darwin.accept(fd, nil, nil)
@@ -1713,7 +1749,7 @@ final class QemuServer: @unchecked Sendable {
         Thread { self.serve(client) }.start()
       }
     }.start()
-    Thread { [self] in readQemu(first) }.start()
+    if let first { Thread { [self] in readQemu(first) }.start() }
     Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [self] _ in
       queue.async { [self] in
         guard let rfb, dbus == nil else { return }
@@ -1873,7 +1909,9 @@ final class QemuServer: @unchecked Sendable {
       case "m":
         at = (number(1), number(2), number(3) & 7)
         let now = at
-        queue.async { [self] in rfb?.pointer(x: now.x, y: now.y, mask: now.mask) }
+        queue.async { [self] in
+          if let dbus { dbus.pointer(x: now.x, y: now.y, mask: now.mask) } else { rfb?.pointer(x: now.x, y: now.y, mask: now.mask) }
+        }
       case "m2":
         // The panel's wheel: bit 3 of the mask is down and bit 4 up, a notch for each of the fifth field. QEMU's are
         // buttons 5 and 4, a press and a release a notch.
@@ -1883,8 +1921,12 @@ final class QemuServer: @unchecked Sendable {
         if wheel != 0 {
           queue.async { [self] in
             for _ in 0..<notches {
-              rfb?.pointer(x: held.x, y: held.y, mask: held.mask | wheel)
-              rfb?.pointer(x: held.x, y: held.y, mask: held.mask)
+              if let dbus {
+                dbus.wheel(up: wheel == 8)
+              } else {
+                rfb?.pointer(x: held.x, y: held.y, mask: held.mask | wheel)
+                rfb?.pointer(x: held.x, y: held.y, mask: held.mask)
+              }
             }
           }
         }
@@ -1914,7 +1956,9 @@ final class QemuServer: @unchecked Sendable {
     queue.async { [self] in
       clients[client.id] = nil
       lastClientAt = Date()
-      if held.mask != 0 { rfb?.pointer(x: held.x, y: held.y, mask: 0) }
+      if held.mask != 0 {
+        if let dbus { dbus.pointer(x: held.x, y: held.y, mask: 0) } else { rfb?.pointer(x: held.x, y: held.y, mask: 0) }
+      }
     }
   }
 }
