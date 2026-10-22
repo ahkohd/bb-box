@@ -11,6 +11,7 @@
 // each major collection longer.
 
 import { PerformanceObserver, constants, performance } from "node:perf_hooks";
+import type { SpawnTotals } from "../transports/spawns.ts";
 
 const TICK_MS = 100;
 /** A gap between ticks this long is a stall: the loop ran nothing else for that long, or ran something that long. */
@@ -28,7 +29,7 @@ export interface LoopWatchOptions {
   /** Ticks and garbage collection come from the caller, for tests. */
   manual?: boolean;
   /** The processes bb-box started, ever, and their spawn calls' time; and the longest call since last asked. */
-  spawns?(): { readonly count: number; readonly ms: number };
+  spawns?(): SpawnTotals;
   longestSpawn?(): number;
   /** The process's memory, as process.memoryUsage() gives it. */
   memory?(): { readonly rss: number; readonly heapUsed: number; readonly heapTotal: number; readonly external: number };
@@ -40,6 +41,26 @@ export interface GcEntry {
   readonly major: boolean;
 }
 
+/** How many of the hour's children the helper started, when it is known. */
+function helpedPart(now: SpawnTotals, before: SpawnTotals): string {
+  if (now.helped === undefined) return "";
+  return `, ${now.helped - (before.helped ?? 0)} of them by the helper`;
+}
+
+const MOST_FROM = 5;
+
+/** The callers that started the most of the hour's children. */
+function mostFromPart(now: SpawnTotals, before: SpawnTotals): string {
+  if (!now.byCaller) return "";
+  const most = [...now.byCaller]
+    .map(([caller, total]) => [caller, total - (before.byCaller?.get(caller) ?? 0)] as const)
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, MOST_FROM);
+  if (!most.length) return "";
+  return `; the most from ${most.map(([caller, count]) => `${caller} (${count})`).join(", ")}`;
+}
+
 export class LoopWatch {
   readonly #options: LoopWatchOptions;
   readonly #now: () => number;
@@ -48,8 +69,8 @@ export class LoopWatch {
   #stalls: { start: number; end: number }[] = [];
   #gc: GcEntry[] = [];
   /** The spawn totals at the last minute's line, and at the last memory line. */
-  #spawnedMinute = { count: 0, ms: 0 };
-  #spawnedHour = { count: 0, ms: 0 };
+  #spawnedMinute: SpawnTotals = { count: 0, ms: 0 };
+  #spawnedHour: SpawnTotals = { count: 0, ms: 0 };
   #memoryAt: number;
   readonly #timer: ReturnType<typeof setInterval> | null = null;
   readonly #observer: PerformanceObserver | null = null;
@@ -99,7 +120,11 @@ export class LoopWatch {
     }
     if (spawns) {
       const count = spawns.count - this.#spawnedHour.count;
-      parts.push(`bb-box started ${count} ${count === 1 ? "process" : "processes"} in the last hour, the spawn calls taking ${Math.round(spawns.ms - this.#spawnedHour.ms)} ms in all`);
+      parts.push(
+        `bb-box started ${count} ${count === 1 ? "process" : "processes"} in the last hour, the spawn calls taking ${Math.round(spawns.ms - this.#spawnedHour.ms)} ms in all` +
+          helpedPart(spawns, this.#spawnedHour) +
+          mostFromPart(spawns, this.#spawnedHour),
+      );
       this.#spawnedHour = spawns;
     }
     this.#options.log(`BB's server, which runs bb-box: ${parts.join("; ")}.`);

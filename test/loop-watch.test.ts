@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { LoopWatch } from "../src/plugin/loop-watch.ts";
+import { spawnCaller, spawnTotals, timedSpawn } from "../src/transports/spawns.ts";
 
 test("the event loop watch tells, once a minute, how often bb-box's loop stood still and how much of it was garbage collection", () => {
   let now = 1_000;
@@ -71,4 +72,44 @@ test("the minute's line tells the processes bb-box started and how long their sp
     "BB's server, which runs bb-box: its heap held 2100 MiB of 2300 MiB, 400 MiB more was outside it, and the process 3500 MiB in all; bb-box started 3 processes in the last hour, the spawn calls taking 240 ms in all.",
   );
   watch.dispose();
+});
+
+test("the hour's line tells how many children the helper started and which callers started the most", () => {
+  let now = 1_000;
+  const lines: string[] = [];
+  let spawned = { count: 10, ms: 50, helped: 4, byCaller: new Map([["a < b", 6]]) };
+  const watch = new LoopWatch({ log: (line) => lines.push(line), now: () => now, manual: true, spawns: () => spawned });
+  spawned = { count: 20, ms: 51, helped: 13, byCaller: new Map([["a < b", 9], ["c", 7], ["d", 1]]) };
+  for (let i = 0; i < 36_001; i++) {
+    now += 100;
+    watch.tick();
+  }
+  assert.equal(
+    lines.at(-1),
+    "BB's server, which runs bb-box: bb-box started 10 processes in the last hour, the spawn calls taking 1 ms in all, 9 of them by the helper; the most from c (7), a < b (3), d (1).",
+  );
+  watch.dispose();
+});
+
+test("a spawn is counted by the names of the functions that started it, past the spawn's own plumbing", () => {
+  const stack = [
+    "Error",
+    "    at spawnCaller (file:///x/spawns.ts:1:1)",
+    "    at timedSpawn (file:///x/spawns.ts:2:1)",
+    "    at startChild (file:///x/forker.ts:3:1)",
+    "    at file:///x/process.ts:4:1",
+    "    at new Promise (<anonymous>)",
+    "    at #spawn (file:///x/process.ts:5:1)",
+    "    at async ProcessTransport.run (file:///x/process.ts:6:1)",
+    "    at async ProxmoxHost.state (file:///x/host.ts:7:1)",
+    "    at async Sweep.run (file:///x/boxes.ts:8:1)",
+  ].join("\n");
+  assert.equal(spawnCaller(stack), "#spawn < ProcessTransport.run < ProxmoxHost.state < Sweep.run");
+  function startsOne() {
+    return timedSpawn(() => 1);
+  }
+  const fromStartsOne = () => [...(spawnTotals().byCaller ?? [])].find(([caller]) => caller.startsWith("startsOne"))?.[1] ?? 0;
+  startsOne();
+  startsOne();
+  assert.equal(fromStartsOne(), 2);
 });

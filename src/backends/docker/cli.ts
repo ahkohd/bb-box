@@ -3,8 +3,8 @@
 // ssh:// host alike, and its `docker exec` is a plain command line, which
 // the command transport and the desktop's route use (031).
 
-import { execFile, spawn } from "node:child_process";
-import { timedSpawn } from "../../transports/spawns.ts";
+import { execFile } from "node:child_process";
+import { startChild } from "../../transports/forker.ts";
 import { Capture } from "../../transports/process.ts";
 import { abortable } from "../../core/abortable.ts";
 
@@ -262,7 +262,7 @@ export class DockerCli {
     const stderr = new Capture(64 * 1024);
     return new Promise((resolve, reject) => {
       options.signal?.throwIfAborted();
-      const child = timedSpawn(() => spawn(binary, rest, { stdio: ["pipe", "pipe", "pipe"] }));
+      const child = startChild(binary, rest);
       let timedOut = false;
       const kill = () => child.kill("SIGKILL");
       const timer = setTimeout(() => {
