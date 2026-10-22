@@ -471,7 +471,9 @@ final class Input: @unchecked Sendable {
  * encoder, as a Namespace Mac, a VM, has none, gets the software encoder without low-latency rate control, which only
  * the hardware one offers: with it, every frame failed with -12915 (measured 22 October 2026). The hardware is asked
  * for as required, not read back: a low-latency session does not have kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder
- * (-12900), so reading it sent every Mac to the software encoder.
+ * (-12900), so reading it sent every Mac to the software encoder. And it is asked for without low-latency first: in a
+ * VM with no hardware encoder, a session that requires the hardware with low-latency is made all the same, and its
+ * first frame fails (-12908), where one that requires the hardware alone is refused (-12903).
  */
 final class Encoder: @unchecked Sendable {
   let width: Int
@@ -483,7 +485,7 @@ final class Encoder: @unchecked Sendable {
     self.width = width
     self.height = height
     self.output = output
-    var made = Encoder.session(width: width, height: height, hardware: true)
+    var made = Encoder.hasHardwareEncoder(width: width, height: height) ? Encoder.session(width: width, height: height, hardware: true) : nil
     if made == nil {
       log("no hardware H.264 encoder: the software one, without low-latency rate control")
       made = Encoder.session(width: width, height: height, hardware: false)
@@ -509,6 +511,16 @@ final class Encoder: @unchecked Sendable {
       if set != noErr { log("VideoToolbox did not take \(key): \(set)") }
     }
     VTCompressionSessionPrepareToEncodeFrames(made)
+  }
+
+  private static func hasHardwareEncoder(width: Int, height: Int) -> Bool {
+    var probe: VTCompressionSession?
+    let status = VTCompressionSessionCreate(
+      allocator: nil, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264,
+      encoderSpecification: [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true] as CFDictionary,
+      imageBufferAttributes: nil, compressedDataAllocator: nil, outputCallback: nil, refcon: nil, compressionSessionOut: &probe)
+    if let probe { VTCompressionSessionInvalidate(probe) }
+    return status == noErr && probe != nil
   }
 
   private static func session(width: Int, height: Int, hardware: Bool) -> VTCompressionSession? {
