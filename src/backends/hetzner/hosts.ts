@@ -21,6 +21,8 @@ export interface HostRecord {
   readonly location: string;
   readonly ipv4: string | null;
   readonly ipv6: string | null;
+  readonly lastBusyAtMs: number;
+  readonly answeredAtMs: number | null;
 }
 
 export interface HostSpec {
@@ -35,6 +37,7 @@ export interface HostSpec {
 
 export interface SweepOutcome {
   readonly deletedUnclaimedServers: readonly string[];
+  readonly adoptedHosts: readonly string[];
   readonly finishedDeletes: readonly string[];
   readonly abandonedCreates: readonly string[];
   readonly droppedRecordsOfGoneServers: readonly string[];
@@ -59,14 +62,53 @@ export class HetznerHosts {
   readonly #storage: BackendStorage;
   readonly #installId: string;
   readonly #now: () => number;
+  readonly #whenGone: (record: HostRecord, goneAtMs: number) => Promise<void>;
   readonly #inThisProcess = new Set<string>();
   #sweeping: Promise<SweepOutcome> | null = null;
 
-  constructor(options: { api: Hetzner; storage: BackendStorage; installId: string; now?: () => number }) {
+  constructor(options: { api: Hetzner; storage: BackendStorage; installId: string; now?: () => number; whenGone?: (record: HostRecord, goneAtMs: number) => Promise<void> }) {
     this.#api = options.api;
     this.#storage = options.storage;
     this.#installId = options.installId;
     this.#now = options.now ?? Date.now;
+    this.#whenGone = options.whenGone ?? (async () => {});
+  }
+
+  async markBusy(hostId: string): Promise<void> {
+    const record = await this.record(hostId);
+    if (record && record.state !== "deleting") await this.#save({ ...record, lastBusyAtMs: this.#now() });
+  }
+
+  async markAnswered(hostId: string): Promise<void> {
+    const record = await this.record(hostId);
+    if (record && record.state === "ready") await this.#save({ ...record, answeredAtMs: this.#now() });
+  }
+
+  async adoptUnclaimedHosts(signal?: AbortSignal, listed?: readonly HetznerServer[]): Promise<string[]> {
+    const adopted: string[] = [];
+    for (const server of await this.unclaimedServers(signal, listed)) {
+      if (server.labels[LABEL.role] !== "host" || !server.labels[LABEL.host] || this.#inThisProcess.has(server.labels[LABEL.host]!)) continue;
+      if (await this.record(server.labels[LABEL.host]!)) continue;
+      await this.#save({
+        hostId: server.labels[LABEL.host]!,
+        serverName: server.name,
+        state: "ready",
+        serverId: server.id,
+        claimedAtMs: server.createdAtMs,
+        serverType: server.serverType,
+        location: server.location,
+        ipv4: server.ipv4,
+        ipv6: server.ipv6,
+        lastBusyAtMs: this.#now(),
+        answeredAtMs: null,
+      });
+      adopted.push(server.name);
+    }
+    return adopted;
+  }
+
+  isMakingInThisProcess(hostId: string): boolean {
+    return this.#inThisProcess.has(hostId);
   }
 
   get installLabels(): Labels {
@@ -97,6 +139,8 @@ export class HetznerHosts {
       location: spec.location,
       ipv4: null,
       ipv6: null,
+      lastBusyAtMs: this.#now(),
+      answeredAtMs: null,
     };
     try {
       await this.#save(record);
@@ -126,7 +170,7 @@ export class HetznerHosts {
       await this.#save({ ...record, state: "deleting" });
       const serverId = record.serverId ?? (await this.#serverOfHost(hostId, signal))?.id ?? null;
       if (serverId !== null) await this.#api.deleteServer(serverId, signal);
-      await this.#storage.delete(RECORD_PREFIX + hostId);
+      await this.#forget(record);
     } finally {
       this.#inThisProcess.delete(hostId);
     }
@@ -142,6 +186,7 @@ export class HetznerHosts {
   async #sweep(signal?: AbortSignal): Promise<SweepOutcome> {
     const outcome = {
       deletedUnclaimedServers: [] as string[],
+      adoptedHosts: [] as string[],
       finishedDeletes: [] as string[],
       abandonedCreates: [] as string[],
       droppedRecordsOfGoneServers: [] as string[],
@@ -149,6 +194,7 @@ export class HetznerHosts {
     };
     const servers = await this.#api.servers(this.installLabels, signal);
     const records = new Map((await this.records()).map((each) => [each.hostId, each]));
+    const deleted = new Set<number>();
     const now = this.#now();
     const pastGrace = (sinceMs: number) => now - sinceMs > UNCLAIMED_SERVER_GRACE_MS;
 
@@ -164,10 +210,13 @@ export class HetznerHosts {
         }
         continue;
       }
-      if (this.#inThisProcess.has(hostId) || !pastGrace(server.createdAtMs)) continue;
+      if (this.#inThisProcess.has(hostId) || record || server.labels[LABEL.role] === "host" || !pastGrace(server.createdAtMs)) continue;
       await this.#api.deleteServer(server.id, signal);
+      deleted.add(server.id);
       outcome.deletedUnclaimedServers.push(server.name);
     }
+    outcome.adoptedHosts.push(...(await this.adoptUnclaimedHosts(signal, servers.filter((server) => !deleted.has(server.id)))));
+    for (const record of await this.records()) if (!records.has(record.hostId)) records.set(record.hostId, record);
 
     const listed = new Map(servers.map((server) => [server.labels[LABEL.host] ?? "", server]));
     for (const record of records.values()) {
@@ -180,15 +229,15 @@ export class HetznerHosts {
         await this.delete(record.hostId, signal);
         outcome.abandonedCreates.push(record.serverName);
       } else if (record.state === "ready" && !server) {
-        await this.#storage.delete(RECORD_PREFIX + record.hostId);
+        await this.#forget(record);
         outcome.droppedRecordsOfGoneServers.push(record.serverName);
       }
     }
     return outcome;
   }
 
-  async unclaimedServers(signal?: AbortSignal): Promise<HetznerServer[]> {
-    const servers = await this.#api.servers(this.installLabels, signal);
+  async unclaimedServers(signal?: AbortSignal, listed?: readonly HetznerServer[]): Promise<HetznerServer[]> {
+    const servers = listed ?? (await this.#api.servers(this.installLabels, signal));
     const records = new Map((await this.records()).map((each) => [each.hostId, each]));
     return servers.filter((server) => records.get(server.labels[LABEL.host] ?? "")?.serverName !== server.name);
   }
@@ -220,6 +269,11 @@ export class HetznerHosts {
   async #serverOfHost(hostId: string, signal?: AbortSignal): Promise<HetznerServer | null> {
     const [found] = await this.#api.servers({ ...this.installLabels, [LABEL.host]: hostId }, signal);
     return found ?? null;
+  }
+
+  async #forget(record: HostRecord): Promise<void> {
+    await this.#whenGone(record, this.#now());
+    await this.#storage.delete(RECORD_PREFIX + record.hostId);
   }
 
   async #save(record: HostRecord): Promise<void> {

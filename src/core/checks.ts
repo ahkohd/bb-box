@@ -51,6 +51,14 @@ export const CHECKS = {
   "docker.gpus": { name: "GPUs", from: ["docker"], what: "The NVIDIA GPUs Docker lists as CDI devices, for GPU desktops." },
   "docker.capacity": { name: "Room on <host>", from: ["docker"], what: "Room on the host for a Linux box at its default size." },
   "docker.sizes": { name: "Room for each kind", from: ["docker"], what: "The host holds a box of each kind at its default size." },
+
+  // Hetzner Cloud.
+  "hetzner.api": { name: "Hetzner Cloud API", from: ["hetzner"], what: "The API answers and the token reads the project." },
+  "hetzner.unclaimed": { name: "Servers no host claims", from: ["hetzner"], what: "Servers with this install's label that are not hosts bb-box knows. The sweep adopts a host's server, as after lost storage, and deletes any other 10 minutes after it was made." },
+  "hetzner.type": { name: "Server type <type>", from: ["hetzner"], what: "The hosts' server type is sold at the location, with its size and price." },
+  "hetzner.hosts": { name: "Hosts", from: ["hetzner"], what: "Each host bb-box made: its state, age, boxes and cost this month." },
+  "hetzner.spend": { name: "This month's spend", from: ["hetzner"], what: "What the hosts cost this month before VAT, against the monthly limit." },
+  "hetzner.host.<host>": { name: "Docker on <host>", from: ["hetzner"], what: "A host's Docker, as the Docker backend's checks find it." },
   "image.<image>": { name: "Image <image>", from: ["docker", "microsandbox"], what: "An image a kind runs is on the host, built by bb-box's build script, and not too old." },
 
   // microsandbox.

@@ -95,6 +95,17 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `docker.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
 | `image.<image>` | Image <image> | An image a kind runs is on the host, built by bb-box's build script, and not too old. |
 
+## hetzner
+
+| ID | Name | What it checks |
+| --- | --- | --- |
+| `hetzner.api` | Hetzner Cloud API | The API answers and the token reads the project. |
+| `hetzner.unclaimed` | Servers no host claims | Servers with this install's label that are not hosts bb-box knows. The sweep adopts a host's server, as after lost storage, and deletes any other 10 minutes after it was made. |
+| `hetzner.type` | Server type <type> | The hosts' server type is sold at the location, with its size and price. |
+| `hetzner.hosts` | Hosts | Each host bb-box made: its state, age, boxes and cost this month. |
+| `hetzner.spend` | This month's spend | What the hosts cost this month before VAT, against the monthly limit. |
+| `hetzner.host.<host>` | Docker on <host> | A host's Docker, as the Docker backend's checks find it. |
+
 ## microsandbox
 
 | ID | Name | What it checks |
