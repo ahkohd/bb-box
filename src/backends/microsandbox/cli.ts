@@ -6,8 +6,7 @@
 // command lines, as Docker's do (031). The scripts of release.ts run the
 // same three ways.
 
-import { spawn } from "node:child_process";
-import { timedSpawn } from "../../transports/spawns.ts";
+import { startChild } from "../../transports/forker.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { abortable } from "../../core/abortable.ts";
@@ -154,7 +153,7 @@ export class MsbCli {
     const stderr = new Capture(64 * 1024);
     return new Promise((resolve, reject) => {
       options.signal?.throwIfAborted();
-      const child = timedSpawn(() => spawn(binary, rest, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...env } }));
+      const child = startChild(binary, rest, { env: { ...process.env, ...env } });
       let timedOut = false;
       const kill = () => child.kill("SIGKILL");
       const timer = setTimeout(() => {

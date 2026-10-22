@@ -20,6 +20,7 @@ import { backendPart, checkDocument, exported, generalConfig, readDraft, upgrade
 import { CLEARED_KEY, COPY_KEY, DOCUMENT_KEY, SECRETS_KEY, SIZES_ADOPTED_KEY, fromSettings, type MovedCopy } from "../src/core/move.ts";
 import { boundedDoctor, type ApplyResult, type CheckResult, type ConfigState } from "../src/plugin/configuration.ts";
 import { setup, type BbBox } from "../src/plugin/setup.ts";
+import { helperPid, startChild } from "../src/transports/forker.ts";
 import { FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
 import { KEY, MemoryStorage, tempDir } from "./helpers.ts";
 
@@ -1025,4 +1026,32 @@ test("files for every box: paths checked, contents kept as secrets only, and nev
   );
   assert.ok(!JSON.stringify(bad.problems).includes("sk-secret-value"));
   assert.match(bad.problems[0]!.message, /not under the box user's home/);
+});
+
+/** Whether process `pid` runs, waiting up to 5 s for it to end. */
+async function endsWithin(pid: number): Promise<boolean> {
+  for (let i = 0; i < 100; i++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+test("a disposed bb-box leaves no spawn helper, nor any child the helper started", async () => {
+  const { latest } = await start({});
+  const sleeper = startChild("sleep", ["30"]);
+  await new Promise((resolve) => sleeper.once("spawn", resolve));
+  const helper = helperPid();
+  assert.ok(helper, "the helper started the child");
+  const child = sleeper.pid!;
+  const closed = new Promise((resolve) => sleeper.once("close", resolve));
+  await latest().lifecycle.dispose();
+  await closed;
+  assert.equal(helperPid(), undefined);
+  assert.ok(await endsWithin(helper), "the helper still runs");
+  assert.ok(await endsWithin(child), "the helper's child still runs");
 });

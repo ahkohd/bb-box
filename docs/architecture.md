@@ -507,8 +507,16 @@ route and carries messages, not bytes:
   and input, whether it is bb-box's, BB's or another plugin's. bb-box logs,
   at most once a minute, when the loop stood still for 250 ms or more, how
   much of it was garbage collection, and how many processes bb-box started
-  then and how long their spawn calls took, as each forks the server; and
-  once an hour the server's memory. A CPU profile of the process, 1 to
+  then and how long their spawn calls took; and once an hour the server's
+  memory, how many processes the helper started and which of bb-box's
+  functions started the most. Forking copies the parent's page tables on
+  the loop's thread, about 49 ms a spawn for a 3.5 GB server, so bb-box's
+  commands, Docker's and msb's start from a small helper process, started
+  once, which forks for them and passes their streams back over its IPC
+  channel (`src/transports/forker.ts`); a spawn call then takes about
+  0.1 ms. Should the helper end, bb-box spawns directly for 30 s, then
+  starts it again; when bb-box stops or reloads, the helper ends with its
+  children. `BB_BOX_DIRECT_SPAWN=1` turns it off. A CPU profile of the process, 1 to
   60 s, one at a time, names the code (`bb plugin rpc call bb-box profile` with
   `{"seconds": 15}`), splits the busy time by whose code it ran under, notes
   each long garbage collection with the heap after it, and times starting a

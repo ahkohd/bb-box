@@ -33,6 +33,7 @@ import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { LoopWatch } from "./loop-watch.ts";
+import { stopForker } from "../transports/forker.ts";
 import { spawnTotals, takeLongestSpawn } from "../transports/spawns.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
 import { Enrolment, MACHINE_PROVIDER_ID, type HostApi } from "./enrol.ts";
@@ -741,6 +742,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     memory: () => process.memoryUsage(),
   });
   bb.onDispose(() => loopWatch.dispose());
+  bb.onDispose(() => stopForker());
   bb.onDispose(() => imageJobs.stop());
   bb.onDispose(() => imageBakes.stop());
   bb.onDispose(() => backends.dispose());
