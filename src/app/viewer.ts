@@ -17,31 +17,44 @@ export const SETTLE_MS = 250;
 export const PASTE_CHORD_DELAY_MS = 150;
 /** How long a Cmd+V or Ctrl+V waits for the browser's paste event before the box pastes its own clipboard. */
 export const PASTE_EVENT_WAIT_MS = 150;
+export interface LetterKey {
+  readonly keysym: number;
+  readonly code: string;
+  readonly down: boolean;
+}
+
 /**
- * A letter typed with Shift held and Caps Lock off goes as its capital, whatever the browser named it (#913): Selkies
- * and x0vncserver type the keysym they are given, where Xvnc and wayvnc apply the held Shift. A key's release goes as
- * its press went.
+ * Letters typed as every desktop takes them alike (#913). A letter typed with Shift held and Caps Lock off goes as its
+ * capital, whatever the browser named it: Selkies and x0vncserver type the keysym they are given, where Xvnc and wayvnc
+ * apply the held Shift. A capital A to Z with no Shift held and Caps Lock off, as CDP and soft keyboards send it, goes
+ * inside a Shift press and release: x0vncserver typed it lower case over VNC. A key's release goes as its press went.
  */
 export class ShiftedLetters {
   readonly #shifts = new Set<number>();
-  readonly #pressed = new Map<string, number>();
+  readonly #pressed = new Map<string, { keysym: number; shiftAround: boolean }>();
 
-  keysym(keysym: number, code: string, down: boolean, capslock: boolean | null): number {
+  keys(keysym: number, code: string, down: boolean, capslock: boolean | null): LetterKey[] {
     if (keysym === XK_SHIFT_L || keysym === XK_SHIFT_R) {
       if (down) this.#shifts.add(keysym);
       else this.#shifts.delete(keysym);
-      return keysym;
+      return [{ keysym, code, down }];
     }
     const key = code || String(keysym);
     if (!down) {
       const pressed = this.#pressed.get(key);
       this.#pressed.delete(key);
-      return pressed ?? keysym;
+      const up = { keysym: pressed?.keysym ?? keysym, code, down: false };
+      return pressed?.shiftAround ? [up, leftShift(false)] : [up];
     }
-    const capital = this.#shifts.size > 0 && capslock !== true && keysym >= XK_LOWER_A && keysym <= XK_LOWER_Z;
-    const sent = capital ? keysym - 0x20 : keysym;
-    this.#pressed.set(key, sent);
-    return sent;
+    const shifted = this.#shifts.size > 0;
+    const lockOff = capslock !== true;
+    const lower = keysym >= XK_LOWER_A && keysym <= XK_LOWER_Z;
+    const upper = keysym >= XK_UPPER_A && keysym <= XK_UPPER_Z;
+    const sent = shifted && lockOff && lower ? keysym - 0x20 : keysym;
+    const shiftAround = !shifted && lockOff && upper;
+    this.#pressed.set(key, { keysym: sent, shiftAround });
+    const press = { keysym: sent, code, down: true };
+    return shiftAround ? [leftShift(true), press] : [press];
   }
 
   reset(): void {
@@ -52,6 +65,9 @@ export class ShiftedLetters {
 
 const XK_LOWER_A = 0x61;
 const XK_LOWER_Z = 0x7a;
+const XK_UPPER_A = 0x41;
+const XK_UPPER_Z = 0x5a;
+const leftShift = (down: boolean): LetterKey => ({ keysym: XK_SHIFT_L, code: "ShiftLeft", down });
 
 /** The longest keys typed after a paste wait for its chord before they go anyway (#915). */
 export const PASTE_HOLD_MS = 5_000;

@@ -2391,6 +2391,16 @@ test("over VNC, a letter typed with Shift held and Caps Lock off goes as its cap
   client._handleKeyEvent(0x63, "KeyC", true, null, false);
   client._handleKeyEvent(0x63, "KeyC", false, null, false);
   expect(client.keyEvents.map((key) => `${key.keysym.toString(16)}${key.down ? "" : " up"}`)).toEqual(["ffe1", "41", "ffe1 up", "41 up", "ffe1", "62", "62 up", "ffe1 up", "63", "63 up"]);
+
+  // A capital with no Shift press, as CDP and soft keyboards send it, goes inside Shift; not with Caps Lock on, and no symbol.
+  client.keyEvents.length = 0;
+  client._handleKeyEvent(0x53, "KeyS", true, null, false);
+  client._handleKeyEvent(0x53, "KeyS", false, null, false);
+  client._handleKeyEvent(0x54, "KeyT", true, null, true);
+  client._handleKeyEvent(0x54, "KeyT", false, null, true);
+  client._handleKeyEvent(0x21, "Digit1", true, null, false);
+  client._handleKeyEvent(0x21, "Digit1", false, null, false);
+  expect(client.keyEvents.map((key) => `${key.keysym.toString(16)}${key.down ? "" : " up"}`)).toEqual(["ffe1", "53", "53 up", "ffe1 up", "54", "54 up", "21", "21 up"]);
 });
 
 test("the pointer over the desktop: the local arrow without control whatever the box sends, the box's cursor with control, and never an invisible one", async () => {
@@ -2851,8 +2861,11 @@ test("over video, a letter typed with Shift held and Caps Lock off goes as its c
     fireEvent.keyDown(canvas, { key: "b", code: "KeyB", shiftKey: true, modifierCapsLock: true } as KeyboardEventInit);
     fireEvent.keyUp(canvas, { key: "b", code: "KeyB", shiftKey: true, modifierCapsLock: true } as KeyboardEventInit);
     fireEvent.keyUp(canvas, { key: "Shift", code: "ShiftLeft" });
+    // A capital with no Shift press goes inside Shift.
+    fireEvent.keyDown(canvas, { key: "S", code: "KeyS", shiftKey: true });
+    fireEvent.keyUp(canvas, { key: "S", code: "KeyS", shiftKey: true });
     const keys = socket.sent.slice(sent).filter((message): message is string => typeof message === "string" && /^k[du],/.test(message));
-    expect(keys).toEqual(["kd,65505", "kd,65", "ku,65", "kd,98", "ku,98", "ku,65505"]);
+    expect(keys).toEqual(["kd,65505", "kd,65", "ku,65", "kd,98", "ku,98", "ku,65505", "kd,65505", "kd,83", "ku,83", "ku,65505"]);
   } finally {
     undo();
     window.sessionStorage.clear();
