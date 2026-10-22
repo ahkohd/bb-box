@@ -48,7 +48,7 @@ test("bb-box-stream's qemu mode maps QEMU's shared screen through its D-Bus disp
   stream.stderr!.on("data", (data) => (log += data));
   // QEMU shares the screen: a ScanoutMap, whose file descriptor bb-box-stream maps.
   await until("the shared screen", () => /D-Bus: the desktop is \d+x\d+, shared/.test(log));
-  assert.match(log, /serving QEMU's D-Bus display, with VNC on port \d+ for the pointer/);
+  assert.match(log, /serving QEMU's D-Bus display at /);
   const [, width, height] = /the desktop is (\d+)x(\d+), shared/.exec(log)!.map(Number);
 
   // A viewer, as the panel's video client is: an H.264 frame of the screen's size comes.
