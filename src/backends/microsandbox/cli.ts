@@ -113,7 +113,7 @@ export class MsbCli {
 
   async run(args: readonly string[], options: RunOptions = {}): Promise<MsbResult> {
     await this.prepare(options.signal);
-    return this.#spawn(this.argv(args), options);
+    return this.#spawn(this.argv(args), options, {}, `msb ${args[0] ?? ""}`.trim());
   }
 
   /** Runs `msb <args>` and returns its output, or throws an MsbError that says what failed. */
@@ -144,16 +144,17 @@ export class MsbCli {
     const command = this.host
       ? [this.#options.ssh ?? "ssh", "-o", "BatchMode=yes", "-T", ...sshTarget(this.host), `sh -c ${quote(msbScript(name))} bb-box-msb ${args.map(quote).join(" ")}`]
       : ["sh", "-c", msbScript(name), "bb-box-msb", ...args];
-    return this.#spawn(command as [string, ...string[]], { timeoutMs, signal }, this.host ? {} : { BBBOX_MSB_DIR: this.#dir });
+    return this.#spawn(command as [string, ...string[]], { timeoutMs, signal }, this.host ? {} : { BBBOX_MSB_DIR: this.#dir }, `msb script ${name}`);
   }
 
-  #spawn(argv: readonly [string, ...string[]], options: RunOptions, env: Record<string, string> = {}): Promise<MsbResult> {
+  /** Runs `argv`, counted by the loop watch as `site`, which names no path. */
+  #spawn(argv: readonly [string, ...string[]], options: RunOptions, env: Record<string, string>, site: string): Promise<MsbResult> {
     const [binary, ...rest] = argv;
     const stdout = new Capture(8 * MiB);
     const stderr = new Capture(64 * 1024);
     return new Promise((resolve, reject) => {
       options.signal?.throwIfAborted();
-      const child = startChild(binary, rest, { env: { ...process.env, ...env }, site: `msb ${rest[0] ?? ""}`.trim() });
+      const child = startChild(binary, rest, { env: { ...process.env, ...env }, site });
       let timedOut = false;
       const kill = () => child.kill("SIGKILL");
       const timer = setTimeout(() => {
