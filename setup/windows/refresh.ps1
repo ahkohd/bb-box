@@ -6,6 +6,8 @@
 #   refresh.ps1 -Pins <pins.json> -Record <image.json>
 #
 # The pins are setup/windows/pins.json's tools for the box's architecture.
+# With bb-url beside it, BB's server URL, it installs that server's BB app
+# too, so a box enrols without its download and npm install (#916).
 # The record is the new build's, which goes to C:\bb-box\image.json once all
 # is done. Exits 0 when done, 3010 when Windows needs a restart first (the
 # refresh restarts the box and runs this again), and 1 on a failure. Each
@@ -276,11 +278,35 @@ try {
 
   if ($restart) { Step 'a restart, then this again'; exit 3010 }
 
+  # BB's host app, where BB's installer looks for it, so enrolment skips its
+  # download and npm install, which took 35 s and more (#916). A box of a
+  # server that has built BB's app again since downloads it as before.
+  $bbApp = $null
+  $bbUrl = if (Test-Path "$dir\bb-url") { (Get-Content "$dir\bb-url" -Raw).Trim() } else { '' }
+  if ($bbUrl) {
+    # Node.js and npm, as installed in this run too.
+    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+    $data = Join-Path $env:USERPROFILE ('.bb-machines\' + (([Uri] $bbUrl).Authority -replace '[^a-zA-Z0-9.-]', '-'))
+    New-Item -ItemType Directory -Force -Path $data | Out-Null
+    $tgz = Join-Path $dir 'bb-app.tgz'
+    $got = Invoke-WebRequest "$($bbUrl.TrimEnd('/'))/install/bb-app.tgz" -OutFile $tgz -UseBasicParsing -PassThru
+    $bbApp = "$($got.Headers['x-bb-artifact-sha256'])".Trim().ToLower()
+    if ($bbApp -notmatch '^[a-f0-9]{64}$' -or (Get-FileHash $tgz -Algorithm SHA256).Hash.ToLower() -ne $bbApp) { throw "bb-app.tgz does not match the server's digest" }
+    & npm.cmd install -g --no-fund --no-audit --allow-scripts=better-sqlite3,node-pty,@parcel/watcher --prefix "$data\npm" $tgz 2>&1 | ForEach-Object { Step "npm: $_" }
+    if ($LASTEXITCODE) { throw "npm could not install BB's app: exit $LASTEXITCODE" }
+    & node.exe -e 'const r = process.argv[1]; require(r + "/node_modules/node-pty"); require(r + "/node_modules/@parcel/watcher")' "$data\npm\node_modules\bb-app"
+    if ($LASTEXITCODE) { throw "BB's app is installed, but its native add-ons (node-pty, @parcel/watcher) do not load" }
+    [IO.File]::WriteAllText("$data\host-artifact.sha256", "$bbApp`n")
+    Remove-Item $tgz -Force
+    Step "BB's app $($bbApp.Substring(0, 12)), from $bbUrl"
+  }
+
   # The record, with the edition this Windows says it is, such as Windows 11 Pro.
   $edition = (Get-CimInstance Win32_OperatingSystem).Caption -replace '^Microsoft ', ''
   Step "The image record, C:\bb-box\image.json ($edition)"
   $new = Get-Content $Record -Raw | ConvertFrom-Json
   if ($edition) { $new.os = $edition }
+  if ($bbApp) { $new.bbApp = $bbApp }
   [IO.File]::WriteAllText('C:\bb-box\image.json', "$($new | ConvertTo-Json -Compress -Depth 5)`n")
   Step 'Cleaning up: temporary files and update downloads'
   Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
