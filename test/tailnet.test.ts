@@ -106,15 +106,15 @@ test("the doctor's check signs the OAuth client in and makes nothing", async () 
 test("devices lists only the tailnet's devices with bb-box's tags, and removing one that is already gone is no error", async () => {
   const fake = fakeTailscale({
     devices: [
-      { id: "1", nodeId: "nA", hostname: "bb-box-mac-quiet-heron", tags: ["tag:bb-box"], lastSeen: "2026-10-22T15:00:00Z" },
+      { id: "1", nodeId: "nA", hostname: "bb-box-mac-quiet-heron", tags: ["tag:bb-box"], lastSeen: "2026-10-22T15:00:00Z", addresses: ["192.0.2.7", "fd7a:115c:a1e0::7"] },
       { id: "2", nodeId: "nB", hostname: "owners-laptop", tags: [], lastSeen: "2026-10-22T15:05:00Z" },
       { id: "3", nodeId: "nC", name: "bb-box-host-h1.tail1234.ts.net", tags: ["tag:other", "tag:bb-box"] },
     ],
   });
   const tailnet = new Tailnet({ credentials, fetch: fake.fetch });
   assert.deepEqual(await tailnet.devices(), [
-    { id: "nA", hostname: "bb-box-mac-quiet-heron", tags: ["tag:bb-box"], lastSeen: Date.parse("2026-10-22T15:00:00Z") },
-    { id: "nC", hostname: "bb-box-host-h1", tags: ["tag:other", "tag:bb-box"], lastSeen: null },
+    { id: "nA", hostname: "bb-box-mac-quiet-heron", tags: ["tag:bb-box"], lastSeen: Date.parse("2026-10-22T15:00:00Z"), addresses: ["192.0.2.7", "fd7a:115c:a1e0::7"] },
+    { id: "nC", hostname: "bb-box-host-h1", tags: ["tag:other", "tag:bb-box"], lastSeen: null, addresses: [] },
   ]);
   await tailnet.removeDevice("nA");
   assert.deepEqual(fake.calls.at(-1), { method: "DELETE", path: "/api/v2/device/nA", headers: { Authorization: `Bearer ${ACCESS_TOKEN}`, Accept: "application/json" }, body: undefined });
@@ -137,7 +137,7 @@ test("the join script takes the key on its input, gives it to tailscale up only 
   const log = join(folder, "calls");
   writeFileSync(
     join(folder, "tailscale"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> ${log}\ncase "$1" in up) f=$(printf '%s' "$2" | sed 's/^--auth-key=file://'); printf 'key=%s\\n' "$(cat "$f")" >> ${log};; ip) echo 100.64.0.7;; esac\n`,
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> ${log}\ncase "$1" in up) f=$(printf '%s' "$2" | sed 's/^--auth-key=file://'); printf 'key=%s\\n' "$(cat "$f")" >> ${log};; ip) echo 192.0.2.7;; esac\n`,
   );
   chmodSync(join(folder, "tailscale"), 0o755);
   writeFileSync(join(folder, "sudo"), `#!/bin/sh\n[ "$1" = -n ] && shift\nexec "$@"\n`);
@@ -145,7 +145,7 @@ test("the join script takes the key on its input, gives it to tailscale up only 
   const scratch = mkdtempSync(join(tmpdir(), "tailnet-tmp-"));
   const env = { ...process.env, PATH: `${folder}:${process.env.PATH}`, TMPDIR: scratch };
   const out = execFileSync("sh", ["-c", joinScript("Quiet Heron")], { input: MINTED, env, encoding: "utf8" });
-  assert.equal(out.trim(), "100.64.0.7");
+  assert.equal(out.trim(), "192.0.2.7");
   const calls = readFileSync(log, "utf8").trim().split("\n");
   assert.match(calls[0]!, /^up --auth-key=file:\S+ --hostname=quiet-heron --accept-dns=false --timeout=60s$/);
   assert.equal(calls[1], `key=${MINTED}`);

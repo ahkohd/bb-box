@@ -54,6 +54,7 @@ export const CHECKS = {
 
   // Hetzner Cloud.
   "hetzner.api": { name: "Hetzner Cloud API", from: ["hetzner"], what: "The API answers and the token reads the project." },
+  "hetzner.reach": { name: "Reaching hosts", from: ["hetzner"], what: "How bb-box reaches a host's Docker: over the tailnet, or over the internet from the addresses in SSH from." },
   "hetzner.unclaimed": { name: "Servers no host claims", from: ["hetzner"], what: "Servers with this install's label that are not hosts bb-box knows. The sweep adopts a host's server, as after lost storage, and deletes any other 10 minutes after it was made." },
   "hetzner.type": { name: "Server type <type>", from: ["hetzner"], what: "The hosts' server type is sold at the location, with its size and price." },
   "hetzner.hosts": { name: "Hosts", from: ["hetzner"], what: "Each host bb-box made: its state, age, boxes and cost this month." },

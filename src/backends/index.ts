@@ -6,6 +6,7 @@
 // or an open connection survives them and changes to other backends.
 
 import { dockerDriver } from "./docker/index.ts";
+import { hetznerDriver } from "./hetzner/index.ts";
 import { microsandboxDriver } from "./microsandbox/index.ts";
 import { proxmoxLxcDriver } from "./proxmox-lxc/index.ts";
 import { proxmoxQemuDriver } from "./proxmox-qemu/index.ts";
@@ -20,7 +21,7 @@ import { GENERAL_SECRETS } from "../core/box-files.ts";
 import { Tailnet, type TailnetFetch } from "../core/tailnet.ts";
 import { tailnetUse } from "../core/tailnet-settings.ts";
 
-export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver, microsandboxDriver];
+export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver, microsandboxDriver, hetznerDriver];
 
 /** What a backend's boxes are, from its ID, which starts with its driver's type (029). Null for a driver bb-box no longer has. */
 export function boxForm(backendId: string, drivers: readonly BackendDriver<any>[] = DRIVERS): BoxForm | null {

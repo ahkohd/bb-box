@@ -282,16 +282,13 @@ export class Hetzner {
   }
 
   async createFirewall(input: { name: string; labels: Labels; rules: readonly FirewallRule[] }, signal?: AbortSignal): Promise<HetznerFirewall> {
-    const rules = input.rules.map((rule) => ({
-      direction: rule.direction,
-      protocol: rule.protocol,
-      ...(rule.port !== undefined ? { port: rule.port } : {}),
-      ...(rule.sourceIps ? { source_ips: rule.sourceIps } : {}),
-      ...(rule.destinationIps ? { destination_ips: rule.destinationIps } : {}),
-      ...(rule.description ? { description: rule.description } : {}),
-    }));
-    const data = await this.#request<Json>("POST", "/firewalls", { name: input.name, labels: input.labels, rules }, signal);
+    const data = await this.#request<Json>("POST", "/firewalls", { name: input.name, labels: input.labels, rules: input.rules.map(ruleJson) }, signal);
     return firewall(data.firewall as Json);
+  }
+
+  async setFirewallRules(id: number, rules: readonly FirewallRule[], signal?: AbortSignal): Promise<void> {
+    const data = await this.#request<Json>("POST", `/firewalls/${id}/actions/set_rules`, { rules: rules.map(ruleJson) }, signal);
+    for (const each of (data.actions as Json[] | undefined) ?? []) await this.waitAction(Number(each.id), signal);
   }
 
   async deleteFirewall(id: number, signal?: AbortSignal): Promise<Deletion> {
@@ -446,6 +443,17 @@ function action(data: Json): HetznerAction {
 
 function sshKey(data: Json): HetznerSshKey {
   return { id: Number(data.id), name: String(data.name ?? ""), fingerprint: String(data.fingerprint ?? ""), labels: labelsOf(data.labels) };
+}
+
+function ruleJson(rule: FirewallRule): Json {
+  return {
+    direction: rule.direction,
+    protocol: rule.protocol,
+    ...(rule.port !== undefined ? { port: rule.port } : {}),
+    ...(rule.sourceIps ? { source_ips: rule.sourceIps } : {}),
+    ...(rule.destinationIps ? { destination_ips: rule.destinationIps } : {}),
+    ...(rule.description ? { description: rule.description } : {}),
+  };
 }
 
 function firewall(data: Json): HetznerFirewall {
