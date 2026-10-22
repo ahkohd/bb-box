@@ -40,7 +40,7 @@ is a log: bb-box does not file these with BB.
 | [Start one daemon however often it is started](#29-start-one-daemon-however-often-it-is-started) | not met | two starts of BB's daemon at once, such as its logon entry's and a reconnect's after a boot, can leave two supervisors running; bb-box waits for BB's own start after a boot before it reconnects a Windows box (#917) |
 | [Serve a plugin's WebSocket route off the server's loop](#30-serve-a-plugins-websocket-route-off-the-servers-loop) | not met | every desktop's frames and input run on BB's server's event loop, so whatever holds that loop, BB's or a plugin's, holds them |
 | [Load a plugin's new version before unloading the old](#31-load-a-plugins-new-version-before-unloading-the-old) | not met | a plugin has no tools while its old version's dispose hooks run, so bb-box waits only 5 s for running commands at a deploy, and stops longer ones, which go on as jobs |
-| [Give live agent sessions a plugin's tools back after it reloads](#32-give-live-agent-sessions-a-plugins-tools-back-after-it-reloads) | not met | after bb-box reloaded, running Claude Code sessions lost its tools for good, until their agent runtime restarted |
+| [Give live agent sessions a plugin's tools back after it reloads](#32-give-live-agent-sessions-a-plugins-tools-back-after-it-reloads) | not met | after bb-box reloaded, running Claude Code sessions lost its tools until their agent runtime restarted, or for about an hour |
 | [Install BB's app on Windows in seconds](#33-install-bbs-app-on-windows-in-seconds) | not met | BB's installer takes 42 to 88 s on a Windows box, most of it npm installing bb-app; bb-box's Windows images pre-install the server's build, which helps until the server's next build (#916) |
 | [Keep one plugin's stylesheet from slowing another's panel](#34-keep-one-plugins-stylesheet-from-slowing-anothers-panel) | not met | a terminal in bb-box's panel took about 2.2 s to draw a prompt, as the shell-tasks plugin's stylesheet made each character's measurement about 100 times slower; bb-box is moving its terminals to xterm's WebGL renderer |
 
@@ -1225,20 +1225,22 @@ a reload of bb-box.
 
 **What BB does now.** On 22 October 2026, bb-box reloaded several times
 between 03:23 and about 03:35 UTC. Claude Code sessions that were running
-then lost bb-box's tools and did not get them back. Their notice said the
+then lost bb-box's tools. Their notice said the
 `box_*` and `computer_*` tools were "no longer available (MCP server
 disconnected)". BB's own bridge tools, such as canvas and task, stayed.
 bb-box itself was fine: `bb box` worked on the CLI, its host worker logged
 that it was ready, and the reload logged "started in 0.02 s". A session got
-the tools back only when its agent runtime restarted, with `bb thread stop`
-and then a new message.
+the tools back at once only when its agent runtime restarted, with `bb
+thread stop` and then a new message. One session that was not restarted got
+them back on its own, but only about an hour after the reload: it lost them
+at about 03:35 UTC and had them again at about 04:45.
 
 **What we ask.** When a plugin loads again, BB's bridge tells live sessions
 that its tools are back, with MCP's `notifications/tools/list_changed`, or
-reconnects them, so they need no restart.
+reconnects them at once, so they need no restart and no hour's wait.
 
 **Until then.** An agent that loses bb-box's tools needs its thread stopped
-and a new message. bb-box keeps its reloads short, so fewer sessions catch
+and a new message, or waits about an hour. bb-box keeps its reloads short, so fewer sessions catch
 one, but cannot bring the tools back to a session that lost them.
 
 ## 33. Install BB's app on Windows in seconds
