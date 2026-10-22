@@ -1,5 +1,6 @@
 // The backend interface. A backend adapts one provider of machines (Proxmox
 import type { CheckId } from "../core/checks.ts";
+import type { Tailnet } from "../core/tailnet.ts";
 // LXC now; Proxmox QEMU, a Mac host, a pool of physical machines, a cloud
 // later) to bb-box: acquire and release, address, capacity, and the
 // transports that reach each box. bb-box's core depends only on this file and
@@ -849,6 +850,7 @@ export interface BackendContext {
    * time, like `warm`. Absent where there is no BB.
    */
   enrols?(): boolean;
+  tailnet?(): Tailnet | null;
   /** BB machines bb-box reaches through BB (042). Absent where there is no BB, as in the conformance run. */
   readonly machines?: MachineAccess;
   /** What the doctor judges images by (049). Absent where bb-box cannot tell, as in the conformance run. */
