@@ -52,6 +52,7 @@ The buttons on a row open the box's desktop or terminal, and stop or start the b
 - Copy address: copies the box's network address
 - New thread on this box…: starts a child thread that works on this box in its own copy of the project, and is archived with this thread
 - Check now: asks the backend for the box's state again
+- Resize…: changes its cores, memory or disk: see [resizing a box](resizing.md)
 - Release…: deletes the box
 
 ![A box's menu in the Box panel](../design/mockups/built/panel-menu-light.png)
@@ -108,6 +109,6 @@ A machine is a box of your own, kept as a BB machine. It belongs to no thread. I
 
 You can add a machine from **New box** on the Boxes page, or from **Add machine** in Settings, BB Box, Machines. The form is the same as for a new box, with a name at the end. The name is optional: leave it empty and BB Box picks one. A name uses lowercase letters, digits and hyphens, starts with a letter, does not end with a hyphen, and is at most 32 characters.
 
-A machine's row lists the threads working on it. You can stop, start and remove it from the Boxes page or from settings. Removing a machine deletes it, as releasing a box does. If a thread is working on the machine, Remove and Stop ask again before they go on.
+A machine's row lists the threads working on it. You can stop, start, [resize](resizing.md) and remove it from the Boxes page or from settings. Removing a machine deletes it, as releasing a box does. If a thread is working on the machine, Remove and Stop ask again before they go on.
 
 Remove a Windows machine here, not from BB's own machine list. Removing it there takes it out of BB, but leaves the Windows box running.

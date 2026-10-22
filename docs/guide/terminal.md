@@ -20,13 +20,15 @@ The terminal works like one on your own computer. It fits the tab, and changes s
 
 The shell keeps running when you switch to another tab. When you come back, the terminal shows what the shell printed meanwhile. A shell that no tab has shown for 10 minutes ends.
 
-The toolbar says how the terminal is doing: 'Connecting…', 'Connected', 'Ended', 'Starting' or 'Stopped'.
+The toolbar says how the terminal is doing: 'Connecting…', 'Connected', 'Ended', 'Starting', 'Stopped' or 'Released'.
 
 ## When the shell ends
 
 A shell ends when you exit it, when its box stops or goes, or when BB Box restarts. The terminal says why. Select **Start a new shell** to carry on.
 
 A stopped box has no terminal until it starts. The terminal offers **Start** where the box can start again.
+
+When a box is released, its terminal says so, with the box's name: close the tab.
 
 A few kinds of box have no terminal, because BB Box reaches them without a shell. The terminal says so.
 
