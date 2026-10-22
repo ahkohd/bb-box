@@ -362,7 +362,7 @@ test("a Linux box runs as box, boots with no saved state or VNC, and stop shuts 
   const guest = await backend.acquire(box, null, hooks().hooks, signal());
   assert.deepEqual(guest.data, { box: box.boxId, os: "linux" });
   const runs = () => tartCalls(mac).filter((call) => call[0] === "tart" && call[1] === "run" && call.at(-1) === guest.ref);
-  assert.deepEqual(runs(), [["tart", "run", "--no-graphics", guest.ref]], "neither --suspendable nor --vnc-experimental");
+  assert.deepEqual(runs(), [["tart", "run", "--no-graphics", "--no-clipboard", guest.ref]], "neither --suspendable nor --vnc-experimental");
   assert.ok(ssh.log().some((entry) => entry.target === `box@${guest.address}`), "the VM is reached as box");
   assert.ok(!ssh.log().some((entry) => entry.target === `admin@${guest.address}`));
 
@@ -823,7 +823,7 @@ test("a suspended macOS VM's saved state is read through once before Tart restor
   const read = script.indexOf('cat "$h/vms/$vm/state.vzvmsave" > /dev/null');
   assert.ok(read > 0, "the read is there");
   assert.ok(read > script.indexOf("--suspendable") && read < script.indexOf("detach \"$out\""), "for a macOS VM, before its run starts");
-  assert.ok(script.indexOf('cat "$h/vms/$vm/state.vzvmsave"') > script.indexOf("tart run --no-graphics \"$vm\""), "not for a Linux VM, which Tart does not suspend");
+  assert.ok(script.indexOf('cat "$h/vms/$vm/state.vzvmsave"') > script.indexOf("tart run --no-graphics --no-clipboard \"$vm\""), "not for a Linux VM, which Tart does not suspend");
 });
 
 test("the doctor judges each Tart image by the record beside it (049)", async () => {
@@ -1059,7 +1059,7 @@ test("a macOS VM resizes its CPUs and memory with a restart: shut down, not susp
     [
       ["tart", "stop", guest.ref, "--timeout", "30"],
       ["tart", "set", guest.ref, "--cpu", "6", "--memory", "16384"],
-      ["tart", "run", "--no-graphics", "--vnc-experimental", "--suspendable", guest.ref],
+      ["tart", "run", "--no-graphics", "--no-clipboard", "--vnc-experimental", "--suspendable", guest.ref],
     ],
     "stopped, not suspended, then sized and booted",
   );
