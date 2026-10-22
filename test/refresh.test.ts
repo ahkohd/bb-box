@@ -382,6 +382,7 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
     "write 7000 C:\\bb-box\\build\\bb-box-stream.cs",
     "write 7000 C:\\bb-box\\build\\install-stream.ps1",
     "write 7000 C:\\bb-box\\build\\hardware-cursor.ps1",
+    "write 7000 C:\\bb-box\\build\\boot.ps1",
     "write 7000 C:\\bb-box\\build\\pins.json",
     "write 7000 C:\\bb-box\\build\\image.json",
     "write 7000 C:\\bb-box\\build\\bb-url",
