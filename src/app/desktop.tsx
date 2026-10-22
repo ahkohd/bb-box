@@ -53,6 +53,8 @@ import {
   KeysAfterPaste,
   PASTE_LANDS_MS,
   ShiftedLetters,
+  isModifier,
+  pasteChordKeys,
   PASTE_CHORD_DELAY_MS,
   PASTE_EVENT_WAIT_MS,
   SETTLE_MS,
@@ -148,6 +150,7 @@ class Viewer extends RFB {
   readonly afterPaste = new KeysAfterPaste<[number, string, boolean, boolean | null, boolean | null]>((key) => this.#keyEvent(...key));
 
   readonly #letters = new ShiftedLetters();
+  readonly #heldModifiers = new Map<number, string>();
 
   override _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void {
     for (const each of this.#letters.keys(keysym, code, down, capslock)) {
@@ -165,8 +168,17 @@ class Viewer extends RFB {
     // of X's own names for them.
     for (const each of keys) {
       const sent = this.guestOs === "macos" || this.guestOs === "windows" ? unicodeKeysym(each.key.keysym) : each.key.keysym;
+      if (isModifier(sent)) {
+        if (each.down) this.#heldModifiers.set(sent, each.key.code);
+        else this.#heldModifiers.delete(sent);
+      }
       super._handleKeyEvent(sent, each.key.code, each.down, numlock, capslock);
     }
+  }
+
+  /** The modifiers the box holds down, as this viewer sent them. */
+  heldModifiers(): { readonly keysym: number; readonly code: string }[] {
+    return [...this.#heldModifiers].map(([keysym, code]) => ({ keysym, code }));
   }
 
   /**
@@ -567,10 +579,7 @@ export class DesktopSession implements Kept {
         return;
       }
       const modifier = this.guestOs === "macos" ? commandKey(this.#macKeys) : { keysym: XK_CONTROL_L, code: "ControlLeft" };
-      client.sendKey(modifier.keysym, modifier.code, true);
-      client.sendKey(XK_V, "KeyV", true);
-      client.sendKey(XK_V, "KeyV", false);
-      client.sendKey(modifier.keysym, modifier.code, false);
+      for (const { key, down } of pasteChordKeys(modifier, { keysym: XK_V, code: "KeyV" }, client.heldModifiers())) client.sendKey(key.keysym, key.code, down);
       client.afterPaste.releaseIn(PASTE_LANDS_MS);
     }, PASTE_CHORD_DELAY_MS);
   }

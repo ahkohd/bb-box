@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { KeysAfterPaste, OptionComposer, PASTE_LANDS_MS, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, retryWait, type Connection } from "./viewer.ts";
+import { KeysAfterPaste, OptionComposer, PASTE_LANDS_MS, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_V, boxKey, macBrowser, pasteChordKeys, retryWait, type Connection } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -955,8 +955,9 @@ export class SelkiesSession implements Kept {
         this.#afterPaste.drop();
         return;
       }
-      const modifier = this.guestOs === "macos" ? XK_META_L : XK_CONTROL_L;
-      for (const message of [`kd,${modifier}`, `kd,${XK_V}`, `ku,${XK_V}`, `ku,${modifier}`]) this.#send(message);
+      const modifier = { keysym: this.guestOs === "macos" ? XK_META_L : XK_CONTROL_L };
+      const held = [...this.#held].map((keysym) => ({ keysym }));
+      for (const { key, down } of pasteChordKeys(modifier, { keysym: XK_V }, held)) this.#send(`${down ? "kd" : "ku"},${key.keysym}`);
       this.#afterPaste.releaseIn(PASTE_LANDS_MS);
     }, PASTE_CHORD_DELAY_MS);
   }

@@ -133,6 +133,29 @@ export const XK_MODE_SWITCH = 0xff7e;
 export const XK_ISO_LEVEL3_SHIFT = 0xfe03;
 export const XK_V = 0x76;
 
+const MODIFIERS = new Set([XK_SHIFT_L, XK_SHIFT_R, XK_CONTROL_L, XK_CONTROL_R, XK_META_L, XK_META_R, XK_ALT_L, XK_ALT_R, XK_SUPER_L, XK_SUPER_R, XK_MODE_SWITCH, XK_ISO_LEVEL3_SHIFT]);
+
+export function isModifier(keysym: number): boolean {
+  return MODIFIERS.has(keysym);
+}
+
+/**
+ * The box's paste chord as key events, alone: modifiers the box holds go up first and down again after. The person's
+ * own Ctrl+V leaves their Ctrl down at the box while their release waits behind the chord (#915), and a Mac box would
+ * take Control+Command+V, which pastes nothing.
+ */
+export function pasteChordKeys<K extends { readonly keysym: number }>(modifier: K, v: K, held: readonly K[]): { readonly key: K; readonly down: boolean }[] {
+  const lifted = held.filter((key) => isModifier(key.keysym));
+  return [
+    ...lifted.map((key) => ({ key, down: false })),
+    { key: modifier, down: true },
+    { key: v, down: true },
+    { key: v, down: false },
+    { key: modifier, down: false },
+    ...lifted.map((key) => ({ key, down: true })),
+  ];
+}
+
 /**
  * How a macOS desktop's server names Command and Option. "alt-command" for
  * Tart's VNC server, which takes Alt as Command and Meta as Option, and Super
