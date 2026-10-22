@@ -1,4 +1,6 @@
 export const COMPUTE_SERVICE = "namespace.cloud.compute.v1beta.ComputeService";
+export const USAGE_SERVICE = "namespace.cloud.compute.v1beta.UsageService";
+const MAC_PLATFORM = "macos/arm64";
 const REQUEST_TIMEOUT_MS = 60_000;
 const WAIT_TIMEOUT_MS = 10 * 60_000;
 const LIST_PAGE = 100;
@@ -49,6 +51,13 @@ export interface CreateInstance {
   readonly purpose: string;
   readonly uniqueTag: string;
   readonly sshPublicKeys: readonly string[];
+}
+
+export interface PlatformConcurrency {
+  readonly maxCores: number;
+  readonly maxMemoryMiB: number;
+  readonly usedCores: number;
+  readonly usedMemoryMiB: number;
 }
 
 export interface VncSignIn {
@@ -162,11 +171,25 @@ export class NamespaceApi {
     return { user: answer.username, password: answer.password };
   }
 
-  async #call(method: string, body: unknown, doing: string, signal?: AbortSignal, timeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
+  async macConcurrency(signal?: AbortSignal): Promise<PlatformConcurrency | null> {
+    const answer = (await this.#call("GetConcurrency", {}, "read the workspace's limits", signal, REQUEST_TIMEOUT_MS, USAGE_SERVICE)) as { concurrency?: unknown };
+    const platforms = (Array.isArray(answer.concurrency) ? answer.concurrency : []) as { platforms?: unknown; limits?: Record<string, unknown>; activeConcurrency?: Record<string, unknown> }[];
+    const mac = platforms.find((platform) => Array.isArray(platform.platforms) && platform.platforms.includes(MAC_PLATFORM));
+    if (!mac?.limits) return null;
+    const count = (value: unknown) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+    return {
+      maxCores: count(mac.limits.maxCpu),
+      maxMemoryMiB: count(mac.limits.maxMemoryMb),
+      usedCores: count(mac.activeConcurrency?.cpu),
+      usedMemoryMiB: count(mac.activeConcurrency?.memoryMb),
+    };
+  }
+
+  async #call(method: string, body: unknown, doing: string, signal?: AbortSignal, timeoutMs = REQUEST_TIMEOUT_MS, service = COMPUTE_SERVICE): Promise<unknown> {
     const timeout = AbortSignal.timeout(timeoutMs);
     let response: NamespaceResponse;
     try {
-      response = await this.#fetch(`${this.#endpoint}/${COMPUTE_SERVICE}/${method}`, {
+      response = await this.#fetch(`${this.#endpoint}/${service}/${method}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Connect-Protocol-Version": "1", Authorization: `Bearer ${this.#token}` },
         body: JSON.stringify(body),

@@ -127,6 +127,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | --- | --- | --- |
 | `namespace.token` | API token | Namespace's API answers to the token in BB Box's settings. |
 | `namespace.machines` | Machines | The Namespace machines bb-box has, each with its age and when it ends, and any no box claims. |
+| `namespace.limits` | Workspace limits | The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which bb-box refuses a Mac up front; a warning when the token may not read them. |
 
 ## Tart
 

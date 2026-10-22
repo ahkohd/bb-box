@@ -24,7 +24,7 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
-import { NamespaceApi, NamespaceError, type Instance, type InstanceShape, type NamespaceFetch } from "./api.ts";
+import { NamespaceApi, NamespaceError, type Instance, type InstanceShape, type NamespaceFetch, type PlatformConcurrency } from "./api.ts";
 import type { MacShape, NamespaceConfig, NamespaceKind } from "./config.ts";
 
 export const LABELS = {
@@ -41,7 +41,20 @@ const READY_TIMEOUT_MS = 5 * 60_000;
 const SSH_POLL_MS = 2_000;
 const SSH_KEY = "ssh-key";
 const LARGEST_MACHINE = "largest-machine";
+const USAGE_GRANT = '{"resource_type":"tenant/usage","resource_id":"*","actions":["get"]}';
 const LARGEST_ALLOWED = /maximum ([0-9]+)x([0-9]+)/;
+
+function largestWithin(concurrency: PlatformConcurrency): MacShape | null {
+  const fits = MACOS_SHAPES.filter((shape) => shape.cores <= concurrency.maxCores && shape.memoryGB * MIB_PER_GB <= concurrency.maxMemoryMiB);
+  return fits.sort((a, b) => b.cores * 100 + b.memoryGB - (a.cores * 100 + a.memoryGB))[0] ?? null;
+}
+
+function workspaceFullFor(shape: MacShape, concurrency: PlatformConcurrency): string | null {
+  const freeCores = concurrency.maxCores - concurrency.usedCores;
+  const freeMemoryMiB = concurrency.maxMemoryMiB - concurrency.usedMemoryMiB;
+  if (shape.cores <= freeCores && shape.memoryGB * MIB_PER_GB <= freeMemoryMiB) return null;
+  return `Namespace's workspace has ${concurrency.usedCores} of its ${concurrency.maxCores} Mac cores and ${Math.round(concurrency.usedMemoryMiB / MIB_PER_GB)} of its ${Math.round(concurrency.maxMemoryMiB / MIB_PER_GB)} GB of Mac memory in use, and this box needs a ${shape.cores}x${shape.memoryGB} Mac. Release a Mac box, or wait for one to end.`;
+}
 
 function largestAllowedIn(message: string): MacShape | null {
   const match = LARGEST_ALLOWED.exec(message);
@@ -238,8 +251,12 @@ export class NamespaceBackend implements Backend {
   async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
     this.#kind(kind);
     const host = "Namespace";
-    const largest = await this.#largestMachine();
-    if (!macShapeFor(size, largest)) return { ok: false, message: this.#tooBig(size, largest), warm: null, hosts: [{ host, ok: false, limits: [] }] };
+    const { concurrency } = await this.#workspaceLimits(signal);
+    const largest = await this.#largestMachine(concurrency);
+    const shape = macShapeFor(size, largest);
+    if (!shape) return { ok: false, message: this.#tooBig(size, largest), warm: null, hosts: [{ host, ok: false, limits: [] }] };
+    const fullFor = concurrency ? workspaceFullFor(shape, concurrency) : null;
+    if (fullFor) return { ok: false, message: fullFor, warm: null, hosts: [{ host, ok: false, limits: [{ resource: "cpu", used: concurrency!.usedCores, total: concurrency!.maxCores, reserve: 0, unit: "count" }] }] };
     let held: Instance[];
     try {
       held = await this.#api.list({ [LABELS.install]: null }, signal);
@@ -259,7 +276,7 @@ export class NamespaceBackend implements Backend {
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
-    const largest = await this.#largestMachine();
+    const largest = await this.#largestMachine((await this.#workspaceLimits(signal)).concurrency);
     const shape = macShapeFor(box.size, largest);
     if (!shape) throw new BackendError("no_capacity", this.#tooBig(box.size, largest));
     const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
@@ -431,6 +448,7 @@ export class NamespaceBackend implements Backend {
       detail: held.length ? `${held.length} of at most ${this.#config.machines}: ${described.join("; ")}.` : `None now; at most ${this.#config.machines} at once.`,
       fix: unclaimed.length ? "bb-box's sweep destroys machines labelled for this install that no box claims." : null,
     });
+    checks.push(await this.#limitsCheck(signal));
     notes.push(`Each machine lives at most ${this.#config.longestLifeHours} hours, the plan's longest life, and its deadline is kept no more than an hour ahead, so a machine bb-box loses track of ends within the hour.`);
     const failing = checks.some((check) => check.status === "fail");
     return { ok: !failing, summary: failing ? "Namespace does not answer to the token." : `Namespace answers; ${held.length} machine${held.length === 1 ? "" : "s"}.`, checks, notes };
@@ -566,8 +584,44 @@ export class NamespaceBackend implements Backend {
     if (prepared.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not get Cua Driver ready: ${prepared.stderr.trim().slice(-400) || `exit ${prepared.exitCode}`}`);
   }
 
-  async #largestMachine(): Promise<MacShape | null> {
-    return this.#config.largestMachine ?? (await this.#context.storage.get<MacShape>(LARGEST_MACHINE)) ?? null;
+  async #limitsCheck(signal?: AbortSignal): Promise<DoctorCheck> {
+    const { concurrency, unread } = await this.#workspaceLimits(signal);
+    const largest = await this.#largestMachine(concurrency);
+    const largestWords = largest ? `the largest Mac bb-box asks for is ${largest.cores}x${largest.memoryGB}` : "bb-box knows no largest Mac yet";
+    if (concurrency) {
+      return {
+        id: "namespace.limits",
+        name: "Workspace limits",
+        status: "ok",
+        detail: `The workspace allows ${concurrency.maxCores} Mac cores and ${Math.round(concurrency.maxMemoryMiB / MIB_PER_GB)} GB of Mac memory at once, ${concurrency.usedCores} cores in use now; ${largestWords}.`,
+        fix: null,
+      };
+    }
+    const refused = unread?.kind === "refused";
+    return {
+      id: "namespace.limits",
+      name: "Workspace limits",
+      status: "warn",
+      detail: `${refused ? "The token may not read the workspace's limits" : `bb-box could not read the workspace's limits: ${unread?.message ?? "Namespace gave none for macOS"}`}. So ${largestWords}, from Largest machine in BB Box's settings or Namespace's last refusal, and a full workspace shows only when Namespace refuses a Mac.`,
+      fix: refused ? `Make a new token with the grant ${USAGE_GRANT} as well, as the guide shows, and set it in BB Box's settings.` : null,
+    };
+  }
+
+  async #workspaceLimits(signal?: AbortSignal): Promise<{ readonly concurrency: PlatformConcurrency | null; readonly unread: NamespaceError | null }> {
+    try {
+      return { concurrency: await this.#api.macConcurrency(signal), unread: null };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (error instanceof NamespaceError) return { concurrency: null, unread: error };
+      throw error;
+    }
+  }
+
+  async #largestMachine(concurrency: PlatformConcurrency | null): Promise<MacShape | null> {
+    const fromWorkspace = concurrency ? largestWithin(concurrency) : ((await this.#context.storage.get<MacShape>(LARGEST_MACHINE)) ?? null);
+    const known = [this.#config.largestMachine, fromWorkspace].filter((shape): shape is MacShape => shape !== null);
+    if (!known.length) return null;
+    return { cores: Math.min(...known.map((shape) => shape.cores)), memoryGB: Math.min(...known.map((shape) => shape.memoryGB)) };
   }
 
   #tooBig(size: BoxSize, workspaceLargest: MacShape | null): string {

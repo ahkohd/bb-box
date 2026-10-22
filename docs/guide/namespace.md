@@ -49,15 +49,18 @@ nsc login
 
 ### 2. Make a token for BB Box
 
-BB Box uses a token that can only make, find, extend, reach and destroy machines. Make it with:
+BB Box uses a token that can only make, find, extend, reach and destroy machines, and read how many the workspace allows. Make it with:
 
 ```sh
 nsc token create \
   --name bb-box \
   --description "BB Box's Mac boxes" \
   --expires_in 8760h \
-  --grant '{"resource_type":"instance","resource_id":"*","actions":["create","destroy","get","list","refresh","wait","ssh","exec","dial_host","suspend","resume"]}'
+  --grant '{"resource_type":"instance","resource_id":"*","actions":["create","destroy","get","list","refresh","wait","ssh","exec","dial_host","suspend","resume"]}' \
+  --grant '{"resource_type":"tenant/usage","resource_id":"*","actions":["get"]}'
 ```
+
+The second grant lets BB Box read the workspace's limits: how many Mac cores and how much memory it allows at once, and how many are in use. With it, BB Box turns down a Mac box the workspace has no room for before asking Namespace, so another backend can take it. A token made without it still works: `bb box doctor` warns, and BB Box finds a full workspace only when Namespace refuses a Mac.
 
 It prints the token once, after `Bearer Token:`, below its `Token ID` and dates. Copy the value after `Bearer Token:` for step 4, and do not save it anywhere else. Keep the token ID too: you need it to revoke the token. The token lasts a year, the longest Namespace allows. Make a new one before then.
 
@@ -74,7 +77,7 @@ If BB's server is in Europe and you want the Macs near it, ask Namespace's suppo
 3. Set **API region** to `eu` if BB's server is in Europe, or leave it as `us`. It only says which of Namespace's API addresses BB Box calls.
 4. Set **Longest life (hours)** to your plan's limit: 3 on Developer, 5 on Team.
 5. Set **Most machines** to how many Mac boxes you are willing to pay for at once.
-6. If you know the largest Mac your plan allows, set **Largest machine** to it, as cores x memory in GB: `6x14` on Namespace's trial. BB Box then refuses a box that needs a larger one before asking Namespace, and says what to ask for instead. If you leave it empty, BB Box learns it the first time Namespace refuses a Mac for its size.
+6. Leave **Largest machine** empty: with the token's second grant, BB Box reads the largest Mac the workspace allows from Namespace. Set it, as cores x memory in GB such as `6x14`, only to keep boxes smaller than that, or for a token without the grant. Without either, BB Box learns it the first time Namespace refuses a Mac for its size.
 7. Select **Save**, and turn the backend on.
 
 The token is kept as a secret. BB Box's settings show only that it is set.

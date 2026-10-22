@@ -75,7 +75,7 @@ export const NAMESPACE_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [NAMESPACE_KEYS.largestMachine]: {
     type: "string",
     label: "Largest machine",
-    description: "The largest Mac the workspace's plan allows, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before bb-box asks Namespace, so another backend can take it. Empty: bb-box learns it the first time Namespace refuses a Mac for its size.",
+    description: "The largest Mac bb-box asks for, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before bb-box asks Namespace, so another backend can take it. Empty: the largest the workspace allows, which bb-box reads from Namespace when the token may, or learns the first time Namespace refuses a Mac for its size.",
     group: "boxes",
   },
 };

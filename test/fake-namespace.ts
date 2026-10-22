@@ -1,4 +1,4 @@
-import { COMPUTE_SERVICE, type NamespaceFetch } from "../src/backends/namespace/api.ts";
+import type { NamespaceFetch } from "../src/backends/namespace/api.ts";
 
 export const FAKE_NAMESPACE_TOKEN = "nsct_fakeTOKENvalue.0123456789";
 
@@ -19,6 +19,7 @@ export interface FakeNamespaceOptions {
   readonly lifeCapMs?: number;
   readonly maxCores?: number;
   readonly continent?: string;
+  readonly maxMacMemoryMb?: number;
 }
 
 export class FakeNamespace {
@@ -26,17 +27,20 @@ export class FakeNamespace {
   readonly calls: { method: string; body: Record<string, unknown> }[] = [];
   readonly failures = new Map<string, { code: string; message: string; times: number }>();
   token = FAKE_NAMESPACE_TOKEN;
+  usageGranted = true;
   #next = 0;
   readonly #now: () => number;
   readonly #lifeCapMs: number;
   readonly #maxCores: number;
   readonly #continent: string;
+  readonly #maxMacMemoryMb: number;
 
   constructor(options: FakeNamespaceOptions = {}) {
     this.#now = options.now ?? Date.now;
     this.#lifeCapMs = options.lifeCapMs ?? 4 * 3600_000;
     this.#maxCores = options.maxCores ?? 12;
     this.#continent = options.continent ?? "us";
+    this.#maxMacMemoryMb = options.maxMacMemoryMb ?? 1_000_000;
   }
 
   failNext(method: string, code: string, message = `${method} failed`, times = 1): void {
@@ -49,7 +53,7 @@ export class FakeNamespace {
   }
 
   readonly fetch: NamespaceFetch = async (url, init) => {
-    const method = url.slice(url.indexOf(`${COMPUTE_SERVICE}/`) + COMPUTE_SERVICE.length + 1);
+    const method = url.slice(url.lastIndexOf("/") + 1);
     const body = (init.body ? JSON.parse(init.body) : {}) as Record<string, unknown>;
     this.calls.push({ method, body });
     const reply = (status: number, value: unknown) => ({ ok: status === 200, status, text: async () => JSON.stringify(value) });
@@ -110,6 +114,18 @@ export class FakeNamespace {
         if (!found || found.status === "DESTROYED") return refuse(404, "not_found", "instance not found");
         found.status = "DESTROYED";
         return reply(200, {});
+      }
+      case "GetConcurrency": {
+        if (!this.usageGranted) return refuse(403, "permission_denied", "access denied");
+        const macs = this.running().filter((instance) => instance.shape.os === "macos");
+        const cpu = macs.reduce((sum, instance) => sum + instance.shape.virtualCpu, 0);
+        const memory = macs.reduce((sum, instance) => sum + instance.shape.memoryMegabytes, 0);
+        return reply(200, {
+          concurrency: [
+            { name: "Linux", platforms: ["linux/amd64", "linux/arm64"], limits: { maxCpu: "32", maxMemoryMb: "131072" }, activeConcurrency: {} },
+            { name: "macOS", platforms: ["macos/arm64"], limits: { maxCpu: String(this.#maxCores), maxMemoryMb: String(this.#maxMacMemoryMb) }, activeConcurrency: macs.length ? { instanceCount: String(macs.length), cpu: String(cpu), memoryMb: String(memory) } : {} },
+          ],
+        });
       }
       case "GetVNCConfig": {
         if (!found || found.status !== "RUNNING") return refuse(404, "not_found", "instance not found");
