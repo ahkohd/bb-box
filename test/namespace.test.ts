@@ -232,7 +232,7 @@ test("with a tailnet, each Mac joins it with a single-use key of its own, given 
   assert.equal(tools.calls().at(-1), "tailscale logout");
 });
 
-test("a macos-desktop box gets its desktop ready as it starts: the video helper built from bb-box's source, Screen Recording, Accessibility and event posting for the processes that need them, and a display that stays awake; and shows it over Screen Sharing and as video", async () => {
+test("a macos-desktop box gets its desktop ready as it starts: the video helper built from bb-box's source, Screen Recording, Accessibility and event posting for the processes that need them, no screen-capture notice for those that capture, and a display that stays awake; and shows it over Screen Sharing and as video", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ns-desktop-"));
   const log = join(dir, "calls");
   writeFileSync(log, "");
@@ -243,6 +243,7 @@ test("a macos-desktop box gets its desktop ready as it starts: the video helper 
   tool("xcrun", `printf '%s\\n' "xcrun $*" >> ${log}\nout=; while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done; : > "$out"`);
   tool("sudo", `printf '%s\\n' "sudo $*" >> ${log}`);
   tool("caffeinate", `printf '%s\\n' "caffeinate $*" >> ${log}`);
+  tool("killall", `printf '%s\\n' "killall $*" >> ${log}`);
   const path = process.env.PATH;
   process.env.PATH = `${dir}:${path}`;
   try {
@@ -260,6 +261,13 @@ test("a macos-desktop box gets its desktop ready as it starts: the video helper 
     }
     assert.ok(calls.includes("sudo -n pmset -a displaysleep 0 sleep 0"), calls.join("; "));
     assert.ok(calls.includes("caffeinate -u -t 1"), calls.join("; "));
+    const approvals = readFileSync(join(process.env.FAKE_SSH_DIR!, "home", "ssh.us.namespace.so", "Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"), "utf8");
+    const hintYear = new Date().getUTCFullYear() + 5;
+    for (const client of ["/opt/namespace/vmguest", "/usr/local/bin/bb-box-stream"]) {
+      assert.ok(approvals.includes(`<key>${client}</key><dict><key>kScreenCaptureAlertableUsageCount</key>`), `${client}'s notice put off`);
+    }
+    assert.equal(approvals.match(new RegExp(`<key>kScreenCapturePrivacyHintDate</key><date>${hintYear}-01-01T00:00:00Z</date>`, "g"))?.length, 2);
+    assert.ok(calls.some((call) => /^killall -u \S+ replayd$/.test(call)), "replayd reads them afresh");
 
     const transports = await backend.transports(desktop, "macos-desktop");
     assert.deepEqual(transports.displays.map((display) => `${display.id} ${display.protocol}`), ["desktop rfb", "video selkies"]);
