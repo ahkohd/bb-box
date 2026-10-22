@@ -20,7 +20,7 @@ import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.t
 import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, STALL_MS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
-import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, boxKey, macBrowser, retryWait } from "../src/app/viewer.ts";
+import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, retryWait } from "../src/app/viewer.ts";
 import { checkWords } from "../src/app/resize.tsx";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { choiceOf, displayChoices, formFilterOf, gpuChoices, gpuFullNote, kindFor, nearest, offersShown, providerTitle, runsOnOptions, systemsOf } from "../src/app/box-form.tsx";
@@ -2831,7 +2831,10 @@ test("over video, keys typed straight after a paste go after the box's paste cho
     act(() => void document.dispatchEvent(pasteEvent("[PASTE]")));
     fireEvent.keyDown(canvas, { key: "x", code: "KeyX" });
     expect(socket.sent).not.toContain("kd,120");
+    await waitFor(() => expect(socket.sent).toContain("ku,118"));
+    const chord = performance.now();
     await waitFor(() => expect(socket.sent).toContain("kd,120"));
+    expect(performance.now() - chord).toBeGreaterThanOrEqual(PASTE_LANDS_MS - 60);
     const keys = socket.sent.filter((sent): sent is string => typeof sent === "string" && /^k[du],/.test(sent));
     expect(keys.slice(-5)).toEqual(["kd,65507", "kd,118", "ku,118", "ku,65507", "kd,120"]);
   } finally {
@@ -3636,6 +3639,14 @@ test("keys typed while a paste is on its way wait for it, at most PASTE_HOLD_MS,
     keys.drop();
     vi.advanceTimersByTime(PASTE_HOLD_MS);
     expect(sent).toEqual(["b", "c", "d"]);
+    // Once the chord has gone, they go after the paste has had time to land.
+    keys.hold();
+    keys.keep("f");
+    keys.releaseIn(PASTE_LANDS_MS);
+    vi.advanceTimersByTime(PASTE_LANDS_MS - 1);
+    expect(sent).toEqual(["b", "c", "d"]);
+    vi.advanceTimersByTime(1);
+    expect(sent).toEqual(["b", "c", "d", "f"]);
   } finally {
     vi.useRealTimers();
   }
