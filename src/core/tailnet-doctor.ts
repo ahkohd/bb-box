@@ -1,7 +1,7 @@
 import type { DoctorCheck, DoctorReport } from "../backends/types.ts";
-import type { Tailnet } from "./tailnet.ts";
+import { isInstallDevice, type Tailnet } from "./tailnet.ts";
 
-export async function tailnetDoctor(tailnet: Tailnet, signal?: AbortSignal): Promise<DoctorReport> {
+export async function tailnetDoctor(tailnet: Tailnet, installId: string, signal?: AbortSignal): Promise<DoctorReport> {
   const signedIn = await tailnet.check(signal);
   const checks: DoctorCheck[] = [
     signedIn.ok
@@ -11,13 +11,11 @@ export async function tailnetDoctor(tailnet: Tailnet, signal?: AbortSignal): Pro
   if (signedIn.ok) {
     try {
       const devices = await tailnet.devices(signal);
-      checks.push({
-        id: "tailnet.devices",
-        name: "Devices",
-        status: "ok",
-        detail: devices.length ? `${devices.length} on the tailnet with bb-box's tags: ${devices.map((device) => device.hostname).join(", ")}.` : "None on the tailnet with bb-box's tags.",
-        fix: null,
-      });
+      const own = devices.filter((device) => isInstallDevice(device.hostname, installId));
+      const others = devices.length - own.length;
+      const ownWords = own.length ? `${own.length} of bb-box's on the tailnet: ${own.map((device) => device.hostname).join(", ")}.` : "None of bb-box's on the tailnet.";
+      const otherWords = others ? ` ${others} other ${others === 1 ? "device has" : "devices have"} the tags ${tailnet.tags.join(", ")}; bb-box leaves ${others === 1 ? "it" : "them"} alone.` : "";
+      checks.push({ id: "tailnet.devices", name: "Devices", status: "ok", detail: ownWords + otherWords, fix: null });
     } catch (error) {
       checks.push({
         id: "tailnet.devices",

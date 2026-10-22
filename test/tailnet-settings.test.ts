@@ -48,22 +48,22 @@ function fakeTailscale(options: { devicesStatus?: number } = {}): TailnetFetch {
     const path = new URL(url).pathname;
     const reply = (status: number, body: unknown) => ({ ok: status === 200, status, text: async () => JSON.stringify(body) });
     if (path === "/api/v2/oauth/token") return new URLSearchParams(init.body).get("client_secret") === SECRET ? reply(200, { access_token: "tok", expires_in: 3600 }) : reply(401, { error: "invalid_client" });
-    if (path === "/api/v2/tailnet/-/devices") return options.devicesStatus ? reply(options.devicesStatus, { message: "forbidden" }) : reply(200, { devices: [{ nodeId: "n1", hostname: "bb-box-mac-one", tags: ["tag:bb-box"] }] });
+    if (path === "/api/v2/tailnet/-/devices") return options.devicesStatus ? reply(options.devicesStatus, { message: "forbidden" }) : reply(200, { devices: [{ nodeId: "n1", hostname: "bb-box-ns-i1-mac-one", tags: ["tag:bb-box"] }, { nodeId: "n2", hostname: "owners-laptop", tags: ["tag:bb-box"] }, { nodeId: "n3", hostname: "bb-box-ns-other-mac", tags: ["tag:bb-box"] }] });
     return reply(404, {});
   };
 }
 
-test("backends get the tailnet as the settings have it now, and the doctor checks the client and lists bb-box's devices", async () => {
+test("backends get the tailnet as the settings have it now, and the doctor checks the client and lists only this install's bb-box devices, counting the others with the tag", async () => {
   const backends = new Backends({ storage: new MemoryStorage(), installId: "i1", logError: () => {}, tailnetFetch: fakeTailscale() });
   const on = draft({ mode: "oauth", clientId: "kCLIENT", clientSecret: SECRET });
   await backends.configure(on.document, withSecretChanges({}, on.secrets, on.document));
   const tailnet = backends.context("x").tailnet?.();
   assert.ok(tailnet);
   assert.equal(backends.tailnet(), tailnet, "the same client while the settings are the same");
-  const report = await tailnetDoctor(tailnet);
+  const report = await tailnetDoctor(tailnet, "i1");
   assert.equal(report.ok, true);
   assert.deepEqual(report.checks.map((check) => `${check.id} ${check.status}`), ["tailnet.client ok", "tailnet.devices ok"]);
-  assert.match(report.checks[1]!.detail, /bb-box-mac-one/);
+  assert.equal(report.checks[1]!.detail, "1 of bb-box's on the tailnet: bb-box-ns-i1-mac-one. 2 other devices have the tags tag:bb-box; bb-box leaves them alone.");
 
   const off = draft({ mode: "off" });
   await backends.configure(off.document, {});
@@ -75,7 +75,7 @@ test("the doctor fails when Tailscale refuses the client, and says what to check
   const backends = new Backends({ storage: new MemoryStorage(), installId: "i1", logError: () => {}, tailnetFetch: fakeTailscale() });
   const wrong = draft({ mode: "oauth", clientId: "kCLIENT", clientSecret: "tskey-client-wrong" });
   await backends.configure(wrong.document, withSecretChanges({}, wrong.secrets, wrong.document));
-  const report = await tailnetDoctor(backends.tailnet()!);
+  const report = await tailnetDoctor(backends.tailnet()!, "i1");
   assert.equal(report.ok, false);
   assert.match(report.checks[0]!.fix ?? "", /auth_keys scope/);
   assert.doesNotMatch(JSON.stringify(report), /tskey-client/);
@@ -85,7 +85,7 @@ test("the devices check warns, and says which scope to add, when the client may 
   const backends = new Backends({ storage: new MemoryStorage(), installId: "i1", logError: () => {}, tailnetFetch: fakeTailscale({ devicesStatus: 403 }) });
   const on = draft({ mode: "oauth", clientId: "kCLIENT", clientSecret: SECRET });
   await backends.configure(on.document, withSecretChanges({}, on.secrets, on.document));
-  const report = await tailnetDoctor(backends.tailnet()!);
+  const report = await tailnetDoctor(backends.tailnet()!, "i1");
   assert.equal(report.ok, true);
   assert.deepEqual(report.checks.map((check) => `${check.id} ${check.status}`), ["tailnet.client ok", "tailnet.devices warn"]);
   assert.match(report.checks[1]!.fix ?? "", /devices:core scope/);

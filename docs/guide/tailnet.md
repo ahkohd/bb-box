@@ -39,8 +39,17 @@ If `tagOwners` is already there, add only the `"tag:bb-box"` line to it.
 
 If your policy is still Tailscale's default, which lets every device reach every other, it needs no rule. If you have written your own rules, add two:
 
-- `tag:bb-box` reaches your BB server, on the port BB uses
-- your BB server reaches `tag:bb-box` on port 22, which bb-box uses to reach its cloud machines over SSH, such as the Docker hosts the Hetzner backend makes
+1. `tag:bb-box` reaches the device that BB's URL points at, on port 443.
+2. The machine BB's server runs on reaches `tag:bb-box` on port 22. bb-box uses this to reach its cloud machines over SSH, such as the Docker hosts the Hetzner backend makes.
+
+These can be 2 different devices. BB's URL may point at a reverse proxy rather than at the machine BB's server runs on. To find the device BB's URL points at, look up the address its name has, for example with `dig +short` followed by the name. Then find that address in `tailscale status`, or under **Machines** in the admin console.
+
+In the visual policy editor, these are 2 rules under **General access rules**. Select **Add rule** for each:
+
+| Rule | Source | Destination | Port and protocol |
+| --- | --- | --- | --- |
+| 1 | `tag:bb-box` | the device BB's URL points at | `tcp:443` |
+| 2 | the machine BB's server runs on | `tag:bb-box` | `tcp:22` |
 
 Select **Save**.
 
@@ -79,9 +88,22 @@ bb box doctor
 Under **Tailnet**, the doctor should say:
 
 - **OAuth client**: Tailscale signs the client in, with the tags machines join with.
-- **Devices**: how many devices on the tailnet have the tag. This is none until BB Box starts a machine.
+- **Devices**: BB Box's own machines on the tailnet, by name. This is none until BB Box starts a machine. If other devices have the tag too, it says how many, without naming them.
 
 If **OAuth client** fails, check the ID and secret, and that the client has the `auth_keys` operation with the tag. If **Devices** warns, give the client the `devices:core` operation too.
+
+## Machines you joined by hand
+
+A machine you joined to the tailnet yourself, with `tailscale up` and a login link, as you might while trying a provider out, is not ephemeral. It stays in the tailnet after it logs out or is deleted, and BB Box does not remove it, as it did not name it. Remove it yourself, under **Machines** in the admin console.
+
+## Using a tag you already have
+
+**Tags** takes any tags the OAuth client may use, such as one your tailnet has already. Before you use one, know what that means:
+
+- BB Box's machines get everything the tag reaches in your policy. If the tag reaches your own computers, so do the cloud machines, and so does anyone who uses a box.
+- With `devices:core` on that tag, the client can remove any device that has it, your own included. BB Box itself only removes devices whose names it gave them: names that start with `bb-box-`, `bb-box-hz-` or `bb-box-ns-`, then its install's ID. But whoever holds the client's secret could remove the rest.
+
+So a tag of BB Box's own, `tag:bb-box`, is the safer choice. Reuse a tag only if every device that has it is meant to be reached by BB Box's machines, and you are content for the client to be able to remove those devices.
 
 ## Replacing or revoking the client
 
