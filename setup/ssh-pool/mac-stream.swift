@@ -469,7 +469,11 @@ final class Input: @unchecked Sendable {
 /**
  * H.264 in hardware, in real time, as Annex B with the parameter sets on each key frame. A Mac with no hardware
  * encoder, as a Namespace Mac, a VM, has none, gets the software encoder without low-latency rate control, which only
- * the hardware one offers: with it, every frame failed with -12915 (measured 22 October 2026).
+ * the hardware one offers: with it, every frame failed with -12915 (measured 22 October 2026). The hardware is asked
+ * for as required, not read back: a low-latency session does not have kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder
+ * (-12900), so reading it sent every Mac to the software encoder. And it is asked for without low-latency first: in a
+ * VM with no hardware encoder, a session that requires the hardware with low-latency is made all the same, and its
+ * first frame fails (-12908), where one that requires the hardware alone is refused (-12903).
  */
 final class Encoder: @unchecked Sendable {
   let width: Int
@@ -481,11 +485,10 @@ final class Encoder: @unchecked Sendable {
     self.width = width
     self.height = height
     self.output = output
-    var made = Encoder.session(width: width, height: height, lowLatency: true)
-    if let hardware = made, !Encoder.usesHardware(hardware) {
-      VTCompressionSessionInvalidate(hardware)
+    var made = Encoder.hasHardwareEncoder(width: width, height: height) ? Encoder.session(width: width, height: height, hardware: true) : nil
+    if made == nil {
       log("no hardware H.264 encoder: the software one, without low-latency rate control")
-      made = Encoder.session(width: width, height: height, lowLatency: false)
+      made = Encoder.session(width: width, height: height, hardware: false)
     }
     guard let made else { return nil }
     session = made
@@ -510,25 +513,31 @@ final class Encoder: @unchecked Sendable {
     VTCompressionSessionPrepareToEncodeFrames(made)
   }
 
-  private static func session(width: Int, height: Int, lowLatency: Bool) -> VTCompressionSession? {
-    var spec: [CFString: Any] = [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true]
-    if lowLatency { spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true }
+  private static func hasHardwareEncoder(width: Int, height: Int) -> Bool {
+    var probe: VTCompressionSession?
+    let status = VTCompressionSessionCreate(
+      allocator: nil, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264,
+      encoderSpecification: [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true] as CFDictionary,
+      imageBufferAttributes: nil, compressedDataAllocator: nil, outputCallback: nil, refcon: nil, compressionSessionOut: &probe)
+    if let probe { VTCompressionSessionInvalidate(probe) }
+    return status == noErr && probe != nil
+  }
+
+  private static func session(width: Int, height: Int, hardware: Bool) -> VTCompressionSession? {
+    let spec: [CFString: Any] =
+      hardware
+      ? [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true, kVTVideoEncoderSpecification_EnableLowLatencyRateControl: true]
+      : [:]
     var made: VTCompressionSession?
     let status = VTCompressionSessionCreate(
       allocator: nil, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264,
       encoderSpecification: spec as CFDictionary, imageBufferAttributes: nil, compressedDataAllocator: nil,
       outputCallback: nil, refcon: nil, compressionSessionOut: &made)
     guard status == noErr, let made else {
-      log("VideoToolbox could not make an H.264 encoder: \(status)")
+      log("VideoToolbox could not make \(hardware ? "a hardware" : "an") H.264 encoder: \(status)")
       return nil
     }
     return made
-  }
-
-  private static func usesHardware(_ session: VTCompressionSession) -> Bool {
-    var value: CFTypeRef?
-    let status = VTSessionCopyProperty(session, key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder, allocator: nil, valueOut: &value)
-    return status == noErr && (value as? Bool) == true
   }
 
   func encode(_ buffer: CVImageBuffer, at time: CMTime, key: Bool) {
