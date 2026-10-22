@@ -2,7 +2,7 @@
 
 A server you rent from a cloud provider can host Docker boxes, as a PC with Docker can. You make the server, install Docker and BB's daemon on it, and turn it on in BB Box's settings. BB Box then makes boxes there, reaches them through BB, and builds its images there. Nothing on the server is open to the internet.
 
-This page uses Hetzner Cloud, where it was first done on 22 October 2026. Any provider's Linux server works the same way.
+This page uses Hetzner Cloud, where it was first done on 22 October 2026. Any provider's Linux server works the same way. To have BB Box make Hetzner Cloud servers as boxes need them, and delete them when idle, see [Linux boxes on Hetzner Cloud](hetzner.md) instead.
 
 ## What it costs
 

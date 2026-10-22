@@ -237,7 +237,7 @@ Setup: [setup/microsandbox/README.md](../../setup/microsandbox/README.md).
 
 Hetzner Cloud: Linux boxes, with or without a desktop, as containers on Docker hosts that bb-box makes in a Hetzner Cloud project as boxes need them, and deletes once they are idle.
 
-Setup: [docs/guide/cloud-docker-host.md](../../docs/guide/cloud-docker-host.md).
+Setup: [docs/guide/hetzner.md](../../docs/guide/hetzner.md).
 
 | Field | Label | Type | Group | Default | Description |
 | --- | --- | --- | --- | --- | --- |
@@ -246,7 +246,7 @@ Setup: [docs/guide/cloud-docker-host.md](../../docs/guide/cloud-docker-host.md).
 | `server-type` | Server type | string | boxes | `cpx42` | The type of every host, such as cpx42 (8 cores, 16 GB, 320 GB disk). A box at its largest must fit one, with the memory kept free. |
 | `most-hosts` | Most hosts | number | boxes | `2` | The most hosts at once. At this many, a box that fits on none of them is refused. |
 | `idle-minutes` | Idle minutes | number | boxes | `30` | A host with no box for this long is deleted. Hetzner bills by the started hour, so a shorter time saves little and makes acquires wait for a new host more often. |
-| `monthly-limit-eur` | Monthly limit (EUR) | number | boxes | `20` | bb-box makes no host that would take this calendar month's spend on hosts past this many euros before VAT. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too. |
+| `monthly-limit-eur` | Monthly limit (EUR) | number | boxes | `20` | bb-box makes no host when this calendar month's spend so far, and an hour more of every host with the new one, would pass this many euros before VAT. A busy host keeps running until it is idle. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too. |
 | `host-image` | Host image | string | advanced | `ubuntu-26.04` | What hosts start from. An image name, such as ubuntu-26.04, is the base of the host image bb-box builds as a snapshot, with Docker, Tailscale and the box images in it, and rebuilds weekly or when its scripts change, keeping two; until the first is built, hosts start from the image itself. A snapshot's ID makes hosts start from that snapshot, and bb-box builds none. |
 | `ssh-from` | SSH from | string | advanced |  | Only with the tailnet off: the addresses, as CIDRs separated by commas, that may reach a host's SSH over the internet, such as BB's server's public address. With the tailnet on, a host's SSH is reached on the tailnet alone. |
 | `linux-image` | Linux image | string | boxes | `bbbox/linux:1` | The image linux boxes run. setup/docker/build.sh builds it. Empty turns them off. |

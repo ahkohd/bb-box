@@ -65,7 +65,7 @@ export const HETZNER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [HETZNER_KEYS.monthlyLimit]: {
     type: "number",
     label: "Monthly limit (EUR)",
-    description: "bb-box makes no host that would take this calendar month's spend on hosts past this many euros before VAT. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too.",
+    description: "bb-box makes no host when this calendar month's spend so far, and an hour more of every host with the new one, would pass this many euros before VAT. A busy host keeps running until it is idle. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too.",
     group: "boxes",
     default: HETZNER_DEFAULTS.monthlyLimitEurosBeforeVat,
   },
