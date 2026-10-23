@@ -187,3 +187,20 @@ test("build.sh is given BB's URL, so the images carry BB's app, and the image's 
   await runBuildScript(new DockerCli("unix:///tmp/h1.sock"), "bbbox/linux:1", "linux", null, () => {}, signal(), setup);
   assert.equal(readFileSync(join(setup, "args"), "utf8").trim(), "unix:///tmp/h1.sock --tag bbbox/linux:1 linux");
 });
+
+test("a build Hetzner refuses a server for, as past the project's core limit, waits for room: no failure, the doctor says why, and the next maintain tries again", async () => {
+  const { api, backend } = hetznerWorld();
+  const { options } = builder();
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04", monthlyLimitEurosBeforeVat: 50 }), new MemoryStorage(), "test", options);
+  api.projectServerLimit = 0;
+  await hetzner.buildHostImage("there is no host image yet", signal());
+  const check = (await hetzner.doctor(signal())).checks.find((each) => each.id === "hetzner.image")!;
+  assert.equal(check.status, "ok");
+  assert.match(check.detail, /The last build waited for room: at .* Hetzner Cloud refused its server \(\(403 resource_limit_exceeded\): server limit exceeded\); bb-box tries again at its next check\. Hetzner limits the shared vCPUs of the whole account/);
+  assert.doesNotMatch(check.detail, /failed/);
+  api.projectServerLimit = 10;
+  await hetzner.maintain(signal());
+  for (let i = 0; i < 200 && api.images.size === 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(api.images.size, 1, "the next maintain built it");
+  assert.doesNotMatch((await hetzner.doctor(signal())).checks.find((each) => each.id === "hetzner.image")!.detail, /waited for room/);
+});
