@@ -105,10 +105,10 @@ backends, and the first with room takes the box.
 
 | Kind | Promises | Offered by |
 | --- | --- | --- |
-| `linux` | Linux on x86_64, no GPU | Proxmox LXC, Docker, microsandbox, an SSH pool's Linux machines, Proxmox QEMU as VMs, Hetzner Cloud's hosts |
+| `linux` | Linux on x86_64, no GPU | Proxmox LXC, Docker, microsandbox, an SSH pool's Linux machines, Proxmox QEMU as VMs, Hetzner Cloud's hosts, Namespace |
 | `linux-desktop` | a Linux desktop on a GPU | Proxmox LXC on a GPU host, Docker with NVIDIA's container toolkit |
-| `linux-desktop-cpu` | a Linux desktop drawn by the CPU | Proxmox LXC, Docker, Hetzner Cloud's hosts |
-| `linux-desktop-wayland-cpu` | a Linux desktop on Wayland, drawn by the CPU; X11-only apps do not run | Proxmox LXC, Docker, Hetzner Cloud's hosts |
+| `linux-desktop-cpu` | a Linux desktop drawn by the CPU | Proxmox LXC, Docker, Hetzner Cloud's hosts, Namespace |
+| `linux-desktop-wayland-cpu` | a Linux desktop on Wayland, drawn by the CPU; X11-only apps do not run | Proxmox LXC, Docker, Hetzner Cloud's hosts, Namespace |
 | `linux-arm64` | Linux on arm64 | Tart |
 | `linux-arm64-desktop-cpu` | a Linux desktop on arm64 | Tart |
 | `macos` | macOS | Tart, an SSH pool's Macs, Namespace |
@@ -795,13 +795,14 @@ What runs where:
 | Mac | Windows | VM | Tart, in QEMU | `windows-arm64-desktop` |
 | Hetzner Cloud, servers it makes | Linux | container | Hetzner Cloud | `linux`, `linux-desktop-cpu`, `linux-desktop-wayland-cpu` |
 | Namespace, Macs it rents by the minute | macOS | VM | Namespace | `macos`, `macos-desktop` |
+| Namespace, Linux machines it rents by the minute | Linux | container | Namespace | `linux`, `linux-desktop-cpu`, `linux-desktop-wayland-cpu` |
 
 | | Proxmox LXC | Proxmox QEMU | Docker | microsandbox | SSH host pool | Tart | Hetzner Cloud | Namespace |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Nature | virtual | virtual | virtual | virtual | real | virtual | virtual | virtual |
-| Acquire | linked clone, start | resume a hibernated warm VM, or a linked clone | create and start a container | `msb create` | claim a machine | `tart clone`, `tart run`; QEMU for Windows | a container on a host with room, or on a new host made from the host image | create an instance with a deadline an hour away, wait for SSH |
+| Acquire | linked clone, start | resume a hibernated warm VM, or a linked clone | create and start a container | `msb create` | claim a machine | `tart clone`, `tart run`; QEMU for Windows | a container on a host with room, or on a new host made from the host image | create an instance with a deadline an hour away, wait for SSH; for Linux, pull the image and make a container |
 | Release | delete | delete | remove the container | `msb remove` | reset the machine | `tart delete` | remove the container; a host idle for 30 minutes is deleted | leave the tailnet, destroy the instance |
-| Commands | SSH | SSH; OpenSSH with PowerShell 7 on Windows | `docker exec` | `msb exec` | SSH as the box user | SSH through the Mac | `docker exec` on the host, over SSH | SSH through Namespace's gateway |
+| Commands | SSH | SSH; OpenSSH with PowerShell 7 on Windows | `docker exec` | `msb exec` | SSH as the box user | SSH through the Mac | `docker exec` on the host, over SSH | SSH through Namespace's gateway; `docker exec` over it for Linux |
 | Ownership | tags and description | tags and description | labels set at creation | labels set at creation | a marker on the machine | an owner file per VM on the Mac | labels on servers and containers, and host records | labels set at creation, and a unique tag per box |
 | Capacity | memory, disk, VMIDs, GPU | memory, disk, VMIDs | memory, a container budget, desktops per GPU | memory, cores, a microVM budget | machines | macOS VM slots, memory, disk | each host's memory, most hosts, a monthly spend limit | most machines, the workspace's Mac cores and memory, its largest Mac |
 | Stop and start | yes | yes, by hibernating | yes | yes | no | yes, by suspending or saving | yes | no |
@@ -1075,8 +1076,9 @@ a host in `reach.ts`, the host image in `host-image.ts`, first-boot data in
 ### Namespace
 
 Code in [src/backends/namespace/](../src/backends/namespace/): the Compute
-API client in `api.ts`, settings in `config.ts`, and the backend in
-`backend.ts`. Set up by [the Namespace guide](guide/namespace.md).
+API client in `api.ts`, settings in `config.ts`, the backend in
+`backend.ts`, Linux boxes in `linux.ts` and their images in
+`linux-images.ts`. Set up by [the Namespace guide](guide/namespace.md).
 
 - A box is a Mac of its own, an instance Namespace rents by the minute:
   the smallest of Namespace's fixed shapes with at least the box's cores,
@@ -1102,6 +1104,19 @@ API client in `api.ts`, settings in `config.ts`, and the backend in
   workspace; and the workspace's Mac cores and memory, and its largest
   Mac, read from Namespace's usage API before each Mac, or, for a token
   without that grant, from **Largest machine** or Namespace's last refusal.
+- **Linux** boxes (#997) are each a Linux instance of their own with a
+  container of bb-box's own image, made by a Docker backend whose CLI
+  reaches the instance with `docker -H ssh://` through the gateway, with
+  bb-box's key and a shared SSH connection; the gateway forwards no Unix
+  socket. The acquire creates the instance, waits for SSH, joins the
+  tailnet, pulls the kind's image from the workspace's registry and tags
+  it, and the Docker backend makes the container, with the instance's
+  memory less a margin. Images are built in a Linux instance of their own
+  with `setup/docker/build.sh` and pushed from it, as instances are
+  signed in to the registry already; one is rebuilt, while boxes use it,
+  when the setup scripts or BB's app change, or weekly. A build instance
+  has the label `bbbox-role=image-build`, is not a box's guest, and ends
+  within the hour.
 - A Mac ends at the plan's longest life whatever bb-box does. Its guest
   says when, which the panel and `box_status` show, and the box's thread
   is told an hour before.
@@ -1128,9 +1143,9 @@ API client in `api.ts`, settings in `config.ts`, and the backend in
   a cloud VM that runs Linux works today as a Docker host, through BB, or
   as a pool machine. Built: the Hetzner Cloud backend, which makes Docker
   hosts as boxes need them and places boxes on them, and the Namespace
-  backend, a Mac rented by the minute for each macOS box. Later: AWS
-  (#1007), Linux boxes on Namespace (#997), and a cloud VM per box for
-  Windows and GPU desktops.
+  backend, a Mac or a Linux machine rented by the minute for each box.
+  Later: AWS (#1007), microsandbox on Namespace's Linux machines (#1013),
+  and a cloud VM per box for Windows and GPU desktops.
 - **Desktop streams** ([056](decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md)):
   Linux X11 desktops add a Selkies display, H.264 over WebSockets, which
   the relay carries message by message with the same control; and Tart's
