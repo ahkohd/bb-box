@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { ImageOptionView, KindView, OfferView, ProviderProfile, SizeView } from "../plugin/views.ts";
+import type { ImageOptionView, KindView, OfferRoom, OfferView, ProviderProfile, SizeView } from "../plugin/views.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
 import { DESKTOP_BUILD_WORDS, estimate } from "./first-run.tsx";
@@ -114,6 +114,7 @@ export function NewBox({
   machine = false,
   primary = false,
   profile,
+  rooms,
   askForImage,
   images = [],
 }: {
@@ -128,6 +129,7 @@ export function NewBox({
   primary?: boolean;
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
   profile?: (backend: string) => Promise<ProviderProfile>;
+  rooms?: (kind: string) => Promise<readonly OfferRoom[]>;
   /** Asks an agent to make the project a box image (049), when it has none. */
   askForImage?: () => void;
   /**
@@ -185,6 +187,7 @@ export function NewBox({
     },
     [profile],
   );
+  const [roomsByKind, setRoomsByKind] = useState<ReadonlyMap<string, ReadonlyMap<string, string>>>(() => new Map());
   const listed = kinds.flatMap((kind) => kind.offers.map((offer) => offer.backend)).join("\n");
   useEffect(() => {
     if (!open) {
@@ -200,6 +203,26 @@ export function NewBox({
   // Every step shows what exists; a choice snaps to the nearest that does.
   const picked = nearest(kinds, wanted);
   const kind = kindFor(kinds, picked);
+  const kindId = kind?.id ?? null;
+  useEffect(() => {
+    if (!open) {
+      setRoomsByKind(new Map());
+      return;
+    }
+    if (!rooms || !kindId || (kind?.offers.length ?? 0) < 2) return;
+    let stale = false;
+    rooms(kindId).then(
+      (answers) => {
+        if (stale) return;
+        const blocked = new Map(answers.filter((answer) => !answer.available).map((answer) => [answer.backend, answer.reason ?? "Cannot take a box now"] as const));
+        setRoomsByKind((current) => new Map(current).set(kindId, blocked));
+      },
+      () => undefined,
+    );
+    return () => {
+      stale = true;
+    };
+  }, [open, kindId, rooms]);
   /** The chosen kind is the desktop to build first. */
   const buildsFirst = added && kind?.id === onDemand!.kind.id;
   // The images covering the chosen kind (049): the choice shows only where there is one. The state lists this project's first.
@@ -222,10 +245,14 @@ export function NewBox({
   const offers = kind?.offers ?? [];
   const runsOnChoices = runsOnOptions(offers);
   const effectiveRunsOn: RunsOn = runsOnChoices.includes(runsOn as GuestOs) ? runsOn : "any";
-  const shown = offersShown(offers, filter, effectiveRunsOn);
+  const roomsHere = kind ? roomsByKind.get(kind.id) : undefined;
+  const blockedWhy = (offer: OfferView) => roomsHere?.get(offer.backend) ?? null;
+  const filtered = offersShown(offers, filter, effectiveRunsOn);
+  const shown = [...filtered.filter((offer) => blockedWhy(offer) === null), ...filtered.filter((offer) => blockedWhy(offer) !== null)];
+  const takers = shown.filter((offer) => blockedWhy(offer) === null);
   // One offer is no choice: its row stands alone, checked, and nothing goes as `on` (044's first with room is that one).
   const choiceless = offers.length <= 1;
-  const onOffer = choiceless ? (shown[0] ?? null) : (shown.find((offer) => offer.backend === on) ?? null);
+  const onOffer = choiceless ? (shown[0] ?? null) : (takers.find((offer) => offer.backend === on) ?? null);
   const presets = kind?.presets ?? [];
   const choices: Choice2[] = [...presets.map((preset) => preset.name), CUSTOM];
   const size: Choice2 = choice && choices.includes(choice) ? choice : (kind?.defaultPreset ?? CUSTOM);
@@ -323,7 +350,7 @@ export function NewBox({
     </label>
   );
   // The provider choice: "First with room" when there is one to make, then the rows the filters leave.
-  const providerValues: (string | null)[] = [...(choiceless || !shown.length ? [] : [null]), ...shown.map((offer) => offer.backend)];
+  const providerValues: (string | null)[] = [...(choiceless || !shown.length ? [] : [null]), ...takers.map((offer) => offer.backend)];
   const providerIndex = Math.max(0, providerValues.indexOf(onOffer?.backend ?? null));
   const kindOptions = FORM_FILTERS.map((option) => ({ value: option.id, label: option.label, disabled: option.id !== "all" && !offers.some((offer) => formFilterOf(offer) === option.id) }));
   const runsOnChoiceList = [{ value: "any", label: "Any machine" }, ...runsOnChoices.map((os) => ({ value: os, label: RUNS_ON_WORDS[os] }))];
@@ -505,7 +532,7 @@ export function NewBox({
                   className={rowClass(onOffer === null)}
                 >
                   <span className="block text-xs font-medium text-foreground">First with room</span>
-                  <span className="mt-0.5 block text-2xs text-muted-foreground">{shown.length === 1 ? "The one below" : `Any of the ${shown.length} below, in order`}</span>
+                  <span className="mt-0.5 block text-2xs text-muted-foreground">{takers.length === 0 ? "None below can take it now" : takers.length === 1 ? "The one below" : `Any of the ${takers.length} below, in order`}</span>
                 </button>
               ) : null}
               {shown.map((offer, index) => (
@@ -515,6 +542,7 @@ export function NewBox({
                   among={offers}
                   ready={readyOn(offer)}
                   selected={onOffer?.backend === offer.backend}
+                  unavailable={blockedWhy(offer)}
                   onClick={() => setOn(offer.backend)}
                   optionRef={(element) => {
                     providerOptions.current[index + (choiceless ? 0 : 1)] = element;

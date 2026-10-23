@@ -143,6 +143,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
             kinds={state.kinds}
             make={make}
             profile={(backend) => rpc.call("provider", { backend })}
+            rooms={(kind) => rpc.call("rooms", { kind })}
             askForImage={state.imageOffer ? () => navigate.toCompose({ initialPrompt: IMAGE_REQUEST, focusPrompt: true }) : undefined}
             images={state.images}
             onDemand={onDemand}

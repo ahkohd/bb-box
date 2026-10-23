@@ -61,7 +61,7 @@ import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
 import { ReloadTimes } from "./reload-times.ts";
 import { registerTools } from "./tools.ts";
-import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type ProviderProfile } from "./views.ts";
+import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile } from "./views.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 export const CHANGED = "changed";
@@ -76,6 +76,40 @@ const NIGHTLY_HOURS = 4;
 /** How often bb-box looks for a BB update that leaves the images behind. */
 const BB_UPDATE_LOOK_MS = 5 * 60_000;
 const DOCTOR_TIMEOUT_MS = 30_000;
+const ROOM_ANSWER_MS = 6_000;
+
+function withinMs<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function inUseBy(names: readonly string[]): string {
+  const shown = names.slice(0, 3);
+  const rest = names.length - shown.length;
+  const listed = shown.length < 2 ? (shown[0] ?? "") : `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}`;
+  return `In use by ${listed}${rest ? ` and ${rest} more` : ""}`;
+}
+
+const SHORT_REASON = 60;
+
+function firstSentence(text: string | null): string | null {
+  if (!text) return null;
+  const end = text.search(/\.(\s|$)/);
+  const sentence = end > 0 ? text.slice(0, end) : text;
+  const clause = sentence.indexOf(", ");
+  return sentence.length > SHORT_REASON && clause > 0 ? sentence.slice(0, clause) : sentence;
+}
 /**
  * What BB's daemon gives its workers besides the machine variables: the
  * GitHub token and the user's git identity. A user without GitHub in BB
@@ -152,6 +186,7 @@ export interface BbBox {
   backendViews(): BackendView[];
   /** A provider's profile for the New box form's (i): one capacity call to the provider, made only when asked. */
   providerProfile(backendId: string, signal?: AbortSignal): Promise<ProviderProfile>;
+  offerRooms(kindId: string): Promise<OfferRoom[]>;
   doctor(signal?: AbortSignal): Promise<DoctorView>;
   /**
    * Takes back an install ID this install had before it lost its storage
@@ -1108,6 +1143,20 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         room: first ? await boxes.room(backendId, first.kind.id, signal).catch(() => null) : null,
         status: { state: status.state, problem: status.problems[0] ?? null, ok: state?.doctor?.report.ok ?? null, summary: state?.doctor?.report.summary ?? null, checkedAt: state?.doctor?.at ?? null },
       };
+    },
+    async offerRooms(kindId) {
+      const offered = backends.kinds().filter((offer) => offer.kind.id === kindId);
+      const all = await boxes.all();
+      return Promise.all(
+        offered.map(async ({ backend }): Promise<OfferRoom> => {
+          const holders = () => all.filter((box) => box.backend === backend.id && box.state !== "gone" && box.state !== "releasing").map((box) => box.name);
+          if (backend.free?.(kindId) === 0 && holders().length) return { backend: backend.id, available: false, reason: inUseBy(holders()) };
+          const room = await withinMs(boxes.room(backend.id, kindId), ROOM_ANSWER_MS).catch(() => null);
+          if (!room || room.ok) return { backend: backend.id, available: true, reason: null };
+          const held = backend.free ? holders() : [];
+          return { backend: backend.id, available: false, reason: held.length ? inUseBy(held) : firstSentence(room.message) };
+        }),
+      );
     },
     backendViews: () =>
       backends.statuses().map((backend) => ({

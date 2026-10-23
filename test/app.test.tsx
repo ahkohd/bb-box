@@ -501,7 +501,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult } = {}) {
+function server(initial: BoxView[], options: { rooms?: Record<string, string>; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -599,6 +599,7 @@ function server(initial: BoxView[], options: { profileFailsOnce?: Set<string>; k
       return result(machines.find((candidate) => candidate.box.id === ref)?.box ?? null);
     },
     kinds: () => options.kinds ?? KINDS,
+    rooms: ({ kind }) => ((options.kinds ?? KINDS).find((candidate) => candidate.id === kind)?.offers ?? []).map((offer) => ({ backend: offer.backend, available: !options.rooms?.[offer.backend], reason: options.rooms?.[offer.backend] ?? null })),
     provider: ({ backend }) => {
       asked.push(backend);
       if (options.profileFailsOnce?.has(backend)) {
@@ -4704,6 +4705,29 @@ test("the providers are a choice, First with room first, which goes with the req
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.textContent)).toEqual(["pveContainer · usually ~3.1 s"]);
   fireEvent.click(within(types).getByRole("radio", { name: /^Server/ }));
   expect(within(screen.getByRole("radiogroup", { name: "Provider" })).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+});
+
+test("a provider that cannot take the box now is greyed, after the ones that can, says why in place of its free count, and First with room counts only those that can", async () => {
+  const pool = { ...POOLED.offers[1]!, free: 0 };
+  const cloud = { ...KINDS[0]!.offers[0]!, backend: "namespace", name: "Namespace", type: "namespace", label: "Namespace", hosts: [], form: "VM" as const, typicalReadyMs: null };
+  const crowded: KindView = { ...POOLED, offers: [pool, KINDS[0]!.offers[0]!, cloud], forms: ["Physical", "LXC", "VM"] };
+  const { handlers, changes } = server([], { kinds: [crowded, KINDS[1]!], rooms: { "ssh-pool": "In use by swift-fox", namespace: "Namespace has 3 of the 3 machines bb-box may have at once" } });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const providers = await screen.findByRole("radiogroup", { name: "Provider" });
+  await waitFor(() =>
+    expect(within(providers).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-disabled") ?? "-"}`)).toEqual([
+      "First with roomThe one below:-",
+      "pveContainer · usually ~2.2 s:-",
+      "SSH host poolPhysical · In use by swift-fox:true",
+      "NamespaceVM · Namespace has 3 of the 3 machines bb-box may have at once:true",
+    ]),
+  );
+  fireEvent.click(within(providers).getByRole("radio", { name: /^SSH host pool/ }));
+  expect(within(providers).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false", "false", "false"]);
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes).toEqual(["acquire linux"]));
 });
 
 test("Runs on keeps the providers on that machine, and one that does not know its machine yet; a Docker machine without a name is an unnamed machine", async () => {
