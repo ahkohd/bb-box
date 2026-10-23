@@ -4563,7 +4563,7 @@ test("ticks in one tag group widen (Linux or macOS) and groups together narrow (
   expect(tagCounts(rows, "mac", NO_FILTERS).systems).toEqual({ macOS: 2 });
 });
 
-test("on the Boxes page, the Filters menu has System, Form, Has and Provider tags with counts, greys a tag that matches none, clears, and keeps its ticks across the tabs", async () => {
+test("on the Boxes page, the Filters menu lists the tags flat, without headings or counts, then Provider under its heading; greys a tag that would show none, clears, and keeps its ticks across the tabs", async () => {
   const { handlers } = server(TAGGED.slice(0, 4), { machines: [machine({ id: "box_m2", name: "cloud-machine", form: "Docker", backendLabel: "Hetzner Cloud" }, []), machine({ id: "box_m3", name: "vm-machine", form: "VM", backendLabel: "Proxmox QEMU on pve" }, [])] });
   const list = boxesPage(handlers);
   await list.findByText("cloud-machine");
@@ -4571,15 +4571,29 @@ test("on the Boxes page, the Filters menu has System, Form, Has and Provider tag
   await list.findByText("linux-vm");
   const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
   const menu = await openMenu(list.getByRole("button", { name: "Filters" }));
-  const labels = within(menu).getAllByText(/^(System|Form|Has|Provider|State)$/).map((node) => node.textContent);
-  expect(labels).toEqual(["System", "Form", "Has", "Provider"]);
-  const item = (name: string) => within(menu).getByRole("menuitemcheckbox", { name: new RegExp(`^${name}\\d+$`) });
-  expect(item("VM").textContent).toBe("VM2");
+  expect(within(menu).queryByText(/^(System|Form|Has)$/)).toBeNull();
+  expect(within(menu).getAllByText(/^(Provider|State)$/).map((node) => node.textContent)).toEqual(["Provider"]);
+  expect(within(menu).getAllByRole("menuitemcheckbox").map((option) => option.textContent)).toEqual([
+    "Linux",
+    "macOS",
+    "VM",
+    "Container",
+    "Physical",
+    "Desktop",
+    "KVM",
+    "arm64",
+    "Proxmox LXC on pve",
+    "Proxmox QEMU on pve",
+    "SSH host pool",
+    "Tart on studio",
+  ]);
+  const item = (name: string) => within(menu).getByRole("menuitemcheckbox", { name });
   fireEvent.click(item("Linux"));
   fireEvent.click(item("VM"));
   expect(rowNames()).toEqual(["linux-vm"]);
-  expect(item("macOS").textContent).toBe("macOS1");
+  expect(item("macOS").getAttribute("aria-disabled")).toBeNull();
   expect(item("Physical").getAttribute("aria-disabled")).toBe("true");
+  expect(item("Desktop").getAttribute("aria-disabled")).toBe("true");
   fireEvent.click(item("macOS"));
   expect(rowNames()).toEqual(["linux-vm", "tart-mac"]);
   fireEvent.keyDown(menu, { key: "Escape" });
