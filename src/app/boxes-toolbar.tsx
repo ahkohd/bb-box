@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { filtering, FLAT_TAG_GROUPS, SORT_WORDS, TAG_GROUP_LABELS, type Filters, type Sort, type SortKey, type TagCounts, type TagGroup } from "./boxes-filter.ts";
+import { filtering, SORT_WORDS, TAG_LIST_GROUPS, TAG_GROUP_LABELS, type Filters, type Sort, type SortKey, type TagCounts, type TagGroup } from "./boxes-filter.ts";
 
 export interface TabSpec<T extends string> {
   readonly id: T;
@@ -81,24 +81,21 @@ export function SearchRow({
       </DropdownMenuCheckboxItem>
     );
   };
-  const listed = (key: TagGroup) => split.has(key) || filters[key].length > 0;
-  const tags = FLAT_TAG_GROUPS.filter(listed).flatMap((key) => offered[key].map((value) => item(key, value)));
-  const headed = (key: TagGroup): ReactNode =>
-    listed(key) ? (
+  const ticked = (key: TagGroup) => filters[key].length > 0;
+  const section = (label: string, keys: readonly TagGroup[], shown: boolean): ReactNode => {
+    const items = keys.flatMap((key) => offered[key].map((value) => item(key, value)));
+    return shown && items.length ? (
       <>
-        <DropdownMenuLabel className="font-normal text-subtle-foreground">{TAG_GROUP_LABELS[key]}</DropdownMenuLabel>
-        {offered[key].map((value) => item(key, value))}
+        <DropdownMenuLabel className="font-normal text-subtle-foreground">{label}</DropdownMenuLabel>
+        {items}
       </>
     ) : null;
+  };
   const groups = [
-    tags.length ? (
-      <>
-        <DropdownMenuLabel className="font-normal text-subtle-foreground">Tags</DropdownMenuLabel>
-        {tags}
-      </>
-    ) : null,
-    headed("providers"),
-    headed("states"),
+    section(TAG_GROUP_LABELS.systems, ["systems"], true),
+    section("Tags", TAG_LIST_GROUPS, true),
+    section(TAG_GROUP_LABELS.providers, ["providers"], true),
+    section(TAG_GROUP_LABELS.states, ["states"], split.has("states") || ticked("states")),
   ].filter(Boolean);
   const sortLabel = `Sort: ${SORT_WORDS[sort.key]}, ${sort.ascending ? "ascending" : "descending"}`;
   return (

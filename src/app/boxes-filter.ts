@@ -23,7 +23,7 @@ export type TagGroup = "systems" | "forms" | "has" | "providers" | "states";
 
 export const TAG_GROUPS: readonly TagGroup[] = ["systems", "forms", "has", "providers", "states"];
 
-export const FLAT_TAG_GROUPS: readonly TagGroup[] = ["systems", "forms", "has"];
+export const TAG_LIST_GROUPS: readonly TagGroup[] = ["forms", "has"];
 
 export const TAG_GROUP_LABELS: Readonly<Record<TagGroup, string>> = { systems: "System", forms: "Form", has: "Has", providers: "Provider", states: "State" };
 
