@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { NamespaceBackend } from "../src/backends/namespace/backend.ts";
 import { WORKSPACE_FROM_METADATA, linuxImageBuildScript, linuxImageFingerprint, linuxImageKey } from "../src/backends/namespace/linux-images.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
+import { Tailnet } from "../src/core/tailnet.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const CONFIG = { token: FAKE_NAMESPACE_TOKEN, region: "us" as const, macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
@@ -77,6 +78,7 @@ test("a build that fails destroys its instance and says the build's last lines; 
   assert.equal([...fake.instances.values()][0]!.status, "DESTROYED");
   fake.instances.set("building", { ...[...fake.instances.values()][0]!, id: "building", status: "RUNNING" });
   assert.deepEqual(await backend.held(), [], "a build instance is not a box's guest, so the sweep leaves it to its build");
+  assert.match((await backend.doctor()).checks.find((check) => check.id === "namespace.images")!.detail, /Building now: building \(desktop, 0 min old\)\.$/, "the doctor shows a build machine that is running");
   assert.equal((await backend.capacity("macos", { cores: 4, memoryMiB: 8192, diskGiB: null }, [])).hosts[0]?.limits[0]?.used, 0, "nor does it count as a machine");
 });
 
@@ -92,4 +94,59 @@ test("the workspace's ID is the value of tenant_id in Namespace's metadata, with
   writeFileSync(join(dir, "metadata.json"), '{\n  "instance_id": "abc12",\n  "tenant_id": "tenant_oeigur8bob9pm",\n  "other": "tenant_id"\n}\n');
   const workspace = execFileSync("sh", ["-c", `${WORKSPACE_FROM_METADATA}\nprintf %s "$workspace"`], { encoding: "utf8", env: { ...process.env, NSC_METADATA_FILE: join(dir, "metadata.json") } });
   assert.equal(workspace, "oeigur8bob9pm");
+});
+
+test("with the tailnet on, a build machine joins it with a one-off key of its own before the build, as BB's app comes from BB's server, then leaves it, its device removed, before it is destroyed", async () => {
+  fakeSsh();
+  const dir = mkdtempSync(join(tmpdir(), "ns-build-tailnet-"));
+  const log = join(dir, "calls");
+  writeFileSync(log, "");
+  const tool = (name: string, body: string) => {
+    writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(dir, name), 0o755);
+  };
+  tool("tailscale", `printf '%s\\n' "tailscale $*" >> ${log}\ncase "$1" in up) f=$(printf '%s' "$2" | sed 's/^--auth-key=file://'); printf 'key %s\\n' "$(cat "$f")" >> ${log};; ip) echo 100.64.0.9;; esac`);
+  tool("sudo", `[ "$1" = -n ] && shift\nexec "$@"`);
+  const path = process.env.PATH;
+  process.env.PATH = `${dir}:${path}`;
+  const minted: string[] = [];
+  const removed: string[] = [];
+  const tailnet = new Tailnet({
+    credentials: { clientId: "id", clientSecret: "secret" },
+    fetch: async (url, init) => {
+      const at = new URL(url).pathname;
+      const reply = (body: unknown) => ({ ok: true, status: 200, text: async () => JSON.stringify(body) });
+      if (at === "/api/v2/oauth/token") return reply({ access_token: "tok", expires_in: 3600 });
+      if (at === "/api/v2/tailnet/-/keys") return minted.push(JSON.parse(init.body!).description), reply({ id: "k1", key: "tskey-auth-one-off-build", expires: "2030-01-01T00:10:00Z" });
+      if (at === "/api/v2/tailnet/-/devices") return reply({ devices: [{ nodeId: "n-build", hostname: "bb-box-ns-inst1-build-linux", tags: ["tag:bb-box"] }, { nodeId: "n-other", hostname: "bb-box-ns-inst1-box-b1", tags: ["tag:bb-box"] }] });
+      if (at.startsWith("/api/v2/device/")) return removed.push(at.split("/").at(-1)!), reply({});
+      return { ok: false, status: 404, text: async () => "{}" };
+    },
+  });
+  try {
+    const fake = new FakeNamespace({ maxCores: 64 });
+    const context = { ...testContext(new MemoryStorage(), "inst1"), bbUrl: () => "https://bb.example", images: { bbApp: async () => "a".repeat(64) }, tailnet: () => tailnet } as never;
+    const order: string[] = [];
+    const backend = new NamespaceBackend(CONFIG, context, {
+      fetch: fake.fetch,
+      sshBinary: FAKE_SSH_BINARY,
+      sleep: async () => {},
+      readyTimeoutMs: 20_000,
+      setupArchive: async () => Buffer.from("setup"),
+      linuxTailscaleScript: ":",
+      linuxImageScript: (target, key) => (order.push(readFileSync(log, "utf8").includes("tailscale up") ? "built after joining" : "built before joining"), `cat >/dev/null; echo nscr.io/ws/bbbox/${target}:${key}`),
+    });
+    const image = await backend.linuxImages.forBox("linux", new AbortController().signal);
+    assert.match(image.ref, /^nscr\.io\/ws\/bbbox\/linux:/);
+    assert.deepEqual(order, ["built after joining"]);
+    assert.deepEqual(minted, ["bb-box Namespace build-linux"]);
+    const calls = readFileSync(log, "utf8").trim().split("\n");
+    assert.ok(calls.some((call) => /^tailscale up --auth-key=file:\S+ --hostname=bb-box-ns-inst1-build-linux /.test(call)), calls.join("; "));
+    assert.ok(calls.includes("key tskey-auth-one-off-build"), "the key reached the machine on its input");
+    assert.equal(calls.at(-1), "tailscale logout");
+    assert.deepEqual(removed, ["n-build"], "only the build machine's device");
+    assert.equal([...fake.instances.values()][0]!.status, "DESTROYED");
+  } finally {
+    process.env.PATH = path;
+  }
 });

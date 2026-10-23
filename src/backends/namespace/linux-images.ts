@@ -47,6 +47,7 @@ export interface LinuxImageDeps {
   readonly run: (instance: string, script: string, stdin: Buffer, timeoutMs: number, signal: AbortSignal) => Promise<CommandResult>;
   readonly bbUrl: () => string | null;
   readonly bbApp: (signal?: AbortSignal) => Promise<string | null>;
+  readonly joinTailnet?: (instance: string, name: string, signal: AbortSignal) => Promise<(() => Promise<void>) | null>;
   readonly log: (line: string) => void;
   readonly fingerprint?: () => string;
   readonly setupArchive?: () => Promise<Buffer>;
@@ -167,10 +168,12 @@ export class LinuxImages {
       },
       signal,
     );
+    let leave: (() => Promise<void>) | null = null;
     try {
       const ready = await deps.api.wait(made.id, signal);
       if (ready.status !== "running") throw new Error(`Namespace's build instance ${made.id} is ${ready.status}, not running.`);
       await deps.answers(made.id, signal);
+      leave = (await deps.joinTailnet?.(made.id, `build-${target}`, signal)) ?? null;
       const archive = await (deps.setupArchive ?? setupArchive)();
       const script = (deps.buildScript ?? linuxImageBuildScript)(target, key, deps.bbUrl());
       const built = await deps.run(made.id, script, archive, BUILD_TIMEOUT_MS, signal);
@@ -183,6 +186,7 @@ export class LinuxImages {
       deps.log(`Namespace: built and pushed the ${target} image, ${ref}, in ${Math.round((deps.now() - started) / 1000)} s.`);
       return record;
     } finally {
+      await leave?.().catch((error) => deps.log(`Namespace: build instance ${made.id} did not leave the tailnet: ${error instanceof Error ? error.message : String(error)}`));
       await deps.api.destroy(made.id, "bb-box: the image build ended").catch((error) => deps.log(`Namespace: could not destroy build instance ${made.id}: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
