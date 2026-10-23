@@ -328,6 +328,12 @@ export interface BackendView extends BackendStatus {
   readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
 }
 
+export interface OfferRoom {
+  readonly backend: string;
+  readonly available: boolean;
+  readonly reason: string | null;
+}
+
 /**
  * A provider's profile, behind the (i) on its row in the New box form: read
  * when the row's popover opens, never on every panel load.

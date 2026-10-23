@@ -204,13 +204,17 @@ export function formWords(offer: OfferView): string | null {
  * `ready` is the form's say, as the box's image and size decide (#440); a spare's count is no use to the person, so it is not given.
  * A spare that waits stopped resumes first, which takes some seconds (about 12 for Windows on Proxmox), so it says "ready in seconds" (#539).
  */
-export function OfferWords({ offer, ready = offer.ready > 0 }: { offer: OfferView; ready?: boolean }) {
+export function OfferWords({ offer, ready = offer.ready > 0, reason = null }: { offer: OfferView; ready?: boolean; reason?: string | null }) {
   const parts: ReactNode[] = [];
   const form = formWords(offer);
   if (form) parts.push(<span key="form">{form}</span>);
-  if (ready) parts.push(<span key="ready" className="text-emerald-700 dark:text-emerald-400">{offer.spareStarts ? "ready in seconds" : "ready now"}</span>);
-  if (offer.free !== null) parts.push(<span key="free">{offer.free} free</span>);
-  if (offer.typicalReadyMs !== null) parts.push(<span key="usually">usually ~{seconds(offer.typicalReadyMs)}</span>);
+  if (reason !== null) {
+    parts.push(<span key="reason">{reason}</span>);
+  } else {
+    if (ready) parts.push(<span key="ready" className="text-emerald-700 dark:text-emerald-400">{offer.spareStarts ? "ready in seconds" : "ready now"}</span>);
+    if (offer.free !== null) parts.push(<span key="free">{offer.free} free</span>);
+    if (offer.typicalReadyMs !== null) parts.push(<span key="usually">usually ~{seconds(offer.typicalReadyMs)}</span>);
+  }
   if (!parts.length) return null;
   return (
     <span className="mt-0.5 block text-2xs text-muted-foreground">
@@ -360,6 +364,7 @@ export function ProviderRow({
   onClick,
   optionRef,
   info,
+  unavailable = null,
 }: {
   offer: OfferView;
   /** The kind's other offers, whose names this row's must not repeat. */
@@ -369,20 +374,25 @@ export function ProviderRow({
   onClick: () => void;
   optionRef?: (element: HTMLButtonElement | null) => void;
   info?: ReactNode;
+  unavailable?: string | null;
 }) {
+  const blocked = unavailable !== null;
   return (
-    <div className={cn("group flex items-center rounded-md border", selected ? "border-transparent bg-state-active" : "border-input hover:bg-state-hover")}>
+    <div className={cn("group flex items-center rounded-md border", selected ? "border-transparent bg-state-active" : blocked ? "border-input" : "border-input hover:bg-state-hover")}>
       <button
         ref={optionRef}
         type="button"
         role="radio"
         aria-checked={selected}
+        aria-disabled={blocked || undefined}
         tabIndex={selected ? 0 : -1}
-        onClick={onClick}
-        className="flex min-w-0 flex-1 flex-col items-start rounded-md px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        onClick={() => {
+          if (!blocked) onClick();
+        }}
+        className={cn("flex min-w-0 flex-1 flex-col items-start rounded-md px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring", blocked && "cursor-not-allowed opacity-50")}
       >
         <span className="block w-full truncate text-xs font-medium text-foreground">{providerTitle(offer, among)}</span>
-        <OfferWords offer={offer} ready={ready} />
+        <OfferWords offer={offer} ready={ready} reason={unavailable} />
       </button>
       {info ? (
         <div
