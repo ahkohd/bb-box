@@ -45,8 +45,8 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
 | [Proxmox QEMU](setup/proxmox-qemu/README.md) | Windows desktop; Linux with a kernel of its own, and KVM where the host allows | virtual machines on a Proxmox VE host |
 | [Tart](setup/tart/README.md) | macOS, with or without a desktop; Linux on arm64, with or without a desktop; Windows desktop on arm64 | virtual machines on your Macs with Apple silicon |
 | [SSH host pool](setup/ssh-pool/README.md) | Linux; macOS, with or without a desktop | machines over SSH, physical or a VPS |
-| [Hetzner Cloud](docs/guide/hetzner.md) | Linux; Linux desktop on the CPU; Wayland desktop on the CPU | containers on Docker hosts bb-box rents in your Hetzner Cloud project as boxes need them, and deletes when idle |
-| [Namespace](docs/guide/namespace.md) | macOS, with or without a desktop | a Namespace Mac for each box, rented by the minute in your Namespace workspace, within its plan's limits |
+| [Hetzner Cloud](docs/guide/hetzner.md) | Linux; Linux desktop on the CPU; Wayland desktop on the CPU; Linux on arm64, with or without a desktop | containers on x86 or Arm Docker hosts bb-box rents in your Hetzner Cloud project as boxes need them, and deletes when idle |
+| [Namespace](docs/guide/namespace.md) | macOS, with or without a desktop; Linux, with KVM; Linux desktop on the CPU; Wayland desktop on the CPU | a Namespace machine for each box, a Mac or a Linux machine, rented by the minute in your Namespace workspace, within its plan's limits |
 
 Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md).
 
