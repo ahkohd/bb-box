@@ -4572,6 +4572,8 @@ test("on the Boxes page, the Filters menu lists the tags under one Tags heading,
   await list.findByText("linux-vm");
   const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
   const menu = await openMenu(list.getByRole("button", { name: "Filters" }));
+  expect(menu.className).toContain("min-w-56");
+  expect(within(menu).getByRole("menuitemcheckbox", { name: "Proxmox" }).className).toContain("whitespace-nowrap");
   expect(within(menu).queryByText(/^(Form|Has)$/)).toBeNull();
   expect(within(menu).getAllByText(/^(System|Tags|Provider|State)$/).map((node) => node.textContent)).toEqual(["System", "Tags", "Provider"]);
   expect(within(menu).queryByRole("menuitem", { name: "Clear filters" })).toBeNull();
