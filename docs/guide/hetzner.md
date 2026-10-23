@@ -1,6 +1,6 @@
 # Linux boxes on Hetzner Cloud
 
-Hetzner Cloud rents servers by the hour. With a Hetzner Cloud backend, BB Box makes its own Docker hosts in a Hetzner Cloud project when boxes need them, puts Linux boxes on them, and deletes each host once it has had no box for 30 minutes. You need no server of your own.
+Hetzner Cloud rents servers by the hour. With a Hetzner Cloud backend, BB Box makes its own Docker hosts in a Hetzner Cloud project when boxes need them, puts Linux boxes on them, and deletes each host once it has had no box for 30 minutes. You need no server of your own. Hosts can be x86, for Linux boxes, and Arm, for Linux boxes on arm64.
 
 This page sets it up from a new Hetzner account. It was first done on 22 October 2026. To use a server you made yourself instead, see [a cloud server as a Docker host](cloud-docker-host.md).
 
@@ -16,9 +16,11 @@ Hetzner's prices on 22 October 2026, with a public IPv4 address and excluding VA
 | CPX52 | 12 | 24 GB | 480 GB | EUR 0.1618 | EUR 100.99 | 4 small Linux boxes, or 2 small desktop boxes |
 | CPX62 | 16 | 32 GB | 640 GB | EUR 0.2091 | EUR 130.49 | 6 small Linux boxes, or 3 small desktop boxes |
 
-BB Box also keeps a host image: a snapshot of a host with Docker, Tailscale and the box images in it, so a new host has nothing to install or build. Hetzner bills snapshots by their size. On 22 October the host image was 17 GB, about EUR 0.20 a month. BB Box keeps the 2 newest.
+For Linux boxes on arm64, BB Box makes Arm hosts of Hetzner's Ampere types, which cost less. On 23 October 2026 a CAX31 (8 vCPU, 16 GB, 160 GB disk) cost about EUR 0.03 an hour, at most EUR 21.49 a month, with a public IPv4 address and excluding VAT. `bb box doctor` shows the price of the types you choose.
 
-Building the host image takes about 30 minutes on a server of its own, which costs one hour of that server. BB Box builds a new one each week, when BB updates its app, or when BB Box's image scripts change.
+BB Box also keeps a host image: a snapshot of a host with Docker, Tailscale and the box images in it, so a new host has nothing to install or build. Hetzner bills snapshots by their size. On 22 October the host image was 17 GB, about EUR 0.20 a month, and the Arm one 9.9 GB, about EUR 0.12 a month. BB Box keeps the 2 newest of each.
+
+Building the host image takes 10 to 30 minutes on a server of its own, or about 13 minutes for the Arm one, which costs one hour of that server. BB Box builds a new one each week, when BB updates its app, or when BB Box's image scripts change.
 
 ### Keeping the cost down
 
@@ -27,6 +29,14 @@ Hetzner has no spending limit of its own. BB Box has 3:
 - **Most hosts**: how many hosts BB Box may have at once, 2 by default. When every host is full, BB Box tries the next backend that offers the kind, and refuses the box if none has room.
 - **Monthly limit (EUR)**: BB Box makes no host when this calendar month's spend so far, and an hour more of every host with the new one, would pass this limit. It is EUR 20 by default. A host busy when the limit is reached keeps running until it is idle, so the month's spend can pass the limit by what busy hosts cost until then.
 - **Idle minutes**: how long a host with no box lives, 30 by default. Hetzner bills started hours, so a shorter time saves little and makes boxes wait for a new host more often.
+
+These count x86 and Arm hosts together.
+
+### Hetzner's limit on vCPUs
+
+Hetzner limits how many shared vCPUs a whole account may have at once, across all its projects: 20 for a new account. A CPX42 or a CAX31 takes 8, and so does each host image build while it runs. When a new host would pass the limit, Hetzner refuses it: BB Box then tries the next backend that offers the kind, and says that the account is at Hetzner's limit. A host image build waits, and tries again at BB Box's next check.
+
+To raise the limit, open your account's **Limits** page in Hetzner's Console and ask for more.
 
 ## Before you start
 
@@ -55,14 +65,15 @@ In Hetzner's Console, open **Usage** and, in the project's row, set its **E-Mail
 2. Paste the token from step 2 into **API token**.
 3. Set **Location** to the one nearest BB's server: `nbg1` (Nuremberg), `fsn1` (Falkenstein) or `hel1` (Helsinki) for one in western Europe. A desktop's stream crosses between the host and BB's server.
 4. Leave **Server type** as `cpx42`, or choose a larger CPX type from the table above. Hetzner's CX types cost about half as much, but on 22 October none were available in Germany or Finland.
-5. Set **Most hosts**, **Monthly limit (EUR)** and **Idle minutes** to suit your team.
-6. Select **Save**, and turn the backend on.
+5. For Linux boxes on arm64, set **Arm server type** to an Ampere type, such as `cax31`. Leave it empty for none.
+6. Set **Most hosts**, **Monthly limit (EUR)** and **Idle minutes** to suit your team.
+7. Select **Save**, and turn the backend on.
 
 The token is kept as a secret. BB Box's settings show only that it is set.
 
 ### 5. Turn on the kinds
 
-Under **Kinds**, make sure these are on: **Linux**, **Linux desktop** and **Linux desktop on Wayland**. Hetzner's hosts have no GPU, so the backend offers no GPU desktops.
+Under **Kinds**, make sure these are on: **Linux**, **Linux desktop** and **Linux desktop on Wayland**, and with an Arm server type, **Linux on arm64** and **Linux desktop on arm64**. Hetzner's hosts have no GPU, so the backend offers no GPU desktops. Hetzner Cloud has no nested virtualization either, so there are no microVMs or Windows boxes there.
 
 ## Check it works
 
@@ -70,29 +81,30 @@ Under **Kinds**, make sure these are on: **Linux**, **Linux desktop** and **Linu
 bb box doctor
 ```
 
-The doctor checks that Hetzner accepts the token, the server type and its price, how BB Box reaches hosts, the host image, the hosts BB Box has, and this month's spend against the limit.
+The doctor checks that Hetzner accepts the token, each server type and its price, how BB Box reaches hosts, each host image, the hosts BB Box has, and this month's spend against the limit.
 
-Soon after you turn the backend on, BB Box starts building the first host image, about 30 minutes. The doctor's **Host image** check says when it is ready. Until then, a new host installs Docker and Tailscale and builds the images it needs as it starts, so the first box takes about 6 minutes.
+Soon after you turn the backend on, BB Box starts building the first host image, up to 30 minutes, and the first Arm one, about 13 minutes. The doctor's **Host image** check says when it is ready. Until then, a new host installs Docker and Tailscale and builds the images it needs as it starts, so the first box takes about 6 minutes.
 
 Then make a box from the Box panel, or from the command line:
 
 ```sh
 bb box acquire linux --on hetzner
+bb box acquire linux-arm64 --on hetzner
 ```
 
 ## What a box is like
 
-A box is a Docker container on a host of the server type, with Ubuntu, as on any Docker host. It has Docker of its own by default (**Docker in boxes**), as a privileged container. A box with Docker can take over its host, but each host belongs to this BB Box alone.
+A box is a Docker container on a host of the server type, with Ubuntu, as on any Docker host. A Linux box on arm64 goes only on an Arm host, and runs arm64 programs: amd64 container images and x86_64 binaries do not run there. There is no Wayland desktop on arm64 yet. It has Docker of its own by default (**Docker in boxes**), as a privileged container. A box with Docker can take over its host, but each host belongs to this BB Box alone.
 
-How long a box takes, from the first live run on 22 October 2026 with a CPX42 in Nuremberg:
+How long a box takes, from the live runs on 22 and 23 October 2026 in Nuremberg, with a CPX42 and a CAX31:
 
-| | Time |
-| --- | --- |
-| A box on a host that has room | about 2 seconds |
-| A box that needs a new host, from the host image | about 1 minute |
-| A box that needs a new host, before the first host image | about 6 minutes |
-| Joining BB, once the box is ready | about 20 seconds |
-| Releasing a box | about 1 second |
+| | x86 | Arm |
+| --- | --- | --- |
+| A box on a host that has room | about 2 seconds | about 2 seconds |
+| A box that needs a new host, from the host image | about 1 minute | about 50 seconds |
+| A box that needs a new host, before the first host image | about 6 minutes | |
+| Joining BB, once the box is ready | about 20 seconds | about 20 seconds |
+| Releasing a box | about 1 second | about 1 second |
 
 A host more than three quarters full makes the next one ahead, so a steady stream of boxes rarely waits.
 
@@ -121,7 +133,7 @@ BB Box checks every few minutes. It deletes:
 
 `bb box doctor` warns of any server with the install's label that is not a host BB Box knows. With the tailnet on, a deleted host's device leaves the tailnet with it, and BB Box removes any of its devices it no longer has.
 
-Between uses, the project keeps BB Box's SSH key and firewall, both named `bb-box-` and the install's ID, and up to 2 snapshots. These cost nothing but the snapshots.
+Between uses, the project keeps BB Box's SSH key and firewall, both named `bb-box-` and the install's ID, and up to 2 snapshots for each architecture. These cost nothing but the snapshots.
 
 ## Without a tailnet
 
