@@ -186,7 +186,7 @@ export interface BbBox {
   backendViews(): BackendView[];
   /** A provider's profile for the New box form's (i): one capacity call to the provider, made only when asked. */
   providerProfile(backendId: string, signal?: AbortSignal): Promise<ProviderProfile>;
-  offerRooms(kindId: string): Promise<OfferRoom[]>;
+  offerRooms(kindId: string, size?: SizeRequest): Promise<OfferRoom[]>;
   doctor(signal?: AbortSignal): Promise<DoctorView>;
   /**
    * Takes back an install ID this install had before it lost its storage
@@ -1144,14 +1144,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         status: { state: status.state, problem: status.problems[0] ?? null, ok: state?.doctor?.report.ok ?? null, summary: state?.doctor?.report.summary ?? null, checkedAt: state?.doctor?.at ?? null },
       };
     },
-    async offerRooms(kindId) {
+    async offerRooms(kindId, size) {
       const offered = backends.kinds().filter((offer) => offer.kind.id === kindId);
       const all = await boxes.all();
       return Promise.all(
         offered.map(async ({ backend }): Promise<OfferRoom> => {
           const holders = () => all.filter((box) => box.backend === backend.id && box.state !== "gone" && box.state !== "releasing").map((box) => box.name);
           if (backend.free?.(kindId) === 0 && holders().length) return { backend: backend.id, available: false, reason: inUseBy(holders()) };
-          const room = await withinMs(boxes.room(backend.id, kindId), ROOM_ANSWER_MS).catch(() => null);
+          const room = await withinMs(boxes.room(backend.id, kindId, undefined, size), ROOM_ANSWER_MS).catch(() => null);
           if (!room || room.ok) return { backend: backend.id, available: true, reason: null };
           const held = backend.free ? holders() : [];
           return { backend: backend.id, available: false, reason: held.length ? inUseBy(held) : firstSentence(room.message) };

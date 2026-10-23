@@ -235,7 +235,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     },
     kinds: () => app.kinds(),
     provider: ({ backend }) => app.providerProfile(backend),
-    rooms: ({ kind }) => app.offerRooms(kind),
+    rooms: ({ kind, size }) => app.offerRooms(kind, size),
     backends: () => app.backendViews(),
     doctor: () => app.doctor(),
     "config.get": () => app.configuration.state(),

@@ -1347,11 +1347,14 @@ export class Boxes {
    * it counted, for the provider's profile. Null when it does not offer the
    * kind.
    */
-  async room(backendId: string, kindId: string, signal?: AbortSignal): Promise<Capacity | null> {
+  async room(backendId: string, kindId: string, signal?: AbortSignal, request?: SizeRequest): Promise<Capacity | null> {
     const candidate = this.#deps.backends.kinds().find((offer) => offer.backend.id === backendId && offer.kind.id === kindId);
     if (!candidate) return null;
     const general = await this.#deps.general();
-    const size = defaultSize(kindSizes(kindId, general.sizes));
+    const sizes = kindSizes(kindId, general.sizes);
+    const chosen = request ? chooseSize(kindId, sizes, request) : null;
+    if (chosen && !chosen.ok) return null;
+    const size = chosen ? chosen.size : defaultSize(sizes);
     return candidate.backend.capacity(kindId, size, await this.#pending(backendId), signal);
   }
 

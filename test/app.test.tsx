@@ -501,7 +501,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { rooms?: Record<string, string>; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult } = {}) {
+function server(initial: BoxView[], options: { rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -599,7 +599,11 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string>; p
       return result(machines.find((candidate) => candidate.box.id === ref)?.box ?? null);
     },
     kinds: () => options.kinds ?? KINDS,
-    rooms: ({ kind }) => ((options.kinds ?? KINDS).find((candidate) => candidate.id === kind)?.offers ?? []).map((offer) => ({ backend: offer.backend, available: !options.rooms?.[offer.backend], reason: options.rooms?.[offer.backend] ?? null })),
+    rooms: ({ kind, size }) => {
+      changes.push(`rooms ${kind}${size ? ` ${JSON.stringify(size)}` : ""}`);
+      const blocked = typeof options.rooms === "function" ? options.rooms(size) : (options.rooms ?? {});
+      return ((options.kinds ?? KINDS).find((candidate) => candidate.id === kind)?.offers ?? []).map((offer) => ({ backend: offer.backend, available: !blocked[offer.backend], reason: blocked[offer.backend] ?? null }));
+    },
     provider: ({ backend }) => {
       asked.push(backend);
       if (options.profileFailsOnce?.has(backend)) {
@@ -4813,7 +4817,22 @@ test("a provider that cannot take the box now is greyed, after the ones that can
   fireEvent.click(within(providers).getByRole("radio", { name: /^SSH host pool/ }));
   expect(within(providers).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false", "false", "false"]);
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
-  await waitFor(() => expect(changes).toEqual(["acquire linux"]));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire linux"]));
+});
+
+test("the providers are checked at the size chosen, again after it changes: a cloud that refuses the default size takes another", async () => {
+  const cloud = { ...KINDS[0]!.offers[0]!, backend: "namespace", name: "Namespace", type: "namespace", label: "Namespace", hosts: [], form: "VM" as const, typicalReadyMs: null };
+  const two: KindView = { ...KINDS[0]!, offers: [KINDS[0]!.offers[0]!, cloud], forms: ["LXC", "VM"] };
+  const { handlers, changes } = server([], { kinds: [two, KINDS[1]!], rooms: (size): Record<string, string> => (size ? {} : { namespace: "Namespace's workspace allows machines of at most 2 cores" }) });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const providers = await screen.findByRole("radiogroup", { name: "Provider" });
+  await waitFor(() => expect(within(providers).getByRole("radio", { name: /^Namespace/ }).getAttribute("aria-disabled")).toBe("true"));
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: /^Medium/ }));
+  await waitFor(() => expect(within(providers).getByRole("radio", { name: /^Namespace/ }).getAttribute("aria-disabled")).toBeNull());
+  expect(within(providers).getByRole("radio", { name: /^Namespace/ }).textContent).toBe("NamespaceVM");
+  expect(changes.filter((change) => change.startsWith("rooms"))).toEqual(["rooms linux", 'rooms linux {"preset":"medium"}']);
 });
 
 test("Runs on keeps the providers on that machine, and one that does not know its machine yet; a Docker machine without a name is an unnamed machine", async () => {
