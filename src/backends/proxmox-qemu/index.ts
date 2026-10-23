@@ -5,6 +5,7 @@ import { QEMU_FIELDS, QEMU_INHERITS, QEMU_KINDS, parseQemuPart, type QemuConfig 
 export const proxmoxQemuDriver: BackendDriver<QemuConfig> = {
   type: "proxmox-qemu",
   label: "Proxmox QEMU",
+  family: "Proxmox",
   description: "Windows desktops as VMs on a Proxmox VE host.",
   nature: "virtual",
   form: "VM",

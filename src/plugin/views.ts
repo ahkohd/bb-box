@@ -2,7 +2,7 @@
 // for the panel, and short text for agents. Nothing here holds a credential.
 
 import { providerName } from "../core/provider-name.ts";
-import { boxForm, driverLabel, type BackendStatus, type OfferedKind } from "../backends/index.ts";
+import { boxForm, driverLabel, providerFamily, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
 import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GpuRoom, GuestOs, Resizing, Windowing } from "../backends/types.ts";
 import type { Versions } from "../backends/versions.ts";
@@ -24,6 +24,7 @@ export interface BoxView {
   readonly kind: string;
   readonly kindLabel: string;
   readonly backendLabel: string;
+  readonly provider?: string;
   readonly nature: "virtual" | "real";
   /** What the box is, as a badge: an LXC or Docker container, a VM or a physical machine. Null when its backend's driver is gone. */
   readonly form: BoxForm | null;
@@ -96,6 +97,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     kind: box.kind,
     kindLabel: box.kindLabel,
     backendLabel: box.backendLabel,
+    provider: providerFamily(box.backend),
     nature: box.nature,
     form: boxForm(box.backend),
     role: box.role,

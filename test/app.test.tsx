@@ -4512,13 +4512,13 @@ function tagged(id: string, name: string, facts: Partial<BoxView>): BoxView {
 }
 
 const TAGGED = [
-  tagged("box_t1", "linux-vm", { os: "linux", form: "VM", backendLabel: "Proxmox QEMU on pve", requires: ["kvm"] }),
-  tagged("box_t2", "linux-lxc", { os: "linux", form: "LXC", backendLabel: "Proxmox LXC on pve", desktop: true }),
-  tagged("box_t3", "pool-mac", { os: "macos", form: "Physical", arch: "arm64", backendLabel: "SSH host pool", desktop: true }),
-  tagged("box_t4", "tart-mac", { os: "macos", form: "VM", arch: "arm64", backendLabel: "Tart on studio" }),
-  tagged("box_t5", "win-vm", { os: "windows", form: "VM", backendLabel: "Proxmox QEMU on pve", desktop: true, extras: [] }),
-  tagged("box_t6", "arm-micro", { os: "linux", form: "microVM", arch: "arm64", backendLabel: "microsandbox on studio" }),
-  tagged("box_t7", "cloud-box", { os: "linux", form: "Docker", backendLabel: "Hetzner Cloud", gpu: true }),
+  tagged("box_t1", "linux-vm", { os: "linux", form: "VM", backendLabel: "Proxmox QEMU on pve", provider: "Proxmox", requires: ["kvm"] }),
+  tagged("box_t2", "linux-lxc", { os: "linux", form: "LXC", backendLabel: "Proxmox LXC on pve", provider: "Proxmox", desktop: true }),
+  tagged("box_t3", "pool-mac", { os: "macos", form: "Physical", arch: "arm64", backendLabel: "SSH host pool", provider: "SSH pool", desktop: true }),
+  tagged("box_t4", "tart-mac", { os: "macos", form: "VM", arch: "arm64", backendLabel: "Tart on studio", provider: "Tart" }),
+  tagged("box_t5", "win-vm", { os: "windows", form: "VM", backendLabel: "Proxmox QEMU on pve", provider: "Proxmox", desktop: true, extras: [] }),
+  tagged("box_t6", "arm-micro", { os: "linux", form: "microVM", arch: "arm64", backendLabel: "microsandbox on studio", provider: "microsandbox" }),
+  tagged("box_t7", "cloud-box", { os: "linux", form: "Docker", backendLabel: "Hetzner Cloud", provider: "Hetzner Cloud", gpu: true }),
 ];
 
 test("the Boxes page's tags come from a box's facts, not its backend's name: system, form, what it has, provider and state", () => {
@@ -4535,7 +4535,7 @@ test("the Boxes page's tags come from a box's facts, not its backend's name: sys
     systems: ["Linux", "macOS", "Windows"],
     forms: ["VM", "Container", "microVM", "Physical"],
     has: ["Desktop", "GPU", "KVM", "arm64"],
-    providers: ["Hetzner Cloud", "microsandbox on studio", "Proxmox LXC on pve", "Proxmox QEMU on pve", "SSH host pool", "Tart on studio"],
+    providers: ["Hetzner Cloud", "microsandbox", "Proxmox", "SSH pool", "Tart"],
     states: ["Ready"],
   });
   expect([...splitGroups(TAGGED)]).toEqual(["systems", "forms", "has", "providers"]);
@@ -4551,6 +4551,8 @@ test("ticks in one tag group widen (Linux or macOS) and groups together narrow (
   expect(names({ ...NO_FILTERS, forms: ["VM", "microVM"], has: ["arm64"] })).toEqual(["arm-micro", "tart-mac"]);
   expect(names({ ...NO_FILTERS, has: ["Desktop", "GPU"] })).toEqual(["cloud-box", "linux-lxc", "pool-mac", "win-vm"]);
   expect(names({ ...NO_FILTERS, providers: ["Hetzner Cloud"] })).toEqual(["cloud-box"]);
+  expect(names({ ...NO_FILTERS, providers: ["Proxmox"] })).toEqual(["linux-lxc", "linux-vm", "win-vm"]);
+  expect(names({ ...NO_FILTERS, providers: ["Proxmox"], forms: ["VM"] })).toEqual(["linux-vm", "win-vm"]);
 
   const none = tagCounts(rows, "", NO_FILTERS);
   expect(none.systems).toEqual({ Linux: 4, macOS: 2, Windows: 1 });
@@ -4563,7 +4565,7 @@ test("ticks in one tag group widen (Linux or macOS) and groups together narrow (
   expect(tagCounts(rows, "mac", NO_FILTERS).systems).toEqual({ macOS: 2 });
 });
 
-test("on the Boxes page, the Filters menu lists the tags flat, without headings or counts, then Provider under its heading; greys a tag that would show none, clears, and keeps its ticks across the tabs", async () => {
+test("on the Boxes page, the Filters menu lists the tags under one Tags heading, without counts, then the providers by type under Provider; greys a tag that would show none, and keeps its ticks across the tabs", async () => {
   const { handlers } = server(TAGGED.slice(0, 4), { machines: [machine({ id: "box_m2", name: "cloud-machine", form: "Docker", backendLabel: "Hetzner Cloud" }, []), machine({ id: "box_m3", name: "vm-machine", form: "VM", backendLabel: "Proxmox QEMU on pve" }, [])] });
   const list = boxesPage(handlers);
   await list.findByText("cloud-machine");
@@ -4572,7 +4574,8 @@ test("on the Boxes page, the Filters menu lists the tags flat, without headings 
   const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
   const menu = await openMenu(list.getByRole("button", { name: "Filters" }));
   expect(within(menu).queryByText(/^(System|Form|Has)$/)).toBeNull();
-  expect(within(menu).getAllByText(/^(Provider|State)$/).map((node) => node.textContent)).toEqual(["Provider"]);
+  expect(within(menu).getAllByText(/^(Tags|Provider|State)$/).map((node) => node.textContent)).toEqual(["Tags", "Provider"]);
+  expect(within(menu).queryByRole("menuitem", { name: "Clear filters" })).toBeNull();
   expect(within(menu).getAllByRole("menuitemcheckbox").map((option) => option.textContent)).toEqual([
     "Linux",
     "macOS",
@@ -4582,10 +4585,9 @@ test("on the Boxes page, the Filters menu lists the tags flat, without headings 
     "Desktop",
     "KVM",
     "arm64",
-    "Proxmox LXC on pve",
-    "Proxmox QEMU on pve",
-    "SSH host pool",
-    "Tart on studio",
+    "Proxmox",
+    "SSH pool",
+    "Tart",
   ]);
   const item = (name: string) => within(menu).getByRole("menuitemcheckbox", { name });
   fireEvent.click(item("Linux"));
@@ -4603,8 +4605,10 @@ test("on the Boxes page, the Filters menu lists the tags flat, without headings 
   fireEvent.click(list.getByRole("tab", { name: /^Threads/ }));
   await waitFor(() => expect(rowNames()).toEqual(["linux-vm", "tart-mac"]));
   const again = await openMenu(list.getByRole("button", { name: "Filters" }));
-  fireEvent.click(within(again).getByRole("menuitem", { name: "Clear filters" }));
+  for (const name of ["Linux", "VM", "macOS"]) fireEvent.click(within(again).getByRole("menuitemcheckbox", { name }));
   await waitFor(() => expect(rowNames()).toHaveLength(4));
+  fireEvent.click(within(again).getByRole("menuitemcheckbox", { name: "Proxmox" }));
+  await waitFor(() => expect(rowNames()).toEqual(["linux-lxc", "linux-vm"]));
 });
 
 test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss", async () => {

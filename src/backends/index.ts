@@ -30,6 +30,12 @@ export function boxForm(backendId: string, drivers: readonly BackendDriver<any>[
   return drivers.find((driver) => driver.type === type)?.form ?? null;
 }
 
+export function providerFamily(backendId: string, drivers: readonly BackendDriver<any>[] = DRIVERS): string {
+  const type = backendId.split(":")[0]!;
+  const driver = drivers.find((candidate) => candidate.type === type);
+  return driver ? (driver.family ?? driver.label) : type;
+}
+
 /** The driver's label for a backend ID, as the settings page names it ("Proxmox LXC"); the ID itself for a driver bb-box no longer has. */
 export function driverLabel(backendId: string, drivers: readonly BackendDriver<any>[] = DRIVERS): string {
   const type = backendId.split(":")[0]!;
