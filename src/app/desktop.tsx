@@ -75,7 +75,7 @@ import {
   type MacKeys,
 } from "./viewer.ts";
 import { BoxGlyph, HighResolutionGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
-import { choices, filtering, NO_FILTERS, shown, type Filters, type Sort } from "./boxes-filter.ts";
+import { choices, filtering, NO_FILTERS, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
 import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 
 export const DESKTOP_ACTION = "desktop";
@@ -1642,24 +1642,15 @@ function BoxList() {
   const tab: BoxesTab = chosenTab ?? (machines.length || !threads.length ? "machines" : "threads");
   const loaded = !!all && !!machinesState;
   // The filters offer what the tab lists, and keep only what it still offers. A machine's search words are the threads on it.
-  const offered = choices(tab === "machines" ? machines.map((entry) => entry.box) : threads.map((entry) => entry.box));
-  const kept: Filters = {
-    kinds: filters.kinds.filter((value) => offered.kinds.includes(value)),
-    providers: filters.providers.filter((value) => offered.providers.includes(value)),
-    states: filters.states.filter((value) => offered.states.includes(value)),
-  };
-  const machineRows = shown(
-    machines.map((entry) => ({ box: entry.box, entry, words: entry.threads.map((thread) => thread.title ?? "") })),
-    search,
-    kept,
-    sort,
-  );
-  const threadRows = shown(
-    threads.map(({ threadId, box }) => ({ box, threadId, words: [titles[threadId] ?? ""] })),
-    search,
-    kept,
-    sort,
-  );
+  const tabBoxes = tab === "machines" ? machines.map((entry) => entry.box) : threads.map((entry) => entry.box);
+  const offered = choices(tabBoxes);
+  const kept = Object.fromEntries(TAG_GROUPS.map((group) => [group, filters[group].filter((value) => offered[group].includes(value))])) as unknown as Filters;
+  const machineListed = machines.map((entry) => ({ box: entry.box, entry, words: entry.threads.map((thread) => thread.title ?? "") }));
+  const threadListed = threads.map(({ threadId, box }) => ({ box, threadId, words: [titles[threadId] ?? ""] }));
+  const machineRows = shown(machineListed, search, kept, sort);
+  const threadRows = shown(threadListed, search, kept, sort);
+  const counts = tagCounts(tab === "machines" ? machineListed : threadListed, search, kept);
+  const split = splitGroups(tabBoxes);
   // Each thread once, with its boxes, where its first box comes in the sort's order.
   const groups = new Map<string, typeof threadRows>();
   for (const row of threadRows) groups.set(row.threadId, [...(groups.get(row.threadId) ?? []), row]);
@@ -1689,7 +1680,7 @@ function BoxList() {
           </div>
         </div>
         <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">
-          {listed ? <SearchRow search={search} onSearch={setSearch} filters={kept} offered={offered} onFilters={setFilters} sort={sort} onSort={setSort} /> : null}
+          {listed ? <SearchRow search={search} onSearch={setSearch} filters={kept} offered={offered} counts={counts} split={split} onFilters={setFilters} sort={sort} onSort={setSort} /> : null}
           {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
           <ProblemLine
             problem={shownProblem}

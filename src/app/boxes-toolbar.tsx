@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { filtering, SORT_WORDS, type Filters, type Sort, type SortKey } from "./boxes-filter.ts";
+import { filtering, NO_FILTERS, SORT_WORDS, TAG_GROUP_LABELS, TAG_GROUPS, type Filters, type Sort, type SortKey, type TagCounts, type TagGroup } from "./boxes-filter.ts";
 
 export interface TabSpec<T extends string> {
   readonly id: T;
@@ -47,6 +47,8 @@ export function SearchRow({
   onSearch,
   filters,
   offered,
+  counts,
+  split,
   onFilters,
   sort,
   onSort,
@@ -54,34 +56,41 @@ export function SearchRow({
   search: string;
   onSearch: (value: string) => void;
   filters: Filters;
-  /** What each filter can tick: the kinds, providers and states of the boxes listed. */
   offered: Filters;
+  counts: TagCounts;
+  split: ReadonlySet<TagGroup>;
   onFilters: (filters: Filters) => void;
   sort: Sort;
   onSort: (sort: Sort) => void;
 }) {
-  const toggle = <K extends keyof Filters>(key: K, value: Filters[K][number], on: boolean) => {
-    const current = filters[key] as readonly string[];
+  const toggle = (key: TagGroup, value: string, on: boolean) => {
+    const current = filters[key];
     onFilters({ ...filters, [key]: on ? [...current, value] : current.filter((item) => item !== value) });
   };
-  const group = <K extends keyof Filters>(key: K, label: string): ReactNode =>
-    offered[key].length > 1 || filters[key].length ? (
+  const group = (key: TagGroup): ReactNode =>
+    split.has(key) || filters[key].length ? (
       <>
-        <DropdownMenuLabel className="font-normal text-subtle-foreground">{label}</DropdownMenuLabel>
-        {offered[key].map((value) => (
-          <DropdownMenuCheckboxItem
-            key={value}
-            checked={(filters[key] as readonly string[]).includes(value)}
-            // Ticking one keeps the menu open for the next.
-            onSelect={(event) => event.preventDefault()}
-            onCheckedChange={(on) => toggle(key, value, on === true)}
-          >
-            {value}
-          </DropdownMenuCheckboxItem>
-        ))}
+        <DropdownMenuLabel className="font-normal text-subtle-foreground">{TAG_GROUP_LABELS[key]}</DropdownMenuLabel>
+        {offered[key].map((value) => {
+          const checked = filters[key].includes(value);
+          const count = counts[key][value] ?? 0;
+          return (
+            <DropdownMenuCheckboxItem
+              key={value}
+              checked={checked}
+              disabled={!count && !checked}
+              className="justify-between gap-4"
+              onSelect={(event) => event.preventDefault()}
+              onCheckedChange={(on) => toggle(key, value, on === true)}
+            >
+              {value}
+              <span className="text-2xs tabular-nums text-subtle-foreground">{count}</span>
+            </DropdownMenuCheckboxItem>
+          );
+        })}
       </>
     ) : null;
-  const groups = [group("kinds", "Kind"), group("providers", "Provider"), group("states", "State")].filter(Boolean);
+  const groups = TAG_GROUPS.map(group).filter(Boolean);
   const sortLabel = `Sort: ${SORT_WORDS[sort.key]}, ${sort.ascending ? "ascending" : "descending"}`;
   return (
     <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
@@ -122,6 +131,12 @@ export function SearchRow({
                 {items}
               </div>
             ))}
+            {filtering(filters) ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => onFilters(NO_FILTERS)}>Clear filters</DropdownMenuItem>
+              </>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
         <DropdownMenu>

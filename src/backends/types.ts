@@ -28,7 +28,7 @@ export type Windowing = "x11" | "wayland";
 export type MachineNature = "virtual" | "real";
 
 /** What a box of a backend is, as a badge: an LXC or Docker container, a VM, or a physical machine. */
-export type BoxForm = "LXC" | "Docker" | "VM" | "Physical";
+export type BoxForm = "LXC" | "Docker" | "VM" | "microVM" | "Physical";
 
 /** How bb-box runs commands in a box of a kind. */
 export interface CommandCapability {
