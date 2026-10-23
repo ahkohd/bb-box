@@ -998,6 +998,7 @@ export interface BackendDriver<C = unknown> {
   readonly nature: MachineNature;
   /** What its boxes are, as the panel's badge says. */
   readonly form: BoxForm;
+  readonly family?: string;
   /** The kinds its backends can make, which take warm counts. */
   readonly kinds: readonly string[];
   /** In the order the settings page shows them. */

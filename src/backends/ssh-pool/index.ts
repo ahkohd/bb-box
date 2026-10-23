@@ -5,6 +5,7 @@ import { SSH_POOL_FIELDS, SSH_POOL_KINDS, SSH_POOL_SETTINGS, parseSshPoolPart, r
 export const sshPoolDriver: BackendDriver<SshPoolConfig> = {
   type: "ssh-pool",
   label: "SSH host pool",
+  family: "SSH pool",
   description: "Your own Linux machines and Macs, reached over SSH and reset between boxes.",
   nature: "real",
   form: "Physical",

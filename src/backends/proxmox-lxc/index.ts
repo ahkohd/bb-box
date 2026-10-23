@@ -5,6 +5,7 @@ import { FLAVOUR_KINDS, earlierLxcSizes, LXC_FIELDS, LXC_FLAVOURS, LXC_SETTINGS,
 export const proxmoxLxcDriver: BackendDriver<LxcConfig> = {
   type: "proxmox-lxc",
   label: "Proxmox LXC",
+  family: "Proxmox",
   description: "Linux boxes, with or without a desktop, as containers on a Proxmox VE host.",
   nature: "virtual",
   form: "LXC",

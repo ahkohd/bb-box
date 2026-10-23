@@ -64,7 +64,7 @@ export function tagsOf(box: BoxView): Readonly<Record<TagGroup, readonly string[
     systems: [SYSTEM_NAMES[box.os] ?? box.os],
     forms: form ? [form] : [],
     has,
-    providers: [box.backendLabel],
+    providers: [box.provider ?? box.backendLabel],
     states: [stateGroup(box)],
   };
 }

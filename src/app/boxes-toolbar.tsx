@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { filtering, FLAT_TAG_GROUPS, NO_FILTERS, SORT_WORDS, TAG_GROUP_LABELS, type Filters, type Sort, type SortKey, type TagCounts, type TagGroup } from "./boxes-filter.ts";
+import { filtering, FLAT_TAG_GROUPS, SORT_WORDS, TAG_GROUP_LABELS, type Filters, type Sort, type SortKey, type TagCounts, type TagGroup } from "./boxes-filter.ts";
 
 export interface TabSpec<T extends string> {
   readonly id: T;
@@ -90,7 +90,16 @@ export function SearchRow({
         {offered[key].map((value) => item(key, value))}
       </>
     ) : null;
-  const groups = [tags.length ? <>{tags}</> : null, headed("providers"), headed("states")].filter(Boolean);
+  const groups = [
+    tags.length ? (
+      <>
+        <DropdownMenuLabel className="font-normal text-subtle-foreground">Tags</DropdownMenuLabel>
+        {tags}
+      </>
+    ) : null,
+    headed("providers"),
+    headed("states"),
+  ].filter(Boolean);
   const sortLabel = `Sort: ${SORT_WORDS[sort.key]}, ${sort.ascending ? "ascending" : "descending"}`;
   return (
     <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
@@ -131,12 +140,6 @@ export function SearchRow({
                 {items}
               </div>
             ))}
-            {filtering(filters) ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => onFilters(NO_FILTERS)}>Clear filters</DropdownMenuItem>
-              </>
-            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
         <DropdownMenu>
