@@ -237,7 +237,7 @@ export const contract = defineRpcContract({
   /** The kinds on offer now, for "New box" in BB's new-thread screen. */
   /** A provider's profile for the form's (i): data the plugin has, and one capacity call to the provider. Asked only when opened. */
   provider: { input: z.object({ backend: z.string().min(1) }), output: z.custom<ProviderProfile>() },
-  rooms: { input: z.object({ kind: z.string().min(1) }), output: z.custom<OfferRoom[]>() },
+  rooms: { input: z.object({ kind: z.string().min(1), size: size.optional() }), output: z.custom<OfferRoom[]>() },
   kinds: { input: z.null(), output: z.custom<KindView[]>() },
   /** Starts a child thread on a box's BB machine. */
   thread: { input: oneBox.extend({ prompt: z.string().min(1) }), output: z.custom<ThreadResult>() },

@@ -18,10 +18,13 @@ import { DESKTOP_BUILD_WORDS, estimate } from "./first-run.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
 import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
+export const ROOMS_CHECK_MS = 300;
+
 /**
  * What "Ask an agent to make one" puts in a new thread's composer (049): the
  * skill's flow for a project's image, for the person to send.
  */
+
 export const IMAGE_REQUEST =
   "Make a box image for this project with bb-box: draft .bb/box-setup.sh and .bb/box-check.sh with box_image_draft from the project's files, " +
   "try them with box_image_try until every check passes, commit them, then register them with box_image_set.";
@@ -129,7 +132,7 @@ export function NewBox({
   primary?: boolean;
   /** A provider's profile for the (i) on its row, asked when the popover opens. Without it, rows have no (i). */
   profile?: (backend: string) => Promise<ProviderProfile>;
-  rooms?: (kind: string) => Promise<readonly OfferRoom[]>;
+  rooms?: (kind: string, size?: SizeRequest) => Promise<readonly OfferRoom[]>;
   /** Asks an agent to make the project a box image (049), when it has none. */
   askForImage?: () => void;
   /**
@@ -204,25 +207,6 @@ export function NewBox({
   const picked = nearest(kinds, wanted);
   const kind = kindFor(kinds, picked);
   const kindId = kind?.id ?? null;
-  useEffect(() => {
-    if (!open) {
-      setRoomsByKind(new Map());
-      return;
-    }
-    if (!rooms || !kindId || (kind?.offers.length ?? 0) < 2) return;
-    let stale = false;
-    rooms(kindId).then(
-      (answers) => {
-        if (stale) return;
-        const blocked = new Map(answers.filter((answer) => !answer.available).map((answer) => [answer.backend, answer.reason ?? "Cannot take a box now"] as const));
-        setRoomsByKind((current) => new Map(current).set(kindId, blocked));
-      },
-      () => undefined,
-    );
-    return () => {
-      stale = true;
-    };
-  }, [open, kindId, rooms]);
   /** The chosen kind is the desktop to build first. */
   const buildsFirst = added && kind?.id === onDemand!.kind.id;
   // The images covering the chosen kind (049): the choice shows only where there is one. The state lists this project's first.
@@ -261,6 +245,31 @@ export function NewBox({
   const inView = preset ?? presets.find((candidate) => candidate.name === viewed) ?? presets.find((candidate) => candidate.name === kind?.defaultPreset) ?? null;
   const fields: Fields = (kind && edited[kind.id]) ?? (inView ? fieldsOf(inView) : { cores: "", memoryGiB: "", diskGiB: "" });
   const custom = size === CUSTOM ? customSize(fields) : null;
+  const roomSize: SizeRequest | null | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind?.defaultPreset ? null : { preset: size };
+  const roomKey = roomSize === undefined ? null : JSON.stringify(roomSize);
+  useEffect(() => {
+    if (!open) {
+      setRoomsByKind(new Map());
+      return;
+    }
+    if (!rooms || !kindId || roomKey === null || (kind?.offers.length ?? 0) < 2) return;
+    let stale = false;
+    const asked = JSON.parse(roomKey) as SizeRequest | null;
+    const timer = setTimeout(() => {
+      rooms(kindId, asked ?? undefined).then(
+        (answers) => {
+          if (stale) return;
+          const blocked = new Map(answers.filter((answer) => !answer.available).map((answer) => [answer.backend, answer.reason ?? "Cannot take a box now"] as const));
+          setRoomsByKind((current) => new Map(current).set(kindId, blocked));
+        },
+        () => undefined,
+      );
+    }, ROOMS_CHECK_MS);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [open, kindId, roomKey, rooms]);
   const sizeIndex = choices.indexOf(size);
   // Whether the box would claim a spare on a provider (032, #440): one of the chosen project's image, else one of the kind's,
   // at the kind's default size. Your machines claim none.
