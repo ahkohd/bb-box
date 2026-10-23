@@ -127,6 +127,8 @@ Once its kind's image is built, a Linux box is ready in about 25 seconds, and a 
 
 BB Box reaches the machine through Namespace's SSH gateway, and the box's commands run with `docker exec` through it. With the tailnet on, the machine joins the tailnet, as a Mac does, and the box reaches BB through it.
 
+A Linux box can run VMs and emulators of its own: Namespace's machines have KVM, and the box's user may use `/dev/kvm`. So a thread that asks for `linux-kvm` can get a box from Namespace. As such boxes cost by the minute, a thread that asks for plain `linux` gets one from Namespace only when no other backend has room.
+
 A Linux box ends at your plan's limit, as a Mac does, and is destroyed when it is released.
 
 ## Check that nothing is left running

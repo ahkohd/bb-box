@@ -131,12 +131,14 @@ backends, and the first with room takes the box.
   it only when every machine has a whole-machine reset. An offer or box
   without it says "No Docker".
 - **VMs.** `linux-vm` and `linux-kvm` are aliases of `linux` that take
-  only a VM's offer, Proxmox QEMU's, with the feature `kernel` or `kvm`
-  ([057](decisions/057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md)).
-  A plain `linux` acquire tries a VM's offer last, as it starts slower and
-  holds its memory, and `box_list` lists it last. `kvm` is offered only
-  when the backend's `linux-kvm` setting says the host allows nested
-  virtualization.
+  only an offer with the feature `kernel` or `kvm`
+  ([057](decisions/057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md)):
+  Proxmox QEMU's VMs, and for `kvm` Namespace's Linux boxes too, each a
+  privileged container on a machine of its own whose `/dev/kvm` every user
+  may open. A plain `linux` acquire tries such an offer last, as it starts
+  slower and holds its memory or costs by the minute, and `box_list` lists
+  it last. Proxmox QEMU offers `kvm` only when its `linux-kvm` setting says
+  the host allows nested virtualization.
 - **Agreement.** Offers of one kind agree on what the agent relies on:
   `os`, `arch`, `gpu`, the computer-use driver, `enrol`, whether there is a
   desktop, and the features the kind requires. An offer may add features,

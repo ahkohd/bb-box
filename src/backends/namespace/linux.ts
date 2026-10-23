@@ -45,7 +45,7 @@ export function linuxDockerConfig(): DockerConfig {
 
 export function pullScript(ref: string, local: string): string {
   const quote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
-  return ["set -eu", `docker pull -q ${quote(ref)} >/dev/null`, `docker tag ${quote(ref)} ${quote(local)}`].join("\n");
+  return ["set -eu", "[ ! -e /dev/kvm ] || chmod 0666 /dev/kvm", `docker pull -q ${quote(ref)} >/dev/null`, `docker tag ${quote(ref)} ${quote(local)}`].join("\n");
 }
 
 export interface NamespaceLinuxDeps {
@@ -73,7 +73,8 @@ export class NamespaceLinux {
   kinds(readyTimeoutMs: number): BoxKind[] {
     return dockerKinds(this.#config)
       .filter((kind) => isLinuxKind(kind.id))
-      .map((kind) => ({ ...kind, description: `${kind.description} On a Linux machine of its own on Namespace, which lasts at most the workspace plan's longest life.`, readyTimeoutMs }));
+      .map((kind) => ({ ...kind, description: `${kind.description} On a Linux machine of its own on Namespace, which lasts at most the workspace plan's longest life.`, readyTimeoutMs }))
+      .map((kind) => (kind.id === "linux" && this.#config.docker ? { ...kind, capabilities: { ...kind.capabilities, features: [...kind.capabilities.features, "kvm"] } } : kind));
   }
 
   ref(boxId: string): string {

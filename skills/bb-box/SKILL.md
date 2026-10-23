@@ -63,10 +63,11 @@ where it is built ahead, which its boxes claim at once (#440). The
   there.
 - Ask for `linux-vm` when you need a kernel of your own: to load kernel
   modules, or for systemd as on a real machine. Ask for `linux-kvm` when
-  the box must run VMs or emulators itself, through `/dev/kvm`. Both are
-  VMs on Proxmox, which start in about 10 s and hold their memory while
-  they run. A plain `linux` box starts sooner, so ask for these only when
-  you need them.
+  the box must run VMs or emulators itself, through `/dev/kvm`: a VM on
+  Proxmox, which starts in about 10 s and holds its memory while it runs,
+  or a box on a Namespace Linux machine of its own, ready in about 25 s and
+  billed by the minute. A plain `linux` box starts sooner, so ask for these
+  only when you need them.
 - A `linux-desktop` box always has its GPU. When no GPU is free, the refusal
   suggests `linux-desktop-cpu`.
 - Cloud providers cost money while a box exists, so release such a box as
