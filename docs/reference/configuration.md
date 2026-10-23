@@ -85,7 +85,7 @@ Projects' images, by name (049).
 | [`tart`](#tart) | Tart | macos, macos-desktop, linux-arm64, linux-arm64-desktop-cpu, windows-arm64-desktop |
 | [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
 | [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
-| [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu |
+| [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu, linux-arm64, linux-arm64-desktop-cpu |
 | [`namespace`](#namespace) | Namespace | macos, macos-desktop |
 
 ### proxmox-lxc
@@ -235,7 +235,7 @@ Setup: [setup/microsandbox/README.md](../../setup/microsandbox/README.md).
 
 ### hetzner
 
-Hetzner Cloud: Linux boxes, with or without a desktop, as containers on Docker hosts that bb-box makes in a Hetzner Cloud project as boxes need them, and deletes once they are idle.
+Hetzner Cloud: Linux boxes on x86 or Arm, with or without a desktop, as containers on Docker hosts that bb-box makes in a Hetzner Cloud project as boxes need them, and deletes once they are idle.
 
 Setup: [docs/guide/hetzner.md](../../docs/guide/hetzner.md).
 
@@ -244,6 +244,7 @@ Setup: [docs/guide/hetzner.md](../../docs/guide/hetzner.md).
 | `token` | API token | string, secret | credentials |  | A Read & Write API token of the Hetzner Cloud project bb-box makes its hosts in, from the project's Security page. The project should hold nothing else. |
 | `location` | Location | string | connection | `nbg1` | Where hosts are made, such as nbg1 (Nuremberg), fsn1 (Falkenstein) or hel1 (Helsinki): near BB's server, as a desktop's stream crosses between them. |
 | `server-type` | Server type | string | boxes | `cpx42` | The type of every host, such as cpx42 (8 cores, 16 GB, 320 GB disk). A box at its largest must fit one, with the memory kept free. |
+| `arm-server-type` | Arm server type | string | boxes |  | The type of the hosts for linux-arm64 boxes, an Ampere type such as cax31 (8 cores, 16 GB, 160 GB disk). Empty offers no arm64 boxes. Arm hosts have their own host image. |
 | `most-hosts` | Most hosts | number | boxes | `2` | The most hosts at once. At this many, a box that fits on none of them is refused. |
 | `idle-minutes` | Idle minutes | number | boxes | `30` | A host with no box for this long is deleted. Hetzner bills by the started hour, so a shorter time saves little and makes acquires wait for a new host more often. |
 | `monthly-limit-eur` | Monthly limit (EUR) | number | boxes | `20` | bb-box makes no host when this calendar month's spend so far, and an hour more of every host with the new one, would pass this many euros before VAT. A busy host keeps running until it is idle. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too. |

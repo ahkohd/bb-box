@@ -5,7 +5,7 @@ import { HETZNER_FIELDS, HETZNER_KINDS, parseHetznerPart } from "./config.ts";
 export const hetznerDriver: BackendDriver<HetznerConfig> = {
   type: "hetzner",
   label: "Hetzner Cloud",
-  description: "Linux boxes, with or without a desktop, as containers on Docker hosts that bb-box makes in a Hetzner Cloud project as boxes need them, and deletes once they are idle.",
+  description: "Linux boxes on x86 or Arm, with or without a desktop, as containers on Docker hosts that bb-box makes in a Hetzner Cloud project as boxes need them, and deletes once they are idle.",
   nature: "virtual",
   form: "Docker",
   kinds: HETZNER_KINDS,

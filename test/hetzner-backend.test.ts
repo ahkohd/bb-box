@@ -202,7 +202,7 @@ test("the doctor lists each host with its age, boxes and cost, the month's spend
   const report = await hetzner.doctor(signal());
   const byId = new Map(report.checks.map((each) => [each.id, each]));
   assert.equal(byId.get("hetzner.api")!.status, "ok");
-  assert.match(byId.get("hetzner.hosts")!.detail, /bb-box-hz-test-[a-z0-9]{8}: ready, 90 minutes old, 1 box, EUR 0\.\d\d this month/);
+  assert.match(byId.get("hetzner.hosts")!.detail, /bb-box-hz-test-[a-z0-9]{8} \(cpx42\): ready, 90 minutes old, 1 box, EUR 0\.\d\d this month/);
   assert.equal(byId.get("hetzner.unclaimed")!.status, "warn");
   assert.match(byId.get("hetzner.unclaimed")!.detail, /bb-box-test-stray0001/);
   assert.match(byId.get("hetzner.spend")!.detail, /EUR 0\.\d\d before VAT so far this month of the EUR 100\.00 limit\. An hour more of the 1 host and a new one would take it to EUR 0\.\d\d\./);

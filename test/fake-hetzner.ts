@@ -55,6 +55,7 @@ export const FAKE_SERVER_TYPES = [
   { name: "cpx32", cores: 4, memory: 8, disk: 160, hourly: "0.0569000000", monthly: "35.4900000000" },
   { name: "cpx42", cores: 8, memory: 16, disk: 320, hourly: "0.1114000000", monthly: "69.4900000000" },
   { name: "cpx52", cores: 12, memory: 24, disk: 480, hourly: "0.1610000000", monthly: "100.4900000000" },
+  { name: "cax31", cores: 8, memory: 16, disk: 160, hourly: "0.0248000000", monthly: "15.4900000000", architecture: "arm" },
 ];
 export const FAKE_LOCATIONS = ["nbg1", "fsn1", "hel1"];
 
@@ -207,7 +208,7 @@ export class FakeHetzner {
         cores: each.cores,
         memory: each.memory,
         disk: each.disk,
-        architecture: "x86",
+        architecture: (each as { architecture?: string }).architecture ?? "x86",
         deprecation: null,
         prices: FAKE_LOCATIONS.map((location) => this.#price(location, each)),
       }));
