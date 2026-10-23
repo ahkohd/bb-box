@@ -31,7 +31,7 @@ type BoxEntryLike = { threadId: string; box: BoxView; owner: "thread" | "yours" 
 import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf, timingWords } from "../src/app/status.ts";
-import { choices, NO_FILTERS, shown, stateGroup } from "../src/app/boxes-filter.ts";
+import { choices, NO_FILTERS, shown, splitGroups, stateGroup, tagCounts, tagsOf } from "../src/app/boxes-filter.ts";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import type { BackendConfig } from "../src/core/document.ts";
@@ -4439,7 +4439,7 @@ test("the Boxes page's tab row has the settings gear, then New box at the far ri
 
 
 
-test("the Boxes page's search matches a box's name, kind, provider and thread; its filters tick kinds, providers and states; its sort orders by name or age", () => {
+test("the Boxes page's search matches a box's name, kind, provider and thread; its filters tick tags, providers and states; its sort orders by name or age", () => {
   const hour = 3_600_000;
   const rows = [
     { box: box({ id: "box_1", name: "calm-otter", createdAt: 3 * hour }), words: ["Add dark mode"] },
@@ -4456,13 +4456,13 @@ test("the Boxes page's search matches a box's name, kind, provider and thread; i
   expect(names(shown(rows, "dark pond", NO_FILTERS, byName))).toEqual([]);
   // A filter keeps what it ticks; ticks in one filter widen, filters together narrow.
   expect(names(shown(rows, "", { ...NO_FILTERS, states: ["Stopped", "Starting"] }, byName))).toEqual(["quiet-fern", "still-pond"]);
-  expect(names(shown(rows, "", { ...NO_FILTERS, kinds: ["Linux"], states: ["Ready"] }, byName))).toEqual(["calm-otter"]);
+  expect(names(shown(rows, "", { ...NO_FILTERS, has: ["Desktop"], states: ["Ready"] }, byName))).toEqual(["bold-heron"]);
   expect(names(shown(rows, "", { ...NO_FILTERS, providers: ["Proxmox LXC on pve"] }, byName))).toEqual(["bold-heron"]);
   // The sort: name either way, or age, oldest first when ascending.
   expect(names(shown(rows, "", NO_FILTERS, { key: "name", ascending: false }))).toEqual(["still-pond", "quiet-fern", "calm-otter", "bold-heron"]);
   expect(names(shown(rows, "", NO_FILTERS, { key: "created", ascending: true }))).toEqual(["bold-heron", "still-pond", "calm-otter", "quiet-fern"]);
   // The filters offer what is listed, each once; the states in a fixed order.
-  expect(choices(rows.map((row) => row.box))).toEqual({ kinds: ["Linux", "Linux desktop"], providers: ["Fake host", "Proxmox LXC on pve"], states: ["Ready", "Starting", "Stopped"] });
+  expect(choices(rows.map((row) => row.box))).toEqual({ systems: ["Linux"], forms: ["Container"], has: ["Desktop", "GPU"], providers: ["Fake host", "Proxmox LXC on pve"], states: ["Ready", "Starting", "Stopped"] });
   expect([box({ state: "starting" }), box({ state: "stopping" }), box({ state: "releasing" }), box({ state: "gone" }), box({ state: "failed" })].map(stateGroup)).toEqual(["Starting", "Stopped", "Stopped", "Failed", "Failed"]);
 });
 
@@ -4484,12 +4484,12 @@ test("on the Boxes page, the search narrows the list, says when nothing matches,
   expect(rowNames()).toHaveLength(3);
   // The tab counts stay totals.
   expect(list.getByRole("tab", { name: "Threads 1" })).toBeTruthy();
-  // Filters: State, from the states listed; Kind too; Provider has one choice, so no group.
   let menu = await openMenu(list.getByRole("button", { name: "Filters" }));
   expect(within(menu).queryByText("Provider")).toBeNull();
-  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Stopped" }));
+  expect(within(menu).queryByText("System")).toBeNull();
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /^Stopped/ }));
   expect(rowNames()).toEqual(["swift-fox"]);
-  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Stopped" }));
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /^Stopped/ }));
   fireEvent.keyDown(menu, { key: "Escape" });
   expect(rowNames()).toHaveLength(3);
   // Sort: Created, oldest first; the same again reverses it.
@@ -4500,6 +4500,92 @@ test("on the Boxes page, the search narrows the list, says when nothing matches,
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Created" }));
   expect(list.getByRole("button", { name: "Sort: Created, descending" })).toBeTruthy();
   expect(rowNames().at(-1)).toBe("swift-fox");
+});
+
+function tagged(id: string, name: string, facts: Partial<BoxView>): BoxView {
+  return box({ id, name, ...facts });
+}
+
+const TAGGED = [
+  tagged("box_t1", "linux-vm", { os: "linux", form: "VM", backendLabel: "Proxmox QEMU on pve", requires: ["kvm"] }),
+  tagged("box_t2", "linux-lxc", { os: "linux", form: "LXC", backendLabel: "Proxmox LXC on pve", desktop: true }),
+  tagged("box_t3", "pool-mac", { os: "macos", form: "Physical", arch: "arm64", backendLabel: "SSH host pool", desktop: true }),
+  tagged("box_t4", "tart-mac", { os: "macos", form: "VM", arch: "arm64", backendLabel: "Tart on studio" }),
+  tagged("box_t5", "win-vm", { os: "windows", form: "VM", backendLabel: "Proxmox QEMU on pve", desktop: true, extras: [] }),
+  tagged("box_t6", "arm-micro", { os: "linux", form: "microVM", arch: "arm64", backendLabel: "microsandbox on studio" }),
+  tagged("box_t7", "cloud-box", { os: "linux", form: "Docker", backendLabel: "Hetzner Cloud", gpu: true }),
+];
+
+test("the Boxes page's tags come from a box's facts, not its backend's name: system, form, what it has, provider and state", () => {
+  expect(TAGGED.map((one) => { const tags = tagsOf(one); return `${one.name}: ${tags.systems.join()} | ${tags.forms.join()} | ${tags.has.join()}`; })).toEqual([
+    "linux-vm: Linux | VM | KVM",
+    "linux-lxc: Linux | Container | Desktop",
+    "pool-mac: macOS | Physical | Desktop,arm64",
+    "tart-mac: macOS | VM | arm64",
+    "win-vm: Windows | VM | Desktop",
+    "arm-micro: Linux | microVM | arm64",
+    "cloud-box: Linux | Container | GPU",
+  ]);
+  expect(choices(TAGGED)).toEqual({
+    systems: ["Linux", "macOS", "Windows"],
+    forms: ["VM", "Container", "microVM", "Physical"],
+    has: ["Desktop", "GPU", "KVM", "arm64"],
+    providers: ["Hetzner Cloud", "microsandbox on studio", "Proxmox LXC on pve", "Proxmox QEMU on pve", "SSH host pool", "Tart on studio"],
+    states: ["Ready"],
+  });
+  expect([...splitGroups(TAGGED)]).toEqual(["systems", "forms", "has", "providers"]);
+});
+
+test("ticks in one tag group widen (Linux or macOS) and groups together narrow (Linux and VM); each tag counts what ticking it would show", () => {
+  const rows = TAGGED.map((one) => ({ box: one, words: [] }));
+  const names = (filters: typeof NO_FILTERS) => shown(rows, "", filters, { key: "name", ascending: true }).map((row) => row.box.name);
+  expect(names({ ...NO_FILTERS, systems: ["Linux"] })).toEqual(["arm-micro", "cloud-box", "linux-lxc", "linux-vm"]);
+  expect(names({ ...NO_FILTERS, systems: ["Linux", "macOS"] })).toEqual(["arm-micro", "cloud-box", "linux-lxc", "linux-vm", "pool-mac", "tart-mac"]);
+  expect(names({ ...NO_FILTERS, systems: ["Linux"], forms: ["VM"] })).toEqual(["linux-vm"]);
+  expect(names({ ...NO_FILTERS, systems: ["macOS"], forms: ["Physical"] })).toEqual(["pool-mac"]);
+  expect(names({ ...NO_FILTERS, forms: ["VM", "microVM"], has: ["arm64"] })).toEqual(["arm-micro", "tart-mac"]);
+  expect(names({ ...NO_FILTERS, has: ["Desktop", "GPU"] })).toEqual(["cloud-box", "linux-lxc", "pool-mac", "win-vm"]);
+  expect(names({ ...NO_FILTERS, providers: ["Hetzner Cloud"] })).toEqual(["cloud-box"]);
+
+  const none = tagCounts(rows, "", NO_FILTERS);
+  expect(none.systems).toEqual({ Linux: 4, macOS: 2, Windows: 1 });
+  expect(none.forms).toEqual({ VM: 3, Container: 2, Physical: 1, microVM: 1 });
+  expect(none.has).toEqual({ KVM: 1, Desktop: 3, arm64: 3, GPU: 1 });
+  const linux = tagCounts(rows, "", { ...NO_FILTERS, systems: ["Linux"] });
+  expect(linux.systems).toEqual({ Linux: 4, macOS: 2, Windows: 1 });
+  expect(linux.forms).toEqual({ VM: 1, Container: 2, microVM: 1 });
+  expect(linux.forms.Physical ?? 0).toBe(0);
+  expect(tagCounts(rows, "mac", NO_FILTERS).systems).toEqual({ macOS: 2 });
+});
+
+test("on the Boxes page, the Filters menu has System, Form, Has and Provider tags with counts, greys a tag that matches none, clears, and keeps its ticks across the tabs", async () => {
+  const { handlers } = server(TAGGED.slice(0, 4), { machines: [machine({ id: "box_m2", name: "cloud-machine", form: "Docker", backendLabel: "Hetzner Cloud" }, []), machine({ id: "box_m3", name: "vm-machine", form: "VM", backendLabel: "Proxmox QEMU on pve" }, [])] });
+  const list = boxesPage(handlers);
+  await list.findByText("cloud-machine");
+  fireEvent.click(list.getByRole("tab", { name: /^Threads/ }));
+  await list.findByText("linux-vm");
+  const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
+  const menu = await openMenu(list.getByRole("button", { name: "Filters" }));
+  const labels = within(menu).getAllByText(/^(System|Form|Has|Provider|State)$/).map((node) => node.textContent);
+  expect(labels).toEqual(["System", "Form", "Has", "Provider"]);
+  const item = (name: string) => within(menu).getByRole("menuitemcheckbox", { name: new RegExp(`^${name}\\d+$`) });
+  expect(item("VM").textContent).toBe("VM2");
+  fireEvent.click(item("Linux"));
+  fireEvent.click(item("VM"));
+  expect(rowNames()).toEqual(["linux-vm"]);
+  expect(item("macOS").textContent).toBe("macOS1");
+  expect(item("Physical").getAttribute("aria-disabled")).toBe("true");
+  fireEvent.click(item("macOS"));
+  expect(rowNames()).toEqual(["linux-vm", "tart-mac"]);
+  fireEvent.keyDown(menu, { key: "Escape" });
+  fireEvent.click(list.getByRole("tab", { name: /^Machines/ }));
+  await waitFor(() => expect(list.queryByText("cloud-machine")).toBeNull());
+  expect(list.getByText("vm-machine")).toBeTruthy();
+  fireEvent.click(list.getByRole("tab", { name: /^Threads/ }));
+  await waitFor(() => expect(rowNames()).toEqual(["linux-vm", "tart-mac"]));
+  const again = await openMenu(list.getByRole("button", { name: "Filters" }));
+  fireEvent.click(within(again).getByRole("menuitem", { name: "Clear filters" }));
+  await waitFor(() => expect(rowNames()).toHaveLength(4));
 });
 
 test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss", async () => {

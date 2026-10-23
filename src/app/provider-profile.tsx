@@ -21,7 +21,7 @@ const RESOURCE_WORDS: Record<Limit["resource"], string> = {
   "gpu-memory": "GPU memory",
   machines: "machines",
 };
-const FORM_WORDS: Record<string, string> = { LXC: "LXC containers", Docker: "Docker containers", VM: "VMs", Physical: "physical machines" };
+const FORM_WORDS: Record<string, string> = { LXC: "LXC containers", Docker: "Docker containers", VM: "VMs", microVM: "microVMs", Physical: "physical machines" };
 
 function gib(value: number): string {
   return `${Math.round((value / GIB) * 10) / 10}`;

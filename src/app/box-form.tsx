@@ -148,6 +148,7 @@ export function formFilterOf(offer: OfferView): FormFilter | null {
     case "Docker":
       return "container";
     case "VM":
+    case "microVM":
       return "vm";
     case "Physical":
       return "physical";
@@ -189,6 +190,8 @@ export function formWords(offer: OfferView): string | null {
       return "Container";
     case "VM":
       return "VM";
+    case "microVM":
+      return "microVM";
     case "Physical":
       return "Physical";
     default:

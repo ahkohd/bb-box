@@ -472,6 +472,8 @@ export function formLine(box: BoxRecord): string | null {
       return mac ? "a physical Mac, lent whole" : "a physical machine, lent whole";
     case "VM":
       return mac ? "a macOS VM" : "a VM";
+    case "microVM":
+      return "a microVM";
     case "LXC":
       return "an LXC container";
     case "Docker":

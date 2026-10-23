@@ -7,7 +7,7 @@ export const microsandboxDriver: BackendDriver<MsbConfig> = {
   label: "microsandbox",
   description: "Linux boxes, with or without a desktop, as microVMs that start in under a second, on a Linux host with KVM or a Mac. bb-box installs its own msb there.",
   nature: "virtual",
-  form: "VM",
+  form: "microVM",
   kinds: MSB_KINDS,
   fields: MSB_FIELDS,
   setup: {
