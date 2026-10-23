@@ -71,6 +71,15 @@ test("a Linux box is a Linux machine of its own with the kind's image pulled fro
   assert.equal(machine.status, "DESTROYED");
 });
 
-test("the pull script pulls the registry's image and tags it with the name the Docker backend runs", () => {
-  assert.equal(pullScript("nscr.io/ws/bbbox/linux:abc", "bbbox/linux:1"), "set -eu\ndocker pull -q 'nscr.io/ws/bbbox/linux:abc' >/dev/null\ndocker tag 'nscr.io/ws/bbbox/linux:abc' 'bbbox/linux:1'");
+test("the pull script lets every user on the machine use /dev/kvm, as the machine is the box's alone, pulls the registry's image and tags it with the name the Docker backend runs", () => {
+  assert.equal(pullScript("nscr.io/ws/bbbox/linux:abc", "bbbox/linux:1"), "set -eu\n[ ! -e /dev/kvm ] || chmod 0666 /dev/kvm\ndocker pull -q 'nscr.io/ws/bbbox/linux:abc' >/dev/null\ndocker tag 'nscr.io/ws/bbbox/linux:abc' 'bbbox/linux:1'");
+});
+
+test("Namespace's linux boxes offer kvm, as each is a privileged container on a machine of its own with /dev/kvm, so linux-kvm can be asked of Namespace", () => {
+  const { backend } = setup();
+  const features = Object.fromEntries(backend.kinds().map((kind) => [kind.id, kind.capabilities.features]));
+  assert.ok(features.linux!.includes("kvm"));
+  assert.ok(features.linux!.includes("docker"));
+  assert.ok(!features["linux-desktop-cpu"]!.includes("kvm"), "linux-kvm asks only for linux");
+  assert.ok(!features.macos!.includes("kvm"));
 });
