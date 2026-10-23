@@ -93,8 +93,16 @@ const ANSWERED_NOTED_EVERY_MS = 60_000;
 const OS_MEMORY_MiB = 1024;
 const PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS = 600_000;
 const HOST_IMAGE_CACHE_MS = 10 * 60_000;
-const HOST_IMAGE_FAILED_KEY: Readonly<Record<Architecture, string>> = { x86: "host-image-failed-at", arm: "host-image-failed-at:arm" };
+const HOST_IMAGE_FAILED_KEY: Readonly<Record<Architecture, string>> = { x86: "host-image-failed-at:x86", arm: "host-image-failed-at:arm" };
 const HOST_IMAGE_RETRY_AFTER_MS = 24 * 3_600_000;
+const HOST_IMAGE_WAITING_KEY: Readonly<Record<Architecture, string>> = { x86: "host-image-waiting", arm: "host-image-waiting:arm" };
+
+const ROOM_ADVICE = "Hetzner limits the shared vCPUs of the whole account, 20 for a new one, across all its projects: free some, or ask Hetzner for more on the account's Limits page in the Console.";
+
+interface WaitingForRoom {
+  readonly atMs: number;
+  readonly why: string;
+}
 const HOST_IMAGE_BUILD_HOURS = 2;
 const SNAPSHOT_EUROS_A_GB_A_MONTH = 0.0119;
 const BUILD_TARGET: Readonly<Record<string, string>> = { linux: "linux", "linux-desktop-cpu": "desktop", "linux-desktop-wayland-cpu": "desktop-wayland" };
@@ -561,7 +569,7 @@ export class HetznerBackend implements Backend {
   #makeHost(architecture: Architecture, signal: AbortSignal | undefined): Promise<HostPart> {
     const key = `making-${architecture}-${this.#making.size}-${this.#now()}`;
     const making = (async () => {
-      const record = await this.hostRecords.create(
+      const record = await this.#createOrSayWhyNoRoom(
         {
           serverType: this.#typeOf(architecture),
           location: this.#config.location,
@@ -584,6 +592,17 @@ export class HetznerBackend implements Backend {
     })().finally(() => this.#making.delete(key));
     this.#making.set(key, { architecture, part: making });
     return making;
+  }
+
+  async #createOrSayWhyNoRoom(spec: Parameters<HetznerHosts["create"]>[0], signal: AbortSignal | undefined): Promise<HostRecord> {
+    try {
+      return await this.hostRecords.create(spec, signal);
+    } catch (error) {
+      if (error instanceof HetznerError && (error.overLimit || error.unavailable)) {
+        throw new BackendError("no_capacity", `${this.label} could not make a ${spec.serverType} host: ${error.overLimit ? "the account is at Hetzner's limit" : `Hetzner has no ${spec.serverType} free in ${spec.location} now`} (${error.message.replace(/^Hetzner Cloud POST \/servers failed /, "")}). ${error.overLimit ? ROOM_ADVICE : "Try again later, or choose another location or server type."}`);
+      }
+      throw error;
+    }
   }
 
   async #userData(serverName: string, signal: AbortSignal | undefined): Promise<string> {
@@ -634,15 +653,17 @@ export class HetznerBackend implements Backend {
     const kept = snapshots.length ? ` ${snapshots.length} kept, ${sizes.toFixed(1)} GB, about ${euros(sizes * SNAPSHOT_EUROS_A_GB_A_MONTH)} a month.` : "";
     const building = this.#buildingHostImage.has(architecture) ? " A new one is being built." : "";
     const failed = failedAt !== undefined ? ` The last build failed at ${new Date(failedAt).toISOString()}; bb-box tries again a day after.` : "";
+    const waiting = await this.#context.storage.get<WaitingForRoom>(HOST_IMAGE_WAITING_KEY[architecture]);
+    const waits = waiting && !this.#buildingHostImage.has(architecture) ? ` The last build waited for room: at ${new Date(waiting.atMs).toISOString()} Hetzner Cloud refused its server (${waiting.why.replace(/^Hetzner Cloud POST \/servers failed /, "")}); bb-box tries again at its next check. ${ROOM_ADVICE}` : "";
     const fix = failedAt !== undefined ? "See BB Box's log for the build's last lines." : null;
     if (!newest) {
-      push(id, name, failedAt !== undefined ? "warn" : "ok", `None yet: ${this.#whichHosts(architecture)} start from ${this.#baseImage()} and install Docker and Tailscale, and build each kind's image, as they start.${building}${failed}`, fix);
+      push(id, name, failedAt !== undefined ? "warn" : "ok", `None yet: ${this.#whichHosts(architecture)} start from ${this.#baseImage()} and install Docker and Tailscale, and build each kind's image, as they start.${building}${waits}${failed}`, fix);
       return;
     }
     const why = this.#hostImages.whyBuild(newest, this.#now(), await this.#bbApp(signal));
     const days = Math.floor((this.#now() - newest.createdAtMs) / (24 * 3_600_000));
     const whichHosts = this.#whichHosts(architecture);
-    push(id, name, failedAt !== undefined ? "warn" : "ok", `${whichHosts[0]!.toUpperCase()}${whichHosts.slice(1)} start from snapshot ${newest.id}, built ${days} day${days === 1 ? "" : "s"} ago.${kept}${why ? ` A new one is due, as ${why}.` : ""}${building}${failed}`, fix);
+    push(id, name, failedAt !== undefined ? "warn" : "ok", `${whichHosts === "hosts" ? "Hosts" : whichHosts} start from snapshot ${newest.id}, built ${days} day${days === 1 ? "" : "s"} ago.${kept}${why ? ` A new one is due, as ${why}.` : ""}${building}${waits}${failed}`, fix);
   }
 
   #whichHosts(architecture: Architecture): string {
@@ -724,7 +745,13 @@ export class HetznerBackend implements Backend {
         this.#newestHostImage.delete(architecture);
         await this.#hostImages.prune(undefined, signal, architecture);
         await this.#context.storage.delete(HOST_IMAGE_FAILED_KEY[architecture]);
+        await this.#context.storage.delete(HOST_IMAGE_WAITING_KEY[architecture]);
       } catch (error) {
+        if (error instanceof HetznerError && (error.overLimit || error.unavailable)) {
+          await this.#context.storage.set(HOST_IMAGE_WAITING_KEY[architecture], { atMs: this.#now(), why: error.message } satisfies WaitingForRoom);
+          this.#context.log?.(`The ${ARCHITECTURE_WORDS[architecture]} host image waits for room in the Hetzner Cloud project: ${error.message}`);
+          return;
+        }
         await this.#context.storage.set(HOST_IMAGE_FAILED_KEY[architecture], this.#now());
         throw error;
       }

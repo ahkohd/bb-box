@@ -121,7 +121,8 @@ test("Hetzner's project limit refuses a host with its reason, and leaves no reco
   api.projectServerLimit = 0;
   const hetzner = backend();
   const error = await hetzner.acquire(identity(), null, hooks().value, signal()).catch((e) => e);
-  assert.match(error.message, /resource_limit_exceeded/);
+  assert.equal(error.code, "no_capacity", "a box refused for room goes to the next backend");
+  assert.match(error.message, /could not make a cpx42 host: the account is at Hetzner's limit \(\(403 resource_limit_exceeded\): server limit exceeded\)\. Hetzner limits the shared vCPUs of the whole account, 20 for a new one, across all its projects: free some, or ask Hetzner for more on the account's Limits page in the Console\./);
   assert.deepEqual(await hetzner.hostRecords.records(), []);
 });
 
