@@ -2,7 +2,7 @@ import { DOCKER_FIELDS, DOCKER_KEYS, parseDockerPart } from "../docker/config.ts
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 import type { HetznerConfig } from "./backend.ts";
 
-export const HETZNER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop-wayland-cpu"] as const;
+export const HETZNER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop-wayland-cpu", "linux-arm64", "linux-arm64-desktop-cpu"] as const;
 
 export const HETZNER_DEFAULTS = {
   location: "nbg1",
@@ -17,6 +17,7 @@ export const HETZNER_KEYS = {
   token: "token",
   location: "location",
   serverType: "server-type",
+  armServerType: "arm-server-type",
   hostImage: "host-image",
   mostHosts: "most-hosts",
   idleMinutes: "idle-minutes",
@@ -47,6 +48,13 @@ export const HETZNER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     description: "The type of every host, such as cpx42 (8 cores, 16 GB, 320 GB disk). A box at its largest must fit one, with the memory kept free.",
     group: "boxes",
     default: HETZNER_DEFAULTS.serverType,
+  },
+  [HETZNER_KEYS.armServerType]: {
+    type: "string",
+    label: "Arm server type",
+    description: "The type of the hosts for linux-arm64 boxes, an Ampere type such as cax31 (8 cores, 16 GB, 160 GB disk). Empty offers no arm64 boxes. Arm hosts have their own host image.",
+    group: "boxes",
+    default: "",
   },
   [HETZNER_KEYS.mostHosts]: {
     type: "number",
@@ -117,6 +125,9 @@ export function parseHetznerPart(part: BackendPart): ParsedBackend<HetznerConfig
   if (!LOCATION.test(location)) problem(HETZNER_KEYS.location, `Hetzner Cloud: "${location}" is not a location, such as nbg1.`);
   const serverType = text(values, HETZNER_KEYS.serverType, HETZNER_DEFAULTS.serverType);
   if (!SERVER_TYPE.test(serverType)) problem(HETZNER_KEYS.serverType, `Hetzner Cloud: "${serverType}" is not a server type, such as cpx42.`);
+  else if (/^cax/.test(serverType)) problem(HETZNER_KEYS.serverType, `Hetzner Cloud: ${serverType} is an Arm server type. Set it as the Arm server type, and an x86 type such as cpx42 here.`);
+  const armServerType = text(values, HETZNER_KEYS.armServerType);
+  if (armServerType && !/^cax[0-9a-z-]{1,29}$/.test(armServerType)) problem(HETZNER_KEYS.armServerType, `Hetzner Cloud: "${armServerType}" is not an Arm server type, such as cax31.`);
   const imageText = text(values, HETZNER_KEYS.hostImage, HETZNER_DEFAULTS.hostImage);
   const hostImage = /^\d+$/.test(imageText) ? Number(imageText) : imageText;
   if (typeof hostImage === "string" && !IMAGE_NAME.test(hostImage)) problem(HETZNER_KEYS.hostImage, `Hetzner Cloud: "${imageText}" is not an image name or a snapshot's ID.`);
@@ -142,6 +153,7 @@ export function parseHetznerPart(part: BackendPart): ParsedBackend<HetznerConfig
       token,
       location,
       serverType,
+      armServerType: armServerType || null,
       hostImage,
       hostImageLabel: typeof hostImage === "number" ? `snapshot-${hostImage}` : hostImage,
       mostHosts,

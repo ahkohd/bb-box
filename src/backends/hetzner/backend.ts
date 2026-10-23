@@ -1,11 +1,12 @@
 import type { CheckId } from "../../core/checks.ts";
 import { keyDescription, tailnetHostname } from "../../core/tailnet.ts";
 import { hostUserData } from "./cloud-init.ts";
-import { BUILD_ABANDONED_AFTER_MS, HostImages, runBuildScript, type BuildImage } from "./host-image.ts";
+import { BUILD_ABANDONED_AFTER_MS, HostImages, runBuildScript, type Architecture, type BuildImage } from "./host-image.ts";
 import { HostReach } from "./reach.ts";
 import { DockerBackend, dockerKinds, type DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
-import type { DockerConfig } from "../docker/config.ts";
+import type { DockerConfig, DockerKind } from "../docker/config.ts";
+import { kindInfo } from "../kinds.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -29,12 +30,13 @@ import {
 } from "../types.ts";
 import { Hetzner, HetznerError, type EurosBeforeVat, type HetznerFetch, type ServerType } from "./api.ts";
 import { HetznerHosts, IMAGE_BUILD_ROLE, serverNamePrefix, serverNamePrefixBeforeHz, type HostRecord } from "./hosts.ts";
-import { euros, nextHourOf, serverAndIpv4, spentThisMonth, startOfMonthUtc, type BilledServer } from "./spend.ts";
+import { euros, serverAndIpv4, spentThisMonth, startOfMonthUtc, type BilledServer } from "./spend.ts";
 
 export interface HetznerConfig {
   readonly token: string;
   readonly location: string;
   readonly serverType: string;
+  readonly armServerType?: string | null;
   readonly hostImage: string | number;
   readonly hostImageLabel: string;
   readonly mostHosts: number;
@@ -63,6 +65,7 @@ type Pending = { readonly kind: string; readonly size: BoxSize };
 
 interface HostPart {
   readonly record: HostRecord;
+  readonly architecture: Architecture;
   readonly cli: DockerCli;
   readonly docker: DockerBackend;
 }
@@ -77,6 +80,10 @@ interface HostRoom {
   readonly totalMemoryMiB: number;
 }
 
+interface BilledServerOfType extends BilledServer {
+  readonly serverType?: string;
+}
+
 const HOST_KEY = "hetznerHost";
 const BILLED_PREFIX = "billed:";
 const PRICE_CACHE_MS = 3_600_000;
@@ -84,15 +91,17 @@ const MAKE_NEXT_AHEAD_ABOVE = 0.75;
 const SILENT_HOST_DELETED_AFTER_MS = 24 * 3_600_000;
 const ANSWERED_NOTED_EVERY_MS = 60_000;
 const OS_MEMORY_MiB = 1024;
-const NO_GPU_KINDS = (kind: BoxKind) => kind.id !== "linux-desktop";
 const PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS = 600_000;
 const HOST_IMAGE_CACHE_MS = 10 * 60_000;
-const HOST_IMAGE_FAILED_KEY = "host-image-failed-at";
+const HOST_IMAGE_FAILED_KEY: Readonly<Record<Architecture, string>> = { x86: "host-image-failed-at", arm: "host-image-failed-at:arm" };
 const HOST_IMAGE_RETRY_AFTER_MS = 24 * 3_600_000;
 const HOST_IMAGE_BUILD_HOURS = 2;
 const SNAPSHOT_EUROS_A_GB_A_MONTH = 0.0119;
 const BUILD_TARGET: Readonly<Record<string, string>> = { linux: "linux", "linux-desktop-cpu": "desktop", "linux-desktop-wayland-cpu": "desktop-wayland" };
-const DOCKER_TARGETS = ["linux", "linux-desktop-cpu", "linux-desktop-wayland-cpu"] as const;
+const DOCKER_TARGETS: Readonly<Record<Architecture, readonly DockerKind[]>> = { x86: ["linux", "linux-desktop-cpu", "linux-desktop-wayland-cpu"], arm: ["linux", "linux-desktop-cpu"] };
+const ARM_KIND_OF: Readonly<Record<string, string>> = { linux: "linux-arm64", "linux-desktop-cpu": "linux-arm64-desktop-cpu" };
+const DOCKER_KIND_OF_ARM: Readonly<Record<string, DockerKind>> = { "linux-arm64": "linux", "linux-arm64-desktop-cpu": "linux-desktop-cpu" };
+const ARCHITECTURE_WORDS: Readonly<Record<Architecture, string>> = { x86: "x86", arm: "Arm" };
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -107,6 +116,28 @@ function scopedStorage(storage: BackendStorage, prefix: string): BackendStorage 
   };
 }
 
+export function armImageOf(image: string | null): string | null {
+  return image ? `${image}-arm64` : null;
+}
+
+export function dockerConfigForArm(config: DockerConfig): DockerConfig {
+  return {
+    ...config,
+    images: {
+      linux: armImageOf(config.images.linux),
+      "linux-desktop-cpu": armImageOf(config.images["linux-desktop-cpu"]),
+      "linux-desktop": null,
+      "linux-desktop-wayland-cpu": null,
+    },
+  };
+}
+
+function armKind(kind: BoxKind): BoxKind {
+  const id = ARM_KIND_OF[kind.id]!;
+  const info = kindInfo(id);
+  return { ...kind, id, label: info.label, description: info.description, capabilities: { ...kind.capabilities, arch: "arm64" } };
+}
+
 export class HetznerBackend implements Backend {
   readonly id: string;
   readonly nature = "virtual" as const;
@@ -117,17 +148,18 @@ export class HetznerBackend implements Backend {
   readonly #api: Hetzner;
   readonly hostRecords: HetznerHosts;
   readonly #kinds: BoxKind[];
+  readonly #dockerConfig: Readonly<Record<Architecture, DockerConfig>>;
   readonly #parts = new Map<string, HostPart>();
-  readonly #making = new Map<string, Promise<HostPart>>();
+  readonly #making = new Map<string, { readonly architecture: Architecture; readonly part: Promise<HostPart> }>();
   readonly #building = new Map<string, Promise<void>>();
   readonly #reach: HostReach | null;
   readonly #hostImages: HostImages;
-  #newestHostImage: { at: number; image: { id: number; label: string } | null } | null = null;
-  #buildingHostImage: Promise<void> | null = null;
+  readonly #newestHostImage = new Map<Architecture, { at: number; image: { id: number; label: string } | null }>();
+  readonly #buildingHostImage = new Map<Architecture, Promise<void>>();
   readonly #now: () => number;
   #placement: Promise<unknown> = Promise.resolve();
-  #prices: { at: number; price: EurosBeforeVat } | null = null;
-  #serverType: ServerType | null = null;
+  readonly #prices = new Map<string, { at: number; price: EurosBeforeVat }>();
+  readonly #serverTypes = new Map<string, ServerType | null>();
 
   constructor(config: HetznerConfig, context: BackendContext, options: HetznerBackendOptions) {
     this.id = context.id;
@@ -150,7 +182,10 @@ export class HetznerBackend implements Backend {
       installLabels: { "bbbox-install": context.installId },
       fingerprint: options.hostImageFingerprint,
     });
-    this.#kinds = dockerKinds(config.docker).filter(NO_GPU_KINDS);
+    this.#dockerConfig = { x86: config.docker, arm: dockerConfigForArm(config.docker) };
+    const x86Kinds = dockerKinds(config.docker).filter((kind) => kind.id !== "linux-desktop");
+    const armKinds = config.armServerType ? dockerKinds(this.#dockerConfig.arm).filter((kind) => ARM_KIND_OF[kind.id]).map(armKind) : [];
+    this.#kinds = [...x86Kinds, ...armKinds];
     this.#reach = options.reachHost
       ? null
       : new HostReach({ api: this.#api, storage: context.storage, installId: context.installId, tailnet: () => context.tailnet?.() ?? null, sshFrom: config.sshFrom, sshBinary: options.sshBinary, dockerBinary: options.dockerOptions?.binary });
@@ -168,10 +203,30 @@ export class HetznerBackend implements Backend {
     return this.#kinds;
   }
 
+  get #architectures(): Architecture[] {
+    return this.#config.armServerType ? ["x86", "arm"] : ["x86"];
+  }
+
   #kind(id: string): BoxKind {
     const kind = this.#kinds.find((each) => each.id === id);
     if (!kind) throw new BackendError("unsupported", `${this.label} does not offer ${id} boxes.`);
     return kind;
+  }
+
+  #architectureOfKind(kind: string): Architecture {
+    return DOCKER_KIND_OF_ARM[kind] ? "arm" : "x86";
+  }
+
+  #dockerKindOf(kind: string): string {
+    return DOCKER_KIND_OF_ARM[kind] ?? kind;
+  }
+
+  #architectureOfType(serverType: string): Architecture {
+    return serverType === this.#config.armServerType || /^cax/.test(serverType) ? "arm" : "x86";
+  }
+
+  #typeOf(architecture: Architecture): string {
+    return architecture === "arm" ? this.#config.armServerType! : this.#config.serverType;
   }
 
   async capacity(kind: string, size: BoxSize, _pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
@@ -179,8 +234,9 @@ export class HetznerBackend implements Backend {
     const rooms = await this.#rooms(kind, size, signal);
     const hosts = rooms.map((room) => room.capacity);
     if (rooms.some((room) => room.ok)) return { ok: true, message: null, warm: null, hosts };
-    const why = await this.#whyNoNewHost(size, signal);
-    if (why === null) return { ok: true, message: null, warm: null, hosts: [...hosts, this.#newHostCapacity()] };
+    const architecture = this.#architectureOfKind(kind);
+    const why = await this.#whyNoNewHost(size, architecture, signal);
+    if (why === null) return { ok: true, message: null, warm: null, hosts: [...hosts, this.#newHostCapacity(architecture)] };
     const onHosts = rooms.map((room) => room.why).filter(Boolean);
     return { ok: false, message: `${this.label} cannot take this ${kind} box: ${[...onHosts, why].join("; ")}.`, warm: null, hosts };
   }
@@ -192,12 +248,13 @@ export class HetznerBackend implements Backend {
     if (!part) throw new BackendError("gone", `The Hetzner Cloud host of ${box.name} is gone.`);
     const own = (guest: Guest): Guest => ({ ...guest, host: part.record.serverName, data: { ...guest.data, [HOST_KEY]: part.record.hostId } });
     await this.hostRecords.markBusy(part.record.hostId);
+    const dockerKind = this.#dockerKindOf(box.kind);
     if (!resumedOn) {
       const started = performance.now();
-      if (await this.#imageReady(part, box.kind, signal)) hooks.timing("build image", Math.round(performance.now() - started));
+      if (await this.#imageReady(part, dockerKind, signal)) hooks.timing("build image", Math.round(performance.now() - started));
     }
-    const made = await part.docker.acquire(box, previous ? { ...previous, data: { ...previous.data } } : null, { ...hooks, claim: (guest) => hooks.claim(own(guest)) }, signal);
-    void this.#makeNextAhead().catch((error) => this.#context.logError("make the next Hetzner Cloud host ahead", error));
+    const made = await part.docker.acquire({ ...box, kind: dockerKind }, previous ? { ...previous, data: { ...previous.data } } : null, { ...hooks, claim: (guest) => hooks.claim(own(guest)) }, signal);
+    void this.#makeNextAhead(part.architecture).catch((error) => this.#context.logError("make the next Hetzner Cloud host ahead", error));
     return own(made);
   }
 
@@ -213,7 +270,7 @@ export class HetznerBackend implements Backend {
 
   async relabel(guest: Guest, box: BoxIdentity): Promise<void> {
     const part = await this.#partOfGuest(guest);
-    if (part) await part.docker.relabel(guest, box);
+    if (part) await part.docker.relabel(guest, { ...box, kind: this.#dockerKindOf(box.kind) });
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
@@ -238,18 +295,18 @@ export class HetznerBackend implements Backend {
   }
 
   async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
-    return (await this.#requirePart(guest, signal)).docker.planResize(guest, kind, to, pending, signal);
+    return (await this.#requirePart(guest, signal)).docker.planResize(guest, this.#dockerKindOf(kind), to, pending, signal);
   }
 
   async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     const part = await this.#requirePart(guest, signal);
-    const resized = await part.docker.resize(guest, kind, to, options, signal);
+    const resized = await part.docker.resize(guest, this.#dockerKindOf(kind), to, options, signal);
     return { ...resized, host: part.record.serverName, data: { ...resized.data, [HOST_KEY]: part.record.hostId } };
   }
 
   async fromCurrentBuild(guest: Guest, kind: string, signal?: AbortSignal): Promise<boolean | null> {
     const part = await this.#partOfGuest(guest, signal);
-    return part ? part.docker.fromCurrentBuild(guest, kind, signal) : null;
+    return part ? part.docker.fromCurrentBuild(guest, this.#dockerKindOf(kind), signal) : null;
   }
 
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {
@@ -263,7 +320,10 @@ export class HetznerBackend implements Backend {
       try {
         const part = await this.#partOf(record.hostId, signal);
         if (!part) continue;
-        for (const guest of await part.docker.held(signal)) all.push({ ...guest, host: record.serverName, data: { ...guest.data, [HOST_KEY]: record.hostId } });
+        for (const guest of await part.docker.held(signal)) {
+          const owner = guest.owner && part.architecture === "arm" && guest.owner.kind && ARM_KIND_OF[guest.owner.kind] ? { ...guest.owner, kind: ARM_KIND_OF[guest.owner.kind]! } : guest.owner;
+          all.push({ ...guest, owner, host: record.serverName, data: { ...guest.data, [HOST_KEY]: record.hostId } });
+        }
         await this.#answered(record);
       } catch (error) {
         if (signal?.aborted) throw error;
@@ -274,7 +334,7 @@ export class HetznerBackend implements Backend {
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
-    return (await this.#requirePart(guest)).docker.transports(guest, kind);
+    return (await this.#requirePart(guest)).docker.transports(guest, this.#dockerKindOf(kind));
   }
 
   async maintain(signal?: AbortSignal): Promise<void> {
@@ -299,8 +359,10 @@ export class HetznerBackend implements Backend {
       }
       await this.#deleteHost(record, signal);
     }
-    const due = await this.#hostImageBuildDue(signal).catch(() => null);
-    if (due) void this.buildHostImage(due).catch((error) => this.#context.logError("build a Hetzner Cloud host image", error));
+    for (const architecture of this.#architectures) {
+      const due = await this.#hostImageBuildDue(architecture, signal).catch(() => null);
+      if (due) void this.buildHostImage(due, undefined, architecture).catch((error) => this.#context.logError(`build a Hetzner Cloud ${ARCHITECTURE_WORDS[architecture]} host image`, error));
+    }
   }
 
   async doctor(signal?: AbortSignal): Promise<DoctorReport> {
@@ -336,19 +398,11 @@ export class HetznerBackend implements Backend {
     if (unreachable) push("hetzner.reach", "Reaching hosts", "fail", unreachable + ".", "Turn the tailnet on, or set SSH from.");
     else push("hetzner.reach", "Reaching hosts", "ok", tailnetOn ? "Over the tailnet: each host joins it as it starts, with a key bb-box makes for it, and its SSH is closed to the internet." : `Over the internet, from ${this.#config.sshFrom.join(", ")}, with bb-box's own SSH key.`);
 
-    const type = await this.#serverTypeNow(signal).catch((error: unknown) => error as Error);
-    if (type instanceof Error || !type) {
-      push("hetzner.type", `Server type ${this.#config.serverType}`, "fail", type instanceof Error ? message(type) : `Hetzner Cloud has no server type ${this.#config.serverType}.`, "Choose a server type Hetzner Cloud sells, such as cpx42.");
-    } else if (!type.soldIn.includes(this.#config.location)) {
-      push("hetzner.type", `Server type ${type.name}`, "fail", `${type.name} is not sold in ${this.#config.location}; it is in ${type.soldIn.join(", ")}.`, "Choose another location or server type.");
-    } else {
-      const price = await this.#price(signal).catch(() => null);
-      push("hetzner.type", `Server type ${type.name}`, "ok", `${type.cores} cores, ${type.memoryGB} GB memory, ${type.diskGB} GB disk in ${this.#config.location}${price ? `, ${euros(price.hourly)} an hour and at most ${euros(price.monthly)} a month with its IPv4, before VAT` : ""}.`);
+    for (const architecture of this.#architectures) {
+      await this.#serverTypeCheck(architecture, push, signal);
+      await this.#hostImageCheck(architecture, push, signal);
     }
 
-    await this.#hostImageCheck(push, signal);
-
-    const price = await this.#price(signal).catch(() => null);
     const live = records.filter((record) => record.state !== "deleting");
     if (!live.length) {
       push("hetzner.hosts", "Hosts", "ok", `None now. One is made when a box needs it, up to ${this.#config.mostHosts} at once, and deleted after ${this.#config.idleMinutes} minutes with no box.`);
@@ -358,18 +412,19 @@ export class HetznerBackend implements Backend {
         const part = record.state === "ready" ? await this.#partOf(record.hostId, signal).catch(() => null) : null;
         const boxes = part ? await part.docker.held(signal).then((held) => held.length).catch(() => null) : null;
         const ageMinutes = Math.round((this.#now() - record.claimedAtMs) / 60_000);
+        const price = await this.#price(record.serverType, signal).catch(() => null);
         const cost = price ? euros(spentThisMonth([{ hostId: record.hostId, startedAtMs: record.claimedAtMs, endedAtMs: null }], price, this.#now())) : "an unknown cost";
-        lines.push(`${record.serverName}: ${record.state}, ${ageMinutes} minutes old, ${boxes === null ? "boxes unknown" : `${boxes} box${boxes === 1 ? "" : "es"}`}, ${cost} this month`);
+        lines.push(`${record.serverName} (${record.serverType}): ${record.state}, ${ageMinutes} minutes old, ${boxes === null ? "boxes unknown" : `${boxes} box${boxes === 1 ? "" : "es"}`}, ${cost} this month`);
       }
       push("hetzner.hosts", "Hosts", "ok", `${lines.join("; ")}.`);
     }
 
-    if (price) {
-      const spent = await this.#spentThisMonth(price);
+    const spent = await this.#spentThisMonth(signal).catch(() => null);
+    if (spent !== null) {
       const limit = this.#config.monthlyLimitEurosBeforeVat;
       const status = limit !== null && spent >= limit ? "warn" : "ok";
       const running = live.length;
-      const projected = spent + nextHourOf(running + 1, price);
+      const projected = spent + (await this.#nextHourWithANewHost("x86", signal).catch(() => 0));
       const projection = `An hour more of ${running ? `the ${running} host${running === 1 ? "" : "s"} and ` : ""}a new one would take it to ${euros(projected)}${limit !== null && projected > limit ? ", past the limit, so no new host is made now" : ""}.`;
       push("hetzner.spend", "This month's spend", status, `${euros(spent)} before VAT so far this month${limit === null ? ", with no limit set" : ` of the ${euros(limit)} limit`}. ${projection}`, status === "warn" ? "bb-box makes no host past the limit. Raise it in the backend's settings, or wait for next month." : null);
     }
@@ -385,13 +440,32 @@ export class HetznerBackend implements Backend {
     return { ok: !failed, summary: failed ? `${failed.name}: ${failed.detail}` : `${this.label}: ${live.length} host${live.length === 1 ? "" : "s"}`, checks, notes };
   }
 
+  async #serverTypeCheck(architecture: Architecture, push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
+    const id: CheckId = architecture === "arm" ? "hetzner.arm-type" : "hetzner.type";
+    const wanted = this.#typeOf(architecture);
+    const type = await this.#serverTypeNow(wanted, signal).catch((error: unknown) => error as Error);
+    const example = architecture === "arm" ? "cax31" : "cpx42";
+    if (type instanceof Error || !type) {
+      push(id, `Server type ${wanted}`, "fail", type instanceof Error ? message(type) : `Hetzner Cloud has no server type ${wanted}.`, `Choose a server type Hetzner Cloud sells, such as ${example}.`);
+    } else if (this.#architectureOfType(type.name) !== architecture || (type.architecture !== "" && (type.architecture === "arm") !== (architecture === "arm"))) {
+      push(id, `Server type ${type.name}`, "fail", `${type.name} is not an ${ARCHITECTURE_WORDS[architecture]} server type.`, `Choose an ${ARCHITECTURE_WORDS[architecture]} server type, such as ${example}.`);
+    } else if (!type.soldIn.includes(this.#config.location)) {
+      push(id, `Server type ${type.name}`, "fail", `${type.name} is not sold in ${this.#config.location}; it is in ${type.soldIn.join(", ")}.`, "Choose another location or server type.");
+    } else {
+      const price = await this.#price(type.name, signal).catch(() => null);
+      push(id, `Server type ${type.name}`, "ok", `${type.cores} cores, ${type.memoryGB} GB memory, ${type.diskGB} GB disk in ${this.#config.location}${price ? `, ${euros(price.hourly)} an hour and at most ${euros(price.monthly)} a month with its IPv4, before VAT` : ""}.`);
+    }
+  }
+
   async #rooms(kind: string, size: BoxSize, signal?: AbortSignal): Promise<HostRoom[]> {
     const rooms: HostRoom[] = [];
+    const architecture = this.#architectureOfKind(kind);
+    const dockerKind = this.#dockerKindOf(kind);
     for (const record of await this.hostRecords.records()) {
-      if (record.state !== "ready") continue;
+      if (record.state !== "ready" || this.#architectureOfType(record.serverType) !== architecture) continue;
       const part = await this.#partOf(record.hostId, signal).catch(() => null);
       if (!part) continue;
-      const capacity = await part.docker.capacity(kind, size, [], signal);
+      const capacity = await part.docker.capacity(dockerKind, size, [], signal);
       const memory = capacity.hosts[0]?.limits.find((limit) => limit.resource === "memory");
       const total = memory?.total ?? 0;
       const used = memory?.used ?? 0;
@@ -408,8 +482,8 @@ export class HetznerBackend implements Backend {
     return rooms;
   }
 
-  #newHostCapacity(): HostCapacity {
-    return { host: `a new ${this.#config.serverType} host`, ok: true, limits: [] };
+  #newHostCapacity(architecture: Architecture): HostCapacity {
+    return { host: `a new ${this.#typeOf(architecture)} host`, ok: true, limits: [] };
   }
 
   #neverAnsweredOrLongSilent(record: HostRecord, idleMs: number): boolean {
@@ -421,13 +495,13 @@ export class HetznerBackend implements Backend {
     if (record.answeredAtMs === null || this.#now() - record.answeredAtMs > ANSWERED_NOTED_EVERY_MS) await this.hostRecords.markAnswered(record.hostId);
   }
 
-  async #whyNoNewHost(size: BoxSize, signal?: AbortSignal): Promise<string | null> {
+  async #whyNoNewHost(size: BoxSize, architecture: Architecture, signal?: AbortSignal): Promise<string | null> {
     const unreachable = this.#reach?.canReach() ?? null;
     if (unreachable) return unreachable;
     if (size.diskGiB !== null) return `a Docker box shares its host's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk of its own. Ask for the base disk`;
     const live = (await this.hostRecords.records()).filter((record) => record.state !== "deleting");
     if (live.length >= this.#config.mostHosts) return `it has the ${this.#config.mostHosts} host${this.#config.mostHosts === 1 ? "" : "s"} it may have at once. Release a box, or raise the most hosts in the backend's settings`;
-    const type = await this.#serverTypeNow(signal).catch(() => null);
+    const type = await this.#serverTypeNow(this.#typeOf(architecture), signal).catch(() => null);
     if (type) {
       const room = type.memoryGB * 1024 - OS_MEMORY_MiB - this.#config.docker.reserveMemoryMiB;
       if (size.cores > type.cores) return `a ${type.name} host has ${type.cores} cores, fewer than the ${size.cores} asked for`;
@@ -435,27 +509,34 @@ export class HetznerBackend implements Backend {
     }
     const limit = this.#config.monthlyLimitEurosBeforeVat;
     if (limit !== null) {
-      const price = await this.#price(signal).catch(() => null);
-      if (!price) return "bb-box could not read Hetzner Cloud's prices to keep to the monthly limit";
-      const spent = await this.#spentThisMonth(price);
-      const running = (await this.hostRecords.records()).filter((record) => record.state !== "deleting").length;
-      const more = nextHourOf(running + 1, price);
+      const spent = await this.#spentThisMonth(signal).catch(() => null);
+      const more = await this.#nextHourWithANewHost(architecture, signal).catch(() => null);
+      if (spent === null || more === null) return "bb-box could not read Hetzner Cloud's prices to keep to the monthly limit";
       if (spent + more > limit) return `another host would take this month's spend from ${euros(spent)} to ${euros(spent + more)} within the hour, past the ${euros(limit)} limit`;
     }
     return null;
   }
 
+  async #nextHourWithANewHost(architecture: Architecture, signal?: AbortSignal): Promise<number> {
+    let sum = (await this.#price(this.#typeOf(architecture), signal)).hourly;
+    for (const record of await this.hostRecords.records()) {
+      if (record.state !== "deleting") sum += (await this.#price(record.serverType, signal)).hourly;
+    }
+    return sum;
+  }
+
   #place(box: BoxIdentity, hooks: AcquireHooks, signal: AbortSignal): Promise<HostPart> {
+    const architecture = this.#architectureOfKind(box.kind);
     const placed = this.#placement.then(async () => {
       const rooms = (await this.#rooms(box.kind, box.size, signal)).filter((room) => room.ok);
       const roomiest = rooms.sort((a, b) => b.freeMemoryMiB - a.freeMemoryMiB)[0];
       if (roomiest) return roomiest.part;
-      const inFlight = [...this.#making.values()][0];
-      if (inFlight) return inFlight;
-      const why = await this.#whyNoNewHost(box.size, signal);
+      const inFlight = [...this.#making.values()].find((each) => each.architecture === architecture);
+      if (inFlight) return inFlight.part;
+      const why = await this.#whyNoNewHost(box.size, architecture, signal);
       if (why !== null) throw new BackendError("no_capacity", `${this.label} cannot take this ${box.kind} box: ${why}.`);
       const started = performance.now();
-      const part = await this.#makeHost(signal);
+      const part = await this.#makeHost(architecture, signal);
       hooks.timing("make a host", Math.round(performance.now() - started));
       return part;
     });
@@ -463,27 +544,28 @@ export class HetznerBackend implements Backend {
     return placed;
   }
 
-  async #makeNextAhead(): Promise<void> {
-    if (this.#making.size) return;
+  async #makeNextAhead(architecture: Architecture): Promise<void> {
+    if ([...this.#making.values()].some((each) => each.architecture === architecture)) return;
     const records = (await this.hostRecords.records()).filter((record) => record.state !== "deleting");
     if (!records.length || records.length >= this.#config.mostHosts) return;
-    const kind = this.#kinds[0]!;
+    const kind = this.#kinds.find((each) => this.#architectureOfKind(each.id) === architecture);
+    if (!kind) return;
     const rooms = await this.#rooms(kind.id, { cores: 1, memoryMiB: 1, diskGiB: null }, undefined);
     const total = rooms.reduce((sum, room) => sum + room.totalMemoryMiB, 0);
     const used = rooms.reduce((sum, room) => sum + room.usedMemoryMiB, 0);
     if (!total || used / total <= MAKE_NEXT_AHEAD_ABOVE) return;
-    if ((await this.#whyNoNewHost({ cores: 1, memoryMiB: 1, diskGiB: null })) !== null) return;
-    await this.#makeHost(undefined);
+    if ((await this.#whyNoNewHost({ cores: 1, memoryMiB: 1, diskGiB: null }, architecture)) !== null) return;
+    await this.#makeHost(architecture, undefined);
   }
 
-  #makeHost(signal: AbortSignal | undefined): Promise<HostPart> {
-    const key = `making-${this.#making.size}-${this.#now()}`;
+  #makeHost(architecture: Architecture, signal: AbortSignal | undefined): Promise<HostPart> {
+    const key = `making-${architecture}-${this.#making.size}-${this.#now()}`;
     const making = (async () => {
       const record = await this.hostRecords.create(
         {
-          serverType: this.#config.serverType,
+          serverType: this.#typeOf(architecture),
           location: this.#config.location,
-          ...(await this.#hostImageForNewHost(signal)),
+          ...(await this.#hostImageForNewHost(architecture, signal)),
           sshKeys: this.#reach ? [await this.#reach.hetznerSshKeyId(signal)] : undefined,
           firewalls: this.#reach ? [await this.#reach.firewallId(signal)] : undefined,
           userData: this.#options.userData ?? ((_hostId, serverName) => this.#userData(serverName, signal)),
@@ -500,7 +582,7 @@ export class HetznerBackend implements Backend {
         throw error;
       }
     })().finally(() => this.#making.delete(key));
-    this.#making.set(key, making);
+    this.#making.set(key, { architecture, part: making });
     return making;
   }
 
@@ -510,57 +592,65 @@ export class HetznerBackend implements Backend {
     return hostUserData({ serverName, tailnetKey: minted?.key ?? null });
   }
 
-  async #imageReady(part: HostPart, kind: string, signal: AbortSignal): Promise<boolean> {
-    const image = this.#config.docker.images[kind as keyof DockerConfig["images"]];
-    const target = BUILD_TARGET[kind];
+  async #imageReady(part: HostPart, dockerKind: string, signal: AbortSignal): Promise<boolean> {
+    const image = this.#dockerConfig[part.architecture].images[dockerKind as DockerKind];
+    const target = BUILD_TARGET[dockerKind];
     if (!image || !target) return false;
     const has = await part.cli.run(["image", "inspect", "--format", "{{.Id}}", image], { timeoutMs: 60_000, signal });
     if (has.exitCode === 0) return false;
     const key = `${part.record.hostId}/${image}`;
     let building = this.#building.get(key);
     if (!building) {
-      building = this.#build(part, image, target, signal).finally(() => this.#building.delete(key));
+      const log = (line: string) => this.#context.log?.(`${part.record.serverName}: ${line}`);
+      building = this.#buildImageOn(part.record, part.cli, image, target, log, signal, part.architecture).finally(() => this.#building.delete(key));
       this.#building.set(key, building);
     }
     await building;
     return true;
   }
 
-  async #build(part: HostPart, image: string, target: string, signal: AbortSignal): Promise<void> {
-    const log = (line: string) => this.#context.log?.(`${part.record.serverName}: ${line}`);
-    await this.#buildImageOn(part.record, part.cli, image, target, log, signal);
-  }
-
-  readonly #buildImageOn: BuildImage = async (record, cli, image, target, log, signal) => {
-    if (this.#options.buildImage) return this.#options.buildImage(record, cli, image, target, log, signal);
+  readonly #buildImageOn: BuildImage = async (record, cli, image, target, log, signal, architecture) => {
+    if (this.#options.buildImage) return this.#options.buildImage(record, cli, image, target, log, signal, architecture);
     await cli.prepare(signal);
-    const code = await runBuildScript(cli, image, target, this.#context.bbUrl?.() ?? null, log, signal);
+    const code = await runBuildScript(cli, image, target, this.#context.bbUrl?.() ?? null, log, signal, undefined, architecture);
     if (code !== 0) throw new Error(`setup/docker/build.sh could not build ${image} on ${record.serverName}: it exited with ${code ?? "a signal"}.`);
   };
 
-  async #hostImageCheck(push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
-    if (typeof this.#config.hostImage === "number") {
-      push("hetzner.image", "Host image", "ok", `Hosts start from snapshot ${this.#config.hostImage}, as the settings say; bb-box builds none.`);
+  async #hostImageCheck(architecture: Architecture, push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
+    const id: CheckId = architecture === "arm" ? "hetzner.arm-image" : "hetzner.image";
+    const name = architecture === "arm" ? "Arm host image" : "Host image";
+    if (typeof this.#config.hostImage === "number" && architecture === "x86") {
+      push(id, name, "ok", `Hosts start from snapshot ${this.#config.hostImage}, as the settings say; bb-box builds none.`);
       return;
     }
-    const snapshots = await this.#hostImages.snapshots(signal).catch((error: unknown) => error as Error);
+    const snapshots = await this.#hostImages.snapshots(signal, architecture).catch((error: unknown) => error as Error);
     if (snapshots instanceof Error) {
-      push("hetzner.image", "Host image", "skipped", `Hetzner Cloud did not list the snapshots: ${snapshots.message}`);
+      push(id, name, "skipped", `Hetzner Cloud did not list the snapshots: ${snapshots.message}`);
       return;
     }
-    const failedAt = await this.#context.storage.get<number>(HOST_IMAGE_FAILED_KEY);
+    const failedAt = await this.#context.storage.get<number>(HOST_IMAGE_FAILED_KEY[architecture]);
     const newest = snapshots[0] ?? null;
     const sizes = snapshots.reduce((sum, each) => sum + (each.compressedSizeGB ?? 0), 0);
     const kept = snapshots.length ? ` ${snapshots.length} kept, ${sizes.toFixed(1)} GB, about ${euros(sizes * SNAPSHOT_EUROS_A_GB_A_MONTH)} a month.` : "";
-    const building = this.#buildingHostImage ? " A new one is being built." : "";
+    const building = this.#buildingHostImage.has(architecture) ? " A new one is being built." : "";
     const failed = failedAt !== undefined ? ` The last build failed at ${new Date(failedAt).toISOString()}; bb-box tries again a day after.` : "";
+    const fix = failedAt !== undefined ? "See BB Box's log for the build's last lines." : null;
     if (!newest) {
-      push("hetzner.image", "Host image", failedAt !== undefined ? "warn" : "ok", `None yet: hosts start from ${this.#config.hostImage} and install Docker and Tailscale, and build each kind's image, as they start.${building}${failed}`, failedAt !== undefined ? "See BB Box's log for the build's last lines." : null);
+      push(id, name, failedAt !== undefined ? "warn" : "ok", `None yet: ${this.#whichHosts(architecture)} start from ${this.#baseImage()} and install Docker and Tailscale, and build each kind's image, as they start.${building}${failed}`, fix);
       return;
     }
     const why = this.#hostImages.whyBuild(newest, this.#now(), await this.#bbApp(signal));
     const days = Math.floor((this.#now() - newest.createdAtMs) / (24 * 3_600_000));
-    push("hetzner.image", "Host image", failedAt !== undefined ? "warn" : "ok", `Hosts start from snapshot ${newest.id}, built ${days} day${days === 1 ? "" : "s"} ago.${kept}${why ? ` A new one is due, as ${why}.` : ""}${building}${failed}`, failedAt !== undefined ? "See BB Box's log for the build's last lines." : null);
+    const whichHosts = this.#whichHosts(architecture);
+    push(id, name, failedAt !== undefined ? "warn" : "ok", `${whichHosts[0]!.toUpperCase()}${whichHosts.slice(1)} start from snapshot ${newest.id}, built ${days} day${days === 1 ? "" : "s"} ago.${kept}${why ? ` A new one is due, as ${why}.` : ""}${building}${failed}`, fix);
+  }
+
+  #whichHosts(architecture: Architecture): string {
+    return this.#architectures.length > 1 ? `${ARCHITECTURE_WORDS[architecture]} hosts` : "hosts";
+  }
+
+  #baseImage(): string {
+    return typeof this.#config.hostImage === "string" ? this.#config.hostImage : "ubuntu-26.04";
   }
 
   async #bbApp(signal?: AbortSignal): Promise<string | null> {
@@ -568,54 +658,60 @@ export class HetznerBackend implements Backend {
     return (await this.#context.images?.bbApp(signal).catch(() => null)) ?? null;
   }
 
-  #buildsHostImages(): boolean {
-    return typeof this.#config.hostImage === "string" && (this.#reach !== null || this.#options.runOnHost !== undefined);
+  #buildsHostImages(architecture: Architecture): boolean {
+    return (typeof this.#config.hostImage === "string" || architecture === "arm") && (this.#reach !== null || this.#options.runOnHost !== undefined);
   }
 
-  async #hostImageForNewHost(signal?: AbortSignal): Promise<{ imageNameOrSnapshotId: string | number; imageLabel: string }> {
-    if (typeof this.#config.hostImage === "number") return { imageNameOrSnapshotId: this.#config.hostImage, imageLabel: this.#config.hostImageLabel };
-    if (!this.#newestHostImage || this.#now() - this.#newestHostImage.at > HOST_IMAGE_CACHE_MS) {
-      const newest = await this.#hostImages.newest(signal).catch(() => null);
-      this.#newestHostImage = { at: this.#now(), image: newest ? { id: newest.id, label: `build-${newest.labels["bbbox-build"] ?? newest.id}` } : null };
+  async #hostImageForNewHost(architecture: Architecture, signal?: AbortSignal): Promise<{ imageNameOrSnapshotId: string | number; imageLabel: string }> {
+    if (typeof this.#config.hostImage === "number" && architecture === "x86") return { imageNameOrSnapshotId: this.#config.hostImage, imageLabel: this.#config.hostImageLabel };
+    const cached = this.#newestHostImage.get(architecture);
+    let image = cached?.image ?? null;
+    if (!cached || this.#now() - cached.at > HOST_IMAGE_CACHE_MS) {
+      const newest = await this.#hostImages.newest(signal, architecture).catch(() => null);
+      image = newest ? { id: newest.id, label: `build-${newest.labels["bbbox-build"] ?? newest.id}` } : null;
+      this.#newestHostImage.set(architecture, { at: this.#now(), image });
     }
-    const image = this.#newestHostImage.image;
-    return image ? { imageNameOrSnapshotId: image.id, imageLabel: image.label } : { imageNameOrSnapshotId: this.#config.hostImage, imageLabel: this.#config.hostImageLabel };
+    return image ? { imageNameOrSnapshotId: image.id, imageLabel: image.label } : { imageNameOrSnapshotId: this.#baseImage(), imageLabel: this.#baseImage() };
   }
 
-  async #hostImageBuildDue(signal?: AbortSignal): Promise<string | null> {
-    if (!this.#buildsHostImages() || this.#buildingHostImage || (this.#reach?.canReach() ?? null) !== null) return null;
-    const failedAt = await this.#context.storage.get<number>(HOST_IMAGE_FAILED_KEY);
+  async #hostImageBuildDue(architecture: Architecture, signal?: AbortSignal): Promise<string | null> {
+    if (!this.#buildsHostImages(architecture) || this.#buildingHostImage.has(architecture) || (this.#reach?.canReach() ?? null) !== null) return null;
+    const failedAt = await this.#context.storage.get<number>(HOST_IMAGE_FAILED_KEY[architecture]);
     if (failedAt !== undefined && this.#now() - failedAt < HOST_IMAGE_RETRY_AFTER_MS) return null;
-    const why = this.#hostImages.whyBuild(await this.#hostImages.newest(signal), this.#now(), await this.#bbApp(signal));
+    const why = this.#hostImages.whyBuild(await this.#hostImages.newest(signal, architecture), this.#now(), await this.#bbApp(signal));
     if (!why) return null;
     const limit = this.#config.monthlyLimitEurosBeforeVat;
     if (limit !== null) {
-      const price = await this.#price(signal).catch(() => null);
-      if (!price || (await this.#spentThisMonth(price)) + HOST_IMAGE_BUILD_HOURS * price.hourly > limit) return null;
+      const price = await this.#price(this.#typeOf(architecture), signal).catch(() => null);
+      const spent = await this.#spentThisMonth(signal).catch(() => null);
+      if (!price || spent === null || spent + HOST_IMAGE_BUILD_HOURS * price.hourly > limit) return null;
     }
     return why;
   }
 
-  buildHostImage(why: string, signal?: AbortSignal): Promise<void> {
-    this.#buildingHostImage ??= (async () => {
-      this.#context.log?.(`Building a Hetzner Cloud host image, as ${why}.`);
-      const images = DOCKER_TARGETS.flatMap((kind) => {
-        const image = this.#config.docker.images[kind];
+  buildHostImage(why: string, signal?: AbortSignal, architecture: Architecture = "x86"): Promise<void> {
+    const running = this.#buildingHostImage.get(architecture);
+    if (running) return running;
+    const build = (async () => {
+      this.#context.log?.(`Building a Hetzner Cloud ${ARCHITECTURE_WORDS[architecture]} host image, as ${why}.`);
+      const images = DOCKER_TARGETS[architecture].flatMap((kind) => {
+        const image = this.#dockerConfig[architecture].images[kind];
         return image ? [{ image, target: BUILD_TARGET[kind]! }] : [];
       });
       try {
         await this.#hostImages.build(
           {
             spec: {
-              serverType: this.#config.serverType,
+              serverType: this.#typeOf(architecture),
               location: this.#config.location,
-              imageNameOrSnapshotId: this.#config.hostImage,
-              imageLabel: this.#config.hostImageLabel,
+              imageNameOrSnapshotId: this.#baseImage(),
+              imageLabel: this.#baseImage(),
               sshKeys: this.#reach ? [await this.#reach.hetznerSshKeyId(signal)] : undefined,
               firewalls: this.#reach ? [await this.#reach.firewallId(signal)] : undefined,
               userData: this.#options.userData ?? ((_hostId, serverName) => this.#userData(serverName, signal)),
             },
             images,
+            architecture,
             cliOf: (record) => (this.#options.reachHost ? this.#options.reachHost(record) : this.#reach!.cli(record)),
             run: (record, script, options) => (this.#options.runOnHost ? this.#options.runOnHost(record, script, options) : this.#reach!.run(record, script, options)),
             buildImage: this.#buildImageOn,
@@ -625,24 +721,26 @@ export class HetznerBackend implements Backend {
           },
           signal ?? new AbortController().signal,
         );
-        this.#newestHostImage = null;
-        await this.#hostImages.prune(undefined, signal);
-        await this.#context.storage.delete(HOST_IMAGE_FAILED_KEY);
+        this.#newestHostImage.delete(architecture);
+        await this.#hostImages.prune(undefined, signal, architecture);
+        await this.#context.storage.delete(HOST_IMAGE_FAILED_KEY[architecture]);
       } catch (error) {
-        await this.#context.storage.set(HOST_IMAGE_FAILED_KEY, this.#now());
+        await this.#context.storage.set(HOST_IMAGE_FAILED_KEY[architecture], this.#now());
         throw error;
       }
-    })().finally(() => (this.#buildingHostImage = null));
-    return this.#buildingHostImage;
+    })().finally(() => this.#buildingHostImage.delete(architecture));
+    this.#buildingHostImage.set(architecture, build);
+    return build;
   }
 
   async #untilDockerAnswers(part: HostPart, signal: AbortSignal | undefined): Promise<void> {
     const within = this.#options.hostAnswersWithinMs ?? PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS;
     const pollMs = this.#options.pollMs ?? 2_000;
     const sleep = this.#options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const probeKind = part.docker.kinds()[0]?.id ?? "linux";
     let last: unknown = null;
     for (let waited = 0; waited <= within; waited += pollMs) {
-      const report = await part.docker.capacity(this.#kinds[0]!.id, { cores: 1, memoryMiB: 1, diskGiB: null }, [], signal).catch((error: unknown) => error);
+      const report = await part.docker.capacity(probeKind, { cores: 1, memoryMiB: 1, diskGiB: null }, [], signal).catch((error: unknown) => error);
       if (!(report instanceof Error) && (report as Capacity).hosts.length && !/did not answer/.test((report as Capacity).message ?? "")) return;
       last = report instanceof Error ? report : (report as Capacity).message;
       await sleep(pollMs, signal);
@@ -678,6 +776,7 @@ export class HetznerBackend implements Backend {
   #partFor(record: HostRecord): HostPart {
     const known = this.#parts.get(record.hostId);
     if (known) return known;
+    const architecture = this.#architectureOfType(record.serverType);
     const context: BackendContext = {
       ...this.#context,
       id: `${this.#context.id}/${record.hostId}`,
@@ -685,11 +784,11 @@ export class HetznerBackend implements Backend {
       machines: undefined,
     };
     const cli = this.#options.reachHost ? this.#options.reachHost(record) : this.#reach!.cli(record);
-    const docker = new DockerBackend({ ...this.#config.docker, host: `hetzner://${record.serverName}`, machine: null }, context, {
+    const docker = new DockerBackend({ ...this.#dockerConfig[architecture], host: `hetzner://${record.serverName}`, machine: null }, context, {
       ...this.#options.dockerOptions,
       cliReachingAHostAnotherBackendMade: cli,
     });
-    const part = { record, cli, docker };
+    const part = { record, architecture, cli, docker };
     this.#parts.set(record.hostId, part);
     return part;
   }
@@ -716,31 +815,34 @@ export class HetznerBackend implements Backend {
     return part;
   }
 
-
-  async #serverTypeNow(signal?: AbortSignal): Promise<ServerType | null> {
-    this.#serverType ??= await this.#api.serverType(this.#config.serverType, signal);
-    return this.#serverType;
+  async #serverTypeNow(name: string, signal?: AbortSignal): Promise<ServerType | null> {
+    if (!this.#serverTypes.has(name)) this.#serverTypes.set(name, await this.#api.serverType(name, signal));
+    return this.#serverTypes.get(name) ?? null;
   }
 
-  async #price(signal?: AbortSignal): Promise<EurosBeforeVat> {
-    if (this.#prices && this.#now() - this.#prices.at < PRICE_CACHE_MS) return this.#prices.price;
-    const prices = await this.#api.pricesBeforeVat(this.#config.serverType, this.#config.location, signal);
-    if (!prices) throw new Error(`Hetzner Cloud sells no ${this.#config.serverType} in ${this.#config.location}.`);
-    this.#prices = { at: this.#now(), price: serverAndIpv4(prices) };
-    return this.#prices.price;
+  async #price(serverType: string, signal?: AbortSignal): Promise<EurosBeforeVat> {
+    const cached = this.#prices.get(serverType);
+    if (cached && this.#now() - cached.at < PRICE_CACHE_MS) return cached.price;
+    const prices = await this.#api.pricesBeforeVat(serverType, this.#config.location, signal);
+    if (!prices) throw new Error(`Hetzner Cloud sells no ${serverType} in ${this.#config.location}.`);
+    const price = serverAndIpv4(prices);
+    this.#prices.set(serverType, { at: this.#now(), price });
+    return price;
   }
 
-  async #spentThisMonth(price: EurosBeforeVat): Promise<number> {
+  async #spentThisMonth(signal?: AbortSignal): Promise<number> {
     const now = this.#now();
-    const ended = await Promise.all((await this.#context.storage.list(BILLED_PREFIX)).map((key) => this.#context.storage.get<BilledServer>(key)));
+    const ended = (await Promise.all((await this.#context.storage.list(BILLED_PREFIX)).map((key) => this.#context.storage.get<BilledServerOfType>(key)))).filter((each): each is BilledServerOfType => each !== undefined);
     const records = [...(await this.hostRecords.records()), ...(await this.#hostImages.builds.records())];
-    const running = records.filter((record) => record.serverId !== null || record.state === "ready").map((record) => ({ hostId: record.hostId, startedAtMs: record.claimedAtMs, endedAtMs: null }));
-    return spentThisMonth([...ended.filter((each): each is BilledServer => each !== undefined), ...running], price, now);
+    const running: BilledServerOfType[] = records.filter((record) => record.serverId !== null || record.state === "ready").map((record) => ({ hostId: record.hostId, startedAtMs: record.claimedAtMs, endedAtMs: null, serverType: record.serverType }));
+    let sum = 0;
+    for (const server of [...ended, ...running]) sum += spentThisMonth([server], await this.#price(server.serverType ?? this.#config.serverType, signal), now);
+    return sum;
   }
 
   async #billEnded(record: HostRecord, goneAtMs: number): Promise<void> {
     if (record.serverId === null) return;
-    await this.#context.storage.set(BILLED_PREFIX + record.hostId, { hostId: record.hostId, startedAtMs: record.claimedAtMs, endedAtMs: goneAtMs } satisfies BilledServer);
+    await this.#context.storage.set(BILLED_PREFIX + record.hostId, { hostId: record.hostId, startedAtMs: record.claimedAtMs, endedAtMs: goneAtMs, serverType: record.serverType } satisfies BilledServerOfType);
     const before = startOfMonthUtc(startOfMonthUtc(goneAtMs) - 1);
     for (const key of await this.#context.storage.list(BILLED_PREFIX)) {
       const each = await this.#context.storage.get<BilledServer>(key);

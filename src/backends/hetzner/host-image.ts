@@ -12,6 +12,13 @@ export const HOST_IMAGE_ROLE = "host-image";
 export const BUILD_LABEL = "bbbox-build";
 export const SETUP_LABEL = "bbbox-setup";
 export const APP_LABEL = "bbbox-app";
+export const ARCH_LABEL = "bbbox-arch";
+
+export type Architecture = "x86" | "arm";
+
+export function isArchitecture(snapshotArch: string | undefined, architecture: Architecture): boolean {
+  return (snapshotArch ?? "x86") === architecture;
+}
 export const KEPT_HOST_IMAGES = 2;
 export const BUILD_ABANDONED_AFTER_MS = 3 * 3_600_000;
 export const HOST_IMAGE_REBUILT_AFTER_MS = 7 * 24 * 3_600_000;
@@ -19,7 +26,7 @@ const DOCKER_ANSWERS_WITHIN_MS = 15 * 60_000;
 const DOCKER_POLL_MS = 5_000;
 const SHUTDOWN_WITHIN_MS = 3 * 60_000;
 
-export type BuildImage = (host: HostRecord, cli: DockerCli, image: string, target: string, log: (line: string) => void, signal: AbortSignal) => Promise<void>;
+export type BuildImage = (host: HostRecord, cli: DockerCli, image: string, target: string, log: (line: string) => void, signal: AbortSignal, architecture: Architecture) => Promise<void>;
 
 export function setupFingerprint(setup = setupDir()): string {
   const hash = createHash("sha256");
@@ -39,9 +46,9 @@ export function appLabel(appSha256: string | null): string | null {
   return appSha256 ? appSha256.slice(0, 16) : null;
 }
 
-export function runBuildScript(cli: DockerCli, image: string, target: string, bbUrl: string | null, log: (line: string) => void, signal: AbortSignal, setup = setupDir()): Promise<number | null> {
+export function runBuildScript(cli: DockerCli, image: string, target: string, bbUrl: string | null, log: (line: string) => void, signal: AbortSignal, setup = setupDir(), architecture: Architecture = "x86"): Promise<number | null> {
   return new Promise((resolve) => {
-    const child = spawn("bash", [join(setup, "docker", "build.sh"), ...(bbUrl ? ["--bb-url", bbUrl] : []), "--tag", image, target], { env: { ...process.env, DOCKER_HOST: cli.host ?? "" }, stdio: ["ignore", "pipe", "pipe"], signal });
+    const child = spawn("bash", [join(setup, "docker", "build.sh"), ...(bbUrl ? ["--bb-url", bbUrl] : []), ...(architecture === "arm" ? ["--arch", "arm64"] : []), "--tag", image, target], { env: { ...process.env, DOCKER_HOST: cli.host ?? "" }, stdio: ["ignore", "pipe", "pipe"], signal });
     let rest = "";
     const read = (chunk: Buffer) => {
       const lines = (rest + chunk.toString("utf8")).split(/\r?\n|\r/);
@@ -91,13 +98,13 @@ export class HostImages {
     return this.#fingerprint();
   }
 
-  async snapshots(signal?: AbortSignal): Promise<HetznerImage[]> {
+  async snapshots(signal?: AbortSignal, architecture: Architecture = "x86"): Promise<HetznerImage[]> {
     const all = await this.#api.snapshots({ ...this.#installLabels, [LABEL.role]: HOST_IMAGE_ROLE }, signal);
-    return all.filter((each) => each.status === "available").sort((a, b) => b.createdAtMs - a.createdAtMs);
+    return all.filter((each) => each.status === "available" && isArchitecture(each.labels[ARCH_LABEL], architecture)).sort((a, b) => b.createdAtMs - a.createdAtMs);
   }
 
-  async newest(signal?: AbortSignal): Promise<HetznerImage | null> {
-    return (await this.snapshots(signal))[0] ?? null;
+  async newest(signal?: AbortSignal, architecture: Architecture = "x86"): Promise<HetznerImage | null> {
+    return (await this.snapshots(signal, architecture))[0] ?? null;
   }
 
   whyBuild(newest: HetznerImage | null, nowMs: number, appSha256: string | null = null): string | null {
@@ -116,6 +123,7 @@ export class HostImages {
       cliOf: (record: HostRecord) => DockerCli;
       run: (record: HostRecord, script: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<{ exitCode: number | null; stderr: string }>;
       buildImage: BuildImage;
+      architecture?: Architecture;
       appSha256: string | null;
       log: (line: string) => void;
       sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -129,7 +137,7 @@ export class HostImages {
       await this.#untilDockerAnswers(record, cli, input.sleep, signal);
       for (const { image, target } of input.images) {
         input.log(`building ${image} on ${record.serverName}`);
-        await input.buildImage(record, cli, image, target, input.log, signal);
+        await input.buildImage(record, cli, image, target, input.log, signal, input.architecture ?? "x86");
       }
       const prepared = await input.run(record, PREPARE_FOR_SNAPSHOT, { timeoutMs: 600_000, signal });
       if (prepared.exitCode !== 0) throw new Error(`${record.serverName} could not be made ready for its snapshot: ${prepared.stderr.trim().split("\n").pop() || `exit code ${prepared.exitCode}`}`);
@@ -139,7 +147,7 @@ export class HostImages {
         record.serverId!,
         {
           description: `bb-box host image ${record.hostId}`,
-          labels: { ...this.#installLabels, [LABEL.role]: HOST_IMAGE_ROLE, [BUILD_LABEL]: record.hostId, [SETUP_LABEL]: fingerprint, ...(appLabel(input.appSha256) ? { [APP_LABEL]: appLabel(input.appSha256)! } : {}) },
+          labels: { ...this.#installLabels, [LABEL.role]: HOST_IMAGE_ROLE, [BUILD_LABEL]: record.hostId, [SETUP_LABEL]: fingerprint, [ARCH_LABEL]: input.architecture ?? "x86", ...(appLabel(input.appSha256) ? { [APP_LABEL]: appLabel(input.appSha256)! } : {}) },
         },
         signal,
       );
@@ -150,9 +158,9 @@ export class HostImages {
     }
   }
 
-  async prune(keep = KEPT_HOST_IMAGES, signal?: AbortSignal): Promise<number[]> {
+  async prune(keep = KEPT_HOST_IMAGES, signal?: AbortSignal, architecture: Architecture = "x86"): Promise<number[]> {
     const deleted: number[] = [];
-    for (const old of (await this.snapshots(signal)).slice(keep)) {
+    for (const old of (await this.snapshots(signal, architecture)).slice(keep)) {
       await this.#api.deleteImage(old.id, signal);
       deleted.push(old.id);
     }

@@ -53,7 +53,7 @@ test("a host image is built on a server of its own from the base image, with eve
   assert.equal(api.shutdownsAsked, 1);
   assert.equal(api.servers.size, 0, "the build server is gone");
   const [snapshot] = api.images.values();
-  assert.deepEqual(snapshot!.labels, { "bbbox-install": "test", "bbbox-role": "host-image", "bbbox-build": buildServer!.labels["bbbox-host"], "bbbox-setup": "fp1" });
+  assert.deepEqual(snapshot!.labels, { "bbbox-install": "test", "bbbox-role": "host-image", "bbbox-build": buildServer!.labels["bbbox-host"], "bbbox-setup": "fp1", "bbbox-arch": "x86" });
   assert.deepEqual(await hetzner.hostRecords.records(), []);
   const guest = await hetzner.acquire(box(), null, hooks, signal());
   const host = [...api.servers.values()].find((each) => each.name === guest.host)!;
