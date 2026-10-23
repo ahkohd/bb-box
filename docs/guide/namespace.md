@@ -1,30 +1,34 @@
-# Mac boxes on Namespace
+# Mac and Linux boxes on Namespace
 
-Namespace rents Macs by the minute. With a Namespace backend, each Mac box is a Mac of its own that BB Box makes in Namespace when a thread asks for one, and destroys when the box is released. You need no Mac of your own.
+Namespace rents Macs and Linux machines by the minute. With a Namespace backend, each box is a machine of its own that BB Box makes in Namespace when a thread asks for one, and destroys when the box is released. You need no Mac or server of your own.
 
 This page sets it up from a new Namespace workspace. It was first done on 22 October 2026.
 
 ## What it costs
 
-Namespace bills a Mac for every minute it exists, from when BB Box makes it until BB Box destroys it. Nothing is billed while you have no Mac boxes.
+Namespace bills a machine for every minute it exists, from when BB Box makes it until BB Box destroys it. Nothing is billed while you have no boxes there.
 
 Namespace's prepaid prices on 22 October 2026, excluding tax:
 
 | A box of | A minute | An hour |
 | --- | --- | --- |
-| 4 vCPU, 7 GB | $0.04 | $2.40 |
-| 6 vCPU, 14 GB | $0.06 | $3.60 |
+| Mac, 4 vCPU, 7 GB | $0.04 | $2.40 |
+| Mac, 6 vCPU, 14 GB | $0.06 | $3.60 |
+| Linux, 2 vCPU, 4 GB | $0.002 | $0.12 |
+| Linux, 4 vCPU, 8 GB | $0.004 | $0.24 |
 
-Larger Macs cost more: see Namespace's pricing page. Minutes beyond what you prepaid cost half as much again.
+Larger machines cost more: see Namespace's pricing page. Minutes beyond what you prepaid cost half as much again.
 
-BB Box gives each box the smallest Mac Namespace offers that has at least the cores, memory and disk the box's size asks for. Namespace's Macs come in fixed shapes, so a box can have more than it asked for, and you pay for the Mac it gets.
+BB Box gives each box the smallest machine Namespace offers that has at least the cores and memory the box's size asks for, and for a Mac its disk. Namespace's machines come in fixed shapes, so a box can have more than it asked for, and you pay for the machine it gets.
+
+Linux boxes also need BB Box's Linux images. BB Box builds each in a Linux machine of 8 vCPU and 16 GB, about 3 minutes for the Linux image and 7 for a desktop's, and keeps it in the workspace's container registry. It builds an image when a box first needs it, and again, while boxes use it, when BB Box's image scripts or BB's app change, or after a week.
 
 ### What your plan allows
 
 Your Namespace plan sets 2 limits that matter here:
 
 - **How long a Mac can live**: 3 hours on Developer, 5 on Team, up to 24 on Business. A box ends then, whatever it is doing. Its thread hears an hour before, and the Box panel shows when it ends.
-- **How many Mac cores you can have at once**: 12 on Developer. Namespace's trial allowed 6, which is one box of 6 vCPU. When you have as many as your plan allows, a thread that asks for another Mac box is told there is no room.
+- **How many Mac cores you can have at once**: 12 on Developer. Namespace's trial allowed 6, which is one box of 6 vCPU. When you have as many as your plan allows, a thread that asks for another Mac box is told there is no room. Linux machines have a limit of their own, 32 cores on the trial.
 
 BB Box also has its own limit, **Most machines**, which is 2 by default.
 
@@ -90,6 +94,7 @@ Under **Kinds**, turn on:
 
 - **macOS**, for Mac boxes you use through a terminal
 - **macOS desktop**, for Mac boxes whose desktop you can watch and use
+- **Linux**, **Linux desktop** and **Linux desktop on Wayland**, for Linux boxes, if you want them from Namespace too
 
 ## Check it works
 
@@ -97,13 +102,13 @@ Under **Kinds**, turn on:
 bb box doctor
 ```
 
-The doctor checks that Namespace accepts the token, and lists the Macs BB Box has there, each with when it ends. If you turned the tailnet on, it checks the tailnet too.
+The doctor checks that Namespace accepts the token, lists the machines BB Box has there, each with when it ends, and says when each Linux image was built. If you turned the tailnet on, it checks the tailnet too.
 
-Then make a Mac box from the Box panel, or ask an agent to.
+Then make a box from the Box panel, or ask an agent to.
 
-## What a box is like
+## What a Mac box is like
 
-A box is a Mac virtual machine on Apple silicon, with macOS 26. You use it as `runner`, who is an administrator and can use `sudo`. Xcode and Homebrew are installed.
+A Mac box is a Mac virtual machine on Apple silicon, with macOS 26. You use it as `runner`, who is an administrator and can use `sudo`. Xcode and Homebrew are installed.
 
 A Mac is ready about 20 seconds after BB Box asks for it. BB Box then gets it ready for its kind:
 
@@ -114,9 +119,19 @@ When the box is released, BB Box takes it off the tailnet and destroys the Mac. 
 
 A Mac cannot outlive your plan's limit. BB Box keeps each Mac's end an hour ahead while its box is held, up to that limit, so a Mac that BB Box loses track of ends within the hour.
 
+## What a Linux box is like
+
+A Linux box is BB Box's own Linux image, with Ubuntu, as on any Docker host, in a container on a Linux machine of its own. You use it as `box`, who can use `sudo`, and it has Docker of its own. Desktops have the same apps as on other backends.
+
+Once its kind's image is built, a Linux box is ready in about 25 seconds, and a desktop in about 35: the machine starts in a few seconds, and pulling the image from the workspace's registry takes most of the rest. The first box of a kind also waits for its image to be built.
+
+BB Box reaches the machine through Namespace's SSH gateway, and the box's commands run with `docker exec` through it. With the tailnet on, the machine joins the tailnet, as a Mac does, and the box reaches BB through it.
+
+A Linux box ends at your plan's limit, as a Mac does, and is destroyed when it is released.
+
 ## Check that nothing is left running
 
-BB Box labels every Mac it makes. To list every Mac in the workspace:
+BB Box labels every machine it makes. To list every machine in the workspace:
 
 ```sh
 nsc list --all
@@ -124,13 +139,15 @@ nsc list --all
 
 Without `--all`, `nsc list` leaves out machines made through the API, which is how BB Box makes them.
 
-Each Mac listed should be a box in BB Box's Boxes page. BB Box checks its backends every few minutes, and destroys a Mac whose box has gone once BB says the box's thread has ended. `bb box doctor` lists any Mac no box claims. If one stays, destroy it with `nsc destroy` followed by its ID.
+Each machine listed should be a box in BB Box's Boxes page, or, for at most an hour, a machine building a Linux image, with the label `bbbox-role=image-build`. BB Box checks its backends every few minutes, and destroys a machine whose box has gone once BB says the box's thread has ended. `bb box doctor` lists any machine no box claims. If one stays, destroy it with `nsc destroy` followed by its ID.
 
-With the tailnet on, the Macs show in Tailscale's admin console, under **Machines**, with the tag `tag:bb-box`. BB Box removes any it no longer has within 15 minutes.
+The workspace's container registry keeps BB Box's Linux images, under `bbbox/`. They cost nothing but their storage.
+
+With the tailnet on, the machines show in Tailscale's admin console, under **Machines**, with the tag `tag:bb-box`. BB Box removes any it no longer has within 15 minutes.
 
 ## Turn it off
 
-1. Release the Mac boxes.
+1. Release the boxes on Namespace.
 2. Turn the Namespace backend off in BB Box's settings. Boxes it already has keep working until they are released.
 3. Check that `nsc list --all` lists nothing of BB Box's.
 4. Revoke the token. `nsc token list` shows its ID:
@@ -139,4 +156,4 @@ With the tailnet on, the Macs show in Tailscale's admin console, under **Machine
    nsc token revoke --token_id <ID>
    ```
 
-Once the token is revoked, BB Box cannot make Macs, and Namespace bills for nothing more.
+Once the token is revoked, BB Box cannot make machines, and Namespace bills for nothing more.

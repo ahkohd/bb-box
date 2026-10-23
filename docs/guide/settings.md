@@ -38,7 +38,7 @@ Select **Set up** on the row. Its settings open below it. Each backend needs dif
 - [Docker](../../setup/docker/README.md), and [Docker in WSL on a Windows PC](../../setup/docker-wsl/README.md)
 - [Tart](../../setup/tart/README.md)
 - [Hetzner Cloud](hetzner.md), for Docker hosts rented by the hour
-- [Namespace](namespace.md), for Macs rented by the minute
+- [Namespace](namespace.md), for Macs and Linux machines rented by the minute
 
 Every setting is also in the [configuration reference](../reference/configuration.md).
 
