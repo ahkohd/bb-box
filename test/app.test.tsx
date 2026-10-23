@@ -4490,8 +4490,7 @@ test("on the Boxes page, the search narrows the list, says when nothing matches,
   // The tab counts stay totals.
   expect(list.getByRole("tab", { name: "Threads 1" })).toBeTruthy();
   let menu = await openMenu(list.getByRole("button", { name: "Filters" }));
-  expect(within(menu).queryByText("Provider")).toBeNull();
-  expect(within(menu).queryByText("System")).toBeNull();
+  expect(within(menu).getAllByText(/^(System|Tags|Provider|State)$/).map((node) => node.textContent)).toEqual(["System", "Tags", "Provider", "State"]);
   fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /^Stopped/ }));
   expect(rowNames()).toEqual(["swift-fox"]);
   fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /^Stopped/ }));
@@ -4573,8 +4572,8 @@ test("on the Boxes page, the Filters menu lists the tags under one Tags heading,
   await list.findByText("linux-vm");
   const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
   const menu = await openMenu(list.getByRole("button", { name: "Filters" }));
-  expect(within(menu).queryByText(/^(System|Form|Has)$/)).toBeNull();
-  expect(within(menu).getAllByText(/^(Tags|Provider|State)$/).map((node) => node.textContent)).toEqual(["Tags", "Provider"]);
+  expect(within(menu).queryByText(/^(Form|Has)$/)).toBeNull();
+  expect(within(menu).getAllByText(/^(System|Tags|Provider|State)$/).map((node) => node.textContent)).toEqual(["System", "Tags", "Provider"]);
   expect(within(menu).queryByRole("menuitem", { name: "Clear filters" })).toBeNull();
   expect(within(menu).getAllByRole("menuitemcheckbox").map((option) => option.textContent)).toEqual([
     "Linux",
@@ -4609,6 +4608,18 @@ test("on the Boxes page, the Filters menu lists the tags under one Tags heading,
   await waitFor(() => expect(rowNames()).toHaveLength(4));
   fireEvent.click(within(again).getByRole("menuitemcheckbox", { name: "Proxmox" }));
   await waitFor(() => expect(rowNames()).toEqual(["linux-lxc", "linux-vm"]));
+});
+
+test("on the Boxes page, a value every listed box shares is still listed under System, Tags and Provider; State shows only when the states differ", async () => {
+  const macs = [
+    tagged("box_s1", "mac-one", { os: "macos", form: "VM", arch: "arm64", backendLabel: "Tart on studio", provider: "Tart" }),
+    tagged("box_s2", "mac-two", { os: "macos", form: "VM", arch: "arm64", backendLabel: "Tart on studio", provider: "Tart" }),
+  ];
+  const list = boxesPage(server(macs).handlers);
+  await list.findByText("mac-one");
+  const menu = await openMenu(list.getByRole("button", { name: "Filters" }));
+  expect(within(menu).getAllByText(/^(System|Tags|Provider|State)$/).map((node) => node.textContent)).toEqual(["System", "Tags", "Provider"]);
+  expect(within(menu).getAllByRole("menuitemcheckbox").map((option) => option.textContent)).toEqual(["macOS", "VM", "arm64", "Tart"]);
 });
 
 test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss", async () => {
