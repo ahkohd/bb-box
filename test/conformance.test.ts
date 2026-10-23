@@ -4,6 +4,7 @@
 // fake Docker host, and against the microsandbox backend on a fake msb host.
 
 import { DockerBackend } from "../src/backends/docker/backend.ts";
+import { DockerCli } from "../src/backends/docker/cli.ts";
 import { MsbBackend } from "../src/backends/microsandbox/backend.ts";
 import { NamespaceBackend } from "../src/backends/namespace/backend.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
@@ -198,7 +199,16 @@ await conformance({
   timeoutMs: 20_000,
 });
 
-const namespace = new FakeNamespace();
+const namespace = new FakeNamespace({ maxCores: 64 });
+const namespaceDockerHosts = new Map<string, DockerCli>();
+const namespaceDocker = (instance: string): DockerCli => {
+  let cli = namespaceDockerHosts.get(instance);
+  if (!cli) {
+    cli = new DockerCli(`unix:///run/bb-box/namespace/${instance}.sock`, fakeDockerHost({ name: instance, cpus: 4, memoryMiB: 16 * 1024 }).binary, async () => {});
+    namespaceDockerHosts.set(instance, cli);
+  }
+  return cli;
+};
 await conformance({
   name: "Namespace on a fake API",
   storage: new MemoryStorage(),
@@ -206,15 +216,28 @@ await conformance({
     new NamespaceBackend(
       { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 4, longestLifeHours: 4, largestMachine: null },
       testContext(storage, installId),
-      { fetch: namespace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, desktopScript: "cat >/dev/null", cuaScript: ":" },
+      {
+        fetch: namespace.fetch,
+        sshBinary: FAKE_SSH_BINARY,
+        sleep: async () => {},
+        readyTimeoutMs: 20_000,
+        desktopScript: "cat >/dev/null",
+        cuaScript: ":",
+        setupArchive: async () => Buffer.from("setup"),
+        linuxImageScript: (target, key) => `cat >/dev/null; echo nscr.io/ws/bbbox/${target}:${key}`,
+        linuxPullScript: () => ":",
+        dockerCli: namespaceDocker,
+        dockerOptions: { readyTimeoutMs: 20_000, selkiesLauncher: "/bin/sh" },
+      },
     ),
   skip: {
-    arch: "the fake ssh runs commands on the test machine",
-    display: "the macos kind has no desktop yet",
-    "computer-use": "the macos kind has no desktop yet",
+    arch: "the fake ssh and the fake docker run commands on the test machine",
+    docker: "the fake docker runs commands on the test machine",
+    display: "the fake ssh and the fake Docker host have no desktop to stream",
+    "computer-use": "the fake Mac and the fake container have no computer-use driver",
     "desktop-session": "the fake ssh runs commands on the test machine, which has no launchctl",
-    size: "the fake ssh runs commands on the test machine",
-    images: "Namespace's machines start from its own macOS images",
+    size: "the fake ssh and the fake docker run commands on the test machine",
+    images: "Namespace's Macs start from its own macOS images, and its Linux boxes from images bb-box builds into the workspace's registry, which test/namespace-linux-images.test.ts checks",
     "exact-size": "Namespace's Macs come only in fixed shapes, so a box gets the smallest with at least its cores and memory",
   },
   timeoutMs: 20_000,

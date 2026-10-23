@@ -86,7 +86,7 @@ Projects' images, by name (049).
 | [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
 | [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
 | [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu, linux-arm64, linux-arm64-desktop-cpu |
-| [`namespace`](#namespace) | Namespace | macos, macos-desktop |
+| [`namespace`](#namespace) | Namespace | macos, macos-desktop, linux, linux-desktop-cpu, linux-desktop-wayland-cpu |
 
 ### proxmox-lxc
 
@@ -260,7 +260,7 @@ Setup: [docs/guide/hetzner.md](../../docs/guide/hetzner.md).
 
 ### namespace
 
-Namespace: Macs rented by the minute from Namespace, one machine for each box, ended when the box is released or at the plan's longest life.
+Namespace: Macs and Linux machines rented by the minute from Namespace, one machine for each box, ended when the box is released or at the plan's longest life.
 
 Setup: [docs/guide/namespace.md](../../docs/guide/namespace.md).
 

@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { setupDir } from "../setup-dir.ts";
 import type { DockerCli } from "../docker/cli.ts";
+import { hashDockerSetup } from "../docker/setup-hash.ts";
 import type { Hetzner, HetznerImage, Labels } from "./api.ts";
 import { hostSetupScript } from "./cloud-init.ts";
 import { LABEL, type HetznerHosts, type HostRecord, type HostSpec } from "./hosts.ts";
@@ -29,17 +29,7 @@ const SHUTDOWN_WITHIN_MS = 3 * 60_000;
 export type BuildImage = (host: HostRecord, cli: DockerCli, image: string, target: string, log: (line: string) => void, signal: AbortSignal, architecture: Architecture) => Promise<void>;
 
 export function setupFingerprint(setup = setupDir()): string {
-  const hash = createHash("sha256");
-  const walk = (dir: string): string[] =>
-    readdirSync(dir)
-      .sort()
-      .flatMap((name) => {
-        const path = join(dir, name);
-        return statSync(path).isDirectory() ? walk(path) : [path];
-      });
-  for (const path of walk(join(setup, "docker"))) hash.update(relative(setup, path)).update("\0").update(readFileSync(path)).update("\0");
-  hash.update(hostSetupScript({ serverName: "host", joinsTailnet: true }));
-  return hash.digest("hex").slice(0, 16);
+  return hashDockerSetup(createHash("sha256"), setup).update(hostSetupScript({ serverName: "host", joinsTailnet: true })).digest("hex").slice(0, 16);
 }
 
 export function appLabel(appSha256: string | null): string | null {
