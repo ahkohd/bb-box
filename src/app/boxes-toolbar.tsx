@@ -74,6 +74,7 @@ export function SearchRow({
         key={`${key}:${value}`}
         checked={checked}
         disabled={!counts[key][value] && !checked}
+        className="whitespace-nowrap pr-10"
         onSelect={(event) => event.preventDefault()}
         onCheckedChange={(on) => toggle(key, value, on === true)}
       >
@@ -130,7 +131,7 @@ export function SearchRow({
               <Icon name="FilterHorizontal" aria-hidden />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-40" mobileTitle="Filters">
+          <DropdownMenuContent align="end" className="w-max min-w-56 max-w-80" mobileTitle="Filters">
             {groups.map((items, index) => (
               <div key={index}>
                 {index ? <DropdownMenuSeparator /> : null}
