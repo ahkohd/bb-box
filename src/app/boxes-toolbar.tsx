@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { filtering, NO_FILTERS, SORT_WORDS, TAG_GROUP_LABELS, TAG_GROUPS, type Filters, type Sort, type SortKey, type TagCounts, type TagGroup } from "./boxes-filter.ts";
+import { filtering, FLAT_TAG_GROUPS, NO_FILTERS, SORT_WORDS, TAG_GROUP_LABELS, type Filters, type Sort, type SortKey, type TagCounts, type TagGroup } from "./boxes-filter.ts";
 
 export interface TabSpec<T extends string> {
   readonly id: T;
@@ -67,30 +67,30 @@ export function SearchRow({
     const current = filters[key];
     onFilters({ ...filters, [key]: on ? [...current, value] : current.filter((item) => item !== value) });
   };
-  const group = (key: TagGroup): ReactNode =>
-    split.has(key) || filters[key].length ? (
+  const item = (key: TagGroup, value: string) => {
+    const checked = filters[key].includes(value);
+    return (
+      <DropdownMenuCheckboxItem
+        key={`${key}:${value}`}
+        checked={checked}
+        disabled={!counts[key][value] && !checked}
+        onSelect={(event) => event.preventDefault()}
+        onCheckedChange={(on) => toggle(key, value, on === true)}
+      >
+        {value}
+      </DropdownMenuCheckboxItem>
+    );
+  };
+  const listed = (key: TagGroup) => split.has(key) || filters[key].length > 0;
+  const tags = FLAT_TAG_GROUPS.filter(listed).flatMap((key) => offered[key].map((value) => item(key, value)));
+  const headed = (key: TagGroup): ReactNode =>
+    listed(key) ? (
       <>
         <DropdownMenuLabel className="font-normal text-subtle-foreground">{TAG_GROUP_LABELS[key]}</DropdownMenuLabel>
-        {offered[key].map((value) => {
-          const checked = filters[key].includes(value);
-          const count = counts[key][value] ?? 0;
-          return (
-            <DropdownMenuCheckboxItem
-              key={value}
-              checked={checked}
-              disabled={!count && !checked}
-              className="justify-between gap-4"
-              onSelect={(event) => event.preventDefault()}
-              onCheckedChange={(on) => toggle(key, value, on === true)}
-            >
-              {value}
-              <span className="text-2xs tabular-nums text-subtle-foreground">{count}</span>
-            </DropdownMenuCheckboxItem>
-          );
-        })}
+        {offered[key].map((value) => item(key, value))}
       </>
     ) : null;
-  const groups = TAG_GROUPS.map(group).filter(Boolean);
+  const groups = [tags.length ? <>{tags}</> : null, headed("providers"), headed("states")].filter(Boolean);
   const sortLabel = `Sort: ${SORT_WORDS[sort.key]}, ${sort.ascending ? "ascending" : "descending"}`;
   return (
     <div className="flex w-full min-w-0 flex-wrap items-center gap-2">

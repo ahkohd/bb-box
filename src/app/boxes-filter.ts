@@ -23,6 +23,8 @@ export type TagGroup = "systems" | "forms" | "has" | "providers" | "states";
 
 export const TAG_GROUPS: readonly TagGroup[] = ["systems", "forms", "has", "providers", "states"];
 
+export const FLAT_TAG_GROUPS: readonly TagGroup[] = ["systems", "forms", "has"];
+
 export const TAG_GROUP_LABELS: Readonly<Record<TagGroup, string>> = { systems: "System", forms: "Form", has: "Has", providers: "Provider", states: "State" };
 
 const TAG_ORDER: Readonly<Partial<Record<TagGroup, readonly string[]>>> = {
