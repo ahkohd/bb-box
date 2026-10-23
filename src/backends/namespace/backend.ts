@@ -205,6 +205,7 @@ export interface NamespaceBackendOptions {
   readonly dockerOptions?: DockerBackendOptions;
   readonly dockerCli?: (instance: string) => DockerCli;
   readonly linuxPullScript?: (ref: string, local: string) => string;
+  readonly linuxTailscaleScript?: string;
 }
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
@@ -255,6 +256,16 @@ export class NamespaceBackend implements Backend {
       answers: (instance, signal) => this.#answers(instance, this.#now() + (options.readyTimeoutMs ?? READY_TIMEOUT_MS), signal),
       run: async (instance, script, stdin, timeoutMs, signal) => new SshTransport((await this.#keys()).ssh, this.#access(instance), "linux").run(script, { stdin, timeoutMs, signal, maxOutputBytes: 1024 * 1024 }),
       bbUrl: () => context.bbUrl?.() ?? null,
+      joinTailnet: async (instance, name, signal) => {
+        const tailnet = context.tailnet?.() ?? null;
+        if (!tailnet) return null;
+        await this.#joinAs(instance, name, tailnet, true, signal);
+        return async () => {
+          await this.#leave(instance);
+          const hostname = this.#tailnetHostname(name);
+          for (const device of await tailnet.devices().catch(() => [])) if (device.hostname === hostname) await tailnet.removeDevice(device.id).catch(() => undefined);
+        };
+      },
       bbApp: async (signal) => (context.bbUrl?.() ? ((await context.images?.bbApp(signal).catch(() => null)) ?? null) : null),
       log: (line) => context.log?.(line),
       ...(options.linuxImageScript ? { buildScript: options.linuxImageScript } : {}),
@@ -610,12 +621,16 @@ export class NamespaceBackend implements Backend {
   }
 
   async #join(instance: string, box: BoxIdentity, tailnet: Tailnet, linux: boolean, signal?: AbortSignal): Promise<void> {
+    await this.#joinAs(instance, box.name, tailnet, linux, signal);
+  }
+
+  async #joinAs(instance: string, name: string, tailnet: Tailnet, linux: boolean, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
     const command = new SshTransport(ssh, this.#access(instance), linux ? "linux" : "macos");
-    const prepared = await command.run(linux ? LINUX_TAILSCALE : MAC_TAILSCALE, { timeoutMs: 180_000, signal });
+    const prepared = await command.run(linux ? (this.#options.linuxTailscaleScript ?? LINUX_TAILSCALE) : MAC_TAILSCALE, { timeoutMs: 180_000, signal });
     if (prepared.exitCode !== 0) throw new Error(`Tailscale did not start on Namespace's machine ${instance}: ${prepared.stderr.trim().slice(-300) || `exit ${prepared.exitCode}`}`);
-    const key = await tailnet.mintKey({ description: `bb-box Namespace ${box.name}` }, signal);
-    const joined = await command.run(joinScript(this.#tailnetHostname(box.name)), { stdin: key.key, timeoutMs: 90_000, signal });
+    const key = await tailnet.mintKey({ description: `bb-box Namespace ${name}` }, signal);
+    const joined = await command.run(joinScript(this.#tailnetHostname(name)), { stdin: key.key, timeoutMs: 90_000, signal });
     if (joined.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not join the tailnet: ${joined.stderr.trim().slice(-300) || `exit ${joined.exitCode}`}`);
   }
 
@@ -679,7 +694,12 @@ export class NamespaceBackend implements Backend {
       const why = await this.linuxImages.whyBuild(target, signal).catch(() => null);
       lines.push(`${target}: built ${days} day${days === 1 ? "" : "s"} ago${why ? `, due again as ${why}` : ""}${building}`);
     }
-    return { id: "namespace.images", name: "Linux images", status: "ok", detail: `In the workspace's registry: ${lines.join("; ")}.`, fix: null };
+    const builders = (await this.#api.list({ [LABELS.install]: this.#context.installId, [LABELS.role]: "image-build" }, signal).catch(() => [])).map((instance) => {
+      const age = instance.createdAt === null ? "" : `, ${Math.round((this.#now() - instance.createdAt) / 60_000)} min old`;
+      return `${instance.id} (${instance.labels["bbbox-target"] ?? "an image"}${age})`;
+    });
+    const building = builders.length ? ` Building now: ${builders.join(", ")}.` : " No build machine is running.";
+    return { id: "namespace.images", name: "Linux images", status: "ok", detail: `In the workspace's registry: ${lines.join("; ")}.${building}`, fix: null };
   }
 
   async #limitsCheck(signal?: AbortSignal): Promise<DoctorCheck> {
