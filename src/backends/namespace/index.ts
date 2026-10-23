@@ -5,7 +5,7 @@ import { NAMESPACE_FIELDS, NAMESPACE_KINDS, parseNamespacePart, type NamespaceCo
 export const namespaceDriver: BackendDriver<NamespaceConfig> = {
   type: "namespace",
   label: "Namespace",
-  description: "Macs rented by the minute from Namespace, one machine for each box, ended when the box is released or at the plan's longest life.",
+  description: "Macs and Linux machines rented by the minute from Namespace, one machine for each box, ended when the box is released or at the plan's longest life.",
   nature: "virtual",
   form: "VM",
   kinds: NAMESPACE_KINDS,

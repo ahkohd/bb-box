@@ -1,0 +1,95 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { NamespaceBackend } from "../src/backends/namespace/backend.ts";
+import { WORKSPACE_FROM_METADATA, linuxImageBuildScript, linuxImageFingerprint, linuxImageKey } from "../src/backends/namespace/linux-images.ts";
+import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
+import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+
+const CONFIG = { token: FAKE_NAMESPACE_TOKEN, region: "us" as const, macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
+
+function setup(options: { failBuild?: boolean; app?: () => string | null } = {}) {
+  fakeSsh();
+  let now = Date.parse("2030-01-01T00:00:00Z");
+  const fake = new FakeNamespace({ now: () => now, lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const dir = mkdtempSync(join(tmpdir(), "ns-images-"));
+  const received = join(dir, "received");
+  const app = options.app ?? (() => "a".repeat(64));
+  const context = { ...testContext(new MemoryStorage(), "inst1"), bbUrl: () => "https://bb.example", images: { bbApp: async () => app() } } as never;
+  const backend = new NamespaceBackend(CONFIG, context, {
+    fetch: fake.fetch,
+    sshBinary: FAKE_SSH_BINARY,
+    sleep: async () => {},
+    readyTimeoutMs: 20_000,
+    now: () => now,
+    setupArchive: async () => Buffer.from("the setup scripts"),
+    linuxImageScript: (target, key, bbUrl) =>
+      options.failBuild
+        ? `cat > ${received}; echo "step 1" >&2; echo "build.sh: no space left" >&2; exit 1`
+        : `cat > ${received}; printf '%s %s\\n' ${target} '${bbUrl}' >> ${received}.calls; echo "nscr.io/ws1/bbbox/${target}:${key}"`,
+  });
+  return { fake, backend, received, advance: (ms: number) => (now += ms) };
+}
+
+test("a Linux image is built once in a Linux instance of its own, from bb-box's setup scripts, pushed to the workspace's registry and recorded, and the instance destroyed", async () => {
+  const { fake, backend, received } = setup();
+  const signal = new AbortController().signal;
+  const [first, second] = await Promise.all([backend.linuxImages.forBox("linux", signal), backend.linuxImages.forBox("linux", signal)]);
+  assert.equal(first.ref, second.ref, "two boxes asking at once share one build");
+  assert.match(first.ref, /^nscr\.io\/ws1\/bbbox\/linux:[0-9a-f]{12}-aaaaaaaaaaaa$/);
+  assert.equal(readFileSync(received, "utf8"), "the setup scripts", "the setup scripts go to the instance on its input");
+  assert.equal(readFileSync(`${received}.calls`, "utf8"), "linux https://bb.example\n");
+  const created = fake.calls.filter((call) => call.method === "CreateInstance");
+  assert.equal(created.length, 1);
+  const instance = [...fake.instances.values()][0]!;
+  assert.equal(instance.shape.os, "linux");
+  assert.deepEqual([instance.shape.virtualCpu, instance.shape.memoryMegabytes], [8, 16384]);
+  assert.deepEqual(instance.labels, { "bbbox-install": "inst1", "bbbox-role": "image-build", "bbbox-target": "linux" });
+  assert.equal(instance.status, "DESTROYED");
+  assert.equal(await backend.linuxImages.whyBuild("linux"), null);
+  await backend.linuxImages.forBox("linux", signal);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 1, "a current image is used as it is");
+});
+
+test("an image is due again when the setup scripts or BB's app change, or after a week, but only if a box used it in the last week; a box waits only for a new setup", async () => {
+  let app = "a".repeat(64);
+  const { fake, backend, advance } = setup({ app: () => app });
+  const signal = new AbortController().signal;
+  await backend.linuxImages.forBox("linux", signal);
+  app = "b".repeat(64);
+  assert.equal(await backend.linuxImages.whyBuild("linux"), "BB's app changed");
+  await backend.linuxImages.forBox("linux", signal);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 1, "a box does not wait for a new app: the old image updates BB's app as it enrols");
+  assert.deepEqual(await backend.linuxImages.due(), [{ target: "linux", why: "BB's app changed" }]);
+  assert.deepEqual(await backend.linuxImages.due().then((due) => due.map((each) => each.target)), ["linux"], "desktops no box used are not built");
+  advance(8 * 24 * 3_600_000);
+  assert.deepEqual(await backend.linuxImages.due(), [], "an image no box used for a week is left as it is");
+  assert.equal(linuxImageKey("abc", null), "abc-noapp");
+  assert.match(linuxImageFingerprint(), /^[0-9a-f]{12}$/);
+});
+
+test("a build that fails destroys its instance and says the build's last lines; build instances are not boxes", async () => {
+  const { fake, backend } = setup({ failBuild: true });
+  await assert.rejects(backend.linuxImages.forBox("desktop", new AbortController().signal), /The desktop image did not build in Namespace's instance \S+: step 1 \/ build\.sh: no space left/);
+  assert.equal([...fake.instances.values()][0]!.status, "DESTROYED");
+  fake.instances.set("building", { ...[...fake.instances.values()][0]!, id: "building", status: "RUNNING" });
+  assert.deepEqual(await backend.held(), [], "a build instance is not a box's guest, so the sweep leaves it to its build");
+  assert.equal((await backend.capacity("macos", { cores: 4, memoryMiB: 8192, diskGiB: null }, [])).hosts[0]?.limits[0]?.used, 0, "nor does it count as a machine");
+});
+
+test("the build script reads the workspace from Namespace's metadata, builds with build.sh and pushes, and prints only the image's name on its output", () => {
+  const script = linuxImageBuildScript("desktop-wayland", "abc-def", "https://bb.example");
+  assert.match(script, /tar -xzf - -C "\$work"/);
+  assert.match(script, /bash "\$work\/setup\/docker\/build\.sh" --bb-url 'https:\/\/bb\.example' --tag "\$ref" desktop-wayland >&2/);
+  assert.match(script, /docker push -q "\$ref" >&2\necho "\$ref"$/);
+});
+
+test("the workspace's ID is the value of tenant_id in Namespace's metadata, without its prefix, not the key's own name", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ns-meta-"));
+  writeFileSync(join(dir, "metadata.json"), '{\n  "instance_id": "abc12",\n  "tenant_id": "tenant_oeigur8bob9pm",\n  "other": "tenant_id"\n}\n');
+  const workspace = execFileSync("sh", ["-c", `${WORKSPACE_FROM_METADATA}\nprintf %s "$workspace"`], { encoding: "utf8", env: { ...process.env, NSC_METADATA_FILE: join(dir, "metadata.json") } });
+  assert.equal(workspace, "oeigur8bob9pm");
+});

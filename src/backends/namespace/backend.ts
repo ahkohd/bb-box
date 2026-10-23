@@ -26,6 +26,10 @@ import {
 } from "../types.ts";
 import { NamespaceApi, NamespaceError, type Instance, type InstanceShape, type NamespaceFetch, type PlatformConcurrency } from "./api.ts";
 import type { MacShape, NamespaceConfig, NamespaceKind } from "./config.ts";
+import { LINUX_IMAGE_TARGETS, LinuxImages, type LinuxImageDeps } from "./linux-images.ts";
+import { NamespaceLinux, isLinuxKind, linuxShapeFor } from "./linux.ts";
+import type { DockerBackendOptions } from "../docker/backend.ts";
+import type { DockerCli } from "../docker/cli.ts";
 
 export const LABELS = {
   install: "bbbox-install",
@@ -34,6 +38,7 @@ export const LABELS = {
   name: "bbbox-name",
   kind: "bbbox-kind",
   created: "bbbox-created",
+  role: "bbbox-role",
 } as const;
 
 export const KEEP_AHEAD_MS = 60 * 60_000;
@@ -43,6 +48,10 @@ const SSH_KEY = "ssh-key";
 const LARGEST_MACHINE = "largest-machine";
 const USAGE_GRANT = '{"resource_type":"tenant/usage","resource_id":"*","actions":["get"]}';
 const LARGEST_ALLOWED = /maximum ([0-9]+)x([0-9]+)/;
+
+function linuxTooBig(size: BoxSize): string {
+  return `Namespace's Linux machines have at most 32 cores and 56 GB of memory, less than the ${size.cores} cores and ${Math.round(size.memoryMiB / MIB_PER_GB)} GiB asked for.`;
+}
 
 function largestWithin(concurrency: PlatformConcurrency): MacShape | null {
   const fits = MACOS_SHAPES.filter((shape) => shape.cores <= concurrency.maxCores && shape.memoryGB * MIB_PER_GB <= concurrency.maxMemoryMiB);
@@ -134,6 +143,20 @@ export const MAC_CUA = [
   'printf \'%s\' "$permissions" | grep -q \'"accessibility": *true\' && printf \'%s\' "$permissions" | grep -q \'"screen_recording": *true\' || { echo "Cua Driver lacks Accessibility or Screen Recording: $permissions" >&2; exit 1; }',
 ].join("\n");
 const STALE_DEVICE_MS = 15 * 60_000;
+const LINUX_READY_TIMEOUT_MS = 30 * 60_000;
+const LINUX_TAILSCALE = [
+  "set -eu",
+  "if ! command -v tailscale >/dev/null; then",
+  '  work=$(mktemp -d); trap \'rm -rf "$work"\' EXIT',
+  '  tarball=$(curl -fsSL "https://pkgs.tailscale.com/stable/?mode=json" | sed -n \'s/.*"amd64": *"\\(tailscale_[^"]*_amd64\\.tgz\\)".*/\\1/p\' | head -n 1)',
+  '  [ -n "$tarball" ] || { echo "Tailscale\'s download page named no amd64 build." >&2; exit 1; }',
+  '  curl -fsSL "https://pkgs.tailscale.com/stable/$tarball" | tar -xzf - -C "$work"',
+  '  install -m 0755 "$work"/tailscale_*/tailscale "$work"/tailscale_*/tailscaled /usr/local/bin/',
+  "fi",
+  "mkdir -p /var/lib/tailscale /var/run/tailscale",
+  'pgrep -x tailscaled >/dev/null || { nohup tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock >/var/log/tailscaled.log 2>&1 </dev/null & }',
+  "for attempt in 1 2 3 4 5 6 7 8 9 10; do [ -S /var/run/tailscale/tailscaled.sock ] && break; sleep 1; done",
+].join("\n");
 const MAC_TAILSCALE = [
   "set -eu",
   'export PATH="$PATH:/opt/homebrew/bin"',
@@ -177,6 +200,11 @@ export interface NamespaceBackendOptions {
   readonly streamSource?: string;
   readonly desktopScript?: string;
   readonly cuaScript?: string;
+  readonly linuxImageScript?: LinuxImageDeps["buildScript"];
+  readonly setupArchive?: () => Promise<Buffer>;
+  readonly dockerOptions?: DockerBackendOptions;
+  readonly dockerCli?: (instance: string) => DockerCli;
+  readonly linuxPullScript?: (ref: string, local: string) => string;
 }
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
@@ -204,6 +232,8 @@ export class NamespaceBackend implements Backend {
   readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly #placing = new Set<string>();
   #ssh: Promise<{ ssh: Ssh; publicKey: string }> | null = null;
+  readonly linuxImages: LinuxImages;
+  readonly #linux: NamespaceLinux;
 
   constructor(config: NamespaceConfig, context: BackendContext, options: NamespaceBackendOptions = {}) {
     if (!config.token) throw new BackendError("unsupported", "Namespace has no API token: set it in BB Box's settings.");
@@ -215,6 +245,32 @@ export class NamespaceBackend implements Backend {
     this.#api = new NamespaceApi({ token: config.token, region: config.region, ...(context.log ? { log: (line: string) => context.log!(line) } : {}), ...(options.fetch ? { fetch: options.fetch } : {}) });
     this.#now = options.now ?? Date.now;
     this.#sleep = options.sleep ?? sleepFor;
+    this.linuxImages = new LinuxImages({
+      api: this.#api,
+      storage: context.storage,
+      labels: { [LABELS.install]: context.installId },
+      uniqueTag: (target) => `bbbox-${context.installId}-image-${target}`.replace(/[^A-Za-z0-9-]+/g, "-"),
+      now: this.#now,
+      publicKey: async () => (await this.#keys()).publicKey,
+      answers: (instance, signal) => this.#answers(instance, this.#now() + (options.readyTimeoutMs ?? READY_TIMEOUT_MS), signal),
+      run: async (instance, script, stdin, timeoutMs, signal) => new SshTransport((await this.#keys()).ssh, this.#access(instance), "linux").run(script, { stdin, timeoutMs, signal, maxOutputBytes: 1024 * 1024 }),
+      bbUrl: () => context.bbUrl?.() ?? null,
+      bbApp: async (signal) => (context.bbUrl?.() ? ((await context.images?.bbApp(signal).catch(() => null)) ?? null) : null),
+      log: (line) => context.log?.(line),
+      ...(options.linuxImageScript ? { buildScript: options.linuxImageScript } : {}),
+      ...(options.setupArchive ? { setupArchive: options.setupArchive } : {}),
+    });
+    this.#linux = new NamespaceLinux({
+      context,
+      images: this.linuxImages,
+      keys: () => this.#keys(),
+      access: (instance) => this.#access(instance),
+      run: async (instance, script, timeoutMs, signal) => new SshTransport((await this.#keys()).ssh, this.#access(instance), "linux").run(script, { timeoutMs, ...(signal ? { signal } : {}) }),
+      shareDir: () => this.#keyFile.shareDir(),
+      ...(options.dockerOptions ? { dockerOptions: options.dockerOptions } : {}),
+      ...(options.dockerCli ? { dockerCli: options.dockerCli } : {}),
+      ...(options.linuxPullScript ? { pullScript: options.linuxPullScript } : {}),
+    });
   }
 
   kinds(): readonly BoxKind[] {
@@ -245,15 +301,17 @@ export class NamespaceBackend implements Backend {
         },
         readyTimeoutMs,
       },
+      ...this.#linux.kinds(this.#options.readyTimeoutMs ?? LINUX_READY_TIMEOUT_MS),
     ];
   }
 
   async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
     this.#kind(kind);
     const host = "Namespace";
-    const { concurrency } = await this.#workspaceLimits(signal);
-    const largest = await this.#largestMachine(concurrency);
-    const shape = macShapeFor(size, largest);
+    if (isLinuxKind(kind) && !linuxShapeFor(size)) return { ok: false, message: linuxTooBig(size), warm: null, hosts: [{ host, ok: false, limits: [] }] };
+    const { concurrency } = isLinuxKind(kind) ? { concurrency: null } : await this.#workspaceLimits(signal);
+    const largest = isLinuxKind(kind) ? null : await this.#largestMachine(concurrency);
+    const shape = isLinuxKind(kind) ? linuxShapeFor(size) : macShapeFor(size, largest);
     if (!shape) return { ok: false, message: this.#tooBig(size, largest), warm: null, hosts: [{ host, ok: false, limits: [] }] };
     const fullFor = concurrency ? workspaceFullFor(shape, concurrency) : null;
     if (fullFor) return { ok: false, message: fullFor, warm: null, hosts: [{ host, ok: false, limits: [{ resource: "cpu", used: concurrency!.usedCores, total: concurrency!.maxCores, reserve: 0, unit: "count" }] }] };
@@ -264,6 +322,7 @@ export class NamespaceBackend implements Backend {
       if (signal?.aborted) throw error;
       return { ok: false, message: `Namespace did not answer: ${error instanceof Error ? error.message : String(error)}`, warm: null, hosts: [{ host, ok: false, limits: [] }] };
     }
+    held = held.filter((instance) => !instance.labels[LABELS.role]);
     const used = held.length + Math.max(this.#placing.size, pending.length);
     const ok = used < this.#config.machines;
     return {
@@ -276,9 +335,10 @@ export class NamespaceBackend implements Backend {
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
-    const largest = await this.#largestMachine((await this.#workspaceLimits(signal)).concurrency);
-    const shape = macShapeFor(box.size, largest);
-    if (!shape) throw new BackendError("no_capacity", this.#tooBig(box.size, largest));
+    const linux = isLinuxKind(kind) ? kind : null;
+    const largest = linux ? null : await this.#largestMachine((await this.#workspaceLimits(signal)).concurrency);
+    const shape = linux ? linuxShapeFor(box.size) : macShapeFor(box.size, largest);
+    if (!shape) throw new BackendError("no_capacity", linux ? linuxTooBig(box.size) : this.#tooBig(box.size, largest));
     const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
       const started = performance.now();
       try {
@@ -288,13 +348,15 @@ export class NamespaceBackend implements Backend {
       }
     };
     const tag = this.#tag(box.boxId);
-    const claimed = (instance: Instance | null): Guest => this.#guest(tag, box.boxId, instance, shape);
+    const claimed = (instance: Instance | null): Guest => this.#guest(linux ? this.#linux.ref(box.boxId) : tag, box.boxId, instance, shape, linux !== null);
     this.#placing.add(box.boxId);
     let made: Instance | null = previous?.data?.instance && typeof previous.data.instance === "string" ? await this.#api.describe(previous.data.instance, signal).catch(() => null) : null;
     try {
       await hooks.claim(claimed(null));
       const { publicKey } = await this.#keys();
-      const instanceShape: InstanceShape = { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } };
+      const instanceShape: InstanceShape = linux
+        ? { os: "linux", arch: "amd64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB }
+        : { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } };
       made = await step("create", () =>
         this.#api.create(
           {
@@ -318,7 +380,12 @@ export class NamespaceBackend implements Backend {
         await step("computer use", () => this.#prepareComputerUse(ready.id, signal));
       }
       const tailnet = this.#context.tailnet?.() ?? null;
-      if (tailnet) await step("tailnet", () => this.#join(ready.id, box, tailnet, signal));
+      if (tailnet) await step("tailnet", () => this.#join(ready.id, box, tailnet, linux !== null, signal));
+      if (linux) {
+        const machine = claimed(ready);
+        const own = (guest: Guest): Guest => ({ ...machine, ...guest, ref: this.#linux.ref(box.boxId), host: ready.continent ?? null, size: machine.size, data: { ...guest.data, box: box.boxId, instance: ready.id }, facts: [...(machine.facts ?? []), ...(guest.facts ?? [])] });
+        return await this.#linux.boxOn(ready.id, shape.memoryGB * MIB_PER_GB, box, linux, hooks, own, step, signal);
+      }
       const guest = claimed(ready);
       await hooks.claim(guest);
       return guest;
@@ -343,6 +410,7 @@ export class NamespaceBackend implements Backend {
     if (instance) {
       if (instance.status === "running" && this.#context.tailnet?.()) await this.#leave(instance.id, signal);
       await this.#api.destroy(instance.id, "bb-box: the box was released", signal);
+      this.#linux.forget(instance.id);
       await this.#forget(instance.id);
     }
     hooks.timing("destroy", Math.round(performance.now() - started));
@@ -371,16 +439,19 @@ export class NamespaceBackend implements Backend {
             }
           : null;
       const shape = instance.shape ? { cores: instance.shape.cores, memoryGB: Math.round(instance.shape.memoryMiB / MIB_PER_GB) } : null;
-      return { ...this.#guest(this.#tag(boxId ?? instance.id), boxId, instance, shape), owner, power: instance.status === "running" ? "running" : instance.status === "suspended" ? "stopped" : "unknown" };
+      return { ...this.#guest(this.#refOf(instance), boxId, instance, shape, isLinuxKind(instance.labels[LABELS.kind] ?? "")), owner, power: instance.status === "running" ? "running" : instance.status === "suspended" ? "stopped" : "unknown" };
     });
   }
 
   async maintain(signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void> {
+    for (const { target, why } of await this.linuxImages.due(signal).catch(() => [])) {
+      void this.linuxImages.build(target, why, new AbortController().signal).catch((error) => this.#context.logError(`build Namespace's ${target} image`, error));
+    }
     const held = await this.#held(signal);
     await this.#removeStaleDevices(held, signal).catch((error) => this.#context.logError("remove Namespace machines' leftover tailnet devices", error));
     for (const instance of held) {
       if (instance.status !== "running" || instance.createdAt === null) continue;
-      if (!recordedGuests?.has(this.#tag(instance.labels[LABELS.box] ?? instance.id))) continue;
+      if (!recordedGuests?.has(this.#refOf(instance))) continue;
       const ends = this.#endsAt(instance.createdAt);
       const ahead = Math.min(KEEP_AHEAD_MS, ends - this.#now());
       if (ahead <= 0 || (instance.deadline ?? 0) - this.#now() >= ahead - 5 * 60_000) continue;
@@ -391,6 +462,7 @@ export class NamespaceBackend implements Backend {
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
     const instance = typeof guest.data?.instance === "string" ? guest.data.instance : null;
     if (!instance) throw new BackendError("gone", `Box ${guest.ref} has no Namespace machine.`);
+    if (isLinuxKind(kind)) return (await this.#linux.part(instance)).transports(guest, kind);
     const { ssh } = await this.#keys();
     const access = this.#access(instance);
     const command = new SshTransport(ssh, access, "macos");
@@ -449,6 +521,7 @@ export class NamespaceBackend implements Backend {
       fix: unclaimed.length ? "bb-box's sweep destroys machines labelled for this install that no box claims." : null,
     });
     checks.push(await this.#limitsCheck(signal));
+    checks.push(await this.#linuxImagesCheck(signal));
     notes.push(`Each machine lives at most ${this.#config.longestLifeHours} hours, the plan's longest life, and its deadline is kept no more than an hour ahead, so a machine bb-box loses track of ends within the hour.`);
     const failing = checks.some((check) => check.status === "fail");
     return { ok: !failing, summary: failing ? "Namespace does not answer to the token." : `Namespace answers; ${held.length} machine${held.length === 1 ? "" : "s"}.`, checks, notes };
@@ -458,7 +531,7 @@ export class NamespaceBackend implements Backend {
     return createdAt + this.#config.longestLifeHours * 3600_000;
   }
 
-  #guest(tag: string, boxId: string | null, instance: Instance | null, shape: { readonly cores: number; readonly memoryGB: number } | null): Guest {
+  #guest(tag: string, boxId: string | null, instance: Instance | null, shape: { readonly cores: number; readonly memoryGB: number } | null, linux = false): Guest {
     const endsAt = instance?.createdAt != null ? this.#endsAt(instance.createdAt) : null;
     const facts: GuestFact[] = [
       ...(endsAt !== null ? [{ label: "Ends", value: `${clock(endsAt)}, the plan's longest life` }] : []),
@@ -468,7 +541,7 @@ export class NamespaceBackend implements Backend {
       ref: tag,
       host: instance?.continent ?? null,
       address: null,
-      size: shape ? { cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, diskGiB: macDiskGiB(shape) } : null,
+      size: shape ? { cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, diskGiB: linux ? null : macDiskGiB(shape) } : null,
       data: { ...(boxId ? { box: boxId } : {}), ...(instance ? { instance: instance.id } : {}) },
       ...(facts.length ? { facts } : {}),
       ...(endsAt !== null ? { endsAt } : {}),
@@ -486,12 +559,17 @@ export class NamespaceBackend implements Backend {
     };
   }
 
+  #refOf(instance: Instance): string {
+    const boxId = instance.labels[LABELS.box] ?? instance.id;
+    return isLinuxKind(instance.labels[LABELS.kind] ?? "") ? this.#linux.ref(boxId) : this.#tag(boxId);
+  }
+
   #tag(boxId: string): string {
     return `bbbox-${this.#context.installId}-${boxId}`.replace(/[^A-Za-z0-9-]+/g, "-").slice(0, 120);
   }
 
-  #held(signal?: AbortSignal): Promise<Instance[]> {
-    return this.#api.list({ [LABELS.install]: this.#context.installId }, signal);
+  async #held(signal?: AbortSignal): Promise<Instance[]> {
+    return (await this.#api.list({ [LABELS.install]: this.#context.installId }, signal)).filter((instance) => !instance.labels[LABELS.role]);
   }
 
   async #find(boxId: string, signal?: AbortSignal): Promise<Instance | null> {
@@ -531,10 +609,10 @@ export class NamespaceBackend implements Backend {
     return { host: this.#api.sshGateway, port: 22, user: instance, hostKeys: [] };
   }
 
-  async #join(instance: string, box: BoxIdentity, tailnet: Tailnet, signal?: AbortSignal): Promise<void> {
+  async #join(instance: string, box: BoxIdentity, tailnet: Tailnet, linux: boolean, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
-    const command = new SshTransport(ssh, this.#access(instance), "macos");
-    const prepared = await command.run(MAC_TAILSCALE, { timeoutMs: 180_000, signal });
+    const command = new SshTransport(ssh, this.#access(instance), linux ? "linux" : "macos");
+    const prepared = await command.run(linux ? LINUX_TAILSCALE : MAC_TAILSCALE, { timeoutMs: 180_000, signal });
     if (prepared.exitCode !== 0) throw new Error(`Tailscale did not start on Namespace's machine ${instance}: ${prepared.stderr.trim().slice(-300) || `exit ${prepared.exitCode}`}`);
     const key = await tailnet.mintKey({ description: `bb-box Namespace ${box.name}` }, signal);
     const joined = await command.run(joinScript(this.#tailnetHostname(box.name)), { stdin: key.key, timeoutMs: 90_000, signal });
@@ -572,7 +650,7 @@ export class NamespaceBackend implements Backend {
   }
 
   #kind(kind: string): NamespaceKind {
-    if (kind !== "macos" && kind !== "macos-desktop") throw new BackendError("unsupported", `Namespace offers macos and macos-desktop boxes, not ${kind}.`);
+    if (kind !== "macos" && kind !== "macos-desktop" && !isLinuxKind(kind)) throw new BackendError("unsupported", `Namespace offers macos, macos-desktop and Linux boxes, not ${kind}.`);
     return kind;
   }
 
@@ -586,6 +664,22 @@ export class NamespaceBackend implements Backend {
     const { ssh } = await this.#keys();
     const prepared = await new SshTransport(ssh, this.#access(instance), "macos").run(this.#options.cuaScript ?? MAC_CUA, { timeoutMs: 300_000, signal });
     if (prepared.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not get Cua Driver ready: ${prepared.stderr.trim().slice(-400) || `exit ${prepared.exitCode}`}`);
+  }
+
+  async #linuxImagesCheck(signal?: AbortSignal): Promise<DoctorCheck> {
+    const lines: string[] = [];
+    for (const target of Object.values(LINUX_IMAGE_TARGETS)) {
+      const record = await this.linuxImages.record(target);
+      const building = this.linuxImages.building(target) ? ", being built now" : "";
+      if (!record) {
+        lines.push(`${target}: none yet, built when a box first needs it${building}`);
+        continue;
+      }
+      const days = Math.floor((this.#now() - record.builtAt) / (24 * 3_600_000));
+      const why = await this.linuxImages.whyBuild(target, signal).catch(() => null);
+      lines.push(`${target}: built ${days} day${days === 1 ? "" : "s"} ago${why ? `, due again as ${why}` : ""}${building}`);
+    }
+    return { id: "namespace.images", name: "Linux images", status: "ok", detail: `In the workspace's registry: ${lines.join("; ")}.`, fix: null };
   }
 
   async #limitsCheck(signal?: AbortSignal): Promise<DoctorCheck> {
