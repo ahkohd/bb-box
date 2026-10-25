@@ -741,7 +741,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
             // The line still shows the clip in this thread.
           }
         }
-        const cut = stills === "keep" ? 0 : Math.max(0, made.recorded - made.clip * times);
+        const cut = plan.cuts.reduce((sum, [from, to]) => sum + (to - from), 0);
         const parts = [
           `a ${made.clip.toFixed(1)} s clip of ${made.recorded.toFixed(1)} s recorded`,
           ...(cut >= 0.5 ? [`${cut.toFixed(1)} s of still stretches cut`] : []),
