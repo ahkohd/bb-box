@@ -15,7 +15,7 @@ import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
-import type { BackendDriver, BoxKind } from "../src/backends/types.ts";
+import { BackendError, type BackendDriver, type BoxKind } from "../src/backends/types.ts";
 import type { BoxPointer } from "../src/transports/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
@@ -469,6 +469,14 @@ test("box_grant grants a program in a Mac's box its permissions, says how to run
   assert.ok(isError(refused));
   assert.match(text(refused), /cannot grant macOS permissions: only Tart's macOS boxes and Macs of the SSH host pool with SIP off can\./);
   assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /macOS permissions/);
+  // A backend's refusal names the box, not its guest.
+  Object.assign(app.backends.get(box.backend)!, {
+    grant: async (guest: { ref: string }) => {
+      throw new BackendError("unsupported", `Only a macOS box has macOS permissions to grant: ${guest.ref} runs Linux.`);
+    },
+  });
+  const named = await tool("box_grant", { box: box.name, program: "/home/box/tool", permissions: ["accessibility"] });
+  assert.equal(text(named).split("\n")[0], `Only a macOS box has macOS permissions to grant: ${box.name} runs Linux.`);
 
   // A backend that grants, as the SSH host pool does for a Mac.
   const grants: { permission: string; client: string; target: string | null }[] = [];
