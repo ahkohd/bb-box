@@ -1877,6 +1877,11 @@ export class TartBackend implements Backend {
       .flatMap((pool) => pool.kinds);
   }
 
+  #agedRetirement(host: TartHost, vm: string, saved: number | null): string {
+    const when = saved === null ? "with no saved time" : `saved ${ageOf(saved)}`;
+    return `Warm VM ${vm} on ${host.name}, ${when}, is retired, as tart-warm-max-hours is ${this.#config.warmMaxHours}.`;
+  }
+
   #tooOld(fields: Readonly<Record<string, string>>): boolean {
     const saved = savedAt(fields);
     return saved === null || Date.now() - saved > this.#config.warmMaxHours * 3_600_000;
@@ -1925,7 +1930,7 @@ export class TartBackend implements Backend {
     const retired = await this.#warm.exclusive(async () => {
       const states = await this.#states(signal);
       const kept = new Map<WarmPool, number>();
-      const out: { host: TartHost; vm: string; os: GuestOs }[] = [];
+      const out: { host: TartHost; vm: string; os: GuestOs; aged: { saved: number | null } | null }[] = [];
       for (const host of this.#on()) {
         const state = states.get(host.name)!;
         if (state instanceof Error) continue;
@@ -1941,14 +1946,18 @@ export class TartBackend implements Backend {
             kept.set(pool, count + 1);
             continue;
           }
-          out.push({ host, vm, os: fields.engine === "qemu" ? "windows" : "macos" });
+          const windows = fields.engine === "qemu";
+          out.push({ host, vm, os: windows ? "windows" : "macos", aged: !windows && this.#tooOld(fields) ? { saved: savedAt(fields) } : null });
         }
       }
       return out;
     });
-    for (const { host, vm, os } of retired) {
+    for (const { host, vm, os, aged } of retired) {
       // Its owner file names no box, so a box that held it meanwhile keeps it.
-      await this.#delete(host, vm, os, null, signal).catch((error) => this.#context.logError("retire a warm VM", error));
+      await this.#delete(host, vm, os, null, signal).then(
+        () => aged && this.#context.log?.(this.#agedRetirement(host, vm, aged.saved)),
+        (error) => this.#context.logError("retire a warm VM", error),
+      );
     }
 
     const short: WarmShortfall[] = [];

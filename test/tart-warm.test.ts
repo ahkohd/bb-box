@@ -285,7 +285,7 @@ function savedAgo(owners: string, owner: (vm: string) => string, vm: string, now
 }
 
 test("a warm VM saved more than tart-warm-max-hours ago, or with no saved time, is retired and replaced", async () => {
-  const { make, warmVms, owners, owner } = setup({ macos: 2 });
+  const { make, warmVms, owners, owner, contexts } = setup({ macos: 2 });
   const backend = make();
   await backend.maintain();
   const [old, unknown] = warmVms();
@@ -296,16 +296,24 @@ test("a warm VM saved more than tart-warm-max-hours ago, or with no saved time, 
   const now = warmVms();
   assert.equal(now.length, 2);
   assert.ok(!now.includes(old!) && !now.includes(unknown!), now.join(", "));
+  const retirements = () => contexts[0]!.logs.filter((line) => line.includes("is retired"));
+  assert.deepEqual(retirements().sort(), [
+    `Warm VM ${old} on mac1, saved 6 h 1 min ago, is retired, as tart-warm-max-hours is 6.`,
+    `Warm VM ${unknown} on mac1, with no saved time, is retired, as tart-warm-max-hours is 6.`,
+  ].sort());
+  await backend.maintain();
+  assert.equal(retirements().length, 2, "an upkeep that retires nothing logs nothing");
 });
 
 test("tart-warm-max-hours sets how long a macOS warm VM is kept", async () => {
-  const { make, warmVms, owners, owner } = setup();
+  const { make, warmVms, owners, owner, contexts } = setup();
   const backend = make("test", { macos: 1 }, { "tart-warm-max-hours": 12 });
   await backend.maintain();
   const [warm] = warmVms();
   savedAgo(owners, owner, warm!, Math.floor(Date.now() / 1000), 7 * 3600);
   await backend.maintain();
   assert.deepEqual(warmVms(), [warm]);
+  assert.deepEqual(contexts[0]!.logs.filter((line) => line.includes("is retired")), []);
 });
 
 test("a claim takes a warm VM whose slot a fill holds: the fill stops for it, as a claim comes before a fill; then the Mac refuses a third", async () => {
