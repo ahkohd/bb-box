@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { HetznerBackend } from "../src/backends/hetzner/backend.ts";
 import { Hetzner } from "../src/backends/hetzner/api.ts";
-import { HOST_SETUP_PATH, METADATA_ADDRESS, TAILSCALE_KEY_PATH, hostUserData } from "../src/backends/hetzner/cloud-init.ts";
+import { HOST_SETUP_PATH, LXCFS_KEPT_RUNNING, METADATA_ADDRESS, TAILSCALE_KEY_PATH, hostUserData } from "../src/backends/hetzner/cloud-init.ts";
 import { HETZNER_FIELDS, parseHetznerPart } from "../src/backends/hetzner/config.ts";
 import type { HostRecord } from "../src/backends/hetzner/hosts.ts";
 import { HostReach, firewallRules, forwardArgs } from "../src/backends/hetzner/reach.ts";
@@ -93,6 +93,9 @@ test("a host's first boot keeps containers from the metadata service before Dock
   assert.match(setup, new RegExp(`tailscale up --auth-key=file:${TAILSCALE_KEY_PATH} --hostname=bb-box-test-h1abcdef --accept-dns=false`));
   assert.ok(setup.indexOf("tailscale up") < setup.indexOf(`rm -f ${TAILSCALE_KEY_PATH}`), "the key file goes once used");
   assert.ok(setup.indexOf(`-d ${METADATA_ADDRESS}`) < setup.indexOf("get.docker.com"), "the rule is there before Docker is");
+  assert.ok(setup.indexOf("get.docker.com") < setup.indexOf("apt-get install -y -qq lxcfs"), "LXCFS comes after Docker, so boxes see their own memory and CPUs (062)");
+  assert.match(setup, /systemctl enable --now lxcfs\napt-mark hold lxcfs/, "held, so unattended-upgrades never upgrades it under running boxes");
+  assert.ok(setup.includes(`printf '[Unit]\\nRefuseManualStop=yes\\n' > ${LXCFS_KEPT_RUNNING}\nsystemctl daemon-reload`), "and systemd refuses to restart it, from needrestart or a package's script, which would break running boxes' files");
   assert.equal(setup.split(TAILNET_KEY).length, 1, "the key is never in the script, so never in a command line");
   assert.match(data, new RegExp(`runcmd:\\n  - \\["${HOST_SETUP_PATH}"\\]`));
   const withoutTailnet = hostUserData({ serverName: "bb-box-test-h1abcdef", tailnetKey: null });

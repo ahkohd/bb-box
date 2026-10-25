@@ -11,6 +11,17 @@ export function metadataRule(): string {
   ].join("; ");
 }
 
+export const LXCFS_KEPT_RUNNING = "/etc/systemd/system/lxcfs.service.d/bb-box-keep-running.conf";
+
+const LXCFS_SETUP = [
+  "command -v lxcfs >/dev/null || { apt-get update -qq && apt-get install -y -qq lxcfs; }",
+  "systemctl enable --now lxcfs",
+  "apt-mark hold lxcfs >/dev/null",
+  "mkdir -p /etc/systemd/system/lxcfs.service.d",
+  `printf '[Unit]\\nRefuseManualStop=yes\\n' > ${LXCFS_KEPT_RUNNING}`,
+  "systemctl daemon-reload",
+];
+
 export function hostSetupScript(input: { serverName: string; joinsTailnet: boolean }): string {
   const lines = [
     "#!/bin/sh",
@@ -28,6 +39,7 @@ export function hostSetupScript(input: { serverName: string; joinsTailnet: boole
   lines.push(
     "command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh",
     "systemctl enable --now docker",
+    ...LXCFS_SETUP,
     metadataRule(),
   );
   return lines.join("\n") + "\n";
