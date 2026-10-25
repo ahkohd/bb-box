@@ -5045,7 +5045,7 @@ test("New box's new-thread inputs offer the Image group with the project's image
 test("a second backend of a type shows the name in its ID, unless its label already says it (053)", () => {
   expect(backendName("microsandbox:mac-mini", "microsandbox on mac-mini")).toBeNull();
   expect(backendName("docker:attic", "Docker")).toBe("attic");
-  expect(backendName("microsandbox", "microsandbox on behemoth")).toBeNull();
+  expect(backendName("microsandbox", "microsandbox on gpu-host")).toBeNull();
 });
 
 test("the form's words: a provider's title, the systems' hosts, the nearest choice and the filters", () => {
@@ -5058,10 +5058,10 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   expect(providerTitle({ ...offer, type: "docker", label: "Docker", hosts: [] })).toBe("an unnamed machine");
   expect(providerTitle({ ...offer, type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
   // Docker and microsandbox on one host: each says which it is; a host of its own needs no more (053).
-  const onBehemoth = { ...offer, backend: "docker", type: "docker", label: "Docker", hosts: ["behemoth"] };
-  const msb = { ...offer, backend: "microsandbox", type: "microsandbox", label: "microsandbox", hosts: ["behemoth"] };
-  const all = [offer, onBehemoth, msb];
-  expect([providerTitle(onBehemoth, all), providerTitle(msb, all), providerTitle(offer, all)]).toEqual(["behemoth (Docker)", "behemoth (microsandbox)", "pve"]);
+  const onGpuHost = { ...offer, backend: "docker", type: "docker", label: "Docker", hosts: ["gpu-host"] };
+  const msb = { ...offer, backend: "microsandbox", type: "microsandbox", label: "microsandbox", hosts: ["gpu-host"] };
+  const all = [offer, onGpuHost, msb];
+  expect([providerTitle(onGpuHost, all), providerTitle(msb, all), providerTitle(offer, all)]).toEqual(["gpu-host (Docker)", "gpu-host (microsandbox)", "pve"]);
   const mac: KindView = { ...linux, id: "macos", os: "macos", arch: "arm64", offers: [{ ...offer, backend: "tart", type: "tart", label: "Tart", hosts: ["mac-mini"], hostOs: "macos", gpuRoom: null }] };
   const many: KindView = { ...linux, id: "linux-arm64", arch: "arm64", offers: [offer, { ...offer, backend: "b", hosts: ["pve2"] }, { ...offer, backend: "c", hosts: ["pve3"] }] };
   expect(systemsOf([mac, many, linux]).map((system) => [system.label, system.words])).toEqual([
