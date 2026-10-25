@@ -9,7 +9,7 @@ import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
 import type { ImageView } from "./images.ts";
-import { extraFeatures, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
+import { extraFeatures, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type ResizeAnswer } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
 import type { MovedCopy } from "../core/move.ts";
@@ -35,6 +35,7 @@ export interface BoxView {
   readonly error: string | null;
   /** Why it last stopped without bb-box's request, and what bb-box did, in words (#406). */
   readonly stopped: string | null;
+  readonly waitingOn?: string | null;
   readonly createdAt: number;
   readonly readyAt: number | null;
   readonly os: string;
@@ -105,6 +106,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     state: box.state,
     error: box.error,
     stopped: stopWords(box) || null,
+    waitingOn: waitingWords(box),
     createdAt: box.createdAt,
     readyAt: box.readyAt,
     os: box.capabilities.os,
@@ -500,6 +502,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   const lines = [
     `Box ${box.name} (${box.id})`,
     `State: ${STATE_WORDS[box.state]}${box.error ? `. ${box.error}` : ""}`,
+    ...(waitingWords(box) ? [`Now: ${waitingWords(box)}`] : []),
     ...(box.unrequestedStop ? [`Last unrequested stop: ${stopWords(box)}`] : []),
     `Kind: ${box.kindLabel} (${box.kind}) from ${box.backendLabel}`,
     ...(formLine(box) ? [`Form: ${formLine(box)}`] : []),
@@ -558,7 +561,13 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
  * ends the wait, and the next bb-box goes on acquiring the box (#533).
  */
 export function startingWords(box: BoxRecord, restarted: boolean): string {
-  return restarted ? `bb-box restarted, as for an update, before box ${box.name} was ready. It goes on starting once bb-box is back, usually within seconds.` : `Box ${box.name} is still starting.`;
+  if (restarted) return `bb-box restarted, as for an update, before box ${box.name} was ready. It goes on starting once bb-box is back, usually within seconds.`;
+  const waiting = waitingWords(box);
+  return waiting ? `Box ${box.name} is still starting. ${waiting}` : `Box ${box.name} is still starting.`;
+}
+
+export function waitingWords(box: BoxRecord): string | null {
+  return isAcquiring(box) ? (box.waitingOn ?? null) : null;
 }
 
 export function next(...hints: string[]): string {

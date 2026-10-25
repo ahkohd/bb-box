@@ -82,7 +82,7 @@ export class NamespaceLinux {
   }
 
   async boxOn(instance: string, machineMemoryMiB: number, box: BoxIdentity, kind: LinuxImageKind, hooks: AcquireHooks, own: (guest: Guest) => Guest, step: <T>(name: string, run: () => Promise<T>) => Promise<T>, signal: AbortSignal): Promise<Guest> {
-    const image = await step("image", () => this.#deps.images.forBox(LINUX_IMAGE_TARGETS[kind], signal));
+    const image = await step("image", () => this.#deps.images.forBox(LINUX_IMAGE_TARGETS[kind], signal, async (words) => hooks.waiting?.(words)));
     await step("pull", async () => {
       const pulled = await this.#deps.run(instance, (this.#deps.pullScript ?? pullScript)(image.ref, LOCAL_IMAGE[kind]), PULL_TIMEOUT_MS, signal);
       if (pulled.exitCode !== 0) throw new Error(`Namespace's machine ${instance} could not pull ${image.ref}: ${pulled.stderr.trim().slice(-300) || `exit ${pulled.exitCode}`}`);

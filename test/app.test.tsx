@@ -1391,6 +1391,13 @@ test("Resize changes a box live at once: the presets, cores, memory and disk wit
   expect(slot.queryByText(/^Resized to/)).toBeNull();
 });
 
+test("a starting box's row says what its acquire waits on, with how long it takes, and a ready box's row does not (#1117)", async () => {
+  const words = "Building Namespace's Linux desktop image first, which takes about 7 minutes. Later boxes of this kind use it and start in under a minute.";
+  const slot = panel(server([box({ state: "starting", waitingOn: words }), box({ id: "box_2", name: "quiet-heron", waitingOn: null })]).handlers);
+  expect(await slot.findByText(words)).toBeTruthy();
+  expect(slot.getAllByText(/^Building Namespace's/)).toHaveLength(1);
+});
+
 test("a row says how a resize that ended in the last two minutes went, for a panel that reloaded while its dialog waited (061)", async () => {
   const ended = (minutesAgo: number, state: "done" | "failed", error: string | null = null) => ({ to: size(4, 8, 64), at: Date.now() - minutesAgo * 60_000 - 15_000, state, restart: true, ms: 15_000, error });
   const ways = { cores: "restart", memory: "restart", disk: "restart", shrinks: false } as const;

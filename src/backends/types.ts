@@ -299,6 +299,7 @@ export interface AcquireHooks {
   starting(): Promise<void>;
   /** How long a named step took, in milliseconds. Shown in status and the smoke script. */
   timing(step: string, ms: number): void;
+  waiting?(words: string | null): Promise<void>;
 }
 
 /** Whether one more box fits, with the limits of each host. */

@@ -206,6 +206,7 @@ export class FakeBackend implements Backend {
   readonly faults: FakeFaults = {};
   /** Acquires wait here after the claim while it is set. */
   gate: Promise<void> | null = null;
+  waitingOn: string | null = null;
   /** Stops and starts wait here while it is set. */
   powerGate: Promise<void> | null = null;
   readonly calls: string[] = [];
@@ -386,7 +387,9 @@ export class FakeBackend implements Backend {
       const driver = this.#kind(box.kind).capabilities.computerUse;
       if (this.#options.wayland && driver) await writeFile(join(this.#home(guest.ref), driver.socket), JSON.stringify({ ...emptyDesktop(), wayland: true }));
       hooks.timing("make", Math.round(performance.now() - started));
+      if (this.waitingOn) await hooks.waiting?.(this.waitingOn);
       await this.gate;
+      if (this.waitingOn) await hooks.waiting?.(null);
       this.#fault("claimed");
       signal.throwIfAborted();
       await hooks.starting();

@@ -156,6 +156,7 @@ export function BoxRow({
           <RowTitle name={box.name} os={osName(box.os)} badges={<KindBadges desktop={box.desktop} wayland={runsWayland(box)} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={held !== null} />} />
         </button>
         <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
+        {box.waitingOn ? <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{box.waitingOn}</p> : null}
         {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
         {resizeNote ? <p className={cn("mt-0.5 text-xs leading-snug", resizeNote.failed ? "text-destructive-text" : "text-muted-foreground")}>{resizeNote.text}</p> : null}
         {ready && box.enrol.state === "failed" ? (

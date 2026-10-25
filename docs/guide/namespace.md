@@ -21,7 +21,7 @@ Larger machines cost more: see Namespace's pricing page. Minutes beyond what you
 
 BB Box gives each box the smallest machine Namespace offers that has at least the cores and memory the box's size asks for, and for a Mac its disk. Namespace's machines come in fixed shapes, so a box can have more than it asked for, and you pay for the machine it gets.
 
-Linux boxes also need BB Box's Linux images. BB Box builds each in a Linux machine of 8 vCPU and 16 GB, about 3 minutes for the Linux image and 7 for a desktop's, and keeps it in the workspace's container registry. It builds an image when a box first needs it, and again, while boxes use it, when BB Box's image scripts or BB's app change, or after a week.
+Linux boxes also need BB Box's Linux images. BB Box builds each in a Linux machine of 8 vCPU and 16 GB, about 4 minutes for the Linux image, 6 to 7 for the desktop's and 9 for the Wayland desktop's, and keeps it in the workspace's container registry. It builds an image when a box first needs it, and again, while boxes use it, when BB Box's image scripts or BB's app change, or after a week.
 
 ### What your plan allows
 
@@ -123,7 +123,7 @@ A Mac cannot outlive your plan's limit. BB Box keeps each Mac's end an hour ahea
 
 A Linux box is BB Box's own Linux image, with Ubuntu, as on any Docker host, in a container on a Linux machine of its own. You use it as `box`, who can use `sudo`, and it has Docker of its own. Desktops have the same apps as on other backends.
 
-Once its kind's image is built, a Linux box is ready in about 25 seconds, and a desktop in about 35: the machine starts in a few seconds, and pulling the image from the workspace's registry takes most of the rest. The first box of a kind also waits for its image to be built.
+Once its kind's image is built, a Linux box is ready in about 25 seconds, and a desktop in about 35: the machine starts in a few seconds, and pulling the image from the workspace's registry takes most of the rest. The first box of a kind also waits for its image to be built, and says so while it waits, with how long the build takes: in its row in the Boxes page, in `bb box status`, and in what an agent's `box_acquire` and `box_status` answer.
 
 BB Box reaches the machine through Namespace's SSH gateway, and the box's commands run with `docker exec` through it. With the tailnet on, the machine joins the tailnet, as a Mac does, and the box reaches BB through it.
 

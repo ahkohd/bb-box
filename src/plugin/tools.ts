@@ -372,7 +372,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const settled = await ready(app, box, signal);
         // Not ready when the kind's wait ran out, or bb-box restarted first.
         if (!settled || isAcquiring(settled)) {
-          return `${startingWords(box, !!settled && boxes.stopping)}${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
+          return `${startingWords(settled ?? box, !!settled && boxes.stopping)}${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
         }
         if (settled.state === "failed") {
           return {

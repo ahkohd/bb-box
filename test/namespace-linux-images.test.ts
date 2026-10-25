@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { NamespaceBackend } from "../src/backends/namespace/backend.ts";
-import { WORKSPACE_FROM_METADATA, linuxImageBuildScript, linuxImageFingerprint, linuxImageKey } from "../src/backends/namespace/linux-images.ts";
+import { WORKSPACE_FROM_METADATA, buildWaitWords, linuxImageBuildScript, linuxImageFingerprint, linuxImageKey } from "../src/backends/namespace/linux-images.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
@@ -117,6 +117,25 @@ test("two boxes share one build, and one released while it builds leaves the bui
   finish();
   assert.match((await second).ref, /^nscr\.io\/ws1\/bbbox\/desktop:/);
   assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 1);
+});
+
+test("a box whose image is built first says so while it waits, with how long the build takes, and the build's time is recorded for the next estimate (#1117)", async () => {
+  const { backend, building, finish, advance } = setup({ slowBuild: true });
+  const said: (string | null)[] = [];
+  const waiting = async (words: string | null) => void said.push(words);
+  const first = backend.linuxImages.forBox("desktop", new AbortController().signal, waiting);
+  await building();
+  assert.deepEqual(said, ["Building Namespace's Linux desktop image first, which takes about 7 minutes. Later boxes of this kind use it and start in under a minute."]);
+  advance(338_000);
+  finish();
+  assert.equal((await first).buildMs, 338_000);
+  assert.deepEqual(said.at(-1), null, "the words go once the image is built");
+  said.length = 0;
+  await backend.linuxImages.forBox("desktop", new AbortController().signal, waiting);
+  assert.deepEqual(said, [], "a box that uses the image as it is waits on nothing");
+  assert.equal(buildWaitWords("desktop", 338_000), "Building Namespace's Linux desktop image first, which takes about 6 minutes. Later boxes of this kind use it and start in under a minute.");
+  assert.match(buildWaitWords("linux", null), /^Building Namespace's Linux image first, which takes about 4 minutes\./);
+  assert.match(buildWaitWords("desktop-wayland", 30_000), /^Building Namespace's Linux desktop on Wayland image first, which takes about 1 minute\./);
 });
 
 test("the build script reads the workspace from Namespace's metadata, builds with build.sh and pushes, and prints only the image's name on its output", () => {
