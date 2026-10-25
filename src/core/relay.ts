@@ -252,10 +252,11 @@ export class RfbRelay {
    * character over Tart's VNC server, may wait for it, and the keys after it must not reach the box first.
    */
   receive(bytes: Uint8Array): Promise<void> {
+    const mayInput = this.#options.mayInput();
     this.#received = this.#received.then(async () => {
       if (this.#phase === "ended") return;
       try {
-        await this.#receive(bytes);
+        await this.#receive(bytes, mayInput);
       } catch (error) {
         await this.#end("box", error instanceof Error ? error : new Error(String(error)));
       }
@@ -263,8 +264,8 @@ export class RfbRelay {
     return this.#received;
   }
 
-  async #receive(bytes: Uint8Array): Promise<void> {
-    if (this.#phase === "messages") return this.#forward(this.#parser.push(bytes));
+  async #receive(bytes: Uint8Array, mayInput: boolean): Promise<void> {
+    if (this.#phase === "messages") return this.#forward(this.#parser.push(bytes), mayInput);
     this.#pending = concat(this.#pending, bytes);
     if (this.#phase === "version") {
       if (this.#pending.byteLength < 12) return;
@@ -307,7 +308,7 @@ export class RfbRelay {
       this.#watchAttached(connection);
       const rest = this.#pending;
       this.#pending = new Uint8Array(0);
-      if (rest.byteLength) await this.#forward(this.#parser.push(rest));
+      if (rest.byteLength) await this.#forward(this.#parser.push(rest), this.#options.mayInput());
     }
   }
 
@@ -326,7 +327,7 @@ export class RfbRelay {
     }
   }
 
-  async #forward(messages: ClientMessage[]): Promise<void> {
+  async #forward(messages: ClientMessage[], mayInput: boolean): Promise<void> {
     const connection = this.#connection;
     if (!connection || this.#ended) return;
     // One write, awaited: a write left unawaited to a box that has gone
@@ -341,7 +342,7 @@ export class RfbRelay {
           if (this.#heardAt < asked) void this.#serverLost(connection, "sent no picture for a full update");
         });
       }
-      const bytes = this.#passing(message);
+      const bytes = this.#passing(message, mayInput);
       const key = message.type === "key" || message.type === "qemu-key" ? message : null;
       const logKey = (way: string) => key && this.#options.keyLog?.(`${way}: ${key.down ? "down" : "up"} 0x${key.keysym.toString(16)}${key.type === "qemu-key" ? ` scancode ${key.keycode}` : ""}, held [${[...this.#heldKeysyms()].map((held) => `0x${held.toString(16)}`).join(" ")}], at ${Date.now() % 100_000} ms`);
       if (!bytes) {
@@ -444,9 +445,9 @@ export class RfbRelay {
   }
 
   /** What of a message goes to the box, if any, tracking what the viewer holds down. */
-  #passing(message: ClientMessage): Uint8Array | null {
+  #passing(message: ClientMessage, mayInput: boolean): Uint8Array | null {
     if (message.type === "other" && message.class === "pass") return message.bytes;
-    if (!this.#options.mayInput()) return null;
+    if (!mayInput) return null;
     switch (message.type) {
       case "key":
         if (message.down) this.#held.set(`k${message.keysym}`, keyEvent(false, message.keysym));
