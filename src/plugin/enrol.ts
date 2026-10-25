@@ -451,7 +451,7 @@ export class Enrolment {
         // A box already being released, as when you removed it in settings, is left to that release,
         // which is waiting for this removal.
         const box = await this.#deps.boxes.find(boxId);
-        if (box?.threadId === OPERATOR && box.state !== "releasing") await this.#deps.boxes.release(OPERATOR, box.id, "its BB machine was removed in BB");
+        if (box?.threadId === OPERATOR && box.state !== "releasing" && box.enrol.state !== "failed") await this.#deps.boxes.release(OPERATOR, box.id, "its BB machine was removed in BB");
         return { status: "removed" };
       },
     };
