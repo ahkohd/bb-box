@@ -387,6 +387,8 @@ export class SelkiesSession implements Kept {
     if (!this.#socket || this.#socket.readyState !== WebSocket.OPEN) return;
     if (stop) {
       this.#send("STOP_VIDEO");
+      closeDecoder(this.#decoder);
+      this.#decoder = null;
       return;
     }
     this.#restart();
