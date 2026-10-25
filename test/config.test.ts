@@ -17,6 +17,7 @@ import { parseTartSettings } from "../src/backends/tart/config.ts";
 import { tartDriver } from "../src/backends/tart/index.ts";
 import type { BackendContext, BackendDriver, DoctorReport } from "../src/backends/types.ts";
 import { backendPart, checkDocument, exported, generalConfig, readDraft, upgradeDocument, withSecretChanges, type ConfigDocument, type Secrets } from "../src/core/document.ts";
+import { INSTALL_ID_KEY } from "../src/core/install.ts";
 import { CLEARED_KEY, COPY_KEY, DOCUMENT_KEY, SECRETS_KEY, SIZES_ADOPTED_KEY, fromSettings, type MovedCopy } from "../src/core/move.ts";
 import { boundedDoctor, type ApplyResult, type CheckResult, type ConfigState } from "../src/plugin/configuration.ts";
 import { ReloadTimes, STARTED_AT_KEY, STOPPED_AT_KEY } from "../src/plugin/reload-times.ts";
@@ -129,7 +130,7 @@ function lxcLike(root: string, built: FakeBackend[]): BackendDriver<any> {
  * Starts the plugin with the fake backend, a Proxmox LXC driver whose
  * backends are fake ones, and the SSH host pool, as the plugin's drivers.
  */
-async function start(settings: Record<string, PluginSettingValue>, options: { faults?: Faults; seed?: Record<string, unknown>; drivers?: BackendDriver<any>[]; fake?: Partial<FakeBackendOptions> } = {}) {
+async function start(settings: Record<string, PluginSettingValue>, options: { faults?: Faults; seed?: Record<string, unknown>; drivers?: BackendDriver<any>[]; fake?: Partial<FakeBackendOptions>; freshInstall?: boolean } = {}) {
   const root = tempDir("config");
   const threads = new Map([[THREAD, makeThreadResponse({ id: THREAD, projectId: "prj_config", environmentId: "env_config" })]]);
   const { bb, harness } = createFakePluginHost({
@@ -156,7 +157,8 @@ async function start(settings: Record<string, PluginSettingValue>, options: { fa
     handles: [] as Handle[],
     kv: bb.storage.kv,
   };
-  for (const [key, value] of Object.entries(options.seed ?? {})) await bb.storage.kv.set(key, value);
+  const earlierInstall = options.freshInstall ? {} : { [INSTALL_ID_KEY]: "earlier01" };
+  for (const [key, value] of Object.entries({ ...earlierInstall, ...options.seed })) await bb.storage.kv.set(key, value);
   const recorded = (driver: BackendDriver<any>): BackendDriver<any> => ({
     ...driver,
     create: (config, context) => {
@@ -280,6 +282,17 @@ test("an off backend moves in off, and a value that is not valid moves as it is"
   const { document } = fromSettings({ ...SAVED, "proxmox-lxc-enabled": false, "proxmox-lxc-subnet": "not a subnet" }, DRIVERS, true);
   assert.equal(document.backends[0]!.enabled, false);
   assert.equal(document.backends[0]!.fields.subnet, "not a subnet");
+});
+
+test("a fresh install declares none of BB's earlier settings, on its first start or after, so BB's settings page shows bb-box's own sections alone", async () => {
+  const { harness, latest, world, restart } = await start({}, { freshInstall: true });
+  assert.deepEqual(Object.keys(harness.inspection.registrations.settingsDescriptors), []);
+  assert.equal(world.handles.length, 0);
+  assert.ok(await kvOf(world).get(DOCUMENT_KEY));
+  assert.ok(await kvOf(world).get(CLEARED_KEY));
+  await restart();
+  assert.deepEqual(Object.keys(latest().inspection.registrations.settingsDescriptors), []);
+  assert.equal(world.handles.length, 0);
 });
 
 test("the first start moves BB's settings: secrets, then the copy, then the document, then clears them; the next start changes nothing", async () => {
