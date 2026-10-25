@@ -308,7 +308,7 @@ export class NamespaceBackend implements Backend {
           gpu: false,
           features: ["xcode"],
           command: SSH_COMMAND,
-          displays: [{ id: "desktop", protocol: "rfb", resizable: false }, MAC_VIDEO],
+          displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" }, MAC_VIDEO],
           computerUse: { driver: "cua", version: CUA_VERSION, socket: CUA_SOCKET },
           enrol: true,
         },

@@ -370,4 +370,5 @@ test("a macos-desktop box gets Cua Driver for computer use: the pinned release c
   const { backend } = setup();
   assert.deepEqual(backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.computerUse, { driver: "cua", version: CUA_VERSION, socket: "/Users/runner/Library/Caches/cua-driver/cua-driver.sock" });
   assert.equal(backend.kinds().find((kind) => kind.id === "macos")!.capabilities.computerUse, null);
+  assert.equal(backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays[0]!.clipboard, "commands", "Screen Sharing sends a viewer none of the box's clipboard, so bb-box moves it with pbcopy and pbpaste");
 });
