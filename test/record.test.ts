@@ -40,11 +40,12 @@ test("box_record starts once, refuses no display, and stop makes the clip with s
 
   const { prepared, facts, made } = stop(home, 2, "cut");
   assert.equal(prepared.status, 0, prepared.stderr);
-  assert.deepEqual({ ...facts!, start: null }, { ended: "stopped", recorded: 10, width: 1280, height: 720, start: null, cuts: [[1.5, 6], [8.5, 10]], events: [] });
+  assert.deepEqual({ ...facts!, start: null }, { ended: "stopped", recorded: 10, width: 1280, height: 720, start: null, position: "top", cuts: [[1.5, 6], [8.5, 10]], events: [] });
   assert.equal(made!.status, RECORD_STOP_EXITS.made, made!.stderr);
-  assert.deepEqual(parseRecordResult(made!.stdout), { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720", captions: null });
+  assert.deepEqual(parseRecordResult(made!.stdout), { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720", captions: true });
   const encoded = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!;
-  assert.ok(encoded.includes("select='not(between(t,1.500,6.000)+between(t,8.500,10.000))',setpts='(((T-STARTT)-(clip((T-STARTT)-1.500,0,4.5)+clip((T-STARTT)-8.500,0,1.5)))/2)/TB',fps=15,scale='min(1280,iw)':-2[out]"), encoded);
+  assert.ok(encoded.includes("select='not(between(t,1.500,6.000)+between(t,8.500,10.000))',setpts='(((T-STARTT)-(clip((T-STARTT)-1.500,0,4.5)+clip((T-STARTT)-8.500,0,1.5)))/2)/TB',fps=15,tpad=stop_mode=clone:stop_duration=2,trim=duration=2,scale='min(1280,iw)':-2[v0]"), encoded);
+  assert.match(encoded, /-i \S+\/pill-0\.png -i \S+\/pill-1\.png -filter_complex /, "the speed and the cut drawn as marks");
   assert.match(encoded, /-c:v libx264 .*-crf 28 -tune animation -pix_fmt yuv420p -movflags \+faststart/);
   assert.ok(!existsSync(join(home, RECORD_DIR, "capture.mkv")), "the capture goes once the clip is made");
   assert.equal(readFileSync(join(home, RECORD_DIR, "clip.mp4"), "utf8"), "mp4data");
@@ -69,8 +70,8 @@ test("box_record's steps and results are saved with the box's time while it reco
   assert.equal(made!.status, RECORD_STOP_EXITS.made, made!.stderr);
   assert.equal(parseRecordResult(made!.stdout)?.captions, true);
   const args = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n");
-  assert.equal(args.filter((line) => line.includes("print(tw)")).length, 4, "each pill's text and icon measured");
-  assert.match(args.at(-1)!, /-i \S+\/pill-0\.png -i \S+\/pill-1\.png -filter_complex /);
+  assert.equal(args.filter((line) => line.includes("print(tw)")).length, 6, "each pill's text and icon measured: two captions and a cut's mark");
+  assert.match(args.at(-1)!, /-i \S+\/pill-0\.png -i \S+\/pill-1\.png -i \S+\/pill-2\.png -filter_complex /);
   assert.match(args.at(-1)!, /\[v0\]\[1:v\]overlay=x=\(W-w\)\/2:y=25:enable='between\(t,/);
   assert.equal(plan!.captions.length, 2);
   assert.ok(!existsSync(join(home, RECORD_DIR, "events")), "the steps go with the capture");
@@ -98,18 +99,31 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
     const next = plan.captions.slice(index + 1).find((later) => later.from > caption.from);
     assert.ok((next?.from ?? plan.length) - caption.from >= readingSeconds(caption.text) - 0.001, `${caption.text} is on screen long enough to read`);
   }
-  assert.deepEqual([plan.width, plan.height, plan.fontSize, plan.pillHeight, plan.top, plan.gap], [1280, 720, 19, 40, 25, 6]);
+  assert.deepEqual([plan.width, plan.height, plan.fontSize, plan.edge, plan.position], [1280, 720, 19, 25, "top"]);
+  assert.deepEqual(plan.overlays.slice(4), [
+    { look: "mark", text: "2x", size: 13, x: "right", y: 614, from: 0, to: 14.786 },
+    { look: "mark", text: "10 s later", size: 13, x: "right", y: 581, from: 3.143, to: 4.343 },
+  ], "the speed in the bottom corner all along, and the cut over it for a moment");
+  assert.match(clipGraph(plan, true), /\[v4\]\[5:v\]overlay=x=W-w-25:y=614:enable='between\(t,0,14\.786\)'\[v5\]/);
   const clock = "((T-STARTT)-(clip((T-STARTT)-5.500,0,9.5)))/2";
   assert.ok(clipGraph(plan, true).includes(`setpts='(${clock}+0.393*gt(${clock},1)+1.643*gt(${clock},2.75)+2.5*gt(${clock},9.75))/TB'`), clipGraph(plan, true));
   assert.match(clipGraph(plan, true), /\[v1\]\[2:v\]overlay=x=\(W-w\)\/2:y=71:enable='between\(t,3\.143,5\.286\)'\[v2\]/);
-  assert.match(clipGraph(plan, true), /\[v3\]\[4:v\]overlay=.*\[out\]$/);
+  assert.match(clipGraph(plan, true), /\[v5\]\[6:v\]overlay=.*\[out\]$/);
   assert.doesNotMatch(clipGraph(plan, false), /overlay/);
+  assert.ok(clipGraph(plan, false).includes(",fps=15,tpad=stop_mode=clone:stop_duration=14.786,trim=duration=14.786,"), "a hold at the end lasts though no frame follows it");
 
   const quiet = planClip({ ...PREPARED, cuts: [], events: [{ at: 1001, kind: "step", text: "Short" }] }, 1);
   assert.deepEqual(quiet.holds, [], "a caption with time enough to read is not held");
+  assert.deepEqual(quiet.overlays.filter((overlay) => overlay.look === "mark"), [], "nothing cut and no speed: no mark");
+  const short = planClip({ ...PREPARED, cuts: [[5.5, 8]], events: [] }, 1);
+  assert.deepEqual(short.overlays, [], "a cut under 3 s has no mark");
+
+  const below = planClip({ ...PREPARED, position: "bottom", events }, 1);
+  assert.deepEqual(below.overlays.filter((overlay) => overlay.look !== "mark").map((overlay) => `${overlay.look}:${overlay.y}`), ["step:555", "pass:601", "step:555", "fail:601"], "at the bottom, above a dock, the step over its result");
+  assert.deepEqual(below.overlays.filter((overlay) => overlay.look === "mark").map((overlay) => `${overlay.text}:${overlay.y}`), ["10 s later:36"], "the mark in the top corner, away from the captions");
   assert.deepEqual(chaptersOf(plan.captions), [
-    { at: 1, text: "Open the meetings page", result: { passed: true, text: "It lists three meetings" } },
-    { at: 5.286, text: "It should not recreate existing meetings on 404 or 403", result: { passed: false, text: "A second meeting appeared after the 404" } },
+    { at: 1, real: 2, text: "Open the meetings page", result: { passed: true, text: "It lists three meetings" } },
+    { at: 5.286, real: 16, text: "It should not recreate existing meetings on 404 or 403", result: { passed: false, text: "A second meeting appeared after the 404" } },
   ]);
   assert.equal(captionText("a ".repeat(80)).length, 90);
   assert.ok(captionText("a ".repeat(80)).endsWith("…"));
@@ -139,7 +153,7 @@ test("box_record's page plays the clip beside it by its name, and its height fol
   assert.equal(previewHeight("960x1600"), 1075);
   assert.equal(previewHeight("odd"), 400);
   assert.equal(parseRecordResult("no json"), null);
-  const listed = recordPage("Box a", "a.mp4", [{ at: 65.5, text: "Open <it>", result: { passed: false, text: "It failed" } }]);
-  assert.match(listed, /<a href="#" data-at="65\.5"><span class="at">1:05<\/span><span><span style="color:#4f8df5">▶<\/span> Open &#60;it&#62;<br><span style="color:#ff453a">✗<\/span> It failed<\/span><\/a>/);
+  const listed = recordPage("Box a", "a.mp4", [{ at: 65.5, real: 125, text: "Open <it>", result: { passed: false, text: "It failed" } }]);
+  assert.match(listed, /<a href="#" data-at="65\.5"><span class="at">2:05<\/span><span><span style="color:#4f8df5">▶<\/span> Open &#60;it&#62;<br><span style="color:#ff453a">✗<\/span> It failed<\/span><\/a>/);
   assert.match(listed, /v\.currentTime = Number\(a\.dataset\.at\)/);
 });

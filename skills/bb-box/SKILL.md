@@ -204,7 +204,9 @@ cut by default, so a long session makes a short clip.
   false and what you saw ("Draft kept; no error toast"). They are drawn
   over the video, a step at the top and its result under it, and listed as
   chapters under it. Each stays on screen long enough to read, even at
-  speed 2 or 4.
+  speed 2 or 4. If what you check is near the top of the screen, such as a
+  menu bar or a window's title, start with `position: "bottom"` so the
+  captions do not cover it.
 - On Windows, BB's Keep Awake opens a "Windows PowerShell" window over the
   desktop when the box joins BB and each time BB restarts there, such as
   after a resume. Minimise it with the computer tools before you record;

@@ -40,12 +40,13 @@ const CLIP = "-an -c:v libx264 -preset medium -crf 28 -tune animation -pix_fmt y
  * command, so Perl's starts ffmpeg's session there. A missing recorder is
  * named on stderr.
  */
-export function recordStartScript(os: GuestOs = "linux"): string {
+export function recordStartScript(os: GuestOs = "linux", position: CaptionPosition = "top"): string {
   if (os === "windows") return windowsStart();
   return String.raw`d="$HOME/${RECORD_DIR}"; mkdir -p "$d"
 if [ -s "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null; then exit ${RECORD_START_EXITS.running}; fi
 set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
 rm -f "$d/capture.mkv" "$d/clip.mp4" "$d/log" "$d/events" "$d"/pill-*
+echo ${position} >"$d/position"
 perl -MTime::HiRes=time -e 'printf "%.3f\n", time' >"$d/start"
 if [ "$(uname)" = Darwin ]; then
   command -v ffmpeg >/dev/null || { echo ffmpeg >&2; exit ${RECORD_START_EXITS.noRecorder}; }
@@ -114,7 +115,7 @@ if [ "${stills}" = cut ]; then
     awk -v end="$recorded" '/freeze_start:/ { s = $NF } /freeze_end:/ { printf "%s[%.3f,%.3f]", sep, s + 0.5, $NF; sep = ","; s = "" }
       END { if (s != "") printf "%s[%.3f,%.3f]", sep, s + 0.5, end }')
 fi
-printf '{"ended":"%s","recorded":%s,"size":"%s","start":%s,"cuts":[%s]}\n' "$ended" "$recorded" "$size" "$(cat "$d/start" 2>/dev/null || echo null)" "$cuts"
+printf '{"ended":"%s","recorded":%s,"size":"%s","start":%s,"position":"%s","cuts":[%s]}\n' "$ended" "$recorded" "$size" "$(cat "$d/start" 2>/dev/null || echo null)" "$(cat "$d/position" 2>/dev/null || echo top)" "$cuts"
 [ ! -s "$d/events" ] || cat "$d/events"
 `;
 }
@@ -131,6 +132,7 @@ export interface Prepared {
   readonly width: number;
   readonly height: number;
   readonly start: number | null;
+  readonly position?: CaptionPosition;
   readonly cuts: readonly (readonly [number, number])[];
   readonly events: readonly RecordEvent[];
 }
@@ -140,18 +142,20 @@ export function parsePrepared(stdout: string): Prepared | null {
   const head = lines.findIndex((line) => line.startsWith("{"));
   if (head < 0) return null;
   try {
-    const value = JSON.parse(lines[head]!) as { ended: Prepared["ended"]; recorded: number; size: string; start: number | null; cuts: [number, number][] };
+    const value = JSON.parse(lines[head]!) as { ended: Prepared["ended"]; recorded: number; size: string; start: number | null; position?: string; cuts: [number, number][] };
     const [width, height] = value.size.split("x").map(Number);
     const events = lines.slice(head + 1).flatMap((line): RecordEvent[] => {
       const [at, kind, encoded] = line.split("\t");
       if (!at || !encoded || (kind !== "step" && kind !== "pass" && kind !== "fail")) return [];
       return [{ at: Number(at), kind, text: Buffer.from(encoded, "base64").toString("utf8") }];
     });
-    return { ended: value.ended, recorded: value.recorded, width: width ?? 0, height: height ?? 0, start: value.start, cuts: value.cuts, events };
+    return { ended: value.ended, recorded: value.recorded, width: width ?? 0, height: height ?? 0, start: value.start, position: value.position === "bottom" ? "bottom" : "top", cuts: value.cuts, events };
   } catch {
     return null;
   }
 }
+
+export type CaptionPosition = "top" | "bottom";
 
 export interface Caption {
   readonly kind: StepKind;
@@ -159,6 +163,7 @@ export interface Caption {
   readonly row: 0 | 1;
   readonly from: number;
   readonly to: number;
+  readonly real: number;
 }
 
 export interface Hold {
@@ -166,25 +171,43 @@ export interface Hold {
   readonly seconds: number;
 }
 
+export type PillLook = StepKind | "mark";
+
+export interface Overlay {
+  readonly look: PillLook;
+  readonly text: string;
+  readonly size: number;
+  readonly x: "centre" | "right";
+  readonly y: number;
+  readonly from: number;
+  readonly to: number;
+}
+
 export interface ClipPlan {
   readonly speed: RecordSpeed;
   readonly cuts: readonly (readonly [number, number])[];
   readonly holds: readonly Hold[];
   readonly captions: readonly Caption[];
+  readonly overlays: readonly Overlay[];
+  readonly position: CaptionPosition;
   readonly length: number;
   readonly width: number;
   readonly height: number;
   readonly fontSize: number;
-  readonly pillHeight: number;
-  readonly top: number;
-  readonly gap: number;
+  readonly edge: number;
 }
 
 export const CLIP_WIDTH = 1280;
+export const SKIP_MARK_S = 3;
+export const MARK_SHOWN_S = 1.2;
 
 export function readingSeconds(text: string): number {
   const words = text.split(/\s+/).filter(Boolean).length;
   return Math.min(6, Math.max(2, 1 + words / 3.5));
+}
+
+export function skipWords(seconds: number): string {
+  return seconds < 90 ? `${Math.round(seconds)} s later` : `${Math.round(seconds / 60)} min later`;
 }
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
@@ -196,7 +219,10 @@ export function planClip(prepared: Prepared, speed: RecordSpeed): ClipPlan {
   const base = onClip(prepared.recorded);
   const start = prepared.start ?? 0;
   const changes = [...prepared.events]
-    .map((event) => ({ ...event, text: captionText(event.text), at: Math.min(base, Math.max(0, onClip(Math.min(prepared.recorded, Math.max(0, event.at - start))))) }))
+    .map((event) => {
+      const real = Math.min(prepared.recorded, Math.max(0, event.at - start));
+      return { ...event, text: captionText(event.text), real, at: Math.min(base, Math.max(0, onClip(real))) };
+    })
     .sort((a, b) => a.at - b.at);
   const holds: Hold[] = [];
   const shownAt: number[] = [];
@@ -210,48 +236,60 @@ export function planClip(prepared: Prepared, speed: RecordSpeed): ClipPlan {
       added += hold;
     }
   });
-  const length = base + added;
+  const length = round3(base + added);
   const nextStep = (index: number) => {
     const later = changes.findIndex((change, other) => other > index && change.kind === "step");
     return later < 0 ? length : shownAt[later]!;
   };
-  const captions = changes.map((change, index): Caption => ({ kind: change.kind, text: change.text, row: change.kind === "step" ? 0 : 1, from: round3(shownAt[index]!), to: round3(nextStep(index)) }));
+  const captions = changes.map((change, index): Caption => ({ kind: change.kind, text: change.text, row: change.kind === "step" ? 0 : 1, from: round3(shownAt[index]!), to: round3(nextStep(index)), real: round3(change.real) }));
   const width = Math.min(CLIP_WIDTH, prepared.width || CLIP_WIDTH);
   const height = prepared.width ? Math.round((prepared.height * width) / prepared.width / 2) * 2 : 720;
   const fontSize = Math.max(14, Math.round(height / 38));
-  return {
-    speed,
-    cuts,
-    holds,
-    captions,
-    length: round3(length),
-    width,
-    height,
-    fontSize,
-    pillHeight: Math.round(fontSize * 2.1),
-    top: Math.round(height * 0.035),
-    gap: Math.max(4, Math.round(fontSize * 0.3)),
-  };
+  const pill = (size: number) => Math.round(size * 2.1);
+  const gap = Math.max(4, Math.round(fontSize * 0.3));
+  const edge = Math.round(height * 0.035);
+  const dock = Math.round(height * 0.11);
+  const position = prepared.position ?? "top";
+  const captionY = (row: 0 | 1) =>
+    position === "top" ? edge + row * (pill(fontSize) + gap) : height - dock - (2 - row) * pill(fontSize) - (1 - row) * gap;
+  const markSize = Math.max(11, Math.round(fontSize * 0.7));
+  const markHeight = pill(markSize);
+  const cornerY = position === "top" ? height - dock - markHeight : Math.round(height * 0.05);
+  const skipY = speed > 1 ? (position === "top" ? cornerY - markHeight - gap : cornerY + markHeight + gap) : cornerY;
+  const finalAt = (at: number) => at + holds.filter((hold) => hold.at < at - 0.0005).reduce((sum, hold) => sum + hold.seconds, 0);
+  const skips = cuts
+    .filter(([from, to]) => to - from >= SKIP_MARK_S)
+    .map(([from, to]): Overlay => {
+      const shown = round3(finalAt(onClip(from)));
+      return { look: "mark", text: skipWords(to - from), size: markSize, x: "right", y: skipY, from: shown, to: round3(Math.min(length, shown + MARK_SHOWN_S)) };
+    });
+  const overlays: Overlay[] = [
+    ...captions.map((caption): Overlay => ({ look: caption.kind, text: caption.text, size: fontSize, x: "centre", y: captionY(caption.row), from: caption.from, to: caption.to })),
+    ...(speed > 1 ? [{ look: "mark" as const, text: `${speed}x`, size: markSize, x: "right" as const, y: cornerY, from: 0, to: length }] : []),
+    ...skips,
+  ];
+  return { speed, cuts, holds, captions, overlays, position, length, width, height, fontSize, edge };
 }
 
-const PILLS: Readonly<Record<StepKind, { readonly icon: string; readonly color: string; readonly fill: string; readonly alpha: number }>> = {
+const PILLS: Readonly<Record<PillLook, { readonly icon: string; readonly color: string; readonly fill: string; readonly alpha: number }>> = {
   step: { icon: "▶", color: "4f8df5", fill: "5f6368", alpha: 0.82 },
   pass: { icon: "✓", color: "34c759", fill: "2a2a2a", alpha: 0.94 },
   fail: { icon: "✗", color: "ff453a", fill: "2a2a2a", alpha: 0.94 },
+  mark: { icon: "▶▶", color: "ffffff", fill: "1f1f1f", alpha: 0.88 },
 };
 
-export function clipGraph(plan: ClipPlan, withCaptions: boolean): string {
+export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
   const select = plan.cuts.length ? `select='not(${plan.cuts.map(([from, to]) => `between(t,${from.toFixed(3)},${to.toFixed(3)})`).join("+")})',` : "";
   const since = "(T-STARTT)";
   const removed = plan.cuts.map(([from, to]) => `clip(${since}-${from.toFixed(3)},0,${round3(to - from)})`).join("+");
   const clock = removed ? `(${since}-(${removed}))/${plan.speed}` : `${since}/${plan.speed}`;
   const pts = `'(${clock}${plan.holds.map((hold) => `+${hold.seconds}*gt(${clock},${hold.at})`).join("")})/TB'`;
-  const head = `[0:v]${select}setpts=${pts},fps=${RECORD_FPS},scale='min(${CLIP_WIDTH},iw)':-2`;
-  if (!withCaptions || !plan.captions.length) return `${head}[out]`;
-  const steps = plan.captions.map((caption, index) => {
-    const y = caption.row === 0 ? plan.top : plan.top + plan.pillHeight + plan.gap;
-    const into = index === plan.captions.length - 1 ? "[out]" : `[v${index + 1}]`;
-    return `[v${index}][${index + 1}:v]overlay=x=(W-w)/2:y=${y}:enable='between(t,${caption.from},${caption.to})'${into}`;
+  const head = `[0:v]${select}setpts=${pts},fps=${RECORD_FPS},tpad=stop_mode=clone:stop_duration=${plan.length},trim=duration=${plan.length},scale='min(${CLIP_WIDTH},iw)':-2`;
+  if (!withOverlays || !plan.overlays.length) return `${head}[out]`;
+  const steps = plan.overlays.map((overlay, index) => {
+    const x = overlay.x === "centre" ? "(W-w)/2" : `W-w-${plan.edge}`;
+    const into = index === plan.overlays.length - 1 ? "[out]" : `[v${index + 1}]`;
+    return `[v${index}][${index + 1}:v]overlay=x=${x}:y=${overlay.y}:enable='between(t,${overlay.from},${overlay.to})'${into}`;
   });
   return [`${head}[v0]`, ...steps].join(";");
 }
@@ -284,37 +322,37 @@ function run(argv) {
 `;
 
 export function recordMakeScript(plan: ClipPlan): string {
-  const pills = plan.captions.map((caption, index) => {
-    const look = PILLS[caption.kind];
-    const encoded = Buffer.from(caption.text).toString("base64");
-    return `pill ${index} '${encoded}' '${Buffer.from(look.icon).toString("base64")}' ${look.color} ${look.fill} ${look.alpha}`;
+  const pills = plan.overlays.map((overlay, index) => {
+    const look = PILLS[overlay.look];
+    const encoded = Buffer.from(overlay.text).toString("base64");
+    return `pill ${index} '${encoded}' '${Buffer.from(look.icon).toString("base64")}' ${look.color} ${look.fill} ${look.alpha} ${overlay.size}`;
   });
-  const inputs = plan.captions.map((_, index) => `-i "$d/pill-${index}.png"`).join(" ");
+  const inputs = plan.overlays.map((_, index) => `-i "$d/pill-${index}.png"`).join(" ");
   return String.raw`d="$HOME/${RECORD_DIR}"
 [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
-fs=${plan.fontSize}
 decode() { perl -MMIME::Base64 -e 'print decode_base64($ARGV[0])' "$1"; }
 if [ "$(uname)" = Darwin ]; then
   cat >"$d/pill.js" <<'PILL'
 ${MAC_PILL}PILL
   pill() {
     decode "$2" >"$d/pill-$1.txt"
-    osascript -l JavaScript "$d/pill.js" "$d/pill-$1.txt" "$(decode "$3")" "$4" "$5" "$6" "$fs" "$d/pill-$1.png" >/dev/null
+    osascript -l JavaScript "$d/pill.js" "$d/pill-$1.txt" "$(decode "$3")" "$4" "$5" "$6" "$7" "$d/pill-$1.png" >/dev/null
   }
 else
   font=$(fc-match -f '%{file}' 'DejaVu Sans' 2>/dev/null)
   bold=$(fc-match -f '%{file}' 'DejaVu Sans:bold' 2>/dev/null)
-  measure() { ffmpeg -nostdin -hide_banner -v info -f lavfi -i color=s=16x16:d=0.1 -vf "drawtext=fontfile=$1:textfile=$2:expansion=none:fontsize=$fs:x='print(tw)'" -frames:v 1 -f null - 2>&1 | awk '/^[0-9.]+$/ { print int($1 + 0.5); exit }'; }
+  measure() { ffmpeg -nostdin -hide_banner -v info -f lavfi -i color=s=16x16:d=0.1 -vf "drawtext=fontfile=$1:textfile=$2:expansion=none:fontsize=$3:x='print(tw)'" -frames:v 1 -f null - 2>&1 | awk '/^[0-9.]+$/ { print int($1 + 0.5); exit }'; }
   pill() {
+    fs=$7
     decode "$2" >"$d/pill-$1.txt"; decode "$3" >"$d/pill-$1.icon"
-    tw=$(measure "$font" "$d/pill-$1.txt"); iw=$(measure "$bold" "$d/pill-$1.icon")
+    tw=$(measure "$font" "$d/pill-$1.txt" "$fs"); iw=$(measure "$bold" "$d/pill-$1.icon" "$fs")
     [ -n "$tw" ] && [ -n "$iw" ] || return 1
     h=$((fs * 21 / 10)); pad=$fs; gap=$((fs * 6 / 10)); w=$((pad + iw + gap + tw + pad)); r=$((h / 2)); cap=$((fs * 73 / 100))
     rgb=$((0x$5))
     ffmpeg -nostdin -v error -y -f lavfi -i "color=c=black@0:s=$${"{"}w}x$${"{"}h},format=rgba" -vf "geq=r=$((rgb >> 16 & 255)):g=$((rgb >> 8 & 255)):b=$((rgb & 255)):a='255*$6*clip($r+0.5-hypot(max(0\,max($r-X\,X-($w-1-$r)))\,Y-($h-1)/2)\,0\,1)',drawtext=fontfile=$bold:textfile=$d/pill-$1.icon:expansion=none:fontsize=$fs:fontcolor=0x$4:x=$pad:y=($h+$cap)/2-ascent,drawtext=fontfile=$font:textfile=$d/pill-$1.txt:expansion=none:fontsize=$fs:fontcolor=white:x=$((pad + iw + gap)):y=($h+$cap)/2-ascent" -frames:v 1 "$d/pill-$1.png"
   }
 fi
-captions=${plan.captions.length ? "1" : "none"}
+captions=${plan.overlays.length ? "1" : "none"}
 ${pills.map((line) => `[ "$captions" = 0 ] || ${line} || captions=0`).join("\n")}
 if [ "$captions" = 1 ]; then
   ffmpeg -nostdin -loglevel error -y -i "$d/capture.mkv" ${inputs} -filter_complex "${clipGraph(plan, true)}" -map "[out]" ${CLIP} "$d/clip.mp4" || exit ${RECORD_STOP_EXITS.failed}
@@ -423,6 +461,7 @@ export function parseRecordResult(stdout: string): RecordResult | null {
  */
 export interface Chapter {
   readonly at: number;
+  readonly real: number;
   readonly text: string;
   readonly result: { readonly passed: boolean; readonly text: string } | null;
 }
@@ -430,9 +469,9 @@ export interface Chapter {
 export function chaptersOf(captions: readonly Caption[]): Chapter[] {
   const chapters: Chapter[] = [];
   for (const caption of captions) {
-    if (caption.kind === "step") chapters.push({ at: caption.from, text: caption.text, result: null });
+    if (caption.kind === "step") chapters.push({ at: caption.from, real: caption.real, text: caption.text, result: null });
     else if (chapters.length) chapters[chapters.length - 1] = { ...chapters[chapters.length - 1]!, result: { passed: caption.kind === "pass", text: caption.text } };
-    else chapters.push({ at: caption.from, text: "", result: { passed: caption.kind === "pass", text: caption.text } });
+    else chapters.push({ at: caption.from, real: caption.real, text: "", result: { passed: caption.kind === "pass", text: caption.text } });
   }
   return chapters;
 }
@@ -454,7 +493,7 @@ export function recordPage(title: string, mp4: string, chapters: readonly Chapte
     .map((chapter) => {
       const result = chapter.result ? `<span style="color:${chapter.result.passed ? "#34c759" : "#ff453a"}">${chapter.result.passed ? "✓" : "✗"}</span> ${escape(chapter.result.text)}` : "";
       const step = chapter.text ? `<span style="color:#4f8df5">▶</span> ${escape(chapter.text)}` : "";
-      return `<li><a href="#" data-at="${chapter.at}"><span class="at">${clock(chapter.at)}</span><span>${step}${step && result ? "<br>" : ""}${result}</span></a></li>`;
+      return `<li><a href="#" data-at="${chapter.at}"><span class="at">${clock(chapter.real)}</span><span>${step}${step && result ? "<br>" : ""}${result}</span></a></li>`;
     })
     .join("");
   return `<!doctype html><meta charset="utf-8"><title>${escape(title)}</title>

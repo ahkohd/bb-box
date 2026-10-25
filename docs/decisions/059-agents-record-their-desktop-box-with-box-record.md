@@ -169,6 +169,16 @@ green ✓ or a red ✗. The next step's pill replaces both.
   its time, and a click there plays the clip from it.
 - **Windows** records as before, without captions, for now: `step` and
   `result` say so.
+- **Where the captions go** (amended): `start` takes `position`, `top`, the
+  default, or `bottom`, for a check near the top of the screen, such as a
+  menu bar or a window's title. At the bottom the pills sit above a dock or
+  taskbar, the step over its result.
+- **Skips and speed shown** (amended): a still stretch cut of 3 s or more
+  shows "▶▶ 18 s later", the time it skipped, for 1.2 s, and a clip at 2x
+  or 4x shows its speed all along, both in small pills in the corner away
+  from the captions. A shorter cut shows nothing, so the mark does not
+  flicker. The page's step list gives each step's real time in the
+  recording.
 
 ### Notifications are the agent's
 
