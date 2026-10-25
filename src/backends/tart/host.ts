@@ -21,6 +21,7 @@
 //   which a start keeps.
 
 import { quote } from "../../transports/process.ts";
+import { isSignallablePid } from "../../transports/spawns.ts";
 import { recordFromJson, type ImageRecord } from "../images.ts";
 import type { StopReason } from "../types.ts";
 import { VNC_HOLDER_PY } from "./vnc-holder.ts";
@@ -368,6 +369,7 @@ export function parseFollow(text: string): { status: number | null; size: number
 
 /** Stops a detached build, pid `pid`, and what it started, if it still runs. */
 export function stopBuildScript(pid: number): string {
+  if (!isSignallablePid(pid)) return script("exit 0\n");
   return script(`kill -0 ${pid} 2>/dev/null || exit 0; pkill -TERM -P ${pid} 2>/dev/null; kill -TERM ${pid} 2>/dev/null; :\n`);
 }
 

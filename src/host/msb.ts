@@ -15,6 +15,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ExperimentalHostRpcContext, ExperimentalHostWorkerLease } from "@get-bb/plugin-sdk/host";
 import { Capture, quote } from "../transports/process.ts";
+import { killsOnlyOnceStarted } from "../transports/spawns.ts";
 import { HANG_UP, ptyArgv } from "../transports/terminal.ts";
 import { msbScript, scriptArgsOk } from "../backends/microsandbox/release.ts";
 import type { Channel } from "../relay/mux.ts";
@@ -81,7 +82,7 @@ function serve(channel: Channel, binary: string): void {
   const start = (args: readonly string[], tty: TtySize | undefined) => {
     if (!existsSync(binary)) return failed(`msb is not installed here (${binary}). bb-box installs it with its doctor's fix, or when it first needs it.`);
     const [program, ...rest] = tty ? scriptArgv(binary, args, tty) : [binary, ...args];
-    const spawned = spawn(program!, rest, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(tty ? { TERM: "xterm-256color" } : {}) } });
+    const spawned = killsOnlyOnceStarted(spawn(program!, rest, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...(tty ? { TERM: "xterm-256color" } : {}) } }));
     child = spawned;
     spawned.stdin.on("error", () => {});
     spawned.once("error", (error) => failed(`cannot run ${program}: ${error.message}`));
@@ -145,7 +146,7 @@ function runScript(dir: string, name: string, args: readonly string[], signal: A
     if (!scriptArgsOk(name, args)) return resolve({ exitCode: 2, stdout: "", stderr: `bb-box's host entry runs no script ${name} with those arguments.` });
     const stdout = new Capture(OUTPUT_BYTES);
     const stderr = new Capture(OUTPUT_BYTES);
-    const child = spawn("sh", ["-c", msbScript(name), "bb-box-msb", ...args], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, BBBOX_MSB_DIR: dir } });
+    const child = killsOnlyOnceStarted(spawn("sh", ["-c", msbScript(name), "bb-box-msb", ...args], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, BBBOX_MSB_DIR: dir } }));
     const timer = setTimeout(() => child.kill("SIGKILL"), SCRIPT_MS[name] ?? 60_000);
     const kill = () => child.kill("SIGKILL");
     signal.addEventListener("abort", kill, { once: true });

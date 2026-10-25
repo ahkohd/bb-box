@@ -65,6 +65,7 @@ boot_id() {
 }
 generation() { cat "$STATE/generation" 2>/dev/null; }
 number() { case ${1:-} in '' | *[!0-9]*) return 1 ;; esac; }
+box_uid() { number "${1:-}" && { { [ "$1" -ge 70000 ] && [ "$1" -lt 80000 ]; } || { [ "$1" -ge 60706 ] && [ "$1" -lt 61184 ]; }; }; }
 # Writes stdin to a file in one step.
 put() { cat >"$1.new.$$" && mv -f "$1.new.$$" "$1"; }
 
@@ -315,7 +316,7 @@ remove_user() {
     fi
   fi
   rm -f "/var/lib/systemd/linger/$user" "/etc/sudoers.d/$user" "/etc/sudoers.d/$user.new"
-  if [ -n "$uid" ]; then
+  if box_uid "$uid"; then
     tries=0
     while pgrep -u "$uid" >/dev/null 2>&1; do
       pkill -KILL -u "$uid" >/dev/null 2>&1

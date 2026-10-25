@@ -78,13 +78,14 @@ qmp() {
   return 1
 }
 qmp_close() { exec 3>&- 4<&-; kill "$qnc" 2>/dev/null; wait "$qnc" 2>/dev/null; }
+signal_pid() { case $2 in '' | 0 | *[!0-9]*) return 1 ;; esac; kill "-$1" "$2" 2>/dev/null; }
 # Whether VM $1's video bridge runs (qemu-video.ts, #865): the PID in its video.pid, and the process there a bridge.
 qvideo() {
   _p=$(cat "$q/vms/$1/video.pid" 2>/dev/null) && [ -n "$_p" ] && ps -ww -p "$_p" -o command= 2>/dev/null | grep -q '/bb-box-stream-[0-9a-f]* qemu '
 }
 # Ends VM $1's video bridge by that PID only: the Mac is its owner's.
 qvideostop() {
-  if qvideo "$1"; then kill "$(cat "$q/vms/$1/video.pid")" 2>/dev/null; fi
+  if qvideo "$1"; then signal_pid TERM "$(cat "$q/vms/$1/video.pid")"; fi
   rm -f "$q/vms/$1/video.pid" "$q/vms/$1/video.sock"
 }
 # Whether QMP's answer $1 has "$2": "$3", however QEMU spaces it.
@@ -287,17 +288,17 @@ keep "$v/out" "$v/exit"
 detach "$v/out" "$v/exit" qemu-system-aarch64 "$@" || { echo "QEMU did not start for $vm." >&2; exit 1; }
 i=0
 until [ -S "$v/qmp" ]; do
-  kill -0 "$pid" 2>/dev/null || { cat "$v/out" >&2; exit 3; }
+  signal_pid 0 "$pid" || { cat "$v/out" >&2; exit 3; }
   i=$((i + 1))
-  [ "$i" -lt ${waitSeconds * 10} ] || { kill "$pid" 2>/dev/null; echo "QEMU did not start $vm within ${waitSeconds} s." >&2; cat "$v/out" >&2; exit 1; }
+  [ "$i" -lt ${waitSeconds * 10} ] || { signal_pid TERM "$pid"; echo "QEMU did not start $vm within ${waitSeconds} s." >&2; cat "$v/out" >&2; exit 1; }
   sleep 0.1
 done
 [ -n "$saved" ] || { echo started; exit 0; }
 failed() {
   qmp_close
-  kill "$pid" 2>/dev/null
-  i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-  kill -9 "$pid" 2>/dev/null
+  signal_pid TERM "$pid"
+  i=0; while signal_pid 0 "$pid" && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  signal_pid KILL "$pid"
   echo "QEMU failed to restore $vm's saved state: $1 $(tail -n 5 "$v/out")" >&2; exit 1
 }
 qmp_open "$vm" || failed "its monitor did not answer."
@@ -343,8 +344,8 @@ if qrunning "$vm"; then
   mv -f "$v/state.part" "$v/state" || failed "its state could not be kept."
   qmp '{"execute":"quit"}' >/dev/null
   qmp_close
-  i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
-  kill -9 "$pid" 2>/dev/null
+  i=0; while signal_pid 0 "$pid" && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+  signal_pid KILL "$pid"
 fi
 `;
 
@@ -405,11 +406,11 @@ qvideostop "$vm"
 how=stopped
 if qrunning "$vm"; then
   pid=$(cat "$v/pid")
-  i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt ${waitSeconds * 10} ]; do sleep 0.1; i=$((i + 1)); done
-  if kill -0 "$pid" 2>/dev/null; then
-    how=ended; kill "$pid"
-    i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-    kill -9 "$pid" 2>/dev/null
+  i=0; while signal_pid 0 "$pid" && [ "$i" -lt ${waitSeconds * 10} ]; do sleep 0.1; i=$((i + 1)); done
+  if signal_pid 0 "$pid"; then
+    how=ended; signal_pid TERM "$pid"
+    i=0; while signal_pid 0 "$pid" && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+    signal_pid KILL "$pid"
   fi
 fi
 rm -f "$v/state"
@@ -454,9 +455,9 @@ export function qemuDeleteScript(vm: string, installId: string, boxId: string | 
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
 if [ -f "$d/owners/$vm" ] && ! mine "$vm" ${quote(installId)} ${quote(boxId ?? "")}; then echo gone; exit 0; fi
 if qrunning "$vm"; then
-  pid=$(cat "$v/pid"); kill "$pid"
-  i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-  kill -9 "$pid" 2>/dev/null
+  pid=$(cat "$v/pid"); signal_pid TERM "$pid"
+  i=0; while signal_pid 0 "$pid" && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  signal_pid KILL "$pid"
 fi
 qvideostop "$vm"
 rm -rf "$v" "$v.new" || exit 1

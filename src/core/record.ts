@@ -97,7 +97,8 @@ export function recordPrepareScript(stills: "cut" | "keep", os: GuestOs = "linux
 ended=limit
 if [ -s "$d/pid" ]; then
   pid=$(cat "$d/pid")
-  if kill -0 "$pid" 2>/dev/null; then
+  case $pid in '' | 0 | *[!0-9]*) pid= ;; esac
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
     ended=stopped
     kill -TERM "$pid"
     for i in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done

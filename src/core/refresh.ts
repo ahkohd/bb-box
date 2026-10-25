@@ -17,6 +17,7 @@ import { KIND_INFO } from "../backends/kinds.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../backends/types.ts";
 import { compareVersions, resolveVersions, stageSetup } from "../backends/versions.ts";
 import { quote } from "../transports/process.ts";
+import { isSignallablePid } from "../transports/spawns.ts";
 import { TransportError, type CommandTransport } from "../transports/types.ts";
 
 /** How each Linux kind's standard image is built, as template/build.sh builds it. */
@@ -293,7 +294,7 @@ async function followWindows(command: CommandTransport, timeoutMs: number, resta
       if (Date.now() - heard > restart.timeoutMs) throw error;
     }
     if (Date.now() > deadline) {
-      await command.run(`taskkill /T /F /PID ${run.pid} *> $null`, { timeoutMs: 30_000, signal }).catch(() => undefined);
+      if (isSignallablePid(run.pid)) await command.run(`taskkill /T /F /PID ${run.pid} *> $null`, { timeoutMs: 30_000, signal }).catch(() => undefined);
       return { exitCode: null, timedOut: true };
     }
     if (!more) await sleep(restart.pollMs, undefined, { signal });

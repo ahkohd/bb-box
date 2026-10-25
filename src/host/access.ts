@@ -13,6 +13,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { ExperimentalHostRpcContext, ExperimentalHostWorkerLease } from "@get-bb/plugin-sdk/host";
+import { killsOnlyOnceStarted } from "../transports/spawns.ts";
 
 /** What the held process runs: it only waits, about 68 years. */
 export const HOLDER_COMMAND = ["sleep", "2147483647"] as const;
@@ -51,7 +52,7 @@ export function accessHandlers(options: { command?: readonly string[] } = {}) {
         if (held && running(held.child) && held.fingerprint === now) return { started: false, pid: held.child.pid ?? null, missing };
         const old = held;
         // windowsHide: BB's daemon runs in the desktop session, where Node would show a console.
-        const child = spawn(program!, args, { env: { ...process.env }, stdio: "ignore", windowsHide: true });
+        const child = killsOnlyOnceStarted(spawn(program!, args, { env: { ...process.env }, stdio: "ignore", windowsHide: true }));
         // A program that cannot start must not take the worker down with it.
         child.on("error", () => {});
         held = { child, fingerprint: now };
