@@ -168,13 +168,22 @@ test("the hosts' sweep leaves a build server alone, and the builds' own sweep de
   assert.ok(![...api.servers.values()].some((each) => each.name === left && each.status !== "deleting"), "the builds' sweep deleted the one the crash left");
 });
 
-test("the setup's fingerprint changes when a file under setup/docker does, and not otherwise", () => {
+test("the setup's fingerprint changes with what the image build reads, setup/docker and Proxmox's template and common.sh, and not with docs or anything else", () => {
   const copy = tempDir("setup-copy");
-  cpSync(join(setupDir(), "docker"), join(copy, "docker"), { recursive: true });
+  for (const part of ["docker", "proxmox-lxc/host", "proxmox-lxc/template"]) cpSync(join(setupDir(), part), join(copy, part), { recursive: true });
   const before = setupFingerprint(copy);
   assert.equal(setupFingerprint(copy), before);
+  writeFileSync(join(copy, "docker", "README.md"), "a docs change\n");
+  assert.equal(setupFingerprint(copy), before, "the build reads no Markdown");
+  writeFileSync(join(copy, "proxmox-lxc", "host", "other.sh"), "not read by the build\n");
+  assert.equal(setupFingerprint(copy), before, "of proxmox-lxc/host, the build reads only common.sh");
   writeFileSync(join(copy, "docker", "extra.txt"), "changed\n");
-  assert.notEqual(setupFingerprint(copy), before);
+  const docker = setupFingerprint(copy);
+  assert.notEqual(docker, before);
+  writeFileSync(join(copy, "proxmox-lxc", "template", "guest", "extra.sh"), "changed\n");
+  assert.notEqual(setupFingerprint(copy), docker, "the template is mounted into the build");
+  writeFileSync(join(copy, "proxmox-lxc", "host", "common.sh"), "changed\n");
+  assert.notEqual(setupFingerprint(copy), docker);
 });
 
 test("a host image is built with BB's app in it, labelled with its digest, and is due again once BB's server gives another", async () => {
