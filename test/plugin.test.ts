@@ -4170,6 +4170,81 @@ test("a desktop's clipboard is read once at a time, and a read that began before
   await session.close();
 });
 
+test("a macOS desktop's clipboard comes from a watcher in the box once it runs, with no pbpaste per poll: a copy of the same text counts, and the viewer's own paste does not come back", async (t) => {
+  const bin = tempDir("pasteboard-watch");
+  const path = process.env.PATH;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  const { displays, command } = FAKE_KINDS[1]!.capabilities;
+  const capabilities = { ...FAKE_KINDS[1]!.capabilities, os: "macos" as const, command: { ...command!, inDesktopSession: true }, displays: [{ ...displays[0]!, resizable: false, clipboard: "commands" as const }] };
+  const kind: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities };
+  const { harness, app, box, tool } = await desktopBox({ kind });
+  let disposed = false;
+  t.after(() => (disposed ? undefined : harness.lifecycle.dispose()));
+  const home = /stdout:\n(.*)\n/.exec(text(await tool("box_run", { box: box.name, command: "pwd" })))![1]!;
+  const board = join(home, "pasteboard");
+  const count = join(home, "pasteboard-count");
+  const shims: Record<string, string> = {
+    pbcopy: `cat > ${board}; echo x >> ${count}`,
+    pbpaste: `echo read >> ${home}/pasteboard-reads; cat ${board} 2>/dev/null`,
+    osascript: `echo $$ > ${home}/watcher-pid; echo ready; last=$(cat ${count} 2>/dev/null); while :; do now=$(cat ${count} 2>/dev/null); if [ "$now" != "$last" ]; then last=$now; printf 'C %s\\n' "$(base64 < ${board} | tr -d '\\n')"; fi; sleep 0.05; done`,
+  };
+  for (const [name, script] of Object.entries(shims)) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${script}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  process.env.PATH = `${bin}:${path}`;
+  const copy = (value: string) => {
+    writeFileSync(board, value);
+    writeFileSync(count, `${readFileSync(count, "utf8")}x\n`);
+  };
+  writeFileSync(board, "before");
+  writeFileSync(count, "x\n");
+  const reads = () => (existsSync(join(home, "pasteboard-reads")) ? readFileSync(join(home, "pasteboard-reads"), "utf8").split("\n").filter(Boolean).length : 0);
+  const viewer = "viewer-one-0001";
+  const clipboard = () => harness.behavior.callRpc("desktopClipboard", { threadId: THREAD, box: box.id, viewer }) as Promise<{ text: string; serial: number } | null>;
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
+  await session.receive(new TextEncoder().encode("RFB 003.008\n"));
+  await session.receive(Uint8Array.of(1));
+  await session.receive(Uint8Array.of(1));
+  await until("the viewer to join", async () => app.desktops.control.connected(box.id, viewer));
+  assert.equal(((await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null }).error, null);
+
+  const first = await clipboard();
+  assert.equal(first?.text, "before", "the first poll reads the pasteboard, as the watcher starts");
+  await until("the watcher to start", async () => existsSync(join(home, "watcher-pid")));
+  copy("copied ✓");
+  let latest: { text: string; serial: number } | null = first;
+  await until("the copy", async () => (latest = await clipboard())?.text === "copied ✓");
+  const settled = reads();
+  for (let i = 0; i < 3; i++) await clipboard();
+  assert.equal(reads(), settled, "polls while the watcher runs read nothing in the box");
+
+  copy("copied ✓");
+  await until("the same text copied again", async () => (await clipboard())!.serial > latest!.serial);
+  latest = await clipboard();
+
+  assert.equal(await harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer, text: "pasted here" }), null);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.deepEqual(await clipboard(), { text: "pasted here", serial: latest!.serial }, "the viewer's own paste does not come back as a copy");
+  copy("after the paste");
+  await until("a copy after the paste", async () => (await clipboard())?.text === "after the paste");
+
+  const pid = Number(readFileSync(join(home, "watcher-pid"), "utf8"));
+  await session.close();
+  disposed = true;
+  await harness.lifecycle.dispose();
+  await until("the watcher to stop", async () => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+});
+
 test("a click that opened another process's panel, which Cua on Windows calls a failed foreground check, is done, and names the panel (#484)", async (t) => {
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());

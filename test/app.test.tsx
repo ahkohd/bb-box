@@ -2377,6 +2377,25 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
   }
 });
 
+test("a Mac's first copy reaches this computer when its clipboard was empty as the tab took control, within a poll", async () => {
+  const { writeText } = fakeClipboard(() => Promise.resolve(""));
+  const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  try {
+    const { handlers, copyInBox } = server([desktopBox({ id: "box_9", name: "mac-9", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" } })]);
+    const slot = desktopTab(handlers, "box_9");
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    copyInBox("the first copy ✓");
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("the first copy ✓"), { timeout: 900 });
+  } finally {
+    focus.mockRestore();
+  }
+});
+
 test("a Windows box, whose QEMU console moves no clipboard, has it through bb-box: Cmd+V from a Mac and the menu's Paste send UTF-8 by RPC, then press the box's Ctrl+V, and Copy reads the box's (#461)", async () => {
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
   const { writeText } = fakeClipboard(() => Promise.resolve("from the Mac ✓"));

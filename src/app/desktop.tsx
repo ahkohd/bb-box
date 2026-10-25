@@ -83,7 +83,7 @@ export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
 
 /** How often a tab with control asks for the box's clipboard. */
-const CLIPBOARD_POLL_MS = 2_000;
+const CLIPBOARD_POLL_MS = 500;
 /** How long a clipboard note, such as "Copied" or "Pasted", shows in the toolbar at least. */
 const FLASH_MS = 3_000;
 /**
@@ -1020,8 +1020,13 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     };
     const fromBox = async () => {
       if (!document.hasFocus()) return;
-      const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => null);
-      if (stopped || !latest || latest.serial === seen) return;
+      const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => undefined);
+      if (stopped || latest === undefined) return;
+      if (latest === null) {
+        seen ??= 0;
+        return;
+      }
+      if (latest.serial === seen) return;
       // The first answer is what the box had before: only later changes are copied.
       const first = seen === null;
       seen = latest.serial;
