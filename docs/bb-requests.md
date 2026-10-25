@@ -49,6 +49,7 @@ is a log: bb-box does not file these with BB.
 | [Install BB's app on Windows in seconds](#33-install-bbs-app-on-windows-in-seconds) | not met | BB's installer takes 42 to 88 s on a Windows box, most of it npm installing bb-app; bb-box's Windows images pre-install the server's build, which helps until the server's next build (#916) |
 | [Keep one plugin's stylesheet from slowing another's panel](#34-keep-one-plugins-stylesheet-from-slowing-anothers-panel) | not met | a terminal in bb-box's panel took about 2.2 s to draw a prompt, as the shell-tasks plugin's stylesheet made each character's measurement about 100 times slower; bb-box is moving its terminals to xterm's WebGL renderer |
 | [Say what a machine needs before installing](#35-say-what-a-machine-needs-before-installing) | not met | on a fresh Ubuntu server, BB's machine installer stopped with "sh: node: not found" and its usage, and the guide for a cloud Docker host lists Node.js 22 as a step of its own |
+| [Let a reloaded plugin's old instance go](#36-let-a-reloaded-plugins-old-instance-go) | not met in 0.47.1 | each reload of bb-box keeps its old instance in BB's server, with everything it registered and holds: about 0.7 MiB on an idle BB, and more with boxes and desktops in use |
 
 ## 1. BB's host app on Windows
 
@@ -1350,6 +1351,47 @@ Two more things slowed the same setup:
 
 **Until then.** bb-box's guide for a cloud Docker host lists Node.js, the
 user and lingering as steps before the command.
+
+## 36. Let a reloaded plugin's old instance go
+
+**Status in BB 0.47.1: not met.**
+
+**What bb-box needs.** A plugin that reloads, at each deploy or
+`bb plugin reload`, leaves nothing of its old instance in BB's server once
+the old instance is disposed.
+
+**What BB does now.** BB's `loadOne` reads `const previous = loaded.get(row.id)`
+in the same scope as the functions it gives the new instance, such as
+`getSdk: () => boundSdk`. A closure in that scope, `failBeforeFactory`, reads
+`previous`, so V8 keeps `previous` in the scope's context, which every
+closure of the new instance shares. The new instance's API therefore keeps
+the old instance alive, which keeps the one before it, and so on: every
+instance since the server started stays reachable, with the handlers,
+tools, schemas and state it registered or held.
+
+On 25 October 2026, on a fresh BB 0.47.1 with no account, Docker set up and
+one Linux box kept, BB's heap after a full garbage collection, a minute
+after each `bb plugin reload`:
+
+| Reloads | bb-box reloaded | A plugin that does nothing, reloaded |
+| --- | --- | --- |
+| 0 | 81 MiB | 96 MiB |
+| 2 | 83 MiB | 97 MiB |
+| 10 | 89 MiB | 97 MiB |
+| 20 | 96 MiB | 98 MiB |
+
+A heap snapshot after the 20th reload of bb-box held 20 old instances
+through `previous`, and 12.0 MiB that only they kept. On the operator's
+BB, with boxes and desktops in use, the heap after a full collection went
+from 725 to 884 MiB over a day with about 35 deploys.
+
+**What we ask.** BB drops its reference to the old instance once it is
+disposed, for example by declaring `previous` with `let` and setting it to
+`undefined` after `disposePluginInstance`, or by reading it in a function of
+its own, so no closure of the new instance shares its context.
+
+**Until then.** BB's server grows by one bb-box instance at each deploy or
+reload, and a restart of BB's server frees them all.
 
 ## Checked, no request needed
 
