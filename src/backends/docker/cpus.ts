@@ -43,6 +43,11 @@ export function cpusBothAllow(probed: CpuList, daemon: CpuList | null): number[]
   return both.length ? both : [...daemon];
 }
 
+export function cpusToPinTo(probed: CpuList, daemon: CpuList | null, cores: number): number[] | null {
+  const both = cpusBothAllow(probed, daemon);
+  return both.length < Math.min(Math.ceil(cores), probed.length) ? null : both;
+}
+
 export function hostCpusFromProbe(output: string | null, count: number): number[] {
   return parseCpuList(output) ?? hostCpuRange(count);
 }
