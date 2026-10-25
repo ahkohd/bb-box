@@ -10,6 +10,7 @@ A box belongs to a thread. It stays until you release it, or until its thread is
 - [Making a box](making-a-box.md): choose its system, type, image, size and where it runs
 - [Resizing a box](resizing.md): give a box more or fewer cores, more or less memory, or a larger disk
 - [Desktops](desktops.md): watch a desktop, take control, copy and paste, hand back, and show it as video
+- [Recordings](recording.md): clips of an agent's work on a desktop, with each step and its result captioned
 - [The terminal](terminal.md): use a shell in a box
 - [Images](images.md): project images, and how standard images stay up to date
 - [Long commands and jobs](jobs.md): what happens when an agent's command runs for minutes
