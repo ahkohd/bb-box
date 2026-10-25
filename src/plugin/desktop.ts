@@ -159,9 +159,9 @@ export interface Desktops {
   /**
    * Puts the viewer's text on the box's clipboard, where the desktop's server
    * moves none (#464). Only the viewer with control may; rejects with why
-   * the box did not take it.
+   * the box did not take it, or, for an automatic send, resolves false.
    */
-  paste(boxId: string, viewer: string, text: string): Promise<void>;
+  paste(boxId: string, viewer: string, text: string, options?: { readonly automatic?: boolean }): Promise<boolean>;
   /** Whether the box's desktop is High resolution, or null where it cannot be. */
   sharp(boxId: string): Promise<boolean | null>;
   /** Makes the box's desktop High resolution, twice the pixels at twice Xfce's scale, or not. */
@@ -1056,8 +1056,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       }
       return clipboards.get(boxId) ?? null;
     },
-    async paste(boxId, viewer, text) {
-      if (!control.mayInput(boxId, viewer)) throw new Error("Only the tab with control of the desktop can paste into it. Take control, then paste again.");
+    async paste(boxId, viewer, text, options = {}) {
+      if (!control.mayInput(boxId, viewer)) {
+        if (options.automatic) return false;
+        throw new Error("Only the tab with control of the desktop can paste into it. Take control, then paste again.");
+      }
       const box = await byCommands(boxId);
       if (!box) throw new Error("This desktop takes a viewer's clipboard through its own server, so bb-box does not paste into it.");
       pastes.set(boxId, (pastes.get(boxId) ?? 0) + 1);
@@ -1069,6 +1072,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       // The box has the viewer's text, so the next read finds no change to copy back.
       clipboards.set(boxId, { text, serial: clipboards.get(boxId)?.serial ?? ++clipboardSerial });
       if (watches.get(boxId)?.live) ownPastes.set(boxId, text);
+      return true;
     },
     async dispose() {
       for (const boxId of [...watches.keys()]) stopWatch(boxId);

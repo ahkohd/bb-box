@@ -523,6 +523,8 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
   /** A box's clipboard where bb-box moves it with commands (#464): as the viewer pasted, or as the box copied. */
   let boxClipboard: { text: string; serial: number } | null = null;
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
+  let declining = 0;
+  const declineAutomatic = (count: number) => (declining = count);
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, videoByDefault: options.videoByDefault ?? options.video ?? false, sharp: options.sharp ?? null, switching: options.switching?.on ?? false }),
@@ -553,7 +555,12 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktopClipboard: () => boxClipboard,
-    desktopPaste: ({ box: ref, viewer, text }) => {
+    desktopPaste: ({ box: ref, viewer, text, automatic }) => {
+      if (automatic && declining > 0) {
+        declining--;
+        changes.push(`desktopPaste declined ${ref} ${viewer} ${text}`);
+        return false;
+      }
       changes.push(`desktopPaste ${ref} ${viewer} ${text}`);
       boxClipboard = { text, serial: boxClipboard?.serial ?? 1 };
       return null;
@@ -666,7 +673,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       return { result: { ok: true, state: configState(options.config ?? {}), problems: [] }, hosts: dockerHosts };
     },
   };
-  return { handlers, changes, asked, copyInBox };
+  return { handlers, changes, asked, copyInBox, declineAutomatic };
 }
 
 let applied: ConfigDocument | null = null;
@@ -2375,6 +2382,28 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
   } finally {
     platform.mockRestore();
   }
+});
+
+test("the tab's automatic send of this computer's clipboard, which a box that does not yet know the tab has control declines, goes again at the tab's next focus", async () => {
+  fakeClipboard(() => Promise.resolve("from this computer ✓"));
+  const { handlers, changes, declineAutomatic } = server([desktopBox({ id: "box_10", name: "mac-10", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" } })]);
+  declineAutomatic(1);
+  const slot = desktopTab(handlers, "box_10");
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+  const viewer = new URL(novnc.FakeRfb.made[0]!.url).searchParams.get("viewer");
+  act(() => void client.dispatchEvent(new Event("connect")));
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  await waitFor(() => expect(changes).toContain(`desktopPaste declined box_10 ${viewer} from this computer ✓`));
+  expect(changes).not.toContain(`desktopPaste box_10 ${viewer} from this computer ✓`);
+  expect(slot.queryByRole("alert")).toBeNull();
+  act(() => void window.dispatchEvent(new Event("focus")));
+  await waitFor(() => expect(changes).toContain(`desktopPaste box_10 ${viewer} from this computer ✓`));
+  const sends = changes.filter((change) => change.endsWith(`${viewer} from this computer ✓`)).length;
+  act(() => void window.dispatchEvent(new Event("focus")));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(changes.filter((change) => change.endsWith(`${viewer} from this computer ✓`))).toHaveLength(sends);
 });
 
 test("a Mac's first copy reaches this computer when its clipboard was empty as the tab took control, within a poll", async () => {
