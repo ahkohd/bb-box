@@ -283,13 +283,14 @@ test("a macos-desktop box gets its desktop ready as it starts: the video helper 
   tool("sudo", `printf '%s\\n' "sudo $*" >> ${log}`);
   tool("caffeinate", `printf '%s\\n' "caffeinate $*" >> ${log}`);
   tool("killall", `printf '%s\\n' "killall $*" >> ${log}`);
+  tool("brew", `printf '%s\\n' "brew $*" >> ${log}`);
   const path = process.env.PATH;
   process.env.PATH = `${dir}:${path}`;
   try {
     const { fake, backend } = setup();
     const desktop = await backend.acquire({ ...box("d1"), kind: "macos-desktop" }, null, hooks().hooks, new AbortController().signal);
     const calls = readFileSync(log, "utf8").trim().split("\n");
-    assert.match(calls[0]!, /^xcrun swiftc -O -swift-version 5 -o \S+ \S+stream\.swift$/);
+    assert.ok(calls.some((call) => /^xcrun swiftc -O -swift-version 5 -o \S+ \S+stream\.swift$/.test(call)), calls.join("; "));
     assert.ok(calls.some((call) => /^sudo -n install -m 0755 \S+ \/usr\/local\/bin\/bb-box-stream$/.test(call)), calls.join("; "));
     const grants = calls.filter((call) => call.startsWith("sudo -n sqlite3"));
     assert.equal(grants.length, 9);
@@ -307,6 +308,7 @@ test("a macos-desktop box gets its desktop ready as it starts: the video helper 
     }
     assert.equal(approvals.match(new RegExp(`<key>kScreenCapturePrivacyHintDate</key><date>${hintYear}-01-01T00:00:00Z</date>`, "g"))?.length, 3);
     assert.ok(calls.some((call) => /^killall -u \S+ replayd$/.test(call)), "replayd reads them afresh");
+    assert.ok(calls.includes("brew install --quiet ffmpeg"), "ffmpeg, which box_record needs, is installed");
 
     const transports = await backend.transports(desktop, "macos-desktop");
     assert.deepEqual(transports.displays.map((display) => `${display.id} ${display.protocol}`), ["desktop rfb", "video selkies"]);

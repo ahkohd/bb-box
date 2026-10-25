@@ -91,6 +91,17 @@ test("box_record's captions are drawn with FFmpeg 8 too, as on Ubuntu 26.04's Wa
 
 const PREPARED: Prepared = { ended: "stopped", recorded: 30, width: 1920, height: 1080, start: 1000, cuts: [[5.5, 15]], events: [] };
 
+test("box_record starts in zsh with no pills to clear and no glob error, and on a Mac starts ffmpeg in a session of its own with no nohup, which refuses where there is no console to leave, as under Namespace's agent (#1032)", () => {
+  const home = tempDir("record-zsh");
+  const shell = spawnSync("zsh", ["-fc", ":"]).status === 0 ? "zsh" : "sh";
+  const started = spawnSync(shell, ["-c", recordStartScript("linux")], { env: { PATH: process.env.PATH, HOME: home }, encoding: "utf8" });
+  assert.equal(started.status, RECORD_START_EXITS.noDisplay, started.stderr);
+  assert.doesNotMatch(started.stderr, /no matches found/);
+  const mac = recordStartScript("macos");
+  assert.match(mac, /perl -MPOSIX -e '\$SIG\{HUP\} = "IGNORE"; POSIX::setsid\(\); exec @ARGV' ffmpeg /);
+  assert.doesNotMatch(mac, /exec @ARGV' nohup/);
+});
+
 test("a clip's plan maps each step through the cut stills and the speed, and holds a caption only as long as its reading time needs", () => {
   const events: Prepared["events"] = [
     { at: 1002, kind: "step", text: "Open the meetings page" },
