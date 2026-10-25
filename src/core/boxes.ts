@@ -2156,7 +2156,7 @@ export class Boxes {
     try {
       return { box, answer: await backend.grant(box.guest!, request, signal) };
     } catch (error) {
-      if (error instanceof BackendError && error.code === "unsupported") throw new BoxError("unsupported", error.message);
+      if (error instanceof BackendError && error.code === "unsupported") throw new BoxError("unsupported", error.message.replaceAll(box.guest!.ref, box.name));
       throw error;
     }
   }
