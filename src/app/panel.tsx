@@ -124,6 +124,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
             askForImage={state.imageOffer ? () => navigate.toCompose({ initialPrompt: IMAGE_REQUEST, focusPrompt: true }) : undefined}
             images={state.images}
             onDemand={onDemand}
+            access={state.access ?? null}
           />
         ) : null}
       </div>

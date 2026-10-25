@@ -132,7 +132,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   // What each method starts is counted as for it.
   bb.rpc.register(contract, withPurposes("rpc", {
     async state({ threadId }) {
-      const [list, kinds, machine, project, desktopOnDemand] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId), app.projectOf(threadId).catch(() => null), app.desktopOnDemand().catch(() => null)]);
+      const [list, kinds, machine, project, desktopOnDemand, access] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId), app.projectOf(threadId).catch(() => null), app.desktopOnDemand().catch(() => null), app.machineAccess().catch(() => null)]);
       const imageOffer = !!project && !Object.values(app.configuration.exported().images ?? {}).some((image) => image.projects.includes(project));
       const images = await app.imageOptions(project).catch(() => []);
       const yours = machine !== null && (machine.threadId === OPERATOR || machine.threadId === SPARES);
@@ -140,7 +140,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         machine && !list.some((box) => box.id === machine.id)
           ? { box: app.view(machine), owner: yours ? ("yours" as const) : ("thread" as const), threadId: yours ? null : machine.threadId }
           : null;
-      return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn, imageOffer, images, desktopOnDemand, desktopProblem: app.desktopProblem(threadId) };
+      return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn, imageOffer, images, desktopOnDemand, desktopProblem: app.desktopProblem(threadId), access };
     },
     acquire: ({ threadId, kind, size, on, image }) =>
       change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}), ...(image ? { image } : {}) })),
@@ -214,12 +214,13 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     },
     async "machines.list"() {
       const records = (await boxes.list(OPERATOR)).filter((box) => box.state !== "releasing").sort((a, b) => a.createdAt - b.createdAt);
-      const [machines, kinds, desktopOnDemand] = await Promise.all([
+      const [machines, kinds, desktopOnDemand, access] = await Promise.all([
         Promise.all(records.map(async (box) => ({ box: app.view(box), threads: await app.threadsOn(box).catch(() => []) }))),
         app.kinds(),
         app.desktopOnDemand().catch(() => null),
+        app.machineAccess().catch(() => null),
       ]);
-      return { machines, kinds: kinds.filter((kind) => kind.enrol), desktopOnDemand, desktopProblem: app.desktopProblem(OPERATOR) };
+      return { machines, kinds: kinds.filter((kind) => kind.enrol), desktopOnDemand, desktopProblem: app.desktopProblem(OPERATOR), access };
     },
     "machines.add": ({ kind, size, name, on }) =>
       change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) })),

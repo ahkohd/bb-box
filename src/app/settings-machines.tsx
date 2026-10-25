@@ -51,7 +51,7 @@ export function MachinesSection() {
   };
 
   return (
-    <Section title="Machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} onDemand={onDemand} machine profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} />} plain={!machines.length}>
+    <Section title="Machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} onDemand={onDemand} access={state?.access ?? null} machine profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} />} plain={!machines.length}>
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
       <ProblemLine problem={problem} onDismiss={() => setProblem(null)} className="py-2" />
       {state && !machines.length ? (

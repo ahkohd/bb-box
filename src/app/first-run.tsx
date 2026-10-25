@@ -213,7 +213,7 @@ export function JoinHelp({ words }: { words: string | null }) {
   if (needsSignIn(words)) {
     return (
       <>
-        BB's machine access, bb connect, needs you signed in to your bb account. Sign in to it in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach. {guide}
+        BB's machine access, bb connect, needs you signed in to your bb account. Sign in to it in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach, and have BB listen there: started with npx bb-app, add --server-bind-host 0.0.0.0. {guide}
       </>
     );
   }

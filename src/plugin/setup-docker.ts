@@ -47,7 +47,7 @@ export function progressWords(setup: MachineSetup, now: number): string {
 /** What to do where BB's machine access will not let boxes join BB, as the panel says it (#661). */
 export function accessWords(access: MachineAccessProblem): string {
   const how = needsSignIn(access.message)
-    ? "Sign in to your bb account in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach."
+    ? "Sign in to your bb account in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach, and have BB listen there: started with npx bb-app, add --server-bind-host 0.0.0.0."
     : `${access.message.replace(/\.?$/, ".")} See Machine access in BB's settings, under Machines.`;
   return `Boxes will not join BB yet. ${how}`;
 }
