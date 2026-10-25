@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { NamespaceBackend } from "../src/backends/namespace/backend.ts";
-import { WORKSPACE_FROM_METADATA, buildWaitWords, linuxImageBuildScript, linuxImageFingerprint, linuxImageKey } from "../src/backends/namespace/linux-images.ts";
+import { WORKSPACE_FROM_METADATA, buildProgressScript, buildWaitWords, linuxImageBuildScript, linuxImageFingerprint, linuxImageKey, readBuildProgress, startDetachedBuildScript } from "../src/backends/namespace/linux-images.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
@@ -21,8 +21,9 @@ function setup(options: { failBuild?: boolean; slowBuild?: boolean; app?: () => 
   const received = join(dir, "received");
   const finishBuild = join(dir, "finish");
   const app = options.app ?? (() => "a".repeat(64));
-  const context = { ...testContext(new MemoryStorage(), "inst1"), bbUrl: () => "https://bb.example", images: { bbApp: async () => app() } } as never;
-  const backend = new NamespaceBackend(CONFIG, context, {
+  const lines: string[] = [];
+  const context = { ...testContext(new MemoryStorage(), "inst1"), bbUrl: () => "https://bb.example", images: { bbApp: async () => app() }, log: (line: string) => void lines.push(line) } as never;
+  const make = () => new NamespaceBackend(CONFIG, context, {
     fetch: fake.fetch,
     sshBinary: FAKE_SSH_BINARY,
     sleep: async () => {},
@@ -34,11 +35,12 @@ function setup(options: { failBuild?: boolean; slowBuild?: boolean; app?: () => 
         ? `cat > ${received}; echo "step 1" >&2; echo "build.sh: no space left" >&2; exit 1`
         : `cat > ${received}; printf '%s %s\\n' ${target} '${bbUrl}' >> ${received}.calls; ${options.slowBuild ? `while [ ! -e ${finishBuild} ]; do sleep 0.02; done; ` : ""}echo "nscr.io/ws1/bbbox/${target}:${key}"`,
   });
+  const backend = make();
   const building = async () => {
     for (let wait = 0; !existsSync(`${received}.calls`) && wait < 500; wait++) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.ok(existsSync(`${received}.calls`), "the build started");
   };
-  return { fake, backend: disposed(backend), received, advance: (ms: number) => (now += ms), building, finish: () => writeFileSync(finishBuild, "") };
+  return { fake, backend: disposed(backend), again: () => disposed(make()), lines, received, advance: (ms: number) => (now += ms), building, finish: () => writeFileSync(finishBuild, "") };
 }
 
 test("a Linux image is built once in a Linux instance of its own, from bb-box's setup scripts, pushed to the workspace's registry and recorded, and the instance destroyed", async () => {
@@ -206,4 +208,60 @@ test("with the tailnet on, a build machine joins it with a one-off key of its ow
   } finally {
     process.env.PATH = path;
   }
+});
+
+test("a reload while an image builds leaves the build running in its instance, and the next run carries on with the same instance; nothing is destroyed until the build ends (#1032)", async (t) => {
+  const { fake, backend, again, lines, building, finish } = setup({ slowBuild: true });
+  t.after(finish);
+  const stopped = assert.rejects(backend.linuxImages.forBox("desktop", new AbortController().signal));
+  await building();
+  const [instance] = [...fake.instances.values()];
+  const status = () => fake.instances.get(instance!.id)!.status as string;
+  await backend.dispose();
+  await stopped;
+  assert.equal(status(), "RUNNING", "the build instance keeps building");
+  assert.ok(lines.includes(`Namespace: bb-box stopped while it built the desktop image in instance ${instance!.id}, at its building step: it leaves the instance building, and the next run of bb-box carries on with it.`));
+
+  const next = again();
+  await next.maintain();
+  assert.ok(lines.includes(`Namespace: bb-box carries on with the desktop image build in instance ${instance!.id}, from its building step, which an earlier run of bb-box left.`));
+  finish();
+  for (let wait = 0; !(await next.linuxImages.record("desktop")) && wait < 500; wait++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.match((await next.linuxImages.record("desktop"))!.ref, /^nscr\.io\/ws1\/bbbox\/desktop:/);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 1, "the same instance, not a new one");
+  for (let wait = 0; status() !== "DESTROYED" && wait < 200; wait++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(status(), "DESTROYED", "once the build ends, its instance goes");
+});
+
+test("a build instance no build of bb-box's follows, as one whose record was lost, is destroyed by the next upkeep; one made in the last two minutes is left to its build (#1032)", async () => {
+  const { fake, backend, advance } = setup();
+  const start = Date.parse("2030-01-01T00:00:00Z");
+  const instance = (id: string, createdAt: number) => ({
+    id,
+    status: "RUNNING" as const,
+    labels: { "bbbox-install": "inst1", "bbbox-role": "image-build", "bbbox-target": "linux" },
+    shape: { os: "linux", machineArch: "amd64", virtualCpu: 8, memoryMegabytes: 16384, selectors: [] },
+    uniqueTag: id,
+    sshKeys: [],
+    createdAt,
+    deadline: createdAt + 3_600_000,
+    continent: "us",
+  });
+  fake.instances.set("orphan1", instance("orphan1", start - 10 * 60_000));
+  fake.instances.set("fresh1", instance("fresh1", start));
+  await backend.maintain();
+  assert.equal(fake.instances.get("orphan1")!.status, "DESTROYED");
+  assert.equal(fake.instances.get("fresh1")!.status, "RUNNING");
+  advance(3 * 60_000);
+  await backend.maintain();
+  assert.equal(fake.instances.get("fresh1")!.status, "DESTROYED");
+});
+
+test("the detached build's progress reads its exit code, its image's name and the log from where it left off (#1032)", () => {
+  assert.deepEqual(readBuildProgress("exit=\nref=\nstep 1\n", 0), { exitCode: null, ref: "", log: "step 1\n", nextByte: 7 });
+  assert.deepEqual(readBuildProgress("exit=0\nref=nscr.io/ws1/bbbox/linux:k\n", 7), { exitCode: 0, ref: "nscr.io/ws1/bbbox/linux:k", log: "", nextByte: 7 });
+  const start = startDetachedBuildScript("linux", "echo inner");
+  assert.match(start, /\[ ! -e "\$d\/started" \] \|\| \{ cat >\/dev\/null; exit 0; \}/, "a second start does nothing");
+  assert.match(start, /setsid nohup bash -c/);
+  assert.match(buildProgressScript("linux", 7), /tail -c \+8 "\$d\/log"/);
 });

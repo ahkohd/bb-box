@@ -262,12 +262,10 @@ export class NamespaceBackend implements Backend {
         const tailnet = context.tailnet?.() ?? null;
         if (!tailnet) return null;
         await this.#joinAs(instance, name, tailnet, true, signal);
-        return async () => {
-          await this.#leave(instance);
-          const hostname = this.#tailnetHostname(name);
-          for (const device of await tailnet.devices().catch(() => [])) if (device.hostname === hostname) await tailnet.removeDevice(device.id).catch(() => undefined);
-        };
+        return () => this.#leaveTailnetAs(instance, name);
       },
+      leaveTailnet: (instance, name) => this.#leaveTailnetAs(instance, name),
+      sleep: this.#sleep,
       bbApp: async (signal) => (context.bbUrl?.() ? ((await context.images?.bbApp(signal).catch(() => null)) ?? null) : null),
       log: (line) => context.log?.(line),
       ...(options.linuxImageScript ? { buildScript: options.linuxImageScript } : {}),
@@ -457,6 +455,8 @@ export class NamespaceBackend implements Backend {
   }
 
   async maintain(signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void> {
+    await this.linuxImages.carryOnLeftBuilds().catch((error) => this.#context.logError("carry on Namespace's image builds", error));
+    await this.linuxImages.destroyBuildsNoOneFollows(signal).catch((error) => this.#context.logError("destroy Namespace's build instances no build follows", error));
     for (const { target, why } of await this.linuxImages.due(signal).catch(() => [])) {
       void this.linuxImages.build(target, why).catch((error) => this.#context.logError(`build Namespace's ${target} image`, error));
     }
@@ -636,6 +636,14 @@ export class NamespaceBackend implements Backend {
     if (joined.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not join the tailnet: ${joined.stderr.trim().slice(-300) || `exit ${joined.exitCode}`}`);
   }
 
+  async #leaveTailnetAs(instance: string, name: string): Promise<void> {
+    const tailnet = this.#context.tailnet?.() ?? null;
+    await this.#leave(instance);
+    if (!tailnet) return;
+    const hostname = this.#tailnetHostname(name);
+    for (const device of await tailnet.devices().catch(() => [])) if (device.hostname === hostname) await tailnet.removeDevice(device.id).catch(() => undefined);
+  }
+
   async #leave(instance: string, signal?: AbortSignal): Promise<void> {
     const { ssh } = await this.#keys();
     await new SshTransport(ssh, this.#access(instance), "macos").run(leaveScript(), { timeoutMs: 15_000, signal }).catch(() => undefined);
@@ -760,6 +768,7 @@ export class NamespaceBackend implements Backend {
   }
 
   async dispose(): Promise<void> {
+    this.linuxImages.dispose();
     await (await this.#ssh?.catch(() => null))?.ssh.dispose();
     await this.#keyFile.dispose();
   }
