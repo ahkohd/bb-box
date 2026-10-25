@@ -362,6 +362,37 @@ test("the viewer's reads go in turn: a key in a later read waits for a character
   await relay.relay.close();
 });
 
+test("keys a viewer sent while it had control reach the box though they wait their turn past a hand-back, and keys sent after it do not (the Mac sweep)", async () => {
+  const server = new FakeRfb();
+  const characters: number[] = [];
+  let box: FakeRfb["connections"][number] | undefined;
+  const input: DisplayInput = {
+    key: async () => true,
+    character: async (down, keysym) => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      if (down) characters.push(keysym);
+    },
+    pointer: async () => undefined,
+    clipboard: async () => undefined,
+    size: async () => undefined,
+    ping: async () => undefined,
+    close: async () => undefined,
+  };
+  const relay = relayTo(server, { displayInput: async () => input, inputTakes: "wheel", typesAsCharacter: tartTypesAsCharacter });
+  await relay.init();
+  [box] = server.connections;
+  relay.give(true);
+  const typed = [relay.relay.receive(keyEvent(true, 0xe9)), relay.relay.receive(keyEvent(false, 0xe9)), relay.relay.receive(keyEvent(true, 0x78)), relay.relay.receive(keyEvent(false, 0x78))];
+  relay.give(false);
+  const late = relay.relay.receive(keyEvent(true, 0x79));
+  await Promise.all([...typed, late]);
+  await until("the key typed before the hand-back", () => box!.received.byteLength >= 16);
+  assert.deepEqual(characters, [0xe9], "the character typed with control was posted");
+  const keys = [...box!.received].length / 8;
+  assert.equal(keys, 2, "the key typed with control went down and up, and the one typed after the hand-back was dropped");
+  await relay.relay.close();
+});
+
 test("over QEMU's VNC server on Windows, a key typed otherwise than on a US keyboard goes to the display's input as its character, and the rest, the pointer included, to the server (the desktop sweep)", async () => {
   const server = new FakeRfb();
   const calls: string[] = [];
