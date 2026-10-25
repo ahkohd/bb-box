@@ -188,6 +188,8 @@ export class HetznerBackend implements Backend {
       api: this.#api,
       builds: new HetznerHosts({ api: this.#api, storage: context.storage, installId: context.installId, now: this.#now, whenGone: (record, goneAtMs) => this.#billEnded(record, goneAtMs), role: IMAGE_BUILD_ROLE, readyAbandonedAfterMs: BUILD_ABANDONED_AFTER_MS }),
       installLabels: { "bbbox-install": context.installId },
+      storage: context.storage,
+      now: this.#now,
       fingerprint: options.hostImageFingerprint,
     });
     this.#dockerConfig = { x86: config.docker, arm: dockerConfigForArm(config.docker) };
@@ -347,6 +349,7 @@ export class HetznerBackend implements Backend {
 
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.hostRecords.sweep(signal);
+    await this.#hostImages.reconcile((line) => this.#context.log?.(line), signal).catch((error) => this.#context.logError("reconcile host image snapshots", error));
     await this.#hostImages.builds.sweep(signal);
     await this.#removeFromTailnet("every one this install has no host for", signal);
     const idleMs = this.#config.idleMinutes * 60_000;
@@ -672,7 +675,8 @@ export class HetznerBackend implements Backend {
     const newest = snapshots[0] ?? null;
     const sizes = snapshots.reduce((sum, each) => sum + (each.compressedSizeGB ?? 0), 0);
     const kept = snapshots.length ? ` ${snapshots.length} kept, ${sizes.toFixed(1)} GB, about ${euros(sizes * SNAPSHOT_EUROS_A_GB_A_MONTH)} a month.` : "";
-    const building = this.#buildingHostImage.has(architecture) ? " A new one is being built." : "";
+    const making = this.#buildingHostImage.has(architecture) ? null : await this.#hostImages.beingMade(signal, architecture).catch(() => null);
+    const building = this.#buildingHostImage.has(architecture) ? " A new one is being built." : making ? ` Hetzner Cloud is making a new one, snapshot ${making.id}, which bb-box takes once it is ready.` : "";
     const failed = failedAt !== undefined ? ` The last build failed at ${new Date(failedAt).toISOString()}; bb-box tries again a day after.` : "";
     const waiting = await this.#context.storage.get<WaitingForRoom>(HOST_IMAGE_WAITING_KEY[architecture]);
     const waits = waiting && !this.#buildingHostImage.has(architecture) ? ` The last build waited for room: at ${new Date(waiting.atMs).toISOString()} Hetzner Cloud refused its server (${waiting.why.replace(/^Hetzner Cloud POST \/servers failed /, "")}); bb-box tries again at its next check. ${ROOM_ADVICE}` : "";
@@ -720,6 +724,7 @@ export class HetznerBackend implements Backend {
     if (!this.#buildsHostImages(architecture) || this.#buildingHostImage.has(architecture) || (this.#reach?.canReach() ?? null) !== null) return null;
     const failedAt = await this.#context.storage.get<number>(HOST_IMAGE_FAILED_KEY[architecture]);
     if (failedAt !== undefined && this.#now() - failedAt < HOST_IMAGE_RETRY_AFTER_MS) return null;
+    if (await this.#hostImages.beingMade(signal, architecture)) return null;
     const why = this.#hostImages.whyBuild(await this.#hostImages.newest(signal, architecture), this.#now(), await this.#bbApp(signal));
     if (!why) return null;
     const limit = this.#config.monthlyLimitEurosBeforeVat;
@@ -771,6 +776,11 @@ export class HetznerBackend implements Backend {
         if (error instanceof HetznerError && (error.overLimit || error.unavailable)) {
           await this.#context.storage.set(HOST_IMAGE_WAITING_KEY[architecture], { atMs: this.#now(), why: error.message } satisfies WaitingForRoom);
           this.#context.log?.(`The ${ARCHITECTURE_WORDS[architecture]} host image waits for room in the Hetzner Cloud project: ${error.message}`);
+          return;
+        }
+        const making = await this.#hostImages.beingMade(signal, architecture).catch(() => null);
+        if (making) {
+          this.#context.log?.(`The ${ARCHITECTURE_WORDS[architecture]} host image build stopped waiting for snapshot ${making.id}, which Hetzner Cloud is still making: bb-box takes it once it is ready.`);
           return;
         }
         await this.#context.storage.set(HOST_IMAGE_FAILED_KEY[architecture], this.#now());

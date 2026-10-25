@@ -140,6 +140,7 @@ test("the hosts' sweep leaves a build server alone, and the builds' own sweep de
   void first.buildHostImage("there is no host image yet");
   for (let i = 0; i < 200 && !crashed; i++) await new Promise((resolve) => setTimeout(resolve, 5));
   api.intercept = undefined;
+  const left = [...api.servers.values()].find((each) => each.labels["bbbox-role"] === "image-build")!.name;
   const restarted = backend(config, storage, "test", { ...options, hostImageFingerprint: () => "fp1" });
   await restarted.hostRecords.sweep(signal());
   assert.equal(api.servers.size, 1, "the hosts' sweep leaves the build server alone");
@@ -148,7 +149,7 @@ test("the hosts' sweep leaves a build server alone, and the builds' own sweep de
   assert.equal([...api.servers.values()].filter((each) => each.labels["bbbox-role"] === "image-build").length, 1, "a build may run for hours");
   api.advanceClock(3 * 3_600_000);
   await restarted.maintain(signal());
-  assert.ok(![...api.servers.values()].some((each) => each.labels["bbbox-role"] === "image-build" && each.status !== "deleting"), "the builds' sweep deleted the one the crash left");
+  assert.ok(![...api.servers.values()].some((each) => each.name === left && each.status !== "deleting"), "the builds' sweep deleted the one the crash left");
 });
 
 test("the setup's fingerprint changes when a file under setup/docker does, and not otherwise", () => {
@@ -203,4 +204,63 @@ test("a build Hetzner refuses a server for, as past the project's core limit, wa
   for (let i = 0; i < 200 && api.images.size === 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(api.images.size, 1, "the next maintain built it");
   assert.doesNotMatch((await hetzner.doctor(signal())).checks.find((each) => each.id === "hetzner.image")!.detail, /waited for room/);
+});
+
+test("a snapshot that takes longer than ten minutes, as a 320 GB disk's can, is waited for while Hetzner Cloud makes it", async () => {
+  const { api, backend } = hetznerWorld();
+  const { options } = builder();
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04" }), new MemoryStorage(), "test", options);
+  api.pollsUntilSnapshotMade = 200;
+  await hetzner.buildHostImage("there is no host image yet", signal());
+  assert.deepEqual([...api.images.values()].map((each) => each.status), ["available"]);
+  assert.equal(api.servers.size, 0, "the build server goes once its snapshot is made");
+});
+
+test("when bb-box stops waiting for a snapshot Hetzner Cloud is still making, it keeps the build server, builds no other, and takes the snapshot once made, saying so", async () => {
+  const { api, backend } = hetznerWorld();
+  const { options } = builder();
+  const lines: string[] = [];
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04" }), new MemoryStorage(), "test", options, { log: (line: string) => void lines.push(line) });
+  api.pollsUntilSnapshotMade = 5_000;
+  await hetzner.buildHostImage("there is no host image yet", signal());
+  const [snapshot] = api.images.values();
+  assert.equal(snapshot!.status, "creating");
+  assert.equal(api.servers.size, 1, "the build server stays while its snapshot is made");
+  assert.ok(lines.some((line) => /^Snapshot \d+ of bb-box-hz-\S+ is still being made, so bb-box keeps the build server/.test(line)));
+  const check = (await hetzner.doctor(signal())).checks.find((each) => each.id === "hetzner.image")!;
+  assert.equal(check.status, "ok", "not a failure");
+  assert.match(check.detail, new RegExp(`Hetzner Cloud is making a new one, snapshot ${snapshot!.id}, which bb-box takes once it is ready\\.`));
+
+  const creates = () => api.calls.filter((call) => call.method === "POST" && call.path === "/servers").length;
+  const before = creates();
+  await hetzner.maintain(signal());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(creates(), before, "no other build while one is being made");
+  assert.ok(lines.some((line) => line === `Host image snapshot ${snapshot!.id} of build ${snapshot!.labels["bbbox-build"]} (x86) is creating, no size yet: bb-box waits for Hetzner Cloud to finish it, and keeps its build server until then.`));
+  assert.equal(api.servers.size, 1);
+
+  snapshot!.status = "available";
+  snapshot!.imageSize = 31.5;
+  await hetzner.maintain(signal());
+  assert.ok(lines.some((line) => line === `Host image snapshot ${snapshot!.id} of build ${snapshot!.labels["bbbox-build"]} (x86) is available, 31.5 GB: bb-box adopts it as the host image, the newest build for its current scripts.`));
+  assert.ok(lines.some((line) => /^The build server bb-box-hz-\S+ waited for its snapshot, which is no longer being made: bb-box deletes it\.$/.test(line)));
+  assert.equal(api.servers.size, 0);
+  const guest = await hetzner.acquire(box(), null, hooks, signal());
+  assert.equal([...api.servers.values()].find((each) => each.name === guest.host)!.image, snapshot!.id, "the next host starts from it");
+});
+
+test("a host image snapshot Hetzner Cloud did not make, or one still creating after two hours, is deleted, and bb-box says which", async () => {
+  const { api, backend } = hetznerWorld();
+  const { options } = builder();
+  const lines: string[] = [];
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04" }), new MemoryStorage(), "test", options, { log: (line: string) => void lines.push(line) });
+  const labels = (build: string) => ({ "bbbox-install": "test", "bbbox-role": "host-image", "bbbox-build": build, "bbbox-setup": "fp1", "bbbox-arch": "x86" });
+  const old = new Date(api.now - 3 * 3_600_000).toISOString();
+  api.images.set(9001, { id: 9001, description: "bb-box host image dead1", status: "unavailable", created: old, labels: labels("dead1"), imageSize: null, createdFrom: 1 });
+  api.images.set(9002, { id: 9002, description: "bb-box host image slow1", status: "creating", created: old, labels: labels("slow1"), imageSize: null, createdFrom: 2 });
+  await hetzner.maintain(signal());
+  assert.equal(api.images.has(9001), false);
+  assert.equal(api.images.has(9002), false);
+  assert.ok(lines.includes("Host image snapshot 9001 of build dead1 (x86) is unavailable, no size yet: bb-box deletes it, as Hetzner Cloud did not make it."));
+  assert.ok(lines.includes("Host image snapshot 9002 of build slow1 (x86) is creating, no size yet: bb-box deletes it, as it has been creating for over 2 hours."));
 });

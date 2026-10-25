@@ -68,6 +68,7 @@ export class FakeHetzner {
   readonly calls: FakeHetznerCall[] = [];
   pollsUntilCreatedServerRuns = 2;
   pollsUntilOtherActionsFinish = 1;
+  pollsUntilSnapshotMade: number | null = null;
   projectServerLimit = 10;
   readonly soldOutTypeAtLocation = new Set<string>();
   requestsLeftThisHour = 3600;
@@ -162,7 +163,7 @@ export class FakeHetzner {
         createdFrom: found.id,
       };
       this.images.set(made.id, made);
-      const action = this.#action("create_image", this.pollsUntilOtherActionsFinish, () => {
+      const action = this.#action("create_image", this.pollsUntilSnapshotMade ?? this.pollsUntilOtherActionsFinish, () => {
         made.status = "available";
         made.imageSize = 4.2;
       });
