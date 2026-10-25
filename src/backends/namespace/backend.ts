@@ -77,6 +77,7 @@ const MAC_DESKTOP = [
   "set -eu",
   'export PATH="$PATH:/opt/homebrew/bin"',
   'work=$(mktemp -d); trap \'rm -rf "$work"\' EXIT',
+  'ffmpeg_install=; [ -x /opt/homebrew/bin/ffmpeg ] || { HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install --quiet ffmpeg >"$work/ffmpeg.log" 2>&1 & ffmpeg_install=$!; }',
   'cat > "$work/stream.swift"',
   'xcrun swiftc -O -swift-version 5 -o "$work/bb-box-stream" "$work/stream.swift" >"$work/build.log" 2>&1 || { tail -n 5 "$work/build.log" >&2; exit 1; }',
   `sudo -n mkdir -p ${"$(dirname " + MAC_STREAM + ")"}`,
@@ -95,6 +96,7 @@ const MAC_DESKTOP = [
   "killall -u \"$(id -un)\" replayd 2>/dev/null || :",
   "sudo -n pmset -a displaysleep 0 sleep 0 >/dev/null",
   "caffeinate -u -t 1",
+  '[ -z "$ffmpeg_install" ] || wait "$ffmpeg_install" || { echo "Homebrew could not install ffmpeg, which box_record needs:" >&2; tail -n 3 "$work/ffmpeg.log" >&2; }',
 ].join("\n");
 const CUA_ARCHIVE = `cua-driver-rs-${CUA_VERSION}-darwin-arm64`;
 const CUA_APP = "/Applications/CuaDriver.app";

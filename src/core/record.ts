@@ -45,14 +45,14 @@ export function recordStartScript(os: GuestOs = "linux", position: CaptionPositi
   return String.raw`d="$HOME/${RECORD_DIR}"; mkdir -p "$d"
 if [ -s "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null; then exit ${RECORD_START_EXITS.running}; fi
 set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
-rm -f "$d/capture.mkv" "$d/clip.mp4" "$d/log" "$d/events" "$d"/pill-*
+rm -f "$d/capture.mkv" "$d/clip.mp4" "$d/log" "$d/events"; find "$d" -maxdepth 1 -name 'pill-*' -exec rm -f {} +
 echo ${position} >"$d/position"
 perl -MTime::HiRes=time -e 'printf "%.3f\n", time' >"$d/start"
 if [ "$(uname)" = Darwin ]; then
   command -v ffmpeg >/dev/null || { echo ffmpeg >&2; exit ${RECORD_START_EXITS.noRecorder}; }
   screen=$(ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 | sed -n 's/.*\[\([0-9]*\)\] Capture screen 0.*/\1/p' | head -n 1)
   [ -n "$screen" ] || exit ${RECORD_START_EXITS.noDisplay}
-  perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' nohup ffmpeg -nostdin -loglevel error -y -f avfoundation -capture_cursor 1 \
+  perl -MPOSIX -e '$SIG{HUP} = "IGNORE"; POSIX::setsid(); exec @ARGV' ffmpeg -nostdin -loglevel error -y -f avfoundation -capture_cursor 1 \
     -framerate ${RECORD_FPS} -i "$screen:none" -t ${RECORD_LIMIT_S} -c:v libx264 -preset ultrafast -crf 0 "$d/capture.mkv" >"$d/log" 2>&1 </dev/null &
 elif [ -n "${"$"}{WAYLAND_DISPLAY:-}" ]; then
   command -v wf-recorder >/dev/null || { echo wf-recorder >&2; exit ${RECORD_START_EXITS.noRecorder}; }
@@ -365,7 +365,7 @@ fi
 seconds() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1"; }
 recorded=$(seconds "$d/capture.mkv")
 size=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$d/clip.mp4")
-rm -f "$d/capture.mkv" "$d/events" "$d"/pill-* "$d/pill.js"
+rm -f "$d/capture.mkv" "$d/events" "$d/pill.js"; find "$d" -maxdepth 1 -name 'pill-*' -exec rm -f {} +
 printf '{"ended":"stopped","recorded":%s,"clip":%s,"bytes":%s,"size":"%s","captions":%s}\n'   "$recorded" "$(seconds "$d/clip.mp4")" "$(wc -c <"$d/clip.mp4" | tr -d ' ')" "$size" "$(if [ "$captions" = 1 ]; then echo true; elif [ "$captions" = none ]; then echo null; else echo false; fi)"
 `;
 }

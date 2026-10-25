@@ -676,7 +676,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         if (!found.capabilities.displays.length) throw new BoxError("unsupported", `Box ${found.name} has no desktop to record.`);
         // On Windows both run in the desktop session: gdigrab reads the desktop it runs in, and the stop closes its window.
         const os = found.capabilities.os;
-        const session = os === "windows" ? ("desktop" as const) : undefined;
+        const session = os === "windows" || os === "macos" ? ("desktop" as const) : undefined;
         if (action === "start") {
           const { result } = await boxes.run(owner, found.id, recordStartScript(os, position ?? "top"), { timeoutMs: 30_000, signal, session, waitForEnrolment: false });
           const refused: Partial<Record<number, string>> = {
