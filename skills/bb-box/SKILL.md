@@ -198,6 +198,13 @@ cut by default, so a long session makes a short clip.
 
 - Before you start a recording, clear or dismiss notifications, and close
   windows that do not belong in the video.
+- To show a test run, caption each check, on Linux and macOS: before it,
+  `action: "step"` with what you check, one short line ("It keeps the draft
+  when saving fails"); after it, `action: "result"` with `passed` true or
+  false and what you saw ("Draft kept; no error toast"). They are drawn
+  over the video, a step at the top and its result under it, and listed as
+  chapters under it. Each stays on screen long enough to read, even at
+  speed 2 or 4.
 - On Windows, BB's Keep Awake opens a "Windows PowerShell" window over the
   desktop when the box joins BB and each time BB restarts there, such as
   after a resume. Minimise it with the computer tools before you record;

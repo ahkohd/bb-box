@@ -323,6 +323,7 @@ echo "$*" >> "$HOME/ffmpeg-args"
 case "$*" in
   *list_devices*) printf '[AVFoundation indev @ 0x1] [0] Capture screen 0\n' >&2 ;;
   *x11grab* | *"-f avfoundation"*) trap 'echo capture > "$out"; exit 0' TERM; while :; do sleep 0.05; done ;;
+  *"print(tw)"*) printf '120.000000\n' >&2 ;;
   *"-f null"*) printf '[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 1\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_end: 6\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 8\\n' >&2 ;;
   *) printf mp4data > "$out" ;;
 esac

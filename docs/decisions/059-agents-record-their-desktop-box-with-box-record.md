@@ -136,6 +136,40 @@ time was cut.
    crash at start on Windows on arm64, even x64 ones under emulation.
    (Amended.)
 
+### Step captions (amended, 25 October 2026)
+
+The owner asked for clips like Devin's QA recordings: a step's name at the
+top centre of the video, in a translucent grey pill led by a blue ▶, and
+once it is checked, its result in a near-black pill just under it, led by a
+green ✓ or a red ✗. The next step's pill replaces both.
+
+- **Two more actions**, while recording: `step` with `text`, and `result`
+  with `passed` and `text`. Each appends a line to `events` beside the
+  capture, timed by the box's own clock, as `start` is: Perl's
+  `Time::HiRes`, on Linux and macOS alike.
+- **The stop has two parts.** The box stops the capture and reports its
+  length, size, start time, the still stretches to cut and the events.
+  bb-box then plans the clip: each event's place after the cuts and the
+  speed, where each pill shows, and a hold, a frozen frame, wherever a
+  caption would otherwise stay up less than its reading time, one second
+  and a word every 0.29 s, from 2 s to 6 s. The hold comes after the speed,
+  so a caption reads the same at 1x, 2x or 4x. The box then draws the pills
+  and makes the clip.
+- **The clip's clock is each frame's own time.** It was the frame count at
+  15 fps, but macOS's avfoundation gives a frame only when the screen
+  changes, so a Mac's clip came out shorter than the time it showed.
+- **Pills burned in**, so they survive a download or a Slack upload. On
+  Linux, ffmpeg draws them: a rounded mask in `geq`, and `drawtext` in
+  DejaVu Sans, after measuring the text with `print(tw)`. Homebrew's ffmpeg
+  has no `drawtext`, so on macOS AppKit draws each pill as a PNG, through
+  JavaScript for Automation, in the system font: it sends no Apple event,
+  so it asks for no grant. A box that cannot draw them still makes its
+  clip, without captions, and the answer says so.
+- **Chapters**: the clip's page lists the steps, each with its result and
+  its time, and a click there plays the clip from it.
+- **Windows** records as before, without captions, for now: `step` and
+  `result` say so.
+
 ### Notifications are the agent's
 
 bb-box does not manage notifications. The skill says, in one line: clear

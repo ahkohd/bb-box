@@ -120,12 +120,14 @@ It takes no parameters.
 
 ## box_record
 
-Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after 5 minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops.
+Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after 5 minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops; step and result on Linux and macOS.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
-| `action` | `start`, `stop` | yes | start begins recording; stop ends it and makes the clip. |
+| `action` | `start`, `step`, `result`, `stop` | yes | start begins recording; step captions the next check; result gives its outcome; stop ends it and makes the clip. |
+| `text` | string | no | With step: what you check next. With result: what you saw. One short line each. |
+| `passed` | boolean | no | With result: whether the check passed. |
 | `speed` | number or number or number | no | With stop: the clip plays this many times faster. Defaults to 1. |
 | `stills` | `cut`, `keep` | no | With stop: cut each still stretch to half a second (the default), or keep it. |
 
