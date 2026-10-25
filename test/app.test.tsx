@@ -989,11 +989,16 @@ test("a desktop box not made after its image was built shows in the panel with i
 });
 
 test("while a desktop's image builds, the panel says so with its step and time; a failed one says why and how to try again", async () => {
-  const building = setup({ state: "on", build: { state: "building", targets: ["desktop"], detail: "#9 [desktop 3/9] RUN apt-get install", step: { at: 3, of: 9 }, startedAt: Date.now() - 125_000, endedAt: null } });
+  const building = setup({ state: "on", boxFollows: true, build: { state: "building", targets: ["desktop"], detail: "#9 [desktop 3/9] RUN apt-get install", step: { at: 3, of: 9 }, startedAt: Date.now() - 125_000, endedAt: null } });
   const slot = panel(server([box()], { setups: [building] }).handlers);
   expect(await slot.findByText("Building the desktop image on this machine")).toBeTruthy();
   expect(slot.getByText("Step 3 of 9")).toBeTruthy();
   expect(slot.getByText("Started 2 min ago. It usually takes 4 to 10 min, and goes on if you close this panel. The desktop box that was asked for follows.")).toBeTruthy();
+  cleanup();
+  // Built from bb box docker-build, with no box asked for, and both desktop images in one build.
+  const both = setup({ state: "on", build: { state: "building", targets: ["desktop", "desktop-wayland"], detail: null, step: { at: 3, of: 9 }, startedAt: Date.now() - 125_000, endedAt: null } });
+  const unasked = panel(server([box()], { setups: [both] }).handlers);
+  expect(await unasked.findByText("Started 2 min ago. It usually takes 8 to 16 min, and goes on if you close this panel.")).toBeTruthy();
   cleanup();
   const failed = setup({ state: "on", build: { state: "failed", targets: ["desktop"], detail: "build.sh exited with 1: no space left on device", startedAt: Date.now() - 300_000, endedAt: Date.now() - 5_000 } });
   const after = panel(server([box()], { setups: [failed] }).handlers);

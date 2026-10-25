@@ -21,6 +21,7 @@ import { REPOSITORY_URL } from "./settings-backends.tsx";
 export const LINUX_BUILD_WORDS = "5 to 12 min";
 /** How long the desktop image usually takes, on a host that has the Linux image it starts from: 8 min where the Linux one took 11. */
 export const DESKTOP_BUILD_WORDS = "4 to 10 min";
+export const DESKTOPS_BUILD_WORDS = "8 to 16 min";
 /** How long the panel says the Linux image is ready, while the thread has no box yet. */
 const READY_MS = 60 * 60_000;
 
@@ -39,6 +40,11 @@ export function roughly(ms: number): string {
 export function buildStep(line: string | null): { readonly step: number; readonly of: number } | null {
   const found = line ? /\[[^\]\s]+ (\d+)\/(\d+)\]/.exec(line) : null;
   return found ? { step: Number(found[1]), of: Number(found[2]) } : null;
+}
+
+function usualTime(build: NonNullable<MachineSetup["build"]>, desktop: boolean): string {
+  if (!desktop) return LINUX_BUILD_WORDS;
+  return build.targets.length > 1 ? DESKTOPS_BUILD_WORDS : DESKTOP_BUILD_WORDS;
 }
 
 /** A build of desktop images alone, as when a desktop was first asked for. */
@@ -73,8 +79,8 @@ function Progress({ setup }: { setup: MachineSetup }) {
         <div className="h-full rounded-full bg-foreground/70 transition-[width] duration-500" style={{ width: `${Math.round(share * 100)}%` }} />
       </div>
       <p className="mt-2 text-xs text-subtle-foreground">
-        Started {roughly(elapsed)} ago. {took ? `It took ${roughly(took)} last time here` : `It usually takes ${desktop ? DESKTOP_BUILD_WORDS : LINUX_BUILD_WORDS}`}, and goes on if you close this panel.
-        {desktop ? " The desktop box that was asked for follows." : ""}
+        Started {roughly(elapsed)} ago. {took ? `It took ${roughly(took)} last time here` : `It usually takes ${usualTime(build, desktop)}`}, and goes on if you close this panel.
+        {desktop && setup.boxFollows ? " The desktop box that was asked for follows." : ""}
       </p>
     </div>
   );

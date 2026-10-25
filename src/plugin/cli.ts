@@ -233,6 +233,13 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         }),
         machines: cliCommand({
           summary: "List your machines: boxes you own, kept as BB machines, which no thread ending releases.",
+          description: [
+            "Its commands:",
+            "  bb box machines add <kind>        Add a machine of your own, of the kind",
+            "  bb box machines resize <machine>  Resize one of your machines",
+            "  bb box machines remove <machine>  Remove one of your machines and delete its disk",
+            "Run one with --help for its options.",
+          ].join("\n"),
           options: jsonOption,
           async run({ options }) {
             const machines = (await boxes.list(OPERATOR)).filter((box) => box.state !== "releasing").sort((a, b) => a.createdAt - b.createdAt);

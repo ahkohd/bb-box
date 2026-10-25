@@ -1934,6 +1934,14 @@ test("the panel and the CLI release a box with only idle threads at once, and fo
   assert.equal(cli.exitCode, 0, cli.stderr);
   assert.deepEqual(await app.boxes.list(THREAD), []);
 });
+test("bb box machines --help names its add, resize and remove commands, not the list alone", async (t) => {
+  const { harness } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const help = await harness.behavior.runCli(["machines", "--help"]);
+  const words = `${help.stdout ?? ""}${help.stderr ?? ""}`;
+  for (const command of ["bb box machines add <kind>", "bb box machines resize <machine>", "bb box machines remove <machine>"]) assert.ok(words.includes(command), words);
+});
+
 test("a box made before its kind's boxes joined BB stays a box only, and box_status and box_thread say so (#539)", async (t) => {
   // A Windows kind whose boxes do not join BB, then do, as when the switch comes on.
   const { harness, app, tool, world } = await start({ "fake-enabled": true }, { kinds: [FAKE_WINDOWS_KIND] });
