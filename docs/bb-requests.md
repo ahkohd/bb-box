@@ -49,7 +49,7 @@ is a log: bb-box does not file these with BB.
 | [Install BB's app on Windows in seconds](#33-install-bbs-app-on-windows-in-seconds) | not met | BB's installer takes 42 to 88 s on a Windows box, most of it npm installing bb-app; bb-box's Windows images pre-install the server's build, which helps until the server's next build (#916) |
 | [Keep one plugin's stylesheet from slowing another's panel](#34-keep-one-plugins-stylesheet-from-slowing-anothers-panel) | not met | a terminal in bb-box's panel took about 2.2 s to draw a prompt, as the shell-tasks plugin's stylesheet made each character's measurement about 100 times slower; bb-box is moving its terminals to xterm's WebGL renderer |
 | [Say what a machine needs before installing](#35-say-what-a-machine-needs-before-installing) | not met | on a fresh Ubuntu server, BB's machine installer stopped with "sh: node: not found" and its usage, and the guide for a cloud Docker host lists Node.js 22 as a step of its own |
-| [Let a reloaded plugin's old instance go](#36-let-a-reloaded-plugins-old-instance-go) | not met in 0.47.1 | each reload of bb-box keeps its old instance in BB's server, with everything it registered and holds: about 0.7 MiB on an idle BB, and more with boxes and desktops in use |
+| [Let a reloaded plugin's old instance go](#36-let-a-reloaded-plugins-old-instance-go) | not met in 0.47.1 | each update of bb-box to new code keeps the old version's code in BB's server, about 5 MiB of heap and 4 MiB outside it, and each reload of the same code keeps the old instance, about 0.6 MiB |
 
 ## 1. BB's host app on Windows
 
@@ -1357,8 +1357,8 @@ user and lingering as steps before the command.
 **Status in BB 0.47.1: not met.**
 
 **What bb-box needs.** A plugin that reloads, at each deploy or
-`bb plugin reload`, leaves nothing of its old instance in BB's server once
-the old instance is disposed.
+`bb plugin reload`, leaves nothing of its old instance or its old code in
+BB's server once the old instance is disposed.
 
 **What BB does now.** BB's `loadOne` reads `const previous = loaded.get(row.id)`
 in the same scope as the functions it gives the new instance, such as
@@ -1385,13 +1385,38 @@ through `previous`, and 12.0 MiB that only they kept. On the operator's
 BB, with boxes and desktops in use, the heap after a full collection went
 from 725 to 884 MiB over a day with about 35 deploys.
 
+An update to new code, as at each deploy, costs more. On a second fresh BB
+0.47.1, set up the same way, bb-box was moved 6 times between two commits
+of main with `bb plugin update`, from a Git mirror on the machine:
+
+| Updates | BB's heap after a full collection | Outside the heap |
+| --- | --- | --- |
+| 0 | 81 MiB | 25 MiB |
+| 2 | 92 MiB | 33 MiB |
+| 4 | 103 MiB | 40 MiB |
+| 6 | 114 MiB | 48 MiB |
+
+BB imports each version's `server.js` at a new URL, ending in
+`?bbPluginLoad=` and a number, and Node's module loader keeps every module
+it has loaded, in its `LoadCache`, for the life of the process. A heap
+snapshot after the 6th update held all 7 versions, each with about 10,000
+functions. The 6 old ones kept 31.6 MiB that nothing else did: 21.9 MiB of
+code, bytecode and functions, and 9.7 MiB of each version's module-level
+data. Their old instances were not kept: an update does not go through
+`previous`. That is about 5.3 MiB of heap a deploy, close to the 4.6 MiB a
+deploy on the operator's BB.
+
 **What we ask.** BB drops its reference to the old instance once it is
 disposed, for example by declaring `previous` with `let` and setting it to
 `undefined` after `disposePluginInstance`, or by reading it in a function of
-its own, so no closure of the new instance shares its context.
+its own, so no closure of the new instance shares its context. For an
+update, BB loads a plugin's server code where it can be let go, as Node
+cannot unload a module it has imported: in a worker or a process of its
+own, or in a `vm` context it drops with the old version.
 
-**Until then.** BB's server grows by one bb-box instance at each deploy or
-reload, and a restart of BB's server frees them all.
+**Until then.** BB's server grows by one version of bb-box's code at each
+deploy, and by one instance at each reload, and a restart of BB's server
+frees them all.
 
 ## Checked, no request needed
 
