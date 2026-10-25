@@ -56,6 +56,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
+import { lxcfsFromProbe, lxcfsMountArgs, lxcfsProbeArgs, type LxcfsOnHost } from "./lxcfs.ts";
 import { allotCpus, cpusBothAllow, daemonCpusFromRefusal, formatCpuList, hostCpusFromProbe, movesOntoFreeCpus, resizeCpus, type CpuList } from "./cpus.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
@@ -442,6 +443,7 @@ export class DockerBackend implements Backend {
   #placement: Promise<unknown> = Promise.resolve();
   #hostCpus: { readonly at: number; readonly cpus: CpuList } | null = null;
   #daemonCpus: CpuList | null = null;
+  #lxcfs: { readonly at: number; readonly on: LxcfsOnHost | null } | null = null;
 
   constructor(config: DockerConfig, context: BackendContext, options: DockerBackendOptions = {}) {
     this.id = context.id;
@@ -715,6 +717,18 @@ export class DockerBackend implements Backend {
     return true;
   }
 
+  #probeImage(): string | null {
+    return DOCKER_KINDS.map((kind) => this.#config.images[kind]).find((each): each is string => Boolean(each)) ?? null;
+  }
+
+  async #lxcfsOnHost(signal?: AbortSignal, again = false): Promise<LxcfsOnHost | null> {
+    if (!again && this.#lxcfs && Date.now() - this.#lxcfs.at < HOST_CPUS_KEPT_FOR_MS) return this.#lxcfs.on;
+    const image = this.#probeImage();
+    const on = image ? lxcfsFromProbe(await this.#cli.run(lxcfsProbeArgs(image), { timeoutMs: 30_000, signal })) : null;
+    this.#lxcfs = { at: Date.now(), on };
+    return on;
+  }
+
   async #cpusOfHost(info: DockerInfo, signal?: AbortSignal, again = false): Promise<CpuList> {
     return cpusBothAllow(await this.#probedCpus(info, signal, again), this.#daemonCpus);
   }
@@ -722,7 +736,7 @@ export class DockerBackend implements Backend {
   async #probedCpus(info: DockerInfo, signal?: AbortSignal, again = false): Promise<CpuList> {
     if (!again && this.#hostCpus && Date.now() - this.#hostCpus.at < HOST_CPUS_KEPT_FOR_MS) return this.#hostCpus.cpus;
     if (!again) this.#daemonCpus = null;
-    const image = DOCKER_KINDS.map((kind) => this.#config.images[kind]).find((each): each is string => Boolean(each));
+    const image = this.#probeImage();
     const probe = image
       ? await this.#cli.run(["container", "run", "--rm", "--pull", "never", "--network", "none", image, "cat", "/sys/fs/cgroup/cpuset.cpus.effective"], { timeoutMs: 30_000, signal })
       : null;
@@ -817,12 +831,14 @@ export class DockerBackend implements Backend {
       await hooks.claim(guest(null));
       await step("network", () => this.#network(signal));
       gpu = await step("create", async () => {
+        let lxcfs = await this.#lxcfsOnHost(signal);
         try {
-          return await this.#create(box, image, gpu, cpus, signal);
+          return await this.#create(box, image, gpu, cpus, lxcfs, signal);
         } catch (error) {
-          if (!cpus || !this.#learnRefusal(error)) throw error;
-          cpus = await this.#resumePlacement(box, gpu, signal, true);
-          return this.#create(box, image, gpu, cpus, signal);
+          if (cpus && this.#learnRefusal(error)) cpus = await this.#resumePlacement(box, gpu, signal, true);
+          else if (lxcfs?.serves && /lxcfs/i.test(message(error))) lxcfs = await this.#lxcfsOnHost(signal, true);
+          else throw error;
+          return this.#create(box, image, gpu, cpus, lxcfs, signal);
         }
       });
       await hooks.starting();
@@ -1145,6 +1161,7 @@ export class DockerBackend implements Backend {
           );
         }
       }
+      await this.#checkLxcfs(info, state.containers, push, signal);
 
       // What images are judged by (049).
       const judging = Promise.all([
@@ -1293,6 +1310,54 @@ export class DockerBackend implements Backend {
 
   // The host's side.
 
+  async #checkLxcfs(
+    info: DockerInfo,
+    containers: readonly ContainerInfo[],
+    push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const name = "Memory and CPUs a box sees";
+    const lxcfs = await this.#lxcfsOnHost(signal, true);
+    if (lxcfs === null) {
+      push("docker.lxcfs", name, "skipped", "Skipped until a box image is on the host, as bb-box looks for LXCFS from a container of it.");
+      return;
+    }
+    if (!lxcfs.serves) {
+      const desktop = /Docker Desktop/i.test(info.operatingSystem);
+      push(
+        "docker.lxcfs",
+        name,
+        "warn",
+        `${info.name} has no LXCFS, so in a box free, /proc/meminfo and /proc/cpuinfo say the host's memory and CPUs, though the box's limits hold.` +
+          (desktop ? " Docker Desktop's VM cannot have LXCFS." : ""),
+        desktop
+          ? null
+          : `Install LXCFS on ${info.name}, as root: apt install lxcfs, or the distribution's package, then systemctl enable --now lxcfs. Boxes made after see their own memory and CPUs; boxes made before keep the host's until they are made again. Reload LXCFS (systemctl reload lxcfs) rather than restart it, as a restart breaks the files of the boxes running.`,
+      );
+      return;
+    }
+    const mine = containers.filter((container) => container.lxcfs && ACTIVE.has(container.status) && container.labels[LABELS.install] === this.#context.installId);
+    const broken = (
+      await Promise.all(
+        mine.map(async (container) => {
+          const read = await this.#cli.run(["exec", container.id, "head", "-c", "1", "/proc/meminfo"], { timeoutMs: 10_000, signal }).catch(() => null);
+          return read && read.exitCode !== 0 && /Transport endpoint is not connected/i.test(read.stderr) ? container.labels[LABELS.name] || container.name : null;
+        }),
+      )
+    ).filter((each): each is string => each !== null);
+    if (broken.length) {
+      push(
+        "docker.lxcfs",
+        name,
+        "warn",
+        `LXCFS on ${info.name} was restarted under running boxes, so in ${broken.join(", ")} free, /proc/meminfo and /proc/cpuinfo fail with "Transport endpoint is not connected".`,
+        `Stop and start each of them, from the panel or with box_stop and box_start, to see its memory again. Reload LXCFS (systemctl reload lxcfs) rather than restart it.`,
+      );
+      return;
+    }
+    push("docker.lxcfs", name, "ok", `Boxes on ${info.name} see their own memory and CPUs through LXCFS, in free, /proc/meminfo and /proc/cpuinfo.`);
+  }
+
   #boxOf(guest: Guest): string | null {
     return typeof guest.data?.box === "string" ? guest.data.box : null;
   }
@@ -1345,7 +1410,7 @@ export class DockerBackend implements Backend {
    * is this box's, as after a restart, and fails if not. Returns the GPU the
    * container has.
    */
-  async #create(box: BoxIdentity, image: string, gpu: string | null, cpus: CpuList | null, signal: AbortSignal): Promise<string | null> {
+  async #create(box: BoxIdentity, image: string, gpu: string | null, cpus: CpuList | null, lxcfs: LxcfsOnHost | null, signal: AbortSignal): Promise<string | null> {
     const name = containerName(box.boxId);
     const { cores, memoryMiB } = box.size;
     const labels: Record<string, string> = {
@@ -1378,6 +1443,7 @@ export class DockerBackend implements Backend {
       "--init",
       "--cpus", String(cores),
       ...(cpus ? ["--cpuset-cpus", formatCpuList(cpus)] : ["--env", `OMP_NUM_THREADS=${Math.ceil(cores)}`]),
+      ...(lxcfs ? lxcfsMountArgs(lxcfs) : []),
       "--memory", `${memoryMiB}m`,
       "--memory-swap", `${memoryMiB}m`,
       "--shm-size", `${Math.max(SHM_MIN_MiB, Math.floor(memoryMiB / 2))}m`,

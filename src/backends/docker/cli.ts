@@ -8,6 +8,7 @@ import { startChild } from "../../transports/forker.ts";
 import { Capture } from "../../transports/process.ts";
 import { abortable } from "../../core/abortable.ts";
 import { parseCpuList } from "./cpus.ts";
+import { mountsLxcfs } from "./lxcfs.ts";
 
 export interface DockerResult {
   /** Null when the CLI was killed. */
@@ -96,6 +97,7 @@ export interface ContainerInfo {
   readonly cores: number | null;
   readonly memoryMiB: number | null;
   readonly cpus: readonly number[] | null;
+  readonly lxcfs: boolean;
   /** Its address on each network. */
   readonly addresses: Readonly<Record<string, string>>;
   /** The ID of the image it was made from, which a tag moved to a new build no longer names. */
@@ -172,6 +174,7 @@ export function parseContainers(text: string): ContainerInfo[] {
       cores: nanoCpus ? Math.round((nanoCpus / 1e9) * 100) / 100 : null,
       memoryMiB: memory ? Math.round(memory / MiB) : null,
       cpus: parseCpuList(typeof host.CpusetCpus === "string" ? host.CpusetCpus : null),
+      lxcfs: mountsLxcfs((Array.isArray(host.Mounts) ? host.Mounts : []).map((mount) => String(record(mount).Source ?? ""))),
       addresses,
       imageId: typeof container.Image === "string" ? container.Image : "",
     };

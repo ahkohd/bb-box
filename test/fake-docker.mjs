@@ -94,8 +94,26 @@ function checkCpus(list) {
   if (cpusOf(list).some((cpu) => !available.includes(cpu))) fail(`Error response from daemon: Requested CPUs are not available - requested ${list}, available: ${daemonList ?? `0-${available.length - 1}`}`);
 }
 
+function mountOf(spec) {
+  const fields = Object.fromEntries(spec.split(",").map((field) => (field.includes("=") ? field.split("=") : [field, true])));
+  return { Type: fields.type, Source: fields.source, Target: fields.target, ReadOnly: fields.readonly === true };
+}
+
+function checkMounts(mounts) {
+  for (const mount of mounts) {
+    if (mount.Source.startsWith("/var/lib/lxcfs") && !host.lxcfs) fail(`Error response from daemon: invalid mount config for type "bind": bind source path does not exist: ${mount.Source}`);
+  }
+}
+
 function run(rest) {
   appendFileSync(join(root, "probes"), `${JSON.stringify(rest)}\n`);
+  const mounts = rest.flatMap((arg, i) => (rest[i - 1] === "--mount" ? [mountOf(arg)] : []));
+  if (mounts.some((mount) => mount.Source === "/var/lib/lxcfs")) {
+    checkMounts(mounts);
+    console.log("MemTotal:        4194304 kB");
+    if (host.lxcfsCpuOnline ?? true) console.log("cpu-online");
+    return;
+  }
   const at = rest.findIndex((arg, i) => !arg.startsWith("--") && !(rest[i - 1] ?? "").startsWith("--"));
   const [image, ...command] = rest.slice(at);
   if (!(image in read("images.json", {}))) fail(`Unable to find image '${image}' locally\ndocker: Error response from daemon: No such image: ${image}`, 125);
@@ -110,6 +128,7 @@ function create(rest) {
   const labels = {};
   const env = [];
   const devices = [];
+  const mounts = [];
   const options = {};
   let i = 0;
   const value = () => rest[++i];
@@ -120,12 +139,14 @@ function create(rest) {
       labels[key] = parts.join("=");
     } else if (flag === "--env") env.push(value());
     else if (flag === "--device") devices.push(value());
+    else if (flag === "--mount") mounts.push(mountOf(value()));
     else if (["--init", "--privileged"].includes(flag)) options[flag] = true;
     else options[flag] = value();
   }
   const [image, ...command] = rest.slice(i);
   const name = options["--name"];
   checkCpus(options["--cpuset-cpus"]);
+  checkMounts(mounts);
   const images = read("images.json", {});
   if (!(image in images)) fail(`Error response from daemon: No such image: ${image}`);
   const network = options["--network"];
@@ -158,6 +179,7 @@ function create(rest) {
       Init: options["--init"] === true,
       RestartPolicy: { Name: options["--restart"] },
       Devices: devices,
+      Mounts: mounts,
     },
     NetworkSettings: { Networks: { [network]: { IPAddress: "" } } },
     // Kept for the address it gets when it starts.
@@ -286,6 +308,10 @@ function exec(rest) {
   const ref = rest[i];
   const found = find(ref) ?? fail(`Error response from daemon: No such container: ${ref}`);
   if (found.State.Status !== "running") fail(`Error response from daemon: container ${found.Id} is not running`);
+  const lxcfsBroken = host.lxcfsBroken === true || (Array.isArray(host.lxcfsBroken) && host.lxcfsBroken.includes(found.Name.slice(1)));
+  if (lxcfsBroken && (found.HostConfig.Mounts ?? []).some((mount) => mount.Source.startsWith("/var/lib/lxcfs/")) && rest.slice(i + 1).includes("/proc/meminfo")) {
+    fail("head: cannot open '/proc/meminfo' for reading: Transport endpoint is not connected", 1);
+  }
   const name = found.Name.slice(1);
   const home = join(dir(name), "home");
   const own = (text) =>
