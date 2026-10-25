@@ -6,8 +6,8 @@
 // slow or the person chose it.
 
 import RFB from "@novnc/novnc";
-import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { experimental_Icon as Icon, experimental_usePluginId, UrlLink, useBbNavigate, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +44,7 @@ import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts
 import { refreshLosslessly, type LosslessRefresh } from "./rfb-refresh.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
+import { REPOSITORY_URL } from "./settings-backends.tsx";
 import { NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
 import { SetupProgress } from "./first-run.tsx";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
@@ -918,6 +919,18 @@ function controlText(box: BoxView, mine: boolean, taken: boolean): string {
 }
 
 /** A box's desktop, live, with its control bar. */
+export const VIDEO_GUIDE = `${REPOSITORY_URL}/docs/guide/desktops.md#video`;
+
+const insecurePageNoted = { shown: false };
+
+export function forgetInsecurePageNote(): void {
+  insecurePageNoted.shown = false;
+}
+
+function pageIsInsecure(): boolean {
+  return typeof isSecureContext !== "undefined" && !isSecureContext;
+}
+
 export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: string; boxId: string; newTab: boolean; onBack?: BackTo }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
@@ -971,6 +984,16 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     if (video === null) return;
     if (!videoPossible) {
       decide("rfb");
+      if (video === true && !videoFailed && pageIsInsecure() && !insecurePageNoted.shown) {
+        insecurePageNoted.shown = true;
+        flashFor(
+          "This desktop shows over VNC: video needs a secure connection to BB.",
+          <UrlLink href={VIDEO_GUIDE} className="underline underline-offset-2">
+            Video, in the desktops guide
+          </UrlLink>,
+          FALLBACK_NOTE_MS,
+        );
+      }
       return;
     }
     decide(storedChoice(boxId) ?? firstStream);
@@ -1002,7 +1025,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
    */
   const flashId = `bb-box-desktop:${shown}`;
   /** A note, with a detail under it, for at least `ms`. */
-  const flashFor = (words: string, detail?: string, ms = FLASH_MS) => {
+  const flashFor = (words: string, detail?: ReactNode, ms = FLASH_MS) => {
     toast(words, { id: flashId, description: detail, duration: Math.max(ms, words.split(" ").length * 300), closeButton: true });
   };
   useEffect(() => () => void toast.dismiss(flashId), [flashId]);

@@ -17,7 +17,7 @@ import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-off
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
-import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, STALL_MS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, pasteShortcut, retryWait } from "../src/app/viewer.ts";
@@ -278,8 +278,9 @@ vi.mock("sonner", () => {
       shown.delete(key);
     }
   };
-  const toast = (message: string, options: { id?: string | number; description?: string; duration?: number } = {}) => {
+  const toast = (message: string, options: { id?: string | number; description?: unknown; duration?: number } = {}) => {
     const id = options.id ?? message;
+    (globalThis as { lastToastDescription?: unknown }).lastToastDescription = options.description;
     dismiss(id);
     let region = document.querySelector<HTMLElement>("section[data-toaster]");
     if (!region) {
@@ -293,7 +294,7 @@ vi.mock("sonner", () => {
     const title = document.createElement("div");
     title.textContent = message;
     node.appendChild(title);
-    if (options.description) {
+    if (typeof options.description === "string" && options.description) {
       const description = document.createElement("div");
       description.textContent = options.description;
       node.appendChild(description);
@@ -3348,6 +3349,31 @@ test("a kept VNC session that fails as it connects again when its tab comes back
   } finally {
     novnc.FakeRfb.refuse = 0;
     logged.mockRestore();
+  }
+});
+
+test("a desktop that would show as video on a page that is not secure shows over VNC and says so once for the page, with the desktops guide's Video", async () => {
+  const undo = withVideo();
+  forgetInsecurePageNote();
+  vi.stubGlobal("isSecureContext", false);
+  try {
+    const { handlers } = server([desktopBox()], { video: true });
+    desktopTab(handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(false);
+    await waitFor(() => expect(toasts()).toHaveLength(1));
+    expect(toasts()[0]).toMatch(/^This desktop shows over VNC: video needs a secure connection to BB\./);
+    const link = (globalThis as { lastToastDescription?: { props?: { href?: string; children?: unknown } } }).lastToastDescription;
+    expect(link?.props?.href).toMatch(/docs\/guide\/desktops\.md#video$/);
+    expect(link?.props?.children).toBe("Video, in the desktops guide");
+    cleanup();
+    act(() => void toast.dismiss());
+    dropAllKept();
+    desktopTab(handlers);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(2));
+    expect(toasts()).toEqual([]);
+  } finally {
+    undo();
   }
 });
 
