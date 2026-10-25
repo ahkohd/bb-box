@@ -36,10 +36,13 @@ export function roughly(ms: number): string {
   return `${Math.round(ms / 60_000)} min`;
 }
 
-/** A build's step from its last line, as Docker's build prints it: "#14 [linux 7/12] RUN …". */
-export function buildStep(line: string | null): { readonly step: number; readonly of: number } | null {
-  const found = line ? /\[[^\]\s]+ (\d+)\/(\d+)\]/.exec(line) : null;
-  return found ? { step: Number(found[1]), of: Number(found[2]) } : null;
+export function buildPlace(build: Pick<NonNullable<MachineSetup["build"]>, "step" | "image">): { readonly words: string | null; readonly share: number } {
+  const { step, image } = build;
+  if (!step) return { words: null, share: 0.03 };
+  const images = image?.of ?? 1;
+  const done = ((image?.at ?? 1) - 1 + (step.at - 1) / step.of) / images;
+  const words = images > 1 ? `Image ${image!.at} of ${images}: step ${step.at} of ${step.of}` : `Step ${step.at} of ${step.of}`;
+  return { words, share: Math.min(0.97, Math.max(0.03, done)) };
 }
 
 function usualTime(build: NonNullable<MachineSetup["build"]>, desktop: boolean): string {
@@ -62,9 +65,7 @@ function Progress({ setup }: { setup: MachineSetup }) {
   const now = useNow(true, 1000);
   const build = setup.build!;
   const elapsed = Math.max(0, now - build.startedAt);
-  // The step from the build when it kept one, else from its last line; the bar follows the steps, as the time varies with the host.
-  const step = build.step ? { step: build.step.at, of: build.step.of } : buildStep(build.detail);
-  const share = step ? Math.min(0.97, Math.max(0.03, (step.step - 1) / step.of)) : 0.03;
+  const { words: place, share } = buildPlace(build);
   // A desktop's image alone, built when a desktop was first asked for, rather than first-run setup's Linux image.
   const desktop = isDesktopBuild(build);
   const what = desktop ? "the desktop image" : "the Linux image";
@@ -73,7 +74,7 @@ function Progress({ setup }: { setup: MachineSetup }) {
     <div className={CARD}>
       <p className="text-sm font-medium text-foreground">{desktop ? `Building the desktop image on ${whose(setup)}` : `Setting up Docker on ${whose(setup)}`}</p>
       <p className="mt-1 text-xs leading-snug text-muted-foreground">
-        {desktop ? (step ? `Step ${step.step} of ${step.of}` : "Starting") : `Building ${what} · ${step ? `Step ${step.step} of ${step.of}` : "starting"}`}
+        {desktop ? (place ?? "Starting") : `Building ${what} · ${place ?? "starting"}`}
       </p>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`Building ${what}`} aria-valuenow={Math.round(share * 100)} aria-valuemin={0} aria-valuemax={100}>
         <div className="h-full rounded-full bg-foreground/70 transition-[width] duration-500" style={{ width: `${Math.round(share * 100)}%` }} />
