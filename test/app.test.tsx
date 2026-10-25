@@ -3520,6 +3520,38 @@ function fakePng(size: number): Uint8Array<ArrayBuffer> {
   return Uint8Array.from({ length: size }, (_, index) => index % 251);
 }
 
+test("a hidden video session closes its decoder, which holds a decoder of the browser's while nothing shows, and makes a new one as it shows again", async () => {
+  const undo = withVideo();
+  try {
+    const session = new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies");
+    const socket = FakeSocket.made.at(-1)!;
+    act(() => socket.open());
+    await decodesMacroblocks();
+    socket.onmessage?.({ data: videoFrame(0, true) });
+    const shown = FakeDecoder.made.at(-1)!;
+    expect(shown.state).toBe("configured");
+
+    socket.sent.length = 0;
+    session.hidden = true;
+    expect(socket.sent).toEqual(["STOP_VIDEO"]);
+    expect(shown.state).toBe("closed");
+    const made = FakeDecoder.made.length;
+    socket.onmessage?.({ data: videoFrame(1, false) });
+    expect(FakeDecoder.made).toHaveLength(made);
+    expect(FakeDecoder.thrown).toEqual([]);
+
+    socket.sent.length = 0;
+    session.hidden = false;
+    expect(socket.sent.slice(-2)).toEqual(["START_VIDEO", "REQUEST_KEYFRAME"]);
+    expect(FakeDecoder.made).toHaveLength(made + 1);
+    socket.onmessage?.({ data: videoFrame(0, true) });
+    expect(FakeDecoder.made.at(-1)!.chunks).toEqual([{ type: "key", timestamp: 0 }]);
+    session.dispose();
+  } finally {
+    undo();
+  }
+});
+
 test("the video client starts its video again when it stalls, as control is taken and as the window regains focus (the owner's note of 19 October 2026)", async () => {
   const undo = withVideo();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance"] });
