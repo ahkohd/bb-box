@@ -125,7 +125,7 @@ if [ -x /usr/local/libexec/bb-box/display ]; then
       sway=$!
       if as_box /usr/local/libexec/bb-box/display wait; then
         in_session env CUA_DRIVER_RS_ENABLE_WAYLAND=1 CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
-          CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve &
+          CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve --no-overlay &
         cua=$!
         stream &
         vnc=$!
@@ -166,7 +166,7 @@ if [ -x /usr/local/libexec/bb-box/display ]; then
     session() {
       as_box /usr/local/libexec/bb-box/display wait || return
       as_box env "${session_env[@]}" sh -c 'set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
-        CUA_DRIVER_RS_TELEMETRY_ENABLED=false CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve &
+        CUA_DRIVER_RS_TELEMETRY_ENABLED=false CUA_DRIVER_RS_UPDATE_CHECK=false cua-driver serve --no-overlay &
         cua=$!
         xfce4-session
         kill "$cua" 2>/dev/null'

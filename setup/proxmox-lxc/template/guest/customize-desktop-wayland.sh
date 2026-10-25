@@ -407,7 +407,7 @@ Description=bb-box: Cua Driver daemon for the Wayland desktop
 EnvironmentFile=/run/bb-box/display.env
 Environment=CUA_DRIVER_RS_ENABLE_WAYLAND=1 XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway
 Environment=CUA_DRIVER_RS_TELEMETRY_ENABLED=false CUA_DRIVER_RS_UPDATE_CHECK=false
-ExecStart=/usr/local/bin/cua-driver serve
+ExecStart=/usr/local/bin/cua-driver serve --no-overlay
 Restart=always
 RestartSec=1
 EOF
