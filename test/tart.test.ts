@@ -91,6 +91,9 @@ test("parses Macs, one per line, and refuses what it cannot use", () => {
   // macOS desktops as video are off until set on (060).
   assert.equal(tartConfig().video, false);
   assert.equal(tartConfig({ "tart-video": true }).video, true);
+  assert.equal(tartConfig().warmMaxHours, 6);
+  const never = parseTartSettings({ "tart-enabled": true, "tart-hosts": "mac1 a@b", "tart-host-keys": "b ssh-ed25519 AAAA", "tart-warm-max-hours": 0 });
+  assert.ok(never.enabled && !never.ok && never.problems.some((problem) => /hours a warm VM is kept/.test(problem)));
 });
 
 test("offers macos and macos-desktop from the image, each only when it has one", () => {

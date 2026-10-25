@@ -94,6 +94,7 @@ test("maintain fills a pool with suspended clones at the default size, which hel
     assert.ok(suspended(vm), `${vm} is suspended`);
     assert.match(owner(vm), /^state=warm$/m);
     assert.match(owner(vm), /^grants=[0-9a-f]{16}$/m, "its fill made its signing identity and default grants with this helper (058)");
+    assert.match(owner(vm), /^saved=\d{10}$/m, "its fill notes when it was saved");
     assert.match(owner(vm), new RegExp(`^image=${FAKE_IMAGE}$`, "m"));
     assert.doesNotMatch(owner(vm), /^box=/m);
   }
@@ -237,23 +238,74 @@ test("a warm VM that does not restore gives way to a clone, and goes", async () 
   const guest = await backend.acquire(box, null, hooks().hooks, signal());
   assert.equal(guest.ref, `bb-box-${box.boxId}`);
   assert.ok(!existsSync(join(vmsDir, warm!)), "the warm VM that failed is deleted");
-  assert.ok(contexts[0]!.errors.some((error) => /could not use VM [\s\S]*failed to restore/.test(error)), contexts[0]!.errors.join("\n"));
+  assert.ok(contexts[0]!.errors.some((error) => /could not use warm VM [^,]+, saved \d+ min ago, [\s\S]*failed to restore/.test(error)), contexts[0]!.errors.join("\n"));
   await backend.maintain();
   await backend.release(guest, releasing);
 });
 
-test("after a warm VM that does not restore, the box clones rather than trying another warm VM, as the log says", async () => {
-  const { make, warmVms, vmsDir } = setup({ macos: 2 });
+test("after a warm VM that does not restore, the box clones rather than trying another warm VM, and the one saved no later is retired, as the log says", async () => {
+  const { make, warmVms, vmsDir, contexts, owners, owner } = setup({ macos: 2 });
   const backend = make();
   await backend.maintain();
   const spares = warmVms();
   assert.equal(spares.length, 2);
-  for (const warm of spares) writeFileSync(join(vmsDir, warm, "state.vzvmsave"), "corrupt");
+  const now = Math.floor(Date.now() / 1000);
+  for (const warm of spares) {
+    savedAgo(owners, owner, warm, now, 600);
+    writeFileSync(join(vmsDir, warm, "state.vzvmsave"), "corrupt");
+  }
   const box = identity();
   const guest = await backend.acquire(box, null, hooks().hooks, signal());
   assert.equal(guest.ref, `bb-box-${box.boxId}`);
-  assert.equal(warmVms().length, 1, "the other warm VM was left alone");
+  await until(() => spares.every((warm) => !existsSync(join(vmsDir, warm))), "the other warm VM to be retired");
+  assert.ok(contexts[0]!.errors.some((error) => /Warm VM bb-box-warm-\w+ on mac1, saved \d+ min ago, is retired, as one saved after it failed to restore/.test(error)), contexts[0]!.errors.join("\n"));
   await backend.release(guest, releasing);
+});
+
+test("after a warm VM that does not restore, one saved after it stays", async () => {
+  const { make, warmVms, vmsDir, owners, owner } = setup({ macos: 2 });
+  const backend = make();
+  await backend.maintain();
+  const [first, second] = warmVms().sort();
+  const now = Math.floor(Date.now() / 1000);
+  savedAgo(owners, owner, first!, now, 600);
+  savedAgo(owners, owner, second!, now, 60);
+  for (const warm of [first!, second!]) writeFileSync(join(vmsDir, warm, "state.vzvmsave"), "corrupt");
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.equal(guest.ref, `bb-box-${box.boxId}`);
+  assert.ok(!existsSync(join(vmsDir, first!)), "the warm VM that failed is deleted");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.ok(existsSync(join(vmsDir, second!)), "the warm VM saved after it stays");
+  await backend.release(guest, releasing);
+});
+
+function savedAgo(owners: string, owner: (vm: string) => string, vm: string, now: number, seconds: number): void {
+  writeFileSync(join(owners, vm), owner(vm).replace(/^saved=\d+$/m, `saved=${now - seconds}`));
+}
+
+test("a warm VM saved more than tart-warm-max-hours ago, or with no saved time, is retired and replaced", async () => {
+  const { make, warmVms, owners, owner } = setup({ macos: 2 });
+  const backend = make();
+  await backend.maintain();
+  const [old, unknown] = warmVms();
+  savedAgo(owners, owner, old!, Math.floor(Date.now() / 1000), 6 * 3600 + 60);
+  writeFileSync(join(owners, unknown!), owner(unknown!).replace(/^saved=\d+\n/m, ""));
+  assert.equal((await backend.capacity("macos", SMALL, [])).warm?.ready, 0, "neither is offered");
+  await backend.maintain();
+  const now = warmVms();
+  assert.equal(now.length, 2);
+  assert.ok(!now.includes(old!) && !now.includes(unknown!), now.join(", "));
+});
+
+test("tart-warm-max-hours sets how long a macOS warm VM is kept", async () => {
+  const { make, warmVms, owners, owner } = setup();
+  const backend = make("test", { macos: 1 }, { "tart-warm-max-hours": 12 });
+  await backend.maintain();
+  const [warm] = warmVms();
+  savedAgo(owners, owner, warm!, Math.floor(Date.now() / 1000), 7 * 3600);
+  await backend.maintain();
+  assert.deepEqual(warmVms(), [warm]);
 });
 
 test("a claim takes a warm VM whose slot a fill holds: the fill stops for it, as a claim comes before a fill; then the Mac refuses a third", async () => {

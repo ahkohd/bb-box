@@ -49,6 +49,7 @@ export interface TartConfig {
   readonly windowsEnrol: boolean;
   /** macOS desktops open as video by default, where every Mac's image has bb-box-stream (060); else VNC, with video a choice. Off by default. */
   readonly video: boolean;
+  readonly warmMaxHours: number;
 }
 
 export const TART_DEFAULTS = {
@@ -56,6 +57,7 @@ export const TART_DEFAULTS = {
   vmUser: "admin",
   reserveMemoryMiB: 16384,
   reserveDiskGiB: 50,
+  warmMaxHours: 6,
 } as const;
 
 /** Setting keys. Every key starts with "tart-". */
@@ -75,6 +77,7 @@ export const TART_KEYS = {
   vmsPerHost: "tart-vms-per-host",
   reserveMemoryMiB: "tart-reserve-memory-mib",
   reserveDiskGiB: "tart-reserve-disk-gib",
+  warmMaxHours: "tart-warm-max-hours",
 } as const;
 
 const IMAGE_KEYS: Readonly<Record<TartKind, string>> = {
@@ -194,6 +197,12 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "A new box is refused if the Mac's disk has less free space than this.",
     default: TART_DEFAULTS.reserveDiskGiB,
   },
+  [TART_KEYS.warmMaxHours]: {
+    type: "number",
+    label: "Tart: hours a macOS warm VM is kept",
+    description: "A suspended macOS warm VM saved longer ago than this is replaced by a fresh one, as an old saved state may not restore.",
+    default: TART_DEFAULTS.warmMaxHours,
+  },
 };
 
 /** A string setting, or `fallback` when the key is absent. An empty string stays empty. */
@@ -294,6 +303,9 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
     problem(reserveMemoryMiB >= 0 ? TART_KEYS.reserveDiskGiB : TART_KEYS.reserveMemoryMiB, "Tart: the memory and disk kept free cannot be negative.");
   }
 
+  const warmMaxHours = number(values, TART_KEYS.warmMaxHours, TART_DEFAULTS.warmMaxHours);
+  if (!(warmMaxHours > 0)) problem(TART_KEYS.warmMaxHours, "Tart: the hours a warm VM is kept must be more than 0.");
+
   const vmUser = text(values, TART_KEYS.vmUser, TART_DEFAULTS.vmUser);
   if (!USER.test(vmUser)) problem(TART_KEYS.vmUser, `Tart: "${vmUser}" is not a user name.`);
   const keyText = text(values, TART_KEYS.sshPrivateKey);
@@ -309,6 +321,7 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
     reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB },
     windowsEnrol: values[TART_KEYS.windowsEnrol] !== false,
     video: values[TART_KEYS.video] === true,
+    warmMaxHours,
   };
 }
 
@@ -338,6 +351,7 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.vmsPerHost, "advanced"],
     [TART_KEYS.reserveMemoryMiB, "advanced"],
     [TART_KEYS.reserveDiskGiB, "advanced"],
+    [TART_KEYS.warmMaxHours, "advanced"],
   ] as const).map(([key, group]) => {
     const setting = TART_SETTINGS[key]!;
     return [key.slice(TART_PREFIX.length), { ...setting, label: IMAGE_LABELS[key] ?? fieldLabel(setting.label), group } as FieldDescriptor];
