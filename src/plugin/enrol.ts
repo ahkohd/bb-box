@@ -448,6 +448,7 @@ export class Enrolment {
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
+          if (this.#isStopping(error) || signal.aborted) return { status: "failed", message: `bb-box stopped while it installed BB in box ${box.name}; its next run installs it again.` };
           const message = withReachHint(describeError(error, `Enrolling box ${box.name}`), box.backendLabel);
           // Kept on the box, so its row says why: BB removes the machine next, and that removal must not leave the box looking fine.
           await boxes.update(box, (current) => ({ enrol: { state: "failed", hostId: current.enrol.hostId, error: message } })).catch(() => null);
@@ -590,6 +591,7 @@ export class Enrolment {
     const since = options.since ?? "ready";
     const phases = new Phases(since === "ready" ? (box.readyAt ?? Date.now()) : Date.now(), Date.now, since);
     this.#phases.set(box.id, phases);
+    let startOver = false;
     try {
       let current: BoxRecord = box;
       let access: Promise<void> | null = null;
@@ -619,8 +621,8 @@ export class Enrolment {
           phases.mark("bootstrapped");
         }
       }
-      await this.#follow(current, phases, access ?? this.#setUpAccess(current, phases));
-      if (current.capabilities.os === "windows") void this.#hideConsoles(current);
+      startOver = (await this.#follow(current, phases, access ?? this.#setUpAccess(current, phases))) === "start over";
+      if (current.capabilities.os === "windows" && !startOver) void this.#hideConsoles(current);
     } catch (error) {
       if (this.#isStopping(error)) return;
       this.#deps.logError("enrol", error);
@@ -636,6 +638,9 @@ export class Enrolment {
       this.#phases.delete(box.id);
       this.#following.delete(box.id);
     }
+    if (!startOver || this.#stopping.signal.aborted) return;
+    const latest = await this.#deps.boxes.find(box.id);
+    if (latest?.state === "ready" && latest.enrol.state === "enrolling" && !latest.enrol.hostId) await this.enrol(latest, { since: "resumed" });
   }
 
   /**
@@ -668,7 +673,7 @@ export class Enrolment {
    * the waits for the box's access end. `access` is the access setup
    * running alongside.
    */
-  async #follow(box: BoxRecord, phases: Phases, access: Promise<void>): Promise<void> {
+  async #follow(box: BoxRecord, phases: Phases, access: Promise<void>): Promise<"start over" | void> {
     const hostId = box.enrol.hostId!;
     const deadline = Date.now() + this.#timeoutMs;
     /** When the waits for the box's access ended. */
@@ -705,6 +710,15 @@ export class Enrolment {
         phases.mark("enrolled");
         this.#deps.log?.(phases.line(enrolled.name));
         return;
+      }
+      if (phases.since === "resumed" && phase === "removing") {
+        await Promise.race([phases.sleep(this.#pollMs), this.#stopped]);
+        continue;
+      }
+      if (phases.since === "resumed" && phase === "destroyed") {
+        this.#deps.log?.(`BB removed box ${current.name}'s machine while bb-box restarted, as when a restart ended BB's installer in it; bb-box adds the box again.`);
+        await this.#deps.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: null, error: null } }));
+        return "start over";
       }
       if (phase === "destroyed" || phase === "removing") {
         const reason = host.lifecycle.message ?? "BB removed the machine before it connected.";

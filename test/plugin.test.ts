@@ -148,6 +148,7 @@ async function start(
     projectKind: "standard" as "standard" | "personal",
     /** How long after bootstrap returns BB shows a machine it has connected again, or null for never, nor a new one. */
     connectAfterMs: 0 as number | null,
+    current: null as { inspection: { registrations: { machineProviders: Map<string, unknown> } } } | null,
     /** What BB's bootstrap throws before it runs anything, as for bb connect without a sign-in, or null. */
     bootstrapError: null as string | null,
     /** How many threads run on each machine, by host ID. */
@@ -291,7 +292,7 @@ async function start(
           const host = makeHostResponse({ id, status: "disconnected", machineProviderId: "bb-box" });
           hosts.set(id, { ...host, lifecycle: { ...host.lifecycle, phase: "creating" } });
           void (async () => {
-            const provider = harness.inspection.registrations.machineProviders.get("bb-box")!;
+            const provider = ((world.current ?? harness) as typeof harness).inspection.registrations.machineProviders.get("bb-box")!;
             const result = await provider.create({
               inputs,
               key,
@@ -1535,6 +1536,7 @@ test("a reload during an enrolment stops the replaced instance's enrolment at on
     restarted = await setup(bb, setupOptions);
   });
   host = next.harness;
+  world.current = next.harness as never;
   await new Promise((resolve) => setTimeout(resolve, 1_500));
   const oldErrors = old.inspection.logEntries.filter((entry) => /enrol/i.test(entry.message) && /stale|reloaded|error|failed/i.test(entry.message));
   assert.deepEqual(oldErrors.map((entry) => entry.message), [], "the replaced instance logs nothing about the enrolment it stopped");
@@ -1542,6 +1544,39 @@ test("a reload during an enrolment stops the replaced instance's enrolment at on
   world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "connected" });
   sweeper = next.harness.behavior.runService("sweeper");
   await until("the next run to enrol the box", async () => (await restarted!.boxes.find(box.id))?.enrol.state === "enrolled");
+});
+
+test("a reload while BB's installer runs in a box ends the installer, and the next run adds the box again and enrols it, rather than leave it failed (#1032)", async (t) => {
+  const { harness, app, world, setupOptions } = await start();
+  let host = harness;
+  let sweeper: ReturnType<typeof harness.behavior.runService> | null = null;
+  t.after(async () => {
+    if (sweeper) {
+      sweeper.controller.abort(new Error("the test ends"));
+      await sweeper.done;
+    }
+    await host.lifecycle.dispose();
+  });
+  const installer = world.installer;
+  world.installer = "sleep 30";
+  await host.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux" });
+  const box = await until("BB's installer to run in the box", async () => {
+    const [current] = await app.boxes.list(THREAD);
+    return current?.enrol.state === "enrolling" && world.bootstraps.length ? current : null;
+  });
+  const old = harness;
+  let restarted: Awaited<ReturnType<typeof setup>> | null = null;
+  const next = await host.lifecycle.reload(async (bb) => {
+    restarted = await setup(bb, setupOptions);
+  });
+  host = next.harness;
+  world.current = next.harness as never;
+  world.installer = installer;
+  sweeper = next.harness.behavior.runService("sweeper");
+  await until("the next run to enrol the box", async () => (await restarted!.boxes.find(box.id))?.enrol.state === "enrolled");
+  assert.ok(world.bootstraps.length >= 2, "BB's installer ran again");
+  assert.deepEqual(old.inspection.logEntries.filter((entry) => /enrol/i.test(entry.message) && /fail|error|stale/i.test(entry.message)).map((entry) => entry.message), []);
+  assert.ok(next.harness.inspection.logEntries.some((entry) => entry.message === `BB removed box ${box.name}'s machine while bb-box restarted, as when a restart ended BB's installer in it; bb-box adds the box again.`));
 });
 
 test("an enrolment fails, and says why, when BB does not show the machine connected soon after its daemon started (#286)", async (t) => {
