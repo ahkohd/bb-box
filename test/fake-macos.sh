@@ -434,6 +434,11 @@ case $tool in
     # csreq -r- -b <out>: the requirement's text, as its compiled form.
     cat
     ;;
+  xxd)
+    [ "$1" = -p ] || exit 2
+    od -An -v -tx1 | tr -d ' \n'
+    echo
+    ;;
   clang | swiftc)
     # clang or swiftc ... -o <out> <source>: an executable that runs nothing, unless flags/no-clang.
     flag no-clang && exit 1
