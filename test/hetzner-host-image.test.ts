@@ -3,7 +3,7 @@ import { cpSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { HostRecord } from "../src/backends/hetzner/hosts.ts";
-import { HOST_IMAGE_REBUILT_AFTER_MS, PREPARE_FOR_SNAPSHOT, setupFingerprint } from "../src/backends/hetzner/host-image.ts";
+import { HOST_IMAGE_REBUILT_AFTER_MS, PREPARE_FOR_SNAPSHOT, progressScript, readProgress, setupFingerprint, startBuildScript, type RemoteBuild } from "../src/backends/hetzner/host-image.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
 import type { AcquireHooks, BoxIdentity } from "../src/backends/types.ts";
 import { MemoryStorage, tempDir } from "./helpers.ts";
@@ -279,4 +279,55 @@ test("a host image snapshot Hetzner Cloud did not make, or one still creating af
   assert.equal(api.images.has(9002), false);
   assert.ok(lines.includes("Host image snapshot 9001 of build dead1 (x86) is unavailable, no size yet: bb-box deletes it, as Hetzner Cloud did not make it."));
   assert.ok(lines.includes("Host image snapshot 9002 of build slow1 (x86) is creating, no size yet: bb-box deletes it, as it has been creating for over 2 hours."));
+});
+
+test("a host image build runs on its server, so a restart of bb-box does not end it: the next run carries on with the same server, and its snapshot is the host image (#1083)", async () => {
+  const { api, backend } = hetznerWorld();
+  const { ran, options } = builder();
+  const storage = new MemoryStorage();
+  const runs = new Map<string, { starts: number; exitCode: number | null }>();
+  const remote: RemoteBuild = {
+    start: async (record) => {
+      const run = runs.get(record.hostId);
+      if (run) run.starts++;
+      else runs.set(record.hostId, { starts: 1, exitCode: null });
+    },
+    progress: async (record, fromByte) => {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      return { exitCode: runs.get(record.hostId)?.exitCode ?? null, log: fromByte === 0 ? "building bbbox/linux:1\n" : "", nextByte: fromByte + (fromByte === 0 ? 23 : 0) };
+    },
+  };
+  const lines: string[] = [];
+  const config = hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04" });
+  const first = backend(config, storage, "test", { ...options, remoteBuild: remote }, { log: (line: string) => void lines.push(line) });
+  const stopping = new AbortController();
+  const building = first.buildHostImage("there is no host image yet", stopping.signal).catch((error: unknown) => error);
+  for (let i = 0; i < 400 && runs.size === 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  stopping.abort();
+  await building;
+  assert.equal(api.servers.size, 1, "the build server keeps running");
+  assert.ok(lines.some((line) => /^bb-box stopped while it built the x86 host image on bb-box-hz-\S+, at its building step: it leaves the build server running/.test(line)));
+
+  const [buildId] = runs.keys();
+  runs.get(buildId!)!.exitCode = 0;
+  const next = backend(config, storage, "test", { ...options, remoteBuild: remote }, { log: (line: string) => void lines.push(line) });
+  await next.buildHostImage("there is no host image yet", signal());
+  assert.equal(api.calls.filter((call) => call.method === "POST" && call.path === "/servers").length, 1, "no second build server");
+  assert.ok(lines.some((line) => /^bb-box carries on with the x86 host image build on bb-box-hz-\S+, from its building step/.test(line)));
+  assert.deepEqual(ran.map((each) => each.script), [PREPARE_FOR_SNAPSHOT]);
+  const [snapshot] = api.images.values();
+  assert.equal(snapshot!.status, "available");
+  assert.equal(snapshot!.labels["bbbox-build"], buildId);
+  assert.equal(api.servers.size, 0, "the build server goes once its snapshot is made");
+});
+
+test("the build script starts once, unpacks bb-box's setup on the server, runs build.sh for each image with BB's URL and the architecture, and keeps its log and exit code there; its progress reads from where it left off (#1083)", () => {
+  const script = startBuildScript({ images: [{ image: "bbbox/linux:1", target: "linux" }, { image: "bbbox/linux-desktop:1", target: "desktop" }], architecture: "arm", bbUrl: "https://bb.example.test" }, "QUJD");
+  assert.match(script, /\[ ! -e "\$d\/started" \] \|\| exit 0/);
+  assert.match(script, /base64 -d > "\$d\/setup\.tgz" <<'BB_BOX_SETUP'\nQUJD\nBB_BOX_SETUP/);
+  assert.match(script, /bash "\$d\/setup\/docker\/build\.sh" --bb-url 'https:\/\/bb\.example\.test' --arch arm64 --tag 'bbbox\/linux:1' 'linux' \|\| \{ echo \$\? > "\$d\/exit"; exit 1; \}/);
+  assert.match(script, /setsid nohup bash "\$d\/run\.sh" >> "\$d\/log" 2>&1 < \/dev\/null &\n$/);
+  assert.match(progressScript(120), /tail -c \+121 "\$d\/log"/);
+  assert.deepEqual(readProgress("exit=\nline one\nline two\n", 100), { exitCode: null, log: "line one\nline two\n", nextByte: 118 });
+  assert.deepEqual(readProgress("exit=3\n", 5), { exitCode: 3, log: "", nextByte: 5 });
 });
