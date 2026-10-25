@@ -40,7 +40,7 @@ If `tagOwners` is already there, add only the `"tag:bb-box"` line to it.
 If your policy is still Tailscale's default, which lets every device reach every other, it needs no rule. If you have written your own rules, add two:
 
 1. `tag:bb-box` reaches the device that BB's URL points at, on port 443.
-2. The machine BB's server runs on reaches `tag:bb-box` on port 22. bb-box uses this to reach its cloud machines over SSH, such as the Docker hosts the Hetzner backend makes.
+2. The machine BB's server runs on reaches `tag:bb-box` on port 22. BB Box uses this to reach its cloud machines over SSH, such as the Docker hosts the Hetzner backend makes.
 
 These can be 2 different devices. BB's URL may point at a reverse proxy rather than at the machine BB's server runs on. To find the device BB's URL points at, look up the address its name has, for example with `dig +short` followed by the name. Then find that address in `tailscale status`, or under **Machines** in the admin console.
 
@@ -117,8 +117,8 @@ To revoke a client, go to **Settings**, then **Trust credentials**, in Tailscale
 
 ## When BB is not on a tailnet
 
-If your BB server is reached through bb Connect, or at a public address, machines do not need to join a tailnet. In the **Tailnet** part of BB Box's settings, choose **No: BB is reached without one**, and select **Save**.
+If your BB server is reached through bb connect, or at a public address, machines do not need to join a tailnet. In the **Tailnet** part of BB Box's settings, choose **No: BB is reached without one**, and select **Save**.
 
 ## Next
 
-Set up the cloud machines themselves, such as [Mac and Linux boxes on Namespace](namespace.md) or [a cloud server as a Docker host](cloud-docker-host.md).
+Set up the cloud machines themselves: [Linux boxes on Hetzner Cloud](hetzner.md), [Mac and Linux boxes on Namespace](namespace.md), or [a cloud server as a Docker host](cloud-docker-host.md).

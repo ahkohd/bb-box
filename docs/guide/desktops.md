@@ -59,7 +59,7 @@ Without control, your own pointer shows over the desktop. With control, the poin
 
 ## Video
 
-A Linux desktop can also show as video, which follows a dragged window far more closely than the usual stream (VNC), and stays smooth on a slow connection where VNC falls to a few frames a second. It is on unless **Linux desktops as video** is off in [settings](settings.md#general), and works for Linux desktops drawn by the CPU, X11 and Wayland, and, by choice, on a GPU desktop. Other desktops show as before.
+A Linux desktop can also show as video, which follows a dragged window far more closely than the usual stream (VNC), and stays smooth on a slow connection where VNC falls to a few frames a second. It is on unless **Linux desktops as video** is off in [settings](settings.md#general), and works for Linux desktops drawn by the CPU, X11 and Wayland, and, by choice, on a GPU desktop.
 
 Such a desktop opens as video, on arm64 under microsandbox too. To see it over VNC instead, select **Show as VNC** under **Display** in the toolbar's menu; it is ticked while the desktop shows over VNC. Your choice lasts for that box in that tab; select it again to go back to video. A Linux desktop on a Tart Mac opens over VNC instead, with **Show as VNC** ticked; select it to see the desktop as video.
 
@@ -67,7 +67,7 @@ A macOS desktop on a Mac of the SSH host pool opens as video. One on a Tart Mac 
 
 A Linux desktop on a GPU opens over VNC, with **Show as VNC** ticked. Select it to see the desktop as video, encoded on the box's GPU (NVENC). This needs a GPU box made from a recent image; an older one shows over VNC only.
 
-A Windows desktop on a Mac opens as video, as one on Proxmox does. The Mac makes the video from QEMU's own display of the desktop, rather than Windows capturing it: it shows about a third more frames a second than before, never tears, and uses far less bandwidth than VNC. Where the box's QEMU does not offer that display, the Mac makes the video from QEMU's VNC picture instead, as before. People watching see the agent's pointer, over video and over VNC. This needs a box made from a recent image, and Xcode's Command Line Tools on the Mac; `bb box doctor` says when a Mac lacks them.
+A Windows desktop on a Mac opens as video, as one on Proxmox does. The Mac makes the video from QEMU's own display of the desktop, rather than Windows capturing it, so it never tears and uses far less bandwidth than VNC. Where the box's QEMU does not offer that display, the Mac makes the video from QEMU's VNC picture instead. People watching see the agent's pointer, over video and over VNC. This needs a box made from a recent image, and Xcode's Command Line Tools on the Mac; `bb box doctor` says when a Mac lacks them.
 
 A Linux desktop on Wayland, which runs Ubuntu 26.04, also opens as video, which follows a drag more closely than VNC, does not tear while you scroll, and uses about a sixth of the bandwidth, though a key on its own shows a little later. This needs a Wayland box made from a recent image; an older one shows over VNC. High resolution is not offered on Wayland.
 

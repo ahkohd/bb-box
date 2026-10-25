@@ -27,7 +27,7 @@ Linux boxes also need BB Box's Linux images. BB Box builds each in a Linux machi
 
 Your Namespace plan sets 2 limits that matter here:
 
-- **How long a Mac can live**: 3 hours on Developer, 5 on Team, up to 24 on Business. A box ends then, whatever it is doing. Its thread hears an hour before, and the Box panel shows when it ends.
+- **How long a machine can live**: 3 hours on Developer, 5 on Team, up to 24 on Business, for Macs and Linux machines alike. A box ends then, whatever it is doing. Its thread hears an hour before, and the Box panel shows when it ends.
 - **How many Mac cores you can have at once**: 12 on Developer. Namespace's trial allowed 6, which is one box of 6 vCPU. When you have as many as your plan allows, a thread that asks for another Mac box is told there is no room. Linux machines have a limit of their own, 32 cores on the trial.
 
 BB Box also has its own limit, **Most machines**, which is 2 by default.
@@ -38,7 +38,7 @@ You need:
 
 - a Namespace workspace for BB Box, made at namespace.so. Use one that runs nothing else, so what BB Box makes is easy to see
 - a computer with a terminal, to make the token in step 2
-- a way for the Macs to reach BB's server: if BB is on a Tailscale tailnet, [set BB Box up to join them to it](tailnet.md); otherwise BB's server needs a URL they can reach, such as bb Connect
+- a way for the machines to reach BB's server: if BB is on a Tailscale tailnet, [set BB Box up to join them to it](tailnet.md); otherwise BB's server needs a URL they can reach, such as bb connect's
 
 ## Set it up
 
@@ -58,7 +58,7 @@ BB Box uses a token that can only make, find, extend, reach and destroy machines
 ```sh
 nsc token create \
   --name bb-box \
-  --description "BB Box's Mac boxes" \
+  --description "BB Box's boxes" \
   --expires_in 8760h \
   --grant '{"resource_type":"instance","resource_id":"*","actions":["create","destroy","get","list","refresh","wait","ssh","exec","dial_host","suspend","resume"]}' \
   --grant '{"resource_type":"tenant/usage","resource_id":"*","actions":["get"]}'
@@ -82,7 +82,7 @@ If BB's server is in Europe and you want the Macs near it, ask Namespace's suppo
 2. Paste the token from step 2 into **API token**.
 3. Set **API region** to `eu` if BB's server is in Europe, or leave it as `us`. It only says which of Namespace's API addresses BB Box calls.
 4. Set **Longest life (hours)** to your plan's limit: 3 on Developer, 5 on Team.
-5. Set **Most machines** to how many Mac boxes you are willing to pay for at once.
+5. Set **Most machines** to how many boxes, Mac and Linux together, you are willing to pay for at once.
 6. Leave **Largest machine** empty: with the token's second grant, BB Box reads the largest Mac the workspace allows from Namespace. Set it, as cores x memory in GB such as `6x14`, only to keep boxes smaller than that, or for a token without the grant. Without either, BB Box learns it the first time Namespace refuses a Mac for its size.
 7. Select **Save**, and turn the backend on.
 
