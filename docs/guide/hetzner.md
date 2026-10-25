@@ -114,6 +114,7 @@ Each host:
 - joins the tailnet with a key BB Box makes for it, which works once and lasts 10 minutes
 - lets in only Tailscale and ping from the internet: BB Box reaches its Docker over SSH on the tailnet, with a key of BB Box's own
 - stops boxes reaching Hetzner's metadata service, which holds the host's first-boot data
+- pins each box to as many of its CPUs as the box has cores, and runs LXCFS, so `nproc`, `free` and `/proc/cpuinfo` in a box say the box's own cores and memory. LXCFS is held and kept from restarts, as a restart would break those files in running boxes
 
 ## Check that nothing is left running
 
