@@ -307,28 +307,6 @@ export type MacKeys = "alt-command";
 
 export type Connection = { readonly state: "connecting" } | { readonly state: "connected" } | { readonly state: "disconnected"; readonly reason: string; readonly retryMs: number };
 
-export const TYPE_TEXT_PASTE_FROM = 200;
-
-export function typeTextShortcut(event: Pick<KeyboardEvent, "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">, mac: boolean): boolean {
-  if (event.code !== "Space" || event.shiftKey || !event.ctrlKey) return false;
-  return mac ? event.metaKey && !event.altKey : event.altKey && !event.metaKey;
-}
-
-export function typeTextShortcutLabel(mac: boolean): string {
-  return mac ? "Ctrl+Cmd+Space" : "Ctrl+Alt+Space";
-}
-
-export function textKeys(text: string): { readonly keysym: number; readonly code: string }[] {
-  const keys: { keysym: number; code: string }[] = [];
-  for (const character of text.replace(/\r\n?/g, "\n")) {
-    const codePoint = character.codePointAt(0)!;
-    if (codePoint === 0x0a) keys.push({ keysym: 0xff0d, code: "Enter" });
-    else if (codePoint === 0x09) keys.push({ keysym: 0xff09, code: "Tab" });
-    else if (codePoint >= 0x20 && codePoint !== 0x7f) keys.push({ keysym: codePoint <= 0xff ? codePoint : 0x1000000 | codePoint, code: "Unidentified" });
-  }
-  return keys;
-}
-
 export function astralKeysym(event: KeyboardEvent): number | null {
   if (event.isComposing || event.keyCode === 229 || event.key.length !== 2) return null;
   const codePoint = event.key.codePointAt(0)!;
