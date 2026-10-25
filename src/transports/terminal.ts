@@ -41,7 +41,7 @@ const darwin = process.platform === "darwin";
 const PIPE_RELAY =
   `my $pid; my $status = sub { $? & 127 ? 128 + ($? & 127) : $? >> 8 }; ` +
   `$SIG{CHLD} = sub { exit $status->() if waitpid(-1, 0) > 0 }; ` +
-  `$SIG{TERM} = $SIG{HUP} = sub { kill "KILL", $pid if $pid; exit 129 }; ` +
+  `$SIG{TERM} = $SIG{HUP} = sub { $SIG{CHLD} = "DEFAULT"; kill "KILL", $pid if $pid; exit 129 }; ` +
   `pipe(my $r, my $w) or die "pipe: $!\\n"; $pid = fork; defined $pid or die "fork: $!\\n"; ` +
   `if (!$pid) { close $w; open(STDIN, "<&", $r) or die "stdin: $!\\n"; close $r; exec @ARGV or die "exec $ARGV[0]: $!\\n" } ` +
   `close $r; $SIG{PIPE} = "IGNORE"; my $buf; while (sysread STDIN, $buf, 65536) { defined(syswrite $w, $buf) or last } ` +
