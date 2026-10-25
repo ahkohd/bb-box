@@ -4102,6 +4102,19 @@ test("the Boxes page lists every box under its thread, servers as well as deskto
   expect(await one.findByText("Connecting to the desktop…")).toBeTruthy();
   fireEvent.click(one.getByRole("button", { name: "Back to boxes" }));
   expect(one.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "desktop", options: { subPath: "" } }]);
+  cleanup();
+
+  await handlers.release!({ threadId: "thr_panel", box: "box_2" } as never);
+  for (const subPath of ["thr_panel/box_2", "thr_panel/box_2/terminal"]) {
+    const gone = renderSlot(page!, { subPath }, { rpc: handlers, pluginId: "bb-box" });
+    expect(await gone.findByText(/has been released\.$/)).toBeTruthy();
+    expect(gone.queryByText("Close this tab when you are done with it.")).toBeNull();
+    const backs = gone.getAllByRole("button", { name: "Back to boxes" });
+    expect(backs).toHaveLength(2);
+    fireEvent.click(backs[1]!);
+    expect(gone.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "" } });
+    cleanup();
+  }
 });
 
 function terminalTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_1") {

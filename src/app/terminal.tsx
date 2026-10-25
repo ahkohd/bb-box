@@ -29,6 +29,7 @@ import {
   IconButton,
   message,
   Notice,
+  ReleasedNotice,
   StatusDot,
   useLive,
   useNow,
@@ -607,11 +608,7 @@ export function BoxTerminal({
         {error ? (
           <Notice>{error}</Notice>
         ) : !state ? null : !box ? (
-          <Notice detail="Close this tab when you are done with it.">
-            {lastName.current
-              ? `${lastName.current} has been released.`
-              : "This box has been released."}
-          </Notice>
+          <ReleasedNotice name={lastName.current} back={onBack} />
         ) : box.state === "stopped" ? (
           <Notice
             action={
