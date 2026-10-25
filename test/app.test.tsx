@@ -4342,6 +4342,7 @@ test("the settings page lists your machines with their threads and actions, and 
   expect(chips.getAllByRole("button").map((chip) => [chip.textContent, chip.getAttribute("title"), !!within(chip).queryByLabelText("Working")])).toEqual([
     ["Fix the login form", "Fix the login form", true],
     ["Docs pass", "Docs pass", false],
+    ["+1 more", null, false],
   ]);
   fireEvent.click(chips.getByRole("button", { name: /Docs pass/ }));
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_b" });
@@ -4523,7 +4524,11 @@ test("a machine's threads show as up to 3 chips, working first, then the latest,
   const { handlers } = server([], { machines: [machine({}, threads)] });
   const list = boxesPage(handlers);
   const chips = within(await list.findByRole("list", { name: "Threads on this box" }));
-  expect(chips.getAllByRole("button").map((chip) => chip.textContent)).toEqual(["Check the release notes", "thr_5", "Thread number 11", "+9 more"]);
+  expect(chips.getAllByRole("button").map((chip) => chip.textContent)).toEqual(["Check the release notes", "thr_5", "Thread number 11", "+11 more", "+9 more"]);
+  const where = (text: string) => chips.getAllByRole("button").find((chip) => chip.textContent === text)!.closest("[role=listitem], span.flex")!.className;
+  expect(where("Check the release notes")).not.toMatch(/@(max-)?md:hidden/);
+  expect(["thr_5", "Thread number 11", "+9 more"].map(where)).toEqual(Array(3).fill(expect.stringContaining("@max-md:hidden")));
+  expect(where("+11 more")).toContain("@md:hidden");
   fireEvent.click(chips.getByRole("button", { name: "9 more threads" }));
   const search = await screen.findByRole("textbox", { name: "Search threads" });
   const all = () => within(screen.getByRole("list", { name: "All threads on this box" })).getAllByRole("button");

@@ -8,6 +8,9 @@ import type { ThreadOnBox } from "../plugin/contract.ts";
 export const SHOWN_CHIPS = 3;
 export const SEARCH_FROM = 8;
 
+const ONLY_WHERE_CHIPS_FIT = "@max-md:hidden";
+const ONLY_WHERE_CHIPS_STACK = "@md:hidden";
+
 const REPLY_PREFIX = /^\s*Replying to this earlier message in the conversation:\s*/i;
 
 export function threadTitle(thread: ThreadOnBox): string {
@@ -19,7 +22,7 @@ export function byActivity(threads: readonly ThreadOnBox[]): ThreadOnBox[] {
   return [...threads].sort((a, b) => Number(b.running) - Number(a.running) || (b.activeAt ?? 0) - (a.activeAt ?? 0));
 }
 
-const CHIP = "inline-flex h-6 min-w-0 max-w-56 items-center gap-1 rounded-full border border-border px-2 text-xs leading-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+const CHIP = "inline-flex h-6 min-w-0 max-w-56 items-center gap-1 whitespace-nowrap rounded-full border border-border px-2 text-xs leading-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 function WorkingMark() {
   return <Icon name="Loading" className="size-3 shrink-0 animate-spin text-muted-foreground" aria-label="Working" />;
@@ -83,13 +86,24 @@ export function ThreadChips({ threads, className }: { threads: readonly ThreadOn
   const shown = ordered.slice(0, SHOWN_CHIPS);
   const open = (id: string) => navigate.toThread(id);
   return (
-    <div className={cn("flex min-w-0 flex-wrap items-center gap-1", className)} role="list" aria-label="Threads on this box">
-      {shown.map((thread) => (
-        <span key={thread.id} role="listitem" className="flex min-w-0 max-w-full">
-          <ThreadChip thread={thread} onOpen={open} />
-        </span>
-      ))}
-      {ordered.length > shown.length ? <MoreThreads threads={ordered} more={ordered.length - shown.length} onOpen={open} /> : null}
+    <div className={cn("@container min-w-0", className)}>
+      <div className="flex min-w-0 flex-wrap items-center gap-1 @max-md:flex-nowrap" role="list" aria-label="Threads on this box">
+        {shown.map((thread, index) => (
+          <span key={thread.id} role="listitem" className={cn("flex min-w-0 max-w-full", index > 0 && ONLY_WHERE_CHIPS_FIT)}>
+            <ThreadChip thread={thread} onOpen={open} />
+          </span>
+        ))}
+        {ordered.length > 1 ? (
+          <span className={cn("flex shrink-0", ONLY_WHERE_CHIPS_STACK)}>
+            <MoreThreads threads={ordered} more={ordered.length - 1} onOpen={open} />
+          </span>
+        ) : null}
+        {ordered.length > shown.length ? (
+          <span className={cn("flex shrink-0", ONLY_WHERE_CHIPS_FIT)}>
+            <MoreThreads threads={ordered} more={ordered.length - shown.length} onOpen={open} />
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
