@@ -11,8 +11,8 @@ import { fakeFfmpeg, tempDir } from "./helpers.ts";
 
 const skip = process.platform === "linux" ? false : "needs GNU stat and setsid";
 
-function run(script: string, home: string, env: Record<string, string> = {}, wfRecorder = true, darwin = false) {
-  const bin = fakeFfmpeg({ wfRecorder, darwin });
+function run(script: string, home: string, env: Record<string, string> = {}, wfRecorder = true, darwin = false, ffmpeg8 = false) {
+  const bin = fakeFfmpeg({ wfRecorder, darwin, ffmpeg8 });
   return spawnSync("bash", ["-c", script], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, ...env }, encoding: "utf8" });
 }
 
@@ -75,6 +75,18 @@ test("box_record's steps and results are saved with the box's time while it reco
   assert.match(args.at(-1)!, /\[v0\]\[1:v\]overlay=x=\(W-w\)\/2:y=25:enable='between\(t,/);
   assert.equal(plan!.captions.length, 2);
   assert.ok(!existsSync(join(home, RECORD_DIR, "events")), "the steps go with the capture");
+});
+
+test("box_record's captions are drawn with FFmpeg 8 too, as on Ubuntu 26.04's Wayland desktops, whose drawtext logs the text's width after an [Eval @ ...] prefix", { skip }, () => {
+  const home = tempDir("record-ffmpeg8");
+  assert.equal(run(recordStartScript(), home, { DISPLAY: ":99" }).status, RECORD_START_EXITS.started);
+  assert.equal(run(recordStepScript("step", "Typing a line"), home).status, RECORD_STEP_EXITS.saved);
+  const prepared = run(recordPrepareScript("cut"), home);
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const made = run(recordMakeScript(planClip(parsePrepared(prepared.stdout)!, 1)), home, {}, true, false, true);
+  assert.equal(made.status, RECORD_STOP_EXITS.made, made.stderr);
+  assert.equal(parseRecordResult(made.stdout)?.captions, true, "the pills are measured and drawn");
+  assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!, /-i \S+\/pill-0\.png .*-filter_complex .*\[1:v\]overlay=/, "the step's pill over the clip");
 });
 
 const PREPARED: Prepared = { ended: "stopped", recorded: 30, width: 1920, height: 1080, start: 1000, cuts: [[5.5, 15]], events: [] };
