@@ -29,7 +29,7 @@ import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/
 import { hostEntry } from "../src/host/entry.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { waylandPointerScript } from "../src/backends/wayvnc.ts";
-import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, type FakeBackendOptions } from "./fake-backend.ts";
+import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, loseLastByteOfCopies, type FakeBackendOptions } from "./fake-backend.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeDaemon, fakeFfmpeg, joined, tempDir } from "./helpers.ts";
@@ -546,7 +546,7 @@ test("an agent acquires a box, runs commands, copies files both ways and release
   writeFileSync(join(world.workspace, "input.txt"), "from the workspace\n");
   const copiedIn = await tool("box_copy", { box: box.name, direction: "to_box", from: "input.txt" });
   assert.ok(!isError(copiedIn), text(copiedIn));
-  assert.match(text(copiedIn), new RegExp(`Copied ${join(world.workspace, "input.txt")} \\(19 bytes\\) to input.txt in box`));
+  assert.match(text(copiedIn), new RegExp(`Copied ${join(world.workspace, "input.txt")} \\(19 bytes, SHA-256 ${createHash("sha256").update("from the workspace\n").digest("hex")}\\) to input.txt in box`));
   const cat = await tool("box_run", { box: box.name, command: "tr a-z A-Z < input.txt > output.txt && cat output.txt" });
   assert.match(text(cat), /FROM THE WORKSPACE/);
   assert.match(text(await tool("box_copy", { box: box.id, direction: "from_box", from: "output.txt", to: "out/result.txt" })), /to .*\/workspace\/out\/result.txt in the workspace/);
@@ -821,7 +821,7 @@ test("box_copy takes files in the thread's storage folder both ways, by its vari
 
   const byPath = await tool("box_copy", { box: name, direction: "to_box", from: join(world.storage, "prof", "check.mjs") });
   assert.ok(!isError(byPath), text(byPath));
-  assert.match(text(byPath), /\(7 bytes\) to check\.mjs in box/);
+  assert.match(text(byPath), /\(7 bytes, SHA-256 [0-9a-f]{64}\) to check\.mjs in box/);
   assert.ok(!isError(await tool("box_copy", { box: name, direction: "to_box", from: "$BB_THREAD_STORAGE/prof/check.mjs", to: "again.mjs" })));
   assert.match(text(await tool("box_run", { box: name, command: "cat check.mjs again.mjs > both.txt" })), /Exit code 0/);
 
@@ -1056,6 +1056,37 @@ test("a Windows box's release ends its threads' processes, waits for BB to finis
   world.hosts.delete(second.hostId);
   await app.enrolment.sweep();
   assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
+});
+
+test("a box_copy under 16 MiB checks the size and SHA-256 at both ends, both ways, and a short copy fails, leaving nothing written here", async (t) => {
+  const { harness, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  t.after(() => harness.lifecycle.dispose());
+  t.after(() => loseLastByteOfCopies(null));
+  const name = /Box (\S+) \(/.exec(text(await tool("box_acquire", {})))![1]!;
+  const content = "a file that must arrive whole\n";
+  const sum = `${content.length} bytes, SHA-256 ${createHash("sha256").update(content).digest("hex")}`;
+  const short = `${content.length - 1} bytes, SHA-256 ${createHash("sha256").update(content.slice(0, -1)).digest("hex")}`;
+  writeFileSync(join(world.workspace, "whole.txt"), content);
+
+  loseLastByteOfCopies("write");
+  const sentShort = await tool("box_copy", { box: name, direction: "to_box", from: "whole.txt" });
+  assert.ok(isError(sentShort));
+  assert.match(text(sentShort), new RegExp(`The copy of ${join(world.workspace, "whole.txt")} did not arrive whole: ${sum} went, and whole\\.txt in the box has ${short}\\. Copy it again\\.`));
+
+  loseLastByteOfCopies(null);
+  const sent = await tool("box_copy", { box: name, direction: "to_box", from: "whole.txt" });
+  assert.match(text(sent), new RegExp(`^Copied ${join(world.workspace, "whole.txt")} \\(${sum}\\) to whole\\.txt in box ${name}\\.`));
+
+  loseLastByteOfCopies("read");
+  const backShort = await tool("box_copy", { box: name, direction: "from_box", from: "whole.txt", to: "back.txt" });
+  assert.ok(isError(backShort));
+  assert.match(text(backShort), new RegExp(`The copy of whole\\.txt did not arrive whole: the box has ${sum}, and ${short} came\\. Nothing was written\\. Try again\\.`));
+  assert.ok(!existsSync(join(world.workspace, "back.txt")));
+
+  loseLastByteOfCopies(null);
+  const back = await tool("box_copy", { box: name, direction: "from_box", from: "whole.txt", to: "back.txt" });
+  assert.match(text(back), new RegExp(`^Copied whole\\.txt \\(${sum}\\) from box ${name} to ${join(world.workspace, "back.txt")} in the workspace\\.`));
+  assert.equal(readFileSync(join(world.workspace, "back.txt"), "utf8"), content);
 });
 
 test("box_copy names a file from a Windows box after its source", async (t) => {

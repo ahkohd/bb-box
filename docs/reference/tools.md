@@ -47,7 +47,7 @@ Get a fresh box for this thread: a Linux or macOS computer for commands, builds,
 
 ## box_copy
 
-Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. A file over 16 MiB streams through bb-box's worker on the thread's machine, and its SHA-256 is checked at both ends. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.
+Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. Every copy's size and SHA-256 are checked at both ends, and one that does not match fails. A file over 16 MiB streams through bb-box's worker on the thread's machine. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
