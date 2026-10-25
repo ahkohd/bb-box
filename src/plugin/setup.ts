@@ -115,6 +115,7 @@ function firstSentence(text: string | null): string | null {
  * GitHub token and the user's git identity. A user without GitHub in BB
  * still has the identity, which ends the enrolment's wait for a worker.
  */
+const NOTHING_COMES: readonly string[] = [];
 const DAEMON_NAMES = ["GH_TOKEN", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
 /** How long the names of BB's machine variables are kept before a refresh. */
 const NAMES_FRESH_MS = 60_000;
@@ -345,6 +346,11 @@ export interface SetupOptions {
   readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
   readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "callTimeoutMs" | "launchWaitMs" | "lookupWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree" | "nameWindows">;
+}
+
+function awaitedNames(gitToken: boolean, variablesSet: boolean): readonly string[] | undefined {
+  if (gitToken) return ["GH_TOKEN"];
+  return variablesSet ? undefined : NOTHING_COMES;
 }
 
 export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promise<BbBox> {
@@ -582,12 +588,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return { names, gitToken: git === "logged in" || names.includes("GH_TOKEN") };
     },
   });
-  const access = async (box: BoxRecord): Promise<{ names: string[]; gitToken: boolean }> => {
+  const access = async (box: BoxRecord): Promise<{ names: string[]; gitToken: boolean; variablesSet: boolean }> => {
     const [system, project] = await Promise.all([variableNames.get(""), box.projectId ? variableNames.get(box.projectId) : null]);
+    const set = [...(system?.names ?? []), ...(project?.names ?? [])];
     return {
-      names: [...new Set([...DAEMON_NAMES, ...(system?.names ?? []), ...(project?.names ?? [])])],
+      names: [...new Set([...DAEMON_NAMES, ...set])],
       // The project's own answer, when the box has one: it can override BB's Git.
       gitToken: (project ?? system)?.gitToken ?? false,
+      variablesSet: set.length > 0,
     };
   };
   const names = async (box: BoxRecord): Promise<string[]> => (await access(box)).names;
@@ -696,11 +704,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return `bb-box is reconnecting to ${machineNames.get(hostId) ?? `BB machine ${hostId}`}, which runs its Docker, as after an update.`;
     },
     access: async (box) => {
-      const { names: listed, gitToken } = await access(box);
+      const { names: listed, gitToken, variablesSet } = await access(box);
       if (box.enrol.hostId) await holders.ensure(box.enrol.hostId, listed);
-      // git needs GH_TOKEN, which BB can give a new machine after its other variables.
-      // Only when BB gives one: without GitHub, nothing waits for it.
-      return { names: listed, parent: options.daemonParent ?? DAEMON_PARENT, required: gitToken ? ["GH_TOKEN"] : [] };
+      return { names: listed, parent: options.daemonParent ?? DAEMON_PARENT, required: awaitedNames(gitToken, variablesSet) };
     },
     logError,
     log: (message) => bb.log.info(message),

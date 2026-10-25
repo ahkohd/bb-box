@@ -105,6 +105,10 @@ async function start(
     unknownProvider: 0,
     /** BB's built-in Git: "logged in" when it gives machines GH_TOKEN. */
     git: "logged in" as "logged in" | "not logged in" | "disabled" | "overridden",
+    /** The machine variables a user set in BB's settings. */
+    machineVariables: ["MACHINE_VAR"],
+    /** The variables a user set for the thread's project. */
+    projectVariables: ["PROJECT_VAR"],
     /** Host calls, in order, to check a machine is removed before its box. */
     events: [] as string[],
     /** Makes threads.get fail with this error, such as a network error. */
@@ -224,7 +228,7 @@ async function start(
       system: {
         machineEnvironment: async () => {
           world.names.push("system");
-          return { builtInGit: { status: world.git, statusMessage: "" }, variables: variables(["MACHINE_VAR"]) };
+          return { builtInGit: { status: world.git, statusMessage: "" }, variables: variables(world.machineVariables) };
         },
       },
       projects: {
@@ -239,8 +243,8 @@ async function start(
           world.names.push(projectId);
           return {
             builtInGit: { status: world.git, statusMessage: "" },
-            inheritedVariables: variables(["MACHINE_VAR"]),
-            variables: variables(projectId === PROJECT ? ["PROJECT_VAR"] : []),
+            inheritedVariables: variables(world.machineVariables),
+            variables: variables(projectId === PROJECT ? world.projectVariables : []),
           };
         },
       },
@@ -1361,10 +1365,9 @@ test("a box whose machine BB removes while its daemon starts again is not enroll
   assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "off", hostId: null, error: null });
 });
 
-test("without GitHub in BB, a new box does not wait for GH_TOKEN: its git identity ends the enrolment's wait", async (t) => {
+test("without GitHub in BB, a new box waits only for the machine variables a user set, not for GH_TOKEN", async (t) => {
   const connected = join(tempDir("connected"), "connected");
-  const identity = { GIT_AUTHOR_NAME: "A Person", GIT_AUTHOR_EMAIL: "a@example.com", GIT_COMMITTER_NAME: "A Person", GIT_COMMITTER_EMAIL: "a@example.com" };
-  const daemon = await fakeDaemon([identity], { startOn: { file: connected, seconds: 0.5 } });
+  const daemon = await fakeDaemon([{ MACHINE_VAR: "value-machine" }], { startOn: { file: connected, seconds: 0.5 } });
   t.after(daemon.stop);
   const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent });
   t.after(() => harness.lifecycle.dispose());
@@ -1376,8 +1379,25 @@ test("without GitHub in BB, a new box does not wait for GH_TOKEN: its git identi
   const box = await only(app);
   const messages = harness.inspection.logEntries.map((entry) => entry.message);
   assert.ok(!messages.some((line) => line.includes("had no process with the thread's GH_TOKEN")), messages.join("\n"));
-  const run = await tool("box_run", { box: box.name, command: 'printf "%s|" "${GH_TOKEN:-none}"; git var GIT_AUTHOR_IDENT' });
-  assert.match(text(run), /stdout:\nnone\|A Person <a@example\.com> /);
+  const run = await tool("box_run", { box: box.name, command: 'printf "%s|%s" "${GH_TOKEN:-none}" "$MACHINE_VAR"' });
+  assert.match(text(run), /stdout:\nnone\|value-machine/);
+});
+
+test("without GitHub or machine variables in BB, a new box does not wait at all, as BB gives git's identity only with its GitHub login", async (t) => {
+  const connected = join(tempDir("connected"), "connected");
+  const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }], { startOn: { file: connected, seconds: 0.5 } });
+  t.after(daemon.stop);
+  const { harness, world, tool } = await start(undefined, { daemonParent: daemon.parent });
+  t.after(() => harness.lifecycle.dispose());
+  world.git = "not logged in";
+  world.machineVariables = [];
+  world.projectVariables = [];
+  world.installer = `: > '${connected}'`;
+  const started = Date.now();
+  assert.match(text(await tool("box_acquire", { kind: "linux" })), /BB machine: enrolled/);
+  assert.ok(Date.now() - started < 10_000, `no wait for variables BB does not give: ${Date.now() - started} ms`);
+  const messages = harness.inspection.logEntries.map((entry) => entry.message);
+  assert.ok(!messages.some((line) => line.includes("had no process with the thread's")), messages.join("\n"));
 });
 
 test("the enrolment waits only so long for a worker with the thread's variables", async (t) => {

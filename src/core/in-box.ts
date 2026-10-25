@@ -38,7 +38,8 @@ export interface Access {
   /**
    * Of `names`, those a box's commands must have before it counts as having
    * the thread's access, such as GH_TOKEN, which git needs. BB can give a
-   * new machine some variables before others. Any name counts when empty.
+   * new machine some variables before others. Any name counts when
+   * undefined; when empty, BB gives none, so nothing is waited for.
    */
   readonly required?: readonly string[];
 }
@@ -609,7 +610,7 @@ export const ACCESS_CHECK_EXITS = { found: 0, waiting: 1, noDaemon: 2 } as const
  */
 export function accessCheck(os: GuestOs, access: Access): string | null {
   const names = accessNames(access);
-  if (!names.length) return null;
+  if (!names.length || access.required?.length === 0) return null;
   const required = (access.required ?? []).filter((name) => names.includes(name));
   if (os === "windows") return windowsAccessCheck(names, required, access.parent, ACCESS_CHECK_EXITS);
   const set = required.length
