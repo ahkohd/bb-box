@@ -1388,3 +1388,23 @@ test("a box is made without LXCFS's files when LXCFS went from the host after bb
   assert.equal(older.fake.inspect(guest.ref).HostConfig.Mounts.some((mount) => mount.Target === "/sys/devices/system/cpu/online"), false);
   assert.equal(older.fake.inspect(guest.ref).HostConfig.Mounts.length, 7);
 });
+
+test("on a Docker host that is itself an LXC container, as on Proxmox VE, boxes mount the files the LXCFS outside gives the container, as it answers for each box's own cgroup (062)", async () => {
+  const { fake, backend } = setup({}, { containerLxcfs: true, cpus: 8 });
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const mounts = fake.inspect(guest.ref).HostConfig.Mounts.map((mount) => `${mount.Source} ${mount.Target}`);
+  assert.deepEqual(mounts, [
+    ...["cpuinfo", "meminfo", "stat", "uptime", "swaps", "loadavg", "diskstats"].map((file) => `/proc/${file} /proc/${file}`),
+    "/sys/devices/system/cpu/online /sys/devices/system/cpu/online",
+  ]);
+  const check = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!;
+  assert.equal(check.status, "ok");
+  assert.match(check.detail, /through the LXCFS of the machine that runs fake-docker's own container, in free/);
+  fake.set({ lxcfsBroken: [guest.ref] });
+  assert.match((await backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!.detail, /^The LXCFS of the machine that runs fake-docker's own container was restarted under running boxes, so in calm-otter-\d+/);
+
+  const plain = setup({}, { cpus: 8 });
+  const unserved = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.deepEqual(plain.fake.inspect(unserved.ref).HostConfig.Mounts, [], "a host's own /proc files are not LXCFS's, so no box mounts them");
+  assert.match((await plain.backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!.fix!, /If fake-docker is itself a container, LXCFS cannot run in it/);
+});

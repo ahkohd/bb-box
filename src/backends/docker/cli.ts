@@ -174,7 +174,7 @@ export function parseContainers(text: string): ContainerInfo[] {
       cores: nanoCpus ? Math.round((nanoCpus / 1e9) * 100) / 100 : null,
       memoryMiB: memory ? Math.round(memory / MiB) : null,
       cpus: parseCpuList(typeof host.CpusetCpus === "string" ? host.CpusetCpus : null),
-      lxcfs: mountsLxcfs((Array.isArray(host.Mounts) ? host.Mounts : []).map((mount) => String(record(mount).Source ?? ""))),
+      lxcfs: mountsLxcfs((Array.isArray(host.Mounts) ? host.Mounts : []).map((mount) => String(record(mount).Target ?? ""))),
       addresses,
       imageId: typeof container.Image === "string" ? container.Image : "",
     };
