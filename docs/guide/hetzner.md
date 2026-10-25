@@ -43,7 +43,7 @@ To raise the limit, open your account's **Limits** page in Hetzner's Console and
 You need:
 
 - a Hetzner account, made at hetzner.com, with a payment method
-- a way for the hosts to reach BB's server, and for BB's server to reach the hosts. If BB is on a Tailscale tailnet, [set BB Box up to join cloud machines to it](tailnet.md): its policy lets BB's server reach the hosts over SSH. Otherwise, BB's server needs a URL the hosts can reach, such as bb Connect, and BB Box reaches the hosts over the internet (see [without a tailnet](#without-a-tailnet))
+- a way for the hosts to reach BB's server, and for BB's server to reach the hosts. If BB is on a Tailscale tailnet, [set BB Box up to join cloud machines to it](tailnet.md): its policy lets BB's server reach the hosts over SSH. Otherwise, BB's server needs a URL the hosts can reach, such as bb connect's, and BB Box reaches the hosts over the internet (see [without a tailnet](#without-a-tailnet))
 
 ## Set it up
 
@@ -137,7 +137,7 @@ Between uses, the project keeps BB Box's SSH key and firewall, both named `bb-bo
 
 ## Without a tailnet
 
-If BB's server is not on a tailnet, set **SSH from** in the backend's settings to BB's server's public address, as a range such as `203.0.113.7/32`. BB Box then reaches each host's SSH over the internet from that address alone, with a key of BB Box's own. With neither the tailnet nor **SSH from**, BB Box makes no host, and the doctor says so. The boxes reach BB's server at the URL BB gives them, such as bb Connect's.
+If BB's server is not on a tailnet, set **SSH from** in the backend's settings to BB's server's public address, as a range such as `203.0.113.7/32`. BB Box then reaches each host's SSH over the internet from that address alone, with a key of BB Box's own. With neither the tailnet nor **SSH from**, BB Box makes no host, and the doctor says so. The boxes reach BB's server at the URL BB gives them, such as bb connect's.
 
 ## Turn it off
 

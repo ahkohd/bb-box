@@ -21,13 +21,13 @@ Both cloud backends join their machines to your tailnet when BB is on one: see [
 
 ## Install the plugin
 
-In BB, open Settings, then Installed plugins. Select **New plugin**, then **Install from source**, enter `git:https://github.com/moonstead/bb-box.git@main`, and select **Install plugin**. Or, with BB's command line:
+In BB, open Settings, then Installed plugins. Select the arrow beside **New plugin**, then **Install from source**, enter `git:https://github.com/moonstead/bb-box.git@main`, and select **Install plugin**. Or, with BB's command line:
 
 ```sh
 bb plugin install git:https://github.com/moonstead/bb-box.git@main
 ```
 
-BB fetches and builds it, so you need no clone. To change bb-box itself, clone it, run `npm install` and `bb plugin build`, then `bb plugin install .` in the clone.
+It asks you to confirm; an agent or a script adds `--yes`. BB fetches and builds it, so you need no clone. To change bb-box itself, clone it, run `npm install` and `bb plugin build`, then `bb plugin install .` in the clone.
 
 For Docker on the machine that runs BB, the Box panel can do the rest: select **Use Docker on this machine**. From a terminal, or for an agent, `bb box setup docker` does the same and waits for the build. Otherwise, follow your backend's guide. It says what to prepare, such as an image or a template, and what to enter on BB Box's settings page: in BB, open Settings, Plugins, BB Box. For each backend, select **Set up**, enter the values, select **Check**, then **Save and turn on**. The [user guide's settings page](../docs/guide/settings.md) explains the page.
 
@@ -40,7 +40,7 @@ Each thread then has a Box panel, and agents have the `box_` tools.
 
 ## Rebuild images each night
 
-bb-box rebuilds its standard Linux, macOS and Windows images itself, so new boxes have current agent tools, gh and Chrome, and Windows boxes have Windows' updates. Turn on **Rebuild images each night** under General in BB Box's settings: bb-box then starts a run at 03:00 on BB's server, on a schedule of its own, while it is loaded. Setting up Docker from the Box panel turns it on.
+bb-box rebuilds its standard Linux, macOS and Windows images itself, so new boxes have current agent tools, gh and Chrome, and Windows boxes have Windows' updates. Turn on **Rebuild images each night** under General in BB Box's settings: bb-box then starts a run at 03:00 on BB's server, on a schedule of its own, while it is loaded. Setting up Docker from the Box panel, or with `bb box setup docker`, turns it on.
 
 A run starts no image after 4 hours, and goes on in the background. To see what the last run did, run `bb box images list`. `bb box doctor` warns when no run has finished for 8 days. What is rebuilt and when is in the [user guide's images page](../docs/guide/images.md), and every `bb box images` command is in the [command-line reference](../docs/reference/cli.md).
 
@@ -73,8 +73,8 @@ Its boxes keep running. Run `bb box install-id --set <id>` with bb-box's old ins
 ## Remove bb-box
 
 1. Release the boxes first, as removing bb-box does not release them. `bb box list --all` lists them, and `bb box release <box> --force` releases one. Remove your own machines with `bb box machines remove <name>`.
-2. Delete the nightly automation: `bb automation list --project <project>` finds it, and `bb automation delete` removes it.
-3. Undo each backend's host side, as its guide says under **Remove**.
+2. If you made a BB automation for the nightly rebuilds, delete it: `bb automation list --project <project>` finds it, and `bb automation delete` removes it.
+3. Undo each backend's host side, as its guide says under **Remove**, or for Hetzner Cloud and Namespace under **Turn it off**.
 4. Run `bb plugin remove bb-box`. It deletes bb-box's configuration, secrets and storage.
 
 A box you did not release keeps running on its host, where you can delete it.

@@ -27,7 +27,7 @@ Set a cost alert in the Hetzner Console. Hetzner does not stop spending by itsel
 You need:
 
 - a Hetzner Cloud project, and your SSH key in it
-- a way for the server to reach BB's server: if BB is on a tailnet, the server joins the tailnet; otherwise BB's server needs a URL the server can reach, such as bb Connect
+- a way for the server to reach BB's server: if BB is on a tailnet, the server joins the tailnet; otherwise BB's server needs a URL the server can reach, such as bb connect's
 - 160 GB of disk on the server: BB Box's images need about 36 GB to build
 - 16 GB of memory for desktop boxes: a small desktop box takes 8 GB, and BB Box keeps some memory free
 
@@ -91,7 +91,7 @@ Use the dialog, not `bb machine create --provider manual`: the command line does
 
 ### 6. Close the server to the internet
 
-In the Hetzner Console, make a Cloud Firewall with no inbound rules, and apply it to the server. BB's daemon and Tailscale only make connections out, so they keep working. From now on, log in to the server over the tailnet, at its tailnet address.
+In the Hetzner Console, make a Cloud Firewall with no inbound rules, and apply it to the server. BB's daemon and Tailscale only make connections out, so they keep working. From now on, log in to the server over the tailnet, at its tailnet address. Without a tailnet, add one inbound rule for SSH from your own address alone, or you can no longer log in.
 
 ## Turn it on in BB Box
 

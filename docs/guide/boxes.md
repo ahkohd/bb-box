@@ -17,6 +17,7 @@ When no backend is set up, the panel looks for Docker on your BB machines, the o
 A row starts with the box's name and its system, such as Linux. Badges then say what the box is:
 
 - Desktop: it has a screen you can see and use
+- Wayland: its desktop runs on Wayland rather than X11, so apps built only for X11 do not run there
 - GPU: its desktop is drawn by a graphics card
 - No Docker: it is a Linux box without Docker
 - arm64: it runs on an ARM processor, which some programs do not support
