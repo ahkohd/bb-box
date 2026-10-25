@@ -85,6 +85,7 @@ const SHM_MIN_MiB = 1024;
 /** Statuses in which a container holds its memory. */
 const ACTIVE = new Set(["running", "paused", "restarting"]);
 const HOST_CPUS_KEPT_FOR_MS = 10 * 60_000;
+const PROBES_REFRESHED_AFTER_MS = 6 * 60_000;
 const CPUS_NOT_AVAILABLE = /Requested CPUs are not available|for cpuset cpus/i;
 
 export const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.28.3", socket: "/home/box/.cache/cua-driver/cua-driver.sock" };
@@ -105,6 +106,7 @@ export interface DockerBackendOptions {
   readonly cursorHelper?: string;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
+  readonly now?: () => number;
   /** Runs setup/docker/build.sh with `args`, for tests; bash by default. Resolves with its exit code. */
   readonly script?: (script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void, signal: AbortSignal) => Promise<number | null>;
 }
@@ -717,16 +719,33 @@ export class DockerBackend implements Backend {
     return true;
   }
 
+  #now(): number {
+    return this.#options.now?.() ?? Date.now();
+  }
+
+  async maintain(signal?: AbortSignal): Promise<void> {
+    await this.#underPlacement(async () => {
+      const state = await this.#state(signal);
+      if (!state.containers.some((container) => ACTIVE.has(container.status))) return;
+      if (this.#hostCpus && this.#now() - this.#hostCpus.at < PROBES_REFRESHED_AFTER_MS) return;
+      await this.#lxcfsOnHost(signal, true);
+      if (!this.#pinsCpus(state.info)) return;
+      this.#daemonCpus = null;
+      await this.#probedCpus(state.info, signal, true);
+      await this.#moveSharingBoxes(signal);
+    });
+  }
+
   #probeImage(): string | null {
     return DOCKER_KINDS.map((kind) => this.#config.images[kind]).find((each): each is string => Boolean(each)) ?? null;
   }
 
   async #lxcfsOnHost(signal?: AbortSignal, again = false): Promise<LxcfsOnHost | null> {
-    if (!again && this.#lxcfs && Date.now() - this.#lxcfs.at < HOST_CPUS_KEPT_FOR_MS) return this.#lxcfs.on;
+    if (!again && this.#lxcfs && this.#now() - this.#lxcfs.at < HOST_CPUS_KEPT_FOR_MS) return this.#lxcfs.on;
     const image = this.#probeImage();
     let on = image ? lxcfsFromProbe(await this.#cli.run(lxcfsProbeArgs(image), { timeoutMs: 30_000, signal })) : null;
     if (image && on && !on.serves) on = lxcfsFromContainerProbe(await this.#cli.run(containerLxcfsProbeArgs(image), { timeoutMs: 30_000, signal }));
-    this.#lxcfs = { at: Date.now(), on };
+    this.#lxcfs = { at: this.#now(), on };
     return on;
   }
 
@@ -735,14 +754,14 @@ export class DockerBackend implements Backend {
   }
 
   async #probedCpus(info: DockerInfo, signal?: AbortSignal, again = false): Promise<CpuList> {
-    if (!again && this.#hostCpus && Date.now() - this.#hostCpus.at < HOST_CPUS_KEPT_FOR_MS) return this.#hostCpus.cpus;
+    if (!again && this.#hostCpus && this.#now() - this.#hostCpus.at < HOST_CPUS_KEPT_FOR_MS) return this.#hostCpus.cpus;
     if (!again) this.#daemonCpus = null;
     const image = this.#probeImage();
     const probe = image
       ? await this.#cli.run(["container", "run", "--rm", "--pull", "never", "--network", "none", image, "cat", "/sys/fs/cgroup/cpuset.cpus.effective"], { timeoutMs: 30_000, signal })
       : null;
     const cpus = hostCpusFromProbe(probe?.exitCode === 0 ? probe.stdout : null, info.cpus);
-    this.#hostCpus = { at: Date.now(), cpus };
+    this.#hostCpus = { at: this.#now(), cpus };
     return cpus;
   }
 

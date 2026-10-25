@@ -1,7 +1,7 @@
 import type { GuestOs } from "../src/backends/types.ts";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -1407,4 +1407,32 @@ test("on a Docker host that is itself an LXC container, as on Proxmox VE, boxes 
   const unserved = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
   assert.deepEqual(plain.fake.inspect(unserved.ref).HostConfig.Mounts, [], "a host's own /proc files are not LXCFS's, so no box mounts them");
   assert.match((await plain.backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!.fix!, /If fake-docker is itself a container, LXCFS cannot run in it/);
+});
+
+test("the sweep probes a host with boxes again before its probes are 10 minutes old, and moves boxes off CPUs the host no longer has, so a create never waits on a probe (062)", async () => {
+  let now = 1_000_000;
+  const fake = fakeDockerHost({ cpuList: "27,61", memoryMiB: 65536 });
+  const backend = new DockerBackend(dockerConfig(), testContext(), { binary: fake.binary, readyTimeoutMs: 2_000, now: () => now });
+  const one: BoxSize = { cores: 1, memoryMiB: 2048, diskGiB: null };
+  const probes = () => (existsSync(join(fake.root, "probes")) ? readFileSync(join(fake.root, "probes"), "utf8").trim().split("\n").filter((line) => line.includes("cpuset.cpus.effective")).length : 0);
+
+  const empty = fakeDockerHost();
+  await new DockerBackend(dockerConfig(), testContext(), { binary: empty.binary, now: () => now }).maintain(signal());
+  assert.equal(existsSync(join(empty.root, "probes")), false, "a host with no bb-box box is not probed");
+
+  const a = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
+  assert.equal(fake.inspect(a.ref).HostConfig.CpusetCpus, "27");
+  await backend.maintain(signal());
+  assert.equal(probes(), 1, "probes under 6 minutes old stand");
+
+  fake.set({ cpuList: "3,61" });
+  now += 7 * 60_000;
+  await backend.maintain(signal());
+  assert.equal(probes(), 2);
+  assert.equal(fake.inspect(a.ref).HostConfig.CpusetCpus, "3", "the box on a CPU the host no longer has moved back onto it");
+
+  now += 4 * 60_000;
+  const b = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
+  assert.equal(probes(), 2, "a create 11 minutes after the first probe did not wait on one");
+  assert.equal(fake.inspect(b.ref).HostConfig.CpusetCpus, "61");
 });
