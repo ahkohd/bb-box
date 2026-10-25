@@ -37,7 +37,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, MachinesState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, osName, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, ReleasedNotice, osName, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { POINTER_NONE } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
@@ -1282,7 +1282,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
         {error ? (
           <Notice>{error}</Notice>
         ) : !state ? null : !box ? (
-          <Notice detail="Close this tab when you are done with it.">{lastName.current ? `${lastName.current} has been released.` : "This box has been released."}</Notice>
+          <ReleasedNotice name={lastName.current} back={onBack} />
         ) : !box.display ? (
           <Notice>{box.name} has no desktop.</Notice>
         ) : box.state === "stopped" ? (

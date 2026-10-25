@@ -414,6 +414,21 @@ export function EmptyPanel({ title, children, className, role }: { title?: strin
 }
 
 /** A notice centred on a surface, in BB's card style: a line, a muted second line, at most one action. */
+export function ReleasedNotice({ name, back }: { name: string | null; back?: BackTo }) {
+  const words = name ? `${name} has been released.` : "This box has been released.";
+  if (!back) return <Notice detail="Close this tab when you are done with it.">{words}</Notice>;
+  const button = "href" in back ? (
+    <Button asChild variant="outline" size="sm" className="h-7">
+      <a href={back.href}>{back.label}</a>
+    </Button>
+  ) : (
+    <Button type="button" variant="outline" size="sm" className="h-7" onClick={back.go}>
+      {back.label}
+    </Button>
+  );
+  return <Notice action={button}>{words}</Notice>;
+}
+
 export function Notice({ children, detail, action }: { children: ReactNode; detail?: ReactNode; action?: ReactNode }) {
   return (
     <div className="absolute inset-0 flex items-center justify-center p-4">
