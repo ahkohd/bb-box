@@ -1225,7 +1225,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (imageChecks.length) {
         sections.push({
           title: "Images",
-          report: { ok: true, summary: "bb-box rebuilds the standard images each night.", checks: imageChecks, notes: [] },
+          report: { ok: true, summary: "How the standard images are kept up to date.", checks: imageChecks, notes: [] },
         });
       }
       const fileChecks = files?.checks() ?? [];
