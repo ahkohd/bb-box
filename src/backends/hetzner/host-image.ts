@@ -35,6 +35,13 @@ const BUILD_WITHIN_MS = 3 * 3_600_000;
 const BUILD_UNANSWERED_POLLS = 30;
 const STOPPING = /stale API handle|reloaded or disabled/i;
 
+export class BuildGaveWayToBoxes extends Error {}
+
+export interface RoomFromBuilds {
+  readonly stopped: readonly HostRecord[];
+  readonly snapshotting: readonly HostRecord[];
+}
+
 export function bbBoxIsStopping(error: unknown, signal?: AbortSignal): boolean {
   return Boolean(signal?.aborted) || STOPPING.test(error instanceof Error ? error.message : String(error));
 }
@@ -203,6 +210,7 @@ export class HostImages {
   readonly #told = new Set<string>();
   readonly #waitingOn = new Set<number>();
   readonly #carryingOn = new Set<string>();
+  readonly #givingWay = new Map<string, AbortController>();
 
   constructor(options: { api: Hetzner; builds: HetznerHosts; installLabels: Labels; fingerprint?: () => string; storage?: BackendStorage; now?: () => number }) {
     this.#api = options.api;
@@ -310,11 +318,14 @@ export class HostImages {
       log: (line: string) => void;
       sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
     },
-    signal: AbortSignal,
+    given: AbortSignal,
   ): Promise<HostImageBuild> {
     const architecture = input.architecture ?? "x86";
     const resumed = await this.resumable(architecture);
-    const record = resumed?.record ?? (await this.#builds.create(input.spec, signal));
+    const record = resumed?.record ?? (await this.#builds.create(input.spec, given));
+    const givingWay = new AbortController();
+    this.#givingWay.set(record.hostId, givingWay);
+    const signal = AbortSignal.any([given, givingWay.signal]);
     let saved: SavedBuild = resumed?.saved ?? { architecture, fingerprint: this.#fingerprint(), appSha256: input.appSha256, phase: "building", imageId: null };
     const save = async (next: SavedBuild) => {
       saved = next;
@@ -322,7 +333,7 @@ export class HostImages {
     };
     if (resumed) input.log(`bb-box carries on with the ${architecture} host image build on ${record.serverName}, from its ${saved.phase} step, which an earlier run of bb-box left.`);
     this.#carryingOn.add(record.hostId);
-    let ending: "done" | "failed" | "left" = "failed";
+    let ending: "done" | "failed" | "left" | "gave way" = "failed";
     let snapshotting: number | null = saved.imageId;
     try {
       await save(saved);
@@ -360,12 +371,19 @@ export class HostImages {
       input.log(`host image ${record.hostId} is snapshot ${snapshot.id}`);
       return { buildId: record.hostId, snapshot };
     } catch (error) {
+      if (givingWay.signal.aborted && !given.aborted) {
+        ending = "gave way";
+        throw new BuildGaveWayToBoxes(`bb-box stopped the ${architecture} host image build on ${record.serverName}, at its ${saved.phase} step, and deleted the server, so a box gets its room. It builds again once boxes have not waited for room for 30 minutes.`);
+      }
       if (bbBoxIsStopping(error, signal)) ending = "left";
       throw error;
     } finally {
       this.#carryingOn.delete(record.hostId);
+      this.#givingWay.delete(record.hostId);
       if (snapshotting !== null) this.#waitingOn.delete(snapshotting);
-      if (ending === "left") {
+      if (ending === "gave way") {
+        await this.#storage?.delete(savedKey(record.hostId)).catch(() => undefined);
+      } else if (ending === "left") {
         input.log(`bb-box stopped while it built the ${architecture} host image on ${record.serverName}, at its ${saved.phase} step: it leaves the build server running, and the next run of bb-box carries on with it.`);
       } else {
         const stillMaking = ending === "failed" && snapshotting !== null && (await this.#api.image(snapshotting).catch(() => null))?.status === "creating";
@@ -378,6 +396,28 @@ export class HostImages {
         }
       }
     }
+  }
+
+  async giveRoomToBoxes(signal?: AbortSignal): Promise<RoomFromBuilds> {
+    const stopped: HostRecord[] = [];
+    const snapshotting: HostRecord[] = [];
+    for (const record of await this.#builds.records()) {
+      if (record.state !== "ready") continue;
+      const phase = (await this.#storage?.get<SavedBuild>(savedKey(record.hostId)))?.phase ?? "building";
+      if (phase !== "building" || (await this.#storage?.get<boolean>(leftKey(record.hostId)))) {
+        snapshotting.push(record);
+        continue;
+      }
+      this.#givingWay.get(record.hostId)?.abort();
+      await this.#builds.delete(record.hostId, signal);
+      await this.#storage?.delete(savedKey(record.hostId));
+      stopped.push(record);
+    }
+    return { stopped, snapshotting };
+  }
+
+  async isBuilding(hostId: string): Promise<boolean> {
+    return (await this.#builds.records()).some((record) => record.hostId === hostId);
   }
 
   async resumable(architecture: Architecture): Promise<{ record: HostRecord; saved: SavedBuild } | null> {
