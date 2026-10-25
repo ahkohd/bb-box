@@ -961,6 +961,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   });
   /** Why a thread's desktop box was not made after its image was built (the setup plan's PR 4), by thread, until it asks again. */
   const desktopProblems = new Map<string, { message: string; at: number }>();
+  const desktopsAwaited = new Set<string>();
   /**
    * BB terminal sessions open on a machine (061): its own, and those of
    * each thread on it and of each such thread's environment, which BB lists
@@ -996,7 +997,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     setups: async () => {
       const hosts = await dockerHosts.list();
       const took = new Map(await Promise.all(hosts.map(async (host) => [host.hostId, await dockerImages.took(host.hostId)] as const)));
-      return machineSetups(hosts, setupFactsOf, hostname(), took);
+      return machineSetups(hosts, setupFactsOf, hostname(), took).map((setup) => (desktopsAwaited.has(setup.hostId) ? { ...setup, boxFollows: true } : setup));
     },
     machineAccess: async () => machineAccessProblem((await bb.sdk.system.config().catch(() => null)) as AccessConfig | null),
     async dockerHostOf(machine) {
@@ -1036,9 +1037,11 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (!result.ok) return result;
       const projectId = await api.projectOf(threadId).catch(() => null);
       desktopProblems.delete(threadId);
+      desktopsAwaited.add(hostId);
       // The box is made once the image is built; the panel shows the build until then, and a failed build says why.
       void dockerImages
         .ensure(hostId)
+        .finally(() => desktopsAwaited.delete(hostId))
         .then(async (build) => {
           if (build.state === "built") {
             // A box that fails now says why in the thread's panel, as an acquire refused there does.

@@ -150,6 +150,12 @@ List your machines: boxes you own, kept as BB machines, which no thread ending r
 Usage:
   bb box machines [--json]
 
+Its commands:
+  bb box machines add <kind>        Add a machine of your own, of the kind
+  bb box machines resize <machine>  Resize one of your machines
+  bb box machines remove <machine>  Remove one of your machines and delete its disk
+Run one with --help for its options.
+
 Options:
   --json      Print JSON.
   --help, -h  Show this help and exit

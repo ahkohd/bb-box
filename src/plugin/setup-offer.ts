@@ -36,6 +36,7 @@ export interface MachineSetup {
   readonly build: ImageBuild | null;
   /** How long each image last took to build alone there, in ms, by build target ("linux", "desktop"): its next estimate. */
   readonly took: Readonly<Record<string, number>>;
+  readonly boxFollows?: boolean;
 }
 
 const ORDER: Record<MachineSetup["state"], number> = { on: 0, ready: 1, fix: 2, none: 3, offline: 4 };
