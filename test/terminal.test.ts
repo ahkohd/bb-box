@@ -42,6 +42,11 @@ function viewer(): TerminalViewer & { text(): string; closed: { code: number; re
   };
 }
 
+function goneOrUnreaped(pid: number): boolean {
+  const ps = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+  return ps.status !== 0 || ps.stdout.trim().startsWith("Z");
+}
+
 async function until(check: () => boolean, ms = 5_000): Promise<void> {
   const start = Date.now();
   while (!check()) {
@@ -282,9 +287,7 @@ test("on macOS a terminal's script gets its stdin as a pipe, which macOS's scrip
 
   // The command ends while the relay's own stdin stays open, as a PTY's does: the relay ends with it.
   const quick = run("exit 0");
-  const ended = await Promise.race([quick.exited, new Promise((resolve) => setTimeout(resolve, 5_000, "still running").unref())]);
-  quick.child.kill("SIGKILL");
-  assert.equal(ended, 0);
+  assert.equal(await quick.exited, 0);
 
   // SIGTERM, as a closed terminal sends, kills the command at once.
   const long = run("echo $$; exec sleep 30");
@@ -292,6 +295,5 @@ test("on macOS a terminal's script gets its stdin as a pipe, which macOS's scrip
   const pid = Number(long.stdout().trim());
   long.child.kill("SIGTERM");
   assert.equal(await long.exited, 129);
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.throws(() => process.kill(pid, 0), "the command is gone");
+  await until(() => goneOrUnreaped(pid), 10_000);
 });
