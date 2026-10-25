@@ -271,3 +271,16 @@ test("label selectors: all terms match, with =, ==, !=, presence, absence, in an
   assert.equal(selectorMatches(labels, "bbbox-role notin (host,build),bbbox-install=inst1"), false);
   assert.equal(selectorMatches({}, "bbbox-install=inst1"), false, "a server made by hand, with no labels, never matches");
 });
+
+test("a snapshot's wait polls every 15 s for up to an hour, within Hetzner's 3600 requests an hour", async () => {
+  const { api, hetzner, sleeps } = setup();
+  const { server } = await hetzner.createServer(host("bb-box-inst1-slow"));
+  api.pollsUntilSnapshotMade = 100_000;
+  const started = await hetzner.startSnapshot(server.id, { description: "slow", labels: {} });
+  const before = sleeps.length;
+  const error = (await hetzner.waitAction(started.actionId, undefined, 3_600_000, 15_000).catch((e: unknown) => e)) as Error;
+  assert.match(error.message, /create_image did not finish in 3600 s/);
+  const waits = sleeps.slice(before);
+  assert.equal(waits.length, 240);
+  assert.ok(waits.every((ms) => ms === 15_000));
+});

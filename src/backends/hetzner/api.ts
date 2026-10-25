@@ -254,15 +254,16 @@ export class Hetzner {
     return action(data.action as Json);
   }
 
-  async waitAction(id: number, signal?: AbortSignal): Promise<HetznerAction> {
-    for (let waited = 0; ; waited += this.#actionPollMs) {
+  async waitAction(id: number, signal?: AbortSignal, timeoutMs = this.#actionTimeoutMs, pollMs = this.#actionPollMs): Promise<HetznerAction> {
+    const every = Math.max(this.#actionPollMs, pollMs);
+    for (let waited = 0; ; waited += every) {
       const each = await this.action(id, signal);
       if (each.status === "success") return each;
       if (each.status === "error") {
         throw new HetznerError("GET", `/actions/${id}`, 200, each.error?.code ?? "action_failed", `${each.command} failed: ${this.#redact(each.error?.message ?? "no reason given")}`);
       }
-      if (waited >= this.#actionTimeoutMs) throw new HetznerError("GET", `/actions/${id}`, 0, "timeout", `${each.command} did not finish in ${Math.round(this.#actionTimeoutMs / 1000)} s`);
-      await this.#sleep(this.#actionPollMs, signal);
+      if (waited >= timeoutMs) throw new HetznerError("GET", `/actions/${id}`, 0, "timeout", `${each.command} did not finish in ${Math.round(timeoutMs / 1000)} s`);
+      await this.#sleep(every, signal);
     }
   }
 
@@ -311,11 +312,22 @@ export class Hetzner {
     return (await this.#list("/images", "images", { type: "snapshot", label_selector: selectorMatchingAll(labels) }, signal)).map(image);
   }
 
-  async createSnapshot(serverId: number, input: { description: string; labels: Labels }, signal?: AbortSignal): Promise<HetznerImage> {
+  async startSnapshot(serverId: number, input: { description: string; labels: Labels }, signal?: AbortSignal): Promise<{ imageId: number; actionId: number }> {
     const data = await this.#request<Json>("POST", `/servers/${serverId}/actions/create_image`, { type: "snapshot", description: input.description, labels: input.labels }, signal);
-    await this.waitAction(Number((data.action as Json).id), signal);
-    const made = await this.#request<Json>("GET", `/images/${Number((data.image as Json).id)}`, undefined, signal);
-    return image(made.image as Json);
+    return { imageId: Number((data.image as Json).id), actionId: Number((data.action as Json).id) };
+  }
+
+  async image(id: number, signal?: AbortSignal): Promise<HetznerImage | null> {
+    const found = await this.#orNullWhenGone("GET", `/images/${id}`, undefined, signal);
+    return found === null ? null : image((found as Json).image as Json);
+  }
+
+  async createSnapshot(serverId: number, input: { description: string; labels: Labels }, signal?: AbortSignal, timeoutMs?: number): Promise<HetznerImage> {
+    const started = await this.startSnapshot(serverId, input, signal);
+    await this.waitAction(started.actionId, signal, timeoutMs);
+    const made = await this.image(started.imageId, signal);
+    if (!made) throw new HetznerError("GET", `/images/${started.imageId}`, 404, "not_found", "the snapshot went as it was made");
+    return made;
   }
 
   async deleteImage(id: number, signal?: AbortSignal): Promise<Deletion> {
