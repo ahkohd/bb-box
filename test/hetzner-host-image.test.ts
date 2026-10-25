@@ -313,7 +313,8 @@ test("a host image build runs on its server, so a restart of bb-box does not end
   const building = first.buildHostImage("there is no host image yet", stopping.signal).catch((error: unknown) => error);
   for (let i = 0; i < 400 && runs.size === 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
   stopping.abort();
-  await building;
+  assert.equal(await building, undefined, "a build bb-box left as it stopped is no error");
+  assert.equal(await storage.get("host-image-failed-at:x86"), undefined, "nor a failure, which would put off the next try");
   assert.equal(api.servers.size, 1, "the build server keeps running");
   assert.ok(lines.some((line) => /^bb-box stopped while it built the x86 host image on bb-box-hz-\S+, at its building step: it leaves the build server running/.test(line)));
 
@@ -424,4 +425,22 @@ test("while a build runs after a failure, the doctor names the failure but no ti
   assert.match(detail, new RegExp(`A new one is being built\\. The last build failed at ${new Date(failedAt).toISOString()}\\.$`));
   release();
   await until(() => api.images.size === 1 && api.servers.size === 0);
+});
+
+test("a build that meets bb-box's reload, as its API handle goes stale, is left for the next run: no failure is kept and none is logged as an error", async () => {
+  const { api, backend } = hetznerWorld();
+  const storage = new MemoryStorage();
+  const errors: string[] = [];
+  const remote: RemoteBuild = {
+    start: async () => {},
+    progress: async () => {
+      throw new Error('plugin "bb-box" used a stale API handle — it was reloaded or disabled; re-entry happens via a fresh factory call');
+    },
+  };
+  const { options } = builder();
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04" }), storage, "test", { ...options, remoteBuild: remote }, { logError: (what: string) => void errors.push(what) });
+  await hetzner.buildHostImage("there is no host image yet", signal());
+  assert.equal(await storage.get("host-image-failed-at:x86"), undefined);
+  assert.deepEqual(errors, []);
+  assert.equal(api.servers.size, 1, "the build server keeps running for the next run");
 });

@@ -34,6 +34,10 @@ const BUILD_POLL_MS = 10_000;
 const BUILD_WITHIN_MS = 3 * 3_600_000;
 const BUILD_UNANSWERED_POLLS = 30;
 const STOPPING = /stale API handle|reloaded or disabled/i;
+
+export function bbBoxIsStopping(error: unknown, signal?: AbortSignal): boolean {
+  return Boolean(signal?.aborted) || STOPPING.test(error instanceof Error ? error.message : String(error));
+}
 const BUILD_DIR = "/var/lib/bb-box-build";
 
 type BuildPhase = "building" | "prepared" | "snapshotting";
@@ -356,7 +360,7 @@ export class HostImages {
       input.log(`host image ${record.hostId} is snapshot ${snapshot.id}`);
       return { buildId: record.hostId, snapshot };
     } catch (error) {
-      if (signal.aborted || STOPPING.test(error instanceof Error ? error.message : String(error))) ending = "left";
+      if (bbBoxIsStopping(error, signal)) ending = "left";
       throw error;
     } finally {
       this.#carryingOn.delete(record.hostId);
@@ -393,7 +397,7 @@ export class HostImages {
     for (let waited = 0; waited <= BUILD_WITHIN_MS; waited += BUILD_POLL_MS) {
       signal.throwIfAborted();
       const progress = await remote.progress(record, fromByte, signal).catch((error: unknown) => {
-        if (signal.aborted || STOPPING.test(error instanceof Error ? error.message : String(error))) throw error;
+        if (bbBoxIsStopping(error, signal)) throw error;
         return null;
       });
       if (progress) {

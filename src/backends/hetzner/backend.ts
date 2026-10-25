@@ -1,7 +1,7 @@
 import type { CheckId } from "../../core/checks.ts";
 import { keyDescription, tailnetHostname } from "../../core/tailnet.ts";
 import { hostUserData } from "./cloud-init.ts";
-import { BUILD_ABANDONED_AFTER_MS, HostImages, localRemoteBuild, runBuildScript, scriptRemoteBuild, type Architecture, type BuildImage, type RemoteBuild } from "./host-image.ts";
+import { BUILD_ABANDONED_AFTER_MS, bbBoxIsStopping, HostImages, localRemoteBuild, runBuildScript, scriptRemoteBuild, type Architecture, type BuildImage, type RemoteBuild } from "./host-image.ts";
 import { setupArchive } from "../namespace/linux-images.ts";
 import { HostReach } from "./reach.ts";
 import { DockerBackend, dockerKinds, type DockerBackendOptions } from "../docker/backend.ts";
@@ -835,6 +835,7 @@ export class HetznerBackend implements Backend {
         await this.#context.storage.delete(HOST_IMAGE_FAILED_KEY[architecture]);
         await this.#context.storage.delete(HOST_IMAGE_WAITING_KEY[architecture]);
       } catch (error) {
+        if (bbBoxIsStopping(error, signal)) return;
         if (error instanceof HetznerError && (error.overLimit || error.unavailable)) {
           await this.#context.storage.set(HOST_IMAGE_WAITING_KEY[architecture], { atMs: this.#now(), why: error.message } satisfies WaitingForRoom);
           this.#context.log?.(`The ${ARCHITECTURE_WORDS[architecture]} host image waits for room in the Hetzner Cloud project: ${error.message}`);
