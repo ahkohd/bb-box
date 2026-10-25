@@ -8,8 +8,9 @@
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after } from "node:test";
+import { after, afterEach, beforeEach } from "node:test";
 import { OWNER_FILE, TEMP_PREFIX, shortTempBase } from "../src/core/temp-folders.ts";
+import { helperChildrenNotClosed } from "../src/transports/forker.ts";
 
 /** How long a test file's process may run on after its last test. */
 const EXIT_WAIT_MS = 60_000;
@@ -38,8 +39,19 @@ process.once("exit", () => {
   process.exitCode = 1;
 });
 
-after(() => {
+const testsRunning = { count: 0, lastEndedAt: Date.now() };
+beforeEach(() => {
+  testsRunning.count++;
+});
+afterEach(() => {
+  testsRunning.count--;
+  testsRunning.lastEndedAt = Date.now();
+});
+
+let waiting = false;
+function failIfStillRunningAfterLastTest(): void {
   setTimeout(() => {
+    if (testsRunning.count > 0 || Date.now() - testsRunning.lastEndedAt < EXIT_WAIT_MS) return failIfStillRunningAfterLastTest();
     const handles = (process as unknown as { _getActiveHandles(): object[] })._getActiveHandles().map((handle) => {
       const each = handle as { constructor?: { name?: string }; pid?: number; spawnargs?: string[]; address?: () => unknown };
       const what = [each.constructor?.name ?? "handle"];
@@ -49,8 +61,15 @@ after(() => {
     });
     process.stderr.write(
       `This test file's process still runs ${EXIT_WAIT_MS / 1000} s after its last test: ${JSON.stringify(process.getActiveResourcesInfo())}\n` +
-        handles.map((line) => `  ${line}\n`).join(""),
+        handles.map((line) => `  ${line}\n`).join("") +
+        helperChildrenNotClosed().map((line) => `  the spawn helper's child not closed, ${line}\n`).join(""),
     );
     process.exit(1);
   }, EXIT_WAIT_MS).unref();
+}
+
+after(() => {
+  if (waiting) return;
+  waiting = true;
+  failIfStillRunningAfterLastTest();
 });
