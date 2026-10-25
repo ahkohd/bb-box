@@ -352,6 +352,8 @@ export class HetznerBackend implements Backend {
     const idleMs = this.#config.idleMinutes * 60_000;
     for (const record of await this.hostRecords.records()) {
       if (record.state !== "ready" || this.hostRecords.isMakingInThisProcess(record.hostId)) continue;
+      const tended = await this.#partOf(record.hostId, signal).catch(() => null);
+      await tended?.docker.maintain(signal).catch(() => undefined);
       if (this.#now() - record.lastBusyAtMs < idleMs) continue;
       await this.#placement.catch(() => undefined);
       const part = await this.#partOf(record.hostId, signal).catch(() => null);
