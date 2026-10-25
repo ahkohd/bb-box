@@ -36,6 +36,7 @@ Select **Set up** on the row. Its settings open below it. Each backend needs dif
 - [Proxmox QEMU](../../setup/proxmox-qemu/README.md)
 - [SSH host pool](../../setup/ssh-pool/README.md)
 - [Docker](../../setup/docker/README.md), and [Docker in WSL on a Windows PC](../../setup/docker-wsl/README.md)
+- [microsandbox](../../setup/microsandbox/README.md)
 - [Tart](../../setup/tart/README.md)
 - [Hetzner Cloud](hetzner.md), for Docker hosts rented by the hour
 - [Namespace](namespace.md), for Macs and Linux machines rented by the minute

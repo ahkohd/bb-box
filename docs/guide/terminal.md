@@ -28,7 +28,7 @@ A shell ends when you exit it, when its box stops or goes, or when BB Box restar
 
 A stopped box has no terminal until it starts. The terminal offers **Start** where the box can start again.
 
-When a box is released, its terminal says so, with the box's name: close the tab.
+When a box is released, its terminal says so, with the box's name: close the tab, or, on the Boxes page or in settings, select **Back to boxes** or **Back to settings**.
 
 A few kinds of box have no terminal, because BB Box reaches them without a shell. The terminal says so.
 

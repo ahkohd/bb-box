@@ -42,9 +42,9 @@ Memory can shrink, but not below what the box uses. A live shrink is refused whe
 
 If any part needs a restart, the dialog asks first, for example 'Restart calm-otter to resize it?', and says when the box will be back, such as in about 30 seconds. Select **Restart and resize** to go ahead.
 
-If threads are working on the box, the dialog names them and asks again, 'Restart calm-otter anyway?', as their work stops while it restarts.
+If threads are working on the box, the dialog shows them and asks again, 'Restart calm-otter anyway?', as their work stops while it restarts.
 
-When it is done, the dialog says how it went, for example 'Resized to 4 cores · 8 GiB · 64 GiB disk after a restart, in 15 s.' The box's row says so too.
+When it is done, the dialog says what the box has now, for example 'It has 4 cores · 8 GiB · 64 GiB disk now, after a restart.' The box's row says how it went, for example 'Resized to 4 cores · 8 GiB · 64 GiB disk after a restart, in 15 s.'
 
 ## A BB machine's cores
 

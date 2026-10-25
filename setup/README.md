@@ -29,6 +29,8 @@ bb plugin install git:https://github.com/moonstead/bb-box.git@main
 
 It asks you to confirm; an agent or a script adds `--yes`. BB fetches and builds it, so you need no clone. To change bb-box itself, clone it, run `npm install` and `bb plugin build`, then `bb plugin install .` in the clone.
 
+Boxes join BB by reaching BB's server, through bb connect when BB is signed in to your bb account, or otherwise at an address you give under Machine access: see the [quick start](../README.md#quick-start).
+
 For Docker on the machine that runs BB, the Box panel can do the rest: select **Use Docker on this machine**. From a terminal, or for an agent, `bb box setup docker` does the same and waits for the build. Otherwise, follow your backend's guide. It says what to prepare, such as an image or a template, and what to enter on BB Box's settings page: in BB, open Settings, Plugins, BB Box. For each backend, select **Set up**, enter the values, select **Check**, then **Save and turn on**. The [user guide's settings page](../docs/guide/settings.md) explains the page.
 
 From a terminal:

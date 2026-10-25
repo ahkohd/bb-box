@@ -111,7 +111,7 @@ The screen tells you why, and what you can do. It uses the box's name, here calm
 | The connection to the desktop ended. Trying again in 4 s | wait, or select **Reconnect now** |
 | calm-otter is stopped. | select **Start**, where the box can start again |
 | calm-otter is starting… | wait: the desktop shows once the box is ready |
-| This box has been released. | close the tab |
+| This box has been released. | close the tab, or, on the Boxes page or in settings, select **Back to boxes** or **Back to settings** |
 
 After a lost connection, the viewer tries again by itself, waiting a little longer each time, up to 15 seconds. **Reconnect** in the toolbar or its menu tries at once.
 

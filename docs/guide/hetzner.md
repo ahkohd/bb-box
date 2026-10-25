@@ -83,7 +83,7 @@ bb box doctor
 
 The doctor checks that Hetzner accepts the token, each server type and its price, how BB Box reaches hosts, each host image, the hosts BB Box has, and this month's spend against the limit.
 
-Soon after you turn the backend on, BB Box starts building the first host image, up to 30 minutes, and the first Arm one, about 13 minutes. The doctor's **Host image** check says when it is ready. Until then, a new host installs Docker and Tailscale and builds the images it needs as it starts, so the first box takes about 6 minutes.
+Soon after you turn the backend on, BB Box starts building the first host image, up to 30 minutes, and the first Arm one, about 13 minutes. The doctor's **Host image** check says when it is ready. Until then, a new host installs Docker and Tailscale and builds the images it needs as it starts, so the first box takes about 6 minutes. A build that fails is tried again 10 minutes later, then after 20 and 40 minutes, then every hour, and the check says when it last failed and when it is tried again. A restart of bb-box, as for an update, does not end a build, which runs on a build server of its own.
 
 Then make a box from the Box panel, or from the command line:
 
