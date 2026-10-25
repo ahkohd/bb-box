@@ -65,9 +65,7 @@ export interface RefreshOptions {
   /** False to try a refresh: the build and its checks, then the build goes and the current one stays. */
   readonly replace?: boolean;
   readonly signal: AbortSignal;
-  /** The refresh's own lines and the build's steps, as they come; the build's whole output goes to its file. */
   readonly log?: (line: string) => void;
-  /** Where the build's whole output goes. */
   readonly buildLogDir?: string;
   /** How long the guest scripts may take. */
   readonly buildTimeoutMs?: number;
