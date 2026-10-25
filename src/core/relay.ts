@@ -218,6 +218,7 @@ export class RfbRelay {
   #size: Size = { width: 0, height: 0 };
   /** The display's own input, once this viewer's first input opens it (#406). */
   #input: Promise<DisplayInput | null> | null = null;
+  #inputWanted = false;
   /** The wheel's buttons the display's input last had, where it takes only the wheel. */
   #wheel = 0;
   /** The keysyms of keys down as their character in the display's own input (typesAsCharacter). */
@@ -304,6 +305,7 @@ export class RfbRelay {
       this.#options.onServerInit?.({ width: init.width, height: init.height });
       this.#phase = "messages";
       this.#heardAt = Date.now();
+      if (this.#inputWanted) this.#openInputAhead(connection);
       void this.#pump(connection);
       this.#watchAttached(connection);
       const rest = this.#pending;
@@ -406,6 +408,17 @@ export class RfbRelay {
     const keysyms = new Set<number>(this.#heldQemu.values());
     for (const key of this.#held.keys()) if (key.startsWith("k")) keysyms.add(Number(key.slice(1)));
     return keysyms;
+  }
+
+  prepareInput(): void {
+    this.#inputWanted = true;
+    const connection = this.#connection;
+    if (connection && this.#phase === "messages") this.#openInputAhead(connection);
+  }
+
+  #openInputAhead(connection: BoxConnection): void {
+    if (!connection.input || connection.inputTakes === "characters" || this.#ended) return;
+    void this.#opened(connection);
   }
 
   /** The display's own input, opened at this viewer's first input; null when it cannot be opened. */
