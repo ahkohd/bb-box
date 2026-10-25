@@ -2139,6 +2139,37 @@ function pasteEvent(text: string) {
   return event;
 }
 
+test("a character above U+FFFF, as an emoji from the keyboard or the emoji picker, goes to the box as its Unicode keysym, down and up, while dead keys and composition stay noVNC's", async () => {
+  for (const os of ["linux", "macos", "windows"] as const) {
+    novnc.FakeRfb.made.length = 0;
+    const { handlers } = server([desktopBox({ id: `box_${os}`, name: `${os}-1`, os })]);
+    const slot = desktopTab(handlers, `box_${os}`);
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    const without = keyOnCanvas(slot, { key: "😀", code: "" });
+    expect(without.reached).not.toHaveBeenCalled();
+    expect(client.keyEvents).toEqual([]);
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const emoji = keyOnCanvas(slot, { key: "😀", code: "" });
+    expect(emoji.reached).not.toHaveBeenCalled();
+    expect(emoji.event.defaultPrevented).toBe(true);
+    keyOnCanvas(slot, { key: "🇲", code: "" });
+    expect(client.keyEvents).toEqual([
+      { keysym: 0x101f600, code: "Unidentified", down: true },
+      { keysym: 0x101f600, code: "Unidentified", down: false },
+      { keysym: 0x101f1f2, code: "Unidentified", down: true },
+      { keysym: 0x101f1f2, code: "Unidentified", down: false },
+    ]);
+    expect(keyOnCanvas(slot, { key: "Dead", code: "BracketLeft" }).reached).toHaveBeenCalledTimes(1);
+    expect(keyOnCanvas(slot, { key: "😀", code: "", isComposing: true }).reached).toHaveBeenCalledTimes(1);
+    expect(keyOnCanvas(slot, { key: "é", code: "KeyE" }).reached).toHaveBeenCalledTimes(1);
+    expect(client.keyEvents).toHaveLength(4);
+    cleanup();
+  }
+});
+
 type FakeClient = { input: string[]; pasted: string[]; keys: { keysym: number; code: string | null; down: boolean }[]; keyEvents: { keysym: number; code: string; down: boolean }[]; _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void } & EventTarget;
 
 test("with control, Cmd+V on a Mac pastes this computer's text into a Linux box with the box's Ctrl+V, and Cmd stands for Ctrl there", async () => {
@@ -2800,6 +2831,10 @@ test("with the setting on, a desktop shows as video whatever the round trip to B
     fireEvent.keyUp(canvas, { key: "a", code: "KeyA" });
     expect(socket.sent).toContain("kd,97");
     expect(socket.sent).toContain("ku,97");
+    const emoji = 0x1000000 + 0x1f600;
+    fireEvent.keyDown(canvas, { key: "😀", code: "" });
+    fireEvent.keyUp(canvas, { key: "😀", code: "" });
+    expect(socket.sent.filter((sent) => sent === `kd,${emoji}` || sent === `ku,${emoji}`)).toEqual([`kd,${emoji}`, `ku,${emoji}`]);
     canvas.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
     expect(socket.sent.at(-1)).toBe("m,0,0,1,0");
     canvas.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));

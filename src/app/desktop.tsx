@@ -52,6 +52,7 @@ import { MachineRow } from "./settings-machines.tsx";
 import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
 import {
   KeysAfterPaste,
+  astralKeysym,
   keyLog,
   keyLogOn,
   PASTE_LANDS_MS,
@@ -186,6 +187,11 @@ class Viewer extends RFB {
       }
       super._handleKeyEvent(sent, each.key.code, each.down, numlock, capslock);
     }
+  }
+
+  typeCharacter(keysym: number, code: string): void {
+    this.#keyEvent(keysym, code, true, null, null);
+    this.#keyEvent(keysym, code, false, null, null);
   }
 
   /** The modifiers the box holds down, as this viewer sent them. */
@@ -400,6 +406,7 @@ export class DesktopSession implements Kept {
     // Cmd+V (Ctrl+V elsewhere) while this tab has control pastes this computer's text: the browser's paste event
     // carries it with no permission asked, so the keydown is kept from noVNC and left to the browser (4 October 2026).
     this.element.addEventListener("keydown", (event) => this.#interceptPaste(event), true);
+    for (const type of ["keydown", "keyup"] as const) this.element.addEventListener(type, (event) => this.#astralKey(event), true);
     document.addEventListener("paste", this.#onPasteEvent, true);
     this.connect();
   }
@@ -626,6 +633,14 @@ export class DesktopSession implements Kept {
   }
 
   /** A Cmd+V (Ctrl+V off a Mac), or with Shift on a box that is not a Mac, while this tab has control: kept from noVNC, left to the browser, whose paste event brings the text. */
+  #astralKey(event: KeyboardEvent): void {
+    const keysym = astralKeysym(event);
+    if (keysym === null) return;
+    event.stopPropagation();
+    event.preventDefault();
+    if (event.type === "keydown" && this.#mine && this.connection.state === "connected") this.#client?.typeCharacter(keysym, event.code || "Unidentified");
+  }
+
   #interceptPaste(event: KeyboardEvent): void {
     if (!this.#mine || this.connection.state !== "connected" || this.pasteAllowed?.() === false) return;
     const shortcut = pasteShortcut(event, this.guestOs, macBrowser());

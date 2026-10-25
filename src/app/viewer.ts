@@ -307,6 +307,12 @@ export type MacKeys = "alt-command";
 
 export type Connection = { readonly state: "connecting" } | { readonly state: "connected" } | { readonly state: "disconnected"; readonly reason: string; readonly retryMs: number };
 
+export function astralKeysym(event: KeyboardEvent): number | null {
+  if (event.isComposing || event.keyCode === 229 || event.key.length !== 2) return null;
+  const codePoint = event.key.codePointAt(0)!;
+  return codePoint > 0xffff ? 0x1000000 | codePoint : null;
+}
+
 /** Whether the browser runs on a Mac, where Cmd is the shortcut key: Chrome says "macOS", Safari "MacIntel". */
 export function macBrowser(): boolean {
   if (typeof navigator === "undefined") return false;

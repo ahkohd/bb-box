@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { KeysAfterPaste, keyLog, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_SHIFT_L, XK_V, boxKey, macBrowser, pasteChordKeys, pasteShortcut, retryWait, type Connection, type PasteShortcut } from "./viewer.ts";
+import { KeysAfterPaste, astralKeysym, keyLog, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_SHIFT_L, XK_V, boxKey, macBrowser, pasteChordKeys, pasteShortcut, retryWait, type Connection, type PasteShortcut } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -345,6 +345,7 @@ export class SelkiesSession implements Kept {
           });
     this.#observer?.observe(this.element);
     this.element.addEventListener("keydown", (event) => this.#interceptPaste(event), true);
+    for (const type of ["keydown", "keyup"] as const) this.element.addEventListener(type, (event) => this.#astralKey(event), true);
     document.addEventListener("paste", this.#onPasteEvent, true);
     document.addEventListener("visibilitychange", this.#onVisibility);
     window.addEventListener("focus", this.#onFocus);
@@ -804,6 +805,16 @@ export class SelkiesSession implements Kept {
   readonly #option = new OptionComposer();
   readonly #letters = new ShiftedLetters();
   readonly #afterPaste = new KeysAfterPaste<[number, string, boolean]>((key) => this.#sendKey(...key));
+
+  #astralKey(event: KeyboardEvent): void {
+    const keysym = astralKeysym(event);
+    if (keysym === null) return;
+    event.stopPropagation();
+    event.preventDefault();
+    if (event.type !== "keydown" || this.connection.state !== "connected") return;
+    this.#key(keysym, event.code || "Unidentified", true);
+    this.#key(keysym, event.code || "Unidentified", false);
+  }
 
   #key(keysym: number, code: string, down: boolean): void {
     if (!this.#mine) return;
