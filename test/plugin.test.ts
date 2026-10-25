@@ -2178,6 +2178,13 @@ test("your machines: removed in settings or in BB, without either waiting on the
   const removal = bbOwned(second);
   assert.deepEqual(await within(removal(), "BB's removal"), { status: "removed" });
   assert.equal(await app.boxes.find(second.id), null);
+
+  const unjoined = await addMachine(harness, app, { kind: "linux", name: "unjoined" });
+  await app.boxes.update(unjoined, (current) => ({ enrol: { state: "failed", hostId: current.enrol.hostId, error: "BB at http://127.0.0.1:38886 is not reachable from the box." } }));
+  assert.deepEqual(await within(bbOwned(unjoined)(), "BB's removal of a machine that never joined"), { status: "removed" });
+  const kept = await app.boxes.find(unjoined.id);
+  assert.equal(kept?.state, "ready");
+  assert.deepEqual(kept?.enrol, { state: "failed", hostId: null, error: "BB at http://127.0.0.1:38886 is not reachable from the box." });
 });
 
 test("your machines: removing or stopping one a thread is working on asks first (036)", async (t) => {
