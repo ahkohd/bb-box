@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
-import { arch, tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { arch } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -59,7 +59,7 @@ test("install-tools.sh runs again on a built image, as a refresh does: it keeps 
 
 test("the desktop scripts' check for a newer Chrome passes where Chrome is not installed yet, as on a fresh image (049)", () => {
   const dir = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/", import.meta.url));
-  const bin = mkdtempSync(join(tmpdir(), "bb-box-dpkg-"));
+  const bin = tempDir("dpkg");
   // dpkg-query as for a package it has never seen.
   writeFileSync(join(bin, "dpkg-query"), "#!/bin/sh\necho \"dpkg-query: no packages found matching $3\" >&2\nexit 1\n", { mode: 0o755 });
   for (const script of ["customize-desktop.sh", "customize-desktop-wayland.sh"]) {

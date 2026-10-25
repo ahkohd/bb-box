@@ -9,7 +9,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
@@ -2922,9 +2921,10 @@ test("sizes saved in the Proxmox LXC settings before 028 become the kinds' defau
   const applied = (await harness.behavior.callRpc("config.apply", { draft, revision: rest.revision })) as { ok: boolean };
   assert.ok(applied.ok, JSON.stringify(applied));
   let restarted: Awaited<ReturnType<typeof setup>> | null = null;
-  await harness.lifecycle.reload(async (bb) => {
+  const next = await harness.lifecycle.reload(async (bb) => {
     restarted = await setup(bb, setupOptions);
   });
+  t.after(() => next.harness.lifecycle.dispose());
   const again = (await restarted!.kinds()).find((kind) => kind.id === "linux")!;
   assert.equal(again.presets[0]!.words, "2 cores, 4 GiB memory");
 });
@@ -5252,7 +5252,7 @@ test("a provider's profile for the form's (i): its technology, hosts, kinds, roo
 });
 
 test("before BB's installer, a box sets aside BB's data for a machine that is not its own, and stops that machine's daemon, as after a restore", () => {
-  const root = join(tmpdir(), `bb-box-aside-${randomBytes(4).toString("hex")}`);
+  const root = tempDir("aside");
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
   // systemctl records what it is asked, and uname says Linux.
@@ -5287,7 +5287,7 @@ test("before BB's installer, a box sets aside BB's data for a machine that is no
 });
 
 test("before BB's installer, a box on an overlay root drops a pre-installed BB app of another build than the server's, and keeps the server's (#701)", () => {
-  const root = join(tmpdir(), `bb-box-stale-${randomBytes(4).toString("hex")}`);
+  const root = tempDir("stale");
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
   const server = "a".repeat(64);

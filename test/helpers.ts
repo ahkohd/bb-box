@@ -41,6 +41,12 @@ process.once("exit", () => {
   for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
 });
 
+export function disposedOnceTheFileEnds(): <T extends { dispose(): Promise<void> }>(thing: T) => T {
+  const made: { dispose(): Promise<void> }[] = [];
+  process.once("beforeExit", () => void Promise.all(made.map((thing) => thing.dispose())));
+  return (thing) => (made.push(thing), thing);
+}
+
 /** A fresh directory, removed when the test process exits. */
 export function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), `bb-box-${prefix}-`));

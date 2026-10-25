@@ -8,8 +8,9 @@ import { NamespaceBackend } from "../src/backends/namespace/backend.ts";
 import { WORKSPACE_FROM_METADATA, linuxImageBuildScript, linuxImageFingerprint, linuxImageKey } from "../src/backends/namespace/linux-images.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
+const disposed = disposedOnceTheFileEnds();
 const CONFIG = { token: FAKE_NAMESPACE_TOKEN, region: "us" as const, macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
 
 function setup(options: { failBuild?: boolean; app?: () => string | null } = {}) {
@@ -32,7 +33,7 @@ function setup(options: { failBuild?: boolean; app?: () => string | null } = {})
         ? `cat > ${received}; echo "step 1" >&2; echo "build.sh: no space left" >&2; exit 1`
         : `cat > ${received}; printf '%s %s\\n' ${target} '${bbUrl}' >> ${received}.calls; echo "nscr.io/ws1/bbbox/${target}:${key}"`,
   });
-  return { fake, backend, received, advance: (ms: number) => (now += ms) };
+  return { fake, backend: disposed(backend), received, advance: (ms: number) => (now += ms) };
 }
 
 test("a Linux image is built once in a Linux instance of its own, from bb-box's setup scripts, pushed to the workspace's registry and recorded, and the instance destroyed", async () => {
@@ -136,6 +137,7 @@ test("with the tailnet on, a build machine joins it with a one-off key of its ow
       linuxTailscaleScript: ":",
       linuxImageScript: (target, key) => (order.push(readFileSync(log, "utf8").includes("tailscale up") ? "built after joining" : "built before joining"), `cat >/dev/null; echo nscr.io/ws/bbbox/${target}:${key}`),
     });
+    disposed(backend);
     const image = await backend.linuxImages.forBox("linux", new AbortController().signal);
     assert.match(image.ref, /^nscr\.io\/ws\/bbbox\/linux:/);
     assert.deepEqual(order, ["built after joining"]);

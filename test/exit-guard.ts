@@ -5,10 +5,38 @@
 // 19 October 2026). Its own timer is unref'd, so a process that ends as it
 // should never sees it.
 
+import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after } from "node:test";
+import { OWNER_FILE, TEMP_PREFIX, shortTempBase } from "../src/core/temp-folders.ts";
 
 /** How long a test file's process may run on after its last test. */
 const EXIT_WAIT_MS = 60_000;
+
+function foldersThisProcessLeft(): string[] {
+  const left: string[] = [];
+  for (const base of new Set([tmpdir(), shortTempBase()])) {
+    let names: string[] = [];
+    try {
+      names = readdirSync(base).filter((name) => name.startsWith(TEMP_PREFIX));
+    } catch {}
+    for (const name of names) {
+      try {
+        if (readFileSync(join(base, name, OWNER_FILE), "utf8").split(" ")[0] === String(process.pid)) left.push(join(base, name));
+      } catch {}
+    }
+  }
+  return left;
+}
+
+process.once("exit", () => {
+  const left = foldersThisProcessLeft();
+  if (!left.length) return;
+  for (const dir of left) rmSync(dir, { recursive: true, force: true });
+  process.stderr.write(`This test file left ${left.length} of bb-box's temporary folders that nothing disposed: ${left.join(", ")}. Dispose what made them, as bb-box does when it stops.\n`);
+  process.exitCode = 1;
+});
 
 after(() => {
   setTimeout(() => {

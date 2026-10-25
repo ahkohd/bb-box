@@ -5,8 +5,9 @@ import { CONTAINER_MEMORY_MARGIN_MIB, linuxShapeFor, pullScript } from "../src/b
 import { DockerCli } from "../src/backends/docker/cli.ts";
 import { fakeDockerHost } from "./fake-docker.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
+const disposed = disposedOnceTheFileEnds();
 const CONFIG = { token: FAKE_NAMESPACE_TOKEN, region: "us" as const, macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
 
 function setup() {
@@ -29,7 +30,7 @@ function setup() {
     },
     dockerOptions: { readyTimeoutMs: 20_000, selkiesLauncher: "/bin/sh" },
   });
-  return { fake, backend, pulls };
+  return { fake, backend: disposed(backend), pulls };
 }
 
 const box = (id: string, kind = "linux") => ({ boxId: id, threadId: "thr_1", name: `box-${id}`, kind, createdAt: Date.now(), size: { cores: 2, memoryMiB: 4096, diskGiB: null } });
