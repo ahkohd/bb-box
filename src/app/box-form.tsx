@@ -304,6 +304,19 @@ export function MenuSelect({
 }
 
 /** An option card: a title and a line under it; chosen reads as BB's active state; unavailable greys out and says so. */
+function keepNumbersWithUnits(words: string | null): ReactNode {
+  if (!words) return null;
+  return words.split(/(\d+(?:\.\d+)? [A-Za-z]+)/).map((part, index) =>
+    index % 2 ? (
+      <span key={index} className="whitespace-nowrap">
+        {part}
+      </span>
+    ) : (
+      part
+    ),
+  );
+}
+
 export function OptionCard({
   title,
   words,
@@ -341,7 +354,9 @@ export function OptionCard({
       {glyph}
       <span className="min-w-0">
         <span className="block truncate text-xs font-medium text-foreground">{title}</span>
-        <span className="mt-0.5 block truncate text-2xs text-muted-foreground">{available ? words : "Not available"}</span>
+        <span data-option-words className="mt-0.5 block truncate text-2xs text-muted-foreground max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:break-words">
+          {available ? keepNumbersWithUnits(words) : "Not available"}
+        </span>
       </span>
     </button>
   );

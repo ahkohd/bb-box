@@ -935,6 +935,7 @@ test("the panel makes a box by steps, System, Architecture, Type and Resources, 
   expect(within(archs).getAllByRole("radio").map((option) => `${option.textContent}:${option.getAttribute("aria-checked")}:${option.getAttribute("aria-disabled")}`)).toEqual(["x86_6464-bit Intel / AMD:true:null", "arm64Not available:false:true"]);
   fireEvent.click(within(archs).getByRole("radio", { name: /^arm64/ }));
   expect(within(archs).getAllByRole("radio").map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+  expect(archs.querySelector("[data-option-words]")!.className.split(" ")).toEqual(expect.arrayContaining(["truncate", "max-sm:line-clamp-2", "max-sm:whitespace-normal"]));
   // A terminal is access, not a type (the operator's note): Server and Desktop are the types, with what each gives under it.
   const types = screen.getByRole("radiogroup", { name: "Type" });
   expect(within(types).getAllByRole("radio").map((option) => option.textContent)).toEqual(["ServerTerminal", "DesktopScreen · Terminal · Computer use"]);
