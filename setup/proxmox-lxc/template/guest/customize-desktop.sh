@@ -424,7 +424,7 @@ Description=bb-box: Cua Driver daemon for the desktop on :99
 Environment=DISPLAY=:99 XAUTHORITY=/run/bb-box/Xauthority
 Environment=CUA_DRIVER_RS_TELEMETRY_ENABLED=false CUA_DRIVER_RS_UPDATE_CHECK=false
 EnvironmentFile=-/run/bb-box/display.env
-ExecStart=/usr/local/bin/cua-driver serve
+ExecStart=/usr/local/bin/cua-driver serve --no-overlay
 Restart=always
 RestartSec=1
 EOF
