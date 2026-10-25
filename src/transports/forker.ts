@@ -99,11 +99,13 @@ class ForkedChild extends EventEmitter implements ChildLike {
   signalCode: NodeJS.Signals | null = null;
   readonly #id: number;
   readonly #helper: Helper;
+  readonly argv: readonly string[];
 
-  constructor(id: number, helper: Helper) {
+  constructor(id: number, helper: Helper, argv: readonly string[]) {
     super();
     this.#id = id;
     this.#helper = helper;
+    this.argv = argv;
     this.stdin = new Writable({
       write: (chunk: Buffer, _encoding, done) => {
         helper.send({ op: "in", id, data: new Uint8Array(chunk) });
@@ -211,7 +213,7 @@ class Helper {
 
   start(binary: string, args: readonly string[], options: StartOptions): ForkedChild {
     const id = ++this.#next;
-    const child = new ForkedChild(id, this);
+    const child = new ForkedChild(id, this, [binary, ...args]);
     this.#children.set(id, child);
     if (this.#children.size === 1) this.#hold(true);
     // The environment as it is now, not as it was when the helper started.
@@ -226,6 +228,14 @@ class Helper {
 
   get pid(): number | undefined {
     return this.#process.pid;
+  }
+
+  get waitingOn(): string[] {
+    return [...this.#children.values()].map((child) => {
+      const ended = child.exitCode ?? child.signalCode;
+      const command = child.argv.join(" ");
+      return `${child.pid ?? "unstarted"}, ${ended === null ? "not exited" : `exited with ${ended}`}: ${command.slice(0, 120)} ... ${command.slice(-700)}`;
+    });
   }
 
   /** Ends the helper and its children: it kills them when told to stop, or when its channel closes. */
@@ -281,6 +291,10 @@ export function startChild(binary: string, args: readonly string[], options: Sta
     }
   }
   return timedSpawn(() => spawn(binary, args, { stdio: options.stdio ?? ["pipe", "pipe", "pipe"], env: options.env, cwd: options.cwd }) as ChildLike, options.site);
+}
+
+export function helperChildrenNotClosed(): string[] {
+  return helper?.alive ? helper.waitingOn : [];
 }
 
 /** The helper's process ID, while it runs. */
