@@ -133,8 +133,10 @@ test("a host is reached at its tailnet address over a forward that comes up once
     assert.equal(ssh.calls().length, 2, "a forward that went is made again");
     const refused = new HostReach({ api, storage: new MemoryStorage(), installId: "test", tailnet: () => tailnet, sshFrom: [], sshBinary: fakeSsh("refused").binary });
     await assert.rejects(refused.cli(record()).prepare(), /could not reach bb-box-test-h1abcdef at 192\.0\.2\.9 over SSH: root@192\.0\.2\.9: Permission denied \(publickey\)\./);
-    await assert.rejects(new HostReach({ api, storage: new MemoryStorage(), installId: "test", tailnet: () => fakeTailnet().tailnet, sshFrom: [] }).address(record()), /not on the tailnet yet/);
+    const offTailnet = new HostReach({ api, storage: new MemoryStorage(), installId: "test", tailnet: () => fakeTailnet().tailnet, sshFrom: [] });
+    await assert.rejects(offTailnet.address(record()), /not on the tailnet yet/);
     await refused.dispose();
+    await offTailnet.dispose();
   } finally {
     await reach.dispose();
   }

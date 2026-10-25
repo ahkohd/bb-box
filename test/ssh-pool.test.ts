@@ -14,7 +14,7 @@ import { CUA_VERSION, TartBackend } from "../src/backends/tart/backend.ts";
 import { BackendError, type AcquireHooks, type Backend, type BackendStorage, type BoxIdentity, type BoxSize, type Capacity, type Guest } from "../src/backends/types.ts";
 import { conformance, identity, recordingHooks, releaseHooks, sizeOf } from "./conformance/suite.ts";
 import { FAKE_MAC, tartConfig } from "./fake-mac.ts";
-import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, KEY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
 const HELPER = `node ${new URL("./fake-machine.mjs", import.meta.url).pathname}`;
 const HOST_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIDbH0n7Bm2fQzZ0lH8w5j0c0pYh7J6Hq4Xb1x2u3v4w";
@@ -65,6 +65,7 @@ function problems(values: Record<string, unknown>): string {
 }
 
 const sleeps: number[] = [];
+const disposed = disposedOnceTheFileEnds();
 function pool(lines: string, storage: BackendStorage = new MemoryStorage(), installId = "test", options: SshPoolBackendOptions = {}) {
   const context = testContext(storage, installId);
   const backend = new SshPoolBackend(config(lines), context, {
@@ -77,7 +78,7 @@ function pool(lines: string, storage: BackendStorage = new MemoryStorage(), inst
     resetPollMs: 1,
     ...options,
   });
-  return { backend, context, storage };
+  return { backend: disposed(backend), context, storage };
 }
 
 async function acquire(backend: Backend, kind = "linux", size = sizeOf(kind)): Promise<{ box: BoxIdentity; guest: Guest }> {

@@ -11,7 +11,7 @@ import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type G
 import { FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
 import { FakeTart, Viewer } from "./fake-tart-vnc.ts";
-import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, tempDir, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
 const MAC = FAKE_MAC;
@@ -212,7 +212,7 @@ test("a macOS desktop declares video while every Mac's image record lists bb-box
   const mac = ssh.home(MAC);
   fakeMacTools(mac);
   addImage(mac);
-  const stream = join(mkdtempSync(join(tmpdir(), "bb-box-stream-")), "bb-box-stream");
+  const stream = join(tempDir("stream"), "bb-box-stream");
   const make = (video: boolean) => {
     const tart = new TartBackend(tartConfig({ "tart-video": video }), testContext(new MemoryStorage()), { ...FAKES, macStream: stream });
     made.push(tart);
@@ -946,7 +946,7 @@ test("a VM that changes hands gets its new owner in its owner file, and its new 
 });
 
 test("a refresh's base is pulled when the registry has moved its tag, room allowing, and the old cached copy goes after (#475)", () => {
-  const dir = mkdtempSync(join(tmpdir(), "bb-box-base-"));
+  const dir = tempDir("base");
   const bin = join(dir, "bin");
   const cache = join(dir, "tart", "cache", "OCIs", "ghcr.io", "acme", "macos-xcode");
   mkdirSync(bin, { recursive: true });

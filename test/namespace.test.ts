@@ -10,8 +10,9 @@ import { parseNamespacePart, type NamespaceConfig } from "../src/backends/namesp
 import { Tailnet } from "../src/core/tailnet.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
+const disposed = disposedOnceTheFileEnds();
 const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
 
 function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number; cuaScript?: string } = {}) {
@@ -19,7 +20,7 @@ function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number;
   const fake = new FakeNamespace({ ...(options.now ? { now: options.now } : {}), lifeCapMs: 4 * 3600_000, maxCores: 64 });
   const context = testContext(new MemoryStorage(), "inst1");
   const backend = new NamespaceBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: options.cuaScript ?? ":", ...(options.now ? { now: options.now } : {}) });
-  return { fake, backend, context };
+  return { fake, backend: disposed(backend), context };
 }
 
 function box(id: string, size = { cores: 4, memoryMiB: 8192, diskGiB: null }): BoxIdentity {
@@ -103,7 +104,7 @@ test("with the usage grant, capacity reads the workspace's Mac limits from Names
   const { fake, backend } = setup();
   const small = { cores: 4, memoryMiB: 8192, diskGiB: null };
   const workspace = new FakeNamespace({ maxCores: 6, maxMacMemoryMb: 14336 });
-  const limited = new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), { fetch: workspace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 });
+  const limited = disposed(new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), { fetch: workspace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }));
   const medium = await limited.capacity("macos", { cores: 6, memoryMiB: 16384, diskGiB: null }, []);
   assert.equal(medium.ok, false);
   assert.match(medium.message!, /at most 6 cores and 14 GB of memory, and 6 cores and 16 GiB needs its 6x28 Mac/);
@@ -255,7 +256,7 @@ test("with a tailnet, each Mac joins it with a single-use key of its own, given 
   fakeSsh();
   const fake = new FakeNamespace({ maxCores: 64 });
   const context = { ...testContext(new MemoryStorage(), "inst1"), tailnet: () => tailnet };
-  const backend = new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 });
+  const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }));
   const recorded = hooks();
   const guest = await backend.acquire(box("b1"), null, recorded.hooks, new AbortController().signal);
   assert.deepEqual(recorded.steps, ["create", "ready", "ssh", "tailnet"]);
