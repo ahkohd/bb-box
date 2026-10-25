@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MAC_INPUT_SCRIPT, MacInput, macCharacter, macInputCommand, macKeyCode, tartTypesAsCharacter } from "../src/core/mac-input.ts";
 import type { ByteChannel } from "../src/transports/types.ts";
-import { runJxa } from "./jxa.ts";
+import { runJxa, type PostedKey } from "./jxa.ts";
 
 test("keys map to the key that types them on a US keyboard, and a key it lacks maps to none", () => {
   const code = (key: string | number) => macKeyCode(typeof key === "number" ? key : key.codePointAt(0)!);
@@ -26,6 +26,19 @@ test("the helper's script goes in single quotes as it is", () => {
 
 test("the helper's script, with JXA's integers as strings, ends at the end of its input", () => {
   assert.deepEqual(runJxa(MAC_INPUT_SCRIPT, { chunks: ["t 7\n"] }), ["ready", "t 7"]);
+});
+
+test("the helper's script types a character above U+FFFF, as an emoji or a flag's half, with both of its UTF-16 units", () => {
+  const posted: PostedKey[] = [];
+  const typed = (codePoint: number) => [`u 1 ${codePoint}\n`, `u 0 ${codePoint}\n`];
+  const out = runJxa(MAC_INPUT_SCRIPT, { chunks: [...typed(0x1f600), ...typed(0x1f1f2), ...typed(0x1f1fa), ...typed(0xe9), ...typed(0x41)], posted });
+  assert.deepEqual(out, ["ready", ...Array<string>(10).fill("u")]);
+  const units = (text: string) => Array.from({ length: text.length }, (_, index) => text.charCodeAt(index));
+  assert.deepEqual(
+    posted.map((key) => key.units),
+    [units("😀"), units("😀"), units("🇲"), units("🇲"), units("🇺"), units("🇺"), units("é"), units("é"), units("A"), units("A")],
+  );
+  assert.deepEqual(posted.map((key) => key.down), [true, false, true, false, true, false, true, false, true, false]);
 });
 
 test("the helper's script reports a copy in the box at the next q, once, and not the viewer's own text", () => {
