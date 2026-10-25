@@ -458,7 +458,7 @@ export class NamespaceBackend implements Backend {
 
   async maintain(signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void> {
     for (const { target, why } of await this.linuxImages.due(signal).catch(() => [])) {
-      void this.linuxImages.build(target, why, new AbortController().signal).catch((error) => this.#context.logError(`build Namespace's ${target} image`, error));
+      void this.linuxImages.build(target, why).catch((error) => this.#context.logError(`build Namespace's ${target} image`, error));
     }
     const held = await this.#held(signal);
     await this.#removeStaleDevices(held, signal).catch((error) => this.#context.logError("remove Namespace machines' leftover tailnet devices", error));
