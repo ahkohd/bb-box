@@ -10,11 +10,11 @@ function run() {
   var out = $.NSFileHandle.fileHandleWithStandardOutput;
   function say(line) { out.writeData($(line + "\n").dataUsingEncoding($.NSUTF8StringEncoding)); }
   var pasteboard = $.NSPasteboard.generalPasteboard;
-  var seen = pasteboard.changeCount;
+  var seen = Number(pasteboard.changeCount);
   say("ready");
   for (var tick = 1; ; tick++) {
     $.NSThread.sleepForTimeInterval(${CLIPBOARD_WATCH_EVERY_MS / 1000});
-    var count = pasteboard.changeCount;
+    var count = Number(pasteboard.changeCount);
     if (count === seen) {
       if (tick % 8 === 0) say("h");
       continue;
@@ -22,7 +22,7 @@ function run() {
     seen = count;
     var string = pasteboard.stringForType($.NSPasteboardTypeString);
     var data = string.isNil() ? null : string.dataUsingEncoding($.NSUTF8StringEncoding);
-    say(data === null || data.length > ${CLIPBOARD_WATCH_MAX_BYTES} ? "N" : "C " + data.base64EncodedStringWithOptions(0).js);
+    say(data === null || Number(data.length) > ${CLIPBOARD_WATCH_MAX_BYTES} ? "N" : "C " + data.base64EncodedStringWithOptions(0).js);
   }
 }`;
 

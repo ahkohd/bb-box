@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MAC_INPUT_SCRIPT, MacInput, macCharacter, macInputCommand, macKeyCode, tartTypesAsCharacter } from "../src/core/mac-input.ts";
 import type { ByteChannel } from "../src/transports/types.ts";
+import { runJxa } from "./jxa.ts";
 
 test("keys map to the key that types them on a US keyboard, and a key it lacks maps to none", () => {
   const code = (key: string | number) => macKeyCode(typeof key === "number" ? key : key.codePointAt(0)!);
@@ -21,6 +22,28 @@ test("keys map to the key that types them on a US keyboard, and a key it lacks m
 test("the helper's script goes in single quotes as it is", () => {
   assert.ok(!MAC_INPUT_SCRIPT.includes("'"));
   assert.ok(macInputCommand().startsWith("exec /usr/bin/osascript -l JavaScript -e '"));
+});
+
+test("the helper's script, with JXA's integers as strings, ends at the end of its input", () => {
+  assert.deepEqual(runJxa(MAC_INPUT_SCRIPT, { chunks: ["t 7\n"] }), ["ready", "t 7"]);
+});
+
+test("the helper's script reports a copy in the box at the next q, once, and not the viewer's own text", () => {
+  const pasteboard = { changeCount: 3, text: "old" };
+  const out = runJxa(MAC_INPUT_SCRIPT, {
+    pasteboard,
+    chunks: [
+      "q\n",
+      () => {
+        pasteboard.changeCount = 4;
+        pasteboard.text = "copied ✓";
+        return "q\nq\n";
+      },
+      `c ${Buffer.from("pasted").toString("base64")}\nq\n`,
+    ],
+  });
+  assert.deepEqual(out, ["ready", `C ${Buffer.from("copied ✓").toString("base64")}`]);
+  assert.equal(pasteboard.text, "pasted");
 });
 
 /** A channel whose far end the test plays: it reads the lines MacInput sends, and answers on its stdout; a character at once unless `holding`. */
