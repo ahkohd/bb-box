@@ -757,6 +757,11 @@ export class NamespaceBackend implements Backend {
     ].join("");
   }
 
+  async dispose(): Promise<void> {
+    await (await this.#ssh?.catch(() => null))?.ssh.dispose();
+    await this.#keyFile.dispose();
+  }
+
   #keys(): Promise<{ ssh: Ssh; publicKey: string }> {
     if (!this.#ssh) {
       const pending = (async () => {

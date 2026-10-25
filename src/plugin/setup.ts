@@ -34,6 +34,7 @@ import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { LoopWatch } from "./loop-watch.ts";
+import { sweepStaleTempFolders } from "../core/temp-folders.ts";
 import { stopForker } from "../transports/forker.ts";
 import { forPurpose, spawnTotals, takeLongestSpawn } from "../transports/spawns.ts";
 import { registerTerminals, type Terminals } from "./terminal.ts";
@@ -808,6 +809,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     memory: () => process.memoryUsage(),
   });
   bb.onDispose(() => loopWatch.dispose());
+  setTimeout(() => {
+    const swept = sweepStaleTempFolders();
+    if (swept.removed.length) bb.log.info(`Removed ${swept.removed.length} of bb-box's temporary folders that earlier runs of bb-box left: ${swept.removed.join(", ")}.`);
+  }, 0).unref();
   bb.onDispose(() => stopForker());
   bb.onDispose(() => imageJobs.stop());
   bb.onDispose(() => imageBakes.stop());

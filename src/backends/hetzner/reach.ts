@@ -1,9 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
+import { makeTempFolderSync, shortTempBase } from "../../core/temp-folders.ts";
 import { KeyFile, generateKeyPair } from "../../transports/ssh.ts";
 import { timedSpawn } from "../../transports/spawns.ts";
 import { DockerCli } from "../docker/cli.ts";
@@ -92,7 +92,7 @@ export class HostReach {
 
   constructor(options: HostReachOptions) {
     this.#options = options;
-    this.#socketDir = mkdtempSync(join(tmpdir().length > 40 ? "/tmp" : tmpdir(), "bb-box-hz-"));
+    this.#socketDir = makeTempFolderSync("bb-box-hz-", shortTempBase());
   }
 
   get labels(): Labels {
@@ -196,10 +196,10 @@ export class HostReach {
   }
 
   async dispose(): Promise<void> {
+    rmSync(this.#socketDir, { recursive: true, force: true });
     for (const forward of this.#forwards.values()) forward.child.kill();
     this.#forwards.clear();
     await this.#keyFile.dispose();
-    await rm(this.#socketDir, { recursive: true, force: true });
   }
 
   #socketPath(hostId: string): string {
