@@ -770,7 +770,7 @@ export class SelkiesSession implements Kept {
   #apply(): void {
     if (this.#mine) {
       this.#keyboard.grab();
-      if (this.connection.state === "connected") this.#canvas.focus({ preventScroll: true });
+      if (this.connection.state === "connected" && !this.#typing) this.#canvas.focus({ preventScroll: true });
     } else this.#keyboard.ungrab();
     this.#refreshCursor();
   }
@@ -833,6 +833,15 @@ export class SelkiesSession implements Kept {
       this.#key(key.keysym, key.code, true);
       this.#key(key.keysym, key.code, false);
     }
+  }
+
+  #typing = false;
+
+  setTyping(open: boolean): void {
+    if (this.#typing === open) return;
+    this.#typing = open;
+    this.#keyboard._allKeysUp();
+    if (!open) this.focusDesktop();
   }
 
   focusDesktop(): void {

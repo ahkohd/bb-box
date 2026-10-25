@@ -2180,10 +2180,13 @@ test("Type text opens a field over the desktop for input methods and emoji: Ente
   expect(slot.queryByRole("textbox", { name: "Text to type" })).toBeNull();
   fireEvent.click(slot.getByRole("button", { name: "Take control" }));
   await slot.findByText(/You have control/);
+  const letGo = client.keysLetGo;
   fireEvent.click(slot.getByRole("button", { name: "Type text (Ctrl+Alt+Space)" }));
   const field = await slot.findByRole("textbox", { name: "Text to type" });
   expect(slot.getByRole("group", { name: "Type text into type-1" })).toBeTruthy();
   expect(document.activeElement).toBe(field);
+  expect(client.keysLetGo).toBe(letGo + 1);
+  const focusedWhileOpen = client.focused;
   fireEvent.change(field, { target: { value: "aé😀\nb" } });
   fireEvent.keyDown(field, { key: "Enter", code: "Enter", isComposing: true, keyCode: 229 });
   expect(client.keyEvents).toEqual([]);
@@ -2201,15 +2204,20 @@ test("Type text opens a field over the desktop for input methods and emoji: Ente
   fireEvent.click(slot.getByRole("button", { name: "Send" }));
   expect(client.pasted).toEqual([long]);
   expect(client.keyEvents).toHaveLength(10);
+  expect(client.focused).toBe(focusedWhileOpen);
 
   fireEvent.keyDown(field, { key: "Escape", code: "Escape" });
   expect(slot.queryByRole("textbox", { name: "Text to type" })).toBeNull();
+  expect(client.keysLetGo).toBe(letGo + 2);
+  expect(client.focused).toBeGreaterThan(focusedWhileOpen);
 
   const shortcut = keyOnCanvas(slot, { key: " ", code: "Space", ctrlKey: true, altKey: true });
   expect(shortcut.reached).not.toHaveBeenCalled();
   expect(await slot.findByRole("textbox", { name: "Text to type" })).toBeTruthy();
+  expect(client.keysLetGo).toBe(letGo + 3);
   expect(client.keyEvents).toHaveLength(10);
   fireEvent.click(slot.getByRole("button", { name: "Close" }));
+  expect(client.keysLetGo).toBe(letGo + 4);
   expect(keyOnCanvas(slot, { key: " ", code: "Space", ctrlKey: true }).reached).toHaveBeenCalledTimes(1);
   expect(keyOnCanvas(slot, { key: "Dead", code: "BracketLeft" }).reached).toHaveBeenCalledTimes(1);
 
@@ -2239,7 +2247,7 @@ test("on a Mac, Ctrl+Cmd+Space with the desktop focused opens Type text rather t
   }
 });
 
-type FakeClient = { input: string[]; pasted: string[]; keys: { keysym: number; code: string | null; down: boolean }[]; keyEvents: { keysym: number; code: string; down: boolean }[]; _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void } & EventTarget;
+type FakeClient = { input: string[]; pasted: string[]; keysLetGo: number; focused: number; keys: { keysym: number; code: string | null; down: boolean }[]; keyEvents: { keysym: number; code: string; down: boolean }[]; _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void } & EventTarget;
 
 test("with control, Cmd+V on a Mac pastes this computer's text into a Linux box with the box's Ctrl+V, and Cmd stands for Ctrl there", async () => {
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");

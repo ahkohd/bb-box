@@ -505,7 +505,7 @@ export class DesktopSession implements Kept {
     client.guestOs = this.guestOs;
     client.macKeys = this.#macKeys;
     client.refreshCursor();
-    if (this.#mine) client.focus({ preventScroll: true });
+    if (this.#mine && !this.#typing) client.focus({ preventScroll: true });
     this.#drawPointer();
   }
 
@@ -659,6 +659,15 @@ export class DesktopSession implements Kept {
   typeText(text: string): void {
     if (!this.#mine || this.connection.state !== "connected") return;
     for (const key of textKeys(text)) this.#client?.typeCharacter(key.keysym, key.code);
+  }
+
+  #typing = false;
+
+  setTyping(open: boolean): void {
+    if (this.#typing === open) return;
+    this.#typing = open;
+    if (this.#mine && this.connection.state === "connected") this.#client?._keyboard._allKeysUp();
+    if (!open) this.focusDesktop();
   }
 
   focusDesktop(): void {
@@ -1049,6 +1058,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     current.onPasteFailed = (error) => setProblem(message(error));
     // A desktop whose server moves no clipboard, as Tart's macOS VMs: bb-box puts the text there itself, as UTF-8 (#464).
     current.onTypeText = () => setTyping((now) => now ?? "");
+    current.setTyping(typingNow.current);
     current.putClipboard = (text, automatic) =>
       boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text, ...(automatic ? { automatic: true } : {}) }) : null;
     current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
@@ -1221,10 +1231,13 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   useEffect(() => {
     if (!mine) setTyping(null);
   }, [mine]);
-  const closeTyping = () => {
-    setTyping(null);
-    session.current?.focusDesktop();
-  };
+  const closeTyping = () => setTyping(null);
+  const typingOpen = typing !== null && mine;
+  const typingNow = useRef(false);
+  typingNow.current = typingOpen;
+  useEffect(() => {
+    session.current?.setTyping(typingOpen);
+  }, [typingOpen]);
   const sendTyped = (text: string) => {
     if (!text) return;
     const long = [...text].length > TYPE_TEXT_PASTE_FROM && (!box || noClipboardThroughServer(box) === null);
