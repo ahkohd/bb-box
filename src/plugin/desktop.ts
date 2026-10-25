@@ -748,7 +748,13 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       let unlistenPointer: (() => void) | null = null;
       let relay: RfbRelay | SelkiesRelay | null = null;
       let shown: Display | null = null;
-      const connection: ViewerConnection = { viewer, release: () => relay?.release() ?? Promise.resolve() };
+      const connection: ViewerConnection = {
+        viewer,
+        release: () => relay?.release() ?? Promise.resolve(),
+        prepareInput: () => {
+          if (relay instanceof RfbRelay) relay.prepareInput();
+        },
+      };
       const onEnd = (by: "viewer" | "box", error: Error | null) => {
         relays.delete(relay!);
         if (selkies) leftSelkies(boxId, relay instanceof SelkiesRelay ? relay : null);

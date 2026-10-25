@@ -34,6 +34,7 @@ export interface ViewerConnection {
   readonly viewer: string;
   /** Releases the keys and buttons the viewer holds down in the box. */
   release(): Promise<void>;
+  prepareInput?(): void;
 }
 
 export interface ControlDeps {
@@ -123,6 +124,7 @@ export class Control {
   attach(boxId: string, connection: ViewerConnection): void {
     const state = this.#box(boxId);
     state.connections.add(connection);
+    if (state.owner === "human" && state.holder === connection.viewer) connection.prepareInput?.();
     if (state.holder === connection.viewer && state.stale) {
       clearTimeout(state.stale);
       state.stale = null;
@@ -275,8 +277,13 @@ export class Control {
     state.owner = owner;
     state.holder = holder;
     state.takenFrom = takenFrom;
+    if (owner === "human" && holder) this.#prepareInput(state, holder);
     this.#deps.changed(boxId);
     this.#store();
+  }
+
+  #prepareInput(state: BoxControl, viewer: string): void {
+    for (const connection of state.connections) if (connection.viewer === viewer) connection.prepareInput?.();
   }
 
   async #release(state: BoxControl, viewer: string): Promise<void> {

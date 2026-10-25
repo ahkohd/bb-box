@@ -240,6 +240,48 @@ test("a display with an input of its own gets the holder's keys, pointer and cli
   assert.equal(hex(box!.received), hex(UPDATE_REQUEST));
 });
 
+test("a display's input opens ahead of the first key once the viewer has control, after the desktop's size is known, but not where it takes characters only", async () => {
+  const opened = (inputTakes?: DisplayOpened["inputTakes"]) => {
+    const server = new FakeRfb();
+    const calls: string[] = [];
+    const input: DisplayInput = {
+      key: async (down, keysym) => (calls.push(`key ${down} ${keysym}`), true),
+      pointer: async (mask, x, y) => void calls.push(`pointer ${mask} ${x} ${y}`),
+      clipboard: async (value) => void calls.push(`clipboard ${value}`),
+      size: async (width, height) => void calls.push(`size ${width}x${height}`),
+      ping: async () => undefined,
+      close: async () => undefined,
+    };
+    return { calls, relay: relayTo(server, { displayInput: async () => input, ...(inputTakes ? { inputTakes } : {}) }) };
+  };
+
+  const early = opened();
+  early.relay.relay.prepareInput();
+  await early.relay.init();
+  await until("the input to open", () => early.calls.length >= 1);
+  assert.deepEqual(early.calls, ["size 1280x800"], "opened at ServerInit, with no input from the viewer");
+  early.relay.give(true);
+  await early.relay.relay.receive(keyEvent(true, 0x61));
+  await until("the key", () => early.calls.length >= 2);
+  assert.deepEqual(early.calls, ["size 1280x800", "key true 97"], "the first key goes to the input opened already");
+  await early.relay.relay.close();
+
+  const late = opened("wheel");
+  await late.relay.init();
+  assert.deepEqual(late.calls, []);
+  late.relay.relay.prepareInput();
+  await until("the input to open", () => late.calls.length >= 1);
+  assert.deepEqual(late.calls, ["size 1280x800"]);
+  await late.relay.relay.close();
+
+  const characters = opened("characters");
+  characters.relay.relay.prepareInput();
+  await characters.relay.init();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(characters.calls, [], "a Windows VM's character input still opens at its first character");
+  await characters.relay.relay.close();
+});
+
 test("a display whose input takes only the wheel gets the wheel's notches, and the stream server everything else, the pointer's moves and buttons included", async () => {
   const server = new FakeRfb();
   const calls: string[] = [];
@@ -814,11 +856,15 @@ function control(
     reconnectMs: options.reconnectMs,
   });
   const connect = (viewer: string, box = "box1") => {
-    const connection: ViewerConnection & { releases: number } = {
+    const connection: ViewerConnection & { releases: number; prepares: number } = {
       viewer,
       releases: 0,
+      prepares: 0,
       release: async () => {
         connection.releases++;
+      },
+      prepareInput: () => {
+        connection.prepares++;
       },
     };
     value.attach(box, connection);
@@ -826,6 +872,23 @@ function control(
   };
   return { value, events, restores, errors, connect };
 }
+
+test("the viewer that takes control has its display's input opened then, and so does a holder that connects again after a restart", async () => {
+  const { value, connect } = control();
+  const a = connect("viewer-a");
+  const b = connect("viewer-b");
+  assert.equal(a.prepares + b.prepares, 0, "no input opens for a watcher");
+  await value.take("box1", "viewer-a");
+  assert.deepEqual([a.prepares, b.prepares], [1, 0]);
+  await value.take("box1", "viewer-b");
+  assert.deepEqual([a.prepares, b.prepares], [1, 1]);
+
+  const after = control({ staleMs: 60_000 });
+  after.value.resume([{ boxId: "box1", holder: "viewer-b", size: null, resized: null }]);
+  const watcher = after.connect("viewer-a");
+  const holder = after.connect("viewer-b");
+  assert.deepEqual([watcher.prepares, holder.prepares], [0, 1], "the holder's input opens as it connects again");
+});
 
 test("a person takes control from the agent in one viewer, and hands it back", async () => {
   const { value, events, restores, connect } = control();
