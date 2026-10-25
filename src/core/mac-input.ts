@@ -77,6 +77,7 @@ const CLOSE_GRACE_MS = 200;
 /** The helper's script, for `osascript -l JavaScript`. It has no single quotes, so it can be quoted for sh as it is. */
 export const MAC_INPUT_SCRIPT = String.raw`ObjC.import("AppKit");
 ObjC.import("CoreGraphics");
+ObjC.import("CoreFoundation");
 function run() {
   var out = $.NSFileHandle.fileHandleWithStandardOutput;
   var input = $.NSFileHandle.fileHandleWithStandardInput;
@@ -127,12 +128,14 @@ function run() {
       // The character as the text the key types, in UTF-16 code units, with no modifier: Shift or Option already made it.
       var text = $.NSString.stringWithString(String.fromCodePoint(Number(f[2])));
       var length = Number(text.length);
-      var units = Ref("unsigned short", length);
-      for (var i = 0; i < length; i++) units[i] = text.characterAtIndex(i);
-      var event = $.CGEventCreateKeyboardEvent($(), 0, f[1] === "1");
-      $.CGEventKeyboardSetUnicodeString(event, length, units);
-      $.CGEventSetFlags(event, 0);
-      $.CGEventPost($.kCGHIDEventTap, event);
+      var units = length === 1 ? Ref("unsigned short") : $.CFStringGetCharactersPtr(text);
+      if (length === 1) units[0] = text.characterAtIndex(0);
+      if (units) {
+        var event = $.CGEventCreateKeyboardEvent($(), 0, f[1] === "1");
+        $.CGEventKeyboardSetUnicodeString(event, length, units);
+        $.CGEventSetFlags(event, 0);
+        $.CGEventPost($.kCGHIDEventTap, event);
+      } else say("e U+" + Number(f[2]).toString(16) + " has no UTF-16 to type");
       say("u");
     } else if (f[0] === "p") pointer(Number(f[1]), Number(f[2]), Number(f[3]));
     else if (f[0] === "s") scale = Number(f[1]) / points || 1;
