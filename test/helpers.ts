@@ -169,8 +169,9 @@ export function testContext(
   storage: BackendStorage = new MemoryStorage(),
   installId = "test",
   options: { id?: string; warm?: Readonly<Record<string, number>> } = {},
-): BackendContext & { errors: string[]; short: (readonly WarmShortfall[])[] } {
+): BackendContext & { errors: string[]; logs: string[]; short: (readonly WarmShortfall[])[] } {
   const errors: string[] = [];
+  const logs: string[] = [];
   const short: (readonly WarmShortfall[])[] = [];
   return {
     id: options.id ?? "test",
@@ -181,8 +182,10 @@ export function testContext(
     kind: shippedKind,
     warmShortfalls: (pools) => void short.push(pools),
     errors,
+    logs,
     short,
     logError: (operation, error) => errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
+    log: (message) => void logs.push(message),
   };
 }
 
