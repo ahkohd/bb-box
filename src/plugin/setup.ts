@@ -24,7 +24,7 @@ import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { GENERAL_DEFAULTS, emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig } from "../core/document.ts";
-import { loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
+import { INSTALL_ID_KEY, loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
 import { CLEARED_KEY, DOCUMENT_KEY, clearSettings, earlierSettings, moveSettings } from "../core/move.ts";
 import { LINUX_LEAST_MEMORY_GIB, presetMemoryChecks } from "../core/sizes.ts";
 import type { ControlView } from "../core/control.ts";
@@ -375,6 +375,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const reloadTimes = new ReloadTimes((message) => bb.log.info(message), kv);
   bb.onDispose(() => reloadTimes.stopped());
   const earlier = earlierSettings(drivers);
+  const freshInstall = !(await kv.get<unknown>(DOCUMENT_KEY)) && !(await kv.get<unknown>(INSTALL_ID_KEY));
+  if (freshInstall) await kv.set(CLEARED_KEY, { at: Date.now() });
   const settings = (await kv.get<unknown>(CLEARED_KEY)) ? null : bb.settings.define(earlier);
   if (!(await kv.get<ConfigDocument>(DOCUMENT_KEY))) {
     if (settings) {

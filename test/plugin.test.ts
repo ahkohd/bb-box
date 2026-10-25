@@ -18,6 +18,7 @@ import { BackendError, type BackendDriver, type BoxKind } from "../src/backends/
 import type { BoxPointer } from "../src/transports/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
+import { INSTALL_ID_KEY, newInstallId } from "../src/core/install.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases, removeStaleApp, setAsideOtherMachines, withReachHint } from "../src/plugin/enrol.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
@@ -386,6 +387,7 @@ async function start(
     drainMs: options.drainMs,
     runWaitMs: options.runWaitMs,
   };
+  await bb.storage.kv.set(INSTALL_ID_KEY, newInstallId());
   const app = await setup(bb, setupOptions);
   const tool = (name: string, input: unknown, threadId = THREAD) => harness.behavior.callAgentTool(name, input, { threadId, projectId: PROJECT });
   return { bb, harness, app, world, tool, setupOptions };
