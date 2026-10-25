@@ -35,9 +35,11 @@ Taking control does not change what you see: the desktop keeps its size. While y
 
 ## Your keyboard
 
-On a Mac, Cmd works as Ctrl in a Linux or Windows box. So Cmd+C copies, Cmd+V pastes, and Cmd+A, Cmd+Z, Cmd+F and Cmd+S do what Ctrl would. In a macOS box, Cmd stays Cmd. The left Option types accents and symbols as on your Mac, so Option+E then E gives é, and with an arrow, Tab or a function key it works as Alt; the right Option is always Alt, for an app's Alt+letter menu keys.
+On a Mac, Cmd works as Ctrl in a Linux or Windows box. So Cmd+C copies, Cmd+V pastes, and Cmd+A, Cmd+Z, Cmd+F and Cmd+S do what Ctrl would. In a macOS box, Cmd stays Cmd. The left Option types symbols as on your Mac, and with an arrow, Tab or a function key it works as Alt; the right Option is always Alt, for an app's Alt+letter menu keys.
 
 Accented letters and other characters reach the box as your keyboard types them, such as é, ß or ж, whatever your keyboard's layout. Capitals arrive as capitals on every desktop, however your browser sends them, from a phone's or tablet's on-screen keyboard too. Shortcuts go by the key you press, as on the box's own keyboard.
+
+An accent typed with a dead key, such as Option+E then E on a Mac, or ' then E on a US International keyboard, makes é on the desktop only from a browser on Windows. From a browser on a Mac (Chrome or Safari) or on Linux (Chrome or Firefox), the dead key is dropped and the plain letter arrives. To type these accents there, use **Type text**, below, or a keyboard layout with the accented letter on its own key.
 
 To write in another language with an input method, such as Japanese or Chinese, or to add emoji, select **Type text** in the toolbar, or press Ctrl+Cmd+Space on a Mac, Ctrl+Alt+Space elsewhere. A field opens over the desktop. Type there with your input method, press Ctrl+Cmd+Space again on a Mac for the emoji picker, or paste. Enter sends the text to the box where the cursor is, and the field stays open for more. Shift+Enter starts a new line, and Esc closes the field. Long text goes as a paste. Typing straight onto the desktop works as before.
 
