@@ -2241,12 +2241,34 @@ test("Type text opens a field over the desktop for input methods and emoji: Ente
   expect((field as HTMLTextAreaElement).value).toBe("");
   expect(slot.getByRole("textbox", { name: "Text to type" })).toBe(field);
 
+  client.keyEvents.length = 0;
+  fireEvent.change(field, { target: { value: "AbC" } });
+  fireEvent.keyDown(field, { key: "Enter", code: "Enter" });
+  expect(client.keyEvents.map((key) => `${key.keysym.toString(16)}${key.down ? "" : " up"}`)).toEqual(["ffe1", "41", "41 up", "ffe1 up", "62", "62 up", "ffe1", "43", "43 up", "ffe1 up"]);
+
+  client.keyEvents.length = 0;
+  fireEvent.change(field, { target: { value: "日本" } });
+  fireEvent.keyDown(field, { key: "Enter", code: "Enter", isComposing: true, keyCode: 229 });
+  fireEvent.compositionEnd(field);
+  expect(client.keyEvents).toEqual([]);
+  fireEvent.keyDown(field, { key: "Enter", code: "Enter", keyCode: 229 });
+  expect(client.keyEvents.map((key) => key.keysym.toString(16))).toEqual(["10065e5", "10065e5", "100672c", "100672c"]);
+
+  client.keyEvents.length = 0;
+  fireEvent.change(field, { target: { value: "日本" } });
+  fireEvent.compositionEnd(field);
+  fireEvent.keyDown(field, { key: "Enter", code: "Enter", keyCode: 229 });
+  expect(client.keyEvents).toEqual([]);
+  fireEvent.keyDown(field, { key: "Enter", code: "Enter", keyCode: 229 });
+  expect(client.keyEvents).toHaveLength(4);
+  const sent = client.keyEvents.length;
+
   const long = "x".repeat(250);
   fireEvent.change(field, { target: { value: long } });
   expect(slot.getByText("Long text goes as a paste.")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Send" }));
   expect(client.pasted).toEqual([long]);
-  expect(client.keyEvents).toHaveLength(10);
+  expect(client.keyEvents).toHaveLength(sent);
   expect(client.focused).toBe(focusedWhileOpen);
 
   fireEvent.keyDown(field, { key: "Escape", code: "Escape" });
@@ -2258,7 +2280,7 @@ test("Type text opens a field over the desktop for input methods and emoji: Ente
   expect(shortcut.reached).not.toHaveBeenCalled();
   expect(await slot.findByRole("textbox", { name: "Text to type" })).toBeTruthy();
   expect(client.keysLetGo).toBe(letGo + 3);
-  expect(client.keyEvents).toHaveLength(10);
+  expect(client.keyEvents).toHaveLength(sent);
   fireEvent.click(slot.getByRole("button", { name: "Close" }));
   expect(client.keysLetGo).toBe(letGo + 4);
   expect(keyOnCanvas(slot, { key: " ", code: "Space", ctrlKey: true }).reached).toHaveBeenCalledTimes(1);
