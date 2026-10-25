@@ -541,8 +541,8 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       changes.push(`desktop.sharp ${on}`);
       return { error: null };
     },
-    "setup.desktop": ({ threadId, hostId, size, name }) => {
-      changes.push(`setup.desktop ${hostId}${size ? ` ${JSON.stringify(size)}` : ""}${threadId === "operator" ? " for operator" : ""}${name ? ` named ${name}` : ""}`);
+    "setup.desktop": ({ threadId, hostId, kind, size, name }) => {
+      changes.push(`setup.desktop ${hostId}${kind && kind !== "linux-desktop-cpu" ? ` ${kind}` : ""}${size ? ` ${JSON.stringify(size)}` : ""}${threadId === "operator" ? " for operator" : ""}${name ? ` named ${name}` : ""}`);
       return { result: { ok: true, state: {} as ConfigState, problems: [] } };
     },
     "setup.docker": ({ hostId }) => {
@@ -965,7 +965,7 @@ test("the panel makes a box by steps, System, Architecture, Type and Resources, 
 
 test("New box offers a desktop whose image is not built yet: it says it builds first and how long, and Create builds it, then the box follows", async () => {
   const desktop: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
-  const { handlers, changes } = server([], { kinds: [KINDS[0]!], desktopOnDemand: { hostId: "host_bb", name: "devpc", kind: desktop, took: null } });
+  const { handlers, changes } = server([], { kinds: [KINDS[0]!], desktopOnDemand: { hostId: "host_bb", name: "devpc", kinds: [{ kind: desktop, took: null }] } });
   const slot = panel(handlers);
   fireEvent.click(await slot.findByRole("button", { name: "New box" }));
   const types = await screen.findByRole("radiogroup", { name: "Type" });
@@ -980,6 +980,21 @@ test("New box offers a desktop whose image is not built yet: it says it builds f
   await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
 });
 
+test("New box offers the Wayland desktop beside the X11 one where both build first, under Display, and builds the one chosen", async () => {
+  const x11: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
+  const wayland: KindView = { ...KINDS[1]!, id: "linux-desktop-wayland-cpu", gpu: false, windowing: "wayland" };
+  const { handlers, changes } = server([], { kinds: [KINDS[0]!], desktopOnDemand: { hostId: "host_bb", name: "devpc", kinds: [{ kind: x11, took: null }, { kind: wayland, took: 360_000 }] } });
+  const slot = panel(handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }));
+  expect((await screen.findByRole("combobox", { name: "Display" })).textContent).toBe("X11");
+  expect(screen.getByText("BB Box builds the desktop image on devpc first, usually 4 to 10 min, then makes the box.")).toBeTruthy();
+  await choose("Display", "Wayland");
+  expect(screen.getByText("BB Box builds the Wayland desktop image on devpc first, about 6 min, then makes the box.")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Build and create" }));
+  await waitFor(() => expect(changes).toEqual(["setup.desktop host_bb linux-desktop-wayland-cpu"]));
+});
+
 test("a host that has built an image before gives its own last time as the estimate, in the offer, the form and the build's card", async () => {
   const slot = panel(server([], { kinds: [], setups: [setup({ took: { linux: 540_000 } })] }).handlers);
   expect(await slot.findByText("Builds the Linux image first, about 9 min.")).toBeTruthy();
@@ -989,7 +1004,7 @@ test("a host that has built an image before gives its own last time as the estim
   expect(await card.findByText(/It took 8 min last time here, and goes on if you close this panel\./)).toBeTruthy();
   cleanup();
   const desktop: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
-  const form = panel(server([], { kinds: [KINDS[0]!], desktopOnDemand: { hostId: "host_bb", name: "devpc", kind: desktop, took: 480_000 } }).handlers);
+  const form = panel(server([], { kinds: [KINDS[0]!], desktopOnDemand: { hostId: "host_bb", name: "devpc", kinds: [{ kind: desktop, took: 480_000 }] } }).handlers);
   fireEvent.click(await form.findByRole("button", { name: "New box" }));
   expect(within(await screen.findByRole("radiogroup", { name: "Type" })).getByRole("radio", { name: /^Desktop/ }).textContent).toBe("DesktopBuilds first, about 8 min");
 });
@@ -4598,7 +4613,7 @@ test("the Boxes page's New box adds one of your machines with settings' Add mach
 
 test("the Boxes page's New box and settings' Add machine offer a desktop whose image is not built yet, as the Box panel does, and build it for a machine with its name", async () => {
   const desktop: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
-  const onDemand = { hostId: "host_bb", name: "devpc", kind: desktop, took: null };
+  const onDemand = { hostId: "host_bb", name: "devpc", kinds: [{ kind: desktop, took: null }] };
   for (const [where, open, submit] of [
     ["the Boxes page", (handlers: PluginRpcTestHandlers<Contract>) => boxesPage(handlers).findByRole("button", { name: "New box" }), "Build and create"],
     ["settings", (handlers: PluginRpcTestHandlers<Contract>) => settings(handlers).findByRole("button", { name: "Add machine" }), "Build and add"],

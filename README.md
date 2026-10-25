@@ -37,7 +37,7 @@ Boxes join BB by reaching BB's server. If BB is signed in to your bb account, bb
 
 2. Open a thread's **Box** panel, or BB Box in BB's settings, and select **Use Docker on this machine**, or have an agent run `bb box setup docker`. The Linux image usually builds in 5 to 12 minutes, depending on the machine.
 3. Select the plus, then **Create box**. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
-4. For a desktop, select the plus, choose **Desktop**, then **Create box**. bb-box builds the desktop image before the first one, usually in 4 to 10 minutes.
+4. For a desktop, select the plus, choose **Desktop**, and under Display X11 or Wayland, then **Build and create**. bb-box builds that desktop's image before the first one, usually in 4 to 10 minutes.
 
 `bb box doctor` checks the setup. If a box says 'Could not join BB', see [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).
 

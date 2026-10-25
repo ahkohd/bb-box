@@ -105,22 +105,20 @@ export function customSize(fields: Fields): SizeRequest | null {
 export const MACHINE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
 export interface DesktopOnDemand {
-  readonly kind: KindView;
+  readonly kinds: readonly { readonly kind: KindView; readonly took: number | null }[];
   readonly machine: string;
-  readonly took: number | null;
-  readonly build: (size?: SizeRequest, name?: string) => Promise<string | null>;
+  readonly build: (kind: string, size?: SizeRequest, name?: string) => Promise<string | null>;
 }
 
 export function useDesktopOnDemand(view: DesktopOnDemandView | null | undefined, threadId: string, refresh: () => Promise<unknown>): DesktopOnDemand | null {
   const rpc = useRpc<Contract>();
   if (!view) return null;
   return {
-    kind: view.kind,
+    kinds: view.kinds,
     machine: view.name,
-    took: view.took ?? null,
-    build: async (size, name) => {
+    build: async (kind, size, name) => {
       try {
-        const { result } = await rpc.call("setup.desktop", { threadId, hostId: view.hostId, ...(size ? { size } : {}), ...(name ? { name } : {}) });
+        const { result } = await rpc.call("setup.desktop", { threadId, hostId: view.hostId, kind: kind as "linux-desktop-cpu" | "linux-desktop-wayland-cpu", ...(size ? { size } : {}), ...(name ? { name } : {}) });
         await refresh();
         if (result.ok) return null;
         return result.reason === "problems" ? result.problems.map((item) => item.message).join(" ") : "Someone else saved BB Box's settings at the same moment. Try again.";
@@ -181,9 +179,8 @@ export function NewBox({
   onDemand?: DesktopOnDemand | null;
   access?: MachineAccessProblem | null;
 }) {
-  // The desktop to build is offered only where no desktop of its system is: once one is, it is that.
-  const added = !!onDemand && !offeredKinds.some((offered) => offered.os === onDemand.kind.os && offered.arch === onDemand.kind.arch && offered.desktop);
-  const kinds = added ? [...offeredKinds, onDemand!.kind] : offeredKinds;
+  const toBuild = (onDemand?.kinds ?? []).filter((entry) => !offeredKinds.some((offered) => offered.id === entry.kind.id));
+  const kinds = toBuild.length ? [...offeredKinds, ...toBuild.map((entry) => entry.kind)] : offeredKinds;
   const pluginId = experimental_usePluginId();
   const [open, setOpen] = useState(false);
   useEscapeCloses(open, setOpen);
@@ -247,8 +244,10 @@ export function NewBox({
   const picked = nearest(kinds, wanted);
   const kind = kindFor(kinds, picked);
   const kindId = kind?.id ?? null;
-  /** The chosen kind is the desktop to build first. */
-  const buildsFirst = added && kind?.id === onDemand!.kind.id;
+  const buildingFirst = toBuild.find((entry) => entry.kind.id === kind?.id) ?? null;
+  const buildsFirst = buildingFirst !== null;
+  const desktopsAllToBuild = toBuild.filter((entry) => entry.kind.os === picked.os && entry.kind.arch === picked.arch);
+  const desktopBuildsFirst = desktopsAllToBuild.length > 0 && !offeredKinds.some((offered) => offered.os === picked.os && offered.arch === picked.arch && offered.desktop);
   // The images covering the chosen kind (049): the choice shows only where there is one. The state lists this project's first.
   const covering = kind ? images.filter((candidate) => candidate.kinds.includes(kind.id)) : [];
   const imageChoice = covering.length > 0;
@@ -371,7 +370,7 @@ export function NewBox({
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
-      const refused = buildsFirst ? await onDemand!.build(request, machine && typedName ? typedName : undefined) : await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage);
+      const refused = buildsFirst ? await onDemand!.build(kind.id, request, machine && typedName ? typedName : undefined) : await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
@@ -406,7 +405,11 @@ export function NewBox({
   // The footer says what stands in the way: a refusal, or filters that leave no provider.
   const standing =
     problem ??
-    (noMatch ? "No provider matches these filters." : buildsFirst ? `BB Box builds the desktop image on ${onDemand!.machine} first, ${estimate(onDemand!.took, DESKTOP_BUILD_WORDS)}, then makes the box.` : null);
+    (noMatch
+      ? "No provider matches these filters."
+      : buildingFirst
+        ? `BB Box builds the ${buildingFirst.kind.windowing === "wayland" ? "Wayland desktop image" : "desktop image"} on ${onDemand!.machine} first, ${estimate(buildingFirst.took, DESKTOP_BUILD_WORDS)}, then makes the box.`
+        : null);
   const rowClass = (selected: boolean) =>
     cn(
       "flex w-full flex-col items-start rounded-md border px-3 py-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-ring",
@@ -469,7 +472,7 @@ export function NewBox({
           <FormSection title="Type">
             <div role="radiogroup" aria-label="Type" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, 2, picked.desktop ? 1 : 0, (position) => pick({ desktop: position === 1 }))}>
               <OptionCard title="Server" words="Terminal" glyph={TYPE_GLYPHS.server} selected={!picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, false)} onClick={() => pick({ desktop: false })} />
-              <OptionCard title="Desktop" words={added && picked.os === onDemand!.kind.os && picked.arch === onDemand!.kind.arch ? `Builds first, ${estimate(onDemand!.took, DESKTOP_BUILD_WORDS)}` : "Screen · Terminal · Computer use"} glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
+              <OptionCard title="Desktop" words={desktopBuildsFirst ? `Builds first, ${estimate(desktopsAllToBuild[0]!.took, DESKTOP_BUILD_WORDS)}` : "Screen · Terminal · Computer use"} glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
             </div>
             {displayChoice ? (
               // The windowing is a detail of a desktop, as a GPU is of its resources (the operator's notes of 3 October 2026): a dim sub-label under

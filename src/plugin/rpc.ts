@@ -264,7 +264,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       };
     },
     "images.refresh": async () => app.imageJobs.startNow(),
-    "setup.desktop": async ({ threadId, hostId, size, name }) => ({ result: await app.buildDesktop({ threadId, hostId, ...(size ? { size } : {}), ...(name ? { name } : {}) }) }),
+    "setup.desktop": async ({ threadId, hostId, kind, size, name }) => ({ result: await app.buildDesktop({ threadId, hostId, ...(kind ? { kind } : {}), ...(size ? { size } : {}), ...(name ? { name } : {}) }) }),
     "setup.docker": async ({ hostId }) => {
       const result = await app.setDockerHost(hostId, true, true);
       return { result, machines: await app.setups() };
