@@ -152,7 +152,7 @@ function run() {
   var rest = "";
   for (;;) {
     var data = input.availableData;
-    if (data.length === 0) break;
+    if (Number(data.length) === 0) break;
     rest += $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding).js;
     var lines = rest.split("\n");
     rest = lines.pop();
