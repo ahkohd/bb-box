@@ -75,7 +75,7 @@ import {
   type MacKeys,
 } from "./viewer.ts";
 import { BoxGlyph, HighResolutionGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
-import { choices, filtering, NO_FILTERS, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
+import { choices, filtering, NO_FILTERS, runsWayland, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
 import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 
 export const DESKTOP_ACTION = "desktop";
@@ -1447,7 +1447,7 @@ export function BoxLine({ box, meta, machine = false, actions }: { box: BoxView;
     <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
       <span className="flex size-6 items-center justify-center text-muted-foreground"><BoxGlyph /></span>
       <div className="min-w-0">
-        <RowTitle name={box.name} os={osName(box.os)} badges={<KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={machine} />} />
+        <RowTitle name={box.name} os={osName(box.os)} badges={<KindBadges desktop={box.desktop} wayland={runsWayland(box)} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={machine} />} />
         {/* Who has control comes straight after the state, so a narrow chooser keeps it. */}
         <StatusLine tone={status.tone} items={[status.items[0], control, ...status.items.slice(1), meta]} />
       </div>

@@ -4540,6 +4540,14 @@ test("the Boxes page's tags come from a box's facts, not its backend's name: sys
   expect([...splitGroups(TAGGED)]).toEqual(["systems", "forms", "has", "providers"]);
 });
 
+test("a Wayland desktop has a Wayland tag beside Desktop, so it reads differently from an X11 desktop of the same backend", () => {
+  const x11 = tagged("box_x", "xfce-box", { os: "linux", form: "Docker", kind: "linux-desktop-cpu", desktop: true });
+  const wayland = tagged("box_w", "sway-box", { os: "linux", form: "Docker", kind: "linux-desktop-wayland-cpu", desktop: true });
+  expect(tagsOf(x11).has).toEqual(["Desktop"]);
+  expect(tagsOf(wayland).has).toEqual(["Desktop", "Wayland"]);
+  expect(choices([x11, wayland]).has).toEqual(["Desktop", "Wayland"]);
+});
+
 test("ticks in one tag group widen (Linux or macOS) and groups together narrow (Linux and VM); each tag counts what ticking it would show", () => {
   const rows = TAGGED.map((one) => ({ box: one, words: [] }));
   const names = (filters: typeof NO_FILTERS) => shown(rows, "", filters, { key: "name", ascending: true }).map((row) => row.box.name);
