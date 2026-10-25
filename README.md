@@ -17,7 +17,9 @@ Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own
 
 ## Quick start
 
-You need a Linux machine that runs BB and Docker, with about 10 GB free.
+You need a Linux machine that runs BB and Docker, with about 10 GB of disk free and at least 8 GiB of memory, or 12 GiB for a desktop box.
+
+Boxes join BB by reaching BB's server. If BB is signed in to your bb account, bb connect does that. If it is not, start BB with `npx bb-app --server-bind-host 0.0.0.0`, then in BB's settings, under Machines, set Machine access to **Manual** with this machine's address on your network, such as `http://192.0.2.10:38886`. See [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).
 
 1. In BB, open Settings, then Installed plugins, then the arrow beside **New plugin**, then **Install from source**, and enter:
 
@@ -25,7 +27,7 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
    git:https://github.com/moonstead/bb-box.git@main
    ```
 
-   Or with BB's command line:
+   Or with BB's command line, `bb`, or `npx --package bb-app bb` where `bb` is not installed:
 
    ```sh
    bb plugin install git:https://github.com/moonstead/bb-box.git@main
@@ -33,11 +35,11 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
 
    It asks you to confirm. An agent or a script adds `--yes`, as it cannot answer.
 
-2. Open a thread's **Box** panel and select **Use Docker on this machine**, or have an agent run `bb box setup docker`. The Linux image usually builds in 5 to 12 minutes, depending on the machine.
+2. Open a thread's **Box** panel, or BB Box in BB's settings, and select **Use Docker on this machine**, or have an agent run `bb box setup docker`. The Linux image usually builds in 5 to 12 minutes, depending on the machine.
 3. Select the plus, then **Create box**. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
 4. For a desktop, select the plus, choose **Desktop**, then **Create box**. bb-box builds the desktop image before the first one, usually in 4 to 10 minutes.
 
-A box joins BB by reaching BB's server, so BB must listen on an address the box can reach. `bb box doctor` checks the setup. If a box says 'Could not join BB', see [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).
+`bb box doctor` checks the setup. If a box says 'Could not join BB', see [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).
 
 ## Backends and boxes
 
