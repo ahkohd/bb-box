@@ -219,6 +219,7 @@ test("reads the daemon's facts and its containers", () => {
         MemTotal: 16 * 1024 * MiB + 5,
         SecurityOptions: ["name=seccomp,profile=builtin", "name=rootless"],
         CpuCfsQuota: false,
+        CPUSet: false,
         DiscoveredDevices: devices,
       }),
     ),
@@ -234,6 +235,7 @@ test("reads the daemon's facts and its containers", () => {
       rootless: true,
       cpuLimit: false,
       memoryLimit: true,
+      cpuset: false,
       gpus: [GPU_A, GPU_B],
     },
   );
@@ -245,7 +247,7 @@ test("reads the daemon's facts and its containers", () => {
         Image: "sha256:1111",
         State: { Status: "running", ExitCode: 0 },
         Config: { Labels: { "bbbox.box": "bx1", other: 3 } },
-        HostConfig: { NanoCpus: 2.5e9, Memory: 4096 * MiB },
+        HostConfig: { NanoCpus: 2.5e9, Memory: 4096 * MiB, CpusetCpus: "4-5,7" },
         NetworkSettings: { Networks: { bbbox: { IPAddress: "172.30.0.2" }, none: { IPAddress: "" } } },
       },
     ]),
@@ -258,6 +260,7 @@ test("reads the daemon's facts and its containers", () => {
     exitCode: 0,
     cores: 2.5,
     memoryMiB: 4096,
+    cpus: [4, 5, 7],
     addresses: { bbbox: "172.30.0.2" },
     imageId: "sha256:1111",
   });
@@ -292,6 +295,8 @@ test("acquires a box as a container labelled from its first write, claimed befor
   assert.equal(after(create, "--pull"), "never");
   assert.ok(create.includes("--init"));
   assert.equal(after(create, "--cpus"), "2");
+  assert.equal(after(create, "--cpuset-cpus"), "0-1");
+  assert.equal(container.Config.Env.some((variable) => variable.startsWith("OMP_NUM_THREADS=")), false, "a pinned box needs no OMP_NUM_THREADS");
   assert.equal(after(create, "--memory"), "4096m");
   assert.equal(after(create, "--memory-swap"), "4096m");
   assert.equal(after(create, "--shm-size"), "2048m");
@@ -681,6 +686,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
       ["docker.cli", "ok"],
       ["docker.daemon", "ok"],
       ["docker.limits", "ok"],
+      ["docker.cpuset", "ok"],
       ["image.bbbox/linux:1", "ok"],
       ["image.bbbox/linux-desktop:1", "ok"],
       ["image.bbbox/linux-desktop-wayland:1", "ok"],
@@ -1236,7 +1242,7 @@ test("a container's cores and memory resize live with docker update, with room f
   const grown = await backend.resize(guest, "linux", to, { restart: false }, signal());
   assert.deepEqual(grown.size, to);
   const update = fake.calls().find((args) => args[0] === "container" && args[1] === "update")!;
-  assert.deepEqual(update.slice(2, -1), ["--cpus", "4", "--memory", "8192m", "--memory-swap", "8192m"]);
+  assert.deepEqual(update.slice(2, -1), ["--cpus", "4", "--cpuset-cpus", "0-3", "--memory", "8192m", "--memory-swap", "8192m"]);
   // Down again: memory and swap go together, which Docker needs to lower memory.
   assert.deepEqual((await backend.resize(guest, "linux", SMALL, { restart: false }, signal())).size, SMALL);
   assert.equal((await backend.capacity("linux", SMALL, [], signal())).hosts[0]!.limits.find((limit) => limit.resource === "memory")!.used, 4096, "capacity counts the new limit");
@@ -1245,4 +1251,93 @@ test("a container's cores and memory resize live with docker update, with room f
   fake.set({ failUpdate: "the kernel refused" });
   await assert.rejects(backend.resize(guest, "linux", to, { restart: false }, signal()), /the kernel refused/);
   await assert.rejects(backend.resize({ ...guest, data: { ...guest.data, box: "bx_other" } }, "linux", to, { restart: false }, signal()), (error) => error instanceof BackendError && error.code === "gone");
+});
+
+test("each box is pinned to the CPUs the fewest boxes have, two boxes placed at once get their own, and boxes past the host's CPUs share the least-used (062)", async () => {
+  const { fake, backend } = setup({}, { cpus: 4, memoryMiB: 65536 });
+  const pinned = (guest: Guest) => fake.inspect(guest.ref).HostConfig.CpusetCpus;
+  const [a, b] = await Promise.all([backend.acquire(identity(), null, hooks().hooks, signal()), backend.acquire(identity(), null, hooks().hooks, signal())]);
+  assert.deepEqual([pinned(a), pinned(b)].sort(), ["0-1", "2-3"]);
+  const c = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(pinned(c), "0-1", "with every CPU taken, the least shared, the lowest first");
+
+  const [sharing, alone] = pinned(a) === "0-1" ? [a, b] : [b, a];
+  await backend.release(alone, releasing, signal());
+  assert.deepEqual([pinned(sharing), pinned(c)].sort(), ["0-1", "2-3"], "a release moves one of the two sharing boxes onto the CPUs it freed");
+  const moves = fake.calls().filter((args) => args[1] === "update" && args.includes("--cpuset-cpus"));
+  assert.equal(moves.length, 1);
+  assert.deepEqual(moves[0]!.slice(2, 4), ["--cpuset-cpus", "2-3"]);
+
+  await backend.release(c, releasing, signal());
+  assert.equal(fake.calls().filter((args) => args[1] === "update").length, 1, "a box that shares no CPU never moves");
+});
+
+test("a resize keeps a box's CPUs, grows onto the least-used and shrinks off the most shared, and a box made before pinning is pinned at its first resize (062)", async () => {
+  const { fake, backend } = setup({}, { cpus: 8, memoryMiB: 65536 });
+  const pinned = (guest: Guest) => fake.inspect(guest.ref).HostConfig.CpusetCpus;
+  const a = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const b = await backend.acquire(identity(), null, hooks().hooks, signal());
+  await backend.resize(a, "linux", { cores: 4, memoryMiB: 4096, diskGiB: null }, { restart: false }, signal());
+  assert.equal(pinned(a), "0-1,4-5");
+  await backend.resize(a, "linux", SMALL, { restart: false }, signal());
+  assert.equal(pinned(a), "0-1");
+  assert.equal(pinned(b), "2-3");
+
+  fake.set({ cpuset: false });
+  const unpinned = await backend.acquire(identity(), null, hooks().hooks, signal());
+  fake.set({ cpuset: true });
+  assert.equal(pinned(unpinned), "");
+  await backend.resize(unpinned, "linux", SMALL, { restart: false }, signal());
+  assert.equal(pinned(unpinned), "4-5");
+});
+
+test("where Docker cannot pin a container to CPUs, a box keeps its CPU limit, gets OMP_NUM_THREADS, which nproc follows, and the doctor says why (062)", async () => {
+  const { fake, backend } = setup({}, { rootless: true, cpuset: false });
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const create = fake.calls().find((args) => args[0] === "container" && args[1] === "create")!;
+  assert.equal(after(create, "--cpus"), "2");
+  assert.equal(create.includes("--cpuset-cpus"), false);
+  assert.ok(fake.inspect(guest.ref).Config.Env.includes("OMP_NUM_THREADS=2"));
+  await backend.resize(guest, "linux", { cores: 4, memoryMiB: 4096, diskGiB: null }, { restart: false }, signal());
+  assert.equal(fake.calls().filter((args) => args[1] === "update" && args.includes("--cpuset-cpus")).length, 0);
+
+  const check = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.cpuset")!;
+  assert.deepEqual([check.name, check.status], ["Cores a box sees", "warn"]);
+  assert.match(check.detail, /^Docker on fake-docker cannot pin a container to CPUs, so nproc in a box says the host's CPUs/);
+  assert.match(check.fix!, /Delegate=cpu cpuset io memory pids/);
+});
+
+test("on a Docker host whose CPUs are 27 and 61, as one in an LXC container, boxes are pinned to those, and when the host's CPUs change, a refused create probes again and goes on (062)", async () => {
+  const { fake, backend } = setup({}, { cpuList: "27,61", memoryMiB: 65536 });
+  const one: BoxSize = { cores: 1, memoryMiB: 2048, diskGiB: null };
+  const pinned = (guest: Guest) => fake.inspect(guest.ref).HostConfig.CpusetCpus;
+  const probes = () => readFileSync(join(fake.root, "probes"), "utf8").trim().split("\n").length;
+  const a = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
+  const b = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
+  assert.deepEqual([pinned(a), pinned(b)], ["27", "61"]);
+  assert.equal(probes(), 1, "the host's CPUs are probed once and kept");
+
+  fake.set({ cpuList: "3,9" });
+  const c = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
+  assert.equal(probes(), 2, "a refused create probes again");
+  assert.equal(pinned(c), "3");
+  const refused = fake.calls().filter((args) => args[1] === "create" && after(args, "--cpuset-cpus") === "27");
+  assert.equal(refused.length, 2, "the first create of c, on the CPUs the host had, and a's own");
+  assert.deepEqual([pinned(a), pinned(b), pinned(c)].map((cpus) => ["3", "9"].includes(cpus)), [true, true, true], "boxes on CPUs the host no longer has move back onto it");
+});
+
+test("without cpuset.cpus.effective, as on cgroup v1, a host's CPUs are 0 to its count less one (062)", async () => {
+  const { fake, backend } = setup({}, { cgroupV1: true, cpus: 4 });
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(fake.inspect(guest.ref).HostConfig.CpusetCpus, "0-1");
+});
+
+test("when dockerd refuses CPUs the host has, as it keeps the set it started with, a box is pinned to CPUs both allow (062)", async () => {
+  const { fake, backend } = setup({}, { cpuList: "1,23", daemonCpuList: "10,23", memoryMiB: 65536 });
+  const guest = await backend.acquire(identity("linux", { cores: 1, memoryMiB: 2048, diskGiB: null }), null, hooks().hooks, signal());
+  assert.equal(fake.inspect(guest.ref).HostConfig.CpusetCpus, "23");
+  const check = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.cpuset")!;
+  assert.equal(check.status, "warn");
+  assert.match(check.detail, /keeps the CPUs it had when it started \(10,23\), but its containers may now have 1,23, .* pinned to CPUs in both \(23\)/);
+  assert.match(check.fix!, /^Restart Docker on fake-docker/);
 });

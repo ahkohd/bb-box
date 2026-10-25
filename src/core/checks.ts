@@ -46,6 +46,7 @@ export const CHECKS = {
   "docker.daemon": { name: "Docker daemon", from: ["docker"], what: "The Docker host answers, runs Linux containers, and its architecture." },
   "docker.ssh": { name: "SSH connection reuse", from: ["docker"], what: "Over ssh://, whether the docker calls share one SSH connection." },
   "docker.limits": { name: "CPU and memory limits", from: ["docker"], what: "Docker can limit a container's CPU and memory, as each box needs." },
+  "docker.cpuset": { name: "Cores a box sees", from: ["docker"], what: "Docker can pin each box to as many CPUs as it has cores, so nproc in a box says its cores." },
   "docker.network": { name: "Network <network>", from: ["docker"], what: "bb-box's network for its boxes, made by bb-box." },
   "docker.privileged": { name: "Docker in boxes", from: ["docker"], what: "Whether boxes are privileged, so they can run Docker inside." },
   "docker.gpus": { name: "GPUs", from: ["docker"], what: "The NVIDIA GPUs Docker lists as CDI devices, for GPU desktops." },
