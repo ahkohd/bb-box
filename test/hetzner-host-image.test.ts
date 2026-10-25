@@ -97,21 +97,37 @@ test("a host image is due when there is none, when bb-box's scripts changed, or 
   assert.match(await report(), /A new one is due, as the host image is more than a week old\./);
 });
 
-test("a failed build deletes its server, keeps no snapshot, says so in the doctor, and is not tried again for a day", async () => {
+test("a failed build deletes its server, keeps no snapshot, says so in the doctor, and is tried again after 10 minutes, then 20, 40 and every hour", async () => {
   const { api, backend } = hetznerWorld();
   const { options } = builder({ failOn: "desktop" });
   const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04", monthlyLimitEurosBeforeVat: 50 }), new MemoryStorage(), "test", options);
   await assert.rejects(hetzner.buildHostImage("there is no host image yet", signal()), /build\.sh failed on desktop/);
   assert.equal(api.servers.size, 0);
   assert.equal(api.images.size, 0);
-  const check = (await hetzner.doctor(signal())).checks.find((each) => each.id === "hetzner.image")!;
-  assert.equal(check.status, "warn");
-  assert.match(check.detail, /The last build failed at .*; bb-box tries again a day after\./);
+  const detail = async () => (await hetzner.doctor(signal())).checks.find((each) => each.id === "hetzner.image")!;
+  const failedAt = api.now;
+  assert.equal((await detail()).status, "warn");
+  assert.match((await detail()).detail, new RegExp(`The last build failed at ${new Date(failedAt).toISOString()}; bb-box tries again at ${new Date(failedAt + 10 * 60_000).toISOString()}\\.`));
   const creates = () => api.calls.filter((call) => call.method === "POST" && call.path === "/servers").length;
-  const before = creates();
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+  let before = creates();
+  api.advanceClock(9 * 60_000);
   await hetzner.maintain(signal());
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(creates(), before, "not again within the day");
+  await settle();
+  assert.equal(creates(), before, "not again within 10 minutes");
+  api.advanceClock(2 * 60_000);
+  await hetzner.maintain(signal());
+  await settle();
+  assert.equal(creates(), before + 1, "again after them");
+  for (let i = 0; i < 300 && /A new one is being built/.test((await detail()).detail); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.match((await detail()).detail, /, the 2nd failure in a row; bb-box tries again at /);
+  const secondAt = api.now;
+  assert.match((await detail()).detail, new RegExp(`tries again at ${new Date(secondAt + 20 * 60_000).toISOString()}\\.`));
+  before = creates();
+  api.advanceClock(19 * 60_000);
+  await hetzner.maintain(signal());
+  await settle();
+  assert.equal(creates(), before, "then not within 20 minutes");
 });
 
 test("no host image is built past the monthly limit, nor when the hosts' image is a snapshot set in the settings", async () => {

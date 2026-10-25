@@ -94,7 +94,16 @@ const OS_MEMORY_MiB = 1024;
 const PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS = 600_000;
 const HOST_IMAGE_CACHE_MS = 10 * 60_000;
 const HOST_IMAGE_FAILED_KEY: Readonly<Record<Architecture, string>> = { x86: "host-image-failed-at:x86", arm: "host-image-failed-at:arm" };
-const HOST_IMAGE_RETRY_AFTER_MS = 24 * 3_600_000;
+const HOST_IMAGE_RETRIES_AFTER_MS = [10, 20, 40, 60].map((minutes) => minutes * 60_000);
+
+interface HostImageFailures {
+  readonly atMs: number;
+  readonly inARow: number;
+}
+
+function retryAfterMs(failures: HostImageFailures): number {
+  return HOST_IMAGE_RETRIES_AFTER_MS[Math.min(failures.inARow, HOST_IMAGE_RETRIES_AFTER_MS.length) - 1]!;
+}
 const HOST_IMAGE_WAITING_KEY: Readonly<Record<Architecture, string>> = { x86: "host-image-waiting", arm: "host-image-waiting:arm" };
 
 const ROOM_ADVICE = "Hetzner limits the shared vCPUs of the whole account, 20 for a new one, across all its projects: free some, or ask Hetzner for more on the account's Limits page in the Console.";
@@ -671,13 +680,16 @@ export class HetznerBackend implements Backend {
       push(id, name, "skipped", `Hetzner Cloud did not list the snapshots: ${snapshots.message}`);
       return;
     }
-    const failedAt = await this.#context.storage.get<number>(HOST_IMAGE_FAILED_KEY[architecture]);
+    const failures = await this.#failures(architecture);
+    const failedAt = failures?.atMs;
     const newest = snapshots[0] ?? null;
     const sizes = snapshots.reduce((sum, each) => sum + (each.compressedSizeGB ?? 0), 0);
     const kept = snapshots.length ? ` ${snapshots.length} kept, ${sizes.toFixed(1)} GB, about ${euros(sizes * SNAPSHOT_EUROS_A_GB_A_MONTH)} a month.` : "";
     const making = this.#buildingHostImage.has(architecture) ? null : await this.#hostImages.beingMade(signal, architecture).catch(() => null);
     const building = this.#buildingHostImage.has(architecture) ? " A new one is being built." : making ? ` Hetzner Cloud is making a new one, snapshot ${making.id}, which bb-box takes once it is ready.` : "";
-    const failed = failedAt !== undefined ? ` The last build failed at ${new Date(failedAt).toISOString()}; bb-box tries again a day after.` : "";
+    const failed = failures
+      ? ` The last build failed at ${new Date(failures.atMs).toISOString()}${failures.inARow > 1 ? `, the ${failures.inARow}${ordinal(failures.inARow)} failure in a row` : ""}; bb-box tries again at ${new Date(failures.atMs + retryAfterMs(failures)).toISOString()}.`
+      : "";
     const waiting = await this.#context.storage.get<WaitingForRoom>(HOST_IMAGE_WAITING_KEY[architecture]);
     const waits = waiting && !this.#buildingHostImage.has(architecture) ? ` The last build waited for room: at ${new Date(waiting.atMs).toISOString()} Hetzner Cloud refused its server (${waiting.why.replace(/^Hetzner Cloud POST \/servers failed /, "")}); bb-box tries again at its next check. ${ROOM_ADVICE}` : "";
     const fix = failedAt !== undefined ? "See BB Box's log for the build's last lines." : null;
@@ -722,8 +734,8 @@ export class HetznerBackend implements Backend {
 
   async #hostImageBuildDue(architecture: Architecture, signal?: AbortSignal): Promise<string | null> {
     if (!this.#buildsHostImages(architecture) || this.#buildingHostImage.has(architecture) || (this.#reach?.canReach() ?? null) !== null) return null;
-    const failedAt = await this.#context.storage.get<number>(HOST_IMAGE_FAILED_KEY[architecture]);
-    if (failedAt !== undefined && this.#now() - failedAt < HOST_IMAGE_RETRY_AFTER_MS) return null;
+    const failures = await this.#failures(architecture);
+    if (failures && this.#now() - failures.atMs < retryAfterMs(failures)) return null;
     if (await this.#hostImages.beingMade(signal, architecture)) return null;
     const why = this.#hostImages.whyBuild(await this.#hostImages.newest(signal, architecture), this.#now(), await this.#bbApp(signal));
     if (!why) return null;
@@ -734,6 +746,12 @@ export class HetznerBackend implements Backend {
       if (!price || spent === null || spent + HOST_IMAGE_BUILD_HOURS * price.hourly > limit) return null;
     }
     return why;
+  }
+
+  async #failures(architecture: Architecture): Promise<HostImageFailures | null> {
+    const stored = await this.#context.storage.get<HostImageFailures | number>(HOST_IMAGE_FAILED_KEY[architecture]);
+    if (stored === undefined || stored === null) return null;
+    return typeof stored === "number" ? { atMs: stored, inARow: 1 } : stored;
   }
 
   buildHostImage(why: string, signal?: AbortSignal, architecture: Architecture = "x86"): Promise<void> {
@@ -783,7 +801,8 @@ export class HetznerBackend implements Backend {
           this.#context.log?.(`The ${ARCHITECTURE_WORDS[architecture]} host image build stopped waiting for snapshot ${making.id}, which Hetzner Cloud is still making: bb-box takes it once it is ready.`);
           return;
         }
-        await this.#context.storage.set(HOST_IMAGE_FAILED_KEY[architecture], this.#now());
+        const before = await this.#failures(architecture);
+        await this.#context.storage.set(HOST_IMAGE_FAILED_KEY[architecture], { atMs: this.#now(), inARow: (before?.inARow ?? 0) + 1 } satisfies HostImageFailures);
         throw error;
       }
     })().finally(() => this.#buildingHostImage.delete(architecture));
@@ -907,4 +926,9 @@ export class HetznerBackend implements Backend {
       if (each && (each.endedAtMs ?? goneAtMs) < before) await this.#context.storage.delete(key);
     }
   }
+}
+
+function ordinal(n: number): string {
+  if (n % 100 >= 11 && n % 100 <= 13) return "th";
+  return n % 10 === 1 ? "st" : n % 10 === 2 ? "nd" : n % 10 === 3 ? "rd" : "th";
 }
