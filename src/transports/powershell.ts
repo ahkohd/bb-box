@@ -138,6 +138,31 @@ export function writeFileScript(path: string): string {
 /** Prints the file's SHA-256 in lower-case hex and its size in bytes, as "<sha256> <bytes>" (#492). */
 const PRINT_HASH = "[Console]::Out.Write((Get-FileHash -Algorithm SHA256 -LiteralPath $t).Hash.ToLower()+' '+(Get-Item -LiteralPath $t).Length)";
 
+export function writeFileSummedScript(path: string): string {
+  return onFile(
+    path,
+    "$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($p));" +
+      `$f=[IO.File]::Create($p);try{[Console]::OpenStandardInput().CopyTo($f)}finally{$f.Close()};$t=$p;${PRINT_HASH}`,
+  );
+}
+
+export function readFileSummedScript(path: string): string {
+  return onFile(
+    path,
+    "$f=[IO.FileStream]::new($p,'Open','Read','ReadWrite, Delete');$o=[Console]::OpenStandardOutput();" +
+      "try{$f.CopyTo($o)}finally{$f.Close()};" +
+      "$b=[Text.Encoding]::ASCII.GetBytes([char]10+(Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLower()+' '+(Get-Item -LiteralPath $p).Length);" +
+      "$o.Write($b,0,$b.Length);$o.Flush()",
+  );
+}
+
+export function splitSummedRead(output: Buffer): { readonly data: Buffer; readonly sum: { readonly bytes: number; readonly sha256: string } } | null {
+  const tail = output.subarray(Math.max(0, output.length - 96)).toString("latin1");
+  const match = /\n([0-9a-f]{64}) (\d+)$/.exec(tail);
+  if (!match) return null;
+  return { data: output.subarray(0, output.length - match[0].length), sum: { sha256: match[1]!, bytes: Number(match[2]) } };
+}
+
 /** Prints `path`'s SHA-256 and size (#492). */
 export function hashFileScript(path: string): string {
   return onFile(path, `if(-not [IO.File]::Exists($p)){throw ($p+' is not a file.')};$t=$p;${PRINT_HASH}`);

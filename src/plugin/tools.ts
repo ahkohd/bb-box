@@ -281,10 +281,22 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
    * the box's (#492).
    */
   const fromBox = async (owner: string, boxId: string, from: string, target: ThreadFile, signal: AbortSignal): Promise<{ box: BoxRecord; sum: FileSum; streamed: boolean }> => {
-    const small = await boxes.readFile(owner, boxId, from, { maxBytes: COPY_MAX_BYTES, signal }).catch((error: unknown) => {
-      if (error instanceof Error && /is larger than \d+ bytes/.test(error.message)) return null;
-      throw error;
-    });
+    const small = await boxes
+      .reach(
+        owner,
+        boxId,
+        async (transport, box) => {
+          const read = await transport.readFileSummed?.(from, { maxBytes: COPY_MAX_BYTES, signal });
+          if (read) return read;
+          const data = await transport.readFile(from, { maxBytes: COPY_MAX_BYTES, signal });
+          return { data, sum: await boxFileSum(transport, box.capabilities.os, from, signal) };
+        },
+        signal,
+      )
+      .catch((error: unknown) => {
+        if (error instanceof Error && /is larger than \d+ bytes/.test(error.message)) return null;
+        throw error;
+      });
     if (!small) {
       const { box, result } = await boxes.reach(
         owner,
@@ -301,14 +313,14 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       );
       return { box, sum: result, streamed: true };
     }
-    const arrived = sumOf(small.data);
-    const { result: inBox } = await boxes.reach(owner, boxId, (transport, box) => boxFileSum(transport, box.capabilities.os, from, signal), signal);
+    const arrived = sumOf(small.result.data);
+    const inBox = small.result.sum;
     if (!sameSum(arrived, inBox)) throw new Error(`The copy of ${from} did not arrive whole: the box has ${summed(inBox)}, and ${summed(arrived)} came. Nothing was written. Try again.`);
     await bb.sdk.files.write({
       hostId: target.hostId,
       path: target.path,
       rootPath: target.rootPath,
-      content: Buffer.from(small.data).toString("base64"),
+      content: Buffer.from(small.result.data).toString("base64"),
       contentEncoding: "base64",
       createParents: true,
     });
@@ -626,8 +638,17 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
             if (!("content" in file)) throw new Error(`BB did not return the contents of ${source.path}.`);
             const data = bytes(file.content, file.contentEncoding);
             const sent = sumOf(data);
-            await boxes.writeFile(owner, found.id, target, data, { signal });
-            const { box, result: written } = await boxes.reach(owner, found.id, (transport, box) => boxFileSum(transport, box.capabilities.os, target, signal), signal);
+            const { box, result: written } = await boxes.reach(
+              owner,
+              found.id,
+              async (transport, box) => {
+                const summedThere = await transport.writeFileSummed?.(target, data, { signal });
+                if (summedThere) return summedThere;
+                await transport.writeFile(target, data, { signal });
+                return boxFileSum(transport, box.capabilities.os, target, signal);
+              },
+              signal,
+            );
             if (!sameSum(sent, written)) throw new Error(`The copy of ${source.path} did not arrive whole: ${summed(sent)} went, and ${target} in the box has ${summed(written)}. Copy it again.`);
             return `Copied ${source.path} (${summed(sent)}) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
           }

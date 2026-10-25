@@ -30,13 +30,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeTempFolder, shortTempBase } from "../core/temp-folders.ts";
 import { CommandLine, PROBE, failure, quote } from "./process.ts";
-import { COMMAND_LIMIT, powershellCommand, readFileScript, scriptText, stageCommand, stagedCommand, stagedName, writeFileScript } from "./powershell.ts";
+import { COMMAND_LIMIT, powershellCommand, readFileScript, readFileSummedScript, scriptText, splitSummedRead, stageCommand, stagedCommand, stagedName, writeFileScript, writeFileSummedScript } from "./powershell.ts";
 import { openRoute } from "./route.ts";
 import { openTerminal } from "./terminal.ts";
 import {
   TransportError,
   type ByteChannel,
   type CommandTransport,
+  type FileSize,
   type GuestOs,
   type Route,
   type RunOptions,
@@ -48,6 +49,8 @@ import {
 } from "./types.ts";
 
 export { quote } from "./process.ts";
+
+const SUM_TAIL_BYTES = 96;
 
 export interface SshOptions {
   /** Path to the private key file, mode 0600. */
@@ -435,6 +438,26 @@ export class Ssh {
     return this.#leased(access, options, (share) => this.#line(access, os, share).readFile(path, { ...options, script }), () => false);
   }
 
+  async writeFileSummed(access: SshAccess, path: string, data: Uint8Array, options: { timeoutMs?: number; signal?: AbortSignal } = {}, os?: GuestOs): Promise<FileSize | null> {
+    if (os !== "windows") return null;
+    const script = await this.#fileScript(access, writeFileSummedScript(path), `write ${path}`, options);
+    const result = await this.#leased(access, options, (share) => this.#line(access, os, share).run(script, { stdin: data, timeoutMs: options.timeoutMs ?? 120_000, signal: options.signal }), () => false);
+    if (result.exitCode !== 0) throw new SshError(failure(`write ${path}`, result));
+    const sum = /([0-9a-f]{64}) (\d+)\s*$/.exec(result.stdout);
+    if (!sum) throw new SshError(`Could not write ${path}: the box gave no size and SHA-256 for what it wrote.`);
+    return { sha256: sum[1]!, bytes: Number(sum[2]) };
+  }
+
+  async readFileSummed(access: SshAccess, path: string, options: { maxBytes: number; timeoutMs?: number; signal?: AbortSignal }, os?: GuestOs): Promise<{ readonly data: Uint8Array; readonly sum: FileSize } | null> {
+    if (os !== "windows") return null;
+    const script = await this.#fileScript(access, readFileSummedScript(path), `read ${path}`, options);
+    const output = await this.#leased(access, options, (share) => this.#line(access, os, share).readFile(path, { ...options, maxBytes: options.maxBytes + SUM_TAIL_BYTES, script }), () => false);
+    const read = splitSummedRead(output);
+    if (!read) throw new SshError(`Could not read ${path}: the box gave no size and SHA-256 after it.`);
+    if (read.data.length > options.maxBytes) throw new SshError(`${path} is larger than ${options.maxBytes} bytes.`);
+    return read;
+  }
+
   /** The command for a Windows file copy's script, whose stdin or stdout is the file's bytes. */
   async #fileScript(access: SshAccess, script: string, action: string, options: { timeoutMs?: number; signal?: AbortSignal }): Promise<string> {
     const command = await this.#powershell(access, script, options);
@@ -543,6 +566,24 @@ export class SshTransport implements CommandTransport {
   async readFile(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<Uint8Array> {
     try {
       return await this.#ssh.readFile(this.#access, path, options, this.#os);
+    } catch (error) {
+      if (error instanceof SshError && !/larger than/.test(error.message) && !(await this.#answersAgain(options.signal))) throw this.#unreachable();
+      throw error;
+    }
+  }
+
+  async writeFileSummed(path: string, data: Uint8Array, options: { signal?: AbortSignal } = {}): Promise<FileSize | null> {
+    try {
+      return await this.#ssh.writeFileSummed(this.#access, path, data, options, this.#os);
+    } catch (error) {
+      if (error instanceof SshError && !(await this.#answersAgain(options.signal))) throw this.#unreachable();
+      throw error;
+    }
+  }
+
+  async readFileSummed(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<{ readonly data: Uint8Array; readonly sum: FileSize } | null> {
+    try {
+      return await this.#ssh.readFileSummed(this.#access, path, options, this.#os);
     } catch (error) {
       if (error instanceof SshError && !/larger than/.test(error.message) && !(await this.#answersAgain(options.signal))) throw this.#unreachable();
       throw error;

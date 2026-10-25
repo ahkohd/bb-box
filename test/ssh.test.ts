@@ -1,9 +1,10 @@
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { readFileScript, scriptText, writeFileScript } from "../src/transports/powershell.ts";
+import { readFileScript, readFileSummedScript, scriptText, splitSummedRead, writeFileScript, writeFileSummedScript } from "../src/transports/powershell.ts";
 import { CommandLine, EndMark } from "../src/transports/process.ts";
 import { waitUntilAnswers } from "../src/transports/ready.ts";
 import { KeyFile, Ssh, SshError, SshTransport, generateKeyPair, publicKey, quote } from "../src/transports/ssh.ts";
@@ -234,7 +235,10 @@ test("a command spawned on a Windows box runs in PowerShell, with its stdin and 
 
 /** A sh stand-in for PowerShell that writes and reads files as bb-box's Windows file copies do, and runs any other script with sh. */
 const FILES = String.raw`p=$(printf '%s' "$1" | sed -n "1s/^try{\$p=\$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('\(.*\)');if(\[IO.Directory\].*/\1/p" | sed "s/''/'/g")
+sum() { printf '%s %s' "$(sha256sum < "$p" | cut -d' ' -f1)" "$(wc -c < "$p" | tr -d ' ')"; }
 case "$1" in
+  *OpenStandardInput*Get-FileHash*) mkdir -p "$(dirname "$p")" && cat > "$p" && sum ;;
+  *OpenStandardOutput*Get-FileHash*) cat -- "$p" && printf '\n' && sum ;;
   *OpenStandardInput*) mkdir -p "$(dirname "$p")" && cat > "$p" ;;
   *OpenStandardOutput*) cat -- "$p" ;;
   *) exec sh -c "$1" ;;
@@ -268,6 +272,35 @@ test("a Windows box's file copies run in PowerShell, with the file's bytes as th
   assert.equal(log().filter((entry) => entry.target === "box@192.0.2.36").length, 1, "the copy is not run");
   down("192.0.2.35");
   await assert.rejects(box.writeFile("x", data), (error: unknown) => error instanceof TransportError && error.code === "unreachable");
+});
+
+test("a Windows box's copy gives the file's size and SHA-256 from the same PowerShell, after the bytes it wrote or read, and a Linux box's gives none", async () => {
+  const { ssh, log, home, windows, powershell } = fakeSsh();
+  windows("192.0.2.37");
+  powershell("192.0.2.37", FILES);
+  const box = new SshTransport(ssh, at("192.0.2.37"), "windows");
+  const data = Uint8Array.from({ length: 700 }, (_, i) => (i * 7) % 256);
+  const sum = { sha256: createHash("sha256").update(data).digest("hex"), bytes: data.length };
+  assert.deepEqual(await box.writeFileSummed("in dir/it's.bin", data), sum);
+  assert.deepEqual(readFileSync(join(home("192.0.2.37"), "in dir", "it's.bin")), Buffer.from(data));
+  const script = (command: string) => Buffer.from(/FromBase64String\('([^']+)'\)/.exec(command)![1]!, "base64").toString("utf8");
+  assert.equal(log().length, 1, "one command writes and hashes");
+  assert.equal(script(log()[0]!.command), scriptText(writeFileSummedScript("in dir/it's.bin")));
+
+  const read = await box.readFileSummed("in dir/it's.bin", { maxBytes: 700 });
+  assert.deepEqual(Buffer.from(read!.data), Buffer.from(data));
+  assert.deepEqual(read!.sum, sum);
+  assert.equal(log().length, 2, "one command reads and hashes");
+  assert.equal(script(log()[1]!.command), scriptText(readFileSummedScript("in dir/it's.bin")));
+  await assert.rejects(box.readFileSummed("in dir/it's.bin", { maxBytes: 699 }), /^SshError: in dir\/it's.bin is larger than 699 bytes\.$/);
+
+  const ending = Buffer.concat([Buffer.from("ends with what looks like a sum\n" + "a".repeat(64) + " 3"), Buffer.from(`\n${"b".repeat(64)} 37`)]);
+  assert.deepEqual(splitSummedRead(ending), { data: ending.subarray(0, ending.length - 68), sum: { sha256: "b".repeat(64), bytes: 37 } }, "only the last line is the sum");
+  assert.equal(splitSummedRead(Buffer.from("no sum")), null);
+
+  const linux = new SshTransport(ssh, at("192.0.2.38"), "linux");
+  assert.equal(await linux.writeFileSummed("x", data), null);
+  assert.equal(await linux.readFileSummed("x", { maxBytes: 10 }), null);
 });
 
 test("commands to one box share a connection that bb-box opens once", async () => {
