@@ -51,13 +51,12 @@ import { FILE_ROUTE, FileRelay } from "../relay/files.ts";
 import { MSB_ROUTE, msbClientArgv, refuseMsb } from "../relay/msb.ts";
 import { NAME_WINDOWS_SCRIPT, parseNamed } from "../backends/windows.ts";
 import { abortable } from "../core/abortable.ts";
-import { DESKTOP_ON_DEMAND, DockerHosts, backendOn, desktopsOnDemand, machineOffline, withDesktopImage, withDockerHost, type MachineRecord, MachineNames, MachinePlatforms } from "./docker-hosts.ts";
+import { DESKTOP_ON_DEMAND, DockerHosts, backendOn, desktopsOnDemand, machineOffline, withDesktopImage, withDockerHost, withoutDesktopImage, type DesktopOnDemandKind, type MachineRecord, MachineNames, MachinePlatforms } from "./docker-hosts.ts";
 import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { DesktopOnDemandView, ThreadOnBox } from "./contract.ts";
 import { dockerKind } from "../backends/docker/backend.ts";
-import { DOCKER_KEYS } from "../backends/docker/config.ts";
 import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
 import { ReloadTimes } from "./reload-times.ts";
@@ -167,7 +166,7 @@ export interface BbBox {
    * Turns on the desktop image of BB machine `hostId`'s Docker and builds it, then makes a desktop box for the thread
    * once it is built. Returns once the configuration is saved; the panel shows the build.
    */
-  buildDesktop(input: { threadId: string; hostId: string; size?: SizeRequest; name?: string }): Promise<ApplyResult>;
+  buildDesktop(input: { threadId: string; hostId: string; kind?: DesktopOnDemandKind; size?: SizeRequest; name?: string }): Promise<ApplyResult>;
   /** Docker on BB machine `machine`, by ID or name, through the relay, and how long it took. */
   dockerCheck(machine: string, signal?: AbortSignal): Promise<{ hostId: string; name: string; endpoint: string; info: DockerInfo; firstMs: number; againMs: number }>;
   /** What a rebuild of the standard Linux images would take now (049): upstream's latest of the tools that follow it, or with `pinned` the pins alone. */
@@ -1025,7 +1024,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     desktopProblem: (threadId) => desktopProblems.get(threadId) ?? null,
     async desktopOnDemand() {
-      const [first] = desktopsOnDemand(configuration.document);
+      const all = desktopsOnDemand(configuration.document);
+      const first = all[0];
       const backend = first ? backends.get(first.backend) : undefined;
       if (!first || !backend) return null;
       const machine = (await dockerHosts.list()).find((candidate) => candidate.hostId === first.hostId);
@@ -1033,14 +1033,25 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       // The desktop as the backend will offer it once its image is set: with Docker in it when its Linux boxes have it.
       const docker = backends.kinds().some((offered) => offered.backend === backend && offered.kind.capabilities.features.includes("docker"));
       const config = await general();
-      const [kind] = kindViews([{ kind: dockerKind(DESKTOP_ON_DEMAND, docker), backend }], config.sizes, {}, {}, {}, {}, (id) => backends.driverLabel(id));
-      return kind ? { hostId: first.hostId, name: machine.name, kind, took: (await dockerImages.took(first.hostId)).desktop ?? null } : null;
+      const took = await dockerImages.took(first.hostId);
+      const onDemand = all.filter((candidate) => candidate.hostId === first.hostId && candidate.backend === first.backend);
+      const views = kindViews(
+        onDemand.map((candidate) => ({ kind: dockerKind(candidate.kind, docker), backend })),
+        config.sizes,
+        {},
+        {},
+        {},
+        {},
+        (id) => backends.driverLabel(id),
+      );
+      const kinds = views.map((kind) => ({ kind, took: took[kind.id === "linux-desktop-wayland-cpu" ? "desktop-wayland" : "desktop"] ?? null }));
+      return kinds.length ? { hostId: first.hostId, name: machine.name, kinds } : null;
     },
-    async buildDesktop({ threadId, hostId, size, name }) {
+    async buildDesktop({ threadId, hostId, kind = DESKTOP_ON_DEMAND, size, name }) {
       const document = configuration.document;
-      const found = desktopsOnDemand(document).find((candidate) => candidate.hostId === hostId);
-      if (!found) throw new BoxError("not_found", `BB machine ${hostId} has no Docker desktop image to build: its Docker is off, or its desktop image is set already.`);
-      const result = await configuration.apply(withDesktopImage(document, found.backend), document.revision);
+      const found = desktopsOnDemand(document).find((candidate) => candidate.hostId === hostId && candidate.kind === kind);
+      if (!found) throw new BoxError("not_found", `BB machine ${hostId} has no Docker desktop image to build for ${kind}: its Docker is off, or that image is set already.`);
+      const result = await configuration.apply(withDesktopImage(document, found.backend, kind), document.revision);
       if (!result.ok) return result;
       const projectId = await api.projectOf(threadId).catch(() => null);
       desktopProblems.delete(threadId);
@@ -1052,7 +1063,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         .then(async (build) => {
           if (build.state === "built") {
             // A box that fails now says why in the thread's panel, as an acquire refused there does.
-            await boxes.acquire({ threadId, projectId, kind: DESKTOP_ON_DEMAND, ...(size ? { size } : {}), ...(name ? { name } : {}), on: found.backend }).catch((error: unknown) => {
+            await boxes.acquire({ threadId, projectId, kind, ...(size ? { size } : {}), ...(name ? { name } : {}), on: found.backend }).catch((error: unknown) => {
               const reason = error instanceof Error ? error.message : String(error);
               logError("desktop on demand", error);
               desktopProblems.set(threadId, { message: `The desktop image is built, but the box was not made: ${reason}`, at: Date.now() });
@@ -1062,12 +1073,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           }
           // Not built: the desktop goes back to building first, so the form offers it again rather than a desktop with no image.
           const now = configuration.document;
-          const backend = now.backends.find((candidate) => candidate.id === found.backend);
-          if (!backend || DOCKER_KEYS.desktopImage in backend.fields) return;
-          await configuration.apply(
-            { ...now, backends: now.backends.map((candidate) => (candidate === backend ? { ...candidate, fields: { ...candidate.fields, [DOCKER_KEYS.desktopImage]: "" } } : candidate)) },
-            now.revision,
-          );
+          await configuration.apply(withoutDesktopImage(now, found.backend, kind), now.revision);
         })
         .catch((error) => logError("desktop on demand", error));
       return result;

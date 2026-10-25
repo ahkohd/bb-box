@@ -45,13 +45,10 @@ export interface MachinesState {
   readonly access?: MachineAccessProblem | null;
 }
 
-/** A desktop New box can build first: the BB machine whose Docker builds its image, and the kind as it will be offered. */
 export interface DesktopOnDemandView {
   readonly hostId: string;
   readonly name: string;
-  readonly kind: KindView;
-  /** How long the desktop image last took to build there, in ms, or null when it has not: its estimate. */
-  readonly took: number | null;
+  readonly kinds: readonly { readonly kind: KindView; readonly took: number | null }[];
 }
 
 /** The settings page's Rebuild now: the standard images, most needed first, and where a refresh run is. */
@@ -273,7 +270,7 @@ export const contract = defineRpcContract({
   "docker.hosts": { input: z.null(), output: z.custom<{ hosts: DockerHostView[] }>() },
   /** What each BB machine offers first-run setup, the server's first, and what stands in the way of boxes joining BB, if anything. */
   "setup.offer": { input: z.null(), output: z.custom<{ machines: MachineSetup[]; access: MachineAccessProblem | null }>() },
-  "setup.desktop": { input: thread.extend({ hostId: z.string().min(1), size: size.optional(), name: z.string().min(1).optional() }), output: z.custom<{ result: ApplyResult }>() },
+  "setup.desktop": { input: thread.extend({ hostId: z.string().min(1), kind: z.enum(["linux-desktop-cpu", "linux-desktop-wayland-cpu"]).optional(), size: size.optional(), name: z.string().min(1).optional() }), output: z.custom<{ result: ApplyResult }>() },
   /** First-run setup: turns on Docker on BB machine `hostId` with the Linux image alone, which then builds. */
   "setup.docker": { input: z.object({ hostId: z.string().min(1) }), output: z.custom<{ result: ApplyResult; machines: MachineSetup[] }>() },
   /**

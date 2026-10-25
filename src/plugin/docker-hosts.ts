@@ -209,13 +209,19 @@ export function withDockerHost(document: ConfigDocument, machine: { readonly id:
   return { ...document, backends: document.backends.filter((backend) => backend !== existing) };
 }
 
-/** The desktop kind a Docker machine's desktop image serves, built on demand (the setup plan's PR 4). */
-export const DESKTOP_ON_DEMAND = "linux-desktop-cpu";
+export const DESKTOPS_ON_DEMAND = {
+  "linux-desktop-cpu": DOCKER_KEYS.desktopImage,
+  "linux-desktop-wayland-cpu": DOCKER_KEYS.waylandImage,
+} as const;
 
-/** A BB machine whose Docker is on, with the desktop image first-run setup left off, so the New box form can build it. */
+export type DesktopOnDemandKind = keyof typeof DESKTOPS_ON_DEMAND;
+
+export const DESKTOP_ON_DEMAND: DesktopOnDemandKind = "linux-desktop-cpu";
+
 export interface DesktopOnDemand {
   readonly hostId: string;
   readonly backend: string;
+  readonly kind: DesktopOnDemandKind;
 }
 
 /**
@@ -224,22 +230,29 @@ export interface DesktopOnDemand {
  * left at its default, is not this: it is offered, or not, as configured.
  */
 export function desktopsOnDemand(document: ConfigDocument): DesktopOnDemand[] {
-  if (!kindOn(document, DESKTOP_ON_DEMAND)) return [];
+  const kinds = (Object.keys(DESKTOPS_ON_DEMAND) as DesktopOnDemandKind[]).filter((kind) => kindOn(document, kind));
   return document.backends.flatMap((backend) => {
     const host = typeof backend.fields.host === "string" ? /^bb:(.+)$/.exec(backend.fields.host)?.[1] : undefined;
-    return backend.type === "docker" && backend.enabled && host && backend.fields[DOCKER_KEYS.desktopImage] === "" ? [{ hostId: host, backend: backend.id }] : [];
+    if (backend.type !== "docker" || !backend.enabled || !host) return [];
+    return kinds.filter((kind) => backend.fields[DESKTOPS_ON_DEMAND[kind]] === "").map((kind) => ({ hostId: host, backend: backend.id, kind }));
   });
 }
 
-/** The configuration with backend `id`'s desktop image back at its default, so it builds and its desktops are offered. */
-export function withDesktopImage(document: ConfigDocument, id: string): ConfigDocument {
+export function withDesktopImage(document: ConfigDocument, id: string, kind: DesktopOnDemandKind = DESKTOP_ON_DEMAND): ConfigDocument {
   return {
     ...document,
     backends: document.backends.map((backend) => {
       if (backend.id !== id) return backend;
-      const { [DOCKER_KEYS.desktopImage]: _, ...fields } = backend.fields;
+      const { [DESKTOPS_ON_DEMAND[kind]]: _, ...fields } = backend.fields;
       return { ...backend, fields };
     }),
+  };
+}
+
+export function withoutDesktopImage(document: ConfigDocument, id: string, kind: DesktopOnDemandKind): ConfigDocument {
+  return {
+    ...document,
+    backends: document.backends.map((backend) => (backend.id === id && !(DESKTOPS_ON_DEMAND[kind] in backend.fields) ? { ...backend, fields: { ...backend.fields, [DESKTOPS_ON_DEMAND[kind]]: "" } } : backend)),
   };
 }
 
