@@ -167,8 +167,13 @@ green ✓ or a red ✗. The next step's pill replaces both.
   clip, without captions, and the answer says so.
 - **Chapters**: the clip's page lists the steps, each with its result and
   its time, and a click there plays the clip from it.
-- **Windows** records as before, without captions, for now: `step` and
-  `result` say so.
+- **Windows** (amended): the same two-part stop, in PowerShell. `step`
+  and `result` append to `events` with the box's clock in milliseconds,
+  and GDI+ draws each pill as a PNG in Segoe UI, its icon in Segoe UI
+  Symbol: GDI+ comes with every Windows box, so the pills need nothing
+  installed.
+  Checked on a Proxmox QEMU box and on a Tart arm64 box, at 1x and 2x,
+  with the captions at the top and at the bottom.
 - **Where the captions go** (amended): `start` takes `position`, `top`, the
   default, or `bottom`, for a check near the top of the screen, such as a
   menu bar or a window's title. At the bottom the pills sit above a dock or

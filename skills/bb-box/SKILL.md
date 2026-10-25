@@ -198,7 +198,7 @@ cut by default, so a long session makes a short clip.
 
 - Before you start a recording, clear or dismiss notifications, and close
   windows that do not belong in the video.
-- To show a test run, caption each check, on Linux and macOS: before it,
+- To show a test run, caption each check: before it,
   `action: "step"` with what you check, one short line ("It keeps the draft
   when saving fails"); after it, `action: "result"` with `passed` true or
   false and what you saw ("Draft kept; no error toast"). They are drawn

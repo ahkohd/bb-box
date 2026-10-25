@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, recordStopScript, type Prepared } from "../src/core/record.ts";
+import { RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, type Prepared } from "../src/core/record.ts";
 import { fakeFfmpeg, tempDir } from "./helpers.ts";
 
 const skip = process.platform === "linux" ? false : "needs GNU stat and setsid";
@@ -141,19 +141,37 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   assert.ok(captionText("a ".repeat(80)).endsWith("…"));
 });
 
-test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its console before it would force it, then makes the clip as elsewhere (059)", () => {
-  const start = recordStartScript("windows");
+test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its console before it would force it, then captions and makes the clip as elsewhere (059)", () => {
+  const start = recordStartScript("windows", "bottom");
   assert.match(start, /Join-Path \$HOME '\.local\\state\\bb-box\\recording'/);
   assert.match(start, /Start-Process \$ffmpeg -WindowStyle Hidden -PassThru -RedirectStandardError "\$d\\log"/);
   assert.match(start, /-f gdigrab -framerate 15 -draw_mouse 1 -i desktop -t 300 -c:v libx264 -preset ultrafast -crf 0 /);
   assert.match(start, /exit 4 }/);
-  const stop = recordStopScript({ speed: 4, stills: "cut" });
-  // Without /F, ffmpeg sees its console close and ends its file whole.
-  assert.ok(stop.indexOf("taskkill /PID $p.Id") < stop.indexOf("taskkill /F /PID $p.Id"), stop);
-  assert.match(stop, /if \('cut' -eq 'cut'\)/);
-  assert.match(stop, /-vf freezedetect=n=0\.0001:d=1 -map 0:v -f null -/);
-  assert.match(stop, /setpts=N\/\(15\*4\)\/TB,fps=15,scale='min\(1280,iw\)':-2" -an -c:v libx264 -preset medium -crf 28 -tune animation -pix_fmt yuv420p -movflags \+faststart/);
-  assert.match(recordStopScript({ speed: 1, stills: "keep" }), /if \('keep' -eq 'cut'\)/);
+  assert.match(start, /Set-Content "\$d\\position" 'bottom'\nSet-Content "\$d\\start" \(Now\)/);
+  assert.match(start, /CultureInfo\]::InvariantCulture/);
+
+  const step = recordStepScript("fail", "Saving   kept the draft", "windows");
+  assert.match(step, /if \(-not \(Recording\)\) \{ exit 3 \}/);
+  assert.ok(step.includes(`Add-Content "$d\\events" ((Now) + "\`tfail\`t${Buffer.from("Saving kept the draft").toString("base64")}")`), step);
+
+  const prepare = recordPrepareScript("cut", "windows");
+  assert.ok(prepare.indexOf("taskkill /PID $p.Id") < prepare.indexOf("taskkill /F /PID $p.Id"), prepare);
+  assert.match(prepare, /if \('cut' -eq 'cut'\)/);
+  assert.match(prepare, /-vf freezedetect=n=0\.0001:d=1 -map 0:v -f null -/);
+  assert.match(prepare, /"start":\{3\},"position":"\{4\}","cuts":\[\{5\}\]/);
+  assert.match(recordPrepareScript("keep", "windows"), /if \('keep' -eq 'cut'\)/);
+  const prepared = parsePrepared(`{"ended":"stopped","recorded":20.5,"size":"1280x800","start":100.000,"position":"bottom","cuts":[[3.500,9.000]]}\r\n100.500\tstep\t${Buffer.from("It opens Notepad").toString("base64")}\r\n102.000\tpass\t${Buffer.from("Notepad is open").toString("base64")}\r\n`);
+  assert.deepEqual(prepared?.events.map((event) => event.text), ["It opens Notepad", "Notepad is open"]);
+  assert.equal(prepared?.position, "bottom");
+
+  const plan = planClip(prepared!, 2);
+  const make = recordMakeScript(plan, "windows");
+  assert.match(make, /\[Drawing\.Font\]::new\('Segoe UI Semibold', \$fs, \[Drawing\.GraphicsUnit\]::Pixel\)/);
+  assert.match(make, /Pill 0 '[^']+' '4pa2' '4f8df5' '5f6368' 0\.82 21\n {4}Pill 1 '[^']+' '4pyT' '34c759' '2a2a2a' 0\.94 21/);
+  assert.ok(make.includes(`-i $capture -i "$d\\pill-0.png" -i "$d\\pill-1.png" -i "$d\\pill-2.png" -i "$d\\pill-3.png" -filter_complex "${clipGraph(plan, true)}" -map '[out]'`), make);
+  assert.ok(make.includes(`-i $capture -filter_complex "${clipGraph(plan, false)}" -map '[out]'`), make);
+  assert.match(make, /\$drawn = switch \(\$captions\) \{ '1' \{ 'true' \} 'none' \{ 'null' \} default \{ 'false' \} \}/);
+  assert.match(recordMakeScript(planClip({ ...prepared!, events: [], cuts: [] }, 1), "windows"), /\$captions = 'none'/);
 });
 
 test("box_record's page plays the clip beside it by its name, and its height follows the clip's shape (059)", () => {

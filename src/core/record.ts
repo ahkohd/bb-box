@@ -41,7 +41,7 @@ const CLIP = "-an -c:v libx264 -preset medium -crf 28 -tune animation -pix_fmt y
  * named on stderr.
  */
 export function recordStartScript(os: GuestOs = "linux", position: CaptionPosition = "top"): string {
-  if (os === "windows") return windowsStart();
+  if (os === "windows") return windowsStart(position);
   return String.raw`d="$HOME/${RECORD_DIR}"; mkdir -p "$d"
 if [ -s "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null; then exit ${RECORD_START_EXITS.running}; fi
 set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
@@ -70,10 +70,6 @@ kill -0 "$(cat "$d/pid")" 2>/dev/null || { rm -f "$d/pid"; tail -n 3 "$d/log" >&
 `;
 }
 
-export function recordStopScript(options: { speed: RecordSpeed; stills: "cut" | "keep" }): string {
-  return windowsStop(options);
-}
-
 export const RECORD_STEP_EXITS = { saved: 0, none: 3 } as const;
 
 export type StepKind = "step" | "pass" | "fail";
@@ -85,15 +81,17 @@ export function captionText(text: string): string {
   return line.length > CAPTION_CHARS ? `${line.slice(0, CAPTION_CHARS - 1).trimEnd()}…` : line;
 }
 
-export function recordStepScript(kind: StepKind, text: string): string {
+export function recordStepScript(kind: StepKind, text: string, os: GuestOs = "linux"): string {
   const encoded = Buffer.from(captionText(text)).toString("base64");
+  if (os === "windows") return windowsStep(kind, encoded);
   return String.raw`d="$HOME/${RECORD_DIR}"
 [ -s "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null || exit ${RECORD_STEP_EXITS.none}
 printf '%s\t%s\t%s\n' "$(perl -MTime::HiRes=time -e 'printf "%.3f", time')" ${kind} '${encoded}' >>"$d/events"
 `;
 }
 
-export function recordPrepareScript(stills: "cut" | "keep"): string {
+export function recordPrepareScript(stills: "cut" | "keep", os: GuestOs = "linux"): string {
+  if (os === "windows") return windowsPrepare(stills);
   return String.raw`d="$HOME/${RECORD_DIR}"
 [ -s "$d/pid" ] || [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
 ended=limit
@@ -138,7 +136,7 @@ export interface Prepared {
 }
 
 export function parsePrepared(stdout: string): Prepared | null {
-  const lines = stdout.trim().split("\n");
+  const lines = stdout.trim().split(/\r?\n/);
   const head = lines.findIndex((line) => line.startsWith("{"));
   if (head < 0) return null;
   try {
@@ -321,12 +319,17 @@ function run(argv) {
 }
 `;
 
-export function recordMakeScript(plan: ClipPlan): string {
-  const pills = plan.overlays.map((overlay, index) => {
+function pillCalls(plan: ClipPlan, name: string): string[] {
+  return plan.overlays.map((overlay, index) => {
     const look = PILLS[overlay.look];
     const encoded = Buffer.from(overlay.text).toString("base64");
-    return `pill ${index} '${encoded}' '${Buffer.from(look.icon).toString("base64")}' ${look.color} ${look.fill} ${look.alpha} ${overlay.size}`;
+    return `${name} ${index} '${encoded}' '${Buffer.from(look.icon).toString("base64")}' '${look.color}' '${look.fill}' ${look.alpha} ${overlay.size}`;
   });
+}
+
+export function recordMakeScript(plan: ClipPlan, os: GuestOs = "linux"): string {
+  if (os === "windows") return windowsMake(plan);
+  const pills = pillCalls(plan, "pill");
   const inputs = plan.overlays.map((_, index) => `-i "$d/pill-${index}.png"`).join(" ");
   return String.raw`d="$HOME/${RECORD_DIR}"
 [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
@@ -372,14 +375,20 @@ printf '{"ended":"stopped","recorded":%s,"clip":%s,"bytes":%s,"size":"%s","capti
  * in. ddagrab needs a Direct3D 11 device, which a box drawn by WARP lacks.
  * ffmpeg gets a hidden console of its own, which the stop closes.
  */
-function windowsStart(): string {
-  return String.raw`$d = Join-Path $HOME '${RECORD_DIR.replaceAll("/", "\\")}'
+const WINDOWS_DIR = String.raw`$d = Join-Path $HOME '${RECORD_DIR.replaceAll("/", "\\")}'
+[Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::InvariantCulture
+function Recording { if (Test-Path "$d\pid") { Get-Process -Id ([int](Get-Content "$d\pid" -Raw)) -ErrorAction Ignore | Where-Object ProcessName -eq ffmpeg } }
+function Now { '{0:f3}' -f ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000) }`;
+
+function windowsStart(position: CaptionPosition): string {
+  return String.raw`${WINDOWS_DIR}
 New-Item -ItemType Directory -Force $d | Out-Null
-$running = if (Test-Path "$d\pid") { Get-Process -Id ([int](Get-Content "$d\pid" -Raw)) -ErrorAction Ignore | Where-Object ProcessName -eq ffmpeg }
-if ($running) { exit ${RECORD_START_EXITS.running} }
+if (Recording) { exit ${RECORD_START_EXITS.running} }
 $ffmpeg = (Get-Command ffmpeg -ErrorAction Ignore).Source
 if (-not $ffmpeg) { [Console]::Error.WriteLine('ffmpeg'); exit ${RECORD_START_EXITS.noRecorder} }
-Remove-Item "$d\capture.mkv", "$d\clip.mp4", "$d\log" -Force -ErrorAction Ignore
+Remove-Item "$d\capture.mkv", "$d\clip.mp4", "$d\log", "$d\events", "$d\pill-*" -Force -ErrorAction Ignore
+Set-Content "$d\position" '${position}'
+Set-Content "$d\start" (Now)
 $p = Start-Process $ffmpeg -WindowStyle Hidden -PassThru -RedirectStandardError "$d\log" -ArgumentList ('-nostdin -loglevel error -y -f gdigrab -framerate ${RECORD_FPS} -draw_mouse 1 -i desktop -t ${RECORD_LIMIT_S} -c:v libx264 -preset ultrafast -crf 0 "' + "$d\capture.mkv" + '"')
 Set-Content "$d\pid" $p.Id
 Start-Sleep -Milliseconds 500
@@ -388,48 +397,108 @@ exit ${RECORD_START_EXITS.started}
 `;
 }
 
+function windowsStep(kind: StepKind, encoded: string): string {
+  return String.raw`${WINDOWS_DIR}
+if (-not (Recording)) { exit ${RECORD_STEP_EXITS.none} }
+Add-Content "$d\events" ((Now) + "${"`"}t${kind}${"`"}t${encoded}")
+exit ${RECORD_STEP_EXITS.saved}
+`;
+}
+
 /**
  * The stop on Windows, in the desktop session: taskkill without /F closes
  * ffmpeg's console, and ffmpeg ends its file whole; /F would leave it
  * broken. A window's close does not reach another session.
  */
-function windowsStop(options: { speed: RecordSpeed; stills: "cut" | "keep" }): string {
-  return String.raw`$d = Join-Path $HOME '${RECORD_DIR.replaceAll("/", "\\")}'
+function windowsPrepare(stills: "cut" | "keep"): string {
+  return String.raw`${WINDOWS_DIR}
 $capture = "$d\capture.mkv"
-# Numbers with a decimal point, whatever the box's language.
-[Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::InvariantCulture
 if (-not (Test-Path "$d\pid") -and -not (Test-Path $capture)) { exit ${RECORD_STOP_EXITS.none} }
 $ended = 'limit'
-if (Test-Path "$d\pid") {
-  $p = Get-Process -Id ([int](Get-Content "$d\pid" -Raw)) -ErrorAction Ignore | Where-Object ProcessName -eq ffmpeg
-  if ($p) {
-    $ended = 'stopped'
-    taskkill /PID $p.Id *> $null
-    if (-not $p.WaitForExit(10000)) { taskkill /F /PID $p.Id *> $null }
-  }
-  Remove-Item "$d\pid"
+$p = Recording
+if ($p) {
+  $ended = 'stopped'
+  taskkill /PID $p.Id *> $null
+  if (-not $p.WaitForExit(10000)) { taskkill /F /PID $p.Id *> $null }
 }
-function Fail { Get-Content "$d\log" -Tail 3 -ErrorAction Ignore | ForEach-Object { [Console]::Error.WriteLine($_) }; exit ${RECORD_STOP_EXITS.failed} }
-if (-not (Test-Path $capture) -or -not (Get-Item $capture).Length) { Fail }
-function Seconds($file) { [double](ffprobe -v error -show_entries format=duration -of csv=p=0 $file) }
-$recorded = Seconds $capture
-$keep = @()
-if ('${options.stills}' -eq 'cut') {
-  $start = $null
+Remove-Item "$d\pid" -ErrorAction Ignore
+if (-not (Test-Path $capture) -or -not (Get-Item $capture).Length) { Get-Content "$d\log" -Tail 3 -ErrorAction Ignore | ForEach-Object { [Console]::Error.WriteLine($_) }; exit ${RECORD_STOP_EXITS.failed} }
+$recorded = [double](ffprobe -v error -show_entries format=duration -of csv=p=0 $capture)
+$size = "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 $capture)".Trim()
+$cuts = @()
+if ('${stills}' -eq 'cut') {
+  $still = $null
   foreach ($line in (ffmpeg -nostdin -hide_banner -i $capture -vf ${FREEZE} -map 0:v -f null - 2>&1)) {
     if ("$line" -match 'freeze_(start|end): ([\d.]+)') {
       $t = [double]$Matches[2]
-      if ($Matches[1] -eq 'start') { $start = $t } elseif ($null -ne $start) { $keep += 'between(t,{0:f3},{1:f3})' -f ($start + 0.5), $t; $start = $null }
+      if ($Matches[1] -eq 'start') { $still = $t } elseif ($null -ne $still) { $cuts += '[{0:f3},{1:f3}]' -f ($still + 0.5), $t; $still = $null }
     }
   }
-  if ($null -ne $start) { $keep += 'between(t,{0:f3},{1:f3})' -f ($start + 0.5), $recorded }
+  if ($null -ne $still) { $cuts += '[{0:f3},{1:f3}]' -f ($still + 0.5), $recorded }
 }
-$select = if ($keep) { "select='not($($keep -join '+'))'," } else { '' }
-ffmpeg -nostdin -loglevel error -y -i $capture -vf "$($select)setpts=N/(${RECORD_FPS}*${options.speed})/TB,fps=${RECORD_FPS},scale='min(1280,iw)':-2" ${CLIP} "$d\clip.mp4" 2>> "$d\log"
-if ($LASTEXITCODE) { Fail }
-$size = ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$d\clip.mp4"
-Remove-Item $capture
-'{{"ended":"{0}","recorded":{1},"clip":{2},"bytes":{3},"size":"{4}"}}' -f $ended, $recorded, (Seconds "$d\clip.mp4"), (Get-Item "$d\clip.mp4").Length, "$size".Trim()
+$start = if (Test-Path "$d\start") { (Get-Content "$d\start" -Raw).Trim() } else { 'null' }
+$position = if (Test-Path "$d\position") { (Get-Content "$d\position" -Raw).Trim() } else { 'top' }
+'{{"ended":"{0}","recorded":{1},"size":"{2}","start":{3},"position":"{4}","cuts":[{5}]}}' -f $ended, $recorded, $size, $start, $position, ($cuts -join ',')
+if (Test-Path "$d\events") { Get-Content "$d\events" }
+exit ${RECORD_STOP_EXITS.made}
+`;
+}
+
+const WINDOWS_PILL = String.raw`function Decode($text) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($text)) }
+function Color($hex, $alpha) { [Drawing.Color]::FromArgb([int](255 * $alpha), [Convert]::ToInt32($hex.Substring(0, 2), 16), [Convert]::ToInt32($hex.Substring(2, 2), 16), [Convert]::ToInt32($hex.Substring(4, 2), 16)) }
+function Pill($index, $text, $icon, $iconHex, $fillHex, $alpha, $size) {
+  $ErrorActionPreference = 'Stop'
+  Add-Type -AssemblyName System.Drawing
+  $label = Decode $text; $mark = Decode $icon; $fs = [int]$size
+  $font = [Drawing.Font]::new('Segoe UI Semibold', $fs, [Drawing.GraphicsUnit]::Pixel)
+  $iconFont = [Drawing.Font]::new('Segoe UI Symbol', $fs, [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
+  $format = [Drawing.StringFormat]::GenericTypographic
+  $measure = [Drawing.Graphics]::FromImage([Drawing.Bitmap]::new(1, 1))
+  $measure.TextRenderingHint = 'AntiAlias'
+  $tw = [int][Math]::Ceiling($measure.MeasureString($label, $font, [Drawing.PointF]::Empty, $format).Width)
+  $iw = [int][Math]::Ceiling($measure.MeasureString($mark, $iconFont, [Drawing.PointF]::Empty, $format).Width)
+  $h = [int][Math]::Round($fs * 2.1); $pad = $fs; $gap = [int][Math]::Round($fs * 0.6); $w = $pad + $iw + $gap + $tw + $pad
+  $bitmap = [Drawing.Bitmap]::new($w, $h, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+  $g = [Drawing.Graphics]::FromImage($bitmap)
+  $g.SmoothingMode = 'AntiAlias'; $g.PixelOffsetMode = 'HighQuality'; $g.TextRenderingHint = 'AntiAlias'
+  $capsule = [Drawing.Drawing2D.GraphicsPath]::new()
+  $capsule.AddArc(0, 0, $h, $h, 90, 180); $capsule.AddArc($w - $h, 0, $h, $h, 270, 180); $capsule.CloseFigure()
+  $g.FillPath([Drawing.SolidBrush]::new((Color $fillHex ([double]$alpha))), $capsule)
+  $capHeight = $fs * 0.7
+  function Top($f) { ($h + $capHeight) / 2 - $fs * $f.FontFamily.GetCellAscent('Regular') / $f.FontFamily.GetEmHeight('Regular') }
+  $g.DrawString($mark, $iconFont, [Drawing.SolidBrush]::new((Color $iconHex 1)), [float]$pad, [float](Top $iconFont), $format)
+  $g.DrawString($label, $font, [Drawing.Brushes]::White, [float]($pad + $iw + $gap), [float](Top $font), $format)
+  $bitmap.Save("$d\pill-$index.png", [Drawing.Imaging.ImageFormat]::Png)
+  $g.Dispose(); $bitmap.Dispose()
+}`;
+
+function windowsMake(plan: ClipPlan): string {
+  const inputs = plan.overlays.map((_, index) => `-i "$d\\pill-${index}.png"`).join(" ");
+  return String.raw`${WINDOWS_DIR}
+$capture = "$d\capture.mkv"
+if (-not (Test-Path $capture)) { exit ${RECORD_STOP_EXITS.none} }
+${WINDOWS_PILL}
+function Seconds($file) { [double](ffprobe -v error -show_entries format=duration -of csv=p=0 $file) }
+$captions = '${plan.overlays.length ? "1" : "none"}'
+if ($captions -eq '1') {
+  try {
+${pillCalls(plan, "    Pill").join("\n")}
+  } catch {
+    Add-Content "$d\log" "$_"
+    $captions = '0'
+  }
+}
+if ($captions -eq '1') {
+  ffmpeg -nostdin -loglevel error -y -i $capture ${inputs} -filter_complex "${clipGraph(plan, true)}" -map '[out]' ${CLIP} "$d\clip.mp4" 2>> "$d\log"
+} else {
+  ffmpeg -nostdin -loglevel error -y -i $capture -filter_complex "${clipGraph(plan, false)}" -map '[out]' ${CLIP} "$d\clip.mp4" 2>> "$d\log"
+}
+if ($LASTEXITCODE) { Get-Content "$d\log" -Tail 3 -ErrorAction Ignore | ForEach-Object { [Console]::Error.WriteLine($_) }; exit ${RECORD_STOP_EXITS.failed} }
+$recorded = Seconds $capture
+$size = "$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$d\clip.mp4")".Trim()
+Remove-Item $capture, "$d\events", "$d\pill-*" -Force -ErrorAction Ignore
+$drawn = switch ($captions) { '1' { 'true' } 'none' { 'null' } default { 'false' } }
+'{{"ended":"stopped","recorded":{0},"clip":{1},"bytes":{2},"size":"{3}","captions":{4}}}' -f $recorded, (Seconds "$d\clip.mp4"), (Get-Item "$d\clip.mp4").Length, $size, $drawn
 exit ${RECORD_STOP_EXITS.made}
 `;
 }

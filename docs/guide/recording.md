@@ -42,7 +42,6 @@ A clip is an MP4 file in the thread's storage folder. The captions and marks are
 
 - A recording runs for at most 5 minutes. It then stops by itself, and the agent still gets the clip.
 - Only a desktop box can be recorded: Linux, on X11 or Wayland, macOS or Windows.
-- On Windows, still stretches are cut and a clip can play faster, but there are no captions or marks yet.
 
 ## What it costs a box
 
