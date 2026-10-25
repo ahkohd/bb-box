@@ -59,8 +59,11 @@ if [ "${BBBOX_DOCKERD:-0}" = 1 ]; then
   # dockerd can make groups of its own beside it, as Docker's dind image does.
   if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
     mkdir -p /sys/fs/cgroup/init
-    xargs -rn1 </sys/fs/cgroup/cgroup.procs >/sys/fs/cgroup/init/cgroup.procs 2>/dev/null || :
-    sed -e 's/ / +/g' -e 's/^/+/' </sys/fs/cgroup/cgroup.controllers >/sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || :
+    for _ in $(seq 1 100); do
+      xargs -rn1 </sys/fs/cgroup/cgroup.procs >/sys/fs/cgroup/init/cgroup.procs 2>/dev/null || :
+      sed -e 's/ / +/g' -e 's/^/+/' </sys/fs/cgroup/cgroup.controllers >/sys/fs/cgroup/cgroup.subtree_control 2>/dev/null && break
+      sleep 0.05
+    done
   fi
   rm -f /var/run/docker.pid /run/containerd/containerd.pid
   # systemd-socket-activate runs dockerd with the socket when the first
