@@ -341,7 +341,7 @@ ${MAC_PILL}PILL
 else
   font=$(fc-match -f '%{file}' 'DejaVu Sans' 2>/dev/null)
   bold=$(fc-match -f '%{file}' 'DejaVu Sans:bold' 2>/dev/null)
-  measure() { ffmpeg -nostdin -hide_banner -v info -f lavfi -i color=s=16x16:d=0.1 -vf "drawtext=fontfile=$1:textfile=$2:expansion=none:fontsize=$3:x='print(tw)'" -frames:v 1 -f null - 2>&1 | awk '/^[0-9.]+$/ { print int($1 + 0.5); exit }'; }
+  measure() { ffmpeg -nostdin -hide_banner -v info -f lavfi -i color=s=16x16:d=0.1 -vf "drawtext=fontfile=$1:textfile=$2:expansion=none:fontsize=$3:x='print(tw)'" -frames:v 1 -f null - 2>&1 | awk '/^(\[Eval @ [^]]*\] )?[0-9.]+$/ { print int($NF + 0.5); exit }'; }
   pill() {
     fs=$7
     decode "$2" >"$d/pill-$1.txt"; decode "$3" >"$d/pill-$1.icon"

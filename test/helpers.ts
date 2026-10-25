@@ -313,7 +313,7 @@ export function joined(hub: () => Routed, options: { openAfterMs?: number } = {}
  * 10 s for the capture, 4.2 s for the clip and 1280x720. Each ffmpeg call's
  * arguments go to ~/ffmpeg-args.
  */
-export function fakeFfmpeg(options: { wfRecorder?: boolean; darwin?: boolean } = {}): string {
+export function fakeFfmpeg(options: { wfRecorder?: boolean; darwin?: boolean; ffmpeg8?: boolean } = {}): string {
   const bin = tempDir("fake-ffmpeg");
   writeFileSync(
     join(bin, "ffmpeg"),
@@ -323,7 +323,7 @@ echo "$*" >> "$HOME/ffmpeg-args"
 case "$*" in
   *list_devices*) printf '[AVFoundation indev @ 0x1] [0] Capture screen 0\n' >&2 ;;
   *x11grab* | *"-f avfoundation"*) trap 'echo capture > "$out"; exit 0' TERM; while :; do sleep 0.05; done ;;
-  *"print(tw)"*) printf '120.000000\n' >&2 ;;
+  *"print(tw)"*) ${options.ffmpeg8 ? `printf '[Eval @ 0x5a1] 120.000000\\n    Last message repeated 1 times\\n' >&2` : `printf '120.000000\\n' >&2`} ;;
   *"-f null"*) printf '[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 1\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_end: 6\\n[freezedetect @ 0x1] lavfi.freezedetect.freeze_start: 8\\n' >&2 ;;
   *) printf mp4data > "$out" ;;
 esac
