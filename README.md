@@ -19,7 +19,7 @@ Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own
 
 You need a Linux machine that runs BB and Docker, with about 10 GB free.
 
-1. In BB, open Settings, then Installed plugins, then **New plugin**, then **Install from source**, and enter:
+1. In BB, open Settings, then Installed plugins, then the arrow beside **New plugin**, then **Install from source**, and enter:
 
    ```text
    git:https://github.com/moonstead/bb-box.git@main
@@ -31,10 +31,13 @@ You need a Linux machine that runs BB and Docker, with about 10 GB free.
    bb plugin install git:https://github.com/moonstead/bb-box.git@main
    ```
 
+   It asks you to confirm. An agent or a script adds `--yes`, as it cannot answer.
+
 2. Open a thread's **Box** panel and select **Use Docker on this machine**, or have an agent run `bb box setup docker`. The Linux image usually builds in 5 to 12 minutes, depending on the machine.
 3. Select the plus, then **Create box**. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
+4. For a desktop, select the plus, choose **Desktop**, then **Create box**. bb-box builds the desktop image before the first one, usually in 4 to 10 minutes.
 
-`bb box doctor` checks the setup. If a box says 'Could not join BB', see [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).
+A box joins BB by reaching BB's server, so BB must listen on an address the box can reach. `bb box doctor` checks the setup. If a box says 'Could not join BB', see [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).
 
 ## Backends and boxes
 
