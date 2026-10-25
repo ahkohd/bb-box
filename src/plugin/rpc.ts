@@ -175,8 +175,9 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       }
     },
     ping: async () => null,
-    async profile({ seconds, keep, allocations, snapshot }) {
+    async profile({ seconds, keep, allocations, snapshot, collect }) {
       const lines = await profileLoop(seconds, {
+        fullCollection: collect === true,
         ...(keep ? { save: (profile: CpuProfile) => keepProfile(bb, profile, "cpuprofile") } : {}),
         ...(allocations ? { allocations: (profile: HeapProfile) => keepProfile(bb, profile, "heapprofile") } : {}),
         ...(snapshot ? { snapshot: () => heapSnapshot(bb) } : {}),

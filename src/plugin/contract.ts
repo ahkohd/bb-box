@@ -216,7 +216,7 @@ export const contract = defineRpcContract({
    * or it is refused.
    */
   profile: {
-    input: z.object({ seconds: z.number().int().min(1).max(60), keep: z.boolean().optional(), allocations: z.boolean().optional(), snapshot: z.boolean().optional() }),
+    input: z.object({ seconds: z.number().int().min(1).max(60), keep: z.boolean().optional(), allocations: z.boolean().optional(), snapshot: z.boolean().optional(), collect: z.boolean().optional() }),
     output: z.object({ lines: z.array(z.string()) }),
   },
   takeControl: { input: viewer, output: boxResult },
