@@ -22,7 +22,7 @@ function hooks() {
 let counter = 0;
 const identity = (kind: string): BoxIdentity => ({ boxId: `bxarm${String(++counter).padStart(9, "0")}`, threadId: "thr_abc123", name: `calm-otter-${counter}`, kind, createdAt: 1_790_000_000_000, size: box4 });
 
-function armWorld() {
+function armWorld(extra: Parameters<typeof hetznerConfig>[0] = {}) {
   const world = hetznerWorld();
   const built: { host: string; image: string; target: string; architecture: string }[] = [];
   const addImage = (record: HostRecord, image: string) => {
@@ -39,7 +39,7 @@ function armWorld() {
     runOnHost: async () => ({ exitCode: 0, stderr: "" }),
     hostImageFingerprint: () => "fp1",
   };
-  const config = hetznerConfig({ armServerType: "cax31", hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04" });
+  const config = hetznerConfig({ armServerType: "cax31", hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04", ...extra });
   return { ...world, built, options, config, backend: () => world.backend(config, new MemoryStorage(), "test", options) };
 }
 
@@ -79,6 +79,25 @@ test("a linux-arm64 box makes an Arm host, builds the arm64 image there, and com
   assert.equal((await command!.run("echo arm", { timeoutMs: 10_000 })).stdout.trim(), "arm");
   await hetzner.release(arm, releasing, signal());
   await hetzner.release(x86, releasing, signal());
+});
+
+test("at the most hosts, a host of the other architecture that holds no box makes way, and one that holds a box does not (#1032)", async () => {
+  const { api, backend } = armWorld({ mostHosts: 1 });
+  const hetzner = backend();
+  const types = () => [...api.servers.values()].map((server) => server.serverType);
+  // An x86 box, then its release: its host stays, idle, until it has been for idleMinutes.
+  const x86 = await hetzner.acquire(identity("linux"), null, hooks().value, signal());
+  const offer = await hetzner.capacity("linux-arm64", box4, [], signal());
+  assert.equal(offer.ok, false, "a host that holds a box does not make way");
+  assert.match(offer.message!, /has the 1 host it may have at once/);
+  await hetzner.release(x86, releasing, signal());
+  assert.deepEqual(types(), ["cpx42"]);
+  // Before, the arm64 box was refused until the idle host was deleted, half an hour later.
+  assert.equal((await hetzner.capacity("linux-arm64", box4, [], signal())).ok, true);
+  const arm = await hetzner.acquire(identity("linux-arm64"), null, hooks().value, signal());
+  assert.deepEqual(types(), ["cax31"], "the idle x86 host went, and an Arm host took the box");
+  assert.equal([...api.servers.values()][0]!.name, arm.host);
+  await hetzner.release(arm, releasing, signal());
 });
 
 test("each architecture has its own host image: an Arm build on an Arm server with the arm64 images, labelled arm, which only Arm hosts start from", async () => {
