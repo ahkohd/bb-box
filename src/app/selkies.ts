@@ -233,7 +233,7 @@ export class SelkiesSession implements Kept {
   /** A paste: the text or image pasted, or null when the browser's clipboard had none and the box pasted its own. */
   onPaste?: (pasted: string | Blob | null) => void;
   onPasteFailed?: (error: unknown) => void;
-  putClipboard?: (text: string) => Promise<unknown> | null;
+  putClipboard?: (text: string, automatic?: boolean) => Promise<unknown> | null;
   pasteAllowed?: () => boolean;
   readonly #url: string;
   readonly #listeners = new Set<() => void>();
@@ -907,11 +907,12 @@ export class SelkiesSession implements Kept {
   }
 
   /** Puts text on the box's clipboard, as a viewer's paste does. */
-  sendClipboard(text: string): void {
-    if (this.connection.state !== "connected") return;
-    const put = this.putClipboard?.(text);
-    if (put) put.catch(() => undefined);
-    else this.#putOnBox("text/plain", new TextEncoder().encode(text));
+  sendClipboard(text: string): Promise<boolean> {
+    if (this.connection.state !== "connected") return Promise.resolve(false);
+    const put = this.putClipboard?.(text, true);
+    if (put) return put.then((taken) => taken !== false, () => false);
+    this.#putOnBox("text/plain", new TextEncoder().encode(text));
+    return Promise.resolve(true);
   }
 
   /** Puts text on the box's clipboard, then presses the box's own paste chord where the cursor is, and says so. */

@@ -357,7 +357,7 @@ export class DesktopSession implements Kept {
   /** A paste the box did not take, with why. */
   onPasteFailed?: (error: unknown) => void;
   /** Puts the viewer's text on the box's clipboard bb-box's own way, where the desktop's server moves none (#464); null leaves it to noVNC. */
-  putClipboard?: (text: string) => Promise<unknown> | null;
+  putClipboard?: (text: string, automatic?: boolean) => Promise<unknown> | null;
   /** Whether the box takes a viewer's clipboard at all; where not, a Cmd+V is left to noVNC as it was. */
   pasteAllowed?: () => boolean;
   /** A Cmd+V or Ctrl+V taken from noVNC, with Shift or not, while the browser's paste event is awaited. */
@@ -556,11 +556,12 @@ export class DesktopSession implements Kept {
   }
 
   /** Puts text on the box's clipboard, as a viewer's paste does. */
-  sendClipboard(text: string): void {
-    if (this.connection.state !== "connected") return;
-    const put = this.putClipboard?.(text);
-    if (put) put.catch(() => undefined);
-    else this.#client?.clipboardPasteFrom(text);
+  sendClipboard(text: string): Promise<boolean> {
+    if (this.connection.state !== "connected") return Promise.resolve(false);
+    const put = this.putClipboard?.(text, true);
+    if (put) return put.then((taken) => taken !== false, () => false);
+    this.#client?.clipboardPasteFrom(text);
+    return Promise.resolve(true);
   }
 
   /**
@@ -925,7 +926,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     };
     current.onPasteFailed = (error) => setProblem(message(error));
     // A desktop whose server moves no clipboard, as Tart's macOS VMs: bb-box puts the text there itself, as UTF-8 (#464).
-    current.putClipboard = (text) => (boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text }) : null);
+    current.putClipboard = (text, automatic) =>
+      boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text, ...(automatic ? { automatic: true } : {}) }) : null;
     current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
     const unsubscribe = current.subscribe(() => setConnection(current.connection));
     setConnection(current.connection);
@@ -1013,7 +1015,9 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
         (text) => {
           if (stopped || !text || text === sent) return;
           sent = text;
-          session.current?.sendClipboard(text);
+          void session.current?.sendClipboard(text).then((taken) => {
+            if (!taken && sent === text) sent = null;
+          });
         },
         () => undefined,
       );

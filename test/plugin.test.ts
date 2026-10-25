@@ -4088,6 +4088,8 @@ test("a macOS desktop whose server moves no clipboard has it through pbcopy and 
 
   // Before control, nothing is pasted, and nothing is read.
   await assert.rejects(harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer, text: "early" }), /Only the tab with control of the desktop can paste into it/);
+  assert.equal(await harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer, text: "early", automatic: true }), false, "an automatic send without control is declined, not an error");
+  assert.ok(!existsSync(join(home, "pasteboard")), "and pastes nothing");
   writeFileSync(join(home, "pasteboard"), "copied before");
   assert.equal(await clipboard(viewer), null);
 
@@ -4101,7 +4103,7 @@ test("a macOS desktop whose server moves no clipboard has it through pbcopy and 
   const first = await clipboard(viewer);
   assert.equal(first?.text, "copied before");
   const pasted = "héllo, wörld ✓ 日本\nline two";
-  assert.equal(await harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer, text: pasted }), null);
+  assert.equal(await harness.behavior.callRpc("desktopPaste", { threadId: THREAD, box: box.id, viewer, text: pasted, automatic: true }), null);
   assert.equal(readFileSync(join(home, "pasteboard"), "utf8"), pasted, "byte for byte, as UTF-8");
   assert.equal(readFileSync(join(home, "pasteboard-locale"), "utf8"), "en_US.UTF-8");
   assert.equal((await clipboard(viewer))?.serial, first!.serial, "the viewer's own paste does not come back as a copy");

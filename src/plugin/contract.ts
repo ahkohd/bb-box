@@ -227,7 +227,7 @@ export const contract = defineRpcContract({
    */
   desktopClipboard: { input: oneBox.extend({ viewer: viewerId.optional() }), output: z.object({ text: z.string(), serial: z.number() }).nullable() },
   /** Puts the viewer with control's text on the box's clipboard, where the desktop's server moves none (#464). */
-  desktopPaste: { input: viewer.extend({ text: z.string().max(MAX_PASTE_LENGTH) }), output: z.null() },
+  desktopPaste: { input: viewer.extend({ text: z.string().max(MAX_PASTE_LENGTH), automatic: z.boolean().optional() }), output: z.literal(false).nullable() },
   /** Every box across threads, servers as well as desktops, and your machines (036), for the Boxes page. */
   allBoxes: { input: z.null(), output: z.custom<BoxEntry[]>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
