@@ -2,39 +2,44 @@
 
 bb-box builds on BB rather than around it
 ([002](decisions/002-bb-is-the-coordinator.md)). These are the BB features it
-has needed. Each one's status is checked against BB 0.45.0, its plugin SDK
-0.6.15, its guide and its component registry, on 7 October 2026. A request BB
-meets stays here, with the bb-box issue that drops its workaround. This page
+has needed. Each one's status was checked against BB 0.45.0, its plugin SDK
+0.6.15, its guide and its component registry, on 7 October 2026, or against the
+version its section names. On 25 October 2026 the requests a plugin's API or
+BB's command line shows were checked again against BB 0.47.1 and its plugin SDK
+0.6.79: their sections say "Status in BB 0.47.1". Those that only a live test
+shows, such as a reboot or a Windows install, keep the status of the version
+they name. A request BB meets stays here, with the bb-box issue that drops its
+workaround. This page
 is a log: bb-box does not file these with BB.
 
 | Request | Status | Without it |
 | --- | --- | --- |
 | [BB's host app on Windows](#1-bbs-host-app-on-windows) | partly met | Windows boxes join BB as machines of BB's manual provider, not bb-box's, so BB removing one does not release its box, and "New box" cannot make a Windows box (#539) |
-| [Send backlog on plugin WebSockets](#2-send-backlog-on-plugin-websockets) | not met | the desktop relay cannot slow down for a slow viewer |
+| [Send backlog on plugin WebSockets](#2-send-backlog-on-plugin-websockets) | not met in 0.47.1 | the desktop relay cannot slow down for a slow viewer |
 | [Start cleanly after a reboot](#3-start-cleanly-after-a-reboot) | not met | every template and image clears BB's daemon lock and PID file at boot |
 | [Change a plugin's source and keep its state](#4-change-a-plugins-source-and-keep-its-state) | not met | moving bb-box off a pinned commit or tag needs `bb plugin remove`, which deletes its settings, secrets and storage |
 | [Enrol quickly when bb-app is installed](#5-enrol-quickly-when-bb-app-is-installed) | not met | a box from a template with bb-app installed takes about 5 s to enrol, not under 2 s |
 | [Find a machine by its key](#6-find-a-machine-by-its-key) | not met | the machine of a box whose record was lost, and whose thread then ended, stays in BB |
 | [Reach a port on a machine](#7-reach-a-port-on-a-machine) | not met | a Mac that runs Tart for bb-box needs SSH from the BB server, with a host user and a key, even when it is a BB machine already; Docker on a BB machine goes through a relay of bb-box's own, on a route with `auth: "none"` guarded by a one-time secret |
 | [Give a machine's own commands its variables](#8-give-a-machines-own-commands-its-variables) | not met | bb-box's host entry keeps a process with the thread's variables and GH_TOKEN on each box, and commands read them from BB's processes there: from `/proc` on Linux, inexactly from `ps -E` on macOS, and through each process's PEB on Windows |
-| [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | not met | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
+| [Open BB's terminal on a machine from a plugin](#9-open-bbs-terminal-on-a-machine-from-a-plugin) | met in 0.47.1, experimental; bb-box does not use it yet | a box's terminal is bb-box's own tab over its own shell, not BB's terminal with its tabs, history and persistence |
 | [Show machine-making environments where they can be seen](#10-show-machine-making-environments-where-they-can-be-seen) | not known | "New box" in the new-thread screen sits below the fold of the Machines list, and users do not find it |
 | [Give a machine a project's variables without a thread there](#11-give-a-machine-a-projects-variables-without-a-thread-there) | not met | a box has its thread's project variables only while a thread of the project runs on it |
 | [Make a plugin's host call quick](#12-make-a-plugins-host-call-quick) | not met | each call to bb-box's host entry takes about 0.4 s, so it cannot carry commands |
 | [Mark a machine offline when it stops checking in](#13-mark-a-machine-offline-when-it-stops-checking-in) | not met | a machine that goes with no word, such as a PC that restarts, shows as connected for about 16 minutes, so bb-box judges it by when BB last heard from it |
-| [Panel actions without a launcher row](#14-panel-actions-without-a-launcher-row) | not met | a thread panel action is always a launcher row, so Desktop and Terminal cannot be hidden and open from the Box panel alone; instead each is a shortcut that opens the right box |
+| [Panel actions without a launcher row](#14-panel-actions-without-a-launcher-row) | may be met in 0.47.1, experimental; not tried | a thread panel action is always a launcher row, so Desktop and Terminal cannot be hidden and open from the Box panel alone; instead each is a shortcut that opens the right box |
 | [Give a plugin's CLI the caller's files](#15-give-a-plugins-cli-the-callers-files) | documented in 0.45.0, not shipped | `bb box image set --script-file` and `bb box config apply` read their files on BB's server, so they fail from any other machine; agents use `box_image_set`, which takes the text, until #535 |
 | [Alert dialogs that do not fly in from the corner](#16-alert-dialogs-that-do-not-fly-in-from-the-corner) | not met | every plugin's alert dialog, scaffolded from the registry's `alert-dialog.tsx`, flies in from the top left on Tailwind v4; bb-box carries BB's own dialog motion in its copy |
 | [Carry providers' own config to every machine](#17-carry-providers-own-config-to-every-machine) | not met | a box lacks the config a provider reads from its machine, such as pi's `models.json`, so bb-box carries a list of files of its own into every box (#455) |
 | [A nav page's title-bar action beside its title](#18-a-nav-pages-title-bar-action-beside-its-title) | not met | the Boxes page's settings gear sits at the title bar's right, before BB's own buttons, not beside the "Boxes" title where the operator wanted it |
-| [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | not met | `box_run` returns after 270 s, and a command still running goes on as a job for `box_job`; a Windows command in the desktop session, which has no job, is stopped (#486, #414) |
-| [Move large files through the file API](#20-move-large-files-through-the-file-api) | not met | `box_copy` moves a file over 16 MiB through bb-box's own worker on the machine that holds it, which needs that machine connected to BB (#492) |
+| [Tool calls longer than five minutes](#19-tool-calls-longer-than-five-minutes) | not met in 0.47.1 | `box_run` returns after 270 s, and a command still running goes on as a job for `box_job`; a Windows command in the desktop session, which has no job, is stopped (#486, #414) |
+| [Move large files through the file API](#20-move-large-files-through-the-file-api) | not met in 0.47.1 | `box_copy` moves a file over 16 MiB through bb-box's own worker on the machine that holds it, which needs that machine connected to BB (#492) |
 | [Stop a plugin's machine workers after its tool calls](#21-stop-a-plugins-machine-workers-after-its-tool-calls) | not met | a command in a Docker box on a BB machine loses its box first at a deploy, so `box_run` waits up to 10 s to see that bb-box is stopping before it names the job (#415) |
-| [Remove a machine whose host is gone](#22-remove-a-machine-whose-host-is-gone) | not met | a Windows box's machine stays in BB's list as "removing" when the box goes before BB has torn down the threads' environments on it, so bb-box waits up to 2 minutes for BB's removal before it releases a Windows box (#539) |
+| [Remove a machine whose host is gone](#22-remove-a-machine-whose-host-is-gone) | met in 0.47.1; bb-box does not use it yet | a Windows box's machine stays in BB's list as "removing" when the box goes before BB has torn down the threads' environments on it, so bb-box waits up to 2 minutes for BB's removal before it releases a Windows box (#539) |
 | [Install commands for the machine's OS](#23-install-commands-for-the-machines-os) | not met | BB's install action for Cursor's CLI on a Windows machine is a bash script, which Windows cannot run (#561) |
 | [End a thread's processes before removing its worktree on Windows](#24-end-a-threads-processes-before-removing-its-worktree-on-windows) | not met | bb-box ends the processes working in BB's worktrees in a Windows box before it asks BB to remove the box's machine, or BB's teardown fails with EBUSY and the machine stays "removing" (#539) |
-| [Keep the server's event loop free](#25-keep-the-servers-event-loop-free) | not met | BB's server stops for up to 1.2 s, 6 to 20 times a minute, and every desktop's frames and input wait it out, so a drag lags by up to a second and a video viewer loses frames |
-| [Say what uninstalling a plugin keeps](#26-say-what-uninstalling-a-plugin-keeps) | not met | after an uninstall in BB's settings and a fresh install, bb-box came back with its old box records and its Docker backend on, though the dialog says it deletes the plugin's settings |
+| [Keep the server's event loop free](#25-keep-the-servers-event-loop-free) | not met in 0.47.1 | BB's server stops for up to 1.2 s, 6 to 20 times a minute, and every desktop's frames and input wait it out, so a drag lags by up to a second and a video viewer loses frames |
+| [Say what uninstalling a plugin keeps](#26-say-what-uninstalling-a-plugin-keeps) | not met in 0.47.1 | after an uninstall in BB's settings and a fresh install, bb-box came back with its old box records and its Docker backend on, though the dialog says it deletes the plugin's settings |
 | [Start a Windows machine's helpers without a window](#27-start-a-windows-machines-helpers-without-a-window) | not met | on a Windows box, Keep Awake's PowerShell opens a window over the desktop each time BB's daemon starts, and after a boot BB's daemon opens one of its own, which take the focus and show in box_record's clips |
 | [Refresh a machine's processors and memory when they change](#28-refresh-a-machines-processors-and-memory-when-they-change) | not met | after a live resize (061), BB keeps a machine's old processor count, and its automatic thread limit with it, until BB's daemon there restarts; bb-box restarts it when no thread works on the machine and no BB terminal is open there, and otherwise says how to set the limit by hand |
 | [Start one daemon however often it is started](#29-start-one-daemon-however-often-it-is-started) | not met | two starts of BB's daemon at once, such as its logon entry's and a reconnect's after a boot, can leave two supervisors running; bb-box waits for BB's own start after a boot before it reconnects a Windows box (#917) |
@@ -135,8 +140,9 @@ A thread started on such a box would also run in Linux, not Windows:
 
 ## 2. Send backlog on plugin WebSockets
 
-**Status in BB 0.45.0: not met.** SDK 0.6.15's plugin WebSocket has neither
-`bufferedAmount` nor a `send` that returns a promise.
+**Status in BB 0.47.1: not met.** SDK 0.6.79's plugin WebSocket has `send`,
+`close` and `readyState`, and still neither `bufferedAmount` nor a `send` that
+returns a promise.
 
 **What bb-box needs.** The desktop relay copies a box's stream to each viewer
 through a plugin WebSocket route. When a viewer's network is slower than the
@@ -473,8 +479,10 @@ process is Node, as Windows has no `sleep` (`src/core/windows-access.ts`,
 
 ## 9. Open BB's terminal on a machine from a plugin
 
-**Status in BB 0.45.0: not met.** SDK 0.6.15 has no navigation call that opens
-BB's terminal on a machine.
+**Status in BB 0.47.1: met, experimental.** SDK 0.6.79's `terminals.create`
+makes a terminal session scoped to a thread, an environment or a directory on a
+host, and the app's `navigate.experimental_openTerminal` shows it in the
+surface's own BB terminal panel. bb-box has not moved its terminal to it yet.
 
 **What bb-box needs.** A terminal in a box, one click from the Box panel.
 A box that is a BB machine already has BB's own terminal sessions on it:
@@ -642,8 +650,10 @@ heard from for 60 s, as offline.
 
 ## 14. Panel actions without a launcher row
 
-**Status in BB 0.45.0: not met.** `threadPanelAction` in SDK 0.6.15 has no
-field that hides its launcher row.
+**Status in BB 0.47.1: may be met, experimental; not tried.** SDK 0.6.79
+replaces `threadPanelAction` with `experimental_tab`, whose registration takes
+`availability: "action"` and a `useVisible` hook. Whether a tab `useVisible`
+hides can still be opened by code, as bb-box needs, is not yet tried.
 
 **What bb-box needs.** A thread panel action that a panel can open, but that
 BB draws no launcher row for: a tab a plugin reaches by code, not one a
@@ -789,8 +799,8 @@ before BB's buttons.
 
 ## 19. Tool calls longer than five minutes
 
-**Status in BB 0.45.0: not met.** Neither the guide nor SDK 0.6.15 states a
-tool call's time limit or a way to keep a call open. It was not timed again.
+**Status in BB 0.47.1: not met.** SDK 0.6.79's `registerTool` still takes no
+time limit and no way to keep a call open. It was not timed again.
 
 **What bb-box needs.** A tool call that runs as long as its tool says, such as
 `box_run` with `timeout_seconds` up to an hour, or else to be told when BB
@@ -815,8 +825,8 @@ with its output so far.
 
 ## 20. Move large files through the file API
 
-**Status in BB 0.45.0: not met.** SDK 0.6.15's `files.read` and `files.write`
-still move a whole file, with no offset, length or append.
+**Status in BB 0.47.1: not met.** SDK 0.6.79's `files.read` and `files.write`
+still move a whole file as one string, with no offset, length or append.
 
 **What bb-box needs.** To copy a file of any size between a thread's workspace
 or storage folder and a box, as `box_copy` does for small ones: installers,
@@ -865,8 +875,9 @@ whether bb-box is stopping. If it is, the answer names the job, which
 
 ## 22. Remove a machine whose host is gone
 
-**Status in BB 0.45.0: not met.** SDK 0.6.15's `hosts.delete` takes no force,
-and neither do `bb machine remove` and `bb machine retry-cleanup`.
+**Status in BB 0.47.1: met.** SDK 0.6.79's `hosts.delete` takes `force`, where
+0.6.15's took none. bb-box has not moved to it yet, and still waits up to 2
+minutes for BB's removal before it releases a Windows box.
 
 **What bb-box needs.** To remove a Windows box's machine, made with BB's
 manual provider (#539), when the box goes, even when the box has gone first,
@@ -940,7 +951,9 @@ each process's working directory from its PEB.
 
 ## 25. Keep the server's event loop free
 
-**Status in BB 0.46.0: not met.**
+**Status in BB 0.47.1: not met.** On a fresh BB 0.47.1 on a 4-core machine,
+bb-box logged BB's server standing still for up to 778 ms, twice in two
+minutes, while a desktop was open.
 
 **What bb-box needs.** BB's server's event loop free of long synchronous
 work. bb-box's desktop relays run on that loop, inside BB's server process,
@@ -1002,7 +1015,9 @@ each minute in which the loop stood still for 250 ms or more, and the
 
 ## 26. Say what uninstalling a plugin keeps
 
-**Status in BB 0.46.0: not met.**
+**Status in BB 0.47.1: not met.** `bb plugin remove --help` in 0.47.1 says it
+deletes a plugin's settings, secrets and schedules, and still says nothing of its
+storage.
 
 **What bb-box needs.** An uninstall that does what its dialog says, or a
 dialog that says what stays. A person who uninstalls bb-box to start again,
