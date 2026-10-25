@@ -244,7 +244,7 @@ export class HetznerBackend implements Backend {
     if (rooms.some((room) => room.ok)) return { ok: true, message: null, warm: null, hosts };
     const architecture = this.#architectureOfKind(kind);
     const why = await this.#whyNoNewHost(size, architecture, signal);
-    if (why === null) return { ok: true, message: null, warm: null, hosts: [...hosts, this.#newHostCapacity(architecture)] };
+    if (why === null || (await this.#idleHostToFree(size, architecture, signal))) return { ok: true, message: null, warm: null, hosts: [...hosts, this.#newHostCapacity(architecture)] };
     const onHosts = rooms.map((room) => room.why).filter(Boolean);
     return { ok: false, message: `${this.label} cannot take this ${kind} box: ${[...onHosts, why].join("; ")}.`, warm: null, hosts };
   }
@@ -503,12 +503,12 @@ export class HetznerBackend implements Backend {
     if (record.answeredAtMs === null || this.#now() - record.answeredAtMs > ANSWERED_NOTED_EVERY_MS) await this.hostRecords.markAnswered(record.hostId);
   }
 
-  async #whyNoNewHost(size: BoxSize, architecture: Architecture, signal?: AbortSignal): Promise<string | null> {
+  async #whyNoNewHost(size: BoxSize, architecture: Architecture, signal?: AbortSignal, options: { readonly hostLimit?: boolean } = {}): Promise<string | null> {
     const unreachable = this.#reach?.canReach() ?? null;
     if (unreachable) return unreachable;
     if (size.diskGiB !== null) return `a Docker box shares its host's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk of its own. Ask for the base disk`;
     const live = (await this.hostRecords.records()).filter((record) => record.state !== "deleting");
-    if (live.length >= this.#config.mostHosts) return `it has the ${this.#config.mostHosts} host${this.#config.mostHosts === 1 ? "" : "s"} it may have at once. Release a box, or raise the most hosts in the backend's settings`;
+    if (options.hostLimit !== false && live.length >= this.#config.mostHosts) return `it has the ${this.#config.mostHosts} host${this.#config.mostHosts === 1 ? "" : "s"} it may have at once. Release a box, or raise the most hosts in the backend's settings`;
     const type = await this.#serverTypeNow(this.#typeOf(architecture), signal).catch(() => null);
     if (type) {
       const room = type.memoryGB * 1024 - OS_MEMORY_MiB - this.#config.docker.reserveMemoryMiB;
@@ -521,6 +521,19 @@ export class HetznerBackend implements Backend {
       const more = await this.#nextHourWithANewHost(architecture, signal).catch(() => null);
       if (spent === null || more === null) return "bb-box could not read Hetzner Cloud's prices to keep to the monthly limit";
       if (spent + more > limit) return `another host would take this month's spend from ${euros(spent)} to ${euros(spent + more)} within the hour, past the ${euros(limit)} limit`;
+    }
+    return null;
+  }
+
+  async #idleHostToFree(size: BoxSize, architecture: Architecture, signal?: AbortSignal): Promise<HostRecord | null> {
+    const live = (await this.hostRecords.records()).filter((record) => record.state !== "deleting");
+    if (live.length < this.#config.mostHosts) return null;
+    if ((await this.#whyNoNewHost(size, architecture, signal, { hostLimit: false })) !== null) return null;
+    for (const record of live) {
+      if (record.state !== "ready" || this.#architectureOfType(record.serverType) === architecture || this.hostRecords.isMakingInThisProcess(record.hostId)) continue;
+      const part = await this.#partOf(record.hostId, signal).catch(() => null);
+      const boxes = part ? await part.docker.held(signal).catch(() => null) : null;
+      if (boxes !== null && boxes.length === 0) return record;
     }
     return null;
   }
@@ -541,7 +554,13 @@ export class HetznerBackend implements Backend {
       if (roomiest) return roomiest.part;
       const inFlight = [...this.#making.values()].find((each) => each.architecture === architecture);
       if (inFlight) return inFlight.part;
-      const why = await this.#whyNoNewHost(box.size, architecture, signal);
+      let why = await this.#whyNoNewHost(box.size, architecture, signal);
+      const idle = why === null ? null : await this.#idleHostToFree(box.size, architecture, signal);
+      if (idle) {
+        this.#context.log?.(`Deleting ${this.label} host ${idle.serverName}, which holds no box, to make room for a ${this.#typeOf(architecture)} host for box ${box.name}: the most hosts at once is ${this.#config.mostHosts}.`);
+        await this.#deleteHost(idle, signal);
+        why = await this.#whyNoNewHost(box.size, architecture, signal);
+      }
       if (why !== null) throw new BackendError("no_capacity", `${this.label} cannot take this ${box.kind} box: ${why}.`);
       const started = performance.now();
       const part = await this.#makeHost(architecture, signal);
