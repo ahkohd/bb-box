@@ -40,7 +40,7 @@ function targetsWords(build: ImageBuild): string {
 /** Where a build is, in a sentence. */
 export function progressWords(setup: MachineSetup, now: number): string {
   const build = setup.build!;
-  const step = build.step ? `, step ${build.step.at} of ${build.step.of}` : "";
+  const step = build.step ? (build.image && build.image.of > 1 ? `, image ${build.image.at} of ${build.image.of}, step ${build.step.at} of ${build.step.of}` : `, step ${build.step.at} of ${build.step.of}`) : "";
   return `Building ${targetsWords(build)} on ${setup.name}${step}, started ${minutes(Math.max(0, now - build.startedAt))} ago.`;
 }
 

@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { BUILD_FREE_GB, DockerImages, bbAppDigest, outdated, type DockerImagesDeps } from "../src/plugin/docker-images.ts";
+import { BUILD_FREE_GB, DockerImages, bbAppDigest, imageStep, outdated, type DockerImagesDeps, type ImageBuild } from "../src/plugin/docker-images.ts";
 import { tempDir } from "./helpers.ts";
 
 function world(more: Partial<DockerImagesDeps> & { staleImages?: string[]; exit?: number | null; lines?: string[] } = {}) {
@@ -38,6 +38,17 @@ function world(more: Partial<DockerImagesDeps> & { staleImages?: string[]; exit?
   });
   return { images, runs, apps, changes, release };
 }
+
+test("a build's place is its image and that image's own step: helper stages leave it, and it never goes back", () => {
+  const targets = ["desktop", "desktop-wayland"];
+  let current: Pick<ImageBuild, "step" | "image"> = {};
+  const seen: string[] = [];
+  for (const line of ["#3 [fetch 5/5] RUN curl", "#7 [desktop 2/9] RUN apt-get", "#8 [app 3/3] COPY", "#9 [desktop 4/9] RUN", "#5 [desktop 1/9] FROM", "Sending build context", "#21 [desktop-wayland 1/7] FROM", "#22 [fetch-desktop-wayland 2/2] RUN", "#23 [desktop-wayland 3/7] RUN", "#24 [desktop 9/9] RUN"]) {
+    current = { ...current, ...imageStep(line, targets, current) };
+    seen.push(current.image ? `${current.image.at}/${current.image.of} ${current.step!.at}/${current.step!.of}` : "none");
+  }
+  assert.deepEqual(seen, ["none", "1/2 2/9", "1/2 2/9", "1/2 4/9", "1/2 4/9", "1/2 4/9", "2/2 1/7", "2/2 1/7", "2/2 3/7", "2/2 3/7"]);
+});
 
 test("a machine with every image it needs builds nothing, and one that lacks one builds it through its relay", async () => {
   const fine = world();

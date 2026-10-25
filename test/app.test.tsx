@@ -15,7 +15,7 @@ import type { GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
 import type { ImagesStatus } from "../src/plugin/contract.ts";
-import { buildStep, roughly } from "../src/app/first-run.tsx";
+import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
@@ -1673,10 +1673,18 @@ test("first run: with no machine to set up, the panel says BB Box is not set up 
   expect(await slot.findByText("BB Box is not set up yet")).toBeTruthy();
 });
 
-test("a build's time reads in whole seconds under a minute and minutes after, and its step comes from Docker's build line", () => {
+test("a build's time reads in whole seconds under a minute and minutes after, and its place reads as its image and that image's step, with a bar that only grows", () => {
   expect([roughly(800), roughly(45_400), roughly(75_000), roughly(4 * 60_000)]).toEqual(["1 s", "45 s", "1 min", "4 min"]);
-  expect(buildStep("#14 [linux 7/12] RUN /tmp/install-tools.sh")).toEqual({ step: 7, of: 12 });
-  expect(buildStep("Sending build context")).toBeNull();
+  expect(buildPlace({})).toEqual({ words: null, share: 0.03 });
+  expect(buildPlace({ step: { at: 7, of: 12 } })).toEqual({ words: "Step 7 of 12", share: 0.5 });
+  const places = [
+    { image: { at: 1, of: 2 }, step: { at: 2, of: 4 } },
+    { image: { at: 1, of: 2 }, step: { at: 4, of: 4 } },
+    { image: { at: 2, of: 2 }, step: { at: 1, of: 9 } },
+    { image: { at: 2, of: 2 }, step: { at: 5, of: 9 } },
+  ].map(buildPlace);
+  expect(places.map((place) => place.words)).toEqual(["Image 1 of 2: step 2 of 4", "Image 1 of 2: step 4 of 4", "Image 2 of 2: step 1 of 9", "Image 2 of 2: step 5 of 9"]);
+  expect(places.map((place) => place.share)).toEqual([...places.map((place) => place.share)].sort((a, b) => a - b));
 });
 
 test("the panel refetches on its thread's change signals and after a reconnect", async () => {
