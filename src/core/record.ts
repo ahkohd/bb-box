@@ -45,7 +45,8 @@ export function recordStartScript(os: GuestOs = "linux"): string {
   return String.raw`d="$HOME/${RECORD_DIR}"; mkdir -p "$d"
 if [ -s "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null; then exit ${RECORD_START_EXITS.running}; fi
 set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
-rm -f "$d/capture.mkv" "$d/clip.mp4" "$d/log"
+rm -f "$d/capture.mkv" "$d/clip.mp4" "$d/log" "$d/events" "$d"/pill-*
+perl -MTime::HiRes=time -e 'printf "%.3f\n", time' >"$d/start"
 if [ "$(uname)" = Darwin ]; then
   command -v ffmpeg >/dev/null || { echo ffmpeg >&2; exit ${RECORD_START_EXITS.noRecorder}; }
   screen=$(ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 | sed -n 's/.*\[\([0-9]*\)\] Capture screen 0.*/\1/p' | head -n 1)
@@ -68,14 +69,30 @@ kill -0 "$(cat "$d/pid")" 2>/dev/null || { rm -f "$d/pid"; tail -n 3 "$d/log" >&
 `;
 }
 
-/**
- * Stops the recording, or takes one that ended at its limit, and makes the
- * clip. Still stretches over 1 s keep 0.5 s each unless `stills` is
- * "keep". Prints one line of JSON: how the recording ended, the seconds
- * recorded and in the clip, the clip's bytes and size.
- */
-export function recordStopScript(options: { speed: RecordSpeed; stills: "cut" | "keep"; os?: GuestOs }): string {
-  if (options.os === "windows") return windowsStop(options);
+export function recordStopScript(options: { speed: RecordSpeed; stills: "cut" | "keep" }): string {
+  return windowsStop(options);
+}
+
+export const RECORD_STEP_EXITS = { saved: 0, none: 3 } as const;
+
+export type StepKind = "step" | "pass" | "fail";
+
+export const CAPTION_CHARS = 90;
+
+export function captionText(text: string): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > CAPTION_CHARS ? `${line.slice(0, CAPTION_CHARS - 1).trimEnd()}…` : line;
+}
+
+export function recordStepScript(kind: StepKind, text: string): string {
+  const encoded = Buffer.from(captionText(text)).toString("base64");
+  return String.raw`d="$HOME/${RECORD_DIR}"
+[ -s "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null || exit ${RECORD_STEP_EXITS.none}
+printf '%s\t%s\t%s\n' "$(perl -MTime::HiRes=time -e 'printf "%.3f", time')" ${kind} '${encoded}' >>"$d/events"
+`;
+}
+
+export function recordPrepareScript(stills: "cut" | "keep"): string {
   return String.raw`d="$HOME/${RECORD_DIR}"
 [ -s "$d/pid" ] || [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
 ended=limit
@@ -83,36 +100,232 @@ if [ -s "$d/pid" ]; then
   pid=$(cat "$d/pid")
   if kill -0 "$pid" 2>/dev/null; then
     ended=stopped
-    # ffmpeg ends a file whole on SIGTERM; a command started with &
-    # ignores SIGINT.
     kill -TERM "$pid"
     for i in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
   fi
   rm -f "$d/pid"
 fi
 [ -s "$d/capture.mkv" ] || { tail -n 3 "$d/log" >&2; exit ${RECORD_STOP_EXITS.failed}; }
+recorded=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$d/capture.mkv")
+size=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$d/capture.mkv")
+cuts=
+if [ "${stills}" = cut ]; then
+  cuts=$(ffmpeg -nostdin -hide_banner -i "$d/capture.mkv" -vf ${FREEZE} -map 0:v -f null - 2>&1 |
+    awk -v end="$recorded" '/freeze_start:/ { s = $NF } /freeze_end:/ { printf "%s[%.3f,%.3f]", sep, s + 0.5, $NF; sep = ","; s = "" }
+      END { if (s != "") printf "%s[%.3f,%.3f]", sep, s + 0.5, end }')
+fi
+printf '{"ended":"%s","recorded":%s,"size":"%s","start":%s,"cuts":[%s]}\n' "$ended" "$recorded" "$size" "$(cat "$d/start" 2>/dev/null || echo null)" "$cuts"
+[ ! -s "$d/events" ] || cat "$d/events"
+`;
+}
+
+export interface RecordEvent {
+  readonly at: number;
+  readonly kind: StepKind;
+  readonly text: string;
+}
+
+export interface Prepared {
+  readonly ended: "stopped" | "limit";
+  readonly recorded: number;
+  readonly width: number;
+  readonly height: number;
+  readonly start: number | null;
+  readonly cuts: readonly (readonly [number, number])[];
+  readonly events: readonly RecordEvent[];
+}
+
+export function parsePrepared(stdout: string): Prepared | null {
+  const lines = stdout.trim().split("\n");
+  const head = lines.findIndex((line) => line.startsWith("{"));
+  if (head < 0) return null;
+  try {
+    const value = JSON.parse(lines[head]!) as { ended: Prepared["ended"]; recorded: number; size: string; start: number | null; cuts: [number, number][] };
+    const [width, height] = value.size.split("x").map(Number);
+    const events = lines.slice(head + 1).flatMap((line): RecordEvent[] => {
+      const [at, kind, encoded] = line.split("\t");
+      if (!at || !encoded || (kind !== "step" && kind !== "pass" && kind !== "fail")) return [];
+      return [{ at: Number(at), kind, text: Buffer.from(encoded, "base64").toString("utf8") }];
+    });
+    return { ended: value.ended, recorded: value.recorded, width: width ?? 0, height: height ?? 0, start: value.start, cuts: value.cuts, events };
+  } catch {
+    return null;
+  }
+}
+
+export interface Caption {
+  readonly kind: StepKind;
+  readonly text: string;
+  readonly row: 0 | 1;
+  readonly from: number;
+  readonly to: number;
+}
+
+export interface Hold {
+  readonly at: number;
+  readonly seconds: number;
+}
+
+export interface ClipPlan {
+  readonly speed: RecordSpeed;
+  readonly cuts: readonly (readonly [number, number])[];
+  readonly holds: readonly Hold[];
+  readonly captions: readonly Caption[];
+  readonly length: number;
+  readonly width: number;
+  readonly height: number;
+  readonly fontSize: number;
+  readonly pillHeight: number;
+  readonly top: number;
+  readonly gap: number;
+}
+
+export const CLIP_WIDTH = 1280;
+
+export function readingSeconds(text: string): number {
+  const words = text.split(/\s+/).filter(Boolean).length;
+  return Math.min(6, Math.max(2, 1 + words / 3.5));
+}
+
+const round3 = (value: number) => Math.round(value * 1000) / 1000;
+
+export function planClip(prepared: Prepared, speed: RecordSpeed): ClipPlan {
+  const cuts = [...prepared.cuts].sort((a, b) => a[0] - b[0]);
+  const removedBefore = (at: number) => cuts.reduce((sum, [from, to]) => sum + Math.max(0, Math.min(at, to) - from), 0);
+  const onClip = (at: number) => (at - removedBefore(at)) / speed;
+  const base = onClip(prepared.recorded);
+  const start = prepared.start ?? 0;
+  const changes = [...prepared.events]
+    .map((event) => ({ ...event, text: captionText(event.text), at: Math.min(base, Math.max(0, onClip(Math.min(prepared.recorded, Math.max(0, event.at - start))))) }))
+    .sort((a, b) => a.at - b.at);
+  const holds: Hold[] = [];
+  const shownAt: number[] = [];
+  let added = 0;
+  changes.forEach((change, index) => {
+    shownAt.push(change.at + added);
+    const natural = (changes[index + 1]?.at ?? base) - change.at;
+    const hold = Math.max(0, readingSeconds(change.text) - natural);
+    if (hold > 0) {
+      holds.push({ at: round3(change.at), seconds: round3(hold) });
+      added += hold;
+    }
+  });
+  const length = base + added;
+  const nextStep = (index: number) => {
+    const later = changes.findIndex((change, other) => other > index && change.kind === "step");
+    return later < 0 ? length : shownAt[later]!;
+  };
+  const captions = changes.map((change, index): Caption => ({ kind: change.kind, text: change.text, row: change.kind === "step" ? 0 : 1, from: round3(shownAt[index]!), to: round3(nextStep(index)) }));
+  const width = Math.min(CLIP_WIDTH, prepared.width || CLIP_WIDTH);
+  const height = prepared.width ? Math.round((prepared.height * width) / prepared.width / 2) * 2 : 720;
+  const fontSize = Math.max(14, Math.round(height / 38));
+  return {
+    speed,
+    cuts,
+    holds,
+    captions,
+    length: round3(length),
+    width,
+    height,
+    fontSize,
+    pillHeight: Math.round(fontSize * 2.1),
+    top: Math.round(height * 0.035),
+    gap: Math.max(4, Math.round(fontSize * 0.3)),
+  };
+}
+
+const PILLS: Readonly<Record<StepKind, { readonly icon: string; readonly color: string; readonly fill: string; readonly alpha: number }>> = {
+  step: { icon: "▶", color: "4f8df5", fill: "5f6368", alpha: 0.82 },
+  pass: { icon: "✓", color: "34c759", fill: "2a2a2a", alpha: 0.94 },
+  fail: { icon: "✗", color: "ff453a", fill: "2a2a2a", alpha: 0.94 },
+};
+
+export function clipGraph(plan: ClipPlan, withCaptions: boolean): string {
+  const select = plan.cuts.length ? `select='not(${plan.cuts.map(([from, to]) => `between(t,${from.toFixed(3)},${to.toFixed(3)})`).join("+")})',` : "";
+  const since = "(T-STARTT)";
+  const removed = plan.cuts.map(([from, to]) => `clip(${since}-${from.toFixed(3)},0,${round3(to - from)})`).join("+");
+  const clock = removed ? `(${since}-(${removed}))/${plan.speed}` : `${since}/${plan.speed}`;
+  const pts = `'(${clock}${plan.holds.map((hold) => `+${hold.seconds}*gt(${clock},${hold.at})`).join("")})/TB'`;
+  const head = `[0:v]${select}setpts=${pts},fps=${RECORD_FPS},scale='min(${CLIP_WIDTH},iw)':-2`;
+  if (!withCaptions || !plan.captions.length) return `${head}[out]`;
+  const steps = plan.captions.map((caption, index) => {
+    const y = caption.row === 0 ? plan.top : plan.top + plan.pillHeight + plan.gap;
+    const into = index === plan.captions.length - 1 ? "[out]" : `[v${index + 1}]`;
+    return `[v${index}][${index + 1}:v]overlay=x=(W-w)/2:y=${y}:enable='between(t,${caption.from},${caption.to})'${into}`;
+  });
+  return [`${head}[v0]`, ...steps].join(";");
+}
+
+const MAC_PILL = String.raw`ObjC.import("AppKit");
+function run(argv) {
+  const [file, icon, iconHex, fillHex, alpha, size, out] = argv;
+  const text = $.NSString.stringWithContentsOfFileEncodingError(file, $.NSUTF8StringEncoding, null);
+  const fs = Number(size);
+  const color = (hex, a) => $.NSColor.colorWithSRGBRedGreenBlueAlpha(parseInt(hex.slice(0, 2), 16) / 255, parseInt(hex.slice(2, 4), 16) / 255, parseInt(hex.slice(4, 6), 16) / 255, a);
+  const font = $.NSFont.systemFontOfSizeWeight(fs, $.NSFontWeightMedium);
+  const iconFont = $.NSFont.systemFontOfSizeWeight(fs, $.NSFontWeightBold);
+  const attrs = (f, c) => $.NSDictionary.dictionaryWithObjectsForKeys($([f, c]), $([$.NSFontAttributeName, $.NSForegroundColorAttributeName]));
+  const mark = $(icon);
+  const labelAttrs = attrs(font, color("ffffff", 1)), markAttrs = attrs(iconFont, color(iconHex, 1));
+  const tw = Math.ceil(text.sizeWithAttributes(labelAttrs).width), iw = Math.ceil(mark.sizeWithAttributes(markAttrs).width);
+  const h = Math.round(fs * 2.1), pad = fs, gap = Math.round(fs * 0.6), w = pad + iw + gap + tw + pad;
+  const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, w, h, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
+  $.NSGraphicsContext.saveGraphicsState;
+  $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
+  color(fillHex, Number(alpha)).setFill;
+  $.NSBezierPath.bezierPathWithRoundedRectXRadiusYRadius($.NSMakeRect(0, 0, w, h), h / 2, h / 2).fill;
+  const baseline = (h - font.capHeight) / 2;
+  mark.drawAtPointWithAttributes($.NSMakePoint(pad, baseline + iconFont.descender), markAttrs);
+  text.drawAtPointWithAttributes($.NSMakePoint(pad + iw + gap, baseline + font.descender), labelAttrs);
+  $.NSGraphicsContext.restoreGraphicsState;
+  rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $()).writeToFileAtomically(out, true);
+  return w + "x" + h;
+}
+`;
+
+export function recordMakeScript(plan: ClipPlan): string {
+  const pills = plan.captions.map((caption, index) => {
+    const look = PILLS[caption.kind];
+    const encoded = Buffer.from(caption.text).toString("base64");
+    return `pill ${index} '${encoded}' '${Buffer.from(look.icon).toString("base64")}' ${look.color} ${look.fill} ${look.alpha}`;
+  });
+  const inputs = plan.captions.map((_, index) => `-i "$d/pill-${index}.png"`).join(" ");
+  return String.raw`d="$HOME/${RECORD_DIR}"
+[ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
+fs=${plan.fontSize}
+decode() { perl -MMIME::Base64 -e 'print decode_base64($ARGV[0])' "$1"; }
+if [ "$(uname)" = Darwin ]; then
+  cat >"$d/pill.js" <<'PILL'
+${MAC_PILL}PILL
+  pill() {
+    decode "$2" >"$d/pill-$1.txt"
+    osascript -l JavaScript "$d/pill.js" "$d/pill-$1.txt" "$(decode "$3")" "$4" "$5" "$6" "$fs" "$d/pill-$1.png" >/dev/null
+  }
+else
+  font=$(fc-match -f '%{file}' 'DejaVu Sans' 2>/dev/null)
+  bold=$(fc-match -f '%{file}' 'DejaVu Sans:bold' 2>/dev/null)
+  measure() { ffmpeg -nostdin -hide_banner -v info -f lavfi -i color=s=16x16:d=0.1 -vf "drawtext=fontfile=$1:textfile=$2:expansion=none:fontsize=$fs:x='print(tw)'" -frames:v 1 -f null - 2>&1 | awk '/^[0-9.]+$/ { print int($1 + 0.5); exit }'; }
+  pill() {
+    decode "$2" >"$d/pill-$1.txt"; decode "$3" >"$d/pill-$1.icon"
+    tw=$(measure "$font" "$d/pill-$1.txt"); iw=$(measure "$bold" "$d/pill-$1.icon")
+    [ -n "$tw" ] && [ -n "$iw" ] || return 1
+    h=$((fs * 21 / 10)); pad=$fs; gap=$((fs * 6 / 10)); w=$((pad + iw + gap + tw + pad)); r=$((h / 2)); cap=$((fs * 73 / 100))
+    rgb=$((0x$5))
+    ffmpeg -nostdin -v error -y -f lavfi -i "color=c=black@0:s=$${"{"}w}x$${"{"}h},format=rgba" -vf "geq=r=$((rgb >> 16 & 255)):g=$((rgb >> 8 & 255)):b=$((rgb & 255)):a='255*$6*clip($r+0.5-hypot(max(0\,max($r-X\,X-($w-1-$r)))\,Y-($h-1)/2)\,0\,1)',drawtext=fontfile=$bold:textfile=$d/pill-$1.icon:expansion=none:fontsize=$fs:fontcolor=0x$4:x=$pad:y=($h+$cap)/2-ascent,drawtext=fontfile=$font:textfile=$d/pill-$1.txt:expansion=none:fontsize=$fs:fontcolor=white:x=$((pad + iw + gap)):y=($h+$cap)/2-ascent" -frames:v 1 "$d/pill-$1.png"
+  }
+fi
+captions=${plan.captions.length ? "1" : "none"}
+${pills.map((line) => `[ "$captions" = 0 ] || ${line} || captions=0`).join("\n")}
+if [ "$captions" = 1 ]; then
+  ffmpeg -nostdin -loglevel error -y -i "$d/capture.mkv" ${inputs} -filter_complex "${clipGraph(plan, true)}" -map "[out]" ${CLIP} "$d/clip.mp4" || exit ${RECORD_STOP_EXITS.failed}
+else
+  ffmpeg -nostdin -loglevel error -y -i "$d/capture.mkv" -filter_complex "${clipGraph(plan, false)}" -map "[out]" ${CLIP} "$d/clip.mp4" || exit ${RECORD_STOP_EXITS.failed}
+fi
 seconds() { ffprobe -v error -show_entries format=duration -of csv=p=0 "$1"; }
 recorded=$(seconds "$d/capture.mkv")
-keep=
-if [ "${options.stills}" = cut ]; then
-  # Each stretch with no change for over 1 s keeps its first 0.5 s. At
-  # n=0.0001 a few typed characters count as change on a 1080p screen and
-  # a blinking cursor does not; ffmpeg's default, 0.001, cut typing too.
-  keep=$(ffmpeg -nostdin -hide_banner -i "$d/capture.mkv" -vf ${FREEZE} -map 0:v -f null - 2>&1 |
-    awk -v end="$recorded" '/freeze_start:/ { s = $NF } /freeze_end:/ { printf "%sbetween(t,%.3f,%.3f)", sep, s + 0.5, $NF; sep = "+"; s = "" }
-      END { if (s != "") printf "%sbetween(t,%.3f,%.3f)", sep, s + 0.5, end }')
-fi
-select=; [ -z "$keep" ] || select="select='not($keep)',"
-make() {
-  ffmpeg -nostdin -loglevel error -y -i "$d/capture.mkv" \
-    -vf "${"$"}{select}setpts=N/(${RECORD_FPS}*${options.speed})/TB,fps=${RECORD_FPS},scale='min(1280,iw)':-2" \
-    ${CLIP} "$d/clip.mp4"
-}
-make || exit ${RECORD_STOP_EXITS.failed}
 size=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "$d/clip.mp4")
-rm -f "$d/capture.mkv"
-printf '{"ended":"%s","recorded":%s,"clip":%s,"bytes":%s,"size":"%s"}\n' \
-  "$ended" "$recorded" "$(seconds "$d/clip.mp4")" "$(wc -c <"$d/clip.mp4" | tr -d ' ')" "$size"
+rm -f "$d/capture.mkv" "$d/events" "$d"/pill-* "$d/pill.js"
+printf '{"ended":"stopped","recorded":%s,"clip":%s,"bytes":%s,"size":"%s","captions":%s}\n'   "$recorded" "$(seconds "$d/clip.mp4")" "$(wc -c <"$d/clip.mp4" | tr -d ' ')" "$size" "$(if [ "$captions" = 1 ]; then echo true; elif [ "$captions" = none ]; then echo null; else echo false; fi)"
 `;
 }
 
@@ -190,6 +403,7 @@ export interface RecordResult {
   readonly clip: number;
   readonly bytes: number;
   readonly size: string;
+  readonly captions?: boolean | null;
 }
 
 /** The stop script's line of JSON, or null when it printed none. */
@@ -207,10 +421,46 @@ export function parseRecordResult(stdout: string): RecordResult | null {
  * The page the thread's inline preview shows: the clip `mp4`, a file beside
  * it, playing at once, muted and looping.
  */
-export function recordPage(title: string, mp4: string): string {
+export interface Chapter {
+  readonly at: number;
+  readonly text: string;
+  readonly result: { readonly passed: boolean; readonly text: string } | null;
+}
+
+export function chaptersOf(captions: readonly Caption[]): Chapter[] {
+  const chapters: Chapter[] = [];
+  for (const caption of captions) {
+    if (caption.kind === "step") chapters.push({ at: caption.from, text: caption.text, result: null });
+    else if (chapters.length) chapters[chapters.length - 1] = { ...chapters[chapters.length - 1]!, result: { passed: caption.kind === "pass", text: caption.text } };
+    else chapters.push({ at: caption.from, text: "", result: { passed: caption.kind === "pass", text: caption.text } });
+  }
+  return chapters;
+}
+
+function clock(seconds: number): string {
+  const whole = Math.floor(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
+export function recordPage(title: string, mp4: string, chapters: readonly Chapter[] = []): string {
   const escape = (text: string) => text.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const video = `<video id="clip" src="${escape(encodeURIComponent(mp4))}" autoplay muted loop controls playsinline style="display:block;width:100%;height:auto"></video>`;
+  if (!chapters.length) {
+    return `<!doctype html><meta charset="utf-8"><title>${escape(title)}</title>
+<body style="margin:0;background:#111">${video}</body>
+`;
+  }
+  const rows = chapters
+    .map((chapter) => {
+      const result = chapter.result ? `<span style="color:${chapter.result.passed ? "#34c759" : "#ff453a"}">${chapter.result.passed ? "✓" : "✗"}</span> ${escape(chapter.result.text)}` : "";
+      const step = chapter.text ? `<span style="color:#4f8df5">▶</span> ${escape(chapter.text)}` : "";
+      return `<li><a href="#" data-at="${chapter.at}"><span class="at">${clock(chapter.at)}</span><span>${step}${step && result ? "<br>" : ""}${result}</span></a></li>`;
+    })
+    .join("");
   return `<!doctype html><meta charset="utf-8"><title>${escape(title)}</title>
-<body style="margin:0;background:#111"><video src="${escape(encodeURIComponent(mp4))}" autoplay muted loop controls playsinline style="display:block;width:100%;height:auto"></video></body>
+<style>body{margin:0;background:#111;color:#e8e8e8;font:13px/1.45 -apple-system,system-ui,sans-serif}ol{list-style:none;margin:0;padding:8px 10px}li a{display:flex;gap:10px;padding:5px 6px;border-radius:6px;color:inherit;text-decoration:none}li a:hover{background:#222}.at{color:#9a9a9a;font-variant-numeric:tabular-nums;min-width:2.6em}</style>
+<body>${video}<ol>${rows}</ol>
+<script>document.querySelectorAll("a[data-at]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); const v = document.getElementById("clip"); v.currentTime = Number(a.dataset.at); v.play(); }));</script></body>
 `;
 }
 

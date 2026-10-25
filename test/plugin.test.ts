@@ -762,7 +762,7 @@ test("box_record records a Linux desktop, and stop puts the clip and a page that
   assert.match(said, /^Recorded box \S+: a 4\.2 s clip of 10\.0 s recorded, 1\.6 s of still stretches cut, played 2x, 1280x720, 1 KB\. It reached the 5-minute limit/);
   assert.ok(said.includes(`::inline-vis{source="thread-storage" file="${name}.html" height="368"}`), said);
   assert.equal(readFileSync(join(world.storage, `${name}.mp4`), "utf8"), "mp4data");
-  assert.ok(readFileSync(join(world.storage, `${name}.html`), "utf8").includes(`<video src="${name.split("/").pop()}.mp4"`));
+  assert.ok(readFileSync(join(world.storage, `${name}.html`), "utf8").includes(`<video id="clip" src="${name.split("/").pop()}.mp4"`));
   assert.match(said, /It shows the clip in this thread only:/);
 
   // A child thread's recording: its parent, and the parent's parent, get a copy, as a parent passes on its child's
@@ -781,8 +781,21 @@ test("box_record records a Linux desktop, and stop puts the clip and a page that
   assert.match(child, /It shows the clip in this thread and in its parent threads, which have a copy, so a parent can pass the line on:/);
   for (const folder of [world.storage, ...parents]) {
     assert.equal(readFileSync(join(folder, `${clip}.mp4`), "utf8"), "mp4data", folder);
-    assert.ok(readFileSync(join(folder, `${clip}.html`), "utf8").includes(`<video src="${clip!.split("/").pop()}.mp4"`), folder);
+    assert.ok(readFileSync(join(folder, `${clip}.html`), "utf8").includes(`<video id="clip" src="${clip!.split("/").pop()}.mp4"`), folder);
   }
+
+  assert.match(text(await tool("box_record", { box: desktop.name, action: "step", text: "Too early" })), /is not recording\./);
+  assert.match(text(await tool("box_record", { box: desktop.name, action: "step" })), /Give text with step/);
+  assert.match(text(await tool("box_record", { box: desktop.name, action: "result", text: "Saw it" })), /Give passed with result/);
+  await tool("box_run", { box: desktop.name, command: "d=.local/state/bb-box/recording; mkdir -p $d && echo capture > $d/capture.mkv && date +%s.000 > $d/start && { setsid sleep 30 >/dev/null 2>&1 & echo $! > $d/pid; }" });
+  assert.match(text(await tool("box_record", { box: desktop.name, action: "step", text: "It keeps the draft when saving fails" })), /^Captioned the next step: ▶ It keeps the draft when saving fails/);
+  assert.match(text(await tool("box_record", { box: desktop.name, action: "result", passed: false, text: "The editor closed and lost it" })), /^Captioned the result: ✗ The editor closed and lost it/);
+  const captioned = text(await tool("box_record", { box: desktop.name, action: "stop" }));
+  assert.match(captioned, /, 1 step captioned, 1 failed\./, captioned);
+  const page = /\$BB_THREAD_STORAGE\/(recordings\/[^ ,]+)\.mp4/.exec(captioned)?.[1];
+  const html = readFileSync(join(world.storage, `${page}.html`), "utf8");
+  assert.match(html, /▶<\/span> It keeps the draft when saving fails<br><span style="color:#ff453a">✗<\/span> The editor closed and lost it/);
+  assert.ok(captioned.includes(`file="${page}.html" height="430"`), captioned);
 });
 
 test("box_copy takes files in the thread's storage folder both ways, by its variable or its path (#482)", async (t) => {
