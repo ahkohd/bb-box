@@ -56,6 +56,15 @@ export function PasteGlyph(props: Props) {
   );
 }
 
+export function KeyboardGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="2.5" y="6" width="19" height="12" rx="2" />
+      <path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M6.5 13.5h.01M17.5 13.5h.01M9.5 14.5h5" />
+    </Stroked>
+  );
+}
+
 /** A box with a desktop: a monitor. */
 export function MonitorGlyph(props: Props) {
   return (

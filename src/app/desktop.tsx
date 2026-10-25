@@ -53,6 +53,10 @@ import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
 import {
   KeysAfterPaste,
   astralKeysym,
+  textKeys,
+  typeTextShortcut,
+  typeTextShortcutLabel,
+  TYPE_TEXT_PASTE_FROM,
   keyLog,
   keyLogOn,
   PASTE_LANDS_MS,
@@ -76,7 +80,7 @@ import {
   type Connection,
   type MacKeys,
 } from "./viewer.ts";
-import { BoxGlyph, HighResolutionGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { choices, filtering, NO_FILTERS, runsWayland, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
 import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 
@@ -366,6 +370,7 @@ export class DesktopSession implements Kept {
   putClipboard?: (text: string, automatic?: boolean) => Promise<unknown> | null;
   /** Whether the box takes a viewer's clipboard at all; where not, a Cmd+V is left to noVNC as it was. */
   pasteAllowed?: () => boolean;
+  onTypeText?: () => void;
   /** A Cmd+V or Ctrl+V taken from noVNC, with Shift or not, while the browser's paste event is awaited. */
   #pasteArmed: PasteShortcut | null = null;
   #pasteWait: ReturnType<typeof setTimeout> | undefined;
@@ -406,7 +411,10 @@ export class DesktopSession implements Kept {
     // Cmd+V (Ctrl+V elsewhere) while this tab has control pastes this computer's text: the browser's paste event
     // carries it with no permission asked, so the keydown is kept from noVNC and left to the browser (4 October 2026).
     this.element.addEventListener("keydown", (event) => this.#interceptPaste(event), true);
-    for (const type of ["keydown", "keyup"] as const) this.element.addEventListener(type, (event) => this.#astralKey(event), true);
+    for (const type of ["keydown", "keyup"] as const) {
+      this.element.addEventListener(type, (event) => this.#interceptTypeText(event), true);
+      this.element.addEventListener(type, (event) => this.#astralKey(event), true);
+    }
     document.addEventListener("paste", this.#onPasteEvent, true);
     this.connect();
   }
@@ -497,7 +505,7 @@ export class DesktopSession implements Kept {
     client.guestOs = this.guestOs;
     client.macKeys = this.#macKeys;
     client.refreshCursor();
-    if (this.#mine) client.focus({ preventScroll: true });
+    if (this.#mine && !this.#typing) client.focus({ preventScroll: true });
     this.#drawPointer();
   }
 
@@ -639,6 +647,31 @@ export class DesktopSession implements Kept {
     event.stopPropagation();
     event.preventDefault();
     if (event.type === "keydown" && this.#mine && this.connection.state === "connected") this.#client?.typeCharacter(keysym, event.code || "Unidentified");
+  }
+
+  #interceptTypeText(event: KeyboardEvent): void {
+    if (!this.#mine || this.connection.state !== "connected" || !typeTextShortcut(event, macBrowser())) return;
+    event.stopPropagation();
+    event.preventDefault();
+    if (event.type === "keydown" && !event.repeat) this.onTypeText?.();
+  }
+
+  typeText(text: string): void {
+    if (!this.#mine || this.connection.state !== "connected") return;
+    for (const key of textKeys(text)) this.#client?.typeCharacter(key.keysym, key.code);
+  }
+
+  #typing = false;
+
+  setTyping(open: boolean): void {
+    if (this.#typing === open) return;
+    this.#typing = open;
+    if (this.#mine && this.connection.state === "connected") this.#client?._keyboard._allKeysUp();
+    if (!open) this.focusDesktop();
+  }
+
+  focusDesktop(): void {
+    if (this.#mine && this.connection.state === "connected") this.#client?.focus({ preventScroll: true });
   }
 
   #interceptPaste(event: KeyboardEvent): void {
@@ -790,6 +823,88 @@ function HighResolutionItem({ checked, disabled, words, onChange }: { checked: b
   );
 }
 
+function TypeTextButton({ mine, shortcut, compact, onClick }: { mine: boolean; shortcut: string; compact: boolean; onClick: () => void }) {
+  const words = mine ? `Type text: input methods, emoji and other languages (${shortcut})` : "Take control first to type text";
+  return (
+    <TooltipProvider delayDuration={250}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={cn("h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground", !mine && "opacity-60")}
+            aria-label={mine ? `Type text (${shortcut})` : "Type text: take control first"}
+            aria-disabled={!mine}
+            onClick={onClick}
+          >
+            <KeyboardGlyph />
+            {compact ? null : "Type text"}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-64 text-xs leading-snug">
+          {words}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function TypeTextField({
+  name,
+  value,
+  mac,
+  long,
+  onChange,
+  onSend,
+  onClose,
+}: {
+  name: string;
+  value: string;
+  mac: boolean;
+  long: boolean;
+  onChange: (value: string) => void;
+  onSend: (value: string) => void;
+  onClose: () => void;
+}) {
+  const hintId = useId();
+  const hint = long ? "Long text goes as a paste." : "Enter sends it. Shift+Enter starts a new line. Esc closes.";
+  return (
+    <div role="group" aria-label={`Type text into ${name}`} className="absolute inset-x-2 bottom-2 z-10 mx-auto max-w-xl rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-lg">
+      <Textarea
+        aria-label="Text to type"
+        aria-describedby={hintId}
+        placeholder={mac ? "Type or paste text. Press Ctrl+Cmd+Space again for emoji." : "Type or paste text, in any language or input method."}
+        value={value}
+        rows={2}
+        autoFocus
+        className="min-h-0 resize-none text-sm"
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+          } else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+            event.preventDefault();
+            onSend(value);
+          }
+        }}
+      />
+      <div className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+        <span id={hintId} aria-live="polite" className="min-w-0 flex-1">
+          {hint}
+        </span>
+        <Button type="button" variant="ghost" size="sm" className="h-7" onClick={onClose}>
+          Close
+        </Button>
+        <Button type="button" size="sm" className="h-7" disabled={!value} onClick={() => onSend(value)}>
+          Send
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038). */
 function controlText(box: BoxView, mine: boolean, taken: boolean): string {
   switch (box.control?.owner) {
@@ -893,6 +1008,7 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
   useEffect(() => () => void toast.dismiss(flashId), [flashId]);
   /** The field to paste into when this computer's clipboard cannot be read here: null closed, else its text. */
   const [pasteField, setPasteField] = useState<string | null>(null);
+  const [typing, setTyping] = useState<string | null>(null);
   /** The box's text shown to copy by hand, when this computer's clipboard cannot be written here. */
   const [copyField, setCopyField] = useState<string | Blob | null>(null);
   const ready = showing && path !== null;
@@ -941,6 +1057,8 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     };
     current.onPasteFailed = (error) => setProblem(message(error));
     // A desktop whose server moves no clipboard, as Tart's macOS VMs: bb-box puts the text there itself, as UTF-8 (#464).
+    current.onTypeText = () => setTyping((now) => now ?? "");
+    current.setTyping(typingNow.current);
     current.putClipboard = (text, automatic) =>
       boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text, ...(automatic ? { automatic: true } : {}) }) : null;
     current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
@@ -1102,6 +1220,31 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
     }
     session.current?.paste(text);
   };
+  const typeShortcut = typeTextShortcutLabel(macBrowser());
+  const openTyping = () => {
+    if (!mine) {
+      flashFor("Take control first, then type text.");
+      return;
+    }
+    setTyping((now) => now ?? "");
+  };
+  useEffect(() => {
+    if (!mine) setTyping(null);
+  }, [mine]);
+  const closeTyping = () => setTyping(null);
+  const typingOpen = typing !== null && mine;
+  const typingNow = useRef(false);
+  typingNow.current = typingOpen;
+  useEffect(() => {
+    session.current?.setTyping(typingOpen);
+  }, [typingOpen]);
+  const sendTyped = (text: string) => {
+    if (!text) return;
+    const long = [...text].length > TYPE_TEXT_PASTE_FROM && (!box || noClipboardThroughServer(box) === null);
+    if (long) session.current?.paste(text);
+    else session.current?.typeText(text);
+    setTyping("");
+  };
   /**
    * The menu's Paste: this computer's clipboard, read on the click, which is a gesture; where the frame still refuses, a field to paste into.
    * The video client takes an image too, before text (#609).
@@ -1203,6 +1346,9 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
               Hand back to the agent
             </Button>
           ) : null}
+          {showing && connection.state === "connected" ? (
+            <TypeTextButton mine={mine} shortcut={typeShortcut} compact={compact} onClick={openTyping} />
+          ) : null}
           {showing && connection.state === "disconnected" ? (
             <Button type="button" variant="outline" size="sm" className="h-7" onClick={reconnect}>
               Reconnect
@@ -1268,6 +1414,11 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
                       <Icon name="Copy" aria-hidden />
                       Copy to this computer
                     </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!mine || connection.state !== "connected"} onSelect={openTyping}>
+                      <KeyboardGlyph />
+                      Type text
+                      <span className="ml-auto pl-4 text-xs text-muted-foreground">{typeShortcut}</span>
+                    </DropdownMenuItem>
                   </>
                 ) : null}
                 {box.control?.owner === "human" && !mine ? (
@@ -1294,6 +1445,17 @@ export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: s
       <div className="relative min-h-0 flex-1 bg-muted">
         <div ref={target} className="absolute inset-0" data-testid="desktop-screen" />
         {mine ? <div aria-hidden data-testid="control-ring" className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-primary/60" /> : null}
+        {typing !== null && mine && connection.state === "connected" ? (
+          <TypeTextField
+            name={box?.name ?? "the desktop"}
+            value={typing}
+            mac={macBrowser()}
+            long={[...typing].length > TYPE_TEXT_PASTE_FROM}
+            onChange={setTyping}
+            onSend={sendTyped}
+            onClose={closeTyping}
+          />
+        ) : null}
         {error ? (
           <Notice>{error}</Notice>
         ) : !state ? null : !box ? (

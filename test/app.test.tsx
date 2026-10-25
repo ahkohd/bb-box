@@ -2170,7 +2170,84 @@ test("a character above U+FFFF, as an emoji from the keyboard or the emoji picke
   }
 });
 
-type FakeClient = { input: string[]; pasted: string[]; keys: { keysym: number; code: string | null; down: boolean }[]; keyEvents: { keysym: number; code: string; down: boolean }[]; _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void } & EventTarget;
+test("Type text opens a field over the desktop for input methods and emoji: Enter types its text into the box and keeps it open, Shift+Enter a new line, Esc closes, and long text goes as a paste", async () => {
+  const { handlers } = server([desktopBox({ id: "box_t", name: "type-1", os: "linux" })]);
+  const slot = desktopTab(handlers, "box_t");
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+  act(() => void client.dispatchEvent(new Event("connect")));
+  fireEvent.click(await slot.findByRole("button", { name: "Type text: take control first" }));
+  expect(slot.queryByRole("textbox", { name: "Text to type" })).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  const letGo = client.keysLetGo;
+  fireEvent.click(slot.getByRole("button", { name: "Type text (Ctrl+Alt+Space)" }));
+  const field = await slot.findByRole("textbox", { name: "Text to type" });
+  expect(slot.getByRole("group", { name: "Type text into type-1" })).toBeTruthy();
+  expect(document.activeElement).toBe(field);
+  expect(client.keysLetGo).toBe(letGo + 1);
+  const focusedWhileOpen = client.focused;
+  fireEvent.change(field, { target: { value: "aé😀\nb" } });
+  fireEvent.keyDown(field, { key: "Enter", code: "Enter", isComposing: true, keyCode: 229 });
+  expect(client.keyEvents).toEqual([]);
+  fireEvent.keyDown(field, { key: "Enter", code: "Enter", shiftKey: true });
+  expect(client.keyEvents).toEqual([]);
+  fireEvent.keyDown(field, { key: "Enter", code: "Enter" });
+  const keysyms = client.keyEvents.map((key) => `${key.keysym.toString(16)}${key.down ? "" : " up"}`);
+  expect(keysyms).toEqual(["61", "61 up", "e9", "e9 up", "101f600", "101f600 up", "ff0d", "ff0d up", "62", "62 up"]);
+  expect((field as HTMLTextAreaElement).value).toBe("");
+  expect(slot.getByRole("textbox", { name: "Text to type" })).toBe(field);
+
+  const long = "x".repeat(250);
+  fireEvent.change(field, { target: { value: long } });
+  expect(slot.getByText("Long text goes as a paste.")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Send" }));
+  expect(client.pasted).toEqual([long]);
+  expect(client.keyEvents).toHaveLength(10);
+  expect(client.focused).toBe(focusedWhileOpen);
+
+  fireEvent.keyDown(field, { key: "Escape", code: "Escape" });
+  expect(slot.queryByRole("textbox", { name: "Text to type" })).toBeNull();
+  expect(client.keysLetGo).toBe(letGo + 2);
+  expect(client.focused).toBeGreaterThan(focusedWhileOpen);
+
+  const shortcut = keyOnCanvas(slot, { key: " ", code: "Space", ctrlKey: true, altKey: true });
+  expect(shortcut.reached).not.toHaveBeenCalled();
+  expect(await slot.findByRole("textbox", { name: "Text to type" })).toBeTruthy();
+  expect(client.keysLetGo).toBe(letGo + 3);
+  expect(client.keyEvents).toHaveLength(10);
+  fireEvent.click(slot.getByRole("button", { name: "Close" }));
+  expect(client.keysLetGo).toBe(letGo + 4);
+  expect(keyOnCanvas(slot, { key: " ", code: "Space", ctrlKey: true }).reached).toHaveBeenCalledTimes(1);
+  expect(keyOnCanvas(slot, { key: "Dead", code: "BracketLeft" }).reached).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(slot.getByRole("button", { name: "Hand back to the agent" }));
+  await slot.findByRole("button", { name: "Type text: take control first" });
+});
+
+test("on a Mac, Ctrl+Cmd+Space with the desktop focused opens Type text rather than going to the box, and the field says to press it again for emoji", async () => {
+  const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
+  try {
+    const { handlers } = server([desktopBox({ id: "box_m", name: "mac-type", os: "macos", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" } })]);
+    const slot = desktopTab(handlers, "box_m");
+    await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+    const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
+    act(() => void client.dispatchEvent(new Event("connect")));
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    expect(keyOnCanvas(slot, { key: " ", code: "Space", ctrlKey: true, altKey: true }).reached).toHaveBeenCalledTimes(1);
+    expect(slot.queryByRole("textbox", { name: "Text to type" })).toBeNull();
+    const shortcut = keyOnCanvas(slot, { key: " ", code: "Space", ctrlKey: true, metaKey: true });
+    expect(shortcut.reached).not.toHaveBeenCalled();
+    const field = await slot.findByRole("textbox", { name: "Text to type" });
+    expect(field.getAttribute("placeholder")).toBe("Type or paste text. Press Ctrl+Cmd+Space again for emoji.");
+    expect(slot.getByRole("button", { name: "Type text (Ctrl+Cmd+Space)" })).toBeTruthy();
+  } finally {
+    platform.mockRestore();
+  }
+});
+
+type FakeClient = { input: string[]; pasted: string[]; keysLetGo: number; focused: number; keys: { keysym: number; code: string | null; down: boolean }[]; keyEvents: { keysym: number; code: string; down: boolean }[]; _handleKeyEvent(keysym: number, code: string, down: boolean, numlock: boolean | null, capslock: boolean | null): void } & EventTarget;
 
 test("with control, Cmd+V on a Mac pastes this computer's text into a Linux box with the box's Ctrl+V, and Cmd stands for Ctrl there", async () => {
   const platform = vi.spyOn(Navigator.prototype, "platform", "get").mockReturnValue("MacIntel");
@@ -2831,6 +2908,12 @@ test("with the setting on, a desktop shows as video whatever the round trip to B
     fireEvent.keyUp(canvas, { key: "a", code: "KeyA" });
     expect(socket.sent).toContain("kd,97");
     expect(socket.sent).toContain("ku,97");
+    fireEvent.click(slot.getByRole("button", { name: "Type text (Ctrl+Alt+Space)" }));
+    const typed = await slot.findByRole("textbox", { name: "Text to type" });
+    fireEvent.change(typed, { target: { value: "日本" } });
+    fireEvent.keyDown(typed, { key: "Enter", code: "Enter" });
+    expect(socket.sent.filter((sent) => typeof sent === "string" && /^k[du],(16803301|16803628)$/.test(sent))).toEqual(["kd,16803301", "ku,16803301", "kd,16803628", "ku,16803628"]);
+    fireEvent.keyDown(typed, { key: "Escape", code: "Escape" });
     const emoji = 0x1000000 + 0x1f600;
     fireEvent.keyDown(canvas, { key: "😀", code: "" });
     fireEvent.keyUp(canvas, { key: "😀", code: "" });
