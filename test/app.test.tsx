@@ -1396,7 +1396,8 @@ test("Resize asks before a restart, in the record's words, then names the thread
   expect(changes.filter((change) => !change.includes('"check":true'))).toEqual([]);
   fireEvent.click(within(dialog).getByRole("button", { name: "Restart and resize" }));
   expect(await within(dialog).findByText("Restart calm-otter anyway?")).toBeTruthy();
-  expect(within(dialog).getByText("Build the app is working on it, and its work stops while it restarts.")).toBeTruthy();
+  expect(within(dialog).getByText("A thread is working on it, and its work stops while it restarts.")).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: /Build the app/ })).toBeTruthy();
   fireEvent.click(within(dialog).getByRole("button", { name: "Restart anyway" }));
   expect(await within(dialog).findByText("It has 8 cores · 16 GiB · 20 GiB disk now, after a restart.")).toBeTruthy();
   expect(changes.filter((change) => !change.includes('"check":true'))).toEqual(['resize box_1 {"size":{"preset":"large"},"restart":true}', 'resize box_1 {"size":{"preset":"large"},"restart":true,"force":true}']);
@@ -1491,7 +1492,8 @@ test("a box a thread runs on is released or stopped only once the user says so",
   fireEvent.click(slot.getByRole("button", { name: "Stop" }));
   let dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("Stop calm-otter anyway?")).toBeTruthy();
-  expect(within(dialog).getByText("Build the app is working on it, and would lose its machine.")).toBeTruthy();
+  expect(within(dialog).getByText("A thread is working on it, and would lose its machine.")).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: /Build the app/ })).toBeTruthy();
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(changes).toEqual([]);
@@ -4235,7 +4237,13 @@ test("the settings page lists your machines with their threads and actions, and 
   const slot = settings(handlers);
   expect(await slot.findByText("build-1")).toBeTruthy();
   expect(slot.getByText("Machines")).toBeTruthy();
-  expect(slot.getByText("Working: Fix the login form · 1 more")).toBeTruthy();
+  const chips = within(slot.getByRole("list", { name: "Threads on this box" }));
+  expect(chips.getAllByRole("button").map((chip) => [chip.textContent, chip.getAttribute("title"), !!within(chip).queryByLabelText("Working")])).toEqual([
+    ["Fix the login form", "Fix the login form", true],
+    ["Docs pass", "Docs pass", false],
+  ]);
+  fireEvent.click(chips.getByRole("button", { name: /Docs pass/ }));
+  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_b" });
   expect(slot.getByText("scratch")).toBeTruthy();
   // Said once for the section, not under each machine.
   // No line inside the list about the new-thread picker (the operator, 4 October 2026).
@@ -4252,7 +4260,8 @@ test("the settings page lists your machines with their threads and actions, and 
   // Stopping a machine a thread works on asks first, then sends force.
   fireEvent.click(slot.getByRole("button", { name: "Stop" }));
   expect(await screen.findByText("Stop build-1 anyway?")).toBeTruthy();
-  expect(screen.getByText("Fix the login form is working on it, and would lose its machine.")).toBeTruthy();
+  expect(screen.getByText("A thread is working on it, and would lose its machine.")).toBeTruthy();
+  expect(within(screen.getByRole("alertdialog")).getByRole("button", { name: /Fix the login form/ })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Stop anyway" }));
   await waitFor(() => expect(changes).toEqual(["machines.stop (forced) box_m1"]));
 
@@ -4352,7 +4361,8 @@ test("on the Boxes page, a box another thread is working on is released only aft
   fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Release" }));
   const dialog = await screen.findByRole("alertdialog", {}, { timeout: 2000 });
   await within(dialog).findByText("Release calm-otter anyway?");
-  expect(within(dialog).getByText("Build the app is working on it, and would lose its machine.")).toBeTruthy();
+  expect(within(dialog).getByText("A thread is working on it, and would lose its machine.")).toBeTruthy();
+  expect(within(dialog).getByRole("button", { name: /Build the app/ })).toBeTruthy();
   expect(changes).toEqual([]);
   fireEvent.click(within(dialog).getByRole("button", { name: "Release anyway" }));
   await waitFor(() => expect(changes).toEqual(["release (forced) box_1"]));
@@ -4374,11 +4384,30 @@ test("settings' Machines resize one of your machines through machines.resize (06
   expect(changes.filter((change) => !change.includes('"check":true'))).toEqual(['machines.resize box_m1 {"size":{"cores":4}}']);
 });
 
+test("a machine's threads show as up to 3 chips, working first, then the latest, and +N more lists them all, searchable when long; each opens its thread", async () => {
+  const threads: ThreadOnBox[] = Array.from({ length: 12 }, (_, index) => ({ id: `thr_${index}`, title: `Thread number ${index}`, running: false, activeAt: 1_000 + index }));
+  threads[2] = { id: "thr_2", title: "Replying to this earlier message in the conversation: > Check the release notes", running: true, activeAt: 10 };
+  threads[5] = { id: "thr_5", title: null, running: false, activeAt: 2_000 };
+  const { handlers } = server([], { machines: [machine({}, threads)] });
+  const list = boxesPage(handlers);
+  const chips = within(await list.findByRole("list", { name: "Threads on this box" }));
+  expect(chips.getAllByRole("button").map((chip) => chip.textContent)).toEqual(["Check the release notes", "thr_5", "Thread number 11", "+9 more"]);
+  fireEvent.click(chips.getByRole("button", { name: "9 more threads" }));
+  const search = await screen.findByRole("textbox", { name: "Search threads" });
+  const all = () => within(screen.getByRole("list", { name: "All threads on this box" })).getAllByRole("button");
+  expect(all()).toHaveLength(12);
+  fireEvent.change(search, { target: { value: "number 1" } });
+  const found = all();
+  expect(found.map((button) => button.textContent)).toEqual(["Thread number 11", "Thread number 10", "Thread number 1"]);
+  fireEvent.click(found[2]!);
+  expect(list.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_1" });
+});
+
 test("the Boxes page's Machines have settings' rows and warnings: Stop, Start and Remove, each asking when threads work there", async () => {
   const { handlers, changes } = server([], { machines: [machine(), machine({ id: "box_m2", name: "scratch", desktop: false, display: null, state: "stopped" }, [])] });
   const list = boxesPage(handlers);
   expect(await list.findByText("Machines")).toBeTruthy();
-  expect(list.getByText(/Working: Fix the login form/)).toBeTruthy();
+  expect(list.getAllByRole("button", { name: /Fix the login form/ })).toHaveLength(1);
   // Every row has the same padding above and below, in Automations' card (px-4 py-1, rows py-3): none loses it as first or last.
   const rows = Array.from(list.container.querySelectorAll("[data-resource-row]"));
   expect(rows).toHaveLength(2);

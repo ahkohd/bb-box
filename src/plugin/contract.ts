@@ -142,6 +142,7 @@ export interface ThreadOnBox {
   readonly title: string | null;
   /** Working now: busy, or waiting on a question to the user. An idle thread has finished. */
   readonly running: boolean;
+  readonly activeAt?: number;
 }
 
 /** What starting a thread on a box returns: the new thread, or why it did not start. */

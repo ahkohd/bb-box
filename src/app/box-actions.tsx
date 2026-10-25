@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import type { Contract, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { message } from "./common.tsx";
+import { ThreadChips } from "./thread-chips.tsx";
 
 /** A failure that needs action: red, and lasting until dismissed or the next action. Nothing when there is none. */
 export function ProblemLine({ problem, onDismiss, className }: { problem: string | null; onDismiss: () => void; className?: string }) {
@@ -52,9 +53,8 @@ export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{inUse ? `${verb} ${inUse.box.name} anyway?` : null}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {inUse ? `${inUse.threads.map((thread) => thread.title ?? thread.id).join(", ")} ${count === 1 ? "is" : "are"} working on it, and would lose ${count === 1 ? "its" : "their"} machine.` : null}
-          </AlertDialogDescription>
+          <AlertDialogDescription>{inUse ? `${count === 1 ? "A thread is" : `${count} threads are`} working on it, and would lose ${count === 1 ? "its" : "their"} machine.` : null}</AlertDialogDescription>
+          {inUse ? <ThreadChips threads={inUse.threads} /> : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
