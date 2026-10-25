@@ -25,6 +25,7 @@ export interface FakeContainer {
     readonly Init: boolean;
     readonly RestartPolicy: { readonly Name: string };
     readonly Devices: string[];
+    readonly Mounts: { readonly Type: string; readonly Source: string; readonly Target: string; readonly ReadOnly: boolean }[];
   };
 }
 

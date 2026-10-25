@@ -247,7 +247,7 @@ test("reads the daemon's facts and its containers", () => {
         Image: "sha256:1111",
         State: { Status: "running", ExitCode: 0 },
         Config: { Labels: { "bbbox.box": "bx1", other: 3 } },
-        HostConfig: { NanoCpus: 2.5e9, Memory: 4096 * MiB, CpusetCpus: "4-5,7" },
+        HostConfig: { NanoCpus: 2.5e9, Memory: 4096 * MiB, CpusetCpus: "4-5,7", Mounts: [{ Type: "bind", Source: "/var/lib/lxcfs/proc/meminfo", Target: "/proc/meminfo" }] },
         NetworkSettings: { Networks: { bbbox: { IPAddress: "172.30.0.2" }, none: { IPAddress: "" } } },
       },
     ]),
@@ -261,6 +261,7 @@ test("reads the daemon's facts and its containers", () => {
     cores: 2.5,
     memoryMiB: 4096,
     cpus: [4, 5, 7],
+    lxcfs: true,
     addresses: { bbbox: "172.30.0.2" },
     imageId: "sha256:1111",
   });
@@ -687,6 +688,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
       ["docker.daemon", "ok"],
       ["docker.limits", "ok"],
       ["docker.cpuset", "ok"],
+      ["docker.lxcfs", "warn"],
       ["image.bbbox/linux:1", "ok"],
       ["image.bbbox/linux-desktop:1", "ok"],
       ["image.bbbox/linux-desktop-wayland:1", "ok"],
@@ -1311,7 +1313,7 @@ test("on a Docker host whose CPUs are 27 and 61, as one in an LXC container, box
   const { fake, backend } = setup({}, { cpuList: "27,61", memoryMiB: 65536 });
   const one: BoxSize = { cores: 1, memoryMiB: 2048, diskGiB: null };
   const pinned = (guest: Guest) => fake.inspect(guest.ref).HostConfig.CpusetCpus;
-  const probes = () => readFileSync(join(fake.root, "probes"), "utf8").trim().split("\n").length;
+  const probes = () => readFileSync(join(fake.root, "probes"), "utf8").trim().split("\n").filter((line) => line.includes("cpuset.cpus.effective")).length;
   const a = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
   const b = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
   assert.deepEqual([pinned(a), pinned(b)], ["27", "61"]);
@@ -1340,4 +1342,49 @@ test("when dockerd refuses CPUs the host has, as it keeps the set it started wit
   assert.equal(check.status, "warn");
   assert.match(check.detail, /keeps the CPUs it had when it started \(10,23\), but its containers may now have 1,23, .* pinned to CPUs in both \(23\)/);
   assert.match(check.fix!, /^Restart Docker on fake-docker/);
+});
+
+test("on a host with LXCFS, each box mounts its files over /proc and the CPUs online, so free and /proc/cpuinfo say the box's own, and the doctor says so (062)", async () => {
+  const { fake, backend } = setup({}, { lxcfs: true, cpus: 8 });
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const mounts = fake.inspect(guest.ref).HostConfig.Mounts.map((mount) => `${mount.Source} ${mount.Target}`);
+  assert.deepEqual(mounts, [
+    ...["cpuinfo", "meminfo", "stat", "uptime", "swaps", "loadavg", "diskstats"].map((file) => `/var/lib/lxcfs/proc/${file} /proc/${file}`),
+    "/var/lib/lxcfs/sys/devices/system/cpu/online /sys/devices/system/cpu/online",
+  ]);
+  const check = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!;
+  assert.deepEqual([check.name, check.status], ["Memory and CPUs a box sees", "ok"]);
+
+  fake.set({ lxcfsBroken: [guest.ref] });
+  const broken = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!;
+  assert.equal(broken.status, "warn");
+  assert.match(broken.detail, /^LXCFS on fake-docker was restarted under running boxes, so in calm-otter-\d+ free, \/proc\/meminfo and \/proc\/cpuinfo fail with "Transport endpoint is not connected"\.$/);
+  assert.match(broken.fix!, /^Stop and start each of them/);
+});
+
+test("on a host without LXCFS, boxes are made without its files and the doctor says what they see and how to add it; Docker Desktop cannot have it (062)", async () => {
+  const { fake, backend } = setup({}, { cpus: 8 });
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.deepEqual(fake.inspect(guest.ref).HostConfig.Mounts, []);
+  const check = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!;
+  assert.equal(check.status, "warn");
+  assert.match(check.detail, /^fake-docker has no LXCFS, so in a box free, \/proc\/meminfo and \/proc\/cpuinfo say the host's memory and CPUs/);
+  assert.match(check.fix!, /apt install lxcfs.*systemctl enable --now lxcfs.*Reload LXCFS/);
+  fake.set({ operatingSystem: "Docker Desktop" });
+  const desktop = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!;
+  assert.match(desktop.detail, /Docker Desktop's VM cannot have LXCFS\.$/);
+  assert.equal(desktop.fix, null);
+});
+
+test("a box is made without LXCFS's files when LXCFS went from the host after bb-box last looked, and without the CPUs online where LXCFS has none (062)", async () => {
+  const { fake, backend } = setup({}, { lxcfs: true, cpus: 8 });
+  await backend.acquire(identity(), null, hooks().hooks, signal());
+  fake.set({ lxcfs: false });
+  const after = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.deepEqual(fake.inspect(after.ref).HostConfig.Mounts, [], "the refused create looked again, and made the box without them");
+
+  const older = setup({}, { lxcfs: true, lxcfsCpuOnline: false, cpus: 8 });
+  const guest = await older.backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(older.fake.inspect(guest.ref).HostConfig.Mounts.some((mount) => mount.Target === "/sys/devices/system/cpu/online"), false);
+  assert.equal(older.fake.inspect(guest.ref).HostConfig.Mounts.length, 7);
 });
