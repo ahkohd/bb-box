@@ -1512,14 +1512,22 @@ test("an enrolment that finds the machine disconnected as its waits end gives BB
 });
 
 test("a reload during an enrolment stops the replaced instance's enrolment at once: it logs no error and leaves the box enrolling, and the next run carries on (#1032)", async (t) => {
-  const { harness, app, world, setupOptions } = await start(undefined, { variablesWaitMs: 4_000 });
+  const { harness, app, world, setupOptions } = await start(undefined, { variablesWaitMs: 30_000 });
   let host = harness;
-  t.after(() => host.lifecycle.dispose());
+  let sweeper: ReturnType<typeof harness.behavior.runService> | null = null;
+  t.after(async () => {
+    if (sweeper) {
+      sweeper.controller.abort(new Error("the test ends"));
+      await sweeper.done;
+    }
+    await host.lifecycle.dispose();
+  });
   world.connectAfterMs = null;
   await host.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux" });
-  const box = await until("the enrolment to wait for BB to show the machine connected", async () => {
+  const box = await until("the enrolment to wait for BB to show the machine connected, its installer done", async () => {
     const [current] = await app.boxes.list(THREAD);
-    return current?.enrol.state === "enrolling" && current.enrol.hostId && world.bootstraps.length ? current : null;
+    const machine = current?.enrol.hostId ? world.hosts.get(current.enrol.hostId) : undefined;
+    return current?.enrol.state === "enrolling" && machine?.lifecycle.phase === "active" ? current : null;
   });
   const old = harness;
   let restarted: Awaited<ReturnType<typeof setup>> | null = null;
@@ -1532,11 +1540,7 @@ test("a reload during an enrolment stops the replaced instance's enrolment at on
   assert.deepEqual(oldErrors.map((entry) => entry.message), [], "the replaced instance logs nothing about the enrolment it stopped");
   const hostId = `host-${box.id}`;
   world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "connected" });
-  const sweeper = next.harness.behavior.runService("sweeper");
-  t.after(async () => {
-    sweeper.controller.abort(new Error("the test ends"));
-    await sweeper.done;
-  });
+  sweeper = next.harness.behavior.runService("sweeper");
   await until("the next run to enrol the box", async () => (await restarted!.boxes.find(box.id))?.enrol.state === "enrolled");
 });
 

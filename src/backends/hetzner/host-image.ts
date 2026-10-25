@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { setupDir } from "../setup-dir.ts";
+import { BuildLog } from "../../core/build-log.ts";
 import type { DockerCli } from "../docker/cli.ts";
 import { hashDockerSetup } from "../docker/setup-hash.ts";
 import type { Hetzner, HetznerImage, Labels } from "./api.ts";
@@ -317,6 +318,7 @@ export class HostImages {
       appSha256: string | null;
       log: (line: string) => void;
       sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+      buildLogDir?: string;
     },
     given: AbortSignal,
   ): Promise<HostImageBuild> {
@@ -340,7 +342,7 @@ export class HostImages {
       if (saved.phase === "building") {
         if (!resumed) await this.#untilDockerAnswers(record, input.cliOf(record), input.sleep, signal);
         await input.remote.start(record, { images: input.images, architecture, bbUrl: input.bbUrl }, signal);
-        await this.#follow(record, input.remote, input.log, input.sleep, signal);
+        await this.#follow(record, input.remote, input.log, input.sleep, signal, new BuildLog(`hetzner-${architecture}-host-image-${record.hostId}`, this.#now(), input.buildLogDir));
         const prepared = await input.run(record, PREPARE_FOR_SNAPSHOT, { timeoutMs: 600_000, signal });
         if (prepared.exitCode !== 0) throw new Error(`${record.serverName} could not be made ready for its snapshot: ${prepared.stderr.trim().split("\n").pop() || `exit code ${prepared.exitCode}`}`);
         await save({ ...saved, phase: "prepared" });
@@ -430,7 +432,7 @@ export class HostImages {
     return null;
   }
 
-  async #follow(record: HostRecord, remote: RemoteBuild, log: (line: string) => void, sleep: (ms: number, signal?: AbortSignal) => Promise<void>, signal: AbortSignal): Promise<void> {
+  async #follow(record: HostRecord, remote: RemoteBuild, log: (line: string) => void, sleep: (ms: number, signal?: AbortSignal) => Promise<void>, signal: AbortSignal, buildLog: BuildLog): Promise<void> {
     let fromByte = 0;
     let tail: string[] = [];
     let unanswered = 0;
@@ -445,11 +447,12 @@ export class HostImages {
         fromByte = progress.nextByte;
         for (const line of progress.log.split(/\r?\n|\r/)) {
           if (!line.trim()) continue;
-          log(line);
+          const step = buildLog.write(line);
+          if (step) log(step);
           tail = [...tail, line].slice(-5);
         }
         if (progress.exitCode === 0) return;
-        if (progress.exitCode !== null) throw new Error(`The image build on ${record.serverName} exited with ${progress.exitCode}: ${tail.join(" ") || "no output"}`);
+        if (progress.exitCode !== null) throw new Error(`The image build on ${record.serverName} exited with ${progress.exitCode}: ${tail.join(" ") || "no output"}. Its whole output is in ${buildLog.path}.`);
       } else if (++unanswered >= BUILD_UNANSWERED_POLLS) {
         throw new Error(`The build server ${record.serverName} did not answer for ${Math.round((BUILD_UNANSWERED_POLLS * BUILD_POLL_MS) / 60_000)} minutes while it built the images.`);
       }
