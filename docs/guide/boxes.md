@@ -69,7 +69,7 @@ A thread can run on a box rather than on your computer. That box is the first ro
 
 ### When a box does not join BB
 
-A box joins BB through BB's machine access, in BB's settings under Machines. BB's desktop app starts with bb connect, which needs you signed in to your bb account. Until you are, no box joins BB: the row says 'Could not join BB' and why, and the first-run offer says so before you make a box. Sign in to your bb account in BB, or set Machine access to **Manual** with an address boxes can reach, such as the machine's address on your network. A box made before then stays as it is, so release it and make a new one.
+A box joins BB through BB's machine access, in BB's settings under Machines. BB's desktop app starts with bb connect, which needs you signed in to your bb account. Until you are, no box joins BB: the row says 'Could not join BB' and why, and the first-run offer says so before you make a box. Sign in to your bb account in BB, or set Machine access to **Manual** with an address boxes can reach, such as the machine's address on your network. BB must listen on that address too. BB on its own listens only on 127.0.0.1, which a box cannot reach: start it with `npx bb-app --server-bind-host 0.0.0.0`, or with the address itself in place of 0.0.0.0. That makes BB reachable by anything else on that network too. A box made before then stays as it is, so release it and make a new one.
 
 Boxes still work without joining BB, but the thread's commands and terminals cannot use them, and they do not get the thread's Git credentials and variables.
 
