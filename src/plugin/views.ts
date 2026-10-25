@@ -491,6 +491,10 @@ export function formLine(box: BoxRecord): string | null {
   }
 }
 
+function neverReady(box: BoxRecord): boolean {
+  return box.readyAt === null && !box.restoredAt;
+}
+
 export function boxDetail(box: BoxRecord, control?: ControlView): string {
   const capabilities = box.capabilities;
   const lines = [
@@ -518,7 +522,11 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   if (control && capabilities.displays.length) lines.push(`Desktop control: ${CONTROL_WORDS[control.owner]}`);
   const enrol: Record<EnrolState, string> = {
     off:
-      box.restoredAt && capabilities.enrol
+      capabilities.enrol && neverReady(box)
+        ? box.state === "acquiring" || box.state === "starting"
+          ? "not yet: it joins BB once it is ready, if bb-box enrols boxes"
+          : "not enrolled"
+        : box.restoredAt && capabilities.enrol
         ? "not enrolled since bb-box restored its lost record. It enrols again once it runs and answers, if bb-box enrols boxes"
         : capabilities.enrol
           ? // A box made before its kind's boxes joined BB, as a Windows box made before #539, is not enrolled in place.
