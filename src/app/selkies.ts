@@ -830,8 +830,9 @@ export class SelkiesSession implements Kept {
   typeText(text: string): void {
     if (this.connection.state !== "connected") return;
     for (const key of textKeys(text)) {
-      this.#key(key.keysym, key.code, true);
-      this.#key(key.keysym, key.code, false);
+      for (const down of [true, false]) {
+        for (const each of this.#letters.keys(key.keysym, key.code, down, false)) this.#key(each.keysym, each.code, each.down);
+      }
     }
   }
 

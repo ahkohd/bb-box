@@ -195,8 +195,9 @@ class Viewer extends RFB {
   }
 
   typeCharacter(keysym: number, code: string): void {
-    this.#keyEvent(keysym, code, true, null, null);
-    this.#keyEvent(keysym, code, false, null, null);
+    for (const down of [true, false]) {
+      for (const each of this.#letters.keys(keysym, code, down, false)) this.#keyEvent(each.keysym, each.code, each.down, null, null);
+    }
   }
 
   /** The modifiers the box holds down, as this viewer sent them. */
@@ -869,6 +870,8 @@ function TypeTextField({
   onClose: () => void;
 }) {
   const hintId = useId();
+  const enterWhileComposing = useRef(false);
+  const commitAfter = useRef(false);
   const hint = long ? "Long text goes as a paste." : "Enter sends it. Shift+Enter starts a new line. Esc closes.";
   return (
     <div role="group" aria-label={`Type text into ${name}`} className="absolute inset-x-2 bottom-2 z-10 mx-auto max-w-xl rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-lg">
@@ -881,11 +884,21 @@ function TypeTextField({
         autoFocus
         className="min-h-0 resize-none text-sm"
         onChange={(event) => onChange(event.target.value)}
+        onCompositionEnd={() => {
+          commitAfter.current = !enterWhileComposing.current;
+          enterWhileComposing.current = false;
+        }}
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) {
+            if (event.key === "Enter") enterWhileComposing.current = true;
+            return;
+          }
+          const commit = commitAfter.current && event.keyCode === 229;
+          commitAfter.current = false;
           if (event.key === "Escape") {
             event.preventDefault();
             onClose();
-          } else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+          } else if (event.key === "Enter" && !event.shiftKey && !commit) {
             event.preventDefault();
             onSend(value);
           }
