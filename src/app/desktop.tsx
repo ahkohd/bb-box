@@ -277,30 +277,34 @@ function randomId(): string {
  * that remounts keeps the control it took. Two viewers mounted at once never
  * share one.
  */
-function useViewerId(boxId: string): string {
-  const [viewer] = useState(() => {
-    const key = `bb-box:viewer:${boxId}`;
-    let stored: string | null = null;
-    try {
-      stored = window.sessionStorage.getItem(key);
-    } catch {
-      // Storage may be off. A new ID only means control is not kept across remounts.
-    }
-    const id = stored && !mounted.has(stored) ? stored : randomId();
-    try {
-      window.sessionStorage.setItem(key, id);
-    } catch {
-      // As above.
-    }
-    return id;
-  });
-  useEffect(() => {
+function tabViewerId(boxId: string): string {
+  const key = `bb-box:viewer:${boxId}`;
+  let stored: string | null = null;
+  try {
+    stored = window.sessionStorage.getItem(key);
+  } catch {
+    // Storage may be off. A new ID only means control is not kept across remounts.
+  }
+  const id = stored && !mounted.has(stored) ? stored : randomId();
+  try {
+    window.sessionStorage.setItem(key, id);
+  } catch {
+    // As above.
+  }
+  return id;
+}
+
+function useViewerId(boxId: string): string | null {
+  const [chosen, setChosen] = useState<{ boxId: string; viewer: string } | null>(null);
+  useLayoutEffect(() => {
+    const viewer = tabViewerId(boxId);
     mounted.add(viewer);
+    setChosen({ boxId, viewer });
     return () => {
       mounted.delete(viewer);
     };
-  }, [viewer]);
-  return viewer;
+  }, [boxId]);
+  return chosen?.boxId === boxId ? chosen.viewer : null;
 }
 
 /**
@@ -944,11 +948,17 @@ function pageIsInsecure(): boolean {
   return typeof isSecureContext !== "undefined" && !isSecureContext;
 }
 
-export function DesktopViewer({ threadId, boxId, newTab, onBack }: { threadId: string; boxId: string; newTab: boolean; onBack?: BackTo }) {
+type DesktopViewerProps = { threadId: string; boxId: string; newTab: boolean; onBack?: BackTo };
+
+export function DesktopViewer(props: DesktopViewerProps) {
+  const viewer = useViewerId(props.boxId);
+  return viewer === null ? null : <DesktopViewerAs {...props} viewer={viewer} />;
+}
+
+function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopViewerProps & { viewer: string }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
-  const viewer = useViewerId(boxId);
   const { value: state, error, refresh } = useLive<DesktopState>(`${threadId}/${boxId}`, () => rpc.call("desktop", { threadId, box: boxId }), forThread(threadId));
   const box = state?.box ?? null;
   /** The box's name as last seen, so a tab whose box was released still names it. */
