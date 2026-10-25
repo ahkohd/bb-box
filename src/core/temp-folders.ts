@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync,
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isSignallablePid } from "../transports/spawns.ts";
 
 export const TEMP_PREFIX = "bb-box-";
 export const OWNER_FILE = ".bb-box-owner";
@@ -87,6 +88,7 @@ function hasProc(procRoot: string): boolean {
 }
 
 function processAlive(pid: number): boolean {
+  if (!isSignallablePid(pid)) return false;
   try {
     process.kill(pid, 0);
     return true;

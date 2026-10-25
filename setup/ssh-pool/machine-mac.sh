@@ -111,6 +111,7 @@ fail() { quit 1 "$@"; }
 field() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; }
 generation() { cat "$STATE/generation" 2>/dev/null; }
 number() { case ${1:-} in '' | *[!0-9]*) return 1 ;; esac; }
+box_uid() { number "${1:-}" && [ "$1" -ge "$ID_BASE" ] && [ "$1" -lt $((ID_BASE + ID_SPAN)) ]; }
 now() { date +%s; }
 # Writes stdin to a file in one step.
 put() { cat >"$1.new.$$" && mv -f "$1.new.$$" "$1"; }
@@ -592,7 +593,7 @@ sign_in() {
 log_out() {
   user=$1 uid=${2:-}
   [ -n "$uid" ] || uid=$(attribute "$user" UniqueID)
-  number "$uid" || return 0
+  box_uid "$uid" || return 0
   within 30 launchctl bootout "gui/$uid" >/dev/null 2>&1
   within 30 launchctl bootout "user/$uid" >/dev/null 2>&1
   tries=0

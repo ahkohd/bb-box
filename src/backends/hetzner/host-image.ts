@@ -7,6 +7,7 @@ import { hashDockerSetup } from "../docker/setup-hash.ts";
 import type { Hetzner, HetznerImage, Labels } from "./api.ts";
 import { hostSetupScript } from "./cloud-init.ts";
 import { LABEL, type HetznerHosts, type HostRecord, type HostSpec } from "./hosts.ts";
+import { timedSpawn } from "../../transports/spawns.ts";
 
 export const HOST_IMAGE_ROLE = "host-image";
 export const BUILD_LABEL = "bbbox-build";
@@ -38,7 +39,7 @@ export function appLabel(appSha256: string | null): string | null {
 
 export function runBuildScript(cli: DockerCli, image: string, target: string, bbUrl: string | null, log: (line: string) => void, signal: AbortSignal, setup = setupDir(), architecture: Architecture = "x86"): Promise<number | null> {
   return new Promise((resolve) => {
-    const child = spawn("bash", [join(setup, "docker", "build.sh"), ...(bbUrl ? ["--bb-url", bbUrl] : []), ...(architecture === "arm" ? ["--arch", "arm64"] : []), "--tag", image, target], { env: { ...process.env, DOCKER_HOST: cli.host ?? "" }, stdio: ["ignore", "pipe", "pipe"], signal });
+    const child = timedSpawn(() => spawn("bash", [join(setup, "docker", "build.sh"), ...(bbUrl ? ["--bb-url", bbUrl] : []), ...(architecture === "arm" ? ["--arch", "arm64"] : []), "--tag", image, target], { env: { ...process.env, DOCKER_HOST: cli.host ?? "" }, stdio: ["ignore", "pipe", "pipe"], signal }), "Hetzner Cloud host image build");
     let rest = "";
     const read = (chunk: Buffer) => {
       const lines = (rest + chunk.toString("utf8")).split(/\r?\n|\r/);

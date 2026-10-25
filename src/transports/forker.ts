@@ -34,6 +34,7 @@ export const HELPER_SOURCE = String.raw`
 const { spawn } = require("node:child_process");
 const children = new Map();
 const AHEAD = 16;
+const signalOnceStarted = (child, signal) => { if (!Number.isSafeInteger(child.pid) || child.pid <= 0) return; try { child.kill(signal); } catch {} };
 const send = (message, child) => {
   if (child) {
     child.bbAhead = (child.bbAhead || 0) + 1;
@@ -71,12 +72,12 @@ process.on("message", (m) => {
   if (!child) return;
   if (m.op === "in") child.stdin?.write(Buffer.from(m.data));
   else if (m.op === "end") child.stdin?.end();
-  else if (m.op === "kill") { try { child.kill(m.signal); } catch {} }
+  else if (m.op === "kill") signalOnceStarted(child, m.signal);
   else if (m.op === "drop") { child.stdout?.destroy(); child.stderr?.destroy(); }
 });
 process.on("message", (m) => { if (m.op === "stop") stop(); });
 const stop = () => {
-  for (const child of children.values()) { try { child.kill("SIGKILL"); } catch {} }
+  for (const child of children.values()) signalOnceStarted(child, "SIGKILL");
   process.exit(0);
 };
 process.on("disconnect", stop);

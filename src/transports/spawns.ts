@@ -9,6 +9,7 @@
 // comes in. The bundle is minified, so the stack's names say nothing.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { ChildProcess } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
 export interface SpawnTotals {
@@ -57,7 +58,7 @@ export function spawnLabel(site: string): string {
 export function timedSpawn<T>(start: () => T, site: string, viaHelper = false): T {
   const began = performance.now();
   try {
-    return start();
+    return killsOnlyOnceStarted(start());
   } finally {
     const took = performance.now() - began;
     count++;
@@ -68,6 +69,17 @@ export function timedSpawn<T>(start: () => T, site: string, viaHelper = false): 
     const key = byCaller.has(caller) || byCaller.size < CALLERS ? caller : OTHERS;
     byCaller.set(key, (byCaller.get(key) ?? 0) + 1);
   }
+}
+
+export function isSignallablePid(pid: unknown): pid is number {
+  return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0;
+}
+
+export function killsOnlyOnceStarted<T>(child: T): T {
+  if (!(child instanceof ChildProcess)) return child;
+  const kill = child.kill.bind(child);
+  child.kill = (signal?: NodeJS.Signals | number) => (isSignallablePid(child.pid) ? kill(signal) : false);
+  return child;
 }
 
 export function spawnTotals(): SpawnTotals {
