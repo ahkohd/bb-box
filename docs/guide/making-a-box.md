@@ -81,6 +81,8 @@ Name shows only when you add one of your machines. See [your machines](boxes.md#
 
 Select **Create box**, or **Add machine** in settings. The box shows in the list at once, starting, and is usually ready in seconds. If no provider has room, the form stays open and says why.
 
+Where boxes cannot join BB yet, the form says so above the button, 'Boxes will not join BB yet.', with what to do and a link to [when a box does not join BB](boxes.md#when-a-box-does-not-join-bb). You can still make the box.
+
 The form remembers the system, type and size you chose last, separately for boxes and machines. It does not remember the image.
 
 ![The Box panel with a server box and a desktop box](../media/box-panel.png)
