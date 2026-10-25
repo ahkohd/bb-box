@@ -35,8 +35,8 @@ import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, PanelState } from "../plugin/contract.ts";
-import type { BoxView, KindView } from "../plugin/views.ts";
+import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, MachinesState, PanelState } from "../plugin/contract.ts";
+import type { BoxView } from "../plugin/views.ts";
 import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, osName, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { POINTER_NONE } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
@@ -44,7 +44,8 @@ import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts
 import { refreshLosslessly, type LosslessRefresh } from "./rfb-refresh.ts";
 import { controlWord, statusOf } from "./status.ts";
 import { BoxTerminal, canOpenTerminal } from "./terminal.tsx";
-import { NewBox, type SizeRequest } from "./new-box.tsx";
+import { NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
+import { SetupProgress } from "./first-run.tsx";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
 import { MachineRow } from "./settings-machines.tsx";
@@ -1571,12 +1572,14 @@ function BoxList() {
   const pluginId = experimental_usePluginId();
   const { value: all, error, refresh } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
   // Your machines with the threads on each, as settings lists them: settings' rows, actions and warnings (the operator, 5 October 2026).
-  const { value: machinesState, refresh: refreshMachines } = useLive<{ machines: MachineEntry[]; kinds: KindView[] }>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
+  const { value: machinesState, refresh: refreshMachines } = useLive<MachinesState>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
   const kinds = machinesState?.kinds ?? [];
   const machines = machinesState?.machines ?? [];
   const refreshBoth = () => Promise.all([refresh(), refreshMachines()]);
   const machineActions = useMachineActions(refreshBoth);
   const [problem, setProblem] = useState<string | null>(null);
+  const onDemand = useDesktopOnDemand(machinesState?.desktopOnDemand, OPERATOR, refreshBoth);
+  useDesktopProblemShownOnce(machinesState?.desktopProblem, setProblem);
   const [open, setOpen] = useState<string | null>(null);
   /** A release or stop of a thread's box left alone because threads work on it, until the person says: the panel's question. */
   const [inUse, setInUse] = useState<(InUse<"release" | "stop"> & { readonly threadId: string }) | null>(null);
@@ -1676,10 +1679,11 @@ function BoxList() {
               with an app path. BB offers no place beside the page's title for it (docs/bb-requests.md #18). */}
           <div className="flex shrink-0 items-center gap-1.5">
             <IconLink label="BB Box settings" icon="Settings" href={SETTINGS_PATH} className="size-8" />
-            {kinds.length ? <NewBox kinds={kinds} make={add} machine primary profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} /> : null}
+            {kinds.length ? <NewBox kinds={kinds} make={add} onDemand={onDemand} machine primary profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} /> : null}
           </div>
         </div>
         <div role="tabpanel" className="flex min-h-0 flex-1 flex-col gap-5">
+          <SetupProgress empty={false} />
           {listed ? <SearchRow search={search} onSearch={setSearch} filters={kept} offered={offered} counts={counts} split={split} onFilters={setFilters} sort={sort} onSort={setSort} /> : null}
           {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
           <ProblemLine

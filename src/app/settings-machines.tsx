@@ -9,13 +9,13 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { Contract, MachineEntry } from "../plugin/contract.ts";
-import type { BoxView, KindView } from "../plugin/views.ts";
+import type { Contract, MachineEntry, MachinesState } from "../plugin/contract.ts";
+import type { BoxView } from "../plugin/views.ts";
 import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, OPERATOR, osName, StatusDot, useLive, useNow } from "./common.tsx";
 import { runsWayland } from "./boxes-filter.ts";
 import { DESKTOP_PAGE, desktopSubPath, pageUrl } from "./desktop.tsx";
 import { ProblemLine, useMachineActions } from "./box-actions.tsx";
-import { NewBox, type SizeRequest } from "./new-box.tsx";
+import { NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
 import { Section } from "./settings-fields.tsx";
 import { statusOf } from "./status.ts";
 import { canOpenTerminal } from "./terminal.tsx";
@@ -31,12 +31,14 @@ function isMoving(box: BoxView): boolean {
 
 export function MachinesSection() {
   const rpc = useRpc<Contract>();
-  const { value: state, error, refresh } = useLive<{ machines: MachineEntry[]; kinds: KindView[] }>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
+  const { value: state, error, refresh } = useLive<MachinesState>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
   const machines = state?.machines ?? [];
   const kinds = state?.kinds ?? [];
   const now = useNow(machines.some((entry) => isMoving(entry.box)));
   // Start, Stop and Remove with their warnings, shared with the Boxes page's Machines.
   const { act, busy, problem, setProblem, askRemove, dialogs } = useMachineActions(refresh);
+  const onDemand = useDesktopOnDemand(state?.desktopOnDemand, OPERATOR, refresh);
+  useDesktopProblemShownOnce(state?.desktopProblem, setProblem);
   const add = async (kind: string, size?: SizeRequest, name?: string, on?: string | string[]): Promise<string | null> => {
     let refused: string | null;
     try {
@@ -49,7 +51,7 @@ export function MachinesSection() {
   };
 
   return (
-    <Section title="Machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} machine profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} />} plain={!machines.length}>
+    <Section title="Machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} onDemand={onDemand} machine profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} />} plain={!machines.length}>
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
       <ProblemLine problem={problem} onDismiss={() => setProblem(null)} className="py-2" />
       {state && !machines.length ? (

@@ -214,11 +214,12 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     },
     async "machines.list"() {
       const records = (await boxes.list(OPERATOR)).filter((box) => box.state !== "releasing").sort((a, b) => a.createdAt - b.createdAt);
-      const [machines, kinds] = await Promise.all([
+      const [machines, kinds, desktopOnDemand] = await Promise.all([
         Promise.all(records.map(async (box) => ({ box: app.view(box), threads: await app.threadsOn(box).catch(() => []) }))),
         app.kinds(),
+        app.desktopOnDemand().catch(() => null),
       ]);
-      return { machines, kinds: kinds.filter((kind) => kind.enrol) };
+      return { machines, kinds: kinds.filter((kind) => kind.enrol), desktopOnDemand, desktopProblem: app.desktopProblem(OPERATOR) };
     },
     "machines.add": ({ kind, size, name, on }) =>
       change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) })),
@@ -262,7 +263,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       };
     },
     "images.refresh": async () => app.imageJobs.startNow(),
-    "setup.desktop": async ({ threadId, hostId, size }) => ({ result: await app.buildDesktop({ threadId, hostId, ...(size ? { size } : {}) }) }),
+    "setup.desktop": async ({ threadId, hostId, size, name }) => ({ result: await app.buildDesktop({ threadId, hostId, ...(size ? { size } : {}), ...(name ? { name } : {}) }) }),
     "setup.docker": async ({ hostId }) => {
       const result = await app.setDockerHost(hostId, true, true);
       return { result, machines: await app.setups() };

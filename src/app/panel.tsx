@@ -2,7 +2,7 @@
 
 import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { experimental_Icon as Icon, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DelayedLoading } from "@/components/ui/delayed-loading";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,7 +12,7 @@ import { BoxRow, type BoxAction, type Held } from "./box-row.tsx";
 import { InUseDialog, ProblemLine, type InUse } from "./box-actions.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { useThreadTitles } from "./desktop.tsx";
-import { IMAGE_REQUEST, NewBox, type SizeRequest } from "./new-box.tsx";
+import { IMAGE_REQUEST, NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
 
 /** bb-box's page under BB's settings. */
 
@@ -57,32 +57,9 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   // The size key is left out for the kind's default: RPC input must be JSON.
   const make = (kind: string, size?: SizeRequest, _name?: string, on?: string | string[], image?: string) => settle(rpc.call("acquire", { threadId, kind, ...(size ? { size } : {}), ...(on ? { on } : {}), ...(image ? { image } : {}) }));
   // A desktop whose image builds first (the setup plan's PR 4): the panel then shows the build, and the box follows it.
-  const onDemand = state?.desktopOnDemand
-    ? {
-        kind: state.desktopOnDemand.kind,
-        machine: state.desktopOnDemand.name,
-        took: state.desktopOnDemand.took ?? null,
-        build: async (size?: SizeRequest): Promise<string | null> => {
-          const hostId = state.desktopOnDemand!.hostId;
-          try {
-            const { result } = await rpc.call("setup.desktop", { threadId, hostId, ...(size ? { size } : {}) });
-            await refresh();
-            if (result.ok) return null;
-            return result.reason === "problems" ? result.problems.map((item) => item.message).join(" ") : "Someone else saved BB Box's settings at the same moment. Try again.";
-          } catch (caught) {
-            return message(caught);
-          }
-        },
-      }
-    : null;
+  const onDemand = useDesktopOnDemand(state?.desktopOnDemand, threadId, refresh);
   // A desktop box not made after its image was built shows as a refused acquire does, once, until dismissed.
-  const shownProblem = useRef<number | null>(null);
-  const desktopProblem = state?.desktopProblem ?? null;
-  useEffect(() => {
-    if (!desktopProblem || shownProblem.current === desktopProblem.at) return;
-    shownProblem.current = desktopProblem.at;
-    setProblem(desktopProblem.message);
-  }, [desktopProblem]);
+  useDesktopProblemShownOnce(state?.desktopProblem, setProblem);
   const act = async (method: BoxAction, box: BoxView, force = false) => {
     const guarded = method === "release" || method === "stop";
     const input = { threadId, box: box.id, ...(guarded && force ? { force: true } : {}) };

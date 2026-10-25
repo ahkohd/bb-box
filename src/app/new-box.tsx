@@ -4,13 +4,14 @@
 // within the kind's largest (028). It remembers the last kind and size in
 // the browser, keyed by plugin ID.
 
-import { experimental_Icon as Icon, experimental_usePluginId } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_usePluginId, useRpc } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import type { Contract, DesktopOnDemandView } from "../plugin/contract.ts";
 import type { ImageOptionView, KindView, OfferRoom, OfferView, ProviderProfile, SizeView } from "../plugin/views.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
@@ -102,6 +103,42 @@ export function customSize(fields: Fields): SizeRequest | null {
 /** A machine's name (036): a hostname label of up to 32 characters, unique among your machines, which the server checks. */
 export const MACHINE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
+export interface DesktopOnDemand {
+  readonly kind: KindView;
+  readonly machine: string;
+  readonly took: number | null;
+  readonly build: (size?: SizeRequest, name?: string) => Promise<string | null>;
+}
+
+export function useDesktopOnDemand(view: DesktopOnDemandView | null | undefined, threadId: string, refresh: () => Promise<unknown>): DesktopOnDemand | null {
+  const rpc = useRpc<Contract>();
+  if (!view) return null;
+  return {
+    kind: view.kind,
+    machine: view.name,
+    took: view.took ?? null,
+    build: async (size, name) => {
+      try {
+        const { result } = await rpc.call("setup.desktop", { threadId, hostId: view.hostId, ...(size ? { size } : {}), ...(name ? { name } : {}) });
+        await refresh();
+        if (result.ok) return null;
+        return result.reason === "problems" ? result.problems.map((item) => item.message).join(" ") : "Someone else saved BB Box's settings at the same moment. Try again.";
+      } catch (caught) {
+        return message(caught);
+      }
+    },
+  };
+}
+
+export function useDesktopProblemShownOnce(desktopProblem: { readonly message: string; readonly at: number } | null | undefined, show: (message: string) => void): void {
+  const shown = useRef<number | null>(null);
+  useEffect(() => {
+    if (!desktopProblem || shown.current === desktopProblem.at) return;
+    shown.current = desktopProblem.at;
+    show(desktopProblem.message);
+  }, [desktopProblem]);
+}
+
 /** Why a typed name will not do, or null when it will; an empty name lets bb-box pick one. */
 export function nameProblem(name: string): string | null {
   if (!name) return null;
@@ -139,7 +176,7 @@ export function NewBox({
    * A desktop whose image is not built yet (the setup plan's PR 4): the form offers it, saying it builds first, and
    * Create asks `build`, which resolves with the refusal to show, or null once the build has started.
    */
-  onDemand?: { readonly kind: KindView; readonly machine: string; readonly took: number | null; readonly build: (size?: SizeRequest) => Promise<string | null> } | null;
+  onDemand?: DesktopOnDemand | null;
 }) {
   // The desktop to build is offered only where no desktop of its system is: once one is, it is that.
   const added = !!onDemand && !offeredKinds.some((offered) => offered.os === onDemand.kind.os && offered.arch === onDemand.kind.arch && offered.desktop);
@@ -331,7 +368,7 @@ export function NewBox({
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
-      const refused = buildsFirst ? await onDemand!.build(request) : await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage);
+      const refused = buildsFirst ? await onDemand!.build(request, machine && typedName ? typedName : undefined) : await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
@@ -612,7 +649,7 @@ export function NewBox({
             )}
             <Button type="submit" size="sm" className="shrink-0" disabled={!kind || making || noMatch || (size === CUSTOM && !custom) || nameWrong !== null}>
               {making ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-              {machine && !primary ? "Add machine" : buildsFirst ? "Build and create" : "Create box"}
+              {machine && !primary ? (buildsFirst ? "Build and add" : "Add machine") : buildsFirst ? "Build and create" : "Create box"}
             </Button>
           </div>
         </form>
