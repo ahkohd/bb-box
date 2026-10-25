@@ -108,6 +108,9 @@ function retryAfterMs(failures: HostImageFailures): number {
 }
 const HOST_IMAGE_WAITING_KEY: Readonly<Record<Architecture, string>> = { x86: "host-image-waiting", arm: "host-image-waiting:arm" };
 
+const BOXES_REFUSED_FOR_ROOM_KEY = "boxes-refused-for-room-at";
+const BUILDS_WAIT_AFTER_BOXES_REFUSED_MS = 30 * 60_000;
+const BUILD_TAKES_ABOUT_MS: Readonly<Record<Architecture, number>> = { x86: 45 * 60_000, arm: 20 * 60_000 };
 const ROOM_ADVICE = "Hetzner limits the shared vCPUs of the whole account, 20 for a new one, across all its projects: free some, or ask Hetzner for more on the account's Limits page in the Console.";
 
 interface WaitingForRoom {
@@ -634,10 +637,31 @@ export class HetznerBackend implements Backend {
       return await this.hostRecords.create(spec, signal);
     } catch (error) {
       if (error instanceof HetznerError && (error.overLimit || error.unavailable)) {
-        throw new BackendError("no_capacity", `${this.label} could not make a ${spec.serverType} host: ${error.overLimit ? "the account is at Hetzner's limit" : `Hetzner has no ${spec.serverType} free in ${spec.location} now`} (${error.message.replace(/^Hetzner Cloud POST \/servers failed /, "")}). ${error.overLimit ? ROOM_ADVICE : "Try again later, or choose another location or server type."}`);
+        const building = error.overLimit ? await this.#ownBuildHoldingRoom(signal).catch(() => "") : "";
+        if (error.overLimit) await this.#context.storage.set(BOXES_REFUSED_FOR_ROOM_KEY, this.#now());
+        throw new BackendError("no_capacity", `${this.label} could not make a ${spec.serverType} host: ${error.overLimit ? "the account is at Hetzner's limit" : `Hetzner has no ${spec.serverType} free in ${spec.location} now`} (${error.message.replace(/^Hetzner Cloud POST \/servers failed /, "")}).${building} ${error.overLimit ? ROOM_ADVICE : "Try again later, or choose another location or server type."}`);
       }
       throw error;
     }
+  }
+
+  async #ownBuildHoldingRoom(signal: AbortSignal | undefined): Promise<string> {
+    const builds = (await this.#hostImages.builds.records()).filter((record) => record.state === "ready" || record.state === "creating");
+    if (!builds.length) return "";
+    const told = await Promise.all(
+      builds.map(async (record) => {
+        const cores = (await this.#serverTypeNow(record.serverType, signal).catch(() => null))?.cores;
+        const architecture = this.#architectureOfType(record.serverType);
+        const endsBy = new Date(record.claimedAtMs + BUILD_TAKES_ABOUT_MS[architecture]).toISOString();
+        return `${record.serverName}, a ${record.serverType}${cores ? ` of ${cores} vCPUs` : ""}, since ${new Date(record.claimedAtMs).toISOString()}, which ends by about ${endsBy}`;
+      }),
+    );
+    return ` bb-box's own host image build holds some of that room: ${told.join("; ")}. bb-box starts no other build while boxes wait for room.`;
+  }
+
+  async #boxesWaitedForRoomAt(): Promise<number | null> {
+    const at = await this.#context.storage.get<number>(BOXES_REFUSED_FOR_ROOM_KEY);
+    return typeof at === "number" && this.#now() - at < BUILDS_WAIT_AFTER_BOXES_REFUSED_MS ? at : null;
   }
 
   async #userData(serverName: string, signal: AbortSignal | undefined): Promise<string> {
@@ -690,19 +714,28 @@ export class HetznerBackend implements Backend {
     const making = this.#buildingHostImage.has(architecture) ? null : await this.#hostImages.beingMade(signal, architecture).catch(() => null);
     const building = this.#buildingHostImage.has(architecture) ? " A new one is being built." : making ? ` Hetzner Cloud is making a new one, snapshot ${making.id}, which bb-box takes once it is ready.` : "";
     const failed = failures
-      ? ` The last build failed at ${new Date(failures.atMs).toISOString()}${failures.inARow > 1 ? `, the ${failures.inARow}${ordinal(failures.inARow)} failure in a row` : ""}; bb-box tries again at ${new Date(failures.atMs + retryAfterMs(failures)).toISOString()}.`
+      ? ` The last build failed at ${new Date(failures.atMs).toISOString()}${failures.inARow > 1 ? `, the ${failures.inARow}${ordinal(failures.inARow)} failure in a row` : ""}${building ? "." : `; bb-box tries again at ${new Date(failures.atMs + retryAfterMs(failures)).toISOString()}.`}`
       : "";
     const waiting = await this.#context.storage.get<WaitingForRoom>(HOST_IMAGE_WAITING_KEY[architecture]);
     const waits = waiting && !this.#buildingHostImage.has(architecture) ? ` The last build waited for room: at ${new Date(waiting.atMs).toISOString()} Hetzner Cloud refused its server (${waiting.why.replace(/^Hetzner Cloud POST \/servers failed /, "")}); bb-box tries again at its next check. ${ROOM_ADVICE}` : "";
     const fix = failedAt !== undefined ? "See BB Box's log for the build's last lines." : null;
+    const why = this.#hostImages.whyBuild(newest, this.#now(), await this.#bbApp(signal));
+    const held = why && !building ? await this.#whyBuildWaits(architecture) : "";
     if (!newest) {
-      push(id, name, failedAt !== undefined ? "warn" : "ok", `None yet: ${this.#whichHosts(architecture)} start from ${this.#baseImage()} and install Docker and Tailscale, and build each kind's image, as they start.${building}${waits}${failed}`, fix);
+      push(id, name, failedAt !== undefined ? "warn" : "ok", `None yet: ${this.#whichHosts(architecture)} start from ${this.#baseImage()} and install Docker and Tailscale, and build each kind's image, as they start.${held}${building}${waits}${failed}`, fix);
       return;
     }
-    const why = this.#hostImages.whyBuild(newest, this.#now(), await this.#bbApp(signal));
     const days = Math.floor((this.#now() - newest.createdAtMs) / (24 * 3_600_000));
     const whichHosts = this.#whichHosts(architecture);
-    push(id, name, failedAt !== undefined ? "warn" : "ok", `${whichHosts === "hosts" ? "Hosts" : whichHosts} start from snapshot ${newest.id}, built ${days} day${days === 1 ? "" : "s"} ago.${kept}${why ? ` A new one is due, as ${why}.` : ""}${building}${waits}${failed}`, fix);
+    push(id, name, failedAt !== undefined ? "warn" : "ok", `${whichHosts === "hosts" ? "Hosts" : whichHosts} start from snapshot ${newest.id}, built ${days} day${days === 1 ? "" : "s"} ago.${kept}${why ? ` A new one is due, as ${why}.` : ""}${held}${building}${waits}${failed}`, fix);
+  }
+
+  async #whyBuildWaits(architecture: Architecture): Promise<string> {
+    const otherBuilding = [...this.#buildingHostImage.keys()].find((other) => other !== architecture);
+    if (otherBuilding) return ` It waits for the ${ARCHITECTURE_WORDS[otherBuilding]} host image's build to finish, as bb-box builds one at a time.`;
+    const boxesWaited = await this.#boxesWaitedForRoomAt();
+    if (boxesWaited === null) return "";
+    return ` It waits until ${new Date(boxesWaited + BUILDS_WAIT_AFTER_BOXES_REFUSED_MS).toISOString()}, as boxes waited for room at ${new Date(boxesWaited).toISOString()}, and they come first.`;
   }
 
   #whichHosts(architecture: Architecture): string {
@@ -735,7 +768,9 @@ export class HetznerBackend implements Backend {
   }
 
   async #hostImageBuildDue(architecture: Architecture, signal?: AbortSignal): Promise<string | null> {
-    if (!this.#buildsHostImages(architecture) || this.#buildingHostImage.has(architecture) || (this.#reach?.canReach() ?? null) !== null) return null;
+    if (!this.#buildsHostImages(architecture) || this.#buildingHostImage.size > 0 || (this.#reach?.canReach() ?? null) !== null) return null;
+    for (const other of this.#architectures) if (other !== architecture && (await this.#hostImages.resumable(other))) return null;
+    if ((await this.#boxesWaitedForRoomAt()) !== null) return null;
     const failures = await this.#failures(architecture);
     if (failures && this.#now() - failures.atMs < retryAfterMs(failures)) return null;
     if (await this.#hostImages.beingMade(signal, architecture)) return null;

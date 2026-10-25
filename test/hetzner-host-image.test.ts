@@ -340,3 +340,88 @@ test("the build script starts once, unpacks bb-box's setup on the server, runs b
   assert.deepEqual(readProgress("exit=\nline one\nline two\n", 100), { exitCode: null, log: "line one\nline two\n", nextByte: 118 });
   assert.deepEqual(readProgress("exit=3\n", 5), { exitCode: 3, log: "", nextByte: 5 });
 });
+
+function heldBuilder() {
+  const { options } = builder();
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const started: string[] = [];
+  const setup = { fingerprint: "fp1" };
+  return {
+    started,
+    setup,
+    release: () => release(),
+    options: {
+      ...options,
+      hostImageFingerprint: () => setup.fingerprint,
+      buildImage: async (host: HostRecord, _cli: unknown, _image: string, target: string) => {
+        if (!started.includes(host.serverName)) started.push(host.serverName);
+        if (target === "linux") await held;
+      },
+    },
+  };
+}
+
+const until = async (done: () => boolean) => {
+  for (let i = 0; i < 400 && !done(); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+};
+const buildServers = (api: ReturnType<typeof hetznerWorld>["api"]) => [...api.servers.values()].filter((server) => server.labels["bbbox-role"] === "image-build");
+
+test("bb-box builds one host image at a time: while the x86 build runs, the Arm one waits, and the doctor says so (#1075)", async () => {
+  const { api, backend } = hetznerWorld();
+  const { started, release, options } = heldBuilder();
+  const hetzner = backend(hetznerConfig({ armServerType: "cax31", hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04", monthlyLimitEurosBeforeVat: 50 }), new MemoryStorage(), "test", options);
+  await hetzner.maintain(signal());
+  await until(() => started.length > 0);
+  await hetzner.maintain(signal());
+  assert.deepEqual(buildServers(api).map((server) => server.serverType), ["cpx42"]);
+  const arm = (await hetzner.doctor(signal())).checks.find((each) => each.id === "hetzner.arm-image")!;
+  assert.match(arm.detail, /It waits for the x86 host image's build to finish, as bb-box builds one at a time\./);
+  release();
+  await until(() => api.images.size === 1 && api.servers.size === 0);
+  await hetzner.maintain(signal());
+  await until(() => api.images.size === 2);
+  assert.deepEqual([...api.images.values()].map((image) => image.labels["bbbox-arch"]), ["x86", "arm"]);
+});
+
+test("a box Hetzner refuses for room comes before a build: the acquire names bb-box's own build server, and no build starts for 30 minutes after (#1075)", async () => {
+  const { api, backend } = hetznerWorld();
+  const { started, setup, release, options } = heldBuilder();
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04", monthlyLimitEurosBeforeVat: 50 }), new MemoryStorage(), "test", options);
+  await hetzner.maintain(signal());
+  await until(() => started.length > 0);
+  const [server] = buildServers(api);
+  api.projectServerLimit = 1;
+  await assert.rejects(hetzner.acquire(box(), null, hooks, signal()), (error: Error) => {
+    assert.match(error.message, new RegExp(`bb-box's own host image build holds some of that room: ${server!.name}, a cpx42 of \\d+ vCPUs, since .*, which ends by about .*\\. bb-box starts no other build while boxes wait for room\\.`));
+    return true;
+  });
+  release();
+  await until(() => api.images.size === 1 && api.servers.size === 0);
+  api.projectServerLimit = 10;
+  setup.fingerprint = "fp2";
+  api.advanceClock(29 * 60_000);
+  await hetzner.maintain(signal());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(buildServers(api).length, 0, "no build while boxes waited for room within 30 minutes");
+  assert.match((await hetzner.doctor(signal())).checks.find((each) => each.id === "hetzner.image")!.detail, /A new one is due, as .*\. It waits until .*, as boxes waited for room at .*, and they come first\./);
+  api.advanceClock(2 * 60_000);
+  await hetzner.maintain(signal());
+  await until(() => api.images.size === 2);
+  assert.equal(api.images.size, 2, "the build starts once boxes have not waited for 30 minutes");
+});
+
+test("while a build runs after a failure, the doctor names the failure but no time to try again, as that time has passed", async () => {
+  const { api, backend } = hetznerWorld();
+  const { started, release, options } = heldBuilder();
+  const storage = new MemoryStorage();
+  const failedAt = api.now - 20 * 60_000;
+  await storage.set("host-image-failed-at:x86", { atMs: failedAt, inARow: 1 });
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04", monthlyLimitEurosBeforeVat: 50 }), storage, "test", options);
+  await hetzner.maintain(signal());
+  await until(() => started.length > 0);
+  const detail = (await hetzner.doctor(signal())).checks.find((each) => each.id === "hetzner.image")!.detail;
+  assert.match(detail, new RegExp(`A new one is being built\\. The last build failed at ${new Date(failedAt).toISOString()}\\.$`));
+  release();
+  await until(() => api.images.size === 1 && api.servers.size === 0);
+});
