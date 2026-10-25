@@ -613,6 +613,23 @@ test("box details promise a restored box enrols again only when its kind can enr
   assert.match(boxDetail(restored(false)), /\nBB machine: not enrolled(\n|$)/, "a kind that never enrols, such as linux-docker");
 });
 
+test("box details say a box still being made joins BB once it is ready, not that it was made while its kind did not join BB", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const making = (state: BoxRecord["state"]): BoxRecord => ({
+    ...box,
+    state,
+    readyAt: null,
+    enrol: { state: "off", hostId: null, error: null },
+    capabilities: { ...box.capabilities, enrol: true },
+  });
+  for (const state of ["acquiring", "starting"] as const) {
+    assert.match(boxDetail(making(state)), /\nBB machine: not yet: it joins BB once it is ready, if bb-box enrols boxes(\n|$)/, state);
+  }
+  assert.match(boxDetail(making("failed")), /\nBB machine: not enrolled(\n|$)/, "a failed box is not about to join");
+  assert.match(boxDetail({ ...making("starting"), readyAt: Date.now() }), /\nBB machine: not enrolled: it was made while boxes of its kind did not join BB/, "a box that was ready before");
+});
+
 test("concurrent acquires from different threads never share the last room", async () => {
   const world = setup({ maxGuests: 2 });
   const results = await Promise.allSettled(
