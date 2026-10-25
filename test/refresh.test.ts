@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -9,6 +9,7 @@ import { pinsDigest, type ImageRecord } from "../src/backends/images.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../src/backends/types.ts";
 import { buildScript, recordChecks, refreshImage, windowsRecord } from "../src/core/refresh.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../src/transports/types.ts";
+import { tempDir } from "./helpers.ts";
 
 const SETUP = fileURLToPath(new URL("../setup/", import.meta.url));
 const APP = "a".repeat(64);
@@ -174,7 +175,7 @@ test("a failed build, or a failed check, keeps the image and removes what the re
   const failed = fake({ buildExit: 1 });
   const build = await refresh(failed);
   assert.equal(build.ok, false);
-  assert.equal(build.reason, "The build failed with exit code 1: finalize: done (linux)");
+  assert.match(build.reason!, /^The build failed with exit code 1: finalize: done \(linux\)\. Its whole output is in \S+\/bb-box-build-logs\/9100-\S+\.log\.$/);
   assert.deepEqual(failed.events.slice(-1), ["remove 7000"]);
   assert.ok(!failed.events.some((event) => event.startsWith("capture")));
 
@@ -226,6 +227,29 @@ test("a refresh on a backend whose standard images come from a build script, as 
   ]);
   assert.match(staged[0]!, /bb-box-refresh-.*\/setup$/, "a staged copy of setup/");
   assert.equal(result.checks[1]!.name, "the kind's check");
+});
+
+test("a refresh writes its build's output to the build's own file, and gives the plugin's log only the build's steps and its own lines (#1032)", async () => {
+  const made = fake();
+  const lines: string[] = [];
+  const dir = tempDir("build-logs");
+  const images: BackendImages = {
+    ...made.images,
+    build: async (current, _setup, { log }) => {
+      log("#14 [linux 4/9] RUN apt-get update");
+      for (let i = 0; i < 50; i++) log(`#14 ${i}.1 Get:${i} https://snapshot.ubuntu.com/ubuntu resolute/main amd64 package-${i}`);
+      log("#14 DONE 98.1s");
+      log("built bbbox/linux:refresh-x");
+      return { ref: "bbbox/linux:refresh-x", image: "standard", kind: current.kind, build: "build.20261003-021500-3f9c", record: record("build.20261003-021500-3f9c", { node: "24.21.0", "claude-code": "2.1.288" }), current: false };
+    },
+    check: () => "echo 'node ok   v24.21.0'",
+  };
+  const result = await refreshImage({ images, current: CURRENT, setup: SETUP, bbUrl: "https://bb.example.com", bbApp: APP, pinned: true, signal: AbortSignal.timeout(60_000), now: made.now, log: (line) => void lines.push(line), buildLogDir: dir });
+  assert.equal(result.ok, true, result.reason ?? "");
+  assert.deepEqual(lines.filter((line) => /Get:|DONE/.test(line)), [], "no build output in the plugin's log");
+  assert.ok(lines.includes("#14 [linux 4/9] RUN apt-get update") && lines.includes("built bbbox/linux:refresh-x"), "its steps are");
+  const [file] = readdirSync(dir);
+  assert.equal(readFileSync(join(dir, file!), "utf8").split("\n").filter((line) => line.includes("Get:")).length, 50, "the file has the whole output");
 });
 
 test("the record's checks: whole, and no tool older or missing than in the old build", () => {
@@ -461,7 +485,7 @@ test("a Windows refresh takes 194, 3010 as ssh's 8-bit exit code gives it, as a 
 test("a Windows refresh that fails, or that Windows keeps asking to restart, keeps the image", async () => {
   const failed = fakeWindows([1]);
   const result = await failed.run();
-  assert.equal(result.reason, "The build failed with exit code 1: 12:00:00 FAILED: no network");
+  assert.match(result.reason!, /^The build failed with exit code 1: 12:00:00 FAILED: no network\. Its whole output is in \S+\.log\.$/);
   assert.ok(!failed.events.some((event) => event.startsWith("capture")));
   assert.equal(failed.events.at(-1), "remove 7000");
 

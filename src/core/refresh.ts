@@ -12,6 +12,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { BuildLog } from "./build-log.ts";
 import { IMAGE_CONTRACT, WINDOWS_HARDWARE_CURSOR, parseImageRecord, pinsDigest, type ImageRecord } from "../backends/images.ts";
 import { KIND_INFO } from "../backends/kinds.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../backends/types.ts";
@@ -64,8 +65,10 @@ export interface RefreshOptions {
   /** False to try a refresh: the build and its checks, then the build goes and the current one stays. */
   readonly replace?: boolean;
   readonly signal: AbortSignal;
-  /** Each line of the build's output, as it comes. */
+  /** The refresh's own lines and the build's steps, as they come; the build's whole output goes to its file. */
   readonly log?: (line: string) => void;
+  /** Where the build's whole output goes. */
+  readonly buildLogDir?: string;
   /** How long the guest scripts may take. */
   readonly buildTimeoutMs?: number;
   /** Replaces resolveVersions, for tests. */
@@ -417,10 +420,19 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
   const now = options.now ?? Date.now;
   const started = now();
   const output: string[] = [];
-  const say = (line: string) => {
+  const keep = (line: string) => {
     output.push(line);
     if (output.length > KEPT_LINES) output.shift();
+  };
+  const say = (line: string) => {
+    keep(line);
     options.log?.(line);
+  };
+  const buildLog = new BuildLog(current.ref, started, options.buildLogDir);
+  const buildOutput = (line: string) => {
+    keep(line);
+    const step = buildLog.write(line);
+    if (step) options.log?.(step);
   };
   const checks: RefreshCheck[] = [];
   const made: string[] = [];
@@ -494,7 +506,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       const restart = options.restart ?? { timeoutMs: 20 * 60_000, pollMs: 5_000 };
       for (let round = 1; ; round++) {
         // Detached, so a link that drops does not end the round (#707).
-        const built = await followWindows(box.command, options.buildTimeoutMs ?? 3 * 60 * 60_000, restart, signal, say);
+        const built = await followWindows(box.command, options.buildTimeoutMs ?? 3 * 60 * 60_000, restart, signal, buildOutput);
         if (built === null) {
           // The run ended without an exit code, as when Windows restarts by itself: wait for the box, then the round runs again.
           if (round === WINDOWS_ROUNDS) return end(false, null, `refresh.ps1 ended without an exit code in round ${round}, as when Windows restarts by itself.`);
@@ -503,7 +515,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
           continue;
         }
         if (built.exitCode === 0) break;
-        if (!restarts(built.exitCode)) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}`);
+        if (!restarts(built.exitCode)) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}. Its whole output is in ${buildLog.path}.`);
         if (round === WINDOWS_ROUNDS) return end(false, null, `Windows still wanted a restart after ${WINDOWS_ROUNDS} rounds of updates.`);
         say(`restarting the box (round ${round} of ${WINDOWS_ROUNDS})`);
         await restartWindows(box.command, restart, say, signal);
@@ -514,7 +526,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
     } else if (images.build) {
       // A backend whose standard images come from a build script, as Docker's do.
       say(`building a new build of ${current.ref}`);
-      captured = await images.build(current, join(staged, "setup"), { bbUrl: options.bbUrl, log: say, signal });
+      captured = await images.build(current, join(staged, "setup"), { bbUrl: options.bbUrl, log: buildOutput, signal });
       made.push(captured.ref);
     } else {
       const tar = spawnSync("tar", ["-C", join(staged, "setup"), "-czf", "-", "proxmox-lxc/template", "proxmox-lxc/host/common.sh", "proxmox-qemu/linux"], { maxBuffer: 64 * 1024 * 1024 });
@@ -526,8 +538,8 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       const { box } = await boxOf(current, `refresh of ${current.ref}`);
       made.push(box.ref);
       await box.command.writeFile("bb-box-setup.tgz", tar.stdout, { signal });
-      const built = await streamLines(box.command, buildScript(kind, options.bbUrl, buildId), options.buildTimeoutMs ?? 90 * 60_000, signal, say);
-      if (built.exitCode !== 0) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}`);
+      const built = await streamLines(box.command, buildScript(kind, options.bbUrl, buildId), options.buildTimeoutMs ?? 90 * 60_000, signal, buildOutput);
+      if (built.exitCode !== 0) return end(false, null, built.timedOut ? "The build ran out of time." : `The build failed with exit code ${built.exitCode}: ${output.at(-1) ?? ""}. Its whole output is in ${buildLog.path}.`);
 
       // The capture.
       captured = await images.capture(box, current, "standard", signal);
