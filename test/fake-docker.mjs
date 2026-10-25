@@ -64,14 +64,46 @@ function info() {
       OperatingSystem: host.operatingSystem ?? "Ubuntu 24.04 LTS",
       OSType: host.osType ?? "linux",
       Architecture: host.arch ?? "x86_64",
-      NCPU: host.cpus ?? 16,
+      NCPU: hostCpus().length,
       MemTotal: (host.memoryMiB ?? 65536) * MiB,
       SecurityOptions: ["name=seccomp,profile=builtin", "name=cgroupns", ...(host.rootless ? ["name=rootless"] : [])],
       CpuCfsQuota: host.cpuLimit ?? true,
       MemoryLimit: host.memoryLimit ?? true,
+      CPUSet: host.cpuset ?? true,
       DiscoveredDevices: gpus.length ? [{ Source: "cdi", ID: "nvidia.com/gpu=all" }, ...gpus.map((id) => ({ Source: "cdi", ID: id }))] : null,
     }),
   );
+}
+
+function cpusOf(list) {
+  return list.split(",").flatMap((part) => {
+    const [first, last = first] = part.split("-").map(Number);
+    return Array.from({ length: last - first + 1 }, (_, i) => first + i);
+  });
+}
+
+function hostCpus() {
+  return host.cpuList ? cpusOf(host.cpuList) : Array.from({ length: host.cpus ?? 16 }, (_, cpu) => cpu);
+}
+
+function checkCpus(list) {
+  if (list === undefined) return;
+  if (!(host.cpuset ?? true)) fail("Error response from daemon: Your kernel does not support cpuset in the cgroup.");
+  const daemonList = host.daemonCpuList ?? host.cpuList;
+  const available = daemonList ? cpusOf(daemonList) : hostCpus();
+  if (cpusOf(list).some((cpu) => !available.includes(cpu))) fail(`Error response from daemon: Requested CPUs are not available - requested ${list}, available: ${daemonList ?? `0-${available.length - 1}`}`);
+}
+
+function run(rest) {
+  appendFileSync(join(root, "probes"), `${JSON.stringify(rest)}\n`);
+  const at = rest.findIndex((arg, i) => !arg.startsWith("--") && !(rest[i - 1] ?? "").startsWith("--"));
+  const [image, ...command] = rest.slice(at);
+  if (!(image in read("images.json", {}))) fail(`Unable to find image '${image}' locally\ndocker: Error response from daemon: No such image: ${image}`, 125);
+  if (command.join(" ") === "cat /sys/fs/cgroup/cpuset.cpus.effective") {
+    if (host.cgroupV1) fail("cat: /sys/fs/cgroup/cpuset.cpus.effective: No such file or directory", 1);
+    return console.log(host.cpuList ?? `0-${hostCpus().length - 1}`);
+  }
+  fail(`fake docker: no run for ${command.join(" ")}`, 2);
 }
 
 function create(rest) {
@@ -93,6 +125,7 @@ function create(rest) {
   }
   const [image, ...command] = rest.slice(i);
   const name = options["--name"];
+  checkCpus(options["--cpuset-cpus"]);
   const images = read("images.json", {});
   if (!(image in images)) fail(`Error response from daemon: No such image: ${image}`);
   const network = options["--network"];
@@ -117,6 +150,7 @@ function create(rest) {
     Config: { Hostname: options["--hostname"], Image: image, Labels: labels, Env: env, Cmd: command },
     HostConfig: {
       NanoCpus: Math.round(Number(options["--cpus"]) * 1e9),
+      CpusetCpus: options["--cpuset-cpus"] ?? "",
       Memory: Number.parseInt(options["--memory"], 10) * MiB,
       MemorySwap: Number.parseInt(options["--memory-swap"], 10) * MiB,
       ShmSize: Number.parseInt(options["--shm-size"], 10) * MiB,
@@ -136,6 +170,8 @@ function container(command, rest) {
   switch (command) {
     case "create":
       return create(rest);
+    case "run":
+      return run(rest.filter((arg) => arg !== "--rm"));
     case "ls": {
       const filters = [];
       for (let i = 0; i < rest.length; i++) if (rest[i] === "--filter") filters.push(rest[++i].replace(/^label=/, ""));
@@ -181,6 +217,10 @@ function container(command, rest) {
       if (host.failUpdate) fail(`Error response from daemon: Cannot update container ${found.Id}: ${host.failUpdate}`);
       const config = { ...found.HostConfig };
       if (options["--cpus"] !== undefined) config.NanoCpus = Math.round(Number(options["--cpus"]) * 1e9);
+      if (options["--cpuset-cpus"] !== undefined) {
+        checkCpus(options["--cpuset-cpus"]);
+        config.CpusetCpus = options["--cpuset-cpus"];
+      }
       if (options["--memory"] !== undefined) config.Memory = Number.parseInt(options["--memory"], 10) * MiB;
       if (options["--memory-swap"] !== undefined) config.MemorySwap = Number.parseInt(options["--memory-swap"], 10) * MiB;
       if (config.MemorySwap > 0 && config.Memory > config.MemorySwap) {

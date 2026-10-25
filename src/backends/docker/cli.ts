@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { startChild } from "../../transports/forker.ts";
 import { Capture } from "../../transports/process.ts";
 import { abortable } from "../../core/abortable.ts";
+import { parseCpuList } from "./cpus.ts";
 
 export interface DockerResult {
   /** Null when the CLI was killed. */
@@ -78,6 +79,7 @@ export interface DockerInfo {
    */
   readonly cpuLimit: boolean;
   readonly memoryLimit: boolean;
+  readonly cpuset: boolean;
   /** NVIDIA GPUs the daemon lists as CDI devices, one name each, such as nvidia.com/gpu=0. */
   readonly gpus: readonly string[];
 }
@@ -93,6 +95,7 @@ export interface ContainerInfo {
   /** From the container's limits; null without one. */
   readonly cores: number | null;
   readonly memoryMiB: number | null;
+  readonly cpus: readonly number[] | null;
   /** Its address on each network. */
   readonly addresses: Readonly<Record<string, string>>;
   /** The ID of the image it was made from, which a tag moved to a new build no longer names. */
@@ -141,6 +144,7 @@ export function parseInfo(text: string): DockerInfo {
     rootless: security.some((option) => option.includes("name=rootless")),
     cpuLimit: info.CpuCfsQuota !== false,
     memoryLimit: info.MemoryLimit !== false,
+    cpuset: info.CPUSet !== false,
     gpus: gpusOf(info.DiscoveredDevices),
   };
 }
@@ -167,6 +171,7 @@ export function parseContainers(text: string): ContainerInfo[] {
       exitCode: typeof state.ExitCode === "number" ? state.ExitCode : null,
       cores: nanoCpus ? Math.round((nanoCpus / 1e9) * 100) / 100 : null,
       memoryMiB: memory ? Math.round(memory / MiB) : null,
+      cpus: parseCpuList(typeof host.CpusetCpus === "string" ? host.CpusetCpus : null),
       addresses,
       imageId: typeof container.Image === "string" ? container.Image : "",
     };

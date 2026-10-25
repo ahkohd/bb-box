@@ -88,6 +88,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `docker.daemon` | Docker daemon | The Docker host answers, runs Linux containers, and its architecture. |
 | `docker.ssh` | SSH connection reuse | Over ssh://, whether the docker calls share one SSH connection. |
 | `docker.limits` | CPU and memory limits | Docker can limit a container's CPU and memory, as each box needs. |
+| `docker.cpuset` | Cores a box sees | Docker can pin each box to as many CPUs as it has cores, so nproc in a box says its cores. |
 | `docker.network` | Network <network> | bb-box's network for its boxes, made by bb-box. |
 | `docker.privileged` | Docker in boxes | Whether boxes are privileged, so they can run Docker inside. |
 | `docker.gpus` | GPUs | The NVIDIA GPUs Docker lists as CDI devices, for GPU desktops. |

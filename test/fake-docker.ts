@@ -17,6 +17,7 @@ export interface FakeContainer {
   readonly Config: { readonly Hostname: string; readonly Image: string; readonly Labels: Record<string, string>; readonly Env: string[]; readonly Cmd: string[] };
   readonly HostConfig: {
     readonly NanoCpus: number;
+    readonly CpusetCpus: string;
     readonly Memory: number;
     readonly MemorySwap: number;
     readonly ShmSize: number;

@@ -56,6 +56,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
+import { allotCpus, cpusBothAllow, daemonCpusFromRefusal, formatCpuList, hostCpusFromProbe, movesOntoFreeCpus, resizeCpus, type CpuList } from "./cpus.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
 import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
@@ -82,6 +83,8 @@ const MiB_PER_GiB = 1024;
 const SHM_MIN_MiB = 1024;
 /** Statuses in which a container holds its memory. */
 const ACTIVE = new Set(["running", "paused", "restarting"]);
+const HOST_CPUS_KEPT_FOR_MS = 10 * 60_000;
+const CPUS_NOT_AVAILABLE = /Requested CPUs are not available|for cpuset cpus/i;
 
 export const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.28.3", socket: "/home/box/.cache/cua-driver/cua-driver.sock" };
 const DOCKER_COMMAND: CommandCapability = { transport: "docker", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
@@ -156,6 +159,7 @@ interface Placing {
   readonly name: string;
   readonly memoryMiB: number;
   readonly gpu: string | null;
+  readonly cpus: CpuList | null;
 }
 
 /** Boxes the registry is acquiring that have not been placed yet. */
@@ -436,6 +440,8 @@ export class DockerBackend implements Backend {
   };
   /** Placement is one at a time, so two acquires never take the last room on the host. */
   #placement: Promise<unknown> = Promise.resolve();
+  #hostCpus: { readonly at: number; readonly cpus: CpuList } | null = null;
+  #daemonCpus: CpuList | null = null;
 
   constructor(config: DockerConfig, context: BackendContext, options: DockerBackendOptions = {}) {
     this.id = context.id;
@@ -684,17 +690,94 @@ export class DockerBackend implements Backend {
     return `${this.label} cannot take this ${kind} box: ${why}.`;
   }
 
+  #underPlacement<T>(work: () => Promise<T>): Promise<T> {
+    const done = this.#placement.then(work);
+    this.#placement = done.catch(() => undefined);
+    return done;
+  }
+
+  #pinsCpus(info: DockerInfo): boolean {
+    return info.cpuset && info.cpus > 0;
+  }
+
+  #cpusHeldBesides(state: HostState, name: string | null): CpuList[] {
+    const running = new Set(state.containers.filter((container) => ACTIVE.has(container.status)).map((container) => container.name));
+    return [
+      ...state.containers.filter((container) => running.has(container.name) && container.name !== name && container.cpus).map((container) => container.cpus!),
+      ...[...this.#placing.values()].filter((other) => !running.has(other.name) && other.name !== name && other.cpus).map((other) => other.cpus!),
+    ];
+  }
+
+  #learnRefusal(error: unknown): boolean {
+    const said = message(error);
+    if (!CPUS_NOT_AVAILABLE.test(said)) return false;
+    this.#daemonCpus = daemonCpusFromRefusal(said) ?? this.#daemonCpus;
+    return true;
+  }
+
+  async #cpusOfHost(info: DockerInfo, signal?: AbortSignal, again = false): Promise<CpuList> {
+    return cpusBothAllow(await this.#probedCpus(info, signal, again), this.#daemonCpus);
+  }
+
+  async #probedCpus(info: DockerInfo, signal?: AbortSignal, again = false): Promise<CpuList> {
+    if (!again && this.#hostCpus && Date.now() - this.#hostCpus.at < HOST_CPUS_KEPT_FOR_MS) return this.#hostCpus.cpus;
+    if (!again) this.#daemonCpus = null;
+    const image = DOCKER_KINDS.map((kind) => this.#config.images[kind]).find((each): each is string => Boolean(each));
+    const probe = image
+      ? await this.#cli.run(["container", "run", "--rm", "--pull", "never", "--network", "none", image, "cat", "/sys/fs/cgroup/cpuset.cpus.effective"], { timeoutMs: 30_000, signal })
+      : null;
+    const cpus = hostCpusFromProbe(probe?.exitCode === 0 ? probe.stdout : null, info.cpus);
+    this.#hostCpus = { at: Date.now(), cpus };
+    return cpus;
+  }
+
+  async #allot(state: HostState, name: string, cores: number, signal?: AbortSignal, again = false): Promise<CpuList | null> {
+    if (!this.#pinsCpus(state.info)) return null;
+    return allotCpus(await this.#cpusOfHost(state.info, signal, again), this.#cpusHeldBesides(state, name), cores);
+  }
+
   /** Checks room and counts the box against the host, one acquire at a time. */
-  #place(box: BoxIdentity, signal: AbortSignal): Promise<{ host: string; gpu: string | null }> {
-    const placed = this.#placement.then(async () => {
+  #place(box: BoxIdentity, signal: AbortSignal): Promise<{ host: string; gpu: string | null; cpus: CpuList | null }> {
+    return this.#underPlacement(async () => {
       const state = await this.#state(signal);
       const room = this.#room(state, box.kind, box.size);
       if (room.why !== null) throw new BackendError("no_capacity", this.#full(box.kind, room.why));
-      this.#placing.set(box.boxId, { name: containerName(box.boxId), memoryMiB: box.size.memoryMiB, gpu: room.gpu });
-      return { host: room.capacity.host, gpu: room.gpu };
+      const name = containerName(box.boxId);
+      const cpus = await this.#allot(state, name, box.size.cores, signal);
+      this.#placing.set(box.boxId, { name, memoryMiB: box.size.memoryMiB, gpu: room.gpu, cpus });
+      return { host: room.capacity.host, gpu: room.gpu, cpus };
     });
-    this.#placement = placed.catch(() => undefined);
-    return placed;
+  }
+
+  #resumePlacement(box: BoxIdentity, gpu: string | null, signal: AbortSignal, again = false): Promise<CpuList | null> {
+    return this.#underPlacement(async () => {
+      const name = containerName(box.boxId);
+      const cpus = await this.#allot(await this.#state(signal), name, box.size.cores, signal, again);
+      this.#placing.set(box.boxId, { name, memoryMiB: box.size.memoryMiB, gpu, cpus });
+      if (again) await this.#moveSharingBoxes(signal).catch((error) => this.#context.logError("moving boxes onto the host's CPUs as they are now", error));
+      return cpus;
+    });
+  }
+
+  async #moveSharingBoxes(signal?: AbortSignal): Promise<void> {
+    const state = await this.#state(signal);
+    if (!this.#pinsCpus(state.info)) return;
+    const running = state.containers.filter((container) => ACTIVE.has(container.status) && container.cpus);
+    const runningNames = new Set(state.containers.filter((container) => ACTIVE.has(container.status)).map((container) => container.name));
+    const mine = running.filter((container) => container.labels[LABELS.install] === this.#context.installId);
+    const held = [
+      ...running.filter((container) => !mine.includes(container)).map((container) => container.cpus!),
+      ...[...this.#placing.values()].filter((other) => !runningNames.has(other.name) && other.cpus).map((other) => other.cpus!),
+    ];
+    const moves = movesOntoFreeCpus(await this.#cpusOfHost(state.info, signal), mine.map((container) => ({ id: container.id, cpus: container.cpus! })), held);
+    for (const move of moves) {
+      try {
+        await this.#cli.ok(["container", "update", "--cpuset-cpus", formatCpuList(move.cpus), move.id], { timeoutMs: 60_000, signal });
+      } catch (error) {
+        if (this.#learnRefusal(error)) this.#hostCpus = null;
+        throw error;
+      }
+    }
   }
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
@@ -715,12 +798,13 @@ export class DockerBackend implements Backend {
     const resumed = previous?.ref === name;
     let host: string;
     let gpu: string | null;
+    let cpus: CpuList | null;
     if (resumed) {
       host = previous.host ?? this.#host;
       gpu = typeof previous.data?.gpu === "string" ? previous.data.gpu : null;
-      this.#placing.set(box.boxId, { name, memoryMiB: box.size.memoryMiB, gpu });
+      cpus = await this.#resumePlacement(box, gpu, signal);
     } else {
-      ({ host, gpu } = await step("place", () => this.#place(box, signal)));
+      ({ host, gpu, cpus } = await step("place", () => this.#place(box, signal)));
     }
     const guest = (address: string | null, size: BoxSize | null = null): Guest => ({
       ref: name,
@@ -732,7 +816,15 @@ export class DockerBackend implements Backend {
     try {
       await hooks.claim(guest(null));
       await step("network", () => this.#network(signal));
-      gpu = await step("create", () => this.#create(box, image, gpu, signal));
+      gpu = await step("create", async () => {
+        try {
+          return await this.#create(box, image, gpu, cpus, signal);
+        } catch (error) {
+          if (!cpus || !this.#learnRefusal(error)) throw error;
+          cpus = await this.#resumePlacement(box, gpu, signal, true);
+          return this.#create(box, image, gpu, cpus, signal);
+        }
+      });
       await hooks.starting();
       await step("start", () => this.#cli.ok(["container", "start", name], { timeoutMs: 120_000, signal }));
       await step("ready", () => this.#ready(name, deadline, signal));
@@ -757,6 +849,7 @@ export class DockerBackend implements Backend {
     this.#cursor.forget(guest.ref);
     await this.#remove(guest.ref, this.#boxOf(guest), signal);
     await this.#context.storage.delete(relabelKey(guest.ref));
+    await this.#underPlacement(() => this.#moveSharingBoxes(signal)).catch((error) => this.#context.logError("moving boxes onto CPUs a release freed", error));
     hooks.timing("delete", Math.round(performance.now() - started));
   }
 
@@ -820,15 +913,33 @@ export class DockerBackend implements Backend {
   /** Changes a container's CPUs and memory, swap with it, as `docker update` does at once, running or stopped (061). */
   async resize(guest: Guest, _kind: string, to: BoxSize, _options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     if (to.diskGiB !== null) throw new BackendError("unsupported", "A Docker box shares its host's disk, so it has no disk of its own to grow.");
-    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
-    if (!found) throw this.#gone(guest);
-    const from = sizeOf(found);
-    if (!from || from.cores !== to.cores || from.memoryMiB !== to.memoryMiB) {
+    return this.#underPlacement(async () => {
+      const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+      if (!found) throw this.#gone(guest);
+      const from = sizeOf(found);
+      const state = await this.#state(signal);
+      const pinTo = async (again: boolean) =>
+        this.#pinsCpus(state.info) ? resizeCpus(await this.#cpusOfHost(state.info, signal, again), this.#cpusHeldBesides(state, found.name), found.cpus ?? [], to.cores) : null;
       // Memory and swap together, as Docker refuses memory above the swap limit it has.
-      await this.#cli.ok(["container", "update", "--cpus", String(to.cores), "--memory", `${to.memoryMiB}m`, "--memory-swap", `${to.memoryMiB}m`, found.id], { timeoutMs: 60_000, signal });
-    }
-    const [now] = await this.#cli.inspect([found.id], signal);
-    return { ...guest, size: (now && sizeOf(now)) ?? to };
+      const update = (cpus: CpuList | null) =>
+        this.#cli.ok(
+          ["container", "update", "--cpus", String(to.cores), ...(cpus ? ["--cpuset-cpus", formatCpuList(cpus)] : []), "--memory", `${to.memoryMiB}m`, "--memory-swap", `${to.memoryMiB}m`, found.id],
+          { timeoutMs: 60_000, signal },
+        );
+      const cpus = await pinTo(false);
+      const repinned = cpus !== null && formatCpuList(cpus) !== formatCpuList(found.cpus ?? []);
+      if (!from || from.cores !== to.cores || from.memoryMiB !== to.memoryMiB || repinned) {
+        try {
+          await update(cpus);
+        } catch (error) {
+          if (!cpus || !this.#learnRefusal(error)) throw error;
+          await update(await pinTo(true));
+        }
+      }
+      if (from && to.cores < from.cores) await this.#moveSharingBoxes(signal).catch((error) => this.#context.logError("moving boxes onto CPUs a shrink freed", error));
+      const [now] = await this.#cli.inspect([found.id], signal);
+      return { ...guest, size: (now && sizeOf(now)) ?? to };
+    });
   }
 
   /** Room on the host for a container to grow from `from` to `to`: the memory it adds, kept within the reserve, and cores within the host's (061). */
@@ -1007,6 +1118,32 @@ export class DockerBackend implements Backend {
         push(...limits, "warn", `Docker on ${info.name} cannot limit a container's memory, so boxes there start without their memory limit, and one box can take all of the host's memory.`, limitsFix);
       } else {
         push(...limits, "ok", "Docker limits each box's CPU and memory.");
+      }
+      if (info.cpuLimit) {
+        const pinning = ["docker.cpuset", "Cores a box sees"] as const;
+        if (this.#pinsCpus(info)) {
+          const probed = await this.#probedCpus(info, signal, true);
+          const daemon = this.#daemonCpus;
+          if (daemon && formatCpuList(daemon) !== formatCpuList(probed)) {
+            push(
+              ...pinning,
+              "warn",
+              `Docker on ${info.name} keeps the CPUs it had when it started (${formatCpuList(daemon)}), but its containers may now have ${formatCpuList(probed)}, as when Proxmox moves an LXC container's CPUs. Boxes are pinned to CPUs in both (${formatCpuList(cpusBothAllow(probed, daemon))}), so a box may see fewer CPUs than it has cores.`,
+              `Restart Docker on ${info.name} (sudo systemctl restart docker), which restarts its boxes too, so it takes the CPUs as they are now.`,
+            );
+          } else {
+            push(...pinning, "ok", `Each box is pinned to as many of ${info.name}'s CPUs (${formatCpuList(cpusBothAllow(probed, daemon))}) as it has cores, so nproc, make -j$(nproc) and the like see its cores.`);
+          }
+        } else {
+          push(
+            ...pinning,
+            "warn",
+            `Docker on ${info.name} cannot pin a container to CPUs, so nproc in a box says the host's CPUs, not the box's cores, and make -j$(nproc) and the like start too many jobs. Boxes there get OMP_NUM_THREADS set to their cores, which nproc follows, and which keeps its first value after a resize.`,
+            info.rootless
+              ? `Have systemd delegate the cpuset cgroup controller to the user that runs rootless Docker on ${info.name}: put Delegate=cpu cpuset io memory pids under [Service] in /etc/systemd/system/user@.service.d/delegate.conf, run sudo systemctl daemon-reload, and restart the host.`
+              : `Turn on the kernel's cpuset cgroup controller on ${info.name}. docker info names what is missing in its warnings.`,
+          );
+        }
       }
 
       // What images are judged by (049).
@@ -1208,7 +1345,7 @@ export class DockerBackend implements Backend {
    * is this box's, as after a restart, and fails if not. Returns the GPU the
    * container has.
    */
-  async #create(box: BoxIdentity, image: string, gpu: string | null, signal: AbortSignal): Promise<string | null> {
+  async #create(box: BoxIdentity, image: string, gpu: string | null, cpus: CpuList | null, signal: AbortSignal): Promise<string | null> {
     const name = containerName(box.boxId);
     const { cores, memoryMiB } = box.size;
     const labels: Record<string, string> = {
@@ -1240,6 +1377,7 @@ export class DockerBackend implements Backend {
       "--hostname", hostnameOf(box.name),
       "--init",
       "--cpus", String(cores),
+      ...(cpus ? ["--cpuset-cpus", formatCpuList(cpus)] : ["--env", `OMP_NUM_THREADS=${Math.ceil(cores)}`]),
       "--memory", `${memoryMiB}m`,
       "--memory-swap", `${memoryMiB}m`,
       "--shm-size", `${Math.max(SHM_MIN_MiB, Math.floor(memoryMiB / 2))}m`,
