@@ -139,6 +139,7 @@ export interface BoxRecord {
   readonly restoredAt?: number | null;
   /** Milliseconds per acquire step, "total" from request to ready, and "release.<step>" after a failed release. */
   readonly timings: Readonly<Record<string, number>>;
+  readonly waitingOn?: string | null;
   readonly enrol: { readonly state: EnrolState; readonly hostId: string | null; readonly error: string | null };
   /** Its project's image (049), whose script runs as root as the box starts, before it is handed over. */
   readonly image?: BoxImage | null;
@@ -1532,6 +1533,10 @@ export class Boxes {
       timing: (step, ms) => {
         timings[step] = ms;
       },
+      waiting: async (words) => {
+        const next = await this.update(box, (current) => (current.state === "releasing" ? {} : { waitingOn: words }));
+        if (next) box = next;
+      },
     };
     let guest: Guest;
     try {
@@ -1540,7 +1545,7 @@ export class Boxes {
       // The backend released whatever it claimed before it threw.
       const next = await this.update(box, (current) => {
         if (current.state === "releasing" || this.#disposed) return { guest: null };
-        return { state: "failed", guest: null, error: describeError(error, "Acquiring the box"), timings: { ...timings } };
+        return { state: "failed", guest: null, error: describeError(error, "Acquiring the box"), timings: { ...timings }, waitingOn: null };
       });
       if (next?.state === "failed") this.#deps.logError("acquire", error);
       return;
@@ -1565,7 +1570,7 @@ export class Boxes {
     const next = await this.update(box, (current) =>
       current.state === "releasing"
         ? { guest }
-        : { guest, state: "ready", readyAt: now, error: null, timings: { ...timings, total: now - current.createdAt } },
+        : { guest, state: "ready", readyAt: now, error: null, timings: { ...timings, total: now - current.createdAt }, waitingOn: null },
     );
     if (next?.state === "ready") void this.#recordReady(next).catch((error) => this.#deps.logError("ready history", error));
     // A spare's own start is not a use of its image: a claim is (#440).

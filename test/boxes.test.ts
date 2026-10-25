@@ -19,7 +19,7 @@ import { powershellCommand } from "../src/transports/powershell.ts";
 import { LOADS_ENV, endMarked } from "../src/transports/process.ts";
 import { parseSizeChanges } from "../src/core/sizes.ts";
 import { gpuRoomText } from "../src/plugin/tools.ts";
-import { adminText, boxDetail, boxView, gpuRooms, kindResizeText, kindViews, type KindView } from "../src/plugin/views.ts";
+import { adminText, boxDetail, boxView, gpuRooms, kindResizeText, kindViews, startingWords, waitingWords, type KindView } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
 
@@ -334,6 +334,29 @@ test("there is no per-thread limit by default, and a set limit names the boxes",
   // Other threads have their own limit.
   await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" });
   await world.boxes.idle();
+});
+
+test("a long step in an acquire says what it waits on, in box_status and box_acquire's answer, until the box is ready (#1117)", async () => {
+  const world = setup();
+  const gate = deferred();
+  world.backend.gate = gate.promise;
+  world.backend.waitingOn = "Building the image first, which takes about 7 minutes.";
+  const asked = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  let waiting = (await world.boxes.find(asked.id))!;
+  for (let wait = 0; !waiting.waitingOn && wait < 200; wait++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    waiting = (await world.boxes.find(asked.id))!;
+  }
+  assert.equal(waitingWords(waiting), "Building the image first, which takes about 7 minutes.");
+  assert.match(boxDetail(waiting), /\nState: being acquired\nNow: Building the image first, which takes about 7 minutes\.\n/);
+  assert.equal(startingWords(waiting, false), `Box ${waiting.name} is still starting. Building the image first, which takes about 7 minutes.`);
+  gate.resolve();
+  await world.boxes.idle();
+  const ready = (await world.boxes.find(asked.id))!;
+  assert.equal(ready.state, "ready");
+  assert.equal(ready.waitingOn, null);
+  assert.equal(waitingWords(ready), null);
+  assert.doesNotMatch(boxDetail(ready), /\nNow:/);
 });
 
 test("capacity counts boxes still being acquired, and the backend's message reaches the user", async () => {

@@ -29,6 +29,24 @@ export interface LinuxImageRecord {
   readonly key: string;
   readonly builtAt: number;
   readonly usedAt: number | null;
+  readonly buildMs?: number;
+}
+
+const TARGET_WORDS: Record<LinuxImageTarget, string> = {
+  linux: "Linux",
+  desktop: "Linux desktop",
+  "desktop-wayland": "Linux desktop on Wayland",
+};
+
+const USUAL_BUILD_MINUTES: Record<LinuxImageTarget, number> = {
+  linux: 4,
+  desktop: 7,
+  "desktop-wayland": 9,
+};
+
+export function buildWaitWords(target: LinuxImageTarget, lastBuildMs: number | null): string {
+  const minutes = lastBuildMs ? Math.max(1, Math.round(lastBuildMs / 60_000)) : USUAL_BUILD_MINUTES[target];
+  return `Building Namespace's ${TARGET_WORDS[target]} image first, which takes about ${minutes} ${minutes === 1 ? "minute" : "minutes"}. Later boxes of this kind use it and start in under a minute.`;
 }
 
 export interface CommandResult {
@@ -131,13 +149,22 @@ export class LinuxImages {
     return null;
   }
 
-  async forBox(target: LinuxImageTarget, signal: AbortSignal): Promise<LinuxImageRecord> {
+  async forBox(target: LinuxImageTarget, signal: AbortSignal, waiting?: (words: string | null) => Promise<void>): Promise<LinuxImageRecord> {
     const current = await this.record(target);
     const why = await this.whyBuild(target, signal);
-    const usable = current && (why === null || why === "it is a week old" || why === "BB's app changed") ? current : await this.build(target, why ?? "it was asked for", signal);
+    const usable = current && (why === null || why === "it is a week old" || why === "BB's app changed") ? current : await this.#buildForBox(target, why ?? "it was asked for", current?.buildMs ?? null, signal, waiting);
     const used = { ...usable, usedAt: this.#deps.now() };
     await this.#deps.storage.set(`${RECORD_PREFIX}${target}`, used);
     return used;
+  }
+
+  async #buildForBox(target: LinuxImageTarget, why: string, lastBuildMs: number | null, signal: AbortSignal, waiting?: (words: string | null) => Promise<void>): Promise<LinuxImageRecord> {
+    await waiting?.(buildWaitWords(target, lastBuildMs));
+    try {
+      return await this.build(target, why, signal);
+    } finally {
+      await waiting?.(null);
+    }
   }
 
   async due(signal?: AbortSignal): Promise<{ readonly target: LinuxImageTarget; readonly why: string }[]> {
@@ -207,7 +234,7 @@ export class LinuxImages {
       if (built.exitCode !== 0 || !ref.startsWith("nscr.io/")) {
         throw new Error(`The ${target} image did not build in Namespace's instance ${made.id}: ${built.stderr.trim().split("\n").slice(-5).join(" / ") || `exit ${built.exitCode}`}`);
       }
-      const record: LinuxImageRecord = { target, ref, key, builtAt: deps.now(), usedAt: (await this.record(target))?.usedAt ?? null };
+      const record: LinuxImageRecord = { target, ref, key, builtAt: deps.now(), usedAt: (await this.record(target))?.usedAt ?? null, buildMs: deps.now() - started };
       await deps.storage.set(`${RECORD_PREFIX}${target}`, record);
       deps.log(`Namespace: built and pushed the ${target} image, ${ref}, in ${Math.round((deps.now() - started) / 1000)} s.`);
       return record;
