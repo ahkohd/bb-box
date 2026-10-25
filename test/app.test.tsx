@@ -2,6 +2,7 @@
 // SDK's slot harness against fake RPC handlers and a fake noVNC. Run with
 // vitest: npm run test:app.
 
+import { useState, type ComponentType } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { toast } from "sonner";
 import { afterEach, expect, test, vi } from "vitest";
@@ -4056,6 +4057,44 @@ test("a desktop tab keeps its viewer ID when it remounts, and two tabs never sha
   await again.findByText("Connecting to the desktop…");
   expect(novnc.FakeRfb.made).toHaveLength(2);
   expect(new URL(novnc.FakeRfb.made[1]!.url).searchParams.get("viewer")).toBe(b);
+});
+
+test("a desktop tab that BB moves to another place in one commit, as at the phone breakpoint, keeps its viewer, its connection and its control", async () => {
+  const { handlers, changes } = server([desktopBox()]);
+  const Desktop = app.threadPanelActions.find((candidate) => candidate.id === "desktop")!.component as ComponentType<{ threadId: string; params: { box: string } }>;
+  let turn!: () => void;
+  function Layout(props: { threadId: string; params: { box: string } }) {
+    const [wide, setWide] = useState(true);
+    turn = () => setWide((now) => !now);
+    return wide ? (
+      <div data-layout="wide">
+        <Desktop {...props} />
+      </div>
+    ) : (
+      <section data-layout="phone">
+        <Desktop {...props} />
+      </section>
+    );
+  }
+  const slot = renderSlot({ component: Layout }, { threadId: THREAD, params: { box: "box_2" } }, { rpc: handlers, pluginId: "bb-box" });
+  await slot.findByText("Connecting to the desktop…");
+  const [client] = novnc.FakeRfb.made;
+  act(() => void client!.dispatchEvent(new Event("connect")));
+  fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+  await slot.findByText("You have control.");
+
+  for (const layout of ["phone", "wide"]) {
+    act(() => turn());
+    expect(slot.container.querySelector(`[data-layout="${layout}"]`)!.contains(client!.target)).toBe(true);
+    expect(slot.getByText("You have control.")).toBeTruthy();
+  }
+  vi.useFakeTimers();
+  await vi.advanceTimersByTimeAsync(HAND_BACK_MS + 50);
+  vi.useRealTimers();
+  expect(novnc.FakeRfb.made).toHaveLength(1);
+  expect(client!.disconnected).toBe(false);
+  expect(changes).toEqual(["takeControl box_2"]);
+  expect(slot.getByText("You have control.")).toBeTruthy();
 });
 
 test("a hidden desktop tab keeps its stream, hands control back after a minute, and closes after ten", async () => {
