@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allocationLines, gcLines, memoryLine, ownerOf, profileLoop, summarise, type CpuProfile } from "../src/plugin/profile.ts";
+import { allocationLines, collectionLine, gcLines, memoryLine, ownerOf, profileLoop, summarise, type CpuProfile } from "../src/plugin/profile.ts";
 
 const frame = (functionName: string, url = "", lineNumber = 0) => ({ functionName, url, lineNumber });
 
@@ -107,4 +107,25 @@ test("a profile ends with the process's memory: all of it, its heap, and what is
     memoryLine({ rss: 6655 * MiB, heapUsed: 604 * MiB, heapTotal: 650 * MiB, external: 120 * MiB, arrayBuffers: 90 * MiB }),
     "The process held 6655 MiB in all: its heap 604 MiB used of 650 MiB, and outside it 120 MiB of external memory, 90 MiB of it in ArrayBuffers and Buffers.",
   );
+});
+
+test("a full collection on request says how long it held the server and the heap's used size before and after", () => {
+  const MiB = 1024 * 1024;
+  assert.equal(
+    collectionLine({ beforeBytes: 752.4 * MiB, afterBytes: 431.6 * MiB, heldMs: 287.6 }),
+    "A full garbage collection, as asked, held BB's server for 288 ms: its heap went from 752 to 432 MiB used.",
+  );
+});
+
+test("a profile collects the garbage only when asked, after the profile and before the memory it tells", async () => {
+  let garbage: object[] | null = Array.from({ length: 200_000 }, (_, i) => ({ i }));
+  assert.equal(garbage.length, 200_000);
+  garbage = null;
+  const asked = await profileLoop(1, { fullCollection: true });
+  const collected = asked.findIndex((line) => line.startsWith("A full garbage collection, as asked"));
+  assert.match(asked[collected]!, /^A full garbage collection, as asked, held BB's server for \d+ ms: its heap went from \d+ to \d+ MiB used\.$/);
+  assert.match(asked[collected + 1]!, /^The process held \d+ MiB in all/);
+  const [, before, after] = /from (\d+) to (\d+) MiB/.exec(asked[collected]!)!.map(Number);
+  assert.ok(after! <= before!, `${after} MiB after, of ${before} before`);
+  assert.equal((await profileLoop(1)).some((line) => line.startsWith("A full garbage collection")), false);
 });

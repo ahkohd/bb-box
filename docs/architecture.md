@@ -531,7 +531,12 @@ route and carries messages, not bytes:
   who allocates, and with `"snapshot": true` it writes a heap snapshot,
   which holds the server still while it is written and is refused without
   the free memory for it; each goes to `profiles/` beside bb-box's own
-  database in BB's data, the last five.
+  database in BB's data, the last five. With `"collect": true`, after the
+  profile it has V8 collect all the garbage, and says how long that held
+  the server and the heap's used size before and after, so the memory
+  line that follows is what the process keeps, not garbage not yet
+  collected. A full collection of a large heap holds the server for
+  hundreds of milliseconds, so it is for an occasional sample.
 - Selkies refuses a connection within 500 ms of another from the same
   address, and the relay's all come from the box's loopback, so it spaces
   them and tries again.
