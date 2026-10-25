@@ -57,7 +57,7 @@ import {
 import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
 import { containerLxcfsProbeArgs, lxcfsFromContainerProbe, lxcfsFromProbe, lxcfsMountArgs, lxcfsProbeArgs, type LxcfsOnHost } from "./lxcfs.ts";
-import { allotCpus, cpusBothAllow, daemonCpusFromRefusal, formatCpuList, hostCpusFromProbe, movesOntoFreeCpus, resizeCpus, type CpuList } from "./cpus.ts";
+import { allotCpus, cpusBothAllow, cpusToPinTo, daemonCpusFromRefusal, formatCpuList, hostCpusFromProbe, movesOntoFreeCpus, resizeCpus, type CpuList } from "./cpus.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
 import { CURSOR_HELPER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
@@ -766,8 +766,13 @@ export class DockerBackend implements Backend {
   }
 
   async #allot(state: HostState, name: string, cores: number, signal?: AbortSignal, again = false): Promise<CpuList | null> {
-    if (!this.#pinsCpus(state.info)) return null;
-    return allotCpus(await this.#cpusOfHost(state.info, signal, again), this.#cpusHeldBesides(state, name), cores);
+    const host = await this.#cpusToPinTo(state.info, cores, signal, again);
+    return host ? allotCpus(host, this.#cpusHeldBesides(state, name), cores) : null;
+  }
+
+  async #cpusToPinTo(info: DockerInfo, cores: number, signal?: AbortSignal, again = false): Promise<CpuList | null> {
+    if (!this.#pinsCpus(info)) return null;
+    return cpusToPinTo(await this.#probedCpus(info, signal, again), this.#daemonCpus, cores);
   }
 
   /** Checks room and counts the box against the host, one acquire at a time. */
@@ -954,8 +959,10 @@ export class DockerBackend implements Backend {
       if (!found) throw this.#gone(guest);
       const from = sizeOf(found);
       const state = await this.#state(signal);
-      const pinTo = async (again: boolean) =>
-        this.#pinsCpus(state.info) ? resizeCpus(await this.#cpusOfHost(state.info, signal, again), this.#cpusHeldBesides(state, found.name), found.cpus ?? [], to.cores) : null;
+      const pinTo = async (again: boolean) => {
+        const host = await this.#cpusToPinTo(state.info, to.cores, signal, again);
+        return host ? resizeCpus(host, this.#cpusHeldBesides(state, found.name), found.cpus ?? [], to.cores) : null;
+      };
       // Memory and swap together, as Docker refuses memory above the swap limit it has.
       const update = (cpus: CpuList | null) =>
         this.#cli.ok(
@@ -1164,7 +1171,7 @@ export class DockerBackend implements Backend {
             push(
               ...pinning,
               "warn",
-              `Docker on ${info.name} keeps the CPUs it had when it started (${formatCpuList(daemon)}), but its containers may now have ${formatCpuList(probed)}, as when Proxmox moves an LXC container's CPUs. Boxes are pinned to CPUs in both (${formatCpuList(cpusBothAllow(probed, daemon))}), so a box may see fewer CPUs than it has cores.`,
+              `Docker on ${info.name} keeps the CPUs it had when it started (${formatCpuList(daemon)}), but its containers may now have ${formatCpuList(probed)}, as when Proxmox moves an LXC container's CPUs. A box is pinned to CPUs in both (${formatCpuList(cpusBothAllow(probed, daemon))}) when there are as many as its cores. One with more cores is not pinned, so it keeps all its cores' time, and gets OMP_NUM_THREADS set to its cores, which nproc follows.`,
               `Restart Docker on ${info.name} (sudo systemctl restart docker), which restarts its boxes too, so it takes the CPUs as they are now.`,
             );
           } else {

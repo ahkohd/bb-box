@@ -1344,6 +1344,19 @@ test("when dockerd refuses CPUs the host has, as it keeps the set it started wit
   assert.match(check.fix!, /^Restart Docker on fake-docker/);
 });
 
+test("when the CPUs both dockerd and the container allow are fewer than a box's cores, the box is not pinned to them: it keeps all its cores' time, and nproc follows OMP_NUM_THREADS (#1032)", async () => {
+  const { fake, backend } = setup({}, { cpuList: "1,23", daemonCpuList: "10,23", memoryMiB: 65536 });
+  const guest = await backend.acquire(identity("linux", { cores: 2, memoryMiB: 2048, diskGiB: null }), null, hooks().hooks, signal());
+  const made = fake.inspect(guest.ref);
+  assert.equal(made.HostConfig.CpusetCpus, "");
+  assert.equal(made.HostConfig.NanoCpus, 2_000_000_000);
+  assert.ok(made.Config.Env.includes("OMP_NUM_THREADS=2"));
+  const one = await backend.acquire(identity("linux", { cores: 1, memoryMiB: 2048, diskGiB: null }), null, hooks().hooks, signal());
+  assert.equal(fake.inspect(one.ref).HostConfig.CpusetCpus, "23", "a box with no more cores than CPUs in both is still pinned");
+  const check = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.cpuset")!;
+  assert.match(check.detail, /One with more cores is not pinned, so it keeps all its cores' time, and gets OMP_NUM_THREADS set to its cores/);
+});
+
 test("on a host with LXCFS, each box mounts its files over /proc and the CPUs online, so free and /proc/cpuinfo say the box's own, and the doctor says so (062)", async () => {
   const { fake, backend } = setup({}, { lxcfs: true, cpus: 8 });
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allotCpus, cpusBothAllow, daemonCpusFromRefusal, formatCpuList, hostCpuRange, hostCpusFromProbe, movesOntoFreeCpus, parseCpuList, resizeCpus } from "../src/backends/docker/cpus.ts";
+import { allotCpus, cpusBothAllow, cpusToPinTo, daemonCpusFromRefusal, formatCpuList, hostCpuRange, hostCpusFromProbe, movesOntoFreeCpus, parseCpuList, resizeCpus } from "../src/backends/docker/cpus.ts";
 
 const HOST = hostCpuRange(8);
 
@@ -58,4 +58,11 @@ test("dockerd keeps the CPUs it had when it started, so a box is pinned to CPUs 
   assert.deepEqual(cpusBothAllow([1, 23, 32], [10, 23, 32]), [23, 32]);
   assert.deepEqual(cpusBothAllow([1, 23], null), [1, 23]);
   assert.deepEqual(cpusBothAllow([1], [10]), [10], "with none in both, what dockerd takes");
+});
+
+test("a box is pinned only when the CPUs both allow are as many as it would get from the container's own, else it is left unpinned (#1032)", () => {
+  assert.deepEqual(cpusToPinTo([0, 12, 20, 24, 28, 35, 36, 40], [17, 24, 25, 27, 40, 42, 50, 55], 2), [24, 40]);
+  assert.equal(cpusToPinTo([0, 12, 20, 24, 28, 35, 36, 40], [17, 24, 25, 27, 40, 42, 50, 55], 4), null, "the live case: a 4-core box on 2 CPUs in both");
+  assert.deepEqual(cpusToPinTo([0, 1], null, 4), [0, 1], "a host with fewer CPUs than the box's cores still pins to all it has");
+  assert.deepEqual(cpusToPinTo([1, 23], [10, 23], 1), [23]);
 });
