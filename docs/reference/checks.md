@@ -89,6 +89,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `docker.ssh` | SSH connection reuse | Over ssh://, whether the docker calls share one SSH connection. |
 | `docker.limits` | CPU and memory limits | Docker can limit a container's CPU and memory, as each box needs. |
 | `docker.cpuset` | Cores a box sees | Docker can pin each box to as many CPUs as it has cores, so nproc in a box says its cores. |
+| `docker.apparmor` | Programs in boxes under the host's AppArmor | A setgid program in a box, as sudo runs, works under the Docker host's AppArmor profiles, which on a host that is itself a container cannot name a box's files. |
 | `docker.lxcfs` | Memory and CPUs a box sees | The host runs LXCFS, so free, /proc/meminfo and /proc/cpuinfo in a box say its own memory and CPUs, and no running box's LXCFS files have broken. |
 | `docker.network` | Network <network> | bb-box's network for its boxes, made by bb-box. |
 | `docker.privileged` | Docker in boxes | Whether boxes are privileged, so they can run Docker inside. |

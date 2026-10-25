@@ -66,7 +66,7 @@ function info() {
       Architecture: host.arch ?? "x86_64",
       NCPU: hostCpus().length,
       MemTotal: (host.memoryMiB ?? 65536) * MiB,
-      SecurityOptions: ["name=seccomp,profile=builtin", "name=cgroupns", ...(host.rootless ? ["name=rootless"] : [])],
+      SecurityOptions: ["name=seccomp,profile=builtin", "name=cgroupns", ...(host.apparmor ? ["name=apparmor"] : []), ...(host.rootless ? ["name=rootless"] : [])],
       CpuCfsQuota: host.cpuLimit ?? true,
       MemoryLimit: host.memoryLimit ?? true,
       CPUSet: host.cpuset ?? true,
@@ -114,7 +114,8 @@ function run(rest) {
     if (host.lxcfsCpuOnline ?? true) console.log("cpu-online");
     return;
   }
-  const at = rest.findIndex((arg, i) => !arg.startsWith("--") && !(rest[i - 1] ?? "").startsWith("--"));
+  let at = 0;
+  while (at < rest.length && rest[at].startsWith("--")) at += ["--rm", "--privileged", "--init"].includes(rest[at]) ? 1 : 2;
   const [image, ...command] = rest.slice(at);
   if (command.join(" ") === "cat /proc/self/mountinfo") {
     for (const [i, mount] of mounts.entries()) {
@@ -124,6 +125,10 @@ function run(rest) {
     return;
   }
   if (!(image in read("images.json", {}))) fail(`Unable to find image '${image}' locally\ndocker: Error response from daemon: No such image: ${image}`, 125);
+  if (command.includes("/usr/sbin/unix_chkpwd")) {
+    if (host.apparmorRefusesSetgid) fail("/usr/sbin/unix_chkpwd: error while loading shared libraries: /usr/lib/x86_64-linux-gnu/libc.so.6: cannot apply additional memory protection after relocation: Permission denied", 127);
+    return console.log("-1");
+  }
   if (command.join(" ") === "cat /sys/fs/cgroup/cpuset.cpus.effective") {
     if (host.cgroupV1) fail("cat: /sys/fs/cgroup/cpuset.cpus.effective: No such file or directory", 1);
     return console.log(host.cpuList ?? `0-${hostCpus().length - 1}`);
