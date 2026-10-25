@@ -706,7 +706,7 @@ export const scenes = {
     after: (root) => click(root, "button", "clever-summit: details"),
   },
 
-  // Docker and microsandbox on one host, beside Proxmox LXC (053): the provider rows must tell the two on behemoth apart.
+  // Docker and microsandbox on one host, beside Proxmox LXC (053): the provider rows must tell the two on gpu-host apart.
   "panel-chooser-microsandbox": {
     slot: "boxes",
     chrome: boxesChrome,
@@ -719,8 +719,8 @@ export const scenes = {
           forms: ["LXC", "Docker", "VM"],
           offers: [
             offer("proxmox-lxc", "Proxmox LXC", ["pve"], "LXC", { ready: 1, typicalReadyMs: 2200 }),
-            offer("docker", "Docker", ["behemoth"], "Docker", { typicalReadyMs: 1800 }),
-            offer("microsandbox", "microsandbox", ["behemoth"], "VM", { typicalReadyMs: 400 }),
+            offer("docker", "Docker", ["gpu-host"], "Docker", { typicalReadyMs: 1800 }),
+            offer("microsandbox", "microsandbox", ["gpu-host"], "VM", { typicalReadyMs: 400 }),
           ],
         },
         ...KINDS.slice(1),
@@ -1308,16 +1308,16 @@ export const scenes = {
           schema: 1,
           revision: 9,
           backends: [
-            { id: "docker", type: "docker", enabled: true, fields: { host: "ssh://box@behemoth" } },
-            { id: "microsandbox", type: "microsandbox", enabled: true, fields: { host: "ssh://box@behemoth" } },
+            { id: "docker", type: "docker", enabled: true, fields: { host: "ssh://box@gpu-host" } },
+            { id: "microsandbox", type: "microsandbox", enabled: true, fields: { host: "ssh://box@gpu-host" } },
             { id: "microsandbox:mac-mini", type: "microsandbox", enabled: true, fields: { host: "bb:host_mac1", "memory-overcommit": 2 } },
           ],
           kinds: {},
           general: {},
         },
         backends: [
-          { id: "docker", type: "docker", label: "Docker on behemoth", form: "Docker", state: "active", problems: [], boxes: 1, kinds: ["linux", "linux-desktop-cpu"], doctor: { report: { ok: true, summary: "Docker 29.8 on behemoth", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
-          { id: "microsandbox", type: "microsandbox", label: "microsandbox on behemoth", form: "microVM", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-desktop-cpu"], doctor: { report: { ok: true, summary: "msb 0.7.7 on behemoth", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
+          { id: "docker", type: "docker", label: "Docker on gpu-host", form: "Docker", state: "active", problems: [], boxes: 1, kinds: ["linux", "linux-desktop-cpu"], doctor: { report: { ok: true, summary: "Docker 29.8 on gpu-host", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
+          { id: "microsandbox", type: "microsandbox", label: "microsandbox on gpu-host", form: "microVM", state: "active", problems: [], boxes: 2, kinds: ["linux", "linux-desktop-cpu"], doctor: { report: { ok: true, summary: "msb 0.7.7 on gpu-host", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
           { id: "microsandbox:mac-mini", type: "microsandbox", label: "microsandbox on mac-mini", form: "microVM", state: "active", problems: [], boxes: 0, kinds: ["linux-arm64", "linux-arm64-desktop-cpu"], doctor: { report: { ok: true, summary: "msb 0.7.7 on mac-mini", checks: [], notes: [] }, at: now - 60_000 }, warmShort: [] },
         ],
       },

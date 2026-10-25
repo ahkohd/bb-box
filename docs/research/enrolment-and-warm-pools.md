@@ -95,7 +95,7 @@ to an enrolled machine. What is left is the installer's fixed steps and its
 1 s polls.
 
 **In Docker**, without systemd: `node:24-bookworm-slim` containers with
-`--init`, on a Linux devbox close to its BB server.
+`--init`, on a Linux machine close to its BB server.
 
 | Box | Installer finished | Connected |
 | --- | --- | --- |
