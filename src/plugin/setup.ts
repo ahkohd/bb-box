@@ -166,7 +166,7 @@ export interface BbBox {
    * Turns on the desktop image of BB machine `hostId`'s Docker and builds it, then makes a desktop box for the thread
    * once it is built. Returns once the configuration is saved; the panel shows the build.
    */
-  buildDesktop(input: { threadId: string; hostId: string; size?: SizeRequest }): Promise<ApplyResult>;
+  buildDesktop(input: { threadId: string; hostId: string; size?: SizeRequest; name?: string }): Promise<ApplyResult>;
   /** Docker on BB machine `machine`, by ID or name, through the relay, and how long it took. */
   dockerCheck(machine: string, signal?: AbortSignal): Promise<{ hostId: string; name: string; endpoint: string; info: DockerInfo; firstMs: number; againMs: number }>;
   /** What a rebuild of the standard Linux images would take now (049): upstream's latest of the tools that follow it, or with `pinned` the pins alone. */
@@ -1028,7 +1028,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const [kind] = kindViews([{ kind: dockerKind(DESKTOP_ON_DEMAND, docker), backend }], config.sizes, {}, {}, {}, {}, (id) => backends.driverLabel(id));
       return kind ? { hostId: first.hostId, name: machine.name, kind, took: (await dockerImages.took(first.hostId)).desktop ?? null } : null;
     },
-    async buildDesktop({ threadId, hostId, size }) {
+    async buildDesktop({ threadId, hostId, size, name }) {
       const document = configuration.document;
       const found = desktopsOnDemand(document).find((candidate) => candidate.hostId === hostId);
       if (!found) throw new BoxError("not_found", `BB machine ${hostId} has no Docker desktop image to build: its Docker is off, or its desktop image is set already.`);
@@ -1042,7 +1042,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         .then(async (build) => {
           if (build.state === "built") {
             // A box that fails now says why in the thread's panel, as an acquire refused there does.
-            await boxes.acquire({ threadId, projectId, kind: DESKTOP_ON_DEMAND, ...(size ? { size } : {}), on: found.backend }).catch((error: unknown) => {
+            await boxes.acquire({ threadId, projectId, kind: DESKTOP_ON_DEMAND, ...(size ? { size } : {}), ...(name ? { name } : {}), on: found.backend }).catch((error: unknown) => {
               const reason = error instanceof Error ? error.message : String(error);
               logError("desktop on demand", error);
               desktopProblems.set(threadId, { message: `The desktop image is built, but the box was not made: ${reason}`, at: Date.now() });

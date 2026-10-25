@@ -36,6 +36,13 @@ export interface PanelState {
   readonly desktopProblem?: { readonly message: string; readonly at: number } | null;
 }
 
+export interface MachinesState {
+  readonly machines: MachineEntry[];
+  readonly kinds: KindView[];
+  readonly desktopOnDemand?: DesktopOnDemandView | null;
+  readonly desktopProblem?: { readonly message: string; readonly at: number } | null;
+}
+
 /** A desktop New box can build first: the BB machine whose Docker builds its image, and the kind as it will be offered. */
 export interface DesktopOnDemandView {
   readonly hostId: string;
@@ -224,7 +231,7 @@ export const contract = defineRpcContract({
   /** Every box across threads, servers as well as desktops, and your machines (036), for the Boxes page. */
   allBoxes: { input: z.null(), output: z.custom<BoxEntry[]>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
-  "machines.list": { input: z.null(), output: z.custom<{ machines: MachineEntry[]; kinds: KindView[] }>() },
+  "machines.list": { input: z.null(), output: z.custom<MachinesState>() },
   /** Adds one: returns once it is recorded, and the "changed" signal for "operator" follows its progress. */
   "machines.add": {
     input: z.object({ kind: z.string().min(1), size: size.optional(), name: z.string().min(1).optional(), on: providers.optional() }),
@@ -264,8 +271,7 @@ export const contract = defineRpcContract({
   "docker.hosts": { input: z.null(), output: z.custom<{ hosts: DockerHostView[] }>() },
   /** What each BB machine offers first-run setup, the server's first, and what stands in the way of boxes joining BB, if anything. */
   "setup.offer": { input: z.null(), output: z.custom<{ machines: MachineSetup[]; access: MachineAccessProblem | null }>() },
-  /** Builds the desktop image on BB machine `hostId`, then makes a desktop box of `size` for the thread. */
-  "setup.desktop": { input: thread.extend({ hostId: z.string().min(1), size: size.optional() }), output: z.custom<{ result: ApplyResult }>() },
+  "setup.desktop": { input: thread.extend({ hostId: z.string().min(1), size: size.optional(), name: z.string().min(1).optional() }), output: z.custom<{ result: ApplyResult }>() },
   /** First-run setup: turns on Docker on BB machine `hostId` with the Linux image alone, which then builds. */
   "setup.docker": { input: z.object({ hostId: z.string().min(1) }), output: z.custom<{ result: ApplyResult; machines: MachineSetup[] }>() },
   /**

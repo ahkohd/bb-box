@@ -538,8 +538,8 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       changes.push(`desktop.sharp ${on}`);
       return { error: null };
     },
-    "setup.desktop": ({ hostId, size }) => {
-      changes.push(`setup.desktop ${hostId}${size ? ` ${JSON.stringify(size)}` : ""}`);
+    "setup.desktop": ({ threadId, hostId, size, name }) => {
+      changes.push(`setup.desktop ${hostId}${size ? ` ${JSON.stringify(size)}` : ""}${threadId === "operator" ? " for operator" : ""}${name ? ` named ${name}` : ""}`);
       return { result: { ok: true, state: {} as ConfigState, problems: [] } };
     },
     "setup.docker": ({ hostId }) => {
@@ -561,7 +561,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
     images: () => options.images ?? [],
     allBoxes: () => boxes.map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
     // Your machines (036): `options.machines` to start with, kept as the tests add, stop, start and remove them.
-    "machines.list": () => ({ machines, kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol) }),
+    "machines.list": () => ({ machines, kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol), desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null }),
     "machines.add": ({ kind, name }) => {
       changes.push(`machines.add ${kind}${name ? ` ${name}` : ""}`);
       if (options.failWith) return result(null);
@@ -4320,6 +4320,37 @@ test("the Boxes page's New box adds one of your machines with settings' Add mach
   expect(await list.findByText("build-2")).toBeTruthy();
   expect(list.getAllByText(/build-1|build-2|calm-otter/).map((node) => node.textContent)).toEqual(["build-1", "build-2"]);
   expect(list.getByRole("tab", { name: "Machines 2" }).getAttribute("aria-selected")).toBe("true");
+});
+
+test("the Boxes page's New box and settings' Add machine offer a desktop whose image is not built yet, as the Box panel does, and build it for a machine with its name", async () => {
+  const desktop: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
+  const onDemand = { hostId: "host_bb", name: "devpc", kind: desktop, took: null };
+  for (const [where, open, submit] of [
+    ["the Boxes page", (handlers: PluginRpcTestHandlers<Contract>) => boxesPage(handlers).findByRole("button", { name: "New box" }), "Build and create"],
+    ["settings", (handlers: PluginRpcTestHandlers<Contract>) => settings(handlers).findByRole("button", { name: "Add machine" }), "Build and add"],
+  ] as const) {
+    const { handlers, changes } = server([], { kinds: [KINDS[0]!], desktopOnDemand: onDemand });
+    fireEvent.click(await open(handlers));
+    const types = await screen.findByRole("radiogroup", { name: "Type" });
+    fireEvent.click(within(types).getByRole("radio", { name: /^Desktop/ }));
+    expect(screen.getByText("BB Box builds the desktop image on devpc first, usually 4 to 10 min, then makes the box."), where).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "desk-1" } });
+    fireEvent.click(screen.getByRole("button", { name: submit }));
+    await waitFor(() => expect(changes, where).toEqual(["setup.desktop host_bb for operator named desk-1"]));
+    cleanup();
+  }
+});
+
+test("the Boxes page shows a desktop image's build while it runs, as the Box panel and settings do", async () => {
+  const building = setup({ state: "on", build: { state: "building", targets: ["desktop"], detail: null, step: { at: 3, of: 9 }, startedAt: Date.now() - 125_000, endedAt: null } });
+  const list = boxesPage(server([], { setups: [building] }).handlers);
+  expect(await list.findByText("Building the desktop image on this machine")).toBeTruthy();
+  expect(list.getByText("Step 3 of 9")).toBeTruthy();
+});
+
+test("a desktop machine not made after its image was built says why on the Boxes page, once", async () => {
+  const list = boxesPage(server([], { desktopProblem: { message: "The desktop image is built, but the box was not made: no room", at: 1 } }).handlers);
+  expect(await list.findByText("The desktop image is built, but the box was not made: no room")).toBeTruthy();
 });
 
 /** The Boxes page, with thread titles from the SDK. */
