@@ -184,6 +184,7 @@ Setup: [setup/tart/README.md](../../setup/tart/README.md).
 | `vms-per-host` | VMs per Mac | number | advanced | `2` | The most macOS VMs that run on each Mac at once, counting every VM Tart runs there, not only bb-box's. At most 2, which Apple's licence and the Virtualization framework allow. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `16384` | A new box is refused if the Mac would have less memory than this left for its own use, after its running VMs. |
 | `reserve-disk-gib` | Disk kept free (GiB) | number | advanced | `50` | A new box is refused if the Mac's disk has less free space than this. |
+| `warm-max-hours` | Hours a macOS warm VM is kept | number | advanced | `6` | A suspended macOS warm VM saved longer ago than this is replaced by a fresh one, as an old saved state may not restore. |
 
 Each host's fields:
 

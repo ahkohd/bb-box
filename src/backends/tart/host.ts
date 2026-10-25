@@ -393,7 +393,7 @@ grep -qxF ${quote(`install=${installId}`)} "$f" 2>/dev/null && grep -qx 'state=f
 if [ "$(state "$vm")" = running ]; then tart suspend "$vm" || exit 1; fi
 settled "$vm" 1200 || { echo "$vm is still running a minute after tart suspend." >&2; exit 1; }
 [ "$(state "$vm")" = suspended ] || { echo "$vm did not suspend." >&2; exit 1; }
-{ sed 's/^state=filling$/state=warm/' "$f"${grants ? `; echo grants=${quote(grants)}` : ""}; } > "$f.new" && mv -f "$f.new" "$f"
+{ sed 's/^state=filling$/state=warm/' "$f"${grants ? `; echo grants=${quote(grants)}` : ""}; echo "saved=$(date +%s)"; } > "$f.new" && mv -f "$f.new" "$f"
 echo warm
 `);
 }

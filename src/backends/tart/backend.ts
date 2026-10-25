@@ -355,12 +355,13 @@ interface FreeWarm {
   readonly kinds: readonly string[];
   /** A macOS VM whose fill ran this Mac helper's vm-ready (058): its claim skips the grants step. */
   readonly ready: boolean;
+  readonly saved: number | null;
 }
 
 /** How an acquire gets its VM: a clone, a free warm VM, a fill to take over, or its own VM after a restart. */
 type Placement =
   | { readonly how: "clone" | "resume"; readonly host: TartHost; readonly vm: string }
-  | { readonly how: "warm"; readonly host: TartHost; readonly vm: string; readonly ready: boolean }
+  | { readonly how: "warm"; readonly host: TartHost; readonly vm: string; readonly ready: boolean; readonly saved: number | null }
   | { readonly how: "adopt"; readonly host: TartHost; readonly vm: string; readonly fill: Fill }
   | { readonly how: "wait"; readonly fills: readonly Fill[] };
 
@@ -380,6 +381,17 @@ function warmOf(state: MacState, vm: string, fields: Readonly<Record<string, str
     return { size: made ? { cores: made.cores, memoryMiB: made.memoryMiB, diskGiB: made.diskGiB } : null, suspended: made?.power === "suspended" };
   }
   return { size: sizeOf(state.configs.get(vm)), suspended: state.vms.find((candidate) => candidate.name === vm)?.state === "suspended" };
+}
+
+function savedAt(fields: Readonly<Record<string, string>>): number | null {
+  const saved = Number(fields.saved);
+  return fields.saved && Number.isFinite(saved) ? saved * 1000 : null;
+}
+
+function ageOf(saved: number | null): string {
+  if (saved === null) return "at an unknown time";
+  const minutes = Math.max(0, Math.round((Date.now() - saved) / 60_000));
+  return minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} h ${minutes % 60} min ago`;
 }
 
 /** A Tart error that a VM's saved state did not restore. */
@@ -1040,7 +1052,7 @@ export class TartBackend implements Backend {
         const warm = this.#freeWarm(state).find((free) => free.kinds.includes(box.kind) && sameSize(free.size, box.size));
         if (warm) {
           count(room.host, warm.vm);
-          return { how: "warm", host: room.host, vm: warm.vm, ready: warm.ready };
+          return { how: "warm", host: room.host, vm: warm.vm, ready: warm.ready, saved: warm.saved };
         }
       }
       // A free warm VM that only the Mac's fills keep from its slot: they stop, as a claim comes before a fill.
@@ -1189,13 +1201,33 @@ export class TartBackend implements Backend {
       } catch (error) {
         if (owned) await this.#delete(host, vm, os, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
         const retry = placement.how !== "clone" && attempt === 0 && !signal.aborted && Date.now() < deadline;
-        if (!retry) throw error;
-        this.#context.logError("acquire", new Error(`Box ${box.name} could not use VM ${vm} (${message(error)}), so bb-box clones a VM for it.`));
+        const used = placement.how === "warm" ? `warm VM ${vm}, saved ${ageOf(placement.saved)},` : `VM ${vm}`;
+        if (placement.how === "warm" && failedRestore(error)) this.#retireSavedBefore(host, placement.saved);
+        if (!retry) {
+          if (placement.how === "warm") this.#context.logError("acquire", new Error(`Box ${box.name} could not use ${used} (${message(error)}).`));
+          throw error;
+        }
+        this.#context.logError("acquire", new Error(`Box ${box.name} could not use ${used} (${message(error)}), so bb-box clones a VM for it.`));
       } finally {
         this.#placing.delete(placement.vm);
       }
       placement = null;
     }
+  }
+
+  #retireSavedBefore(host: TartHost, saved: number | null): void {
+    const retire = async () => {
+      const older = await this.#warm.exclusive(async () => {
+        const state = await this.#state(host, this.#stopping.signal);
+        return this.#freeWarm(state).filter((warm) => warm.saved === null || (saved !== null && warm.saved <= saved));
+      });
+      for (const warm of older) {
+        this.#context.logError("retire a warm VM", new Error(`Warm VM ${warm.vm} on ${host.name}, saved ${ageOf(warm.saved)}, is retired, as one saved after it failed to restore.`));
+        await this.#delete(host, warm.vm, "macos", null, this.#stopping.signal);
+      }
+      if (older.length) this.#kick();
+    };
+    retire().catch((error) => this.#context.logError("retire a warm VM", error));
   }
 
   /**
@@ -1825,10 +1857,13 @@ export class TartBackend implements Backend {
    * The kinds a warm VM serves now: those whose image is the VM's, at the
    * build the VM was cloned from, and whose default size is the VM's. A VM
    * saved under another macOS build, or another version of the engine that
-   * saved it, Tart or QEMU, serves none, as its state may not restore.
+   * saved it, Tart or QEMU, serves none, as its state may not restore; nor
+   * does a macOS VM saved more than tart-warm-max-hours ago, or at a time
+   * bb-box did not note.
    */
   #servedBy(state: MacState, fields: Readonly<Record<string, string>>, size: BoxSize | null): string[] {
     const windows = fields.engine === "qemu";
+    if (!windows && this.#tooOld(fields)) return [];
     if (!size || fields.macos !== state.macosBuild || (windows ? fields.qemu !== state.qemu.version : fields.tart !== state.version)) return [];
     const build = windows ? (state.qemu.image?.build ?? "") : null;
     return this.#pools()
@@ -1842,6 +1877,11 @@ export class TartBackend implements Backend {
       .flatMap((pool) => pool.kinds);
   }
 
+  #tooOld(fields: Readonly<Record<string, string>>): boolean {
+    const saved = savedAt(fields);
+    return saved === null || Date.now() - saved > this.#config.warmMaxHours * 3_600_000;
+  }
+
   /** This install's free warm VMs on a Mac: saved, marked warm, serving a kind now. */
   #freeWarm(state: MacState): FreeWarm[] {
     const free: FreeWarm[] = [];
@@ -1850,7 +1890,7 @@ export class TartBackend implements Backend {
       const { size, suspended } = warmOf(state, vm, fields);
       if (!suspended) continue;
       const kinds = this.#servedBy(state, fields, size);
-      if (size && kinds.length) free.push({ vm, size, kinds, ready: fields.grants === this.#helperHash() });
+      if (size && kinds.length) free.push({ vm, size, kinds, ready: fields.grants === this.#helperHash(), saved: savedAt(fields) });
     }
     return free;
   }
