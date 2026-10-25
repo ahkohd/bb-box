@@ -11,6 +11,7 @@ Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own
 - **Any provider.** Docker, Proxmox, Micro Sandbox, Macs with Tart, machines over SSH, or cloud machines from Hetzner Cloud and Namespace, made when boxes need them.
 - **Ready in seconds.** A warm box is ready at once.
 - **Shared desktops.** You and the agent use the same screen. The agent waits while you have control.
+- **Recordings that show the work.** An agent records its test run as a short clip, with each step and its result captioned. See [Recordings](docs/guide/recording.md).
 
 *bb-box assumes one trusted user. It is not a sandbox for code you do not trust.*
 
