@@ -56,7 +56,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
-import { lxcfsFromProbe, lxcfsMountArgs, lxcfsProbeArgs, type LxcfsOnHost } from "./lxcfs.ts";
+import { containerLxcfsProbeArgs, lxcfsFromContainerProbe, lxcfsFromProbe, lxcfsMountArgs, lxcfsProbeArgs, type LxcfsOnHost } from "./lxcfs.ts";
 import { allotCpus, cpusBothAllow, daemonCpusFromRefusal, formatCpuList, hostCpusFromProbe, movesOntoFreeCpus, resizeCpus, type CpuList } from "./cpus.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
 import { judgeImage, recordFromJson, type ImageRecord } from "../images.ts";
@@ -724,7 +724,8 @@ export class DockerBackend implements Backend {
   async #lxcfsOnHost(signal?: AbortSignal, again = false): Promise<LxcfsOnHost | null> {
     if (!again && this.#lxcfs && Date.now() - this.#lxcfs.at < HOST_CPUS_KEPT_FOR_MS) return this.#lxcfs.on;
     const image = this.#probeImage();
-    const on = image ? lxcfsFromProbe(await this.#cli.run(lxcfsProbeArgs(image), { timeoutMs: 30_000, signal })) : null;
+    let on = image ? lxcfsFromProbe(await this.#cli.run(lxcfsProbeArgs(image), { timeoutMs: 30_000, signal })) : null;
+    if (image && on && !on.serves) on = lxcfsFromContainerProbe(await this.#cli.run(containerLxcfsProbeArgs(image), { timeoutMs: 30_000, signal }));
     this.#lxcfs = { at: Date.now(), on };
     return on;
   }
@@ -1332,10 +1333,11 @@ export class DockerBackend implements Backend {
           (desktop ? " Docker Desktop's VM cannot have LXCFS." : ""),
         desktop
           ? null
-          : `Install LXCFS on ${info.name}, as root: apt install lxcfs, or the distribution's package, then systemctl enable --now lxcfs. Boxes made after see their own memory and CPUs; boxes made before keep the host's until they are made again. Reload LXCFS (systemctl reload lxcfs) rather than restart it, as a restart breaks the files of the boxes running.`,
+          : `Install LXCFS on ${info.name}, as root: apt install lxcfs, or the distribution's package, then systemctl enable --now lxcfs. Boxes made after see their own memory and CPUs; boxes made before keep the host's until they are made again. Reload LXCFS (systemctl reload lxcfs) rather than restart it, as a restart breaks the files of the boxes running. If ${info.name} is itself a container, LXCFS cannot run in it: it runs on the machine that runs the container, as Proxmox VE's does for its LXC containers, and bb-box then uses the files it gives the container.`,
       );
       return;
     }
+    const where = lxcfs.via === "host" ? `LXCFS on ${info.name}` : `the LXCFS of the machine that runs ${info.name}'s own container`;
     const mine = containers.filter((container) => container.lxcfs && ACTIVE.has(container.status) && container.labels[LABELS.install] === this.#context.installId);
     const broken = (
       await Promise.all(
@@ -1350,12 +1352,12 @@ export class DockerBackend implements Backend {
         "docker.lxcfs",
         name,
         "warn",
-        `LXCFS on ${info.name} was restarted under running boxes, so in ${broken.join(", ")} free, /proc/meminfo and /proc/cpuinfo fail with "Transport endpoint is not connected".`,
+        `${where.charAt(0).toUpperCase()}${where.slice(1)} was restarted under running boxes, so in ${broken.join(", ")} free, /proc/meminfo and /proc/cpuinfo fail with "Transport endpoint is not connected".`,
         `Stop and start each of them, from the panel or with box_stop and box_start, to see its memory again. Reload LXCFS (systemctl reload lxcfs) rather than restart it.`,
       );
       return;
     }
-    push("docker.lxcfs", name, "ok", `Boxes on ${info.name} see their own memory and CPUs through LXCFS, in free, /proc/meminfo and /proc/cpuinfo.`);
+    push("docker.lxcfs", name, "ok", `Boxes on ${info.name} see their own memory and CPUs through ${where}, in free, /proc/meminfo and /proc/cpuinfo.`);
   }
 
   #boxOf(guest: Guest): string | null {

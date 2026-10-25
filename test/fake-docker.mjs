@@ -116,6 +116,13 @@ function run(rest) {
   }
   const at = rest.findIndex((arg, i) => !arg.startsWith("--") && !(rest[i - 1] ?? "").startsWith("--"));
   const [image, ...command] = rest.slice(at);
+  if (command.join(" ") === "cat /proc/self/mountinfo") {
+    for (const [i, mount] of mounts.entries()) {
+      const lxcfs = host.containerLxcfs && mount.Source.startsWith("/proc/") ? "fuse.lxcfs lxcfs" : host.containerLxcfs && mount.Source === "/sys/devices/system/cpu/online" ? "fuse.lxcfs lxcfs" : mount.Source.startsWith("/proc/") ? "proc proc" : "sysfs sysfs";
+      console.log(`${200 + i} 190 0:${60 + i} ${mount.Source} ${mount.Target} ro,relatime - ${lxcfs} rw`);
+    }
+    return;
+  }
   if (!(image in read("images.json", {}))) fail(`Unable to find image '${image}' locally\ndocker: Error response from daemon: No such image: ${image}`, 125);
   if (command.join(" ") === "cat /sys/fs/cgroup/cpuset.cpus.effective") {
     if (host.cgroupV1) fail("cat: /sys/fs/cgroup/cpuset.cpus.effective: No such file or directory", 1);
@@ -309,7 +316,7 @@ function exec(rest) {
   const found = find(ref) ?? fail(`Error response from daemon: No such container: ${ref}`);
   if (found.State.Status !== "running") fail(`Error response from daemon: container ${found.Id} is not running`);
   const lxcfsBroken = host.lxcfsBroken === true || (Array.isArray(host.lxcfsBroken) && host.lxcfsBroken.includes(found.Name.slice(1)));
-  if (lxcfsBroken && (found.HostConfig.Mounts ?? []).some((mount) => mount.Source.startsWith("/var/lib/lxcfs/")) && rest.slice(i + 1).includes("/proc/meminfo")) {
+  if (lxcfsBroken && (found.HostConfig.Mounts ?? []).some((mount) => mount.Target === "/proc/meminfo") && rest.slice(i + 1).includes("/proc/meminfo")) {
     fail("head: cannot open '/proc/meminfo' for reading: Transport endpoint is not connected", 1);
   }
   const name = found.Name.slice(1);
