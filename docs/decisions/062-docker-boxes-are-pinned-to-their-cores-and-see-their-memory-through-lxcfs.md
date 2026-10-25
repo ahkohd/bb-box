@@ -106,9 +106,8 @@ by giving their cpusets the least-used CPUs, overlapping when it must.
    when it places the box:
    - The host's CPUs are those a probe container sees in
      `/sys/fs/cgroup/cpuset.cpus.effective`: the CPUs the daemon may give
-     its containers, wherever it runs. Measured on a rootful daemon only;
-     rootless Docker and Docker Desktop are to be checked when this is
-     built.
+     its containers, wherever it runs. Measured on rootful Docker, on
+     rootless Docker, and on Docker in a Proxmox LXC container (below).
    - A box takes the CPUs that the fewest of the host's running bb-box
      boxes are pinned to, the lowest-numbered first among equals. bb-box
      reads each container's pinning from `docker inspect`
@@ -148,13 +147,17 @@ by giving their cpusets the least-used CPUs, overlapping when it must.
      runs it with systemd. That changes the host image's fingerprint, so
      the next build after this change rebuilds it. Package upgrades on the
      host must not restart LXCFS under running boxes: the image holds the
-     package and keeps unattended-upgrades and needrestart from restarting
-     it, and a measured upgrade run leaves boxes' `free` working.
+     package, and a systemd drop-in with `RefuseManualStop=yes` makes
+     systemd refuse any restart of it, measured below.
    - **A person's own Docker host and a BB machine's:** bb-box does not
      install it. The doctor names the hosts without it, says what boxes
      there see (`free` and `/proc/cpuinfo` say the host's), and how to
      add it: `apt install lxcfs`, or the distribution's package. bb-box
      cannot add it to Docker Desktop's VM; the doctor says that instead.
+   - **A Docker host that is itself an LXC container**, as on Proxmox VE,
+     cannot run LXCFS (below). The LXCFS of the machine that runs it
+     already serves the container's `/proc` files, and answers for
+     whichever cgroup reads them, so boxes mount those files instead.
    - **An LXCFS restart** breaks the files in boxes already running, so
      the doctor checks each running box's `/proc/meminfo` on a host with
      LXCFS. A box whose read fails is named, with "restart it to see its
@@ -202,10 +205,80 @@ Not chosen:
 - Built in three steps: cpuset pinning, with resizes, moves and the
   doctor's line; then the LXCFS probe, mounts and doctor checks; then
   LXCFS in the Hetzner Cloud host image, with a live run of a 2-core box
-  showing `nproc` 2 and `free` 4096. Rootless Docker is measured after.
+  showing `nproc` 2 and `free` 4096.
   Tests on the fake Docker: the allotment, with overlap and two boxes
   placed at once; a resize up and down; a move after a release; a host
   with and without LXCFS; and a box whose LXCFS files fail. The
   conformance suite asks every backend's linux box that `nproc` and
   `free` say its size, with Docker on a host without LXCFS excused for
   `free`.
+
+## As built and measured
+
+Measured on 25 October 2026 as the steps were built (#1069, #1071 to
+#1074, and the Hetzner Cloud host image after). Each box was 2 cores,
+with 2 or 4 GiB.
+
+**Docker in a Proxmox LXC container.** The container's CPUs were such as
+1,23,32,44-46,53,62, not 0 to 7, and Proxmox moved them while it ran.
+
+- The probe container reads the container's own set.
+- dockerd keeps the set it had when it started. It refused a CPU the
+  container had, and took one the container no longer had, whose box then
+  saw the whole parent set: `nproc` 8.
+- bb-box learns dockerd's set from its refusal, pins to CPUs both allow,
+  and the doctor warns while the two differ.
+- The sweep probes again before the probes are 10 minutes old, and moves
+  boxes off CPUs that left the set. Live, with the set narrowed under a
+  box: `nproc` 6 until the sweep, then 2. A probe container takes 0.17 to
+  0.19 s.
+
+**LXCFS in an LXC container.**
+
+- LXCFS cannot run there: there is no `/dev/fuse` without Proxmox's fuse
+  feature, and Ubuntu's `lxcfs.service` skips itself in a container.
+- Instead, boxes mount the container's own LXCFS files, served by
+  Proxmox VE's LXCFS. A box there sees `nproc`, `getconf` and
+  `/proc/cpuinfo` 2, `free` 2048 and its own uptime, privileged or not,
+  and 3, 3 and 3072 after a resize. Without them, it sees 64 CPUs and
+  257245 MiB.
+
+**Rootless Docker** (Ubuntu 24.04, systemd 255, Docker's rootless
+install, with the AppArmor profile Ubuntu needs for rootlesskit).
+
+- With systemd's default delegation (cpu, memory, pids), `docker info`
+  says `CPUSet` false. The box gets `OMP_NUM_THREADS`, so `nproc` says 2,
+  and `free` says 2048 through LXCFS, but `/proc/cpuinfo` says 8. The
+  doctor warns with the Delegate fix.
+- With `Delegate=cpu cpuset io memory pids` for `user@.service`, the box
+  is pinned: `nproc` and `/proc/cpuinfo` say 2 and `free` 2048, and the
+  doctor's checks are all ok.
+
+**LXCFS kept running** on Ubuntu 24.04 (LXCFS 5.0.4) and 26.04.1 (kernel
+7.0, systemd 259, LXCFS 6.0.5), with the host image's lines and a box
+reading 2 cores and 4 GiB:
+
+- `systemctl restart lxcfs` is refused.
+- needrestart, with LXCFS on a reinstalled libfuse's deleted mappings,
+  says "Service restarts being refused by systemd".
+- `deb-systemd-invoke restart`, as a package's script restarts, is
+  refused.
+- `systemctl reload lxcfs` works, and LXCFS starts at boot.
+
+The box read the same throughout and after a reboot. Without the
+drop-in, `systemctl restart lxcfs` breaks every running box's
+`/proc/meminfo` and `/proc/cpuinfo`, and so `free`, until the box stops
+and starts.
+
+**Hetzner Cloud**, after the host image was built with LXCFS (#1093 to
+#1096, #1103 to #1110). The x86 image was built from Ubuntu 26.04.1 and
+made at 16:11 UTC, and the Arm image at 16:45. Each build carried on
+across bb-box's reloads, on the same build server.
+
+- A 2-core, 4 GiB linux box was ready in 63.4 s, with its host: 60.0 s
+  to make the host from the new snapshot, then 3.4 s for the box.
+- In the box, `nproc` and `/proc/cpuinfo` say 2, the online CPUs are
+  0-1, `free` says 4096, and LXCFS serves all eight files.
+- On the host's disk, read without writing from the box: LXCFS 6.0.5 is
+  held (`hold ok installed`), the drop-in says `RefuseManualStop=yes`,
+  and `lxcfs.service` starts at boot.

@@ -37,7 +37,8 @@ shared connection. How bb-box drives a box is in the
 - Docker Engine with BuildKit on Linux, or Docker Desktop. bb-box is tested
   with rootful Docker 29 on Linux, and with Docker Desktop on Windows as a BB
   machine's (below). Rootless Docker needs systemd 252 or later, which lets
-  it limit each box's CPU; boxes there have no Docker of their own.
+  it limit each box's CPU, and the cpuset controller delegated to its user
+  (below); boxes there have no Docker of their own.
 - The `docker` CLI on the machine that runs BB, on the PATH of the user BB
   runs as, and that user allowed to use Docker: on Linux, in the `docker`
   group.
@@ -70,6 +71,56 @@ Before you rely on it:
   reach it. Make BB listen on an address the containers reach, or turn off
   **Enrol boxes as BB machines** in BB Box's settings: commands, copies,
   desktops and computer use work without it.
+
+## What a box sees
+
+A box sees its own cores and memory, as on Proxmox LXC:
+
+- **Cores.** bb-box pins each box to as many of the host's CPUs as it has
+  cores, so `nproc` and `make -j$(nproc)` say the box's cores.
+- **Memory.** Where the host runs LXCFS, `free`, `/proc/meminfo`,
+  `/proc/cpuinfo` and the uptime are the box's own. Without LXCFS they
+  show the host's, though the box's limits still hold. Docker Desktop
+  cannot have LXCFS.
+
+To add LXCFS on a Linux Docker host:
+
+```sh
+sudo apt install lxcfs
+sudo systemctl enable --now lxcfs
+```
+
+Boxes made after that see their own memory. Boxes made before keep the
+host's numbers until they are made again.
+
+If the Docker host is itself a Proxmox LXC container, there is nothing to
+add: Proxmox's LXCFS serves the container, and bb-box uses it.
+
+**Reload LXCFS, never restart it.** A restart breaks `free` and
+`/proc/meminfo` in every running box until that box stops and starts.
+Use `sudo systemctl reload lxcfs`. To stop anything restarting it, as
+bb-box's Hetzner Cloud hosts do:
+
+```sh
+sudo mkdir -p /etc/systemd/system/lxcfs.service.d
+printf '[Unit]\nRefuseManualStop=yes\n' | sudo tee /etc/systemd/system/lxcfs.service.d/keep-running.conf
+sudo systemctl daemon-reload
+```
+
+**Rootless Docker** pins boxes only when systemd gives its user the
+cpuset controller. Until then a box gets `OMP_NUM_THREADS`, which `nproc`
+follows. To give it:
+
+```sh
+sudo mkdir -p /etc/systemd/system/user@.service.d
+printf '[Service]\nDelegate=cpu cpuset io memory pids\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+sudo systemctl daemon-reload
+```
+
+Then restart the host.
+
+The doctor checks both: **Cores a box sees** and **Memory and CPUs a box
+sees**.
 
 ## Steps
 
@@ -215,7 +266,8 @@ GPU yet.
 ## Check it worked
 
 Run `bb box doctor`. It checks the `docker` CLI, the daemon, that Docker can
-limit a box's CPU and memory, each image, the network, Docker in boxes, GPU
+limit a box's CPU and memory and pin it to its cores, whether boxes see
+their own memory through LXCFS, each image, the network, Docker in boxes, GPU
 desktops when they are on, and the room on the host. For each image it:
 
 - fails when the image keeps an older contract than bb-box needs;
