@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CLIPBOARD_WATCH_MAX_BYTES, MAC_CLIPBOARD_WATCH_SCRIPT, macClipboardWatchCommand, startClipboardWatch } from "../src/core/mac-clipboard.ts";
 import type { ByteChannel } from "../src/transports/types.ts";
+import { StopJxa, runJxa } from "./jxa.ts";
 
 function watcher() {
   let say!: ReadableStreamDefaultController<Uint8Array>;
@@ -28,7 +29,7 @@ test("the watcher's script goes in single quotes as it is, looks every 250 ms, a
   assert.ok(!MAC_CLIPBOARD_WATCH_SCRIPT.includes("'"));
   assert.ok(macClipboardWatchCommand().startsWith("exec osascript -l JavaScript -e '"));
   assert.match(MAC_CLIPBOARD_WATCH_SCRIPT, /sleepForTimeInterval\(0\.25\)/);
-  assert.ok(MAC_CLIPBOARD_WATCH_SCRIPT.includes(`data.length > ${CLIPBOARD_WATCH_MAX_BYTES}`));
+  assert.ok(MAC_CLIPBOARD_WATCH_SCRIPT.includes(`Number(data.length) > ${CLIPBOARD_WATCH_MAX_BYTES}`), "JXA gives NSData's length as a string");
 });
 
 test("the watcher reports each copy as UTF-8 text, the same text again too, and passes over heartbeats and what is not text", async () => {
@@ -44,6 +45,25 @@ test("the watcher reports each copy as UTF-8 text, the same text again too, and 
   fake.end();
   await watch.ended;
   assert.deepEqual(copies, ["héllo ✓ 日本\nline two", "héllo ✓ 日本\nline two"]);
+});
+
+test("the watcher's script, with JXA's integers as strings, prints each change of the count, the same text too, and N for text over the limit", () => {
+  const pasteboard = { changeCount: 3, text: "old" as string | null };
+  const changes: Record<number, () => void> = {
+    2: () => Object.assign(pasteboard, { changeCount: 4, text: "copied ✓" }),
+    4: () => Object.assign(pasteboard, { changeCount: 5 }),
+    6: () => Object.assign(pasteboard, { changeCount: 6, text: "a".repeat(CLIPBOARD_WATCH_MAX_BYTES + 1) }),
+    7: () => Object.assign(pasteboard, { changeCount: 7, text: null }),
+  };
+  const out = runJxa(MAC_CLIPBOARD_WATCH_SCRIPT, {
+    pasteboard,
+    tick: (count) => {
+      if (count > 9) throw new StopJxa();
+      changes[count]?.();
+    },
+  });
+  const copied = `C ${Buffer.from("copied ✓").toString("base64")}`;
+  assert.deepEqual(out, ["ready", copied, copied, "N", "N", "h"]);
 });
 
 test("a watcher that ends before it is ready is an error, and its channel is closed", async () => {

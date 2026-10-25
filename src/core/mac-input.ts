@@ -116,7 +116,7 @@ function run() {
     mask = next;
   }
   var pasteboard = $.NSPasteboard.generalPasteboard;
-  var seen = pasteboard.changeCount;
+  var seen = Number(pasteboard.changeCount);
   function handle(line) {
     var f = line.split(" ");
     if (f[0] === "k") {
@@ -126,10 +126,11 @@ function run() {
     } else if (f[0] === "u") {
       // The character as the text the key types, in UTF-16 code units, with no modifier: Shift or Option already made it.
       var text = $.NSString.stringWithString(String.fromCodePoint(Number(f[2])));
-      var units = Ref("unsigned short", text.length);
-      for (var i = 0; i < text.length; i++) units[i] = text.characterAtIndex(i);
+      var length = Number(text.length);
+      var units = Ref("unsigned short", length);
+      for (var i = 0; i < length; i++) units[i] = text.characterAtIndex(i);
       var event = $.CGEventCreateKeyboardEvent($(), 0, f[1] === "1");
-      $.CGEventKeyboardSetUnicodeString(event, text.length, units);
+      $.CGEventKeyboardSetUnicodeString(event, length, units);
       $.CGEventSetFlags(event, 0);
       $.CGEventPost($.kCGHIDEventTap, event);
       say("u");
@@ -139,10 +140,10 @@ function run() {
       var text = $.NSString.alloc.initWithDataEncoding($.NSData.alloc.initWithBase64EncodedStringOptions($(f[1] || ""), 0), $.NSUTF8StringEncoding);
       pasteboard.clearContents;
       pasteboard.setStringForType(text, $.NSPasteboardTypeString);
-      seen = pasteboard.changeCount;
+      seen = Number(pasteboard.changeCount);
     } else if (f[0] === "q") {
-      if (pasteboard.changeCount === seen) return;
-      seen = pasteboard.changeCount;
+      if (Number(pasteboard.changeCount) === seen) return;
+      seen = Number(pasteboard.changeCount);
       var string = pasteboard.stringForType($.NSPasteboardTypeString);
       if (string.isNil()) return;
       say("C " + string.dataUsingEncoding($.NSUTF8StringEncoding).base64EncodedStringWithOptions(0).js);
