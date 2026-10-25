@@ -4,6 +4,7 @@ import { hostUserData } from "./cloud-init.ts";
 import { BUILD_ABANDONED_AFTER_MS, bbBoxIsStopping, HostImages, localRemoteBuild, runBuildScript, scriptRemoteBuild, type Architecture, type BuildImage, type RemoteBuild } from "./host-image.ts";
 import { setupArchive } from "../namespace/linux-images.ts";
 import { HostReach } from "./reach.ts";
+import { sleep as abortableSleep } from "../proxmox/api.ts";
 import { DockerBackend, dockerKinds, type DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
 import type { DockerConfig, DockerKind } from "../docker/config.ts";
@@ -215,8 +216,15 @@ export class HetznerBackend implements Backend {
       : new HostReach({ api: this.#api, storage: context.storage, installId: context.installId, tailnet: () => context.tailnet?.() ?? null, sshFrom: config.sshFrom, sshBinary: options.sshBinary, dockerBinary: options.dockerOptions?.binary });
   }
 
+  readonly #disposed = new AbortController();
+
   async dispose(): Promise<void> {
+    this.#disposed.abort(new Error("bb-box disposed this Hetzner Cloud backend, as it reloaded or disabled it"));
     await this.#reach?.dispose();
+  }
+
+  #untilDisposed(signal: AbortSignal | undefined): AbortSignal {
+    return signal ? AbortSignal.any([signal, this.#disposed.signal]) : this.#disposed.signal;
   }
 
   get label(): string {
@@ -361,7 +369,8 @@ export class HetznerBackend implements Backend {
     return (await this.#requirePart(guest)).docker.transports(guest, this.#dockerKindOf(kind));
   }
 
-  async maintain(signal?: AbortSignal): Promise<void> {
+  async maintain(given?: AbortSignal): Promise<void> {
+    const signal = this.#untilDisposed(given);
     await this.hostRecords.sweep(signal);
     await this.#hostImages.reconcile((line) => this.#context.log?.(line), signal).catch((error) => this.#context.logError("reconcile host image snapshots", error));
     await this.#hostImages.builds.sweep(signal);
@@ -797,7 +806,8 @@ export class HetznerBackend implements Backend {
     return typeof stored === "number" ? { atMs: stored, inARow: 1 } : stored;
   }
 
-  buildHostImage(why: string, signal?: AbortSignal, architecture: Architecture = "x86"): Promise<void> {
+  buildHostImage(why: string, given?: AbortSignal, architecture: Architecture = "x86"): Promise<void> {
+    const signal = this.#untilDisposed(given);
     const running = this.#buildingHostImage.get(architecture);
     if (running) return running;
     const build = (async () => {
@@ -826,9 +836,9 @@ export class HetznerBackend implements Backend {
             bbUrl: this.#context.bbUrl?.() ?? null,
             appSha256: await this.#bbApp(signal),
             log: (line) => this.#context.log?.(line),
-            sleep: this.#options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
+            sleep: this.#options.sleep ?? abortableSleep,
           },
-          signal ?? new AbortController().signal,
+          signal,
         );
         this.#newestHostImage.delete(architecture);
         await this.#hostImages.prune(undefined, signal, architecture);
@@ -858,7 +868,7 @@ export class HetznerBackend implements Backend {
   async #untilDockerAnswers(part: HostPart, signal: AbortSignal | undefined): Promise<void> {
     const within = this.#options.hostAnswersWithinMs ?? PLAIN_IMAGE_HOST_ANSWERS_WITHIN_MS;
     const pollMs = this.#options.pollMs ?? 2_000;
-    const sleep = this.#options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const sleep = this.#options.sleep ?? abortableSleep;
     const probeKind = part.docker.kinds()[0]?.id ?? "linux";
     let last: unknown = null;
     for (let waited = 0; waited <= within; waited += pollMs) {

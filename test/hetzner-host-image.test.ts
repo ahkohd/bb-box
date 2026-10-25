@@ -444,3 +444,32 @@ test("a build that meets bb-box's reload, as its API handle goes stale, is left 
   assert.deepEqual(errors, []);
   assert.equal(api.servers.size, 1, "the build server keeps running for the next run");
 });
+
+test("a backend bb-box disposes, as a reload does, stops following its build at once: no more calls to the build server, no failure, and the server is left for the next run", async () => {
+  const { api, backend } = hetznerWorld();
+  const storage = new MemoryStorage();
+  let progressCalls = 0;
+  const remote: RemoteBuild = {
+    start: async () => {},
+    progress: async () => {
+      progressCalls++;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      throw new Error("ssh: connect to host 192.0.2.10 port 22: Connection refused");
+    },
+  };
+  const { options } = builder();
+  const lines: string[] = [];
+  const errors: string[] = [];
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04" }), storage, "test", { ...options, remoteBuild: remote }, { log: (line: string) => void lines.push(line), logError: (what: string) => void errors.push(what) });
+  const building = hetzner.buildHostImage("there is no host image yet");
+  await until(() => progressCalls >= 3);
+  await hetzner.dispose();
+  assert.equal(await building, undefined);
+  const callsWhenDisposed = progressCalls;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(progressCalls, callsWhenDisposed, "no call to the build server after dispose");
+  assert.equal(api.servers.size, 1, "the build server is left for the next run");
+  assert.equal(await storage.get("host-image-failed-at:x86"), undefined);
+  assert.deepEqual(errors, []);
+  assert.ok(lines.some((line) => /^bb-box stopped while it built the x86 host image on bb-box-hz-\S+, at its building step/.test(line)));
+});
