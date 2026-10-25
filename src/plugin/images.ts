@@ -491,10 +491,13 @@ export class ImageJobs {
     const checks: DoctorCheck[] = [];
     const last = await this.#deps.storage.get<{ at: number; ok: boolean }>(LAST_RUN);
     const days = last ? (this.#now() - last.at) / DAY_MS : null;
+    const nightlyOn = this.#deps.afterBbUpdates?.() ?? false;
     checks.push(
       days !== null && days <= NIGHTLY_WARN_DAYS
         ? { id: "images.nightly", name: "Nightly rebuilds", status: "ok", detail: `The last run ended ${days < 1 ? "today" : `${Math.floor(days)} days ago`}${last!.ok ? "" : ", with a failure"}.`, fix: null }
-        : {
+        : days === null && nightlyOn
+          ? { id: "images.nightly", name: "Nightly rebuilds", status: "ok", detail: "Rebuild images each night is on, and no run has ended yet: the first is tonight.", fix: null }
+          : {
             id: "images.nightly",
             name: "Nightly rebuilds",
             status: "warn",

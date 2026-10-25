@@ -220,6 +220,8 @@ test("the doctor's checks: Nightly rebuilds, and each image whose last rebuild f
   clock.now += 9 * DAY;
   assert.deepEqual([(await job.checks())[0]!.status, (await job.checks())[0]!.detail], ["warn", "No run of bb box images refresh has ended for 9 days."]);
   assert.deepEqual(await jobs([backend("ssh-pool", []).backend]).job.checks(), [], "no images, no checks");
+  const firstNight = (await jobs([lxc.backend], { follow: { on: true } }).job.checks())[0]!;
+  assert.deepEqual([firstNight.status, firstNight.detail, firstNight.fix], ["ok", "Rebuild images each night is on, and no run has ended yet: the first is tonight.", null], "with the switch on, a new install is not told to turn it on");
 });
 
 test("a backend that refreshes its Windows images has them due monthly, and a failed refresh is tried again the next month (054)", async () => {
