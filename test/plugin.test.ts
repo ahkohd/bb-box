@@ -1511,6 +1511,35 @@ test("an enrolment that finds the machine disconnected as its waits end gives BB
   assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "enrolled", hostId, error: null });
 });
 
+test("a reload during an enrolment stops the replaced instance's enrolment at once: it logs no error and leaves the box enrolling, and the next run carries on (#1032)", async (t) => {
+  const { harness, app, world, setupOptions } = await start(undefined, { variablesWaitMs: 4_000 });
+  let host = harness;
+  t.after(() => host.lifecycle.dispose());
+  world.connectAfterMs = null;
+  await host.behavior.callRpc("acquire", { threadId: THREAD, kind: "linux" });
+  const box = await until("the enrolment to wait for BB to show the machine connected", async () => {
+    const [current] = await app.boxes.list(THREAD);
+    return current?.enrol.state === "enrolling" && current.enrol.hostId && world.bootstraps.length ? current : null;
+  });
+  const old = harness;
+  let restarted: Awaited<ReturnType<typeof setup>> | null = null;
+  const next = await host.lifecycle.reload(async (bb) => {
+    restarted = await setup(bb, setupOptions);
+  });
+  host = next.harness;
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  const oldErrors = old.inspection.logEntries.filter((entry) => /enrol/i.test(entry.message) && /stale|reloaded|error|failed/i.test(entry.message));
+  assert.deepEqual(oldErrors.map((entry) => entry.message), [], "the replaced instance logs nothing about the enrolment it stopped");
+  const hostId = `host-${box.id}`;
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "connected" });
+  const sweeper = next.harness.behavior.runService("sweeper");
+  t.after(async () => {
+    sweeper.controller.abort(new Error("the test ends"));
+    await sweeper.done;
+  });
+  await until("the next run to enrol the box", async () => (await restarted!.boxes.find(box.id))?.enrol.state === "enrolled");
+});
+
 test("an enrolment fails, and says why, when BB does not show the machine connected soon after its daemon started (#286)", async (t) => {
   const { harness, app, world, tool } = await start(undefined, { variablesWaitMs: 300 });
   t.after(() => harness.lifecycle.dispose());

@@ -393,6 +393,8 @@ export class Enrolment {
   readonly #reconnecting = new Set<string>();
   /** The steps of each enrolment this process is following. */
   readonly #phases = new Map<string, Phases>();
+  readonly #stopping = new AbortController();
+  readonly #stopped = new Promise<void>((resolve) => this.#stopping.signal.addEventListener("abort", () => resolve(), { once: true }));
 
   constructor(deps: EnrolmentDeps) {
     this.#deps = deps;
@@ -404,6 +406,18 @@ export class Enrolment {
     this.#logonWaitMs = deps.logonWaitMs ?? 90_000;
     this.#providerRetryMs = deps.providerRetryMs ?? 6_000;
     this.#manualRemoveMs = deps.manualRemoveMs ?? 2 * 60_000;
+  }
+
+  dispose(): void {
+    this.#stopping.abort(new Error("bb-box stopped, as for a reload"));
+  }
+
+  #isStopping(error: unknown): boolean {
+    return this.#stopping.signal.aborted || /stale API handle|reloaded or disabled/i.test(error instanceof Error ? error.message : String(error));
+  }
+
+  #untilStopping(signal: AbortSignal): AbortSignal {
+    return AbortSignal.any([signal, this.#stopping.signal]);
   }
 
   /** The machine provider BB calls to create and remove a box's machine. */
@@ -531,7 +545,7 @@ export class Enrolment {
     if (!enrolment?.windowsCommand) throw new Error(`BB gave no Windows enrolment command for box ${box.name}'s machine ${hostId}.`);
     const transport = await this.#transport(box);
     phases.mark("install");
-    const result = await runWindowsCommand(transport, enrolment.windowsCommand, { timeoutMs: this.#timeoutMs, signal: AbortSignal.timeout(this.#timeoutMs) });
+    const result = await runWindowsCommand(transport, enrolment.windowsCommand, { timeoutMs: this.#timeoutMs, signal: this.#untilStopping(AbortSignal.timeout(this.#timeoutMs)) });
     phases.mark("installed");
     if (result.exitCode !== 0) throw new Error(windowsFailure(`BB's Windows installer in box ${box.name}`, result));
     phases.mark("bootstrapped");
@@ -601,13 +615,14 @@ export class Enrolment {
         // again, so bootstrap with the same key starts the daemon.
         if (box.capabilities.os !== "windows" && host.lifecycle.phase === "active" && host.status !== "connected") {
           const transport = await this.#transport(current);
-          await this.#bootstrapAgain(current, host.id, transport, { key: box.id, executor: executor(transport, phases), report: QUIET, signal: AbortSignal.timeout(this.#timeoutMs) });
+          await this.#bootstrapAgain(current, host.id, transport, { key: box.id, executor: executor(transport, phases), report: QUIET, signal: this.#untilStopping(AbortSignal.timeout(this.#timeoutMs)) });
           phases.mark("bootstrapped");
         }
       }
       await this.#follow(current, phases, access ?? this.#setUpAccess(current, phases));
       if (current.capabilities.os === "windows") void this.#hideConsoles(current);
     } catch (error) {
+      if (this.#isStopping(error)) return;
       this.#deps.logError("enrol", error);
       // A Windows box's manual machine is bb-box's to remove: none may stay in BB's list (#539).
       const manual = box.capabilities.os === "windows" ? (await this.#deps.boxes.find(box.id))?.enrol.hostId : null;
@@ -641,7 +656,8 @@ export class Enrolment {
         if (!isUnknownProvider(error) || attempt >= PROVIDER_TRIES) throw error;
         this.#deps.log?.(`Enrolling box ${box.name}: BB does not know bb-box's machine provider yet, as while the plugin restarts. Asking again in ${this.#providerRetryMs / 1000} s, ${PROVIDER_TRIES - attempt} more times at most.`);
       }
-      await new Promise((resolve) => setTimeout(resolve, this.#providerRetryMs));
+      await Promise.race([new Promise((resolve) => setTimeout(resolve, this.#providerRetryMs)), this.#stopped]);
+      this.#stopping.signal.throwIfAborted();
       const current = await this.#deps.boxes.find(box.id);
       if (!current || current.state === "releasing") return null;
     }
@@ -658,6 +674,7 @@ export class Enrolment {
     /** When the waits for the box's access ended. */
     let waitsEnded: number | undefined;
     for (;;) {
+      this.#stopping.signal.throwIfAborted();
       const current = await this.#deps.boxes.find(box.id);
       if (!current || current.state === "releasing" || current.enrol.hostId !== hostId || current.enrol.state === "failed") return;
       const host = await this.#deps.hosts().get({ hostId });
@@ -713,7 +730,7 @@ export class Enrolment {
         await this.#deps.boxes.update(box, () => ({ enrol: { state: "failed", hostId, error: reason } }));
         return;
       }
-      await phases.sleep(phases.marks.has("bootstrapped") ? this.#fastPollMs : this.#pollMs);
+      await Promise.race([phases.sleep(phases.marks.has("bootstrapped") ? this.#fastPollMs : this.#pollMs), this.#stopped]);
     }
   }
 
@@ -900,7 +917,7 @@ export class Enrolment {
     try {
       const transport = await this.#transport(box);
       // Its own time limit, or the plugin stopping, whichever comes first.
-      const signal = stop ? AbortSignal.any([AbortSignal.timeout(this.#timeoutMs), stop]) : AbortSignal.timeout(this.#timeoutMs);
+      const signal = stop ? AbortSignal.any([this.#untilStopping(AbortSignal.timeout(this.#timeoutMs)), stop]) : this.#untilStopping(AbortSignal.timeout(this.#timeoutMs));
       try {
         // A thread's own box joined BB under the thread's key; any other under its own ID.
         const key = box.role === "machine" ? box.threadId : box.id;
