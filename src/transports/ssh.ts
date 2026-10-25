@@ -24,10 +24,11 @@
 import { spawn } from "node:child_process";
 import { startChild } from "./forker.ts";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { makeTempFolder, shortTempBase } from "../core/temp-folders.ts";
 import { CommandLine, PROBE, failure, quote } from "./process.ts";
 import { COMMAND_LIMIT, powershellCommand, readFileScript, scriptText, stageCommand, stagedCommand, stagedName, writeFileScript } from "./powershell.ts";
 import { openRoute } from "./route.ts";
@@ -572,7 +573,7 @@ export class KeyFile {
   async path(privateKey: string): Promise<string> {
     const key = privateKey.replace(/\r\n/g, "\n").trim() + "\n";
     if (this.#path && this.#key === key) return this.#path;
-    if (!this.#dir) this.#dir = await mkdtemp(join(tmpdir(), "bb-box-ssh-"));
+    if (!this.#dir) this.#dir = await makeTempFolder("bb-box-ssh-");
     const path = join(this.#dir, "id");
     await writeFile(path, key, { mode: 0o600 });
     this.#path = path;
@@ -583,7 +584,7 @@ export class KeyFile {
   /** Writes known_hosts lines for pinned host keys, and returns the file's path. */
   async knownHosts(lines: readonly string[]): Promise<string> {
     const text = lines.map((line) => line.trim()).filter(Boolean).join("\n") + "\n";
-    if (!this.#dir) this.#dir = await mkdtemp(join(tmpdir(), "bb-box-ssh-"));
+    if (!this.#dir) this.#dir = await makeTempFolder("bb-box-ssh-");
     const path = join(this.#dir, `known_hosts-${createHash("sha256").update(text).digest("hex").slice(0, 16)}`);
     await writeFile(path, text, { mode: 0o600 });
     return path;
@@ -591,12 +592,12 @@ export class KeyFile {
 
   /** A directory for shared connections' sockets. A socket's path must fit in about 100 bytes, so it is short. */
   async shareDir(): Promise<string> {
-    this.#shareDir ??= await mkdtemp(join(tmpdir().length > 40 ? "/tmp" : tmpdir(), "bb-box-cm-"));
+    this.#shareDir ??= await makeTempFolder("bb-box-cm-", shortTempBase());
     return this.#shareDir;
   }
 
   async dispose(): Promise<void> {
-    for (const dir of [this.#dir, this.#shareDir]) if (dir) await rm(dir, { recursive: true, force: true });
+    for (const dir of [this.#dir, this.#shareDir]) if (dir) rmSync(dir, { recursive: true, force: true });
     this.#dir = this.#shareDir = this.#path = this.#key = null;
   }
 }

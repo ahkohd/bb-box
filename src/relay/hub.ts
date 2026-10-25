@@ -9,10 +9,10 @@
 // no channel open, unless bb-box still has a box on the machine.
 
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { makeTempFolderSync } from "../core/temp-folders.ts";
 import { Mux, type Channel } from "./mux.ts";
 
 /** The route the machine's worker connects to, under the plugin's HTTP routes. */
@@ -124,7 +124,7 @@ export class RelayHub {
     this.#what = deps.what ?? "Docker";
     this.#refuse = deps.refuse ?? refuse;
     this.#ownDir = !deps.dir;
-    this.#dir = deps.dir ?? mkdtempSync(join(tmpdir(), "bb-box-relay-"));
+    this.#dir = deps.dir ?? makeTempFolderSync("bb-box-relay-");
     chmodSync(this.#dir, 0o700);
   }
 
@@ -256,8 +256,8 @@ export class RelayHub {
     this.#disposed = true;
     for (const pending of this.#pending.values()) pending.reject(new Error(`The ${this.#what} relay has stopped.`));
     this.#pending.clear();
-    await Promise.all([...this.#machines.keys()].map((hostId) => this.forget(hostId)));
     if (this.#ownDir) rmSync(this.#dir, { recursive: true, force: true });
+    await Promise.all([...this.#machines.keys()].map((hostId) => this.forget(hostId)));
   }
 
   #connection(machine: Machine, socket: Socket): void {
