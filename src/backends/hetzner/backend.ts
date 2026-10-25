@@ -1,7 +1,8 @@
 import type { CheckId } from "../../core/checks.ts";
 import { keyDescription, tailnetHostname } from "../../core/tailnet.ts";
 import { hostUserData } from "./cloud-init.ts";
-import { BUILD_ABANDONED_AFTER_MS, HostImages, runBuildScript, type Architecture, type BuildImage } from "./host-image.ts";
+import { BUILD_ABANDONED_AFTER_MS, HostImages, localRemoteBuild, runBuildScript, scriptRemoteBuild, type Architecture, type BuildImage, type RemoteBuild } from "./host-image.ts";
+import { setupArchive } from "../namespace/linux-images.ts";
 import { HostReach } from "./reach.ts";
 import { DockerBackend, dockerKinds, type DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
@@ -54,7 +55,8 @@ export interface HetznerBackendOptions {
   readonly sshBinary?: string;
   readonly hostImageFingerprint?: () => string;
   readonly buildImage?: BuildImage;
-  readonly runOnHost?: (host: HostRecord, script: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<{ exitCode: number | null; stderr: string }>;
+  readonly remoteBuild?: RemoteBuild;
+  readonly runOnHost?: (host: HostRecord, script: string, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<{ exitCode: number | null; stdout?: string; stderr: string }>;
   readonly userData?: (hostId: string, serverName: string) => Promise<string> | string;
   readonly dockerOptions?: Omit<DockerBackendOptions, "cliReachingAHostAnotherBackendMade">;
   readonly hostAnswersWithinMs?: number;
@@ -748,6 +750,12 @@ export class HetznerBackend implements Backend {
     return why;
   }
 
+  #remoteBuild(): RemoteBuild {
+    if (this.#options.remoteBuild) return this.#options.remoteBuild;
+    if (this.#options.buildImage) return localRemoteBuild(this.#buildImageOn, (record) => (this.#options.reachHost ? this.#options.reachHost(record) : this.#reach!.cli(record)));
+    return scriptRemoteBuild((record, script, options) => (this.#options.runOnHost ? this.#options.runOnHost(record, script, options) : this.#reach!.run(record, script, options)), () => setupArchive());
+  }
+
   async #failures(architecture: Architecture): Promise<HostImageFailures | null> {
     const stored = await this.#context.storage.get<HostImageFailures | number>(HOST_IMAGE_FAILED_KEY[architecture]);
     if (stored === undefined || stored === null) return null;
@@ -779,7 +787,8 @@ export class HetznerBackend implements Backend {
             architecture,
             cliOf: (record) => (this.#options.reachHost ? this.#options.reachHost(record) : this.#reach!.cli(record)),
             run: (record, script, options) => (this.#options.runOnHost ? this.#options.runOnHost(record, script, options) : this.#reach!.run(record, script, options)),
-            buildImage: this.#buildImageOn,
+            remote: this.#remoteBuild(),
+            bbUrl: this.#context.bbUrl?.() ?? null,
             appSha256: await this.#bbApp(signal),
             log: (line) => this.#context.log?.(line),
             sleep: this.#options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms))),
