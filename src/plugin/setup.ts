@@ -44,7 +44,7 @@ import { dockerDriver } from "../backends/docker/index.ts";
 import { backendPart } from "../core/document.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { setupDir } from "../backends/setup-dir.ts";
 import { RELAY_ROUTE, RelayHub } from "../relay/hub.ts";
 import { FILE_ROUTE, FileRelay } from "../relay/files.ts";
 import { MSB_ROUTE, msbClientArgv, refuseMsb } from "../relay/msb.ts";
@@ -495,9 +495,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   };
 
   // What the doctor judges images by (049): the pins in the plugin's own
-  // setup files, which the bundle, dist/server.js, has one up, and BB's app
-  // on BB's server now.
-  const pins = fileURLToPath(new URL("../setup/", import.meta.url));
+  // setup files, and BB's app on BB's server now.
+  const pins = setupDir();
   const images: ImageFacts = {
     pins: (set) => pinsDigest(pins, set),
     async bbApp() {
@@ -900,8 +899,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const threadHosts = new Map<string, string>();
   const buildScript =
     options.dockerBuildScript !== undefined ? options.dockerBuildScript : (() => {
-      // The bundle is dist/server.js, so the plugin's files are one up.
-      const script = fileURLToPath(new URL("../setup/docker/build.sh", import.meta.url));
+      const script = join(setupDir(), "docker", "build.sh");
       return existsSync(script) ? script : null;
     })();
   const dockerImages = new DockerImages({
