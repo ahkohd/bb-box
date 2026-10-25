@@ -655,20 +655,21 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops; step and result on Linux and macOS.`,
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops; step and result on Linux and macOS.`,
     presentation: { label: { pending: "Recording the desktop", completed: "Recorded the desktop" } },
     parameters: z.object({
       box: boxParam,
       action: z.enum(["start", "step", "result", "stop"]).describe("start begins recording; step captions the next check; result gives its outcome; stop ends it and makes the clip."),
       text: z.string().min(1).max(200).optional().describe("With step: what you check next. With result: what you saw. One short line each."),
       passed: z.boolean().optional().describe("With result: whether the check passed."),
+      position: z.enum(["top", "bottom"]).optional().describe('With start: where step captions go. Defaults to "top"; "bottom" when what you check is near the top of the screen.'),
       speed: z
         .union([z.literal(1), z.literal(2), z.literal(4)])
         .optional()
         .describe("With stop: the clip plays this many times faster. Defaults to 1."),
       stills: z.enum(["cut", "keep"]).optional().describe("With stop: cut each still stretch to half a second (the default), or keep it."),
     }),
-    async execute({ box: ref, action, text, passed, speed, stills }, { threadId, signal }) {
+    async execute({ box: ref, action, text, passed, position, speed, stills }, { threadId, signal }) {
       try {
         const id = thread(threadId);
         const { owner, box: found } = await app.resolve(id, ref, signal);
@@ -677,7 +678,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const os = found.capabilities.os;
         const session = os === "windows" ? ("desktop" as const) : undefined;
         if (action === "start") {
-          const { result } = await boxes.run(owner, found.id, recordStartScript(os), { timeoutMs: 30_000, signal, session, waitForEnrolment: false });
+          const { result } = await boxes.run(owner, found.id, recordStartScript(os, position ?? "top"), { timeoutMs: 30_000, signal, session, waitForEnrolment: false });
           const refused: Partial<Record<number, string>> = {
             [RECORD_START_EXITS.running]: `Box ${found.name} is recording already.${next(`Call box_record with box "${found.name}" and action "stop" for its clip.`)}`,
             [RECORD_START_EXITS.noRecorder]: `Box ${found.name} has no ${result.stderr.trim() || "recorder"} yet, which box_record needs there. It comes with the image's next rebuild, or on a Mac of the SSH host pool when its owner runs setup-mac.sh again.`,
