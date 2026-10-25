@@ -73,7 +73,7 @@ export class Capture {
   }
 }
 
-type Spawned = Omit<RunResult, "stdout" | "stderr" | "truncated">;
+type Spawned = Omit<RunResult, "stdout" | "stderr" | "truncated"> & { readonly stdoutWhole: boolean };
 
 const NOTHING = Buffer.alloc(0);
 
@@ -189,7 +189,7 @@ export class CommandLine {
   run(script: string, options: RunOptions = {}): Promise<RunResult> {
     const stdout = new Capture(options.maxOutputBytes ?? 128 * 1024);
     const stderr = new Capture(options.maxOutputBytes ?? 128 * 1024);
-    return this.#spawn(script, options, (chunk) => stdout.push(chunk), (chunk) => stderr.push(chunk)).then((result) => ({
+    return this.#spawn(script, options, (chunk) => stdout.push(chunk), (chunk) => stderr.push(chunk)).then(({ stdoutWhole: _, ...result }) => ({
       ...result,
       stdout: stdout.text(),
       stderr: stderr.text(),
@@ -249,6 +249,7 @@ export class CommandLine {
     if (!result || result.exitCode !== 0) {
       throw this.#error(failure(`read ${path}`, { ...result!, stdout: "", stderr: errors.text(), truncated: false }));
     }
+    if (!result.stdoutWhole) throw this.#error(`Could not read ${path}: the connection ended before all of it arrived. Try again.`);
     return Buffer.concat(chunks);
   }
 
@@ -298,7 +299,7 @@ export class CommandLine {
         options.signal?.removeEventListener("abort", abort);
         if (error) return reject(error);
         if (options.signal?.aborted && !timedOut) return reject(options.signal.reason);
-        resolve({ exitCode, timedOut, durationMs: Date.now() - started });
+        resolve({ exitCode, timedOut, durationMs: Date.now() - started, stdoutWhole: !marks || marks.stdout.status !== null });
       };
       // Once both marks are in, the script's shell has exited and everything
       // it wrote has arrived. What it left running keeps running in the box.
