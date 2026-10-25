@@ -56,9 +56,9 @@ Boxes join BB by reaching BB's server. If BB is signed in to your bb account, bb
 
 Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md).
 
-Notes:
+## What still waits on BB
 
-- Windows boxes join BB as machines too. A thread cannot yet start on a new Windows box from BB's new-thread screen ([BB requests](docs/bb-requests.md)).
+Some things wait on features BB does not have yet, listed in [what bb-box asks of BB](docs/bb-requests.md). You will notice them in five places. A thread cannot start on a new Windows box from BB's new-thread screen, though Windows boxes join BB as machines. A box's terminal is bb-box's own tab, not BB's terminal with its tabs and history. When BB's server is busy for a moment, every desktop's picture and input wait for it, so a drag can lag. A file over 16 MiB copies to or from a box only while the machine that holds it is connected to BB. An agent's command that runs longer than about 4.5 minutes goes on as a job, which the agent checks later, as BB ends a tool call after about five minutes.
 
 ## Documentation
 
