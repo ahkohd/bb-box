@@ -12,6 +12,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { BoxRecord, Boxes } from "../core/boxes.ts";
 import { Control, RECONNECT_MS, STALE_MS, type KeptControl, type ViewerConnection } from "../core/control.ts";
 import { clipboardCommands } from "../core/in-box.ts";
+import { macClipboardWatchCommand, startClipboardWatch, type ClipboardWatch } from "../core/mac-clipboard.ts";
 import { RfbRelay, desktopSize, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Screen } from "../core/rfb.ts";
 import { SelkiesBox, SelkiesRelay, type OpenStream } from "../core/selkies.ts";
@@ -31,6 +32,8 @@ const KEPT_KEY = "desktop-control";
 const MAX_CLIPBOARD_BYTES = 4 * 1024 * 1024;
 /** How long reading or writing a box's clipboard with a command may take. */
 const CLIPBOARD_TIMEOUT_MS = 10_000;
+const CLIPBOARD_WATCH_IDLE_MS = 10_000;
+const CLIPBOARD_WATCH_RETRY_MS = 30_000;
 /** How long after a VNC viewer's resize its desktop's video viewers follow: the box takes a size in a few milliseconds. */
 const FOLLOW_AFTER_MS = 300;
 /** How long after bb-box-cursor ends, as when the desktop restarts, it runs again while the box has video viewers (060). */
@@ -661,11 +664,61 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   };
   /**
    * One read of a box's clipboard at a time, which the next calls share: a Windows desktop's read takes seconds,
-   * longer than the viewer's 2 s poll (#461), so reads would pile up in the box.
+   * longer than the viewer's poll (#461), so reads would pile up in the box.
    */
   const reading = new Map<string, Promise<void>>();
   /** Pastes into each box so far: a read that began before a paste found the old text, which must not come back as a copy. */
   const pastes = new Map<string, number>();
+  const watches = new Map<string, { live: boolean; idle: ReturnType<typeof setTimeout>; readonly abort: AbortController; watch: ClipboardWatch | null }>();
+  const watchRetry = new Map<string, number>();
+  const ownPastes = new Map<string, string>();
+  const copiedInBox = (boxId: string, text: string) => {
+    if (ownPastes.get(boxId) === text) {
+      ownPastes.delete(boxId);
+      return;
+    }
+    ownPastes.delete(boxId);
+    clipboards.set(boxId, { text, serial: ++clipboardSerial });
+  };
+  const stopWatch = (boxId: string) => {
+    const entry = watches.get(boxId);
+    if (!entry) return;
+    watches.delete(boxId);
+    clearTimeout(entry.idle);
+    entry.abort.abort();
+    void entry.watch?.close().catch(() => undefined);
+  };
+  const watchingClipboard = (box: BoxRecord): boolean => {
+    if (box.capabilities.os !== "macos") return false;
+    const running = watches.get(box.id);
+    if (running) {
+      running.idle.refresh();
+      return running.live;
+    }
+    if (Date.now() < (watchRetry.get(box.id) ?? 0)) return false;
+    const entry = { live: false, idle: setTimeout(() => stopWatch(box.id), CLIPBOARD_WATCH_IDLE_MS), abort: new AbortController(), watch: null as ClipboardWatch | null };
+    entry.idle.unref?.();
+    watches.set(box.id, entry);
+    void (async () => {
+      const channel = await boxes.spawnOwn(box, macClipboardWatchCommand(), { session: "desktop", signal: entry.abort.signal });
+      entry.watch = await startClipboardWatch(channel, (text) => copiedInBox(box.id, text), entry.abort.signal);
+      if (entry.abort.signal.aborted) {
+        await entry.watch.close().catch(() => undefined);
+        return;
+      }
+      entry.live = true;
+      await entry.watch.ended;
+    })()
+      .catch((error: unknown) => {
+        if (!entry.abort.signal.aborted) deps.logError(`watch box ${box.name}'s clipboard`, error);
+      })
+      .finally(() => {
+        if (entry.abort.signal.aborted) return;
+        watchRetry.set(box.id, Date.now() + CLIPBOARD_WATCH_RETRY_MS);
+        if (watches.get(box.id) === entry) stopWatch(box.id);
+      });
+    return false;
+  };
 
   // Control people had as the last instance stopped. BB starts this one first, so the viewers connect again once that one stops.
   void (async () => {
@@ -985,7 +1038,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     switching: (boxId) => switching.has(boxId),
     async clipboard(boxId, viewer) {
       const box = viewer && control.mayInput(boxId, viewer) ? await byCommands(boxId) : null;
-      if (box) {
+      if (box && !watchingClipboard(box)) {
         let read = reading.get(boxId);
         if (!read) {
           const commands = clipboardCommands(box.capabilities.os)!;
@@ -1015,8 +1068,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       }
       // The box has the viewer's text, so the next read finds no change to copy back.
       clipboards.set(boxId, { text, serial: clipboards.get(boxId)?.serial ?? ++clipboardSerial });
+      if (watches.get(boxId)?.live) ownPastes.set(boxId, text);
     },
     async dispose() {
+      for (const boxId of [...watches.keys()]) stopWatch(boxId);
       await control.dispose();
       await Promise.all([...relays].map((relay) => relay.close()));
     },

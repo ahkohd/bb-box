@@ -46,7 +46,7 @@ import {
   type SizePart,
   type StopReason,
 } from "../backends/types.ts";
-import { TransportError, type CommandTransport, type RunResult } from "../transports/types.ts";
+import { TransportError, type ByteChannel, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
 import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
@@ -2280,6 +2280,19 @@ export class Boxes {
           signal: options.signal,
           maxOutputBytes: options.maxOutputBytes,
         }),
+      options.signal,
+    );
+  }
+
+  async spawnOwn(box: BoxRecord, script: string, options: { session?: Session; signal?: AbortSignal } = {}): Promise<ByteChannel> {
+    const capabilities = box.capabilities;
+    const session = options.session === "desktop" && !capabilities.command?.inDesktopSession ? "desktop" : "default";
+    return this.#reach(
+      box,
+      async (transport) => {
+        if (!transport.spawn) throw new BoxError("unsupported", `bb-box cannot keep a process running in box ${box.name}: its commands cannot.`);
+        return transport.spawn(command(capabilities.os, script, { session }), options.signal);
+      },
       options.signal,
     );
   }
