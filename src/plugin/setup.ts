@@ -817,6 +817,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.onDispose(() => stopForker());
   bb.onDispose(() => imageJobs.stop());
   bb.onDispose(() => imageBakes.stop());
+  bb.onDispose(() => enrolment.dispose());
   bb.onDispose(() => backends.dispose());
   bb.onDispose(() => boxes.dispose());
   bb.onDispose(() => desktop.dispose());
