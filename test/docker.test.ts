@@ -233,6 +233,7 @@ test("reads the daemon's facts and its containers", () => {
       cpus: 8,
       memoryMiB: 16 * 1024,
       rootless: true,
+      apparmor: false,
       cpuLimit: false,
       memoryLimit: true,
       cpuset: false,
@@ -689,6 +690,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
       ["docker.limits", "ok"],
       ["docker.cpuset", "ok"],
       ["docker.lxcfs", "warn"],
+      ["docker.apparmor", "ok"],
       ["image.bbbox/linux:1", "ok"],
       ["image.bbbox/linux-desktop:1", "ok"],
       ["image.bbbox/linux-desktop-wayland:1", "ok"],
@@ -1355,6 +1357,21 @@ test("when the CPUs both dockerd and the container allow are fewer than a box's 
   assert.equal(fake.inspect(one.ref).HostConfig.CpusetCpus, "23", "a box with no more cores than CPUs in both is still pinned");
   const check = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.cpuset")!;
   assert.match(check.detail, /One with more cores is not pinned, so it keeps all its cores' time, and gets OMP_NUM_THREADS set to its cores/);
+});
+
+test("on a Docker host that is a container whose own AppArmor profile for unix_chkpwd cannot see into boxes, the doctor warns that sudo fails in them, and gives the two lines that disable that profile (#1032)", async () => {
+  const refusing = setup({}, { apparmor: true, apparmorRefusesSetgid: true });
+  const check = (await refusing.backend.doctor(signal())).checks.find((each) => each.id === "docker.apparmor")!;
+  assert.deepEqual([check.name, check.status], ["Programs in boxes under the host's AppArmor", "warn"]);
+  assert.match(check.detail, /^fake-docker is itself a container, and its own AppArmor profile for unix_chkpwd cannot see into boxes, so sudo fails in them with "account validation failure"/);
+  assert.equal(check.fix, "On fake-docker, as root, disable that profile: ln -s /etc/apparmor.d/unix-chkpwd /etc/apparmor.d/disable/ && apparmor_parser -R /etc/apparmor.d/unix-chkpwd. Both last across a reboot. This only drops AppArmor's confinement of unix_chkpwd on fake-docker; boxes need not be made again.");
+  const probe = readFileSync(join(refusing.fake.root, "probes"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as string[]).find((args) => args.includes("/usr/sbin/unix_chkpwd"))!;
+  assert.ok(probe.includes("--privileged") && probe.includes("--reuid=65534"), "as a user, in a container like a box with Docker of its own");
+
+  const fine = setup({}, { apparmor: true });
+  assert.equal((await fine.backend.doctor(signal())).checks.find((each) => each.id === "docker.apparmor")!.status, "ok");
+  const none = setup({}, {});
+  assert.match((await none.backend.doctor(signal())).checks.find((each) => each.id === "docker.apparmor")!.detail, /runs no AppArmor/);
 });
 
 test("on a host with LXCFS, each box mounts its files over /proc and the CPUs online, so free and /proc/cpuinfo say the box's own, and the doctor says so (062)", async () => {

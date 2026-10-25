@@ -397,6 +397,12 @@ function hostWords(host: string | null, machines?: MachineAccess): string {
   return host;
 }
 
+const SETGID_PROBE = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", "/usr/sbin/unix_chkpwd", "nobody", "chkexpiry"];
+
+export function refusedByAppArmor(result: { readonly exitCode: number | null; readonly stderr: string }): boolean {
+  return result.exitCode === 127 && /cannot apply additional memory protection after relocation: Permission denied/.test(result.stderr);
+}
+
 export class DockerBackend implements Backend {
   readonly id: string;
   readonly nature = "virtual" as const;
@@ -1189,6 +1195,7 @@ export class DockerBackend implements Backend {
         }
       }
       await this.#checkLxcfs(info, state.containers, push, signal);
+      await this.#checkAppArmor(info, push, signal);
 
       // What images are judged by (049).
       const judging = Promise.all([
@@ -1336,6 +1343,34 @@ export class DockerBackend implements Backend {
   }
 
   // The host's side.
+
+  async #checkAppArmor(info: DockerInfo, push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
+    const name = "Programs in boxes under the host's AppArmor";
+    if (!info.apparmor) {
+      push("docker.apparmor", name, "ok", `${info.name} runs no AppArmor, so no profile of its own confines programs in boxes.`);
+      return;
+    }
+    const image = this.#probeImage();
+    if (!image) {
+      push("docker.apparmor", name, "skipped", "Skipped until a box image is on the host, as bb-box tries a setgid program in a container of it.");
+      return;
+    }
+    const probe = await this.#cli.run(
+      ["container", "run", "--rm", "--pull", "never", "--network", "none", ...(this.#config.docker ? ["--privileged"] : []), image, ...SETGID_PROBE],
+      { timeoutMs: 30_000, signal },
+    );
+    if (!refusedByAppArmor(probe)) {
+      push("docker.apparmor", name, "ok", `Setgid programs in boxes on ${info.name}, as sudo runs, work under its AppArmor profiles.`);
+      return;
+    }
+    push(
+      "docker.apparmor",
+      name,
+      "warn",
+      `${info.name} is itself a container, and its own AppArmor profile for unix_chkpwd cannot see into boxes, so sudo fails in them with "account validation failure", and unix_chkpwd with "cannot apply additional memory protection after relocation".`,
+      `On ${info.name}, as root, disable that profile: ln -s /etc/apparmor.d/unix-chkpwd /etc/apparmor.d/disable/ && apparmor_parser -R /etc/apparmor.d/unix-chkpwd. Both last across a reboot. This only drops AppArmor's confinement of unix_chkpwd on ${info.name}; boxes need not be made again.`,
+    );
+  }
 
   async #checkLxcfs(
     info: DockerInfo,

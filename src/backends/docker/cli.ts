@@ -72,6 +72,7 @@ export interface DockerInfo {
   readonly cpus: number;
   readonly memoryMiB: number;
   readonly rootless: boolean;
+  readonly apparmor: boolean;
   /**
    * Whether the daemon can limit a container's CPU, as each box's --cpus
    * needs, and its memory. Rootless Docker can only when systemd delegates
@@ -144,6 +145,7 @@ export function parseInfo(text: string): DockerInfo {
     cpus: Number(info.NCPU) || 0,
     memoryMiB: Math.floor((Number(info.MemTotal) || 0) / MiB),
     rootless: security.some((option) => option.includes("name=rootless")),
+    apparmor: security.some((option) => option.includes("name=apparmor")),
     cpuLimit: info.CpuCfsQuota !== false,
     memoryLimit: info.MemoryLimit !== false,
     cpuset: info.CPUSet !== false,
