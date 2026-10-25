@@ -61,7 +61,7 @@ The buttons on a row open the box's desktop or terminal, and stop or start the b
 
 Releasing a box deletes it and everything on its disk, so copy out anything you want to keep first. On a physical machine, releasing resets the machine and returns it to its pool. Everything in the box user's home is deleted.
 
-Release asks you first. If another thread is working on the box, it asks again, for example 'Release calm-otter anyway?', and names the threads that would lose their machine. Stop asks the same way.
+Release asks you first. If another thread is working on the box, it asks again, for example 'Release calm-otter anyway?', and shows the threads that would lose their machine. Stop asks the same way.
 
 ### The machine a thread runs on
 
@@ -109,6 +109,6 @@ A machine is a box of your own, kept as a BB machine. It belongs to no thread. I
 
 You can add a machine from **New box** on the Boxes page, or from **Add machine** in Settings, BB Box, Machines. The form is the same as for a new box, with a name at the end. The name is optional: leave it empty and BB Box picks one. A name uses lowercase letters, digits and hyphens, starts with a letter, does not end with a hyphen, and is at most 32 characters.
 
-A machine's row lists the threads working on it. You can stop, start, [resize](resizing.md) and remove it from the Boxes page or from settings. Removing a machine deletes it, as releasing a box does. If a thread is working on the machine, Remove and Stop ask again before they go on.
+A machine's row shows the threads on it: up to three, those working first, with a spinner, then those most recently active. Select one to open it. **+2 more**, or however many there are, lists them all, with a search box when the list is long. You can stop, start, [resize](resizing.md) and remove it from the Boxes page or from settings. Removing a machine deletes it, as releasing a box does. If a thread is working on the machine, Remove and Stop ask again before they go on.
 
 Remove a Windows machine here, not from BB's own machine list. Removing it there takes it out of BB, but leaves the Windows box running.

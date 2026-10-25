@@ -9,7 +9,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { Contract, MachineEntry, ThreadOnBox } from "../plugin/contract.ts";
+import type { Contract, MachineEntry } from "../plugin/contract.ts";
 import type { BoxView, KindView } from "../plugin/views.ts";
 import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, OPERATOR, osName, StatusDot, useLive, useNow } from "./common.tsx";
 import { runsWayland } from "./boxes-filter.ts";
@@ -21,17 +21,9 @@ import { statusOf } from "./status.ts";
 import { canOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
 import { canResize, ResizeDialog, useResizeNote } from "./resize.tsx";
+import { ThreadChips } from "./thread-chips.tsx";
 
 
-
-/** The threads on a machine, in a few words: the working ones named first. */
-export function threadsWords(threads: readonly ThreadOnBox[]): string | null {
-  if (!threads.length) return null;
-  const name = (thread: ThreadOnBox) => thread.title ?? thread.id;
-  const working = threads.filter((thread) => thread.running);
-  if (working.length) return `Working: ${working.map(name).join(", ")}${threads.length > working.length ? ` · ${threads.length - working.length} more` : ""}`;
-  return `${threads.length === 1 ? "Thread" : "Threads"}: ${threads.map(name).join(", ")}`;
-}
 
 function isMoving(box: BoxView): boolean {
   return box.state === "acquiring" || box.state === "starting" || box.state === "stopping" || box.state === "releasing";
@@ -109,10 +101,10 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
                   {item.text}
                 </span>
               )),
-              threadsWords(threads),
             ]}
           />
         </div>
+        <ThreadChips threads={threads} className="mt-1.5" />
         {box.error ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}
         {resizeNote ? <p className={cn("mt-0.5 text-xs leading-snug", resizeNote.failed ? "text-destructive-text" : "text-muted-foreground")}>{resizeNote.text}</p> : null}
       </div>
