@@ -12,10 +12,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { Contract, DesktopOnDemandView } from "../plugin/contract.ts";
+import type { MachineAccessProblem } from "../plugin/setup-offer.ts";
 import type { ImageOptionView, KindView, OfferRoom, OfferView, ProviderProfile, SizeView } from "../plugin/views.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
-import { DESKTOP_BUILD_WORDS, estimate } from "./first-run.tsx";
+import { DESKTOP_BUILD_WORDS, estimate, JoinHelp } from "./first-run.tsx";
 import type { GuestOs, Windowing } from "../backends/types.ts";
 import { archAvailable, ARCHS, choiceOf, displayChoices, FORM_FILTERS, formFilterOf, FormSection, gpuChoices, gpuFullNote, kindFor, MenuSelect, nearest, useEscapeCloses, offersShown, OptionCard, ProviderRow, runsOnOptions, RUNS_ON_WORDS, systemsOf, TYPE_GLYPHS, typeAvailable, type Choice, type FormFilter, type RunsOn } from "./box-form.tsx";
 
@@ -151,6 +152,7 @@ export function NewBox({
   kinds: offeredKinds,
   make,
   onDemand,
+  access = null,
   machine = false,
   primary = false,
   profile,
@@ -177,6 +179,7 @@ export function NewBox({
    * Create asks `build`, which resolves with the refusal to show, or null once the build has started.
    */
   onDemand?: DesktopOnDemand | null;
+  access?: MachineAccessProblem | null;
 }) {
   // The desktop to build is offered only where no desktop of its system is: once one is, it is that.
   const added = !!onDemand && !offeredKinds.some((offered) => offered.os === onDemand.kind.os && offered.arch === onDemand.kind.arch && offered.desktop);
@@ -625,6 +628,11 @@ export function NewBox({
                 </p>
               ) : null}
             </FormSection>
+          ) : null}
+          {access ? (
+            <p role="note" className="border-t border-border pt-4 text-xs leading-snug text-warning-text">
+              Boxes will not join BB yet. <JoinHelp words={access.message} />
+            </p>
           ) : null}
           <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
             {standing ? (

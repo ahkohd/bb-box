@@ -34,6 +34,7 @@ export interface PanelState {
   readonly desktopOnDemand?: DesktopOnDemandView | null;
   /** Why the desktop box this thread asked to build first was not made once its image was built, and when; absent or null for none. */
   readonly desktopProblem?: { readonly message: string; readonly at: number } | null;
+  readonly access?: MachineAccessProblem | null;
 }
 
 export interface MachinesState {
@@ -41,6 +42,7 @@ export interface MachinesState {
   readonly kinds: KindView[];
   readonly desktopOnDemand?: DesktopOnDemandView | null;
   readonly desktopProblem?: { readonly message: string; readonly at: number } | null;
+  readonly access?: MachineAccessProblem | null;
 }
 
 /** A desktop New box can build first: the BB machine whose Docker builds its image, and the kind as it will be offered. */

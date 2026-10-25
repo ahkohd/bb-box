@@ -526,7 +526,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
   let declining = 0;
   const declineAutomatic = (count: number) => (declining = count);
   const handlers: PluginRpcTestHandlers<Contract> = {
-    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null }),
+    state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null, access: options.access ?? null }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, videoByDefault: options.videoByDefault ?? options.video ?? false, sharp: options.sharp ?? null, switching: options.switching?.on ?? false }),
     profile: async () => ({ lines: [] }),
     "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
@@ -568,7 +568,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
     images: () => options.images ?? [],
     allBoxes: () => boxes.map((found) => ({ threadId: THREAD, box: found, owner: "thread" as const })),
     // Your machines (036): `options.machines` to start with, kept as the tests add, stop, start and remove them.
-    "machines.list": () => ({ machines, kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol), desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null }),
+    "machines.list": () => ({ machines, kinds: (options.kinds ?? KINDS).filter((kind) => kind.enrol), desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null, access: options.access ?? null }),
     "machines.add": ({ kind, name }) => {
       changes.push(`machines.add ${kind}${name ? ` ${name}` : ""}`);
       if (options.failWith) return result(null);
@@ -1645,6 +1645,25 @@ test("first run: where BB's machine access will not let boxes join, the offer sa
   const fine = panel(server([], { kinds: [], setups: [setup()] }).handlers);
   await fine.findByRole("button", { name: "Use Docker on this machine" });
   expect(fine.queryByText(/Boxes will not join BB yet/)).toBeNull();
+});
+
+test("New box says before making a box that it will not join BB, in the offer's words with both ways out and the guide, and still makes it", async () => {
+  const access = { provider: "bb connect", message: "Sign in to your bb account to use bb connect" };
+  const { handlers, changes } = server([], { access });
+  const slot = panel(handlers);
+  fireEvent.click(await slot.findByRole("button", { name: "New box" }));
+  const note = await screen.findByRole("note");
+  expect(note.textContent).toBe(
+    "Boxes will not join BB yet. BB's machine access, bb connect, needs you signed in to your bb account. Sign in to it in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach, and have BB listen there: started with npx bb-app, add --server-bind-host 0.0.0.0. How boxes join BB",
+  );
+  expect(within(note).getByRole("link", { name: "How boxes join BB" }).getAttribute("href")).toMatch(/docs\/guide\/boxes\.md#when-a-box-does-not-join-bb$/);
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes.some((change) => change.startsWith("acquire"))).toBe(true));
+  cleanup();
+  const fine = panel(server([]).handlers);
+  fireEvent.click(await fine.findByRole("button", { name: "New box" }));
+  await screen.findByRole("button", { name: "Create box" });
+  expect(screen.queryByText(/Boxes will not join BB yet/)).toBeNull();
 });
 
 test("first run in settings: with no backend on, the offer leads the page, without the link to settings itself; with one on, it is not there", async () => {

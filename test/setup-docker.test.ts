@@ -76,7 +76,7 @@ test("--no-wait says how far the build is; a failed build says why; BB's machine
   assert.equal(
     glance.stdout,
     "Docker on devpc is on for BB Box. Building the Linux image on devpc, step 3 of 9, started 2 min ago. Run bb box setup docker again to wait for it, or with --no-wait to see how far it is.\n" +
-      "Boxes will not join BB yet. Sign in to your bb account in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach.\n",
+      "Boxes will not join BB yet. Sign in to your bb account in BB, or set Machine access to Manual in BB's settings, under Machines, with an address boxes can reach, and have BB listen there: started with npx bb-app, add --server-bind-host 0.0.0.0.\n",
   );
   const waiting = setupDocker(all, { wait: true });
   await new Promise((done) => setTimeout(done, 5));
