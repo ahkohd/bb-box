@@ -45,7 +45,8 @@ shared connection. How bb-box drives a box is in the
   prompt, as a user who may use Docker there.
 - Memory for the boxes: bb-box keeps 4 GiB of the host's memory free by
   default, and a small linux box has a 4 GiB limit, so the host needs at
-  least 8 GiB.
+  least 8 GiB. A small desktop box has 8 GiB, so for one the host needs at
+  least 12 GiB.
 - Disk to build the images, on the Docker host: about 36 GB free for all
   three, 10 GB for the linux image alone and 18 GB for either desktop image
   alone. `build.sh` does not start with less free.
