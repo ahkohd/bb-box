@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { allocationLines, gcLines, ownerOf, profileLoop, summarise, type CpuProfile } from "../src/plugin/profile.ts";
+import { allocationLines, gcLines, memoryLine, ownerOf, profileLoop, summarise, type CpuProfile } from "../src/plugin/profile.ts";
 
 const frame = (functionName: string, url = "", lineNumber = 0) => ({ functionName, url, lineNumber });
 
@@ -99,4 +99,12 @@ test("a profile with allocations sampled tells them and what starting a process 
   assert.ok(lines.some((line) => line.startsWith("Allocations sampled over 1 s, by whose code made them: bb-box ")));
   assert.ok(lines.includes("The allocations are kept at test."));
   assert.match(lines.at(-1)!, /^Starting a process here held the loop for \d+\.\d ms, \d+\.\d ms, \d+\.\d ms, as the spawn call forks BB's server with \d+ MiB in use\.$/);
+});
+
+test("a profile ends with the process's memory: all of it, its heap, and what is outside the heap, Buffers apart", () => {
+  const MiB = 1024 * 1024;
+  assert.equal(
+    memoryLine({ rss: 6655 * MiB, heapUsed: 604 * MiB, heapTotal: 650 * MiB, external: 120 * MiB, arrayBuffers: 90 * MiB }),
+    "The process held 6655 MiB in all: its heap 604 MiB used of 650 MiB, and outside it 120 MiB of external memory, 90 MiB of it in ArrayBuffers and Buffers.",
+  );
 });

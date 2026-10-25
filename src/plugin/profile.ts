@@ -143,7 +143,7 @@ export async function profileLoop(seconds: number, options: ProfileOptions = {})
     await new Promise((resolve) => setTimeout(resolve, span * 1000));
     const { profile } = await post<{ profile: CpuProfile }>("Profiler.stop");
     const heap = options.allocations ? (await post<{ profile: HeapProfile }>("HeapProfiler.stopSampling")).profile : null;
-    const lines = [...summarise(profile, span), ...gcLines(gc, before.used_heap_size / MiB, getHeapStatistics())];
+    const lines = [...summarise(profile, span), ...gcLines(gc, before.used_heap_size / MiB, getHeapStatistics()), memoryLine(process.memoryUsage())];
     const told = (error: unknown) => `not kept: ${error instanceof Error ? error.message : String(error)}`;
     const saved = await options.save?.(profile).catch(told);
     if (saved) lines.push(`The profile is ${saved}.`);
@@ -183,6 +183,11 @@ export async function spawnCostLine(): Promise<string> {
 }
 
 /** The long garbage collections in lines: how many, how long, and the heap after each major one. */
+export function memoryLine(memory: Pick<NodeJS.MemoryUsage, "rss" | "heapUsed" | "heapTotal" | "external" | "arrayBuffers">): string {
+  const mib = (bytes: number) => `${Math.round(bytes / MiB)} MiB`;
+  return `The process held ${mib(memory.rss)} in all: its heap ${mib(memory.heapUsed)} used of ${mib(memory.heapTotal)}, and outside it ${mib(memory.external)} of external memory, ${mib(memory.arrayBuffers)} of it in ArrayBuffers and Buffers.`;
+}
+
 export function gcLines(gc: readonly GcNote[], startMiB: number, end: { used_heap_size: number; heap_size_limit: number }): string[] {
   const major = gc.filter((each) => each.major);
   const minor = gc.filter((each) => !each.major);
