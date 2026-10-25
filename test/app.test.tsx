@@ -820,6 +820,9 @@ test("a row keeps its name and kind on one line, and its status on one, dropping
   const name = slot.getByText("bold-heron");
   expect(name.className).toContain("truncate");
   expect(name.parentElement!.className).not.toContain("flex-wrap");
+  const badges = name.parentElement!.querySelector<HTMLElement>("[data-row-badges]")!;
+  expect(badges.className.split(" ")).toEqual(expect.arrayContaining(["flex-1", "basis-0", "flex-wrap", "overflow-hidden", "h-[1.125rem]"]));
+  expect(badges.textContent).toBe("DesktopGPULXC");
   // The second is one line high: the state, what to act on, then the rest; what does not fit drops whole from the end.
   const line = slot.getByText("Ready in 2.1 s").closest<HTMLElement>("[data-status-line]")!;
   expect(line.className).toContain("overflow-hidden");

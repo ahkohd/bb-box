@@ -215,7 +215,9 @@ export function RowTitle({ name, os, badges }: { name: string; os: string; badge
         {name}
       </OneLine>
       <span className="shrink-0 text-xs font-normal text-muted-foreground">{os}</span>
-      {badges}
+      <span data-row-badges className="flex h-[1.125rem] min-w-0 flex-1 basis-0 flex-wrap content-start items-center gap-1 overflow-hidden *:contents before:-mr-1 before:h-full before:w-0 before:content-['']">
+        {badges}
+      </span>
     </span>
   );
 }
