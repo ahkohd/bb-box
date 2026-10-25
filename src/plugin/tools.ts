@@ -3,6 +3,7 @@
 
 import { toolsForPurposes } from "./purposes.ts";
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
+import { createHash } from "node:crypto";
 import { posix, win32 } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -147,6 +148,14 @@ function summed(sum: FileSum): string {
   return `${sum.bytes} bytes, SHA-256 ${sum.sha256}`;
 }
 
+function sumOf(data: Uint8Array): FileSum {
+  return { bytes: data.byteLength, sha256: createHash("sha256").update(data).digest("hex") };
+}
+
+function sameSum(one: FileSum, other: FileSum): boolean {
+  return one.bytes === other.bytes && one.sha256 === other.sha256;
+}
+
 /** The box's transport runs in the box user's home, so a relative path is under it; so is one that starts with ~/. */
 export function boxPath(path: string): string {
   return path.startsWith("~/") ? path.slice(2) || "." : path;
@@ -271,7 +280,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
    * the thread's machine, which keeps it only if its size and SHA-256 match
    * the box's (#492).
    */
-  const fromBox = async (owner: string, boxId: string, from: string, target: ThreadFile, signal: AbortSignal): Promise<{ box: BoxRecord; bytes: number; sum: FileSum | null }> => {
+  const fromBox = async (owner: string, boxId: string, from: string, target: ThreadFile, signal: AbortSignal): Promise<{ box: BoxRecord; sum: FileSum; streamed: boolean }> => {
     const small = await boxes.readFile(owner, boxId, from, { maxBytes: COPY_MAX_BYTES, signal }).catch((error: unknown) => {
       if (error instanceof Error && /is larger than \d+ bytes/.test(error.message)) return null;
       throw error;
@@ -290,8 +299,11 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         },
         signal,
       );
-      return { box, bytes: result.bytes, sum: result };
+      return { box, sum: result, streamed: true };
     }
+    const arrived = sumOf(small.data);
+    const { result: inBox } = await boxes.reach(owner, boxId, (transport, box) => boxFileSum(transport, box.capabilities.os, from, signal), signal);
+    if (!sameSum(arrived, inBox)) throw new Error(`The copy of ${from} did not arrive whole: the box has ${summed(inBox)}, and ${summed(arrived)} came. Nothing was written. Try again.`);
     await bb.sdk.files.write({
       hostId: target.hostId,
       path: target.path,
@@ -300,7 +312,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       contentEncoding: "base64",
       createParents: true,
     });
-    return { box: small.box, bytes: small.data.byteLength, sum: null };
+    return { box: small.box, sum: arrived, streamed: false };
   };
   // Registered after the core's hooks, so it runs first, while boxes and
   // backends still work (#405).
@@ -582,7 +594,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_copy",
     description:
-      "Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. A file over 16 MiB streams through bb-box's worker on the thread's machine, and its SHA-256 is checked at both ends. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.",
+      "Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. Every copy's size and SHA-256 are checked at both ends, and one that does not match fails. A file over 16 MiB streams through bb-box's worker on the thread's machine. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.",
     presentation: { label: { pending: "Copying a file", completed: "Copied a file" } },
     parameters: z.object({
       box: boxParam,
@@ -612,8 +624,12 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           });
           if (file) {
             if (!("content" in file)) throw new Error(`BB did not return the contents of ${source.path}.`);
-            const box = await boxes.writeFile(owner, found.id, target, bytes(file.content, file.contentEncoding), { signal });
-            return `Copied ${source.path} (${file.sizeBytes} bytes) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
+            const data = bytes(file.content, file.contentEncoding);
+            const sent = sumOf(data);
+            await boxes.writeFile(owner, found.id, target, data, { signal });
+            const { box, result: written } = await boxes.reach(owner, found.id, (transport, box) => boxFileSum(transport, box.capabilities.os, target, signal), signal);
+            if (!sameSum(sent, written)) throw new Error(`The copy of ${source.path} did not arrive whole: ${summed(sent)} went, and ${target} in the box has ${summed(written)}. Copy it again.`);
+            return `Copied ${source.path} (${summed(sent)}) to ${target} in box ${box.name}.${next(`Use it with box_run (box "${box.name}").`)}`;
           }
           // Too large for BB's file API: the worker on the file's machine streams it to a part file in the box, which replaces the target once the two SHA-256s match (#492).
           const { box, result } = await boxes.reach(
@@ -638,11 +654,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           return `Copied ${source.path} (${summed(result)}) to ${target} in box ${box.name}, streamed through the thread's machine.${next(`Use it with box_run (box "${box.name}").`)}`;
         }
         const target = await local(to ?? (found.capabilities.os === "windows" ? win32 : posix).basename(from));
-        const { box, bytes: size, sum } = await fromBox(owner, found.id, boxPath(from), target, signal);
+        const { box, sum, streamed } = await fromBox(owner, found.id, boxPath(from), target, signal);
         const folder = target.stored ? "this thread's storage folder" : "the workspace";
-        return sum
-          ? `Copied ${from} (${summed(sum)}) from box ${box.name} to ${target.path} in ${folder}, streamed through the thread's machine.${next("Read it with your usual file tools.")}`
-          : `Copied ${from} (${size} bytes) from box ${box.name} to ${target.path} in ${folder}.${next("Read it with your usual file tools.")}`;
+        return `Copied ${from} (${summed(sum)}) from box ${box.name} to ${target.path} in ${folder}${streamed ? ", streamed through the thread's machine" : ""}.${next("Read it with your usual file tools.")}`;
       } catch (error) {
         return failure(error, "Copying the file");
       }

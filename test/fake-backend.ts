@@ -18,6 +18,8 @@
 // servers a test starts in a guest. All guests' commands therefore run in one
 // process group, which ends with the test process, however it ends (#310).
 
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -722,6 +724,13 @@ export class FakeBackend implements Backend {
 }
 
 /** Runs scripts in the guest's directory with sh. A stopped guest does not answer. */
+/** A fake box's file copies lose their last byte on the way, to test that a copy notices. */
+let fakeCopiesLose: "read" | "write" | null = null;
+
+export function loseLastByteOfCopies(way: "read" | "write" | null): void {
+  fakeCopiesLose = way;
+}
+
 export class FakeTransport implements CommandTransport {
   readonly #home: string;
   readonly #line: CommandLine;
@@ -760,8 +769,20 @@ export class FakeTransport implements CommandTransport {
 
   async run(script: string, options?: RunOptions): Promise<RunResult> {
     await this.#answer();
+    const hashed = this.#powerShellHash(script);
+    if (hashed) return hashed;
     // A fake box has no root of its own: what bb-box runs as root runs as the test's user, never through the test machine's sudo.
     return this.#line.run(script.replaceAll("sudo -n ", ""), { ...options, signal: this.#signal(options?.signal) });
+  }
+
+  /** A Windows box's file hash (#492), as PowerShell would print it, for a fake box whose scripts run in sh. */
+  #powerShellHash(script: string): RunResult | null {
+    const path = /^try\{\$p=\$ExecutionContext\.SessionState\.Path\.GetUnresolvedProviderPathFromPSPath\('((?:[^']|'')*)'\);.*Get-FileHash -Algorithm SHA256/.exec(script)?.[1]?.replaceAll("''", "'");
+    if (path === undefined) return null;
+    const file = join(this.#home, path);
+    if (!existsSync(file)) return { exitCode: 1, stdout: "", stderr: `${path} is not a file.\n`, timedOut: false, durationMs: 0, truncated: false };
+    const data = readFileSync(file);
+    return { exitCode: 0, stdout: `${createHash("sha256").update(data).digest("hex")} ${data.length}`, stderr: "", timedOut: false, durationMs: 0, truncated: false };
   }
 
   async stream(script: string, options: StreamOptions): Promise<{ exitCode: number | null; timedOut: boolean }> {
@@ -771,12 +792,14 @@ export class FakeTransport implements CommandTransport {
 
   async writeFile(path: string, data: Uint8Array, options?: { mode?: string; signal?: AbortSignal }): Promise<void> {
     await this.#answer();
-    return this.#line.writeFile(path, data, { ...options, signal: this.#signal(options?.signal) });
+    const kept = fakeCopiesLose === "write" ? data.subarray(0, -1) : data;
+    return this.#line.writeFile(path, kept, { ...options, signal: this.#signal(options?.signal) });
   }
 
   async readFile(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<Uint8Array> {
     await this.#answer();
-    return this.#line.readFile(path, { ...options, signal: this.#signal(options.signal) });
+    const data = await this.#line.readFile(path, { ...options, signal: this.#signal(options.signal) });
+    return fakeCopiesLose === "read" ? data.subarray(0, -1) : data;
   }
 
   /** A fake box's ports are the test machine's. */
