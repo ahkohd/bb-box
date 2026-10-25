@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
+import { abortable } from "../../core/abortable.ts";
 import { hashDockerSetup } from "../docker/setup-hash.ts";
 import { setupDir } from "../setup-dir.ts";
 import type { BackendStorage } from "../types.ts";
@@ -94,9 +95,16 @@ export function linuxImageBuildScript(target: LinuxImageTarget, key: string, bbU
   ].join("\n");
 }
 
+interface Building {
+  readonly done: Promise<LinuxImageRecord>;
+  readonly stop: AbortController;
+  boxesWaiting: number;
+  keptForUpkeep: boolean;
+}
+
 export class LinuxImages {
   readonly #deps: LinuxImageDeps;
-  readonly #building = new Map<LinuxImageTarget, Promise<LinuxImageRecord>>();
+  readonly #building = new Map<LinuxImageTarget, Building>();
 
   constructor(deps: LinuxImageDeps) {
     this.#deps = deps;
@@ -143,13 +151,31 @@ export class LinuxImages {
     return due;
   }
 
-  build(target: LinuxImageTarget, why: string, signal: AbortSignal): Promise<LinuxImageRecord> {
+  build(target: LinuxImageTarget, why: string, boxSignal?: AbortSignal): Promise<LinuxImageRecord> {
     let building = this.#building.get(target);
     if (!building) {
-      building = this.#build(target, why, signal).finally(() => this.#building.delete(target));
+      const stop = new AbortController();
+      const done = this.#build(target, why, stop.signal).finally(() => this.#building.delete(target));
+      done.catch(() => undefined);
+      building = { done, stop, boxesWaiting: 0, keptForUpkeep: false };
       this.#building.set(target, building);
     }
-    return building;
+    if (!boxSignal) {
+      building.keptForUpkeep = true;
+      return building.done;
+    }
+    return this.#waitAsBox(building, boxSignal);
+  }
+
+  async #waitAsBox(building: Building, boxSignal: AbortSignal): Promise<LinuxImageRecord> {
+    building.boxesWaiting++;
+    try {
+      return await abortable(building.done, boxSignal);
+    } finally {
+      building.boxesWaiting--;
+      const noOneWaits = building.boxesWaiting === 0 && !building.keptForUpkeep;
+      if (boxSignal.aborted && noOneWaits) building.stop.abort(boxSignal.reason);
+    }
   }
 
   async #build(target: LinuxImageTarget, why: string, signal: AbortSignal): Promise<LinuxImageRecord> {

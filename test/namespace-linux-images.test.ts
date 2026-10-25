@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -13,12 +13,13 @@ import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testC
 const disposed = disposedOnceTheFileEnds();
 const CONFIG = { token: FAKE_NAMESPACE_TOKEN, region: "us" as const, macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
 
-function setup(options: { failBuild?: boolean; app?: () => string | null } = {}) {
+function setup(options: { failBuild?: boolean; slowBuild?: boolean; app?: () => string | null } = {}) {
   fakeSsh();
   let now = Date.parse("2030-01-01T00:00:00Z");
   const fake = new FakeNamespace({ now: () => now, lifeCapMs: 4 * 3600_000, maxCores: 64 });
   const dir = mkdtempSync(join(tmpdir(), "ns-images-"));
   const received = join(dir, "received");
+  const finishBuild = join(dir, "finish");
   const app = options.app ?? (() => "a".repeat(64));
   const context = { ...testContext(new MemoryStorage(), "inst1"), bbUrl: () => "https://bb.example", images: { bbApp: async () => app() } } as never;
   const backend = new NamespaceBackend(CONFIG, context, {
@@ -31,9 +32,13 @@ function setup(options: { failBuild?: boolean; app?: () => string | null } = {})
     linuxImageScript: (target, key, bbUrl) =>
       options.failBuild
         ? `cat > ${received}; echo "step 1" >&2; echo "build.sh: no space left" >&2; exit 1`
-        : `cat > ${received}; printf '%s %s\\n' ${target} '${bbUrl}' >> ${received}.calls; echo "nscr.io/ws1/bbbox/${target}:${key}"`,
+        : `cat > ${received}; printf '%s %s\\n' ${target} '${bbUrl}' >> ${received}.calls; ${options.slowBuild ? `while [ ! -e ${finishBuild} ]; do sleep 0.02; done; ` : ""}echo "nscr.io/ws1/bbbox/${target}:${key}"`,
   });
-  return { fake, backend: disposed(backend), received, advance: (ms: number) => (now += ms) };
+  const building = async () => {
+    for (let wait = 0; !existsSync(`${received}.calls`) && wait < 500; wait++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(existsSync(`${received}.calls`), "the build started");
+  };
+  return { fake, backend: disposed(backend), received, advance: (ms: number) => (now += ms), building, finish: () => writeFileSync(finishBuild, "") };
 }
 
 test("a Linux image is built once in a Linux instance of its own, from bb-box's setup scripts, pushed to the workspace's registry and recorded, and the instance destroyed", async () => {
@@ -81,6 +86,37 @@ test("a build that fails destroys its instance and says the build's last lines; 
   assert.deepEqual(await backend.held(), [], "a build instance is not a box's guest, so the sweep leaves it to its build");
   assert.match((await backend.doctor()).checks.find((check) => check.id === "namespace.images")!.detail, /Building now: building \(desktop, 0 min old\)\.$/, "the doctor shows a build machine that is running");
   assert.equal((await backend.capacity("macos", { cores: 4, memoryMiB: 8192, diskGiB: null }, [])).hosts[0]?.limits[0]?.used, 0, "nor does it count as a machine");
+});
+
+test("a box released while its image builds, the only one waiting, stops the build: its instance is destroyed, nothing is recorded, and the next box builds it again", async () => {
+  const { fake, backend, building, finish } = setup({ slowBuild: true });
+  const released = new AbortController();
+  const first = backend.linuxImages.forBox("desktop", released.signal);
+  await building();
+  released.abort(new Error("released"));
+  await assert.rejects(first, /released/);
+  for (let wait = 0; backend.linuxImages.building("desktop") && wait < 500; wait++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(backend.linuxImages.building("desktop"), false);
+  assert.deepEqual([...fake.instances.values()].map((instance) => instance.status), ["DESTROYED"]);
+  assert.equal(await backend.linuxImages.record("desktop"), undefined);
+  finish();
+  const next = await backend.linuxImages.forBox("desktop", new AbortController().signal);
+  assert.match(next.ref, /^nscr\.io\/ws1\/bbbox\/desktop:/);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 2);
+});
+
+test("two boxes share one build, and one released while it builds leaves the build to the other", async () => {
+  const { fake, backend, building, finish } = setup({ slowBuild: true });
+  const released = new AbortController();
+  const first = backend.linuxImages.forBox("desktop", released.signal);
+  const second = backend.linuxImages.forBox("desktop", new AbortController().signal);
+  await building();
+  released.abort(new Error("released"));
+  await assert.rejects(first, /released/);
+  assert.equal(backend.linuxImages.building("desktop"), true, "the other box still waits for it");
+  finish();
+  assert.match((await second).ref, /^nscr\.io\/ws1\/bbbox\/desktop:/);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 1);
 });
 
 test("the build script reads the workspace from Namespace's metadata, builds with build.sh and pushes, and prints only the image's name on its output", () => {
