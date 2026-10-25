@@ -249,6 +249,11 @@ export interface StreamOptions {
  * shell of the box's OS: POSIX sh on Linux and macOS, PowerShell on Windows.
  * The core writes scripts once per OS; see src/core/in-box.ts.
  */
+export interface FileSize {
+  readonly bytes: number;
+  readonly sha256: string;
+}
+
 export interface CommandTransport {
   /** True when the box answers. Quick: used to poll readiness. */
   probe(signal?: AbortSignal): Promise<boolean>;
@@ -257,6 +262,8 @@ export interface CommandTransport {
   /** Writes a file, creating parent directories. A relative path is under the box user's home. Windows boxes ignore `mode`. */
   writeFile(path: string, data: Uint8Array, options?: { mode?: string; signal?: AbortSignal }): Promise<void>;
   readFile(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<Uint8Array>;
+  writeFileSummed?(path: string, data: Uint8Array, options?: { signal?: AbortSignal }): Promise<FileSize | null>;
+  readFileSummed?(path: string, options: { maxBytes: number; signal?: AbortSignal }): Promise<{ readonly data: Uint8Array; readonly sum: FileSize } | null>;
   /** A route to a TCP port inside the box, for a display served there. */
   route?(port: number, signal?: AbortSignal): Promise<Route>;
   /**
