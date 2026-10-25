@@ -526,6 +526,17 @@ test("a script that prints the command lines in the box, as ps aux does, runs to
   assert.equal(result.exitCode, 3);
 });
 
+test("a file read whose connection ends before its output's end mark fails, rather than give part of the file as all of it", async () => {
+  const lostTail = (script: string): [string, ...string[]] => {
+    const [first, second] = [...script.matchAll(/printf '%s%s%s\\n' '([^']*)' '([^']*)'/g)][0]!.slice(1);
+    return ["sh", "-c", `printf 'the first part'; printf '%s0\\n' ${quote(`${first}${second}`)} >&2`];
+  };
+  const line = new CommandLine({ argv: lostTail });
+  await assert.rejects(line.readFile("/tmp/file", { maxBytes: 1024, timeoutMs: 10_000 }), /Could not read \/tmp\/file: the connection ended before all of it arrived/);
+  const whole = new CommandLine({ argv: (script) => ["sh", "-c", script] });
+  assert.equal((await whole.readFile("/dev/null", { maxBytes: 1024, timeoutMs: 10_000 })).length, 0);
+});
+
 test("a timeout ends a run whose command line exited while something it started holds the output", async () => {
   // Without an end mark, as for PowerShell, a run waits for its output to close.
   const line = new CommandLine({ argv: (script) => ["sh", "-c", script], posix: false });
