@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { KeysAfterPaste, astralKeysym, keyLog, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_SHIFT_L, XK_V, boxKey, macBrowser, pasteChordKeys, pasteShortcut, retryWait, type Connection, type PasteShortcut } from "./viewer.ts";
+import { KeysAfterPaste, astralKeysym, keyLog, textKeys, typeTextShortcut, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_SHIFT_L, XK_V, boxKey, macBrowser, pasteChordKeys, pasteShortcut, retryWait, type Connection, type PasteShortcut } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
 let named: Map<number, number> | null = null;
@@ -234,6 +234,7 @@ export class SelkiesSession implements Kept {
   onPaste?: (pasted: string | Blob | null) => void;
   onPasteFailed?: (error: unknown) => void;
   putClipboard?: (text: string, automatic?: boolean) => Promise<unknown> | null;
+  onTypeText?: () => void;
   pasteAllowed?: () => boolean;
   readonly #url: string;
   readonly #listeners = new Set<() => void>();
@@ -345,7 +346,10 @@ export class SelkiesSession implements Kept {
           });
     this.#observer?.observe(this.element);
     this.element.addEventListener("keydown", (event) => this.#interceptPaste(event), true);
-    for (const type of ["keydown", "keyup"] as const) this.element.addEventListener(type, (event) => this.#astralKey(event), true);
+    for (const type of ["keydown", "keyup"] as const) {
+      this.element.addEventListener(type, (event) => this.#interceptTypeText(event), true);
+      this.element.addEventListener(type, (event) => this.#astralKey(event), true);
+    }
     document.addEventListener("paste", this.#onPasteEvent, true);
     document.addEventListener("visibilitychange", this.#onVisibility);
     window.addEventListener("focus", this.#onFocus);
@@ -814,6 +818,25 @@ export class SelkiesSession implements Kept {
     if (event.type !== "keydown" || this.connection.state !== "connected") return;
     this.#key(keysym, event.code || "Unidentified", true);
     this.#key(keysym, event.code || "Unidentified", false);
+  }
+
+  #interceptTypeText(event: KeyboardEvent): void {
+    if (!this.#mine || this.connection.state !== "connected" || !typeTextShortcut(event, macBrowser())) return;
+    event.stopPropagation();
+    event.preventDefault();
+    if (event.type === "keydown" && !event.repeat) this.onTypeText?.();
+  }
+
+  typeText(text: string): void {
+    if (this.connection.state !== "connected") return;
+    for (const key of textKeys(text)) {
+      this.#key(key.keysym, key.code, true);
+      this.#key(key.keysym, key.code, false);
+    }
+  }
+
+  focusDesktop(): void {
+    if (this.#mine && this.connection.state === "connected") this.#canvas.focus({ preventScroll: true });
   }
 
   #key(keysym: number, code: string, down: boolean): void {
