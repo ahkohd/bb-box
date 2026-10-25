@@ -1,7 +1,7 @@
 import type { CheckId } from "../../core/checks.ts";
 import { keyDescription, tailnetHostname } from "../../core/tailnet.ts";
 import { hostUserData } from "./cloud-init.ts";
-import { BUILD_ABANDONED_AFTER_MS, bbBoxIsStopping, HostImages, localRemoteBuild, runBuildScript, scriptRemoteBuild, type Architecture, type BuildImage, type RemoteBuild } from "./host-image.ts";
+import { BUILD_ABANDONED_AFTER_MS, bbBoxIsStopping, BuildGaveWayToBoxes, HostImages, localRemoteBuild, runBuildScript, scriptRemoteBuild, type Architecture, type BuildImage, type RemoteBuild } from "./host-image.ts";
 import { setupArchive } from "../namespace/linux-images.ts";
 import { HostReach } from "./reach.ts";
 import { sleep as abortableSleep } from "../proxmox/api.ts";
@@ -112,6 +112,10 @@ const HOST_IMAGE_WAITING_KEY: Readonly<Record<Architecture, string>> = { x86: "h
 const BOXES_REFUSED_FOR_ROOM_KEY = "boxes-refused-for-room-at";
 const BUILDS_WAIT_AFTER_BOXES_REFUSED_MS = 30 * 60_000;
 const BUILD_TAKES_ABOUT_MS: Readonly<Record<Architecture, number>> = { x86: 45 * 60_000, arm: 20 * 60_000 };
+const ROOM_FREED_WITHIN_MS = 60_000;
+const ROOM_POLL_MS = 5_000;
+const SNAPSHOT_WAITED_FOR_BY_BOXES_MS = 30 * 60_000;
+const SNAPSHOT_POLL_FOR_BOXES_MS = 15_000;
 const ROOM_ADVICE = "Hetzner limits the shared vCPUs of the whole account, 20 for a new one, across all its projects: free some, or ask Hetzner for more on the account's Limits page in the Console.";
 
 interface WaitingForRoom {
@@ -645,13 +649,41 @@ export class HetznerBackend implements Backend {
     try {
       return await this.hostRecords.create(spec, signal);
     } catch (error) {
+      if (error instanceof HetznerError && error.overLimit) {
+        await this.#context.storage.set(BOXES_REFUSED_FOR_ROOM_KEY, this.#now());
+        const made = await this.#createInRoomBuildsGive(spec, signal);
+        if (made) return made;
+      }
       if (error instanceof HetznerError && (error.overLimit || error.unavailable)) {
         const building = error.overLimit ? await this.#ownBuildHoldingRoom(signal).catch(() => "") : "";
-        if (error.overLimit) await this.#context.storage.set(BOXES_REFUSED_FOR_ROOM_KEY, this.#now());
         throw new BackendError("no_capacity", `${this.label} could not make a ${spec.serverType} host: ${error.overLimit ? "the account is at Hetzner's limit" : `Hetzner has no ${spec.serverType} free in ${spec.location} now`} (${error.message.replace(/^Hetzner Cloud POST \/servers failed /, "")}).${building} ${error.overLimit ? ROOM_ADVICE : "Try again later, or choose another location or server type."}`);
       }
       throw error;
     }
+  }
+
+  async #createInRoomBuildsGive(spec: Parameters<HetznerHosts["create"]>[0], signal: AbortSignal | undefined): Promise<HostRecord | null> {
+    const sleep = this.#options.sleep ?? abortableSleep;
+    const room = await this.#hostImages.giveRoomToBoxes(signal);
+    for (const record of room.stopped) this.#context.log?.(`bb-box stopped its host image build on ${record.serverName}, a ${record.serverType}, and deleted the server, so a ${spec.serverType} host for a box gets its room.`);
+    for (const record of room.snapshotting) {
+      const endsBy = new Date(record.claimedAtMs + BUILD_TAKES_ABOUT_MS[this.#architectureOfType(record.serverType)]).toISOString();
+      this.#context.log?.(`A ${spec.serverType} host for a box waits for room: bb-box's own host image build on ${record.serverName} is taking its snapshot, which ends by about ${endsBy}, and its room then goes to the box.`);
+    }
+    const waitMs = room.snapshotting.length ? SNAPSHOT_WAITED_FOR_BY_BOXES_MS : room.stopped.length ? ROOM_FREED_WITHIN_MS : 0;
+    const pollMs = room.snapshotting.length ? SNAPSHOT_POLL_FOR_BOXES_MS : ROOM_POLL_MS;
+    for (let waited = 0; waited < waitMs; waited += pollMs) {
+      const stillSnapshotting = await Promise.all(room.snapshotting.map((record) => this.#hostImages.isBuilding(record.hostId)));
+      if (!stillSnapshotting.some(Boolean)) {
+        try {
+          return await this.hostRecords.create(spec, signal);
+        } catch (error) {
+          if (!(error instanceof HetznerError && error.overLimit)) throw error;
+        }
+      }
+      await sleep(pollMs, signal);
+    }
+    return null;
   }
 
   async #ownBuildHoldingRoom(signal: AbortSignal | undefined): Promise<string> {
@@ -743,7 +775,7 @@ export class HetznerBackend implements Backend {
     const otherBuilding = [...this.#buildingHostImage.keys()].find((other) => other !== architecture);
     if (otherBuilding) return ` It waits for the ${ARCHITECTURE_WORDS[otherBuilding]} host image's build to finish, as bb-box builds one at a time.`;
     const boxesWaited = await this.#boxesWaitedForRoomAt();
-    if (boxesWaited === null) return "";
+    if (boxesWaited === null || (await this.#hostImages.resumable(architecture))) return "";
     return ` It waits until ${new Date(boxesWaited + BUILDS_WAIT_AFTER_BOXES_REFUSED_MS).toISOString()}, as boxes waited for room at ${new Date(boxesWaited).toISOString()}, and they come first.`;
   }
 
@@ -779,7 +811,7 @@ export class HetznerBackend implements Backend {
   async #hostImageBuildDue(architecture: Architecture, signal?: AbortSignal): Promise<string | null> {
     if (!this.#buildsHostImages(architecture) || this.#buildingHostImage.size > 0 || (this.#reach?.canReach() ?? null) !== null) return null;
     for (const other of this.#architectures) if (other !== architecture && (await this.#hostImages.resumable(other))) return null;
-    if ((await this.#boxesWaitedForRoomAt()) !== null) return null;
+    if ((await this.#boxesWaitedForRoomAt()) !== null && !(await this.#hostImages.resumable(architecture))) return null;
     const failures = await this.#failures(architecture);
     if (failures && this.#now() - failures.atMs < retryAfterMs(failures)) return null;
     if (await this.#hostImages.beingMade(signal, architecture)) return null;
@@ -846,6 +878,10 @@ export class HetznerBackend implements Backend {
         await this.#context.storage.delete(HOST_IMAGE_WAITING_KEY[architecture]);
       } catch (error) {
         if (bbBoxIsStopping(error, signal)) return;
+        if (error instanceof BuildGaveWayToBoxes) {
+          this.#context.log?.(error.message);
+          return;
+        }
         if (error instanceof HetznerError && (error.overLimit || error.unavailable)) {
           await this.#context.storage.set(HOST_IMAGE_WAITING_KEY[architecture], { atMs: this.#now(), why: error.message } satisfies WaitingForRoom);
           this.#context.log?.(`The ${ARCHITECTURE_WORDS[architecture]} host image waits for room in the Hetzner Cloud project: ${error.message}`);

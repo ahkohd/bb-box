@@ -357,7 +357,7 @@ function heldBuilder() {
       hostImageFingerprint: () => setup.fingerprint,
       buildImage: async (host: HostRecord, _cli: unknown, _image: string, target: string) => {
         if (!started.includes(host.serverName)) started.push(host.serverName);
-        if (target === "linux") await held;
+        if (target === "linux" && host.serverName === started[0]) await held;
       },
     },
   };
@@ -385,20 +385,16 @@ test("bb-box builds one host image at a time: while the x86 build runs, the Arm 
   assert.deepEqual([...api.images.values()].map((image) => image.labels["bbbox-arch"]), ["x86", "arm"]);
 });
 
-test("a box Hetzner refuses for room comes before a build: the acquire names bb-box's own build server, and no build starts for 30 minutes after (#1075)", async () => {
+test("after a box Hetzner refuses for room, no build starts for 30 minutes (#1075)", async () => {
   const { api, backend } = hetznerWorld();
   const { started, setup, release, options } = heldBuilder();
   const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04", monthlyLimitEurosBeforeVat: 50 }), new MemoryStorage(), "test", options);
   await hetzner.maintain(signal());
   await until(() => started.length > 0);
-  const [server] = buildServers(api);
-  api.projectServerLimit = 1;
-  await assert.rejects(hetzner.acquire(box(), null, hooks, signal()), (error: Error) => {
-    assert.match(error.message, new RegExp(`bb-box's own host image build holds some of that room: ${server!.name}, a cpx42 of \\d+ vCPUs, since .*, which ends by about .*\\. bb-box starts no other build while boxes wait for room\\.`));
-    return true;
-  });
   release();
   await until(() => api.images.size === 1 && api.servers.size === 0);
+  api.projectServerLimit = 0;
+  await assert.rejects(hetzner.acquire(box(), null, hooks, signal()), /the account is at Hetzner's limit/);
   api.projectServerLimit = 10;
   setup.fingerprint = "fp2";
   api.advanceClock(29 * 60_000);
@@ -472,4 +468,96 @@ test("a backend bb-box disposes, as a reload does, stops following its build at 
   assert.equal(await storage.get("host-image-failed-at:x86"), undefined);
   assert.deepEqual(errors, []);
   assert.ok(lines.some((line) => /^bb-box stopped while it built the x86 host image on bb-box-hz-\S+, at its building step/.test(line)));
+});
+
+test("a box refused room while bb-box's own build is still building takes that room: the build stops, its server goes, the box's host is made, and no failure is kept", async () => {
+  const { api, backend } = hetznerWorld();
+  const { started, release, options } = heldBuilder();
+  const storage = new MemoryStorage();
+  const lines: string[] = [];
+  const errors: string[] = [];
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04", monthlyLimitEurosBeforeVat: 50 }), storage, "test", options, { log: (line: string) => void lines.push(line), logError: (what: string) => void errors.push(what) });
+  await hetzner.maintain(signal());
+  await until(() => started.length > 0);
+  const [build] = buildServers(api);
+  api.projectServerLimit = 1;
+  const guest = await hetzner.acquire(box(), null, hooks, signal());
+  release();
+  assert.equal(buildServers(api).length, 0, "the build server is gone");
+  assert.ok(api.servers.size === 1 && [...api.servers.values()][0]!.name === guest.host, "the box's host has the room");
+  assert.ok(lines.includes(`bb-box stopped its host image build on ${build!.name}, a cpx42, and deleted the server, so a cpx42 host for a box gets its room.`));
+  await until(() => lines.some((line) => line.startsWith(`bb-box stopped the x86 host image build on ${build!.name}, at its building step, and deleted the server, so a box gets its room.`)));
+  assert.equal(await storage.get("host-image-failed-at:x86"), undefined);
+  assert.deepEqual(errors, []);
+  api.projectServerLimit = 10;
+  await hetzner.maintain(signal());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(buildServers(api).length, 0, "no new build while boxes waited for room within 30 minutes");
+});
+
+test("a box refused room while bb-box's own build is taking its snapshot waits for it, says until when, and gets the room once the snapshot is made", async () => {
+  const { api, backend } = hetznerWorld();
+  const { options } = builder();
+  const lines: string[] = [];
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04" }), new MemoryStorage(), "test", { ...options, sleep: () => new Promise((resolve) => setTimeout(resolve, 5)) }, { log: (line: string) => void lines.push(line) });
+  api.pollsUntilSnapshotMade = 5_000;
+  await hetzner.buildHostImage("there is no host image yet", signal());
+  const [snapshot] = api.images.values();
+  const [build] = buildServers(api);
+  assert.equal(snapshot!.status, "creating");
+  api.projectServerLimit = 1;
+  const acquiring = hetzner.acquire(box(), null, hooks, signal());
+  await until(() => lines.some((line) => line.startsWith("A cpx42 host for a box waits for room: bb-box's own host image build on")));
+  assert.ok(lines.some((line) => new RegExp(`^A cpx42 host for a box waits for room: bb-box's own host image build on ${build!.name} is taking its snapshot, which ends by about \\S+, and its room then goes to the box\\.$`).test(line)));
+  assert.ok(api.servers.has(build!.id), "the build server stays while its snapshot is made");
+  snapshot!.status = "available";
+  snapshot!.imageSize = 31.5;
+  await hetzner.maintain(signal());
+  const guest = await acquiring;
+  assert.equal(buildServers(api).length, 0);
+  assert.ok([...api.servers.values()].some((server) => server.name === guest.host));
+});
+
+test("the 30 minutes' hold after boxes waited for room stops new builds only: a build left by an earlier run is carried on", async () => {
+  const { api, backend } = hetznerWorld();
+  const { options } = builder();
+  const storage = new MemoryStorage();
+  const runs = new Map<string, number | null>();
+  const remote: RemoteBuild = {
+    start: async (record) => void runs.set(record.hostId, runs.get(record.hostId) ?? null),
+    progress: async (record, fromByte) => {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      return { exitCode: runs.get(record.hostId) ?? null, log: "", nextByte: fromByte };
+    },
+  };
+  const lines: string[] = [];
+  const config = hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04", monthlyLimitEurosBeforeVat: 50 });
+  const first = backend(config, storage, "test", { ...options, remoteBuild: remote });
+  const building = first.buildHostImage("there is no host image yet");
+  await until(() => runs.size > 0);
+  await first.dispose();
+  await building;
+  await storage.set("boxes-refused-for-room-at", api.now);
+  const [buildId] = runs.keys();
+  runs.set(buildId!, 0);
+  const next = backend(config, storage, "test", { ...options, remoteBuild: remote }, { log: (line: string) => void lines.push(line) });
+  await next.maintain(signal());
+  await until(() => api.images.size === 1);
+  assert.equal(api.images.size, 1);
+  assert.ok(lines.some((line) => /^bb-box carries on with the x86 host image build on bb-box-hz-\S+, from its building step/.test(line)));
+});
+
+test("a box refused room that a snapshotting build holds past the wait is refused, naming bb-box's own build server and when it ends", async () => {
+  const { api, backend } = hetznerWorld();
+  const { options } = builder();
+  const hetzner = backend(hetznerConfig({ hostImage: "ubuntu-26.04", hostImageLabel: "ubuntu-26.04" }), new MemoryStorage(), "test", options);
+  api.pollsUntilSnapshotMade = 5_000;
+  await hetzner.buildHostImage("there is no host image yet", signal());
+  const [server] = buildServers(api);
+  api.projectServerLimit = 1;
+  await assert.rejects(hetzner.acquire(box(), null, hooks, signal()), (error: Error) => {
+    assert.match(error.message, new RegExp(`bb-box's own host image build holds some of that room: ${server!.name}, a cpx42 of \\d+ vCPUs, since .*, which ends by about .*\\. bb-box starts no other build while boxes wait for room\\.`));
+    return true;
+  });
+  assert.ok(api.servers.has(server!.id), "a server taking its snapshot is never deleted for a box");
 });
