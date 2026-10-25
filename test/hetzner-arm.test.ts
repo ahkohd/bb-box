@@ -120,11 +120,15 @@ test("each architecture has its own host image: an Arm build on an Arm server wi
   assert.notEqual([...api.servers.values()].find((server) => server.name === x86.host)!.image, snapshot!.id, "an x86 host never starts from an Arm snapshot");
 });
 
-test("maintain builds a host image for each architecture that has none", async () => {
+test("maintain builds a host image for each architecture that has none, one after the other", async () => {
   const { api, backend } = armWorld();
-  await backend().maintain(signal());
+  const hetzner = backend();
+  await hetzner.maintain(signal());
+  for (let i = 0; i < 400 && (api.images.size < 1 || api.servers.size > 0); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual([...api.images.values()].map((each) => each.labels["bbbox-arch"]), ["x86"]);
+  await hetzner.maintain(signal());
   for (let i = 0; i < 400 && api.images.size < 2; i++) await new Promise((resolve) => setTimeout(resolve, 5));
-  assert.deepEqual([...api.images.values()].map((each) => each.labels["bbbox-arch"]).sort(), ["arm", "x86"]);
+  assert.deepEqual([...api.images.values()].map((each) => each.labels["bbbox-arch"]), ["x86", "arm"]);
 });
 
 test("the month's spend counts each host at its own type's price", async () => {
