@@ -346,7 +346,7 @@ export function lacksDocker({ os, docker }: { readonly os: string; readonly dock
 }
 
 /**
- * What a kind or a box is beyond its OS, as badges: Desktop, GPU, No Docker
+ * What a kind or a box is beyond its OS, as badges: Desktop, Wayland, GPU, No Docker
  * (041), arm64 (040; macOS is always arm64, so it has none), then what its
  * boxes are (LXC, Container, VM, Physical), then Ready now for a kind with a
  * spare (032). In a wrapping line they go under the name rather than
@@ -354,6 +354,7 @@ export function lacksDocker({ os, docker }: { readonly os: string; readonly dock
  */
 export function KindBadges({
   desktop = false,
+  wayland = false,
   gpu,
   noDocker = false,
   arm64 = false,
@@ -363,6 +364,7 @@ export function KindBadges({
   className,
 }: {
   desktop?: boolean;
+  wayland?: boolean;
   gpu: boolean;
   /** The kind, or box, has no Docker (041: every Linux box has it, so only its absence is said). */
   noDocker?: boolean;
@@ -379,6 +381,7 @@ export function KindBadges({
   return (
     <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
       {desktop ? <Badge>Desktop</Badge> : null}
+      {wayland ? <Badge>Wayland</Badge> : null}
       {gpu ? <Badge>GPU</Badge> : null}
       {noDocker ? <Badge>No Docker</Badge> : null}
       {arm64 ? <Badge>arm64</Badge> : null}

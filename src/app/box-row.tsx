@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { IconButton, isArm64Badge, KindBadges, lacksDocker, osName, relativeTime, RowTitle, SETTINGS_PATH, StatusLine } from "./common.tsx";
+import { runsWayland } from "./boxes-filter.ts";
 import { pageUrl, useOpenDesktop } from "./desktop.tsx";
 import { JoinHelp } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
@@ -152,7 +153,7 @@ export function BoxRow({
           className="block w-full min-w-0 cursor-pointer rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
           {/* Each line stays one line in the panel's 560 px: the name and kind, then the state and what to act on. */}
-          <RowTitle name={box.name} os={osName(box.os)} badges={<KindBadges desktop={box.desktop} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={held !== null} />} />
+          <RowTitle name={box.name} os={osName(box.os)} badges={<KindBadges desktop={box.desktop} wayland={runsWayland(box)} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={held !== null} />} />
         </button>
         <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
         {showsError ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{box.error}</p> : null}

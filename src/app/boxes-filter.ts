@@ -30,7 +30,7 @@ export const TAG_GROUP_LABELS: Readonly<Record<TagGroup, string>> = { systems: "
 const TAG_ORDER: Readonly<Partial<Record<TagGroup, readonly string[]>>> = {
   systems: ["Linux", "macOS", "Windows"],
   forms: ["VM", "Container", "microVM", "Physical"],
-  has: ["Desktop", "GPU", "KVM", "arm64"],
+  has: ["Desktop", "Wayland", "GPU", "KVM", "arm64"],
   states: STATE_GROUPS,
 };
 
@@ -56,10 +56,14 @@ function formTag(box: BoxView): string | null {
   }
 }
 
+export function runsWayland(box: { readonly desktop: boolean; readonly kind: string }): boolean {
+  return box.desktop && box.kind.includes("wayland");
+}
+
 export function tagsOf(box: BoxView): Readonly<Record<TagGroup, readonly string[]>> {
   const form = formTag(box);
   const features = [...box.requires, ...box.extras];
-  const has = [box.desktop && "Desktop", box.gpu && "GPU", features.includes("kvm") && "KVM", box.arch === "arm64" && "arm64"].filter((tag): tag is string => !!tag);
+  const has = [box.desktop && "Desktop", runsWayland(box) && "Wayland", box.gpu && "GPU", features.includes("kvm") && "KVM", box.arch === "arm64" && "arm64"].filter((tag): tag is string => !!tag);
   return {
     systems: [SYSTEM_NAMES[box.os] ?? box.os],
     forms: form ? [form] : [],
