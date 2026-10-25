@@ -13,7 +13,7 @@ import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
-import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, chaptersOf, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, recordStopScript, type Chapter } from "../core/record.ts";
+import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, chaptersOf, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, type Chapter } from "../core/record.ts";
 import { GRANT_PERMISSIONS, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
@@ -655,7 +655,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops; step and result on Linux and macOS.`,
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops.`,
     presentation: { label: { pending: "Recording the desktop", completed: "Recorded the desktop" } },
     parameters: z.object({
       box: boxParam,
@@ -692,9 +692,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         if (action === "step" || action === "result") {
           if (!text) return { content: [{ type: "text", text: `Give text with ${action}: ${action === "step" ? "what you check next" : "what you saw"}, in one short line.` }], isError: true };
           if (action === "result" && passed === undefined) return { content: [{ type: "text", text: "Give passed with result: true when the check passed, false when it failed." }], isError: true };
-          if (os === "windows") return { content: [{ type: "text", text: `Step captions need a Linux or macOS desktop box; box ${found.name} runs Windows. Its recording goes on without them.` }], isError: true };
           const kind = action === "step" ? "step" : passed ? "pass" : "fail";
-          const { result } = await boxes.run(owner, found.id, recordStepScript(kind, text), { timeoutMs: 15_000, signal, waitForEnrolment: false });
+          const { result } = await boxes.run(owner, found.id, recordStepScript(kind, text, os), { timeoutMs: 15_000, signal, waitForEnrolment: false });
           if (result.exitCode === RECORD_STEP_EXITS.none) {
             return { content: [{ type: "text", text: `Box ${found.name} is not recording.${next(`Call box_record with box "${found.name}" and action "start" first.`)}` }], isError: true };
           }
@@ -708,27 +707,16 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const times = speed ?? 1;
         const noRecording = { content: [{ type: "text" as const, text: `Box ${found.name} has no recording.${next(`Call box_record with box "${found.name}" and action "start" to begin one.`)}` }], isError: true };
         const runLong = (script: string) => boxes.run(owner, found.id, script, { timeoutMs: 240_000, signal, session, maxOutputBytes: 256 * 1024, waitForEnrolment: false });
-        let chapters: Chapter[] = [];
-        let made: ReturnType<typeof parseRecordResult> = null;
-        let failed = "";
-        if (os === "windows") {
-          const { result } = await runLong(recordStopScript({ speed: times, stills: stills ?? "cut" }));
-          if (result.exitCode === RECORD_STOP_EXITS.none) return noRecording;
-          made = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
-          failed = result.stderr.trim() || `exit code ${result.exitCode}`;
-        } else {
-          const prepared = await runLong(recordPrepareScript(stills ?? "cut"));
-          if (prepared.result.exitCode === RECORD_STOP_EXITS.none) return noRecording;
-          const facts = prepared.result.exitCode === 0 ? parsePrepared(prepared.result.stdout) : null;
-          if (!facts) throw new BoxError("unreachable", `Stopping box ${found.name}'s recording failed: ${prepared.result.stderr.trim() || `exit code ${prepared.result.exitCode}`}`);
-          const plan = planClip(facts, times);
-          const { result } = await runLong(recordMakeScript(plan));
-          made = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
-          if (made) made = { ...made, ended: facts.ended };
-          if (made?.captions) chapters = chaptersOf(plan.captions);
-          failed = result.stderr.trim() || `exit code ${result.exitCode}`;
-        }
-        if (!made) throw new BoxError("unreachable", `Making the clip in box ${found.name} failed: ${failed}`);
+        const prepared = await runLong(recordPrepareScript(stills ?? "cut", os));
+        if (prepared.result.exitCode === RECORD_STOP_EXITS.none) return noRecording;
+        const facts = prepared.result.exitCode === 0 ? parsePrepared(prepared.result.stdout) : null;
+        if (!facts) throw new BoxError("unreachable", `Stopping box ${found.name}'s recording failed: ${prepared.result.stderr.trim() || `exit code ${prepared.result.exitCode}`}`);
+        const plan = planClip(facts, times);
+        const { result } = await runLong(recordMakeScript(plan, os));
+        const said = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
+        if (!said) throw new BoxError("unreachable", `Making the clip in box ${found.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+        const made = { ...said, ended: facts.ended };
+        const chapters: Chapter[] = made.captions ? chaptersOf(plan.captions) : [];
         const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
         const name = `recordings/${found.name}-${stamp}`;
         const html = recordPage(`Box ${found.name}`, pathsOf(storage.path).basename(`${name}.mp4`), chapters);
