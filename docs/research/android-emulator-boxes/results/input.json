@@ -1,0 +1,31 @@
+{
+ "tap_to_pixels_ms_on_grpc_stream": {
+  "grpc_sendTouch": {"n": 12, "median": 49.0, "p95": 52.7, "max": 52.7},
+  "adb_input_motionevent": {"n": 12, "median": 56.3, "p95": 119.5, "max": 119.5}
+ },
+ "key_to_pixels_ms_on_grpc_stream": {
+  "gRPC sendKey keydown and keyup": {"n": 10, "median": 64.3, "max": 129.0},
+  "adb input keyevent": {"n": 10, "median": 70.4, "max": 154.9},
+  "adb input text": {"n": 10, "median": 69.5, "max": 150.3},
+  "gRPC setClipboard, adb keyevent PASTE": {"n": 10, "median": 97.1, "max": 170.8}
+ },
+ "text_arrived": {
+  "gRPC sendKey text 'hello'": "hello",
+  "gRPC sendKey text 'héllo ñandú'": "hllo and",
+  "gRPC sendKey text '日本語', '🙂👍🏽', 'مرحبا'": "nothing",
+  "adb input text 'h%sello'": "h ello",
+  "adb input text 'héllo'": "NullPointerException in InputShellCommand.sendText",
+  "gRPC setClipboard '日本語 🙂 مرحبا' then KEYCODE_PASTE": "日本語 🙂 مرحبا"
+ },
+ "multitouch": "two gRPC touches in one TouchEvent: pointer location shows P: 2/2, getevent shows slots 0 and 1",
+ "agent": {
+  "uiautomator_dump_ms": [1916, 1920, 1914, 1911, 1916],
+  "uiautomator_nodes_settings": 79,
+  "uiautomator_bytes_settings": 30027,
+  "dumpsys_activity_top_ms": [21, 11, 10],
+  "screencap_png_ms": [166, 158, 158],
+  "grpc_getScreenshot_png_ms": 80,
+  "grpc_getScreenshot_rgb888_ms": 16,
+  "adb_shell_round_trip_ms": [5, 5, 5, 4, 4]
+ }
+}
