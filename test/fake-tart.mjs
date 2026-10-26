@@ -16,6 +16,10 @@
 // - `sw_vers -buildVersion` says 27A1, or what the Mac's ~/.fake-macos-build holds.
 // - `sysctl` says the Mac has 16 cores, 128 GiB and the Hypervisor framework,
 //   unless the Mac's ~/.fake-no-hvf exists, and started in November 2023.
+// - `tart list` fails as Tart 2.30.0's does when a VM is deleted while it
+//   reads, while ~/.fake-tart-list-fails exists; `tart get` of a VM whose
+//   config.json is gone fails so too, and of the VM ~/.fake-tart-get-fails
+//   names fails with what it holds after the name.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -39,6 +43,7 @@ const alive = (pid) => {
   }
 };
 const dir = (name) => join(vms, name);
+const MISSING_CONFIG = "Error: The file “config.json” couldn’t be opened because there is no such file.";
 const running = (name) => existsSync(join(dir(name), "running")) && alive(Number(readFileSync(join(dir(name), "running"), "utf8")));
 const stateOf = (name) => (running(name) ? "running" : existsSync(join(dir(name), "state.vzvmsave")) ? "suspended" : "stopped");
 const names = () => readdirSync(vms).filter((name) => existsSync(join(dir(name), "config.json")));
@@ -51,6 +56,7 @@ function tart() {
     case "--version":
       return console.log("2.30.0");
     case "list": {
+      if (existsSync(join(home, ".fake-tart-list-fails"))) fail(MISSING_CONFIG);
       const diskOf = (name) => (existsSync(join(dir(name), "disk-gb")) ? Number(readFileSync(join(dir(name), "disk-gb"), "utf8")) : 64);
       const list = names().map((name) => ({ Source: "local", Name: name, Disk: diskOf(name), Size: 20, Accessed: "1 minute ago", Running: running(name), State: stateOf(name) }));
       if (rest.includes("--quiet")) return list.forEach((vm) => console.log(vm.Name));
@@ -86,6 +92,9 @@ function tart() {
     case "get": {
       const [name] = rest;
       if (!existsSync(dir(name))) fail(`the specified VM "${name}" does not exist`);
+      if (!existsSync(join(dir(name), "config.json"))) fail(MISSING_CONFIG);
+      const [failing, ...why] = existsSync(join(home, ".fake-tart-get-fails")) ? readFileSync(join(home, ".fake-tart-get-fails"), "utf8").trim().split(" ") : [];
+      if (failing === name) fail(why.join(" "));
       const value = config(name);
       const disk = existsSync(join(dir(name), "disk-gb")) ? Number(readFileSync(join(dir(name), "disk-gb"), "utf8")) : 64;
       const running = existsSync(join(dir(name), "running"));

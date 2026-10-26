@@ -179,8 +179,20 @@ done
 export function stateScript(tart = true, extra = ""): string {
   const tartPart = `command -v tart >/dev/null 2>&1 || { echo "tart is not installed, or not on the PATH of $(id -un)'s SSH sessions." >&2; exit 3; }
 echo @version; tart --version
-echo @list; tart list --source local --format json || exit 1
 home="\${TART_HOME:-$HOME/.tart}"
+listed_one_by_one() {
+  printf '['; sep=
+  for vm in $(ls "$home/vms" 2>/dev/null); do
+    if got=$(tart get "$vm" --format json 2>&1); then
+      printf '%s{"Name":"%s","Source":"local",%s' "$sep" "$vm" "$(printf '%s' "$got" | tr -d '\\n' | sed 's/^[[:space:]]*{//')"; sep=,
+    elif [ -f "$home/vms/$vm/config.json" ]; then
+      printf '%s\\n' "$got" >&2; return 1
+    fi
+  done
+  echo ']'
+}
+listed=$(tart list --source local --format json 2>/dev/null) || listed=$(listed_one_by_one) || exit 1
+echo @list; printf '%s\\n' "$listed"
 echo @configs
 for vm in $(ls "$home/vms" 2>/dev/null); do
   [ -f "$home/vms/$vm/config.json" ] || continue

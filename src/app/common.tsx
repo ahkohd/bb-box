@@ -209,13 +209,14 @@ export function StatusLine({ tone, items }: { tone: Tone; items: readonly (LineI
 }
 
 /** A box row's first line: its name, then its system and badges, on one line; the name gives way first, cut with its tooltip. */
-export function RowTitle({ name, os, badges }: { name: string; os: string; badges: ReactNode }) {
+export function RowTitle({ name, os, device = null, badges }: { name: string; os: string; device?: string | null; badges: ReactNode }) {
   return (
     <span className="flex min-w-0 items-center gap-x-2">
       <OneLine full={name} className="text-sm font-medium text-foreground">
         {name}
       </OneLine>
       <span className="shrink-0 text-xs font-normal text-muted-foreground">{os}</span>
+      {device ? <span className="shrink-0 text-xs font-normal text-foreground">{device}</span> : null}
       <span data-row-badges className="flex h-[1.125rem] min-w-0 flex-1 basis-0 flex-wrap content-start items-center gap-1 overflow-hidden *:contents before:-mr-1 before:h-full before:w-0 before:content-['']">
         {badges}
       </span>
@@ -336,6 +337,14 @@ export function hasViewer(box: Pick<BoxView, "desktop" | "device">): boolean {
 /** The name the panel gives a kind or a box: its OS. Badges say the rest (the operator, 1 October 2026). */
 export function osName(os: string): string {
   return os === "macos" ? "macOS" : os === "windows" ? "Windows" : os === "linux" ? "Linux" : os;
+}
+
+export function deviceModelOf(box: Pick<BoxView, "device">): string | null {
+  return box.device?.model ?? null;
+}
+
+export function hostFormBadges(box: Pick<BoxView, "form" | "device">): readonly BoxForm[] {
+  return box.form && !box.device ? [box.form] : [];
 }
 
 /** An arm64 kind or box has a badge, except on macOS, which is always arm64 (040). */

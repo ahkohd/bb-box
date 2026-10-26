@@ -5729,7 +5729,10 @@ test("box_acquire and bb box acquire take a device, refuse it on other kinds, an
   assert.match(cliWithheld.stderr ?? "", /No ios box \(iOS Simulator\) can come now\..*the Mac did not answer\..*\(no_capacity\)/s);
   assert.deepEqual(await app.boxes.list(THREAD), [], "nothing was acquired");
   const list = text(await tool("box_list", {}));
-  assert.doesNotMatch(list, /\bios\b|\bandroid\b|Devices:/, "box_list lists no kind no backend offers");
+  assert.match(list, /\n\nKinds you cannot acquire now:\n- ios: iOS Simulator\. Not now: .+ offers them, but not now: the Mac did not answer\.\n\nNext:/, "box_list names a kind a backend withholds, with why");
+  assert.doesNotMatch(list, /\bandroid\b|Devices:/, "and no kind no backend offers");
+  const offered = new Set(app.boxes.kinds().map((kind) => kind.id));
   assert.ok(!isError(await tool("box_acquire", { kind: "linux" })), "a box with no device is as before");
-  assert.deepEqual(asked, ["ios", "ios"], "a backend is asked only for a kind no backend offers");
+  assert.ok(asked.every((kind) => !offered.has(kind)), "a backend is asked only for a kind no backend offers");
+  assert.deepEqual(asked.filter((kind) => kind === "ios"), ["ios", "ios", "ios"], "by acquire twice, then by box_list");
 });

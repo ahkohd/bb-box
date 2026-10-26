@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
+import { BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -518,6 +518,20 @@ test("a box's view says whether its desktop's viewer asks for a still area again
   assert.equal(withDisplay({ id: "desktop", protocol: "rfb", resizable: true, refresh: "viewer" })?.refresh, "viewer");
   assert.equal(withDisplay({ id: "desktop", protocol: "rfb", resizable: true, quality: 4 })?.quality, 4);
   assert.equal(withDisplay({ id: "desktop", protocol: "rfb", resizable: false, macKeys: "alt-command" })?.macKeys, "alt-command");
+});
+
+test("box details say who has control of a device box's device, and of a desktop box's desktop", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const showing = (displays: readonly DisplayCapability[]): BoxRecord => ({ ...box, capabilities: { ...box.capabilities, displays } });
+  const desktop: DisplayCapability = { id: "desktop", protocol: "rfb", resizable: true };
+  const android = showing([DEVICE_DISPLAY]);
+  const ios = showing([desktop, DEVICE_DISPLAY]);
+  assert.match(boxDetail(android, { owner: "agent", holder: null }), /\nDevice control: the agent\n/);
+  assert.match(boxDetail(ios, { owner: "agent", holder: null }), /\nDevice control: the agent\n/);
+  assert.match(boxDetail(android, { owner: "human", holder: null }), /\nDevice control: the user, in bb-box's panel\. Leave the device alone until they hand control back/);
+  assert.doesNotMatch(boxDetail(android, { owner: "agent", holder: null }), /Desktop control/);
+  assert.match(boxDetail(showing([desktop]), { owner: "human", holder: null }), /\nDesktop control: the user, in bb-box's panel\. Leave the desktop's windows alone until/);
 });
 
 test("box details and kind lists say whether the box user can become root", async () => {
@@ -3107,6 +3121,27 @@ test("an acquire of a kind a backend withholds until it has read what decides it
   world.others = [];
   await assert.rejects(acquire(), refusedWith("unknown_kind", /^No backend offers ios boxes \(iOS Simulator\) now\./), "a kind no backend is set up for is still no backend's");
   assert.deepEqual(await world.boxes.list(THREAD), [], "nothing was recorded");
+});
+
+test("box_list's kinds wait, as acquire does, for a backend's read of a kind it withholds until then: offered once read, being checked while the read goes on, and otherwise withheld with why", async () => {
+  const world = setup();
+  const mac = new FakeBackend({ root: tempDir("boxes-mac-list"), storage: scopedStorage(world.kv, "backend/fake:mac/"), id: "fake:mac", hosts: ["mac1"], kinds: [iosKind()] });
+  const allKinds = mac.kinds.bind(mac);
+  let declared = false;
+  let read: () => Promise<WithheldKind[]> = async () => {
+    declared = true;
+    return [];
+  };
+  world.others = [Object.assign(mac, { kinds: () => (declared ? allKinds() : allKinds().filter((kind) => kind.id !== "ios")), withheldKinds: async (kind: string) => (kind === "ios" ? read() : []) }) as unknown as Backend];
+  assert.equal(world.boxes.kinds().some((kind) => kind.id === "ios"), false, "before the Mac's read");
+  assert.deepEqual(await world.boxes.withheldKinds(1_000), []);
+  assert.equal(world.boxes.kinds().some((kind) => kind.id === "ios"), true, "offered once read");
+
+  declared = false;
+  read = () => new Promise(() => undefined);
+  assert.deepEqual(await world.boxes.withheldKinds(50), [{ kind: "ios", label: "iOS Simulator", words: "Being checked: bb-box is still reading whether its backends can make them now. Call box_list again in a few seconds" }]);
+  read = async () => [{ kind: "ios", why: "mac1 did not answer: ssh timed out.", passing: true }];
+  assert.deepEqual(await world.boxes.withheldKinds(1_000), [{ kind: "ios", label: "iOS Simulator", words: "Not now: Fake host on mac1 offers them, but not now: mac1 did not answer: ssh timed out." }]);
 });
 
 test("an acquire with a device tries only the offers whose image has it, and the box keeps what it asked for (063)", async () => {

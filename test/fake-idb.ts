@@ -83,5 +83,5 @@ server.on("stream", (stream, headers) => {
     else stream.end(Buffer.from(frame(new Uint8Array(0))));
   });
 });
-server.listen(socket, () => note(`listening ${values.udid}`));
+server.listen(socket, () => note(`listening ${values.udid} at ${Date.now()}`));
 process.on("SIGTERM", () => process.exit(0));

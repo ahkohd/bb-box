@@ -1,10 +1,12 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { DriverError } from "./driver.ts";
 
 export const XCRUN = "/usr/bin/xcrun";
 const COMMAND_MS = 120_000;
 const SPAWN_TRIES = 5;
 const SPAWN_RETRY_MS = 1_000;
+export const LOG_LISTEN_MS = 2_000;
 const UTF8 = { LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" };
 
 export interface SimDevice {
@@ -52,7 +54,31 @@ export const runProgram: Runner = (program, args, options) =>
     if (options.input !== undefined) child.stdin?.end(options.input);
   });
 
+export type LineSpawner = (program: string, args: readonly string[], signal: AbortSignal) => AsyncIterable<string>;
+
+export async function* spawnedLines(program: string, args: readonly string[], signal: AbortSignal): AsyncIterable<string> {
+  if (signal.aborted) return;
+  const child = spawn(program, [...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const stop = () => child.kill("SIGKILL");
+  signal.addEventListener("abort", stop, { once: true });
+  const lines = createInterface({ input: child.stdout });
+  createInterface({ input: child.stderr }).on("line", (line) => lines.emit("line", line));
+  child.once("exit", () => lines.close());
+  try {
+    for await (const line of lines) yield line;
+  } finally {
+    signal.removeEventListener("abort", stop);
+    stop();
+  }
+}
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export function runningServicePid(listed: string, label: string): number | null {
+  const line = listed.split("\n").find((each) => each.trim().split(/\s+/).at(-1) === label);
+  const pid = Number(line?.trim().split(/\s+/)[0]);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
 
 export function disabledLabels(printed: string): ReadonlySet<string> {
   return new Set([...printed.matchAll(/"([^"]+)" => (?:disabled|true)/g)].map((match) => match[1]!));
@@ -63,10 +89,12 @@ type SimctlOptions = { readonly timeoutMs?: number; readonly input?: string; rea
 export class Simctl {
   readonly #xcrun: string;
   readonly #run: Runner;
+  readonly #lines: LineSpawner;
 
-  constructor(options: { readonly xcrun?: string; readonly run?: Runner } = {}) {
+  constructor(options: { readonly xcrun?: string; readonly run?: Runner; readonly lines?: LineSpawner } = {}) {
     this.#xcrun = options.xcrun ?? XCRUN;
     this.#run = options.run ?? runProgram;
+    this.#lines = options.lines ?? spawnedLines;
   }
 
   async #simctl(args: readonly string[], options: SimctlOptions = {}): Promise<Ran> {
@@ -117,6 +145,35 @@ export class Simctl {
       await wait(SPAWN_RETRY_MS);
     }
     throw new DriverError("failed", `simctl spawn ${args.join(" ")} failed ${SPAWN_TRIES} times: ${last}`);
+  }
+
+  async servicePid(udid: string, label: string, signal?: AbortSignal): Promise<number | null> {
+    return runningServicePid(await this.#spawn(udid, ["launchctl", "list"], signal), label);
+  }
+
+  async logged(udid: string, phrase: string, listening: () => void, signal: AbortSignal): Promise<boolean> {
+    const args = ["simctl", "spawn", udid, "log", "stream", "--style", "compact", "--predicate", `eventMessage CONTAINS "${phrase}"`];
+    let heard = false;
+    const hear = () => {
+      if (heard) return;
+      heard = true;
+      listening();
+    };
+    if (signal.aborted) return false;
+    const unheard = setTimeout(hear, LOG_LISTEN_MS);
+    const ended = new Promise<false>((resolve) => signal.addEventListener("abort", () => resolve(false), { once: true }));
+    const seen = (async () => {
+      for await (const line of this.#lines(this.#xcrun, args, signal)) {
+        if (line.startsWith("Filtering the log data")) hear();
+        else if (line.includes(phrase) && !line.includes("eventMessage CONTAINS")) return true;
+      }
+      return false;
+    })().catch(() => false);
+    try {
+      return await Promise.race([seen, ended]);
+    } finally {
+      clearTimeout(unheard);
+    }
   }
 
   async disabled(udid: string, signal?: AbortSignal): Promise<ReadonlySet<string>> {

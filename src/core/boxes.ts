@@ -585,6 +585,14 @@ export function withDeviceChecked(box: BoxRecord): BoxRecord {
   };
 }
 
+export interface UnofferedKind {
+  readonly kind: string;
+  readonly label: string;
+  readonly words: string;
+}
+
+export const WITHHELD_READ_WAIT_MS = 10_000;
+
 function withheldRefusal(kind: string, withheld: readonly WithheldOffer[], providerName: (backend: Backend) => string): BoxError {
   const reasons = withheld.map((offer) => `${providerName(offer.backend)} offers them, but not now: ${offer.why}`);
   const passing = withheld.some((offer) => offer.passing);
@@ -765,6 +773,26 @@ export class Boxes {
       throw new BoxError("not_found", `This thread has no box "${ref}".${names ? ` Its boxes are: ${names}.` : " It has no boxes."}`);
     }
     return box;
+  }
+
+  async withheldKinds(waitMs = WITHHELD_READ_WAIT_MS): Promise<readonly UnofferedKind[]> {
+    const ask = this.#deps.backends.withheld?.bind(this.#deps.backends);
+    if (!ask) return [];
+    const offered = () => new Set(this.kinds().map((kind) => kind.id));
+    const unoffered = Object.keys(KIND_INFO).filter((kind) => !offered().has(kind));
+    const reading = AbortSignal.timeout(waitMs);
+    const answers = await Promise.all(
+      unoffered.map(async (kind): Promise<UnofferedKind | null> => {
+        const stillReading = new Promise<null>((resolve) => reading.addEventListener("abort", () => resolve(null), { once: true }));
+        const withheld = await Promise.race([ask(kind, reading).catch(() => [] as const), stillReading]);
+        if (offered().has(kind)) return null;
+        const label = KIND_INFO[kind]?.label ?? kind;
+        if (withheld === null) return { kind, label, words: "Being checked: bb-box is still reading whether its backends can make them now. Call box_list again in a few seconds" };
+        if (!withheld.length) return null;
+        return { kind, label, words: `Not now: ${withheld.map((offer) => `${this.#providerName(offer.backend)} offers them, but not now: ${offer.why}`).join(" ")}` };
+      }),
+    );
+    return answers.filter((answer): answer is UnofferedKind => answer !== null);
   }
 
   /** The kinds the active backends offer, once each. */
