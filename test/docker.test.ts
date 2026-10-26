@@ -1,6 +1,6 @@
 import type { GuestOs } from "../src/backends/types.ts";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
@@ -1274,6 +1274,21 @@ test("each box is pinned to the CPUs the fewest boxes have, two boxes placed at 
 
   await backend.release(c, releasing, signal());
   assert.equal(fake.calls().filter((args) => args[1] === "update").length, 1, "a box that shares no CPU never moves");
+});
+
+test("the fake docker never shows another call a container half written, so boxes placed at once never see it die (#1152)", async () => {
+  const { fake, backend } = setup({}, { cpus: 4, memoryMiB: 65536 });
+  const [written, read] = await Promise.all([backend.acquire(identity(), null, hooks().hooks, signal()), backend.acquire(identity(), null, hooks().hooks, signal())]);
+  const docker = (...args: string[]) =>
+    new Promise<{ status: number | null; stderr: string }>((resolve) => {
+      const child = spawn(fake.binary, args, { stdio: ["ignore", "ignore", "pipe"] });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => (stderr += chunk));
+      child.on("exit", (status) => resolve({ status, stderr }));
+    });
+  const rounds = Array.from({ length: 40 }, (_, round) => [docker("container", "update", "--cpus", String(1 + (round % 2)), written.ref), docker("container", "inspect", read.ref)]);
+  const failed = (await Promise.all(rounds.flat())).filter((result) => result.status !== 0);
+  assert.deepEqual(failed, []);
 });
 
 test("a resize keeps a box's CPUs, grows onto the least-used and shrinks off the most shared, and a box made before pinning is pinned at its first resize (062)", async () => {
