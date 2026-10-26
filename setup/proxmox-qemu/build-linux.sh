@@ -5,6 +5,13 @@
 #   build.sh linux-desktop <vmid> [--replace] [--keep]
 #       the Linux desktop template, for linux-desktop-cpu boxes: the Linux
 #       one with the CPU desktop of Proxmox LXC's desktop-cpu template
+#   build.sh android <vmid> [--replace] [--keep] [--with-x264]
+#       the Android template (063), for android boxes: the Linux one with
+#       ../android/customize-android.sh, the SDK, the emulator and an AVD
+#       with its snapshot for each device. It needs the operator's
+#       acceptance of the Android SDK's licence first, as
+#       ../android/accept-sdk-licence.sh writes it, and KVM in the build VM.
+#       --with-x264 builds x264 from source for bb-box-h264.
 #
 # Imports Ubuntu 24.04's cloud image, pinned by its SHA-256, as a VM on the
 # box bridge, and boots it once with cloud-init, which gives it the build
@@ -21,25 +28,26 @@
 #                     and only then takes its place.
 #          --keep     leave the build VM when the build fails, to look at it.
 # Settings: /etc/bb-box/bb-box.env (see
-# ../proxmox-lxc/host/bb-box.env.example), and BBBOX_CHECK_VMID, the clone
-# the check runs in (the next free VMID).
+# ../proxmox-lxc/host/bb-box.env.example), BBBOX_CHECK_VMID, the clone
+# the check runs in (the next free VMID), and for android
+# BBBOX_ANDROID_LICENCE, the acceptance (/etc/bb-box/android-sdk-license).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=../proxmox-lxc/host/common.sh
 . "$here/../proxmox-lxc/host/common.sh"
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
-# build.sh hands over "linux <vmid>" or "linux-desktop <vmid>".
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 kind=${1:-}
-case "$kind" in linux | linux-desktop) ;; *) usage ;; esac
+case "$kind" in linux | linux-desktop | android) ;; *) usage ;; esac
 [ $# -ge 2 ] || usage
 vmid=$2
 shift 2
-replace='' keep=''
+replace='' keep='' x264=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --replace) replace=1; shift ;;
     --keep) keep=1; shift ;;
+    --with-x264) [ "$kind" = android ] || usage; x264=yes; shift ;;
     *) usage ;;
   esac
 done
@@ -56,12 +64,20 @@ IMAGE_URL=https://cloud-images.ubuntu.com/releases/noble/release-$IMAGE_RELEASE/
 # template's disk. Each kind's artifacts, finalize.sh's kind and check.
 if [ "$kind" = linux ]; then
   cores=2 memory=4096 disk=16 artifacts=linux finalize=linux check=bb-box-check-headless
+elif [ "$kind" = android ]; then
+  cores=8 memory=16384 disk=48 artifacts=linux finalize=android check=bb-box-check-android
 else
   cores=4 memory=8192 disk=24 artifacts=desktop-cpu finalize=desktop check=bb-box-check-desktop
 fi
 name=bb-box-$kind
 
 for tool in curl jq ssh sha256sum; do command -v "$tool" >/dev/null || die "$tool is required"; done
+licence=${BBBOX_ANDROID_LICENCE:-/etc/bb-box/android-sdk-license}
+if [ "$kind" = android ]; then
+  accepted=$(jq -r .license.accepted "$here/../android/pins.json")
+  grep -qx "$accepted" "$licence" 2>/dev/null ||
+    die "the Android SDK's licence is not accepted in $licence: run ../android/accept-sdk-licence.sh, which shows its terms, then build again"
+fi
 template=$here/../proxmox-lxc/template
 snapshot=$(cut -c1-8 "$template/apt-snapshot")
 [ "$IMAGE_RELEASE" -lt "$snapshot" ] ||
@@ -133,6 +149,7 @@ bash "$template/fetch-artifacts.sh" "$cache" "$artifacts"
 install -d -m 0700 "$stage/artifacts"
 cp -r "$template/guest" "$template/pins.json" "$template/desktop-pins.tsv" "$template/baseline-packages.txt" "$template/apt-snapshot" "$here/linux" "$stage/"
 cp "$BBBOX_SSH_KEY.pub" "$stage/plugin-key.pub"
+[ "$kind" != android ] || { cp -r "$here/../android" "$stage/"; cp "$licence" "$stage/android-sdk-license"; }
 cat >"$stage/build.env" <<EOF
 BOX_USER=box
 BOX_RUNTIME=vm
@@ -140,6 +157,7 @@ BOX_DNS="$BBBOX_DNS"
 BB_URL="$BBBOX_BB_URL"
 DESKTOP_GPU=none
 BUILD_ID=$build
+ANDROID_X264=$x264
 EOF
 for f in "$cache"/*; do
   case "${f##*/}" in *.run | *.run.sha256sum | *.deb | cua-driver-* | rustup-init) [ "$kind" = linux-desktop ] || continue ;; esac
@@ -197,7 +215,14 @@ push
 log "customising the build VM (the Linux template's customize-base.sh)"
 ssh_box "sudo bash $in_vm/guest/customize-base.sh $in_vm" </dev/null
 ssh_box "sudo bash $in_vm/linux/customize-vm.sh $in_vm" </dev/null
-[ "$kind" = linux ] || ssh_box "sudo bash $in_vm/guest/customize-desktop.sh $in_vm" </dev/null
+[ "$kind" != linux-desktop ] || ssh_box "sudo bash $in_vm/guest/customize-desktop.sh $in_vm" </dev/null
+if [ "$kind" = android ]; then
+  ssh_box 'python3 -c "import fcntl, os; fcntl.ioctl(os.open(\"/dev/kvm\", os.O_RDWR), 0xAE01, 0)"' </dev/null 2>/dev/null ||
+    ssh_box 'sudo python3 -c "import fcntl, os; fcntl.ioctl(os.open(\"/dev/kvm\", os.O_RDWR), 0xAE01, 0)"' </dev/null ||
+    die "KVM does not work in the build VM, and the emulator needs it: allow nested virtualization on the host (kvm_amd or kvm_intel nested=1)"
+  log "the Android layer (../android/customize-android.sh): the SDK, bb-box-h264, the device's firewall, and each device's AVD and snapshot"
+  ssh_box "sudo bash $in_vm/android/customize-android.sh $in_vm" </dev/null
+fi
 
 # Boot it again as a box would, with its address from the serial, and check it
 # as the box user.

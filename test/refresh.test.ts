@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { pinsDigest, type ImageRecord } from "../src/backends/images.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../src/backends/types.ts";
-import { buildScript, recordChecks, refreshImage, windowsRecord } from "../src/core/refresh.ts";
+import { buildScript, recordChecks, refreshImage, trialCheck, windowsRecord } from "../src/core/refresh.ts";
 import { TransportError, type CommandTransport, type RunResult } from "../src/transports/types.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -279,6 +279,14 @@ test("the build script runs the guest scripts as build.sh does for each kind", (
   assert.doesNotMatch(linux, /customize-desktop|DESKTOP_/);
   assert.match(linux, /finalize\.sh \S+ linux$/m);
   assert.throws(() => buildScript("macos", null, "build.x"), /bb-box refreshes no macos image/);
+  const android = buildScript("android", null, "build.x");
+  assert.match(android, /fetch-artifacts\.sh \S+ linux "\$arch"/);
+  assert.doesNotMatch(android, /customize-desktop|DESKTOP_/);
+  assert.match(android, /^sudo bash \S+\/android\/customize-android\.sh \S+$/m);
+  assert.ok(android.indexOf("customize-android.sh") > android.indexOf("customize-vm.sh"), "the Android layer after the VM's");
+  assert.ok(android.indexOf("customize-android.sh") < android.indexOf("finalize.sh"), "and before finalize.sh");
+  assert.match(android, /finalize\.sh \S+ android$/m);
+  assert.equal(trialCheck({} as never, "android").name, "the kind's check (bb-box-check-android)");
 });
 
 test("the build script runs the guest scripts in a VM's way in a VM, and in a container's in a container (057)", () => {

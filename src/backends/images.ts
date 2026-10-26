@@ -112,7 +112,7 @@ export function recordInDescription(description: string): ImageRecord | null {
  * adds the desktop's; a macOS image's on a Mac; a Windows template's on
  * Proxmox, or a Windows image's on a Mac.
  */
-export type PinSet = "linux" | "linux-desktop" | "macos" | "windows" | "windows-arm64";
+export type PinSet = "linux" | "linux-desktop" | "android" | "macos" | "windows" | "windows-arm64";
 
 /**
  * What each set's digest covers, under setup/: Linux's are files in
@@ -123,6 +123,7 @@ export type PinSet = "linux" | "linux-desktop" | "macos" | "windows" | "windows-
 const PINS: Readonly<Record<PinSet, { readonly files: readonly string[] } | { readonly lines: string }>> = {
   linux: { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot"] },
   "linux-desktop": { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot", "proxmox-lxc/template/desktop-pins.tsv"] },
+  android: { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot", "android/pins.json"] },
   macos: { lines: "tart/prepare-image.sh" },
   windows: { lines: "proxmox-qemu/build.sh" },
   "windows-arm64": { lines: "tart/prepare-windows-image.sh" },
@@ -158,8 +159,8 @@ export interface ImageFacts {
   bbApp(signal?: AbortSignal): Promise<string | null>;
 }
 
-/** Days after which an image warns: twice the interval it is rebuilt at, a week for Linux and a month for Windows and macOS. */
-export const STALE_DAYS: Readonly<Record<"linux" | "windows" | "macos", number>> = { linux: 14, windows: 60, macos: 60 };
+/** Days after which an image warns: twice the interval it is rebuilt at, a week for Linux and a month for Android, Windows and macOS. */
+export const STALE_DAYS: Readonly<Record<"linux" | "android" | "windows" | "macos", number>> = { linux: 14, android: 60, windows: 60, macos: 60 };
 
 /** The Node.js BB's Windows installer needs (#539). */
 const WINDOWS_NODE = "22.19.0";
@@ -260,6 +261,12 @@ export function judgeImage(
   }
   if (facts.pins && record.pins !== facts.pins) {
     warnings.push("It was built with other pins than this bb-box's, so it lacks what a bb-box update brought.");
+  }
+  if (facts.os === "android" && (!record.devices || record.devices[0].runtime.platform !== "android")) {
+    failures.push("It offers no Android devices in its record, so no android box can boot one from it.");
+  }
+  if (facts.os === "android" && record.devices?.some((device) => device.runtime.platform === "android" && device.runtime.snapshot === null)) {
+    warnings.push("A device in it has no snapshot, so its boxes boot that device cold, in about 17 s rather than 2 to 4.");
   }
   if (facts.os === "macos" && !record.tools.xcode) {
     warnings.push("It has no Xcode, so its boxes have no XCTest, Metal compiler or iOS Simulator (#475).");

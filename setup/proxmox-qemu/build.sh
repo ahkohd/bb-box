@@ -3,7 +3,7 @@
 #
 #   build.sh windows <vmid> [--replace] [--keep] [--sata]
 #
-# build.sh linux <vmid> and build.sh linux-desktop <vmid>, each with
+# build.sh linux <vmid>, build.sh linux-desktop <vmid> and build.sh android <vmid>, each with
 # [--replace] [--keep], build the Linux VM templates instead, with
 # build-linux.sh, which says how at its top (057).
 #
@@ -34,7 +34,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/../proxmox-lxc/host/common.sh"
 
 usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
-case "${1:-}" in linux | linux-desktop) exec bash "$here/build-linux.sh" "$@" ;; esac
+case "${1:-}" in linux | linux-desktop | android) exec bash "$here/build-linux.sh" "$@" ;; esac
 [ "${1:-}" = windows ] && [ $# -ge 2 ] || usage
 vmid=$2
 shift 2

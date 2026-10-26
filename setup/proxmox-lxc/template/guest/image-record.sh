@@ -26,7 +26,20 @@ image_kind=linux
 pin_files=("$build/pins.json" "$build/apt-snapshot")
 pin_set=linux
 tools=$(jq -c --arg arch "$arch" '[.tools[] | select(.arch == $arch) | {(.name): .version}] | add // {}' "$build/pins.json")
-if [ "$kind" != linux ]; then
+devices=null
+if [ "$kind" = android ]; then
+  image_kind=android
+  pin_files+=("$build/android-pins.json")
+  pin_set=android
+  encoder=$(/usr/local/bin/bb-box-h264 --version 2>/dev/null || true)
+  x264=
+  case $encoder in x264*) x264=$(jq -r '.encoder[] | select(.name == "x264") | .version' "$build/android-pins.json") ;; esac
+  tools=$(jq -c --slurpfile android "$build/android-pins.json" --arg x264 "$x264" \
+    '. + ([$android[0].sdk[] | {("android-\(.name)"): .version}] | add)
+       + {openh264: ($android[0].encoder[] | select(.name == "openh264") | .version)}
+       + (if $x264 == "" then {} else {x264: $x264} end)' <<<"$tools")
+  devices=$(jq -c . "$build/android-devices.json")
+elif [ "$kind" != linux ]; then
   pin_files+=("$build/desktop-pins.tsv")
   pin_set=linux-desktop
   if [ "$(settings DESKTOP_SESSION)" = wayland ]; then image_kind=linux-desktop-wayland-cpu
@@ -54,10 +67,11 @@ jq -cn --arg kind "$image_kind" --arg arch "$arch" --arg build "$build_id" --arg
   --arg snapshot "$(sed -n 's/^apt_snapshot=//p' "$out/template-release" | grep -v '^none$' || true)" \
   --arg pins "$pins" \
   --arg app "$(cat /home/*/.bb-machines/*/host-artifact.sha256 2>/dev/null | head -1 || true)" \
-  --arg nvidia "$nvidia" --argjson tools "$tools" \
+  --arg nvidia "$nvidia" --argjson tools "$tools" --argjson devices "$devices" \
   '{contract: 1, image: "standard", kind: $kind, arch: $arch, build: $build, built: $built, base: null, os: $os,
     aptSnapshot: ($snapshot | select(. != "") // null), pins: $pins, bbApp: ($app | select(. != "") // null),
-    tools: $tools, nvidia: ($nvidia | select(. != "") // null), layer: null, sizeGiB: null}' \
+    tools: $tools, nvidia: ($nvidia | select(. != "") // null), layer: null, sizeGiB: null}
+   + (if $devices == null then {} else {devices: $devices} end)' \
   >"$out/image.json"
 chmod 0644 "$out/image.json"
 echo "image-record: $image_kind $build_id"

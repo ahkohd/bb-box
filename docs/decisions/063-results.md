@@ -3,7 +3,9 @@
 The numbers unit 2.4 of [063](063-device-boxes.md) measured, so the
 android kind's sizes, its encoder and the way frames reach the encoder come
 from measurements: E17 (each model's cost), E6 (shared memory or a pipe)
-and E7 (x264 or OpenH264).
+and E7 (x264 or OpenH264). Unit 3.1's, for the Android template, are
+[at the end](#unit-31-the-android-template): E2 (snapshots in another VM),
+E13 (typing), E19 (the gRPC port) and E24 (disk).
 
 ## How they were measured
 
@@ -226,3 +228,132 @@ memory, busy:
   busiest a person's use gets, and kinder than a game or a video.
 - The desktop of the linux-desktop-cpu VM ran beside the emulator, idle.
   An android box has none.
+
+## Unit 3.1: the Android template
+
+Measured on 26 October 2026 with the template's own scripts in
+[setup/android](../../setup/android/README.md): two Linux VM boxes on Proxmox
+QEMU, each a clone of the Linux VM template, on the same AMD Ryzen
+Threadripper PRO 9975WX host with nested KVM. The build box had 16 cores and
+16 GiB; the other 16 cores and 32 GiB. Emulator 37.2.12.0, the Android 15
+(API 35) Google APIs x86_64 image revision 9, each AVD from `avdmanager`
+with 4 cores and `hw.keyboard = yes`, drawn by SwiftShader with no window.
+
+The template itself was not built: `build.sh android` runs as root on the
+Proxmox host, and the refresh through the plugin's Proxmox API token. Both
+are the lead's to run. What ran is the build's Android layer,
+`customize-android.sh`, in a box, then the refresh's own script in that box,
+then the image's check, `bb-box-check-android`, in both boxes.
+
+### The build
+
+| Step | Time |
+| --- | --- |
+| The SDK's four parts, downloaded and checked by SHA-256, then unpacked | about 60 s |
+| Each device: `avdmanager`, a cold boot to `sys.boot_completed`, the defaults, the snapshot saved on stop | 29 to 32 s: boot 16.9 to 17.5 s, save 2.5 to 4.0 s |
+| Each device booted again from its snapshot, as the build's own check | 2.1 to 3.3 s |
+| The whole layer, with the SDK downloaded already | 101 s |
+
+### The refresh, in a box
+
+The script `refreshImage` runs in a box of an Android template (from
+`buildScript("android", ...)`, with the setup files packed as the refresh
+packs them) ran in the box that had the Android layer: the Linux template's
+guest scripts, `customize-vm.sh`, `customize-android.sh` and `finalize.sh
+android`. It took 250 s and exited 0. It kept the SDK, whose pins had not
+moved, and the encoder the image had, made each device's AVD and snapshot
+again, and wrote a record of kind `android` with the three devices, each
+with its snapshot's origin, and a size of 20.8 GiB. After a reboot, as a
+trial box starts, `bb-box-check-android` passed 44 of its 45 lines. The
+other, that the box's adb key is its own, then compared the key with the
+boot time, and failed on the box's second boot. It now compares it with the
+image's build time, and passed. The
+capture, the trial box and the replace are the Proxmox QEMU backend's, as
+for the Linux templates, and were run against the fake Proxmox in the tests
+only.
+
+### E2: a snapshot made in the build, in another VM
+
+The SDK and the AVDs, snapshots and all, were copied from the build box to
+the other box, as a clone of the template would have them, and each device
+booted from its snapshot there five times. Before the first, the page cache
+was dropped (`drop_caches`), as a fresh clone reads its disk cold. Seconds
+from `emulator` to `sys.boot_completed`:
+
+| Device | First, cold cache | Then |
+| --- | --- | --- |
+| Pixel 8 | 3.73 | 2.29, 2.65, 2.08, 2.32 |
+| Pixel Fold | 3.93 | 2.69, 3.11, 2.70, 3.31 |
+| Pixel Tablet | 3.51 | 2.48, 2.48, 2.89, 2.48 |
+
+Every boot loaded its snapshot (the emulator's log said "Successfully loaded
+snapshot 'default_boot'"), within 063's 2.2 to 3.9 s, the Pixel Fold's first
+at its top. One earlier boot of the Pixel Fold, the first after the copy,
+took 9.4 s. The snapshot loaded in another VM on the same host. On another
+host's CPU it was not tried: there is one Proxmox host. The image record
+names the CPU each snapshot was made on.
+
+### E13: typing
+
+In Messages, keys sent by `adb shell input text` with the hardware keyboard
+on and Gboard's defaults: "Hello idb 123", "teh", "adn", "recieve", "x." and
+two spaces, then "i", arrived as typed. Nothing was corrected, no capital
+was added, and two spaces gave no full stop. Gboard corrects only what it
+types itself, so the template leaves Gboard's own settings as they are, and
+turns off the system spell checker. 063 said to set Gboard's; that is not
+needed.
+
+### E19: the gRPC port
+
+With `-grpc 8554 -grpc-use-token`, the pinned emulator listened for gRPC on
+`[::ffff:127.0.0.1]:8554`, loopback only. Its console (5554), adb (5555)
+and adb's server (5037) listened on 127.0.0.1 and ::1. So the firewall is
+the second wall, not the only one. The research's `[::]:8554` was without
+a token. Still open on every interface: adb's mDNS, UDP 5353, which answers
+no connection.
+
+The token is made new at each start by `bb-box-emulator`, and is in that
+start's discovery file under `/run/user/<uid>/avd/running/`. gRPC
+`getStatus` with no token and with a wrong one answered status 16,
+UNAUTHENTICATED; with the start's token, 0.
+
+### The ports, from elsewhere
+
+From the other box, over IPv4 and over IPv6 (a private address added on the
+two boxes' shared link, as their image has none): ports 8554, 5554, 5555
+and 5037 timed out, dropped, every 16 s from 4 s into a cold boot until
+90 s after it; SSH, port 22, connected each time. From a Docker container
+in the box, to the box's address and to `docker0`'s: none connected, while
+the device was booted, half a second into a restart, and after it. From a
+network namespace on another interface of the box, as the image's check
+does: none connected, over IPv4 and IPv6, for each device. With the table
+removed, `bb-box-emulator` refused to start the device. No tailnet peer was
+tried: no box here had joined a tailnet.
+
+### Identity
+
+Each box made its own adb key, console token and gRPC token: their SHA-256s
+differed. The device's own serial, `EMULATOR37X2X12X0`, and whatever else
+the snapshot holds, such as the device's Android ID, are the same in every
+box from one template.
+
+### E24: disk
+
+Allocated and apparent, after the build and its checks:
+
+| Part | Allocated | Apparent | Of which |
+| --- | --- | --- | --- |
+| The SDK | 4.6 GB | 4.6 GB | system image 3.5 GB, emulator 0.9 GB, command-line tools 0.2 GB |
+| Pixel 8 | 3.4 GB | 4.0 GB | snapshot memory 2.4 GB, data 0.9 GB |
+| Pixel Fold | 4.7 to 4.9 GB | 4.9 GB | snapshot memory 3.7 GB, data 1.1 GB |
+| Pixel Tablet | 4.7 to 5.1 GB | 5.2 GB | snapshot memory 3.7 GB, data 1.4 GB |
+| The box's root, after the build | 21.6 GiB | | the Linux VM image, 3.6 GiB, and the above |
+
+The template adds about 18 GB to the Linux VM template, as 063 expected.
+The Fold's and the Tablet's grew by 0.2 to 0.4 GB over 15 boots from their
+snapshots without saving. Their snapshots hold more memory than the 2 GiB
+each AVD asks for: the emulator raises it to 2.5 GiB for the Pixel 8 and
+4 GiB for the large screens, which E17's resident memory matches. A device
+used in a box, a hibernated spare, and a build and trial beside the current
+template were not measured: they need the template (4.1, 7.5).
+

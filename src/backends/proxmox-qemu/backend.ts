@@ -201,6 +201,17 @@ const LINUX_DESKTOP_KIND: BoxKind = {
 };
 /** The Linux kinds, each with its templates' setting. */
 const LINUX_KINDS: readonly BoxKind[] = [LINUX_KIND, LINUX_DESKTOP_KIND];
+
+const ANDROID_IMAGE_KIND: BoxKind = {
+  id: "android",
+  label: "Android emulator",
+  description: "The Android template's image boxes, which the refresh builds and checks in.",
+  requires: [],
+  capabilities: LINUX_KIND.capabilities,
+  readyTimeoutMs: READY_TIMEOUT_MS,
+};
+const LINUX_TEMPLATE_KINDS: readonly BoxKind[] = [...LINUX_KINDS, ANDROID_IMAGE_KIND];
+
 /** The guest's VNC server, as in Proxmox LXC's desktops, and the password its desktop writes at boot. */
 const LINUX_VNC_PORT = 5900;
 const LINUX_VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
@@ -217,6 +228,9 @@ const POOL: Check = ["proxmox.pool", "Resource pool"];
 const BRIDGE: Check = ["proxmox.bridge", "Network bridge"];
 const VMIDS: Check = ["proxmox.vmids", "VMID range"];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
+const ANDROID_KVM: Check = ["proxmox.android-kvm", "KVM for Android"];
+const ANDROID_DISK: Check = ["proxmox.android-disk", "Disk for Android"];
+const ANDROID_ROOM_GIB = 40;
 
 function powerOf(status: string): PowerState {
   if (status === "running") return "running";
@@ -431,18 +445,35 @@ export class ProxmoxQemuBackend implements Backend {
   /** The templates of a kind's boxes. */
   #templatesOf(kind: string): readonly number[] {
     if (kind === LINUX_KIND.id) return this.#config.linuxTemplates;
+    if (kind === ANDROID_IMAGE_KIND.id) return this.#config.androidTemplates;
     return kind === LINUX_DESKTOP_KIND.id ? this.#config.linuxDesktopTemplates : this.#config.templates;
   }
 
-  /** Every template, Windows' and Linux'. */
+  /** Every template, Windows', Linux' and Android's. */
   #allTemplates(): readonly number[] {
-    return [...this.#config.templates, ...this.#config.linuxTemplates, ...this.#config.linuxDesktopTemplates];
+    return [...this.#config.templates, ...this.#config.linuxTemplates, ...this.#config.linuxDesktopTemplates, ...this.#config.androidTemplates];
   }
 
-  /** A template as messages name it: "Linux template 9106" or "Windows template 9104". */
+  /** A template as messages name it: "Linux template 9106", "Android template 9108" or "Windows template 9104". */
   #templateName(template: number): string {
     const kind = this.#kindOf(template);
-    return `${kind === LINUX_DESKTOP_KIND ? "Linux desktop" : kind === LINUX_KIND ? "Linux" : "Windows"} template ${template}`;
+    return `${this.#flavour(kind)} template ${template}`;
+  }
+
+  #flavour(kind: BoxKind): string {
+    return kind === LINUX_DESKTOP_KIND ? "Linux desktop" : kind === LINUX_KIND ? "Linux" : kind === ANDROID_IMAGE_KIND ? "Android" : "Windows";
+  }
+
+  #androidDisk(template: number, storage: string, freeGiB: number, report: { pass: (check: Check, detail: string) => void; warn: (check: Check, detail: string, fix: string) => void }): void {
+    const spare = freeGiB - this.#config.reserve.diskGiB;
+    const detail = `${storage}, where Android template ${template} is, has ${freeGiB} GiB free, ${spare} GiB beyond the ${this.#config.reserve.diskGiB} GiB kept free.`;
+    if (spare >= ANDROID_ROOM_GIB) report.pass(ANDROID_DISK, `${detail} A refresh's build and trial boxes and an Android box in use need about ${ANDROID_ROOM_GIB} GiB.`);
+    else
+      report.warn(
+        ANDROID_DISK,
+        `${detail} A refresh's build and trial boxes and an Android box in use need about ${ANDROID_ROOM_GIB} GiB, so a refresh may wait for room or fail.`,
+        `Free space on ${storage}, release boxes, or lower the disk kept free in bb-box's settings.`,
+      );
   }
 
   /** The OS of a guest from its template: Linux for a Linux template's clone, Windows otherwise. */
@@ -450,16 +481,16 @@ export class ProxmoxQemuBackend implements Backend {
     return this.#kindOf(template).capabilities.os;
   }
 
-  /** build.sh's word for a template's kind: windows, linux or linux-desktop. */
+  /** build.sh's word for a template's kind: windows, linux, linux-desktop or android. */
   #buildWord(template: number): string {
     const kind = this.#kindOf(template);
-    return kind === LINUX_DESKTOP_KIND ? "linux-desktop" : kind.capabilities.os;
+    return kind === LINUX_DESKTOP_KIND ? "linux-desktop" : kind === ANDROID_IMAGE_KIND ? "android" : kind.capabilities.os;
   }
 
-  /** The kind of a template's boxes: Windows' unless it is a Linux or Linux desktop template. */
+  /** The kind of a template's boxes: Windows' unless it is a Linux, Linux desktop or Android template. */
   #kindOf(template: unknown): BoxKind {
     if (typeof template !== "number") return KIND;
-    return LINUX_KINDS.find((kind) => this.#templatesOf(kind.id).includes(template)) ?? KIND;
+    return LINUX_TEMPLATE_KINDS.find((kind) => this.#templatesOf(kind.id).includes(template)) ?? KIND;
   }
 
   async capacity(kind: string, size: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
@@ -1075,7 +1106,9 @@ export class ProxmoxQemuBackend implements Backend {
       const linux = this.#config.linuxTemplates.length + this.#config.linuxDesktopTemplates.length > 0;
       const linuxPins = this.#config.linuxTemplates.length ? (this.#context.images?.pins("linux") ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
       const desktopPins = this.#config.linuxDesktopTemplates.length ? (this.#context.images?.pins("linux-desktop") ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
-      const bbApp = linux ? (this.#context.images?.bbApp(signal) ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
+      const android = this.#config.androidTemplates.length > 0;
+      const androidPins = android ? (this.#context.images?.pins("android") ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
+      const bbApp = linux || android ? (this.#context.images?.bbApp(signal) ?? Promise.resolve(null)).catch(() => null) : Promise.resolve(null);
       for (const template of this.#allTemplates()) {
         const name = templateCheck(template);
         const os = this.#osOf(template);
@@ -1093,12 +1126,17 @@ export class ProxmoxQemuBackend implements Backend {
               fail(name, `VM template ${template} is on ${storage}, whose free space cannot be read.`, audit(free, `Give the token Datastore.Audit on /storage/${storage}.`));
             } else {
               this.#templates.set(template, { storage, bootDisk: disk, diskGiB: rootDiskGiB(config, disk) });
-              pass(name, `VM template ${template} on ${storage}, ${Math.floor((free as { available: number }).available / GiB)} GiB free.`);
+              const freeGiB = Math.floor((free as { available: number }).available / GiB);
+              const kind = this.#kindOf(template);
+              pass(name, `VM template ${template} on ${storage}, ${freeGiB} GiB free.`);
+              if (kind === ANDROID_IMAGE_KIND) this.#androidDisk(template, storage, freeGiB, { pass, warn });
               // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB. A Linux one does (057).
               const judged = judgeImage(
                 recordInDescription(String(config.description ?? "")),
-                os === "linux"
-                  ? { os, pins: await (this.#kindOf(template) === LINUX_DESKTOP_KIND ? desktopPins : linuxPins), bbApp: await bbApp }
+                kind === ANDROID_IMAGE_KIND
+                  ? { os: "android", pins: await androidPins, bbApp: await bbApp }
+                  : os === "linux"
+                  ? { os, pins: await (kind === LINUX_DESKTOP_KIND ? desktopPins : linuxPins), bbApp: await bbApp }
                   : { os, pins: await pins, bbApp: null, joins: this.#config.enrol },
                 `Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on ${node}: build.sh ${this.#buildWord(template)} ${template} --replace.`,
               );
@@ -1115,6 +1153,16 @@ export class ProxmoxQemuBackend implements Backend {
               : audit(error, `Give the token VM.Audit and VM.Clone on /vms/${template}.`),
           );
         }
+      }
+
+      if (android) {
+        if (this.#config.kvm) pass(ANDROID_KVM, "KVM in Linux VM boxes is on, so the host allows nested virtualization, which the Android emulator needs.");
+        else
+          fail(
+            ANDROID_KVM,
+            "Android templates are listed, but KVM in Linux VM boxes is off, so bb-box takes it that the host does not allow nested virtualization. The Android emulator needs KVM, and the refresh boots its devices.",
+            "Turn on linux-kvm in Proxmox QEMU's settings once build.sh linux says KVM works in a clone; build.sh android stops when it does not.",
+          );
       }
 
       const bridge = this.#config.network.bridge;
@@ -1136,7 +1184,7 @@ export class ProxmoxQemuBackend implements Backend {
         const install = installTag(this.#context.installId);
         for (const guest of guests.filter((one) => this.#inRange(one.vmid) && one.tags.includes(install) && one.tags.includes(`${IMAGE_TAG}${ROLLBACK}`))) {
           const target = templateFromTags(guest.tags);
-          const os = guest.tags.includes(`${KIND_TAG}${LINUX_DESKTOP_KIND.id}`) ? "Linux desktop" : guest.tags.includes(`${KIND_TAG}${LINUX_KIND.id}`) ? "Linux" : "Windows";
+          const os = this.#flavour(LINUX_TEMPLATE_KINDS.find((kind) => guest.tags.includes(`${KIND_TAG}${kind.id}`)) ?? KIND);
           const build = buildFromTags(guest.tags);
           notes.push(
             `VMID ${guest.vmid} is the rollback of ${os} template ${target ?? "unknown"}${build ? `, ${BUILD}${build}` : ""}. It holds a box's VMID and address until the template's next refresh replaces it. To go back to it, list ${guest.vmid} as the ${os} template in bb-box's settings.`,
@@ -1787,7 +1835,7 @@ export class ProxmoxQemuBackend implements Backend {
   async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
     const api = await this.client();
     const template = Number(build.ref);
-    const kind = LINUX_KINDS.find((linux) => linux.id === build.kind) ?? KIND;
+    const kind = LINUX_TEMPLATE_KINDS.find((linux) => linux.id === build.kind) ?? KIND;
     const os = kind.capabilities.os;
     let vmid: number | null = null;
     // Each step's time, for the build's check that a box of it answers as quickly as one of the old.
@@ -1833,7 +1881,7 @@ export class ProxmoxQemuBackend implements Backend {
   async #capture(box: ImageBox, from: ImageBuild, image: string, signal: AbortSignal): Promise<ImageBuild> {
     const api = await this.client();
     const vmid = Number(box.ref);
-    const linux = LINUX_KINDS.some((kind) => kind.id === from.kind);
+    const linux = LINUX_TEMPLATE_KINDS.some((kind) => kind.id === from.kind);
     // Where the refresh writes the record: finalize.sh's on Linux (049), refresh.ps1's on Windows (054).
     const at = linux ? "/usr/share/bb-box/image.json" : "C:\\bb-box\\image.json";
     const read = await box.command.run(linux ? `cat ${at}` : `Get-Content ${at} -Raw`, { timeoutMs: 15_000, signal, maxOutputBytes: 64 * 1024 });
@@ -1910,7 +1958,7 @@ export class ProxmoxQemuBackend implements Backend {
     const Os = this.#templateName(target).replace(/ template \d+$/, "");
     if (!storage) throw new Error(`${Os} template ${target} has no boot disk.`);
     const thin = (await api.storageStatus(storage, signal)).type === "lvmthin";
-    const name = typeof old.name === "string" ? old.name : this.#kindOf(target) === LINUX_DESKTOP_KIND ? "bb-box-linux-desktop" : `bb-box-${os}`;
+    const name = typeof old.name === "string" ? old.name : `bb-box-${this.#buildWord(target)}`;
     const pool = this.#config.proxmox.pool;
     const install = installTag(this.#context.installId);
     const guests = await api.listPool(pool, signal);

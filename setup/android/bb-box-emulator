@@ -1,0 +1,148 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: bb-box-emulator start <avd> [--cold] [--no-save] [--timeout <s>]
+       bb-box-emulator stop
+       bb-box-emulator status
+       bb-box-emulator grpc <method> [--token <token> | --no-token]
+
+start   starts the AVD with no window, its gRPC on 8554 behind a token made new
+        for this start, and waits until Android has booted. It refuses to start
+        while bb-box-device-firewall check fails. It loads the AVD's snapshot
+        unless --cold; --no-save leaves the snapshot as it is when it stops.
+        It prints one line: the AVD, the seconds to boot, and whether the
+        snapshot loaded.
+stop    stops the running emulator, saving its snapshot unless it started with
+        --no-save, and waits for it to end.
+status  prints the running emulator's AVD and process ID, or exits 1.
+grpc    calls one EmulatorController method with an empty request, with this
+        start's token, another token or none, and prints its gRPC status: 0 is
+        OK, 16 unauthenticated.
+USAGE
+  exit 2
+}
+
+sdk=${ANDROID_HOME:-/opt/android-sdk}
+export ANDROID_HOME=$sdk ANDROID_SDK_ROOT=$sdk
+export PATH=$sdk/platform-tools:$sdk/emulator:$PATH
+serial=emulator-5554
+state=$HOME/.bb-box/device/emulator
+mkdir -p "$state"
+chmod 0700 "$HOME/.bb-box/device" "$state"
+
+running_pid() {
+  local pid
+  pid=$(cat "$state/pid" 2>/dev/null) || return 1
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q -e emulator -e qemu-system && echo "$pid"
+}
+
+boot_completed() { [ "$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; }
+
+start() {
+  local avd=$1 cold=no save=yes timeout=240
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --cold) cold=yes ;;
+      --no-save) save=no ;;
+      --timeout) timeout=$2; shift ;;
+      *) usage ;;
+    esac
+    shift
+  done
+  if pid=$(running_pid); then
+    echo "bb-box-emulator: $(cat "$state/avd") is running already (pid $pid); stop it first" >&2
+    exit 1
+  fi
+  if ! bb-box-device-firewall check; then
+    echo "bb-box-emulator: the device's firewall is not in place, so the emulator does not start" >&2
+    exit 1
+  fi
+  local flags=(-avd "$avd" -port 5554 -grpc 8554 -grpc-use-token -gpu swiftshader_indirect -no-window -no-audio -no-boot-anim)
+  [ "$cold" = no ] || flags+=(-no-snapshot-load)
+  [ "$save" = yes ] || flags+=(-no-snapshot-save)
+  (umask 077 && head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' >"$HOME/.emulator_console_auth_token")
+  adb start-server >/dev/null 2>&1
+  local started log=$state/emulator.log
+  started=$(date +%s%N)
+  setsid emulator "${flags[@]}" >"$log" 2>&1 </dev/null &
+  echo $! >"$state/pid"
+  echo "$avd" >"$state/avd"
+  local deadline=$(($(date +%s) + timeout))
+  until boot_completed; do
+    if ! running_pid >/dev/null; then
+      echo "bb-box-emulator: the emulator ended before $avd booted; its last lines:" >&2
+      tail -n 20 "$log" >&2
+      exit 1
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "bb-box-emulator: $avd did not boot within $timeout s" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+  local ms=$((($(date +%s%N) - started) / 1000000)) snapshot=cold
+  if [ "$cold" = no ]; then
+    if grep -q "Successfully loaded snapshot 'default_boot'" "$log"; then snapshot=loaded; else snapshot=not-loaded; fi
+  fi
+  printf 'avd=%s boot_s=%d.%03d snapshot=%s\n' "$avd" $((ms / 1000)) $((ms % 1000)) "$snapshot"
+}
+
+stop() {
+  local pid
+  pid=$(running_pid) || { echo "bb-box-emulator: no emulator is running" >&2; return 0; }
+  adb -s "$serial" emu kill >/dev/null 2>&1 </dev/null || kill "$pid"
+  for _ in $(seq 1 600); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "bb-box-emulator: the emulator did not end within 60 s; stopping it" >&2
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$state/pid" "$state/avd"
+}
+
+discovery_file() {
+  local avd file pid
+  running_pid >/dev/null || return 1
+  avd=$(cat "$state/avd")
+  for dir in "${XDG_RUNTIME_DIR:-/nonexistent}" "/run/user/$(id -u)" "$HOME/.android" "/tmp/android-$(id -un)"; do
+    for file in "$dir"/avd/running/pid_*.ini; do
+      [ -f "$file" ] || continue
+      pid=${file##*/pid_}
+      pid=${pid%.ini}
+      kill -0 "$pid" 2>/dev/null && grep -qx "avd.name=$avd" "$file" && { echo "$file"; return 0; }
+    done
+  done
+  return 1
+}
+
+grpc() {
+  local method=$1 header
+  shift
+  case "${1:-}" in
+    --no-token) header=() ;;
+    --token) header=(-H "authorization: Bearer $2") ;;
+    "")
+      local file
+      file=$(discovery_file) || { echo "bb-box-emulator: no running emulator's discovery file" >&2; exit 1; }
+      header=(-H "authorization: Bearer $(sed -n 's/^grpc.token=//p' "$file")")
+      ;;
+    *) usage ;;
+  esac
+  printf '\0\0\0\0\0' | curl -sS --http2-prior-knowledge --max-time 10 -o /dev/null -D - -X POST \
+    -H 'content-type: application/grpc' -H 'te: trailers' "${header[@]}" --data-binary @- \
+    "http://127.0.0.1:8554/android.emulation.control.EmulatorController/$method" |
+    tr -d '\r' | sed -n 's/^grpc-status: *//p' | tail -n 1
+}
+
+case "${1:-}" in
+  grpc) [ $# -ge 2 ] || usage; shift; grpc "$@" ;;
+  start) [ $# -ge 2 ] || usage; shift; start "$@" ;;
+  stop) stop ;;
+  status) pid=$(running_pid) || exit 1; echo "$(cat "$state/avd") $pid" ;;
+  *) usage ;;
+esac

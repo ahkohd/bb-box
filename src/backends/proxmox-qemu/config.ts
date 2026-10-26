@@ -34,6 +34,7 @@ export interface QemuConfig {
   readonly linuxTemplates: readonly number[];
   /** VMIDs of the Linux desktop templates, for linux-desktop-cpu boxes as VMs (057). None by default. */
   readonly linuxDesktopTemplates: readonly number[];
+  readonly androidTemplates: readonly number[];
   readonly vmids: VmidRange;
   readonly network: ProxmoxNetwork;
   /** A null key means bb-box generates one and shows its public key. */
@@ -71,6 +72,7 @@ export const QEMU_KEYS = {
   templates: "windows-templates",
   linuxTemplates: "linux-templates",
   linuxDesktopTemplates: "linux-desktop-templates",
+  androidTemplates: "android-templates",
   vmidFirst: "vmid-first",
   vmidLast: "vmid-last",
   bridge: "bridge",
@@ -161,6 +163,14 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     label: "Linux desktop templates",
     description:
       "VMIDs of the Linux desktop templates that linux-desktop-cpu boxes as VMs are linked clones of, separated by spaces or commas, for a desktop with its own kernel. setup/proxmox-qemu/build.sh linux-desktop builds one. Empty offers no Linux desktop VMs.",
+    group: "boxes",
+    default: "",
+  },
+  [QEMU_KEYS.androidTemplates]: {
+    type: "string",
+    label: "Android templates",
+    description:
+      "VMIDs of the Android templates, separated by spaces or commas: the Linux template with the Android SDK, the emulator and a booted device for each model. setup/proxmox-qemu/build.sh android builds one, on a host with nested virtualization, and the nightly job refreshes it monthly. Android boxes are not offered yet.",
     group: "boxes",
     default: "",
   },
@@ -274,12 +284,13 @@ export function parseQemuPart(part: BackendPart): ParsedBackend<QemuConfig> {
   const templates = templateList(values, problem, QEMU_KEYS.templates, "Windows", String(QEMU_DEFAULTS.windowsTemplate));
   const linuxTemplates = templateList(values, problem, QEMU_KEYS.linuxTemplates, "Linux", "", templates);
   const linuxDesktopTemplates = templateList(values, problem, QEMU_KEYS.linuxDesktopTemplates, "Linux desktop", "", [...templates, ...linuxTemplates]);
-  if (!templates.length && !linuxTemplates.length && !linuxDesktopTemplates.length) problem(QEMU_KEYS.templates, "Set the VMID of at least one Windows or Linux template.");
-  const vmids = checkVmids(values, QEMU_KEYS, QEMU_DEFAULTS, [...templates, ...linuxTemplates, ...linuxDesktopTemplates], problem);
+  const androidTemplates = templateList(values, problem, QEMU_KEYS.androidTemplates, "Android", "", [...templates, ...linuxTemplates, ...linuxDesktopTemplates]);
+  if (!templates.length && !linuxTemplates.length && !linuxDesktopTemplates.length && !androidTemplates.length) problem(QEMU_KEYS.templates, "Set the VMID of at least one Windows, Linux or Android template.");
+  const vmids = checkVmids(values, QEMU_KEYS, QEMU_DEFAULTS, [...templates, ...linuxTemplates, ...linuxDesktopTemplates, ...androidTemplates], problem);
   const network = checkNetwork(values, QEMU_KEYS, QEMU_DEFAULTS, vmids, problem);
   const ssh = checkSsh(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
   const reserve = checkReserve(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { proxmox, templates, linuxTemplates, linuxDesktopTemplates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false, kvm: values[QEMU_KEYS.kvm] === true } };
+  return { ok: true, config: { proxmox, templates, linuxTemplates, linuxDesktopTemplates, androidTemplates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false, kvm: values[QEMU_KEYS.kvm] === true } };
 }

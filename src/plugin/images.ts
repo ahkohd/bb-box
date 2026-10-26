@@ -17,7 +17,7 @@ import { defaultSize, kindSizes } from "../core/sizes.ts";
 import type { ImageBakes } from "./bakes.ts";
 
 /** The days after which a standard image is due (049): a week for Linux, a month for macOS and Windows. */
-const INTERVAL_DAYS = { linux: 7, macos: 30, windows: 30 } as const;
+const INTERVAL_DAYS = { linux: 7, android: 30, macos: 30, windows: 30 } as const;
 /** A refresh run stops starting images after this long (049). */
 export const RUN_LIMIT_MS = 4 * 60 * 60_000;
 /** The doctor warns when no run has ended for this long (049). */
@@ -141,11 +141,15 @@ export interface RunResult {
 }
 
 /** A kind's OS and pins, by its name. */
-function osOf(kind: string): "linux" | "macos" | "windows" {
-  return kind.startsWith("macos") ? "macos" : kind.startsWith("windows") ? "windows" : "linux";
+function osOf(kind: string): keyof typeof INTERVAL_DAYS {
+  return kind === "android" ? "android" : kind.startsWith("macos") ? "macos" : kind.startsWith("windows") ? "windows" : "linux";
+}
+function carriesBbApp(kind: string): boolean {
+  return osOf(kind) === "linux" || osOf(kind) === "android";
 }
 function pinSet(kind: string): PinSet {
   if (osOf(kind) === "windows") return kind.includes("arm64") ? "windows-arm64" : "windows";
+  if (osOf(kind) === "android") return "android";
   return osOf(kind) === "macos" ? "macos" : kind.includes("desktop") ? "linux-desktop" : "linux";
 }
 
@@ -178,7 +182,7 @@ export class ImageJobs {
 
   /** Whether a Linux image carries another build of BB's app than BB's server gives: one a BB update leaves behind. */
   #appStale(build: ImageBuild, app: string | null): boolean {
-    return osOf(build.kind) === "linux" && !!app && !!build.record && build.record.bbApp !== app;
+    return carriesBbApp(build.kind) && !!app && !!build.record && build.record.bbApp !== app;
   }
 
   /** Why an image is due (049), in the decision's order of need, or null: [rank, reason]. */
@@ -186,11 +190,11 @@ export class ImageJobs {
     const os = osOf(build.kind);
     const pins = await this.#deps.facts.pins(pinSet(build.kind)).catch(() => null);
     const record = build.record;
-    if (record && judgeImage(record, { os, pins, bbApp: os === "linux" ? app : null, now: this.#now() }, "").status === "fail") return [1, "it fails the doctor"];
+    if (record && judgeImage(record, { os, pins, bbApp: carriesBbApp(build.kind) ? app : null, now: this.#now() }, "").status === "fail") return [1, "it fails the doctor"];
     if (!record) return [2, "it has no record, so its age is not known"];
     const days = (this.#now() - Date.parse(record.built)) / DAY_MS;
     if (days > INTERVAL_DAYS[os]) return [2, `it is ${Math.floor(days)} days old, past its ${INTERVAL_DAYS[os]}-day interval`];
-    if (os === "linux" && app && record.bbApp !== app) return [4, "it has another build of BB's app than BB's server gives"];
+    if (carriesBbApp(build.kind) && app && record.bbApp !== app) return [4, "it has another build of BB's app than BB's server gives"];
     if (pins && record.pins !== pins) return [5, "it was built with other pins than this bb-box's"];
     return null;
   }

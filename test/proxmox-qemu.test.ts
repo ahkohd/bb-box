@@ -138,7 +138,7 @@ test("the settings list Windows and Linux templates by VMID", () => {
     const parsed = parse(values);
     return parsed.ok ? [] : parsed.problems;
   };
-  assert.deepEqual(problems({ "windows-templates": "" }), [{ path: "windows-templates", message: "Set the VMID of at least one Windows or Linux template." }]);
+  assert.deepEqual(problems({ "windows-templates": "" }), [{ path: "windows-templates", message: "Set the VMID of at least one Windows, Linux or Android template." }]);
   // Linux templates (057): none by default, alone or beside Windows', never the same VMID.
   assert.deepEqual(qemuConfig({}).linuxTemplates, []);
   assert.deepEqual(qemuConfig({ "windows-templates": "", "linux-templates": "9120" }).linuxTemplates, [9120]);
@@ -146,6 +146,11 @@ test("the settings list Windows and Linux templates by VMID", () => {
   assert.deepEqual(qemuConfig({}).linuxDesktopTemplates, []);
   assert.deepEqual(qemuConfig({ "windows-templates": "", "linux-desktop-templates": "9121" }).linuxDesktopTemplates, [9121]);
   assert.deepEqual(problems({ "linux-templates": "9120", "linux-desktop-templates": "9120" }), [{ path: "linux-desktop-templates", message: "Template 9120 is listed more than once. List each template once." }]);
+  // Android templates (063): none by default, alone or beside the others, never one of theirs.
+  assert.deepEqual(qemuConfig({}).androidTemplates, []);
+  assert.deepEqual(qemuConfig({ "windows-templates": "", "android-templates": "9108" }).androidTemplates, [9108]);
+  assert.deepEqual(problems({ "linux-templates": "9120", "android-templates": "9120" }), [{ path: "android-templates", message: "Template 9120 is listed more than once. List each template once." }]);
+  assert.deepEqual(problems({ "windows-templates": "", "android-templates": "" }), [{ path: "windows-templates", message: "Set the VMID of at least one Windows, Linux or Android template." }]);
   // KVM in Linux VM boxes (057): off unless set.
   assert.equal(qemuConfig({}).kvm, false);
   assert.equal(qemuConfig({ "linux-kvm": true }).kvm, true);
@@ -1334,4 +1339,67 @@ test("a Linux VM's root file system grows live over its disk (061)", async () =>
   const log = existsSync(join(home, "sudo.log")) ? readFileSync(join(home, "sudo.log"), "utf8") : "";
   if (grown instanceof Error) assert.fail(grown.message);
   assert.match(log, /^growpart \/dev\/sda \S*\nresize2fs \/dev\/sda1\n$/);
+});
+
+test("an Android template is no kind's yet, but its image is listed, boxed at the android kind's size, captured, and checked by the doctor (063)", async () => {
+  const runtime = { platform: "android", api: 35, image: "google_apis", revision: 9, abi: "x86_64", emulator: "37.2.12.0", snapshot: { emulator: "37.2.12.0", cpu: "Example CPU", made: "2026-10-26T05:15:46Z" } };
+  const devices = [
+    { model: "Pixel 8", native: "pixel_8", runtime },
+    { model: "Pixel Fold", native: "pixel_fold", runtime },
+    { model: "Pixel Tablet", native: "pixel_tablet", runtime },
+  ];
+  const record = { contract: 1, image: "standard", kind: "android", arch: "x86_64", build: "build.20261026-051500-1a2b", built: new Date().toISOString(), os: "Ubuntu 24.04", pins: "p".repeat(64), tools: { node: "24.21.0", "android-emulator": "37.2.12.0" }, devices };
+  const { backend, proxmox, ssh } = setup({ "android-templates": "9108" });
+  proxmox.addVmTemplate(9108);
+  const template = proxmox.guests.get(9108)!;
+  template.name = template.config.name = "bb-box-android";
+  template.config.tags = "bbbox;android;build.20261020-030000-77aa";
+  template.config.description = `bb-box android vm template, built 2026-10-20 from Ubuntu 24.04's cloud image 20260911.\n${JSON.stringify(record)}`;
+  for (let last = 150; last <= 159; last++) {
+    const host = `192.0.2.${last}`;
+    rmSync(join(ssh.dir, "windows", host), { force: true });
+    mkdirSync(ssh.home(host), { recursive: true });
+    ssh.powershell(host, `case "$1" in\n  *"cat /usr/share/bb-box/image.json"*) echo '${JSON.stringify(record)}';;\n  *) exec sh -c "$1";;\nesac\n`);
+  }
+  assert.ok(!backend.kinds().some((kind) => kind.id === "android"), "not offered until the Android driver");
+
+  const report = await backend.doctor();
+  const check = (id: string) => report.checks.find((one) => one.id === id);
+  assert.equal(check("template.9108")?.name, "Android template 9108");
+  assert.equal(check("template.9108.image")?.status, "ok", JSON.stringify(check("template.9108.image")));
+  assert.equal(check("proxmox.android-kvm")?.status, "fail");
+  assert.match(check("proxmox.android-kvm")!.fix!, /Turn on linux-kvm/);
+  assert.equal(check("proxmox.android-disk")?.status, "ok");
+  assert.match(check("proxmox.android-disk")!.detail, /^local-lvm, where Android template 9108 is, has 600 GiB free, 550 GiB beyond the 50 GiB kept free\./);
+  proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 80 * GiB });
+  const short = (await backend.doctor()).checks.find((one) => one.id === "proxmox.android-disk")!;
+  assert.equal(short.status, "warn");
+  assert.match(short.detail, /30 GiB beyond the 50 GiB kept free.*need about 40 GiB, so a refresh may wait for room or fail\./);
+  proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 600 * GiB });
+
+  const images = backend.images;
+  const standard = (await images.list()).builds.find((build) => build.ref === "9108")!;
+  assert.deepEqual([standard.image, standard.kind, standard.current, standard.record?.devices?.length], ["standard", "android", true, 3]);
+  const box = await images.box(standard, "refresh of 9108", signal());
+  assert.deepEqual([proxmox.guests.get(Number(box.ref))!.config.cores, proxmox.guests.get(Number(box.ref))!.config.memory], ["8", "16384"], "at the android kind's default size");
+  const captured = await images.capture(box, standard, "standard", signal());
+  assert.deepEqual([captured.kind, captured.record?.devices?.map((device) => device.native)], ["android", ["pixel_8", "pixel_fold", "pixel_tablet"]]);
+  assert.ok(parseTags(proxmox.guests.get(Number(captured.ref))!.config.tags).includes("kind.android"));
+  const replaced = await images.replace(captured, standard, signal());
+  assert.equal(replaced.ref, "9108");
+  const rollback = [...proxmox.guests.values()].find((guest) => parseTags(guest.config.tags).includes("image.rollback"))!;
+  assert.equal(rollback.name, "bb-box-android-rollback");
+  assert.match(rollback.config.description!, /^bb-box rollback of Android template 9108, build\.20261020-030000-77aa, kept until its next refresh\./);
+  const withKvm = setup({ "android-templates": "9108", "linux-kvm": true });
+  withKvm.proxmox.addVmTemplate(9108);
+  assert.equal((await withKvm.backend.doctor()).checks.find((one) => one.id === "proxmox.android-kvm")?.status, "ok");
+
+  const noDevices = setup({ "android-templates": "9108" });
+  noDevices.proxmox.addVmTemplate(9108);
+  noDevices.proxmox.guests.get(9108)!.config.description = `bb-box android vm template.\n${JSON.stringify({ ...record, devices: undefined })}`;
+  const judged = (await noDevices.backend.doctor()).checks.find((one) => one.id === "template.9108.image")!;
+  assert.equal(judged.status, "fail");
+  assert.match(judged.detail, /It offers no Android devices in its record/);
+  assert.match(judged.fix!, /build\.sh android 9108 --replace\.$/);
+
 });

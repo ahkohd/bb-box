@@ -1,0 +1,46 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: bb-box-device-firewall load | check
+
+load   loads the table inet bb_box_device from /etc/bb-box/device-firewall.nft,
+       then checks it, as bb-box-device-firewall.service does at each boot.
+check  exits 0 only when the table is loaded as that file gives it: its input
+       hook at priority -300, loopback accepted, and the emulator's ports, adb's
+       and adb's server's dropped on every other interface, IPv4 and IPv6.
+USAGE
+  exit 2
+}
+
+rules_file=/etc/bb-box/device-firewall.nft
+expected_rules='[[{"match":{"op":"==","left":{"meta":{"key":"iifname"}},"right":"lo"}},{"accept":null}],[{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":{"set":[5037,{"range":[5554,5585]},8554]}}},{"drop":null}]]'
+nft_as_root() { if [ "$(id -u)" = 0 ]; then nft "$@"; else sudo -n nft "$@"; fi; }
+
+check() {
+  local table
+  table=$(nft_as_root -j list table inet bb_box_device 2>/dev/null) || { echo "bb-box-device-firewall: the table inet bb_box_device is not loaded" >&2; return 1; }
+  if ! jq -e '
+      [.nftables[] | select(.chain) | .chain | select(.family == "inet" and .name == "input" and .hook == "input" and .prio == -300 and .type == "filter" and .policy == "accept")] | length == 1
+    ' <<<"$table" >/dev/null; then
+    echo "bb-box-device-firewall: the table has no input chain hooked at priority -300" >&2
+    return 1
+  fi
+  local rules
+  rules=$(jq -c '[.nftables[] | select(.rule) | .rule | select(.chain == "input") | .expr]' <<<"$table")
+  if [ "$rules" != "$expected_rules" ]; then
+    echo "bb-box-device-firewall: the table's rules are not its own: $rules" >&2
+    return 1
+  fi
+}
+
+case "${1:-}" in
+  load)
+    nft_as_root -f "$rules_file"
+    check
+    echo "bb-box-device-firewall: loaded"
+    ;;
+  check) check ;;
+  *) usage ;;
+esac

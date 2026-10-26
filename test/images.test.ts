@@ -72,6 +72,7 @@ test("the pins' digest is the build's: Linux's files, or a script's pin lines, a
   const digest = (cwd: string, command: string) => spawnSync("sh", ["-c", `${command} | sha256sum | cut -d' ' -f1`], { cwd, encoding: "utf8" }).stdout.trim();
   assert.equal(await pinsDigest(SETUP, "linux"), digest(TEMPLATE, "cat pins.json apt-snapshot"));
   assert.equal(await pinsDigest(SETUP, "linux-desktop"), digest(TEMPLATE, "cat pins.json apt-snapshot desktop-pins.tsv"));
+  assert.equal(await pinsDigest(SETUP, "android"), digest(TEMPLATE, "cat pins.json apt-snapshot ../../android/pins.json"), "as image-record.sh hashes an Android image's");
   // What each script runs to record its pins.
   const lines = "grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)='";
   for (const [set, script] of [["macos", "tart/prepare-image.sh"], ["windows", "proxmox-qemu/build.sh"], ["windows-arm64", "tart/prepare-windows-image.sh"]] as const) {

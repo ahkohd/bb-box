@@ -54,6 +54,8 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.sizes` | Room for each kind | The node holds a box of each kind at its default size. |
 | `template.<vmid>` | <flavour> template <vmid> | A template is there, is a template, and has what its kind needs. |
 | `template.<vmid>.image` | Image of <flavour> template <vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
+| `proxmox.android-kvm` | KVM for Android | Where Android templates are listed, the host allows nested virtualization, as the linux-kvm setting says: the Android emulator needs KVM. |
+| `proxmox.android-disk` | Disk for Android | The storage of each Android template has room beyond the reserve for a refresh's build and trial boxes and an Android box in use. |
 | `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
 
 ## SSH host pool
