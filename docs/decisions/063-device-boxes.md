@@ -2,7 +2,9 @@
 
 Status: accepted, 26 October 2026, with [the owner's answers](#the-owners-answers); revised the same day after two
 independent reviews, answered finding by finding under
-[Review answers](#review-answers). Built on the research in
+[Review answers](#review-answers). Unit 2.4's measurements of each Android
+model and encoder (E6, E7, E17) are in [063 results](063-results.md). Built
+on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
 [Android emulator boxes](../research/android-emulator-boxes.md). Extends
 [060](060-every-desktop-streams-as-video-through-one-viewer.md): a device's
