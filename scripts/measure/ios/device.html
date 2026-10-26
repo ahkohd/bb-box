@@ -16,6 +16,8 @@ session.setDeviceView({ frame: q.get("frame") !== "0", pixelForPixel: q.get("pfp
 window.view = (frame, pixelForPixel) => session.setDeviceView({ frame, pixelForPixel });
 const canvas = session.element.querySelector("canvas");
 const sampler = new OffscreenCanvas(1, 1).getContext("2d", { willReadFrequently: true });
+const own = () => session.device?.state?.geometry?.video ?? { width: canvas.width, height: canvas.height };
+const toCanvas = (x, y) => ({ x: Math.round((x * canvas.width) / own().width), y: Math.round((y * canvas.height) / own().height) });
 window.session = session;
 window.drawn = [];
 window.downs = [];
@@ -27,7 +29,8 @@ CanvasRenderingContext2D.prototype.drawImage = function (...args) {
     const at = performance.now();
     let shade = -1;
     if (window.probe) {
-      sampler.drawImage(canvas, window.probe.x, window.probe.y, 1, 1, 0, 0, 1, 1);
+      const probe = toCanvas(window.probe.x, window.probe.y);
+      sampler.drawImage(canvas, probe.x, probe.y, 1, 1, 0, 0, 1, 1);
       const [r, g, b] = sampler.getImageData(0, 0, 1, 1).data;
       shade = Math.round((r + g + b) / 3);
     }
@@ -38,7 +41,8 @@ CanvasRenderingContext2D.prototype.drawImage = function (...args) {
 canvas.addEventListener("pointerdown", (event) => window.downs.push(event.timeStamp), true);
 window.shadeNow = () => {
   if (!window.probe) return -1;
-  sampler.drawImage(canvas, window.probe.x, window.probe.y, 1, 1, 0, 0, 1, 1);
+  const probe = toCanvas(window.probe.x, window.probe.y);
+  sampler.drawImage(canvas, probe.x, probe.y, 1, 1, 0, 0, 1, 1);
   const [r, g, b] = sampler.getImageData(0, 0, 1, 1).data;
   return Math.round((r + g + b) / 3);
 };
@@ -49,7 +53,8 @@ window.clientOfVideo = (x, y) => {
   return at ? { x: rect.left + at.x, y: rect.top + at.y } : null;
 };
 window.videoAt = (clientX, clientY) => session.deviceStage.toVideo(clientX, clientY);
-window.pixel = (x, y, radius = 2) => {
+window.pixel = (deviceX, deviceY, radius = 2) => {
+  const { x, y } = toCanvas(deviceX, deviceY);
   const size = radius * 2 + 1;
   sampler.canvas.width = size;
   sampler.canvas.height = size;
@@ -60,6 +65,7 @@ window.pixel = (x, y, radius = 2) => {
   const n = data.length / 4;
   return [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
 };
+window.frameSize = () => ({ width: canvas.width, height: canvas.height, own: own(), drawn: session.deviceStage.drawn });
 window.screenRect = () => {
   const rect = canvas.getBoundingClientRect();
   const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);

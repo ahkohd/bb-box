@@ -43,6 +43,7 @@ export interface RecorderOptions {
   readonly log: (line: string) => void;
   readonly clock?: RecorderClock;
   readonly limitMs?: number;
+  readonly recording?: (on: boolean) => void;
 }
 
 export type RecordingAnswer = { readonly ok: true; readonly summary: RecordingSummary } | { readonly ok: false; readonly code: DeviceErrorCode; readonly words: string };
@@ -75,7 +76,8 @@ const LEFTOVERS = /^(capture(-\d+)?\.mkv|device\.jsonl|clip\.mp4|events|pid|star
 
 function geometryOf(state: DeviceState, frame: EncodedFrame): SegmentGeometry {
   const geometry = state.geometry;
-  const video = { width: frame.width, height: frame.height };
+  const shown = geometry && geometry.generation === frame.generation ? geometry.video : null;
+  const video = shown && shown.width > shown.height === frame.width > frame.height ? shown : { width: frame.width, height: frame.height };
   if (!geometry) return { physical: "upright", content: "upright", video };
   const fold = state.platform === "android" && state.form === "foldable" ? state : null;
   const screen = fold && state.geometry && "screen" in state.geometry ? state.geometry.screen : undefined;
@@ -183,6 +185,7 @@ export class DeviceRecorder {
     watch.unref?.();
     const running: Running = { start, stopPump: new AbortController(), limit, watch, segment: null, nextSegment, keyAsked: false, booted: this.#options.state().power.is === "booted", lastTouch: null, pendingTouch: null, lastWatchAt: this.#atNow(start) };
     this.#running = running;
+    this.#options.recording?.(true);
     void this.#pump(running).catch((error) => this.#options.log(`recording: frames stopped: ${wordsOf(error)}`));
     this.#askKey(running);
   }
@@ -319,6 +322,7 @@ export class DeviceRecorder {
     clearTimeout(running.limit);
     clearInterval(running.watch);
     running.stopPump.abort();
+    this.#options.recording?.(false);
     this.#append({ type: "end", at, ended });
     rmSync(this.#pidPath, { force: true });
     this.#options.log(`recording: ended (${ended}) at ${(at / 1000).toFixed(1)} s`);
@@ -332,5 +336,6 @@ export class DeviceRecorder {
     clearTimeout(running.limit);
     clearInterval(running.watch);
     running.stopPump.abort();
+    this.#options.recording?.(false);
   }
 }

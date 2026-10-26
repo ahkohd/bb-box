@@ -73,4 +73,36 @@ describe("the device stage", () => {
     expect(stage.paint(picture(), UPRIGHT.width, UPRIGHT.height, 2)).toBe(true);
     stage.dispose();
   });
+
+  test("takes a touch in the device's own pixels whatever the frame's step, and says how large it draws the screen (064)", () => {
+    const stage = new DeviceStage(document.createElement("canvas"), "iPhone 18 Pro");
+    Object.defineProperty(stage.element, "clientWidth", { value: 400 });
+    Object.defineProperty(stage.element, "clientHeight", { value: 900 });
+    const drawn: ({ width: number; height: number } | null)[] = [];
+    stage.onDrawn = (size) => drawn.push(size);
+    stage.setState(state(1, "upright", "upright", UPRIGHT));
+    const reported = stage.drawn!;
+    expect(drawn.at(-1)).toEqual(reported);
+    expect(reported.height).toBeLessThan(900);
+    expect(reported.width / reported.height).toBeCloseTo(UPRIGHT.width / UPRIGHT.height, 2);
+    const at = [{ x: 200, y: 450 }, { x: 120, y: 300 }];
+    const touched = (width: number, height: number) => {
+      const canvas = picture();
+      canvas.width = width;
+      canvas.height = height;
+      expect(stage.paint(canvas, width, height, 1)).toBe(true);
+      return at.map((point) => stage.toVideo(point.x, point.y));
+    };
+    const full = touched(UPRIGHT.width, UPRIGHT.height);
+    for (const [width, height] of [[402, 874], [604, 1312], [804, 1748]] as const) {
+      const scaled = touched(width, height);
+      scaled.forEach((point, index) => {
+        expect(Math.abs(point!.x - full[index]!.x)).toBeLessThanOrEqual(3);
+        expect(Math.abs(point!.y - full[index]!.y)).toBeLessThanOrEqual(3);
+      });
+    }
+    expect(full[0]!.x).toBeGreaterThan(500);
+    expect(stage.shownGeneration).toBe(1);
+    stage.dispose();
+  });
 });

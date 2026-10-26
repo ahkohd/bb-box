@@ -27,7 +27,7 @@ import { Companion, accessibilityTree, orientation, screenshot, setOrientation, 
 import { iosElementAt, readIosTree } from "./ios-tree.ts";
 import { IosSettingsKeeper } from "./ios-controls.ts";
 import { IosInput, PasteboardAccess, typesWithOption } from "./ios-input.ts";
-import { IosVideo } from "./ios-video.ts";
+import { IosVideo, scaledBack } from "./ios-video.ts";
 import { inBox, type DevicePaths } from "./paths.ts";
 import { Simctl, type SimDevice } from "./simctl.ts";
 
@@ -46,6 +46,7 @@ export const ROTATE_PICTURE_MS = 1_000;
 export const LOCK_SETTLE_MS = 3_000;
 export const REBOOT_PICTURE_MS = 10_000;
 export const HID_DAEMON = "com.apple.coredevice.dtuhidd";
+export const FULL_SIZE_SLACK = 0.02;
 export const SPRINGBOARD = "com.apple.SpringBoard";
 export const HID_DAEMON_ACTIVE = "dtuhidd state changed to active";
 export const HID_DAEMON_ACTIVE_WAIT_MS = 15_000;
@@ -180,6 +181,7 @@ export class IosDriver implements DeviceDriver {
   #lastTick: { readonly wall: number; readonly mono: number } | null = null;
   #closed = new AbortController();
   #awake = true;
+  #leftoversChecked = false;
   readonly #settings: IosSettingsKeeper;
 
   constructor(options: IosDriverOptions) {
@@ -193,9 +195,10 @@ export class IosDriver implements DeviceDriver {
     this.#settings = new IosSettingsKeeper({ simctl: this.#simctl, file: own.settings, log: options.log, now: () => this.#clock.now() });
     this.#companion = new Companion({ program: options.companionProgram, paths: own.companion, log: options.log });
     this.#video = new IosVideo({
-      open: (stopped, signal) => videoStream(this.#companion.client, stopped, signal),
+      open: (stopped, signal, scale) => videoStream(this.#companion.client, stopped, signal, scale),
       recover: (error) => this.#recover(error),
       sized: (size) => this.#sized(size),
+      fullSize: (frame, scale) => this.#fullSize(frame, scale),
       log: options.log,
       monotonic: () => this.#clock.monotonic(),
     });
@@ -278,10 +281,18 @@ export class IosDriver implements DeviceDriver {
     await this.#rememberContent(target);
     const reattached = running && !rebooted;
     const keepCompanion = reattached && !(await this.#companionPredatesBoot(target, device.udid));
-    const companion = keepCompanion ? await this.#companion.ensure(device.udid, signal) : await this.#companion.restart(device.udid, signal);
+    let companion = keepCompanion ? await this.#companion.ensure(device.udid, signal) : await this.#companion.restart(device.udid, signal);
+    if (companion === "reused" && !this.#leftoversChecked) {
+      this.#leftoversChecked = true;
+      const leftover = await this.#companion.streamsEncoding(this.#clock.now());
+      if (leftover) {
+        this.#log(`companion: idb_companion still encodes ${leftover} video stream${leftover === 1 ? "" : "s"} of an earlier device server, which it never ends; starting it again`);
+        companion = await this.#companion.restart(device.udid, signal);
+      }
+    }
     if (companion === "started") this.#input.close();
     this.#physical = (await orientation(this.#companion.client, AbortSignal.any([signal, AbortSignal.timeout(ORIENTATION_READ_MS)])).catch(() => null)) ?? this.#physical;
-    if (this.#video.running) this.#video.restart(`idb_companion was ${companion}`);
+    if (this.#video.enabled) this.#video.restart(`idb_companion was ${companion}`);
     else this.#video.start();
     await this.#settings.use(target.model, device.udid, signal).catch((error) => this.#log(`settings: ${words(error)}`));
     await this.#readSettings(signal).catch((error) => this.#log(`settings: not read: ${words(error)}`));
@@ -377,10 +388,19 @@ export class IosDriver implements DeviceDriver {
     return true;
   }
 
+  #fullSize(frame: VideoSize, scale: number): VideoSize {
+    const back = scaledBack(frame, scale);
+    if (scale === 1 || !this.#target) return back;
+    const screen = screensOf(this.#model())[0].pixels;
+    const own = back.width > back.height === screen.width > screen.height ? screen : { width: screen.height, height: screen.width };
+    const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(4, b * FULL_SIZE_SLACK);
+    return near(back.width, own.width) && near(back.height, own.height) ? own : back;
+  }
+
   #sized(size: VideoSize): number {
     this.#generation++;
     this.#input.close();
-    this.#log(`video: the ${this.#target?.model ?? "device"} streams at ${size.width}x${size.height}, generation ${this.#generation}`);
+    this.#log(`video: the ${this.#target?.model ?? "device"} is ${size.width}x${size.height} in its own pixels, generation ${this.#generation}`);
     void this.#readOrientation();
     this.#changed();
     return this.#generation;

@@ -1,0 +1,19 @@
+[
+  { "tool": "control", "control": { "action": "home" } },
+  { "tool": "run", "command": "cd ~/bb-box && node scripts/measure/ios/drive.ts follow:third:700:1000:1:frame" },
+  { "tool": "launch", "app": "Settings" },
+  { "tool": "observe" },
+  { "tool": "run", "command": "cd ~/bb-box && node scripts/measure/ios/drive.ts follow:full:700:1000:1:pfp" },
+  { "tool": "act", "action": "click", "ref": "/\"General\" \\(id com.apple.settings.general\\)/" },
+  { "tool": "observe" },
+  { "tool": "run", "command": "cd ~/bb-box && node scripts/measure/ios/drive.ts follow:half:600:1100:1:frame" },
+  { "tool": "act", "action": "click", "ref": "/\"About\"/" },
+  { "tool": "observe", "query": "Name" },
+  { "tool": "launch", "url": "http://127.0.0.1:8770/touch.html" },
+  { "tool": "wait", "ms": 1500 },
+  { "tool": "screenshot" },
+  { "tool": "act", "action": "click", "x": 150, "y": 500 },
+  { "tool": "screenshot" },
+  { "tool": "act", "action": "click", "x": 600, "y": 1100 },
+  { "tool": "screenshot" }
+]

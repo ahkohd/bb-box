@@ -16,6 +16,7 @@ import {
   POSTURES,
   SWITCH_STEPS,
   TEXT_SIZE_STEPS,
+  VIDEO_STEPS,
   batteryProblem,
   deviceModel,
   deviceModels,
@@ -574,7 +575,7 @@ function base64(value: unknown, path: string): string {
 }
 
 function request(value: unknown, path: string): DeviceRequest {
-  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "launch", "settle", "at", "screenshot", "tree", "record", "result"]);
+  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "launch", "settle", "at", "screenshot", "tree", "record", "cap", "result"]);
   const at = (key: string) => `${path}.${key}`;
   switch (type) {
     case "touch": {
@@ -633,6 +634,10 @@ function request(value: unknown, path: string): DeviceRequest {
       const read = fields(value, path, ["id", "type", "longestEdge"]);
       const id = requestId(read.id, at("id"));
       return read.longestEdge === undefined ? { id, type } : { id, type, longestEdge: whole(read.longestEdge, at("longestEdge"), SCREENSHOT_EDGE_LEAST, 16384) };
+    }
+    case "cap": {
+      const read = fields(value, path, ["id", "type", "most"]);
+      return { id: requestId(read.id, at("id")), type, most: read.most === null ? null : oneOf(read.most, at("most"), VIDEO_STEPS) };
     }
     case "tree":
     case "result":

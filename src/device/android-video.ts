@@ -1,4 +1,4 @@
-import type { VideoSize } from "../core/device.ts";
+import type { VideoSize, VideoStep } from "../core/device.ts";
 import type { EncodedFrame, VideoSource } from "./driver.ts";
 import { FrameFanout } from "./frame-fanout.ts";
 import type { H264Encoder } from "./h264-encoder.ts";
@@ -51,6 +51,9 @@ export class AndroidVideo implements VideoSource {
   #streamRestarts = 0;
   #encoderWords: string | null = null;
   #stream: AbortController | null = null;
+  #paused = false;
+  #resumed = false;
+  #framesSkipped = 0;
 
   constructor(options: AndroidVideoOptions) {
     this.#options = options;
@@ -91,6 +94,24 @@ export class AndroidVideo implements VideoSource {
 
   get encoderWords(): string | null {
     return this.#encoderWords;
+  }
+
+  get paused(): boolean {
+    return this.#paused;
+  }
+
+  get framesSkipped(): number {
+    return this.#framesSkipped;
+  }
+
+  want(step: VideoStep | null): void {
+    const paused = step === null;
+    if (paused === this.#paused) return;
+    this.#paused = paused;
+    this.#options.log(paused ? "video: encoding paused, as nothing wants the video" : "video: encoding again");
+    if (paused || !this.#shown || !this.#running) return;
+    this.#resumed = true;
+    this.#ensureEncoder().submitShared(this.#shown);
   }
 
   frames(signal: AbortSignal): AsyncIterable<EncodedFrame> {
@@ -143,7 +164,9 @@ export class AndroidVideo implements VideoSource {
       for await (const unit of encoder.frames()) {
         if (encoder !== this.#encoder) continue;
         this.#framesSent++;
-        const frame: EncodedFrame = { data: unit.data, key: unit.key, generation: unit.generation, monotonicMs: unit.monotonicMs, width: unit.width, height: unit.height };
+        const unchanged = this.#resumed || !!unit.again;
+        this.#resumed = false;
+        const frame: EncodedFrame = { data: unit.data, key: unit.key, generation: unit.generation, monotonicMs: unit.monotonicMs, width: unit.width, height: unit.height, ...(unchanged ? { unchanged } : {}) };
         this.#fanout.push(frame);
       }
     } catch (error) {
@@ -194,6 +217,10 @@ export class AndroidVideo implements VideoSource {
     const changed = !shown || shown.width !== screen.width || shown.height !== screen.height || shown.rotation !== screen.rotation;
     this.#shown = { width: screen.width, height: screen.height, rotation: screen.rotation, generation: shown?.generation ?? 0 };
     if (changed) this.#shown = { ...this.#shown, generation: this.#options.sized({ width: screen.width, height: screen.height }, screen.rotation) };
+    if (this.#paused) {
+      this.#framesSkipped++;
+      return;
+    }
     this.#ensureEncoder().submitShared(this.#shown);
   }
 }

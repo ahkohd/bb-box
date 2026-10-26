@@ -1,0 +1,16 @@
+[
+  { "tool": "control", "control": { "action": "home" } },
+  { "tool": "shell", "command": "cd ~/bb-box && CHROME=/usr/bin/google-chrome PAGE='http://127.0.0.1:8770/device.html?model=Pixel%20Fold&guest=linux' MODEL='Pixel Fold' node scripts/measure/ios/drive.ts follow:small:700:1000:1:frame" },
+  { "tool": "launch", "app": "Settings" },
+  { "tool": "observe" },
+  { "tool": "shell", "command": "cd ~/bb-box && CHROME=/usr/bin/google-chrome PAGE='http://127.0.0.1:8770/device.html?model=Pixel%20Fold&guest=linux' MODEL='Pixel Fold' node scripts/measure/ios/drive.ts follow:pfp:700:1000:1:pfp" },
+  { "tool": "act", "action": "click", "ref": "/\"Connected devices/" },
+  { "tool": "observe" },
+  { "tool": "launch", "url": "http://10.0.2.2:8770/touch.html" },
+  { "tool": "wait", "ms": 2000 },
+  { "tool": "screenshot" },
+  { "tool": "act", "action": "click", "x": 300, "y": 500 },
+  { "tool": "screenshot" },
+  { "tool": "act", "action": "click", "x": 900, "y": 1000 },
+  { "tool": "screenshot" }
+]

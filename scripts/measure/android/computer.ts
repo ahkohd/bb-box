@@ -104,6 +104,7 @@ async function main(): Promise<void> {
     log: (line) => process.stderr.write(`plugin: ${line}\n`),
     logError: (operation, error) => process.stderr.write(`plugin: ${operation}: ${error}\n`),
     instance: `bench-android-computer-${process.pid}`,
+    ...(process.env.HARNESS_STARTED ? { started: Number(process.env.HARNESS_STARTED) + 1 } : {}),
   });
   const computer = new DeviceComputer({
     read: (each, request) => servers.read(each, request),

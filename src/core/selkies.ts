@@ -23,7 +23,7 @@
 
 import type { ByteChannel } from "../transports/types.ts";
 import { BoxWebSocket, WebSocketError, type Message } from "./websocket.ts";
-import { DEVICE_ANSWER_VERB, DEVICE_REQUEST_VERB, DEVICE_STILLS_VERB } from "./device.ts";
+import { DEVICE_ANSWER_VERB, DEVICE_REQUEST_VERB, DEVICE_STILLS_VERB, DEVICE_VIEW_VERB } from "./device.ts";
 
 const PATH = "/api/websockets";
 /** Selkies' RECONNECT_DEBOUNCE_MS, with a margin. */
@@ -50,7 +50,7 @@ export type OpenStream = (signal: AbortSignal) => Promise<ByteChannel>;
 
 /** What a message from a viewer is, by its first comma-separated field. */
 type Kind = "video" | "ack" | "input" | "device" | "drop";
-const VIDEO_VERBS = new Set(["SETTINGS", "START_VIDEO", "STOP_VIDEO", "REQUEST_KEYFRAME", DEVICE_STILLS_VERB]);
+const VIDEO_VERBS = new Set(["SETTINGS", "START_VIDEO", "STOP_VIDEO", "REQUEST_KEYFRAME", DEVICE_STILLS_VERB, DEVICE_VIEW_VERB]);
 /** Keys, pointer, typing and the clipboard: what Selkies takes only from a page with control. */
 const INPUT_VERBS = new Set(["kd", "ku", "kh", "kr", "m", "m2", "co", "cw", "cb", "cws", "cbs", "cwd", "cbd", "cwe", "cbe", "cr", "REQUEST_CLIPBOARD"]);
 /** What Selkies sends of the box's clipboard: only the viewer with control gets it, as with RFB. */

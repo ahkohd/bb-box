@@ -823,6 +823,61 @@ describe("the Android video", () => {
       await video.stop();
     }
   });
+
+  test("encodes nothing while nothing wants the video, still reading the screen for its geometry, and starts again from the last frame, which is no change (064)", async () => {
+    const screens: { width: number; height: number; rotation: number }[] = [];
+    let push: () => void = () => {};
+    let generation = 0;
+    const video = new AndroidVideo({
+      open: async function* (signal) {
+        while (!signal.aborted) {
+          const next = screens.shift();
+          if (next) yield next;
+          else
+            await new Promise<void>((resolve) => {
+              push = resolve;
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+        }
+      },
+      encoder: () => new H264Encoder({ helper: FAKE_HELPER, sharedMemory: "/nonexistent" }),
+      sized: () => ++generation,
+      recover: async () => {},
+      log: () => undefined,
+    });
+    const frames: { key: boolean; unchanged: boolean }[] = [];
+    const reading = new AbortController();
+    void (async () => {
+      for await (const each of video.frames(reading.signal)) frames.push({ key: each.key, unchanged: !!each.unchanged });
+    })();
+    video.start();
+    try {
+      video.want(null);
+      for (let index = 0; index < 3; index++) {
+        screens.push({ width: 64, height: index === 2 ? 32 : 64, rotation: 0 });
+        push();
+        await until(`screen ${index + 1}`, () => video.framesReceived === index + 1);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(frames.length, 0, "nothing is encoded while nothing wants the video");
+      assert.equal(video.framesSkipped, 3);
+      assert.deepEqual(video.size, { width: 64, height: 32 }, "the screen's size is still read");
+      assert.equal(generation, 2);
+      video.want("full");
+      await until("the last screen, encoded", () => frames.length === 1);
+      assert.deepEqual(frames[0], { key: true, unchanged: true });
+      video.keyframe();
+      await until("the key frame asked for", () => frames.length === 2);
+      assert.deepEqual(frames[1], { key: true, unchanged: true }, "the last frame encoded again is no change");
+      screens.push({ width: 64, height: 32, rotation: 0 });
+      push();
+      await until("a change", () => frames.length === 3);
+      assert.equal(frames[2]!.unchanged, false);
+    } finally {
+      reading.abort();
+      await video.stop();
+    }
+  });
 });
 
 function runner(answers: Record<string, Partial<Ran>>, seen: string[]): Runner {

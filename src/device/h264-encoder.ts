@@ -10,6 +10,7 @@ export interface EncodedFrame {
   readonly monotonicMs: number;
   readonly width: number;
   readonly height: number;
+  readonly again?: boolean;
 }
 
 export interface EncodedUnit {
@@ -117,6 +118,7 @@ type Waiting = { readonly frame: RawFrame; readonly at: number } | { readonly sh
 interface InFlight {
   readonly generation: number;
   readonly at: number;
+  readonly again?: boolean;
 }
 
 export class H264EncoderStopped extends Error {}
@@ -221,7 +223,7 @@ export class H264Encoder {
     if (this.#inFlight || this.#closed) return;
     if (this.#keyWanted) {
       this.#keyWanted = false;
-      this.#inFlight = { generation: this.#lastGeneration, at: this.#lastAt };
+      this.#inFlight = { generation: this.#lastGeneration, at: this.#lastAt, again: true };
       this.#child.stdin.write("K");
       return;
     }
@@ -252,7 +254,7 @@ export class H264Encoder {
       this.#inFlight = null;
       if (unit.data.length > 0 && answered) {
         this.#onEncoded?.(unit);
-        this.#encoded.push({ data: unit.data, key: unit.key, generation: answered.generation, monotonicMs: answered.at, width: unit.width, height: unit.height });
+        this.#encoded.push({ data: unit.data, key: unit.key, generation: answered.generation, monotonicMs: answered.at, width: unit.width, height: unit.height, ...(answered.again ? { again: true } : {}) });
         this.#wakeReader();
       }
       this.#pump();

@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import { Deframer, frame } from "../src/device/grpc.ts";
 import { decode, encode } from "../src/device/protobuf.ts";
 import { GRPC_METHODS, IDB_SCHEMA } from "../src/device/schemas.ts";
+import { evenScaled, spsOfSize } from "./sps.ts";
 
 const IPHONE_SPS = "27640032ac13142404c0149e6a9a80868083c2010898";
 const START = Uint8Array.of(0, 0, 0, 1);
@@ -16,6 +17,10 @@ function annexB(...units: Uint8Array[]): Uint8Array {
 }
 
 const KEY_FRAME = annexB(Buffer.from(IPHONE_SPS, "hex"), PPS, IDR);
+
+function keyFrameAt(scale: number): Uint8Array {
+  return scale === 1 ? KEY_FRAME : annexB(spsOfSize(evenScaled(1206, scale), evenScaled(2622, scale)), PPS, IDR);
+}
 const DELTA_FRAME = annexB(DELTA);
 
 function payload(data: Uint8Array): Buffer {
@@ -45,11 +50,15 @@ server.on("stream", (stream, headers) => {
     stream.on("error", () => undefined);
     stream.on("close", () => timer && clearInterval(timer));
     stream.on("data", (chunk: Buffer) => {
-      messages += deframer.push(new Uint8Array(chunk)).length;
-      if (messages === 1 && !timer) {
-        note(`stream ${values.udid}`);
+      const received = deframer.push(new Uint8Array(chunk));
+      const first = messages === 0 ? received[0] : undefined;
+      messages += received.length;
+      if (messages >= 1 && first && !timer) {
+        const asked = decode(IDB_SCHEMA, "idb.VideoStreamRequest", first) as { start?: { scale_factor?: number } };
+        const scale = asked.start?.scale_factor ?? 1;
+        note(`stream ${values.udid} scale ${Math.round(scale * 1000) / 1000}`);
         ok();
-        stream.write(payload(KEY_FRAME));
+        stream.write(payload(keyFrameAt(scale)));
         timer = setInterval(() => !still && stream.write(payload(DELTA_FRAME)), 30);
       } else if (messages >= 2) {
         if (timer) clearInterval(timer);

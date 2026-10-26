@@ -17,6 +17,7 @@ import {
   type Power,
   type TouchContact,
   type VideoSize,
+  type VideoStep,
 } from "../core/device.ts";
 import { DriverError, type DeviceDriver, type EncodedFrame, type VideoSource } from "./driver.ts";
 import { PcmH264Encoder, yuvFromRgba } from "./pcm-h264.ts";
@@ -58,6 +59,7 @@ export interface TestRecord {
   readonly controls: DeviceControl[];
   readonly opened: string[];
   readonly launched: string[];
+  readonly steps: (VideoStep | null)[];
   prepared: number;
 }
 
@@ -74,11 +76,15 @@ class Frames implements VideoSource {
   keyframe(): void {
     this.#driver.askKeyframe();
   }
+
+  want(step: VideoStep | null): void {
+    this.#driver.wanted(step);
+  }
 }
 
 export class TestDriver implements DeviceDriver {
   readonly platform: DevicePlatform;
-  readonly record: TestRecord = { touches: [], keys: [], pastes: [], controls: [], opened: [], launched: [], prepared: 0 };
+  readonly record: TestRecord = { touches: [], keys: [], pastes: [], controls: [], opened: [], launched: [], steps: [], prepared: 0 };
   readonly #clock: TestDriverClock;
   readonly #listeners = new Set<() => void>();
   readonly #frameWaiters = new Set<() => void>();
@@ -197,6 +203,7 @@ export class TestDriver implements DeviceDriver {
     const size = content.size;
     const card = JSON.stringify({ ...content, generation: this.#generation });
     if (card === this.#lastCard && !this.#keyAsked) return;
+    const unchanged = card === this.#lastCard;
     this.#lastCard = card;
     if (!this.#encoder || this.#encoder.size.width !== size.width || this.#encoder.size.height !== size.height) {
       this.#encoder = new PcmH264Encoder(size);
@@ -207,13 +214,19 @@ export class TestDriver implements DeviceDriver {
     this.#keyAsked = false;
     if (!encoded) return;
     this.#frameCount++;
-    this.#latest = { data: encoded.data, key: encoded.key, generation: this.#generation, monotonicMs: this.#clock.monotonic(), width: size.width, height: size.height };
+    this.#latest = { data: encoded.data, key: encoded.key, generation: this.#generation, monotonicMs: this.#clock.monotonic(), width: size.width, height: size.height, ...(unchanged ? { unchanged } : {}) };
     for (const wake of this.#frameWaiters) wake();
   }
 
   askKeyframe(): void {
     this.#keyAsked = true;
     this.#draw();
+  }
+
+  wanted(step: VideoStep | null): void {
+    const opens = step !== null && (this.record.steps.at(-1) ?? null) === null;
+    this.record.steps.push(step);
+    if (opens) this.askKeyframe();
   }
 
   async *frameStream(signal: AbortSignal): AsyncIterable<EncodedFrame> {
