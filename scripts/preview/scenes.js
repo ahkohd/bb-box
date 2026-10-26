@@ -303,7 +303,7 @@ function configState(options = {}) {
   return {
     document,
     revision: document.revision,
-    defaults: { general: { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false }, kinds: { linux: LINUX_SIZES, "linux-desktop": DESKTOP_SIZES, "linux-desktop-cpu": DESKTOP_SIZES, macos: LINUX_SIZES, "macos-desktop": DESKTOP_SIZES } },
+    defaults: { general: { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false }, kinds: { linux: LINUX_SIZES, "linux-desktop": DESKTOP_SIZES, "linux-desktop-cpu": DESKTOP_SIZES, macos: LINUX_SIZES, "macos-desktop": DESKTOP_SIZES } },
     kinds: KIND_INFO,
     drivers: [...DRIVERS, ...(options.drivers ?? [])],
     backends: options.backends ?? [

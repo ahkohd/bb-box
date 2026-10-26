@@ -25,6 +25,7 @@ bb-box's configuration is one document (029): `bb box config show --json` prints
 | `files` | `readonly BoxFileSetting[]` |  | Files for every box (#455): paths under the box user's home, whose contents are secrets. |
 | `video` | `boolean` | `true` | Whether viewers of a Linux X11 desktop on the CPU show it as video, through Selkies (056), unless one chose VNC in its menu. On unless set off: an install with no value takes the default. |
 | `nightlyImages` | `boolean` | `false` | Whether bb-box rebuilds the standard images that are due each night (049), on a schedule of its own at 03:00 on BB's server. Off unless set; first-run setup turns it on. |
+| `testDevice` | `boolean` | `false` | Advanced: whether linux, linux-desktop-cpu, macos and macos-desktop boxes offer the test device (063), a test card served by bb-box's device server in place of a phone, for checking the device path with no simulator or emulator. It stands in for an Android phone or tablet on Linux and an iPhone on macOS, under those models' names, so a box acquired with device "Pixel 8" or "Test device" gets one. Off unless set; the conformance suite turns it on. |
 | `tailnet` | `TailnetSetting` |  | How bb-box joins machines it makes to the operator's tailnet: off, where BB is reached without one, or through a Tailscale OAuth client, from which it makes a single-use key for each machine. The client's ID and secret are general secrets. |
 
 ## kinds

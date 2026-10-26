@@ -18,6 +18,13 @@ bb-box does not redistribute the software it installs on hosts or puts in images
 
 React, Radix's menus and dialogs, and the other packages BB shares with plugins come from BB at runtime. bb-box does not bundle them. The licence texts of everything bundled are in its package in `node_modules` after `npm install`.
 
+## In the tests
+
+| Software | Licence | Notes |
+| --- | --- | --- |
+| [idb](https://github.com/facebook/idb)'s `idb.proto`, at v1.7.7 | MIT | `test/fixtures/proto/idb.proto`, unchanged, with its notice. The device server's codec is checked against its field numbers. |
+| The Android emulator's `emulator_controller.proto`, from emulator 37.2.12.0 (`emulator-linux_x64-16428233.zip`, its SHA-1 as Google's repository manifest gives it) | Apache 2.0 | `test/fixtures/proto/emulator_controller.proto`, unchanged, with its notice. The same check. |
+
 ## On hosts
 
 | Software | Licence | Where |

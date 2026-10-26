@@ -20,7 +20,7 @@ import { foldName, providerKeys, providerName } from "./provider-name.ts";
 import { randomBytes } from "node:crypto";
 import type { OfferedKind } from "../backends/index.ts";
 import { KIND_INFO, VM_FEATURES, currentKindId, featureWord, isEarlierKindId, kindRequest, vmOffersLast } from "../backends/kinds.ts";
-import { DEVICE_PLATFORMS, deviceModels, listWords, offeredModels, offersModel, type BoxDevice, type DevicePlatform, type ModelName } from "./device.ts";
+import { DEVICE_PLATFORMS, TEST_DEVICE_NAME, deviceModels, isTestOffer, listWords, offeredModels, offersModel, type BoxDevice, type DevicePlatform, type ModelName } from "./device.ts";
 import { chooseModel, parseBoxDevice, parseDeviceOffer } from "./device-parse.ts";
 import {
   BackendError,
@@ -316,6 +316,7 @@ export interface BoxesDeps {
     get(id: string): Backend | null;
     active(): Backend[];
     kinds(): OfferedKind[];
+    offered?(backend: Backend): readonly BoxKind[];
     /** The driver's label for a backend ID, as settings names it ("Proxmox LXC"), for a provider's name (044). */
     driverLabel?(id: string): string;
     /** The built backends that are on, so an `on` naming one that is off is told so (044). */
@@ -763,8 +764,11 @@ export class Boxes {
       .filter((kind) => !seen.has(kind.id) && !!seen.add(kind.id));
   }
 
-  #askedDevice(name: string | undefined, kind: string, platform: DevicePlatform | null, offered: boolean): ModelName | null {
+  #askedDevice(name: string | undefined, kind: string, platform: DevicePlatform | null, offers: readonly OfferedKind[]): ModelName | null {
     if (name === undefined) return null;
+    const offered = offers.length > 0;
+    const testOffer = offers.find((candidate) => isTestOffer(candidate.kind.capabilities.device))?.kind.capabilities.device;
+    if (testOffer && name.trim().toLowerCase() === TEST_DEVICE_NAME.toLowerCase()) return testOffer.devices[0].model;
     if (!platform) {
       if (!offered && !KIND_INFO[kind]) return null;
       const examples = DEVICE_PLATFORMS.map((each) => deviceModels(each)[0]!.name);
@@ -802,7 +806,7 @@ export class Boxes {
     const { kind: wanted, features } = kindRequest(input.kind);
     const ofKind = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
     const platform = kindPlatform(wanted, ofKind);
-    const askedDevice = this.#askedDevice(input.device, wanted, platform, ofKind.length > 0);
+    const askedDevice = this.#askedDevice(input.device, wanted, platform, ofKind);
     // An alias takes only the offers that have its features (041).
     // A VM's offer comes after the others', which start sooner and hold less, unless the request asks for a VM (057).
     const asksVm = features.some((feature) => VM_FEATURES.includes(feature));
@@ -1149,7 +1153,7 @@ export class Boxes {
       if (signal?.aborted) break;
       if (!box.guest || box.state === "gone" || box.state === "releasing") continue;
       const backend = this.#deps.backends.get(box.backend);
-      const kind = backend?.kinds().find((candidate) => candidate.id === box.kind);
+      const kind = backend ? this.#offeredKinds(backend).find((candidate) => candidate.id === box.kind) : undefined;
       if (!backend || !kind) continue;
       // A box asked for by an alias keeps what it was made with when the offer now lacks the alias's features (041).
       if (!hasFeatures(kind.capabilities, box.requires)) continue;
@@ -1424,6 +1428,10 @@ export class Boxes {
     throw new BoxError("unknown_device", `${listWords(lacking, "and")} ${lacking.length === 1 ? "has" : "have"} no ${device}. The ${device} comes from: ${having.join(", ")}. Leave "on" out for the first with room.`);
   }
 
+  #offeredKinds(backend: Backend): readonly BoxKind[] {
+    return this.#deps.backends.offered?.(backend) ?? backend.kinds();
+  }
+
   #providerName(backend: Backend): string {
     return providerName({ label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! });
   }
@@ -1519,7 +1527,7 @@ export class Boxes {
           continue;
         }
         // Checking room can show a backend lacks what it offered, as a rootless Docker host lacks Docker (041).
-        const kind = candidate.backend.kinds().find((other) => other.id === candidate.kind.id) ?? candidate.kind;
+        const kind = this.#offeredKinds(candidate.backend).find((other) => other.id === candidate.kind.id) ?? candidate.kind;
         const missing = features.filter((feature) => !kind.capabilities.features.includes(feature));
         if (!missing.length) return { ...candidate, kind };
         lacking++;
@@ -2690,7 +2698,7 @@ export class Boxes {
     const owner = found!;
     const asked = kindRequest(owner.kind ?? "unknown");
     const kindId = asked.kind;
-    const kind = backend.kinds().find((candidate) => candidate.id === kindId);
+    const kind = this.#offeredKinds(backend).find((candidate) => candidate.id === kindId);
     const answers = power === "stopped" ? false : await this.#answers(backend, guest, kindId, signal);
     const yours = owner.threadId === OPERATOR;
     const projectId = yours ? null : ((await this.#deps.projectOf?.(owner.threadId).catch(() => null)) ?? null);

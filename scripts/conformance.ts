@@ -64,4 +64,5 @@ await conformance({
   kinds: values.kind,
   skip,
   timeoutMs: 600_000,
+  testDevice: true,
 });

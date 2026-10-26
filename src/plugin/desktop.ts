@@ -143,6 +143,7 @@ export interface DesktopDeps {
   readonly staleMs?: number;
   /** How long a holder's viewer has to connect again after the box ended its connection. */
   readonly reconnectMs?: number;
+  controlChanged?(boxId: string): void;
 }
 
 export interface Desktops {
@@ -266,6 +267,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const control = new Control({
     changed(boxId) {
       changed(boxId);
+      deps.controlChanged?.(boxId);
       // A person took control of a box with Selkies viewers: its input connection opens now, not at their first key.
       if (control.view(boxId).owner === "human") selkiesBoxes.get(boxId)?.box.warm();
       cursorFor(boxId);
