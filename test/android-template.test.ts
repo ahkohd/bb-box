@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
@@ -114,4 +115,90 @@ test("the template's scripts parse, and carry no comments: their usage says what
     const comments = text.split("\n").slice(1).filter((line) => /^\s*#/.test(line));
     assert.deepEqual(comments, [], name);
   }
+});
+
+const STAND_INS: Readonly<Record<string, string>> = {
+  python3: "exit 0",
+  systemctl: "exit 0",
+  "bb-box-device-firewall": '[ ! -e "$STATE/table-gone" ]',
+  sudo: `case "$*" in
+  "-n nft delete table inet bb_box_device") touch "$STATE/table-gone" ;;
+  "-n systemctl restart bb-box-device-firewall.service") rm -f "$STATE/table-gone" ;;
+  *"/dev/tcp/192.0.2.1/22"*) exit 0 ;;
+  *"/dev/tcp/"*) exit 1 ;;
+esac`,
+  "bb-box-emulator": `case "$1" in
+  start) [ ! -e "$STATE/table-gone" ] || exit 1; echo "$2" >"$STATE/avd"; echo unfold >"$STATE/fold"; echo "avd=$2 boot_s=2.500 snapshot=loaded" ;;
+  stop) rm -f "$STATE/avd" ;;
+  grpc) case "\${3:-}" in --no-token | --token) echo 16 ;; *) echo 0 ;; esac ;;
+esac`,
+  adb: `shift 2
+case "$1" in
+  emu) echo "$2" >"$STATE/fold" ;;
+  shell)
+    shift
+    case "$*" in
+      "wm size")
+        case "$(cat "$STATE/avd")" in
+          pixel_8) echo "Physical size: 1080x2400" ;;
+          pixel_tablet) echo "Physical size: 2560x1600" ;;
+          pixel_fold) if [ "$(cat "$STATE/fold")" = fold ]; then echo "Physical size: 1080x2092"; else echo "Physical size: 2208x1840"; fi ;;
+        esac ;;
+      "settings get system accelerometer_rotation") echo 1 ;;
+      "settings get system screen_off_timeout") echo 2147483647 ;;
+      "settings get "*) echo 0 ;;
+      "dumpsys power") echo "mStayOn=true" ;;
+    esac ;;
+esac`,
+};
+
+function checkAt(stage: "before finalize" | "after finalize" | "no devices", staleKey = false) {
+  const root = mkdtempSync(join(tmpdir(), "android-check-"));
+  try {
+    const bin = join(root, "bin");
+    const share = join(root, "share");
+    const home = join(root, "home");
+    const state = join(root, "state");
+    for (const dir of [bin, share, home, state]) mkdirSync(dir, { recursive: true });
+    for (const [name, body] of Object.entries(STAND_INS)) writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+    writeFileSync(join(share, "android-pins.json"), read("pins.json"));
+    if (stage !== "no devices") writeFileSync(join(share, "android-devices.json"), JSON.stringify(pins.devices.map((device) => ({ model: device.model, native: device.avd }))));
+    const built = new Date(Date.now() - 60_000);
+    if (stage === "after finalize") writeFileSync(join(share, "image.json"), JSON.stringify({ kind: "android", built: built.toISOString().replace(/\.\d+Z$/, "Z") }));
+    for (const device of pins.devices) {
+      mkdirSync(join(home, ".android", "avd", `${device.avd}.avd`), { recursive: true });
+      writeFileSync(join(home, ".android", "avd", `${device.avd}.avd`, "config.ini"), "hw.keyboard = yes\n");
+    }
+    if (staleKey) {
+      writeFileSync(join(home, ".android", "adbkey"), "");
+      const before = new Date(built.getTime() - 3_600_000);
+      utimesSync(join(home, ".android", "adbkey"), before, before);
+    }
+    const ran = spawnSync("bash", [join(ANDROID, "check-android.sh"), "--no-base"], {
+      env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, STATE: state, BB_BOX_SHARE: share, ANDROID_HOME: join(root, "no-sdk") },
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    return ran.stdout.split("\n").filter(Boolean);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("the image's check passes in build.sh's order, before finalize.sh writes the image's record, and after it in a clone", () => {
+  for (const stage of ["before finalize", "after finalize"] as const) {
+    const lines = checkAt(stage);
+    assert.deepEqual(lines.filter((line) => /\bFAIL\b/.test(line)), [], `${stage}:\n${lines.join("\n")}`);
+    for (const device of pins.devices) assert.ok(lines.some((line) => line.startsWith(`${device.model} boots from its snapshot`) && /\bok\b/.test(line)), `${stage}: ${device.model}`);
+    assert.ok(lines.some((line) => /^Pixel Fold screens +ok +closed 1080x2092, open 2208x1840$/.test(line)), stage);
+    assert.equal(lines.filter((line) => /\bok\b/.test(line)).length, 4 + 5 * pins.devices.length, stage);
+  }
+});
+
+test("the image's check fails, not passes, when the build made no devices, and when an adb key came with the image", () => {
+  const none = checkAt("no devices");
+  assert.ok(none.some((line) => /^no emulator without the firewall +FAIL .*lists no device to try$/.test(line)), none.join("\n"));
+  assert.ok(none.some((line) => /^devices the build made +FAIL /.test(line)), none.join("\n"));
+  const stale = checkAt("after finalize", true);
+  assert.ok(stale.some((line) => /^this box's own adb identity +FAIL .*adbkey is older than the image's build/.test(line)), stale.join("\n"));
 });

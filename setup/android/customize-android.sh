@@ -162,6 +162,7 @@ chown "$box:$box" "$made"
 runuser -u "$box" -- env HOME="$home" ANDROID_HOME="$sdk" PATH="/usr/local/bin:/usr/bin:/bin" \
   bash "$made/prepare-avds.sh" /usr/share/bb-box/android-pins.json "$made/devices.json" </dev/null
 install -m 0644 "$made/devices.json" "$build/android-devices.json"
+install -m 0644 "$made/devices.json" /usr/share/bb-box/android-devices.json
 rm -rf "$made"
 
 log "removing Java, which only avdmanager needed"
