@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, test } from "node:test";
@@ -1212,6 +1212,41 @@ test("offers ios once a Mac's iOS image lists its devices: a box clones that ima
   const { displays } = await backend.transports(guest, "ios");
   assert.deepEqual(displays.map((display) => [display.id, display.protocol]), [["desktop", "rfb"]]);
   await backend.release(guest, releasing);
+});
+
+test("ios, withheld until a Mac lists the iOS image's devices, is offered once withheldKinds has read the Macs, and otherwise withheld with why: a Mac that did not answer, or an image with no devices (063)", async () => {
+  const { mac, context } = setup({ "tart-ios-image": "bb-box-ios" });
+  addImage(mac, "bb-box-ios");
+  const records = join(mac, ".bb-box", "tart", "images", "bb-box-ios.json");
+  const record = (devices: typeof IOS_DEVICES | null) => `${imageRecord("ios", { build: "build.20261003-040000-1111", base: "build.20261003-021500", devices, tools: { idb_companion: "1.7.7" } })}\n`;
+  const fresh = () => {
+    const backend = new TartBackend(tartConfig({ "tart-ios-image": "bb-box-ios" }), context, FAKES);
+    made.push(backend);
+    return backend;
+  };
+  writeFileSync(records, record(IOS_DEVICES));
+  const restarted = fresh();
+  assert.deepEqual(await restarted.withheldKinds("macos", signal()), [], "only ios is withheld");
+  assert.equal(await restarted.withheldKinds("ios", signal()).then((withheld) => withheld.length), 0);
+  assert.ok(restarted.kinds().some((kind) => kind.id === "ios"), "offered once the read is done, not left to the next");
+  assert.deepEqual(await restarted.withheldKinds("ios", signal()), []);
+
+  writeFileSync(records, record(null));
+  const bare = await fresh().withheldKinds("ios", signal());
+  assert.deepEqual(bare, [{ kind: "ios", passing: false, why: "the iOS image bb-box-ios on mac1 lists no iOS devices in its record, so there is none to boot. bb box doctor says why." }]);
+
+  writeFileSync(records, record(IOS_DEVICES));
+  const tart = join(mac, ".tart");
+  renameSync(tart, `${tart}.away`);
+  symlinkSync(join(mac, "gone"), tart);
+  try {
+    const [silent] = await fresh().withheldKinds("ios", signal());
+    assert.equal(silent?.passing, true);
+    assert.match(silent?.why ?? "", /^mac1 did not answer, so bb-box cannot read which devices its iOS image offers: .*is its volume mounted\?/s);
+  } finally {
+    rmSync(tart);
+    renameSync(`${tart}.away`, tart);
+  }
 });
 
 test("the iOS image setting is a Tart VM name of its own, and needs a macOS image to be built on (063, 3.2)", () => {

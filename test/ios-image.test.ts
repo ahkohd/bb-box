@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { judgeImage, parseImageRecord, pinsDigest } from "../src/backends/images.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
 import { parseOfferedDevices } from "../src/core/device-parse.ts";
-import { IOS_COMPANION_PAIRINGS } from "../src/core/device.ts";
+import { IOS_COMPANION_PAIRINGS, IOS_CONTENT_SIZES } from "../src/core/device.ts";
 
 const SETUP = join(import.meta.dirname, "..", "setup");
 const IOS = join(SETUP, "tart", "ios");
@@ -132,4 +132,19 @@ test("the build and the check are POSIX sh that parses, and the check runs the t
   const build = read("build-ios.sh");
   assert.match(build, /apply_slimming "\$udid" "\$list"\n  restart_device "\$udid"\n  apply_slimming "\$udid" "\$list"/, "apply, reboot, apply again");
   assert.match(build, /\[ "\$count" -eq "\$labels" \] \|\| die/, "then the count is checked");
+});
+
+test("the check sets and reads back each control box_device reads back, on each model: appearance, every text size, the status bar, and reads the lock state (063)", () => {
+  const check = read("check-ios.sh");
+  const sizes = /^content_sizes="([^"]+)"$/m.exec(check)?.[1]?.split(" ");
+  assert.deepEqual(sizes, [...IOS_CONTENT_SIZES], "the text sizes are box_device's");
+  for (const line of [
+    'check "$model appearance" ui_sets_and_reads_back "$udid" appearance "dark light"',
+    'check "$model text size" ui_sets_and_reads_back "$udid" content_size "$content_sizes"',
+    'check "$model status bar" status_bar_reads_back "$udid"',
+    'check "$model lock state" lock_state_reads "$udid"',
+  ]) {
+    assert.ok(check.includes(line), line);
+  }
+  assert.match(check, /notifyutil -g com\.apple\.springboard\.lockstate/, "the lock state the driver reads");
 });

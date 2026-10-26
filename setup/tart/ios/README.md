@@ -130,6 +130,10 @@ each device it checks:
 | slim | not every label of the list is disabled | |
 | keyboard | a keyboard default is not off | typed text must arrive as typed |
 | pixels | a screenshot's size is not the model table's | the frame is drawn from the table |
+| appearance | dark or light, once set, does not read back, or the first is not set again | box_device sets it and reads it back |
+| text size | any of the 12 text sizes, once set, does not read back, or the first is not set again | box_device sets it and reads it back |
+| status bar | an override of the time and battery is not listed, or is still listed once cleared | box_device sets it and reads it back |
+| lock state | `notifyutil` does not read the lock state, or reads it locked just after boot | the device's awake state comes from it |
 | idle cpu | the device's processes use more than 0.1 of a core over a minute, after a minute to settle | a service can fail loudly, as without `sleepd` |
 | xcuitest launch | an XCUITest launch takes over 3 s to reach its automation session, or the test fails | a service can fail quietly, as without `gamed` |
 

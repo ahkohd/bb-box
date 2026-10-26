@@ -242,14 +242,15 @@ export class IosDriver implements DeviceDriver {
     await this.#simctl.boot(device.udid, signal);
     if (!running) this.#log(`device: the ${target.model} (${device.udid}) booted in ${((this.#clock.monotonic() - began) / 1000).toFixed(1)} s`);
     const rebooted = await this.#slimming(target, device.udid, signal);
-    const companion = await this.#companion.ensure(device.udid, signal);
+    const reattached = running && !rebooted;
+    const companion = reattached ? await this.#companion.ensure(device.udid, signal) : await this.#companion.restart(device.udid, signal);
     if (companion === "started") this.#input.close();
     this.#physical = await orientation(this.#companion.client, signal).catch(() => null) ?? "upright";
     if (this.#video.running) this.#video.restart(`idb_companion was ${companion}`);
     else this.#video.start();
     await this.#settings.use(target.model, device.udid, signal).catch((error) => this.#log(`settings: ${words(error)}`));
     await this.#readSettings(signal).catch((error) => this.#log(`settings: not read: ${words(error)}`));
-    return running && !rebooted ? "reattached" : "booted";
+    return reattached ? "reattached" : "booted";
   }
 
   async #slimList(name: string): Promise<readonly string[] | null> {
@@ -619,7 +620,6 @@ export class IosDriver implements DeviceDriver {
     try {
       await this.#video.stop();
       this.#input.close();
-      await this.#companion.stop();
       const generation = this.#generation;
       await this.#simctl.shutdown(this.#udid!, signal);
       await this.#start(target, signal);

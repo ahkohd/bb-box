@@ -176,6 +176,12 @@ export interface KindCapabilities {
 }
 
 /** A kind of box a backend offers, such as linux. */
+export interface WithheldKind {
+  readonly kind: string;
+  readonly why: string;
+  readonly passing: boolean;
+}
+
 export interface BoxKind {
   /**
    * A shared word that names what the kind promises, never what it lacks.
@@ -482,6 +488,7 @@ export interface Backend {
 
   /** The kinds this backend can acquire now. */
   kinds(): readonly BoxKind[];
+  withheldKinds?(kind: string, signal?: AbortSignal): Promise<readonly WithheldKind[]>;
 
   /**
    * Real backends: how many free machines could take a box of `kind`, from

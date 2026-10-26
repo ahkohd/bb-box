@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type GpuRoom, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -72,6 +72,11 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
         ? [world.backend, ...world.others].filter((backend) => !world.off.has(backend.id)).flatMap((backend) => offered(backend).map((kind) => ({ kind, backend: backend as Backend })))
         : [],
     offered,
+    withheld: async (kind: string) => {
+      const asked = world.active ? [world.backend, ...world.others].filter((backend) => !world.off.has(backend.id)) : [];
+      const answers = await Promise.all(asked.map(async (backend) => ((await (backend as Backend).withheldKinds?.(kind)) ?? []).filter((each) => each.kind === kind).map((each) => ({ ...each, backend: backend as Backend }))));
+      return answers.flat();
+    },
     driverLabel: (id: string) => (id.startsWith("fake") ? "Fake host" : id.split(":")[0]!),
   };
   const registry = () =>
@@ -3074,6 +3079,33 @@ test("an acquire of a device kind no backend offers is refused, naming no offer,
   await assert.rejects(acquire("ios", "Pixel 8"), refusedWith("unknown_device", /^The Pixel 8 is an Android device, not an iOS one\. The iOS devices are: iPhone 18 Pro, iPhone 17, iPad Pro 13-inch \(M5\)\.$/));
   await assert.rejects(acquire("android", "Pixel 99"), refusedWith("unknown_device", /^There is no Android device called "Pixel 99"\./));
   await assert.rejects(acquire("no-such-kind", "Pixel 8"), refusedWith("unknown_kind", /^There is no "no-such-kind" kind\./));
+  assert.deepEqual(await world.boxes.list(THREAD), [], "nothing was recorded");
+});
+
+test("an acquire of a kind a backend withholds until it has read what decides it waits for that read, then is refused for room as any kind is, or told why the backend still withholds it (063)", async () => {
+  const world = setup();
+  const mac = new FakeBackend({ root: tempDir("boxes-mac"), storage: scopedStorage(world.kv, "backend/fake:mac/"), id: "fake:mac", hosts: ["mac1"], kinds: [iosKind()], maxGuests: 0 });
+  const allKinds = mac.kinds.bind(mac);
+  let read: WithheldKind | null = null;
+  let declared = false;
+  const withholding = Object.assign(mac, {
+    kinds: () => (declared ? allKinds() : allKinds().filter((kind) => kind.id !== "ios")),
+    withheldKinds: async (): Promise<WithheldKind[]> => {
+      if (declared) return [];
+      if (!read) declared = true;
+      return read ? [read] : [];
+    },
+  });
+  world.others = [withholding as unknown as Backend];
+  const acquire = () => world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios" });
+  await assert.rejects(acquire(), refusedWith("no_capacity", /^The fake host holds 0 guests at most\. Release a box to make room\.$/));
+  declared = false;
+  read = { kind: "ios", why: "mac1 did not answer: ssh timed out.", passing: true };
+  await assert.rejects(acquire(), refusedWith("no_capacity", /^No ios box \(iOS Simulator\) can come now\. Fake host on mac1 offers them, but not now: mac1 did not answer: ssh timed out\.$/));
+  read = { kind: "ios", why: "its image lists no iOS devices.", passing: false };
+  await assert.rejects(acquire(), refusedWith("unknown_kind", /^No ios box \(iOS Simulator\) can come now\. Fake host on mac1 offers them, but not now: its image lists no iOS devices\.$/));
+  world.others = [];
+  await assert.rejects(acquire(), refusedWith("unknown_kind", /^No backend offers ios boxes \(iOS Simulator\) now\./), "a kind no backend is set up for is still no backend's");
   assert.deepEqual(await world.boxes.list(THREAD), [], "nothing was recorded");
 });
 

@@ -5649,8 +5649,17 @@ test("box_acquire and bb box acquire take a device, refuse it on other kinds, an
   const cliIos = await harness.behavior.runCli(["acquire", "ios", "--thread", THREAD, "--device", "iPhone 17"]);
   assert.equal(cliIos.exitCode, 1);
   assert.match(cliIos.stderr ?? "", /No backend offers ios boxes \(iOS Simulator\) now\..*\(unknown_kind\)/s);
+  const asked: string[] = [];
+  Object.assign(app.backends.active()[0]!, {
+    withheldKinds: async (kind: string) => (asked.push(kind), kind === "ios" ? [{ kind: "ios", why: "the Mac did not answer.", passing: true }] : []),
+  });
+  const withheld = await tool("box_acquire", { kind: "ios" });
+  assert.match(text(withheld), /^No ios box \(iOS Simulator\) can come now\. .+ offers them, but not now: the Mac did not answer\.\n\nNext: Try again later/);
+  const cliWithheld = await harness.behavior.runCli(["acquire", "ios", "--thread", THREAD]);
+  assert.match(cliWithheld.stderr ?? "", /No ios box \(iOS Simulator\) can come now\..*the Mac did not answer\..*\(no_capacity\)/s);
   assert.deepEqual(await app.boxes.list(THREAD), [], "nothing was acquired");
   const list = text(await tool("box_list", {}));
   assert.doesNotMatch(list, /\bios\b|\bandroid\b|Devices:/, "box_list lists no kind no backend offers");
   assert.ok(!isError(await tool("box_acquire", { kind: "linux" })), "a box with no device is as before");
+  assert.deepEqual(asked, ["ios", "ios"], "a backend is asked only for a kind no backend offers");
 });

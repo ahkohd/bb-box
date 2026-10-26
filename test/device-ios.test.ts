@@ -373,6 +373,44 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     driver.close();
   });
 
+  test("starts a new idb_companion whenever its device boots, as one from before the boot has lost its HID connection: after the device stopped by itself, after slimming rebooted it on a reattach, and after a reboot; a plain reattach keeps the one it has", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    simulator.idbLog = setup.log;
+    for (const label of LIST) simulator.disabled.add(label);
+    const companion = () => (JSON.parse(readFileSync(join(setup.paths.dir, "companion.json"), "utf8")) as { pid: number }).pid;
+    const replaced = (before: number) => {
+      assert.notEqual(companion(), before, "a new idb_companion");
+      assert.throws(() => process.kill(before, 0), "the one from before the boot is gone");
+    };
+    const first = driverOf(setup, simulator);
+    await first.driver.attach(setup.target, AbortSignal.timeout(20_000));
+
+    let before = companion();
+    simulator.state = "Shutdown";
+    await until("the device back", () => first.logs.some((line) => line.includes("is back")), 10_000);
+    replaced(before);
+    first.driver.close();
+
+    before = companion();
+    const plain = driverOf(setup, simulator);
+    assert.equal(await plain.driver.attach(setup.target, AbortSignal.timeout(20_000)), "reattached");
+    assert.equal(companion(), before, "a reattach to a device that kept running keeps its idb_companion");
+    plain.driver.close();
+
+    simulator.disabled.delete(LIST[0]!);
+    const slimmed = driverOf(setup, simulator);
+    assert.equal(await slimmed.driver.attach(setup.target, AbortSignal.timeout(20_000)), "booted");
+    assert.ok(slimmed.logs.some((line) => line.includes("turning the rest off, then rebooting it")));
+    replaced(before);
+
+    before = companion();
+    await slimmed.driver.control({ action: "reboot" }, AbortSignal.timeout(20_000), { personHasControl: false });
+    replaced(before);
+    slimmed.driver.close();
+    await slimmed.driver.shutdown(AbortSignal.timeout(5000));
+  });
+
   test("starts a new idb_companion after the box's suspend, as one from before it grows without bound, and streams again", async () => {
     const setup = setUp();
     const simulator = new FakeSimulator();

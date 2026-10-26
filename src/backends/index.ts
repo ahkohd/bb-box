@@ -15,7 +15,7 @@ import { sshPoolDriver } from "./ssh-pool/index.ts";
 import { tartDriver } from "./tart/index.ts";
 import { GENERAL_DEFAULTS, backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
-import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall } from "./types.ts";
+import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall, WithheldKind } from "./types.ts";
 import { DEVICE_DISPLAY, desktopDisplays } from "./types.ts";
 import type { ImageFacts } from "./images.ts";
 import { WarmShortfalls } from "./warm.ts";
@@ -116,6 +116,10 @@ export function withTestDevice(kind: BoxKind): BoxKind {
 
 export interface OfferedKind {
   readonly kind: BoxKind;
+  readonly backend: Backend;
+}
+
+export interface WithheldOffer extends WithheldKind {
   readonly backend: Backend;
 }
 
@@ -474,6 +478,22 @@ export class Backends {
       }
     }
     return offered;
+  }
+
+  async withheld(kind: string, signal?: AbortSignal): Promise<WithheldOffer[]> {
+    const document = this.#document;
+    if (!document || !kindOn(document, kind)) return [];
+    const asked = [...this.#entries.values()].filter((entry) => this.#config(entry.id)?.enabled && entry.backend.withheldKinds);
+    const answers = await Promise.all(
+      asked.map(async (entry) => {
+        const withheld = await entry.backend.withheldKinds!(kind, signal).catch((error: unknown) => {
+          this.#logError(`withheld kinds ${entry.id}`, error);
+          return [];
+        });
+        return withheld.filter((each) => each.kind === kind).map((each) => ({ ...each, backend: entry.backend }));
+      }),
+    );
+    return answers.flat();
   }
 
   async dispose(): Promise<void> {

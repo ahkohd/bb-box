@@ -588,7 +588,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 7;
+export const DEVICE_SERVER_VERSION = 8;
 
 export function speaksProtocol(protocol: number): boolean {
   return protocol >= DEVICE_PROTOCOLS.least && protocol <= DEVICE_PROTOCOLS.most;
