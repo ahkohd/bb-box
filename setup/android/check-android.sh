@@ -8,10 +8,13 @@ usage: bb-box-check-android [--no-base]
 Checks an Android image as the box user, one line a check, ok or FAIL: the
 Linux VM's own checks (bb-box-check-headless) unless --no-base, then KVM, the
 device's firewall and that the emulator does not start without it, that this
-box's adb key is its own, and for each device in the image's record: it
-boots from its snapshot, its screens' pixels are the model table's, the
+box's adb key is its own, and for each device the build made, as
+/usr/share/bb-box/android-devices.json lists them: it boots from its snapshot, its screens' pixels are the model table's, the
 image's defaults hold, its gRPC refuses no token and a wrong one, and its
-ports are closed to another interface over IPv4 and IPv6.
+ports are closed to another interface over IPv4 and IPv6. It runs before
+finalize.sh writes the image's record, in build.sh's check, and after it, in
+a clone's and a refresh's trial box. BB_BOX_SHARE gives another folder than
+/usr/share/bb-box.
 USAGE
   exit 2
 }
@@ -27,7 +30,10 @@ t() { printf '%-34s ' "$1"; shift; out=$("$@" 2>&1) && echo "ok   ${out:0:200}" 
 
 sdk=${ANDROID_HOME:-/opt/android-sdk}
 export ANDROID_HOME=$sdk PATH=$sdk/platform-tools:$sdk/emulator:$PATH
-record=/usr/share/bb-box/image.json
+share=${BB_BOX_SHARE:-/usr/share/bb-box}
+record=$share/image.json
+devices=$share/android-devices.json
+pins=$share/android-pins.json
 serial=emulator-5554
 shell() { adb -s "$serial" shell "$@" </dev/null | tr -d '\r'; }
 
@@ -40,7 +46,7 @@ firewall() {
 
 fails_closed() {
   local avd started
-  avd=$(jq -r '.devices[0].native' "$record")
+  avd=$(jq -er '.[0].native' "$devices" 2>/dev/null) || { echo "$devices lists no device to try"; return 1; }
   sudo -n nft delete table inet bb_box_device || return 1
   started=0
   bb-box-emulator start "$avd" --no-save --timeout 30 >/dev/null 2>&1 && started=1
@@ -50,11 +56,19 @@ fails_closed() {
   [ "$started" = 0 ] && echo "refused while the table was gone; the table is back"
 }
 
+image_made() {
+  if [ -f "$record" ]; then
+    date -d "$(jq -er .built "$record" 2>/dev/null)" +%s 2>/dev/null
+  else
+    stat -c %Y "$devices" 2>/dev/null
+  fi
+}
+
 own_identity() {
-  local built
-  built=$(date -d "$(jq -r .built "$record")" +%s) || return 1
+  local made
+  made=$(image_made) || { echo "neither $record nor $devices says when the image was made"; return 1; }
   for file in "$HOME/.android/adbkey" "$HOME/.emulator_console_auth_token"; do
-    [ ! -e "$file" ] || [ "$(stat -c %Y "$file")" -gt "$built" ] || { echo "$file is older than the image's build: it came with the image"; return 1; }
+    [ ! -e "$file" ] || [ "$(stat -c %Y "$file")" -gt "$made" ] || { echo "$file is older than the image's build: it came with the image"; return 1; }
   done
   echo "no adb key or console token came with the image"
 }
@@ -127,12 +141,13 @@ t "KVM" kvm
 t "device firewall" firewall
 t "no emulator without the firewall" fails_closed
 t "this box's own adb identity" own_identity
-count=$(jq '.devices | length' "$record" 2>/dev/null || echo 0)
-[ "$count" -gt 0 ] || echo "devices in the record             FAIL the image's record lists no devices"
+count=$(jq -e 'length' "$devices" 2>/dev/null || echo 0)
+[ "$count" -gt 0 ] || echo "$(printf '%-34s ' "devices the build made")FAIL $devices lists none"
 for i in $(seq 0 $((count - 1))); do
-  model=$(jq -r ".devices[$i].model" "$record")
-  avd=$(jq -r ".devices[$i].native" "$record")
-  screens=$(jq -r --arg avd "$avd" '.devices[] | select(.avd == $avd) | .screens | map("\(.[0])x\(.[1])") | join(" ")' /usr/share/bb-box/android-pins.json)
+  model=$(jq -r ".[$i].model" "$devices")
+  avd=$(jq -r ".[$i].native" "$devices")
+  screens=$(jq -r --arg avd "$avd" '.devices[] | select(.avd == $avd) | .screens | map("\(.[0])x\(.[1])") | join(" ")' "$pins")
+  [ -n "$screens" ] || { echo "$(printf '%-34s ' "$model screen")FAIL $pins has no screens for $avd"; continue; }
   booted=$(bb-box-emulator start "$avd" --no-save 2>&1)
   case "$booted" in
     *snapshot=loaded*) echo "$(printf '%-34s ' "$model boots from its snapshot")ok   $booted" ;;
