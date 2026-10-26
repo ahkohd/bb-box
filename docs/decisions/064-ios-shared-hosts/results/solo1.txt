@@ -1,0 +1,42 @@
+16:48:14 phase solo1 start
+{"label": "solo1-enc2", "at": "16:48:34", "n": 2, "size": "1206x2622", "paced": false, "fps": [160.0, 160.1], "total": 320.1}
+solo1-n4-s1 shared-1: 54.6 fps, 3 Mbit/s, gap p95 33 ms worst 78 ms, 29 taps
+solo1-n4-s1 shared-2: 54.1 fps, 2.9 Mbit/s, gap p95 33 ms worst 88 ms, 29 taps
+solo1-n4-s1 shared-3: 54.8 fps, 2.9 Mbit/s, gap p95 32 ms worst 77 ms, 29 taps
+solo1-n4-s1 shared-4: 54.4 fps, 3 Mbit/s, gap p95 33 ms worst 101 ms, 29 taps
+shared-1: tap to frame median 72 ms, p95 137 ms, worst 146 ms, missed 0 of 29
+shared-2: tap to frame median 66 ms, p95 176 ms, worst 198 ms, missed 0 of 29
+shared-3: tap to frame median 70 ms, p95 143 ms, worst 181 ms, missed 0 of 29
+shared-4: tap to frame median 75 ms, p95 149 ms, worst 195 ms, missed 0 of 29
+all: 116 taps, median 70 ms, p95 149 ms, worst 198 ms, missed 0
+solo1-n6-s1 shared-1: 51.6 fps, 2.9 Mbit/s, gap p95 25 ms worst 42 ms, 29 taps
+solo1-n6-s1 shared-2: 51.7 fps, 2.9 Mbit/s, gap p95 26 ms worst 34 ms, 29 taps
+solo1-n6-s1 shared-3: 51.5 fps, 3 Mbit/s, gap p95 25 ms worst 32 ms, 29 taps
+solo1-n6-s1 shared-4: 51.5 fps, 3 Mbit/s, gap p95 25 ms worst 33 ms, 29 taps
+solo1-n6-s1 shared-5: 51.5 fps, 2.9 Mbit/s, gap p95 25 ms worst 32 ms, 29 taps
+solo1-n6-s1 shared-6: 51.6 fps, 2.9 Mbit/s, gap p95 25 ms worst 32 ms, 29 taps
+shared-1: tap to frame median 145 ms, p95 173 ms, worst 182 ms, missed 0 of 29
+shared-2: tap to frame median 149 ms, p95 182 ms, worst 182 ms, missed 0 of 29
+shared-3: tap to frame median 144 ms, p95 182 ms, worst 184 ms, missed 0 of 29
+shared-4: tap to frame median 148 ms, p95 173 ms, worst 179 ms, missed 0 of 29
+shared-5: tap to frame median 139 ms, p95 167 ms, worst 182 ms, missed 0 of 29
+shared-6: tap to frame median 147 ms, p95 186 ms, worst 200 ms, missed 0 of 29
+all: 174 taps, median 146 ms, p95 179 ms, worst 200 ms, missed 0
+solo1-n8-s0.5 shared-1: 56.6 fps, 0.6 Mbit/s, gap p95 27 ms worst 53 ms, 29 taps
+solo1-n8-s0.5 shared-2: 56.2 fps, 0.6 Mbit/s, gap p95 30 ms worst 64 ms, 29 taps
+solo1-n8-s0.5 shared-3: 56.2 fps, 0.6 Mbit/s, gap p95 28 ms worst 55 ms, 29 taps
+solo1-n8-s0.5 shared-4: 56.5 fps, 0.6 Mbit/s, gap p95 30 ms worst 54 ms, 29 taps
+solo1-n8-s0.5 shared-5: 56.5 fps, 0.6 Mbit/s, gap p95 28 ms worst 65 ms, 29 taps
+solo1-n8-s0.5 shared-6: 55.9 fps, 0.5 Mbit/s, gap p95 30 ms worst 54 ms, 29 taps
+solo1-n8-s0.5 shared-7: 56.4 fps, 0.6 Mbit/s, gap p95 28 ms worst 53 ms, 29 taps
+solo1-n8-s0.5 shared-8: 56.5 fps, 0.6 Mbit/s, gap p95 28 ms worst 54 ms, 29 taps
+shared-1: tap to frame median 66 ms, p95 83 ms, worst 104 ms, missed 0 of 29
+shared-2: tap to frame median 66 ms, p95 83 ms, worst 95 ms, missed 0 of 29
+shared-3: tap to frame median 66 ms, p95 83 ms, worst 84 ms, missed 0 of 29
+shared-4: tap to frame median 67 ms, p95 84 ms, worst 84 ms, missed 0 of 29
+shared-5: tap to frame median 66 ms, p95 84 ms, worst 117 ms, missed 0 of 29
+shared-6: tap to frame median 66 ms, p95 94 ms, worst 95 ms, missed 0 of 29
+shared-7: tap to frame median 65 ms, p95 77 ms, worst 83 ms, missed 0 of 29
+shared-8: tap to frame median 73 ms, p95 94 ms, worst 131 ms, missed 0 of 29
+all: 232 taps, median 66 ms, p95 84 ms, worst 131 ms, missed 0
+16:51:07 phase solo1 end

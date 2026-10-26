@@ -1,0 +1,12 @@
+base-n4 shared-1: 55.6 fps, 3.3 Mbit/s, gap p95 26 ms worst 105 ms, 29 taps
+base-n4 shared-2: 55.5 fps, 3.3 Mbit/s, gap p95 28 ms worst 121 ms, 29 taps
+base-n4 shared-3: 55.2 fps, 3.3 Mbit/s, gap p95 30 ms worst 89 ms, 29 taps
+base-n4 shared-4: 55.5 fps, 3.1 Mbit/s, gap p95 27 ms worst 91 ms, 29 taps
+all: 116 taps, median 72 ms, p95 144 ms, worst 317 ms, missed 0
+make-n4 shared-1: 55.5 fps, 3 Mbit/s, gap p95 28 ms worst 135 ms, 39 taps
+make-n4 shared-2: 56.3 fps, 3.3 Mbit/s, gap p95 26 ms worst 114 ms, 39 taps
+make-n4 shared-3: 55.8 fps, 3.3 Mbit/s, gap p95 28 ms worst 126 ms, 39 taps
+make-n4 shared-4: 55.4 fps, 3.1 Mbit/s, gap p95 28 ms worst 135 ms, 39 taps
+devices 1, disabled 112
+slot slt6 made in 43.4 s
+all: 156 taps, median 71 ms, p95 148 ms, worst 244 ms, missed 0

@@ -1,0 +1,31 @@
+17:39:33 phase bflat start
+{"label": "bflat-enc2-1", "at": "17:39:54", "n": 2, "size": "1206x2622", "paced": false, "fps": [79.7, 79.7], "total": 159.4}
+{"label": "bflat-enc2-2", "at": "17:40:14", "n": 2, "size": "1206x2622", "paced": false, "fps": [79.7, 79.6], "total": 159.3}
+bflat-n4-s1 shared-1: 52.6 fps, 2.9 Mbit/s, gap p95 24 ms worst 26 ms, 29 taps
+bflat-n4-s1 shared-2: 52.6 fps, 3 Mbit/s, gap p95 24 ms worst 26 ms, 29 taps
+bflat-n4-s1 shared-3: 52.6 fps, 3 Mbit/s, gap p95 24 ms worst 26 ms, 29 taps
+bflat-n4-s1 shared-4: 52.6 fps, 3 Mbit/s, gap p95 24 ms worst 26 ms, 29 taps
+shared-1: tap to frame median 148 ms, p95 152 ms, worst 154 ms, missed 0 of 29
+shared-2: tap to frame median 149 ms, p95 153 ms, worst 153 ms, missed 0 of 29
+shared-3: tap to frame median 149 ms, p95 156 ms, worst 157 ms, missed 0 of 29
+shared-4: tap to frame median 149 ms, p95 154 ms, worst 156 ms, missed 0 of 29
+all: 116 taps, median 149 ms, p95 154 ms, worst 157 ms, missed 0
+bflat-n8-s0.5 shared-1: 57.2 fps, 0.6 Mbit/s, gap p95 29 ms worst 46 ms, 29 taps
+bflat-n8-s0.5 shared-2: 57.3 fps, 0.6 Mbit/s, gap p95 30 ms worst 41 ms, 29 taps
+bflat-n8-s0.5 shared-3: 57.2 fps, 0.6 Mbit/s, gap p95 29 ms worst 45 ms, 29 taps
+bflat-n8-s0.5 shared-4: 57.3 fps, 0.6 Mbit/s, gap p95 30 ms worst 48 ms, 29 taps
+bflat-n8-s0.5 shared-5: 57.1 fps, 0.5 Mbit/s, gap p95 30 ms worst 45 ms, 29 taps
+bflat-n8-s0.5 shared-6: 57.2 fps, 0.6 Mbit/s, gap p95 29 ms worst 42 ms, 29 taps
+bflat-n8-s0.5 shared-7: 57.1 fps, 0.6 Mbit/s, gap p95 30 ms worst 48 ms, 29 taps
+bflat-n8-s0.5 shared-8: 57 fps, 0.6 Mbit/s, gap p95 29 ms worst 43 ms, 29 taps
+shared-1: tap to frame median 67 ms, p95 84 ms, worst 86 ms, missed 0 of 29
+shared-2: tap to frame median 66 ms, p95 80 ms, worst 87 ms, missed 0 of 29
+shared-3: tap to frame median 65 ms, p95 85 ms, worst 92 ms, missed 0 of 29
+shared-4: tap to frame median 70 ms, p95 77 ms, worst 85 ms, missed 0 of 29
+shared-5: tap to frame median 71 ms, p95 82 ms, worst 84 ms, missed 0 of 29
+shared-6: tap to frame median 67 ms, p95 80 ms, worst 84 ms, missed 0 of 29
+shared-7: tap to frame median 71 ms, p95 83 ms, worst 84 ms, missed 0 of 29
+shared-8: tap to frame median 66 ms, p95 77 ms, worst 78 ms, missed 0 of 29
+all: 232 taps, median 68 ms, p95 82 ms, worst 92 ms, missed 0
+{"label": "bflat-enc2-3", "at": "17:42:07", "n": 2, "size": "1206x2622", "paced": false, "fps": [79.7, 79.7], "total": 159.4}
+17:42:07 phase bflat end

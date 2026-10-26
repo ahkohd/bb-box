@@ -1,0 +1,60 @@
+== setup
+18:46:03 system: macOS 26.3.1, Apple M4 Pro (Virtual), 6 cores, 14 GiB
+Xcode 26.1.1 Build version 17B100 
+iOS 17.5 (17.5 - 21F79) - com.apple.CoreSimulator.SimRuntime.iOS-17-5
+iOS 18.6 (18.6 - 22G86) - com.apple.CoreSimulator.SimRuntime.iOS-18-6
+iOS 26.0 (26.0 - 23A343) - com.apple.CoreSimulator.SimRuntime.iOS-26-0
+iOS 26.1 (26.1 - 23B86) - com.apple.CoreSimulator.SimRuntime.iOS-26-1
+iOS 26.2 (26.2 - 23C54) - com.apple.CoreSimulator.SimRuntime.iOS-26-2
+/opt/homebrew/bin/ffmpeg
+/opt/homebrew/bin/node
+18:46:04 idb_companion installed in 0.6 s: {"build_date":"Oct 22 2026","build_time":"13:52:17"}
+18:46:04 runtime com.apple.CoreSimulator.SimRuntime.iOS-26-2, device type com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro
+18:46:31 template first boot 27.1 s
+Unrecognized subcommand: reboot
+Command line utility to control the Simulator
+For subcommands that require a <device> argument, you may specify a device UDID
+will choose one of them.
+Subcommands:
+Unrecognized subcommand: reboot
+Command line utility to control the Simulator
+For subcommands that require a <device> argument, you may specify a device UDID
+will choose one of them.
+Subcommands:
+18:48:17 template slimmed with the iOS 27.0 list: 112 of 112 labels off; store /private/var/tmp/com.apple.CoreSimulator.SimDevice.B5E8A542-2F86-42A2-BDFA-A317DC9DAB16/disabled.plist
+18:48:38 clones made
+== ns1 (harness's nohup failed: no companions)
+18:48:45 phase ns1 start
+18:50:21  shared-1 B528C400-4DD4-4684-8374-E161CC5C27D6 booted in 16.0 s, companion up
+18:51:14  shared-2 BCE993A6-7DDA-4E18-9DFB-8C8EEBA40A6D booted in 18.7 s, companion up
+18:52:07  shared-3 8D804D51-CC1B-430D-95A7-562C8E067823 booted in 19.5 s, companion up
+18:53:04  shared-4 E5B98D56-2EF7-4258-B27D-36A44B038A93 booted in 22.3 s, companion up
+18:54:04  shared-5 8911CBE3-6237-48AD-9C8F-7D879F223A78 booted in 24.1 s, companion up
+18:55:04  shared-6 303E1BA8-678E-4492-B0C6-D43B8857BF87 booted in 25.5 s, companion up
+ns1-n4-s1 shared-1: 0 fps, 0 Mbit/s, gap p95 NaN ms worst -Infinity ms, 0 taps, errors stream: The pending stream has been canceled (caused by: connect ENOENT /
+ns1-n4-s1 shared-2: 0 fps, 0 Mbit/s, gap p95 NaN ms worst -Infinity ms, 0 taps, errors stream: The pending stream has been canceled (caused by: connect ENOENT /
+ns1-n4-s1 shared-3: 0 fps, 0 Mbit/s, gap p95 NaN ms worst -Infinity ms, 0 taps, errors stream: The pending stream has been canceled (caused by: connect ENOENT /
+ns1-n4-s1 shared-4: 0 fps, 0 Mbit/s, gap p95 NaN ms worst -Infinity ms, 0 taps, errors stream: The pending stream has been canceled (caused by: connect ENOENT /
+ns1-n4-s1 vm: cpu 56.29% user 43.7% sys 0% idle, summed 5.8 cores, gpu 1202,1156,1156,1156,1156,1157,1156,1156,1156,1156,1156,1156,1156,1156,1156, free 53%, swa
+== ns2
+18:59:00 phase ns2 start
+{"label": "ns2-enc2", "at": "18:59:15", "n": 2, "size": "1206x2622", "paced": false, "fps": [null, null], "total": 0}
+{"label": "ns2-enc4", "at": "18:59:31", "n": 4, "size": "1206x2622", "paced": false, "fps": [null, null, null, null], "total": 0}
+{"label": "ns2-enc4-half", "at": "18:59:46", "n": 4, "size": "604x1312", "paced": false, "fps": [null, null, null, null], "total": 0}
+18:59:48  shared-1 B528C400-4DD4-4684-8374-E161CC5C27D6 booted in 1.0 s, companion up
+18:59:50  shared-2 BCE993A6-7DDA-4E18-9DFB-8C8EEBA40A6D booted in 1.1 s, companion up
+18:59:52  shared-3 8D804D51-CC1B-430D-95A7-562C8E067823 booted in 1.0 s, companion up
+18:59:54  shared-4 E5B98D56-2EF7-4258-B27D-36A44B038A93 booted in 1.2 s, companion up
+ns2-n2-s1 shared-1: 0 fps, 0 Mbit/s, gap p95 NaN ms worst -Infinity ms, 29 taps, errors stream: The operation was aborted
+ns2-n2-s1 shared-2: 0 fps, 0 Mbit/s, gap p95 NaN ms worst -Infinity ms, 29 taps, errors stream: The operation was aborted
+ns2-n2-s1 vm: cpu 50.58% user 48.77% sys 0.63% idle, summed 5.27 cores, gpu 970,1006,1126,1181,1178,1198,1169,1299,1199,1148,1294,1136,1265,1280,1302, free 11%, swap 2067.5 MiB
+== companion log
+   2 2026-10-26 19:01:37.929+0000 [BCE993A6-7DDA-4E18-9DFB-8C8EEBA40A6D] VideoToolbox encode error: OSStatus -12915
+   2 2026-10-26 19:01:37.929+0000 [B528C400-4DD4-4684-8374-E161CC5C27D6] VideoToolbox encode error: OSStatus -12915
+   2 2026-10-26 19:01:12.435+0000 [BCE993A6-7DDA-4E18-9DFB-8C8EEBA40A6D] VideoToolbox encode error: OSStatus -12915
+   2 2026-10-26 19:01:07.286+0000 [B528C400-4DD4-4684-8374-E161CC5C27D6] VideoToolbox encode error: OSStatus -12915
+   2 2026-10-26 19:00:34.163+0000 [B528C400-4DD4-4684-8374-E161CC5C27D6] VideoToolbox encode error: OSStatus -12915
+== ffmpeg
+h264_videotoolbox -allow_sw 0: cannot create compression session: -12903; -allow_sw 1: 42 fps at 1206x2622 (CPU)
+== screenshots
+10 idb screenshots: median 509 ms, worst 2187 ms

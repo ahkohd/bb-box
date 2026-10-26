@@ -1,0 +1,24 @@
+/private/var/folders/m3/lsfr67t152n16tw455nndrtm0000gp
+/private/var/protected/trustd/private/A054405B-C5B8-40EE-9D39-DFE4A31423B1
+/private/var/protected/trustd/private/A0E79760-C7D0-4A2A-84DA-E10A5AD5B8D5
+/private/var/protected/sfanalytics/A054405B-C5B8-40EE-9D39-DFE4A31423B1
+/private/var/protected/sfanalytics/A0E79760-C7D0-4A2A-84DA-E10A5AD5B8D5
+/Applications/Google Chrome.app
+/private/var/folders/y6/w8kg6bks5718brjw25qxhsg80000gq
+/private/var/protected/trustd/private/64CA8164-DA6E-47F0-BB35-503814F0854F
+/private/var/protected/trustd/private/F1B8893C-CB96-4A70-A178-8F045BF6197A
+/private/var/protected/sfanalytics/64CA8164-DA6E-47F0-BB35-503814F0854F
+/private/var/protected/sfanalytics/F1B8893C-CB96-4A70-A178-8F045BF6197A
+/private/var/tmp/com.apple.launchd.xF2wvkXbrv
+/private/var/tmp/com.apple.launchd.35Kzbdu3HA
+/private/var/tmp/com.apple.CoreSimulator.SimDevice.9F0D29B6-F323-456E-9F35-721A060F9D6F
+/private/var/tmp/com.apple.launchd.7h9riWxjP9
+/private/var/folders/lv/b10ghh151z708flh4rrqr0mh0000gr
+/private/var/protected/trustd/private/1E0295F0-DE6F-4928-A41D-40557442B0C3
+/private/var/protected/trustd/private/9ED6103E-1009-43F3-810E-9C098C5F00A4
+/private/var/protected/sfanalytics/1E0295F0-DE6F-4928-A41D-40557442B0C3
+/private/var/protected/sfanalytics/9ED6103E-1009-43F3-810E-9C098C5F00A4
+/private/var/tmp/com.apple.launchd.fihxcrbMev
+/private/var/tmp/com.apple.launchd.UC7JBAPE0s
+/private/var/tmp/com.apple.launchd.qzzcqYMaAS
+/private/var/tmp/com.apple.CoreSimulator.SimDevice.FFE64417-08F0-4C7C-90DF-60ACBFF890C2

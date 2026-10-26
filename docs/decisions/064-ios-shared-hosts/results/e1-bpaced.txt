@@ -1,0 +1,31 @@
+17:43:50 phase bpaced start
+{"label": "bpaced-enc2-1", "at": "17:44:10", "n": 2, "size": "1206x2622", "paced": false, "fps": [53.0, 53.1], "total": 106.1}
+{"label": "bpaced-enc2-2", "at": "17:44:30", "n": 2, "size": "1206x2622", "paced": false, "fps": [52.9, 53.0], "total": 105.9}
+bpaced-n4-s1 shared-1: 52.4 fps, 3.1 Mbit/s, gap p95 24 ms worst 27 ms, 29 taps
+bpaced-n4-s1 shared-2: 52.4 fps, 3 Mbit/s, gap p95 24 ms worst 50 ms, 29 taps
+bpaced-n4-s1 shared-3: 52.4 fps, 3 Mbit/s, gap p95 24 ms worst 30 ms, 29 taps
+bpaced-n4-s1 shared-4: 52.4 fps, 3.2 Mbit/s, gap p95 24 ms worst 38 ms, 29 taps
+shared-1: tap to frame median 147 ms, p95 161 ms, worst 161 ms, missed 0 of 29
+shared-2: tap to frame median 144 ms, p95 158 ms, worst 168 ms, missed 0 of 29
+shared-3: tap to frame median 148 ms, p95 158 ms, worst 160 ms, missed 0 of 29
+shared-4: tap to frame median 146 ms, p95 160 ms, worst 162 ms, missed 0 of 29
+all: 116 taps, median 146 ms, p95 160 ms, worst 168 ms, missed 0
+bpaced-n8-s0.5 shared-1: 57.1 fps, 0.5 Mbit/s, gap p95 29 ms worst 42 ms, 29 taps
+bpaced-n8-s0.5 shared-2: 57.2 fps, 0.6 Mbit/s, gap p95 30 ms worst 45 ms, 29 taps
+bpaced-n8-s0.5 shared-3: 56.9 fps, 0.6 Mbit/s, gap p95 30 ms worst 40 ms, 29 taps
+bpaced-n8-s0.5 shared-4: 57.3 fps, 0.6 Mbit/s, gap p95 30 ms worst 48 ms, 29 taps
+bpaced-n8-s0.5 shared-5: 57.5 fps, 0.7 Mbit/s, gap p95 29 ms worst 46 ms, 29 taps
+bpaced-n8-s0.5 shared-6: 56.9 fps, 0.6 Mbit/s, gap p95 30 ms worst 51 ms, 29 taps
+bpaced-n8-s0.5 shared-7: 57.1 fps, 0.5 Mbit/s, gap p95 30 ms worst 47 ms, 29 taps
+bpaced-n8-s0.5 shared-8: 56.7 fps, 0.5 Mbit/s, gap p95 31 ms worst 42 ms, 29 taps
+shared-1: tap to frame median 73 ms, p95 86 ms, worst 93 ms, missed 0 of 29
+shared-2: tap to frame median 69 ms, p95 80 ms, worst 85 ms, missed 0 of 29
+shared-3: tap to frame median 70 ms, p95 85 ms, worst 93 ms, missed 0 of 29
+shared-4: tap to frame median 69 ms, p95 82 ms, worst 84 ms, missed 0 of 29
+shared-5: tap to frame median 68 ms, p95 84 ms, worst 85 ms, missed 0 of 29
+shared-6: tap to frame median 68 ms, p95 81 ms, worst 84 ms, missed 0 of 29
+shared-7: tap to frame median 67 ms, p95 77 ms, worst 80 ms, missed 0 of 29
+shared-8: tap to frame median 68 ms, p95 80 ms, worst 80 ms, missed 0 of 29
+all: 232 taps, median 69 ms, p95 84 ms, worst 93 ms, missed 0
+{"label": "bpaced-enc2-3", "at": "17:46:24", "n": 2, "size": "1206x2622", "paced": false, "fps": [53.1, 53.0], "total": 106.1}
+17:46:24 phase bpaced end
