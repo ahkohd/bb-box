@@ -366,6 +366,7 @@ export type DeviceRequest =
   | { readonly id: string; readonly type: "control"; readonly control: DeviceControl }
   | { readonly id: string; readonly type: "input"; readonly input: DeviceInput; readonly owner: number }
   | { readonly id: string; readonly type: "owner"; readonly generation: number; readonly holder: ControlHolder }
+  | { readonly id: string; readonly type: "open"; readonly url: string }
   | { readonly id: string; readonly type: "screenshot" }
   | { readonly id: string; readonly type: "tree" }
   | { readonly id: string; readonly type: "record"; readonly to: "start" | "stop" }
@@ -381,6 +382,7 @@ export type DeviceHello = {
     readonly devices: NonEmpty<OfferedDeviceOf<P>>;
     readonly state: DeviceStateOf<P>;
     readonly lease: boolean;
+    readonly bootedHere?: readonly ModelNameOf<P>[];
   };
 }[DevicePlatform];
 
@@ -402,6 +404,7 @@ export type DeviceServerMessage =
 
 export type DeviceServerVerb = DeviceServerMessage["verb"];
 export const DEVICE_REQUEST_VERB = "BB_DEVICE";
+export const DEVICE_ANSWER_VERB = "BB_DEVICE_ANSWER" satisfies DeviceServerVerb;
 export const DEVICE_STILLS_VERB = "BB_DEVICE_STILLS";
 export const STILLS_EVERY_MS = 200;
 export const DEVICE_FIRST_FRAME_MS = 3_000;
@@ -600,7 +603,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 9;
+export const DEVICE_SERVER_VERSION = 10;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 
 export function frameGenerationOf(header: Uint8Array): number {
@@ -609,6 +612,22 @@ export function frameGenerationOf(header: Uint8Array): number {
 
 export function speaksProtocol(protocol: number): boolean {
   return protocol >= DEVICE_PROTOCOLS.least && protocol <= DEVICE_PROTOCOLS.most;
+}
+
+export const MAX_URL_LENGTH = 2048;
+
+export function urlProblem(url: string): string | null {
+  if (url.length > MAX_URL_LENGTH) return `A link takes at most ${MAX_URL_LENGTH} characters.`;
+  if (/\s/.test(url)) return "A link has no spaces. Write %20 for a space.";
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:./.test(url)) return "A link starts with its scheme, such as https:// or an app's own, such as myapp://.";
+  return null;
+}
+
+export function linkFrom(typed: string): string {
+  const trimmed = typed.trim();
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:(.*)$/.exec(trimmed);
+  if (scheme && !/^\d+(\/|$)/.test(scheme[1]!)) return trimmed;
+  return trimmed ? `https://${trimmed}` : "";
 }
 
 export const DEVICE_HUB_PROCESS = "DeviceHub";

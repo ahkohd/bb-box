@@ -7,6 +7,7 @@ import {
   IOS_CONTENT_SIZES,
   IOS_FAILURE_CODES,
   KEY_MODIFIERS,
+  MAX_URL_LENGTH,
   NETWORK_PRESETS,
   ORIENTATIONS,
   POSTURES,
@@ -20,6 +21,7 @@ import {
   locationProblem,
   modelNamed,
   platformWord,
+  urlProblem,
   type AndroidRuntime,
   type AndroidSettings,
   type AnswerResult,
@@ -567,7 +569,7 @@ function base64(value: unknown, path: string): string {
 }
 
 function request(value: unknown, path: string): DeviceRequest {
-  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "screenshot", "tree", "record", "result"]);
+  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "screenshot", "tree", "record", "result"]);
   const at = (key: string) => `${path}.${key}`;
   switch (type) {
     case "touch": {
@@ -589,6 +591,13 @@ function request(value: unknown, path: string): DeviceRequest {
     case "owner": {
       const read = fields(value, path, ["id", "type", "generation", "holder"]);
       return { id: requestId(read.id, at("id")), type, generation: whole(read.generation, at("generation")), holder: oneOf(read.holder, at("holder"), ["agent", "person"]) };
+    }
+    case "open": {
+      const read = fields(value, path, ["id", "type", "url"]);
+      const url = text(read.url, at("url"), MAX_URL_LENGTH);
+      const problem = urlProblem(url);
+      if (problem) refuse(at("url"), `is not a link to open: ${problem}`);
+      return { id: requestId(read.id, at("id")), type, url };
     }
     case "record": {
       const read = fields(value, path, ["id", "type", "to"]);
@@ -634,14 +643,17 @@ function answer(value: unknown, path: string): DeviceAnswer {
 }
 
 function hello(value: unknown, path: string): DeviceHello {
-  const read = fields(value, path, ["protocol", "version", "platform", "devices", "state", "lease"]);
+  const read = fields(value, path, ["protocol", "version", "platform", "devices", "state", "lease", "bootedHere"]);
   const platform = platformOf(read.platform, `${path}.platform`);
   const devices = offeredDevices(read.devices, `${path}.devices`);
   if (devices[0].runtime.platform !== platform) refuse(`${path}.devices`, `are ${platformWord(devices[0].runtime.platform)} devices, from an ${platformWord(platform)} server.`);
   const state = deviceState(read.state, `${path}.state`);
   if (state.platform !== platform) refuse(`${path}.state`, `is an ${platformWord(state.platform)} device's, from an ${platformWord(platform)} server.`);
   if (!devices.some((device) => device.model === state.model)) refuse(`${path}.state.model`, `is the ${state.model}, which the box's devices do not include.`);
-  return { protocol: whole(read.protocol, `${path}.protocol`, 1), version: whole(read.version, `${path}.version`, 1), platform, devices, state, lease: bool(read.lease, `${path}.lease`) } as DeviceHello;
+  const said = { protocol: whole(read.protocol, `${path}.protocol`, 1), version: whole(read.version, `${path}.version`, 1), platform, devices, state, lease: bool(read.lease, `${path}.lease`) };
+  if (read.bootedHere === undefined) return said as DeviceHello;
+  const bootedHere = list(read.bootedHere, `${path}.bootedHere`, (item, at) => modelOf(item, at, platform));
+  return { ...said, bootedHere } as DeviceHello;
 }
 
 const SERVER_VERBS: readonly DeviceServerVerb[] = ["BB_DEVICE_HELLO", "BB_DEVICE_STATE", "BB_DEVICE_TOUCH", "BB_DEVICE_STILL", "BB_DEVICE_ANSWER"];

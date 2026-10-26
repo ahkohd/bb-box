@@ -19,7 +19,7 @@ const socketPort = Number(values.socket);
 const deviceSocket = devicePaths(homedir()).socket;
 const here = fileURLToPath(new URL(".", import.meta.url));
 const pages = [here, join(here, "..", "web")];
-const TYPES: Readonly<Record<string, string>> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".json": "application/json" };
+const TYPES: Readonly<Record<string, string>> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
 
 function channel(): Promise<ByteChannel> {
   return new Promise((resolve, reject) => {
@@ -36,6 +36,7 @@ const open: OpenStream = () => channel();
 const relays = new Set<SelkiesRelay>();
 const box = new SelkiesBox(open, { paths: DEVICE_PATHS, spacingMs: 0, apart: () => true, onText: (message) => relays.forEach((relay) => relay.fromBox(message)) });
 let personHasControl = false;
+let holder: string | null = null;
 let generation = 0;
 const HARNESS_STARTED = Date.now();
 
@@ -51,11 +52,72 @@ async function openControl(): Promise<DeviceLink> {
 
 let control = await openControl();
 
-async function setOwner(holder: "agent" | "person") {
+async function setOwner(to: "agent" | "person", viewer: string | null = null) {
   generation = Math.max(generation + 1, Date.now());
-  personHasControl = holder === "person";
+  personHasControl = to === "person";
+  holder = personHasControl ? viewer : null;
   if (personHasControl) box.warm();
-  return control.request({ type: "owner", generation, holder });
+  return control.request({ type: "owner", generation, holder: to });
+}
+
+function boxView() {
+  return {
+    id: "harness-box",
+    name: "harness-box",
+    kind: "ios",
+    kindLabel: "iOS Simulator",
+    backendLabel: "Harness",
+    nature: "virtual",
+    form: "vm",
+    role: "box",
+    size: null,
+    state: "ready",
+    error: null,
+    stopped: null,
+    createdAt: HARNESS_STARTED,
+    readyAt: HARNESS_STARTED,
+    os: "macos",
+    arch: "arm64",
+    gpu: false,
+    requires: [],
+    extras: [],
+    docker: false,
+    desktop: false,
+    display: null,
+    device: { model: control.state.model, simulatorHost: false },
+    control: personHasControl ? { owner: "human", holder } : { owner: "agent", holder: null },
+    computerUse: true,
+    terminal: false,
+    address: null,
+    facts: [],
+    timings: {},
+    enrol: { state: "off", hostId: null, error: null },
+    enrols: false,
+    canStopStart: false,
+  };
+}
+
+async function rpc(method: string, input: { readonly viewer?: string }): Promise<unknown> {
+  switch (method) {
+    case "desktop":
+      return { box: boxView(), desktopPath: `ws://127.0.0.1:${socketPort}/device`, terminalPath: "/terminal", video: true, videoByDefault: true, sharp: null, switching: false };
+    case "takeControl":
+      await setOwner("person", input.viewer ?? null);
+      return { box: boxView(), error: null };
+    case "handBack":
+      await setOwner("agent");
+      return { box: boxView(), error: null };
+    case "deviceScreenshot": {
+      const answer = await control.request({ type: "screenshot" }, { timeoutMs: 60_000 });
+      if (!answer.ok) return { png: null, model: answer.state?.model ?? null, error: answer.error.words };
+      return answer.result.type === "screenshot" ? { png: answer.result.png, model: answer.state.model, error: null } : { png: null, model: null, error: "no picture" };
+    }
+    case "desktopClipboard":
+    case "desktopPaste":
+      return null;
+    default:
+      throw new Error(`The harness has no RPC ${method}.`);
+  }
 }
 
 async function body(request: IncomingMessage): Promise<unknown> {
@@ -72,6 +134,10 @@ function reply(response: ServerResponse, status: number, value: unknown): void {
 createHttpServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://harness");
   try {
+    if (url.pathname.startsWith("/rpc/")) {
+      reply(response, 200, await rpc(url.pathname.slice("/rpc/".length), ((await body(request)) ?? {}) as { viewer?: string }));
+      return;
+    }
     if (url.pathname === "/api/owner") {
       reply(response, 200, await setOwner(url.searchParams.get("holder") === "person" ? "person" : "agent"));
       return;

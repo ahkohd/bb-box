@@ -163,6 +163,7 @@ export interface FitRequest {
   readonly area: VideoSize;
   readonly margin: number;
   readonly below: number;
+  readonly beside?: number;
   readonly pixelRatio: number;
   readonly pixelForPixel: boolean;
 }
@@ -173,10 +174,11 @@ export function placement(shape: FrameShape, physical: Orientation, fit: FitRequ
   const across = sideways ? bounds.height : bounds.width;
   const down = sideways ? bounds.width : bounds.height;
   const ownPixels = 1 / Math.max(fit.pixelRatio, 0.01);
-  const room = { width: Math.max(1, fit.area.width - fit.margin * 2), height: Math.max(1, fit.area.height - fit.margin * 2 - fit.below) };
+  const beside = fit.beside ?? 0;
+  const room = { width: Math.max(1, fit.area.width - fit.margin * 2 - beside), height: Math.max(1, fit.area.height - fit.margin * 2 - fit.below) };
   const scale = fit.pixelForPixel ? ownPixels : Math.min(ownPixels, room.width / across, room.height / down);
-  const content = { width: Math.max(fit.area.width, across * scale + fit.margin * 2), height: Math.max(fit.area.height, down * scale + fit.margin * 2 + fit.below) };
-  return { scale, content, centre: { x: content.width / 2, y: (content.height - fit.below) / 2 } };
+  const content = { width: Math.max(fit.area.width, across * scale + fit.margin * 2 + beside), height: Math.max(fit.area.height, down * scale + fit.margin * 2 + fit.below) };
+  return { scale, content, centre: { x: (content.width - beside) / 2, y: (content.height - fit.below) / 2 } };
 }
 
 export function bodyToStage(shape: FrameShape, turns: number, place: Placement): Affine {

@@ -208,6 +208,42 @@ describe("the device server", () => {
     await link.close();
   });
 
+  test("says in its hello which models it booted in this box, kept through a restart of the server", async () => {
+    const { open, paths, driver, server } = await started();
+    const link = await open("control", { started: 1, instance: "a" });
+    assert.deepEqual(link.hello.bootedHere, ["Pixel 8"]);
+    const switched = await link.request({ type: "control", control: { action: "switch", device: "Pixel Tablet" } });
+    assert.equal(switched.ok, true);
+    await link.close();
+    const viewer = await open("viewer");
+    assert.deepEqual(viewer.hello.bootedHere, ["Pixel 8", "Pixel Tablet"]);
+    await viewer.close();
+    await server.stop();
+    const again = new DeviceServer({ paths, platform: "android", devices: testDeviceOffer("android").devices as OfferedDevices, driver, version: DEVICE_SERVER_VERSION });
+    servers.push(again);
+    await again.start();
+    for (let tries = 0; again.state.power.is !== "booted" && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
+    const later = await DeviceLink.open(await channelTo(paths.socket), { role: "viewer" });
+    assert.deepEqual(later.hello.bootedHere, ["Pixel 8", "Pixel Tablet"]);
+    await later.close();
+  });
+
+  test("opens a link from the person's input connection, and refuses the agent's while a person has control", async () => {
+    const { open, driver } = await started({ platform: "ios" });
+    const control = await open("control", { started: 1, instance: "a" });
+    const input = await open("input");
+    const opened = await input.request({ type: "open", url: "https://example.com" });
+    assert.equal(opened.ok, true);
+    assert.deepEqual((driver as TestDriver).record.opened, ["https://example.com"]);
+    const agent = await control.request({ type: "open", url: "myapp://settings" });
+    assert.equal(agent.ok, true);
+    assert.equal((await control.request({ type: "owner", generation: 1, holder: "person" })).ok, true);
+    const held = await control.request({ type: "open", url: "myapp://other" });
+    assert.equal(!held.ok && held.error.words, PERSON_HAS_CONTROL_WORDS);
+    assert.deepEqual((driver as TestDriver).record.opened, ["https://example.com", "myapp://settings"]);
+    for (const link of [control, input]) await link.close();
+  });
+
   test("starts the model its intent names, and finishes a switch that a restart cut short", async () => {
     const { server } = await started({ intent: { target: "Pixel Tablet", switching: { id: "s", from: "Pixel 8", step: "booting", since: 1 } } });
     assert.equal(server.state.model, "Pixel Tablet");

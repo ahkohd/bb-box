@@ -340,12 +340,20 @@ export class IosDriver implements DeviceDriver {
     void this.#readOrientation();
   }
 
+  async #orientationNow(): Promise<Orientation | null> {
+    try {
+      return await orientation(this.#companion.client, AbortSignal.timeout(ORIENTATION_READ_MS));
+    } catch {
+      return null;
+    }
+  }
+
   async #readOrientation(): Promise<void> {
-    if (this.#readingOrientation) return;
+    if (this.#readingOrientation || this.#busy || this.#power.is !== "booted") return;
     this.#readingOrientation = true;
     this.#orientationRead = { at: this.#clock.monotonic(), frames: this.#video.framesSent };
     try {
-      const read = await orientation(this.#companion.client, AbortSignal.timeout(ORIENTATION_READ_MS)).catch(() => null);
+      const read = await this.#orientationNow();
       if (!read || this.#busy || this.#power.is !== "booted") return;
       this.#turned(read);
     } finally {
@@ -644,6 +652,13 @@ export class IosDriver implements DeviceDriver {
     }
     await this.#readSettings(signal).catch((error) => this.#log(`settings: not read after ${control.action}: ${words(error)}`));
     this.#changed();
+  }
+
+  async openUrl(url: string, signal: AbortSignal): Promise<void> {
+    const udid = this.#booted();
+    const began = this.#clock.monotonic();
+    await this.#simctl.openUrl(udid, url, signal);
+    this.#log(`open: ${url} in ${Math.round(this.#clock.monotonic() - began)} ms`);
   }
 
   async #newPicture(since: number, signal: AbortSignal, waitMs = ROTATE_PICTURE_MS): Promise<void> {

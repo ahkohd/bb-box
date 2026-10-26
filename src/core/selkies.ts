@@ -23,7 +23,7 @@
 
 import type { ByteChannel } from "../transports/types.ts";
 import { BoxWebSocket, WebSocketError, type Message } from "./websocket.ts";
-import { DEVICE_REQUEST_VERB, DEVICE_STILLS_VERB } from "./device.ts";
+import { DEVICE_ANSWER_VERB, DEVICE_REQUEST_VERB, DEVICE_STILLS_VERB } from "./device.ts";
 
 const PATH = "/api/websockets";
 /** Selkies' RECONNECT_DEBOUNCE_MS, with a margin. */
@@ -316,7 +316,7 @@ export class SelkiesBox {
     try {
       for (let message = await socket.next(); message !== null; message = await socket.next()) {
         if (typeof message === "string" && message.startsWith("BB_PONG,")) this.#pongs.get(message.slice(8))?.();
-        else if (typeof message === "string" && this.#apart() && (CLIPBOARD_VERBS.has(verb(message)) || verb(message) === "cursor")) this.#onText(message);
+        else if (typeof message === "string" && this.#apart() && (CLIPBOARD_VERBS.has(verb(message)) || verb(message) === "cursor" || verb(message) === DEVICE_ANSWER_VERB)) this.#onText(message);
         if (typeof message !== "string" && this.clock.now() - this.#stopAsked > STOP_ASK_MS) {
           this.#stopAsked = this.clock.now();
           await socket.send("STOP_VIDEO");

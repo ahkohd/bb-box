@@ -4,9 +4,13 @@ import { parseImageRecord } from "../src/backends/images.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
 import { answerText, controlFromParameters, lostWords, type DeviceControlParameters } from "../src/core/device-control.ts";
 import { controlDeadlineMs, deviceStateWords, nextContentSize, nextFontScale, turnedFrom } from "../src/core/device-settings.ts";
+import { frameShape, placement } from "../src/core/device-frame.ts";
+import { arrangementFor, barGroups, barHeight, changeWords, moreItems, overflowControls, rowControls, textSizeSteps } from "../src/core/device-toolbar.ts";
 import {
   ANDROID_FONT_SCALES,
   DEVICE_ACTIONS,
+  linkFrom,
+  urlProblem,
   IOS_CONTENT_SIZES,
   actionsOf,
   deviceModel,
@@ -373,6 +377,7 @@ describe("messages", () => {
     { id: "c1", type: "control", control: { action: "rotate", turn: "left" } },
     { id: "i1", type: "input", input: { type: "tap", at: { x: 1, y: 1, generation: 1 } }, owner: 4 },
     { id: "o1", type: "owner", generation: 5, holder: "person" },
+    { id: "l1", type: "open", url: "myapp://settings?tab=2" },
     { id: "s1", type: "screenshot" },
     { id: "r1", type: "tree" },
     { id: "rec", type: "record", to: "start" },
@@ -392,6 +397,10 @@ describe("messages", () => {
       {
         verb: "BB_DEVICE_HELLO",
         hello: { protocol: 1, version: 3, platform: "ios", devices: [{ model: "iPhone 18 Pro", native: "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", runtime: IOS_RUNTIME }], state: iosState as DeviceState & { platform: "ios" }, lease: true },
+      },
+      {
+        verb: "BB_DEVICE_HELLO",
+        hello: { protocol: 1, version: 10, platform: "ios", devices: [{ model: "iPhone 18 Pro", native: "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", runtime: IOS_RUNTIME }], state: iosState as DeviceState & { platform: "ios" }, lease: false, bootedHere: ["iPhone 18 Pro"] },
       },
       { verb: "BB_DEVICE_STATE", state: foldState as DeviceState },
       { verb: "BB_DEVICE_TOUCH", contacts: [{ id: 0, x: 5, y: 6 }], by: "agent", generation: 2 },
@@ -421,6 +430,9 @@ describe("messages", () => {
     refusal(parseDeviceServerMessage(`BB_DEVICE_HELLO ${JSON.stringify(hello)}`), /state\.model is the Pixel Fold, which the box's devices do not include/);
     refusal(parseDeviceServerMessage(`BB_DEVICE_HELLO ${JSON.stringify({ ...hello, platform: "ios" })}`), /are Android devices, from an iOS server/);
     refusal(parseDeviceServerMessage(`BB_DEVICE_ANSWER ${JSON.stringify({ id: "a", ok: false, result: { type: "done" }, state: null })}`), /has "result", which it does not take/);
+    refusal(parseDeviceServerMessage(`BB_DEVICE_HELLO ${JSON.stringify({ ...hello, state: phoneState, bootedHere: ["iPhone 17"] })}`), /bootedHere\[0\]/);
+    refusal(parseDeviceRequest('BB_DEVICE {"id":"a","type":"open","url":"example.com"}'), /url is not a link to open: A link starts with its scheme/);
+    refusal(parseDeviceRequest('BB_DEVICE {"id":"a","type":"open","url":"https://example.com/two words"}'), /A link has no spaces/);
   });
 });
 
@@ -538,5 +550,64 @@ describe("large messages", () => {
     assert.ok(big.ok, big.ok ? "" : big.words);
     const short = parseDeviceServerMessage(`BB_DEVICE_STILL ${JSON.stringify({ png: "QUJ", generation: 1 })}`);
     assert.ok(!short.ok);
+  });
+});
+
+describe("links the toolbar opens", () => {
+  test("take a scheme as typed, and add https:// to an address without one", () => {
+    assert.equal(linkFrom(" example.com/a "), "https://example.com/a");
+    assert.equal(linkFrom("localhost:3000/b"), "https://localhost:3000/b");
+    assert.equal(linkFrom("myapp://settings"), "myapp://settings");
+    assert.equal(linkFrom("mailto:someone@example.com"), "mailto:someone@example.com");
+    assert.equal(linkFrom("   "), "");
+    assert.equal(urlProblem("https://example.com"), null);
+    assert.match(urlProblem(`https://example.com/${"a".repeat(3000)}`) ?? "", /at most 2048/);
+  });
+});
+
+describe("the toolbar's controls (063, 6.4)", () => {
+  const model = (name: ModelName) => deviceModel(name) as DeviceModel;
+
+  test("shows only what each model supports, in the decision's order, and More takes the rest of a narrow row", () => {
+    assert.deepEqual(barGroups(model("iPhone 18 Pro")), [["home"], ["rotate-left", "rotate-right"], ["appearance", "text-size"], ["screenshot"]]);
+    assert.deepEqual(barGroups(model("Pixel 8")), [["home", "back", "recents"], ["rotate-left", "rotate-right"], ["appearance", "text-size"], ["screenshot"]]);
+    assert.deepEqual(barGroups(model("Pixel Fold"))[1], ["rotate-left", "rotate-right", "fold"]);
+    assert.deepEqual(rowControls(model("iPad Pro 13-inch (M5)")), ["home", "rotate-left"]);
+    assert.deepEqual(rowControls(model("Pixel Fold")), ["home", "back", "recents", "rotate-left", "fold"]);
+    assert.deepEqual(overflowControls(model("Pixel 8")), ["rotate-right", "appearance", "text-size", "screenshot"]);
+    assert.deepEqual(moreItems(model("iPhone 17")), ["lock", "open-link", "location", "status-bar", "battery", "reboot"]);
+    assert.deepEqual(moreItems(model("Pixel Tablet")), ["lock", "open-link", "location", "battery", "network", "reboot"]);
+    assert.ok(barGroups(model("Pixel Fold")).flat().length <= 9);
+  });
+
+  test("goes below the frame in a panel under 480 px, or when the screen beside it would be under 280 px and below it is wider", () => {
+    assert.equal(arrangementFor(479, 400, 400), "below");
+    assert.equal(arrangementFor(480, 280, 300), "beside");
+    assert.equal(arrangementFor(900, 279, 300), "below");
+    assert.equal(arrangementFor(900, 200, 180), "beside");
+    assert.equal(barHeight(model("iPhone 18 Pro"), false), 7 * 36 + 4 * 9 + 8);
+  });
+
+  test("names each platform's own text size step, and the default", () => {
+    assert.equal(textSizeSteps(model("iPhone 18 Pro"), iosState as DeviceState).words, "Large, the default");
+    assert.equal(textSizeSteps(model("Pixel 8"), phoneState as DeviceState).words, "130%");
+    assert.equal(textSizeSteps(model("Pixel 8"), null).at, null);
+  });
+
+  test("says what changed for a screen reader, and nothing for the first state", () => {
+    const turned = { ...iosState, geometry: { ...GEOMETRY, physical: "upright" }, settings: { ...IOS_SETTINGS, appearance: { known: true, value: "dark", at: 2, by: "bb-box" } } } as DeviceState;
+    assert.equal(changeWords(null, iosState as DeviceState), null);
+    assert.equal(changeWords(iosState as DeviceState, turned), "Upright. Dark appearance.");
+    assert.equal(changeWords(iosState as DeviceState, { ...iosState, power: { is: "booted", awake: false } } as DeviceState), "Asleep.");
+    assert.equal(changeWords(phoneState as DeviceState, { ...phoneState, model: "Pixel Tablet", form: "tablet", power: { is: "booted", awake: true } } as DeviceState), "Now the Pixel Tablet. Ready.");
+  });
+
+  test("leaves a frame beside the toolbar's room, so the device and the bar centre together", () => {
+    const shape = frameShape(model("iPhone 18 Pro"), null, true);
+    const alone = placement(shape, "upright", { area: { width: 1000, height: 800 }, margin: 24, below: 0, pixelRatio: 2, pixelForPixel: false });
+    const beside = placement(shape, "upright", { area: { width: 1000, height: 800 }, margin: 24, below: 0, beside: 60, pixelRatio: 2, pixelForPixel: false });
+    assert.equal(alone.centre.x, 500);
+    assert.equal(beside.centre.x, 470);
+    assert.equal(beside.scale, alone.scale);
   });
 });

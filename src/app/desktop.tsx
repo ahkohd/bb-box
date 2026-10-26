@@ -50,8 +50,15 @@ import { SetupProgress } from "./first-run.tsx";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
 import { MachineRow } from "./settings-machines.tsx";
-import { DEVICE_HUB_WORDS, STILLS_WORDS, SelkiesSession, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
-import { DEFAULT_DEVICE_VIEW, type DeviceStageAction, type DeviceView } from "./device-stage.ts";
+import { DEVICE_HUB_WORDS, STILLS_WORDS, SelkiesSession, base64Bytes, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
+import { DEFAULT_DEVICE_VIEW, type DeviceLayout, type DeviceView } from "./device-stage.ts";
+import { DeviceControls, type AskKey, type DeviceAsk } from "./device-controls.ts";
+import { DevicePicker, DeviceToolbar, TOUCH_HINT_KEY, toolbarRoom, type AskedBy } from "./device-toolbar.tsx";
+import { usePointerCoarse } from "@/components/ui/hooks/use-pointer-coarse";
+import { afterWords, doneWords } from "../core/device-control.ts";
+import { changeWords, placeAt } from "../core/device-toolbar.ts";
+import { locationWords } from "../core/device-settings.ts";
+import { modelNamed, type DeviceAction, type DeviceAnswer, type DeviceState, type ModelName } from "../core/device.ts";
 import {
   KeysAfterPaste,
   astralKeysym,
@@ -194,6 +201,37 @@ function deviceWaitWords(device: DeviceShown | null): string {
   if (power.is === "stopped") return "Stopped";
   if (power.is === "failed") return power.error.words;
   return power.awake ? "Connecting" : "Asleep";
+}
+
+const KEEP_TOOLBAR_FOCUS_MS = 3_000;
+
+const SHOWN_ON_SCREEN: ReadonlySet<DeviceAction> = new Set(["home", "back", "recents", "rotate", "posture", "appearance", "text_size", "lock", "wake"]);
+
+function storedFlag(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function storeFlag(key: string): void {
+  try {
+    window.localStorage.setItem(key, "1");
+  } catch {
+    return;
+  }
+}
+
+function downloadPicture(picture: Blob, name: string): void {
+  const url = URL.createObjectURL(picture);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 /** Forgets every viewer's last stream, and video that gave way, for tests. */
@@ -814,39 +852,6 @@ export const WINDOWS_HIGH_RESOLUTION_WORDS =
  * The desktop menu's Display items (the owner's notes of 17 October 2026): Show as VNC and High resolution, each with
  * its tick, in a submenu; on a small screen, whose menu is a sheet with no submenus, under a Display label.
  */
-function DeviceDisplayItems({ compact, view, onChange }: { compact: boolean; view: DeviceView; onChange: (view: DeviceView) => void }) {
-  const items = (
-    <>
-      <DropdownMenuCheckboxItem className="gap-2" checked={view.frame} onCheckedChange={(checked) => onChange({ ...view, frame: checked === true })}>
-        <MonitorGlyph />
-        Show frame
-      </DropdownMenuCheckboxItem>
-      <DropdownMenuCheckboxItem className="gap-2" checked={view.pixelForPixel} onCheckedChange={(checked) => onChange({ ...view, pixelForPixel: checked === true })}>
-        <Icon name="Maximize2" aria-hidden />
-        Pixel for pixel
-      </DropdownMenuCheckboxItem>
-    </>
-  );
-  if (compact) {
-    return (
-      <>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>Display</DropdownMenuLabel>
-        {items}
-      </>
-    );
-  }
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger>
-        <MonitorGlyph />
-        Display
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent>{items}</DropdownMenuSubContent>
-    </DropdownMenuSub>
-  );
-}
-
 function DisplayItems({
   compact,
   vnc,
@@ -1019,10 +1024,10 @@ function TypeTextField({
 }
 
 /** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038). */
-function controlText(box: BoxView, mine: boolean, taken: boolean): string {
+function controlText(box: BoxView, mine: boolean, taken: boolean, tookByControl: boolean): string {
   switch (box.control?.owner) {
     case "human":
-      return mine ? "You have control." : "Another viewer has control.";
+      return mine ? (tookByControl ? "You have control. Hand back when done." : "You have control.") : "Another viewer has control.";
     case "none":
       return "Control is changing hands…";
     default:
@@ -1146,7 +1151,57 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   const [device, setDevice] = useState<DeviceShown | null>(null);
   const [deviceView, setDeviceView] = useState<DeviceView>(() => storedDeviceView(boxId));
   useEffect(() => setDeviceView(storedDeviceView(boxId)), [boxId]);
-  const pendingDeviceAction = useRef<DeviceStageAction | null>(null);
+  const [deviceLayout, setDeviceLayout] = useState<DeviceLayout | null>(null);
+  const coarse = usePointerCoarse();
+  const [tookByControl, setTookByControl] = useState(false);
+  useEffect(() => {
+    if (!mine) setTookByControl(false);
+  }, [mine]);
+  const [deviceBusy, setDeviceBusy] = useState<AskKey | null>(null);
+  const [shooting, setShooting] = useState(false);
+  const [hintSeen, setHintSeen] = useState(() => storedFlag(TOUCH_HINT_KEY));
+  const [announced, setAnnounced] = useState("");
+  const deviceStateBefore = useRef<DeviceState | null>(null);
+  const controlsRef = useRef<DeviceControls | null>(null);
+  const takeForControl = async (): Promise<string | null> => {
+    try {
+      const result = await rpc.call("takeControl", { threadId, box: boxId, viewer });
+      if (result.error) return result.error;
+      setTookByControl(true);
+      await refresh();
+      return null;
+    } catch (caught) {
+      return message(caught);
+    }
+  };
+  const takeForControlNow = useRef(takeForControl);
+  takeForControlNow.current = takeForControl;
+  const answeredNow = useRef<(ask: DeviceAsk, answer: DeviceAnswer) => void>(() => undefined);
+  if (!controlsRef.current) {
+    controlsRef.current = new DeviceControls({
+      mine: () => mineNow.current && session.current instanceof SelkiesSession && !!session.current.device,
+      take: () => takeForControlNow.current(),
+      send: (ask) => {
+        const current = session.current;
+        if (!(current instanceof SelkiesSession) || !current.device) return Promise.resolve({ id: "", ok: false, error: { code: "not-booted", words: "The device is not shown here now." }, state: null });
+        return ask.kind === "control" ? current.sendDeviceControl(ask.control) : current.openDeviceUrl(ask.url);
+      },
+      answered: (ask, answer) => answeredNow.current(ask, answer),
+      changed: () => setDeviceBusy(controlsRef.current?.busy ?? null),
+    });
+  }
+  const controls = controlsRef.current;
+  useEffect(() => () => controls.dispose(), [controls]);
+  const askDevice = (ask: DeviceAsk, by: AskedBy = "menu") => {
+    if (!hintSeen) {
+      setHintSeen(true);
+      storeFlag(TOUCH_HINT_KEY);
+    }
+    const current = session.current instanceof SelkiesSession ? session.current : null;
+    if (by === "keyboard") current?.keepFocusElsewhere(KEEP_TOOLBAR_FOCUS_MS);
+    controls.ask(ask);
+    if (by === "pointer" && mineNow.current) current?.focusDevice();
+  };
   /** When the viewer tries again after the connection ended, so its note counts down to it rather than stand still. */
   const retryAt = useMemo(() => (connection.state === "disconnected" ? Date.now() + connection.retryMs : null), [connection]);
   const retryNow = useNow(retryAt !== null, 250);
@@ -1234,13 +1289,10 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
     if (current instanceof SelkiesSession && current.device) {
       current.setDeviceView(deviceViewNow.current);
-      current.onDeviceAction = (action) => {
-        if (mineNow.current) current.sendDeviceControl(action);
-        else {
-          pendingDeviceAction.current = action;
-          void take();
-        }
-      };
+      current.onDeviceAction = (control) => controls.ask({ kind: "control", control });
+      const stage = current.deviceStage;
+      stage?.setToolbar(toolbarRoom(coarseNow.current, hintNow.current));
+      if (stage) stage.onLayout = setDeviceLayout;
     }
     const deviceOf = () => (current instanceof SelkiesSession ? current.device : null);
     const unsubscribe = current.subscribe(() => {
@@ -1259,6 +1311,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
         current.onFallback = undefined;
         current.onClipboardImage = undefined;
         current.onDeviceAction = undefined;
+        if (current.deviceStage) current.deviceStage.onLayout = undefined;
       }
       current.element.remove();
       session.current = null;
@@ -1294,12 +1347,23 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   useLayoutEffect(() => {
     // A desktop at high resolution keeps its density through the video viewer's resizes; noVNC would ask for its pane's own size, so it asks for none.
     session.current?.setControl(mine, !deviceShown && resizable && !(sharp === true && stream === "rfb"));
-    const action = pendingDeviceAction.current;
-    if (mine && action && session.current instanceof SelkiesSession) {
-      pendingDeviceAction.current = null;
-      session.current.sendDeviceControl(action);
-    }
+    controls.mineChanged();
   }, [mine, resizable, connection, sharp, stream, deviceShown]);
+  const coarseNow = useRef(coarse);
+  coarseNow.current = coarse;
+  const hintShown = coarse && !mine && !hintSeen;
+  const hintNow = useRef(hintShown);
+  hintNow.current = hintShown;
+  useEffect(() => {
+    if (session.current instanceof SelkiesSession) session.current.deviceStage?.setToolbar(toolbarRoom(coarse, hintShown));
+  }, [coarse, hintShown, connection]);
+  const deviceState = device?.state ?? null;
+  useEffect(() => {
+    if (!deviceState) return;
+    const words = changeWords(deviceStateBefore.current, deviceState);
+    deviceStateBefore.current = deviceState;
+    if (words) setAnnounced(words);
+  }, [deviceState]);
   const deviceModelName = box?.device?.model ?? null;
   useEffect(() => {
     if (session.current instanceof SelkiesSession) session.current.setDeviceModel(deviceModelName);
@@ -1500,6 +1564,56 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     }
   };
 
+  const deviceModelNow = modelNamed(device?.state?.model ?? device?.model ?? box?.device?.model ?? "");
+  answeredNow.current = (ask, answer) => {
+    const model = deviceModelNow;
+    if (!answer.ok) {
+      flashFor(answer.error.words);
+      return;
+    }
+    if (!model) return;
+    if (ask.kind === "open") {
+      flashFor(`Opened ${ask.url} on the ${model.name}.`);
+      return;
+    }
+    const control = ask.control;
+    if (SHOWN_ON_SCREEN.has(control.action)) return;
+    const took = `${(answer.ms / 1000).toFixed(1)} s`;
+    if (control.action === "switch") {
+      flashFor(`Switched to the ${control.device} in ${took}.`, `Apps are per device. Install your app again on the ${control.device} if it needs it.`, 8_000);
+      return;
+    }
+    const place = control.action === "location" ? placeAt(control.to) : null;
+    const done = doneWords(control, model.name, model.platform);
+    const said = place && control.action === "location" && control.to ? done.replace(locationWords(control.to), `${place.name}, ${locationWords(control.to)}`) : done;
+    flashFor(`${said} in ${took}.${afterWords(control, model.platform)}`);
+  };
+  const copyDeviceScreen = () => {
+    const model = deviceModelNow?.name ?? "device";
+    setShooting(true);
+    const picture = rpc.call("deviceScreenshot", { threadId, box: boxId }).then((shot) => {
+      if (!shot.png) throw new Error(shot.error ?? "The device sent no picture.");
+      return new Blob([base64Bytes(shot.png)], { type: "image/png" });
+    });
+    const copied =
+      typeof ClipboardItem !== "undefined" && navigator.clipboard?.write ? navigator.clipboard.write([new ClipboardItem({ "image/png": picture })]) : Promise.reject(new Error("This browser cannot copy pictures."));
+    void copied
+      .then(
+        () => flashFor(`Copied the ${model}'s screen.`),
+        async () => {
+          try {
+            downloadPicture(await picture, `${model} ${new Date().toISOString().slice(0, 19).replace(/:/g, ".")}.png`);
+            flashFor(`Downloaded the ${model}'s screen.`, "This browser did not let bb-box put a picture on this computer's clipboard, so it saved it instead.");
+          } catch (caught) {
+            flashFor(`Could not take the ${model}'s screenshot.`, message(caught));
+          }
+        },
+      )
+      .finally(() => setShooting(false));
+  };
+  const switchDevice = (to: ModelName) => askDevice({ kind: "control", control: { action: "switch", device: to } });
+  const takesFrom = mine ? null : box?.control?.owner === "human" ? "another viewer" : "the agent";
+
   // The toolbar's state: a dot and a few words.
   let tone: Tone = "busy";
   let words = "Loading…";
@@ -1522,7 +1636,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     words = "Disconnected";
   } else if (box) {
     tone = "ok";
-    words = controlText(box, mine, taken);
+    words = controlText(box, mine, taken, tookByControl);
   }
 
   return (
@@ -1531,6 +1645,9 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
         {onBack ? <BackControl back={onBack} /> : null}
         <MonitorGlyph className="text-muted-foreground" />
         <span className="font-medium text-foreground">{box?.name ?? lastName.current ?? "Desktop"}</span>
+        {deviceShown && showing && deviceModelNow && device ? (
+          <DevicePicker model={deviceModelNow.name} offered={device.offered} bootedHere={device.bootedHere} state={device.state} compact={compact} takesFrom={takesFrom} onSwitch={switchDevice} />
+        ) : null}
         <span className={cn("inline-flex min-w-0 items-center gap-1.5", mine || taken ? "text-foreground" : "text-muted-foreground")}>
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
@@ -1598,16 +1715,6 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
                     <Icon name="ArrowReloadHorizontal" aria-hidden />
                     Reconnect
                   </DropdownMenuItem>
-                ) : null}
-                {showing && deviceShown ? (
-                  <DeviceDisplayItems
-                    compact={compact}
-                    view={deviceView}
-                    onChange={(next) => {
-                      storeDeviceView(boxId, next);
-                      setDeviceView(next);
-                    }}
-                  />
                 ) : null}
                 {showing && !deviceShown && ((video === true && canShowVideo() && stream) || sharp !== null) ? (
                   <DisplayItems
@@ -1685,6 +1792,32 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
       <div className="relative min-h-0 flex-1 bg-muted">
         <div ref={target} className="absolute inset-0" data-testid="desktop-screen" />
         {mine ? <div aria-hidden data-testid="control-ring" className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-primary/60" /> : null}
+        {deviceShown && showing && deviceLayout && deviceModelNow && connection.state !== "disconnected" ? (
+          <DeviceToolbar
+            model={deviceModelNow}
+            state={device?.state ?? null}
+            layout={deviceLayout}
+            coarse={coarse}
+            compact={compact}
+            connected={connection.state === "connected"}
+            mine={mine}
+            takesFrom={takesFrom}
+            busy={deviceBusy ?? (shooting ? "screenshot" : null)}
+            view={deviceView}
+            hint={hintShown}
+            onAsk={askDevice}
+            onScreenshot={copyDeviceScreen}
+            onView={(next) => {
+              storeDeviceView(boxId, next);
+              setDeviceView(next);
+            }}
+          />
+        ) : null}
+        {deviceShown ? (
+          <p className="sr-only" aria-live="polite" data-testid="device-announcer">
+            {announced}
+          </p>
+        ) : null}
         {typing !== null && mine && connection.state === "connected" ? (
           <TypeTextField
             name={box?.name ?? "the desktop"}

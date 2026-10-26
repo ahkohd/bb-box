@@ -176,6 +176,7 @@ export class DeviceServer {
   #lastStillAt = -Infinity;
   #settingsTimer: ReturnType<typeof setInterval> | null = null;
   #readingSettings: Promise<void> | null = null;
+  readonly #bootedHere = new Set<ModelName>();
 
   constructor(options: DeviceServerOptions) {
     this.#options = options;
@@ -242,6 +243,7 @@ export class DeviceServer {
     await mkdir(this.#options.paths.dir, { recursive: true, mode: 0o700 });
     const intent = (await this.#readIntent()) ?? this.#intent;
     await this.#writeIntent(intent);
+    await this.#readBootedHere();
     await this.#listen();
     this.#settingsTimer = setInterval(() => {
       if ([...this.#connections].some((connection) => connection.role === "viewer" && connection.wantsVideo)) void this.#readSettings();
@@ -263,11 +265,33 @@ export class DeviceServer {
     return this.#readingSettings;
   }
 
+  async #readBootedHere(): Promise<void> {
+    const text = await readFile(this.#options.paths.bootedHere, "utf8").catch(() => null);
+    if (text === null) return;
+    try {
+      const read: unknown = JSON.parse(text);
+      for (const model of Array.isArray(read) ? read : []) if (typeof model === "string" && this.#offered(model as ModelName)) this.#bootedHere.add(model as ModelName);
+    } catch {
+      this.#log("booted here: not JSON; starting the list again");
+    }
+  }
+
+  #bootedHereWrites: Promise<void> = Promise.resolve();
+
+  #bootedIn(model: ModelName): Promise<void> {
+    if (this.#bootedHere.has(model)) return this.#bootedHereWrites;
+    this.#bootedHere.add(model);
+    const text = `${JSON.stringify([...this.#bootedHere])}\n`;
+    this.#bootedHereWrites = this.#bootedHereWrites.then(() => writeWhole(this.#options.paths.bootedHere, text)).catch((error) => this.#log(`booted here: could not write: ${error}`));
+    return this.#bootedHereWrites;
+  }
+
   async #boot(intent: Intent): Promise<void> {
     const target = this.#offered(intent.target)!;
     try {
       const how = await this.#options.driver.attach(target, AbortSignal.any([this.#stop.signal, AbortSignal.timeout(DEADLINES_MS.switch)]));
       this.#log(`device: ${how === "reattached" ? "reattached to" : "booted"} the ${target.model}`);
+      void this.#bootedIn(target.model);
       if (intent.switching) await this.#writeIntent({ target: intent.target, switching: null } as Intent);
       await this.#liftAll("the server started");
     } catch (error) {
@@ -345,6 +369,7 @@ export class DeviceServer {
       devices: this.#options.devices,
       state: this.#state,
       lease: this.#lease === connection,
+      bootedHere: [...this.#bootedHere],
     } as DeviceHello;
   }
 
@@ -570,9 +595,24 @@ export class DeviceServer {
         return { type: "done" };
       case "control":
         return this.#control(request.id, request.control, connection);
+      case "open":
+        await this.#open(request.url, connection);
+        return { type: "done" };
       case "result":
         return { type: "done" };
     }
+  }
+
+  async #open(url: string, from: Connection): Promise<void> {
+    if (from.role === "control") {
+      this.#leaseOnly(from, "open a link on the device");
+      if (this.#owner.holder === "person") throw new Refused("person-has-control", PERSON_HAS_CONTROL_WORDS);
+    }
+    this.#booted();
+    const driver = this.#options.driver;
+    if (!driver.openUrl) throw new Refused("unsupported", `The ${this.#state.model} cannot open links yet.`);
+    if (from.role === "input") this.#personActs();
+    await driver.openUrl(url, AbortSignal.any([this.#stop.signal, AbortSignal.timeout(DEADLINES_MS.control)]));
   }
 
   #booted(): void {
@@ -868,6 +908,7 @@ export class DeviceServer {
       await driver.shutdown(signal);
       await this.#step(id, from, device, "booting", since);
       await driver.attach(target, signal);
+      void this.#bootedIn(device);
       await this.#step(id, from, device, "waiting", since);
       await this.#step(id, from, device, "streaming", since);
       await this.#firstFrame(signal);

@@ -558,6 +558,10 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktopClipboard: () => boxClipboard,
+    deviceScreenshot: () => {
+      changes.push("deviceScreenshot");
+      return { png: "iVBORw0KGgo=", model: "Pixel 8", error: null };
+    },
     desktopPaste: ({ box: ref, viewer, text, automatic }) => {
       if (automatic && declining > 0) {
         declining--;
@@ -3087,6 +3091,242 @@ const PIXEL_8_STATE = {
   at: 1,
 };
 
+const IPHONE_STATE = {
+  platform: "ios",
+  model: "iPhone 18 Pro",
+  power: { is: "booted", awake: true },
+  geometry: { generation: 1, physical: "upright", content: "upright", video: { width: 1206, height: 2622 } },
+  settings: {
+    appearance: { known: true, value: "light", at: 1, by: "bb-box" },
+    textSize: { known: true, value: "large", at: 1, by: "bb-box" },
+    location: { set: null, at: null },
+    statusBar: { set: null, at: null },
+  },
+  at: 1,
+};
+
+const IOS_RUNTIME = { platform: "ios", os: "27.0", build: "25A1", xcode: "27.0", companion: "1.7.7" };
+
+function iosHello(bootedHere?: readonly string[]) {
+  const devices = ["iPhone 18 Pro", "iPhone 17", "iPad Pro 13-inch (M5)"].map((model) => ({ model, native: model, runtime: IOS_RUNTIME }));
+  return `BB_DEVICE_HELLO ${JSON.stringify({ protocol: 1, version: 10, platform: "ios", devices, state: IPHONE_STATE, lease: false, ...(bootedHere ? { bootedHere } : {}) })}`;
+}
+
+function sizedPanel(width: number, height: number) {
+  const sized = (name: "clientWidth" | "clientHeight", value: number) => vi.spyOn(HTMLElement.prototype, name, "get").mockReturnValue(value);
+  const spies = [sized("clientWidth", width), sized("clientHeight", height)];
+  return () => {
+    for (const spy of spies) spy.mockRestore();
+  };
+}
+
+async function deviceShown(model: string, state: object, hello?: string) {
+  const { handlers, changes } = server([desktopBox({ device: { model, simulatorHost: false } })], { video: true });
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
+  const device = deviceSocket();
+  act(() => device.open());
+  act(() => void device.onmessage?.({ data: "MODE websockets" }));
+  const video = (state as { geometry: { video: { width: number; height: number } } }).geometry.video;
+  act(() => void device.onmessage?.({ data: videoFrame(1, true, video.width, video.height) }));
+  if (hello) act(() => void device.onmessage?.({ data: hello }));
+  act(() => void device.onmessage?.({ data: `BB_DEVICE_STATE ${JSON.stringify({ state })}` }));
+  await slot.findByRole("toolbar");
+  const requests = () =>
+    device.sent
+      .filter((sent): sent is string => typeof sent === "string" && sent.startsWith("BB_DEVICE "))
+      .map((sent) => JSON.parse(sent.slice("BB_DEVICE ".length)) as { id: string; type: string; control?: { action: string }; url?: string });
+  const answer = (id: string, ok = true, words = "") =>
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_ANSWER ${JSON.stringify(ok ? { id, ok, ms: 412, state, result: { type: "done" } } : { id, ok, error: { code: "busy", words }, state })}` }));
+  return { slot, device, changes, requests, answer };
+}
+
+function barButtons(slot: ReturnType<typeof desktopTab>): string[] {
+  return within(slot.getByRole("toolbar")).getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? "");
+}
+
+test("an iPhone's toolbar has Home, both rotations, Appearance, Text size, Screenshot and More beside the frame, and nothing iOS lacks (063)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  try {
+    window.sessionStorage.clear();
+    const { slot } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello());
+    const toolbar = slot.getByRole("toolbar");
+    expect(toolbar.getAttribute("aria-label")).toBe("iPhone 18 Pro controls");
+    expect(toolbar.getAttribute("aria-orientation")).toBe("vertical");
+    expect(toolbar.dataset.arrangement).toBe("beside");
+    expect(barButtons(slot)).toEqual(["Home", "Rotate left", "Rotate right", "Dark appearance", "Text size", "Copy screenshot", "More device controls"]);
+    expect(within(toolbar).getByRole("button", { name: "Dark appearance" }).getAttribute("aria-pressed")).toBe("false");
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
+test("a Pixel 8's toolbar adds Back and Recent apps, and a narrow panel puts the most used in one row with the rest in More (063)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(400, 800);
+  try {
+    window.sessionStorage.clear();
+    const { slot } = await deviceShown("Pixel 8", PIXEL_8_STATE);
+    const toolbar = slot.getByRole("toolbar");
+    expect(toolbar.dataset.arrangement).toBe("below");
+    expect(toolbar.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(barButtons(slot)).toEqual(["Home", "Back", "Recent apps", "Rotate left", "More device controls"]);
+    const more = await openMenu(within(toolbar).getByRole("button", { name: "More device controls" }));
+    for (const name of ["Rotate right", "Copy screenshot", "Lock", "Open link…", /^Reboot device ?Takes about 18 s\. Keeps apps and data\.$/]) expect(within(more).getByRole("menuitem", { name })).toBeTruthy();
+    expect(within(more).getByRole("menuitemcheckbox", { name: "Dark appearance" })).toBeTruthy();
+    expect(within(more).queryByRole("menuitemcheckbox", { name: /Clean status bar/ })).toBeNull();
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
+test("a toolbar click takes control and sends its control once control comes, says so in the top bar, and shows a refusal's words (063)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  try {
+    window.sessionStorage.clear();
+    const { slot, changes, requests, answer } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello());
+    expect(slot.getByText("The agent has control.")).toBeTruthy();
+    fireEvent.click(within(slot.getByRole("toolbar")).getByRole("button", { name: "Home" }));
+    await slot.findByText("You have control. Hand back when done.");
+    expect(changes).toEqual(["takeControl box_2"]);
+    await waitFor(() => expect(requests().filter((request) => request.type === "control")).toHaveLength(1));
+    const home = requests().find((request) => request.type === "control")!;
+    expect(home.control).toEqual({ action: "home" });
+    expect(within(slot.getByRole("toolbar")).getByRole("button", { name: "Home" }).getAttribute("aria-busy")).toBe("true");
+    answer(home.id);
+    await waitFor(() => expect(within(slot.getByRole("toolbar")).getByRole("button", { name: "Home" }).getAttribute("aria-busy")).toBeNull());
+    expect(toasts()).toEqual([]);
+    fireEvent.click(within(slot.getByRole("toolbar")).getByRole("button", { name: "Dark appearance" }));
+    await waitFor(() => expect(requests().at(-1)?.control).toEqual({ action: "appearance", to: "dark" }));
+    answer(requests().at(-1)!.id, false, "Another control is under way on this device. Try again when it has finished.");
+    await waitFor(() => expect(toasts()).toEqual(["Another control is under way on this device. Try again when it has finished."]));
+    expect(changes).toEqual(["takeControl box_2"]);
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
+test("More holds Show frame and Pixel for pixel, kept per box, and settings with no picture of their own say what they did (063)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  try {
+    window.sessionStorage.clear();
+    const { slot, requests, answer } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello());
+    const more = () => openMenu(within(slot.getByRole("toolbar")).getByRole("button", { name: "More device controls" }));
+    const menu = await more();
+    expect(within(menu).getByRole("menuitemcheckbox", { name: "Show frame" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Pixel for pixel" }));
+    const viewKey = Object.keys(window.localStorage).find((key) => key.startsWith("bb-box:device-view:"))!;
+    expect(JSON.parse(window.localStorage.getItem(viewKey)!)).toEqual({ frame: true, pixelForPixel: true });
+    window.localStorage.removeItem(viewKey);
+    const again = await more();
+    fireEvent.click(within(again).getByRole("menuitemcheckbox", { name: /Clean status bar/ }));
+    await waitFor(() => expect(requests().at(-1)?.control).toEqual({ action: "status_bar", to: "clean" }));
+    answer(requests().at(-1)!.id);
+    await waitFor(() => expect(toasts()).toEqual([`Made the iPhone 18 Pro's status bar clean in 0.4 s. It shows 9:41, full signal and Wi-Fi, and a full battery unless battery set one.`]));
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
+test("Open link opens a typed address on the device, with https:// added, and refuses one with spaces in words (063)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  try {
+    window.sessionStorage.clear();
+    const { slot, requests, answer } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello());
+    const more = await openMenu(within(slot.getByRole("toolbar")).getByRole("button", { name: "More device controls" }));
+    fireEvent.click(within(more).getByRole("menuitem", { name: "Open link…" }));
+    const field = await screen.findByRole("textbox", { name: "Link" });
+    fireEvent.change(field, { target: { value: "example.com/two words" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("A link has no spaces. Write %20 for a space.");
+    fireEvent.change(field, { target: { value: "example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    await waitFor(() => expect(requests().at(-1)).toEqual(expect.objectContaining({ type: "open", url: "https://example.com" })));
+    answer(requests().at(-1)!.id);
+    await waitFor(() => expect(toasts()).toEqual(["Opened https://example.com on the iPhone 18 Pro."]));
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
+test("the device picker lists the box's models, warns of one not started in this box, and switches with control taken (063)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  try {
+    window.sessionStorage.clear();
+    const { slot, requests, answer } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello(["iPhone 18 Pro", "iPhone 17"]));
+    const picker = await openMenu(slot.getByRole("button", { name: "Device: iPhone 18 Pro. Choose another" }));
+    expect(within(picker).getByRole("menuitemcheckbox", { name: "iPhone 18 Pro" }).getAttribute("aria-checked")).toBe("true");
+    expect(within(picker).getByRole("menuitemcheckbox", { name: "iPhone 17" })).toBeTruthy();
+    const ipad = within(picker).getByRole("menuitemcheckbox", { name: /^iPad Pro 13-inch \(M5\) ?Not started in this box yet, so it may take a minute\.$/ });
+    expect(within(picker).getByText(/Apps are per device/)).toBeTruthy();
+    fireEvent.click(ipad);
+    await waitFor(() => expect(requests().at(-1)?.control).toEqual({ action: "switch", device: "iPad Pro 13-inch (M5)" }));
+    answer(requests().at(-1)!.id);
+    await waitFor(() => expect(toasts()).toEqual(["Switched to the iPad Pro 13-inch (M5) in 0.4 s.Apps are per device. Install your app again on the iPad Pro 13-inch (M5) if it needs it."]));
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
+test("Screenshot asks bb-box for the device's own pixels without taking control, and copies them as a PNG (063)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  const write = vi.fn<(items: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { write, readText: () => Promise.resolve(""), writeText: () => Promise.resolve() }, configurable: true });
+  vi.stubGlobal("ClipboardItem", class {
+    readonly items: Record<string, unknown>;
+    constructor(items: Record<string, unknown>) {
+      this.items = items;
+    }
+  });
+  try {
+    window.sessionStorage.clear();
+    const { slot, changes } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello());
+    fireEvent.click(within(slot.getByRole("toolbar")).getByRole("button", { name: "Copy screenshot" }));
+    await waitFor(() => expect(toasts()).toEqual(["Copied the iPhone 18 Pro's screen."]));
+    expect(changes).toEqual(["deviceScreenshot"]);
+    expect(write).toHaveBeenCalledTimes(1);
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
+test("the toolbar moves by arrow keys as one tab stop, and the device's changes are read out (063)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  try {
+    window.sessionStorage.clear();
+    const { slot, device } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello());
+    const toolbar = slot.getByRole("toolbar");
+    const buttons = within(toolbar).getAllByRole("button");
+    expect(buttons.map((button) => button.tabIndex)).toEqual([0, -1, -1, -1, -1, -1, -1]);
+    buttons[0]!.focus();
+    fireEvent.keyDown(buttons[0]!, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(buttons[1]);
+    fireEvent.keyDown(buttons[1]!, { key: "End" });
+    expect(document.activeElement).toBe(buttons.at(-1));
+    const dark = { ...IPHONE_STATE, settings: { ...IPHONE_STATE.settings, appearance: { known: true, value: "dark", at: 2, by: "bb-box" } }, geometry: { ...IPHONE_STATE.geometry, generation: 2, physical: "turned-left" } };
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_STATE ${JSON.stringify({ state: dark })}` }));
+    await waitFor(() => expect(slot.getByTestId("device-announcer").textContent).toBe("Turned left. Dark appearance."));
+    expect(within(toolbar).getByRole("button", { name: "Dark appearance" }).getAttribute("aria-pressed")).toBe("true");
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
 test("a box with a device and a desktop opens on the device, and Device and Desktop switch between two kept sessions, each with its own socket, input and clipboard, with no hand-back (063)", async () => {
   const undo = withVideo();
   try {
@@ -3098,7 +3338,7 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     expect(novnc.FakeRfb.made).toHaveLength(0);
     const device = deviceSocket();
     expect(device.url).not.toContain("stream=");
-    expect(await slot.findByText("Pixel 8")).toBeTruthy();
+    expect((await slot.findAllByText("Pixel 8")).length).toBeGreaterThan(0);
     expect(slot.getByText("Connecting")).toBeTruthy();
     act(() => device.open());
     expect(device.sent).toEqual(["START_VIDEO"]);
@@ -3106,14 +3346,9 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     act(() => void device.onmessage?.({ data: videoFrame(1, true, 360, 800) }));
     expect(await slot.findByText("The agent has control.")).toBeTruthy();
     expect(slot.getByRole("button", { name: "Device" }).getAttribute("aria-pressed")).toBe("true");
-    const display = await openDisplay(slot.getByRole("button", { name: "Desktop actions" }));
-    expect(within(display).getByRole("menuitemcheckbox", { name: "Show frame" }).getAttribute("aria-checked")).toBe("true");
-    expect(within(display).getByRole("menuitemcheckbox", { name: "Pixel for pixel" }).getAttribute("aria-checked")).toBe("false");
-    expect(within(display).queryByRole("menuitemcheckbox", { name: "Show as VNC" })).toBeNull();
-    fireEvent.click(within(display).getByRole("menuitemcheckbox", { name: "Pixel for pixel" }));
-    const viewKey = Object.keys(window.localStorage).find((key) => key.startsWith("bb-box:device-view:"))!;
-    expect(JSON.parse(window.localStorage.getItem(viewKey)!)).toEqual({ frame: true, pixelForPixel: true });
-    window.localStorage.removeItem(viewKey);
+    const actions = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+    expect(within(actions).queryByRole("menuitem", { name: "Display" })).toBeNull();
+    fireEvent.keyDown(actions, { key: "Escape" });
 
     const readText = vi.fn(() => Promise.resolve("for the device"));
     fakeClipboard(readText);

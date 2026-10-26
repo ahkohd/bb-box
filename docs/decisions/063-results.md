@@ -13,8 +13,9 @@ stream of each model, recovery, slimming kept and turned off, Device Hub,
 and E4 (a suspend). Units 5.1's shared parts and 5.2's, for input on iOS,
 are [after them](#units-51-and-52-input-shared-and-on-ios): E8, E9, E14,
 E21, and how iOS pastes. Unit 6.3's, for the iOS controls and box_device,
-are [at the end](#unit-63-the-ios-controls-and-box_device): each action,
-its read-back, requests by ID, and E11.
+are [after them](#unit-63-the-ios-controls-and-box_device): each action,
+its read-back, requests by ID, and E11. Unit 6.4's, for the toolbar, are
+[at the end](#unit-64-the-toolbar).
 
 ## How they were measured
 
@@ -1285,3 +1286,111 @@ and Reboot device take control first when the viewer does not have it.
   frame assumes; a fold and an unfold by `adb` and the emulator's posture,
   with the stream's change of size; the Pixel Fold's half open posture; and
   each model's bezel, corner and button numbers against the device.
+
+## Unit 6.4: the toolbar
+
+Checked on 26 October 2026 on a physical pool Mac lent whole, through
+`macos` on the SSH host pool, as no Tart VM was free: macOS 27.0.1, Xcode
+27.0, iOS 27.0 (24A434), idb_companion 1.7.7 unpacked in the box user's
+home, as the user has no sudo, and the device server of this unit started
+by hand, with the iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5) the
+Mac already had. The panel was the plugin's own `DesktopViewer`, with
+the toolbar, its menus and the picker, built with BB's theme and run in
+headless Chrome on the same Mac, behind the plugin's own relay, against
+`viewer.ts` standing in for the plugin: the harness in
+[scripts/measure/ios](../../scripts/measure/ios/README.md#the-panel). The
+same page ran on a Linux box with the test device, as an iOS and as an
+Android device, in Google Chrome 156. BB's server and the panel through it
+are not in these checks.
+
+### Each control, clicked, on the iPhone 18 Pro
+
+Each click took control first, as the agent had it, and the toolbar said
+"You have control. Hand back when done."
+
+| Control | Seen |
+| --- | --- |
+| More, Open link, "example.com" | Safari opened https://example.com: the note said "Opened https://example.com on the iPhone 18 Pro." |
+| Home | Safari closed to the Home Screen |
+| Dark appearance | dark mode; the button pressed, its icon a moon |
+| Rotate left, then Rotate right | the frame turned, the bar moved beside it, and back |
+| Text size, Larger three times | the widgets' text larger; the popover said "Extra extra large", then Default gave "Large, the default" |
+| More, Clean status bar | 9:41, full signal and battery; the note gave the decision's words |
+| More, Battery, 42 | the status bar's battery at 42%; the note said only the picture changes |
+| More, Location, New York, then No simulated location | "Set the iPhone 18 Pro's location to New York, 40.7128, -74.006 in 0.2 s.", then cleared |
+| More, Lock, then Wake | the lock screen, dimmed, with Asleep and Wake; then the Home Screen |
+| Copy screenshot | "Copied the iPhone 18 Pro's screen.": a PNG of 1206x2622, 3.0 MB, 143 to 155 ms through `deviceScreenshot`, three times, without taking control |
+| More, Reboot device | booting, then back in 7.2 s, its status bar overrides set again |
+| The picker, iPad Pro 13-inch (M5), iPhone 17, iPhone 18 Pro | below |
+
+On Android, as the test device, the bar had Back and Recent apps, and More
+had Battery and Network and no Clean status bar. Fold was not seen: no
+foldable has been offered yet.
+
+### The picker and a switch
+
+The picker listed the three models, the iPhone 17 with "Not started in this
+box yet, so it may take a minute." under it. A switch to it took about
+16.4 s from the click to its first frame, 11.5 s of it booting; the bar and
+the picker waited, saying "Switching to the iPhone 17…". A switch back to the
+iPhone 18 Pro, started before in this box, took 7.3 s, 1.5 s of it booting,
+and its note said "Apps are per device. Install your app again on the
+iPhone 18 Pro if it needs it."
+
+The first switch, to the iPad, stopped the device server: unit 6.1's watch
+of the orientation read idb_companion's client while there was none, and
+the error went unheard. The watch now skips a device that is not booted,
+and a read that fails is no turn. The server, started again, finished the
+switch from its intent, as 063 says it should.
+
+### Narrow, zoomed, touch, keyboard and screen reader
+
+- **360 px**, with touch: one row under the device, Home, Rotate left and
+  More, 44 px targets, and "Using a control takes control from the agent."
+  under it until the first tap. A tap took control and turned the device.
+- **479 and 480 px**, and 1100 by 900 px at 200% zoom: the row where the screen
+  beside the bar would be under 280 px wide and the row leaves it wider. At
+  200% zoom the panel's height limits the device, so the bar stays beside
+  it: the row would only make the phone smaller.
+- **Keyboard**: the bar is one Tab stop; the arrow keys, Home and End move
+  along it; Enter on Dark appearance took control and kept the focus on the
+  bar; Enter on Text size opened it with the slider focused, which the arrow
+  keys, Home and End move; Escape closed it back to Text size; Enter on
+  More, then Open link, focused the field, and Enter opened the link.
+- **Screen reader**: Chrome's accessibility tree, as a screen reader reads
+  it: a toolbar named "iPhone 18 Pro controls", vertical or horizontal; each
+  button named; Dark appearance pressed or not; Text size and More with
+  their popups; while the device switches, each control unavailable with
+  the reason as its description; the slider's value as words, such as
+  "Large"; and the changes read out from a live region, such as "Turned
+  left. Dark appearance."
+- **The agent while a person holds control**: box_device's home, sent as
+  the plugin sends it, was refused with `person-has-control` and its words.
+
+### What this found
+
+- **The plugin's relay dropped the device server's answers** to the
+  person's controls: only the clipboard and the cursor came back from the
+  input connection. The panel now gets them, and keeps only its own by ID.
+- **A toolbar control by the keyboard lost the focus** to the device, as
+  taking control focuses it. A control from the keyboard now leaves the
+  focus on the bar; one from the pointer gives it to the device.
+- **The touch note covered the screen** in a row at the panel's foot. The
+  row now leaves room for it while it shows.
+
+### What limits these checks
+
+- Chrome was headless, on the box's own Mac or Linux. Its clipboard took
+  the screenshot, but whether a person's browser lets a click copy a
+  picture, or downloads it instead, was not seen.
+- The pool Mac's simulators were not the iOS image's: not slimmed, and its
+  idb_companion was not where the image puts it.
+- No screen reader was run: the accessibility tree is what one reads.
+
+### Not checked here
+
+- **For the owner, in the panel through BB:** each control, the More menu,
+  the picker and a switch; the bar in both themes; at 360 px, on a phone's
+  BB with touch; and VoiceOver or another screen reader on the bar.
+- **For Android, once its driver is built (unit 6.2):** Back, Recent apps,
+  Fold and Network driven on the emulator, and their effect seen.

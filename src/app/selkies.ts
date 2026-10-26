@@ -19,10 +19,13 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, frameGenerationOf, stillsRequestText, type DeviceRequest, type DeviceState, type TouchContact } from "../core/device.ts";
+import { DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, frameGenerationOf, stillsRequestText, type DeviceAnswer, type DeviceControl, type DeviceRequest, type DeviceState, type ModelName, type TouchContact } from "../core/device.ts";
+import { personLostWords } from "../core/device-control.ts";
+import { CONTROL_DEADLINES_MS, controlDeadlineMs } from "../core/device-settings.ts";
+import { DeviceAnswers, viewerRequestId } from "./device-answers.ts";
 import { deviceRequestText, parseDeviceServerMessage } from "../core/device-parse.ts";
 import { DeviceFingers, DeviceTyping, TouchEcho } from "./device-input.ts";
-import { DeviceStage, type DeviceStageAction, type DeviceView } from "./device-stage.ts";
+import { DeviceStage, type DeviceView } from "./device-stage.ts";
 import { KeysAfterPaste, astralKeysym, keyLog, textKeys, typeTextShortcut, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_SHIFT_L, XK_V, boxKey, macBrowser, pasteChordKeys, pasteShortcut, retryWait, type Connection, type PasteShortcut } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
@@ -147,7 +150,7 @@ function bytesBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function base64Bytes(value: string): Uint8Array<ArrayBuffer> {
+export function base64Bytes(value: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 }
 
@@ -197,7 +200,11 @@ export interface DeviceShown {
   readonly model: string | null;
   readonly state: DeviceState | null;
   readonly stills: boolean;
+  readonly offered: readonly ModelName[];
+  readonly bootedHere: readonly ModelName[] | null;
 }
+
+const NOT_MINE_WORDS = "This tab does not have control of the device, so the control was not sent.";
 
 export const STILLS_WORDS = "This browser cannot play the device's video, so it shows a picture a few times a second.";
 export const DEVICE_HUB_WORDS = "Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Device view.";
@@ -334,11 +341,12 @@ export class SelkiesSession implements Kept {
   readonly #stage: DeviceStage | null;
   #framesCarryGeneration = false;
   readonly #frameGenerations = new Map<number, number>();
-  onDeviceAction?: (action: DeviceStageAction) => void;
+  readonly #answers = new DeviceAnswers();
+  onDeviceAction?: (control: DeviceControl) => void;
 
   constructor(url: string, options: { readonly device?: { readonly model: string | null } } = {}) {
     this.#url = url;
-    this.#device = options.device ? { model: options.device.model, state: null, stills: !canShowVideo() } : null;
+    this.#device = options.device ? { model: options.device.model, state: null, stills: !canShowVideo(), offered: [], bootedHere: null } : null;
     this.#afterPaste.join(tabOf(url));
     this.#afterPaste.pressChord = (shifted) => this.#pressPaste(shifted);
     this.element.className = "absolute inset-0";
@@ -348,7 +356,7 @@ export class SelkiesSession implements Kept {
     this.#canvas.tabIndex = -1;
     this.#stage = options.device ? new DeviceStage(this.#canvas, options.device.model) : null;
     this.element.appendChild(this.#stage?.element ?? this.#canvas);
-    if (this.#stage) this.#stage.onAction = (action) => (this.onDeviceAction ? this.onDeviceAction(action) : this.sendDeviceControl(action));
+    if (this.#stage) this.#stage.onAction = (action) => (this.onDeviceAction ? this.onDeviceAction({ action }) : void this.sendDeviceControl({ action }));
     this.#echo = this.#device ? new TouchEcho() : null;
     this.#deviceTyping = this.#device ? new DeviceTyping({ text: (text) => this.#deviceText(text), key: (keysym) => this.#tapKeysym(keysym) }) : null;
     if (this.#echo) this.element.appendChild(this.#echo.element);
@@ -417,8 +425,25 @@ export class SelkiesSession implements Kept {
     this.#stage?.setView(view);
   }
 
-  sendDeviceControl(action: DeviceStageAction): void {
-    if (this.#mine) this.#deviceRequest({ type: "control", control: { action } });
+  sendDeviceControl(control: DeviceControl): Promise<DeviceAnswer> {
+    return this.#askDevice({ type: "control", control }, controlDeadlineMs(control), (why) => personLostWords(control.action, why));
+  }
+
+  openDeviceUrl(url: string): Promise<DeviceAnswer> {
+    return this.#askDevice({ type: "open", url }, CONTROL_DEADLINES_MS.control, (why) => personLostWords("open", why));
+  }
+
+  focusDevice(): void {
+    this.focusDesktop();
+  }
+
+  #askDevice(body: DeviceRequest extends infer R ? (R extends DeviceRequest ? Omit<R, "id"> : never) : never, deadlineMs: number, lost: (why: "ended" | "late") => string): Promise<DeviceAnswer> {
+    const state = () => this.#device?.state ?? null;
+    const id = viewerRequestId(++this.#deviceRequests);
+    if (!this.#mine || this.connection.state !== "connected") return Promise.resolve({ id, ok: false, error: { code: "person-has-control", words: this.#mine ? lost("ended") : NOT_MINE_WORDS }, state: state() });
+    const answer = this.#answers.wait(id, deadlineMs, lost, state);
+    this.#send(deviceRequestText({ ...body, id } as DeviceRequest));
+    return answer;
   }
 
   #showStills(): void {
@@ -594,6 +619,7 @@ export class SelkiesSession implements Kept {
 
   #ended(reason: string): void {
     this.#drop();
+    this.#answers.ended(this.#device?.state ?? null);
     if (this.#disposed) return;
     if (!this.#everShown && !this.#device) {
       this.#fallBack(reason ? reason.replace(/\.?$/, ".") : "The connection ended before the first frame.");
@@ -788,10 +814,20 @@ export class SelkiesSession implements Kept {
       if (this.#device.stills && !this.#stopped) void this.#drawStill(message.png, message.generation);
       return;
     }
+    if (message.verb === "BB_DEVICE_ANSWER") {
+      this.#answers.answered(message.answer);
+      return;
+    }
+    if (message.verb === "BB_DEVICE_HELLO") {
+      const hello = message.hello;
+      this.#device = { ...this.#device, offered: hello.devices.map((device) => device.model), bootedHere: hello.bootedHere ? [...hello.bootedHere] : null };
+    }
     const state = message.verb === "BB_DEVICE_HELLO" ? message.hello.state : message.verb === "BB_DEVICE_STATE" ? message.state : null;
     if (message.verb === "BB_DEVICE_HELLO") this.#framesCarryGeneration = message.hello.version >= FRAME_GENERATIONS_SINCE_VERSION;
     if (!state) return;
-    this.#device = { ...this.#device, model: state.model, state };
+    const bootedHere = this.#device.bootedHere;
+    const nowBooted = state.power.is === "booted" && bootedHere && !bootedHere.includes(state.model) ? [...bootedHere, state.model] : bootedHere;
+    this.#device = { ...this.#device, model: state.model, state, bootedHere: nowBooted };
     this.#stage?.setState(state);
     for (const listener of this.#listeners) listener();
   }
@@ -917,10 +953,16 @@ export class SelkiesSession implements Kept {
     if (mine !== was) this.#follow = false;
   }
 
+  #focusKeptUntil = 0;
+
+  keepFocusElsewhere(ms: number): void {
+    this.#focusKeptUntil = performance.now() + ms;
+  }
+
   #apply(): void {
     if (this.#mine) {
       this.#keyboard.grab();
-      if (this.connection.state === "connected" && !this.#typing) this.#keyTarget().focus({ preventScroll: true });
+      if (this.connection.state === "connected" && !this.#typing && performance.now() >= this.#focusKeptUntil) this.#keyTarget().focus({ preventScroll: true });
     } else this.#keyboard.ungrab();
     this.#refreshCursor();
   }
@@ -1054,7 +1096,7 @@ export class SelkiesSession implements Kept {
   }
 
   #deviceRequest(body: DeviceRequest extends infer R ? (R extends DeviceRequest ? Omit<R, "id"> : never) : never): void {
-    this.#send(deviceRequestText({ ...body, id: `v${Date.now().toString(36)}${(++this.#deviceRequests).toString(36)}` } as DeviceRequest));
+    this.#send(deviceRequestText({ ...body, id: viewerRequestId(++this.#deviceRequests) } as DeviceRequest));
   }
 
   #deviceText(text: string): void {
@@ -1347,6 +1389,7 @@ export class SelkiesSession implements Kept {
     window.removeEventListener("focus", this.#onFocus);
     this.#observer?.disconnect();
     this.#stage?.dispose();
+    this.#answers.ended(this.#device?.state ?? null);
     this.#keyboard.ungrab();
     this.#drop();
     this.#listeners.clear();
