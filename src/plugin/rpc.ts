@@ -16,6 +16,7 @@ import type { BbBox } from "./setup.ts";
 import { profileLoop, type CpuProfile, type HeapProfile } from "./profile.ts";
 import { GENERAL_DEFAULTS } from "../core/document.ts";
 import { withPurposes } from "../transports/spawns.ts";
+import { desktopDisplays } from "../backends/types.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
 const PROFILES_KEPT = 5;
@@ -159,8 +160,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
           throw error;
         },
       );
-      const video = !!box && (app.configuration.document.general.video ?? GENERAL_DEFAULTS.video) && box.capabilities.displays.some((display) => display.protocol === "selkies");
-      const videoByDefault = video && !box.capabilities.displays.some((display) => display.protocol === "selkies" && display.byChoice);
+      const video = !!box && (app.configuration.document.general.video ?? GENERAL_DEFAULTS.video) && desktopDisplays(box.capabilities.displays).some((display) => display.protocol === "selkies");
+      const videoByDefault = video && !desktopDisplays(box.capabilities.displays).some((display) => display.protocol === "selkies" && display.byChoice);
       const sharp = box ? await app.desktops.sharp(box.id).catch(() => null) : null;
       const switching = !!box && app.desktops.switching(box.id);
       return { box: box ? app.view(box) : null, desktopPath: app.desktops.path, terminalPath: app.terminals.path, video, videoByDefault, sharp, switching };

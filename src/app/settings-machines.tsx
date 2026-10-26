@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { cn } from "@/lib/utils";
 import type { Contract, MachineEntry, MachinesState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, OPERATOR, osName, StatusDot, useLive, useNow } from "./common.tsx";
+import { EmptyPanel, forThread, hasViewer, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Meta, OPERATOR, osName, StatusDot, useLive, useNow } from "./common.tsx";
 import { runsWayland } from "./boxes-filter.ts";
 import { DESKTOP_PAGE, desktopSubPath, pageUrl } from "./desktop.tsx";
 import { ProblemLine, useMachineActions } from "./box-actions.tsx";
@@ -111,7 +111,7 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
         {resizeNote ? <p className={cn("mt-0.5 text-xs leading-snug", resizeNote.failed ? "text-destructive-text" : "text-muted-foreground")}>{resizeNote.text}</p> : null}
       </div>
       <span data-row-action className="flex shrink-0 items-center gap-0.5">
-        {box.desktop && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={openDesktop} /> : null}
+        {hasViewer(box) && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={openDesktop} /> : null}
         {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={openTerminal} /> : null}
         {box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={onStart} loading={busy === `start:${box.id}`} disabled={acting} /> : null}
         {box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={onStop} loading={busy === `stop:${box.id}`} disabled={acting} /> : null}
@@ -122,13 +122,13 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-max min-w-40 max-w-72" mobileTitle={box.name}>
-            {box.desktop && ready ? (
+            {hasViewer(box) && ready ? (
               <DropdownMenuItem onSelect={openDesktop}>
                 <MonitorGlyph />
                 Open desktop
               </DropdownMenuItem>
             ) : null}
-            {from === "boxes" && box.desktop && ready ? (
+            {from === "boxes" && hasViewer(box) && ready ? (
               <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, OPERATOR, box.id))}>
                 <Icon name="ExternalLink" aria-hidden />
                 Open in browser
@@ -146,7 +146,7 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
                 Copy address
               </DropdownMenuItem>
             ) : null}
-            {(box.desktop && ready) || canOpenTerminal(box) || box.address ? <DropdownMenuSeparator /> : null}
+            {(hasViewer(box) && ready) || canOpenTerminal(box) || box.address ? <DropdownMenuSeparator /> : null}
             {box.canStopStart && ready ? (
               <DropdownMenuItem onSelect={onStop}>
                 <Icon name="Square" aria-hidden />

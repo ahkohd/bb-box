@@ -103,6 +103,18 @@ Other desktops do not have it. While it is on, resizing your tab in control keep
 
 Video also keeps coloured text sharp: when every browser watching a desktop can decode full colour, as Chrome can, the video carries it, for a little more processor and no more bandwidth.
 
+## Device displays
+
+A box can have a device beside its desktop, such as a phone, or a device and no desktop. For now the only device is the test device: a test card that stands in for a phone, turned on by the advanced `testDevice` setting in the [configuration reference](../reference/configuration.md). The iOS Simulator and Android emulator come later.
+
+A box with a device opens on the device. A box with both shows **Device** and **Desktop** in the toolbar: select one to see it. Each keeps its own connection while you look at the other, so switching is instant, and your choice lasts for that box in that tab.
+
+The display you see is the only one that gets your keys, your pointer and your clipboard. Control is one for the box, covering both: switching between them keeps it, and does not start the minute after which a hidden tab hands control back.
+
+A device always shows as video, at its own size. It has no VNC, no **Show as VNC** and no High resolution, and it ignores the **Linux desktops as video** setting. Resizing the panel does not resize the device.
+
+Where your browser cannot play the device's video, as where it has no WebCodecs or the video does not start within 3 seconds, the device shows a picture of its screen a few times a second instead, over the same connection, and says so above it: 'This browser cannot play the device's video, so it shows a picture a few times a second.' It never shows the box's desktop in its place, so a click never lands on the wrong screen. While it waits for its first picture, it shows the device's name and 'Connecting', or 'Booting' while the device starts.
+
 ## When the desktop is not showing
 
 The screen tells you why, and what you can do. It uses the box's name, here calm-otter:

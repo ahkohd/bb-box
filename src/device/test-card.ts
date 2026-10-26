@@ -121,20 +121,34 @@ export function textWidth(words: string, scale: number): number {
   return words.length * (GLYPH_WIDTH + 1) * scale - scale;
 }
 
+function cardScale(size: VideoSize): number {
+  return Math.max(2, Math.floor(size.width / 90));
+}
+
+export function cardLine(words: string, size: VideoSize): string {
+  const scale = cardScale(size);
+  const fits = Math.max(1, Math.floor((size.width - scale * 8) / ((GLYPH_WIDTH + 1) * scale)));
+  const shown = [...words.toUpperCase()].map((character) => (FONT[character] ? character : character.trim() ? "/" : " ")).join("");
+  return shown.length > fits ? shown.slice(0, fits) : shown;
+}
+
 export function drawCard(content: CardContent): Canvas {
   const colours = CARD_COLOURS[content.appearance];
   const { width, height } = content.size;
   const canvas = new Canvas(content.size, colours.background);
-  const scale = Math.max(2, Math.floor(width / 90));
+  const scale = cardScale(content.size);
   const lineHeight = (GLYPH_HEIGHT + 4) * scale;
   canvas.rect(0, 0, width, Math.round(height / 8), colours.band);
-  canvas.text("TEST DEVICE", Math.round((width - textWidth("TEST DEVICE", scale * 2)) / 2), Math.round(height / 16 - GLYPH_HEIGHT * scale), scale * 2, colours.background);
+  const title = "TEST DEVICE";
+  const titleScale = Math.max(1, Math.min(scale * 2, Math.floor((width * 0.9) / ((GLYPH_WIDTH + 1) * title.length))));
+  canvas.text(title, Math.round((width - textWidth(title, titleScale)) / 2), Math.round(height / 16 - (GLYPH_HEIGHT * titleScale) / 2), titleScale, colours.background);
   let y = Math.round(height / 8) + lineHeight;
   for (const line of content.lines) {
     canvas.text(line, scale * 4, y, scale, colours.ink);
     y += lineHeight;
   }
-  const clockScale = scale * 3;
+  const clockFits = Math.floor((width * 0.9) / ((GLYPH_WIDTH + 1) * Math.max(1, content.clock.length)));
+  const clockScale = Math.max(1, Math.min(scale * 3, clockFits));
   canvas.text(content.clock, Math.round((width - textWidth(content.clock, clockScale)) / 2), Math.round(height * 0.6), clockScale, colours.ink);
   for (const touch of content.touches) canvas.disc(Math.round(touch.x), Math.round(touch.y), Math.max(6, scale * 4), TOUCH_COLOUR);
   return canvas;

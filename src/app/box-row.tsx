@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { IconButton, isArm64Badge, KindBadges, lacksDocker, osName, relativeTime, RowTitle, SETTINGS_PATH, StatusLine } from "./common.tsx";
+import { hasViewer, IconButton, isArm64Badge, KindBadges, lacksDocker, osName, relativeTime, RowTitle, SETTINGS_PATH, StatusLine } from "./common.tsx";
 import { runsWayland } from "./boxes-filter.ts";
 import { pageUrl, useOpenDesktop } from "./desktop.tsx";
 import { JoinHelp } from "./first-run.tsx";
@@ -212,7 +212,7 @@ export function BoxRow({
         ) : null}
       </div>
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
-        {box.desktop && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={() => openDesktop(box)} /> : null}
+        {hasViewer(box) && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={() => openDesktop(box)} /> : null}
         {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => openTerminal(box)} /> : null}
         {!held && box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} /> : null}
         {!held && box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} /> : null}
@@ -224,7 +224,7 @@ export function BoxRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-max min-w-40 max-w-72" mobileTitle={box.name}>
-            {box.desktop && ready ? (
+            {hasViewer(box) && ready ? (
               <>
                 <DropdownMenuItem onSelect={() => openDesktop(box)}>
                   <MonitorGlyph />
@@ -254,7 +254,7 @@ export function BoxRow({
                 New thread on this box…
               </DropdownMenuItem>
             ) : null}
-            {(box.desktop && ready) || canOpenTerminal(box) || box.address || (offersThread && !held && ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
+            {(hasViewer(box) && ready) || canOpenTerminal(box) || box.address || (offersThread && !held && ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
             {!held && box.canStopStart && ready ? (
               <DropdownMenuItem onSelect={() => void run("stop")}>
                 <Icon name="Square" aria-hidden />

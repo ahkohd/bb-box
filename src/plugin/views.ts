@@ -4,7 +4,7 @@
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, providerFamily, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
-import type { Arch, BoxForm, BoxSize, Capacity, DoctorReport, GpuRoom, GuestOs, Resizing, Windowing } from "../backends/types.ts";
+import { desktopDisplays, deviceDisplayOf, type Arch, type BoxForm, type BoxSize, type Capacity, type DoctorReport, type GpuRoom, type GuestOs, type Resizing, type Windowing } from "../backends/types.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
@@ -49,6 +49,7 @@ export interface BoxView {
   readonly desktop: boolean;
   /** The desktop the viewer shows, when the box has one. */
   readonly display: { readonly protocol: DisplayProtocol; readonly resizable: boolean; readonly clipboard: "commands" | null; readonly refresh: "viewer" | null; readonly quality: number | null; readonly macKeys: "alt-command" | null } | null;
+  readonly device?: { readonly model: string | null } | null;
   /** Who controls the desktop's input, when the box has one. */
   readonly control: ControlView | null;
   readonly computerUse: boolean;
@@ -91,7 +92,8 @@ function sizeWords(box: BoxRecord): string | null {
 }
 
 export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlView, resizing: Resizing | null = null): BoxView {
-  const [display] = box.capabilities.displays;
+  const [display] = desktopDisplays(box.capabilities.displays);
+  const device = deviceDisplayOf(box.capabilities.displays) ? { model: box.device?.model ?? box.askedDevice ?? box.capabilities.device?.devices[0].model ?? null } : null;
   return {
     id: box.id,
     name: box.name,
@@ -115,9 +117,10 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     requires: box.requires,
     extras: extraFeatures(box),
     docker: box.capabilities.features.includes("docker"),
-    desktop: box.capabilities.displays.length > 0,
+    desktop: !!display,
     display: display ? { protocol: display.protocol, resizable: display.resizable, clipboard: display.clipboard ?? null, refresh: display.refresh ?? null, quality: display.quality ?? null, macKeys: display.macKeys ?? null } : null,
-    control: display ? control : null,
+    device,
+    control: display || device ? control : null,
     computerUse: box.capabilities.computerUse !== null,
     terminal: box.state === "ready" && box.capabilities.command !== null,
     address: box.guest?.address ?? null,
@@ -280,7 +283,7 @@ export function kindViews(
       ...(backend.offerNote?.(kind.id) ? { note: backend.offerNote(kind.id)! } : {}),
       ...(backend.resizing?.(kind.id) ? { resizing: backend.resizing(kind.id)! } : {}),
       admin,
-      resizable: kind.capabilities.displays.length ? (kind.capabilities.displays[0]!.resizable ?? false) : null,
+      resizable: desktopDisplays(kind.capabilities.displays)[0]?.resizable ?? null,
       typicalReadyMs: typical[key] ?? null,
       docker,
       hostOs: backend.hostOs ?? null,
@@ -309,7 +312,7 @@ export function kindViews(
       defaultPreset: sizes.default,
       largest: sizeView(sizes.largest),
       gpu: kind.capabilities.gpu,
-      desktop: kind.capabilities.displays.length > 0,
+      desktop: desktopDisplays(kind.capabilities.displays).length > 0,
       os: kind.capabilities.os,
       arch: kind.capabilities.arch,
       // The windowing system is not in a kind's capabilities; it is known by the kind's ID (048).
@@ -507,7 +510,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     `Kind: ${box.kindLabel} (${box.kind}) from ${box.backendLabel}`,
     ...(formLine(box) ? [`Form: ${formLine(box)}`] : []),
     ...(sizeWords(box) ? [`Size: ${sizeWords(box)}`] : []),
-    `System: ${capabilities.os} ${capabilities.arch}${capabilities.gpu ? " with a GPU" : ""}${capabilities.displays.length ? ", with a desktop" : ""}`,
+    `System: ${capabilities.os} ${capabilities.arch}${capabilities.gpu ? " with a GPU" : ""}${desktopDisplays(capabilities.displays).length ? ", with a desktop" : ""}`,
   ];
   const admin = adminLine(capabilities);
   if (admin) lines.push(admin);

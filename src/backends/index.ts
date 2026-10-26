@@ -16,6 +16,7 @@ import { tartDriver } from "./tart/index.ts";
 import { GENERAL_DEFAULTS, backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
 import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall } from "./types.ts";
+import { DEVICE_DISPLAY, desktopDisplays } from "./types.ts";
 import type { ImageFacts } from "./images.ts";
 import { WarmShortfalls } from "./warm.ts";
 import { GENERAL_SECRETS } from "../core/box-files.ts";
@@ -110,7 +111,7 @@ export const TEST_DEVICE_KINDS: readonly string[] = ["linux", "linux-desktop-cpu
 export function withTestDevice(kind: BoxKind): BoxKind {
   const platform = testDevicePlatformFor(kind.capabilities.os);
   if (!TEST_DEVICE_KINDS.includes(kind.id) || kind.capabilities.device || kind.capabilities.command?.shell !== "sh" || !platform) return kind;
-  return { ...kind, capabilities: { ...kind.capabilities, device: testDeviceOffer(platform) } };
+  return { ...kind, capabilities: { ...kind.capabilities, device: testDeviceOffer(platform), displays: [...kind.capabilities.displays, DEVICE_DISPLAY] } };
 }
 
 export interface OfferedKind {
@@ -125,7 +126,7 @@ const PROMISES: readonly [string, (kind: BoxKind) => unknown][] = [
   ["GPU", (kind) => kind.capabilities.gpu],
   ["computer-use driver", (kind) => kind.capabilities.computerUse?.driver ?? "none"],
   ["enrolment", (kind) => kind.capabilities.enrol],
-  ["having a desktop", (kind) => kind.capabilities.displays.length > 0],
+  ["having a desktop", (kind) => desktopDisplays(kind.capabilities.displays).length > 0],
   ["device platform", (kind) => kind.capabilities.device?.platform ?? "none"],
   ["required features", (kind) => [...kind.requires].sort().join(", ") || "none"],
 ];

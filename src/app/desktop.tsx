@@ -37,7 +37,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, MachinesState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, ReleasedNotice, osName, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, hasViewer, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, ReleasedNotice, osName, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { POINTER_NONE } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
@@ -50,7 +50,7 @@ import { SetupProgress } from "./first-run.tsx";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
 import { MachineRow } from "./settings-machines.tsx";
-import { SelkiesSession, canShowVideo, unicodeKeysym } from "./selkies.ts";
+import { STILLS_WORDS, SelkiesSession, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
 import {
   KeysAfterPaste,
   astralKeysym,
@@ -135,9 +135,49 @@ const lastStream = new Map<string, Stream>();
 /** Each tab's desktop whose video gave way to VNC, by box and viewer. */
 const failedVideo = new Set<string>();
 
+type Shows = "desktop" | "device";
+
+export function displayChoiceKey(boxId: string): string {
+  return `bb-box:display:${boxId}`;
+}
+
+const lastDisplay = new Map<string, Shows>();
+
+function storedDisplay(boxId: string): Shows | null {
+  try {
+    const value = window.sessionStorage.getItem(displayChoiceKey(boxId));
+    return value === "desktop" || value === "device" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeDisplay(boxId: string, shows: Shows): void {
+  try {
+    window.sessionStorage.setItem(displayChoiceKey(boxId), shows);
+  } catch {
+    return;
+  }
+}
+
+function deviceKeyOf(shown: string): string {
+  return `desktop:${shown}:device`;
+}
+
+function deviceWaitWords(device: DeviceShown | null): string {
+  const power = device?.state?.power;
+  if (!power) return "Connecting";
+  if (power.is === "booting") return "Booting";
+  if (power.is === "switching") return `Switching to the ${power.to}`;
+  if (power.is === "stopped") return "Stopped";
+  if (power.is === "failed") return power.error.words;
+  return power.awake ? "Connecting" : "Asleep";
+}
+
 /** Forgets every viewer's last stream, and video that gave way, for tests. */
 export function forgetStreams(): void {
   lastStream.clear();
+  lastDisplay.clear();
   failedVideo.clear();
 }
 
@@ -967,7 +1007,24 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   /** The box is gone from bb-box's records, as once its thread or agent released it: the tab says so, and offers nothing that needs it. */
   const released = state !== null && !box;
   const path = state?.desktopPath ?? null;
-  const showing = box !== null && box.state === "ready" && box.display !== null;
+  const shown = `${boxId}:${viewer}`;
+  const [shows, setShows] = useState<Shows>(() => lastDisplay.get(shown) ?? storedDisplay(boxId) ?? "desktop");
+  const chooseDisplay = (next: Shows) => {
+    lastDisplay.set(shown, next);
+    setShows(next);
+  };
+  const hasDevice = !!box?.device;
+  const hasDesktop = !!box?.display;
+  useEffect(() => {
+    if (!box) return;
+    if (!hasDevice) chooseDisplay("desktop");
+    else if (!hasDesktop) chooseDisplay("device");
+    else chooseDisplay(lastDisplay.get(shown) ?? storedDisplay(boxId) ?? "device");
+  }, [box !== null, hasDevice, hasDesktop]);
+  const deviceShown = shows === "device";
+  const showsNow = useRef(shows);
+  showsNow.current = shows;
+  const showing = box !== null && box.state === "ready" && (deviceShown ? hasDevice : box.display !== null);
   const mine = box?.control?.owner === "human" && box.control.holder === viewer;
   const taken = box?.control?.owner === "agent" && box.control.takenFrom === viewer;
   const resizable = box?.display?.resizable ?? false;
@@ -981,7 +1038,6 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   // The stream: video whenever the box may show as video (056) and this browser can decode it, unless the
   // person chose VNC in the viewer's menu. Video that cannot start falls back to VNC. Through BB's server, video
   // drags and answers keys as quickly as VNC, in whole frames (056's comparison, corrected).
-  const shown = `${boxId}:${viewer}`;
   const [stream, setStream] = useState<Stream | null>(() => lastStream.get(shown) ?? null);
   // Video that gave way to VNC stays given way for this tab when it comes back, so its return is instant rather than a new try that
   // fails again (the owner's note of 19 October 2026), until the person chooses video again.
@@ -1021,15 +1077,17 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     }
     decide(storedChoice(boxId) ?? firstStream);
   }, [video, videoPossible, firstStream]);
-  const key = stream ? `desktop:${shown}:${stream}` : null;
+  const key = deviceShown ? deviceKeyOf(shown) : stream ? `desktop:${shown}:${stream}` : null;
   // The session of a stream given up for another is ended, not kept.
-  const keyBefore = useRef(key);
+  const keyBefore = useRef(deviceShown ? null : key);
   useEffect(() => {
+    if (deviceShown) return;
     if (keyBefore.current && keyBefore.current !== key) dropKept(keyBefore.current);
     keyBefore.current = key;
   }, [key]);
   // A kept session shows at once, before the box's state has loaded; the state can only confirm or end it.
   const [connection, setConnection] = useState<Connection>(() => (key ? keptFree<ViewerSession>(key)?.connection : undefined) ?? { state: "connecting" });
+  const [device, setDevice] = useState<DeviceShown | null>(null);
   /** When the viewer tries again after the connection ended, so its note counts down to it rather than stand still. */
   const retryAt = useMemo(() => (connection.state === "disconnected" ? Date.now() + connection.retryMs : null), [connection]);
   const retryNow = useNow(retryAt !== null, 250);
@@ -1040,6 +1098,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   const [problem, setProblem] = useState<string | null>(null);
   /** The box's clipboard as last seen: text from its desktop's cut text or the RPC where its input reports it, or an image the video client brought (#609). */
   const [boxClipboard, setBoxClipboard] = useState<string | Blob | null>(null);
+  useEffect(() => setBoxClipboard(null), [deviceShown]);
   /**
    * A note for a moment, as BB's own toast, so the toolbar keeps its height (the owner's note of 18 October 2026): a clipboard
    * outcome of the person's own paste or copy, "Pasted", "Copied" or why nothing went, or why video did not start. Never from an
@@ -1071,14 +1130,20 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     if (keptFree(key) === undefined && !latestPath) return;
     const claimed = claimKept<ViewerSession>(
       key,
-      () => (stream === "selkies" ? new SelkiesSession(`${socketUrl(latestPath!, boxId, viewer)}&stream=selkies`) : new DesktopSession(socketUrl(latestPath!, boxId, viewer))),
+      () =>
+        deviceShown
+          ? new SelkiesSession(`${socketUrl(latestPath!, boxId, viewer)}&display=device`, { device: { model: boxNow.current?.device?.model ?? null } })
+          : stream === "selkies"
+            ? new SelkiesSession(`${socketUrl(latestPath!, boxId, viewer)}&stream=selkies`)
+            : new DesktopSession(socketUrl(latestPath!, boxId, viewer)),
       // It rested while the box was away, or lost its connection while hidden. A session that throws here is replaced by a fresh one.
       (resumed) => {
         if (resumed.connection.state === "disconnected") resumed.reconnect();
       },
     );
     const current = claimed.session;
-    if (current instanceof SelkiesSession) {
+    const ownShows = showsNow.current;
+    if (current instanceof SelkiesSession && !current.device) {
       current.onFallback = (reason) => {
         flashFor("Video did not start, so this shows VNC.", reason, FALLBACK_NOTE_MS);
         setVideoFailed(true);
@@ -1106,10 +1171,15 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     current.onTypeText = () => setTyping((now) => now ?? "");
     current.setTyping(typingNow.current);
     current.putClipboard = (text, automatic) =>
-      boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text, ...(automatic ? { automatic: true } : {}) }) : null;
+      ownShows === "desktop" && boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text, ...(automatic ? { automatic: true } : {}) }) : null;
     current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
-    const unsubscribe = current.subscribe(() => setConnection(current.connection));
+    const deviceOf = () => (current instanceof SelkiesSession ? current.device : null);
+    const unsubscribe = current.subscribe(() => {
+      setConnection(current.connection);
+      setDevice(deviceOf());
+    });
     setConnection(current.connection);
+    setDevice(deviceOf());
     return () => {
       unsubscribe();
       current.onClipboard = undefined;
@@ -1129,7 +1199,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
       // A hidden tab may hold control for as long as a closed viewer: a minute (008). Then the agent has it back, unless someone else took it meanwhile.
       releaseKept(
         key,
-        mineNow.current
+        mineNow.current && showsNow.current === ownShows
           ? {
               handBack: async () => {
                 const latest = await rpc.call("desktop", { threadId, box: boxId });
@@ -1139,7 +1209,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
           : {},
       );
     };
-  }, [wanted, boxId, viewer, key, stream, rpc, threadId]);
+  }, [wanted, boxId, viewer, key, stream, rpc, threadId, deviceShown]);
 
   // In the commit that shows who has control, so the toolbar never says "You have control" while input is still off (#116).
   // Through a High resolution switch, asked here or in another tab, the video holds its last picture until the desktop has its new
@@ -1147,14 +1217,14 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   const switching = sharpAsked || state?.switching === true;
   useEffect(() => {
     const current = session.current;
-    if (!(current instanceof SelkiesSession)) return;
+    if (!(current instanceof SelkiesSession) || current.device) return;
     if (switching) current.hold();
     else current.release();
   }, [switching]);
   useLayoutEffect(() => {
     // A desktop at high resolution keeps its density through the video viewer's resizes; noVNC would ask for its pane's own size, so it asks for none.
-    session.current?.setControl(mine, resizable && !(sharp === true && stream === "rfb"));
-  }, [mine, resizable, connection, sharp, stream]);
+    session.current?.setControl(mine, !deviceShown && resizable && !(sharp === true && stream === "rfb"));
+  }, [mine, resizable, connection, sharp, stream, deviceShown]);
   const guestOs = box?.os ?? null;
   useLayoutEffect(() => {
     if (guestOs) session.current?.setGuest(guestOs);
@@ -1177,6 +1247,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   // A box that stops or goes takes its stream with it.
   useEffect(() => {
     if (state && !showing && key) dropKept(key);
+    if (state && box?.state !== "ready") dropKept(deviceKeyOf(shown));
   }, [state, showing, key]);
 
   // The clipboard, both ways, while this tab has control: the browser's goes
@@ -1202,7 +1273,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
       );
     };
     const fromBox = async () => {
-      if (!document.hasFocus()) return;
+      if (deviceShown || !document.hasFocus()) return;
       const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => undefined);
       if (stopped || latest === undefined) return;
       if (latest === null) {
@@ -1227,7 +1298,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
       window.removeEventListener("focus", toBox);
       clearInterval(timer);
     };
-  }, [mine, connected, rpc, threadId, boxId, viewer]);
+  }, [mine, connected, rpc, threadId, boxId, viewer, deviceShown]);
 
   const act = async (task: () => Promise<BoxResult>) => {
     setActing(true);
@@ -1329,7 +1400,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   /** The menu's Copy: the box's clipboard as last seen, or fetched now where its input reports it, written to this computer's on the click. */
   const copyToComputer = async () => {
     let copied = boxClipboard;
-    if (copied === null) {
+    if (copied === null && !deviceShown) {
       const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => null);
       copied = latest?.text ?? null;
       if (copied !== null) setBoxClipboard(copied);
@@ -1355,14 +1426,14 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   } else if (released) {
     tone = "off";
     words = "Released";
-  } else if (box && !box.display) {
+  } else if (box && !box.display && !box.device) {
     tone = "off";
     words = "No desktop";
   } else if (box && box.state !== "ready") {
     tone = box.state === "stopped" ? "off" : box.state === "failed" || box.state === "gone" ? "bad" : "busy";
     words = statusOf(box, Date.now()).items[0]?.text ?? box.state;
   } else if (box && connection.state === "connecting") {
-    words = "Connecting…";
+    words = deviceShown ? `${deviceWaitWords(device)}…` : "Connecting…";
   } else if (box && connection.state === "disconnected") {
     tone = "warn";
     words = "Disconnected";
@@ -1381,6 +1452,26 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
         </span>
+        {hasDevice && hasDesktop ? (
+          <span role="group" aria-label="Show" className="inline-flex items-center rounded-md border border-border p-0.5">
+            {(["device", "desktop"] as const).map((each) => (
+              <Button
+                key={each}
+                type="button"
+                variant={shows === each ? "secondary" : "ghost"}
+                size="sm"
+                className="h-6 px-2 text-xs"
+                aria-pressed={shows === each}
+                onClick={() => {
+                  storeDisplay(boxId, each);
+                  chooseDisplay(each);
+                }}
+              >
+                {each === "device" ? "Device" : "Desktop"}
+              </Button>
+            ))}
+          </span>
+        ) : null}
         <span className="ml-auto flex items-center gap-1.5">
           {showing && !mine ? (
             <Button type="button" variant="outline" size="sm" className="h-7" disabled={acting || connection.state !== "connected"} onClick={() => void take()}>
@@ -1425,7 +1516,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
                     Reconnect
                   </DropdownMenuItem>
                 ) : null}
-                {showing && ((video === true && canShowVideo() && stream) || sharp !== null) ? (
+                {showing && !deviceShown && ((video === true && canShowVideo() && stream) || sharp !== null) ? (
                   <DisplayItems
                     compact={compact}
                     vnc={
@@ -1488,6 +1579,11 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
           </Button>
         </div>
       ) : null}
+      {deviceShown && showing && device?.stills && connection.state === "connected" ? (
+        <p role="status" className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+          {STILLS_WORDS}
+        </p>
+      ) : null}
       <div className="relative min-h-0 flex-1 bg-muted">
         <div ref={target} className="absolute inset-0" data-testid="desktop-screen" />
         {mine ? <div aria-hidden data-testid="control-ring" className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-primary/60" /> : null}
@@ -1506,7 +1602,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
           <Notice>{error}</Notice>
         ) : !state ? null : !box ? (
           <ReleasedNotice name={lastName.current} back={onBack} />
-        ) : !box.display ? (
+        ) : !box.display && !box.device ? (
           <Notice>{box.name} has no desktop.</Notice>
         ) : box.state === "stopped" ? (
           <Notice
@@ -1530,6 +1626,8 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
           <Notice>{box.name} was deleted outside bb-box.</Notice>
         ) : box.state !== "ready" ? (
           <Notice>{box.name} is being released.</Notice>
+        ) : connection.state === "connecting" && deviceShown ? (
+          <Notice detail={deviceWaitWords(device)}>{device?.model ?? box.device?.model ?? "The device"}</Notice>
         ) : connection.state === "connecting" ? (
           <Notice>Connecting to the desktop…</Notice>
         ) : connection.state === "disconnected" ? (
@@ -1675,7 +1773,7 @@ export function DesktopPanel({ threadId, params }: { threadId: string; params: u
 /** A box as a row: its glyph, name, kind, state (and who has control, for a desktop), with its actions. */
 export function BoxLine({ box, meta, machine = false, actions }: { box: BoxView; meta?: string | null; /** The BB machine the thread runs on (036): its badge. */ machine?: boolean; actions?: React.ReactNode }) {
   const status = statusOf(box, Date.now());
-  const control = box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null;
+  const control = hasViewer(box) && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null;
   return (
     <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
       <span className="flex size-6 items-center justify-center text-muted-foreground"><BoxGlyph /></span>
@@ -1701,8 +1799,8 @@ function DesktopChooser({ threadId }: { threadId: string }) {
   const open = useOpenDesktop();
   const { value: state, error } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
   // The box this thread runs on counts too (the operator, 4 October 2026): listed first, and alone it opens straight away.
-  const runsOn = state?.runsOn?.box.desktop ? state.runsOn.box : null;
-  const desktops = [...(runsOn ? [runsOn] : []), ...(state?.boxes.filter((box) => box.desktop) ?? [])];
+  const runsOn = state?.runsOn && hasViewer(state.runsOn.box) ? state.runsOn.box : null;
+  const desktops = [...(runsOn ? [runsOn] : []), ...(state?.boxes.filter(hasViewer) ?? [])];
   useNow(desktops.some((box) => box.state === "acquiring" || box.state === "starting"), 1000);
   if (desktops.length === 1) return <DesktopViewer key={desktops[0]!.id} threadId={threadId} boxId={desktops[0]!.id} newTab />;
   return (
@@ -1973,7 +2071,7 @@ function BoxList() {
                             desktop: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id) }),
                             terminal: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, "terminal") }),
                           }}
-                          meta={[box.desktop && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
+                          meta={[hasViewer(box) && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
                           threading={false}
                         />
                       ))}

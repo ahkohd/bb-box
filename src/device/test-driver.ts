@@ -18,7 +18,7 @@ import {
 } from "../core/device.ts";
 import { DriverError, type DeviceDriver, type EncodedFrame, type VideoSource } from "./driver.ts";
 import { PcmH264Encoder, yuvFromRgba } from "./pcm-h264.ts";
-import { drawCard } from "./test-card.ts";
+import { cardLine, drawCard, type CardContent } from "./test-card.ts";
 
 const LONGEST_VIDEO_EDGE = 960;
 const REBOOT_MS = 300;
@@ -173,19 +173,26 @@ export class TestDriver implements DeviceDriver {
     return { generation: this.#generation, physical: this.#physical, content: this.#physical, video: this.#videoSize() };
   }
 
-  #draw(): void {
-    if (this.#power.is !== "booted" || !this.#target) return;
+  #card(): CardContent {
     const size = this.#videoSize();
     const clock = new Date(this.#clock.now()).toISOString().slice(11, 19);
-    const lines = [this.#target.model, `AS AN ${platformWord(this.platform)} DEVICE`, orientationWord(this.#physical), `${size.width}X${size.height}`, `CONTROLS ${this.record.controls.length}`];
-    const card = JSON.stringify({ size, clock, lines, appearance: this.#appearance, touches: this.#touches, generation: this.#generation });
+    const clipboard = this.#clipboard ? ["CLIPBOARD", cardLine(this.#clipboard, size)] : [];
+    const lines = [this.#target!.model, `AS AN ${platformWord(this.platform)} DEVICE`, orientationWord(this.#physical), `${size.width}X${size.height}`, `CONTROLS ${this.record.controls.length}`, ...clipboard];
+    return { size, appearance: this.#appearance, lines, clock, touches: this.#touches };
+  }
+
+  #draw(): void {
+    if (this.#power.is !== "booted" || !this.#target) return;
+    const content = this.#card();
+    const size = content.size;
+    const card = JSON.stringify({ ...content, generation: this.#generation });
     if (card === this.#lastCard && !this.#keyAsked) return;
     this.#lastCard = card;
     if (!this.#encoder || this.#encoder.size.width !== size.width || this.#encoder.size.height !== size.height) {
       this.#encoder = new PcmH264Encoder(size);
       this.#keyAsked = true;
     }
-    const canvas = drawCard({ size, appearance: this.#appearance, lines, clock, touches: this.#touches });
+    const canvas = drawCard(content);
     const encoded = this.#encoder.encode(yuvFromRgba(size, canvas.rgba), this.#keyAsked);
     this.#keyAsked = false;
     if (!encoded) return;
@@ -238,6 +245,7 @@ export class TestDriver implements DeviceDriver {
 
   async setClipboard(text: string): Promise<void> {
     this.#clipboard = text;
+    this.#draw();
   }
 
   async clipboard(): Promise<string> {
@@ -280,9 +288,8 @@ export class TestDriver implements DeviceDriver {
 
   async screenshot(): Promise<Uint8Array> {
     this.#booted();
-    const size = this.#videoSize();
-    const canvas = drawCard({ size, appearance: this.#appearance, lines: [this.#target!.model], clock: new Date(this.#clock.now()).toISOString().slice(11, 19), touches: this.#touches });
-    return rgbaPng(size.width, size.height, canvas.rgba);
+    const content = this.#card();
+    return rgbaPng(content.size.width, content.size.height, drawCard(content).rgba);
   }
 
   async tree(): Promise<readonly DeviceElement[]> {
