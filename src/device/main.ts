@@ -10,6 +10,7 @@ import { parseDeviceOffer } from "../core/device-parse.ts";
 import { DriverError, type DeviceDriver, type VideoSource } from "./driver.ts";
 import { EXITS, devicePaths, type DevicePaths } from "./paths.ts";
 import { DeviceServer, placeholderState } from "./server.ts";
+import { IosDriver } from "./ios-driver.ts";
 import { TestDriver } from "./test-driver.ts";
 import { deviceModel } from "../core/device.ts";
 
@@ -94,8 +95,18 @@ class AbsentDriver implements DeviceDriver {
   close(): void {}
 }
 
-function driverFor(offer: DeviceOffer): DeviceDriver {
+async function choices(paths: DevicePaths): Promise<{ readonly slim: boolean }> {
+  try {
+    const parsed = JSON.parse(await readFile(paths.choices, "utf8")) as { slim?: unknown };
+    return { slim: parsed.slim !== false };
+  } catch {
+    return { slim: true };
+  }
+}
+
+async function driverFor(offer: DeviceOffer, paths: DevicePaths): Promise<DeviceDriver> {
   if (offer.devices.every(isTestDevice)) return new TestDriver(offer.platform);
+  if (offer.platform === "ios" && process.platform === "darwin") return new IosDriver({ paths, slim: (await choices(paths)).slim, log });
   return new AbsentDriver(offer.platform, `This device server has no ${platformWord(offer.platform)} driver yet.`);
 }
 
@@ -105,7 +116,7 @@ async function serve(paths: DevicePaths): Promise<void> {
     log(offer);
     process.exit(1);
   }
-  const server = new DeviceServer({ paths, platform: offer.platform, devices: offer.devices, driver: driverFor(offer), version: DEVICE_SERVER_VERSION, log });
+  const server = new DeviceServer({ paths, platform: offer.platform, devices: offer.devices, driver: await driverFor(offer, paths), version: DEVICE_SERVER_VERSION, log });
   const stop = () => {
     void server.stop().finally(() => process.exit(0));
   };

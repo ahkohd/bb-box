@@ -70,6 +70,20 @@ where it is built ahead, which its boxes claim at once (#440). The
   only when you need them.
 - A `linux-desktop` box always has its GPU. When no GPU is free, the refusal
   suggests `linux-desktop-cpu`.
+- An `ios` box is a macOS VM with one iOS Simulator device booted, shown to
+  the person in the panel. `box_list` names its devices; `device` picks one,
+  such as `box_acquire({kind: "ios", device: "iPhone 17"})`, and the first
+  is the default. With `wait`, `box_acquire` answers once the device has
+  booted, at most 120 s, and `box_status` gives its Device lines: the
+  model, its iOS and Xcode, and its state. Build and run on the host with
+  `box_run`: `xcrun simctl` takes `booted` as the device, as in
+  `xcrun simctl install booted App.app` and
+  `xcrun simctl launch booted <bundle id>`. Build for the simulator, with
+  `-sdk iphonesimulator`. The device is slim: widgets, Siri, iCloud,
+  Health, Wallet and the like are off, for a quarter of the memory. Ask for
+  `slim: false` for an app that uses one of them; its first boot then takes
+  about 45 s more. Do not open Device Hub on the host: it
+  takes the device's clipboard, and bb-box closes it.
 - Cloud providers cost money while a box exists, so release such a box as
   soon as you are done. Hetzner Cloud's Linux boxes are containers on hosts
   bb-box makes as boxes need them: a box on a host with room is ready in

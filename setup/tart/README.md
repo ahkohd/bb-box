@@ -238,8 +238,9 @@ is arm64: amd64 container images and x86_64 binaries do not run there.
 ```
 
 It clones the macOS image and adds idb_companion and a booted-once, slimmed
-iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5), in about 17 minutes. bb-box
-does not offer ios boxes yet. [The iOS image's guide](ios/README.md) says what
+iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5), in about 17 minutes. With
+the Tart backend's `ios-image` set to it, bb-box offers ios boxes, each a clone
+of it with one device booted. [The iOS image's guide](ios/README.md) says what
 it has, and how it is checked and refreshed.
 
 #### Windows (arm64)

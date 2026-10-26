@@ -398,6 +398,7 @@ function kindView(id: string, label: string, description: string, cores: number,
     enrol: true,
     spares: { target: 0, ready: 0, making: 0 },
     admin: true,
+    devices: null,
     backends: ["Fake host"],
     forms: ["LXC"],
     offers: [
@@ -3042,7 +3043,7 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
   const undo = withVideo();
   try {
     window.sessionStorage.clear();
-    const { handlers, changes } = server([desktopBox({ device: { model: "Pixel 8" } })], { video: true });
+    const { handlers, changes } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
     const slot = desktopTab(handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
     expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(false);
@@ -3112,7 +3113,7 @@ test("where the browser has no WebCodecs, the device shows stills over its own c
   window.sessionStorage.clear();
   vi.stubGlobal("createImageBitmap", async () => ({ width: 360, height: 800, close() {} }));
   try {
-    const { handlers } = server([desktopBox({ device: { model: "Pixel 8" } })], { video: true });
+    const { handlers } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
     const slot = desktopTab(handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
     const device = deviceSocket();
@@ -3138,7 +3139,7 @@ test("a device whose first frame does not decode within 3 s asks for stills inst
   try {
     window.sessionStorage.clear();
     FakeDecoder.silent = true;
-    const { handlers } = server([desktopBox({ device: { model: "Pixel 8" } })], { video: true });
+    const { handlers } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
     desktopTab(handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
     const device = deviceSocket();

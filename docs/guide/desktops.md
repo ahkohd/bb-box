@@ -105,7 +105,11 @@ Video also keeps coloured text sharp: when every browser watching a desktop can 
 
 ## Device displays
 
-A box can have a device beside its desktop, such as a phone, or a device and no desktop. For now the only device is the test device: a test card that stands in for a phone, turned on by the advanced `testDevice` setting in the [configuration reference](../reference/configuration.md). The iOS Simulator and Android emulator come later.
+A box can have a device beside its desktop, such as a phone, or a device and no desktop. An `ios` box has an iOS Simulator device, an iPhone or iPad, beside its macOS host's desktop. The test device, a test card that stands in for a phone, is turned on by the advanced `testDevice` setting in the [configuration reference](../reference/configuration.md). The Android emulator comes later.
+
+The device's screen shows as it is now, but your clicks and keys do not reach an iOS device yet, nor do its controls: those come in later versions of bb-box. Commands do: `xcrun simctl` in the box's terminal takes `booted` as the device.
+
+On an `ios` box, the Desktop view is the macOS host's, for Xcode. It says above it: 'Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Device view.' Xcode's Run opens Device Hub even so. bb-box closes it within 5 seconds, by stopping its process: quitting it would shut the device down. `bb box doctor` says whether Device Hub runs on each `ios` box, and how often bb-box has closed it.
 
 A box with a device opens on the device. A box with both shows **Device** and **Desktop** in the toolbar: select one to see it. Each keeps its own connection while you look at the other, so switching is instant, and your choice lasts for that box in that tab.
 

@@ -138,6 +138,7 @@ describe("delivering the device server", { skip: process.platform === "win32" },
     assert.equal(view.is === "connected" && view.state.model, "Pixel Tablet");
     assert.equal(record.device?.model, "Pixel Tablet");
     assert.equal(record.device?.runtime.platform, "android");
+    assert.deepEqual(JSON.parse(readFileSync(join(home, ".bb-box/device/choices.json"), "utf8")), { slim: true }, "the box's choices go with the delivery");
     assert.ok(logs.some((line) => line === "first: Box b-12's device server: delivered version 1, as it has none yet."));
     await first.dispose();
   });

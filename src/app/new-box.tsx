@@ -160,7 +160,7 @@ export function NewBox({
 }: {
   kinds: readonly KindView[];
   /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036), and its image (049). */
-  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[], image?: string) => Promise<string | null>;
+  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[], image?: string, device?: string) => Promise<string | null>;
   /** The projects' images a box can choose (049), this project's marked mine; the choice shows where one covers the chosen kind. */
   images?: readonly ImageOptionView[];
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
@@ -194,6 +194,7 @@ export function NewBox({
   const [choice, setChoice] = useState<Choice2 | null>(last.size ?? null);
   /** The image chosen by hand (049): a name or "standard"; null until then, so the form starts on the project's image each time. */
   const [image, setImage] = useState<string | null>(null);
+  const [device, setDevice] = useState<string | null>(null);
   /** The preset last chosen, which Custom starts from. */
   const [viewed, setViewed] = useState<string | null>(last.size && last.size !== CUSTOM ? last.size : null);
   // Custom fields belong to a kind: edited ones are kept per kind, and a
@@ -259,6 +260,10 @@ export function NewBox({
   /** What the form says about the image: the hand's choice while it covers the kind, else this project's image, else Standard; nothing when there is no choice. */
   const chosenImage = imageChoice ? (image && imageOptions.some((option) => option.value === image) ? image : (covering.find((candidate) => candidate.mine)?.name ?? "standard")) : undefined;
   const systems = systemsOf(kinds);
+  const devices = kind?.devices?.models ?? [];
+  const chosenDevice = devices.length ? (device && devices.includes(device) ? device : devices[0]) : undefined;
+  const systemOf = (system: { readonly os: string; readonly device?: string }) => system.device ?? system.os;
+  const pickedSystem = picked.device ?? picked.os;
   const gpus = gpuChoices(kinds, picked.os, picked.arch, picked.windowing);
   /** A desktop whose system has a GPU desktop and a CPU one: the GPU is a choice. */
   const gpuChoice = picked.desktop && gpus.none && gpus.gpu;
@@ -370,7 +375,7 @@ export function NewBox({
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
-      const refused = buildsFirst ? await onDemand!.build(kind.id, request, machine && typedName ? typedName : undefined) : await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage);
+      const refused = buildsFirst ? await onDemand!.build(kind.id, request, machine && typedName ? typedName : undefined) : await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
@@ -456,49 +461,64 @@ export function NewBox({
           }}
         >
           <FormSection title="System" description={machine ? "Of the kinds whose boxes join BB." : undefined}>
-            <div role="radiogroup" aria-label="System" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, systems.length, systems.findIndex((system) => system.os === picked.os), (position) => pick({ os: systems[position]!.os }))}>
+            <div
+              role="radiogroup"
+              aria-label="System"
+              className="flex flex-wrap gap-2"
+              onKeyDown={(event) => arrows(event, systems.length, systems.findIndex((system) => systemOf(system) === pickedSystem), (position) => pick({ os: systems[position]!.os, device: systems[position]!.device }))}
+            >
               {systems.map((system) => (
-                <OptionCard key={system.os} title={system.label} words={system.words} selected={system.os === picked.os} onClick={() => pick({ os: system.os })} />
+                <OptionCard key={systemOf(system)} title={system.label} words={system.words} selected={systemOf(system) === pickedSystem} onClick={() => pick({ os: system.os, device: system.device })} />
               ))}
             </div>
-          </FormSection>
-          <FormSection title="Architecture">
-            <div role="radiogroup" aria-label="Architecture" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, ARCHS.length, ARCHS.findIndex((arch) => arch.id === picked.arch), (position) => pick({ arch: ARCHS[position]!.id }))}>
-              {ARCHS.map((arch) => (
-                <OptionCard key={arch.id} title={arch.label} words={arch.words} selected={arch.id === picked.arch} available={archAvailable(kinds, picked.os, arch.id)} onClick={() => pick({ arch: arch.id })} />
-              ))}
-            </div>
-          </FormSection>
-          <FormSection title="Type">
-            <div role="radiogroup" aria-label="Type" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, 2, picked.desktop ? 1 : 0, (position) => pick({ desktop: position === 1 }))}>
-              <OptionCard title="Server" words="Terminal" glyph={TYPE_GLYPHS.server} selected={!picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, false)} onClick={() => pick({ desktop: false })} />
-              <OptionCard title="Desktop" words={desktopBuildsFirst ? `Builds first, ${estimate(desktopsAllToBuild[0]!.took, DESKTOP_BUILD_WORDS)}` : "Screen · Terminal · Computer use"} glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
-            </div>
-            {displayChoice ? (
-              // The windowing is a detail of a desktop, as a GPU is of its resources (the operator's notes of 3 October 2026): a dim sub-label under
-              // the cards, then the menu, with plain names and no description. Shown only when a system has both; X11 by default, so today's boxes are unchanged (048).
+            {devices.length ? (
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Display</p>
-                <MenuSelect
-                  label="Display"
-                  value={picked.windowing}
-                  options={[
-                    { value: "x11", label: "X11" },
-                    { value: "wayland", label: "Wayland" },
-                  ]}
-                  onChange={(value) => pick({ windowing: value as Windowing })}
-                />
-              </div>
-            ) : null}
-            {imageChoice ? (
-              // The image is a detail of the box's kind (049), in the Display choice's shape: a dim sub-label under the cards, then one menu,
-              // this project's image first and chosen at first, then Standard, then other projects' images; plain names, no description.
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Image</p>
-                <MenuSelect label="Image" value={chosenImage ?? "standard"} options={imageOptions} onChange={setImage} />
+                <p className="text-xs text-muted-foreground">Device</p>
+                <MenuSelect label="Device" value={chosenDevice ?? devices[0]!} options={devices.map((model) => ({ value: model, label: model }))} onChange={setDevice} />
               </div>
             ) : null}
           </FormSection>
+          {picked.device ? null : (
+            <>
+              <FormSection title="Architecture">
+                <div role="radiogroup" aria-label="Architecture" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, ARCHS.length, ARCHS.findIndex((arch) => arch.id === picked.arch), (position) => pick({ arch: ARCHS[position]!.id }))}>
+                  {ARCHS.map((arch) => (
+                    <OptionCard key={arch.id} title={arch.label} words={arch.words} selected={arch.id === picked.arch} available={archAvailable(kinds, picked.os, arch.id)} onClick={() => pick({ arch: arch.id })} />
+                  ))}
+                </div>
+              </FormSection>
+              <FormSection title="Type">
+                <div role="radiogroup" aria-label="Type" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, 2, picked.desktop ? 1 : 0, (position) => pick({ desktop: position === 1 }))}>
+                  <OptionCard title="Server" words="Terminal" glyph={TYPE_GLYPHS.server} selected={!picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, false)} onClick={() => pick({ desktop: false })} />
+                  <OptionCard title="Desktop" words={desktopBuildsFirst ? `Builds first, ${estimate(desktopsAllToBuild[0]!.took, DESKTOP_BUILD_WORDS)}` : "Screen · Terminal · Computer use"} glyph={TYPE_GLYPHS.desktop} selected={picked.desktop} available={typeAvailable(kinds, picked.os, picked.arch, true)} onClick={() => pick({ desktop: true })} />
+                </div>
+                {displayChoice ? (
+                  // The windowing is a detail of a desktop, as a GPU is of its resources (the operator's notes of 3 October 2026): a dim sub-label under
+                  // the cards, then the menu, with plain names and no description. Shown only when a system has both; X11 by default, so today's boxes are unchanged (048).
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Display</p>
+                    <MenuSelect
+                      label="Display"
+                      value={picked.windowing}
+                      options={[
+                        { value: "x11", label: "X11" },
+                        { value: "wayland", label: "Wayland" },
+                      ]}
+                      onChange={(value) => pick({ windowing: value as Windowing })}
+                    />
+                  </div>
+                ) : null}
+                {imageChoice ? (
+                  // The image is a detail of the box's kind (049), in the Display choice's shape: a dim sub-label under the cards, then one menu,
+                  // this project's image first and chosen at first, then Standard, then other projects' images; plain names, no description.
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">Image</p>
+                    <MenuSelect label="Image" value={chosenImage ?? "standard"} options={imageOptions} onChange={setImage} />
+                  </div>
+                ) : null}
+              </FormSection>
+            </>
+          )}
           {kind ? (
             <FormSection title="Resources" description={`Configure the box's cores, memory${gpuChoice ? ", disk and GPU" : " and disk"}: pick a size, or Custom to set your own.`}>
               <div role="radiogroup" aria-label="Size" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>

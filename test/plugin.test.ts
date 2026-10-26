@@ -3330,7 +3330,7 @@ test("a box with the test device shows its device by the display's ID beside its
   const shown = (await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { box: { desktop: boolean; device: { model: string | null } | null; display: { protocol: string } | null }; video: boolean };
   assert.equal(shown.box.desktop, true);
   assert.equal(shown.box.display?.protocol, "rfb");
-  assert.deepEqual(shown.box.device, { model: "Pixel 8" });
+  assert.deepEqual(shown.box.device, { model: "Pixel 8", simulatorHost: false });
   assert.equal(shown.video, true, "the desktop's own video, not the device's");
   const selkies = world.backend!.selkies;
   const viewer = "viewer-one-0001";

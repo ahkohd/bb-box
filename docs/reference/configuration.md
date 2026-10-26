@@ -83,7 +83,7 @@ Projects' images, by name (049).
 | [`proxmox-lxc`](#proxmox-lxc) | Proxmox LXC | linux, linux-desktop, linux-desktop-cpu, linux-desktop-wayland-cpu |
 | [`proxmox-qemu`](#proxmox-qemu) | Proxmox QEMU | windows-desktop, linux, linux-desktop-cpu |
 | [`ssh-pool`](#ssh-pool) | SSH host pool | linux, macos, macos-desktop |
-| [`tart`](#tart) | Tart | macos, macos-desktop, linux-arm64, linux-arm64-desktop-cpu, windows-arm64-desktop |
+| [`tart`](#tart) | Tart | macos, macos-desktop, linux-arm64, linux-arm64-desktop-cpu, windows-arm64-desktop, ios |
 | [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
 | [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
 | [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu, linux-arm64, linux-arm64-desktop-cpu |
@@ -168,7 +168,7 @@ Setup: [setup/ssh-pool/README.md](../../setup/ssh-pool/README.md).
 
 ### tart
 
-Tart: macOS boxes, and Linux and Windows boxes on arm64, as VMs on your Macs with Apple silicon.
+Tart: macOS boxes, iOS Simulator boxes, and Linux and Windows boxes on arm64, as VMs on your Macs with Apple silicon.
 
 Setup: [setup/tart/README.md](../../setup/tart/README.md).
 

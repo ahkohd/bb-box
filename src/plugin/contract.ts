@@ -192,7 +192,7 @@ export const contract = defineRpcContract({
    * `on` names the provider to use, or several for the first with room among them in acquire order (044): each by its name as the form gives it, its backend ID or its one host; without it, the first with room anywhere.
    * `image` is an image's name or "standard" (049); without it, the thread's project's image for the kind.
    */
-  acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional(), on: providers.optional(), image: z.string().min(1).optional() }), output: boxResult },
+  acquire: { input: thread.extend({ kind: z.string().min(1), size: size.optional(), on: providers.optional(), image: z.string().min(1).optional(), device: z.string().min(1).optional() }), output: boxResult },
   /** The projects' images a box can choose (049), marked as the thread's or the project's own, for BB's new-thread inputs, where there is no thread yet. */
   images: { input: z.object({ threadId: z.string().min(1).optional(), projectId: z.string().min(1).optional() }), output: z.custom<ImageOptionView[]>() },
   /** Without `force`, a box a thread is working on is left alone, and the answer names the threads. */

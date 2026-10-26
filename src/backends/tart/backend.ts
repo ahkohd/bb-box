@@ -52,8 +52,11 @@ import {
   type RunResult,
   type SshAccess,
 } from "../../transports/types.ts";
+import type { DeviceOffer } from "../../core/device.ts";
 import {
   BackendError,
+  DEVICE_DISPLAY,
+  desktopDisplays,
   type AcquireHooks,
   type Backend,
   type BackendContext,
@@ -583,7 +586,32 @@ export function tartKinds(config: TartConfig): BoxKind[] {
       readyTimeoutMs: WINDOWS_READY_TIMEOUT_MS,
     },
   };
-  return TART_KINDS.filter((kind) => config.kinds[kind].image).map((kind) => kinds[kind]);
+  const offered = TART_KINDS.filter((kind) => config.kinds[kind].image).map((kind) => kinds[kind]);
+  if (!config.iosImage) return offered;
+  const ios: BoxKind = {
+    id: IOS_IMAGE_KIND,
+    label: "iOS Simulator",
+    description:
+      "An iOS Simulator device, an iPhone or iPad, booted in a macOS VM on a Mac with Apple silicon, for installing, running and testing iOS apps, with its screen shown in the panel. Commands run on the macOS host, with Xcode; simctl takes booted as the device. The host's desktop is for a person, for Xcode.",
+    requires: [],
+    capabilities: {
+      os: "macos",
+      arch: "arm64",
+      gpu: false,
+      features: [],
+      command: SSH_COMMAND,
+      displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands", macKeys: "alt-command" }, DEVICE_DISPLAY],
+      computerUse: null,
+      enrol: true,
+      device: null,
+    },
+    readyTimeoutMs: READY_TIMEOUT_MS,
+  };
+  return [...offered, ios];
+}
+
+function imageOfKind(config: TartConfig, kind: string): string | null {
+  return kind === IOS_IMAGE_KIND ? config.iosImage : (config.kinds[kind as TartKind]?.image ?? null);
 }
 
 /** A hostname from a box's name: lower-case letters, digits and "-", at most 63. */
@@ -792,6 +820,8 @@ export class TartBackend implements Backend {
   readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
   /** Whether a Mac has answered, so macos-desktop's video is declared as its image has it (060). */
   #videoKnown = false;
+  #devicesKnown = false;
+  #devicesAsked = false;
   /** Whether windows-arm64-desktop's video is known: once a Mac has answered, as for macos-desktop's. */
   #windowsVideoKnown = false;
   /** The build of bb-box-stream that Windows video runs on each Mac (#865), from mac-stream.swift's source. */
@@ -816,7 +846,26 @@ export class TartBackend implements Backend {
   }
 
   kinds(): BoxKind[] {
-    return this.#kinds;
+    if (this.#config.iosImage && !this.#devicesKnown && !this.#devicesAsked) {
+      this.#devicesAsked = true;
+      void this.#states().catch((error) => this.#context.logError("read the iOS image's devices", error));
+    }
+    return this.#kinds.filter((kind) => kind.id !== IOS_IMAGE_KIND || kind.capabilities.device);
+  }
+
+  #declareDevices(states: ReadonlyMap<string, MacState | Error>): void {
+    const image = this.#config.iosImage;
+    const index = this.#kinds.findIndex((kind) => kind.id === IOS_IMAGE_KIND);
+    if (!image || index < 0) return;
+    const devices = [...states.values()].flatMap((state) => (state instanceof Error ? [] : [state.records.get(image)?.devices ?? null])).find((found) => found?.[0].runtime.platform === "ios");
+    const answered = [...states.values()].some((state) => !(state instanceof Error));
+    if (!answered) return;
+    this.#devicesKnown = true;
+    const kind = this.#kinds[index]!;
+    const device = devices ? ({ platform: "ios", devices } as DeviceOffer) : null;
+    if (JSON.stringify(device) === JSON.stringify(kind.capabilities.device)) return;
+    this.#kinds[index] = { ...kind, capabilities: { ...kind.capabilities, device } };
+    this.#context.kindsChanged?.();
   }
 
   /**
@@ -854,6 +903,7 @@ export class TartBackend implements Backend {
    */
   async asOffered(_guest: Guest, kind: string): Promise<boolean> {
     if (kind === "windows-arm64-desktop") return this.#windowsVideoKnown;
+    if (kind === IOS_IMAGE_KIND) return this.#devicesKnown;
     return kind !== "macos-desktop" || this.#videoKnown;
   }
 
@@ -929,6 +979,7 @@ export class TartBackend implements Backend {
     );
     const states = new Map(entries);
     this.#declareVideo(states);
+    this.#declareDevices(states);
     return states;
   }
 
@@ -1120,7 +1171,7 @@ export class TartBackend implements Backend {
   async #acquireOne(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
     // A project's image's build, as images.list gives it, <Mac>/<VM>, else the kind's image.
-    const image = box.from ? this.#imageRef(box.from).vm : this.#config.kinds[box.kind as TartKind].image!;
+    const image = box.from ? this.#imageRef(box.from).vm : imageOfKind(this.#config, box.kind)!;
     const os = guestOsOf(box.kind);
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? kind.readyTimeoutMs);
     const step: Step = async (name, run) => {
@@ -1848,6 +1899,7 @@ export class TartBackend implements Backend {
   #pools(): WarmPool[] {
     const pools: WarmPool[] = [];
     for (const kind of this.#kinds) {
+      if (kind.id === IOS_IMAGE_KIND) continue;
       const settings = this.#context.kind(kind.id);
       const image = this.#config.kinds[kind.id as TartKind].image;
       const os = guestOsOf(kind.id);
@@ -2183,8 +2235,8 @@ export class TartBackend implements Backend {
     // Video where the kind declares it and this VM has its stream: bb-box-stream on macOS, Selkies' launcher on a Linux
     // desktop (060). A box of an older build, or of a project's image, may not.
     const stream = os === "macos" ? (this.#options.macStream ?? MAC_STREAM) : (this.#options.selkiesLauncher ?? SELKIES_LAUNCHER);
-    const video = (capabilities?.displays ?? []).some((display) => display.protocol === "selkies") && (await this.#hasStream(guest.ref, command, stream));
-    const displays = (capabilities?.displays ?? []).flatMap((display): Display[] => {
+    const video = desktopDisplays(capabilities?.displays ?? []).some((display) => display.protocol === "selkies") && (await this.#hasStream(guest.ref, command, stream));
+    const displays = desktopDisplays(capabilities?.displays ?? []).flatMap((display): Display[] => {
       if (display.protocol === "selkies") {
         if (!video) return [];
         // A Linux desktop's Selkies listens on the VM's loopback, as its VNC server's port is reached: through SSH to the VM.

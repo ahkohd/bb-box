@@ -6,8 +6,11 @@ from measurements: E17 (each model's cost), E6 (shared memory or a pipe)
 and E7 (x264 or OpenH264). Unit 3.1's, for the Android template, are
 [after them](#unit-31-the-android-template): E2 (snapshots in another VM),
 E13 (typing), E19 (the gRPC port) and E24 (disk). Unit 3.2's, for the iOS
-image, are [at the end](#unit-32-the-ios-image): E1 (boot times), E13, E20
-(Xcode's Run and Device Hub), E24, and its slimming.
+image, are [after them](#unit-32-the-ios-image): E1 (boot times), E13, E20
+(Xcode's Run and Device Hub), E24, and its slimming. Unit 4.2's, for the iOS
+driver, are [at the end](#unit-42-the-ios-driver): E5 (idb's stream), the
+stream of each model, recovery, slimming kept and turned off, Device Hub,
+and E4 (a suspend).
 
 ## How they were measured
 
@@ -520,3 +523,103 @@ image, not in each box. Removing the Siri assets after slimming would save
 about 0.8 GiB a device; it was not tried. A device used in a box, a
 suspended spare, and a build and trial beside the current image were not
 measured: they need the image on the Mac (4.2, 7.5).
+
+## Unit 4.2: the iOS driver
+
+Measured on 26 October 2026 with the harness in
+[scripts/measure/ios](../../scripts/measure/ios/README.md), in Tart
+macos-desktop boxes at the ios kind's default size, 6 cores and 16 GiB,
+cloned from the standard macOS image (build.20261022-033224-9658): macOS
+27.0, Xcode 27.0 (27A266a), iOS 27.0 (24A434), idb_companion 1.7.7. Each box
+ran the iOS image's layer, `build-ios.sh`, and its record, as the image
+build does, then had the device server delivered from this unit's checkout
+as bb-box delivers it. Every number is in the box, from a viewer on the
+server's socket: BB's relay, the network and the browser are not in them.
+Through BB is the lead's live check.
+
+### E5: idb's video stream
+
+A probe read idb_companion's `video_stream` over its unix socket with the
+device server's own gRPC client, and logged each message's NAL units:
+
+- **Each message is one whole access unit,** in Annex B with its start
+  codes: of 153 messages over four streams, each of the 98 the probe
+  printed began with a start code and held exactly one picture, and the
+  driver's own reading of thousands more found none without one. A key
+  frame carries its SPS, PPS and IDR in one message. So the driver
+  needs no parser: it reads each message's NAL types, and the picture's
+  size from the SPS.
+- **On a still screen idb sends nothing after its first frame.** It has no
+  request for a key frame. Stopping the stream and starting another gives a
+  key frame with SPS and PPS, on a still screen too, in 50 to 106 ms; the
+  first stream after the companion starts took 3.3 s.
+- So the driver makes a key frame on demand in one of two ways. Where no
+  frame has come since the last key frame, the screen has not changed, and
+  it sends that key frame again: 2.4 ms at the median, 7.3 ms at worst, of
+  10 asks. Otherwise it stops the stream and starts another: 58 to 86 ms at
+  the median and 64 to 100 ms at worst, by model, of 5 to 10 asks, while
+  the screen changed every frame.
+
+### The stream, each model
+
+Safari showing the iOS research's page, busy (a spinner and a counter
+redrawn every frame), 10 s in 5 s windows, the second window given:
+
+| Model | First frame after a viewer asks | Frames a second, busy | Mbit/s, busy | Server: cores, resident | idb_companion: cores, resident | Key frame on request, busy: median, worst |
+| --- | --- | --- | --- | --- | --- | --- |
+| iPhone 18 Pro | 50 to 77 ms | 57.1 to 57.7 | 1.9 to 3.6 | 0.018 to 0.022, 99 to 108 MiB | 0.076 to 0.09, 55 MiB | 79 to 82 ms, 86 to 90 ms |
+| iPhone 17 | 71 ms | 59.1 | 3.3 | 0.018, 101 MiB | 0.06, 55 MiB | 58 ms, 64 ms |
+| iPad Pro 13-inch (M5) | 82 ms | 58.9 | 4.8 | 0.018, 106 MiB | 0.054, 55 MiB | 86 ms, 100 ms |
+
+On a still screen no frames came, and the two processes took 0.002 and
+0.006 of a core. A viewer said hello 130 to 255 ms after it connected. A
+HID tap, sent to idb_companion beside the server, changed the screen 53 ms
+later at the median of 10 (31 to 77 ms), the first 238 ms, as the research
+found.
+
+### Recovery
+
+| What happened | Three times | What it took |
+| --- | --- | --- |
+| idb_companion killed (SIGKILL) while busy | the stream failed, the server started a new companion, 106 to 108 ms, and a new stream | a viewer's stall: 482 to 489 ms, from the last frame before to a key frame after |
+| The device server killed (SIGKILL) | launchd started it again; it found the device booted and its companion alive, and reattached to both | hello 238 to 248 ms after the kill, a key frame 779 to 797 ms after it |
+| The device shut down from outside (`simctl shutdown`) | the server's watch, every 5 s, saw it and booted it again; slimming checked, the companion kept | frames again about 5 s after it was seen |
+| The same again within 5 minutes | the device left failed: "The iPhone 18 Pro stopped twice within 5 minutes, so bb-box leaves it stopped. Restart the box to start it again." | |
+| A switch of model, through a control connection | the old device shut down, the new one booted, a new companion, the first frame | 8.0 to 8.3 s, of which the shutdown about 3.7 s, the boot 1.4 to 1.5 s and the new companion's first frame about 3 s |
+
+The first run of the device shutting down found a bug in the device
+server's gRPC client, shared with Android: when the companion ended a
+stream, the client waited for its own requests to end, so the server never
+saw the stream end, and an abort after that raised an error nothing heard,
+which stopped the server. The client now ends a call when the server ends
+it.
+
+### Slimming, kept and turned off
+
+| Case | What the server did before the first frame | Time |
+| --- | --- | --- |
+| A device slim as the image left it | counted the list's 112 labels in `print-disabled` | 0.3 s |
+| Three labels turned on by hand, then the server restarted | turned them off, rebooted the device | 8.0 s |
+| The box's choice changed to `slim: false` | turned on all 112, rebooted the device | 43.0 s; then 222 processes, as stock |
+| Back to slim | turned off all 112, rebooted it | 29.8 s; all 112 held after one pass |
+
+### Device Hub
+
+Device Hub opened in the box's desktop was killed by the server's watch,
+with SIGKILL, 2.9 s after it opened, and the device stayed booted. The kill
+is logged, and counted for the doctor's check, `device-hub.<box>`.
+
+### E4: a booted device through the box's suspend
+
+`box_stop` suspends a Tart macOS VM, and `box_start` resumes it and sets its
+clock. The device has no clock of its own: a simulator runs on the Mac's
+kernel, so its clock is the macOS VM's.
+
+| Suspended for | The server | Frames | HID | The clock |
+| --- | --- | --- | --- | --- |
+| 110 s | saw its clock move 102 s past its own, restarted the stream, and checked the device and the companion | a viewer's key frame at once | a tap changed the screen in 56 ms at the median of 5, the first 143 ms | the status bar said 10:04, as the Mac did |
+| 62 minutes | saw its clock move 3,704 s past its own, restarted the stream, and checked the device and the companion; the device was still booted | a viewer's key frame at once | a tap changed the screen in 57 ms at the median of 5, 28 to 91 ms | the status bar said 11:16, as the Mac did |
+| 24 h | suspended again at 11:16 UTC on 26 October; to be read after 11:16 UTC on 27 October | | | |
+
+The 62-minute run was in a second box, which ran the device server as it
+was before its last changes, none of them to the driver's resume.

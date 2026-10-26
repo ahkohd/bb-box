@@ -1,0 +1,68 @@
+import { appendFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http2";
+import { parseArgs } from "node:util";
+import { Deframer, frame } from "../src/device/grpc.ts";
+import { encode } from "../src/device/protobuf.ts";
+import { GRPC_METHODS, IDB_SCHEMA } from "../src/device/schemas.ts";
+
+const IPHONE_SPS = "27640032ac13142404c0149e6a9a80868083c2010898";
+const START = Uint8Array.of(0, 0, 0, 1);
+const PPS = Uint8Array.of(0x68, 0xee, 0x3c, 0x80);
+const IDR = Uint8Array.of(0x65, 0x88, 0x84, 0x00, 0x21);
+const DELTA = Uint8Array.of(0x41, 0x9a, 0x02, 0x04);
+
+function annexB(...units: Uint8Array[]): Uint8Array {
+  return Uint8Array.from(units.flatMap((unit) => [...START, ...unit]));
+}
+
+const KEY_FRAME = annexB(Buffer.from(IPHONE_SPS, "hex"), PPS, IDR);
+const DELTA_FRAME = annexB(DELTA);
+
+function payload(data: Uint8Array): Buffer {
+  return Buffer.from(frame(encode(IDB_SCHEMA, "idb.VideoStreamResponse", { payload: { data } })));
+}
+
+const { values } = parseArgs({ options: { udid: { type: "string" }, "grpc-domain-sock": { type: "string" } }, strict: false });
+const socket = String(values["grpc-domain-sock"]);
+const log = process.env.FAKE_IDB_LOG;
+const still = process.env.FAKE_IDB_STILL === "1";
+const note = (line: string) => log && appendFileSync(log, `${process.pid} ${line}\n`);
+
+rmSync(socket, { force: true });
+const server = createServer();
+server.on("stream", (stream, headers) => {
+  const path = String(headers[":path"]);
+  const deframer = new Deframer();
+  const ok = () => {
+    stream.respond({ ":status": 200, "content-type": "application/grpc" }, { waitForTrailers: true });
+    stream.on("wantTrailers", () => stream.sendTrailers({ "grpc-status": "0" }));
+  };
+  if (path === GRPC_METHODS.idb.videoStream) {
+    let messages = 0;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    stream.on("error", () => undefined);
+    stream.on("close", () => timer && clearInterval(timer));
+    stream.on("data", (chunk: Buffer) => {
+      messages += deframer.push(new Uint8Array(chunk)).length;
+      if (messages === 1 && !timer) {
+        note(`stream ${values.udid}`);
+        ok();
+        stream.write(payload(KEY_FRAME));
+        timer = setInterval(() => !still && stream.write(payload(DELTA_FRAME)), 30);
+      } else if (messages >= 2) {
+        if (timer) clearInterval(timer);
+        stream.end();
+      }
+    });
+    return;
+  }
+  stream.on("data", () => undefined);
+  stream.on("end", () => {
+    ok();
+    if (path === GRPC_METHODS.idb.getOrientation) stream.end(Buffer.from(frame(encode(IDB_SCHEMA, "idb.GetOrientationResponse", { orientation: 1 }))));
+    else if (path === GRPC_METHODS.idb.screenshot) stream.end(Buffer.from(frame(encode(IDB_SCHEMA, "idb.ScreenshotResponse", { image_data: Uint8Array.of(137, 80, 78, 71) }))));
+    else stream.end(Buffer.from(frame(new Uint8Array(0))));
+  });
+});
+server.listen(socket, () => note(`listening ${values.udid}`));
+process.on("SIGTERM", () => process.exit(0));
