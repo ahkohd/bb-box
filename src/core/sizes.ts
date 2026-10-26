@@ -45,6 +45,8 @@ const MACOS: KindSizes = {
   largest: size(16, 64, 256),
 };
 
+const IOS_SIMULATOR_WITH_XCODE: KindSizes = { ...MACOS, default: "medium" };
+
 const ANDROID_EMULATOR: KindSizes = {
   presets: { small: size(8, 16), medium: size(12, 24), large: size(16, 32) },
   default: "small",
@@ -102,7 +104,7 @@ const SHIPPED: Readonly<Record<string, KindSizes>> = {
   "windows-desktop": DESKTOP,
   // Windows on a Mac takes the presets of Windows on Proxmox (046).
   "windows-arm64-desktop": DESKTOP,
-  ios: MACOS,
+  ios: IOS_SIMULATOR_WITH_XCODE,
   android: ANDROID_EMULATOR,
 };
 

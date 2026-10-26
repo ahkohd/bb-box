@@ -205,19 +205,24 @@ function deviceText(app: BbBox, box: BoxRecord): string {
   return lines.length ? `\n${lines.join("\n")}` : "";
 }
 
-async function deviceBooted(app: BbBox, box: BoxRecord, signal: AbortSignal): Promise<string> {
+async function deviceBooted(app: BbBox, box: BoxRecord, signal: AbortSignal, after: "booted" | "came back" = "booted"): Promise<string> {
   if (!wantsDevice(box)) return "";
   const began = Date.now();
   const model = box.askedDevice ?? box.capabilities.device!.devices[0].model;
   while (Date.now() - began < DEVICE_BOOT_WAIT_MS && !signal.aborted) {
     const view = app.devices.view(box.id);
-    if (view.is === "connected" && view.state.power.is === "booted") return `\nThe ${view.state.model} booted ${((Date.now() - began) / 1000).toFixed(1)} s after the box was ready.`;
+    if (view.is === "connected" && view.state.power.is === "booted") return `\nThe ${view.state.model} ${after} ${((Date.now() - began) / 1000).toFixed(1)} s after the box was ready.`;
     if (view.is === "connected" && view.state.power.is === "failed") return `\nThe ${view.state.model} did not boot: ${view.state.power.error.words}`;
     await new Promise((resolve) => setTimeout(resolve, DEVICE_POLL_MS));
   }
   const view = app.devices.view(box.id);
   if (view.is === "down") return `\nThe ${model} has not booted after ${DEVICE_BOOT_WAIT_MS / 1000} s: its device server is down: ${view.words}`;
   return `\nThe ${model} is still booting after ${DEVICE_BOOT_WAIT_MS / 1000} s. Call box_status to see when it has booted.`;
+}
+
+export function ownProcessHint(backend: string, program: string): string {
+  if (backend.split(":")[0] === "ssh-pool") return `Run it through bb-box-own, as bb-box-own ${program} <arguments>, so that it is its own responsible process and its grants apply.`;
+  return `Start it through launchd from a box_run command with desktop true, as launchctl submit -l <label> -o <log> -- ${program} <arguments>, so that it is its own responsible process and its grants apply; launchctl remove <label> when it is done.`;
 }
 
 export function offersText(kind: KindView): string {
@@ -533,7 +538,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
               "Start the program again if it is running: macOS reads some permissions only at launch.",
               isApp
                 ? "Open the app with open, so that it is its own responsible process and its grants apply."
-                : `Run it through bb-box-own, as bb-box-own ${program} <arguments>, so that it is its own responsible process and its grants apply.`,
+                : ownProcessHint(box.backend, program),
             ]
           : ["Fix what the refusals say, then call box_grant again."];
         const text = `${lines.join("\n")}${next(...hints)}`;
@@ -875,7 +880,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         // Its BB machine reconnects after the start; box_run would wait for that anyway.
         const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
         const box = await boxes.enrolled(await boxes.start(owner, found.id, signal), signal);
-        return `${boxDetail(box, app.control(box))}${next(...using(box))}`;
+        const back = await deviceBooted(app, box, signal, "came back");
+        return `${boxDetail(box, app.control(box))}${deviceText(app, box)}${back}${next(...using(box))}`;
       } catch (error) {
         return failure(error, "Starting the box");
       }
