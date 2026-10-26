@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>probe</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #fff; touch-action: none; }
+  body.dark { background: #000; }
+  #spinner { position: absolute; left: 30%; top: 40%; width: 40%; height: 20%; background: #e33; display: none; }
+  #counter { position: absolute; left: 0; right: 0; top: 10%; text-align: center; font: 700 64px -apple-system; color: #36c; display: none; }
+  body.busy #spinner, body.busy #counter { display: block; }
+</style>
+</head>
+<body>
+<div id="counter">0</div>
+<div id="spinner"></div>
+<script>
+  const busy = new URLSearchParams(location.search).has("busy");
+  if (busy) document.body.classList.add("busy");
+  document.addEventListener("pointerdown", () => document.body.classList.toggle("dark"));
+  let frame = 0;
+  function tick() {
+    frame += 1;
+    document.getElementById("counter").textContent = frame;
+    document.getElementById("spinner").style.transform = `rotate(${frame * 3}deg)`;
+    requestAnimationFrame(tick);
+  }
+  if (busy) requestAnimationFrame(tick);
+</script>
+</body>
+</html>

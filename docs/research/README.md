@@ -17,6 +17,7 @@ decided is in the [decisions](../decisions/README.md).
 | [A Wayland desktop](wayland-desktop.md) | 2 October 2026 | [048](../decisions/048-a-wayland-desktop-is-sway-with-floating-windows-streamed-by-wayvnc.md) |
 | [RFB picture quality](rfb-quality.md) | 7 October 2026 | [056](../decisions/056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) |
 | [Cloud hosts: a plan for steps 1 and 2](cloud-hosts.md) | 22 October 2026 | [055](../decisions/055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md), not yet built |
+| [iOS Simulator boxes](ios-simulator-boxes.md) | 26 October 2026 | not yet |
 
 [computer-use-rig](computer-use-rig/README.md) is the test rig the computer
 use research ran in.
