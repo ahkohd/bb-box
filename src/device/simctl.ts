@@ -22,6 +22,20 @@ export interface Ran {
   readonly stderr: string;
 }
 
+export interface InstalledApp {
+  readonly id: string;
+  readonly name: string;
+  readonly system: boolean;
+}
+
+export function installedApps(listed: unknown): readonly InstalledApp[] {
+  if (typeof listed !== "object" || listed === null) return [];
+  return Object.entries(listed as Record<string, Record<string, unknown>>).map(([id, info]) => {
+    const name = [info?.CFBundleDisplayName, info?.CFBundleName].find((each): each is string => typeof each === "string" && each.trim() !== "");
+    return { id, name: name?.trim() ?? id, system: info?.ApplicationType === "System" };
+  });
+}
+
 export type Runner = (program: string, args: readonly string[], options: { readonly timeoutMs: number; readonly input?: string; readonly env?: Readonly<Record<string, string>>; readonly signal?: AbortSignal }) => Promise<Ran>;
 
 export const runProgram: Runner = (program, args, options) =>
@@ -128,6 +142,17 @@ export class Simctl {
 
   async openUrl(udid: string, url: string, signal?: AbortSignal): Promise<void> {
     await this.#must(`open ${url}`, ["openurl", udid, url], { signal, timeoutMs: 30_000 });
+  }
+
+  async launch(udid: string, bundleId: string, signal?: AbortSignal): Promise<Ran> {
+    return this.#simctl(["launch", udid, bundleId], { signal, timeoutMs: 60_000 });
+  }
+
+  async apps(udid: string, signal?: AbortSignal): Promise<readonly InstalledApp[]> {
+    const listed = await this.#must("list the device's apps", ["listapps", udid], { signal, timeoutMs: 30_000 });
+    const json = await this.#run("/usr/bin/plutil", ["-convert", "json", "-o", "-", "--", "-"], { timeoutMs: 30_000, input: listed, signal });
+    if (json.code !== 0) throw new DriverError("failed", `plutil could not read the device's list of apps: ${json.stderr.trim() || `exit code ${json.code}`}`);
+    return installedApps(JSON.parse(json.stdout));
   }
 
   async install(udid: string, app: string, signal?: AbortSignal): Promise<void> {

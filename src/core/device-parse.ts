@@ -7,7 +7,10 @@ import {
   IOS_CONTENT_SIZES,
   IOS_FAILURE_CODES,
   KEY_MODIFIERS,
+  MAX_APP_LENGTH,
   MAX_URL_LENGTH,
+  SCREENSHOT_EDGE_LEAST,
+  SETTLE_MOST_MS,
   NETWORK_PRESETS,
   ORIENTATIONS,
   POSTURES,
@@ -569,7 +572,7 @@ function base64(value: unknown, path: string): string {
 }
 
 function request(value: unknown, path: string): DeviceRequest {
-  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "screenshot", "tree", "record", "result"]);
+  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "launch", "settle", "at", "screenshot", "tree", "record", "result"]);
   const at = (key: string) => `${path}.${key}`;
   switch (type) {
     case "touch": {
@@ -603,7 +606,23 @@ function request(value: unknown, path: string): DeviceRequest {
       const read = fields(value, path, ["id", "type", "to"]);
       return { id: requestId(read.id, at("id")), type, to: oneOf(read.to, at("to"), ["start", "stop"]) };
     }
-    case "screenshot":
+    case "launch": {
+      const read = fields(value, path, ["id", "type", "app"]);
+      return { id: requestId(read.id, at("id")), type, app: text(read.app, at("app"), MAX_APP_LENGTH) };
+    }
+    case "at": {
+      const read = fields(value, path, ["id", "type", "x", "y"]);
+      return { id: requestId(read.id, at("id")), type, x: number(read.x, at("x"), 0, 16384), y: number(read.y, at("y"), 0, 16384) };
+    }
+    case "settle": {
+      const read = fields(value, path, ["id", "type", "quietMs", "mostMs", "fromNow"]);
+      return { id: requestId(read.id, at("id")), type, quietMs: whole(read.quietMs, at("quietMs"), 0, SETTLE_MOST_MS), mostMs: whole(read.mostMs, at("mostMs"), 0, SETTLE_MOST_MS), fromNow: bool(read.fromNow, at("fromNow")) };
+    }
+    case "screenshot": {
+      const read = fields(value, path, ["id", "type", "longestEdge"]);
+      const id = requestId(read.id, at("id"));
+      return read.longestEdge === undefined ? { id, type } : { id, type, longestEdge: whole(read.longestEdge, at("longestEdge"), SCREENSHOT_EDGE_LEAST, 16384) };
+    }
     case "tree":
     case "result":
       return { id: requestId(fields(value, path, ["id", "type"]).id, at("id")), type };
@@ -616,14 +635,29 @@ function deviceError(value: unknown, path: string): DeviceError {
 }
 
 function answerResult(value: unknown, path: string): AnswerResult {
-  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["done", "screenshot", "tree"]);
+  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["done", "screenshot", "tree", "at", "launched", "settled"]);
   switch (type) {
     case "done":
       fields(value, path, ["type"]);
       return { type };
     case "screenshot": {
-      const read = fields(value, path, ["type", "png", "generation"]);
-      return { type, png: base64(read.png, `${path}.png`), generation: whole(read.generation, `${path}.generation`) };
+      const read = fields(value, path, ["type", "png", "generation", "source"]);
+      const shot = { type, png: base64(read.png, `${path}.png`), generation: whole(read.generation, `${path}.generation`) };
+      if (read.source === undefined) return shot;
+      const source = fields(read.source, `${path}.source`, ["width", "height"]);
+      return { ...shot, source: { width: whole(source.width, `${path}.source.width`, 1, 16384), height: whole(source.height, `${path}.source.height`, 1, 16384) } };
+    }
+    case "at": {
+      const read = fields(value, path, ["type", "element", "generation"]);
+      return { type, element: read.element === null ? null : element(read.element, `${path}.element`, 1, { seen: 0 }), generation: whole(read.generation, `${path}.generation`) };
+    }
+    case "launched": {
+      const app = fields(fields(value, path, ["type", "app"]).app, `${path}.app`, ["id", "name"]);
+      return { type, app: { id: text(app.id, `${path}.app.id`, MAX_APP_LENGTH), name: anyText(app.name, `${path}.app.name`) } };
+    }
+    case "settled": {
+      const read = fields(value, path, ["type", "frames", "quiet"]);
+      return { type, frames: whole(read.frames, `${path}.frames`), quiet: bool(read.quiet, `${path}.quiet`) };
     }
     case "tree": {
       const read = fields(value, path, ["type", "elements", "generation"]);

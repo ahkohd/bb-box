@@ -19,6 +19,7 @@ import {
   type DeviceServerMessage,
   type DeviceState,
   type Intent,
+  type LaunchedApp,
   type ModelName,
   type OfferedDevice,
   type OfferedDevices,
@@ -32,7 +33,8 @@ import { deviceServerMessageText, parseDeviceRequest, parseIntent } from "../cor
 import { DriverError, type DeviceDriver, type EncodedFrame } from "./driver.ts";
 import { InputLane, splitByCharacters, TEXT_BATCH } from "./input-lane.ts";
 import { keyOfCharacter, typedOnUsKeyboard } from "./keys.ts";
-import { PersonInput, waitFor } from "./person-input.ts";
+import { PersonInput, WHEEL_SWIPE, easedOut, waitFor } from "./person-input.ts";
+import { pixelsWithin, pngPixels, rgbaPng } from "../core/png.ts";
 import type { DevicePaths } from "./paths.ts";
 import { ServerWebSocket, type WsMessage } from "./ws.ts";
 
@@ -46,6 +48,9 @@ const SUPERSEDED_CLOSE = 4000;
 const TAP_MS = 60;
 export const PASTE_PUT_BACK_MS = 100;
 const GESTURE_STEP_MS = 16;
+export const SWIPE_HELD_MS = 120;
+export const TYPED_KEY_GAP_MS = 15;
+const SETTLE_POLL_MS = 20;
 const GEOMETRY_WAIT_MS = 130_000;
 const GEOMETRY_SETTLE_MS = 1_500;
 const GEOMETRY_ACTIONS: ReadonlySet<DeviceControl["action"]> = new Set(["rotate", "posture", "switch", "reboot"]);
@@ -177,6 +182,8 @@ export class DeviceServer {
   #settingsTimer: ReturnType<typeof setInterval> | null = null;
   #readingSettings: Promise<void> | null = null;
   readonly #bootedHere = new Set<ModelName>();
+  #framesSeen = 0;
+  #lastFrameAt = -Infinity;
 
   constructor(options: DeviceServerOptions) {
     this.#options = options;
@@ -492,6 +499,8 @@ export class DeviceServer {
   }
 
   #frame(frame: EncodedFrame): void {
+    this.#framesSeen++;
+    this.#lastFrameAt = this.#clock.monotonic();
     if (this.#seenGeneration !== frame.generation) this.#newGeneration(frame.generation);
     this.#stillsDue();
     for (const connection of this.#connections) {
@@ -570,12 +579,27 @@ export class DeviceServer {
         throw new Refused("unsupported", "This device server cannot record yet.");
       case "screenshot": {
         this.#booted();
+        const generation = this.#state.geometry?.generation ?? 0;
         const png = await this.#options.driver.screenshot();
-        return { type: "screenshot", png: Buffer.from(png).toString("base64"), generation: this.#state.geometry?.generation ?? 0 };
+        if (request.longestEdge === undefined) return { type: "screenshot", png: Buffer.from(png).toString("base64"), generation };
+        const pixels = pngPixels(png);
+        const within = pixelsWithin(pixels, request.longestEdge);
+        const shown = within === pixels ? png : rgbaPng(within.width, within.height, within.rgba);
+        return { type: "screenshot", png: Buffer.from(shown).toString("base64"), generation, source: { width: pixels.width, height: pixels.height } };
       }
+      case "settle":
+        return this.#settle(request.quietMs, request.mostMs, request.fromNow);
+      case "launch":
+        return { type: "launched", app: await this.#launch(request.app, connection) };
       case "tree":
         this.#booted();
         return { type: "tree", elements: await this.#options.driver.tree(), generation: this.#state.geometry?.generation ?? 0 };
+      case "at": {
+        this.#booted();
+        const driver = this.#options.driver;
+        if (!driver.elementAt) throw new Refused("unsupported", `The ${this.#state.model} cannot say what is at a point yet.`);
+        return { type: "at", element: await driver.elementAt({ x: request.x, y: request.y }), generation: this.#state.geometry?.generation ?? 0 };
+      }
       case "touch":
         this.#personOnly(connection);
         this.#booted();
@@ -614,6 +638,26 @@ export class DeviceServer {
     if (!driver.openUrl) throw new Refused("unsupported", `The ${this.#state.model} cannot open links yet.`);
     if (from.role === "input") this.#personActs();
     await driver.openUrl(url, AbortSignal.any([this.#stop.signal, AbortSignal.timeout(DEADLINES_MS.control)]));
+  }
+
+  async #settle(quietMs: number, mostMs: number, fromNow: boolean): Promise<AnswerResult> {
+    const began = this.#clock.monotonic();
+    const until = began + mostMs;
+    for (;;) {
+      const now = this.#clock.monotonic();
+      const quiet = now - (fromNow ? Math.max(began, this.#lastFrameAt) : this.#lastFrameAt) >= quietMs;
+      if (quiet || now >= until || this.#stop.signal.aborted) return { type: "settled", frames: this.#framesSeen, quiet };
+      await new Promise((resolve) => setTimeout(resolve, Math.min(SETTLE_POLL_MS, Math.max(1, until - now))));
+    }
+  }
+
+  async #launch(app: string, from: Connection): Promise<LaunchedApp> {
+    this.#leaseOnly(from, "launch an app on the device");
+    if (this.#owner.holder === "person") throw new Refused("person-has-control", PERSON_HAS_CONTROL_WORDS);
+    this.#booted();
+    const driver = this.#options.driver;
+    if (!driver.launchApp) throw new Refused("unsupported", `The ${this.#state.model} cannot launch apps yet.`);
+    return driver.launchApp(app, AbortSignal.any([this.#stop.signal, AbortSignal.timeout(DEADLINES_MS.control)]));
   }
 
   #booted(): void {
@@ -704,8 +748,11 @@ export class DeviceServer {
   }
 
   async #typeKeys(text: string, signal: AbortSignal): Promise<void> {
+    let first = true;
     for (const character of text) {
       signal.throwIfAborted();
+      if (!first) await waitFor(TYPED_KEY_GAP_MS, signal);
+      first = false;
       const key = keyOfCharacter(character);
       await this.#key(key, true);
       await this.#key(key, false);
@@ -803,8 +850,14 @@ export class DeviceServer {
         const count = steps(input.ms);
         for (let step = 0; step <= count; step++) {
           current();
-          await this.#touch([{ id: 0, x: from.x + ((to.x - from.x) * step) / count, y: from.y + ((to.y - from.y) * step) / count }], "agent");
+          const along = easedOut(step, count);
+          await this.#touch([{ id: 0, x: from.x + (to.x - from.x) * along, y: from.y + (to.y - from.y) * along }], "agent");
           await hold(input.ms / count);
+        }
+        for (let held = 0, wobble: number = WHEEL_SWIPE.stillWobblePixels; held < SWIPE_HELD_MS; held += GESTURE_STEP_MS, wobble = -wobble) {
+          current();
+          await this.#touch([{ id: 0, x: to.x, y: to.y + Math.max(0, wobble) }], "agent");
+          await hold(GESTURE_STEP_MS);
         }
         await this.#touch([], "agent");
         return;

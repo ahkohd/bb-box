@@ -1,0 +1,440 @@
+[
+ {
+  "children": [
+   {
+    "type": "Button",
+    "children": [],
+    "role_description": "button",
+    "title": null,
+    "role": "AXButton",
+    "AXUniqueId": "Maps",
+    "help": null,
+    "AXFrame": "{{24.333333333333314, 88.000000000000014}, {168.33333333333334, 191.00000000000006}}",
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "AXValue": "Widget",
+    "subrole": null,
+    "enabled": true,
+    "pid": 78378,
+    "content_required": false,
+    "frame": {
+     "height": 191.00000000000006,
+     "width": 168.33333333333334,
+     "x": 24.333333333333314,
+     "y": 88.00000000000001
+    },
+    "AXLabel": "Maps",
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ]
+   },
+   {
+    "AXLabel": "Calendar",
+    "pid": 78378,
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "role_description": "button",
+    "help": null,
+    "role": "AXButton",
+    "AXUniqueId": "Calendar",
+    "children": [],
+    "AXFrame": "{{209.66666666666663, 88.000000000000014}, {168.33333333333337, 191.00000000000006}}",
+    "enabled": true,
+    "content_required": false,
+    "frame": {
+     "y": 88.00000000000001,
+     "x": 209.66666666666663,
+     "width": 168.33333333333337,
+     "height": 191.00000000000006
+    },
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "type": "Button",
+    "subrole": null,
+    "title": null,
+    "AXValue": "Widget, Stack"
+   },
+   {
+    "AXValue": "Monday 26 October",
+    "role_description": "button",
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "help": null,
+    "subrole": null,
+    "AXUniqueId": "Calendar",
+    "type": "Button",
+    "AXFrame": "{{26, 288.66666666666669}, {72, 90.666666666666686}}",
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "children": [],
+    "enabled": true,
+    "title": null,
+    "AXLabel": "Calendar",
+    "role": "AXButton",
+    "content_required": false,
+    "pid": 78378,
+    "frame": {
+     "y": 288.6666666666667,
+     "x": 26,
+     "height": 90.66666666666669,
+     "width": 72
+    }
+   },
+   {
+    "frame": {
+     "height": 90.66666666666669,
+     "width": 68,
+     "x": 120.66666666666674,
+     "y": 288.6666666666667
+    },
+    "AXFrame": "{{120.66666666666674, 288.66666666666669}, {68, 90.666666666666686}}",
+    "role_description": "button",
+    "type": "Button",
+    "role": "AXButton",
+    "AXValue": "",
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "help": null,
+    "AXUniqueId": "Photos",
+    "content_required": false,
+    "AXLabel": "Photos",
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "title": null,
+    "enabled": true,
+    "children": [],
+    "subrole": null,
+    "pid": 78378
+   },
+   {
+    "role": "AXButton",
+    "title": null,
+    "AXFrame": "{{213.66666666666663, 288.66666666666669}, {68, 90.666666666666686}}",
+    "AXLabel": "Maps",
+    "AXValue": "",
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "frame": {
+     "width": 68,
+     "height": 90.66666666666669,
+     "x": 213.66666666666663,
+     "y": 288.6666666666667
+    },
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "help": null,
+    "pid": 78378,
+    "children": [],
+    "AXUniqueId": "Maps",
+    "content_required": false,
+    "enabled": true,
+    "role_description": "button",
+    "type": "Button",
+    "subrole": null
+   },
+   {
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "role_description": "button",
+    "AXUniqueId": "News",
+    "type": "Button",
+    "pid": 78378,
+    "AXValue": "",
+    "subrole": null,
+    "children": [],
+    "frame": {
+     "y": 288.6666666666667,
+     "width": 68,
+     "height": 90.66666666666669,
+     "x": 306
+    },
+    "AXFrame": "{{306, 288.66666666666669}, {68, 90.666666666666686}}",
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "role": "AXButton",
+    "AXLabel": "News",
+    "content_required": false,
+    "help": null,
+    "title": null,
+    "enabled": true
+   },
+   {
+    "pid": 78378,
+    "type": "Button",
+    "subrole": null,
+    "enabled": true,
+    "content_required": false,
+    "children": [],
+    "AXLabel": "Health",
+    "title": null,
+    "AXValue": "",
+    "AXUniqueId": "Health",
+    "frame": {
+     "width": 68,
+     "x": 28.333333333333314,
+     "y": 389,
+     "height": 90.66666666666669
+    },
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "role": "AXButton",
+    "help": null,
+    "AXFrame": "{{28.333333333333314, 389}, {68, 90.666666666666686}}",
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "role_description": "button"
+   },
+   {
+    "AXUniqueId": "Wallet",
+    "type": "Button",
+    "frame": {
+     "x": 120.66666666666674,
+     "y": 389,
+     "height": 90.66666666666669,
+     "width": 68
+    },
+    "AXValue": "",
+    "AXFrame": "{{120.66666666666674, 389}, {68, 90.666666666666686}}",
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "subrole": null,
+    "title": null,
+    "role_description": "button",
+    "content_required": false,
+    "children": [],
+    "pid": 78378,
+    "help": null,
+    "enabled": true,
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "AXLabel": "Wallet",
+    "role": "AXButton"
+   },
+   {
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "help": null,
+    "AXFrame": "{{213.66666666666663, 389}, {68, 90.666666666666686}}",
+    "AXLabel": "Siri",
+    "role": "AXButton",
+    "content_required": false,
+    "AXUniqueId": "Siri",
+    "subrole": null,
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "pid": 78378,
+    "role_description": "button",
+    "title": null,
+    "frame": {
+     "x": 213.66666666666663,
+     "width": 68,
+     "height": 90.66666666666669,
+     "y": 389
+    },
+    "AXValue": "",
+    "type": "Button",
+    "enabled": true,
+    "children": []
+   },
+   {
+    "frame": {
+     "y": 389,
+     "width": 68.33333333333326,
+     "height": 90.66666666666669,
+     "x": 305.66666666666674
+    },
+    "title": null,
+    "AXLabel": "Settings",
+    "content_required": false,
+    "AXValue": "",
+    "role": "AXButton",
+    "children": [],
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "role_description": "button",
+    "type": "Button",
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "AXUniqueId": "Settings",
+    "help": null,
+    "enabled": true,
+    "subrole": null,
+    "pid": 78378,
+    "AXFrame": "{{305.66666666666674, 389}, {68.333333333333258, 90.666666666666686}}"
+   },
+   {
+    "traits": [
+     "Adjustable",
+     "Scrollable"
+    ],
+    "custom_actions": [],
+    "AXFrame": "{{162, 703.66666666666674}, {78, 30}}",
+    "title": null,
+    "pid": 78378,
+    "enabled": true,
+    "role": "AXSlider",
+    "AXUniqueId": "spotlight-pill",
+    "subrole": null,
+    "children": [],
+    "help": "Activate to open Spotlight.",
+    "type": "Slider",
+    "AXValue": "Page 1 of 2",
+    "content_required": false,
+    "frame": {
+     "y": 703.6666666666667,
+     "height": 30,
+     "x": 162,
+     "width": 78
+    },
+    "AXLabel": "Search",
+    "role_description": "slider"
+   },
+   {
+    "help": null,
+    "role": "AXButton",
+    "type": "Button",
+    "AXFrame": "{{123, 771.33333333333326}, {68, 68}}",
+    "enabled": true,
+    "role_description": "button",
+    "frame": {
+     "y": 771.3333333333333,
+     "x": 123,
+     "height": 68,
+     "width": 68
+    },
+    "subrole": null,
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "content_required": false,
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "AXLabel": "Safari",
+    "AXUniqueId": "Safari",
+    "children": [],
+    "title": null,
+    "pid": 78378,
+    "AXValue": ""
+   },
+   {
+    "title": null,
+    "content_required": false,
+    "role": "AXButton",
+    "AXUniqueId": "Messages",
+    "enabled": true,
+    "subrole": null,
+    "custom_actions": [
+     "Edit mode",
+     "Today",
+     "App Library"
+    ],
+    "type": "Button",
+    "role_description": "button",
+    "pid": 78378,
+    "AXLabel": "Messages",
+    "AXFrame": "{{211, 771.33333333333326}, {68, 68}}",
+    "traits": [
+     "UpdatesFrequently",
+     "LaunchIcon",
+     "Scrollable"
+    ],
+    "children": [],
+    "frame": {
+     "x": 211,
+     "y": 771.3333333333333,
+     "width": 68,
+     "height": 68
+    },
+    "help": null,
+    "AXValue": ""
+   }
+  ],
+  "type": "Application",
+  "role": "AXApplication",
+  "enabled": true,
+  "content_required": false,
+  "AXValue": null,
+  "subrole": null,
+  "AXUniqueId": null,
+  "custom_actions": [],
+  "frame": {
+   "y": 0,
+   "width": 402,
+   "x": 0,
+   "height": 874
+  },
+  "AXLabel": " ",
+  "help": null,
+  "title": null,
+  "AXFrame": "{{0, 0}, {402, 874}}",
+  "pid": 78378,
+  "traits": [
+   "None"
+  ],
+  "role_description": "application"
+ }
+]

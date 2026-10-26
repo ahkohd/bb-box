@@ -367,12 +367,18 @@ export type DeviceRequest =
   | { readonly id: string; readonly type: "input"; readonly input: DeviceInput; readonly owner: number }
   | { readonly id: string; readonly type: "owner"; readonly generation: number; readonly holder: ControlHolder }
   | { readonly id: string; readonly type: "open"; readonly url: string }
-  | { readonly id: string; readonly type: "screenshot" }
+  | { readonly id: string; readonly type: "screenshot"; readonly longestEdge?: number }
   | { readonly id: string; readonly type: "tree" }
+  | { readonly id: string; readonly type: "at"; readonly x: number; readonly y: number }
+  | { readonly id: string; readonly type: "launch"; readonly app: string }
+  | { readonly id: string; readonly type: "settle"; readonly quietMs: number; readonly mostMs: number; readonly fromNow: boolean }
   | { readonly id: string; readonly type: "record"; readonly to: "start" | "stop" }
   | { readonly id: string; readonly type: "result" };
 
 export type DeviceRequestType = DeviceRequest["type"];
+
+export type DeviceRead = { readonly type: "tree" } | { readonly type: "at"; readonly x: number; readonly y: number } | { readonly type: "screenshot"; readonly longestEdge?: number } | { readonly type: "settle"; readonly quietMs: number; readonly mostMs: number; readonly fromNow: boolean };
+export type DeviceAgentRequest = { readonly type: "open"; readonly url: string } | { readonly type: "launch"; readonly app: string };
 
 export type DeviceHello = {
   readonly [P in DevicePlatform]: {
@@ -386,10 +392,18 @@ export type DeviceHello = {
   };
 }[DevicePlatform];
 
+export interface LaunchedApp {
+  readonly id: string;
+  readonly name: string;
+}
+
 export type AnswerResult =
   | { readonly type: "done" }
-  | { readonly type: "screenshot"; readonly png: string; readonly generation: number }
-  | { readonly type: "tree"; readonly elements: readonly DeviceElement[]; readonly generation: number };
+  | { readonly type: "screenshot"; readonly png: string; readonly generation: number; readonly source?: VideoSize }
+  | { readonly type: "tree"; readonly elements: readonly DeviceElement[]; readonly generation: number }
+  | { readonly type: "at"; readonly element: DeviceElement | null; readonly generation: number }
+  | { readonly type: "launched"; readonly app: LaunchedApp }
+  | { readonly type: "settled"; readonly frames: number; readonly quiet: boolean };
 
 export type DeviceAnswer =
   | { readonly id: string; readonly ok: true; readonly ms: number; readonly state: DeviceState; readonly result: AnswerResult }
@@ -603,7 +617,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 11;
+export const DEVICE_SERVER_VERSION = 12;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 
 export function frameGenerationOf(header: Uint8Array): number {
@@ -615,6 +629,9 @@ export function speaksProtocol(protocol: number): boolean {
 }
 
 export const MAX_URL_LENGTH = 2048;
+export const MAX_APP_LENGTH = 512;
+export const SETTLE_MOST_MS = 30_000;
+export const SCREENSHOT_EDGE_LEAST = 64;
 
 export function urlProblem(url: string): string | null {
   if (url.length > MAX_URL_LENGTH) return `A link takes at most ${MAX_URL_LENGTH} characters.`;

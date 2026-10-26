@@ -10,7 +10,8 @@ import { parseDeviceServerMessage, parseDeviceState, parseIntent } from "../src/
 import type { DeviceDriver } from "../src/device/driver.ts";
 import { devicePaths } from "../src/device/paths.ts";
 import { PcmH264Encoder, yuvFromRgba } from "../src/device/pcm-h264.ts";
-import { DeviceServer, KEPT_ANSWERS, type Deadlines } from "../src/device/server.ts";
+import { DeviceServer, KEPT_ANSWERS, SWIPE_HELD_MS, type Deadlines } from "../src/device/server.ts";
+import { pngPixels } from "../src/core/png.ts";
 import { cardLine, drawCard } from "../src/device/test-card.ts";
 import { TestDriver, testVideoSize } from "../src/device/test-driver.ts";
 import type { ByteChannel } from "../src/transports/types.ts";
@@ -345,5 +346,73 @@ describe("the device server", () => {
     const changed = encoder.encode(card("2"), false);
     assert.equal(changed?.key, false);
     assert.ok(changed!.data.byteLength < key!.data.byteLength / 2);
+  });
+});
+
+describe("the device server's part in the agent's computer use (063, 7.1)", () => {
+  test("settles once no frame has come for the quiet time, counting the frames seen, and gives up at the most", async () => {
+    const { open } = await started({ platform: "ios" });
+    const control = await open("control", { started: 1, instance: "a" });
+    const began = performance.now();
+    const still = await control.request({ type: "settle", quietMs: 50, mostMs: 2_000, fromNow: true });
+    assert.equal(still.ok && still.result.type === "settled" && still.result.quiet, true);
+    assert.ok(performance.now() - began >= 45, "waits the quiet time at least");
+    const before = still.ok && still.result.type === "settled" ? still.result.frames : -1;
+    assert.equal((await control.request({ type: "open", url: "https://example.com" })).ok, true);
+    const after = await control.request({ type: "settle", quietMs: 50, mostMs: 2_000, fromNow: true });
+    assert.ok(after.ok && after.result.type === "settled" && after.result.frames > before, "the card drawn again is a frame");
+    const cut = await control.request({ type: "settle", quietMs: 5_000, mostMs: 100, fromNow: true });
+    assert.equal(cut.ok && cut.result.type === "settled" && cut.result.quiet, false);
+    await control.close();
+  });
+
+  test("launches an app by its ID or name for the lease holder, names the device's apps for one it lacks, and refuses while a person has control", async () => {
+    const { open, driver } = await started({ platform: "ios" });
+    const control = await open("control", { started: 1, instance: "a" });
+    const input = await open("input");
+    const byName = await control.request({ type: "launch", app: "test card" });
+    assert.deepEqual(byName.ok && byName.result, { type: "launched", app: { id: "com.example.test-card", name: "Test Card" } });
+    const missing = await control.request({ type: "launch", app: "com.example.none" });
+    assert.equal(!missing.ok && missing.error.code, "bad-value");
+    assert.match(!missing.ok ? missing.error.words : "", /Its apps are: Test Card \(com\.example\.test-card\)\./);
+    const fromInput = await input.request({ type: "launch", app: "Test Card" });
+    assert.equal(!fromInput.ok && fromInput.error.code, "superseded");
+    assert.equal((await control.request({ type: "owner", generation: 1, holder: "person" })).ok, true);
+    const held = await control.request({ type: "launch", app: "Test Card" });
+    assert.deepEqual(!held.ok && held.error, { code: "person-has-control", words: PERSON_HAS_CONTROL_WORDS });
+    assert.deepEqual((driver as TestDriver).record.launched, ["com.example.test-card"]);
+    for (const link of [control, input]) await link.close();
+  });
+
+  test("scales the agent's screenshot within its longest edge, and says the size it came from", async () => {
+    const { open } = await started({ platform: "ios" });
+    const control = await open("control", { started: 1, instance: "a" });
+    const whole = await control.request({ type: "screenshot" });
+    assert.ok(whole.ok && whole.result.type === "screenshot");
+    const full = pngPixels(Buffer.from(whole.result.png, "base64"));
+    assert.equal(whole.result.source, undefined);
+    const small = await control.request({ type: "screenshot", longestEdge: 200 });
+    assert.ok(small.ok && small.result.type === "screenshot");
+    const scaled = pngPixels(Buffer.from(small.result.png, "base64"));
+    assert.equal(Math.max(scaled.width, scaled.height), 200);
+    assert.deepEqual(small.result.source, { width: full.width, height: full.height });
+    assert.equal(Math.round((scaled.width / scaled.height) * 100), Math.round((full.width / full.height) * 100));
+    await control.close();
+  });
+
+  test("eases the agent's swipe out and holds its end before it lifts, so a list stops where the finger does", async () => {
+    const { open, driver } = await started({ platform: "ios" });
+    const control = await open("control", { started: 1, instance: "a" });
+    const generation = control.state.geometry!.generation;
+    const answer = await control.request({ type: "input", input: { type: "swipe", from: { x: 100, y: 600, generation }, to: { x: 100, y: 200, generation }, ms: 160 }, owner: 1 });
+    assert.equal(answer.ok, true);
+    const touches = (driver as TestDriver).record.touches;
+    assert.deepEqual(touches.at(-1), []);
+    const path = touches.filter((contacts) => contacts.length).map((contacts) => contacts[0]!.y);
+    const held = path.filter((y) => Math.abs(y - 200) <= 1).length;
+    assert.ok(held >= SWIPE_HELD_MS / 16, `the finger held its end for ${held} reports`);
+    const steps = path.slice(1, path.indexOf(200) + 1).map((y, index) => path[index]! - y);
+    assert.ok(steps[0]! > steps.at(-1)!, `the swipe eases out: ${steps.join(", ")}`);
+    await control.close();
   });
 });

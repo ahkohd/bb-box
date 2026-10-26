@@ -11,6 +11,7 @@ import {
   type DeviceState,
   type Geometry,
   type IosSettings,
+  type LaunchedApp,
   type OfferedDevice,
   type Orientation,
   type Power,
@@ -48,12 +49,15 @@ function turned(from: Orientation, turn: "left" | "right"): Orientation {
   return QUARTER_TURNS[(at + (turn === "right" ? 1 : 3)) % 4]!;
 }
 
+export const TEST_APP: LaunchedApp = { id: "com.example.test-card", name: "Test Card" };
+
 export interface TestRecord {
   readonly touches: (readonly TouchContact[])[];
   readonly keys: { readonly key: string; readonly down: boolean }[];
   readonly pastes: string[];
   readonly controls: DeviceControl[];
   readonly opened: string[];
+  readonly launched: string[];
   prepared: number;
 }
 
@@ -74,7 +78,7 @@ class Frames implements VideoSource {
 
 export class TestDriver implements DeviceDriver {
   readonly platform: DevicePlatform;
-  readonly record: TestRecord = { touches: [], keys: [], pastes: [], controls: [], opened: [], prepared: 0 };
+  readonly record: TestRecord = { touches: [], keys: [], pastes: [], controls: [], opened: [], launched: [], prepared: 0 };
   readonly #clock: TestDriverClock;
   readonly #listeners = new Set<() => void>();
   readonly #frameWaiters = new Set<() => void>();
@@ -342,6 +346,15 @@ export class TestDriver implements DeviceDriver {
     this.#draw();
   }
 
+  async launchApp(app: string, signal: AbortSignal): Promise<LaunchedApp> {
+    signal.throwIfAborted();
+    this.#booted();
+    if (app !== TEST_APP.id && app.toLowerCase() !== TEST_APP.name.toLowerCase()) throw new DriverError("bad-value", `The test device has no app ${JSON.stringify(app)}. Its apps are: ${TEST_APP.name} (${TEST_APP.id}).`);
+    this.record.launched.push(TEST_APP.id);
+    this.#draw();
+    return TEST_APP;
+  }
+
   async screenshot(): Promise<Uint8Array> {
     this.#booted();
     const content = this.#card();
@@ -367,6 +380,23 @@ export class TestDriver implements DeviceDriver {
         ],
       },
     ];
+  }
+
+  async elementAt(point: { readonly x: number; readonly y: number }): Promise<DeviceElement | null> {
+    const inside = (element: DeviceElement): DeviceElement | null => {
+      const { x, y, width, height } = element.frame;
+      if (point.x < x || point.y < y || point.x >= x + width || point.y >= y + height) return null;
+      for (const child of element.children) {
+        const deeper = inside(child);
+        if (deeper) return deeper;
+      }
+      return { ...element, children: [] };
+    };
+    for (const root of await this.tree()) {
+      const found = inside(root);
+      if (found) return found;
+    }
+    return null;
   }
 
   async readBack(): Promise<DeviceState> {
