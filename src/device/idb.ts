@@ -78,6 +78,10 @@ export class Companion {
     }
   }
 
+  async recordedPid(): Promise<number | null> {
+    return (await this.#recorded())?.pid ?? null;
+  }
+
   async #ours(pid: number): Promise<boolean> {
     const command = await commandOf(pid);
     return !!command && command.includes("--grpc-domain-sock") && command.includes(this.#paths.socket);

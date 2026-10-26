@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { hasViewer, IconButton, isArm64Badge, KindBadges, lacksDocker, osName, relativeTime, RowTitle, SETTINGS_PATH, StatusLine } from "./common.tsx";
+import { deviceModelOf, hasViewer, hostFormBadges, IconButton, isArm64Badge, KindBadges, lacksDocker, osName, relativeTime, RowTitle, SETTINGS_PATH, StatusLine } from "./common.tsx";
 import { runsWayland } from "./boxes-filter.ts";
 import { pageUrl, useOpenDesktop } from "./desktop.tsx";
 import { JoinHelp } from "./first-run.tsx";
@@ -153,7 +153,7 @@ export function BoxRow({
           className="block w-full min-w-0 cursor-pointer rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
           {/* Each line stays one line in the panel's 560 px: the name and kind, then the state and what to act on. */}
-          <RowTitle name={box.name} os={osName(box.os)} badges={<KindBadges desktop={box.desktop} wayland={runsWayland(box)} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={box.form ? [box.form] : []} machine={held !== null} />} />
+          <RowTitle name={box.name} os={osName(box.os)} device={deviceModelOf(box)} badges={<KindBadges desktop={box.desktop} wayland={runsWayland(box)} gpu={box.gpu} noDocker={lacksDocker(box)} arm64={isArm64Badge(box.os, box.arch)} forms={hostFormBadges(box)} machine={held !== null} />} />
         </button>
         <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
         {box.waitingOn ? <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{box.waitingOn}</p> : null}
@@ -194,6 +194,7 @@ export function BoxRow({
           <dl className="mt-2 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs leading-snug">
             {box.address ? <Detail label="Address">{box.address}</Detail> : null}
             {box.size ? <Detail label="Size">{box.size}</Detail> : null}
+            {deviceModelOf(box) ? <Detail label="Device">{deviceModelOf(box)}</Detail> : null}
             <Detail label="Backend">{box.backendLabel}</Detail>
             <Detail label="System">
               {osName(box.os)} {box.arch}

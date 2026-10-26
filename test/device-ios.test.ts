@@ -10,12 +10,12 @@ import { hasPicture, isKeyFrame, nalUnits, spsPictureSize, startsWithStartCode }
 import type { EncodedFrame } from "../src/device/driver.ts";
 import { FrameFanout } from "../src/device/frame-fanout.ts";
 import type { StreamOutput } from "../src/device/idb.ts";
-import { IosDriver, contentOrientation, type AppInfo } from "../src/device/ios-driver.ts";
+import { HID_DAEMON, HID_DAEMON_ACTIVE, IosDriver, SPRINGBOARD, contentOrientation, parseProcessStart, type AppInfo, type ProcessStart } from "../src/device/ios-driver.ts";
 import { overridesListed, statusBarOverride } from "../src/device/ios-controls.ts";
-import { PasteboardAccess, hidKey, runningApps } from "../src/device/ios-input.ts";
+import { INERT_KEY_USAGE, PasteboardAccess, hidKey, runningApps } from "../src/device/ios-input.ts";
 import { IosVideo } from "../src/device/ios-video.ts";
 import { devicePaths } from "../src/device/paths.ts";
-import { Simctl, disabledLabels, type Ran, type Runner } from "../src/device/simctl.ts";
+import { Simctl, disabledLabels, runningServicePid, type LineSpawner, type Ran, type Runner } from "../src/device/simctl.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { testDeviceOffer } from "../src/core/device.ts";
 import { wantsDevice } from "../src/plugin/devices.ts";
@@ -177,8 +177,16 @@ describe("iOS helpers", () => {
 const LIST = ["com.apple.one", "com.apple.two", "com.apple.three"];
 const UDID = "11111111-2222-3333-4444-555555555555";
 
+const LAUNCHD_SIM_PID = 7_000_000;
+const SPRINGBOARD_PID = 7_000_001;
+const HID_DAEMON_PID = 7_000_002;
+
 class FakeSimulator {
-  state = "Shutdown";
+  #state = "Shutdown";
+  bootedAt = 0;
+  hidDaemonRunning = false;
+  hidDaemonTakesMs = 0;
+  hidDaemonActiveAt: number | null = null;
   readonly disabled = new Set<string>();
   readonly calls: string[] = [];
   appearance = "light";
@@ -186,6 +194,59 @@ class FakeSimulator {
   statusBar: string[] = [];
   installed = new Set<string>();
   idbLog: string | null = null;
+  get state(): string {
+    return this.#state;
+  }
+  set state(to: string) {
+    if (to === "Booted" && this.#state !== "Booted") this.bootedAt = Date.now();
+    if (to !== "Booted") this.hidDaemonRunning = false;
+    this.#state = to;
+  }
+  bootsAgainOutsideTheServer(): void {
+    this.bootedAt = Date.now() + 1;
+    this.hidDaemonRunning = false;
+  }
+  #companionStarts(): Map<number, number> {
+    const lines = this.idbLog && existsSync(this.idbLog) ? readFileSync(this.idbLog, "utf8").split("\n") : [];
+    return new Map(lines.flatMap((line) => {
+      const match = /^(\d+) listening \S+ at (\d+)$/.exec(line);
+      return match ? [[Number(match[1]), Number(match[2])] as [number, number]] : [];
+    }));
+  }
+  readonly processStart = async (pid: number): Promise<ProcessStart | null> => {
+    if (pid === SPRINGBOARD_PID) return { parentPid: LAUNCHD_SIM_PID, startedAt: this.bootedAt };
+    if (pid === LAUNCHD_SIM_PID) return { parentPid: 1, startedAt: this.bootedAt };
+    const companion = this.#companionStarts().get(pid);
+    return companion === undefined ? null : { parentPid: 1, startedAt: companion };
+  };
+  #inertKeyFromALiveCompanion(after: number): boolean {
+    const starts = this.#companionStarts();
+    const lines = this.idbLog && existsSync(this.idbLog) ? readFileSync(this.idbLog, "utf8").split("\n").slice(after) : [];
+    return lines.some((line) => {
+      const match = /^(\d+) hid (.*)$/.exec(line);
+      const event = match ? (JSON.parse(match[2]!) as { press?: { action?: { key?: { keycode?: number } }; direction?: number } }) : null;
+      return !!match && event?.press?.action?.key?.keycode === INERT_KEY_USAGE && event.press.direction === 1 && (starts.get(Number(match[1])) ?? 0) >= this.bootedAt;
+    });
+  }
+  readonly lines: LineSpawner = async function* (this: FakeSimulator, _program: string, args: readonly string[], signal: AbortSignal) {
+    if (!args.includes("stream")) return;
+    const from = this.idbLog && existsSync(this.idbLog) ? readFileSync(this.idbLog, "utf8").split("\n").length - 1 : 0;
+    yield `Filtering the log data using "${args.at(-1)}"`;
+    while (!signal.aborted) {
+      if (this.#inertKeyFromALiveCompanion(from)) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, this.hidDaemonTakesMs);
+          signal.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
+        });
+        if (signal.aborted) return;
+        this.hidDaemonRunning = true;
+        this.hidDaemonActiveAt = Date.now();
+        yield `2026-10-26 19:01:36.721 Df backboardd[23778:13767] (SimulatorHID) SimHIDVirtualServiceManager: ${HID_DAEMON_ACTIVE}`;
+        return;
+      }
+      await wait(10);
+    }
+  }.bind(this);
   locked(): number {
     const presses = this.idbLog && existsSync(this.idbLog) ? [...readFileSync(this.idbLog, "utf8").matchAll(/"button":\{"button":(\d)\}\}(?!,"direction":1)/g)].map((match) => Number(match[1])) : [];
     return presses.at(-1) === 2 ? 1 : 0;
@@ -227,6 +288,7 @@ class FakeSimulator {
       case "spawn": {
         const [, , command, target] = rest;
         if (rest[1] === "notifyutil") return ok(`${rest[3]} ${this.locked()}\n`);
+        if (command === "list") return ok(`PID\tStatus\tLabel\n${SPRINGBOARD_PID}\t0\t${SPRINGBOARD}\n${this.hidDaemonRunning ? HID_DAEMON_PID : "-"}\t0\t${HID_DAEMON}\n`);
         if (command === "print-disabled") return ok(`disabled services = {\n${[...this.disabled].map((label) => `\t"${label}" => disabled`).join("\n")}\n}`);
         const label = target!.replace("system/", "");
         if (command === "disable") this.disabled.add(label);
@@ -279,7 +341,8 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     return { home, paths, lists, program, log, target };
   }
 
-  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null>; orientationEveryMs?: number } = {}) {
+  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null>; orientationEveryMs?: number; hidDaemonActiveWaitMs?: number } = {}) {
+    simulator.idbLog = setup.log;
     const logs: string[] = [];
     const driver = new IosDriver({
       clock: { now: () => Date.now() + (options.wallAhead?.() ?? 0), monotonic: () => performance.now() },
@@ -287,8 +350,10 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
       paths: setup.paths,
       slim: options.slim ?? true,
       log: (line) => logs.push(line),
-      simctl: new Simctl({ run: simulator.runner }),
+      simctl: new Simctl({ run: simulator.runner, lines: simulator.lines }),
       companionProgram: setup.program,
+      processStart: simulator.processStart,
+      ...(options.hidDaemonActiveWaitMs ? { hidDaemonActiveWaitMs: options.hidDaemonActiveWaitMs } : {}),
       slimLists: setup.lists,
       watchMs: 50,
       ...(options.orientationEveryMs ? { orientationEveryMs: options.orientationEveryMs } : {}),
@@ -412,6 +477,78 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     await slimmed.driver.shutdown(AbortSignal.timeout(5000));
   });
 
+  test("says its device is booted, or back after it stopped by itself, only once the device's HID daemon, which starts at the first input, took input", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    simulator.hidDaemonTakesMs = 300;
+    for (const label of LIST) simulator.disabled.add(label);
+    const { driver, logs } = driverOf(setup, simulator);
+    const powers: string[] = [];
+    driver.onChange(() => void driver.readBack().then((state) => powers.push(state.power.is)));
+    await driver.attach(setup.target, AbortSignal.timeout(20_000));
+    const attached = Date.now();
+    assert.ok(simulator.hidDaemonActiveAt !== null && simulator.hidDaemonActiveAt <= attached, "attach answers after the HID daemon took input");
+    assert.ok(logs.some((line) => /^input: the iPhone 18 Pro's HID daemon, which starts at its first input, took it in \d+\.\d s$/.test(line)));
+
+    simulator.hidDaemonActiveAt = null;
+    simulator.state = "Shutdown";
+    await until("the device back", () => logs.some((line) => line.includes("is back")), 10_000);
+    const back = logs.findIndex((line) => line.includes("is back"));
+    const took = logs.map((line, index) => (line.includes("HID daemon") && line.includes("took it") ? index : -1)).filter((index) => index > logs.findIndex((line) => line.includes("stopped (Shutdown)"))).at(-1) ?? -1;
+    assert.ok(simulator.hidDaemonActiveAt !== null, "the HID daemon was started again after the device's boot");
+    assert.ok(took >= 0 && took < back, "back only after the HID daemon took input");
+    driver.close();
+
+    const reattach = driverOf(setup, simulator);
+    const keyUps = () => readFileSync(setup.log, "utf8").split("\n").filter((line) => line.includes(`"keycode":${INERT_KEY_USAGE}`)).length;
+    const before = keyUps();
+    assert.equal(await reattach.driver.attach(setup.target, AbortSignal.timeout(20_000)), "reattached");
+    assert.equal(keyUps(), before, "a running HID daemon needs no first input");
+    reattach.driver.close();
+  });
+
+  test("on a reattach, starts a new idb_companion when the one it finds started before its device last booted, as with a version that left it, so the HID daemon takes input", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    for (const label of LIST) simulator.disabled.add(label);
+    const companion = () => (JSON.parse(readFileSync(join(setup.paths.dir, "companion.json"), "utf8")) as { pid: number }).pid;
+    const first = driverOf(setup, simulator);
+    await first.driver.attach(setup.target, AbortSignal.timeout(20_000));
+    first.driver.close();
+    const stale = companion();
+
+    simulator.bootsAgainOutsideTheServer();
+    simulator.hidDaemonActiveAt = null;
+    const again = driverOf(setup, simulator);
+    assert.equal(await again.driver.attach(setup.target, AbortSignal.timeout(20_000)), "reattached");
+    assert.notEqual(companion(), stale, "a new idb_companion");
+    assert.throws(() => process.kill(stale, 0), "the one from before the boot is gone");
+    assert.ok(again.logs.includes(`companion: idb_companion ${stale} started before the iPhone 18 Pro last booted, so its HID connection is gone; starting a new one`));
+    assert.ok(simulator.hidDaemonActiveAt !== null, "the new companion's first input started the HID daemon");
+    again.driver.close();
+  });
+
+  test("says so, and goes on, when the HID daemon never says it took input", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    for (const label of LIST) simulator.disabled.add(label);
+    simulator.hidDaemonTakesMs = 60_000;
+    const { driver, logs } = driverOf(setup, simulator, { hidDaemonActiveWaitMs: 200 });
+    assert.equal(await driver.attach(setup.target, AbortSignal.timeout(20_000)), "booted");
+    assert.ok(logs.includes("input: the iPhone 18 Pro's HID daemon did not say it took input within 0.2 s, so the first input may wait"));
+    assert.equal((await driver.readBack()).power.is, "booted");
+    driver.close();
+  });
+
+  test("reads a process's parent and start from ps, and a running service's pid from launchctl list", () => {
+    assert.deepEqual(parseProcessStart(" 24845 Mon Oct 26 19:02:55 2026    \n"), { parentPid: 24845, startedAt: Date.parse("Mon Oct 26 19:02:55 2026") });
+    assert.equal(parseProcessStart(""), null);
+    const listed = "PID\tStatus\tLabel\n24848\t0\tcom.apple.SpringBoard\n-\t0\tcom.apple.coredevice.dtuhidd\n";
+    assert.equal(runningServicePid(listed, "com.apple.SpringBoard"), 24848);
+    assert.equal(runningServicePid(listed, "com.apple.coredevice.dtuhidd"), null);
+    assert.equal(runningServicePid(listed, "com.apple.other"), null);
+  });
+
   test("starts a new idb_companion after the box's suspend, as one from before it grows without bound, and streams again", async () => {
     const setup = setUp();
     const simulator = new FakeSimulator();
@@ -507,7 +644,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     const events = () =>
       readFileSync(setup.log, "utf8")
         .split("\n")
-        .filter((line) => line.includes(" hid "))
+        .filter((line) => line.includes(" hid ") && !line.includes(`"keycode":${INERT_KEY_USAGE}`))
         .map((line) => JSON.parse(line.slice(line.indexOf(" hid ") + 5)) as { press?: { action: { touch?: { point: { x: number; y: number } }; key?: { keycode: number } }; direction?: number }; pinch?: { center: { x: number; y: number }; scale: number; radius: number; duration: number } });
     await driver.prepareInput();
     await driver.touch([{ id: 0, x: 300, y: 600 }]);

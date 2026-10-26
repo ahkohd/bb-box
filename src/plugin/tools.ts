@@ -468,6 +468,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     async execute(_params, { threadId }) {
       try {
         const id = thread(threadId);
+        const withheld = await boxes.withheldKinds();
         const [list, kinds, machine, images] = await Promise.all([boxes.list(id), app.kinds(), app.runsOn(id), app.projectOf(id).catch(() => null).then((project) => app.imageOptions(project))]);
         const lines: string[] = [];
         // The box this thread runs on comes first, unless it is the thread's own and listed below (036).
@@ -480,6 +481,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
             ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${devicesText(kind)}${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
+        if (withheld.length) lines.push(`Kinds you cannot acquire now:\n${withheld.map((kind) => `- ${kind.kind}: ${kind.label}. ${kind.words}`).join("\n")}`);
         const hints = list.length
           ? ["Call box_status for a box's details.", "box_acquire gets another box, at a preset or a custom size."]
           : ["Call box_acquire to get a box, at a preset or a custom size."];

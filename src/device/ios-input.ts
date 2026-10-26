@@ -20,6 +20,7 @@ const PINCH_SCALE_UNCHANGED = 0.05;
 const PASTEBOARD_SERVICE = "kTCCServicePasteboard";
 const ALLOWED = 2;
 export const HID_BUTTONS = { home: 1, lock: 2 } as const;
+export const INERT_KEY_USAGE = 104;
 
 export const HID_USAGES: Readonly<Record<string, number>> = {
   ...Object.fromEntries([..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].map((letter, index) => [`Key${letter}`, 4 + index])),
@@ -338,6 +339,10 @@ export class IosInput {
 
   #press(action: ProtoMessage, direction: number): void {
     this.#hid.send({ press: { action, direction } });
+  }
+
+  releaseInertKey(): void {
+    this.#press({ key: { keycode: INERT_KEY_USAGE } }, UP);
   }
 
   button(button: keyof typeof HID_BUTTONS): void {

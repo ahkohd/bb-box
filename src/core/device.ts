@@ -619,7 +619,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 15;
+export const DEVICE_SERVER_VERSION = 16;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 
 export function frameGenerationOf(header: Uint8Array): number {

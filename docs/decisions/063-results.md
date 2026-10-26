@@ -2206,3 +2206,95 @@ link down until bb-box reloads.
 - The Pixel Tablet, and the Fold's half-open posture held while an app
   uses it.
 - Computer use on Android, unit 7.2.
+
+## Six fixes from live checks
+
+Checked on 26 October 2026 in one ios box from the production BB, on Tart,
+4 cores and 8 GiB, with the iPhone 18 Pro, iOS 27.0 (24A434) and
+idb_companion 1.7.7. The device server came from this checkout: version 14,
+and main's 15, before the fixes, and these fixes after them.
+
+### Input after a boot: the HID daemon starts at the first input
+
+After the device stopped by itself (`simctl shutdown`), the server said it
+was back, and a lock sent then did not take. The probe locked through a
+control connection, sent the lock at once, then waited 3 s for the lock
+state. Before the fix, 0 of 5 locks sent 0 to 1.3 s after "back" took. One
+sent 3.6 s after did not, and ones sent 4 to 7 s after did. Taps were the
+same: a tap on Safari 0 s after "back" opened nothing, and one 2.3 s after
+did.
+
+The simulator's log says why. Input goes through `dtuhidd`
+(`com.apple.coredevice.dtuhidd`), which launchd starts only at the first
+HID event after a boot. backboardd then logs "SimHIDVirtualServiceManager:
+dtuhidd state changed to active", and only then hands input to it. In one
+run the first lock was sent at 34.4 s and `dtuhidd` started then. It was
+active at 36.7 s, and backboardd saw the press at 37.0 s, too late for the
+lock's 3 s. A device left 20 s after its boot with no input had no
+`dtuhidd` running. A fresh idb_companion on a device that had settled
+locked it at the first try, so the companion was not the cause.
+
+Now, before the server says a device it booted or attached to is booted or
+back, it checks whether `dtuhidd` runs in the device. If not, it listens to
+the device's log, sends a key-up of F13, which does nothing, and waits up
+to 15 s for "dtuhidd state changed to active".
+
+| After the device stopped by itself | Before | After |
+| --- | --- | --- |
+| A lock sent 0 to 1.3 s after "back" took at the first try | 0 of 5 | 3 of 3, sent 21 to 40 ms after "back" |
+| From the F13 key-up to `dtuhidd` active | none sent | 0.8, 1.4 and 1.5 s |
+
+### A companion from before the device's last boot
+
+idb_companion's HID connection dies when its device shuts down. A
+companion started before the device's last boot takes each key, and its
+events go nowhere: an F13 key-up through it started no `dtuhidd`. The
+server kept such a companion on a reattach, as when an older version left
+one.
+
+The check: the companion's start, from `ps -o ppid=,lstart=`, against the
+start of the device's `launchd_sim`, SpringBoard's parent. When the
+companion started first, the server starts a new one. The check reads no
+command line.
+
+| The device booted again with the server stopped, then the server started | Before (main's version 15) | After |
+| --- | --- | --- |
+| The companion | kept (the one from before the boot) | "started before the iPhone 18 Pro last booted, so its HID connection is gone; starting a new one" |
+| `dtuhidd` | not running | active 0.5 s after the F13 key-up |
+| Locks after the reattach | 0 of 3 took | 2 of 2 took |
+
+### box_list while Tart reads its Macs
+
+box_list now asks each backend, as acquire does, about the kinds it holds
+back until it has read what decides them, and waits up to 10 s for that
+read. A kind offered once read is listed as any kind is. One still held
+back is listed under "Kinds you cannot acquire now", with why, or as being
+checked while the read goes on. This was tested against fakes only: it
+shows only in the seconds after bb-box restarts.
+
+### A VM deleted while Tart lists the Mac's VMs
+
+Tart 2.30.0's `tart list` fails with "Error: The file “config.json”
+couldn’t be opened because there is no such file." when a VM folder loses
+its config.json while it reads. The Mac's state script ended there, so the
+whole Mac read as not answering. Tart 2.41.1's list does not fail. In a
+macOS box, with VMs whose folders were written by hand, a loop copied a VM
+folder, removed its config.json, then removed the folder, beside reads of
+the state:
+
+| State reads beside the deletes | Failed | Read without one of the two VMs that stayed |
+| --- | --- | --- |
+| Before | 28 of 440, and 2 of 52 | not counted |
+| After | 0 of 402, and 0 of 306 | 0 of 306 |
+
+When `tart list` fails, the script now reads each VM with `tart get`. A VM
+whose config.json has gone is being deleted, so it is left out. A VM that
+is there but cannot be read still fails the read, so a Mac is never taken
+for one with no VMs.
+
+### The Box tab and box_status on device boxes
+
+The Box tab names a device box's device beside its OS, for example
+"Linux Pixel 8" or "macOS iPhone 18 Pro", with no VM badge for its host.
+Its details have a Device line. box_status says "Device control" on android
+and ios boxes, rather than "Desktop control".

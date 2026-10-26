@@ -45,6 +45,10 @@ export const ROTATE_SETTLE_MS = 2_000;
 export const ROTATE_PICTURE_MS = 1_000;
 export const LOCK_SETTLE_MS = 3_000;
 export const REBOOT_PICTURE_MS = 10_000;
+export const HID_DAEMON = "com.apple.coredevice.dtuhidd";
+export const SPRINGBOARD = "com.apple.SpringBoard";
+export const HID_DAEMON_ACTIVE = "dtuhidd state changed to active";
+export const HID_DAEMON_ACTIVE_WAIT_MS = 15_000;
 const LOCK_STATE = "com.apple.springboard.lockstate";
 const PLUTIL = "/usr/bin/plutil";
 const SLIM_PASSES = 2;
@@ -69,6 +73,25 @@ export interface IosDriverOptions {
   readonly access?: PasteboardAccess;
   readonly appInfo?: (app: string) => Promise<AppInfo | null>;
   readonly buttonSettleMs?: number;
+  readonly processStart?: (pid: number) => Promise<ProcessStart | null>;
+  readonly hidDaemonActiveWaitMs?: number;
+}
+
+export interface ProcessStart {
+  readonly startedAt: number;
+  readonly parentPid: number;
+}
+
+export function parseProcessStart(printed: string): ProcessStart | null {
+  const match = /^\s*(\d+)\s+(\w{3} \w{3}\s+\d+ \d\d:\d\d:\d\d \d{4})\s*$/.exec(printed.trim());
+  const startedAt = match ? Date.parse(match[2]!) : Number.NaN;
+  return match && Number.isFinite(startedAt) ? { parentPid: Number(match[1]), startedAt } : null;
+}
+
+function ownProcessStart(pid: number): Promise<ProcessStart | null> {
+  return new Promise((resolve) =>
+    execFile("ps", ["-o", "ppid=,lstart=", "-p", String(pid)], { env: { ...process.env, LC_ALL: "C" } }, (error, stdout) => resolve(error ? null : parseProcessStart(String(stdout)))),
+  );
 }
 
 export interface DeviceHubKills {
@@ -138,6 +161,7 @@ export class IosDriver implements DeviceDriver {
   readonly #input: IosInput;
   readonly #listeners = new Set<() => void>();
   readonly #processes: (name: string) => Promise<number[]>;
+  readonly #processStart: (pid: number) => Promise<ProcessStart | null>;
   readonly #deviceHubFile: string;
   #target: OfferedDeviceOf<"ios"> | null = null;
   #udid: string | null = null;
@@ -163,6 +187,7 @@ export class IosDriver implements DeviceDriver {
     this.#simctl = options.simctl ?? new Simctl();
     this.#clock = options.clock ?? { now: () => Date.now(), monotonic: () => performance.now() };
     this.#processes = options.processes ?? ownProcesses;
+    this.#processStart = options.processStart ?? ownProcessStart;
     const own = iosPaths(options.paths);
     this.#deviceHubFile = own.deviceHub;
     this.#settings = new IosSettingsKeeper({ simctl: this.#simctl, file: own.settings, log: options.log, now: () => this.#clock.now() });
@@ -252,14 +277,43 @@ export class IosDriver implements DeviceDriver {
     const rebooted = await this.#slimming(target, device.udid, signal);
     await this.#rememberContent(target);
     const reattached = running && !rebooted;
-    const companion = reattached ? await this.#companion.ensure(device.udid, signal) : await this.#companion.restart(device.udid, signal);
+    const keepCompanion = reattached && !(await this.#companionPredatesBoot(target, device.udid));
+    const companion = keepCompanion ? await this.#companion.ensure(device.udid, signal) : await this.#companion.restart(device.udid, signal);
     if (companion === "started") this.#input.close();
     this.#physical = (await orientation(this.#companion.client, AbortSignal.any([signal, AbortSignal.timeout(ORIENTATION_READ_MS)])).catch(() => null)) ?? this.#physical;
     if (this.#video.running) this.#video.restart(`idb_companion was ${companion}`);
     else this.#video.start();
     await this.#settings.use(target.model, device.udid, signal).catch((error) => this.#log(`settings: ${words(error)}`));
     await this.#readSettings(signal).catch((error) => this.#log(`settings: not read: ${words(error)}`));
+    await this.#hidDaemonActive(target, device.udid, signal);
     return reattached ? "reattached" : "booted";
+  }
+
+  async #companionPredatesBoot(target: OfferedDeviceOf<"ios">, udid: string): Promise<boolean> {
+    const pid = await this.#companion.recordedPid();
+    if (pid === null) return false;
+    const companionStart = (await this.#processStart(pid))?.startedAt;
+    const booted = await this.#bootedAt(udid).catch(() => null);
+    if (companionStart === undefined || booted === null || companionStart >= booted) return false;
+    this.#log(`companion: idb_companion ${pid} started before the ${target.model} last booted, so its HID connection is gone; starting a new one`);
+    return true;
+  }
+
+  async #bootedAt(udid: string): Promise<number | null> {
+    const springBoard = await this.#simctl.servicePid(udid, SPRINGBOARD);
+    const parent = springBoard === null ? null : (await this.#processStart(springBoard))?.parentPid;
+    return parent ? ((await this.#processStart(parent))?.startedAt ?? null) : null;
+  }
+
+  async #hidDaemonActive(target: OfferedDeviceOf<"ios">, udid: string, signal: AbortSignal): Promise<void> {
+    if ((await this.#simctl.servicePid(udid, HID_DAEMON, signal).catch(() => 0)) !== null) return;
+    const began = this.#clock.monotonic();
+    const waitMs = this.#options.hidDaemonActiveWaitMs ?? HID_DAEMON_ACTIVE_WAIT_MS;
+    const active = await this.#simctl.logged(udid, HID_DAEMON_ACTIVE, () => this.#input.releaseInertKey(), AbortSignal.any([signal, AbortSignal.timeout(waitMs)]));
+    signal.throwIfAborted();
+    const seconds = ((this.#clock.monotonic() - began) / 1000).toFixed(1);
+    if (active) this.#log(`input: the ${target.model}'s HID daemon, which starts at its first input, took it in ${seconds} s`);
+    else this.#log(`input: the ${target.model}'s HID daemon did not say it took input within ${waitMs / 1000} s, so the first input may wait`);
   }
 
   async #rememberContent(target: OfferedDeviceOf<"ios">): Promise<void> {

@@ -485,6 +485,33 @@ test("Linux boxes take memory on a Mac but none of its two macOS VMs, and have n
   for (const guest of [first, second, third]) await backend.release(guest, releasing);
 });
 
+test("a VM deleted while Tart lists the Mac's VMs, which fails Tart 2.30.0's list, leaves the rest of the Mac's read: each VM is read on its own, and only one there that cannot be read fails it", async () => {
+  const { mac, backend } = setup();
+  const first = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const second = await backend.acquire(identity("macos"), null, hooks().hooks, signal());
+  const vms = join(mac, ".tart", "vms");
+  const going = join(vms, "bb-box-going");
+  mkdirSync(going);
+  writeFileSync(join(mac, ".fake-tart-list-fails"), "");
+
+  const capacity = await backend.capacity("macos", SMALL, []);
+  assert.equal(capacity.ok, false);
+  assert.match(capacity.message!, /Two macOS VMs already run on mac1, Apple's limit/, "both running VMs are still counted");
+  const state = parseState(spawnSync("/bin/sh", ["-c", stateScript(true)], { encoding: "utf8", env: { HOME: mac, PATH: `${join(mac, ".nix-profile", "bin")}:/usr/bin:/bin` } }).stdout);
+  assert.deepEqual(state.vms.filter((vm) => vm.running).map((vm) => vm.name).sort(), [first.ref, second.ref].sort(), "the running VMs, read one by one");
+  assert.ok(state.vms.length > 2 && !state.vms.some((vm) => vm.name === "bb-box-going"), "the stopped image too, and not the VM that is going");
+
+  writeFileSync(join(mac, ".fake-tart-get-fails"), `${second.ref} Error: the disk is unreadable`);
+  const failed = await backend.capacity("macos", SMALL, []);
+  assert.match(failed.message!, /mac1 did not answer: .*Error: the disk is unreadable/, "a VM that is there but cannot be read fails the read, so the Mac is not taken for one with no VMs");
+
+  rmSync(join(mac, ".fake-tart-get-fails"));
+  rmSync(join(mac, ".fake-tart-list-fails"));
+  rmSync(going, { recursive: true });
+  await backend.release(first, releasing);
+  await backend.release(second, releasing);
+});
+
 test("a Mac takes two macOS VMs; the third is refused with what to release", async () => {
   const { owners, backend } = setup();
   const first = await backend.acquire(identity(), null, hooks().hooks, signal());

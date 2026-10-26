@@ -467,11 +467,15 @@ export function deviceLines(box: BoxRecord, state: DeviceState | null, server: s
   return lines;
 }
 
-const CONTROL_WORDS: Record<ControlView["owner"], string> = {
-  agent: "the agent",
-  human: "the user, in bb-box's panel. Leave the desktop's windows alone until they hand control back, or until they ask you to continue: then call computer_take_control",
-  none: "changing hands",
-};
+function controlLine(owner: ControlView["owner"], controlled: "desktop" | "device"): string {
+  const leaveAlone = controlled === "device" ? "Leave the device alone" : "Leave the desktop's windows alone";
+  const words: Record<ControlView["owner"], string> = {
+    agent: "the agent",
+    human: `the user, in bb-box's panel. ${leaveAlone} until they hand control back, or until they ask you to continue: then call computer_take_control`,
+    none: "changing hands",
+  };
+  return `${controlled === "device" ? "Device" : "Desktop"} control: ${words[owner]}`;
+}
 
 /** Whether a kind's box user can become root, or Administrator on Windows, for kind lists. */
 export function adminText({ admin, os }: Pick<KindView, "admin" | "os">): string {
@@ -570,7 +574,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
   if (box.image) lines.push(`Image: ${imageWords(box.image)}`);
   if (box.guest?.address) lines.push(`Address: ${box.guest.address}`);
   for (const fact of box.guest?.facts ?? []) if (fact.label !== "Form") lines.push(`${fact.label}: ${fact.value}`);
-  if (control && capabilities.displays.length) lines.push(`Desktop control: ${CONTROL_WORDS[control.owner]}`);
+  if (control && capabilities.displays.length) lines.push(controlLine(control.owner, deviceDisplayOf(capabilities.displays) ? "device" : "desktop"));
   const enrol: Record<EnrolState, string> = {
     off:
       capabilities.enrol && neverReady(box)

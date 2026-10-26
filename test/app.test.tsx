@@ -929,6 +929,25 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: new URL("/plugins/bb-box/desktop/thr_panel/box_2", window.location.origin).href });
 });
 
+test("a device box's row names its device beside the OS, not its host's form, and its details have a Device line, for android and ios", async () => {
+  const android = box({ id: "box_a", name: "pixel-box", kind: "android", kindLabel: "Android emulator", form: "VM", desktop: false, display: null, device: { model: "Pixel 8", simulatorHost: false }, control: { owner: "agent", holder: null } });
+  const ios = box({ id: "box_i", name: "phone-box", kind: "ios", kindLabel: "iOS Simulator", os: "macos", arch: "arm64", form: "VM", desktop: true, device: { model: "iPhone 18 Pro", simulatorHost: true }, control: { owner: "agent", holder: null } });
+  const plain = box({ id: "box_p", name: "plain-vm", form: "VM" });
+  const slot = panel(server([android, ios, plain]).handlers);
+
+  expect(await slot.findByText("pixel-box")).toBeTruthy();
+  expect(slot.getByText("Pixel 8")).toBeTruthy();
+  expect(slot.getByText("iPhone 18 Pro")).toBeTruthy();
+  expect(slot.getAllByText("VM")).toHaveLength(1);
+
+  fireEvent.click(slot.getByRole("button", { name: "pixel-box: details" }));
+  expect(slot.getByText("Device")).toBeTruthy();
+  expect(slot.getAllByText("Pixel 8")).toHaveLength(2);
+  fireEvent.click(slot.getByRole("button", { name: "plain-vm: details" }));
+  expect(slot.getByText("Fake host")).toBeTruthy();
+  expect(slot.queryByText("Device")).toBeNull();
+});
+
 test("the panel makes a box by steps, System, Architecture, Type and Resources, and remembers the kind", async () => {
   const { handlers, changes } = server([]);
   const slot = panel(handlers);
