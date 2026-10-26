@@ -1,0 +1,2 @@
+{"label": "B flat out, 2 encoders", "at": "17:43:40", "n": 2, "size": "1206x2622", "paced": false, "fps": [112.0, 112.0], "total": 224.0}
+{"label": "B paced, 4 encoders at 60 fps", "at": "17:47:51", "n": 4, "size": "1206x2622", "paced": true, "fps": [52.4, 52.4, 52.5, 52.4], "total": 209.7}

@@ -1,0 +1,59 @@
+17:19:10 phase pool1 start
+{"label": "pool1-enc4-1206x2622", "at": "17:19:26", "n": 4, "size": "1206x2622", "paced": false, "fps": [94.0, 93.8, 93.8, 93.7], "total": 375.3}
+{"label": "pool1-enc4-604x1312", "at": "17:19:41", "n": 4, "size": "604x1312", "paced": false, "fps": [669.8, 219.5, 219.9, 219.8], "total": 1329.0}
+{"label": "pool1-enc2", "at": "17:19:56", "n": 2, "size": "1206x2622", "paced": false, "fps": [188.5, 188.5], "total": 377.0}
+pool1-n4-s1 shared-1: 59.5 fps, 3.3 Mbit/s, gap p95 24 ms worst 34 ms, 29 taps
+pool1-n4-s1 shared-2: 59.3 fps, 3.3 Mbit/s, gap p95 25 ms worst 42 ms, 29 taps
+pool1-n4-s1 shared-3: 59.4 fps, 3.4 Mbit/s, gap p95 25 ms worst 43 ms, 29 taps
+pool1-n4-s1 shared-4: 59.3 fps, 3.4 Mbit/s, gap p95 24 ms worst 46 ms, 29 taps
+pool1-n4-s1 vm: cpu 16.5% user 15.49% sys 68.45% idle, summed 5.22 cores, gpu 21,20,21,21,20,20,21,21,20,20,22,21,21,20,21, free 59%, swap 8.75 MiB
+all: 116 taps, median 50 ms, p95 63 ms, worst 77 ms, missed 0
+pool1-n8-s1 shared-1: 47.1 fps, 3.1 Mbit/s, gap p95 28 ms worst 32 ms, 29 taps
+pool1-n8-s1 shared-2: 47.1 fps, 3 Mbit/s, gap p95 28 ms worst 32 ms, 29 taps
+pool1-n8-s1 shared-3: 47.1 fps, 3 Mbit/s, gap p95 28 ms worst 32 ms, 29 taps
+pool1-n8-s1 shared-4: 47.1 fps, 3.1 Mbit/s, gap p95 28 ms worst 32 ms, 29 taps
+pool1-n8-s1 shared-5: 47.1 fps, 3 Mbit/s, gap p95 28 ms worst 32 ms, 29 taps
+pool1-n8-s1 shared-6: 47.1 fps, 2.9 Mbit/s, gap p95 28 ms worst 31 ms, 29 taps
+pool1-n8-s1 shared-7: 47.1 fps, 2.9 Mbit/s, gap p95 28 ms worst 32 ms, 29 taps
+pool1-n8-s1 shared-8: 47.1 fps, 2.9 Mbit/s, gap p95 28 ms worst 32 ms, 29 taps
+pool1-n8-s1 vm: cpu 17.33% user 17.65% sys 65.1% idle, summed 5.72 cores, gpu 19,22,22,22,22,22,22,23,22,23,21,22,23,22,22, free 56%, swap 8.75 MiB
+all: 232 taps, median 148 ms, p95 157 ms, worst 167 ms, missed 0
+pool1-n12-s1 shared-1: 30.8 fps, 2.2 Mbit/s, gap p95 35 ms worst 370 ms, 29 taps
+pool1-n12-s1 shared-2: 30.8 fps, 2.2 Mbit/s, gap p95 35 ms worst 394 ms, 29 taps
+pool1-n12-s1 shared-3: 30.8 fps, 2.1 Mbit/s, gap p95 35 ms worst 291 ms, 29 taps
+pool1-n12-s1 shared-4: 30.9 fps, 2.1 Mbit/s, gap p95 35 ms worst 352 ms, 29 taps
+pool1-n12-s1 shared-5: 30.8 fps, 2 Mbit/s, gap p95 35 ms worst 496 ms, 29 taps
+pool1-n12-s1 shared-6: 30.8 fps, 2.1 Mbit/s, gap p95 35 ms worst 383 ms, 29 taps
+pool1-n12-s1 shared-7: 30.9 fps, 2.1 Mbit/s, gap p95 35 ms worst 270 ms, 29 taps
+pool1-n12-s1 shared-8: 30.6 fps, 2.2 Mbit/s, gap p95 35 ms worst 441 ms, 29 taps
+pool1-n12-s1 shared-9: 30.6 fps, 2.2 Mbit/s, gap p95 35 ms worst 693 ms, 29 taps
+pool1-n12-s1 shared-10: 30.5 fps, 2.2 Mbit/s, gap p95 35 ms worst 751 ms, 29 taps
+pool1-n12-s1 shared-11: 30.5 fps, 2.2 Mbit/s, gap p95 35 ms worst 765 ms, 29 taps
+pool1-n12-s1 shared-12: 30.6 fps, 2.2 Mbit/s, gap p95 35 ms worst 691 ms, 29 taps
+pool1-n12-s1 vm: cpu 18.39% user 18.8% sys 62.79% idle, summed 6.08 cores, gpu 20,25,24,24,24,24,24,23,23,23,23,23,23,24,24, free 54%, swap 8.75 MiB
+all: 348 taps, median 207 ms, p95 229 ms, worst 1030 ms, missed 0
+pool1-n8-s0.5 shared-1: 59.3 fps, 0.6 Mbit/s, gap p95 28 ms worst 49 ms, 29 taps
+pool1-n8-s0.5 shared-2: 59.3 fps, 0.6 Mbit/s, gap p95 28 ms worst 41 ms, 29 taps
+pool1-n8-s0.5 shared-3: 59.3 fps, 0.6 Mbit/s, gap p95 28 ms worst 42 ms, 29 taps
+pool1-n8-s0.5 shared-4: 59.4 fps, 0.7 Mbit/s, gap p95 27 ms worst 43 ms, 29 taps
+pool1-n8-s0.5 shared-5: 59.3 fps, 0.8 Mbit/s, gap p95 27 ms worst 36 ms, 29 taps
+pool1-n8-s0.5 shared-6: 59.4 fps, 0.7 Mbit/s, gap p95 28 ms worst 42 ms, 29 taps
+pool1-n8-s0.5 shared-7: 59.2 fps, 0.7 Mbit/s, gap p95 27 ms worst 43 ms, 29 taps
+pool1-n8-s0.5 shared-8: 59.3 fps, 0.6 Mbit/s, gap p95 27 ms worst 38 ms, 29 taps
+pool1-n8-s0.5 vm: cpu 17.78% user 18.4% sys 63.8% idle, summed 5.88 cores, gpu 20,22,22,22,22,22,22,23,22,22,22,22,23,22,22, free 59%, swap 8.75 MiB
+all: 232 taps, median 49 ms, p95 64 ms, worst 76 ms, missed 0
+pool1-n12-s0.5 shared-1: 58.7 fps, 0.6 Mbit/s, gap p95 25 ms worst 45 ms, 30 taps
+pool1-n12-s0.5 shared-2: 58.9 fps, 0.6 Mbit/s, gap p95 24 ms worst 39 ms, 29 taps
+pool1-n12-s0.5 shared-3: 59 fps, 0.6 Mbit/s, gap p95 25 ms worst 42 ms, 29 taps
+pool1-n12-s0.5 shared-4: 59.1 fps, 0.6 Mbit/s, gap p95 24 ms worst 48 ms, 29 taps
+pool1-n12-s0.5 shared-5: 58.8 fps, 0.7 Mbit/s, gap p95 24 ms worst 41 ms, 29 taps
+pool1-n12-s0.5 shared-6: 59.2 fps, 0.8 Mbit/s, gap p95 24 ms worst 36 ms, 29 taps
+pool1-n12-s0.5 shared-7: 59 fps, 0.7 Mbit/s, gap p95 24 ms worst 47 ms, 29 taps
+pool1-n12-s0.5 shared-8: 59.1 fps, 0.7 Mbit/s, gap p95 24 ms worst 44 ms, 29 taps
+pool1-n12-s0.5 shared-9: 58.9 fps, 0.6 Mbit/s, gap p95 25 ms worst 44 ms, 29 taps
+pool1-n12-s0.5 shared-10: 58.8 fps, 0.6 Mbit/s, gap p95 24 ms worst 44 ms, 29 taps
+pool1-n12-s0.5 shared-11: 59 fps, 0.7 Mbit/s, gap p95 24 ms worst 43 ms, 29 taps
+pool1-n12-s0.5 shared-12: 59 fps, 0.7 Mbit/s, gap p95 24 ms worst 47 ms, 29 taps
+pool1-n12-s0.5 vm: cpu 17.74% user 17.67% sys 64.57% idle, summed 5.79 cores, gpu 19,23,23,24,22,23,23,23,22,22,23,22,22,22,22, free 58%, swap 8.75 MiB
+all: 349 taps, median 49 ms, p95 63 ms, worst 74 ms, missed 0
+17:25:47 phase pool1 end

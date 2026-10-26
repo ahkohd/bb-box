@@ -1,0 +1,31 @@
+17:47:58 phase bidle start
+{"label": "bidle-enc2-1", "at": "17:48:19", "n": 2, "size": "1206x2622", "paced": false, "fps": [159.8, 159.8], "total": 319.6}
+{"label": "bidle-enc2-2", "at": "17:48:39", "n": 2, "size": "1206x2622", "paced": false, "fps": [159.8, 159.8], "total": 319.6}
+bidle-n4-s1 shared-1: 58.2 fps, 3.3 Mbit/s, gap p95 23 ms worst 57 ms, 29 taps
+bidle-n4-s1 shared-2: 57.8 fps, 3.3 Mbit/s, gap p95 23 ms worst 77 ms, 29 taps
+bidle-n4-s1 shared-3: 58 fps, 3.4 Mbit/s, gap p95 23 ms worst 66 ms, 29 taps
+bidle-n4-s1 shared-4: 58.1 fps, 3.2 Mbit/s, gap p95 23 ms worst 50 ms, 29 taps
+shared-1: tap to frame median 65 ms, p95 75 ms, worst 76 ms, missed 0 of 29
+shared-2: tap to frame median 66 ms, p95 79 ms, worst 116 ms, missed 0 of 29
+shared-3: tap to frame median 66 ms, p95 82 ms, worst 140 ms, missed 0 of 29
+shared-4: tap to frame median 69 ms, p95 80 ms, worst 87 ms, missed 0 of 29
+all: 116 taps, median 66 ms, p95 79 ms, worst 140 ms, missed 0
+bidle-n8-s0.5 shared-1: 56.3 fps, 0.5 Mbit/s, gap p95 27 ms worst 43 ms, 29 taps
+bidle-n8-s0.5 shared-2: 56.4 fps, 0.6 Mbit/s, gap p95 27 ms worst 60 ms, 29 taps
+bidle-n8-s0.5 shared-3: 56.1 fps, 0.5 Mbit/s, gap p95 27 ms worst 60 ms, 29 taps
+bidle-n8-s0.5 shared-4: 56.7 fps, 0.6 Mbit/s, gap p95 27 ms worst 57 ms, 29 taps
+bidle-n8-s0.5 shared-5: 55.9 fps, 0.5 Mbit/s, gap p95 29 ms worst 59 ms, 29 taps
+bidle-n8-s0.5 shared-6: 56.2 fps, 0.6 Mbit/s, gap p95 27 ms worst 43 ms, 29 taps
+bidle-n8-s0.5 shared-7: 56.6 fps, 0.6 Mbit/s, gap p95 26 ms worst 43 ms, 29 taps
+bidle-n8-s0.5 shared-8: 55.8 fps, 0.6 Mbit/s, gap p95 29 ms worst 43 ms, 29 taps
+shared-1: tap to frame median 67 ms, p95 75 ms, worst 75 ms, missed 0 of 29
+shared-2: tap to frame median 64 ms, p95 67 ms, worst 68 ms, missed 0 of 29
+shared-3: tap to frame median 66 ms, p95 75 ms, worst 75 ms, missed 0 of 29
+shared-4: tap to frame median 61 ms, p95 67 ms, worst 68 ms, missed 0 of 29
+shared-5: tap to frame median 65 ms, p95 71 ms, worst 74 ms, missed 0 of 29
+shared-6: tap to frame median 63 ms, p95 75 ms, worst 77 ms, missed 0 of 29
+shared-7: tap to frame median 64 ms, p95 82 ms, worst 83 ms, missed 0 of 29
+shared-8: tap to frame median 65 ms, p95 68 ms, worst 109 ms, missed 0 of 29
+all: 232 taps, median 65 ms, p95 75 ms, worst 109 ms, missed 0
+{"label": "bidle-enc2-3", "at": "17:50:32", "n": 2, "size": "1206x2622", "paced": false, "fps": [159.8, 160.0], "total": 319.8}
+17:50:32 phase bidle end

@@ -1,0 +1,12 @@
+{"label": "together-1", "at": "16:58:44", "n": 4, "size": "1206x2622", "paced": false, "fps": [53.1, 53.1, 52.6, 160.2], "total": 319.0}
+{"label": "staggered-1", "at": "16:59:00", "n": 4, "size": "1206x2622", "paced": false, "fps": [52.7, 52.7, 160.3, 53.2], "total": 318.9}
+{"label": "together-2", "at": "16:59:12", "n": 4, "size": "1206x2622", "paced": false, "fps": [79.7, 79.7, 79.8, 79.6], "total": 318.8}
+{"label": "staggered-2", "at": "16:59:28", "n": 4, "size": "1206x2622", "paced": false, "fps": [53.1, 52.5, 160.0, 53.0], "total": 318.6}
+{"label": "together-3", "at": "16:59:40", "n": 4, "size": "1206x2622", "paced": false, "fps": [79.5, 79.5, 79.8, 79.8], "total": 318.6}
+{"label": "staggered-3", "at": "16:59:56", "n": 4, "size": "1206x2622", "paced": false, "fps": [47.2, 46.2, 105.2, 46.4], "total": 245.0}
+{"label": "together-4", "at": "17:00:08", "n": 4, "size": "1206x2622", "paced": false, "fps": [79.6, 79.6, 79.5, 79.4], "total": 318.1}
+{"label": "staggered-4", "at": "17:00:24", "n": 4, "size": "1206x2622", "paced": false, "fps": [79.5, 79.7, 79.7, 79.3], "total": 318.2}
+{"label": "together-5", "at": "17:00:36", "n": 4, "size": "1206x2622", "paced": false, "fps": [79.5, 79.6, 79.7, 79.6], "total": 318.4}
+{"label": "staggered-5", "at": "17:00:53", "n": 4, "size": "1206x2622", "paced": false, "fps": [79.9, 79.6, 79.5, 79.4], "total": 318.4}
+{"label": "together-6", "at": "17:01:05", "n": 4, "size": "1206x2622", "paced": false, "fps": [79.5, 79.4, 79.2, 79.2], "total": 317.3}
+{"label": "staggered-6", "at": "17:01:21", "n": 4, "size": "1206x2622", "paced": false, "fps": [55.6, 55.2, 56.0, 55.8], "total": 222.6}

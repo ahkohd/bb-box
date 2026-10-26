@@ -69,3 +69,4 @@ which records still stand as written. The current design as a whole is in
 | [061](061-a-box-can-be-resized-live-where-its-backend-can-and-restarted-only-when-asked.md) | A box can be resized after it is made, live where its backend can, and restarted only when asked | Accepted |
 | [062](062-docker-boxes-are-pinned-to-their-cores-and-see-their-memory-through-lxcfs.md) | Docker boxes are pinned to their cores, and see their memory through LXCFS where the host has it | Accepted |
 | [063](063-device-boxes.md) | Device boxes: one iOS Simulator or Android emulator per box, in a frame in the panel, shared with the agent | Accepted; not built yet |
+| [064](064-ios-shared-hosts.md) | iOS shared hosts: ios boxes as macOS users with their own device, many to a Mac, on pool Macs, Tart VMs and Namespace Macs | Proposed |

@@ -1,0 +1,31 @@
+17:36:17 phase nb1 start
+{"label": "nb1-enc2-1", "at": "17:36:38", "n": 2, "size": "1206x2622", "paced": false, "fps": [160.1, 160.1], "total": 320.2}
+{"label": "nb1-enc2-2", "at": "17:36:58", "n": 2, "size": "1206x2622", "paced": false, "fps": [159.8, 159.9], "total": 319.7}
+nb1-n4-s1 shared-1: 58.1 fps, 3 Mbit/s, gap p95 23 ms worst 40 ms, 29 taps
+nb1-n4-s1 shared-2: 58.5 fps, 3.1 Mbit/s, gap p95 23 ms worst 40 ms, 29 taps
+nb1-n4-s1 shared-3: 58.1 fps, 3.1 Mbit/s, gap p95 23 ms worst 41 ms, 29 taps
+nb1-n4-s1 shared-4: 58.5 fps, 3.2 Mbit/s, gap p95 23 ms worst 41 ms, 29 taps
+shared-1: tap to frame median 64 ms, p95 74 ms, worst 76 ms, missed 0 of 29
+shared-2: tap to frame median 66 ms, p95 78 ms, worst 83 ms, missed 0 of 29
+shared-3: tap to frame median 65 ms, p95 70 ms, worst 70 ms, missed 0 of 29
+shared-4: tap to frame median 64 ms, p95 76 ms, worst 83 ms, missed 0 of 29
+all: 116 taps, median 65 ms, p95 74 ms, worst 83 ms, missed 0
+nb1-n8-s0.5 shared-1: 36.1 fps, 0.6 Mbit/s, gap p95 76 ms worst 167 ms, 29 taps
+nb1-n8-s0.5 shared-2: 35.7 fps, 0.6 Mbit/s, gap p95 75 ms worst 164 ms, 29 taps
+nb1-n8-s0.5 shared-3: 36.3 fps, 0.6 Mbit/s, gap p95 72 ms worst 136 ms, 29 taps
+nb1-n8-s0.5 shared-4: 36.2 fps, 0.6 Mbit/s, gap p95 71 ms worst 222 ms, 29 taps
+nb1-n8-s0.5 shared-5: 36.3 fps, 0.5 Mbit/s, gap p95 74 ms worst 167 ms, 29 taps
+nb1-n8-s0.5 shared-6: 37 fps, 0.5 Mbit/s, gap p95 70 ms worst 141 ms, 29 taps
+nb1-n8-s0.5 shared-7: 36.2 fps, 0.5 Mbit/s, gap p95 72 ms worst 146 ms, 29 taps
+nb1-n8-s0.5 shared-8: 36.1 fps, 0.5 Mbit/s, gap p95 74 ms worst 124 ms, 29 taps
+shared-1: tap to frame median 213 ms, p95 383 ms, worst 434 ms, missed 0 of 29
+shared-2: tap to frame median 206 ms, p95 363 ms, worst 437 ms, missed 0 of 29
+shared-3: tap to frame median 195 ms, p95 385 ms, worst 393 ms, missed 0 of 29
+shared-4: tap to frame median 207 ms, p95 374 ms, worst 390 ms, missed 0 of 29
+shared-5: tap to frame median 221 ms, p95 370 ms, worst 408 ms, missed 0 of 29
+shared-6: tap to frame median 192 ms, p95 355 ms, worst 363 ms, missed 0 of 29
+shared-7: tap to frame median 200 ms, p95 323 ms, worst 344 ms, missed 0 of 29
+shared-8: tap to frame median 211 ms, p95 344 ms, worst 431 ms, missed 0 of 29
+all: 232 taps, median 206 ms, p95 370 ms, worst 437 ms, missed 0
+{"label": "nb1-enc2-3", "at": "17:38:58", "n": 2, "size": "1206x2622", "paced": false, "fps": [160.0, 160.0], "total": 320.0}
+17:38:58 phase nb1 end

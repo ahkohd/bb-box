@@ -1,0 +1,11 @@
+M14 slot 1 (bbd-1, 80001), BB's command as given: installer 5 s; "Machine host_... enrolled"; "Using local host-daemon port 38889"
+M14 slot 1: "Could not register the bb host-daemon launch agent ... launchctl: Bootstrap failed: 125: Domain does not support specified action"
+M14 slot 1: its LaunchAgent plist as a LaunchDaemon with UserName: connected 0.7 s after bootstrap
+M14 slot 2 (bbd-2, 80002), BB_INSTALL_SKIP_SERVICE=1: enrolled, daemon under --supervise, port 38890, connected
+M14 slot 2: installer's process stopped, LaunchDaemon written: connected 0.5 s after bootstrap
+M14 terminals through BB: "on bbd-1 uid 80001", "on bbd-2 uid 80002"; slot 1 "whoami=bbd-1 uid=80001 home=/Users/bbd-1", 19 devices listed
+M15 device server under LaunchDaemon: socket 0.3 s; "the iPhone 18 Pro booted in 18.5 s"; "has all 112 services of ios-27.0-24A434 off"; companion "169 ms after its start"
+M15 restarts: 0.32, 1.34, 1.28 s; new version folder: 1.67 s
+M16 resize with restart: 69.2 s; after it: both BB daemons running, device server running, "booted in 7.7 s", companion 321 ms after start, device booted 25 s after the server's start
+M16 fresh BB restarted by hand: server up 2.1 s; both slot machines connected 10.9 s after it started
+M17 one UID: 39 paths in 31.8 s; three UIDs in one pass: 18 paths in 31.8 s; after the sweep: 0 left; check 31.6 s
