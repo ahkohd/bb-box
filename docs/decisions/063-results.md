@@ -1703,10 +1703,57 @@ at most 2 s, then reading the tree again to list what changed.
 - The harness ran in the box, beside the device server. Through BB, each
   tool adds the round trip to the box.
 
+### Through the tools in a thread
+
+After the deploy, on 26 October 2026, the agent of this unit's thread ran
+063's check with the real computer tools, on a fresh ios box from the
+production BB (device server version 12, the iPhone 18 Pro, slim). Each
+time is the tool call's, from its start to its answer in the thread's log,
+so BB's server and the round trip to the box are in it.
+
+| Step | Tool | Time | Result |
+| --- | --- | --- | --- |
+| The first read on the new box | `computer_windows`, twice | 13.1 s, 5.4 s | failed: 'The simulator's accessibility service named no frontmost application', though the Home Screen showed. See below |
+| Settings | `computer_launch` | 5.7 s | its first launch in the box |
+| Its tree | `computer_observe` | 0.04 to 0.12 s, 4 reads | |
+| General, About, and back twice | `computer_act` click | 1.49 to 2.06 s, 4 taps | each by reference |
+| General's list, then Settings' | `computer_act` scroll | 3.7 s, 2 steps; 5.6 s, 5 steps | each 'moved no further, so it is at its end' |
+| The search field | `computer_act` set_value | 4.6 s | 'Wallpaper', read back; the device's first typing |
+| Safari | `computer_launch` | 10.5 s | its first launch in the box |
+| The address | `computer_act` click, `computer_type` | 1.8 s, 2.7 s | 'example.com' and Return, and the page loaded |
+| A screenshot | `computer_screenshot` | 0.18 to 0.55 s | 721x1568 |
+| The Home Screen's slider | `computer_act` set_value | 0.07 s | refused, with 'Drag it with computer_act's drag instead.' |
+| The Home Screen's second 'Calendar', the app | `computer_act` click | 2.9 s | Calendar opened; the widget kept its own reference |
+| A reference read before a turn | `computer_act` click | 0.52 s | refused as void |
+| A new reference, sideways | `computer_act` click | 1.6 s | the tap landed; a location alert showed inside the window, with its three buttons |
+
+Two things came out of it, both fixed in device server version 14 and the
+plugin with it:
+
+- **iOS named no app in front on a new box,** with the Home Screen on the
+  screen, through 5 s of reads and a second call, until an app was
+  launched. It did not come back in a second new box, nor after a reboot
+  there, read every 1.6 s for 40 s. iOS still answers what is at a point
+  then, so the driver now reads the screen at a grid of points, six across
+  and every 30 points down, eight at a time, and puts what it finds under
+  one root. Where SpringBoard owns most of the elements, the root is
+  'Home Screen'; either way its value says 'read point by point, as iOS
+  named no app in front'. A test reads the Home Screen this way from the
+  error's own words. On a device, with the error given in place of the
+  tree read, the Home Screen read so in 0.78 to 0.85 s, 3 times: 20
+  elements, the 8 icons, the dock, the slider, the status bar and the
+  widgets' text, under 'Home Screen'. The widgets' text belongs to their
+  own processes, so the root goes by most elements, not all.
+- **After a tap that brought up the alert,** the answer said 'Now in front:
+  .', as the alert's root has no name. It now says 'the Home Screen or a
+  system screen', as the window's heading does.
+
 ### Not checked here
 
-- **Through the tools in a thread,** on an ios box from the production BB:
-  after the deploy.
+- **The error itself again on a device,** as it did not come back: the
+  point-by-point read was checked by giving it the error.
+- **A person's control through BB:** no person held the panel during the
+  thread's run. The harness checked it twice.
 - **The image's check** does not yet read a tree or take a screenshot of
   each model, as 063 asks of units 7.1 and 7.2. It would need idb_companion
   started in the check, as no device server runs there.

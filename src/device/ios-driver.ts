@@ -25,7 +25,7 @@ import { parseDeviceState } from "../core/device-parse.ts";
 import { clockwiseTurnedPixels, pngPixels, rgbaPng } from "../core/png.ts";
 import { DriverError, type ControlContext, type DeviceDriver, type PinchGesture, type VideoSource } from "./driver.ts";
 import { Companion, accessibilityTree, orientation, screenshot, setOrientation, videoStream } from "./idb.ts";
-import { iosElementAt, iosTree } from "./ios-tree.ts";
+import { iosElementAt, readIosTree } from "./ios-tree.ts";
 import { IosSettingsKeeper } from "./ios-controls.ts";
 import { IosInput, PasteboardAccess, typesWithOption } from "./ios-input.ts";
 import { IosVideo } from "./ios-video.ts";
@@ -83,6 +83,10 @@ export function iosPaths(paths: DevicePaths) {
     deviceHub: join(paths.dir, "device-hub.json"),
     settings: join(paths.dir, "ios-settings.json"),
   };
+}
+
+function processName(pid: number): Promise<string | null> {
+  return new Promise((resolve) => execFile("ps", ["-p", String(pid), "-o", "comm="], (error, stdout) => resolve(error ? null : String(stdout).trim() || null)));
 }
 
 function ownProcesses(name: string): Promise<number[]> {
@@ -720,7 +724,17 @@ export class IosDriver implements DeviceDriver {
 
   async tree(): Promise<readonly DeviceElement[]> {
     this.#booted();
-    return iosTree(await accessibilityTree(this.#companion.client), screensOf(this.#model())[0].scale);
+    const scale = screensOf(this.#model())[0].scale;
+    const client = this.#companion.client;
+    const size = this.#video.size ?? screensOf(this.#model())[0].pixels;
+    const began = this.#clock.monotonic();
+    const read = await readIosTree(
+      { tree: () => accessibilityTree(client), at: (point) => accessibilityTree(client, undefined, point), processName },
+      { width: size.width / scale, height: size.height / scale },
+      scale,
+    );
+    if (read.byPoints) this.#log(`tree: iOS named no app in front, so the screen was read point by point in ${Math.round(this.#clock.monotonic() - began)} ms: ${read.elements[0]?.children.length ?? 0} elements`);
+    return read.elements;
   }
 
   async elementAt(point: { readonly x: number; readonly y: number }): Promise<DeviceElement | null> {
