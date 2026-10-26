@@ -11,7 +11,7 @@ pastes), and unit 6.3's of the iOS controls (E11, and each read-back), and unit 
 of the frame (turns, folds drawn from the table, and the island), and unit
 6.4's of the toolbar, and unit 4.1's of the Android driver (the stream of
 each model, recovery, E3 and E23), and unit 7.1's of computer use on iOS,
-are in [063 results](063-results.md). Built
+and unit 7.4's of recording a device (E15), are in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
 [Android emulator boxes](../research/android-emulator-boxes.md). Extends

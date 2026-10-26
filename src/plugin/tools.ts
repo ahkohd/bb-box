@@ -19,6 +19,7 @@ import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import { wantsDevice } from "./devices.ts";
+import { captionDeviceRecording, deviceClipWords, recordsDevice, startDeviceRecording, stopDeviceRecording, type DeviceRecordDeps } from "./record-device.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, deviceLines, devicesText, kindResizeText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
 
@@ -744,8 +745,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops.`,
-    presentation: { label: { pending: "Recording the desktop", completed: "Recorded the desktop" } },
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.`,
+    presentation: { label: { pending: "Recording the screen", completed: "Recorded the screen" } },
     parameters: z.object({
       box: boxParam,
       action: z.enum(["start", "step", "result", "stop"]).describe("start begins recording; step captions the next check; result gives its outcome; stop ends it and makes the clip."),
@@ -762,10 +763,21 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       try {
         const id = thread(threadId);
         const { owner, box: found } = await app.resolve(id, ref, signal);
-        if (!desktopDisplays(found.capabilities.displays).length) throw new BoxError("unsupported", `Box ${found.name} has no desktop to record.`);
+        const onDevice = recordsDevice(found);
+        const hasDesktop = desktopDisplays(found.capabilities.displays).length > 0;
+        if (!onDevice && !hasDesktop) throw new BoxError("unsupported", `Box ${found.name} has no desktop to record.`);
         // On Windows both run in the desktop session: gdigrab reads the desktop it runs in, and the stop closes its window.
         const os = found.capabilities.os;
-        const session = os === "windows" || os === "macos" ? ("desktop" as const) : undefined;
+        const session = (os === "windows" || os === "macos") && hasDesktop ? ("desktop" as const) : undefined;
+        const device: DeviceRecordDeps = {
+          record: (request) => app.devices.record(found, request),
+          run: async (script, timeoutMs) => (await boxes.run(owner, found.id, script, { timeoutMs, signal, session, maxOutputBytes: 1024 * 1024, waitForEnrolment: false })).result,
+        };
+        if (onDevice && action === "start") {
+          const said = await startDeviceRecording(device, found, position ?? "top");
+          if (!said.ok) return { content: [{ type: "text", text: said.text }], isError: true };
+          return `${said.text}${next(`Do what the video should show, then call box_record with box "${found.name}" and action "stop".`)}`;
+        }
         if (action === "start") {
           const { result } = await boxes.run(owner, found.id, recordStartScript(os, position ?? "top"), { timeoutMs: 30_000, signal, session, waitForEnrolment: false });
           const refused: Partial<Record<number, string>> = {
@@ -782,11 +794,16 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           if (!text) return { content: [{ type: "text", text: `Give text with ${action}: ${action === "step" ? "what you check next" : "what you saw"}, in one short line.` }], isError: true };
           if (action === "result" && passed === undefined) return { content: [{ type: "text", text: "Give passed with result: true when the check passed, false when it failed." }], isError: true };
           const kind = action === "step" ? "step" : passed ? "pass" : "fail";
-          const { result } = await boxes.run(owner, found.id, recordStepScript(kind, text, os), { timeoutMs: 15_000, signal, waitForEnrolment: false });
-          if (result.exitCode === RECORD_STEP_EXITS.none) {
-            return { content: [{ type: "text", text: `Box ${found.name} is not recording.${next(`Call box_record with box "${found.name}" and action "start" first.`)}` }], isError: true };
+          if (onDevice) {
+            const said = await captionDeviceRecording(device, found, kind, text);
+            if (!said.ok) return { content: [{ type: "text", text: `${said.text}${next(`Call box_record with box "${found.name}" and action "start" first.`)}` }], isError: true };
+          } else {
+            const { result } = await boxes.run(owner, found.id, recordStepScript(kind, text, os), { timeoutMs: 15_000, signal, waitForEnrolment: false });
+            if (result.exitCode === RECORD_STEP_EXITS.none) {
+              return { content: [{ type: "text", text: `Box ${found.name} is not recording.${next(`Call box_record with box "${found.name}" and action "start" first.`)}` }], isError: true };
+            }
+            if (result.exitCode !== 0) throw new BoxError("unreachable", `Captioning box ${found.name}'s recording failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
           }
-          if (result.exitCode !== 0) throw new BoxError("unreachable", `Captioning box ${found.name}'s recording failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
           return action === "step"
             ? `Captioned the next step: ▶ ${text}${next(`Do it, then call box_record with action "result", passed and what you saw.`)}`
             : `Captioned the result: ${passed ? "✓" : "✗"} ${text}${next(`Call box_record with action "step" for the next check, or "stop" for the clip.`)}`;
@@ -796,16 +813,24 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const times = speed ?? 1;
         const noRecording = { content: [{ type: "text" as const, text: `Box ${found.name} has no recording.${next(`Call box_record with box "${found.name}" and action "start" to begin one.`)}` }], isError: true };
         const runLong = (script: string) => boxes.run(owner, found.id, script, { timeoutMs: 240_000, signal, session, maxOutputBytes: 256 * 1024, waitForEnrolment: false });
-        const prepared = await runLong(recordPrepareScript(stills ?? "cut", os));
-        if (prepared.result.exitCode === RECORD_STOP_EXITS.none) return noRecording;
-        const facts = prepared.result.exitCode === 0 ? parsePrepared(prepared.result.stdout) : null;
-        if (!facts) throw new BoxError("unreachable", `Stopping box ${found.name}'s recording failed: ${prepared.result.stderr.trim() || `exit code ${prepared.result.exitCode}`}`);
-        app.devices.recordingEnded(found.id);
-        const plan = planClip(facts, times);
-        const { result } = await runLong(recordMakeScript(plan, os));
-        const said = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
-        if (!said) throw new BoxError("unreachable", `Making the clip in box ${found.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
-        const made = { ...said, ended: facts.ended };
+        const clip = onDevice
+          ? await stopDeviceRecording(device, found, stills ?? "cut", times, os === "macos" ? "macos" : "linux").finally(() => app.devices.recordingEnded(found.id))
+          : await (async () => {
+              const prepared = await runLong(recordPrepareScript(stills ?? "cut", os));
+              if (prepared.result.exitCode === RECORD_STOP_EXITS.none) return null;
+              const facts = prepared.result.exitCode === 0 ? parsePrepared(prepared.result.stdout) : null;
+              if (!facts) throw new BoxError("unreachable", `Stopping box ${found.name}'s recording failed: ${prepared.result.stderr.trim() || `exit code ${prepared.result.exitCode}`}`);
+              app.devices.recordingEnded(found.id);
+              const plan = planClip(facts, times);
+              const { result } = await runLong(recordMakeScript(plan, os));
+              const said = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
+              if (!said) throw new BoxError("unreachable", `Making the clip in box ${found.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+              return { plan, made: { ...said, ended: facts.ended }, words: "" };
+            })();
+        if (!clip) return noRecording;
+        if ("text" in clip) return { content: [{ type: "text", text: clip.text }], isError: true };
+        const { plan, made } = clip;
+        const deviceWords = "words" in clip ? clip.words : deviceClipWords(clip);
         const chapters: Chapter[] = made.captions ? chaptersOf(plan.captions) : [];
         const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
         const name = `recordings/${found.name}-${stamp}`;
@@ -844,9 +869,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const where = `The MP4 is in this thread's storage folder: $BB_THREAD_STORAGE/${name}.mp4${copied ? `, and in the storage folder of its parent thread${copied === 1 ? "" : `s, ${copied} of them`}` : ""}.`;
         const directive = `::inline-vis{source="thread-storage" file="${name}.html" height="${previewHeight(made.size) + (chapters.length ? 16 + chapters.length * 46 : 0)}"}`;
         const shows = copied ? "this thread and in its parent threads, which have a copy, so a parent can pass the line on" : "this thread only";
-        return `Recorded box ${found.name}: ${parts.join(", ")}.${limit}${steps} ${where}${next(`To show it in the thread, put this line on its own in your reply, outside any code block. It shows the clip in ${shows}:\n${directive}`)}`;
+        return `Recorded box ${found.name}${onDevice ? "'s device" : ""}: ${parts.join(", ")}.${limit}${deviceWords}${steps} ${where}${next(`To show it in the thread, put this line on its own in your reply, outside any code block. It shows the clip in ${shows}:\n${directive}`)}`;
       } catch (error) {
-        return failure(error, "Recording the desktop");
+        return failure(error, "Recording the screen");
       }
     },
   });

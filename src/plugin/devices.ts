@@ -4,7 +4,7 @@ import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, isTestOffer, speaksPro
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { lostWords } from "../core/device-control.ts";
 import { controlDeadlineMs } from "../core/device-settings.ts";
-import { DeviceLink, DeviceLinkError, newRequestId } from "../core/device-link.ts";
+import { DeviceLink, DeviceLinkError, newRequestId, type DeviceRequestBody } from "../core/device-link.ts";
 import type { ByteChannel, RunResult } from "../transports/types.ts";
 import type { DoctorCheck } from "../backends/types.ts";
 
@@ -187,6 +187,13 @@ export class DeviceServers {
     if (!link) return { id: "", ok: false, error: { code: "not-booted", words: `Box ${box.name}'s device server is not connected.` }, state: null };
     const owner = this.#owner(box.id);
     if (owner.changed) await this.#tellOwner(box);
+    this.#touch(box.id);
+    return link.request(request, { timeoutMs: SCRIPT_TIMEOUT_MS });
+  }
+
+  async record(box: BoxRecord, request: Extract<DeviceRequestBody, { readonly type: "record" }>): Promise<DeviceAnswer> {
+    const link = await this.#controlLink(box);
+    if (!link) return { id: "", ok: false, error: { code: "not-booted", words: `Box ${box.name}'s device server is not connected.` }, state: null };
     this.#touch(box.id);
     return link.request(request, { timeoutMs: SCRIPT_TIMEOUT_MS });
   }

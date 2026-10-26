@@ -36,6 +36,7 @@ import { keyOfCharacter, typedOnUsKeyboard } from "./keys.ts";
 import { PersonInput, WHEEL_SWIPE, easedOut, waitFor } from "./person-input.ts";
 import { pixelsWithin, pngPixels, rgbaPng } from "../core/png.ts";
 import type { DevicePaths } from "./paths.ts";
+import { DeviceRecorder, type RecorderClock, type RecordingAnswer } from "./recorder.ts";
 import { ServerWebSocket, type WsMessage } from "./ws.ts";
 
 export const KEPT_ANSWERS = 200;
@@ -74,6 +75,7 @@ export interface DeviceServerOptions {
   readonly log?: (line: string) => void;
   readonly deadlines?: Partial<Deadlines>;
   readonly settingsEveryMs?: number;
+  readonly recording?: { readonly limitMs?: number; readonly clock?: RecorderClock };
 }
 
 interface Connection {
@@ -184,6 +186,7 @@ export class DeviceServer {
   readonly #bootedHere = new Set<ModelName>();
   #framesSeen = 0;
   #lastFrameAt = -Infinity;
+  readonly #recorder: DeviceRecorder;
 
   constructor(options: DeviceServerOptions) {
     this.#options = options;
@@ -205,6 +208,15 @@ export class DeviceServer {
       setClipboard: (text) => this.#options.driver.setClipboard(text),
       acting: () => this.#personActs(),
       log: (line) => this.#log(line),
+    });
+    this.#recorder = new DeviceRecorder({
+      dir: options.paths.recording,
+      video: () => options.driver.video(),
+      state: () => this.#state,
+      readBack: () => options.driver.readBack(),
+      log: (line) => this.#log(line),
+      limitMs: options.recording?.limitMs,
+      clock: options.recording?.clock,
     });
   }
 
@@ -252,6 +264,11 @@ export class DeviceServer {
     await this.#writeIntent(intent);
     await this.#readBootedHere();
     await this.#listen();
+    try {
+      this.#recorder.resume();
+    } catch (error) {
+      this.#log(`recording: could not carry on: ${error instanceof Error ? error.message : String(error)}`);
+    }
     this.#settingsTimer = setInterval(() => {
       if ([...this.#connections].some((connection) => connection.role === "viewer" && connection.wantsVideo)) void this.#readSettings();
     }, this.#options.settingsEveryMs ?? SETTINGS_READ_EVERY_MS);
@@ -335,6 +352,7 @@ export class DeviceServer {
     if (this.#geometryWait) clearTimeout(this.#geometryWait.timer);
     if (this.#stillTimer) clearTimeout(this.#stillTimer);
     if (this.#settingsTimer) clearInterval(this.#settingsTimer);
+    this.#recorder.close();
     for (const connection of this.#connections) connection.ws.close(1001, "the device server is stopping");
     await new Promise<void>((resolve) => (this.#server ? this.#server.close(() => resolve()) : resolve()));
     this.#options.driver.close();
@@ -352,6 +370,7 @@ export class DeviceServer {
   #setState(state: DeviceState): void {
     const shown = this.#switching ? { ...state, power: { is: "switching", to: this.#switching.to, step: this.#switching.step, since: this.#switching.since } } as DeviceState : state;
     this.#state = shown;
+    this.#recorder.stateChanged(shown);
     const { at: _, ...rest } = shown;
     const compared = JSON.stringify(rest);
     if (compared === this.#lastStateText) return;
@@ -574,9 +593,12 @@ export class DeviceServer {
         if (request.generation < this.#owner.generation) throw new Refused("superseded", `Control's owner is at generation ${this.#owner.generation} already, past ${request.generation}.`);
         await this.#setOwner(request.generation, request.holder);
         return { type: "done" };
-      case "record":
+      case "record": {
         this.#leaseOnly(connection, "record the device");
-        throw new Refused("unsupported", "This device server cannot record yet.");
+        const said = this.#record(request);
+        if (!said.ok) throw new Refused(said.code, said.words);
+        return { type: "recording", recording: said.summary };
+      }
       case "screenshot": {
         this.#booted();
         const generation = this.#state.geometry?.generation ?? 0;
@@ -625,6 +647,16 @@ export class DeviceServer {
         return { type: "done" };
       case "result":
         return { type: "done" };
+    }
+  }
+
+  #record(request: Extract<DeviceRequest, { readonly type: "record" }>): RecordingAnswer {
+    try {
+      if (request.to === "start") return this.#recorder.start(request.position ?? "top");
+      if (request.to === "caption") return this.#recorder.caption(request.kind, request.text);
+      return this.#recorder.stop();
+    } catch (error) {
+      return { ok: false, code: "failed", words: `The recording could not ${request.to}: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
 
@@ -903,6 +935,7 @@ export class DeviceServer {
   }
 
   #echo(contacts: readonly TouchContact[], by: InputSource): void {
+    this.#recorder.touch(contacts);
     const generation = this.#state.geometry?.generation ?? 0;
     for (const connection of this.#connections) if (connection.role === "viewer") this.#send(connection, { verb: "BB_DEVICE_TOUCH", contacts, by, generation });
   }
