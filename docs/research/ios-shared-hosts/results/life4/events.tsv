@@ -1,0 +1,8 @@
+boot a fifth device	1793027213701	1793027217644
+release the fifth: shut down and erase	1793027225699	1793027229345
+boot the erased fifth again	1793027237386	1793027263055
+shut the fifth down	1793027271114	1793027274388
+kill shared-2's companion	1793027282645	1793027282684
+restart shared-2's companion	1793027285715	1793027285962
+switch shared-4's box to the iPad: shut shared-4 down	1793027294333	1793027297546
+switch: boot the iPad	1793027297571	1793027299833

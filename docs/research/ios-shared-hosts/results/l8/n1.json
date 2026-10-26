@@ -1,0 +1,185 @@
+{
+ "label": "l8-n1",
+ "at": "2026-10-26T16:06:12.251Z",
+ "seconds": 30,
+ "gapMs": 1000,
+ "devices": [
+  {
+   "name": "shared-1",
+   "udid": "62A4BB89-2FB0-486E-9FFD-63EB00ABD274",
+   "fps": 56.5,
+   "gapP95Ms": 23,
+   "gapWorstMs": 45,
+   "mbitPerSecond": 2.9,
+   "tap": {
+    "around": [
+     "-39:7k -22:6k -1:7k 12:7k 28:6k 62:22k 80:6k 99:6k 116:5k 132:5k 149:6k 166:6k 183:6k 199:6k 216:6k 233:6k 249:5k 266:6k 283:5k 300:5k 316:4k 334:5k 350:5k 367:6k 383:1k 400:5k",
+     "-35:1k -18:5k 6:1k 17:5k 36:5k 51:6k 71:23k 84:10k 101:7k 118:5k 134:7k 151:7k 168:8k 186:8k 203:8k 221:8k 243:7k 260:9k 276:7k 296:7k 313:6k 332:7k 356:6k 367:7k 385:7k",
+     "-44:1k -28:7k -11:7k 6:7k 24:7k 58:20k 74:7k 91:7k 108:5k 124:5k 142:6k 159:6k 177:7k 194:6k 214:6k 230:6k 247:6k 264:6k 280:6k 297:6k 314:5k 330:5k 347:5k 363:5k 380:5k 397:5k",
+     "-40:6k -23:4k -5:5k 12:5k 31:5k 48:5k 67:24k 82:9k 99:8k 117:7k 133:4k 150:6k 167:10k 183:7k 200:1k 216:10k 233:7k 250:9k 267:7k 284:7k 300:6k 317:6k 335:7k 354:6k 371:6k 390:7k",
+     "-25:7k -10:8k 12:7k 26:7k 42:7k 59:20k 79:8k 96:6k 113:5k 131:5k 147:6k 163:6k 179:6k 196:6k 216:7k 236:6k 249:6k 268:8k 285:5k 302:4k 321:5k 341:5k 373:6k 392:5k",
+     "-34:5k -20:4k 3:5k 14:5k 28:5k 45:4k 63:25k 80:9k 101:8k 113:7k 131:5k 151:9k 164:1k 179:9k 196:7k 213:8k 230:7k 247:9k 264:7k 281:6k 298:6k 315:7k 334:7k 352:6k 371:7k 389:7k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  }
+ ],
+ "vm": {
+  "top": {
+   "user": 6.34,
+   "sys": 4.86,
+   "idle": 88.78
+  },
+  "gpuUtilisation": [
+   275,
+   283,
+   281,
+   281,
+   281,
+   285,
+   284,
+   284,
+   284,
+   324,
+   284,
+   284,
+   284,
+   284,
+   284
+  ],
+  "memoryBefore": {
+   "freePercent": 93,
+   "swapUsedMiB": 0,
+   "freeGiB": 14.81,
+   "activeGiB": 7.64,
+   "inactiveGiB": 5.43,
+   "wiredGiB": 1.91,
+   "compressorGiB": 0,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "memoryAfter": {
+   "freePercent": 93,
+   "swapUsedMiB": 0,
+   "freeGiB": 15.07,
+   "activeGiB": 7.45,
+   "inactiveGiB": 5.37,
+   "wiredGiB": 1.9,
+   "compressorGiB": 0,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "processes": {
+   "windowSeconds": 30,
+   "summedCores": 0.81,
+   "perDevice": {
+    "62A4BB89-2FB0-486E-9FFD-63EB00ABD274": {
+     "processes": 80,
+     "cores": 0.404,
+     "rssMiB": 9078,
+     "companionCores": 0.098,
+     "companionRssMiB": 55,
+     "user": "admin"
+    }
+   },
+   "busiest": [
+    {
+     "name": "idb_companion",
+     "cores": 0.098,
+     "rssMiB": 55,
+     "count": 1
+    },
+    {
+     "name": "SimRenderServer",
+     "cores": 0.081,
+     "rssMiB": 53,
+     "count": 1
+    },
+    {
+     "name": "VTEncoderXPCService",
+     "cores": 0.075,
+     "rssMiB": 47,
+     "count": 1
+    },
+    {
+     "name": "SimMetalHost",
+     "cores": 0.054,
+     "rssMiB": 129,
+     "count": 3
+    },
+    {
+     "name": "diagnosticd",
+     "cores": 0.026,
+     "rssMiB": 97,
+     "count": 1
+    },
+    {
+     "name": "node",
+     "cores": 0.025,
+     "rssMiB": 620,
+     "count": 8
+    },
+    {
+     "name": "corespotlightd",
+     "cores": 0.008,
+     "rssMiB": 231,
+     "count": 1
+    },
+    {
+     "name": "(top)",
+     "cores": 0.005,
+     "rssMiB": 8,
+     "count": 1
+    },
+    {
+     "name": "launchd",
+     "cores": 0.002,
+     "rssMiB": 32,
+     "count": 1
+    },
+    {
+     "name": "nsattributedstringagent",
+     "cores": 0.002,
+     "rssMiB": 128,
+     "count": 2
+    },
+    {
+     "name": "runningboardd",
+     "cores": 0.002,
+     "rssMiB": 31,
+     "count": 1
+    },
+    {
+     "name": "Siri",
+     "cores": 0.002,
+     "rssMiB": 144,
+     "count": 1
+    },
+    {
+     "name": "PCCAgentClientExtension",
+     "cores": 0.002,
+     "rssMiB": 15,
+     "count": 1
+    },
+    {
+     "name": "com.apple.CoreSimulator.CoreSimulatorService",
+     "cores": 0.002,
+     "rssMiB": 45,
+     "count": 1
+    },
+    {
+     "name": "logd",
+     "cores": 0.001,
+     "rssMiB": 47,
+     "count": 1
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,54 @@
+[
+ {
+  "device": "shared-1",
+  "event": "baseline, 14 s before the first event",
+  "fps": 58.7,
+  "worstGapMs": 41
+ },
+ {
+  "device": "shared-2",
+  "event": "baseline, 14 s before the first event",
+  "fps": 59.1,
+  "worstGapMs": 40
+ },
+ {
+  "device": "shared-3",
+  "event": "baseline, 14 s before the first event",
+  "fps": 58.9,
+  "worstGapMs": 38
+ },
+ {
+  "device": "shared-4",
+  "event": "baseline, 14 s before the first event",
+  "fps": 58.9,
+  "worstGapMs": 35
+ },
+ {
+  "device": "shared-1",
+  "event": "kill the one user's CoreSimulatorService",
+  "eventMs": 455,
+  "fps": 2.0,
+  "worstGapMs": 291
+ },
+ {
+  "device": "shared-2",
+  "event": "kill the one user's CoreSimulatorService",
+  "eventMs": 455,
+  "fps": 2.9,
+  "worstGapMs": 291
+ },
+ {
+  "device": "shared-3",
+  "event": "kill the one user's CoreSimulatorService",
+  "eventMs": 455,
+  "fps": 2.0,
+  "worstGapMs": 286
+ },
+ {
+  "device": "shared-4",
+  "event": "kill the one user's CoreSimulatorService",
+  "eventMs": 455,
+  "fps": 2.0,
+  "worstGapMs": 292
+ }
+]

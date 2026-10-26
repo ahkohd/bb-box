@@ -20,6 +20,7 @@ decided is in the [decisions](../decisions/README.md).
 | [iOS Simulator boxes](ios-simulator-boxes.md) | 26 October 2026 | not yet |
 | [Android emulator boxes](android-emulator-boxes.md) | 26 October 2026 | not yet |
 | [Slimming an iOS Simulator](ios-simulator-slimming.md) | 26 October 2026 | not yet |
+| [Several iOS Simulators in one macOS VM](ios-shared-hosts.md) | 26 October 2026 | not yet |
 
 [computer-use-rig](computer-use-rig/README.md) is the test rig the computer
 use research ran in.

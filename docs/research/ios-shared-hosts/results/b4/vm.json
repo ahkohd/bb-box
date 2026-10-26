@@ -1,0 +1,187 @@
+{
+ "label": "b4-vm",
+ "at": "2026-10-26T15:40:33.711Z",
+ "seconds": 38,
+ "gapMs": 1000,
+ "devices": [],
+ "vm": {
+  "top": {
+   "user": 21.29,
+   "sys": 16.9,
+   "idle": 62.61
+  },
+  "gpuUtilisation": [
+   799,
+   798,
+   834,
+   835,
+   834,
+   832,
+   837,
+   835,
+   832,
+   834,
+   832,
+   833,
+   833,
+   831,
+   834,
+   836,
+   823,
+   707,
+   698
+  ],
+  "memoryBefore": {
+   "freePercent": 75,
+   "swapUsedMiB": 0,
+   "freeGiB": 0.37,
+   "activeGiB": 5.89,
+   "inactiveGiB": 5.36,
+   "wiredGiB": 3,
+   "compressorGiB": 0.86,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "memoryAfter": {
+   "freePercent": 76,
+   "swapUsedMiB": 0,
+   "freeGiB": 0.57,
+   "activeGiB": 5.86,
+   "inactiveGiB": 5.31,
+   "wiredGiB": 2.85,
+   "compressorGiB": 0.85,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "processes": {
+   "windowSeconds": 38,
+   "summedCores": 2.02,
+   "perDevice": {
+    "FE8804B9-684A-4B97-A98E-3620F68011ED": {
+     "processes": 87,
+     "cores": 0.278,
+     "rssMiB": 8632,
+     "companionCores": 0.053,
+     "companionRssMiB": 55,
+     "user": "sbu1"
+    },
+    "B66DAA10-952C-4B7B-87F8-E76063D58F9B": {
+     "processes": 87,
+     "cores": 0.283,
+     "rssMiB": 10139,
+     "companionCores": 0.054,
+     "companionRssMiB": 55,
+     "user": "sbu4"
+    },
+    "3DB833A8-E65C-492A-94EF-B9FACA928291": {
+     "processes": 85,
+     "cores": 0.286,
+     "rssMiB": 9969,
+     "companionCores": 0.055,
+     "companionRssMiB": 55,
+     "user": "sbu3"
+    },
+    "12FFDDA0-C314-494E-841F-1DB67C97B0EB": {
+     "processes": 86,
+     "cores": 0.281,
+     "rssMiB": 9991,
+     "companionCores": 0.054,
+     "companionRssMiB": 55,
+     "user": "sbu2"
+    }
+   },
+   "busiest": [
+    {
+     "name": "idb_companion",
+     "cores": 0.217,
+     "rssMiB": 219,
+     "count": 4
+    },
+    {
+     "name": "SimRenderServer",
+     "cores": 0.209,
+     "rssMiB": 204,
+     "count": 4
+    },
+    {
+     "name": "VTEncoderXPCService",
+     "cores": 0.164,
+     "rssMiB": 177,
+     "count": 4
+    },
+    {
+     "name": "SimMetalHost",
+     "cores": 0.159,
+     "rssMiB": 487,
+     "count": 12
+    },
+    {
+     "name": "diagnosticd",
+     "cores": 0.066,
+     "rssMiB": 13,
+     "count": 1
+    },
+    {
+     "name": "nsurlsessiond",
+     "cores": 0.033,
+     "rssMiB": 48,
+     "count": 2
+    },
+    {
+     "name": "node",
+     "cores": 0.008,
+     "rssMiB": 331,
+     "count": 6
+    },
+    {
+     "name": "com.apple.StreamingUnzipService.privileged",
+     "cores": 0.006,
+     "rssMiB": 20,
+     "count": 1
+    },
+    {
+     "name": "top",
+     "cores": 0.006,
+     "rssMiB": 9,
+     "count": 1
+    },
+    {
+     "name": "com.apple.CoreSimulator.CoreSimulatorService",
+     "cores": 0.003,
+     "rssMiB": 189,
+     "count": 5
+    },
+    {
+     "name": "com.apple.MobileAsset.DownloadService.Builtin",
+     "cores": 0.003,
+     "rssMiB": 21,
+     "count": 1
+    },
+    {
+     "name": "logd",
+     "cores": 0.002,
+     "rssMiB": 41,
+     "count": 1
+    },
+    {
+     "name": "mediaanalysisd",
+     "cores": 0.002,
+     "rssMiB": 53,
+     "count": 1
+    },
+    {
+     "name": "photoanalysisd",
+     "cores": 0.002,
+     "rssMiB": 46,
+     "count": 1
+    },
+    {
+     "name": "launchd",
+     "cores": 0.002,
+     "rssMiB": 23,
+     "count": 1
+    }
+   ]
+  }
+ }
+}

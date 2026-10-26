@@ -1,0 +1,5 @@
+build4-one-build shared-1: 57.5 fps, 3.2 Mbit/s, gap p95 27 ms worst 106 ms, 149 taps
+build4-one-build shared-2: 52.2 fps, 2.9 Mbit/s, gap p95 26 ms worst 102 ms, 149 taps
+build4-one-build shared-3: 52.2 fps, 3 Mbit/s, gap p95 26 ms worst 109 ms, 149 taps
+build4-one-build shared-4: 52.2 fps, 2.9 Mbit/s, gap p95 26 ms worst 96 ms, 149 taps
+build4-one-build vm: cpu 53.34% user 17.57% sys 29.7% idle, summed 2 cores, gpu 794,836,831,838,838,833,833,833,833,840,837,836,836,841,833,831,846,832,831,837,836,831,831,831,836,840,831,831,833,831,835,831,830,838,831,835,830,835,831,830,835,835,835,840,831,835,831,831,862,831,835,836,831,834,835,833,833,837,837,838,833,831,836,831,840,831,836,835,831,835,831,835,831,840, free 75%, swap 0 MiB

@@ -1,0 +1,15 @@
+list the other's home	Desktop Documents Downloads Library Movies 
+list the other's Library	ls: /Users/sbu2/Library: Permission denied 
+list the other's device set	ls: /Users/sbu2/Library/Developer/CoreSimulator/Devices: Permission denied 
+simctl on the other's set	Provided set path does not exist: /Users/sbu2/Library/Developer/CoreSimulator/Devices 
+simctl on the other's device by UDID	Invalid device: 12FFDDA0-C314-494E-841F-1DB67C97B0EB 
+connect to the other's idb socket	PermissionError: [Errno 13] Permission denied 
+see the other's processes	1 
+see the other's device UDID in ps	6 
+signal the other's companion	zsh:kill:1: kill 77745 failed: operation not permitted exit 1 
+reach a server the other runs on loopback	200
+the other's device reaches my loopback page	n/a 
+read the other's files in /tmp	
+read the other's keychain	ls: /Users/sbu2/Library/Keychains: Permission denied 
+write into the other's home	touch: /Users/sbu2/probe: Permission denied exit 1 
+read the other's DerivedData	ls: /Users/sbu2/Library/Developer/Xcode/DerivedData: Permission denied 

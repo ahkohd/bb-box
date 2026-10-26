@@ -1,0 +1,199 @@
+{
+ "label": "breset-vm",
+ "at": "2026-10-26T15:43:11.996Z",
+ "seconds": 78,
+ "gapMs": 1000,
+ "devices": [],
+ "vm": {
+  "top": {
+   "user": 17.94,
+   "sys": 14.43,
+   "idle": 67.62
+  },
+  "gpuUtilisation": [
+   769,
+   769,
+   803,
+   802,
+   802,
+   802,
+   801,
+   802,
+   803,
+   798,
+   794,
+   636,
+   636,
+   636,
+   636,
+   634,
+   635,
+   635,
+   634,
+   635,
+   635,
+   635,
+   635,
+   635,
+   631,
+   633,
+   635,
+   640,
+   631,
+   646,
+   644,
+   642,
+   642,
+   644,
+   642,
+   642,
+   548,
+   538,
+   538
+  ],
+  "memoryBefore": {
+   "freePercent": 76,
+   "swapUsedMiB": 0,
+   "freeGiB": 0.16,
+   "activeGiB": 6.03,
+   "inactiveGiB": 5.47,
+   "wiredGiB": 2.93,
+   "compressorGiB": 0.85,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "memoryAfter": {
+   "freePercent": 78,
+   "swapUsedMiB": 0,
+   "freeGiB": 2.37,
+   "activeGiB": 4.98,
+   "inactiveGiB": 4.73,
+   "wiredGiB": 2.58,
+   "compressorGiB": 0.83,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "processes": {
+   "windowSeconds": 78,
+   "summedCores": 1.63,
+   "perDevice": {
+    "FE8804B9-684A-4B97-A98E-3620F68011ED": {
+     "processes": 87,
+     "cores": 0.287,
+     "rssMiB": 8643,
+     "companionCores": 0.059,
+     "companionRssMiB": 55,
+     "user": "sbu1"
+    },
+    "3DB833A8-E65C-492A-94EF-B9FACA928291": {
+     "processes": 86,
+     "cores": 0.303,
+     "rssMiB": 10033,
+     "companionCores": 0.059,
+     "companionRssMiB": 55,
+     "user": "sbu3"
+    },
+    "12FFDDA0-C314-494E-841F-1DB67C97B0EB": {
+     "processes": 88,
+     "cores": 0.289,
+     "rssMiB": 10045,
+     "companionCores": 0.059,
+     "companionRssMiB": 55,
+     "user": "sbu2"
+    }
+   },
+   "busiest": [
+    {
+     "name": "idb_companion",
+     "cores": 0.177,
+     "rssMiB": 164,
+     "count": 3
+    },
+    {
+     "name": "SimRenderServer",
+     "cores": 0.158,
+     "rssMiB": 155,
+     "count": 3
+    },
+    {
+     "name": "VTEncoderXPCService",
+     "cores": 0.132,
+     "rssMiB": 133,
+     "count": 3
+    },
+    {
+     "name": "SimMetalHost",
+     "cores": 0.119,
+     "rssMiB": 357,
+     "count": 9
+    },
+    {
+     "name": "diagnosticd",
+     "cores": 0.056,
+     "rssMiB": 13,
+     "count": 1
+    },
+    {
+     "name": "nsurlsessiond",
+     "cores": 0.037,
+     "rssMiB": 48,
+     "count": 2
+    },
+    {
+     "name": "writeconfig",
+     "cores": 0.01,
+     "rssMiB": 11,
+     "count": 1
+    },
+    {
+     "name": "node",
+     "cores": 0.008,
+     "rssMiB": 333,
+     "count": 6
+    },
+    {
+     "name": "com.apple.StreamingUnzipService.privileged",
+     "cores": 0.006,
+     "rssMiB": 30,
+     "count": 1
+    },
+    {
+     "name": "opendirectoryd",
+     "cores": 0.005,
+     "rssMiB": 32,
+     "count": 1
+    },
+    {
+     "name": "mds",
+     "cores": 0.004,
+     "rssMiB": 37,
+     "count": 1
+    },
+    {
+     "name": "fseventsd",
+     "cores": 0.004,
+     "rssMiB": 16,
+     "count": 1
+    },
+    {
+     "name": "com.apple.MobileAsset.DownloadService.Builtin",
+     "cores": 0.003,
+     "rssMiB": 21,
+     "count": 1
+    },
+    {
+     "name": "launchd",
+     "cores": 0.003,
+     "rssMiB": 24,
+     "count": 1
+    },
+    {
+     "name": "com.apple.CoreSimulator.CoreSimulatorService",
+     "cores": 0.003,
+     "rssMiB": 152,
+     "count": 4
+    }
+   ]
+  }
+ }
+}

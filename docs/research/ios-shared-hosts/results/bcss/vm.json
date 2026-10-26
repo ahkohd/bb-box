@@ -1,0 +1,186 @@
+{
+ "label": "bcss-vm",
+ "at": "2026-10-26T15:45:53.971Z",
+ "seconds": 68,
+ "gapMs": 1000,
+ "devices": [],
+ "vm": {
+  "top": {
+   "user": 15.24,
+   "sys": 12.16,
+   "idle": 72.59
+  },
+  "gpuUtilisation": [
+   614,
+   614,
+   646,
+   646,
+   646,
+   646,
+   646,
+   647,
+   642,
+   646,
+   648,
+   647,
+   560,
+   493,
+   491,
+   497,
+   493,
+   493,
+   489,
+   492,
+   490,
+   489,
+   492,
+   489,
+   489,
+   492,
+   492,
+   489,
+   489,
+   492,
+   489,
+   397,
+   389,
+   389
+  ],
+  "memoryBefore": {
+   "freePercent": 78,
+   "swapUsedMiB": 0,
+   "freeGiB": 1.91,
+   "activeGiB": 5.3,
+   "inactiveGiB": 4.8,
+   "wiredGiB": 2.65,
+   "compressorGiB": 0.83,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "memoryAfter": {
+   "freePercent": 81,
+   "swapUsedMiB": 0,
+   "freeGiB": 3.01,
+   "activeGiB": 4.67,
+   "inactiveGiB": 4.8,
+   "wiredGiB": 2.3,
+   "compressorGiB": 0.71,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "processes": {
+   "windowSeconds": 68,
+   "summedCores": 1.27,
+   "perDevice": {
+    "3DB833A8-E65C-492A-94EF-B9FACA928291": {
+     "processes": 86,
+     "cores": 0.332,
+     "rssMiB": 10041,
+     "companionCores": 0.066,
+     "companionRssMiB": 55,
+     "user": "sbu3"
+    },
+    "12FFDDA0-C314-494E-841F-1DB67C97B0EB": {
+     "processes": 87,
+     "cores": 0.334,
+     "rssMiB": 10052,
+     "companionCores": 0.066,
+     "companionRssMiB": 55,
+     "user": "sbu2"
+    }
+   },
+   "busiest": [
+    {
+     "name": "idb_companion",
+     "cores": 0.155,
+     "rssMiB": 164,
+     "count": 3
+    },
+    {
+     "name": "SimRenderServer",
+     "cores": 0.125,
+     "rssMiB": 99,
+     "count": 2
+    },
+    {
+     "name": "VTEncoderXPCService",
+     "cores": 0.115,
+     "rssMiB": 132,
+     "count": 3
+    },
+    {
+     "name": "SimMetalHost",
+     "cores": 0.089,
+     "rssMiB": 262,
+     "count": 6
+    },
+    {
+     "name": "diagnosticd",
+     "cores": 0.044,
+     "rssMiB": 13,
+     "count": 1
+    },
+    {
+     "name": "nsurlsessiond",
+     "cores": 0.027,
+     "rssMiB": 49,
+     "count": 2
+    },
+    {
+     "name": "node",
+     "cores": 0.008,
+     "rssMiB": 334,
+     "count": 6
+    },
+    {
+     "name": "opendirectoryd",
+     "cores": 0.005,
+     "rssMiB": 32,
+     "count": 1
+    },
+    {
+     "name": "com.apple.CoreSimulator.CoreSimulatorService",
+     "cores": 0.004,
+     "rssMiB": 153,
+     "count": 4
+    },
+    {
+     "name": "launchd",
+     "cores": 0.003,
+     "rssMiB": 24,
+     "count": 1
+    },
+    {
+     "name": "com.apple.StreamingUnzipService.privileged",
+     "cores": 0.003,
+     "rssMiB": 37,
+     "count": 1
+    },
+    {
+     "name": "coresymbolicationd",
+     "cores": 0.003,
+     "rssMiB": 6,
+     "count": 1
+    },
+    {
+     "name": "com.apple.MobileAsset.DownloadService.Builtin",
+     "cores": 0.002,
+     "rssMiB": 21,
+     "count": 1
+    },
+    {
+     "name": "logd",
+     "cores": 0.002,
+     "rssMiB": 45,
+     "count": 1
+    },
+    {
+     "name": "coreaudiod",
+     "cores": 0.002,
+     "rssMiB": 32,
+     "count": 1
+    }
+   ]
+  }
+ }
+}

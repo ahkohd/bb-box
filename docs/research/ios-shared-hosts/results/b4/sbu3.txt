@@ -1,0 +1,1 @@
+b4-sbu3 sbu3: 58.6 fps, 3 Mbit/s, gap p95 23 ms worst 40 ms, 29 taps
