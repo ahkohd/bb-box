@@ -32,6 +32,7 @@ class FakeDevice {
   readonly reads: DeviceRead["type"][] = [];
   onInput: (input: DeviceInput) => void = () => undefined;
   took = false;
+  platform: "ios" | "android" = "ios";
 
   constructor(tree: readonly DeviceElement[]) {
     this.tree = tree;
@@ -49,6 +50,17 @@ class FakeDevice {
   }
 
   state(): DeviceState {
+    if (this.platform === "android") {
+      return {
+        platform: "android",
+        form: "phone",
+        model: "Pixel 8",
+        power: { is: "booted", awake: true },
+        geometry: { generation: this.generation, physical: "upright", content: "upright", video: SCREEN },
+        settings: {},
+        at: 0,
+      } as unknown as DeviceState;
+    }
     return {
       platform: "ios",
       model: "iPhone 18 Pro",
@@ -246,6 +258,28 @@ describe("the computer tools on a device (063, 7.1)", () => {
       (error: unknown) => error instanceof ComputerError && error.code === "refused" && /is not a text field, so set_value cannot set it.*Drag it with computer_act's drag instead\./.test(error.message),
     );
     assert.equal(device.inputs.length, 3, "nothing sent to the slider");
+  });
+
+  test("on Android, set_value selects the field's text with Ctrl+A, and a failed typing names Ctrl+A to clear it", async () => {
+    const field = element("text field", "Search settings", { x: 60, y: 600, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
+    const device = new FakeDevice(screenOf([field]));
+    device.platform = "android";
+    device.onInput = (input) => {
+      if (input.type === "text") device.tree = screenOf([{ ...field, value: input.text }]);
+    };
+    const computer = new DeviceComputer(device.deps());
+    const { text } = await computer.observe(BOX, { window: 1 });
+    await computer.act(BOX, { action: "set_value", ref: refOf(text, /"Search settings"/), value: "Wallpaper" });
+    assert.deepEqual(
+      device.inputs.map((input) => (input.type === "key" ? `key ${input.modifiers.join("+")}+${input.key}` : input.type)),
+      ["tap", "key control+a", "text"],
+    );
+    device.onInput = () => undefined;
+    device.tree = screenOf([{ ...field, value: "Wa", focused: true }]);
+    await assert.rejects(
+      computer.type(BOX, { text: "Wallpaper", keys: "Enter" }),
+      (error: unknown) => error instanceof ComputerError && error.hint === "Clear the field, such as with keys ctrl+a then Backspace, and type the text again.",
+    );
   });
 
   test("scroll swipes within the list holding the element, a fifth of it a step, and stops at the list's end", async () => {

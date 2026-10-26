@@ -1,0 +1,78 @@
+[
+  {
+    "tool": "launch",
+    "app": "Settings"
+  },
+  {
+    "tool": "reads",
+    "times": 20,
+    "gapMs": 200
+  },
+  {
+    "tool": "observe"
+  },
+  {
+    "tool": "launch",
+    "url": "https://example.com"
+  },
+  {
+    "tool": "reads",
+    "times": 20,
+    "gapMs": 200
+  },
+  {
+    "tool": "observe"
+  },
+  {
+    "tool": "launch",
+    "app": "Settings"
+  },
+  {
+    "tool": "shell",
+    "background": true,
+    "command": "adb shell am instrument -w -e seconds 8 bbbox.probe/.Holds",
+    "out": "/tmp/holds.out"
+  },
+  {
+    "tool": "watch",
+    "seconds": 12,
+    "gapMs": 500
+  },
+  {
+    "tool": "shell",
+    "command": "cat /tmp/holds.out"
+  },
+  {
+    "tool": "shell",
+    "background": true,
+    "command": "adb shell am instrument -w -e seconds 8 bbbox.probe/.Plain",
+    "out": "/tmp/plain.out"
+  },
+  {
+    "tool": "watch",
+    "seconds": 12,
+    "gapMs": 500
+  },
+  {
+    "tool": "shell",
+    "command": "cat /tmp/plain.out"
+  },
+  {
+    "tool": "shell",
+    "command": "pid=$(adb shell 'for p in /proc/[0-9]*; do grep -q TreeServer $p/cmdline 2>/dev/null && echo ${p#/proc/}; done' | head -1); echo killing the tree server, process $pid; adb shell kill -9 $pid"
+  },
+  {
+    "tool": "watch",
+    "seconds": 3,
+    "gapMs": 500
+  },
+  {
+    "tool": "wait",
+    "ms": 30000
+  },
+  {
+    "tool": "watch",
+    "seconds": 3,
+    "gapMs": 500
+  }
+]

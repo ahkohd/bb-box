@@ -87,3 +87,33 @@ PAGE="http://127.0.0.1:8770/device.html?model=Pixel%208&guest=linux" node
 scripts/measure/ios/drive.ts owner:person e14:540:800:100:600:idle`, where
 points are the video's pixels. `PROBE_DX` and `PROBE_DY` move the pixel
 `e14` watches from the tap, 30 by default.
+
+## Computer use
+
+Units 7.2 and 7.3
+([063 results](../../../docs/decisions/063-results.md#units-72-and-73-computer-use-on-an-android-device))
+use `computer.ts`, as the iOS one, in a box with the template's devices and
+this checkout: `node scripts/measure/android/computer.ts <steps.json>`. It
+runs the plugin's own `DeviceServers` and `DeviceComputer`, and writes a
+line of JSON a step with its time and what the agent would read.
+
+| Option or step | What it does |
+| --- | --- |
+| `--tree dump`, `--tree server` | Stops the box's device server and runs one in this process, reading the tree only by `uiautomator dump`, or by bb-box's tree server with the dump when the server cannot run. Without it, the box's own server, delivered from this checkout |
+| `--person` | Starts with a person holding control |
+| `windows`, `observe`, `screenshot`, `act`, `type`, `launch`, `take_control` | The computer tools. `ref` is a reference, or `/pattern/` for the first line of the last tree that matches, or the `nth` |
+| `control`, `person`, `wait` | A `box_device` control, a person taking or handing back control, a pause |
+| `reads` | Reads the tree `times` times, `gapMs` apart, and gives each read's milliseconds |
+| `watch` | Reads the tree every `gapMs` for `seconds`, with each read's time, its elements and why it was refused |
+| `shell` | Runs a command in the box; with `background`, leaves it running and writes its output to `out` |
+
+`check.json` is 063's live check, and `e12.json` is E12: tree times on
+Settings and Chrome, an instrumentation test that uses UiAutomation and one
+that does not run beside the reads, and the tree server killed. E12 needs
+the probe app in `probe-app`, with two instrumentations,
+`bbbox.probe/.Holds` and `bbbox.probe/.Plain`: the first calls
+`getUiAutomation()` and reads the screen for `-e seconds`, the second only
+waits. Build and install it in the box with
+`setup/android/build-tree-server.sh --install-tools`, for the tools, then
+`scripts/measure/android/probe-app/build.sh` and
+`adb install -r scripts/measure/android/probe-app/out/probe.apk`.

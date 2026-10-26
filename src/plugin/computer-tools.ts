@@ -161,7 +161,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     name: "computer_type",
     description:
       "Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. " +
-      "On a device box, text a US keyboard has goes as keys and the rest as one paste, and cmd is the Command key. " +
+      "On a device box, text a US keyboard has goes as keys and the rest as one paste; cmd is the Command key on iOS, and ctrl+a selects all on Android. " +
       'For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards.',
     presentation: { label: { pending: "Typing", completed: "Typed" } },
     parameters: z.object({
@@ -188,7 +188,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     name: "computer_launch",
     description:
       "Open an app on a desktop box by its name or path, or open a URL in the box's browser. Says which windows it opened; for a URL, waits up to 10 s for the page's title. " +
-      "On a device box, open an app by its bundle ID or package, such as com.apple.Preferences, or its name, such as Settings, or open a URL, which the device's own handler takes.",
+      "On a device box, open an app by its bundle ID or package, such as com.apple.Preferences or com.android.settings, or its name, such as Settings, or open a URL, which the device's own handler takes.",
     presentation: { label: { pending: "Opening an app", completed: "Opened an app" } },
     parameters: z.object({
       box: boxParam,

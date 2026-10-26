@@ -8,6 +8,7 @@ import {
   type DeviceElement,
   type DeviceErrorCode,
   type DeviceInput,
+  type DevicePlatform,
   type DeviceRead,
   type DeviceState,
   type ElementFrame,
@@ -63,6 +64,7 @@ interface Shown {
 
 interface Snapshot {
   readonly model: string;
+  readonly platform: DevicePlatform;
   readonly generation: number;
   readonly screen: VideoSize;
   readonly orientation: string;
@@ -307,10 +309,10 @@ export class DeviceComputer {
     const answer = await this.#ok(this.#deps.read(box, { type: "tree" }), "bb-box could not read the device's elements");
     if (answer.result.type !== "tree") throw new ComputerError("driver", "The device server answered a read of its elements with something else.", "Try again.");
     const { screen, orientation } = this.#screen(answer.state);
-    return this.#snapshot(state, answer.state.model, answer.result.generation, screen, orientation, answer.result.elements);
+    return this.#snapshot(state, answer.state.model, answer.state.platform, answer.result.generation, screen, orientation, answer.result.elements);
   }
 
-  #snapshot(state: BoxState, model: string, generation: number, screen: VideoSize, orientation: string, roots: readonly DeviceElement[]): Snapshot {
+  #snapshot(state: BoxState, model: string, platform: DevicePlatform, generation: number, screen: VideoSize, orientation: string, roots: readonly DeviceElement[]): Snapshot {
     const flat: { element: DeviceElement; depth: number; parent: number | null }[] = [];
     const walk = (element: DeviceElement, depth: number, parent: number | null) => {
       const index = flat.length;
@@ -353,7 +355,7 @@ export class DeviceComputer {
       state.refs.delete(ref);
     }
     const app = roots[0]?.label || "";
-    const snapshot: Snapshot = { model, generation, screen, orientation, app, shown, byRef };
+    const snapshot: Snapshot = { model, platform, generation, screen, orientation, app, shown, byRef };
     state.snapshot = snapshot;
     return snapshot;
   }
@@ -624,7 +626,7 @@ export class DeviceComputer {
     const frames = await this.#frames(box);
     await this.#send(box, { type: "tap", at: target.point }, "The tap on the field failed");
     await this.#settled(box, SCROLL_STEP_SETTLE);
-    await this.#send(box, { type: "key", key: "a", modifiers: ["meta"] }, "Selecting the field's text failed");
+    await this.#send(box, { type: "key", key: "a", modifiers: [selectAllModifier(target.before.platform)] }, "Selecting the field's text failed");
     if (input.value === "") await this.#send(box, { type: "key", key: "Backspace", modifiers: [] }, "Clearing the field failed");
     else await this.#typeChecked(box, state, input.value, target.shown!.ref);
     signal?.throwIfAborted();
@@ -666,7 +668,7 @@ export class DeviceComputer {
         throw new ComputerError(
           "input",
           `Typed ${quoted(input.text)} into ${words}, but ${landed.field} reads ${quoted(landed.reads)}: the device has not taken all of the keys, so bb-box did not press ${input.keys}.${seen.parts.length ? `\n\n${seen.parts.join("\n\n")}` : ""}`,
-          `Clear the field, such as with keys cmd+a then Backspace, and type the text again.`,
+          `Clear the field, such as with keys ${selectAllModifier(before.platform) === "control" ? "ctrl" : "cmd"}+a then Backspace, and type the text again.`,
         );
       }
     }
@@ -738,6 +740,10 @@ export class DeviceComputer {
     }
     return { text: `You already have control of box ${box.name}'s device.`, hints: [] };
   }
+}
+
+function selectAllModifier(platform: DevicePlatform): KeyModifier {
+  return platform === "android" ? "control" : "meta";
 }
 
 function frontWords(snapshot: Snapshot): string {

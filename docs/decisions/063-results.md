@@ -2426,3 +2426,225 @@ IPv4 routes for 8 s after a cold reboot, which leaves the network
 unvalidated as on box 5. The server restarted Wi-Fi 10 s after the boot
 and read the network online 5.4 s later; a fetch gave 200 OK. One of six
 boxes is too few to say how often Android does this.
+
+## Units 7.2 and 7.3: computer use on an Android device
+
+Measured on 26 October 2026 in two android boxes acquired through the
+production BB, clones of the Android template on Proxmox QEMU at the kind's
+default size, 8 cores and 16 GiB: Android 15 (API 35), emulator 37.2.12.0,
+the Pixel 8. The device server was this unit's, version 17, which is 19
+after its rebase on F-3's two fixes. The harness,
+`computer.ts` in
+[scripts/measure/android](../../scripts/measure/android/README.md#computer-use),
+runs the plugin's own `DeviceServers` and `DeviceComputer`, so each answer
+below is what the agent reads. With `--tree dump` or `--tree server` it
+runs the device server in its own process with that source of the tree.
+`check.json` is 063's live check as one run, `e12.json` is E12. BB's
+server and the tools called from a thread are not in these numbers.
+
+Both boxes started with no network on the device and with
+`com.android.phone` failing to start, from the framework restart that gives
+each device its own Android ID. Settings' Network & internet page crashes
+then ("telephony service is null"). F-3 (#1163), merged after these runs,
+gives the Android ID by a reboot instead. Here the device was rebooted cold
+and joined to its Wi-Fi by hand with
+`adb shell cmd wifi connect-network AndroidWifi open`, and the check opens
+Connected devices rather than Network & internet.
+
+### Where the tree comes from
+
+- **bb-box's own tree server (7.3),** a Java program,
+  `setup/android/tree-server/TreeServer.java`, built to a 15 KB dex,
+  `src/device/tree-server.dex`, by `setup/android/build-tree-server.sh`
+  with a pinned JDK 17, d8 and android-35, and delivered with the device
+  server. The same source built on two boxes gave the same dex, byte for
+  byte. The driver copies it to `/data/local/tmp` by its digest and runs it with
+  `app_process` over `adb shell`, as `uiautomator` itself runs, talking a
+  line of JSON each way on its standard input and output. It connects
+  UiAutomation as `uiautomator` does, reads every window, in z-order, with
+  their nodes, and lists the launcher's apps with their labels.
+- **`uiautomator dump` (7.2),** to `/dev/tty`, parsed from its XML. It
+  reads only the active window.
+- Both go through one converter into the device's elements, so a dump and a
+  server read of a screen give the same lines (below).
+
+Choosing bb-box's own server over Appium's UiAutomator2 server:
+
+| | bb-box's tree server | Appium UiAutomator2 server v10.6.6 |
+| --- | --- | --- |
+| What reaches the device | one 15 KB dex in `/data/local/tmp` | two APKs installed on each device, 17,968,807 and 197,183 bytes |
+| Within the 512 KB delivery budget | yes: the delivered files are 504 KB in all | no: it would have to be in the image |
+| Started | 80 to 150 ms to its hello | an instrumentation (`am instrument`), with an HTTP server forwarded by adb |
+| Beside an app's tests | lets go of UiAutomation in 100 ms when `am instrument` starts | is itself an instrumentation holding UiAutomation, so it must be stopped |
+
+Appium's tree time was not measured.
+
+### Android lets one UiAutomation client in at a time
+
+Two clients were started on a device, each connecting UiAutomation:
+
+- The second failed with `IllegalStateException: UiAutomationService ...
+  already registered!`. `uiautomator dump` beside a holder ended "Killed"
+  in 93 ms.
+- An instrumentation test that calls `getUiAutomation()`, as UiDevice and
+  GrantPermissionRule do, passed alone and crashed ("Process crashed")
+  while another client held UiAutomation.
+
+So the dump is no safer beside a test than a server: it holds UiAutomation
+for about 2 s a read, and up to 11 s on a screen that is not idle. The tree
+server holds it while the agent works, lets go after 30 s with no read, and
+watches `/proc` every 100 ms while it holds it: when `am instrument` or
+`uiautomator` starts, it lets go at once. While an instrumentation runs, a
+read is refused in words and screenshots go on.
+
+### E12: tree times, before and after
+
+Each read is the plugin's request to the box's device server and its
+answer, 20 reads 200 ms apart, on a still screen:
+
+| Source | Settings' first page | A page in Chrome |
+| --- | --- | --- |
+| `uiautomator dump` | 1,908 to 1,917 ms, median 1,911 ms | 1,900 to 1,919 ms, median 1,906 ms |
+| bb-box's tree server | 2.7 to 33.1 ms, median 3.2 ms | 1.6 to 16.9 ms, median 3.0 ms |
+
+The server's first read after it connects takes 330 to 620 ms: it waits
+until the window list has not changed for three reads and the screen's
+events have stopped for 300 ms. Without the window wait, a first read
+missed the status bar, or every window. Its start, to its hello, took 80
+to 150 ms.
+
+### E12: the same references both ways
+
+The same screen read by each source, the app's lines on the screen compared
+with their references taken out:
+
+| Screen | Dump | Server | Lines the same |
+| --- | --- | --- | --- |
+| Settings' first page | 12 | 12, and 19 more: the status bar, and rows below the screen | all 12 |
+| The Home Screen | 16 | 16, and the status bar | all 16 |
+
+In Chrome the two did not match: the dump, 4 s after the page was opened,
+had its 13 lines, and the server, 2 s after the dump, had the empty frame
+described below. A test compares a dump and a server read of one Settings
+screen saved from the device: every element that can be tapped has the same role,
+label, identifier and frame.
+
+### E12: beside an instrumentation test
+
+A small app of bb-box's own test probe, built in the box with aapt2, javac
+and d8, has two instrumentations: `Holds` calls `getUiAutomation()` and
+reads the screen every 500 ms for 8 s, as a UiDevice test does, and `Plain`
+does not touch UiAutomation, as an Espresso test need not. Each ran with
+`am instrument -w` while the plugin read the tree every 500 ms:
+
+| Test | Its result | Reads while it ran | After it ended |
+| --- | --- | --- | --- |
+| `Holds` | passed, its UiAutomation connected 3 ms after it asked | refused in 4 to 34 ms each, in words | the server read again in 151 and 329 ms, then 3 to 20 ms |
+| `Plain` | passed | refused the same way | 124 and 618 ms, then 3 to 6 ms |
+
+Then a test started 10 times while the agent read every 100 ms, with
+`Holds` for 2 s:
+
+| How the tree was read | Tests passed |
+| --- | --- |
+| `uiautomator dump` only, as 7.2 alone would | 0 of 10: each crashed |
+| The server gave way, and the dump read while the test ran, as 063's row for 7.3 asked | 9 of 10: the dump took UiAutomation before the test once |
+| The server gave way, and reads were refused while the test ran | 10 of 10, twice, on two boxes |
+
+So reads are refused while an instrumentation runs, and the dump is used
+only when the tree server itself cannot run. With the tree server killed
+(SIGKILL in the device), the next reads came from the dump, 1,911 and
+1,929 ms, and 30 s later from a new server: 443 ms, then 3 to 5 ms.
+
+### What the first runs found
+
+- **A page in Chrome is in the tree only some of the time.** Otherwise
+  Chrome shows a frame described "Web View" with nothing in it, to the dump
+  and the server alike. The page's lines were there for the first box's
+  whole session, for the dump read 4 s after a page was opened by a link,
+  and for the server's first connection 3 s after one; they were not there
+  for the server connecting 1 to 35 s after a dump, nor for the dump itself
+  some minutes after the page loaded, nor straight after 'example.com' was
+  typed in the check. Clearing UiAutomation's cache, waiting 1 s for quiet,
+  and an accessibility focus on the frame did not bring them. With
+  UiAutomation's flag that keeps other accessibility services, they were
+  missing on a page just opened too, so the server connects without it. The
+  element is a `web view` whose value says to use `computer_screenshot`.
+  Why Chrome shows the page some times and not others is not known.
+- **`uiautomator dump` never reads Settings' About page,** as its Up time
+  ticks every second, and the dump waits for 1 s with no accessibility
+  event: "ERROR: could not get idle state." after 11 s, every read, and
+  every read of Settings after it. The server reads it in 2 to 6 ms.
+- **Rows a list holds beyond the screen** come with their far edge cut to
+  the list's, as from 2391 down to 2337. They are listed as below, above,
+  right or left of the screen, by where they lie against the list that
+  holds them; Chrome's tiles beyond the right edge read as right of the
+  screen. Hidden ones of no size are left out.
+- **A row's texts are its label,** as TalkBack reads them: Settings' first
+  row is `button "Network & internet, Mobile, Wi‑Fi, hotspot"`. A row's
+  own text and a description that repeats it are named once.
+- **The keyboard is one element,** `keyboard "English (US) (QWERTY)"`, with
+  no keys listed, above the app in z-order, so a tap by reference under it
+  is refused naming it. This was checked against a screen saved from the
+  device, not on a live screen.
+- **set_value selects with Ctrl+A on Android,** not Cmd+A: "Wallpaper" then
+  "Brightness" in Settings' search field, each read back.
+- **Held upside down,** Android kept drawing in its last landscape rotation
+  inside a 1080x2400 picture. The tree is in the display's pixels, so the
+  converter turns it into the picture's: a tap by a new reference opened
+  Chrome's tab switcher, upside down and turned left.
+- **An app is named by its label,** from the launcher's apps that the
+  server lists in 50 ms. Settings' search, an activity of another app, is
+  named by its window's title, "Settings Services". With the dump alone, an
+  app is named by its package.
+
+### Each tool's time
+
+Times are the tool's, in the plugin, from the call to its answer, from one
+run of `check.json` with each source.
+
+| Tool | What | Through the dump (7.2) | Through the server (7.3) |
+| --- | --- | --- | --- |
+| `computer_windows` | the device's one window and the app in front | 1.9 to 3.7 s | 0.8 to 1.0 s, as it waits up to 1 s for a still screen |
+| `computer_observe` | the tree | 1.90 to 2.15 s, median 1.91 s | 2 to 6 ms, median 3 ms; 0.4 to 1.0 s just after a turn or a new page |
+| `computer_screenshot` | 706x1568, from 1080x2400 | 125 ms | 111 to 169 ms |
+| `computer_act` click | a tap by reference, the change waited for and listed | 4.7 to 6.0 s, median 5.0 s | 1.0 to 2.2 s, median 1.3 s |
+| `computer_act` scroll | Settings' list to its end, 8 of 50 steps, and back | 28.2 and 28.3 s | 8.3 and 9.2 s |
+| `computer_act` set_value | Settings' search field, read back | 6.9 and 7.7 s | 1.6 and 2.1 s |
+| `computer_act` set_value on a slider | refused | | 3 ms |
+| `computer_type` | 'example.com' and Enter into Chrome's address | 7.8 s | 2.0 s |
+| `computer_launch` | an app, until it is in the tree | 4.4 to 5.6 s | 1.3 to 2.5 s |
+| A reference read before a turn | refused as void | 1.9 s | 14 to 54 ms |
+| any act, type or launch while a person has control | refused | under 1 ms | under 1 ms |
+
+063's live check, through the server, in one run: Settings, Connected
+devices and back by references; Settings' list scrolled to its end and
+back; About read; the search field set to "Wallpaper", then "s"; Sound &
+vibration's Media volume slider refused with "Drag it with computer_act's
+drag instead"; Chrome launched by name; 'example.com' and Enter typed into
+its address, and the page loaded; a second tab opened by URL, and the tab
+switcher read with a button "Example Domain, tab" for each tab, each with
+its own reference, and the second tapped; the device turned left, a reference read before the
+turn refused as void, and a new one tapped; a person's control: reading and
+a screenshot went on, a tap, typing and a launch were refused at once, and
+`computer_take_control` took it back. Through the dump alone the same check
+ran except About, which the dump cannot read.
+
+### What limits these numbers
+
+- One model, the Pixel 8, in two boxes. The Pixel Fold and the Pixel
+  Tablet were not driven.
+- Settings, Chrome, the Home Screen and the probe app only.
+- The harness ran in the box. Through BB, each tool adds the round trip to
+  the box.
+- The instrumentation tests were bb-box's own probe, calling
+  `Instrumentation.getUiAutomation()` as AndroidX's runner and UiDevice do,
+  not a Gradle project's `connectedAndroidTest`.
+
+### Not checked here
+
+- **A tap refused under the keyboard on a live screen.** A test reads it
+  from a screen saved from the device.
+- **Through the tools in a thread,** after the deploy.
+- **TalkBack.** The server connects UiAutomation as `uiautomator` does,
+  which turns other accessibility services off while it is connected.

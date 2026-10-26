@@ -14,6 +14,7 @@ import {
   type DeviceState,
   type FoldScreen,
   type LatLon,
+  type LaunchedApp,
   type OfferedDevice,
   type OfferedDeviceOf,
   type Orientation,
@@ -26,9 +27,11 @@ import {
 import { apkPackage } from "./apk.ts";
 import { AndroidSettingsKeeper, asRoot } from "./android-controls.ts";
 import { ANDROID_PASTE_LANDS_MS, PASTE_KEY, TouchesDown, emulatorKey, panelPoint, touchPanel } from "./android-input.ts";
+import { AndroidTreeSource, adbShellChannel, appFor, type AndroidTreeOptions } from "./android-tree-source.ts";
+import { androidElementAt, androidElements, type AndroidElements } from "./android-tree.ts";
 import { AndroidVideo, type ScreenFrame } from "./android-video.ts";
 import { DriverError, type ControlContext, type DeviceDriver, type VideoSource } from "./driver.ts";
-import { Emulator, EmulatorRefused, type EmulatorControl, type RunningEmulator } from "./emulator.ts";
+import { ANDROID_SDK, EMULATOR_SERIAL, Emulator, EmulatorRefused, type EmulatorControl, type RunningEmulator } from "./emulator.ts";
 import { GrpcClient } from "./grpc.ts";
 import { H264Encoder } from "./h264-encoder.ts";
 import { inBox, type DevicePaths } from "./paths.ts";
@@ -48,6 +51,8 @@ export const FOLD_PICTURE_MS = 3_000;
 export const INSTALL_MS = 300_000;
 const SCREENSHOT_MS = 10_000;
 const INPUT_MS = 5_000;
+const LAUNCH_MS = 15_000;
+export const DUMP_READ_KEPT_MS = 5_000;
 const KEYDOWN = 0;
 const KEYUP = 1;
 const ROTATION = 1;
@@ -82,6 +87,7 @@ export interface AndroidDriverOptions {
   readonly clockTickMs?: number;
   readonly clock?: AndroidDriverClock;
   readonly home?: string;
+  readonly tree?: Partial<Pick<AndroidTreeOptions, "spawnServer" | "dex" | "onlyDump">>;
 }
 
 export function framesFile(paths: DevicePaths): string {
@@ -148,6 +154,8 @@ export class AndroidDriver implements DeviceDriver {
   #closed = new AbortController();
   readonly #touches = new TouchesDown();
   readonly #settings: AndroidSettingsKeeper;
+  readonly #tree: AndroidTreeSource;
+  #lastRead: { readonly read: AndroidElements; readonly generation: number; readonly at: number; readonly via: "server" | "dump" } | null = null;
   readonly pasteLandsMs = ANDROID_PASTE_LANDS_MS;
 
   constructor(options: AndroidDriverOptions) {
@@ -174,6 +182,14 @@ export class AndroidDriver implements DeviceDriver {
         battery: (signal) => this.#battery(signal),
         setBattery: (to, signal) => this.#setBattery(to, signal),
       },
+    });
+    this.#tree = new AndroidTreeSource({
+      adbRun: (args, given) => this.#emulator.adbRun(args, given),
+      shell: (command, given) => this.#emulator.shell(command, given),
+      spawnServer: options.tree?.spawnServer ?? ((command) => adbShellChannel(join(ANDROID_SDK, "platform-tools", "adb"), EMULATOR_SERIAL, command)),
+      dex: options.tree?.dex,
+      onlyDump: options.tree?.onlyDump,
+      log: options.log,
     });
   }
 
@@ -444,6 +460,7 @@ export class AndroidDriver implements DeviceDriver {
     void this.#video.stop();
     this.#client?.close();
     this.#client = null;
+    this.#tree.close();
   }
 
   video(): VideoSource {
@@ -643,6 +660,7 @@ export class AndroidDriver implements DeviceDriver {
     const ran = await this.#emulator.adbRun(apks.length === 1 ? ["install", "-r", apks[0]!] : ["install-multiple", "-r", ...apks], { signal, timeoutMs: INSTALL_MS });
     if (ran.code !== 0 || !/\bSuccess\b/.test(ran.output)) throw new DriverError("failed", `adb could not install ${pkg}: ${ran.output.split("\n").slice(-3).join(" ") || `it ended with ${ran.code}`}`);
     await this.#emulator.shell("sync", { signal });
+    this.#tree.forgetApps();
     this.#log(`install: ${pkg} from ${apks.join(", ")} in ${((this.#clock.monotonic() - began) / 1000).toFixed(1)} s, written to the device's disk`);
   }
 
@@ -690,8 +708,42 @@ export class AndroidDriver implements DeviceDriver {
     return image.image;
   }
 
+  async #readTree(): Promise<AndroidElements> {
+    this.#booted();
+    const video = this.#video.size;
+    if (!video) throw new DriverError("not-booted", `The ${this.#model().name} has sent no picture yet.`);
+    const generation = this.#generation;
+    const physical = this.#physical;
+    await this.#tree.apps().catch((error) => this.#log(`apps: not listed: ${words(error)}`));
+    const read = await this.#tree.read();
+    const elements = androidElements(read.screen, { video, physical }, (pkg) => this.#tree.labelOf(pkg));
+    this.#lastRead = { read: elements, generation, at: this.#clock.monotonic(), via: read.screen.source };
+    return elements;
+  }
+
   async tree(): Promise<readonly DeviceElement[]> {
-    throw new DriverError("unsupported", "This bb-box cannot read an Android device's elements yet.");
+    return (await this.#readTree()).elements;
+  }
+
+  async elementAt(point: { readonly x: number; readonly y: number }): Promise<DeviceElement | null> {
+    const last = this.#lastRead;
+    const kept = last && last.via === "dump" && last.generation === this.#generation && this.#clock.monotonic() - last.at < DUMP_READ_KEPT_MS;
+    return androidElementAt(kept ? last.read : await this.#readTree(), point);
+  }
+
+  async launchApp(app: string, signal: AbortSignal): Promise<LaunchedApp> {
+    this.#booted();
+    const began = this.#clock.monotonic();
+    const apps = await this.#tree.apps();
+    const found = appFor(apps, app);
+    if (!found) {
+      const named = [...apps].sort((a, b) => (a.label ?? a.pkg).localeCompare(b.label ?? b.pkg)).map((each) => (each.label ? `${each.label} (${each.pkg})` : each.pkg));
+      throw new DriverError("bad-value", `The ${this.#model().name} has no app ${JSON.stringify(app)} to launch. Its apps are: ${named.join(", ")}.`);
+    }
+    const said = await this.#emulator.shell(`am start -n ${shellQuoted(`${found.pkg}/${found.activity}`)} 2>&1`, { signal, timeoutMs: LAUNCH_MS });
+    if (/^Error/m.test(said)) throw new DriverError("failed", `Android could not launch ${found.label ?? found.pkg}: ${said.split("\n").filter((line) => /Error/.test(line)).join(" ")}`);
+    this.#log(`launch: ${found.pkg} in ${Math.round(this.#clock.monotonic() - began)} ms`);
+    return { id: found.pkg, name: found.label ?? found.pkg };
   }
 
   async readBack(): Promise<DeviceState> {

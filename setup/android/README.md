@@ -144,6 +144,23 @@ The server reads the screen from the emulator's gRPC, by shared memory in
 `~/.bb-box/device/server.log`, and the emulator's
 `~/.bb-box/device/emulator.log`.
 
+## The tree server
+
+The device server reads an Android device's elements through a small Java
+program of bb-box's own, run in the device by `app_process`:
+`setup/android/tree-server/TreeServer.java`, delivered as
+`src/device/tree-server.dex`. It is not part of the template. After a
+change to the Java, build the dex again on a Linux box with the Android
+SDK, and commit both files and `tree-server.json`, whose digests a test
+checks:
+
+```sh
+setup/android/build-tree-server.sh --install-tools
+```
+
+`--install-tools` installs JDK 17 and the pinned build-tools and platform
+first. The same source gives the same dex.
+
 ## The device's firewall
 
 `bb-box-device-firewall.service` loads a table of bb-box's own, `inet

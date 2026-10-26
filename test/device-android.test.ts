@@ -308,7 +308,9 @@ class FakeEmulator implements EmulatorControl {
     }
     const path = /^pm path '([^']+)'/.exec(command);
     if (path) return this.installed.has(path[1]!) ? `package:/data/app/${path[1]}/base.apk\n` : "";
+    if (command.startsWith("am start -n")) return "Starting: Intent { cmp=com.android.settings/.Settings }\n";
     if (command.startsWith("am start")) return "Starting: Intent { act=android.intent.action.VIEW }\n";
+    if (command.startsWith("cmd package query-activities")) return "1 activities found:\n  Activity #0:\n    com.android.settings/.Settings\n";
     return "";
   }
   connectivity(): string {
@@ -324,6 +326,7 @@ class FakeEmulator implements EmulatorControl {
       if (this.wifiWrittenAfterChecks > 0) this.wifiSaved = false;
       return { code: 0, output: "" };
     }
+    if (args[0] === "exec-out") return { code: 0, output: readFileSync(new URL("./fixtures/android-dump-settings.xml", import.meta.url), "utf8") };
     return { code: 0, output: "Performing Streamed Install\nSuccess" };
   }
 }
@@ -335,7 +338,7 @@ after(() => {
   for (const server of servers) server.close();
 });
 
-async function rig(options: { readonly watchMs?: number; readonly adbKey?: string } = {}) {
+async function rig(options: { readonly watchMs?: number; readonly adbKey?: string; readonly onlyDump?: boolean } = {}) {
   const grpc = new FakeEmulatorGrpc();
   servers.push(grpc);
   const port = await grpc.listen();
@@ -358,6 +361,7 @@ async function rig(options: { readonly watchMs?: number; readonly adbKey?: strin
     watchMs: options.watchMs ?? 50,
     clockTickMs: 60_000,
     home: dir,
+    tree: { onlyDump: options.onlyDump ?? true },
   });
   drivers.push(driver);
   const frames: { key: boolean; width: number; height: number; generation: number }[] = [];
@@ -458,14 +462,29 @@ describe("the Android driver", () => {
     }
   });
 
-  test("a screenshot is the emulator's PNG, lifting with nothing down sends nothing, and the tree is not read yet", async () => {
+  test("a screenshot is the emulator's PNG, and lifting with nothing down sends nothing", async () => {
     const { grpc, driver } = await rig();
     await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
     assert.deepEqual([...(await driver.screenshot())], [137, 80, 78, 71]);
     await driver.touch([]);
     await driver.key("a", false);
     assert.equal(grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.sendTouch).length, 0);
-    await assert.rejects(driver.tree(), /cannot read an Android device's elements yet/);
+  });
+
+  test("reads the device's elements in the picture's pixels, says what is at a point from that read, and launches an app by name", async () => {
+    const { driver, emulator, frames } = await rig();
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    await until("a frame", () => frames.length > 0);
+    const tree = await driver.tree();
+    assert.equal(tree[0]?.role, "application");
+    assert.equal(tree[0]?.label, "com.android.settings", "with no label from the tree server, an app goes by its package");
+    const dumps = () => emulator.adb.filter((args) => args[0] === "exec-out").length;
+    assert.equal(dumps(), 1);
+    assert.equal((await driver.elementAt({ x: 540, y: 890 }))?.label, "Network & internet, Mobile, Wi‑Fi, hotspot");
+    assert.equal(dumps(), 1, "a dump read a moment ago answers what is at a point");
+    assert.deepEqual(await driver.launchApp("settings", AbortSignal.timeout(5000)), { id: "com.android.settings", name: "com.android.settings" });
+    assert.ok(emulator.shells.includes("am start -n 'com.android.settings/com.android.settings.Settings' 2>&1"));
+    await assert.rejects(driver.launchApp("Maps", AbortSignal.timeout(5000)), (error: unknown) => error instanceof DriverError && error.code === "bad-value" && /has no app "Maps" to launch\. Its apps are: com\.android\.settings\./.test(error.message));
   });
 
   test("touches go to the emulator in its panel's own pixels however the device is held, with every finger lifted by pressure 0", async () => {

@@ -14,6 +14,8 @@ export const DEVICE_SERVER_FILES = [
   "src/device/android-controls.ts",
   "src/device/android-driver.ts",
   "src/device/android-input.ts",
+  "src/device/android-tree-source.ts",
+  "src/device/android-tree.ts",
   "src/device/android-video.ts",
   "src/device/annexb.ts",
   "src/device/apk.ts",
@@ -43,7 +45,8 @@ export const DEVICE_SERVER_FILES = [
   "src/device/simctl.ts",
   "src/device/test-card.ts",
   "src/device/test-driver.ts",
-  "src/device/ws.ts",
+  "src/device/tree-server.dex",
+    "src/device/ws.ts",
 ] as const;
 
 export const DELIVERY_EXITS = { delivered: 0, noNode: 4, recording: 6, noPrevious: 7 } as const;
