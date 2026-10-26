@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { connect as connectSocket, type Socket } from "node:net";
 import { homedir } from "node:os";
@@ -182,7 +182,10 @@ async function connect(paths: DevicePaths): Promise<void> {
       }
     }
     if (!socket) {
-      process.stderr.write(`The device server did not start within ${CONNECT_WAIT_MS / 1000} s. Its log ends: ${(await lastLog(paths)) || "nothing"}\n`);
+      const words = existsSync(paths.hostManaged)
+        ? `The device server for this box has not started within ${CONNECT_WAIT_MS / 1000} s. Its host's daemon runs it, and starts it again within a second when it stops.`
+        : `The device server did not start within ${CONNECT_WAIT_MS / 1000} s.`;
+      process.stderr.write(`${words} Its log ends: ${(await lastLog(paths)) || "nothing"}\n`);
       process.exit(EXITS.noServer);
     }
   }

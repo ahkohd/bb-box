@@ -120,7 +120,7 @@ test("an iOS image with no devices fails the doctor, and one with a stock device
 });
 
 test("the build and the check are POSIX sh that parses, and the check runs the three checks the slimming note asks for", () => {
-  for (const script of ["build-ios.sh", "check-ios.sh"]) {
+  for (const script of ["build-ios.sh", "check-ios.sh", "host-ios.sh", "device-host.sh"]) {
     const parsed = spawnSync("sh", ["-n", join(IOS, script)], { encoding: "utf8" });
     assert.equal(parsed.status, 0, `${script}: ${parsed.stderr}`);
   }
@@ -147,4 +147,13 @@ test("the check sets and reads back each control box_device reads back, on each 
     assert.ok(check.includes(line), line);
   }
   assert.match(check, /notifyutil -g com\.apple\.springboard\.lockstate/, "the lock state the driver reads");
+});
+
+test("the image's additions install device-host and its carried slots, and leave the host's settings to the host's backend", () => {
+  const host = read("host-ios.sh");
+  assert.match(host, /"\$helper" install/);
+  assert.match(host, /"\$helper" carry/);
+  assert.doesNotMatch(host, /"\$helper" init/, "settings are a snapshot taken when a host is made, so the image writes none");
+  assert.match(read("build-ios.sh"), /sudo -n \/bin\/sh "\$here\/host-ios\.sh" "\$here" "\$\(id -un\)"/);
+  assert.match(readFileSync(join(SETUP, "tart", "prepare-ios-image.sh"), "utf8"), /-C "\$here\/\.\.\/ssh-pool" mac-home\/\.zshenv/, "the slots' home is the pool's");
 });

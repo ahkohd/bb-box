@@ -14,6 +14,9 @@ macOS image, with:
 - each device's keyboard defaults: no autocorrect, smart punctuation,
   predictions or slide to type, and the keyboard's first-use sheet answered
 - `bb-box-check-ios`, the image's check
+- `device-host`, the helper that lends the VM's slots when it is a shared
+  host ([064](../../../docs/decisions/064-ios-shared-hosts.md)), with two
+  slots made ahead, `bbd-i1` and `bbd-i2`, as below
 
 Each ios box is a clone of this image. Its device server, which bb-box
 delivers to the box, boots the device the box asked for, finds it by its
@@ -53,7 +56,10 @@ It clones `bb-box-macos` to `bb-box-ios-build`, boots it, and runs
    writes its keyboard defaults, slims it, and shuts it down;
 4. answers Xcode's Components sheet, and gives the Simulator and Device Hub
    the microphone, which is BlackHole in the macOS image, so neither asks;
-5. clears the devices' pasteboards, CoreSimulator's logs, Device Hub's
+5. runs [`host-ios.sh`](host-ios.sh) as root, which installs `device-host`
+   and its held ports, keeps each iOS runtime's `disabled.plist` from the
+   image's slim devices, and makes the two carried slots (about 55 s);
+6. clears the devices' pasteboards, CoreSimulator's logs, Device Hub's
    preferences and idb's state.
 
 Then it runs `bb-box-check-ios`, writes the image's record, shuts the VM
@@ -137,6 +143,17 @@ each device it checks:
 | idle cpu | the device's processes use more than 0.1 of a core over a minute, after a minute to settle | a service can fail loudly, as without `sleepd` |
 | xcuitest launch | an XCUITest launch takes over 3 s to reach its automation session, or the test fails | a service can fail quietly, as without `gamed` |
 
+For a shared host it checks:
+
+| Check | Fails when |
+| --- | --- |
+| device-host | the helper is not installed, or does not run as root |
+| device-host daemons | launchd has not loaded `app.bb-box.device-host` or its held ports |
+| held ports | 127.0.0.1 at 3000, 4200, 5000, 5173, 8000, 8080, 8081 or 19000 does not answer HTTP 421 |
+| carried slots | `bbd-i1` or `bbd-i2` is missing, not ready, its device not seeded, or booted |
+| slot uids | any file on the Data volume is owned by a UID from 80000 to 89999, or from 79990 to 79999 but the carried users' own |
+| disabled.plist kept | the image kept no runtime's `disabled.plist` |
+
 It builds a small app with a UI test, [`probe`](probe), for the last. Give
 model names, separated by commas, to check only those:
 `bb-box-check-ios "iPhone 17"`.
@@ -161,3 +178,62 @@ the device down, so in each box the device server looks for it every 5 s and
 kills it (SIGKILL), which leaves the device booted: 2.9 s after it opened,
 measured. `bb box doctor`'s check **Device Hub in** each ios box says whether
 it runs, and how often the server has killed it.
+
+## Shared hosts: device-host
+
+A shared host is a VM of this image that lends slots: a macOS user with its
+own device, many to a VM
+([064](../../../docs/decisions/064-ios-shared-hosts.md)). Its helper,
+[`device-host.sh`](device-host.sh), is installed as
+`/usr/local/libexec/bb-box/device-host`, and runs as root. bb-box runs it
+through sudo as the image's user. Input is one `name=value` a line on stdin.
+
+| Command | What |
+| --- | --- |
+| `init` | stdin: `most`, `ahead`, `resetting-most`, `disk-reserve-gib`. The host's settings, kept as given the first time |
+| `status` | the host, its promises, each slot with its state, ports, device and load, and the last sweeps |
+| `make` | stdin: `install`, `box` (the box it is made for, if any), `server` (a device server's folder to copy). Makes a slot and answers its user, UID, device and ports |
+| `promise` and `unpromise` | stdin: `install`, `box`. Holds a place in `most` for a box |
+| `claim <slot>` | stdin: `install`, `box`, `thread`, `name`, `kind` (`ios` or `macos`), `created`, `key`, `server`. Lends a ready slot; the claim marker is made with `ln`, so one claim wins |
+| `release <slot>` | stdin: `install`, `box`. Removes the slot's user, queues its sweep, and answers `last=yes` when no other claim, promise or slot made for a box is left, having written `deleting` under the lock |
+| `daemon <slot>` | stdin: `install`, `box`. Moves BB's daemon, as its installer left it with `BB_INSTALL_SKIP_SERVICE=1`, into a LaunchDaemon as the slot's user |
+| `reset` | runs the sweep queue: one `find` over the Data volume a pass, for at most `resetting-most` UIDs |
+| `resume` | carries on every slot whose step was cut short, and the sweep queue. Run at every boot by the helper's own daemon |
+| `carry` | the image build's: makes the carried slots `i1` and `i2`, their devices shut down and their daemons written but not loaded |
+| `install` | loads the helper's daemon, `app.bb-box.device-host`, and the held ports' daemon, `app.bb-box.device-host.ports` |
+
+Exit codes: 0 done; 1 failed, with words; 2 usage; 3 lost a race, ask
+again; 4 not this box's; 5 no room; 6 the slot is not ready; 7 the host is
+being deleted, ask again.
+
+- **Slots.** Slot `n` is user `bbd-n` with UID 80000 plus `n`; the carried
+  slots are `bbd-i1` and `bbd-i2`, UIDs 79991 and 79992. A UID is never
+  given again while the host lives. Each user is standard and hidden, in
+  `_developer` and, where it exists, `com.apple.access_ssh`, with the
+  pool's `.zshenv` and a home of mode 700.
+- **Devices.** Each slot's device is the first model of `devices.tsv`,
+  made by `simctl create` in its user and seeded with the runtime's
+  `disabled.plist` before its first boot.
+- **Ports.** Each slot has 100 ports from `BB_PORT_BASE`, 20000 plus 100
+  for each place, in its `.zshenv`, `~/.bb-box/ports` and its daemons. The
+  held ports' daemon, as `nobody`, answers 3000, 4200, 5000, 5173, 8000,
+  8080, 8081 and 19000 on 127.0.0.1 and ::1 with HTTP 421 and words.
+- **Daemons.** The device server runs as a LaunchDaemon with the slot's
+  `UserName`, `KeepAlive` and `ThrottleInterval` 1; it waits for a
+  delivered server, and a new version starts when the old one exits.
+- **A release stops a slot gently:** its daemons, its devices through
+  `simctl shutdown`, every process but its `containermanagerd` by SIGTERM,
+  a second's pause, then its launchd domain and SIGKILL for what is left.
+  Ending them all at once can leave the system's CoreMediaIO register
+  assistant waiting forever on the user's `containermanagerd`, and then no
+  slot can boot a device until the VM restarts
+  ([064 results](../../../docs/decisions/064-results.md#a-host-that-cannot-boot-a-device)).
+- **State** is in `/var/db/bb-box/host`, mode 700: a folder for each slot,
+  with its state and claim, the promises, the sweep queue and `deleting`.
+  Every step is recorded before it is taken, so `make`, `release` and
+  `reset` can be run again after a cut, and a step that fails twice
+  removes the slot.
+- **Bounds.** No new slot while the Data volume has less than
+  `disk-reserve-gib` free or `memory_pressure` gives under 15% free. A
+  second booted device in a slot is shut down after 10 minutes, with words
+  in `status`.

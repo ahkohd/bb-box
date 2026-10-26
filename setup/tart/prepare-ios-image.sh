@@ -19,7 +19,7 @@ while [ $# -gt 0 ]; do
 done
 
 here=$(cd "$(dirname "$0")" && pwd)
-[ -f "$here/ios/build-ios.sh" ] || die "found no $here/ios/build-ios.sh: run this from a whole copy of setup/"
+[ -f "$here/ios/build-ios.sh" ] && [ -f "$here/../ssh-pool/mac-home/.zshenv" ] || die "found no $here/ios/build-ios.sh or $here/../ssh-pool/mac-home/.zshenv: run this from a whole copy of setup/"
 . "$here/ios/pins"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:/run/current-system/sw/bin:$PATH" TART_NO_AUTO_PRUNE=1
 command -v tart >/dev/null || die "install Tart first: brew install openai/tools/tart"
@@ -88,7 +88,7 @@ step "booting $build"
 boot
 desktop_ready
 guest_setup=/tmp/bb-box-ios-setup
-tar -C "$here" -czf - ios | tart exec -i "$build" /bin/sh -c "rm -rf $guest_setup && mkdir -p $guest_setup && tar -xzf - -C $guest_setup"
+tar -C "$here" -czf - ios -C "$here/../ssh-pool" mac-home/.zshenv | tart exec -i "$build" /bin/sh -c "rm -rf $guest_setup && mkdir -p $guest_setup && tar -xzf - -C $guest_setup"
 tart exec "$build" test -s /usr/local/share/bb-box/image.json || die "$from has no image record: build it with prepare-image.sh"
 tart exec "$build" cp /usr/local/share/bb-box/image.json "$guest_setup/macos-image.json"
 

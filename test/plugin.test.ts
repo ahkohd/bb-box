@@ -76,7 +76,7 @@ function variables(names: readonly string[]) {
  */
 async function start(
   settings: Record<string, PluginSettingValue> = { "fake-enabled": true },
-  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; logonWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer"> = {},
+  options: { daemonParent?: string; computer?: SetupOptions["computer"]; drivers?: readonly BackendDriver<any>[]; variablesWaitMs?: number; logonWaitMs?: number; providerRetryMs?: number; manualRemoveMs?: number; appUrl?: string; keepsSession?: (kind: string) => boolean; controlReconnectMs?: number; controlStaleMs?: number; drainMs?: number; runWaitMs?: number } & Pick<FakeBackendOptions, "resize" | "minSize" | "kinds" | "shell" | "pointer" | "daemonKeptByHost"> = {},
 ) {
   const root = tempDir("plugin");
   const workspace = join(root, "workspace");
@@ -382,7 +382,7 @@ async function start(
     },
   });
   const setupOptions: SetupOptions = {
-    drivers: [fakeDriver(root, world, { resize: options.resize, minSize: options.minSize, kinds: options.kinds, shell: options.shell, keepsSession: options.keepsSession, pointer: options.pointer }), ...(options.drivers ?? [])],
+    drivers: [fakeDriver(root, world, { resize: options.resize, minSize: options.minSize, kinds: options.kinds, shell: options.shell, keepsSession: options.keepsSession, pointer: options.pointer, daemonKeptByHost: options.daemonKeptByHost }), ...(options.drivers ?? [])],
     daemonParent: options.daemonParent ?? join(root, "no-daemon"),
     computer: options.computer,
     variablesWaitMs: options.variablesWaitMs,
@@ -1765,6 +1765,37 @@ test("on a Mac that booted, BB's daemon loaded at login is unloaded and the boot
   assert.equal(after.enrol.state, "enrolled");
   assert.equal(after.enrol.error, null);
   assert.deepEqual(world.bootstraps, [box.id, box.id, box.id]);
+});
+
+test("a box whose host keeps BB's daemon, as a slot on a shared iOS host, runs BB's installer with BB_INSTALL_SKIP_SERVICE=1 and then hands the daemon to its host, at every bootstrap (064)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true }, { daemonKeptByHost: true });
+  t.after(() => harness.lifecycle.dispose());
+  world.installer = `printf 'skip-service=%s\\n' "\${BB_INSTALL_SKIP_SERVICE:-unset}" >> installer.log`;
+
+  await tool("box_acquire", {});
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  const takeOvers = () => world.backend!.calls.filter((call) => call.startsWith("take over "));
+  assert.deepEqual(takeOvers(), [`take over ${box.guest!.ref}`]);
+  assert.match(text(await tool("box_run", { box: box.name, command: "cat installer.log" })), /^skip-service=1$/m);
+
+  const hostId = `host-${box.id}`;
+  world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });
+  await app.enrolment.sweep();
+  assert.deepEqual(world.bootstraps, [box.id, box.id]);
+  assert.equal(takeOvers().length, 2, "the host takes BB's daemon over again after a reconnect");
+  assert.doesNotMatch(text(await tool("box_run", { box: box.name, command: "cat installer.log" })), /skip-service=unset/);
+});
+
+test("a box whose backend keeps no daemon runs BB's installer as it always has", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.installer = `printf 'skip-service=%s\\n' "\${BB_INSTALL_SKIP_SERVICE:-unset}" >> installer.log`;
+  await tool("box_acquire", {});
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  assert.match(text(await tool("box_run", { box: box.name, command: "cat installer.log" })), /^skip-service=unset$/m);
+  assert.deepEqual(world.backend!.calls.filter((call) => call.startsWith("take over ")), []);
 });
 
 test("the sweep starts BB's daemon again in a ready box that BB shows disconnected", async (t) => {

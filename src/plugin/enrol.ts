@@ -40,7 +40,7 @@ import { OPERATOR, describeError, machineName, type BoxRecord, type Boxes } from
 import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../core/in-box.ts";
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
-import type { BackendStorage } from "../backends/types.ts";
+import type { BackendStorage, DaemonKeptByHost } from "../backends/types.ts";
 import { daemonStarting, endThreadProcesses, hideBbConsoles, runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
@@ -202,6 +202,11 @@ export interface EnrolmentDeps {
 }
 
 const QUIET: Progress = { step: () => {}, log: () => {} };
+
+interface Reach {
+  readonly command: CommandTransport;
+  readonly daemonKeptByHost: DaemonKeptByHost | undefined;
+}
 const ACCESS_SETUP_TIMEOUT_MS = 60_000;
 const ACCESS_CHECK_TIMEOUT_MS = 10_000;
 const VARIABLES_POLL_MS = 250;
@@ -242,12 +247,14 @@ export function withReachHint(message: string, backendLabel: string): string {
 }
 
 /** Runs BB's installer commands in the box, as the box user, through its command transport. */
-export function executor(transport: CommandTransport, phases?: Phases): MachineExecutor {
+export function executor(transport: CommandTransport, phases?: Phases, environment: Readonly<Record<string, string>> = {}): MachineExecutor {
+  const assignments = Object.entries(environment).map(([name, value]) => `${name}=${sh(value)}`);
+  const prefix = assignments.length ? ["env", ...assignments] : [];
   return {
     async exec({ command, stdin, timeoutMs, signal, onOutput }) {
       const decoder = new TextDecoder();
       phases?.mark("install");
-      const result = await transport.stream(command.map(sh).join(" "), {
+      const result = await transport.stream([...prefix, ...command.map(sh)].join(" "), {
         stdin,
         timeoutMs,
         signal,
@@ -438,13 +445,15 @@ export class Enrolment {
         phases?.mark("called");
         await checkpoint({ boxId: box.id });
         try {
-          const transport = await this.#transport(box);
+          const reach = await this.#reach(box);
+          const transport = reach.command;
           phases?.mark("prepared");
           report.step(`Installing BB in box ${box.name}`);
           const bbUrl = box.capabilities.os === "windows" ? null : this.#deps.bbUrl?.();
           if (bbUrl) await transport.run(removeStaleApp(bbUrl), { timeoutMs: 30_000, signal }).catch((error) => this.#deps.logError("remove a stale BB app", error));
           if (box.capabilities.os !== "windows") await this.#setAside(box, transport, signal);
-          await this.#deps.bootstrap({ key, executor: executor(transport, phases), report, signal });
+          await this.#deps.bootstrap({ key, executor: executor(transport, phases, reach.daemonKeptByHost?.installerEnvironment), report, signal });
+          await reach.daemonKeptByHost?.takeOver(signal);
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
@@ -493,7 +502,8 @@ export class Enrolment {
    * from the login, and BB's `launchctl bootstrap` fails for it: bb-box
    * unloads it then and runs the bootstrap once more (#416).
    */
-  async #bootstrapAgain(box: BoxRecord, hostId: string, transport: CommandTransport, request: Parameters<EnrolmentDeps["bootstrap"]>[0]): Promise<void> {
+  async #bootstrapAgain(box: BoxRecord, hostId: string, reach: Reach, request: Parameters<EnrolmentDeps["bootstrap"]>[0]): Promise<void> {
+    const transport = reach.command;
     if (box.capabilities.os === "windows") {
       // BB's daemon runs on through a suspend, and its logon starts it after
       // a boot. BB refuses a reconnect while it shows the machine connected.
@@ -525,12 +535,13 @@ export class Enrolment {
     try {
       await this.#deps.bootstrap(request);
     } catch (error) {
-      if (box.capabilities.os !== "macos" || !LOADED.test(error instanceof Error ? error.message : String(error))) throw error;
+      if (box.capabilities.os !== "macos" || reach.daemonKeptByHost || !LOADED.test(error instanceof Error ? error.message : String(error))) throw error;
       this.#deps.log?.(`BB's daemon in box ${box.name} was loaded already, as after a boot: unloading it, and running BB's bootstrap again.`);
       const unloaded = await transport.run(unloadMacDaemon(hostId), { timeoutMs: 30_000, signal: request.signal });
       if (unloaded.exitCode !== 0) throw error;
       await this.#deps.bootstrap(request);
     }
+    await reach.daemonKeptByHost?.takeOver(request.signal);
   }
 
   /**
@@ -566,9 +577,13 @@ export class Enrolment {
   }
 
   async #transport(box: BoxRecord): Promise<CommandTransport> {
-    const { command } = await this.#deps.boxes.transports(box);
+    return (await this.#reach(box)).command;
+  }
+
+  async #reach(box: BoxRecord): Promise<Reach> {
+    const { command, daemonKeptByHost } = await this.#deps.boxes.transports(box);
     if (!command) throw new Error(`bb-box cannot run commands in box ${box.name}.`);
-    return command;
+    return { command, daemonKeptByHost };
   }
 
   /** The box's machine went: it is no longer enrolled, but one that failed to join still says why (the newcomer check, 11 October 2026). */
@@ -616,8 +631,13 @@ export class Enrolment {
         // and its daemon is not running. BB does not create the machine
         // again, so bootstrap with the same key starts the daemon.
         if (box.capabilities.os !== "windows" && host.lifecycle.phase === "active" && host.status !== "connected") {
-          const transport = await this.#transport(current);
-          await this.#bootstrapAgain(current, host.id, transport, { key: box.id, executor: executor(transport, phases), report: QUIET, signal: this.#untilStopping(AbortSignal.timeout(this.#timeoutMs)) });
+          const reach = await this.#reach(current);
+          await this.#bootstrapAgain(current, host.id, reach, {
+            key: box.id,
+            executor: executor(reach.command, phases, reach.daemonKeptByHost?.installerEnvironment),
+            report: QUIET,
+            signal: this.#untilStopping(AbortSignal.timeout(this.#timeoutMs)),
+          });
           phases.mark("bootstrapped");
         }
       }
@@ -929,13 +949,13 @@ export class Enrolment {
     if (!hostId || this.#reconnecting.has(box.id) || stop?.aborted) return;
     this.#reconnecting.add(box.id);
     try {
-      const transport = await this.#transport(box);
+      const reach = await this.#reach(box);
       // Its own time limit, or the plugin stopping, whichever comes first.
       const signal = stop ? AbortSignal.any([this.#untilStopping(AbortSignal.timeout(this.#timeoutMs)), stop]) : this.#untilStopping(AbortSignal.timeout(this.#timeoutMs));
       try {
         // A thread's own box joined BB under the thread's key; any other under its own ID.
         const key = box.role === "machine" ? box.threadId : box.id;
-        await this.#bootstrapAgain(box, hostId, transport, { key, executor: executor(transport), report: QUIET, signal });
+        await this.#bootstrapAgain(box, hostId, reach, { key, executor: executor(reach.command, undefined, reach.daemonKeptByHost?.installerEnvironment), report: QUIET, signal });
       } catch (error) {
         await this.#deps.boxes.update(box, (current) =>
           current.enrol.hostId !== hostId ? {} : { enrol: { ...current.enrol, error: describeError(error, "Reconnecting the box's BB machine") } },

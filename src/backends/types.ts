@@ -407,11 +407,17 @@ export interface BoxAccess {
 }
 
 /** The transports that reach one box. */
+export interface DaemonKeptByHost {
+  readonly installerEnvironment: Readonly<Record<string, string>>;
+  takeOver(signal: AbortSignal): Promise<void>;
+}
+
 export interface BoxTransports {
   readonly command: CommandTransport | null;
   readonly displays: readonly Display[];
   /** Null when only the BB server can reach the box. */
   readonly access: BoxAccess | null;
+  readonly daemonKeptByHost?: DaemonKeptByHost;
 }
 
 export interface ReleaseHooks {
