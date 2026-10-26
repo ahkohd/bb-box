@@ -1549,19 +1549,31 @@ GiB was the device scrolled, with no app opened.
 - The settings lost in E23 were written about a second before each kill.
   How long Android takes to write a setting was not measured.
 
-### Not checked here
+### Through the production BB
 
-- **Through the production BB, after the deploy:** `box_acquire({kind:
-  "android"})` and each model by `device`; the panel's Device view of each
-  model in its frame, the Pixel Fold's included, with the toolbar; E3
-  through `box_stop` and `box_start` after 1 hour, with the clock set by
-  bb-box, and after 24 hours; E23 through `box_restart` and a crash of a box
-  from the template; two android boxes from the template compared: their
-  adb keys, console and gRPC tokens, and Android IDs; a refused android
-  size reaching the agent in words.
-- **Android's ID.** Unit 3.1 found the device's serial and Android ID the
-  same in every box from one template, as the snapshot holds them. This
-  unit does not change that.
+After the deploy, android boxes acquired with `box_acquire` on the
+production BB, at the kind's default size, 8 cores and 16 GiB, each a
+clone of the Android template.
+
+| Check | Result |
+| --- | --- |
+| box_list | android, on Proxmox QEMU, with "Devices: Pixel 8 (default), Pixel Fold, Pixel Tablet" |
+| A size below the least, `cores: 2` | refused in words: "An android box needs at least 4 cores and 10 GiB memory, not 2 cores, 16 GiB memory: its emulator draws the device on the CPU and holds 4 to 5.5 GiB once booted.", with the presets |
+| box_acquire, each model | the box ready in 10.5 to 11.8 s; the device booted from its snapshot 2.3 to 4.0 s after that; its clock 6,369 to 6,464 s behind, as the template's snapshots were made, and set |
+| Two Pixel 8 boxes compared | the adb key, the console token and the gRPC token differ, by their SHA-256s; the Android ID, `settings get secure android_id`, and the serial are the same in both, as unit 3.1 found |
+| The panel, in the owner's browser | each model in its frame beside its live picture, with the toolbar: the Pixel Fold open with its crease, then, folded by `adb emu fold`, the outer screen in the tall frame with the device's own camera hole; the Pixel 8; the Pixel Tablet in its landscape frame. The Fold's toolbar has Fold; the others' do not |
+| A toolbar click | Home on the Pixel Tablet took control, "You have control. Hand back when done.", and was refused in words: "bb-box cannot do that on an Android device yet: touch, keys and paste, and the device's controls, come in a later version." Hand back gave control to the agent |
+| E3, 1 hour | `box_stop`, 61 minutes, `box_start`: resumed in 5.9 s, the VM's clock set in 28 ms; the device still booted, its file kept, its clock and the box's the same to the second as the real time. The plugin delivered a newer device server as the box came back, which reattached, set Android's clock, 3,644 s behind, and streamed |
+| E23, a restart | an app installed and synced, then `box_resize` to 10 cores with a restart: the snapshot saved as the VM shut down, the Fold booted from it in 4.9 s, the app and the file kept |
+| E23, a crash | a file written and synced, then the VM reset by sysrq: the Fold booted cold in 15.7 s, 25.1 s after the crash, with the file and the app |
+| E3, 24 hours | a Pixel 8 box stopped at 17:27 UTC on 26 October, to be started after 17:27 UTC on 27 October |
+
+Two things the panel showed:
+
+- **The Box tab names an android box "Linux VM",** as the box's OS, with no
+  word of its device, while the Device view's header names the model.
+- **box_status says "Desktop control: the agent"** on an android box, which
+  has no desktop; the control it names is the device's.
 
 ## Unit 7.1: computer use on an iOS device
 
