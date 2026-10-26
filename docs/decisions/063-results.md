@@ -248,11 +248,12 @@ Threadripper PRO 9975WX host with nested KVM. The build box had 16 cores and
 (API 35) Google APIs x86_64 image revision 9, each AVD from `avdmanager`
 with 4 cores and `hw.keyboard = yes`, drawn by SwiftShader with no window.
 
-The template itself was not built: `build.sh android` runs as root on the
-Proxmox host, and the refresh through the plugin's Proxmox API token. Both
-are the lead's to run. What ran is the build's Android layer,
-`customize-android.sh`, in a box, then the refresh's own script in that box,
-then the image's check, `bb-box-check-android`, in both boxes.
+First the build's Android layer, `customize-android.sh`, ran in a box, then
+the refresh's own script in that box, then the image's check,
+`bb-box-check-android`, in both boxes. Then the lead built the template on
+the Proxmox host with `build.sh android`, and its refresh ran through the
+production BB, which has the Proxmox API token: [the template, built and
+refreshed](#the-template-built-and-refreshed), below.
 
 ### The build
 
@@ -336,8 +337,13 @@ in the box, to the box's address and to `docker0`'s: none connected, while
 the device was booted, half a second into a restart, and after it. From a
 network namespace on another interface of the box, as the image's check
 does: none connected, over IPv4 and IPv6, for each device. With the table
-removed, `bb-box-emulator` refused to start the device. No tailnet peer was
-tried: no box here had joined a tailnet.
+removed, `bb-box-emulator` refused to start the device.
+
+No tailnet peer was tried, and none is needed for these boxes: Proxmox
+boxes never join the tailnet, which only cloud backends' boxes do (050).
+The firewall drops the device's ports on every interface but loopback, so
+`tailscale0` is one more interface it drops on. A later backend whose
+android boxes join the tailnet runs the probe from a tailnet peer then.
 
 ### Identity
 
@@ -345,6 +351,13 @@ Each box made its own adb key, console token and gRPC token: their SHA-256s
 differed. The device's own serial, `EMULATOR37X2X12X0`, and whatever else
 the snapshot holds, such as the device's Android ID, are the same in every
 box from one template.
+
+Two android boxes were not compared: android is not an offered kind until
+unit 4.1, and the refresh's own clones are bb-box's, which no agent tool
+enters. Unit 4.1's checks through BB compare two android boxes: their adb
+keys, console and gRPC tokens, and Android IDs. The trial box of each
+refresh below checked that its adb key and console token did not come with
+the image.
 
 ### E24: disk
 
@@ -365,6 +378,32 @@ each AVD asks for: the emulator raises it to 2.5 GiB for the Pixel 8 and
 4 GiB for the large screens, which E17's resident memory matches. A device
 used in a box, a hibernated spare, and a build and trial beside the current
 template were not measured: they need the template (4.1, 7.5).
+
+### The template, built and refreshed
+
+On 26 October 2026 the lead ran `build.sh android 1000 --with-x264` as
+root on the Proxmox host, after the owner accepted the Android SDK's terms
+with `accept-sdk-licence.sh`. The first build failed its own check: the
+check read its devices from the image's record, which `finalize.sh` writes
+only after the check, so the cloud image had none yet (fixed in #1148). The
+second made build.20261026-151250-3f0c. Every line of its checks passed,
+and a clone of it hibernated in 14.9 s and resumed in 7.9 s. With
+`android-templates` set to 1000, `bb box doctor` passed the template, its
+image, KVM for Android and Disk for Android.
+
+Through the production BB:
+
+| | `bb box images build proxmox-qemu/1000 --try` | `bb box images build proxmox-qemu/1000` |
+| --- | --- | --- |
+| Took | 335 s | 344 s |
+| A box of the new build answered in | 10.3 s, the old's in 10.2 s; 8.6 s of each the network | 9.3 s, the old's in 9.3 s |
+| `bb-box-check-android` on the trial box | 45 of 45 lines ok | 45 of 45 lines ok |
+| BB's app | the box's, the record's and the server's the same | the same |
+| The record | contract 1, Ubuntu 24.04.5 LTS, 15 tools; no tool older | the same |
+| Afterwards | build.20261026-151250-3f0c stayed | template 1000 is build.20261026-153035-77eb; the build before is kept as its rollback |
+
+`bb box images list` then said of it: "built today; not due; last rebuild
+2026-10-26 passed".
 
 
 ## Unit 3.2: the iOS image
