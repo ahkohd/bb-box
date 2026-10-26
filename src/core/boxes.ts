@@ -18,7 +18,7 @@
 
 import { foldName, providerKeys, providerName } from "./provider-name.ts";
 import { randomBytes } from "node:crypto";
-import type { OfferedKind } from "../backends/index.ts";
+import type { OfferedKind, WithheldOffer } from "../backends/index.ts";
 import { KIND_INFO, VM_FEATURES, currentKindId, featureWord, isEarlierKindId, kindRequest, vmOffersLast } from "../backends/kinds.ts";
 import { DEVICE_PLATFORMS, TEST_DEVICE_NAME, deviceModels, isTestOffer, listWords, offeredModels, offersModel, type BoxDevice, type DevicePlatform, type ModelName } from "./device.ts";
 import { chooseModel, parseBoxDevice, parseDeviceOffer } from "./device-parse.ts";
@@ -318,6 +318,7 @@ export interface BoxesDeps {
     get(id: string): Backend | null;
     active(): Backend[];
     kinds(): OfferedKind[];
+    withheld?(kind: string, signal?: AbortSignal): Promise<readonly WithheldOffer[]>;
     offered?(backend: Backend): readonly BoxKind[];
     /** The driver's label for a backend ID, as settings names it ("Proxmox LXC"), for a provider's name (044). */
     driverLabel?(id: string): string;
@@ -584,6 +585,12 @@ export function withDeviceChecked(box: BoxRecord): BoxRecord {
   };
 }
 
+function withheldRefusal(kind: string, withheld: readonly WithheldOffer[], providerName: (backend: Backend) => string): BoxError {
+  const reasons = withheld.map((offer) => `${providerName(offer.backend)} offers them, but not now: ${offer.why}`);
+  const passing = withheld.some((offer) => offer.passing);
+  return new BoxError(passing ? "no_capacity" : "unknown_kind", `No ${kind} box (${KIND_INFO[kind]?.label ?? kind}) can come now. ${reasons.join(" ")}`);
+}
+
 function kindPlatform(kind: string, offers: readonly OfferedKind[]): DevicePlatform | null {
   return KIND_INFO[kind]?.device ?? offers.find((offer) => offer.kind.capabilities.device)?.kind.capabilities.device?.platform ?? null;
 }
@@ -816,7 +823,9 @@ export class Boxes {
   }): Promise<BoxRecord> {
     const requested = this.#now();
     const { kind: wanted, features } = kindRequest(input.kind);
-    const ofKind = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
+    const offersOf = () => this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
+    const withheld = offersOf().length ? [] : ((await this.#deps.backends.withheld?.(wanted)) ?? []);
+    const ofKind = offersOf();
     const platform = kindPlatform(wanted, ofKind);
     const askedDevice = this.#askedDevice(input.device, wanted, platform, ofKind);
     const slim = this.#slimAsked(input.slim, wanted, platform);
@@ -825,6 +834,7 @@ export class Boxes {
     const asksVm = features.some((feature) => VM_FEATURES.includes(feature));
     const matching = ofKind.filter((candidate) => hasFeatures(candidate.kind.capabilities, features));
     const everywhere = asksVm ? matching : vmOffersLast(matching);
+    if (!ofKind.length && withheld.length) throw withheldRefusal(wanted, withheld, (backend) => this.#providerName(backend));
     if (!ofKind.length) {
       const kinds = this.kinds().map((kind) => kind.id);
       if (platform && kinds.length) throw new BoxError("unknown_kind", `No backend offers ${wanted} boxes (${KIND_INFO[wanted]?.label ?? wanted}) now. The kinds you can acquire are: ${kinds.join(", ")}.`);

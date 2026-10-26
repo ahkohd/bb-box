@@ -91,6 +91,46 @@ pixels_match() {
   echo "$got, as the model table says"
 }
 
+content_sizes="extra-small small medium large extra-large extra-extra-large extra-extra-extra-large accessibility-medium accessibility-large accessibility-extra-large accessibility-extra-extra-large accessibility-extra-extra-extra-large"
+
+ui_reads() { simctl ui "$1" "$2" 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'; }
+
+ui_sets_and_reads_back() {
+  udid=$1 option=$2 values=$3
+  was=$(ui_reads "$udid" "$option")
+  [ -n "$was" ] || { echo "simctl ui $option read nothing"; return 1; }
+  for value in $values; do
+    simctl ui "$udid" "$option" "$value" >/dev/null 2>&1 || { echo "simctl ui $option $value failed"; simctl ui "$udid" "$option" "$was" >/dev/null 2>&1; return 1; }
+    got=$(ui_reads "$udid" "$option")
+    [ "$got" = "$value" ] || { echo "set to $value, it reads back ${got:-nothing}"; simctl ui "$udid" "$option" "$was" >/dev/null 2>&1; return 1; }
+  done
+  simctl ui "$udid" "$option" "$was" >/dev/null 2>&1 || { echo "simctl ui $option did not set it back to $was"; return 1; }
+  echo "$(echo $values | wc -w | tr -d ' ') values set and read back, then $was again"
+}
+
+status_bar_overrides() { simctl status_bar "$1" list 2>/dev/null | grep -v -e '^[[:space:]]*$' -e '^Current Status Bar Overrides:$' -e '^=*$'; }
+
+status_bar_reads_back() {
+  udid=$1
+  simctl status_bar "$udid" override --time 9:41 --batteryState discharging --batteryLevel 42 >/dev/null 2>&1 || { echo "simctl status_bar override failed"; return 1; }
+  listed=$(status_bar_overrides "$udid")
+  simctl status_bar "$udid" clear >/dev/null 2>&1 || { echo "simctl status_bar clear failed"; return 1; }
+  printf '%s\n' "$listed" | grep -q '9:41' && printf '%s\n' "$listed" | grep -q '42' || { echo "overridden, it lists: $(printf '%s' "$listed" | tr '\n' ' ')"; return 1; }
+  left=$(status_bar_overrides "$udid")
+  [ -z "$left" ] || { echo "cleared, it still lists: $(printf '%s' "$left" | tr '\n' ' ')"; return 1; }
+  echo "an override of the time and battery listed, then cleared"
+}
+
+lock_state_reads() {
+  udid=$1
+  value=$(simctl spawn "$udid" notifyutil -g com.apple.springboard.lockstate 2>/dev/null | awk '{ print $NF }')
+  case $value in
+    0) echo "unlocked, as the lock state reads 0" ;;
+    1) echo "the device reads locked just after it booted"; return 1 ;;
+    *) echo "notifyutil read the lock state as ${value:-nothing}"; return 1 ;;
+  esac
+}
+
 tree_cpu_seconds() {
   udid=$1
   ps -axo pid=,ppid=,time=,command= | python3 -c '
@@ -203,6 +243,10 @@ while IFS="$tab" read -r model type width height; do
   check "$model needed services" needed_services_enabled "$udid"
   check "$model keyboard" keyboard_defaults_hold "$udid"
   check "$model pixels" pixels_match "$udid" "$width" "$height"
+  check "$model appearance" ui_sets_and_reads_back "$udid" appearance "dark light"
+  check "$model text size" ui_sets_and_reads_back "$udid" content_size "$content_sizes"
+  check "$model status bar" status_bar_reads_back "$udid"
+  check "$model lock state" lock_state_reads "$udid"
   check "$model idle cpu" idle_cpu_within "$udid"
   check "$model xcuitest launch" uitest_launch_within "$udid"
   [ -n "$was_booted" ] || simctl shutdown "$udid" 2>/dev/null || fail "$model shuts down" "simctl shutdown did not end within $simctl_most_s s"

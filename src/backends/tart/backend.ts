@@ -88,6 +88,7 @@ import {
   type ReleaseHooks,
   type StopReason,
   type WarmShortfall,
+  type WithheldKind,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
@@ -851,6 +852,21 @@ export class TartBackend implements Backend {
       void this.#states().catch((error) => this.#context.logError("read the iOS image's devices", error));
     }
     return this.#kinds.filter((kind) => kind.id !== IOS_IMAGE_KIND || kind.capabilities.device);
+  }
+
+  async withheldKinds(kind: string, signal?: AbortSignal): Promise<readonly WithheldKind[]> {
+    const image = this.#config.iosImage;
+    const iosOffered = () => this.kinds().some((offered) => offered.id === IOS_IMAGE_KIND);
+    if (kind !== IOS_IMAGE_KIND || !image || iosOffered()) return [];
+    const states = await this.#states(signal);
+    if (iosOffered()) return [];
+    const silent = [...states].filter((entry): entry is [string, Error] => entry[1] instanceof Error);
+    const answered = [...states.keys()].filter((host) => !silent.some(([name]) => name === host));
+    const whys = [
+      ...silent.map(([host, error]) => `${host} did not answer, so bb-box cannot read which devices its iOS image offers: ${error.message}`),
+      ...(answered.length ? [`the iOS image ${image} on ${answered.join(" and ")} lists no iOS devices in its record, so there is none to boot. bb box doctor says why`] : []),
+    ];
+    return [{ kind: IOS_IMAGE_KIND, why: `${whys.join("; ")}.`, passing: !answered.length }];
   }
 
   #declareDevices(states: ReadonlyMap<string, MacState | Error>): void {

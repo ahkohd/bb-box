@@ -998,3 +998,83 @@ LANDSCAPE_RIGHT, and `get_orientation` reads them back.
   person's session.
 - Android: its driver's controls are unit 6.2's. The shared parts, the
   parsing, `supports` and the words, cover Android's actions in tests only.
+
+## Three fixes from live checks
+
+Checked on 26 October 2026 on the production BB and in one Tart
+macos-desktop box, 6 cores and 16 GiB, made as unit 6.3's box was: the
+standard macOS image (build.20261022-033224-9658), the iOS image's layer
+from `build-ios.sh`, and its record. The device server came from this
+checkout, version 7 before the fix and version 8 after it.
+
+### "No backend offers ios boxes"
+
+Unit 6.3's builder was refused an ios box with "No backend offers ios
+boxes (iOS Simulator) now", and box_list had no ios kind. The Tart Mac was
+at Apple's limit of two macOS VMs then, but that was not the cause. Asked
+for an ios box while the Mac was full again, the production BB already
+gave the right refusal, through box_acquire and through
+`bb box acquire`: "No Mac can take this ios box: Two macOS VMs already run
+on the Mac, Apple's limit (box ... of thread ..., box ... of thread ...).
+Release or stop a macOS box, or stop another VM there."
+
+The cause was timing. The Tart backend offers ios only once a Mac's record
+of the iOS image lists its devices, and it reads that only after bb-box
+starts. The refusal came 6 seconds after a box_list, a few minutes into a
+deploy that restarted bb-box, so the first read of the Mac had not
+answered. Every other backend's kinds come from its settings or from
+what its host already said, so ios on Tart was the only kind hidden this
+way.
+
+Now a backend can name the kinds it withholds and why, once it has read
+what decides them. Before acquire refuses a kind no backend offers, it
+asks. Tart reads its Macs then, so after a restart the ios box is placed,
+or refused for room, as any kind is. When a Mac still does not offer ios,
+the refusal says why:
+
+- a Mac that did not answer: "No ios box (iOS Simulator) can come now.
+  Tart on the Mac offers them, but not now: the Mac did not answer, so
+  bb-box cannot read which devices its iOS image offers: ...", as
+  no_capacity
+- an image with no devices: "... the iOS image bb-box-ios on the Mac lists
+  no iOS devices in its record, so there is none to boot. bb box doctor
+  says why.", as unknown_kind
+
+### Input after a device boots again
+
+A device's input goes through idb_companion's HID connection, which dies
+when the device shuts down: "The dtuhidd connection
+(com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated".
+Unit 6.3 made the reboot control start a new companion. Two more ways
+boot the device and kept the old one: the server's restart of a device that
+stopped by itself, and slimming's reboot when the server attaches to a
+running device that has a service of its list on.
+
+| Path | Version 7 | Version 8 |
+| --- | --- | --- |
+| The device shut down from outside (`simctl shutdown`); the server booted it again | the same companion kept (pid 11798); lock: "The device was locked, but it still reads unlocked after 3 s"; the companion's log: the HID connection invalidated | a new companion; lock and wake work; a tap on Settings opened it |
+| One service of the slimming list turned on, then the server killed; launchd started it, and slimming rebooted the device | the same companion kept (`companionKept: true`); lock failed the same way, the HID connection invalidated | a new companion (`companionKept: false`); lock and wake work |
+| The reboot control | a new companion, from unit 6.3 | a new companion; lock and wake work |
+
+The fix is in one place: whenever the device boots while the server starts
+it, the server starts a new companion. Only a reattach to a device that
+kept running, with no reboot, keeps the one it has.
+
+A device takes a few seconds to take input after it boots. After a stop by
+itself, the server says it is back about 2 s after the stop, but the first
+lock that took was sent about 7 s after that. In 2 runs, locks sent in the
+first 6 s did not take, though the companion sent each press and none
+failed on its connection. The reboot control waits for a
+new picture before it answers, so a lock right after its answer took.
+
+### The image's check reads each control back
+
+`bb-box-check-ios` now checks, on each model, what box_device reads back:
+dark and light, and each of the 12 text sizes, set and read back, then the
+first set again; an override of the time and battery listed, then cleared;
+and the lock state read as unlocked after boot.
+
+Run in the box on all three models, the check passed every line, 36 of
+36. Each model took dark and light, and all 12 text sizes, and read each
+back, then went back to light and large. Each listed its status bar
+override, then none once cleared, and read unlocked just after boot.

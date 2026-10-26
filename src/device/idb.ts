@@ -150,12 +150,13 @@ export class Companion {
     this.#log(`companion: idb_companion ${child.pid} listens for the device ${udid}, ${Math.round(performance.now() - began)} ms after its start`);
   }
 
-  async restart(udid: string, signal: AbortSignal): Promise<void> {
+  async restart(udid: string, signal: AbortSignal): Promise<"started"> {
     const known = await this.#recorded();
     this.#client?.close();
     this.#client = null;
     if (known && (await this.#ours(known.pid))) this.#kill(known.pid);
     await this.#start(udid, signal);
+    return "started";
   }
 
   async stop(): Promise<void> {
