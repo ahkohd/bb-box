@@ -1,0 +1,4 @@
+before: 62 528.0 59.7
+after needs: 100 930.5 104.66
+after stream: 100 925.1 108.49
+after ui tests: 102 940.4 120.24

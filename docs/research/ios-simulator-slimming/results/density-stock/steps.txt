@@ -1,0 +1,8 @@
+booted=1 boot_s=4 clone_disabled=0 processes=230 footprint_mib=2005.7 free_percent=81 swap_mib=0.00
+booted=2 boot_s=4 clone_disabled=0 processes=455 footprint_mib=4443.4 free_percent=75 swap_mib=0.00
+booted=3 boot_s=4 clone_disabled=0 processes=689 footprint_mib=6655.2 free_percent=71 swap_mib=0.00
+booted=4 boot_s=8 clone_disabled=0 processes=924 footprint_mib=8906.7 free_percent=66 swap_mib=0.00
+booted=5 boot_s=12 clone_disabled=0 processes=1173 footprint_mib=11248.9 free_percent=59 swap_mib=0.00
+booted=6 boot_s=8 clone_disabled=0 processes=1407 footprint_mib=13476.5 free_percent=51 swap_mib=0.00
+booted=7 boot_s=8 clone_disabled=0 processes=1657 footprint_mib=15846.6 free_percent=43 swap_mib=0.00
+booted=8 boot_s=10 clone_disabled=0 processes=1886 footprint_mib=18010.9 free_percent=36 swap_mib=0.00

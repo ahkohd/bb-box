@@ -1,0 +1,70 @@
+{
+ "seconds": 300,
+ "cpu_seconds": 4.05,
+ "cores": 0.0135,
+ "processes_start": 99,
+ "processes_end": 99,
+ "footprint_mib_end": 659.9,
+ "busiest": [
+  {
+   "name": "SpringBoard",
+   "cpu": 2.44
+  },
+  {
+   "name": "diagnosticd",
+   "cpu": 0.686
+  },
+  {
+   "name": "locationd",
+   "cpu": 0.23
+  },
+  {
+   "name": "axassetsd",
+   "cpu": 0.174
+  },
+  {
+   "name": "dasd",
+   "cpu": 0.117
+  },
+  {
+   "name": "clipserviced",
+   "cpu": 0.097
+  },
+  {
+   "name": "logd",
+   "cpu": 0.056
+  },
+  {
+   "name": "backboardd",
+   "cpu": 0.039
+  },
+  {
+   "name": "cfprefsd",
+   "cpu": 0.021
+  },
+  {
+   "name": "notifyd",
+   "cpu": 0.021
+  },
+  {
+   "name": "mobiletimerd",
+   "cpu": 0.017
+  },
+  {
+   "name": "nsurlsessiond",
+   "cpu": 0.017
+  },
+  {
+   "name": "aslmanager",
+   "cpu": 0.015
+  },
+  {
+   "name": "routined",
+   "cpu": 0.014
+  },
+  {
+   "name": "launchd_sim",
+   "cpu": 0.013
+  }
+ ]
+}

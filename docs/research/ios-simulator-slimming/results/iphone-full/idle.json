@@ -1,0 +1,70 @@
+{
+ "seconds": 300,
+ "cpu_seconds": 2.63,
+ "cores": 0.0088,
+ "processes_start": 62,
+ "processes_end": 62,
+ "footprint_mib_end": 527.9,
+ "busiest": [
+  {
+   "name": "SpringBoard",
+   "cpu": 2.018
+  },
+  {
+   "name": "diagnosticd",
+   "cpu": 0.221
+  },
+  {
+   "name": "locationd",
+   "cpu": 0.11
+  },
+  {
+   "name": "MercuryPosterExtension",
+   "cpu": 0.073
+  },
+  {
+   "name": "launchd_sim",
+   "cpu": 0.072
+  },
+  {
+   "name": "logd",
+   "cpu": 0.043
+  },
+  {
+   "name": "backboardd",
+   "cpu": 0.023
+  },
+  {
+   "name": "axassetsd",
+   "cpu": 0.014
+  },
+  {
+   "name": "notifyd",
+   "cpu": 0.014
+  },
+  {
+   "name": "aslmanager",
+   "cpu": 0.012
+  },
+  {
+   "name": "nsurlsessiond",
+   "cpu": 0.008
+  },
+  {
+   "name": "geod",
+   "cpu": 0.005
+  },
+  {
+   "name": "WidgetRenderer_Default",
+   "cpu": 0.002
+  },
+  {
+   "name": "mobileassetd",
+   "cpu": 0.002
+  },
+  {
+   "name": "securityd",
+   "cpu": 0.002
+  }
+ ]
+}

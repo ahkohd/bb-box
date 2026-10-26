@@ -1,0 +1,4 @@
+booted=1 boot_s=5 clone_disabled=106 processes=61 footprint_mib=474.1 free_percent=81 swap_mib=0.00
+booted=2 boot_s=4 clone_disabled=106 processes=123 footprint_mib=954.6 free_percent=79 swap_mib=0.00
+booted=3 boot_s=5 clone_disabled=106 processes=184 footprint_mib=1429.1 free_percent=78 swap_mib=0.00
+booted=4 boot_s=5 clone_disabled=106 processes=246 footprint_mib=1910.5 free_percent=77 swap_mib=0.00

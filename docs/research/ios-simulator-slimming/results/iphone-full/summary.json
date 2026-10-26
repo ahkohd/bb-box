@@ -1,0 +1,8 @@
+{
+ "boot_seconds": 1.51,
+ "processes": 62,
+ "footprint_mib": 527.5,
+ "idle_cores": 0.0088,
+ "idle_cpu_seconds": 2.63,
+ "idle_window_seconds": 300
+}

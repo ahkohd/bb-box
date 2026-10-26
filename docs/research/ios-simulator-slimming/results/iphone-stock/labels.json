@@ -1,0 +1,1447 @@
+{
+ "processes": 240,
+ "labelled_mib": 1442.1,
+ "unlabelled_mib": 555.6,
+ "rows": [
+  {
+   "label": "com.apple.SpringBoard",
+   "name": "SpringBoard",
+   "footprint_mib": 66.0,
+   "cpu_seconds": 11.05
+  },
+  {
+   "label": "com.apple.sirittsd",
+   "name": "sirittsd",
+   "footprint_mib": 30.5,
+   "cpu_seconds": 0.5
+  },
+  {
+   "label": "UIKitApplication:com.apple.mobilecal[5ab3][rb-legacy]",
+   "name": "MobileCal",
+   "footprint_mib": 28.2,
+   "cpu_seconds": 2.82
+  },
+  {
+   "label": "UIKitApplication:com.apple.chrono.WidgetRenderer-Default[a9af][rb-legacy]",
+   "name": "WidgetRenderer_Default",
+   "footprint_mib": 23.7,
+   "cpu_seconds": 2.41
+  },
+  {
+   "label": "",
+   "name": "NewsToday2",
+   "footprint_mib": 22.9,
+   "cpu_seconds": 3.3
+  },
+  {
+   "label": "UIKitApplication:com.apple.Spotlight[f0ab][rb-legacy]",
+   "name": "Spotlight",
+   "footprint_mib": 22.4,
+   "cpu_seconds": 2.84
+  },
+  {
+   "label": "com.apple.PosterBoard",
+   "name": "PosterBoard",
+   "footprint_mib": 19.3,
+   "cpu_seconds": 7.64
+  },
+  {
+   "label": "",
+   "name": "MercuryPosterExtension",
+   "footprint_mib": 19.2,
+   "cpu_seconds": 1.89
+  },
+  {
+   "label": "",
+   "name": "launchd_sim",
+   "footprint_mib": 18.8,
+   "cpu_seconds": 4.92
+  },
+  {
+   "label": "com.apple.homed",
+   "name": "homed",
+   "footprint_mib": 17.5,
+   "cpu_seconds": 2.24
+  },
+  {
+   "label": "com.apple.backboardd",
+   "name": "backboardd",
+   "footprint_mib": 16.8,
+   "cpu_seconds": 1.76
+  },
+  {
+   "label": "com.apple.spotlightknowledged.updater",
+   "name": "spotlightknowledged.updater",
+   "footprint_mib": 16.0,
+   "cpu_seconds": 1.47
+  },
+  {
+   "label": "",
+   "name": "GeneralMapsWidget",
+   "footprint_mib": 16.0,
+   "cpu_seconds": 0.77
+  },
+  {
+   "label": "com.apple.chronod",
+   "name": "chronod",
+   "footprint_mib": 15.5,
+   "cpu_seconds": 2.55
+  },
+  {
+   "label": "",
+   "name": "CalendarWidgetExtension",
+   "footprint_mib": 15.2,
+   "cpu_seconds": 1.88
+  },
+  {
+   "label": "com.apple.assistantd",
+   "name": "assistantd",
+   "footprint_mib": 14.7,
+   "cpu_seconds": 2.0
+  },
+  {
+   "label": "com.apple.healthd",
+   "name": "healthd",
+   "footprint_mib": 14.5,
+   "cpu_seconds": 1.28
+  },
+  {
+   "label": "com.apple.intelligenceflowd",
+   "name": "intelligenceflowd",
+   "footprint_mib": 14.2,
+   "cpu_seconds": 3.37
+  },
+  {
+   "label": "com.apple.siriactionsd",
+   "name": "siriactionsd",
+   "footprint_mib": 14.1,
+   "cpu_seconds": 2.4
+  },
+  {
+   "label": "com.apple.assetsd",
+   "name": "assetsd",
+   "footprint_mib": 13.7,
+   "cpu_seconds": 0.76
+  },
+  {
+   "label": "com.apple.suggestd",
+   "name": "suggestd",
+   "footprint_mib": 13.3,
+   "cpu_seconds": 0.98
+  },
+  {
+   "label": "",
+   "name": "IntelligencePlatformComputeService",
+   "footprint_mib": 13.1,
+   "cpu_seconds": 0.69
+  },
+  {
+   "label": "",
+   "name": "PhotosPosterProvider",
+   "footprint_mib": 12.8,
+   "cpu_seconds": 1.61
+  },
+  {
+   "label": "com.apple.InputUI",
+   "name": "InputUI",
+   "footprint_mib": 12.8,
+   "cpu_seconds": 4.44
+  },
+  {
+   "label": "",
+   "name": "AmbientPhotoFramePosterProvider",
+   "footprint_mib": 12.7,
+   "cpu_seconds": 1.52
+  },
+  {
+   "label": "com.apple.telephonyutilities.callservicesd",
+   "name": "callservicesd",
+   "footprint_mib": 12.6,
+   "cpu_seconds": 2.32
+  },
+  {
+   "label": "com.apple.routined",
+   "name": "routined",
+   "footprint_mib": 12.6,
+   "cpu_seconds": 1.18
+  },
+  {
+   "label": "",
+   "name": "CollectionsPoster",
+   "footprint_mib": 12.5,
+   "cpu_seconds": 1.49
+  },
+  {
+   "label": "com.apple.nanotimekitcompaniond",
+   "name": "nanotimekitcompaniond",
+   "footprint_mib": 12.5,
+   "cpu_seconds": 2.64
+  },
+  {
+   "label": "com.apple.fitcore",
+   "name": "fitcored",
+   "footprint_mib": 12.5,
+   "cpu_seconds": 0.99
+  },
+  {
+   "label": "com.apple.gamed",
+   "name": "gamed",
+   "footprint_mib": 12.4,
+   "cpu_seconds": 1.82
+  },
+  {
+   "label": "com.apple.passd",
+   "name": "passd",
+   "footprint_mib": 12.4,
+   "cpu_seconds": 0.74
+  },
+  {
+   "label": "",
+   "name": "EmojiPosterExtension",
+   "footprint_mib": 12.3,
+   "cpu_seconds": 1.51
+  },
+  {
+   "label": "com.apple.amsengagementd",
+   "name": "amsengagementd",
+   "footprint_mib": 12.3,
+   "cpu_seconds": 8.0
+  },
+  {
+   "label": "",
+   "name": "AegirPoster",
+   "footprint_mib": 12.2,
+   "cpu_seconds": 1.49
+  },
+  {
+   "label": "com.apple.sharingd",
+   "name": "sharingd",
+   "footprint_mib": 11.9,
+   "cpu_seconds": 2.77
+  },
+  {
+   "label": "com.apple.MapKit.SnapshotService",
+   "name": "com.apple.MapKit.SnapshotService",
+   "footprint_mib": 11.9,
+   "cpu_seconds": 0.87
+  },
+  {
+   "label": "",
+   "name": "PridePosterExtension",
+   "footprint_mib": 11.8,
+   "cpu_seconds": 1.59
+  },
+  {
+   "label": "",
+   "name": "ImagePlaygroundPosterExtension",
+   "footprint_mib": 11.8,
+   "cpu_seconds": 1.56
+  },
+  {
+   "label": "com.apple.searchd",
+   "name": "searchd",
+   "footprint_mib": 11.7,
+   "cpu_seconds": 1.55
+  },
+  {
+   "label": "com.apple.email.maild",
+   "name": "maild",
+   "footprint_mib": 11.6,
+   "cpu_seconds": 1.95
+  },
+  {
+   "label": "",
+   "name": "BatteriesAvocadoWidgetExtension",
+   "footprint_mib": 11.5,
+   "cpu_seconds": 0.33
+  },
+  {
+   "label": "com.apple.locationd",
+   "name": "locationd",
+   "footprint_mib": 11.5,
+   "cpu_seconds": 0.92
+  },
+  {
+   "label": "com.apple.financed",
+   "name": "financed",
+   "footprint_mib": 11.4,
+   "cpu_seconds": 0.72
+  },
+  {
+   "label": "com.apple.remindd",
+   "name": "remindd",
+   "footprint_mib": 11.3,
+   "cpu_seconds": 2.52
+  },
+  {
+   "label": "",
+   "name": "UnityPoster",
+   "footprint_mib": 11.2,
+   "cpu_seconds": 1.44
+  },
+  {
+   "label": "",
+   "name": "ClockPosterExtension",
+   "footprint_mib": 11.2,
+   "cpu_seconds": 1.49
+  },
+  {
+   "label": "",
+   "name": "MercuryPosterExtension",
+   "footprint_mib": 11.2,
+   "cpu_seconds": 1.48
+  },
+  {
+   "label": "com.apple.AccessibilityUIServer",
+   "name": "AccessibilityUIServer",
+   "footprint_mib": 11.1,
+   "cpu_seconds": 1.64
+  },
+  {
+   "label": "com.apple.calaccessd",
+   "name": "calaccessd",
+   "footprint_mib": 11.1,
+   "cpu_seconds": 1.99
+  },
+  {
+   "label": "",
+   "name": "WeatherPoster",
+   "footprint_mib": 11.1,
+   "cpu_seconds": 1.48
+  },
+  {
+   "label": "",
+   "name": "ExtragalacticPoster",
+   "footprint_mib": 11.1,
+   "cpu_seconds": 1.45
+  },
+  {
+   "label": "",
+   "name": "Unity2025Poster",
+   "footprint_mib": 11.1,
+   "cpu_seconds": 1.42
+  },
+  {
+   "label": "",
+   "name": "GradientPosterExtension",
+   "footprint_mib": 11.0,
+   "cpu_seconds": 1.48
+  },
+  {
+   "label": "",
+   "name": "InfographPoster",
+   "footprint_mib": 11.0,
+   "cpu_seconds": 1.51
+  },
+  {
+   "label": "com.apple.newsd",
+   "name": "newsd",
+   "footprint_mib": 10.0,
+   "cpu_seconds": 0.42
+  },
+  {
+   "label": "com.apple.cloudd",
+   "name": "cloudd",
+   "footprint_mib": 10.0,
+   "cpu_seconds": 1.43
+  },
+  {
+   "label": "com.apple.siriinferenced",
+   "name": "siriinferenced",
+   "footprint_mib": 9.9,
+   "cpu_seconds": 2.37
+  },
+  {
+   "label": "com.apple.donotdisturbd",
+   "name": "donotdisturbd",
+   "footprint_mib": 9.7,
+   "cpu_seconds": 1.69
+  },
+  {
+   "label": "com.apple.mobileassetd",
+   "name": "mobileassetd",
+   "footprint_mib": 9.4,
+   "cpu_seconds": 3.81
+  },
+  {
+   "label": "com.apple.accessibility.axassetsd",
+   "name": "axassetsd",
+   "footprint_mib": 9.4,
+   "cpu_seconds": 0.75
+  },
+  {
+   "label": "com.apple.dataaccess.dataaccessd",
+   "name": "dataaccessd",
+   "footprint_mib": 9.2,
+   "cpu_seconds": 2.44
+  },
+  {
+   "label": "com.apple.ScreenTimeAgent",
+   "name": "ScreenTimeAgent",
+   "footprint_mib": 9.2,
+   "cpu_seconds": 2.17
+  },
+  {
+   "label": "com.apple.generativeexperiencesd",
+   "name": "generativeexperiencesd",
+   "footprint_mib": 9.1,
+   "cpu_seconds": 0.54
+  },
+  {
+   "label": "com.apple.weatherd",
+   "name": "weatherd",
+   "footprint_mib": 9.0,
+   "cpu_seconds": 0.44
+  },
+  {
+   "label": "com.apple.biomed",
+   "name": "biomed",
+   "footprint_mib": 8.8,
+   "cpu_seconds": 0.9
+  },
+  {
+   "label": "com.apple.appstored",
+   "name": "appstored",
+   "footprint_mib": 8.8,
+   "cpu_seconds": 1.92
+  },
+  {
+   "label": "com.apple.navd",
+   "name": "navd",
+   "footprint_mib": 8.7,
+   "cpu_seconds": 0.59
+  },
+  {
+   "label": "com.apple.liveactivitiesd",
+   "name": "liveactivitiesd",
+   "footprint_mib": 8.7,
+   "cpu_seconds": 1.71
+  },
+  {
+   "label": "com.apple.identityservicesd",
+   "name": "identityservicesd",
+   "footprint_mib": 8.7,
+   "cpu_seconds": 1.94
+  },
+  {
+   "label": "com.apple.mediaanalysisd",
+   "name": "mediaanalysisd",
+   "footprint_mib": 8.7,
+   "cpu_seconds": 0.52
+  },
+  {
+   "label": "com.apple.modelcatalogd",
+   "name": "modelcatalogd",
+   "footprint_mib": 8.6,
+   "cpu_seconds": 1.26
+  },
+  {
+   "label": "com.apple.geod",
+   "name": "geod",
+   "footprint_mib": 8.4,
+   "cpu_seconds": 0.41
+  },
+  {
+   "label": "com.apple.itunesstored",
+   "name": "itunesstored",
+   "footprint_mib": 8.3,
+   "cpu_seconds": 0.35
+  },
+  {
+   "label": "com.apple.itunescloudd",
+   "name": "itunescloudd",
+   "footprint_mib": 8.3,
+   "cpu_seconds": 0.61
+  },
+  {
+   "label": "com.apple.activitysharingd",
+   "name": "activitysharingd",
+   "footprint_mib": 8.3,
+   "cpu_seconds": 0.57
+  },
+  {
+   "label": "com.apple.icloudmailagent",
+   "name": "icloudmailagent",
+   "footprint_mib": 8.3,
+   "cpu_seconds": 2.27
+  },
+  {
+   "label": "com.apple.usernotificationsd",
+   "name": "usernotificationsd",
+   "footprint_mib": 8.3,
+   "cpu_seconds": 1.65
+  },
+  {
+   "label": "com.apple.amsaccountsd",
+   "name": "amsaccountsd",
+   "footprint_mib": 8.2,
+   "cpu_seconds": 0.51
+  },
+  {
+   "label": "com.apple.managedconfiguration.profiled",
+   "name": "profiled",
+   "footprint_mib": 8.2,
+   "cpu_seconds": 0.71
+  },
+  {
+   "label": "com.apple.parsecd",
+   "name": "parsecd",
+   "footprint_mib": 8.2,
+   "cpu_seconds": 0.62
+  },
+  {
+   "label": "com.apple.ScreenTimeSettingsAgent",
+   "name": "ScreenTimeSettingsAgent",
+   "footprint_mib": 8.1,
+   "cpu_seconds": 0.49
+  },
+  {
+   "label": "com.apple.SafariBookmarksSyncAgent",
+   "name": "SafariBookmarksSyncAgent",
+   "footprint_mib": 8.1,
+   "cpu_seconds": 1.76
+  },
+  {
+   "label": "",
+   "name": "HealthBalanceWidgetExtension",
+   "footprint_mib": 8.1,
+   "cpu_seconds": 2.19
+  },
+  {
+   "label": "com.apple.mediaremoted",
+   "name": "mediaremoted",
+   "footprint_mib": 8.1,
+   "cpu_seconds": 0.84
+  },
+  {
+   "label": "com.apple.ap.promotedcontentd",
+   "name": "promotedcontentd",
+   "footprint_mib": 8.0,
+   "cpu_seconds": 0.32
+  },
+  {
+   "label": "",
+   "name": "ShortcutsTopHitsExtension",
+   "footprint_mib": 7.9,
+   "cpu_seconds": 1.84
+  },
+  {
+   "label": "com.apple.textunderstandingd",
+   "name": "textunderstandingd",
+   "footprint_mib": 7.9,
+   "cpu_seconds": 0.49
+  },
+  {
+   "label": "com.apple.linkd",
+   "name": "linkd",
+   "footprint_mib": 7.9,
+   "cpu_seconds": 0.42
+  },
+  {
+   "label": "",
+   "name": "SafariLinkExtension",
+   "footprint_mib": 7.8,
+   "cpu_seconds": 1.6
+  },
+  {
+   "label": "",
+   "name": "NewsScoringService",
+   "footprint_mib": 7.8,
+   "cpu_seconds": 1.6
+  },
+  {
+   "label": "com.apple.apsd",
+   "name": "apsd",
+   "footprint_mib": 7.8,
+   "cpu_seconds": 20.72
+  },
+  {
+   "label": "",
+   "name": "CalendarIntentsExtension",
+   "footprint_mib": 7.7,
+   "cpu_seconds": 1.59
+  },
+  {
+   "label": "com.apple.iconservices.iconservicesagent",
+   "name": "iconservicesagent",
+   "footprint_mib": 7.7,
+   "cpu_seconds": 1.37
+  },
+  {
+   "label": "com.apple.rapportd",
+   "name": "rapportd",
+   "footprint_mib": 7.7,
+   "cpu_seconds": 0.49
+  },
+  {
+   "label": "com.apple.dasd",
+   "name": "dasd",
+   "footprint_mib": 7.6,
+   "cpu_seconds": 1.02
+  },
+  {
+   "label": "com.apple.photoanalysisd",
+   "name": "photoanalysisd",
+   "footprint_mib": 7.5,
+   "cpu_seconds": 1.49
+  },
+  {
+   "label": "com.apple.Safari.passwordbreachd",
+   "name": "passwordbreachd",
+   "footprint_mib": 7.5,
+   "cpu_seconds": 0.45
+  },
+  {
+   "label": "com.apple.fileindexerd",
+   "name": "fileindexerd",
+   "footprint_mib": 7.5,
+   "cpu_seconds": 0.41
+  },
+  {
+   "label": "com.apple.findmy.findmylocated",
+   "name": "findmylocated",
+   "footprint_mib": 7.5,
+   "cpu_seconds": 0.54
+  },
+  {
+   "label": "com.apple.runningboardd",
+   "name": "runningboardd",
+   "footprint_mib": 7.4,
+   "cpu_seconds": 5.72
+  },
+  {
+   "label": "com.apple.mobiletimerd",
+   "name": "mobiletimerd",
+   "footprint_mib": 7.4,
+   "cpu_seconds": 0.41
+  },
+  {
+   "label": "com.apple.fitnesscoachingd",
+   "name": "fitnesscoachingd",
+   "footprint_mib": 7.4,
+   "cpu_seconds": 2.05
+  },
+  {
+   "label": "com.apple.ap.adprivacyd",
+   "name": "adprivacyd",
+   "footprint_mib": 7.3,
+   "cpu_seconds": 0.53
+  },
+  {
+   "label": "com.apple.siri.context.service",
+   "name": "ContextService",
+   "footprint_mib": 7.3,
+   "cpu_seconds": 0.28
+  },
+  {
+   "label": "com.apple.modelmanagerd",
+   "name": "modelmanagerd",
+   "footprint_mib": 7.3,
+   "cpu_seconds": 0.36
+  },
+  {
+   "label": "com.apple.triald",
+   "name": "triald",
+   "footprint_mib": 7.3,
+   "cpu_seconds": 1.35
+  },
+  {
+   "label": "com.apple.corespeechd",
+   "name": "corespeechd",
+   "footprint_mib": 7.3,
+   "cpu_seconds": 0.56
+  },
+  {
+   "label": "com.apple.assetsubscriptiond",
+   "name": "assetsubscriptiond",
+   "footprint_mib": 7.3,
+   "cpu_seconds": 0.51
+  },
+  {
+   "label": "",
+   "name": "AccessibilityControlsExtension",
+   "footprint_mib": 7.2,
+   "cpu_seconds": 1.6
+  },
+  {
+   "label": "com.apple.NPKCompanionAgent",
+   "name": "NPKCompanionAgent",
+   "footprint_mib": 7.2,
+   "cpu_seconds": 1.85
+  },
+  {
+   "label": "com.apple.intelligencecontextd",
+   "name": "intelligencecontextd",
+   "footprint_mib": 7.2,
+   "cpu_seconds": 2.8
+  },
+  {
+   "label": "com.apple.activityawardsd",
+   "name": "activityawardsd",
+   "footprint_mib": 7.2,
+   "cpu_seconds": 0.41
+  },
+  {
+   "label": "",
+   "name": "logd",
+   "footprint_mib": 7.1,
+   "cpu_seconds": 2.23
+  },
+  {
+   "label": "com.apple.FileProvider",
+   "name": "fileproviderd",
+   "footprint_mib": 7.1,
+   "cpu_seconds": 0.63
+  },
+  {
+   "label": "com.apple.appleaccountd",
+   "name": "appleaccountd",
+   "footprint_mib": 7.1,
+   "cpu_seconds": 0.8
+  },
+  {
+   "label": "com.apple.bulletindistributord",
+   "name": "bulletindistributord",
+   "footprint_mib": 7.1,
+   "cpu_seconds": 1.85
+  },
+  {
+   "label": "com.apple.hybridsearchd",
+   "name": "hybridsearchd",
+   "footprint_mib": 7.1,
+   "cpu_seconds": 0.28
+  },
+  {
+   "label": "com.apple.peopled",
+   "name": "peopled",
+   "footprint_mib": 7.0,
+   "cpu_seconds": 0.56
+  },
+  {
+   "label": "com.apple.avatarsd",
+   "name": "avatarsd",
+   "footprint_mib": 6.9,
+   "cpu_seconds": 0.54
+  },
+  {
+   "label": "com.apple.diagnosticextensionsd",
+   "name": "diagnosticextensionsd",
+   "footprint_mib": 6.9,
+   "cpu_seconds": 0.56
+  },
+  {
+   "label": "com.apple.siriknowledged",
+   "name": "siriknowledged",
+   "footprint_mib": 6.9,
+   "cpu_seconds": 0.52
+  },
+  {
+   "label": "com.apple.nanoprefsyncd.2",
+   "name": "nanoprefsyncd",
+   "footprint_mib": 6.9,
+   "cpu_seconds": 0.27
+  },
+  {
+   "label": "",
+   "name": "SeymourMetricsService",
+   "footprint_mib": 6.9,
+   "cpu_seconds": 0.25
+  },
+  {
+   "label": "com.apple.voicebankingd",
+   "name": "voicebankingd",
+   "footprint_mib": 6.9,
+   "cpu_seconds": 0.34
+  },
+  {
+   "label": "com.apple.nsurlsessiond",
+   "name": "nsurlsessiond",
+   "footprint_mib": 6.9,
+   "cpu_seconds": 1.36
+  },
+  {
+   "label": "com.apple.sleepd",
+   "name": "sleepd",
+   "footprint_mib": 6.9,
+   "cpu_seconds": 0.4
+  },
+  {
+   "label": "com.apple.companionappd",
+   "name": "companionappd",
+   "footprint_mib": 6.8,
+   "cpu_seconds": 1.89
+  },
+  {
+   "label": "com.apple.addressbooksyncd",
+   "name": "addressbooksyncd",
+   "footprint_mib": 6.7,
+   "cpu_seconds": 1.86
+  },
+  {
+   "label": "com.apple.FamilyControlsAgent",
+   "name": "FamilyControlsAgent",
+   "footprint_mib": 6.7,
+   "cpu_seconds": 0.77
+  },
+  {
+   "label": "com.apple.brook.brookcompaniond",
+   "name": "brookcompaniond",
+   "footprint_mib": 6.6,
+   "cpu_seconds": 0.32
+  },
+  {
+   "label": "com.apple.securityd",
+   "name": "securityd",
+   "footprint_mib": 6.6,
+   "cpu_seconds": 1.52
+  },
+  {
+   "label": "",
+   "name": "MessagesActionExtension",
+   "footprint_mib": 6.6,
+   "cpu_seconds": 0.38
+  },
+  {
+   "label": "com.apple.geoanalyticsd",
+   "name": "geoanalyticsd",
+   "footprint_mib": 6.5,
+   "cpu_seconds": 0.23
+  },
+  {
+   "label": "com.apple.jetpackassetd",
+   "name": "jetpackassetd",
+   "footprint_mib": 6.5,
+   "cpu_seconds": 0.49
+  },
+  {
+   "label": "",
+   "name": "SiriAUSP",
+   "footprint_mib": 6.5,
+   "cpu_seconds": 0.39
+  },
+  {
+   "label": "",
+   "name": "MauiAUSP",
+   "footprint_mib": 6.5,
+   "cpu_seconds": 0.39
+  },
+  {
+   "label": "com.apple.AuthenticationServicesCore.AuthenticationServicesAgent",
+   "name": "AuthenticationServicesAgent",
+   "footprint_mib": 6.4,
+   "cpu_seconds": 1.53
+  },
+  {
+   "label": "",
+   "name": "AMDEngagementExtension",
+   "footprint_mib": 6.4,
+   "cpu_seconds": 0.22
+  },
+  {
+   "label": "com.apple.contactsd",
+   "name": "contactsd",
+   "footprint_mib": 6.4,
+   "cpu_seconds": 0.24
+  },
+  {
+   "label": "",
+   "name": "FitnessIntelligenceInferenceService",
+   "footprint_mib": 6.4,
+   "cpu_seconds": 0.38
+  },
+  {
+   "label": "",
+   "name": "com.apple.MobileAsset.DownloadService.Builtin",
+   "footprint_mib": 6.4,
+   "cpu_seconds": 1.77
+  },
+  {
+   "label": "",
+   "name": "MacinTalkAUSP",
+   "footprint_mib": 6.4,
+   "cpu_seconds": 0.37
+  },
+  {
+   "label": "com.apple.dmd",
+   "name": "dmd",
+   "footprint_mib": 6.3,
+   "cpu_seconds": 0.35
+  },
+  {
+   "label": "com.apple.sociallayerd",
+   "name": "sociallayerd",
+   "footprint_mib": 6.3,
+   "cpu_seconds": 1.48
+  },
+  {
+   "label": "com.apple.replicatord",
+   "name": "replicatord",
+   "footprint_mib": 6.3,
+   "cpu_seconds": 0.24
+  },
+  {
+   "label": "com.apple.familycircled",
+   "name": "familycircled",
+   "footprint_mib": 6.3,
+   "cpu_seconds": 0.47
+  },
+  {
+   "label": "com.apple.syncdefaultsd",
+   "name": "syncdefaultsd",
+   "footprint_mib": 6.2,
+   "cpu_seconds": 0.57
+  },
+  {
+   "label": "",
+   "name": "TrialArchivingService",
+   "footprint_mib": 6.2,
+   "cpu_seconds": 0.24
+  },
+  {
+   "label": "com.apple.biomesyncd",
+   "name": "biomesyncd",
+   "footprint_mib": 6.2,
+   "cpu_seconds": 0.5
+  },
+  {
+   "label": "com.apple.deviceaccessd",
+   "name": "deviceaccessd",
+   "footprint_mib": 6.2,
+   "cpu_seconds": 0.44
+  },
+  {
+   "label": "com.apple.eligibilityd",
+   "name": "eligibilityd",
+   "footprint_mib": 6.2,
+   "cpu_seconds": 0.3
+  },
+  {
+   "label": "com.apple.UsageTrackingAgent",
+   "name": "UsageTrackingAgent",
+   "footprint_mib": 6.1,
+   "cpu_seconds": 0.27
+  },
+  {
+   "label": "com.apple.WebBookmarks.webbookmarksd",
+   "name": "webbookmarksd",
+   "footprint_mib": 6.1,
+   "cpu_seconds": 1.63
+  },
+  {
+   "label": "com.apple.akd",
+   "name": "akd",
+   "footprint_mib": 6.1,
+   "cpu_seconds": 0.5
+  },
+  {
+   "label": "com.apple.wcd",
+   "name": "wcd",
+   "footprint_mib": 6.0,
+   "cpu_seconds": 0.64
+  },
+  {
+   "label": "com.apple.carkitd",
+   "name": "carkitd",
+   "footprint_mib": 6.0,
+   "cpu_seconds": 0.28
+  },
+  {
+   "label": "com.apple.ind",
+   "name": "ind",
+   "footprint_mib": 6.0,
+   "cpu_seconds": 0.44
+  },
+  {
+   "label": "com.apple.communicationtrustd",
+   "name": "communicationtrustd",
+   "footprint_mib": 6.0,
+   "cpu_seconds": 0.2
+  },
+  {
+   "label": "com.apple.fitnessintelligenced",
+   "name": "fitnessintelligenced",
+   "footprint_mib": 5.9,
+   "cpu_seconds": 0.35
+  },
+  {
+   "label": "com.apple.remotemanagementd",
+   "name": "remotemanagementd",
+   "footprint_mib": 5.9,
+   "cpu_seconds": 0.25
+  },
+  {
+   "label": "",
+   "name": "com.apple.CallKit.CallDirectoryMaintenance",
+   "footprint_mib": 5.8,
+   "cpu_seconds": 0.2
+  },
+  {
+   "label": "com.apple.medialibraryd",
+   "name": "medialibraryd",
+   "footprint_mib": 5.8,
+   "cpu_seconds": 0.28
+  },
+  {
+   "label": "",
+   "name": "SetStoreUpdateService",
+   "footprint_mib": 5.8,
+   "cpu_seconds": 0.2
+  },
+  {
+   "label": "com.apple.managedassetsd",
+   "name": "managedassetsd",
+   "footprint_mib": 5.8,
+   "cpu_seconds": 0.49
+  },
+  {
+   "label": "com.apple.pluginkit.pkd",
+   "name": "pkd",
+   "footprint_mib": 5.8,
+   "cpu_seconds": 0.31
+  },
+  {
+   "label": "",
+   "name": "MTLCompilerService",
+   "footprint_mib": 5.8,
+   "cpu_seconds": 2.13
+  },
+  {
+   "label": "com.apple.homeeventsd",
+   "name": "homeeventsd",
+   "footprint_mib": 5.7,
+   "cpu_seconds": 0.25
+  },
+  {
+   "label": "com.apple.GameController.gamecontrollerd",
+   "name": "gamecontrollerd",
+   "footprint_mib": 5.7,
+   "cpu_seconds": 0.3
+  },
+  {
+   "label": "",
+   "name": "SeymourAssetService",
+   "footprint_mib": 5.7,
+   "cpu_seconds": 0.21
+  },
+  {
+   "label": "",
+   "name": "MTLCompilerService",
+   "footprint_mib": 5.7,
+   "cpu_seconds": 0.65
+  },
+  {
+   "label": "com.apple.trustd",
+   "name": "trustd",
+   "footprint_mib": 5.6,
+   "cpu_seconds": 2.92
+  },
+  {
+   "label": "",
+   "name": "AppIntentsLiveEntityService",
+   "footprint_mib": 5.6,
+   "cpu_seconds": 0.2
+  },
+  {
+   "label": "com.apple.ManagedSettingsAgent",
+   "name": "ManagedSettingsAgent",
+   "footprint_mib": 5.5,
+   "cpu_seconds": 0.29
+  },
+  {
+   "label": "com.apple.CoreSimulator.bridge",
+   "name": "CoreSimulatorBridge",
+   "footprint_mib": 5.5,
+   "cpu_seconds": 0.41
+  },
+  {
+   "label": "com.apple.accountsd",
+   "name": "accountsd",
+   "footprint_mib": 5.5,
+   "cpu_seconds": 0.26
+  },
+  {
+   "label": "com.apple.UserEventAgent-System",
+   "name": "UserEventAgent",
+   "footprint_mib": 5.5,
+   "cpu_seconds": 0.43
+  },
+  {
+   "label": "com.apple.appprotectiond",
+   "name": "appprotectiond",
+   "footprint_mib": 5.5,
+   "cpu_seconds": 0.19
+  },
+  {
+   "label": "com.apple.AppSSODaemon",
+   "name": "AppSSODaemon",
+   "footprint_mib": 5.5,
+   "cpu_seconds": 0.21
+  },
+  {
+   "label": "com.apple.DeviceConfigurationAgent",
+   "name": "DeviceConfigurationAgent",
+   "footprint_mib": 5.4,
+   "cpu_seconds": 0.29
+  },
+  {
+   "label": "com.apple.featureaccessd",
+   "name": "featureaccessd",
+   "footprint_mib": 5.4,
+   "cpu_seconds": 0.23
+  },
+  {
+   "label": "",
+   "name": "AccountSubscriber",
+   "footprint_mib": 5.3,
+   "cpu_seconds": 0.4
+  },
+  {
+   "label": "",
+   "name": "SetStoreUpdateService",
+   "footprint_mib": 5.3,
+   "cpu_seconds": 0.22
+  },
+  {
+   "label": "",
+   "name": "localspeechrecognition",
+   "footprint_mib": 5.3,
+   "cpu_seconds": 0.23
+  },
+  {
+   "label": "com.apple.tccd",
+   "name": "tccd",
+   "footprint_mib": 5.3,
+   "cpu_seconds": 0.38
+  },
+  {
+   "label": "com.apple.pasteboard.pasted",
+   "name": "pasted",
+   "footprint_mib": 5.2,
+   "cpu_seconds": 0.29
+  },
+  {
+   "label": "",
+   "name": "diagnosticd",
+   "footprint_mib": 5.2,
+   "cpu_seconds": 56.78
+  },
+  {
+   "label": "com.apple.finhealthd",
+   "name": "finhealthd",
+   "footprint_mib": 5.2,
+   "cpu_seconds": 0.26
+  },
+  {
+   "label": "com.apple.nanoregistryd",
+   "name": "nanoregistryd",
+   "footprint_mib": 5.2,
+   "cpu_seconds": 0.36
+  },
+  {
+   "label": "com.apple.swcd",
+   "name": "swcd",
+   "footprint_mib": 5.2,
+   "cpu_seconds": 0.3
+  },
+  {
+   "label": "com.apple.ClipServices.clipserviced",
+   "name": "clipserviced",
+   "footprint_mib": 5.1,
+   "cpu_seconds": 0.26
+  },
+  {
+   "label": "com.apple.assistant_cdmd",
+   "name": "assistant_cdmd",
+   "footprint_mib": 5.1,
+   "cpu_seconds": 0.39
+  },
+  {
+   "label": "com.apple.lsd",
+   "name": "lsd",
+   "footprint_mib": 5.1,
+   "cpu_seconds": 0.27
+  },
+  {
+   "label": "com.apple.cdpd",
+   "name": "cdpd",
+   "footprint_mib": 5.0,
+   "cpu_seconds": 0.24
+  },
+  {
+   "label": "",
+   "name": "deviceconfigurationd",
+   "footprint_mib": 5.0,
+   "cpu_seconds": 0.24
+  },
+  {
+   "label": "com.apple.localizationswitcherd",
+   "name": "localizationswitcherd",
+   "footprint_mib": 5.0,
+   "cpu_seconds": 0.27
+  },
+  {
+   "label": "",
+   "name": "SetStoreUpdateService",
+   "footprint_mib": 5.0,
+   "cpu_seconds": 0.22
+  },
+  {
+   "label": "",
+   "name": "SetStoreUpdateService",
+   "footprint_mib": 4.9,
+   "cpu_seconds": 0.19
+  },
+  {
+   "label": "",
+   "name": "com.apple.FaceTime.FTConversationService",
+   "footprint_mib": 4.9,
+   "cpu_seconds": 0.18
+  },
+  {
+   "label": "",
+   "name": "DeviceConfigurationSubscriber",
+   "footprint_mib": 4.9,
+   "cpu_seconds": 0.17
+  },
+  {
+   "label": "com.apple.installcoordinationd",
+   "name": "installcoordinationd",
+   "footprint_mib": 4.9,
+   "cpu_seconds": 0.19
+  },
+  {
+   "label": "com.apple.systemstatusd",
+   "name": "systemstatusd",
+   "footprint_mib": 4.9,
+   "cpu_seconds": 0.2
+  },
+  {
+   "label": "",
+   "name": "ASConfigurationSubscriber",
+   "footprint_mib": 4.8,
+   "cpu_seconds": 0.22
+  },
+  {
+   "label": "",
+   "name": "ExtensibleSSOSubscriber",
+   "footprint_mib": 4.8,
+   "cpu_seconds": 0.18
+  },
+  {
+   "label": "com.apple.containermanagerd",
+   "name": "containermanagerd",
+   "footprint_mib": 4.7,
+   "cpu_seconds": 0.34
+  },
+  {
+   "label": "com.apple.devicecheckd",
+   "name": "devicecheckd",
+   "footprint_mib": 4.7,
+   "cpu_seconds": 0.26
+  },
+  {
+   "label": "com.apple.eventkitsyncd",
+   "name": "eventkitsyncd",
+   "footprint_mib": 4.7,
+   "cpu_seconds": 0.29
+  },
+  {
+   "label": "com.apple.revisiond",
+   "name": "revisiond",
+   "footprint_mib": 4.6,
+   "cpu_seconds": 0.21
+  },
+  {
+   "label": "com.apple.appconduitd",
+   "name": "appconduitd",
+   "footprint_mib": 4.6,
+   "cpu_seconds": 0.23
+  },
+  {
+   "label": "",
+   "name": "NetworkExtensionSubscriber",
+   "footprint_mib": 4.6,
+   "cpu_seconds": 0.18
+  },
+  {
+   "label": "",
+   "name": "HostInferenceProviderService",
+   "footprint_mib": 4.5,
+   "cpu_seconds": 0.2
+  },
+  {
+   "label": "com.apple.FileCoordination",
+   "name": "filecoordinationd",
+   "footprint_mib": 4.4,
+   "cpu_seconds": 0.22
+  },
+  {
+   "label": "",
+   "name": "containermanagerd_system",
+   "footprint_mib": 4.4,
+   "cpu_seconds": 0.25
+  },
+  {
+   "label": "",
+   "name": "ManagedSettingsSubscriber",
+   "footprint_mib": 4.4,
+   "cpu_seconds": 0.16
+  },
+  {
+   "label": "",
+   "name": "UserFontManager",
+   "footprint_mib": 4.4,
+   "cpu_seconds": 0.16
+  },
+  {
+   "label": "",
+   "name": "ManagedAppsSubscriber",
+   "footprint_mib": 4.3,
+   "cpu_seconds": 0.17
+  },
+  {
+   "label": "com.apple.followupd",
+   "name": "followupd",
+   "footprint_mib": 4.3,
+   "cpu_seconds": 0.18
+  },
+  {
+   "label": "com.apple.mobile.installd",
+   "name": "installd",
+   "footprint_mib": 4.2,
+   "cpu_seconds": 0.18
+  },
+  {
+   "label": "",
+   "name": "PasscodeSettingsSubscriber",
+   "footprint_mib": 4.2,
+   "cpu_seconds": 0.14
+  },
+  {
+   "label": "com.apple.purplebuddy.budd",
+   "name": "budd",
+   "footprint_mib": 4.2,
+   "cpu_seconds": 0.19
+  },
+  {
+   "label": "",
+   "name": "InteractiveLegacyProfilesSubscriber",
+   "footprint_mib": 4.2,
+   "cpu_seconds": 0.14
+  },
+  {
+   "label": "",
+   "name": "LegacyProfilesSubscriber",
+   "footprint_mib": 4.2,
+   "cpu_seconds": 0.15
+  },
+  {
+   "label": "com.apple.fontservicesd",
+   "name": "fontservicesd",
+   "footprint_mib": 4.2,
+   "cpu_seconds": 0.2
+  },
+  {
+   "label": "com.apple.MobileInstallationHelperService",
+   "name": "com.apple.MobileInstallationHelperService",
+   "footprint_mib": 4.1,
+   "cpu_seconds": 0.18
+  },
+  {
+   "label": "com.apple.countryd",
+   "name": "countryd",
+   "footprint_mib": 4.1,
+   "cpu_seconds": 0.17
+  },
+  {
+   "label": "",
+   "name": "WatchEnrollmentSubscriber",
+   "footprint_mib": 4.1,
+   "cpu_seconds": 0.15
+  },
+  {
+   "label": "com.apple.configd_sim",
+   "name": "configd_sim",
+   "footprint_mib": 4.1,
+   "cpu_seconds": 0.5
+  },
+  {
+   "label": "com.apple.AssetCacheLocatorService",
+   "name": "AssetCacheLocatorService",
+   "footprint_mib": 4.1,
+   "cpu_seconds": 0.2
+  },
+  {
+   "label": "com.apple.cfprefsd.xpc.daemon",
+   "name": "cfprefsd",
+   "footprint_mib": 4.1,
+   "cpu_seconds": 2.08
+  },
+  {
+   "label": "com.apple.GSSCred",
+   "name": "GSSCred",
+   "footprint_mib": 4.1,
+   "cpu_seconds": 0.16
+  },
+  {
+   "label": "",
+   "name": "SecuritySubscriber",
+   "footprint_mib": 4.0,
+   "cpu_seconds": 0.15
+  },
+  {
+   "label": "com.apple.nanoregistrylaunchd",
+   "name": "nanoregistrylaunchd",
+   "footprint_mib": 4.0,
+   "cpu_seconds": 0.19
+  },
+  {
+   "label": "",
+   "name": "ManagementTestSubscriber",
+   "footprint_mib": 4.0,
+   "cpu_seconds": 0.17
+  },
+  {
+   "label": "",
+   "name": "STExtractionService",
+   "footprint_mib": 3.9,
+   "cpu_seconds": 0.32
+  },
+  {
+   "label": "com.apple.ids_simd",
+   "name": "ids_simd",
+   "footprint_mib": 3.9,
+   "cpu_seconds": 0.17
+  },
+  {
+   "label": "com.apple.distnoted.xpc.daemon",
+   "name": "distnoted",
+   "footprint_mib": 3.7,
+   "cpu_seconds": 0.19
+  },
+  {
+   "label": "",
+   "name": "logd_helper",
+   "footprint_mib": 3.7,
+   "cpu_seconds": 0.58
+  },
+  {
+   "label": "",
+   "name": "notifyd",
+   "footprint_mib": 3.3,
+   "cpu_seconds": 1.01
+  },
+  {
+   "label": "com.apple.syslogd",
+   "name": "syslogd",
+   "footprint_mib": 2.1,
+   "cpu_seconds": 0.01
+  },
+  {
+   "label": "com.apple.aslmanager",
+   "name": "aslmanager",
+   "footprint_mib": 1.9,
+   "cpu_seconds": 0.01
+  }
+ ]
+}

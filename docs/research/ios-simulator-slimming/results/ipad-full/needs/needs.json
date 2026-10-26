@@ -1,0 +1,92 @@
+[
+ {
+  "need": "install and launch",
+  "ok": true,
+  "evidence": "install 1083 ms, launch 608 ms, alerts answered ['Allow', 'Allow While Using App']",
+  "ms": 21258
+ },
+ {
+  "need": "accessibility tree",
+  "ok": true,
+  "evidence": "11 elements",
+  "ms": 21
+ },
+ {
+  "need": "HID tap",
+  "ok": true,
+  "evidence": "tap counted",
+  "ms": 138
+ },
+ {
+  "need": "typing as keys",
+  "ok": true,
+  "evidence": "typed: Hello idb 123",
+  "ms": 5157
+ },
+ {
+  "need": "privacy grants",
+  "ok": true,
+  "evidence": "contacts: 3 photos: 3 1",
+  "ms": 3922
+ },
+ {
+  "need": "location",
+  "ok": true,
+  "evidence": "location: 51.5007,-0.1246",
+  "ms": 3392
+ },
+ {
+  "need": "push",
+  "ok": true,
+  "evidence": "simctl push 469 ms; push: probe-push",
+  "ms": 507
+ },
+ {
+  "need": "pbcopy and pbpaste",
+  "ok": true,
+  "evidence": "pbpaste gave 'probe paste \u00e9 \ud83d\ude00'",
+  "ms": 703
+ },
+ {
+  "need": "paste from the keyboard's suggestion",
+  "ok": true,
+  "evidence": "'typed: suggested \u00e9'",
+  "ms": 6173
+ },
+ {
+  "need": "appearance",
+  "ok": true,
+  "evidence": "read back dark, light; dark.png",
+  "ms": 1466
+ },
+ {
+  "need": "content size",
+  "ok": true,
+  "evidence": "read back extra-extra-large, large",
+  "ms": 777
+ },
+ {
+  "need": "status bar",
+  "ok": true,
+  "evidence": "list shows 9:41: True; status-bar.png",
+  "ms": 907
+ },
+ {
+  "need": "screenshot",
+  "ok": true,
+  "evidence": "simctl 638 ms 205413 bytes; idb 76 ms 205273 bytes",
+  "ms": 714
+ },
+ {
+  "need": "recordVideo",
+  "ok": true,
+  "evidence": "198174 bytes",
+  "ms": 2549
+ },
+ {
+  "need": "Safari: open URL, page script, paste into the page",
+  "ok": true,
+  "evidence": "openurl 212 ms; page script ran: True; HID Cmd+V pasted: False; pasted into the page: True",
+  "ms": 14043
+ }
+]

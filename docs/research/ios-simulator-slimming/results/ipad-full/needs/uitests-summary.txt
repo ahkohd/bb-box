@@ -1,0 +1,6 @@
+ui tests: exit 143, 427.5 s
+	 Executed 3 tests, with 0 failures (0 unexpected) in 93.264 (93.271) seconds
+Test Suite 'SlimProbeUITests.xctest' passed at 2026-10-26 06:31:14.522.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 93.264 (93.272) seconds
+Test Suite 'All tests' passed at 2026-10-26 06:31:14.522.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 93.264 (93.273) seconds

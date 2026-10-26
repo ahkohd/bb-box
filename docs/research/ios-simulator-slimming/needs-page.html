@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head><meta name="viewport" content="width=device-width, initial-scale=1"><title>needs</title></head>
+<body style="font: 24px system-ui; margin: 0">
+<textarea id="field" style="display: block; box-sizing: border-box; width: 100%; height: 300px; margin-top: 80px; font-size: 24px"></textarea>
+<p id="state">loading</p>
+<script>
+fetch("/ran-js?" + Date.now()).then(() => { document.getElementById("state").textContent = "script ran"; });
+document.getElementById("field").addEventListener("input", (event) => {
+  fetch("/typed?" + encodeURIComponent(event.target.value));
+});
+</script>
+</body>
+</html>

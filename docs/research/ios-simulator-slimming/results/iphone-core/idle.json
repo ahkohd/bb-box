@@ -1,0 +1,70 @@
+{
+ "seconds": 300,
+ "cpu_seconds": 91.22,
+ "cores": 0.3041,
+ "processes_start": 149,
+ "processes_end": 149,
+ "footprint_mib_end": 1176.7,
+ "busiest": [
+  {
+   "name": "diagnosticd",
+   "cpu": 44.449
+  },
+  {
+   "name": "apsd",
+   "cpu": 26.167
+  },
+  {
+   "name": "trustd",
+   "cpu": 3.308
+  },
+  {
+   "name": "SpringBoard",
+   "cpu": 2.469
+  },
+  {
+   "name": "securityd",
+   "cpu": 1.388
+  },
+  {
+   "name": "logd",
+   "cpu": 1.217
+  },
+  {
+   "name": "cfprefsd",
+   "cpu": 0.937
+  },
+  {
+   "name": "dataaccessd",
+   "cpu": 0.768
+  },
+  {
+   "name": "remindd",
+   "cpu": 0.694
+  },
+  {
+   "name": "identityservicesd",
+   "cpu": 0.566
+  },
+  {
+   "name": "sharingd",
+   "cpu": 0.433
+  },
+  {
+   "name": "FamilyControlsAgent",
+   "cpu": 0.425
+  },
+  {
+   "name": "configd_sim",
+   "cpu": 0.402
+  },
+  {
+   "name": "launchd_sim",
+   "cpu": 0.389
+  },
+  {
+   "name": "callservicesd",
+   "cpu": 0.376
+  }
+ ]
+}

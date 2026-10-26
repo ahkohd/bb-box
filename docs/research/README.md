@@ -19,6 +19,7 @@ decided is in the [decisions](../decisions/README.md).
 | [Cloud hosts: a plan for steps 1 and 2](cloud-hosts.md) | 22 October 2026 | [055](../decisions/055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md), not yet built |
 | [iOS Simulator boxes](ios-simulator-boxes.md) | 26 October 2026 | not yet |
 | [Android emulator boxes](android-emulator-boxes.md) | 26 October 2026 | not yet |
+| [Slimming an iOS Simulator](ios-simulator-slimming.md) | 26 October 2026 | not yet |
 
 [computer-use-rig](computer-use-rig/README.md) is the test rig the computer
 use research ran in.

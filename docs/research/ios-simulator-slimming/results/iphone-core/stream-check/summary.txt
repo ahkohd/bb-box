@@ -1,0 +1,2 @@
+round 1: first frame 378.8 ms; tap to frame {'n': 5, 'median': 65.1, 'p95': 503.2, 'min': 29.1, 'max': 503.2} ; missed 15 ; idle 0.0 fps; busy 57.7 fps
+round 2: first frame None ms; tap to frame {'n': 20, 'median': 77.7, 'p95': 109.7, 'min': 49.2, 'max': 109.7} ; missed 0 ; idle 0.0 fps; busy 57.9 fps
