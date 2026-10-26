@@ -1,0 +1,2 @@
+round 1: first frame 478.3 ms; tap to frame None ; missed 20 ; idle 0.4 fps; busy 57.1 fps
+round 2: first frame 1811.8 ms; tap to frame None ; missed 20 ; idle 0.0 fps; busy 57.5 fps

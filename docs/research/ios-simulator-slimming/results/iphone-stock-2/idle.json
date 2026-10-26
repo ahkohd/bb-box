@@ -1,0 +1,70 @@
+{
+ "seconds": 300,
+ "cpu_seconds": 110.85,
+ "cores": 0.3695,
+ "processes_start": 242,
+ "processes_end": 244,
+ "footprint_mib_end": 2216.4,
+ "busiest": [
+  {
+   "name": "diagnosticd",
+   "cpu": 51.098
+  },
+  {
+   "name": "apsd",
+   "cpu": 30.456
+  },
+  {
+   "name": "trustd",
+   "cpu": 3.584
+  },
+  {
+   "name": "SpringBoard",
+   "cpu": 2.598
+  },
+  {
+   "name": "logd",
+   "cpu": 1.503
+  },
+  {
+   "name": "securityd",
+   "cpu": 1.5
+  },
+  {
+   "name": "AuthenticationServicesAgent",
+   "cpu": 1.261
+  },
+  {
+   "name": "cfprefsd",
+   "cpu": 1.079
+  },
+  {
+   "name": "spotlightknowledged.updater",
+   "cpu": 1.049
+  },
+  {
+   "name": "identityservicesd",
+   "cpu": 0.973
+  },
+  {
+   "name": "dataaccessd",
+   "cpu": 0.63
+  },
+  {
+   "name": "remindd",
+   "cpu": 0.538
+  },
+  {
+   "name": "launchd_sim",
+   "cpu": 0.524
+  },
+  {
+   "name": "com.apple.MapKit.SnapshotService",
+   "cpu": 0.522
+  },
+  {
+   "name": "sharingd",
+   "cpu": 0.515
+  }
+ ]
+}

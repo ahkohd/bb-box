@@ -1,0 +1,45 @@
+name: SlimProbe
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "27.0"
+settings:
+  base:
+    SWIFT_VERSION: "5"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+targets:
+  SlimProbe:
+    type: application
+    platform: iOS
+    sources: [SlimProbe]
+    info:
+      path: SlimProbe/Info.plist
+      properties:
+        CFBundleDisplayName: SlimProbe
+        UILaunchScreen: {}
+        NSLocationWhenInUseUsageDescription: The probe shows where the device is.
+        NSContactsUsageDescription: The probe shows whether contacts access was granted.
+        NSPhotoLibraryUsageDescription: The probe shows whether photos access was granted.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.slimprobe
+  SlimProbeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [SlimProbeUITests]
+    dependencies:
+      - target: SlimProbe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.slimprobe.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  SlimProbe:
+    build:
+      targets:
+        SlimProbe: all
+        SlimProbeUITests: [test]
+    test:
+      targets: [SlimProbeUITests]

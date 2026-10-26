@@ -1,0 +1,70 @@
+{
+ "seconds": 300,
+ "cpu_seconds": 4.45,
+ "cores": 0.0148,
+ "processes_start": 66,
+ "processes_end": 66,
+ "footprint_mib_end": 509.2,
+ "busiest": [
+  {
+   "name": "SpringBoard",
+   "cpu": 2.366
+  },
+  {
+   "name": "diagnosticd",
+   "cpu": 0.695
+  },
+  {
+   "name": "mapssyncd",
+   "cpu": 0.296
+  },
+  {
+   "name": "dasd",
+   "cpu": 0.204
+  },
+  {
+   "name": "DockFolderViewService",
+   "cpu": 0.158
+  },
+  {
+   "name": "launchd_sim",
+   "cpu": 0.146
+  },
+  {
+   "name": "locationd",
+   "cpu": 0.116
+  },
+  {
+   "name": "axassetsd",
+   "cpu": 0.114
+  },
+  {
+   "name": "logd",
+   "cpu": 0.089
+  },
+  {
+   "name": "MercuryPosterExtension",
+   "cpu": 0.081
+  },
+  {
+   "name": "notifyd",
+   "cpu": 0.036
+  },
+  {
+   "name": "backboardd",
+   "cpu": 0.031
+  },
+  {
+   "name": "logd_helper",
+   "cpu": 0.02
+  },
+  {
+   "name": "aslmanager",
+   "cpu": 0.017
+  },
+  {
+   "name": "cfprefsd",
+   "cpu": 0.016
+  }
+ ]
+}

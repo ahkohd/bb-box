@@ -1,0 +1,7 @@
+slim, booted: disabled 44; after 60 s: 161 1297.9
+after simctl reboot (7 s): disabled 44; after 60 s: 138 1063.2
+enable 44 labels in 11.6 s
+turned off: enable and reboot took 19 s; disabled 0; after 60 s: 245 2406.4
+disable 44 labels in 13.7 s
+turned on again: disable and reboot took 22 s; disabled 44; after 60 s: 135 1052.1
+after simctl erase, first boot 20 s: disabled 44; after 60 s: 156 1178.0

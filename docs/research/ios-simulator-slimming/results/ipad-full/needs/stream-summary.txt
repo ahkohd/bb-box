@@ -1,0 +1,1 @@
+stream: first frame 436.9 ms; tap to frame {'n': 20, 'median': 82.4, 'p95': 154.8, 'min': 55.9, 'max': 154.8} ; missed 0 ; busy 47.4 fps
