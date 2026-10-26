@@ -126,6 +126,10 @@ export class Simctl {
     await this.#must(to ? "set the device's location" : "clear the device's location", ["location", udid, ...(to ? ["set", `${to.latitude},${to.longitude}`] : ["clear"])], { signal, timeoutMs: 30_000 });
   }
 
+  async openUrl(udid: string, url: string, signal?: AbortSignal): Promise<void> {
+    await this.#must(`open ${url}`, ["openurl", udid, url], { signal, timeoutMs: 30_000 });
+  }
+
   async install(udid: string, app: string, signal?: AbortSignal): Promise<void> {
     await this.#must(`install ${app}`, ["install", udid, app], { signal, timeoutMs: 300_000 });
   }

@@ -8,7 +8,8 @@ model and encoder (E6, E7, E17), and unit 3.1's of the Android template
 and its slimming), and unit 4.2's of the iOS driver (E4, E5), and units
 5.1's shared parts and 5.2's of input on iOS (E8, E9, E14, E21, and how iOS
 pastes), and unit 6.3's of the iOS controls (E11, and each read-back), and unit 6.1's
-of the frame (turns, folds drawn from the table, and the island), are
+of the frame (turns, folds drawn from the table, and the island), and unit
+6.4's of the toolbar, are
 in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
@@ -958,16 +959,26 @@ volume, Siri and the Action button (rare, and idb sends no volume); shake
 decision).
 
 - **Narrow panels.** With the panel under 480 px wide, or the device's
-  screen under 280 px wide beside the bar, the bar goes below the frame as
+  screen under 280 px wide beside the bar where the row leaves it wider, as
+  unit 6.4 found the row only shrinks a device the panel's height limits,
+  the bar goes below the frame as
   one row: Home, Back and Recents on Android, Rotate, Fold on foldables,
   and More, which takes the rest. Targets stay 44 px. On a phone's BB the
   row is the same.
 - **Accessible.** Each control has a name, Appearance and Fold say which is
   on, popovers close with Escape and a click outside, and a change of the
   device's state is announced to a screen reader.
+- **Open link and Screenshot are not box_device actions,** as box_device
+  leaves URLs and screenshots to the computer tools. Open link is an `open`
+  request on the person's input connection, which the agent's
+  `computer_launch` can share in unit 7.1, refused for the agent while a
+  person has control. Screenshot asks the plugin for the device server's
+  own screenshot, so it needs no control.
 - **The device picker,** "iPhone 18 Pro" in the top bar, lists the kind's
   models for this box, and switches. A switch to a model not yet booted in
   this box warns that it may take a minute (iOS first boots, 14 to 68 s).
+  The server says which models it booted in this box in its hello's
+  `bootedHere`, kept in `~/.bb-box/device/booted-here.json`.
 - **Device and Desktop** in the top bar, on an ios box only, shows the
   device or the host's desktop, each a kept session (037), so switching is
   instant.

@@ -53,6 +53,7 @@ export interface TestRecord {
   readonly keys: { readonly key: string; readonly down: boolean }[];
   readonly pastes: string[];
   readonly controls: DeviceControl[];
+  readonly opened: string[];
   prepared: number;
 }
 
@@ -73,7 +74,7 @@ class Frames implements VideoSource {
 
 export class TestDriver implements DeviceDriver {
   readonly platform: DevicePlatform;
-  readonly record: TestRecord = { touches: [], keys: [], pastes: [], controls: [], prepared: 0 };
+  readonly record: TestRecord = { touches: [], keys: [], pastes: [], controls: [], opened: [], prepared: 0 };
   readonly #clock: TestDriverClock;
   readonly #listeners = new Set<() => void>();
   readonly #frameWaiters = new Set<() => void>();
@@ -180,7 +181,9 @@ export class TestDriver implements DeviceDriver {
     const size = this.#videoSize();
     const clock = new Date(this.#clock.now()).toISOString().slice(11, 19);
     const clipboard = this.#clipboard ? ["CLIPBOARD", cardLine(this.#clipboard, size)] : [];
-    const lines = [this.#target!.model, `AS AN ${platformWord(this.platform)} DEVICE`, orientationWord(this.#physical), `${size.width}X${size.height}`, `CONTROLS ${this.record.controls.length}`, ...clipboard];
+    const opened = this.record.opened.at(-1);
+    const link = opened ? ["OPENED", cardLine(opened, size)] : [];
+    const lines = [this.#target!.model, `AS AN ${platformWord(this.platform)} DEVICE`, orientationWord(this.#physical), `${size.width}X${size.height}`, `CONTROLS ${this.record.controls.length}`, ...clipboard, ...link];
     return { size, appearance: this.#appearance, lines, clock, touches: this.#touches };
   }
 
@@ -330,6 +333,13 @@ export class TestDriver implements DeviceDriver {
         break;
     }
     this.#changed();
+  }
+
+  async openUrl(url: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    this.#booted();
+    this.record.opened.push(url);
+    this.#draw();
   }
 
   async screenshot(): Promise<Uint8Array> {

@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bb-box device panel</title>
+    <link rel="stylesheet" href="/panel/out.css" />
+    <style>
+      html, body, #root { height: 100%; margin: 0; }
+      body { background: var(--background); color: var(--foreground); font-family: system-ui, sans-serif; }
+      #frame { height: 100%; width: var(--panel-width, 100%); border-right: 1px solid var(--border); }
+    </style>
+    <script>
+      const query = new URLSearchParams(location.search);
+      document.documentElement.classList.add(query.get("theme") === "light" ? "light" : "dark");
+      if (query.get("width")) document.documentElement.style.setProperty("--panel-width", `${query.get("width")}px`);
+    </script>
+  </head>
+  <body>
+    <div id="frame"><div id="root"></div></div>
+    <script type="module" src="/panel/panel.js"></script>
+  </body>
+</html>

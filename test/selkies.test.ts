@@ -237,6 +237,9 @@ test("where the video comes from elsewhere, the box's server takes the keys and 
   const text = `clipboard,${Buffer.from("copied in the box").toString("base64")}`;
   assert.ok(a.got.includes(text), "the viewer with control gets the clipboard");
   assert.ok(!b.got.includes(text), "a viewer without control does not");
+  const answered = 'BB_DEVICE_ANSWER {"id":"v1","ok":true}';
+  await server.pages[0]!.send(answered);
+  await until("a device server's answer, to every viewer, which keeps only its own", () => a.got.includes(answered) && b.got.includes(answered));
   own = true;
   await server.pages[0]!.send('cursor,{"curdata":"x","hotx":0,"hoty":0}');
   await server.pages[0]!.send("BB_PONG,1");

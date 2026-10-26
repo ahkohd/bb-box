@@ -23,6 +23,7 @@ export function devicePaths(home: string) {
     supervisorLock: join(dir, "supervisor.lock"),
     intent: join(dir, "intent.json"),
     state: join(dir, "state.json"),
+    bootedHere: join(dir, "booted-here.json"),
     devices: join(dir, "devices.json"),
     choices: join(dir, "choices.json"),
     servers: join(dir, "server"),

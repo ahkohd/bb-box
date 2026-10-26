@@ -107,7 +107,7 @@ Video also keeps coloured text sharp: when every browser watching a desktop can 
 
 A box can have a device beside its desktop, such as a phone, or a device and no desktop. An `ios` box has an iOS Simulator device, an iPhone or iPad, beside its macOS host's desktop. The test device, a test card that stands in for a phone, is turned on by the advanced `testDevice` setting in the [configuration reference](../reference/configuration.md). The Android emulator comes later.
 
-Take control to use the device, as with a desktop: one control covers the device and the box's desktop. The device's controls, such as Home and Rotate, come in a later version of bb-box. Commands work now: `xcrun simctl` in the box's terminal takes `booted` as the device.
+Take control to use the device, as with a desktop: one control covers the device and the box's desktop. The device's own controls are in a bar beside it, described under [The device's controls](#the-devices-controls). Commands work too: `xcrun simctl` in the box's terminal takes `booted` as the device.
 
 On an `ios` box, the Desktop view is the macOS host's, for Xcode. It says above it: 'Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Device view.' Xcode's Run opens Device Hub even so. bb-box closes it within 5 seconds, by stopping its process: quitting it would shut the device down. `bb box doctor` says whether Device Hub runs on each `ios` box, and how often bb-box has closed it.
 
@@ -117,7 +117,7 @@ The display you see is the only one that gets your keys, your pointer and your c
 
 A device always shows as video, at its own size. It has no VNC, no **Show as VNC** and no High resolution, and it ignores the **Linux desktops as video** setting. Resizing the panel does not resize the device.
 
-The device shows in a frame drawn by bb-box: a phone or tablet in its body, with its side buttons and, on an iPhone, its Dynamic Island. The body is graphite in both of BB's themes, with a light edge in the dark theme and a soft shadow in the light one. The device and its frame fit the panel, and the screen is never drawn larger than its own pixels on your display. In the menu, **Display** has two choices, which last for that box in that browser:
+The device shows in a frame drawn by bb-box: a phone or tablet in its body, with its side buttons and, on an iPhone, its Dynamic Island. The body is graphite in both of BB's themes, with a light edge in the dark theme and a soft shadow in the light one. The device, its frame and its bar of controls fit the panel, and the screen is never drawn larger than its own pixels on your display. In the bar's **More** menu, two choices change how it shows, and last for that box in that browser:
 
 - **Show frame**, on at first: off, the screen shows alone, with its own corners and island.
 - **Pixel for pixel**: each of the device's pixels is one of your display's, and the panel scrolls.
@@ -127,6 +127,33 @@ When the device turns, the frame turns with it in a third of a second, its last 
 While the device starts, its screen is black, with its name and 'Booting'. A device that is asleep shows its last picture dimmed, with 'Asleep' and **Wake**, and one that failed shows why, with **Reboot device**. Either button takes control if you do not have it.
 
 Where your browser cannot play the device's video, as where it has no WebCodecs or the video does not start within 3 seconds, the device shows a picture of its screen a few times a second instead, over the same connection, and says so above it: 'This browser cannot play the device's video, so it shows a picture a few times a second.' It never shows the box's desktop in its place, so a click never lands on the wrong screen. While it waits for its first picture, it shows the device's name and 'Connecting', or 'Booting' while the device starts.
+
+### The device's controls
+
+A narrow bar beside the device holds the controls you use most when testing an app. A control the device does not have is not shown: an iPhone has no **Back**, and only a foldable has **Fold**.
+
+| Control | What it does |
+| --- | --- |
+| **Home** | goes to the Home Screen |
+| **Back**, **Recent apps** | Android only: goes back, or shows the recent apps |
+| **Rotate left**, **Rotate right** | turns the device a quarter turn the way the arrow points |
+| **Fold** | foldables only: closed, half open or open |
+| **Dark appearance** | turns dark mode on or off. Its icon shows which is on: a moon for dark, a sun for light |
+| **Text size** | a slider of the platform's own steps, such as iOS's content sizes, with smaller, larger and **Default** |
+| **Copy screenshot** | copies the device's own pixels to your computer's clipboard as a PNG, or downloads it where your browser will not let bb-box copy a picture |
+| **More** | **Lock** or **Wake**; **Open link…**, which opens a web address in the device's browser or an app's own link, such as `myapp://settings`, in that app; **Location**, a few cities or your own latitude and longitude; **Clean status bar** on iOS, which shows 9:41, full signal and a full battery for screenshots; **Battery**; **Network** on Android; **Show frame** and **Pixel for pixel**; and **Reboot device**, which keeps apps and data |
+
+Using a control takes control from the agent, as **Take control** does, and the toolbar says 'You have control. Hand back when done.' **Copy screenshot** does not take control: it sends the device nothing. On a touch screen the bar says 'Using a control takes control from the agent.' once, under it, until you first use one. While the device boots or switches, the controls wait, and say why.
+
+Controls the device shows for itself, such as Home or a turn, say nothing more. Those that change what you cannot see, such as the location or the battery, say what they did in a note. If the device refuses a control, as when another is still under way, the note says why.
+
+In a panel narrower than 480 pixels, or where the device's screen beside the bar would be narrower than 280 pixels and the row leaves it wider, the bar goes below the device as one row: **Home**, **Back** and **Recent apps** on Android, **Rotate left**, **Fold** on a foldable, and **More**, which holds the rest.
+
+The bar is one stop for the Tab key: the arrow keys move along it, and Enter or Space uses a control. Menus and the text size slider close with Escape. A screen reader hears each control's name and whether **Dark appearance** is on, and what changed on the device, such as 'Turned left. Dark appearance.'
+
+**The device picker**, the device's name in the toolbar, lists the box's devices and switches to another. Each device keeps its own apps and data, so install your app again on the one you switch to. A device not started in this box before says it may take a minute: about 9 to 12 seconds to boot an iPhone or iPad from the image cold, and a minute or more the first time a device is booted at all. One started before takes about 8 seconds.
+
+While a person has control, the agent's `box_device` is refused but for installing an app the device does not have, so it cannot press Home or turn the device while you test.
 
 ### Device input
 

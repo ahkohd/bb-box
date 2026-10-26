@@ -95,3 +95,201 @@ export function TerminalGlyph(props: Props) {
   );
 }
 
+
+export function HomeGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M4 10.5 12 4l8 6.5" />
+      <path d="M6 9v10a1 1 0 0 0 1 1h3.5v-5h3v5H17a1 1 0 0 0 1-1V9" />
+    </Stroked>
+  );
+}
+
+export function BackGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M17 5v14L6 12z" />
+    </Stroked>
+  );
+}
+
+export function RecentsGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+    </Stroked>
+  );
+}
+
+export function RotateLeftGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="10" y="8" width="9" height="13" rx="1.5" />
+      <path d="M4 12.5A7.5 7.5 0 0 1 11.5 5H13" />
+      <path d="m2 10.5 2 2 2-2" />
+    </Stroked>
+  );
+}
+
+export function RotateRightGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="5" y="8" width="9" height="13" rx="1.5" />
+      <path d="M20 12.5A7.5 7.5 0 0 0 12.5 5H11" />
+      <path d="m22 10.5-2 2-2-2" />
+    </Stroked>
+  );
+}
+
+export function FoldGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M12 5v14" />
+      <path d="M12 5 5 7v12l7-2" />
+      <path d="M12 5h5.5a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5H12" />
+    </Stroked>
+  );
+}
+
+export function SunGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4" />
+    </Stroked>
+  );
+}
+
+export function MoonGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />
+    </Stroked>
+  );
+}
+
+export function TextSizeGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="m3 19 4.5-11L12 19M4.6 15h5.8" />
+      <path d="m12.5 19 4.5-14 4.5 14M14.3 13.5h5.4" />
+    </Stroked>
+  );
+}
+
+export function SmallTextGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="m8 17 4-10 4 10M9.4 13.8h5.2" />
+    </Stroked>
+  );
+}
+
+export function LargeTextGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="m5 20 7-16 7 16M7.4 14.8h9.2" />
+    </Stroked>
+  );
+}
+
+export function ScreenshotGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2" />
+      <circle cx="12" cy="12" r="3.5" />
+    </Stroked>
+  );
+}
+
+export function MoreGlyph(props: Props) {
+  return (
+    <Filled {...props}>
+      <circle cx="12" cy="5.5" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="12" cy="18.5" r="1.6" />
+    </Filled>
+  );
+}
+
+export function MoreAcrossGlyph(props: Props) {
+  return (
+    <Filled {...props}>
+      <circle cx="5.5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="18.5" cy="12" r="1.6" />
+    </Filled>
+  );
+}
+
+export function LockGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="5" y="10.5" width="14" height="10" rx="2" />
+      <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
+    </Stroked>
+  );
+}
+
+export function LinkGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+      <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+    </Stroked>
+  );
+}
+
+export function LocationGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M12 21s-6.5-6.1-6.5-11a6.5 6.5 0 0 1 13 0c0 4.9-6.5 11-6.5 11z" />
+      <circle cx="12" cy="10" r="2.3" />
+    </Stroked>
+  );
+}
+
+export function StatusBarGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="6" y="2.5" width="12" height="19" rx="2.5" />
+      <path d="M8.5 6h2M14 6h1.5" />
+    </Stroked>
+  );
+}
+
+export function BatteryGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="2.5" y="7.5" width="17" height="9" rx="2" />
+      <path d="M21.5 10.5v3M5.5 10.5v3M8.5 10.5v3" />
+    </Stroked>
+  );
+}
+
+export function NetworkGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0" />
+      <path d="M12 19.5h.01" />
+    </Stroked>
+  );
+}
+
+export function RebootGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <path d="M12 3v7" />
+      <path d="M7.5 5.8a7.5 7.5 0 1 0 9 0" />
+    </Stroked>
+  );
+}
+
+export function PhoneGlyph(props: Props) {
+  return (
+    <Stroked {...props}>
+      <rect x="6.5" y="2.5" width="11" height="19" rx="2.5" />
+      <path d="M10.5 18.5h3" />
+    </Stroked>
+  );
+}

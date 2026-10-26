@@ -170,6 +170,13 @@ export class DeviceServers {
     return link.request({ type: "input", input, owner: owner.generation }, { timeoutMs: SCRIPT_TIMEOUT_MS });
   }
 
+  async screenshot(box: BoxRecord): Promise<DeviceAnswer> {
+    const link = await this.#controlLink(box);
+    if (!link) return { id: "", ok: false, error: { code: "not-booted", words: `Box ${box.name}'s device server is not connected.` }, state: null };
+    this.#touch(box.id);
+    return link.request({ type: "screenshot" }, { timeoutMs: SCRIPT_TIMEOUT_MS });
+  }
+
   async control(box: BoxRecord, control: DeviceControl, options: { readonly id?: string; readonly signal?: AbortSignal } = {}): Promise<DeviceAnswer> {
     const id = options.id ?? newRequestId();
     const last = () => this.#lastState(box.id);

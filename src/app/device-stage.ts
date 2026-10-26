@@ -17,6 +17,7 @@ import {
   type Point2,
 } from "../core/device-frame.ts";
 import { clockwiseTurns, foldScreenFor, modelNamed, type DeviceModel, type DeviceState, type Orientation, type VideoSize } from "../core/device.ts";
+import { arrangementFor, type Arrangement as BarArrangement } from "../core/device-toolbar.ts";
 
 export interface DeviceView {
   readonly frame: boolean;
@@ -33,6 +34,36 @@ export const LABEL_ROOM_PX = 28;
 export const GENERATION_MASK = 0xffff;
 
 export type DeviceStageAction = "wake" | "reboot";
+
+export interface ToolbarRoom {
+  readonly beside: number;
+  readonly below: number;
+}
+
+interface FitRoom {
+  readonly beside: number;
+  readonly belowRoom: number;
+}
+
+export interface StageRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface DeviceLayout {
+  readonly arrangement: BarArrangement;
+  readonly device: StageRect;
+  readonly under: number;
+  readonly area: { readonly width: number; readonly height: number };
+}
+
+function sameLayoutOnStage(a: DeviceLayout | null, b: DeviceLayout): boolean {
+  if (!a) return false;
+  const near = (x: number, y: number) => Math.abs(x - y) < 0.5;
+  return a.arrangement === b.arrangement && near(a.device.x, b.device.x) && near(a.device.y, b.device.y) && near(a.device.width, b.device.width) && near(a.device.height, b.device.height) && near(a.under, b.under) && a.area.width === b.area.width && a.area.height === b.area.height;
+}
 
 export interface DeviceStageTimes {
   readonly began: number;
@@ -187,6 +218,9 @@ export class DeviceStage {
   #motionEnds = 0;
   #disposed = false;
   #times: DeviceStageTimes | null = null;
+  #toolbar: ToolbarRoom | null = null;
+  #reported: DeviceLayout | null = null;
+  #onLayout: ((layout: DeviceLayout | null) => void) | undefined;
   onAction?: (action: DeviceStageAction) => void;
   onChange?: () => void;
 
@@ -213,6 +247,22 @@ export class DeviceStage {
     this.#model = model ? modelNamed(model) : null;
     this.#observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this.#layout());
     this.#observer?.observe(this.element);
+    this.element.addEventListener("scroll", () => this.#report(), { passive: true });
+    this.#layout();
+  }
+
+  get layout(): DeviceLayout | null {
+    return this.#reported;
+  }
+
+  set onLayout(listener: ((layout: DeviceLayout | null) => void) | undefined) {
+    this.#onLayout = listener;
+    listener?.(this.#reported);
+  }
+
+  setToolbar(room: ToolbarRoom | null): void {
+    if (room?.beside === this.#toolbar?.beside && room?.below === this.#toolbar?.below) return;
+    this.#toolbar = room;
     this.#layout();
   }
 
@@ -431,14 +481,20 @@ export class DeviceStage {
     if (!model || !area.width || !area.height) {
       this.#shape = null;
       this.#place = null;
+      this.#arranged = null;
       this.#drawWords();
+      this.#report();
       return;
     }
     const view = shown?.view ?? (model.form === "foldable" ? { screen: foldScreenFor("open"), posture: "open" as const } : null);
     const shape = frameShape(model, view, this.#view.frame);
     const physical = this.#change?.to.physical ?? shown?.physical ?? "upright";
     const label = view?.posture === "half-open";
-    const place = this.#fit(shape, physical, label);
+    const room = this.#toolbar;
+    const besideFit = this.#fit(shape, physical, label, room ? { beside: room.beside, belowRoom: 0 } : undefined);
+    const belowFit = room ? this.#fit(shape, physical, label, { beside: 0, belowRoom: room.below }) : besideFit;
+    const arrangement = room ? arrangementFor(area.width, screenOnStage(shape, physical, besideFit).width, screenOnStage(shape, physical, belowFit).width) : null;
+    const place = arrangement === "below" ? belowFit : besideFit;
     const rebuilt = this.#shape === null || this.#shape.body.width !== shape.body.width || this.#shape.body.height !== shape.body.height || this.#shape.framed !== shape.framed || this.#place?.scale !== place.scale || this.#shape.crease?.shaded !== shape.crease?.shaded;
     this.#shape = shape;
     this.#place = place;
@@ -451,11 +507,47 @@ export class DeviceStage {
     this.#label.textContent = label ? "Half open" : "";
     this.#label.style.top = px(place.centre.y + this.#rotatedHeight(shape, physical) * place.scale / 2 + 8);
     this.#drawWords();
+    this.#arranged = arrangement ? { arrangement, shape, physical, place, label } : null;
+    this.#report();
   }
 
-  #fit(shape: FrameShape, physical: Orientation, label: boolean): Placement {
+  #arranged: { readonly arrangement: BarArrangement; readonly shape: FrameShape; readonly physical: Orientation; readonly place: Placement; readonly label: boolean } | null = null;
+
+  #report(): void {
+    const arranged = this.#arranged;
+    if (!arranged) {
+      if (this.#reported) {
+        this.#reported = null;
+        this.#onLayout?.(null);
+      }
+      return;
+    }
+    const { shape, physical, place } = arranged;
+    const sideways = clockwiseTurns(physical) % 2 === 1;
+    const width = (sideways ? shape.body.height : shape.body.width) * place.scale;
+    const height = (sideways ? shape.body.width : shape.body.height) * place.scale;
+    const left = place.centre.x - width / 2 - this.element.scrollLeft;
+    const top = place.centre.y - height / 2 - this.element.scrollTop;
+    const layout: DeviceLayout = {
+      arrangement: arranged.arrangement,
+      device: { x: left, y: top, width, height },
+      under: top + height + (arranged.label ? LABEL_ROOM_PX : 0),
+      area: { width: this.element.clientWidth, height: this.element.clientHeight },
+    };
+    if (sameLayoutOnStage(this.#reported, layout)) return;
+    this.#reported = layout;
+    this.#onLayout?.(layout);
+  }
+
+  #roomNow(): FitRoom {
+    const room = this.#toolbar;
+    if (!room || !this.#arranged) return { beside: 0, belowRoom: 0 };
+    return this.#arranged.arrangement === "beside" ? { beside: room.beside, belowRoom: 0 } : { beside: 0, belowRoom: room.below };
+  }
+
+  #fit(shape: FrameShape, physical: Orientation, label: boolean, room: FitRoom = { beside: 0, belowRoom: 0 }): Placement {
     const area = { width: this.element.clientWidth, height: this.element.clientHeight };
-    return placement(shape, physical, { area, margin: this.#view.frame ? STAGE_MARGIN_PX : 8, below: label ? LABEL_ROOM_PX : 0, pixelRatio: window.devicePixelRatio || 1, pixelForPixel: this.#view.pixelForPixel });
+    return placement(shape, physical, { area, margin: this.#view.frame ? STAGE_MARGIN_PX : 8, below: (label ? LABEL_ROOM_PX : 0) + room.belowRoom, beside: room.beside, pixelRatio: window.devicePixelRatio || 1, pixelForPixel: this.#view.pixelForPixel });
   }
 
   #rotatedHeight(shape: FrameShape, physical: Orientation): number {
@@ -571,7 +663,7 @@ export class DeviceStage {
     this.#removeFold();
     const folding = target.view?.screen === "outer";
     const inner = frameShape(model, { screen: "inner", posture: "open" }, this.#view.frame);
-    const innerPlace = folding ? place : this.#fit(inner, target.physical, target.view?.posture === "half-open");
+    const innerPlace = folding ? place : this.#fit(inner, target.physical, target.view?.posture === "half-open", this.#roomNow());
     const s = innerPlace.scale;
     const half = inner.body.width / 2;
     const overlay = document.createElement("div");

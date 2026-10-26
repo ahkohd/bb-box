@@ -78,3 +78,27 @@ the server's time and the round trip, and the settings read back.
 
 `simctl io` screenshots are turned with the app on screen, as the stream
 is. idb's are not, so `native` shows which way the device itself turned.
+
+## The panel
+
+`panel/` shows the panel's own device viewer, with its toolbar, picker and
+menus, against `viewer.ts`, which answers the few calls the viewer makes of
+the plugin: `desktop`, `takeControl`, `handBack` and `deviceScreenshot`.
+It runs on a Linux box too, with the test device: a `devices.json` of the
+test offer in `~/.bb-box/device`, and `node src/device/main.ts serve`.
+
+1. Fetch BB's theme beside it, without its `@source` line, as
+   `panel/theme.css`: `apps/web/src/components/ui/theme.css` of BB's
+   repository, as `device.html` does.
+2. Build the page's script and styles:
+   `npx esbuild scripts/measure/ios/panel/entry.tsx --bundle --format=esm --outfile=scripts/measure/ios/panel/panel.js --tsconfig=tsconfig.json --alias:@get-bb/plugin-sdk/app=./scripts/measure/ios/panel/sdk.tsx --jsx=automatic --define:process.env.NODE_ENV='"production"'`,
+   then `npx @tailwindcss/cli@4 -i scripts/measure/ios/panel/panel.css -o scripts/measure/ios/panel/out.css`.
+3. Start `viewer.ts`, then drive `http://127.0.0.1:8770/panel/page.html`
+   with `panel/check.ts`, one step an argument: `open:<theme>,<width>,<height>[,<zoom>[,touch]]`,
+   `click:<name>` and `tap:<name>` by accessible name, `key:<key>`,
+   `focus:<name>`, `type:<text>`, `shot:<name>`, `ax:<name>` for the
+   accessibility tree of the toolbar and any menu or dialog, `focused`,
+   `toasts`, `agent:<DeviceControl JSON>` for the agent's control, which a
+   person's control refuses, `api:owner?holder=agent`, `wait:<ms>`,
+   `eval:<js>` and `quit`. `CHROME` names the browser; `OUT` the files'
+   prefix.

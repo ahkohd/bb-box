@@ -39,6 +39,7 @@ export interface DeviceDriver {
   clipboard(): Promise<string>;
   control(control: DeviceControl, signal: AbortSignal, context: ControlContext): Promise<void>;
   readSettings?(signal: AbortSignal): Promise<void>;
+  openUrl?(url: string, signal: AbortSignal): Promise<void>;
   screenshot(): Promise<Uint8Array>;
   tree(): Promise<readonly DeviceElement[]>;
   readBack(): Promise<DeviceState>;

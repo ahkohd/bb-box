@@ -279,7 +279,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     return { home, paths, lists, program, log, target };
   }
 
-  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null> } = {}) {
+  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null>; orientationEveryMs?: number } = {}) {
     const logs: string[] = [];
     const driver = new IosDriver({
       clock: { now: () => Date.now() + (options.wallAhead?.() ?? 0), monotonic: () => performance.now() },
@@ -291,6 +291,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
       companionProgram: setup.program,
       slimLists: setup.lists,
       watchMs: 50,
+      ...(options.orientationEveryMs ? { orientationEveryMs: options.orientationEveryMs } : {}),
       processes: async () => options.hubs?.() ?? [],
       access: options.access,
       appInfo: options.appInfo,
@@ -436,6 +437,28 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     stop.abort();
     driver.close();
     await driver.shutdown(AbortSignal.timeout(5000));
+  });
+
+  test("watches the orientation through a shutdown and a boot again, as a switch does, without reading a companion that is not there", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    for (const label of LIST) simulator.disabled.add(label);
+    const { driver } = driverOf(setup, simulator, { orientationEveryMs: 5 });
+    const rejections: unknown[] = [];
+    const rejected = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", rejected);
+    try {
+      await driver.attach(setup.target, AbortSignal.timeout(20_000));
+      await driver.shutdown(AbortSignal.timeout(5000));
+      await wait(100);
+      await driver.attach(setup.target, AbortSignal.timeout(20_000));
+      await wait(100);
+      assert.deepEqual(rejections, []);
+    } finally {
+      process.off("unhandledRejection", rejected);
+      driver.close();
+      await driver.shutdown(AbortSignal.timeout(5000));
+    }
   });
 
   test("starts idb_companion again when it is killed, and the stream comes back with a key frame", async () => {

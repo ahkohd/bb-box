@@ -209,6 +209,14 @@ const DOING: Readonly<Record<DeviceAction, { readonly doing: string; readonly wh
   reboot: { doing: "rebooting the device", whether: "it rebooted" },
 };
 
+const OPENING = { doing: "opening the link", whether: "it opened" } as const;
+
+export function personLostWords(action: DeviceAction | "open", why: "ended" | "late"): string {
+  const words = action === "open" ? OPENING : DOING[action];
+  const lead = why === "ended" ? `The connection to the device ended while ${words.doing}` : `No answer came while ${words.doing}`;
+  return `${lead}, so bb-box cannot tell whether ${words.whether}. Look at the device before trying again.`;
+}
+
 export function lostWords(action: DeviceAction, state: DeviceState | null): string {
   const words = DOING[action];
   const now = state ? ` It is now ${deviceStateWords(state)}.` : "";

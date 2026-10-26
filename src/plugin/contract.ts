@@ -225,6 +225,7 @@ export const contract = defineRpcContract({
    * or read in the box for that viewer where the desktop's server moves none (#464).
    */
   desktopClipboard: { input: oneBox.extend({ viewer: viewerId.optional() }), output: z.object({ text: z.string(), serial: z.number() }).nullable() },
+  deviceScreenshot: { input: oneBox, output: z.object({ png: z.string().nullable(), model: z.string().nullable(), error: z.string().nullable() }) },
   /** Puts the viewer with control's text on the box's clipboard, where the desktop's server moves none (#464). */
   desktopPaste: { input: viewer.extend({ text: z.string().max(MAX_PASTE_LENGTH), automatic: z.boolean().optional() }), output: z.literal(false).nullable() },
   /** Every box across threads, servers as well as desktops, and your machines (036), for the Boxes page. */

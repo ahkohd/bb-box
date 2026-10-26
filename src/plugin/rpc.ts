@@ -196,6 +196,12 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       const box = await desktopBox(threadId, ref);
       return app.desktops.clipboard(box.id, viewer);
     },
+    async deviceScreenshot({ threadId, box: ref }) {
+      const box = await desktopBox(threadId, ref);
+      const answer = await app.devices.screenshot(box);
+      if (!answer.ok) return { png: null, model: answer.state?.model ?? null, error: answer.error.words };
+      return answer.result.type === "screenshot" ? { png: answer.result.png, model: answer.state.model, error: null } : { png: null, model: answer.state.model, error: "The device server answered without a picture." };
+    },
     async desktopPaste({ threadId, box: ref, viewer, text, automatic }) {
       const box = await desktopBox(threadId, ref);
       return (await app.desktops.paste(box.id, viewer, text, { automatic: automatic === true })) ? null : false;

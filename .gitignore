@@ -6,3 +6,8 @@ node_modules/
 # The preview harness output and bundles for a box
 scripts/preview/out/
 *.tgz
+
+# The device panel harness: BB's theme, fetched, and what is built from it
+scripts/measure/ios/panel/theme.css
+scripts/measure/ios/panel/out.css
+scripts/measure/ios/panel/panel.js
