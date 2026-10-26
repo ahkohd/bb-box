@@ -22,7 +22,7 @@
 // only this (#320). Every call is logged to log, one JSON array per line.
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import { join } from "node:path";
 
@@ -41,12 +41,17 @@ const fail = (text, code = 1) => {
   process.exit(code);
 };
 const read = (file, fallback) => (existsSync(join(root, file)) ? JSON.parse(readFileSync(join(root, file), "utf8")) : fallback);
-const write = (file, value) => writeFileSync(join(root, file), JSON.stringify(value, null, 2));
+const writeWhole = (path, text) => {
+  const partial = `${path}.${process.pid}.partial`;
+  writeFileSync(partial, text);
+  renameSync(partial, path);
+};
+const write = (file, value) => writeWhole(join(root, file), JSON.stringify(value, null, 2));
 const host = read("host.json", {});
 const dir = (name) => join(root, "containers", name);
 const names = () => readdirSync(join(root, "containers")).filter((name) => existsSync(join(dir(name), "config.json")));
 const load = (name) => JSON.parse(readFileSync(join(dir(name), "config.json"), "utf8"));
-const save = (container) => writeFileSync(join(dir(container.Name.slice(1)), "config.json"), JSON.stringify(container, null, 2));
+const save = (container) => writeWhole(join(dir(container.Name.slice(1)), "config.json"), JSON.stringify(container, null, 2));
 /** A container by name, full ID or ID prefix of 12 or more. */
 const find = (ref) => names().map(load).find((container) => container.Name === `/${ref}` || (ref.length >= 12 && container.Id.startsWith(ref))) ?? null;
 const MiB = 1024 * 1024;
