@@ -55,8 +55,8 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     return refused;
   };
   // The size key is left out for the kind's default: RPC input must be JSON.
-  const make = (kind: string, size?: SizeRequest, _name?: string, on?: string | string[], image?: string, device?: string) =>
-    settle(rpc.call("acquire", { threadId, kind, ...(size ? { size } : {}), ...(on ? { on } : {}), ...(image ? { image } : {}), ...(device ? { device } : {}) }));
+  const make = (kind: string, size?: SizeRequest, _name?: string, on?: string | string[], image?: string, device?: string, dedicated?: boolean) =>
+    settle(rpc.call("acquire", { threadId, kind, ...(size ? { size } : {}), ...(on ? { on } : {}), ...(image ? { image } : {}), ...(device ? { device } : {}), ...(dedicated ? { dedicated } : {}) }));
   // A desktop whose image builds first (the setup plan's PR 4): the panel then shows the build, and the box follows it.
   const onDemand = useDesktopOnDemand(state?.desktopOnDemand, threadId, refresh);
   // A desktop box not made after its image was built shows as a refused acquire does, once, until dismissed.

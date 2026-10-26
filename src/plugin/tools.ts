@@ -22,7 +22,7 @@ import { ANDROID_ID_FIRST_BOOT_WORDS } from "../core/device-settings.ts";
 import { wantsDevice } from "./devices.ts";
 import { captionDeviceRecording, deviceClipWords, recordsDevice, startDeviceRecording, stopDeviceRecording, type DeviceRecordDeps } from "./record-device.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, deviceLines, devicesText, kindResizeText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
+import { adminText, boxDetail, deviceLines, devicesText, placementText, kindResizeText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -422,8 +422,18 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         .describe(
           "For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them.",
         ),
+      dedicated: z
+        .boolean()
+        .optional()
+        .describe(
+          "For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop, instead of a macOS user on a shared host. It takes one of the Mac's two VMs, so it may wait for one. Give it with a size, cores, memory_gib or disk_gib: once shared ios boxes are the default, a size without it is refused.",
+        ),
+      shared: z
+        .boolean()
+        .optional()
+        .describe("For an ios or macos box: a macOS user on a Mac or VM shared with other boxes, ready in seconds, with no sudo, Homebrew installs or app windows. Not offered until a shared iOS host is set up."),
     }),
-    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device, slim }, { threadId, projectId, signal }) {
+    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device, slim, dedicated, shared }, { threadId, projectId, signal }) {
       try {
         const box = await boxes.acquire({
           threadId: thread(threadId),
@@ -434,6 +444,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           ...(image !== undefined ? { image } : {}),
           ...(device !== undefined ? { device } : {}),
           ...(slim !== undefined ? { slim } : {}),
+          ...(dedicated !== undefined ? { dedicated } : {}),
+          ...(shared !== undefined ? { shared } : {}),
         });
         if (wait === false) {
           const asked = boxSize(box);
@@ -478,7 +490,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${devicesText(kind)}${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         if (withheld.length) lines.push(`Kinds you cannot acquire now:\n${withheld.map((kind) => `- ${kind.kind}: ${kind.label}. ${kind.words}`).join("\n")}`);

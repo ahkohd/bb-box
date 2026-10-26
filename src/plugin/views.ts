@@ -19,6 +19,7 @@ import type { ThreadOnBox } from "./contract.ts";
 import type { DisplayProtocol } from "../transports/types.ts";
 import { actionsOf, deviceModel, isTestOffer, platformWord, type DevicePlatform, type DeviceState, type Runtime } from "../core/device.ts";
 import { deviceStateWords } from "../core/device-settings.ts";
+import { inSlot, placementOf, placementWords, SHARED_HOSTS_OFF, type SharedHosts } from "../core/device-host.ts";
 
 export interface BoxView {
   readonly id: string;
@@ -190,6 +191,18 @@ export interface KindView {
   /** Its boxes run a computer-use driver, on every backend that offers it. */
   readonly computerUse: boolean;
   readonly devices: KindDevices | null;
+  readonly placement?: KindPlacement | null;
+}
+
+export interface KindPlacement {
+  readonly shared: boolean;
+  readonly why: string | null;
+  readonly sizeNeedsDedicated: boolean;
+}
+
+function kindPlacement(kind: string, shared: SharedHosts): KindPlacement | null {
+  if (kind !== "ios") return null;
+  return { shared: shared.on, why: shared.on ? null : shared.why, sizeNeedsDedicated: shared.byDefault };
 }
 
 export interface KindDevices {
@@ -266,6 +279,7 @@ export function kindViews(
   labelOf: (backendId: string) => string = driverLabel,
   /** GPU desktops' GPUs as last read, keyed "<kind>|<backend>" (`gpuRooms`). */
   gpus: Readonly<Record<string, GpuRoom>> = {},
+  shared: SharedHosts = SHARED_HOSTS_OFF,
 ): KindView[] {
   const views = new Map<string, KindView>();
   // Each kind's offers in the order a plain acquire tries them (057), the kinds where they first come.
@@ -341,6 +355,7 @@ export function kindViews(
       offers: [offer],
       computerUse,
       devices: offerDevices ? { platform: offerDevices.platform, models } : null,
+      placement: kindPlacement(kind.id, shared),
     });
   }
   return [...views.values()];
@@ -439,6 +454,13 @@ export function boxLine(box: BoxRecord): string {
   return `- ${parts.join("; ")}`;
 }
 
+export function placementText(kind: Pick<KindView, "placement">): string {
+  if (!kind.placement) return "";
+  const why = kind.placement.why ?? "";
+  const asking = kind.placement.sizeNeedsDedicated ? "dedicated: true asks for one, and a size needs it" : "dedicated: true asks for one";
+  return ` Each box is a macOS VM of its own, with sudo, brew install and its own cores, ports and desktop; ${asking}. ${why}, so shared ios boxes, a macOS user on a Mac or VM shared with other ios boxes, are not offered yet.`;
+}
+
 export function devicesText(kind: Pick<KindView, "devices">): string {
   if (!kind.devices?.models.length) return "";
   const [first, ...rest] = kind.devices.models;
@@ -496,10 +518,11 @@ export function dockerText({ id, docker, os }: Pick<KindView, "id" | "docker" | 
 }
 
 /** Whether this box's user can become root, or Administrator on Windows. */
-function adminLine(capabilities: BoxRecord["capabilities"]): string | null {
+function adminLine(capabilities: BoxRecord["capabilities"], shared = false): string | null {
   const command = capabilities.command;
   if (!command) return null;
   if (capabilities.os === "windows") return `Administrator: ${command.admin ? "yes" : "no"}`;
+  if (shared) return "Root: no, the box user cannot use sudo or brew install on a shared host. Ask for dedicated: true for a VM of its own";
   return command.admin ? "Root: yes, through sudo without a password" : "Root: no, the box user cannot use sudo. box_list shows the kinds that give root";
 }
 
@@ -558,10 +581,11 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     ...(box.unrequestedStop ? [`Last unrequested stop: ${stopWords(box)}`] : []),
     `Kind: ${box.kindLabel} (${box.kind}) from ${box.backendLabel}`,
     ...(formLine(box) ? [`Form: ${formLine(box)}`] : []),
-    ...(sizeWords(box) ? [`Size: ${sizeWords(box)}`] : []),
+    ...(box.kind === "ios" || inSlot(box) ? [`Where: ${placementWords(placementOf(box))}`] : []),
+    ...(sizeWords(box) && !inSlot(box) ? [`Size: ${sizeWords(box)}`] : []),
     `System: ${capabilities.os} ${capabilities.arch}${capabilities.gpu ? " with a GPU" : ""}${desktopDisplays(capabilities.displays).length ? ", with a desktop" : ""}`,
   ];
-  const admin = adminLine(capabilities);
+  const admin = adminLine(capabilities, inSlot(box));
   if (admin) lines.push(admin);
   // The Docker line says what a "docker" feature would.
   const linux = capabilities.os === "linux";

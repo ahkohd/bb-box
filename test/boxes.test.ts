@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
 import { isEarlierKindId } from "../src/backends/kinds.ts";
-import { BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type BoxSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
+import { BackendError, DEVICE_DISPLAY, type Backend, type BoxKind, type Guest, type BoxSize, type DisplayCapability, type GpuRoom, type ReleaseHooks, type WithheldKind } from "../src/backends/types.ts";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
@@ -24,12 +24,14 @@ import { gpuRoomText } from "../src/plugin/tools.ts";
 import { adminText, boxDetail, boxView, gpuRooms, kindResizeText, kindViews, startingWords, waitingWords, type KindView } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
+import { placementData, placementOf, SHARED_IOS_BY_DEFAULT, type SlotPlacement } from "../src/core/device-host.ts";
+import { placementText } from "../src/plugin/views.ts";
 
 const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random" | "tell"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random" | "tell" | "sharedIosByDefault"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -3210,4 +3212,87 @@ test("a stored slim that is not true or false is dropped where records are read,
   assert.equal(checked.slim, undefined);
   assert.equal(checked.askedDevice, "iPhone 17");
   assert.equal(withDeviceChecked({ ...box, slim: false } as unknown as BoxRecord).slim, false);
+});
+
+function sharedIosKind(): BoxKind {
+  const kind = iosKind();
+  return {
+    ...kind,
+    capabilities: {
+      ...kind.capabilities,
+      command: { ...kind.capabilities.command!, admin: true },
+      displays: [{ id: "desktop", protocol: "rfb", resizable: false }, DEVICE_DISPLAY],
+    },
+  };
+}
+
+const SLOT_THREE: SlotPlacement = { on: "slot", host: "bb-box-host-1", hostOn: "tart", carried: false, generation: 7, place: 3, most: 8 };
+
+function lendingSlots(backend: FakeBackend, placement: SlotPlacement): void {
+  const acquire = backend.acquire.bind(backend);
+  const inSlot = (guest: Guest): Guest => ({ ...guest, data: { ...guest.data, ...placementData(placement) } });
+  backend.acquire = async (box, previous, hooks, signal) => inSlot(await acquire(box, previous, { ...hooks, claim: (guest) => hooks.claim(inSlot(guest)) }, signal));
+}
+
+test("until shared ios boxes are the default, an ios size without dedicated is today's box, a VM of its own at that size, and box_list says no more of a size (064, unit 2)", async () => {
+  const world = setup({ kinds: [sharedIosKind()] });
+  assert.equal(SHARED_IOS_BY_DEFAULT, false);
+  assert.equal(world.boxes.sharedHosts().byDefault, false);
+  const sized = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", size: { preset: "large" } }));
+  assert.equal(sized.state, "ready");
+  assert.deepEqual(placementOf(sized), { on: "vm" });
+  assert.equal(sized.size?.cores, 8);
+  const [kind] = kindViews(world.boxes.kinds().map((each) => ({ kind: each, backend: world.backend })), {}, {}, {}, {}, {}, undefined, {}, world.boxes.sharedHosts());
+  assert.equal(placementText(kind!), " Each box is a macOS VM of its own, with sudo, brew install and its own cores, ports and desktop; dedicated: true asks for one. No shared iOS host is set up, so shared ios boxes, a macOS user on a Mac or VM shared with other ios boxes, are not offered yet.");
+});
+
+test("an ios box with dedicated true is today's box, a VM of its own; with shared the default, a size needs dedicated; dedicated and shared are refused where they do not apply (064, unit 2)", async () => {
+  const world = setup({ kinds: [sharedIosKind(), FAKE_KINDS[0]!, { ...FAKE_KINDS[0]!, id: "macos", label: "macOS" }] }, { sharedIosByDefault: true });
+  const [kind] = kindViews(world.boxes.kinds().filter((each) => each.id === "ios").map((each) => ({ kind: each, backend: world.backend })), {}, {}, {}, {}, {}, undefined, {}, world.boxes.sharedHosts());
+  assert.match(placementText(kind!), /; dedicated: true asks for one, and a size needs it\. /);
+  const acquire = (kind: string, more: { dedicated?: boolean; shared?: boolean; size?: { preset?: string; cores?: number } } = {}) => world.boxes.acquire({ threadId: THREAD, projectId: null, kind, ...more });
+  const dedicated = await ready(world.boxes, await acquire("ios", { dedicated: true, size: { preset: "large" } }));
+  assert.equal(dedicated.state, "ready");
+  assert.deepEqual(placementOf(dedicated), { on: "vm" });
+  assert.equal(dedicated.capabilities.command?.admin, true, "the offer's capabilities, as today");
+  assert.equal(dedicated.size?.cores, 8, "the size asked for");
+  assert.match(boxDetail(dedicated), /\nWhere: A VM of its own\.\nSize: 8 cores/);
+  assert.equal(world.boxes.canStopStart(dedicated), true);
+  const plain = await ready(world.boxes, await acquire("ios"));
+  assert.deepEqual(placementOf(plain), { on: "vm" }, "with no shared host set up, an ios box is a VM of its own");
+  await assert.rejects(acquire("ios", { size: { preset: "large" } }), refusedWith("invalid_size", /^A shared ios box has no size of its own\. Ask for dedicated: true with a size\.$/));
+  await assert.rejects(acquire("ios", { size: { cores: 4 } }), refusedWith("invalid_size", /Ask for dedicated: true with a size\.$/));
+  await assert.rejects(acquire("ios", { dedicated: false, size: { preset: "small" } }), refusedWith("invalid_size", /Ask for dedicated: true/));
+  await assert.rejects(acquire("ios", { shared: true }), refusedWith("no_capacity", /^No shared iOS host is set up, so an ios box cannot have a slot on one yet\. Leave shared out, or ask for dedicated: true, for a VM of its own\.$/));
+  await assert.rejects(acquire("macos", { shared: true }), refusedWith("no_capacity", /^No shared iOS host is set up, so a macos box cannot have a slot on one yet\. Leave shared out for a VM of its own\.$/));
+  await assert.rejects(acquire("ios", { dedicated: true, shared: true }), refusedWith("unsupported", /^Ask for dedicated or shared, not both/));
+  await assert.rejects(acquire("macos", { dedicated: true }), refusedWith("unsupported", /^dedicated is only for ios boxes.* A macos box is a machine of its own already\.$/));
+  await assert.rejects(acquire("linux", { shared: true }), refusedWith("unsupported", /^shared is only for ios and macos boxes.* A linux box cannot\.$/));
+  const machine = await world.boxes.acquire({ threadId: OPERATOR, projectId: null, kind: "ios", size: { preset: "large" } });
+  assert.deepEqual(placementOf(machine), { on: "vm" }, "one of your machines is a VM of its own, so its size needs no dedicated");
+});
+
+test("a box in a slot has the slot's capabilities, says where it is, and refuses a stop, a start, a resize, a restart and a grant in words naming dedicated (064, unit 2)", async () => {
+  const world = setup({ kinds: [sharedIosKind()] });
+  lendingSlots(world.backend, SLOT_THREE);
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios" }));
+  assert.equal(box.state, "ready");
+  assert.deepEqual(placementOf(box), SLOT_THREE, "held once, in guest.data");
+  const stored = await world.boxes.get(THREAD, box.name);
+  assert.equal(stored.capabilities.command?.admin, false, "no root in a slot");
+  assert.deepEqual(stored.capabilities.displays, [DEVICE_DISPLAY], "the device, but not the host's desktop");
+  assert.equal(stored.capabilities.computerUse, null);
+  assert.equal(stored.capabilities.enrol, true, "a slot box still joins BB");
+  const detail = boxDetail(stored);
+  assert.match(detail, /\nWhere: On a shared iOS host \(a Tart VM\), slot 3 of 8\. Ports 20300 to 20399, in BB_PORT_BASE and BB_PORT_COUNT\.\n/);
+  assert.match(detail, /\nRoot: no, the box user cannot use sudo or brew install on a shared host\. Ask for dedicated: true for a VM of its own\n/);
+  assert.doesNotMatch(detail, /\nSize: /, "no size of its own");
+  assert.equal(world.boxes.canStopStart(stored), false);
+  assert.equal(boxView(stored, world.boxes.canStopStart(stored), { owner: "none", holder: null }).canStopStart, false);
+  await assert.rejects(world.boxes.stop(THREAD, box.name), refusedWith("unsupported", /^A shared ios box cannot be stopped on its own: it shares its host with other boxes\. Release it, or ask for dedicated\.$/));
+  await assert.rejects(world.boxes.start(THREAD, box.name), refusedWith("unsupported", /^A shared ios box cannot be stopped on its own/));
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { preset: "large" }), refusedWith("unsupported", /^A shared ios box has no size of its own, so it cannot be resized\. Release it, and ask for dedicated: true with a size\.$/));
+  await assert.rejects(world.boxes.resize(THREAD, box.name, { preset: "large" }, { restart: true }), refusedWith("unsupported", /^A shared ios box cannot be restarted on its own.* box_device reboot reboots its device\.$/));
+  await assert.rejects(world.boxes.grant(THREAD, box.name, { program: "/bin/sh", permissions: ["accessibility"] }), refusedWith("unsupported", /^A shared ios box has no console session.*Ask for dedicated: true for a VM of its own\.$/));
+  assert.deepEqual(world.errors, []);
 });

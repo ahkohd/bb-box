@@ -630,8 +630,8 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       changes.push(`thread ${ref} ${prompt}`);
       return { threadId: "thr_child", error: null };
     },
-    acquire: ({ kind, size, on, image }) => {
-      changes.push(`acquire ${kind}${size ? ` ${JSON.stringify(size)}` : ""}${on ? ` on ${on}` : ""}${image ? ` image ${image}` : ""}`);
+    acquire: ({ kind, size, on, image, dedicated }) => {
+      changes.push(`acquire ${kind}${size ? ` ${JSON.stringify(size)}` : ""}${on ? ` on ${on}` : ""}${image ? ` image ${image}` : ""}${dedicated ? " dedicated" : ""}`);
       if (options.failWith) return result(null);
       const made = box({ id: `box_${boxes.length + 2}`, name: "new-box", kind, kindLabel: KINDS.find((candidate) => candidate.id === kind)?.label ?? kind, state: "acquiring", createdAt: Date.now(), timings: {}, enrol: { state: "off", hostId: null, error: null } });
       boxes = [...boxes, made];
@@ -6410,4 +6410,44 @@ test("the tailnet saves its mode, tags and OAuth client as secrets; a set secret
   fireEvent.click(again.getByRole("button", { name: "Save the tailnet" }));
   await waitFor(() => expect(stored.changes).toHaveLength(2));
   expect(JSON.parse(stored.changes[1]!.slice(stored.changes[1]!.indexOf("{"))).general.tailnet).toBeUndefined();
+});
+
+test("an ios box's New box form chooses Shared or a VM of its own before the device; Shared is off with its words until a shared host is set up, and a VM of its own sends dedicated with its size (064, unit 2)", async () => {
+  const linux = KINDS[0]!;
+  const ios: KindView = {
+    ...linux,
+    id: "ios",
+    label: "iOS Simulator",
+    os: "macos",
+    arch: "arm64",
+    devices: { platform: "ios", models: ["iPhone 18 Pro", "iPhone 17"] },
+    placement: { shared: false, why: "No shared iOS host is set up", sizeNeedsDedicated: false },
+  };
+  const { handlers, changes } = server([], { kinds: [linux, ios] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  const systems = await screen.findByRole("radiogroup", { name: "System" });
+  expect(screen.queryByRole("radiogroup", { name: "Machine" })).toBeNull();
+  fireEvent.click(within(systems).getByRole("radio", { name: /^iOS/ }));
+  const machine = screen.getByRole("radiogroup", { name: "Machine" });
+  const options = within(machine).getAllByRole("radio");
+  expect(options.map((option) => [option.textContent, option.getAttribute("aria-checked"), option.getAttribute("aria-disabled"), option.tabIndex])).toEqual([
+    ["SharedNo shared iOS host is set up.", "false", "true", -1],
+    ["A VM of its ownsudo, Homebrew, its own cores, ports and desktop. Takes one of the Mac's two VMs, so it can wait for one.", "true", null, 0],
+  ]);
+  const placement = screen.getByText("Machine");
+  const device = screen.getByText("Device");
+  expect(placement.compareDocumentPosition(device) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.click(options[0]!);
+  fireEvent.keyDown(options[1]!, { key: "ArrowUp" });
+  expect(options.map((option) => option.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+  expect(screen.getByRole("radiogroup", { name: "Size" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire ios dedicated"]));
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "System" })).getByRole("radio", { name: /^iOS/ }));
+  fireEvent.click(within(screen.getByRole("radiogroup", { name: "Size" })).getByRole("radio", { name: /^Large/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire ios dedicated", 'acquire ios {"preset":"large"} dedicated']));
 });
