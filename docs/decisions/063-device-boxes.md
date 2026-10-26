@@ -1,6 +1,6 @@
 # 063: Device boxes: one iOS Simulator or Android emulator per box, in a frame in the panel, shared with the agent
 
-Status: proposed, 26 October 2026; revised the same day after two
+Status: accepted, 26 October 2026, with [the owner's answers](#the-owners-answers); revised the same day after two
 independent reviews, answered finding by finding under
 [Review answers](#review-answers). Built on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
@@ -82,7 +82,7 @@ under [Experiments](#experiments)) that settles it in a named unit.
 | 5 | Every request has an ID, every switch a written intent, and every restart a rule: the [operations and recovery](#operations-and-recovery) contract | both reviews |
 | 6 | The server's code is delivered by version, only forward, only by the plugin instance that holds the box's control connection, and never while a person has control or a recording runs | 045's reload of two instances |
 | 7 | A viewer picks a display by its ID, not its protocol; a device display has no VNC and falls back to stills where video cannot play | today's routing picks the first Selkies display |
-| 8 | Android frames are encoded by a small C helper on x264, which makes a key frame on demand; frames reach it by shared memory if E6 shows it pays. x264's licence is put to the owner | x264 took 20 ms a frame at 1080x2400; raw frames are 7.8 MB |
+| 8 | Android frames are encoded by a small C helper, on x264 where the operator's image built it and on OpenH264 otherwise, which makes a key frame on demand; frames reach it by shared memory if E6 shows it pays | x264 took 20 ms a frame at 1080x2400; raw frames are 7.8 MB |
 | 9 | Nothing of the device listens off the box: idb on a unix socket; the emulator's gRPC with a token, and a firewall of bb-box's own that the emulator cannot start without | the emulator's gRPC listens on every interface with no token by default |
 | 10 | The panel draws the device in a frame of bb-box's own, from numbers in a model table, with a narrow toolbar and a More menu | Device Hub and Android Studio; what each platform can do, measured |
 | 11 | The computer tools read and drive the device only: its tree, its framebuffer, its touches | Cua saw one element on Android and nothing of the device on iOS |
@@ -540,7 +540,8 @@ device path is checked; the suite's device cases run on real device kinds
 too wherever an offer has a device, as below.
 
 `bb-box-h264` is about 200 lines of C, built in the Android image against
-Ubuntu's libx264. It reads frames, and a one-byte command to make the next
+Ubuntu's libx264 where the operator's build has it, and against OpenH264,
+with Cisco's binary as Windows uses it, where it has not. It reads frames, and a one-byte command to make the next
 frame a key frame, and writes each access unit with its length first. An
 H.264 byte stream from the ffmpeg command line has no frame boundaries,
 which held each frame until the next began: 100 to 300 ms on a still screen
@@ -549,7 +550,7 @@ in the Android note's measurement. x264 runs as the note measured it:
 core. Every key frame carries SPS and PPS. Frames reach it by the
 emulator's shared-memory transport (`MMAP`), which skips copying 7.8 MB a
 frame through Node, if E6 shows that it pays; otherwise through a pipe.
-Its licence is an [open question](#open-questions-for-the-owner).
+Its licence is settled in [the owner's answers](#the-owners-answers).
 
 ### The stream
 
@@ -1229,7 +1230,7 @@ working build.
 | Build time added | each model's first boot: 27 to 68 s | 48 s to install, about 17 s to boot each model, 2.8 s to save it |
 | Built by | `setup/tart/prepare-ios-image.sh`, on the macOS image | `setup/proxmox-qemu/build.sh android`, in a box of the Linux VM template |
 | Refreshed | with the macOS image, after 30 days, by `bb box images refresh` (049) | monthly, in a box of the current build, as 054 refreshes Windows: the pins move with bb-box's releases |
-| Licences | idb: MIT. Xcode's, accepted at build as now | the SDK's terms, accepted by `sdkmanager` in the build. Java is needed for `sdkmanager` and `avdmanager` at build only, and removed after. See [open questions](#open-questions-for-the-owner) |
+| Licences | idb: MIT. Xcode's, accepted at build as now | the SDK's terms, accepted by `sdkmanager` in the build. Java is needed for `sdkmanager` and `avdmanager` at build only, and removed after. See [open questions](#the-owners-answers) |
 
 The ios image is its own, not the macOS image itself, so macOS boxes do not
 carry booted devices; it is a clone of the macOS image, so the iOS runtime
@@ -1485,32 +1486,30 @@ note above; the owner may still change any of them.
 5. **The device bar:** about 80 to 90 ms from tap to screen through BB, for
    the reasons under [The device bar](#the-device-bar).
 
-## Open questions for the owner
+## The owner's answers
 
-1. **Licences.** Three choices, each with a default:
-   - **Android's encoder.** `bb-box-h264` linked to x264 is GPL-2.0 as a
-     binary. Options: (a) x264, built from source in the operator's own
-     image build, with no binary of it shipped by bb-box, 20 ms a frame
-     at 1080x2400; (b) OpenH264, BSD, with Cisco's patent-licensed binary
-     as Windows uses it, at the cost E7 measures; (c) both, x264 by
-     default. Default: (a) until E7's numbers are in, then the owner
-     chooses.
-   - **idb_companion,** MIT. Options: (a) install Meta's pinned bottle in
-     the ios image, with its notice; (b) bb-box's own server on the same
-     private frameworks, later, only if idb falls behind Xcode. Default:
-     (a). Its licence is not the risk; its private APIs are.
-   - **The Android SDK's terms.** The build accepts them through
-     `sdkmanager`. Options: (a) the operator accepts them, as a step they
+Given on 26 October 2026, to the questions the revision left open:
+
+1. **Licences.**
+   - **Android's encoder:** both. `bb-box-h264` uses x264 where the
+     operator's own image build has built it from source, and OpenH264,
+     with Cisco's patent-licensed binary as Windows uses it, where it has
+     not. bb-box never ships an x264 binary. E7 measures OpenH264's cost,
+     and the encoder in use is shown in the box's details.
+   - **idb_companion:** Meta's pinned bottle in the ios image, with its
+     notice. bb-box's own server only if idb falls behind Xcode.
+   - **The Android SDK's terms:** the operator accepts them, as a step they
      confirm in the setup guide, and the template never leaves their
-     install; (b) bb-box shares built templates, which the terms do not
-     allow. Default: (a).
+     install.
 
-   None of these is settled by this note. Before bb-box is published with
-   device boxes, the exact SDK and system image terms, x264's obligations
-   for a helper built in the image, and the notices each image must carry
-   are checked, with legal advice if the owner wants it.
-2. **A toolbar click takes control.** Default: yes, as above. The other way
-   is to keep Take control as a separate first step, as on desktops.
+   Before bb-box is published with device boxes, the exact SDK and system
+   image terms, x264's obligations for a helper built in the image, and the
+   notices each image must carry are checked, with legal advice if the
+   owner wants it.
+2. **A toolbar click takes control,** as Take control does, and says so.
+3. **The lead's defaults stand:** the first 6 models, spares where a host
+   has room, no iOS network control in v1, the computer tools drive the
+   device only, and about 80 to 90 ms from tap to screen as the device bar.
 
 ## Review answers
 
