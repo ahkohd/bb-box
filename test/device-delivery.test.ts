@@ -7,7 +7,7 @@ import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, testDeviceOffer } from "../src/core/device.ts";
-import { DEVICE_SERVER_FILES, connectScript, deviceServerDigest, deviceServerFiles, parseStatus } from "../src/core/device-delivery.ts";
+import { DEVICE_SERVER_FILES, connectScript, deliveryStdin, deviceServerDigest, deviceServerFiles, parseStatus } from "../src/core/device-delivery.ts";
 import { DeviceLink } from "../src/core/device-link.ts";
 import { DeviceServers, type DeviceServersDeps } from "../src/plugin/devices.ts";
 import type { RunResult } from "../src/transports/types.ts";
@@ -40,9 +40,12 @@ describe("the device server's files", () => {
     assert.equal(DEVICE_SERVER_VERSION, PINNED.version, "test/fixtures/device-server-version.json names another version than src/core/device.ts.");
   });
 
-  test("are under 512 KB to deliver", async () => {
-    const bytes = (await deviceServerFiles(ROOT)).reduce((sum, file) => sum + file.data.byteLength, 0);
-    assert.ok(bytes < 512_000, `${bytes} bytes`);
+  test("are under 512 KB to deliver, compressed", async () => {
+    const files = await deviceServerFiles(ROOT);
+    const sent = deliveryStdin({ version: DEVICE_SERVER_VERSION, files, offer: testDeviceOffer("android"), intent: null, choices: { slim: true } });
+    assert.ok(sent.byteLength < 512_000, `${sent.byteLength} bytes`);
+    const whole = files.reduce((sum, file) => sum + file.data.byteLength, 0);
+    assert.ok(sent.byteLength < whole / 2, `${sent.byteLength} bytes compressed, of ${whole}`);
   });
 
   test("a status says which version runs and why it is down", () => {

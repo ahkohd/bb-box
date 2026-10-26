@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DEVICE_HUB_PROCESS, type DeviceOffer, type Intent } from "./device.ts";
@@ -46,7 +47,7 @@ export const DEVICE_SERVER_FILES = [
   "src/device/test-card.ts",
   "src/device/test-driver.ts",
   "src/device/tree-server.dex",
-    "src/device/ws.ts",
+  "src/device/ws.ts",
 ] as const;
 
 export const DELIVERY_EXITS = { delivered: 0, noNode: 4, recording: 6, noPrevious: 7 } as const;
@@ -85,13 +86,20 @@ export interface Delivery {
   readonly choices: DeviceChoices;
 }
 
-export function deliveryStdin(delivery: Delivery): string {
-  return JSON.stringify({
-    files: delivery.files.map((file) => ({ path: file.path, data: Buffer.from(file.data).toString("base64") })),
+function deliveredFile(file: ServerFile): { readonly path: string; readonly text: string } | { readonly path: string; readonly data: string } {
+  const bytes = Buffer.from(file.data);
+  const text = bytes.toString("utf8");
+  return Buffer.from(text, "utf8").equals(bytes) ? { path: file.path, text } : { path: file.path, data: bytes.toString("base64") };
+}
+
+export function deliveryStdin(delivery: Delivery): Uint8Array {
+  const text = JSON.stringify({
+    files: delivery.files.map(deliveredFile),
     devices: delivery.offer,
     intent: delivery.intent,
     choices: delivery.choices,
   });
+  return new Uint8Array(gzipSync(text, { level: 9 }));
 }
 
 const FIND_NODE =
@@ -101,8 +109,8 @@ const FIND_NODE =
 const RECORDING_GUARD = `if [ -s "$HOME/${RECORD_DIR}/pid" ] && kill -0 "$(cat "$HOME/${RECORD_DIR}/pid")" 2>/dev/null; then echo "bb-box: a recording runs in this box." >&2; exit ${DELIVERY_EXITS.recording}; fi; `;
 
 const UNPACK =
-  'const fs=require("fs"),path=require("path");const d=JSON.parse(fs.readFileSync(0,"utf8"));' +
-  'for(const f of d.files){const p=path.join(process.argv[1],f.path);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,Buffer.from(f.data,"base64"))}' +
+  'const fs=require("fs"),path=require("path"),zlib=require("zlib");const d=JSON.parse(zlib.gunzipSync(fs.readFileSync(0)).toString("utf8"));' +
+  'for(const f of d.files){const p=path.join(process.argv[1],f.path);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,f.text!==undefined?f.text:Buffer.from(f.data,"base64"))}' +
   'fs.writeFileSync(process.argv[2],JSON.stringify(d.devices)+"\\n",{mode:0o600});' +
   'if(d.intent&&!fs.existsSync(process.argv[3]))fs.writeFileSync(process.argv[3],JSON.stringify(d.intent)+"\\n",{mode:0o600});' +
   'if(d.choices)fs.writeFileSync(process.argv[4],JSON.stringify(d.choices)+"\\n",{mode:0o600});';

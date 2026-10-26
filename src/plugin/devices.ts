@@ -396,7 +396,7 @@ export class DeviceServers {
     return held.view;
   }
 
-  async #run(box: BoxRecord, script: string, stdin?: string): Promise<RunResult> {
+  async #run(box: BoxRecord, script: string, stdin?: string | Uint8Array): Promise<RunResult> {
     return this.#deps.boxes.runOwn(box, script, { stdin, timeoutMs: SCRIPT_TIMEOUT_MS });
   }
 
