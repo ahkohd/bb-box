@@ -18,7 +18,9 @@ its read-back, requests by ID, and E11. Unit 6.1's, for the frame, follow,
 then unit 6.4's, for the toolbar. Unit 4.1's, for the Android driver, are
 [after them](#unit-41-the-android-driver): the stream of each model,
 recovery, E3 and E23. Unit 7.1's, for the computer tools on an iOS device,
-are [at the end](#unit-71-computer-use-on-an-ios-device).
+are [after them](#unit-71-computer-use-on-an-ios-device). Unit 7.4's, for
+recording a device, are [at the end](#unit-74-recording-a-device): the
+clips, the server killed mid-recording, and E15.
 
 ## How they were measured
 
@@ -1711,3 +1713,96 @@ at most 2 s, then reading the tree again to list what changed.
 - **Android:** unit 7.2. The shared parts, `DeviceComputer`, the tool
   routing and the server's requests, are tested with the test device only.
 
+## Unit 7.4: recording a device
+
+`box_record` on a device box records the device server's own stream. The
+server writes each segment's H.264 as it comes, into a Matroska file of its
+own making with each frame's time on the box's monotonic clock, and logs
+each segment's model and geometry, every touch, each caption and each gap
+beside them. At the stop, bb-box frames the segments on one canvas with
+ffmpeg, holding each frame until the next, finds still stretches with
+`freezedetect`, and makes the clip as 059 does.
+
+### How it was checked
+
+On 26 October 2026, in an ios box from the production BB on Tart (6 cores,
+16 GiB), the iPhone 18 Pro, iOS 27.0, ffmpeg 9.0.2. The device server of
+this unit was delivered by `scripts/measure/ios/bench.ts deliver`: version
+11, before units 4.1 and 7.1 merged, for the table below, and version 13,
+rebased on both, in a second box for the main clip and the kill again.
+`scripts/measure/ios/record.ts` drove it through a control connection, with
+no viewer open, then framed and made each clip as bb-box does. The plugin's
+own path, `box_record` through BB, was checked on a Linux box with the test
+device, in the plugin's tests; through a BB in a box it is the lead's check.
+
+### The clips
+
+| Scenario | Recorded | Segments | Still stretches cut | Clip | Framing | Making |
+| --- | --- | --- | --- | --- | --- | --- |
+| Settings scrolled, then Safari turned right and back, two captioned steps | 60.0 s | 5 | 16 | 27.5 s, 1280x1390, 1.1 MB | 7.6 s | 2.2 s |
+| The same with Settings turned, which an iPhone draws upright only | 60.0 s | 3 | 17 | 25.7 s, 1280x1390, 0.95 MB | 4.8 s | 2.1 s |
+| The Home Screen, still | 20.0 s | 1 | 1 | 0.5 s, 1080x1600 | 1.5 s | 0.3 s |
+| The same, stills kept | 20.0 s | 1 | none | 20.0 s of its first frame | 1.7 s | 0.9 s |
+| A scroll, then a minute still | 70.0 s | 1 | 4, the last 64.6 s | 3.6 s | 3.3 s | 0.6 s |
+| The server killed mid-recording | 20.0 s | 2 | 6 | 11.5 s, the gap captioned | 2.8 s | 1.0 s |
+
+- **Turns.** Each turn of Safari was two segments, as unit 6.1 found: the
+  turn, with the picture still upright, then the new size 153 to 164 ms
+  later. The clip draws the body turned with the island to the right, and
+  Safari's page laid out across it. Settings, which an iPhone does not turn,
+  shows upright on the turned body, on its side, as on a real phone.
+- **Touches** show as the viewer's circles, where each landed: 60 touches
+  logged in the minute, at most one each 40 ms for a contact that moves.
+- **The canvas** fits the largest shape: 1080x1600 for a phone upright
+  only; 1280x1390 with a turn, so the phone keeps one size throughout. The
+  captions sit in a band of 109 pixels above or below the device.
+- **No viewer.** No viewer was open for any clip; the frames came all the
+  same.
+
+Version 13's main clip: 60.0 s recorded, 4 segments, 13 still stretches
+cut, a 25.1 s clip, framed in 6.8 s and made in 2.4 s. Its turn right came
+as the turn and then the new size 62 ms later; the turn back upright came as
+one change.
+
+### The server killed mid-recording
+
+`SIGKILL` to the server 7 s in. launchd started it again 204 and 214 ms
+later in two runs of version 11, and 308 ms later in version 13's. The new server found the recording unended, logged the
+gap, and carried on: the next segment began 0.7 s after the kill, at the
+first key frame of idb's new stream. The clip holds the last frame across
+the gap and shows "The device server restarted here, and frames were lost"
+under the caption band, held for its reading time though the stretch around
+it is still and cut.
+
+### What recording costs
+
+Over the same minute of scrolling and turns, the device server used 0.49 s
+of CPU without a recording and 0.62 s with one, by `ps` at 0.01 s: about
+0.2% of a core more. The segments of a busy minute took 5.2 MB. The cost is
+at the stop: framing took 4.8 to 7.6 s a minute with 6 cores, and making
+the clip about 2 s more.
+
+### E15: still stretches, segments decoded at 15 fps
+
+Each segment is decoded at 15 fps and each frame held until the next, so a
+still stretch of the device is a run of identical frames in the framed
+video, which `freezedetect` finds as it does on desktops: in every clip
+above, each stretch still for over a second was cut to half a second, with
+a mark such as "▶▶ 4 s later" in the corner beside the device where one of
+3 s or more was cut. A still end is cut at the clip's end, so its mark has
+no time to show, as on desktops. A still screen, kept, is its first frame
+for the recording's whole length.
+
+### What limits these numbers
+
+- One model, the iPhone 18 Pro, on one Tart host. The iPad's picture is
+  about 1.8 times the iPhone's, so framing it should take longer; not timed.
+- Android's clip, and the Pixel Fold's fold, were not recorded live: the
+  recorder reads only the device server's frames and state, which the
+  Android driver gives as the iOS driver does, and the fold is drawn from
+  the table, as the frame draws it. They are checked once an android box
+  runs this server.
+- A device that restarts mid-recording was checked with the test device
+  only, in the tests. A recording that falls more than 2 s behind its
+  frames, and a box stopped or restarted mid-recording, which ends it, were
+  not checked.

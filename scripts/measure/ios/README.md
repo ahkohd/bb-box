@@ -17,6 +17,7 @@ It runs as the box user, with this checkout copied into the box.
 | `bench.ts state` | Prints the device's state from a viewer's hello |
 | `bench.ts rotate --to <orientation>` | Turns the device with idb's HID orientation event, then prints, for `--seconds`, each frame with the geometry generation in its header, each state the server sends and each change idb's orientation reads. `--out` keeps idb's own screenshot |
 | `bench.ts screenshot` | Asks the device server for the agent's screenshot `--times` times, and prints each time, its size and generation, and the geometry. `--out` keeps the last |
+| `record.ts <scenario>` | Records the device as box_record does (unit 7.4), through a control connection that takes the box's lease, with no viewer: `main` is a minute, Settings scrolled then Safari turned, with two captioned steps, `still` 20 s of a still Home Screen, `still-end` a scroll then a minute still, and `kill` kills the device server mid-recording. It then frames the clip as bb-box does and copies `clip-<scenario>.mp4` and the recording's log to `--out`. `--position bottom` puts the captions below the device, `--stills keep` keeps still stretches, and `--dry` does the same with no recording, to compare what recording costs |
 
 Input, as the panel sends it (units 5.1 and 5.2), with three more files:
 

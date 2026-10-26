@@ -11,13 +11,12 @@
 // beside it plays in the thread's inline preview.
 
 import type { GuestOs } from "../transports/types.ts";
+import { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind } from "./device-recording.ts";
 
-/** The longest a recording runs, in seconds, so one an agent forgets cannot run on. */
-export const RECORD_LIMIT_S = 300;
+export { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind };
+
 /** The capture's frame rate. */
 export const RECORD_FPS = 15;
-/** Where a box keeps its recording, under the box user's home. */
-export const RECORD_DIR = ".local/state/bb-box/recording";
 
 /** What the start script exits with. */
 export const RECORD_START_EXITS = { started: 0, running: 3, noRecorder: 4, noDisplay: 5, failed: 6 } as const;
@@ -72,8 +71,6 @@ kill -0 "$(cat "$d/pid")" 2>/dev/null || { rm -f "$d/pid"; tail -n 3 "$d/log" >&
 
 export const RECORD_STEP_EXITS = { saved: 0, none: 3 } as const;
 
-export type StepKind = "step" | "pass" | "fail";
-
 export const CAPTION_CHARS = 90;
 
 export function captionText(text: string): string {
@@ -125,6 +122,16 @@ export interface RecordEvent {
   readonly text: string;
 }
 
+export interface ClipNote {
+  readonly at: number;
+  readonly text: string;
+}
+
+export interface ClipLayout {
+  readonly fontSize: number;
+  readonly band: { readonly y: number; readonly height: number };
+}
+
 export interface Prepared {
   readonly ended: "stopped" | "limit";
   readonly recorded: number;
@@ -134,6 +141,8 @@ export interface Prepared {
   readonly position?: CaptionPosition;
   readonly cuts: readonly (readonly [number, number])[];
   readonly events: readonly RecordEvent[];
+  readonly notes?: readonly ClipNote[];
+  readonly layout?: ClipLayout;
 }
 
 export function parsePrepared(stdout: string): Prepared | null {
@@ -154,8 +163,6 @@ export function parsePrepared(stdout: string): Prepared | null {
   }
 }
 
-export type CaptionPosition = "top" | "bottom";
-
 export interface Caption {
   readonly kind: StepKind;
   readonly text: string;
@@ -170,7 +177,7 @@ export interface Hold {
   readonly seconds: number;
 }
 
-export type PillLook = StepKind | "mark";
+export type PillLook = StepKind | "mark" | "note";
 
 export interface Overlay {
   readonly look: PillLook;
@@ -217,12 +224,17 @@ export function planClip(prepared: Prepared, speed: RecordSpeed): ClipPlan {
   const onClip = (at: number) => (at - removedBefore(at)) / speed;
   const base = onClip(prepared.recorded);
   const start = prepared.start ?? 0;
-  const changes = [...prepared.events]
-    .map((event) => {
+  const placed = (real: number) => Math.min(base, Math.max(0, onClip(real)));
+  const changes = [
+    ...prepared.events.map((event) => {
       const real = Math.min(prepared.recorded, Math.max(0, event.at - start));
-      return { ...event, text: captionText(event.text), real, at: Math.min(base, Math.max(0, onClip(real))) };
-    })
-    .sort((a, b) => a.at - b.at);
+      return { kind: event.kind as StepKind | "note", text: captionText(event.text), real, at: placed(real) };
+    }),
+    ...(prepared.notes ?? []).map((note) => {
+      const real = Math.min(prepared.recorded, Math.max(0, note.at));
+      return { kind: "note" as const, text: captionText(note.text), real, at: placed(real) };
+    }),
+  ].sort((a, b) => a.at - b.at);
   const holds: Hold[] = [];
   const shownAt: number[] = [];
   let added = 0;
@@ -240,21 +252,25 @@ export function planClip(prepared: Prepared, speed: RecordSpeed): ClipPlan {
     const later = changes.findIndex((change, other) => other > index && change.kind === "step");
     return later < 0 ? length : shownAt[later]!;
   };
-  const captions = changes.map((change, index): Caption => ({ kind: change.kind, text: change.text, row: change.kind === "step" ? 0 : 1, from: round3(shownAt[index]!), to: round3(nextStep(index)), real: round3(change.real) }));
-  const width = Math.min(CLIP_WIDTH, prepared.width || CLIP_WIDTH);
-  const height = prepared.width ? Math.round((prepared.height * width) / prepared.width / 2) * 2 : 720;
-  const fontSize = Math.max(14, Math.round(height / 38));
+  const captions = changes.flatMap((change, index): Caption[] =>
+    change.kind === "note" ? [] : [{ kind: change.kind, text: change.text, row: change.kind === "step" ? 0 : 1, from: round3(shownAt[index]!), to: round3(nextStep(index)), real: round3(change.real) }],
+  );
+  const layout = prepared.layout;
+  const width = layout ? prepared.width : Math.min(CLIP_WIDTH, prepared.width || CLIP_WIDTH);
+  const height = layout ? prepared.height : prepared.width ? Math.round((prepared.height * width) / prepared.width / 2) * 2 : 720;
+  const fontSize = layout?.fontSize ?? Math.max(14, Math.round(height / 38));
   const pill = (size: number) => Math.round(size * 2.1);
   const gap = Math.max(4, Math.round(fontSize * 0.3));
-  const edge = Math.round(height * 0.035);
-  const dock = Math.round(height * 0.11);
+  const edge = layout ? Math.round((layout.band.height - 2 * pill(fontSize) - gap) / 2) : Math.round(height * 0.035);
+  const dock = layout ? edge : Math.round(height * 0.11);
   const position = prepared.position ?? "top";
   const captionY = (row: 0 | 1) =>
-    position === "top" ? edge + row * (pill(fontSize) + gap) : height - dock - (2 - row) * pill(fontSize) - (1 - row) * gap;
+    layout ? layout.band.y + edge + row * (pill(fontSize) + gap) : position === "top" ? edge + row * (pill(fontSize) + gap) : height - dock - (2 - row) * pill(fontSize) - (1 - row) * gap;
   const markSize = Math.max(11, Math.round(fontSize * 0.7));
   const markHeight = pill(markSize);
-  const cornerY = position === "top" ? height - dock - markHeight : Math.round(height * 0.05);
+  const cornerY = position === "top" ? height - dock - markHeight : layout ? edge : Math.round(height * 0.05);
   const skipY = speed > 1 ? (position === "top" ? cornerY - markHeight - gap : cornerY + markHeight + gap) : cornerY;
+  const noteY = layout ? (position === "top" ? layout.band.y + layout.band.height + gap : layout.band.y - gap - pill(fontSize)) : captionY(1);
   const finalAt = (at: number) => at + holds.filter((hold) => hold.at < at - 0.0005).reduce((sum, hold) => sum + hold.seconds, 0);
   const skips = cuts
     .filter(([from, to]) => to - from >= SKIP_MARK_S)
@@ -262,10 +278,14 @@ export function planClip(prepared: Prepared, speed: RecordSpeed): ClipPlan {
       const shown = round3(finalAt(onClip(from)));
       return { look: "mark", text: skipWords(to - from), size: markSize, x: "right", y: skipY, from: shown, to: round3(Math.min(length, shown + MARK_SHOWN_S)) };
     });
+  const notes = changes.flatMap((change, index): Overlay[] =>
+    change.kind === "note" ? [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteY, from: round3(shownAt[index]!), to: round3(Math.min(length, shownAt[index]! + readingSeconds(change.text))) }] : [],
+  );
   const overlays: Overlay[] = [
     ...captions.map((caption): Overlay => ({ look: caption.kind, text: caption.text, size: fontSize, x: "centre", y: captionY(caption.row), from: caption.from, to: caption.to })),
     ...(speed > 1 ? [{ look: "mark" as const, text: `${speed}x`, size: markSize, x: "right" as const, y: cornerY, from: 0, to: length }] : []),
     ...skips,
+    ...notes,
   ];
   return { speed, cuts, holds, captions, overlays, position, length, width, height, fontSize, edge };
 }
@@ -275,6 +295,7 @@ const PILLS: Readonly<Record<PillLook, { readonly icon: string; readonly color: 
   pass: { icon: "✓", color: "34c759", fill: "2a2a2a", alpha: 0.94 },
   fail: { icon: "✗", color: "ff453a", fill: "2a2a2a", alpha: 0.94 },
   mark: { icon: "▶▶", color: "ffffff", fill: "1f1f1f", alpha: 0.88 },
+  note: { icon: "⚠", color: "ff9f0a", fill: "2a2a2a", alpha: 0.94 },
 };
 
 export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {

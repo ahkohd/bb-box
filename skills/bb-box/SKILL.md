@@ -281,7 +281,7 @@ the device.
   send it a push notification. An appearance or text size set this way
   shows in the state as changed outside bb-box.
 
-## Recording a desktop
+## Recording a desktop or a device
 
 `box_record` records a desktop box's screen, on Linux, macOS or Windows,
 so you can show your work in the thread rather than describe it. Start it, do what the
@@ -308,6 +308,12 @@ cut by default, so a long session makes a short clip.
   after a resume. Minimise it with the computer tools before you record;
   closing it ends Keep Awake, and BB opens another. If typing seems to go
   nowhere on Windows, that window may have taken the focus.
+- On an ios or android box, `box_record` records the device's own screen,
+  not the host's desktop: the device in its frame, turning as it turns, with
+  each touch shown as a circle. The captions sit in a band above the device,
+  or below it with `position: "bottom"`, so they never cover the app. No
+  viewer needs to be open. Where the device restarts or its server restarts
+  during a recording, the clip holds the last picture and says so.
 
 ## BB machines
 

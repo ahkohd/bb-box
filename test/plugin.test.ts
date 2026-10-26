@@ -4,18 +4,23 @@
 
 import assert from "node:assert/strict";
 import type { BackendContext } from "../src/backends/types.ts";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { connect, type AddressInfo } from "node:net";
+import { Duplex } from "node:stream";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
 import { BackendError, DEVICE_DISPLAY, type BackendDriver, type BoxKind } from "../src/backends/types.ts";
-import { PERSON_HAS_CONTROL_WORDS, stillsRequestText } from "../src/core/device.ts";
+import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, stillsRequestText, testDeviceOffer, type OfferedDevices } from "../src/core/device.ts";
+import { DeviceLink } from "../src/core/device-link.ts";
+import { devicePaths } from "../src/device/paths.ts";
+import { DeviceServer } from "../src/device/server.ts";
+import { TestDriver } from "../src/device/test-driver.ts";
 import type { BoxPointer } from "../src/transports/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
@@ -812,6 +817,43 @@ test("box_record records a Linux desktop, and stop puts the clip and a page that
   const html = readFileSync(join(world.storage, `${page}.html`), "utf8");
   assert.match(html, /▶<\/span> It keeps the draft when saving fails<br><span style="color:#ff453a">✗<\/span> The editor closed and lost it/);
   assert.ok(captioned.includes(`file="${page}.html" height="430"`), captioned);
+});
+
+test("box_record on an ios box records its device, not the host's desktop: framed, turned and captioned, with no viewer open (063, 7.4)", { skip: (spawnSync("ffmpeg", ["-version"]).status !== 0 || process.platform !== "linux") && "needs ffmpeg with drawtext" }, async (t) => {
+  const offer = testDeviceOffer("ios");
+  const kind: BoxKind = { ...FAKE_KINDS[0]!, id: "ios", label: "iOS Simulator", capabilities: { ...FAKE_KINDS[0]!.capabilities, displays: [DEVICE_DISPLAY], device: { ...offer, devices: offer.devices.map((device) => ({ ...device, native: "phone" })) } as never } };
+  const { harness, app, world, tool } = await start(undefined, { kinds: [kind] });
+  t.after(() => harness.lifecycle.dispose());
+  assert.ok(!isError(await tool("box_acquire", { kind: "ios" })));
+  const phone = await only(app);
+  const home = /stdout:\n(\S+)/.exec(text(await tool("box_run", { box: phone.name, command: "pwd" })))![1]!;
+  const paths = devicePaths(home);
+  const server = new DeviceServer({ paths, platform: "ios", devices: offer.devices as OfferedDevices, driver: new TestDriver("ios"), version: DEVICE_SERVER_VERSION });
+  await server.start();
+  t.after(() => server.stop());
+  for (let tries = 0; server.state.power.is !== "booted" && tries < 200; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
+  const socket = connect(paths.socket);
+  await new Promise((resolve) => socket.once("connect", resolve));
+  const web = Duplex.toWeb(socket);
+  const control = await DeviceLink.open({ readable: web.readable as ReadableStream<Uint8Array>, writable: web.writable as WritableStream<Uint8Array>, close: async () => void socket.destroy() }, { role: "control", started: 1, instance: "test" });
+  t.after(() => control.close());
+  Object.assign(app.devices, { recorded: () => undefined, record: (_box: unknown, request: never) => control.request(request) });
+
+  assert.match(text(await tool("box_record", { box: phone.name, action: "stop" })), /has no recording\./);
+  const started = text(await tool("box_record", { box: phone.name, action: "start" }));
+  assert.match(started, /^Recording box \S+'s device, the iPhone 18 Pro, for at most 5 minutes\. Only the device's own screen is recorded/);
+  assert.ok(isError(await tool("box_record", { box: phone.name, action: "start" })));
+  assert.match(text(await tool("box_record", { box: phone.name, action: "step", text: "It turns right" })), /^Captioned the next step: ▶ It turns right/);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal((await control.request({ type: "control", control: { action: "rotate", turn: "right" } })).ok, true);
+  assert.match(text(await tool("box_record", { box: phone.name, action: "result", passed: true, text: "Turned right" })), /^Captioned the result: ✓ Turned right/);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  const stopped = text(await tool("box_record", { box: phone.name, action: "stop" }));
+  assert.match(stopped, /^Recorded box \S+'s device: a \d+\.\d s clip of \d+\.\d s recorded, .*1280x\d+, \d+ KB, 1 step captioned\./, stopped);
+  const clip = /\$BB_THREAD_STORAGE\/(recordings\/[^ ,]+)\.mp4/.exec(stopped)?.[1];
+  assert.ok(clip, stopped);
+  assert.equal(readFileSync(join(world.storage, `${clip}.mp4`)).subarray(4, 8).toString("latin1"), "ftyp");
+  assert.match(text(await tool("box_record", { box: phone.name, action: "step", text: "Late" })), /is not recording\./);
 });
 
 test("box_copy takes files in the thread's storage folder both ways, by its variable or its path (#482)", async (t) => {

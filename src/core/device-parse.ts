@@ -66,6 +66,7 @@ import {
   type TableModel,
   type TouchContact,
 } from "./device.ts";
+import type { RecordingSummary } from "./device-recording.ts";
 
 export type Parsed<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly words: string };
 
@@ -79,6 +80,7 @@ const MAX_TEXT = 100_000;
 const MAX_ELEMENT_DEPTH = 64;
 const MAX_ELEMENTS = 20_000;
 const MAX_GESTURE_MS = 60_000;
+const MAX_CAPTION = 200;
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,64}$/;
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 
@@ -603,8 +605,17 @@ function request(value: unknown, path: string): DeviceRequest {
       return { id: requestId(read.id, at("id")), type, url };
     }
     case "record": {
-      const read = fields(value, path, ["id", "type", "to"]);
-      return { id: requestId(read.id, at("id")), type, to: oneOf(read.to, at("to"), ["start", "stop"]) };
+      const to = oneOf((value as Fields | null)?.to, at("to"), ["start", "caption", "stop"]);
+      if (to === "start") {
+        const read = fields(value, path, ["id", "type", "to", "position"]);
+        const id = requestId(read.id, at("id"));
+        return read.position === undefined ? { id, type, to } : { id, type, to, position: oneOf(read.position, at("position"), ["top", "bottom"]) };
+      }
+      if (to === "caption") {
+        const read = fields(value, path, ["id", "type", "to", "kind", "text"]);
+        return { id: requestId(read.id, at("id")), type, to, kind: oneOf(read.kind, at("kind"), ["step", "pass", "fail"]), text: text(read.text, at("text"), MAX_CAPTION) };
+      }
+      return { id: requestId(fields(value, path, ["id", "type", "to"]).id, at("id")), type, to };
     }
     case "launch": {
       const read = fields(value, path, ["id", "type", "app"]);
@@ -635,7 +646,7 @@ function deviceError(value: unknown, path: string): DeviceError {
 }
 
 function answerResult(value: unknown, path: string): AnswerResult {
-  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["done", "screenshot", "tree", "at", "launched", "settled"]);
+  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["done", "screenshot", "tree", "at", "launched", "settled", "recording"]);
   switch (type) {
     case "done":
       fields(value, path, ["type"]);
@@ -663,7 +674,20 @@ function answerResult(value: unknown, path: string): AnswerResult {
       const read = fields(value, path, ["type", "elements", "generation"]);
       return { type, elements: elements(read.elements, `${path}.elements`), generation: whole(read.generation, `${path}.generation`) };
     }
+    case "recording":
+      return { type, recording: recordingSummary(fields(value, path, ["type", "recording"]).recording, `${path}.recording`) };
   }
+}
+
+function recordingSummary(value: unknown, path: string): RecordingSummary {
+  const read = fields(value, path, ["active", "ended", "seconds", "segments", "lost"]);
+  return {
+    active: bool(read.active, `${path}.active`),
+    ended: read.ended === null ? null : oneOf(read.ended, `${path}.ended`, ["stopped", "limit", "box-stopped"]),
+    seconds: number(read.seconds, `${path}.seconds`),
+    segments: whole(read.segments, `${path}.segments`),
+    lost: list(read.lost, `${path}.lost`, (item, at) => text(item, at, 200), 1000),
+  };
 }
 
 function answer(value: unknown, path: string): DeviceAnswer {

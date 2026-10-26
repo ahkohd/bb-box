@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { RECORD_DIR } from "../core/device-recording.ts";
 
 export const DEVICE_HOME = ".bb-box/device";
 export const SERVICE_LABEL = "app.bb-box.device";
@@ -36,6 +37,7 @@ export function devicePaths(home: string) {
     gaveUp: join(dir, "gave-up"),
     lastError: join(dir, "last-error"),
     manager: join(dir, "manager"),
+    recording: join(home, RECORD_DIR),
   };
 }
 

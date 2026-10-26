@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DEVICE_HUB_PROCESS, type DeviceOffer, type Intent } from "./device.ts";
-import { RECORD_DIR } from "./record.ts";
+import { RECORD_DIR } from "./device-recording.ts";
 
 export const DEVICE_SERVER_FILES = [
   "src/core/device-models.ts",
   "src/core/device-parse.ts",
+  "src/core/device-recording.ts",
   "src/core/device-settings.ts",
   "src/core/device.ts",
   "src/core/png.ts",
@@ -28,10 +29,12 @@ export const DEVICE_SERVER_FILES = [
   "src/device/ios-video.ts",
   "src/device/keys.ts",
   "src/device/main.ts",
+  "src/device/mkv.ts",
   "src/device/paths.ts",
   "src/device/pcm-h264.ts",
   "src/device/person-input.ts",
   "src/device/protobuf.ts",
+  "src/device/recorder.ts",
   "src/device/schemas.ts",
   "src/device/server.ts",
   "src/device/simctl.ts",

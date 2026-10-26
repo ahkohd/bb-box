@@ -1,3 +1,4 @@
+import type { CaptionPosition, RecordingSummary, StepKind } from "./device-recording.ts";
 import { DEVICE_MODELS, type AndroidModelName, type AndroidModelNameOfForm, type FoldableModelName, type IosModelName, type ModelName, type TableModel } from "./device-models.ts";
 
 export type { AndroidModelName, FoldableModelName, IosModelName, ModelName, TableModel } from "./device-models.ts";
@@ -372,7 +373,9 @@ export type DeviceRequest =
   | { readonly id: string; readonly type: "at"; readonly x: number; readonly y: number }
   | { readonly id: string; readonly type: "launch"; readonly app: string }
   | { readonly id: string; readonly type: "settle"; readonly quietMs: number; readonly mostMs: number; readonly fromNow: boolean }
-  | { readonly id: string; readonly type: "record"; readonly to: "start" | "stop" }
+  | { readonly id: string; readonly type: "record"; readonly to: "start"; readonly position?: CaptionPosition }
+  | { readonly id: string; readonly type: "record"; readonly to: "caption"; readonly kind: StepKind; readonly text: string }
+  | { readonly id: string; readonly type: "record"; readonly to: "stop" }
   | { readonly id: string; readonly type: "result" };
 
 export type DeviceRequestType = DeviceRequest["type"];
@@ -403,7 +406,8 @@ export type AnswerResult =
   | { readonly type: "tree"; readonly elements: readonly DeviceElement[]; readonly generation: number }
   | { readonly type: "at"; readonly element: DeviceElement | null; readonly generation: number }
   | { readonly type: "launched"; readonly app: LaunchedApp }
-  | { readonly type: "settled"; readonly frames: number; readonly quiet: boolean };
+  | { readonly type: "settled"; readonly frames: number; readonly quiet: boolean }
+  | { readonly type: "recording"; readonly recording: RecordingSummary };
 
 export type DeviceAnswer =
   | { readonly id: string; readonly ok: true; readonly ms: number; readonly state: DeviceState; readonly result: AnswerResult }
@@ -617,7 +621,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 12;
+export const DEVICE_SERVER_VERSION = 13;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 
 export function frameGenerationOf(header: Uint8Array): number {
