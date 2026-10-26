@@ -11,7 +11,7 @@ window.theme(q.get("theme") ?? "dark");
 await fetch(THEME_URL).then((response) => response.text()).then((css) => (document.getElementById("bb-theme").textContent = css.replace(/@theme(?:\s+inline)?\s*\{/g, ":root {"))).catch(() => undefined);
 const session = new SelkiesSession(`ws://127.0.0.1:${q.get("socket") ?? 8771}/device`, { device: { model: q.get("model") ?? "iPhone 18 Pro" } });
 document.getElementById("screen").appendChild(session.element);
-session.setGuest("macos");
+session.setGuest(q.get("guest") ?? "macos");
 session.setDeviceView({ frame: q.get("frame") !== "0", pixelForPixel: q.get("pfp") === "1" });
 window.view = (frame, pixelForPixel) => session.setDeviceView({ frame, pixelForPixel });
 const canvas = session.element.querySelector("canvas");

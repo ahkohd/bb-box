@@ -808,7 +808,7 @@ export class DeviceServer {
       throw signal.reason;
     }
     await driver.paste();
-    await new Promise((resolve) => setTimeout(resolve, PASTE_PUT_BACK_MS));
+    await new Promise((resolve) => setTimeout(resolve, driver.pasteLandsMs ?? PASTE_PUT_BACK_MS));
     if (saved !== null && saved !== text) await driver.setClipboard(saved).catch((error) => this.#log(`${source}: the clipboard was not put back after a paste: ${error instanceof Error ? error.message : String(error)}`));
   }
 

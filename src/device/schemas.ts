@@ -110,6 +110,7 @@ export const GRPC_METHODS = {
     setPhysicalModel: "/android.emulation.control.EmulatorController/setPhysicalModel",
     setPosture: "/android.emulation.control.EmulatorController/setPosture",
     setBattery: "/android.emulation.control.EmulatorController/setBattery",
+    getBattery: "/android.emulation.control.EmulatorController/getBattery",
     setGps: "/android.emulation.control.EmulatorController/setGps",
     getGps: "/android.emulation.control.EmulatorController/getGps",
   },

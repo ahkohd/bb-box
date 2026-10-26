@@ -28,7 +28,7 @@ export interface RunningEmulator {
 
 export type EmulatorManager = "systemd" | "detached";
 
-export type EmulatorControl = Pick<Emulator, "running" | "start" | "waitRunning" | "waitBooted" | "snapshotLoaded" | "stop" | "alive" | "shell">;
+export type EmulatorControl = Pick<Emulator, "running" | "start" | "waitRunning" | "waitBooted" | "snapshotLoaded" | "stop" | "alive" | "shell" | "adbRun">;
 
 export interface EmulatorOptions {
   readonly dir: string;
@@ -271,6 +271,11 @@ export class Emulator {
     const ran = await this.#run(this.adb, ["-s", EMULATOR_SERIAL, "shell", command], { timeoutMs: options.timeoutMs ?? COMMAND_MS, signal: options.signal });
     if (ran.code !== 0) throw new DriverError("failed", `adb shell ${command} failed: ${words(ran)}`);
     return ran.stdout.replace(/\r/g, "");
+  }
+
+  async adbRun(args: readonly string[], options: { readonly signal?: AbortSignal; readonly timeoutMs?: number } = {}): Promise<{ readonly code: number; readonly output: string }> {
+    const ran = await this.#run(this.adb, ["-s", EMULATOR_SERIAL, ...args], { timeoutMs: options.timeoutMs ?? COMMAND_MS, signal: options.signal });
+    return { code: ran.code, output: `${ran.stdout}\n${ran.stderr}`.replace(/\r/g, "").trim() };
   }
 
   async booted(signal?: AbortSignal): Promise<boolean> {

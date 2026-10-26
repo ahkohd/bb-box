@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type OfferedDevice } from "../core/device.ts";
+import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice } from "../core/device.ts";
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { lostWords } from "../core/device-control.ts";
 import { controlDeadlineMs } from "../core/device-settings.ts";
@@ -47,7 +47,7 @@ export interface DeviceServersDeps {
 
 export type DeviceServerView =
   | { readonly is: "none" }
-  | { readonly is: "connected"; readonly version: number; readonly protocol: number; readonly state: DeviceState }
+  | { readonly is: "connected"; readonly version: number; readonly protocol: number; readonly state: DeviceState; readonly bootedHere?: readonly ModelName[] }
   | { readonly is: "waiting"; readonly version: number | null; readonly for: number; readonly why: "person" | "recording" }
   | { readonly is: "down"; readonly words: string }
   | { readonly is: "superseded" };
@@ -368,7 +368,7 @@ export class DeviceServers {
     }
     const hello = link.hello;
     held.link = link;
-    held.view = { is: "connected", version: hello.version, protocol: hello.protocol, state: hello.state };
+    held.view = { is: "connected", version: hello.version, protocol: hello.protocol, state: hello.state, bootedHere: hello.bootedHere };
     this.#touch(box.id);
     await this.#copied(box, hello.state, hello);
     await this.#tellOwner(box).catch((error) => this.#deps.logError("tell the device server who has control", error));
@@ -423,7 +423,7 @@ export class DeviceServers {
       try {
         const fresh = await this.#open(box);
         held.link = fresh;
-        held.view = { is: "connected", version: fresh.hello.version, protocol: fresh.hello.protocol, state: fresh.hello.state };
+        held.view = { is: "connected", version: fresh.hello.version, protocol: fresh.hello.protocol, state: fresh.hello.state, bootedHere: fresh.hello.bootedHere };
         this.#touch(box.id);
         await this.#copied(box, fresh.hello.state, fresh.hello);
         await this.#tellOwner(box).catch((error) => this.#deps.logError("tell the device server who has control", error));
@@ -447,7 +447,7 @@ export class DeviceServers {
     try {
       const restored = await this.#open(box);
       held.link = restored;
-      held.view = { is: "connected", version: restored.hello.version, protocol: restored.hello.protocol, state: restored.hello.state };
+      held.view = { is: "connected", version: restored.hello.version, protocol: restored.hello.protocol, state: restored.hello.state, bootedHere: restored.hello.bootedHere };
       this.#touch(box.id);
       await this.#tellOwner(box).catch((error) => this.#deps.logError("tell the device server who has control", error));
       return held.view;

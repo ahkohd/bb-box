@@ -33,7 +33,7 @@ import {
   type NetworkPreset,
   type Posture,
 } from "../core/device.ts";
-import { batteryWords, locationWords } from "../core/device-settings.ts";
+import { SLOW_NETWORK, batteryWords, locationWords } from "../core/device-settings.ts";
 import {
   BAR_WORDS,
   LAYOUT,
@@ -717,7 +717,7 @@ const NETWORK_WORDS: Readonly<Record<NetworkPreset, string>> = { online: "Online
 const NETWORK_DETAIL: Readonly<Record<NetworkPreset, string>> = {
   online: "Wi-Fi and data at full speed",
   offline: "Airplane mode",
-  slow: "EDGE speed, with 35 to 200 ms of delay",
+  slow: `${SLOW_NETWORK.kbitPerSecond} kbit/s each way, ${SLOW_NETWORK.delayMs} ms later out`,
 };
 
 function FormDialog({ open, title, description, submit, problem, onSubmit, onClose, children }: { open: boolean; title: string; description: string; submit: string; problem: string | null; onSubmit: () => void; onClose: () => void; children: ReactNode }) {

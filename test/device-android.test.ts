@@ -6,7 +6,11 @@ import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { DeviceState, OfferedDeviceOf } from "../src/core/device.ts";
-import { AndroidDriver, foldScreenOf, largestFrameBytes, skinRotation } from "../src/device/android-driver.ts";
+import { AndroidDriver, foldScreenOf, identityFile, largestFrameBytes, shellQuoted, skinRotation } from "../src/device/android-driver.ts";
+import { networkScript, parseReading, readScript } from "../src/device/android-controls.ts";
+import { panelPoint, touchPanel } from "../src/device/android-input.ts";
+import { apkPackage } from "../src/device/apk.ts";
+import { EMULATOR_OWN_LOCATION } from "../src/core/device-settings.ts";
 import { AndroidVideo } from "../src/device/android-video.ts";
 import { DriverError } from "../src/device/driver.ts";
 import { Emulator, EmulatorRefused, discoveryValues, emulatorUnit, type EmulatorControl, type RunningEmulator } from "../src/device/emulator.ts";
@@ -29,6 +33,74 @@ const EMU = "android.emulation.control";
 const TOKEN = "the-token";
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function utf16Pool(strings: readonly string[]): Buffer {
+  const bodies = strings.map((text) => {
+    const units = Buffer.from(text, "utf16le");
+    const length = Buffer.alloc(2);
+    length.writeUInt16LE(text.length);
+    return Buffer.concat([length, units, Buffer.alloc(2)]);
+  });
+  const offsets = Buffer.alloc(strings.length * 4);
+  let at = 0;
+  bodies.forEach((body, index) => {
+    offsets.writeUInt32LE(at, index * 4);
+    at += body.length;
+  });
+  const data = Buffer.concat(bodies);
+  const padded = Buffer.concat([data, Buffer.alloc((4 - (data.length % 4)) % 4)]);
+  const header = Buffer.alloc(28);
+  header.writeUInt16LE(0x0001, 0);
+  header.writeUInt16LE(28, 2);
+  header.writeUInt32LE(28 + offsets.length + padded.length, 4);
+  header.writeUInt32LE(strings.length, 8);
+  header.writeUInt32LE(28 + offsets.length, 20);
+  return Buffer.concat([header, offsets, padded]);
+}
+
+function binaryManifest(pkg: string): Buffer {
+  const pool = utf16Pool(["package", "manifest", pkg]);
+  const element = Buffer.alloc(36 + 20);
+  element.writeUInt16LE(0x0102, 0);
+  element.writeUInt16LE(16, 2);
+  element.writeUInt32LE(element.length, 4);
+  element.writeUInt32LE(0xffffffff, 16);
+  element.writeUInt32LE(1, 20);
+  element.writeUInt16LE(20, 24);
+  element.writeUInt16LE(20, 26);
+  element.writeUInt16LE(1, 28);
+  element.writeUInt32LE(0xffffffff, 36);
+  element.writeUInt32LE(0, 40);
+  element.writeUInt32LE(2, 44);
+  const header = Buffer.alloc(8);
+  header.writeUInt16LE(0x0003, 0);
+  header.writeUInt16LE(8, 2);
+  header.writeUInt32LE(8 + pool.length + element.length, 4);
+  return Buffer.concat([header, pool, element]);
+}
+
+function apkWithPackage(pkg: string): Buffer {
+  const name = Buffer.from("AndroidManifest.xml");
+  const data = binaryManifest(pkg);
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt32LE(data.length, 18);
+  local.writeUInt32LE(data.length, 22);
+  local.writeUInt16LE(name.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt32LE(data.length, 20);
+  central.writeUInt32LE(data.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  const centralAt = local.length + name.length + data.length;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length + name.length, 12);
+  end.writeUInt32LE(centralAt, 16);
+  return Buffer.concat([local, name, data, central, name, end]);
+}
+
 async function until(what: string, check: () => boolean | Promise<boolean>, ms = 5000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!(await check())) {
@@ -50,11 +122,29 @@ interface Screen {
   readonly rotation?: number;
 }
 
+const REQUEST_TYPES: Readonly<Record<string, string>> = {
+  [GRPC_METHODS.emulator.streamScreenshot]: "ImageFormat",
+  [GRPC_METHODS.emulator.getScreenshot]: "ImageFormat",
+  [GRPC_METHODS.emulator.sendTouch]: "TouchEvent",
+  [GRPC_METHODS.emulator.sendKey]: "KeyboardEvent",
+  [GRPC_METHODS.emulator.setClipboard]: "ClipData",
+  [GRPC_METHODS.emulator.setPhysicalModel]: "PhysicalModelValue",
+  [GRPC_METHODS.emulator.setPosture]: "Posture",
+  [GRPC_METHODS.emulator.setBattery]: "BatteryState",
+  [GRPC_METHODS.emulator.setGps]: "GpsState",
+};
+
+const TURNED_BY_DEGREES: Readonly<Record<number, number>> = { 0: 0, 90: 1, 180: 2, [-90]: 3 };
+
 class FakeEmulatorGrpc {
   readonly server: Http2Server;
   readonly streams = new Set<ServerHttp2Stream>();
   readonly asked: { readonly path: string; readonly authorization: string | undefined; readonly request: Record<string, unknown> }[] = [];
   screen: Screen = { width: 1080, height: 2400 };
+  clipboard = "";
+  gps = { latitude: 37.422, longitude: -122.0841 };
+  battery = { charger: 1, chargeLevel: 100 };
+  emulator: FakeEmulator | null = null;
 
   constructor() {
     this.server = createServer();
@@ -75,7 +165,9 @@ class FakeEmulatorGrpc {
     };
     stream.on("data", (chunk: Buffer) => {
       for (const message of deframer.push(new Uint8Array(chunk))) {
-        this.asked.push({ path, authorization, request: decode(EMULATOR_SCHEMA, `${EMU}.ImageFormat`, message) as Record<string, unknown> });
+        const type = REQUEST_TYPES[path];
+        const request = type ? (decode(EMULATOR_SCHEMA, `${EMU}.${type}`, message) as Record<string, unknown>) : {};
+        this.asked.push({ path, authorization, request });
         if (authorization !== `Bearer ${TOKEN}`) {
           respond(16);
           stream.end();
@@ -88,9 +180,38 @@ class FakeEmulatorGrpc {
           this.show(this.screen);
         } else if (path === GRPC_METHODS.emulator.getScreenshot) {
           stream.end(Buffer.from(frame(encode(EMULATOR_SCHEMA, `${EMU}.Image`, { format: { width: this.screen.width, height: this.screen.height }, image: Uint8Array.of(137, 80, 78, 71) }))));
-        } else stream.end();
+        } else {
+          const answer = this.#answer(path, request);
+          stream.end(answer ? Buffer.from(frame(answer)) : Buffer.from(frame(new Uint8Array(0))));
+        }
       }
     });
+  }
+
+  #answer(path: string, request: Record<string, unknown>): Uint8Array | null {
+    const methods = GRPC_METHODS.emulator;
+    if (path === methods.getClipboard) return encode(EMULATOR_SCHEMA, `${EMU}.ClipData`, { text: this.clipboard });
+    if (path === methods.setClipboard) this.clipboard = String(request.text ?? "");
+    if (path === methods.getGps) return encode(EMULATOR_SCHEMA, `${EMU}.GpsState`, this.gps);
+    if (path === methods.setGps) this.gps = { latitude: Number(request.latitude ?? 0), longitude: Number(request.longitude ?? 0) };
+    if (path === methods.getBattery) return encode(EMULATOR_SCHEMA, `${EMU}.BatteryState`, this.battery);
+    if (path === methods.setBattery) this.battery = { charger: Number(request.charger ?? 0), chargeLevel: Number(request.chargeLevel ?? 0) };
+    if (path === methods.setPhysicalModel) {
+      const degrees = ((request.value as { data?: number[] } | undefined)?.data ?? [0, 0, 0])[2] ?? 0;
+      const rotation = TURNED_BY_DEGREES[degrees] ?? 0;
+      const upright = this.upright;
+      setTimeout(() => this.show(rotation % 2 ? { width: upright.height, height: upright.width, rotation } : { width: upright.width, height: upright.height, rotation }), 5);
+    }
+    if (path === methods.setPosture && this.emulator) {
+      const value = Number(request.value ?? 0);
+      this.emulator.deviceState = String(value - 1);
+      setTimeout(() => this.show(value === 1 ? { width: 1080, height: 2092 } : { width: 2208, height: 1840 }), 5);
+    }
+    return null;
+  }
+
+  get upright(): { readonly width: number; readonly height: number } {
+    return (this.screen.rotation ?? 0) % 2 ? { width: this.screen.height, height: this.screen.width } : this.screen;
   }
 
   show(screen: Screen): void {
@@ -111,6 +232,17 @@ class FakeEmulatorGrpc {
 
 class FakeEmulator implements EmulatorControl {
   readonly calls: string[] = [];
+  readonly shells: string[] = [];
+  readonly adb: (readonly string[])[] = [];
+  night = "no";
+  fontScale = "1.0";
+  wakefulness = "Awake";
+  airplane = "disabled";
+  wifi = "1";
+  shaped = false;
+  deviceState = "2";
+  androidId = "91f5432055d42a8c";
+  installed = new Set<string>();
   runningNow: RunningEmulator | null = null;
   nextPid = 100;
   refuse: EmulatorRefused | null = null;
@@ -142,8 +274,33 @@ class FakeEmulator implements EmulatorControl {
   }
   async shell(command: string): Promise<string> {
     if (command === "date +%s") return `${Math.round(Date.now() / 1000)}\n`;
-    this.calls.push(`shell ${command}`);
+    if (command === readScript())
+      return [`Night mode: ${this.night}`, this.fontScale, `  mWakefulness=${this.wakefulness}`, this.airplane, this.wifi, this.shaped ? "qdisc netem 8001: root" : "qdisc noqueue 0: root", this.deviceState].join("\n@@bb-box@@\n");
+    this.shells.push(command);
+    const night = /^cmd uimode night (yes|no)$/.exec(command);
+    if (night) this.night = night[1]!;
+    const scale = /^settings put system font_scale (\S+)$/.exec(command);
+    if (scale) this.fontScale = scale[1]!;
+    if (command === "input keyevent KEYCODE_SLEEP") this.wakefulness = "Asleep";
+    if (command === "input keyevent KEYCODE_WAKEUP") this.wakefulness = "Awake";
+    if (command === "settings get secure android_id") return `${this.androidId}\n`;
+    const id = /^settings put secure android_id (\w+)$/.exec(command);
+    if (id) this.androidId = id[1]!;
+    for (const preset of ["online", "offline", "slow"] as const) {
+      if (command !== networkScript(preset)) continue;
+      this.airplane = preset === "offline" ? "enabled" : "disabled";
+      this.wifi = preset === "offline" ? "0" : "1";
+      this.shaped = preset === "slow";
+    }
+    if (command.startsWith("ip -o -4 addr show wlan0")) return this.wifi === "1" ? "18: wlan0    inet 10.0.2.16/24\n" : "";
+    const path = /^pm path '([^']+)'/.exec(command);
+    if (path) return this.installed.has(path[1]!) ? `package:/data/app/${path[1]}/base.apk\n` : "";
+    if (command.startsWith("am start")) return "Starting: Intent { act=android.intent.action.VIEW }\n";
     return "";
+  }
+  async adbRun(args: readonly string[]): Promise<{ readonly code: number; readonly output: string }> {
+    this.adb.push(args);
+    return { code: 0, output: "Performing Streamed Install\nSuccess" };
   }
 }
 
@@ -154,12 +311,17 @@ after(() => {
   for (const server of servers) server.close();
 });
 
-async function rig(options: { readonly watchMs?: number } = {}) {
+async function rig(options: { readonly watchMs?: number; readonly adbKey?: string } = {}) {
   const grpc = new FakeEmulatorGrpc();
   servers.push(grpc);
   const port = await grpc.listen();
   const emulator = new FakeEmulator();
+  grpc.emulator = emulator;
   const dir = tempDir("android-driver");
+  if (options.adbKey) {
+    mkdirSync(join(dir, ".android"), { recursive: true });
+    writeFileSync(join(dir, ".android", "adbkey.pub"), options.adbKey);
+  }
   const paths = devicePaths(dir);
   mkdirSync(paths.dir, { recursive: true });
   const lines: string[] = [];
@@ -171,6 +333,7 @@ async function rig(options: { readonly watchMs?: number } = {}) {
     grpc: () => new GrpcClient({ tcp: `http://127.0.0.1:${port}` }),
     watchMs: options.watchMs ?? 50,
     clockTickMs: 60_000,
+    home: dir,
   });
   drivers.push(driver);
   const frames: { key: boolean; width: number; height: number; generation: number }[] = [];
@@ -179,7 +342,7 @@ async function rig(options: { readonly watchMs?: number } = {}) {
     for await (const each of driver.video().frames(reading.signal)) frames.push({ key: each.key, width: each.width, height: each.height, generation: each.generation });
   })();
   after(() => reading.abort());
-  return { grpc, emulator, driver, frames, lines, paths };
+  return { grpc, emulator, driver, frames, lines, paths, port, dir };
 }
 
 describe("the Android driver", () => {
@@ -220,7 +383,7 @@ describe("the Android driver", () => {
     await until("a frame", () => frames.length === 1);
     const inner = (await driver.readBack()) as Extract<DeviceState, { form: "foldable" }>;
     assert.equal(inner.geometry?.screen, "inner");
-    assert.equal(inner.posture.known, false);
+    assert.deepEqual(inner.posture.known && inner.posture.value, "open");
     grpc.show({ width: 1080, height: 2092 });
     await until("the folded frame", () => frames.length === 2);
     assert.deepEqual({ width: frames[1]!.width, height: frames[1]!.height, generation: frames[1]!.generation }, { width: 1080, height: 2092, generation: 2 });
@@ -244,7 +407,7 @@ describe("the Android driver", () => {
     assert.equal(failed.is === "failed" && failed.error.code, "device-exited");
     assert.match(failed.is === "failed" ? failed.error.words : "", /stopped twice within 5 minutes/);
     assert.ok(lines.some((line) => /ended without being asked/.test(line)));
-    await driver.control({ action: "reboot" }, AbortSignal.timeout(5000));
+    await driver.control({ action: "reboot" }, AbortSignal.timeout(5000), { personHasControl: false });
     assert.deepEqual(emulator.calls.slice(2), ["start pixel_8 cold"]);
     assert.deepEqual((await driver.readBack()).power, { is: "booted", awake: true });
   });
@@ -271,15 +434,212 @@ describe("the Android driver", () => {
     }
   });
 
-  test("a screenshot is the emulator's PNG; touch, keys, paste and controls other than reboot are refused for now, and lifting is no input", async () => {
-    const { driver } = await rig();
+  test("a screenshot is the emulator's PNG, lifting with nothing down sends nothing, and the tree is not read yet", async () => {
+    const { grpc, driver } = await rig();
     await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
     assert.deepEqual([...(await driver.screenshot())], [137, 80, 78, 71]);
     await driver.touch([]);
     await driver.key("a", false);
-    await assert.rejects(driver.touch([{ id: 0, x: 1, y: 1 }]), (error: unknown) => error instanceof DriverError && error.code === "unsupported");
-    await assert.rejects(driver.control({ action: "home" }, AbortSignal.timeout(1000)), (error: unknown) => error instanceof DriverError && error.code === "unsupported");
+    assert.equal(grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.sendTouch).length, 0);
     await assert.rejects(driver.tree(), /cannot read an Android device's elements yet/);
+  });
+
+  test("touches go to the emulator in its panel's own pixels however the device is held, with every finger lifted by pressure 0", async () => {
+    const { grpc, driver, frames } = await rig();
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    await until("a frame", () => frames.length === 1);
+    const touches = () => grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.sendTouch).map((each) => each.request.touches);
+    await driver.touch([{ id: 0, x: 540, y: 600 }]);
+    await driver.touch([
+      { id: 0, x: 540, y: 600 },
+      { id: 1, x: 100, y: 200 },
+    ]);
+    await driver.touch([{ id: 1, x: 110, y: 210 }]);
+    await driver.touch([]);
+    assert.deepEqual(touches(), [
+      [{ x: 540, y: 600, pressure: 1 }],
+      [
+        { x: 540, y: 600, pressure: 1 },
+        { x: 100, y: 200, identifier: 1, pressure: 1 },
+      ],
+      [
+        { x: 110, y: 210, identifier: 1, pressure: 1 },
+        { x: 540, y: 600 },
+      ],
+      [{ x: 110, y: 210, identifier: 1 }],
+    ]);
+    await driver.control({ action: "rotate", turn: "right" }, AbortSignal.timeout(5000), { personHasControl: false });
+    assert.equal((await driver.readBack()).geometry?.physical, "turned-right");
+    await driver.touch([{ id: 0, x: 300, y: 700 }]);
+    assert.deepEqual(touches().at(-1), [{ x: 700, y: 2099, pressure: 1 }]);
+  });
+
+  test("the panel's pixels: each way the device is held, and the Pixel Fold's outer screen stretched onto its inner panel", () => {
+    const phone = { width: 1080, height: 2400 };
+    assert.deepEqual(panelPoint({ x: 540, y: 600 }, phone, "upright", phone), { x: 540, y: 600 });
+    assert.deepEqual(panelPoint({ x: 1700, y: 300 }, { width: 2400, height: 1080 }, "turned-right", phone), { x: 300, y: 699 });
+    assert.deepEqual(panelPoint({ x: 1700, y: 300 }, { width: 2400, height: 1080 }, "turned-left", phone), { x: 779, y: 1700 });
+    assert.deepEqual(panelPoint({ x: 0, y: 0 }, phone, "upside-down", phone), { x: 1079, y: 2399 });
+    const fold = deviceModel("Pixel Fold");
+    assert.deepEqual(touchPanel(fold), { width: 2208, height: 1840 });
+    assert.deepEqual(panelPoint({ x: 540, y: 700 }, { width: 1080, height: 2092 }, "upright", touchPanel(fold)), { x: 1104, y: 616 });
+    assert.deepEqual(touchPanel(deviceModel("Pixel 8")), phone);
+  });
+
+  test("keys go by their W3C names, a key a US keyboard lacks is refused, paste is the Paste key, and the clipboard goes both ways", async () => {
+    const { grpc, driver } = await rig();
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    await driver.key("Shift", true);
+    await driver.key("a", true);
+    await driver.key("a", false);
+    await driver.key("Shift", false);
+    await driver.key("Enter", true);
+    await driver.key("Enter", false);
+    await assert.rejects(driver.key("é", true), (error: unknown) => error instanceof DriverError && error.code === "bad-value");
+    await driver.setClipboard("日本語 🙂");
+    assert.equal(await driver.clipboard(), "日本語 🙂");
+    await driver.paste();
+    const keys = grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.sendKey).map((each) => `${each.request.key}${each.request.eventType === 1 ? " up" : " down"}`);
+    assert.deepEqual(keys, ["Shift down", "a down", "a up", "Shift up", "Enter down", "Enter up", "Paste down", "Paste up"]);
+    assert.equal(driver.pasteLandsMs, 300);
+  });
+
+  test("Home, Back and Recents are the emulator's keys; lock and wake wait until Android reads them; each setting is set and read back", async () => {
+    const { grpc, emulator, driver } = await rig();
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    const none = { personHasControl: false };
+    for (const action of ["home", "back", "recents"] as const) await driver.control({ action }, AbortSignal.timeout(5000), none);
+    const pressed = grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.sendKey && each.request.eventType !== 1).map((each) => each.request.key);
+    assert.deepEqual(pressed, ["GoHome", "GoBack", "AppSwitch"]);
+    await driver.control({ action: "lock" }, AbortSignal.timeout(5000), none);
+    assert.deepEqual((await driver.readBack()).power, { is: "booted", awake: false });
+    await driver.control({ action: "wake" }, AbortSignal.timeout(5000), none);
+    assert.deepEqual((await driver.readBack()).power, { is: "booted", awake: true });
+    await driver.control({ action: "appearance", to: "dark" }, AbortSignal.timeout(5000), none);
+    await driver.control({ action: "text_size", to: 1.3 }, AbortSignal.timeout(5000), none);
+    await driver.control({ action: "text_size", to: "larger" }, AbortSignal.timeout(5000), none);
+    await driver.control({ action: "location", to: { latitude: 51.5007, longitude: -0.1246 } }, AbortSignal.timeout(5000), none);
+    await driver.control({ action: "battery", to: { level: 42, charging: false } }, AbortSignal.timeout(5000), none);
+    await driver.control({ action: "network", to: "slow" }, AbortSignal.timeout(5000), none);
+    const state = await driver.readBack();
+    assert.equal(state.platform, "android");
+    if (state.platform !== "android") return;
+    const value = <T,>(observed: { readonly known: boolean; readonly value?: T; readonly by?: string }) => (observed.known ? [observed.value, observed.by] : null);
+    assert.deepEqual(value(state.settings.appearance), ["dark", "bb-box"]);
+    assert.deepEqual(value(state.settings.fontScale), [1.5, "bb-box"]);
+    assert.deepEqual(value(state.settings.location), [{ latitude: 51.5007, longitude: -0.1246 }, "bb-box"]);
+    assert.deepEqual(value(state.settings.battery), [{ level: 42, charging: false }, "bb-box"]);
+    assert.deepEqual(value(state.settings.network), ["slow", "bb-box"]);
+    assert.ok(emulator.shells.includes(networkScript("slow")));
+    emulator.night = "no";
+    await driver.readSettings(AbortSignal.timeout(5000));
+    const after = await driver.readBack();
+    assert.deepEqual(after.platform === "android" && value(after.settings.appearance), ["light", "outside"]);
+    await driver.control({ action: "location", to: null }, AbortSignal.timeout(5000), none);
+    assert.deepEqual(grpc.gps, EMULATOR_OWN_LOCATION);
+    await driver.control({ action: "battery", to: null }, AbortSignal.timeout(5000), none);
+    assert.deepEqual(grpc.battery, { charger: 1, chargeLevel: 100 });
+  });
+
+  test("a clean status bar is SystemUI's demo mode, showing the battery bb-box set, set again when the device starts, and live leaves it", async () => {
+    const { emulator, driver, paths, port, dir } = await rig();
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    const none = { personHasControl: false };
+    await driver.control({ action: "status_bar", to: "clean" }, AbortSignal.timeout(5000), none);
+    assert.ok(emulator.shells.some((command) => command.includes("-e command enter") && command.includes("-e level 100 -e plugged false")));
+    await driver.control({ action: "battery", to: { level: 42, charging: true } }, AbortSignal.timeout(5000), none);
+    assert.ok(emulator.shells.some((command) => command.includes("-e level 42 -e plugged true")));
+    const state = await driver.readBack();
+    assert.equal(state.platform === "android" && state.settings.statusBar.set, "clean");
+    emulator.shells.length = 0;
+    const again = new AndroidDriver({ paths, log: () => {}, emulator, encoderProgram: FAKE_HELPER, grpc: () => new GrpcClient({ tcp: `http://127.0.0.1:${port}` }), watchMs: 50, clockTickMs: 60_000, home: dir });
+    drivers.push(again);
+    await again.attach(PIXEL_8, AbortSignal.timeout(5000));
+    assert.ok(emulator.shells.some((command) => command.includes("-e command enter")));
+    await driver.control({ action: "status_bar", to: "live" }, AbortSignal.timeout(5000), none);
+    assert.ok(emulator.shells.some((command) => command.includes("-e command exit")));
+  });
+
+  test("the Pixel Fold folds by posture, waits until Android reads it and the picture shows the other screen", async () => {
+    const { grpc, driver, frames } = await rig();
+    grpc.screen = { width: 2208, height: 1840 };
+    await driver.attach(PIXEL_FOLD, AbortSignal.timeout(5000));
+    await until("a frame", () => frames.length === 1);
+    const none = { personHasControl: false };
+    await driver.control({ action: "posture", to: "closed" }, AbortSignal.timeout(5000), none);
+    const closed = (await driver.readBack()) as Extract<DeviceState, { form: "foldable" }>;
+    assert.equal(closed.geometry?.screen, "outer");
+    assert.deepEqual(closed.posture.known && closed.posture.value, "closed");
+    await driver.control({ action: "posture", to: "half-open" }, AbortSignal.timeout(5000), none);
+    const half = (await driver.readBack()) as Extract<DeviceState, { form: "foldable" }>;
+    assert.equal(half.geometry?.screen, "inner");
+    assert.deepEqual(half.posture.known && half.posture.value, "half-open");
+    await driver.touch([{ id: 0, x: 540, y: 700 }]);
+    assert.equal(grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.setPosture).length, 2);
+  });
+
+  test("install runs adb install, then sync so the app reaches the device's disk; one already installed is refused while a person has control", async () => {
+    const { emulator, driver, paths } = await rig();
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    const apk = join(paths.dir, "app.apk");
+    writeFileSync(apk, apkWithPackage("com.example.app"));
+    await driver.control({ action: "install", paths: [apk] }, AbortSignal.timeout(5000), { personHasControl: true });
+    assert.deepEqual(emulator.adb, [["install", "-r", apk]]);
+    assert.ok(emulator.shells.includes("sync"));
+    emulator.installed.add("com.example.app");
+    await assert.rejects(driver.control({ action: "install", paths: [apk] }, AbortSignal.timeout(5000), { personHasControl: true }), (error: unknown) => error instanceof DriverError && error.code === "person-has-control");
+    const split = join(paths.dir, "split.apk");
+    writeFileSync(split, apkWithPackage("com.example.app"));
+    await driver.control({ action: "install", paths: [apk, split] }, AbortSignal.timeout(5000), { personHasControl: false });
+    assert.deepEqual(emulator.adb.at(-1), ["install-multiple", "-r", apk, split]);
+    await assert.rejects(driver.control({ action: "install", paths: [join(paths.dir, "none.apk")] }, AbortSignal.timeout(5000), { personHasControl: false }), /no file at/);
+    writeFileSync(join(paths.dir, "text.apk"), "not a zip");
+    await assert.rejects(driver.control({ action: "install", paths: [join(paths.dir, "text.apk")] }, AbortSignal.timeout(5000), { personHasControl: false }), /is not an APK/);
+  });
+
+  test("an APK's package is read from its binary manifest", async () => {
+    const dir = tempDir("apk");
+    const path = join(dir, "app.apk");
+    writeFileSync(path, apkWithPackage("org.example.shop"));
+    assert.equal(await apkPackage(path), "org.example.shop");
+    assert.equal(await apkPackage(join(dir, "none.apk")), null);
+  });
+
+  test("a link opens through Android's VIEW intent, quoted for the device's shell", async () => {
+    const { emulator, driver } = await rig();
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    await driver.openUrl("https://example.com/a b'c", AbortSignal.timeout(5000));
+    assert.ok(emulator.shells.includes(`am start -a android.intent.action.VIEW -d ${shellQuoted("https://example.com/a b'c")} 2>&1`));
+    assert.equal(shellQuoted("it's"), `'it'\\''s'`);
+  });
+
+  test("each box gives each device its own Android ID once, restarting Android's framework, and keeps it until the box changes", async () => {
+    const { emulator, driver, paths } = await rig({ adbKey: "a key of this box" });
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    const restarts = () => emulator.shells.filter((command) => command.includes("settings_ssaid.xml") && command.includes("stop; start")).length;
+    assert.equal(restarts(), 1);
+    assert.notEqual(emulator.androidId, "91f5432055d42a8c");
+    const marker = JSON.parse(readFileSync(identityFile(paths, "pixel_8"), "utf8")) as { androidId: string };
+    assert.equal(marker.androidId, emulator.androidId);
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    assert.equal(restarts(), 1);
+    emulator.androidId = "91f5432055d42a8c";
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    assert.equal(restarts(), 2);
+  });
+
+  test("a box with no adb key yet leaves the Android ID as it is", async () => {
+    const { emulator, driver, lines } = await rig();
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    assert.equal(emulator.androidId, "91f5432055d42a8c");
+    assert.ok(lines.some((line) => /no adb key yet/.test(line)));
+  });
+
+  test("the read-back reads every setting in one shell command", () => {
+    const read = parseReading(["Night mode: yes", "1.15", "  mWakefulness=Dozing", "enabled", "0", "qdisc noqueue 0: root", "1"].join("\n@@bb-box@@\n"));
+    assert.deepEqual(read, { appearance: "dark", fontScale: 1.15, awake: false, network: "offline", networkWords: "airplane mode enabled, Wi-Fi off, not slowed", posture: "half-open" });
+    assert.equal(parseReading(["Night mode: no", "null", "", "disabled", "1", "qdisc netem 8001: root", ""].join("\n@@bb-box@@\n")).network, "slow");
+    assert.equal(parseReading(["Night mode: no", "1.0", "", "enabled", "1", "", ""].join("\n@@bb-box@@\n")).network, null);
   });
 
   test("rotations and screens are read as 063 names them", () => {

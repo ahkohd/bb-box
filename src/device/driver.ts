@@ -34,6 +34,7 @@ export interface DeviceDriver {
   key(key: string, down: boolean): Promise<void>;
   typesAsKeys?(character: string): boolean;
   paste(): Promise<void>;
+  readonly pasteLandsMs?: number;
   prepareInput(): Promise<void>;
   setClipboard(text: string): Promise<void>;
   clipboard(): Promise<string>;
