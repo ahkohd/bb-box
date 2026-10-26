@@ -14,7 +14,7 @@ import { test } from "node:test";
 import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
-import { BackendError, type BackendDriver, type BoxKind } from "../src/backends/types.ts";
+import { BackendError, DEVICE_DISPLAY, type BackendDriver, type BoxKind } from "../src/backends/types.ts";
 import { stillsRequestText } from "../src/core/device.ts";
 import type { BoxPointer } from "../src/transports/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
@@ -25,7 +25,7 @@ import { Phases, removeStaleApp, setAsideOtherMachines, withReachHint } from "..
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { FOLLOW_FRAME_MS, POINTER_NONE, sharpOffered } from "../src/plugin/desktop.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
-import { boxPath, workspacePath } from "../src/plugin/tools.ts";
+import { boxPath, ownProcessHint, workspacePath } from "../src/plugin/tools.ts";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { hostEntry } from "../src/host/entry.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
@@ -502,7 +502,8 @@ test("box_grant grants a program in a Mac's box its permissions, says how to run
   assert.match(text(granted), new RegExp(`^Granted accessibility, screen-recording to dev\\.example\\.probe in box ${box.name}\\.`));
   assert.match(text(granted), /Open the app with open, so that it is its own responsible process/);
   const cli = await tool("box_grant", { box: box.name, program: "/Users/bbx-0/bin/tool", permissions: ["microphone"] });
-  assert.match(text(cli), /Run it through bb-box-own, as bb-box-own \/Users\/bbx-0\/bin\/tool <arguments>/);
+  assert.match(text(cli), /Start it through launchd from a box_run command with desktop true, as launchctl submit -l <label> -o <log> -- \/Users\/bbx-0\/bin\/tool <arguments>/);
+  assert.match(ownProcessHint("ssh-pool:macs", "/Users/bbx-0/bin/tool"), /^Run it through bb-box-own, as bb-box-own \/Users\/bbx-0\/bin\/tool <arguments>/, "the SSH host pool's Macs have bb-box-own");
   assert.match(text(await tool("box_status", { box: box.name })), /\nmacOS permissions granted with box_grant: accessibility to dev\.example\.probe, screen-recording to dev\.example\.probe, microphone to \/Users\/bbx-0\/bin\/tool\./);
   await assert.rejects(tool("box_grant", { box: box.name, program: "/Users/bbx-0/bin/tool", permissions: ["telepathy"] }), /expected one of "accessibility"/);
   assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /Signing identity/);
@@ -5566,6 +5567,31 @@ test("an enrolment that cannot reach BB's server says so, and how to fix it, bef
     `BB's server is not reachable from Namespace: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). ${curl}`,
   );
   assert.equal(withReachHint("Enrolling box quiet-oak failed: exit 1", "Namespace"), "Enrolling box quiet-oak failed: exit 1");
+});
+
+test("box_acquire and box_start answer once an ios box's device has booted or come back, with its Device lines (063, 4.2)", async (t) => {
+  const runtime = { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" };
+  const offer = { platform: "ios", devices: [{ model: "iPhone 18 Pro", native: "phone-18", runtime }, { model: "iPhone 17", native: "phone-17", runtime }] };
+  const kind: BoxKind = { ...FAKE_KINDS[0]!, id: "ios", label: "iOS Simulator", capabilities: { ...FAKE_KINDS[0]!.capabilities, displays: [DEVICE_DISPLAY], device: offer as never } };
+  const { harness, app, tool } = await start(undefined, { kinds: [kind] });
+  t.after(() => harness.lifecycle.dispose());
+  const state = {
+    platform: "ios",
+    model: "iPhone 17",
+    power: { is: "booted", awake: true },
+    geometry: { generation: 1, physical: "upright", content: "upright", video: { width: 1206, height: 2622 } },
+    settings: { appearance: { known: false, why: "" }, textSize: { known: false, why: "" }, location: { set: null, at: null }, statusBar: { set: null, at: null } },
+    at: 0,
+  };
+  Object.assign(app.devices, { recorded: () => undefined, view: () => ({ is: "connected", version: 5, protocol: 1, state }) });
+  const acquired = text(await tool("box_acquire", { kind: "ios", device: "iPhone 17" }));
+  assert.match(acquired, /\nDevice: iPhone 17, iOS 27\.0 \(24A434\), Xcode 27\.0, idb_companion 1\.7\.7\nDevice state: booted, upright, 1206x2622\n/);
+  assert.match(acquired, /\nThe iPhone 17 booted \d+\.\d s after the box was ready\./);
+  const box = await only(app);
+  assert.ok(!isError(await tool("box_stop", { box: box.name })));
+  const started = text(await tool("box_start", { box: box.name }));
+  assert.match(started, /\nDevice: iPhone 17, iOS 27\.0 \(24A434\), Xcode 27\.0, idb_companion 1\.7\.7\nDevice state: booted, upright, 1206x2622\n/);
+  assert.match(started, /\nThe iPhone 17 came back \d+\.\d s after the box was ready\./);
 });
 
 test("box_acquire and bb box acquire take a device, refuse it on other kinds, and refuse a device kind no backend offers (063)", async (t) => {

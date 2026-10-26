@@ -19,7 +19,7 @@ import { KIND_INFO } from "../src/backends/kinds.ts";
 
 const GiB = 1024;
 
-test("each kind ships three presets, small by default, and a largest size twice large with a 256 GiB disk", () => {
+test("each kind ships three presets, small by default but medium for ios, and a largest size twice large with a 256 GiB disk", () => {
   const linux = kindSizes("linux");
   assert.deepEqual(linux.presets, {
     small: { cores: 2, memoryMiB: 4 * GiB, diskGiB: null },
@@ -43,6 +43,8 @@ test("each kind ships three presets, small by default, and a largest size twice 
   });
   assert.deepEqual(macos.largest, { cores: 16, memoryMiB: 64 * GiB, diskGiB: 256 });
   assert.deepEqual(kindSizes("macos-desktop"), macos);
+  assert.deepEqual(kindSizes("ios"), { ...macos, default: "medium" }, "an ios box has room for Xcode beside its device, at the size its measurements were made at (063)");
+  assert.deepEqual(defaultSize(kindSizes("ios")), { cores: 6, memoryMiB: 16 * GiB, diskGiB: null });
   assert.deepEqual(kindSizes("windows-desktop"), desktop);
   assert.deepEqual(kindSizes("solaris"), linux, "a kind bb-box has no sizes for takes linux's");
 });

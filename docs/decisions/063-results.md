@@ -622,4 +622,43 @@ kernel, so its clock is the macOS VM's.
 | 24 h | suspended again at 11:16 UTC on 26 October; to be read after 11:16 UTC on 27 October | | | |
 
 The 62-minute run was in a second box, which ran the device server as it
-was before its last changes, none of them to the driver's resume.
+was before its last changes, none of them to the driver's resume. Its screen
+did not change after the resume, which hid what the next section found.
+
+### Through the production BB
+
+After the deploy, ios boxes acquired with `box_acquire` on the production
+BB, at the kind's default size then, small, 4 cores and 8 GiB. The ios
+kind's default is now medium, 6 cores and 16 GiB, the size the measurements
+above were made at, with room for Xcode beside the device. The panel itself
+was not seen: a box cannot reach BB's panel without a person's session.
+Every stream number is from a viewer on the device server's socket in the
+box, as above.
+
+| Check | Result |
+| --- | --- |
+| box_list | ios, with "Devices: iPhone 18 Pro (default), iPhone 17, iPad Pro 13-inch (M5)" |
+| box_acquire, each model | answered once the device had booted: 7.0 to 7.8 s after the box was ready; the device booted cold in 7.7 to 8.2 s, with all 112 labels still off in the fresh clone |
+| The stream, each model | still: no frames once settled; busy: 56 to 62 fps, 3.4 to 4.7 Mbit/s; the server 0.014 to 0.024 of a core, idb_companion 0.05 to 0.08 |
+| A key frame after a pause | on a still screen 0.5 to 1.4 ms at the median of 10, 2.4 ms at worst bar one of 90 ms; busy 60 to 63 ms at the median, 73 to 128 ms at worst |
+| idb_companion killed | a stall of 456 to 762 ms, three times |
+| The server killed | hello again in 0.20 to 0.23 s, a key frame in 0.82 to 0.86 s, the companion kept, three times |
+| Device Hub opened | killed 1.0 s later; frames went on; the doctor's check said "The device server has killed it once" |
+| `slim: false` | every label turned on and the device rebooted before its first frame, in 56.9 s; 202 processes after |
+| A new server version | delivered by the plugin to a running box after an update, the device kept booted |
+| box_stop and box_start | see below |
+
+**After a stop and start, idb_companion grew without bound.** With the
+screen changing, the companion that ran before the suspend grew by about
+265 MB a second, to 17 GB in a minute; the box had 6% of its memory free
+and its swap full, the device drew a few frames a second, and `simctl`
+hung. A companion started after the resume stayed at 39 MB. Since version
+5 the server starts a new companion when it sees the box resume: through
+the deploy, on a fresh box, the new companion listened 212 ms after the
+resume, stayed at 39 MB over the next minute while the screen changed, and
+the stream ran at 54 to 57 fps.
+
+Xcode's Run could not be driven from a command: Xcode refused Apple events
+from a program run by `box_run`, whose shell, not the program, is the one
+macOS asks about, so Device Hub was opened directly, which is what Run
+does (E20).

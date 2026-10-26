@@ -447,7 +447,7 @@ description names HID.
 | Displays | `device`, the device's video; `desktop`, the host's, for the person | `device` only |
 | Computer use | the device, through the device server | the device, through the device server |
 | Enrols | yes | yes, with Docker as other Linux boxes (041) |
-| Sizes | the macOS presets; a device takes 1 to 1.5 GiB and half a core idle | 8 cores and 16 GiB by default, as measured for the phone; refused below 4 cores and 10 GiB. E17 may raise both for the tablet and the foldable |
+| Sizes | the macOS presets, medium by default, 6 cores and 16 GiB, the size every iOS measurement was made at, with room for Xcode beside the device; a device takes 1 to 1.5 GiB and half a core idle | 8 cores and 16 GiB by default, as measured for the phone; refused below 4 cores and 10 GiB. E17 may raise both for the tablet and the foldable |
 
 - `KindCapabilities` gains `device`: the platform and the `OfferedDevice`s
   of an offer's image, or null. `KindInfo` gains the platform, which the

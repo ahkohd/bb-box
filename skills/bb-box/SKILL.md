@@ -82,7 +82,7 @@ where it is built ahead, which its boxes claim at once (#440). The
   `-sdk iphonesimulator`. The device is slim: widgets, Siri, iCloud,
   Health, Wallet and the like are off, for a quarter of the memory. Ask for
   `slim: false` for an app that uses one of them; its first boot then takes
-  about 45 s more. Do not open Device Hub on the host: it
+  about a minute more. Do not open Device Hub on the host: it
   takes the device's clipboard, and bb-box closes it.
 - Cloud providers cost money while a box exists, so release such a box as
   soon as you are done. Hetzner Cloud's Linux boxes are containers on hosts
@@ -139,8 +139,11 @@ reset removes them. Linux and Windows boxes refuse.
   <id> <program>`. Xcode can sign with it too. A command-line program
   signed only ad hoc is granted by its path, which also survives a rebuild.
 - A grant applies only when the program is its own responsible process.
-  Open an app with `open`. Run a command-line program through
-  `bb-box-own <program> <arguments>`. A program `box_run` runs directly is
+  Open an app with `open`. On a Mac of the SSH host pool, run a
+  command-line program through `bb-box-own <program> <arguments>`. On
+  other Macs, start it through launchd from a `box_run` command with
+  `desktop: true`: `launchctl submit -l <label> -o <log> -- <program>
+  <arguments>`, then `launchctl remove <label>`. A program `box_run` runs directly is
   charged to SSH instead, which has Accessibility, Screen Recording, the
   microphone and the camera already.
 - Start the program again after a grant: macOS reads some permissions only

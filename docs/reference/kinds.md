@@ -59,5 +59,5 @@ Each kind has the presets small, medium, large, a default preset, and a largest 
 | `macos-desktop` | 4 cores, 8 GiB memory | 6 cores, 16 GiB memory | 8 cores, 32 GiB memory | small | 16 cores, 64 GiB memory, 256 GiB disk |
 | `windows-desktop` | 4 cores, 8 GiB memory | 8 cores, 16 GiB memory | 16 cores, 32 GiB memory | small | 32 cores, 64 GiB memory, 256 GiB disk |
 | `windows-arm64-desktop` | 4 cores, 8 GiB memory | 8 cores, 16 GiB memory | 16 cores, 32 GiB memory | small | 32 cores, 64 GiB memory, 256 GiB disk |
-| `ios` | 4 cores, 8 GiB memory | 6 cores, 16 GiB memory | 8 cores, 32 GiB memory | small | 16 cores, 64 GiB memory, 256 GiB disk |
+| `ios` | 4 cores, 8 GiB memory | 6 cores, 16 GiB memory | 8 cores, 32 GiB memory | medium | 16 cores, 64 GiB memory, 256 GiB disk |
 | `android` | 8 cores, 16 GiB memory | 12 cores, 24 GiB memory | 16 cores, 32 GiB memory | small | 32 cores, 64 GiB memory, 256 GiB disk |
