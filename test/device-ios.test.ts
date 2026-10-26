@@ -249,9 +249,11 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     return { home, paths, lists, program, log, target };
   }
 
-  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[] } = {}) {
+  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number } = {}) {
     const logs: string[] = [];
     const driver = new IosDriver({
+      clock: { now: () => Date.now() + (options.wallAhead?.() ?? 0), monotonic: () => performance.now() },
+      clockTickMs: 20,
       paths: setup.paths,
       slim: options.slim ?? true,
       log: (line) => logs.push(line),
@@ -337,6 +339,33 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     const power = (await driver.readBack()).power;
     assert.ok(power.is === "failed" && power.error.code === "device-exited" && /stopped twice within 5 minutes/.test(power.error.words));
     driver.close();
+  });
+
+  test("starts a new idb_companion after the box's suspend, as one from before it grows without bound, and streams again", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    for (const label of LIST) simulator.disabled.add(label);
+    let ahead = 0;
+    const { driver, logs } = driverOf(setup, simulator, { wallAhead: () => ahead });
+    await driver.attach(setup.target, AbortSignal.timeout(20_000));
+    const keys: EncodedFrame[] = [];
+    const stop = new AbortController();
+    void (async () => {
+      for await (const frame of driver.video().frames(stop.signal)) if (frame.key) keys.push(frame);
+    })();
+    const before = (JSON.parse(readFileSync(join(setup.paths.dir, "companion.json"), "utf8")) as { pid: number }).pid;
+    driver.video().keyframe();
+    await until("a key frame", () => keys.length > 0);
+    await wait(100);
+    const seen = keys.length;
+    ahead = 3_600_000;
+    await until("a new companion", () => (JSON.parse(readFileSync(join(setup.paths.dir, "companion.json"), "utf8")) as { pid: number }).pid !== before, 10_000);
+    await until("a key frame from it", () => keys.length > seen, 10_000);
+    assert.ok(logs.some((line) => line.startsWith("resume: the clock moved 3600 s")));
+    assert.throws(() => process.kill(before, 0), "the companion from before the suspend is gone");
+    stop.abort();
+    driver.close();
+    await driver.shutdown(AbortSignal.timeout(5000));
   });
 
   test("starts idb_companion again when it is killed, and the stream comes back with a key frame", async () => {
