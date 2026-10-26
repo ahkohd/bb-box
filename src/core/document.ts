@@ -11,7 +11,7 @@ import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../bac
 import { isSecret, type BackendDriver, type BackendPart, type BoxSize, type FieldDescriptor, type FieldValue } from "../backends/types.ts";
 import { exportedTailnet, keptTailnetSecrets, readTailnet, tailnetProblems, type TailnetSetting } from "./tailnet-settings.ts";
 import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathProblem, type BoxFileSetting } from "./box-files.ts";
-import { PRESETS, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
+import { PRESETS, belowLeast, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
 
 export const SCHEMA = 1;
 
@@ -782,6 +782,8 @@ export function checkDocument(
       if (!fits(sizes.presets[preset], sizes.largest)) {
         problem(`${path}.presets.${preset}`, `The ${preset} ${id} preset, ${describeSize(sizes.presets[preset])}, is above the largest size, ${describeSize(sizes.largest)}.`);
       }
+      const tooSmall = belowLeast(id, sizes.presets[preset]);
+      if (tooSmall) problem(`${path}.presets.${preset}`, `The ${preset} ${id} preset is too small. ${tooSmall}`);
     }
     if (kind.spares !== undefined && !isWhole(kind.spares, 0, MAX_SPARES)) problem(`${path}.spares`, `Keep 0 to ${MAX_SPARES} spare ${id} boxes.`);
   }
