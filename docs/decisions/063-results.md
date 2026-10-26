@@ -1865,3 +1865,344 @@ for the recording's whole length.
   only, in the tests. A recording that falls more than 2 s behind its
   frames, and a box stopped or restarted mid-recording, which ends it, were
   not checked.
+
+## Units 5.1 and 6.2 on Android: input and controls
+
+Measured on 26 October 2026 in one android box acquired through the
+production BB, a clone of the Android template on Proxmox QEMU at the
+kind's default size, 8 cores and 16 GiB: Android 15 (API 35), emulator
+37.2.12.0, the Pixel 8 and the Pixel Fold. The device server was this
+unit's, version 14 and then 15, delivered from its checkout as bb-box
+delivers it, so the production plugin used it. Three ways in:
+
+- **Through BB,** in the owner's Chrome on a Mac, driven by playwriter: the
+  panel's own Device view and toolbar, and `box_device` from this thread.
+- **The plugin's own code in the box,** as 5.2 and 6.3 measured iOS:
+  `scripts/measure/ios/viewer.ts` runs the plugin's relay and the panel's
+  video client in headless Chrome 156 in the box, and
+  `scripts/measure/android/controls.ts` runs the plugin's `DeviceServers`
+  and box_device's parsing and words. BB's server and the network are not
+  in these.
+- **Straight to the emulator's gRPC,** for what the emulator itself does.
+
+A page served from the box and opened in the device's Chrome,
+`scripts/measure/android/probe.html`, turned black or white at each touch
+and logged each touch, key, pinch, scroll, field value and request.
+
+### Touches, and E8
+
+- **The emulator takes touches in the AVD's own panel, upright,** whatever
+  way the device is held and whatever the app draws. `dumpsys input` showed
+  the points as sent, and Android turned them with its display. The
+  picture turns with the device as it is held (unit 4.1), so the server
+  turns a point of the picture back into the panel's pixels.
+- **On the Pixel Fold the panel is the inner screen's,** 2208x1840. While
+  closed, a touch at (540, 700) of the outer screen landed at (265, 795) of
+  it, so the emulator stretches the inner panel onto the outer screen, and
+  the server stretches the other way.
+- **Checked on screen:** the agent's long press at 30% across and 70% down
+  the picture, with Android's pointer overlay on, and the agent's
+  screenshot read for the crosshair. On the Pixel 8 in all four
+  orientations, with the Home Screen held upright, and on the Pixel Fold
+  closed, open and half open in all four, the crosshair was within 1 pixel
+  of the tap in all 16.
+- **Each finger is lifted by name:** the server sends every finger down in
+  one `sendTouch`, and a finger that lifted with pressure 0.
+
+### Keys and text
+
+- **Keys go by their W3C names,** which the emulator takes: `sendKey` with
+  key down and key up. Enter, Backspace, Delete, Home, End, the arrows,
+  space, Caps Lock, Escape and Tab reached the page by name; Page Up and
+  Down, Insert, F1 and F12 reached it, named "Unidentified" by Chrome.
+  The emulator holds Shift between calls, so chords work. A key a US
+  keyboard lacks, such as "é", is refused: "Send it as text, which bb-box
+  pastes."
+- **Every printable US character types as keys:**
+  `a7?b8!c9(D0)e-_f=+g[{h]}i;:j,<k.>l/?mZ` arrived exactly, 3 of 3.
+- **Text other than ASCII must be pasted, as on iOS.** `sendKey` with "é" as
+  its key, or with "héllo" as its text, typed nothing for the é. So the
+  server pastes it: the clipboard by gRPC `setClipboard`, then the Paste
+  key.
+- **Android adds no space to pasted text and keeps taking keys** while its
+  notice shows, so the server holds none, unlike iOS.
+
+What arrived, from the person through the panel's client, into the probe
+app's own text field:
+
+| What the person did | What arrived |
+| --- | --- |
+| An input method composing 'nihongo', then committing 日本語 | 日本語 |
+| Arabic letters | مرحبا |
+| An emoji | 😀 |
+| Type text: ' crème brûlée, naïve façade' | exactly |
+| Typed keys: ' Grüße' | exactly |
+
+The device's clipboard held its own text again after each.
+
+### E21: putting the clipboard back
+
+The paste key then the old text put back on the clipboard after a wait,
+then the field read:
+
+| Where | Put back after | Pasted the new text |
+| --- | --- | --- |
+| An app's own text field | 0 ms | 1 of 3 |
+| An app's own text field | 10, 25, 50 and 100 ms | 12 of 12 |
+| A page in Chrome | 0 to 50 ms | mostly the old text |
+| A page in Chrome | 100 and 150 ms | the new text |
+
+Chrome reads the clipboard after it handles the key, up to about 150 ms
+later, so the server puts the clipboard back 300 ms after the paste key.
+
+Chrome on the device took 4 pastes from outside each time it started, then
+no more, by the Paste key and by Ctrl+V alike, with the clipboard put back
+or not, and with the on-screen keyboard shown or hidden. Its log said the
+4 pastes and nothing for the rest. An app's own text field took a paste
+every time, in 21 tries.
+
+### The person and the agent
+
+- **A person taking control halfway through the agent's swipe.** A 2 s
+  swipe up the page's list scrolled it to 259 left alone. Taken over 0.8 s
+  in, the list stopped at 189, the touch was lifted at once, and the
+  agent's answer was `person-has-control`. Its next input was refused the
+  same way, and one sent under the old generation after hand-back as
+  `superseded`.
+- **Halfway through the agent's paste.** Android's paste key goes about
+  10 ms after the clipboard is set, so a person who takes control 150 ms
+  in finds it sent: the paste finished, and the clipboard was put back, as
+  063 says for a paste key already sent. Taken over 120 ms into the agent's
+  keys ahead of a paste, the field kept 'abcdefg', nothing was pasted, and
+  the clipboard still held its own text.
+- **A reload while a person holds control,** mid-drag: the server lifted
+  the person's touch as the old input connection ended, the new instance
+  took the lease, the viewer connected again by itself, and its next tap
+  landed.
+- **The agent while a person holds control:** `box_device home` through BB
+  was refused with `person-has-control`.
+- **Alt and drag:** two touches mirrored about the screen's centre reached
+  the page; its pinch read 1.413 against 1.414 from the pointer's path.
+- **The wheel:** each notch is a swipe of 200 device pixels. It scrolled
+  Chrome's list 180 to 380 device pixels down and 180 to 240 up: Android
+  keeps a little of the swipe's speed, though the finger holds still before
+  it lifts. A trackpad's 160 pixels in 4 events scrolled it 580 device
+  pixels.
+
+### E14: tap to screen
+
+From the browser's pointerdown to the first drawn frame whose pixel beside
+the tap changed, on the probe page, taps 0.6 s apart. Busy is Gradle
+building a small app again and again, at 6 s a build; its share of the 8
+cores is the mean over the run.
+
+| Where | Load | Taps seen | Median | 95th percentile | Worst |
+| --- | --- | --- | --- | --- | --- |
+| In the box | idle | 100 of 100 | 87 ms | 90 ms | 92 ms |
+| In the box, Android's pointer overlay, no app | idle | 30 of 30 | 76 ms | 94 ms | 175 ms |
+| Through BB | idle | 100 of 100 | 67 ms | 346 ms | 596 ms |
+| Through BB | idle, two more runs | 50 and 50 of 50 | 67 ms | 159 and 76 ms | 232 and 523 ms |
+| Through BB | one build, 37% busy | 96 of 100 | 76 ms | 110 ms | 615 ms |
+| Through BB | two builds, 60 to 89% busy | 100 of 100 | 87 ms | 329 ms | 522 ms |
+| Through BB | two builds, the emulator pinned to cores 0 to 5 and the builds to 6 and 7 | 96 of 100 | 74 ms | 301 ms | 639 ms |
+
+Through BB the browser decodes on the Mac's hardware, which is why it is
+faster than headless Chrome decoding in software in a busy box.
+
+Where the time goes, from wall clocks: the box's log stamped when each
+touch reached the device server and when its first frame left, and the
+browser stamped each pointerdown and each frame's arrival, both clocks
+synced by NTP:
+
+- **The device's own share,** the touch at the server to its frame out:
+  median 51 ms idle (26 taps), and 61.5 to 64.5 ms with two builds and the
+  emulator pinned, worst 78 ms (60 taps). This is the CPU drawing and
+  encoding, and is the floor.
+- **Decoding and drawing in the browser** after the frame arrived: median 4
+  to 5 ms, worst 10 ms.
+- **BB's path, both ways,** about 7 ms at the median.
+- **Every slow tap lost 250 to 310 ms on the input's way in,** before the
+  device server saw it; the frame's way out stayed normal. The same relay
+  code run in the box without BB's server or SSH had no tail. bb-box's loop
+  watch logged BB's server standing still 3 to 13 times in each minute of
+  these runs, for up to 383 to 1,676 ms, which a tap arriving then waits
+  out. Pinning the emulator lowered the busy median from 87 to 74 ms, not
+  the tail.
+- **The first tap after a still spell** of tens of seconds took 360 to
+  559 ms through BB each time, by the same late input. In the box the
+  first tap after a reconnect took 58 to 89 ms over 3 reconnects.
+
+So Android's bar is about 70 to 90 ms at the median through BB, with the
+device's CPU drawing, 50 to 60 ms, as its floor. The tail through BB is
+[#1158](https://github.com/moonstead/bb-box/issues/1158), shared with
+desktops.
+
+### Each action, through box_device
+
+Server time is from the request to its answer, read-back included.
+
+| Action | Server time | Seen or read back |
+| --- | --- | --- |
+| home, back, recents | 0.1 s | the launcher; Settings back a page; the recent apps' overview |
+| lock, wake | 0.2 s each, until Android reads asleep or awake | the state asleep, then awake |
+| rotate, turn left and to upright | 0.1 to 0.3 s; the new picture 61 to 125 ms after the command | the Pixel 8 and the Fold turned, the stream 2400x1080 and 1840x2208 |
+| posture, closed, half open, open | 0.2 to 0.6 s, until `cmd device_state` reads it | the outer screen at 1080x2092, the inner at 2208x1840 |
+| appearance | 0.2 s | dark and light |
+| text_size, each of the 7 font scales, and larger, smaller, default | 175 to 333 ms | each read back as set |
+| location, London and cleared | 0.1 to 0.2 s | read back by `getGps`; cleared, the emulator's own, 37.422, -122.0841 |
+| status_bar clean and live | 0.17 s | 9:41, full Wi-Fi and signal, the battery bb-box set, on the Pixel 8 and the Fold |
+| battery, 42% not charging, and the device's own | 0.1 s | read back by `getBattery` |
+| network, slow, offline, online | 0.1, 0.4 and 3.9 to 4.0 s; online waits for Wi-Fi's address | read back; E22 below |
+| install, a 2 MB and a 170 KB APK | 0.2 to 0.3 s, `sync` included | in the app list; launched |
+| switch | 6.6 s; 15.0 s the first time a model booted in this box | each model with its own settings |
+| reboot | 18.5 s from the panel | back, cold |
+
+Refused in words: a content size on Android and a font scale of 1.2 (bad
+value), an `.aab`, a path with no file, and an install of an app the device
+has while a person holds control. A file that is not a zip is "not an APK".
+
+The production plugin, older than this unit, still refused `status_bar` on
+Android in its own parsing, so `status_bar` was sent through the harness
+with this unit's parsing.
+
+### Read-backs
+
+Each 10 times in the box:
+
+| Read | Time |
+| --- | --- |
+| `cmd uimode night` | 8 to 10 ms |
+| `settings get system font_scale` | 10 to 14 ms |
+| `dumpsys power`, the wakefulness | 9 to 12 ms |
+| airplane mode, Wi-Fi and the shaping | 17 to 21 ms |
+| `cmd device_state print-state` | 8 to 10 ms |
+| all of them in one `adb shell` | 36 to 42 ms |
+| gRPC `getGps`, `getBattery` | 1 to 3 ms |
+
+The server reads them together, with the location and battery by gRPC, in
+41 to 82 ms. After `adb shell cmd uimode night no` in a shell, a watching
+viewer's state said light, changed outside bb-box, 6.3 s later.
+
+### Requests by ID
+
+A turn right sent twice with one ID turned the device once, and the second
+answer and the result asked for after were the first. With the plugin's
+connection ended 50 ms after it sent a turn, it connected again and had its
+answer, the device turned once.
+
+### E10: a clean status bar
+
+SystemUI's demo mode, allowed by `settings put global sysui_demo_allowed 1`,
+then its broadcasts: the clock at 9:41, Wi-Fi and mobile at full, the
+battery at the level bb-box set and not charging unless set so, no
+notification icons, and the other icons hidden. It took 126 ms and showed on
+the Pixel 8 and the Pixel Fold. `live` leaves demo mode. A cold boot clears
+it, so the server sets it again when the device starts; after a switch away
+and back, the Fold came back clean.
+
+### E11: which way left and right turn
+
+`setPhysicalModel` ROTATION about z, 90 degrees, gave the picture with the
+device's top, its status bar and camera hole, at the left: turned left, a
+quarter turn anticlockwise, the way the toolbar's left arrow points, as on
+iOS. -90 is turned right and 180 upside down. bb-box turns in one step: the
+emulator's default eases through the orientations between, so upside down
+to turned right passed through upright.
+
+### E22: the network presets
+
+The page's own request for 200 KiB from the box, timed in the device's
+Chrome:
+
+| Preset | Result |
+| --- | --- |
+| online | 8 to 16 ms |
+| offline | failed in 2 ms: "Failed to fetch" |
+| slow | 20 KiB in 0.47 s, 50 KiB in 1.06 s, 200 KiB in 3.76 s |
+| online again | 11 to 14 ms |
+
+The emulator console's `network speed edge` and `network delay umts`, which
+the research set, read back but did not slow these requests at all: Wi-Fi
+does not go through them, and the emulator's mobile data never connects. So
+`slow` shapes the device's Wi-Fi itself, as root in the device: `netem` on
+`wlan0` at 473.6 kbit/s with 100 ms of delay, and incoming traffic
+redirected through `ifb0` at the same rate. The goldfish kernel has `netem`,
+`ifb` and `mirred`.
+
+Turning airplane mode on and off once set the device's clock back 1 h
+49 min, to the time its snapshot was made, so the network control sets the
+clock again after each preset, as the server does at boot. Through the next
+toggles it stayed within 1 s.
+
+### Each device's own Android ID
+
+Every box from the template began with the same Android ID, as the snapshot
+holds it. Setting `android_id` alone changes what `settings get` says, but
+apps read their own IDs since Android 8, made from a key Android keeps in
+`settings_ssaid.xml` and loads only as its framework starts. So the server,
+the first time each device boots in a box, removes that file, restarts the
+framework with `stop` and `start`, waits for the boot to complete, and sets
+a new `android_id`. It keeps a mark per device, with a digest of the box's
+own adb key, so a box made from another never skips it.
+
+| Box | `android_id` | apps' key | Time |
+| --- | --- | --- | --- |
+| The template's | 91f5432055d42a8c | 293E65B6… | |
+| First box, Pixel 8 | 2c856c44ab45739d | 80266BB5… | 7.9 s |
+| First box, Pixel Fold | af4121f49eb626f1 | | 7.5 s |
+| Second box, Pixel 8 | 54fecc20eec6be27 | A378253F… | 7.8 s |
+
+Google Play services' own ID changed with the key, from c37d8b19… to
+294118ec…. A switch away and back kept the Pixel 8's ID, in 6.6 s. After
+the restart the launcher showed "Pixel is starting…" for a few seconds.
+Once this unit runs in the plugin, an acquire whose device boots for the
+first time in the box says so after its time: "…booted N s after the box
+was ready, about 8 s of it giving the device its own Android ID, as each
+device's first boot in a box does."
+
+### The toolbar, through BB
+
+In the owner's Chrome, on the production BB's panel, which draws a control
+when `supports` takes it:
+
+| Control | Seen |
+| --- | --- |
+| Back, Home, Recent apps | Display settings back to Settings; the launcher; the recent apps' overview |
+| Rotate left, Rotate right | the frame turned, the note said "Turned left.", then "Upright." |
+| Dark appearance | dark, the note "Dark appearance." |
+| Text size, Larger twice, then Default | "Text size 130%.", then "100%, the default" |
+| More: Lock, then Wake | "Asleep." with the last picture dimmed, then "Awake." |
+| More: Network, Slow, Offline, Online | "Set the Pixel 8's network to slow in 0.1 s.", then online "in 3.9 s." |
+| More: Battery, 42, not charging | "Set the Pixel 8's battery to 42% in 0.1 s."; More then read "Battery: 42%" |
+| More: Location, London, then No simulated location | "Set the Pixel 8's location to London, 51.5072, -0.1276 in 0.1 s.", then "Cleared…" |
+| More: Open link, example.com | Chrome on the device opened https://example.com |
+| More: Reboot device | "Rebooted the Pixel 8 in 18.5 s." |
+| The picker, Pixel Fold | "Switched to the Pixel Fold in 12.1 s.", with "Apps are per device." |
+| Fold: Closed, Open, Half open | the outer screen in a phone body; the inner screen; half open with the crease shaded and "Half open" under the frame |
+| Copy screenshot | through the harness's panel client, a PNG of the Fold, 4.07 MB |
+
+The production panel's Copy screenshot said "Box <name>'s device
+server is not connected": this unit's harness, an instance started later,
+had taken the box's lease, and an instance once superseded does not take it
+back while it runs. That is right for a reload, where the earlier instance
+is about to end; a harness that outlives its lease leaves the box's plugin
+link down until bb-box reloads.
+
+### What limits these numbers
+
+- One box, of 8 cores, on one host. The Pixel Tablet was not driven.
+- Through BB is one browser, Chrome on a Mac, on the same network as BB's
+  server.
+- The Gradle builds were of a small app with 2,000 generated classes; a
+  real app's build loads the box differently.
+- The wall clocks of the Mac and the box agree to about 30 ms, by their
+  NTP; the split of BB's path both ways is that rough, the device's own
+  share is not.
+- E21's Chrome numbers come from one page; an app that reads the clipboard
+  itself was not tried.
+
+### Not checked here
+
+- The Pixel Tablet, and the Fold's half-open posture held while an app
+  uses it.
+- Computer use on Android, unit 7.2.

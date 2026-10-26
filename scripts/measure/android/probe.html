@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>probe</title><style>
+html,body{margin:0;font:16px sans-serif;background:#fff;touch-action:none;user-select:none;-webkit-user-select:none}
+#pad{position:fixed;left:0;right:0;top:88px;bottom:50%;background:#fff}
+#pad.dark{background:#000}
+#field{position:fixed;left:8px;right:8px;top:4px;height:72px;box-sizing:border-box;font-size:20px;touch-action:auto;user-select:text;-webkit-user-select:text}
+#list{position:fixed;left:0;right:0;top:50%;bottom:0;overflow-y:scroll;touch-action:pan-y;background:#eef}
+#list div{height:48px;border-bottom:1px solid #99a;padding-left:8px;line-height:48px}
+</style></head><body>
+<div id="pad"></div>
+<textarea id="field" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+<div id="list"></div>
+<script>
+const list = document.getElementById("list");
+for (let row = 0; row < 300; row++) list.insertAdjacentHTML("beforeend", `<div>Row ${row}</div>`);
+const pad = document.getElementById("pad");
+const field = document.getElementById("field");
+const unsent = [];
+const post = (body) => fetch("/log", { method: "POST", body }).catch(() => { unsent.push(body); });
+const send = (event) => post(JSON.stringify({ at: Date.now(), ...event }));
+setInterval(() => { while (unsent.length) post(unsent.shift()); }, 1000);
+const down = new Map();
+let pinchFrom = null;
+const span = () => { const points = [...down.values()]; return points.length === 2 ? Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y) : null; };
+document.addEventListener("pointerdown", (event) => {
+  if (event.target === pad) pad.classList.toggle("dark");
+  down.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (down.size === 2) pinchFrom = span();
+  send({ type: "down", id: event.pointerId, x: Math.round(event.clientX), y: Math.round(event.clientY), sx: Math.round(event.screenX), sy: Math.round(event.screenY), dpr: devicePixelRatio, w: innerWidth, h: innerHeight, fingers: down.size });
+});
+document.addEventListener("pointermove", (event) => { if (down.has(event.pointerId)) down.set(event.pointerId, { x: event.clientX, y: event.clientY }); });
+const up = (event) => {
+  if (down.size === 2 && pinchFrom) send({ type: "pinch", scale: +(span() / pinchFrom).toFixed(3) });
+  down.delete(event.pointerId);
+  if (down.size < 2) pinchFrom = null;
+  send({ type: "up", id: event.pointerId, x: Math.round(event.clientX), y: Math.round(event.clientY) });
+};
+document.addEventListener("pointerup", up);
+document.addEventListener("pointercancel", up);
+field.addEventListener("input", () => send({ type: "value", value: field.value }));
+document.addEventListener("keydown", (event) => send({ type: "key", key: event.key, code: event.code, ctrl: event.ctrlKey, shift: event.shiftKey }));
+let scrolled = null;
+list.addEventListener("scroll", () => { clearTimeout(scrolled); scrolled = setTimeout(() => send({ type: "scroll", top: Math.round(list.scrollTop) }), 300); });
+window.probe = {
+  clear: () => { field.value = ""; list.scrollTop = 0; },
+  fetch: async (kib) => {
+    const began = performance.now();
+    try {
+      const answer = await fetch(`/blob?kib=${kib}&r=${Math.random()}`, { signal: AbortSignal.timeout(20000) });
+      const bytes = (await answer.arrayBuffer()).byteLength;
+      send({ type: "fetched", kib, bytes, ms: Math.round(performance.now() - began) });
+    } catch (error) {
+      send({ type: "fetched", kib, failed: String(error), ms: Math.round(performance.now() - began) });
+    }
+  },
+};
+setInterval(() => fetch("/command").then((answer) => answer.text()).then((command) => { if (command === "clear") window.probe.clear(); if (command.startsWith("fetch:")) { const [, kib, after] = command.split(":"); setTimeout(() => window.probe.fetch(Number(kib)), Number(after || 0) * 1000); } }).catch(() => undefined), 300);
+send({ type: "loaded", w: innerWidth, h: innerHeight, dpr: devicePixelRatio });
+</script></body></html>

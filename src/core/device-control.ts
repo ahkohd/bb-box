@@ -1,4 +1,4 @@
-import { batteryWords, deviceStateWords, locationWords } from "./device-settings.ts";
+import { EMULATOR_OWN_LOCATION, SLOW_NETWORK, batteryWords, deviceStateWords, locationWords } from "./device-settings.ts";
 import {
   ANDROID_FONT_SCALES,
   DEVICE_ACTIONS,
@@ -263,8 +263,18 @@ export function doneWords(control: DeviceControl, model: string, platform: Devic
   }
 }
 
+function androidAfterWords(control: DeviceControl): string {
+  if (control.action === "status_bar" && control.to === "clean") return " It shows 9:41, full signal and Wi-Fi, no notifications, and the battery as battery set it, or full.";
+  if (control.action === "battery" && !control.to) return " That is the emulator's own: 100%, charging.";
+  if (control.action === "location" && !control.to) return ` An Android emulator always has a location, so it is the emulator's own again: ${locationWords(EMULATOR_OWN_LOCATION)}.`;
+  if (control.action === "network" && control.to === "slow") return ` Its Wi-Fi carries ${SLOW_NETWORK.kbitPerSecond} kbit/s each way, ${SLOW_NETWORK.delayMs} ms later on the way out.`;
+  if (control.action === "network" && control.to === "offline") return " Airplane mode is on, with Wi-Fi and mobile data off.";
+  if (control.action === "install") return " It is written to the device's disk, so it stays through a crash of the box.";
+  return "";
+}
+
 export function afterWords(control: DeviceControl, platform: DeviceModel["platform"]): string {
-  if (platform !== "ios") return "";
+  if (platform !== "ios") return androidAfterWords(control);
   if (control.action === "status_bar" && control.to === "live") return " The status bar is live again, so the battery shows the Mac's.";
   if (control.action === "battery" && control.to) return " Only the status bar's picture changes: the device's battery API is unchanged.";
   if (control.action === "battery") return " The status bar's battery shows the Mac's again.";

@@ -11,7 +11,9 @@ pastes), and unit 6.3's of the iOS controls (E11, and each read-back), and unit 
 of the frame (turns, folds drawn from the table, and the island), and unit
 6.4's of the toolbar, and unit 4.1's of the Android driver (the stream of
 each model, recovery, E3 and E23), and unit 7.1's of computer use on iOS,
-and unit 7.4's of recording a device (E15), are in [063 results](063-results.md). Built
+and unit 7.4's of recording a device (E15), and units 5.1's and 6.2's of
+input and controls on Android (E8, E10, E11, E14, E21, E22, each read-back,
+and each device's own Android ID), are in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
 [Android emulator boxes](../research/android-emulator-boxes.md). Extends
@@ -363,18 +365,18 @@ it. What each platform does for each, from the notes' control tables:
 | --- | --- | --- |
 | home | idb HOME button: 315 ms by its CLI, seen | gRPC `GoHome`: 2 ms, seen |
 | back | refused: iOS has no back button | gRPC `GoBack`: 1 ms, seen |
-| recents | refused: no command found, only Device Hub's menu | `KEYCODE_APP_SWITCH`: 11 ms, seen |
-| lock | idb LOCK: 359 ms, seen | `KEYCODE_POWER` when awake: 25 ms, seen |
-| wake | idb HOME, twice if the lock screen shows | `KEYCODE_POWER` when asleep; the image has no lock screen |
-| rotate | idb `ui rotate`: 198 to 364 ms; the stream turns to 2622x1206 | gRPC `setPhysicalModel` ROTATION: under 1.5 s, seen in Settings, with auto-rotate on in the image |
-| posture | refused: Xcode 27.0 has no foldable | gRPC `setPosture`: 2 to 4 ms; closed, half open, open. Tent and flipped are refused on the Pixel Fold, so not offered |
+| recents | refused: no command found, only Device Hub's menu | gRPC `AppSwitch`, seen |
+| lock | idb LOCK: 359 ms, seen | `KEYCODE_SLEEP`, until Android reads asleep: 0.2 s |
+| wake | idb HOME, twice if the lock screen shows | `KEYCODE_WAKEUP`, until Android reads awake: 0.2 s; the image has no lock screen |
+| rotate | idb `ui rotate`: 198 to 364 ms; the stream turns to 2622x1206 | gRPC `setPhysicalModel` ROTATION in one step, to the new picture: 61 to 125 ms |
+| posture | refused: Xcode 27.0 has no foldable | gRPC `setPosture`, until `cmd device_state` reads it: 0.2 to 0.6 s; closed, half open, open. Tent and flipped are refused on the Pixel Fold, so not offered |
 | appearance | `simctl ui appearance`: 140 ms, seen | `cmd uimode night`: 25 ms, seen |
 | text_size | `simctl ui content_size`: 239 ms, seen | `settings put system font_scale`: 10 ms, seen |
-| location | `simctl location set`, `clear`: 121 to 139 ms, accepted | console `geo fix`, gRPC `setGps`: 0 to 10 ms, read back |
-| status_bar | `simctl status_bar override`, `clear`: 178 ms, seen | SystemUI's demo mode: not measured (E10); refused until it is |
-| battery | the status bar's picture only, through `status_bar override`; the answer says the device's battery API is unchanged | console `power capacity`, `power ac`: 1 to 3 ms, seen in Settings |
+| location | `simctl location set`, `clear`: 121 to 139 ms, accepted | gRPC `setGps`, read back by `getGps`: 0.2 s. An emulator always has a location, so clearing sets the emulator's own |
+| status_bar | `simctl status_bar override`, `clear`: 178 ms, seen | SystemUI's demo mode (E10): 9:41, full signal, the battery as bb-box set it; 0.2 s, seen, and set again when the device starts |
+| battery | the status bar's picture only, through `status_bar override`; the answer says the device's battery API is unchanged | gRPC `setBattery`, read back by `getBattery`: 0.1 s, seen in Settings |
 | network | refused in v1 | the presets below, checked by an app's own requests (E22) |
-| install | `simctl install`: not timed | `adb install -r`, or `install-multiple` for split APKs: not timed |
+| install | `simctl install`: not timed | `adb install -r`, or `install-multiple` for split APKs, then `sync` so a crash keeps the app (E23): 0.2 to 0.3 s for a 2 MB APK |
 | switch | see [Switching](#switching) | see [Switching](#switching) |
 | reboot | `simctl reboot`: 5.3 s | stop and boot cold: 16 to 18 s |
 
@@ -385,11 +387,15 @@ same state:
 | --- | --- | --- | --- | --- |
 | online | off | on | full | none |
 | offline | on | off | full | none |
-| slow | off | on | `edge`: 473.6 kbit/s | `umts`: 35 to 200 ms |
+| slow | off | on | 473.6 kbit/s each way, as `edge` | 100 ms more on the way out |
 
 Setting a preset sets every column, so `slow` then `online` leaves no
 delay behind. E22 checks that an app's own request fails offline and is
-slow on slow, not only that the settings read back.
+slow on slow, not only that the settings read back. It found that the
+emulator console's `network speed` and `network delay` do not reach an
+app's requests over Wi-Fi, and the emulator's mobile data never connects,
+so `slow` shapes Wi-Fi inside the device, with `netem` on `wlan0` and,
+for what comes in, on `ifb0`.
 
 Volume, Siri, the Action button, shake, erase, snapshots and audio are left
 out of v1. idb sends no volume or Action button, shake was not looked at,
@@ -406,7 +412,10 @@ a screenshot's pixels all use it, and each carries the geometry
 - **The server owns the transform.** From `physical`, `content`, the
   active screen and the video's size, it turns a point into the device's
   own: points at the device's scale for idb, pixels in the emulator's own
-  rotation for gRPC. Which space each takes after a rotation is E8.
+  rotation for gRPC. Which space each takes after a rotation is E8: on
+  Android, the AVD's own panel, upright, whatever way the device is held
+  and whatever the app draws, and on the Pixel Fold the inner screen's
+  panel, stretched onto the outer screen while it is closed.
 - **A point from another generation is refused,** with `stale-geometry`,
   never mapped. An agent's screenshot, element references and coordinates
   from before a rotation, a fold or a switch are void after it. The tool
@@ -1036,7 +1045,10 @@ Text with no US key, from the agent or the person, is pasted:
    own paste, the server looks for that alert for 1 s, and taps Allow Paste
    once if it is there. It never answers an alert it did not cause.
 4. **Android's notice** ("pasted from your clipboard") shows once a batch,
-   not once a character.
+   not once a character. Android adds no space to pasted text and takes
+   keys while its notice shows, so the server holds none; it puts the
+   clipboard back 300 ms after the paste key, as Chrome on the device read
+   the clipboard up to 150 ms after it (E21).
 
 ## Agent tools
 
@@ -1273,6 +1285,15 @@ their own (049's sixth rule):
 | iOS | each model's device, booted once and shut down; its keyboard preferences | the simulators' pasteboards; CoreSimulator's logs; Device Hub's preferences and any record that it ran; idb's state |
 | Android | each AVD and its snapshot, booted with no account; `hw.keyboard = yes`; the settings below | `~/.android/avd/running/` and every discovery file; `~/.emulator_console_auth_token`; adb's keys (`~/.android/adbkey*`); the device's clipboard, cleared before each snapshot is saved; logcat |
 
+A snapshot keeps what the device holds in its memory and on its disk, its
+Android ID among them, so every box from one template began with the same
+one. The device server gives each device its own the first time it boots
+in a box: a new `android_id`, and a new key for the IDs apps read, which
+Android makes only as its framework starts, so the server restarts the
+framework once. That adds about 8 s to the device's first boot in a box,
+and nothing to its later boots or switches, which keep it. A spare (unit
+7.5) pays it before it is claimed.
+
 Defaults in the image, so typing and pasting are predictable:
 
 | Default | iOS | Android | Why |
@@ -1413,6 +1434,14 @@ percentile and the worst beside it. The reasons:
 
 If E14 shows the median over 100 ms, or a 95th percentile over 150 ms on an
 idle box, the unit stops and the lead decides.
+
+Android's bar, from unit 5.1's E14: about 70 to 90 ms at the median
+through BB, 67 ms idle and 87 ms with two Gradle builds busy in the box. Its
+floor is the device's own drawing on the CPU, 50 to 60 ms from a touch to
+the encoded frame, which a host with KVM and a GPU would lower. Its 95th
+percentile through BB, 76 to 346 ms idle, is BB's server standing still
+while the input waits, which desktops share
+([#1158](https://github.com/moonstead/bb-box/issues/1158)).
 
 ## Changes to the brief
 

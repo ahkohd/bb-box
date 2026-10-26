@@ -94,10 +94,9 @@ where it is built ahead, which its boxes claim at once (#440). The
   data stay through a stop and start of the box. If the emulator ends
   without saving, as when it crashes, bb-box boots it cold, in about 15 s,
   which keeps what Android had written to its disk: run `adb shell sync`
-  after `adb install`, so a crash cannot lose the app. bb-box does not yet send
-  touches, keys or text to an Android device, and of `box_device`'s
-  actions it does only `switch` and `reboot`: use `adb` for the rest, such
-  as `adb shell input tap <x> <y>`, until it does.
+  after `adb install`, so a crash cannot lose the app; `box_device`'s
+  `install` does that itself. Each device gets its own Android ID the
+  first time it boots in a box, which takes about 8 s more, once.
 - Cloud providers cost money while a box exists, so release such a box as
   soon as you are done. Hetzner Cloud's Linux boxes are containers on hosts
   bb-box makes as boxes need them: a box on a host with room is ready in
@@ -248,9 +247,11 @@ use `box_run` for the host.
 
 ## A device's controls
 
-`box_device` controls an ios box's device as the panel's toolbar does: Home,
-lock and wake, rotate, light or dark, text size, location, the status bar
-and its battery, install an app, switch to another model, and reboot.
+`box_device` controls an ios or android box's device as the panel's toolbar
+does: Home, lock and wake, rotate, light or dark, text size, location, the
+status bar and the battery, install an app, switch to another model, and
+reboot; on Android also Back, Recents, the network and, on the Pixel Fold,
+its posture.
 `box_status` lists the actions the device has. Each answer says what
 changed, how long it took, and the device's state after it, read back from
 the device.
@@ -261,16 +262,27 @@ the device.
   Screen, stays upright on a device held sideways, and the screen keeps
   its size.
 - `text_size` takes iOS's own content sizes, such as `accessibility-large`,
-  or `larger`, `smaller` and `default`, which is `large`.
+  or Android's font scales, such as 1.3, or `larger`, `smaller` and
+  `default`, which is `large` on iOS and 1 on Android.
 - `status_bar: "clean"` shows 9:41, full signal and a full battery, for
   screenshots. `battery` on iOS changes only the status bar's picture: an
   app that reads the battery sees the Mac's. `status_bar: "live"` clears
-  every override, the battery's too.
+  every override, the battery's too. On Android a clean status bar shows
+  9:41, full signal and the battery as `battery` set it, and `battery` sets
+  what apps read: level, and charging or not.
 - `location` sets the simulated location. Leave out both `latitude` and
   `longitude` to clear it. iOS cannot read it back, so the state shows what
-  bb-box set.
+  bb-box set. An Android emulator always has a location, so clearing it
+  gives back the emulator's own.
+- `network` on Android takes `online`, `offline` (airplane mode) or `slow`
+  (474 kbit/s each way, 100 ms more on the way out), each a whole preset.
 - `install` takes one `.app` in the box, built for the simulator with
-  `xcodebuild -sdk iphonesimulator`.
+  `xcodebuild -sdk iphonesimulator`, or on Android one `.apk`, or the split
+  APKs of one app. An Android App Bundle (`.aab`) does not install: make
+  APKs from it with `bundletool build-apks --mode=universal`.
+- `posture` folds the Pixel Fold: `closed` shows its outer screen, `open`
+  and `half-open` its inner one. A turn or a fold voids earlier
+  screenshots and coordinates.
 - `switch` changes the model. Each model keeps its own apps and settings.
 - While a person has control of the box, `box_device` refuses every action
   but installing an app the device does not have. Wait for the hand-back.
@@ -279,7 +291,9 @@ the device.
   `xcrun simctl privacy booted grant photos <bundle id>` to give an app the
   photo library, and `xcrun simctl push booted <bundle id> payload.json` to
   send it a push notification. An appearance or text size set this way
-  shows in the state as changed outside bb-box.
+  shows in the state as changed outside bb-box. On Android, `adb` in
+  `box_run` does the same, such as `adb shell pm grant <package>
+  android.permission.CAMERA`.
 
 ## Recording a desktop or a device
 

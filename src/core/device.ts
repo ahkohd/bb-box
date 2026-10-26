@@ -518,8 +518,6 @@ function lacking(model: DeviceModel, action: DeviceAction): string | null {
       if (model.form === "foldable") return null;
       if (model.platform === "ios") return "No iOS device folds.";
       return `The ${model.name} does not fold. ${foldablesWords()}`;
-    case "status_bar":
-      return model.platform === "android" ? "bb-box cannot set an Android device's status bar yet." : null;
     case "network":
       return model.platform === "ios" ? "bb-box has no network control for iOS devices." : null;
     default:
@@ -621,7 +619,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 14;
+export const DEVICE_SERVER_VERSION = 15;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 
 export function frameGenerationOf(header: Uint8Array): number {

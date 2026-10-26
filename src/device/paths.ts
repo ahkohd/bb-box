@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { RECORD_DIR } from "../core/device-recording.ts";
 
 export const DEVICE_HOME = ".bb-box/device";
@@ -42,3 +43,9 @@ export function devicePaths(home: string) {
 }
 
 export type DevicePaths = ReturnType<typeof devicePaths>;
+
+export function inBox(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  return isAbsolute(path) ? path : join(homedir(), path);
+}

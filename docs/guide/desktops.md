@@ -105,9 +105,9 @@ Video also keeps coloured text sharp: when every browser watching a desktop can 
 
 ## Device displays
 
-A box can have a device beside its desktop, such as a phone, or a device and no desktop. An `ios` box has an iOS Simulator device, an iPhone or iPad, beside its macOS host's desktop. The test device, a test card that stands in for a phone, is turned on by the advanced `testDevice` setting in the [configuration reference](../reference/configuration.md). The Android emulator comes later.
+A box can have a device beside its desktop, such as a phone, or a device and no desktop. An `ios` box has an iOS Simulator device, an iPhone or iPad, beside its macOS host's desktop. An `android` box has an Android emulator device, a Pixel 8, Pixel Fold or Pixel Tablet, and no desktop. The test device, a test card that stands in for a phone, is turned on by the advanced `testDevice` setting in the [configuration reference](../reference/configuration.md).
 
-Take control to use the device, as with a desktop: one control covers the device and the box's desktop. The device's own controls are in a bar beside it, described under [The device's controls](#the-devices-controls). Commands work too: `xcrun simctl` in the box's terminal takes `booted` as the device.
+Take control to use the device, as with a desktop: one control covers the device and the box's desktop. The device's own controls are in a bar beside it, described under [The device's controls](#the-devices-controls). Commands work too: `xcrun simctl` in the box's terminal takes `booted` as the device, and `adb` reaches an Android device as `emulator-5554`.
 
 On an `ios` box, the Desktop view is the macOS host's, for Xcode. It says above it: 'Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Device view.' Xcode's Run opens Device Hub even so. bb-box closes it within 5 seconds, by stopping its process: quitting it would shut the device down. `bb box doctor` says whether Device Hub runs on each `ios` box, and how often bb-box has closed it.
 
@@ -141,7 +141,7 @@ A narrow bar beside the device holds the controls you use most when testing an a
 | **Dark appearance** | turns dark mode on or off. Its icon shows which is on: a moon for dark, a sun for light |
 | **Text size** | a slider of the platform's own steps, such as iOS's content sizes, with smaller, larger and **Default** |
 | **Copy screenshot** | copies the device's own pixels to your computer's clipboard as a PNG, or downloads it where your browser will not let bb-box copy a picture |
-| **More** | **Lock** or **Wake**; **Open link…**, which opens a web address in the device's browser or an app's own link, such as `myapp://settings`, in that app; **Location**, a few cities or your own latitude and longitude; **Clean status bar** on iOS, which shows 9:41, full signal and a full battery for screenshots; **Battery**; **Network** on Android; **Show frame** and **Pixel for pixel**; and **Reboot device**, which keeps apps and data |
+| **More** | **Lock** or **Wake**; **Open link…**, which opens a web address in the device's browser or an app's own link, such as `myapp://settings`, in that app; **Location**, a few cities or your own latitude and longitude; **Clean status bar**, which shows 9:41, full signal and a full battery for screenshots, or on Android the battery as **Battery** set it; **Battery**; **Network** on Android: **Online**, **Offline** (airplane mode) or **Slow** (474 kbit/s each way, 100 ms later out); **Show frame** and **Pixel for pixel**; and **Reboot device**, which keeps apps and data |
 
 Using a control takes control from the agent, as **Take control** does, and the toolbar says 'You have control. Hand back when done.' **Copy screenshot** does not take control: it sends the device nothing. On a touch screen the bar says 'Using a control takes control from the agent.' once, under it, until you first use one. While the device boots or switches, the controls wait, and say why.
 
@@ -167,7 +167,7 @@ With control, the device takes your pointer, keys and text:
 | Scroll with a wheel or trackpad | a swipe from the pointer, a twelfth of the screen for each notch, held still before it lifts so the list does not fling |
 | Two fingers on a touch screen | two touches |
 | Keys | the same keys, by name. Cmd is Command, Option is Option |
-| A letter with an accent, from your keyboard or a dead key | on iOS, typed as Option keys, as a Mac's keyboard types it |
+| A letter with an accent, from your keyboard or a dead key | on iOS, typed as Option keys, as a Mac's keyboard types it; on Android, pasted, as Android's keyboard has no key for it |
 | Japanese, Chinese or Korean from your input method, an emoji, or Arabic, Cyrillic and other letters with no Option key | pasted, as one paste for each word your input method commits, or for letters you type within half a second of each other |
 | Cmd+V (Ctrl+V off a Mac) | your computer's clipboard, pasted into the device |
 | **Type text** | the whole text: as keys when every letter has a key, otherwise as one paste |
@@ -175,6 +175,8 @@ With control, the device takes your pointer, keys and text:
 When bb-box pastes for you or the agent, it puts the device's own clipboard back afterwards. Your Cmd+V leaves your text on the device's clipboard, as on a desktop.
 
 On iOS, each paste shows 'pasted from CoreSimulatorBridge' at the top of the screen for about 2.5 seconds, and the device takes no keys while it shows, so bb-box holds your keys until it goes. Touches are not held. iOS also adds a space before pasted text that follows a word or a punctuation mark directly, as it does on a phone; type long or mixed text with **Type text**, which pastes it in one piece.
+
+On Android a paste adds no space and holds no keys. Android may say for a moment that an app pasted from the clipboard. Chrome on the device took only 4 pastes from outside each time it started, then no more, by the Paste key or Ctrl+V alike; an app's own text field took every paste.
 
 While someone watches without control, each touch, the agent's or the person's with control, shows as a circle where it lands.
 

@@ -6,7 +6,7 @@ import { GrpcClient } from "../../../src/device/grpc.ts";
 import { encode } from "../../../src/device/protobuf.ts";
 import { GRPC_METHODS, IDB_SCHEMA } from "../../../src/device/schemas.ts";
 
-const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = Number(process.env.CDP_PORT ?? 9333);
 const PAGE = process.env.PAGE ?? "http://127.0.0.1:8770/device.html";
 const HARNESS = process.env.HARNESS ?? "http://127.0.0.1:8770";
@@ -75,6 +75,7 @@ class Cdp {
 
 type Rect = { left: number; top: number; scale: number; width: number; height: number };
 const SCALE = Number(process.env.DEVICE_SCALE ?? 3);
+const PROBE_OFFSET = { x: Number(process.env.PROBE_DX ?? 30), y: Number(process.env.PROBE_DY ?? 30) };
 
 async function at(cdp: Cdp, x: number, y: number): Promise<{ x: number; y: number }> {
   const point = await cdp.evaluate<{ x: number; y: number } | null>(`clientOfVideo(${x * SCALE}, ${y * SCALE})`);
@@ -167,7 +168,7 @@ const percentile = (values: number[], p: number) => [...values].sort((a, b) => a
 
 async function tapToScreen(cdp: Cdp, x: number, y: number, times: number, gapMs: number, label: string): Promise<void> {
   const point = await at(cdp, x, y);
-  await cdp.evaluate(`window.probe = { x: ${Math.round(x * SCALE + 30)}, y: ${Math.round(y * SCALE + 30)} }; window.drawn.length = 0; window.downs.length = 0; true`);
+  await cdp.evaluate(`window.probe = { x: ${Math.round(x * SCALE + PROBE_OFFSET.x)}, y: ${Math.round(y * SCALE + PROBE_OFFSET.y)} }; window.drawn.length = 0; window.downs.length = 0; true`);
   const results: { ms: number | null; down: number }[] = [];
   for (let tap = 0; tap < times; tap++) {
     const before = await cdp.evaluate<number>("shadeNow()");

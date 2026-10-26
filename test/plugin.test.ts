@@ -5636,6 +5636,34 @@ test("box_acquire and box_start answer once an ios box's device has booted or co
   assert.match(started, /\nThe iPhone 17 came back \d+\.\d s after the box was ready\./);
 });
 
+test("box_acquire of an android box says when its device's first boot in the box gave it its own Android ID, and not on a later boot (063, 5.1 and 6.2)", async (t) => {
+  const runtime = { platform: "android", api: 35, image: "google_apis", revision: 9, abi: "x86_64", emulator: "37.2.12.0", snapshot: null };
+  const offer = { platform: "android", devices: [{ model: "Pixel 8", native: "pixel_8", runtime }, { model: "Pixel Fold", native: "pixel_fold", runtime }] };
+  const kind: BoxKind = { ...FAKE_KINDS[0]!, id: "android", label: "Android emulator", capabilities: { ...FAKE_KINDS[0]!.capabilities, displays: [DEVICE_DISPLAY], device: offer as never } };
+  const { harness, app, tool } = await start(undefined, { kinds: [kind] });
+  t.after(() => harness.lifecycle.dispose());
+  const unknown = { known: false, why: "" };
+  const state = (power: unknown) => ({
+    platform: "android",
+    form: "phone",
+    model: "Pixel 8",
+    power,
+    geometry: { generation: 1, physical: "upright", content: "upright", video: { width: 1080, height: 2400 } },
+    settings: { appearance: unknown, fontScale: unknown, location: unknown, battery: unknown, network: unknown, statusBar: { set: null, at: null } },
+    at: 0,
+  });
+  let views: unknown[] = [
+    { is: "connected", version: 15, protocol: 1, state: state({ is: "booting", since: 0 }), bootedHere: [] },
+    { is: "connected", version: 15, protocol: 1, state: state({ is: "booted", awake: true }), bootedHere: [] },
+  ];
+  Object.assign(app.devices, { recorded: () => undefined, view: () => (views.length > 1 ? views.shift() : views[0]) });
+  const first = text(await tool("box_acquire", { kind: "android" }));
+  assert.match(first, /\nThe Pixel 8 booted \d+\.\d s after the box was ready, about 8 s of it giving the device its own Android ID, as each device's first boot in a box does\./);
+  views = [{ is: "connected", version: 15, protocol: 1, state: state({ is: "booted", awake: true }), bootedHere: ["Pixel 8"] }];
+  const again = text(await tool("box_acquire", { kind: "android" }));
+  assert.match(again, /\nThe Pixel 8 booted \d+\.\d s after the box was ready\./);
+});
+
 test("box_device sends a control with its own parameters only, answers in words with the state after it, and passes refusals on with what to do (063, 6.3)", async (t) => {
   const runtime = { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" };
   const offer = { platform: "ios", devices: [{ model: "iPhone 18 Pro", native: "phone-18", runtime }, { model: "iPhone 17", native: "phone-17", runtime }] };

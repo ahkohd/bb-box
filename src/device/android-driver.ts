@@ -1,28 +1,37 @@
-import { open } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { open, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { turnedFrom } from "../core/device-settings.ts";
 import {
   deviceModel,
   deviceModels,
+  foldScreenFor,
   screensOf,
-  type AndroidSettings,
+  type Battery,
   type DeviceControl,
   type DeviceElement,
   type DeviceState,
   type FoldScreen,
+  type LatLon,
   type OfferedDevice,
   type OfferedDeviceOf,
   type Orientation,
+  type Posture,
   type Power,
   type TableModel,
   type TouchContact,
   type VideoSize,
 } from "../core/device.ts";
+import { apkPackage } from "./apk.ts";
+import { AndroidSettingsKeeper, asRoot } from "./android-controls.ts";
+import { ANDROID_PASTE_LANDS_MS, PASTE_KEY, TouchesDown, emulatorKey, panelPoint, touchPanel } from "./android-input.ts";
 import { AndroidVideo, type ScreenFrame } from "./android-video.ts";
-import { DriverError, type DeviceDriver, type VideoSource } from "./driver.ts";
+import { DriverError, type ControlContext, type DeviceDriver, type VideoSource } from "./driver.ts";
 import { Emulator, EmulatorRefused, type EmulatorControl, type RunningEmulator } from "./emulator.ts";
 import { GrpcClient } from "./grpc.ts";
 import { H264Encoder } from "./h264-encoder.ts";
-import type { DevicePaths } from "./paths.ts";
+import { inBox, type DevicePaths } from "./paths.ts";
 import { decode, encode } from "./protobuf.ts";
 import { EMULATOR_SCHEMA, GRPC_METHODS } from "./schemas.ts";
 
@@ -34,15 +43,29 @@ export const CLOCK_TICK_MS = 1_000;
 export const RESUME_GAP_MS = 5_000;
 export const DEVICE_EXITS_WINDOW_MS = 5 * 60_000;
 export const CLOCK_LAG_MOST_S = 2;
+export const ROTATE_PICTURE_MS = 3_000;
+export const FOLD_PICTURE_MS = 3_000;
+export const INSTALL_MS = 300_000;
 const SCREENSHOT_MS = 10_000;
+const INPUT_MS = 5_000;
+const KEYDOWN = 0;
+const KEYUP = 1;
+const ROTATION = 1;
+const STEP = 1;
+const CHARGER_NONE = 0;
+const CHARGER_AC = 1;
+const CHARGING = 1;
+const DISCHARGING = 2;
+const ROTATION_DEGREES: Readonly<Record<Orientation, number>> = { upright: 0, "turned-left": 90, "upside-down": 180, "turned-right": -90 };
+const POSTURE_VALUES = { closed: 1, "half-open": 2, open: 3 } as const;
+const ADB_KEY = ".android/adbkey.pub";
+const SSAID = "/data/system/users/0/settings_ssaid.xml";
 const RGB888 = 2;
 const PNG = 0;
 const MMAP = 1;
 const EMU = "android.emulation.control";
 
 const SKIN_ROTATIONS: readonly Orientation[] = ["upright", "turned-left", "upside-down", "turned-right"];
-
-const NOT_YET = "bb-box cannot do that on an Android device yet: touch, keys and paste, and the device's controls, come in a later version.";
 
 export interface AndroidDriverClock {
   now(): number;
@@ -58,6 +81,7 @@ export interface AndroidDriverOptions {
   readonly watchMs?: number;
   readonly clockTickMs?: number;
   readonly clock?: AndroidDriverClock;
+  readonly home?: string;
 }
 
 export function framesFile(paths: DevicePaths): string {
@@ -81,9 +105,21 @@ export function foldScreenOf(model: TableModel, video: VideoSize): FoldScreen | 
   return sameShape(video, model.inner.pixels) ? "inner" : "outer";
 }
 
-function unknownSettings(why: string): AndroidSettings {
-  const unknown = { known: false as const, why };
-  return { appearance: unknown, fontScale: unknown, location: unknown, battery: unknown, network: unknown, statusBar: { set: null, at: null } };
+export function shellQuoted(text: string): string {
+  return `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+function withoutTimes(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value ?? null, (key, inner) => (key === "at" ? undefined : inner)));
+}
+
+interface IdentityMarker {
+  readonly box: string;
+  readonly androidId: string;
+}
+
+export function identityFile(paths: DevicePaths, avd: string): string {
+  return join(paths.dir, `android-id-${avd}.json`);
 }
 
 function words(error: unknown): string {
@@ -110,6 +146,9 @@ export class AndroidDriver implements DeviceDriver {
   #watching = false;
   #lastTick: { readonly wall: number; readonly mono: number } | null = null;
   #closed = new AbortController();
+  readonly #touches = new TouchesDown();
+  readonly #settings: AndroidSettingsKeeper;
+  readonly pasteLandsMs = ANDROID_PASTE_LANDS_MS;
 
   constructor(options: AndroidDriverOptions) {
     this.#options = options;
@@ -123,6 +162,18 @@ export class AndroidDriver implements DeviceDriver {
       sized: (size, rotation) => this.#sized(size, rotation),
       recover: async () => void this.#look(),
       log: options.log,
+    });
+    this.#settings = new AndroidSettingsKeeper({
+      file: join(options.paths.dir, "android-settings.json"),
+      log: options.log,
+      now: () => this.#clock.now(),
+      device: {
+        shell: (command, signal) => this.#emulator.shell(command, { signal }),
+        gps: (signal) => this.#gps(signal),
+        setGps: (to, signal) => this.#setGps(to, signal),
+        battery: (signal) => this.#battery(signal),
+        setBattery: (to, signal) => this.#setBattery(to, signal),
+      },
     });
   }
 
@@ -205,9 +256,42 @@ export class AndroidDriver implements DeviceDriver {
     }
     this.#connect(running);
     await this.#setClockIfBehind(signal).catch((error) => this.#log(`clock: not checked: ${words(error)}`));
+    await this.#ownIdentity(target, running, signal).catch((error) => this.#log(`identity: the ${target.model} keeps the Android ID it has: ${words(error)}`));
+    this.#touches.liftAll();
     if (this.#video.running) this.#video.restart(how === "booted" ? "the device booted" : "the server reattached");
     else this.#video.start();
+    await this.#settings.use(target.model, signal).catch((error) => this.#log(`settings: ${words(error)}`));
+    await this.#settings.read(signal).catch((error) => this.#log(`settings: not read: ${words(error)}`));
     return how;
+  }
+
+  async #boxIdentity(): Promise<string | null> {
+    const key = await readFile(join(this.#options.home ?? homedir(), ADB_KEY)).catch(() => null);
+    return key ? createHash("sha256").update(key).digest("hex") : null;
+  }
+
+  async #ownIdentity(target: OfferedDeviceOf<"android">, running: RunningEmulator, signal: AbortSignal): Promise<void> {
+    const box = await this.#boxIdentity();
+    if (!box) {
+      this.#log(`identity: this box has no adb key yet, so the ${target.model}'s Android ID is left as it is`);
+      return;
+    }
+    const file = identityFile(this.#options.paths, target.native);
+    const marker = await readFile(file, "utf8").then((text) => JSON.parse(text) as IdentityMarker, () => null);
+    const now = (await this.#emulator.shell("settings get secure android_id", { signal })).trim();
+    if (marker?.box === box && marker.androidId === now) return;
+    const began = this.#clock.monotonic();
+    const androidId = randomBytes(8).toString("hex");
+    this.#log(`identity: the ${target.model} has the Android ID it came with (${now}), as every box from this image has; giving it its own, which restarts Android's framework once`);
+    await this.#emulator.shell(asRoot(`rm -f ${SSAID}; setprop sys.boot_completed 0; stop; start`), { signal });
+    await this.#emulator.waitBooted(target.native, running.pid, signal);
+    await this.#emulator.shell(`settings put secure android_id ${androidId}`, { signal });
+    const read = (await this.#emulator.shell("settings get secure android_id", { signal })).trim();
+    if (read !== androidId) throw new DriverError("failed", `The ${target.model} was given the Android ID ${androidId}, but reads ${read}.`);
+    const fresh = `${file}.new`;
+    await writeFile(fresh, `${JSON.stringify({ box, androidId } satisfies IdentityMarker)}\n`, { mode: 0o600 });
+    await rename(fresh, file);
+    this.#log(`identity: the ${target.model} has its own Android ID, ${androidId}, and its apps new IDs, in ${((this.#clock.monotonic() - began) / 1000).toFixed(1)} s`);
   }
 
   #connect(running: RunningEmulator): void {
@@ -361,41 +445,208 @@ export class AndroidDriver implements DeviceDriver {
     return this.#video;
   }
 
-  async touch(contacts: readonly TouchContact[]): Promise<void> {
-    if (!contacts.length) return;
-    throw new DriverError("unsupported", NOT_YET);
+  #unary(method: keyof typeof GRPC_METHODS.emulator, request: Uint8Array, signal: AbortSignal): Promise<Uint8Array> {
+    const { client, metadata } = this.#call();
+    return client.unary(GRPC_METHODS.emulator[method], request, { metadata, signal });
   }
 
-  async key(_key: string, down: boolean): Promise<void> {
-    if (!down) return;
-    throw new DriverError("unsupported", NOT_YET);
+  #sendKey(key: string, down: boolean): Promise<Uint8Array> {
+    return this.#unary("sendKey", encode(EMULATOR_SCHEMA, `${EMU}.KeyboardEvent`, { key, eventType: down ? KEYDOWN : KEYUP }), AbortSignal.timeout(INPUT_MS));
+  }
+
+  async #press(key: string): Promise<void> {
+    await this.#sendKey(key, true);
+    await this.#sendKey(key, false);
+  }
+
+  async touch(contacts: readonly TouchContact[]): Promise<void> {
+    if (!contacts.length && !this.#touches.any) return;
+    if (!contacts.length && (this.#power.is !== "booted" || !this.#client)) {
+      this.#touches.liftAll();
+      return;
+    }
+    this.#booted();
+    const model = this.#model();
+    const video = this.#video.size;
+    if (!video) throw new DriverError("not-booted", `The ${model.name} has sent no picture yet.`);
+    const panel = touchPanel(model);
+    const touches = this.#touches.next(contacts, (contact) => panelPoint(contact, video, this.#physical, panel));
+    await this.#unary("sendTouch", encode(EMULATOR_SCHEMA, `${EMU}.TouchEvent`, { touches }), AbortSignal.timeout(INPUT_MS));
+  }
+
+  async key(key: string, down: boolean): Promise<void> {
+    if (!down && (this.#power.is !== "booted" || !this.#client)) return;
+    this.#booted();
+    await this.#sendKey(emulatorKey(key), down);
   }
 
   async paste(): Promise<void> {
-    throw new DriverError("unsupported", NOT_YET);
+    this.#booted();
+    await this.#press(PASTE_KEY);
   }
 
   async prepareInput(): Promise<void> {}
 
-  async setClipboard(): Promise<void> {
-    throw new DriverError("unsupported", NOT_YET);
+  async setClipboard(text: string): Promise<void> {
+    this.#booted();
+    await this.#unary("setClipboard", encode(EMULATOR_SCHEMA, `${EMU}.ClipData`, { text }), AbortSignal.timeout(INPUT_MS));
   }
 
   async clipboard(): Promise<string> {
-    throw new DriverError("unsupported", NOT_YET);
+    this.#booted();
+    const answer = await this.#unary("getClipboard", new Uint8Array(0), AbortSignal.timeout(INPUT_MS));
+    return (decode(EMULATOR_SCHEMA, `${EMU}.ClipData`, answer) as { text?: string }).text ?? "";
+  }
+
+  async #gps(signal: AbortSignal): Promise<LatLon> {
+    const read = decode(EMULATOR_SCHEMA, `${EMU}.GpsState`, await this.#unary("getGps", new Uint8Array(0), signal)) as { latitude?: number; longitude?: number };
+    return { latitude: read.latitude ?? 0, longitude: read.longitude ?? 0 };
+  }
+
+  async #setGps(to: LatLon, signal: AbortSignal): Promise<void> {
+    await this.#unary("setGps", encode(EMULATOR_SCHEMA, `${EMU}.GpsState`, { passiveUpdate: false, latitude: to.latitude, longitude: to.longitude, altitude: 0, satellites: 8 }), signal);
+  }
+
+  async #battery(signal: AbortSignal): Promise<Battery> {
+    const read = decode(EMULATOR_SCHEMA, `${EMU}.BatteryState`, await this.#unary("getBattery", new Uint8Array(0), signal)) as { charger?: number; chargeLevel?: number };
+    return { level: read.chargeLevel ?? 0, charging: (read.charger ?? CHARGER_NONE) !== CHARGER_NONE };
+  }
+
+  async #setBattery(to: Battery, signal: AbortSignal): Promise<void> {
+    await this.#unary(
+      "setBattery",
+      encode(EMULATOR_SCHEMA, `${EMU}.BatteryState`, { hasBattery: true, isPresent: true, charger: to.charging ? CHARGER_AC : CHARGER_NONE, chargeLevel: to.level, status: to.charging ? CHARGING : DISCHARGING }),
+      signal,
+    );
   }
 
   #booted(): void {
     if (this.#power.is !== "booted" || !this.#running) throw new DriverError("not-booted", `The ${this.#target?.model ?? "device"} is not booted.`);
   }
 
-  async control(control: DeviceControl, signal: AbortSignal): Promise<void> {
+  async readSettings(signal: AbortSignal): Promise<void> {
+    if (this.#busy || this.#power.is !== "booted" || !this.#running) return;
+    const before = JSON.stringify([this.#settings.settings(), this.#settings.posture(), this.#settings.awake].map(withoutTimes));
+    await this.#settings.read(signal);
+    if (JSON.stringify([this.#settings.settings(), this.#settings.posture(), this.#settings.awake].map(withoutTimes)) !== before) this.#changed();
+  }
+
+  async control(control: DeviceControl, signal: AbortSignal, context: ControlContext): Promise<void> {
     if (control.action === "reboot") {
       await this.#reboot(signal);
       return;
     }
     this.#booted();
-    throw new DriverError("unsupported", NOT_YET);
+    switch (control.action) {
+      case "home":
+        await this.#press("GoHome");
+        break;
+      case "back":
+        await this.#press("GoBack");
+        break;
+      case "recents":
+        await this.#press("AppSwitch");
+        break;
+      case "lock":
+        await this.#emulator.shell("input keyevent KEYCODE_SLEEP", { signal });
+        await this.#settings.waitAwake(false, signal);
+        break;
+      case "wake":
+        await this.#emulator.shell("input keyevent KEYCODE_WAKEUP", { signal });
+        await this.#settings.waitAwake(true, signal);
+        break;
+      case "rotate":
+        await this.#rotate(control.turn ? turnedFrom(this.#physical, control.turn) : control.to, signal);
+        break;
+      case "posture":
+        await this.#fold(control.to, signal);
+        break;
+      case "appearance":
+        await this.#settings.setAppearance(control.to, signal);
+        break;
+      case "text_size":
+        if (typeof control.to === "string" && control.to !== "larger" && control.to !== "smaller" && control.to !== "default") throw new DriverError("bad-value", "Android takes a font scale, not a content size.");
+        await this.#settings.setFontScale(control.to, signal);
+        break;
+      case "location":
+        await this.#settings.setLocation(control.to, signal);
+        break;
+      case "status_bar":
+        await this.#settings.setStatusBar(control.to, signal);
+        break;
+      case "battery":
+        await this.#settings.setBattery(control.to, signal);
+        break;
+      case "network":
+        await this.#settings.setNetwork(control.to, signal);
+        await this.#setClockIfBehind(signal).catch((error) => this.#log(`clock: not checked after the network changed: ${words(error)}`));
+        break;
+      case "install":
+        await this.#install(control.paths, signal, context);
+        break;
+      case "switch":
+        throw new DriverError("failed", "The device server switches devices itself.");
+    }
+    await this.#settings.read(signal).catch((error) => this.#log(`settings: not read after ${control.action}: ${words(error)}`));
+    this.#changed();
+  }
+
+  async #newPicture(since: number, done: () => boolean, waitMs: number, signal: AbortSignal): Promise<boolean> {
+    const until = this.#clock.monotonic() + waitMs;
+    while (!(this.#generation !== since && done()) && this.#clock.monotonic() < until && !signal.aborted) await new Promise((resolve) => setTimeout(resolve, 20));
+    return this.#generation !== since && done();
+  }
+
+  async #rotate(to: Orientation, signal: AbortSignal): Promise<void> {
+    if (to === this.#physical) return;
+    const since = this.#generation;
+    const began = this.#clock.monotonic();
+    await this.#unary("setPhysicalModel", encode(EMULATOR_SCHEMA, `${EMU}.PhysicalModelValue`, { target: ROTATION, value: { data: [0, 0, ROTATION_DEGREES[to]] }, interpolation: STEP }), signal);
+    if (!(await this.#newPicture(since, () => this.#physical === to, ROTATE_PICTURE_MS, signal)))
+      throw new DriverError("failed", `The emulator was asked to turn the device ${to.replace("-", " ")}, but its picture is ${this.#physical.replace("-", " ")} ${ROTATE_PICTURE_MS / 1000} s later.`);
+    this.#log(`rotate: ${to.replace("-", " ")}, its picture in ${Math.round(this.#clock.monotonic() - began)} ms`);
+  }
+
+  async #fold(to: Posture, signal: AbortSignal): Promise<void> {
+    const model = this.#model();
+    if (model.form !== "foldable") throw new DriverError("unsupported", `The ${model.name} does not fold.`);
+    const since = this.#generation;
+    const screenBefore = this.#video.size ? foldScreenOf(model, this.#video.size) : null;
+    const screen = foldScreenFor(to);
+    await this.#unary("setPosture", encode(EMULATOR_SCHEMA, `${EMU}.Posture`, { value: POSTURE_VALUES[to] }), signal);
+    await this.#settings.waitPosture(to, signal);
+    if (screenBefore === screen) return;
+    if (!(await this.#newPicture(since, () => !!this.#video.size && foldScreenOf(model, this.#video.size) === screen, FOLD_PICTURE_MS, signal)))
+      throw new DriverError("failed", `The ${model.name} is ${to.replace("-", " ")}, but its picture is still the ${screenBefore ?? "unknown"} screen ${FOLD_PICTURE_MS / 1000} s later.`);
+  }
+
+  async #installed(pkg: string, signal: AbortSignal): Promise<boolean> {
+    return /^package:/m.test(await this.#emulator.shell(`pm path ${shellQuoted(pkg)} 2>/dev/null; true`, { signal }));
+  }
+
+  async #install(paths: readonly string[], signal: AbortSignal, context: ControlContext): Promise<void> {
+    const apks = paths.map(inBox);
+    for (const apk of apks) {
+      const found = await stat(apk).catch(() => null);
+      if (!found?.isFile()) throw new DriverError("bad-value", `There is no file at ${apk} in the box. Copy it there with box_copy, or build it in the box.`);
+    }
+    const pkg = await apkPackage(apks[0]!);
+    if (!pkg) throw new DriverError("bad-value", `${apks[0]} is not an APK: it has no AndroidManifest.xml naming a package.`);
+    if (context.personHasControl && (await this.#installed(pkg, signal)))
+      throw new DriverError("person-has-control", `A person has control of this box's device, and ${pkg} is installed on it already: installing it again would stop it if it is open. Wait for them to hand control back, or take it back with computer_take_control when they ask.`);
+    const began = this.#clock.monotonic();
+    const ran = await this.#emulator.adbRun(apks.length === 1 ? ["install", "-r", apks[0]!] : ["install-multiple", "-r", ...apks], { signal, timeoutMs: INSTALL_MS });
+    if (ran.code !== 0 || !/\bSuccess\b/.test(ran.output)) throw new DriverError("failed", `adb could not install ${pkg}: ${ran.output.split("\n").slice(-3).join(" ") || `it ended with ${ran.code}`}`);
+    await this.#emulator.shell("sync", { signal });
+    this.#log(`install: ${pkg} from ${apks.join(", ")} in ${((this.#clock.monotonic() - began) / 1000).toFixed(1)} s, written to the device's disk`);
+  }
+
+  async openUrl(url: string, signal: AbortSignal): Promise<void> {
+    this.#booted();
+    const began = this.#clock.monotonic();
+    const said = await this.#emulator.shell(`am start -a android.intent.action.VIEW -d ${shellQuoted(url)} 2>&1`, { signal });
+    if (/^Error/m.test(said)) throw new DriverError("failed", `Android could not open ${url}: ${said.split("\n").filter((line) => /Error/.test(line)).join(" ")}`);
+    this.#log(`open: ${url} in ${Math.round(this.#clock.monotonic() - began)} ms`);
   }
 
   async #reboot(signal: AbortSignal): Promise<void> {
@@ -443,8 +694,8 @@ export class AndroidDriver implements DeviceDriver {
     if (model.platform !== "android") throw new DriverError("failed", `The ${model.name} is not an Android device.`);
     const size = this.#video.size;
     const booted = this.#power.is === "booted" && !!size;
-    const power: Power<"android"> = this.#power;
-    const settings = unknownSettings("This bb-box does not read an Android device's settings yet.");
+    const power: Power<"android"> = this.#power.is === "booted" ? { is: "booted", awake: this.#settings.awake ?? true } : this.#power;
+    const settings = this.#settings.settings();
     const at = this.#clock.now();
     const geometry = booted && size ? { generation: this.#generation, physical: this.#physical, content: this.#physical, video: size } : null;
     if (model.form === "foldable") {
@@ -454,7 +705,7 @@ export class AndroidDriver implements DeviceDriver {
         model: model.name,
         power,
         geometry: geometry && size ? { ...geometry, screen: foldScreenOf(model, size)! } : null,
-        posture: { known: false, why: `This bb-box does not read the ${model.name}'s posture yet.` },
+        posture: this.#settings.posture(),
         settings,
         at,
       } as DeviceState;

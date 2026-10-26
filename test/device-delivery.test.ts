@@ -40,9 +40,9 @@ describe("the device server's files", () => {
     assert.equal(DEVICE_SERVER_VERSION, PINNED.version, "test/fixtures/device-server-version.json names another version than src/core/device.ts.");
   });
 
-  test("are under 420 KB to deliver", async () => {
+  test("are under 512 KB to deliver", async () => {
     const bytes = (await deviceServerFiles(ROOT)).reduce((sum, file) => sum + file.data.byteLength, 0);
-    assert.ok(bytes < 420_000, `${bytes} bytes`);
+    assert.ok(bytes < 512_000, `${bytes} bytes`);
   });
 
   test("a status says which version runs and why it is down", () => {

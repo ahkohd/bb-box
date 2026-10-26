@@ -39,6 +39,7 @@ let personHasControl = false;
 let holder: string | null = null;
 let generation = 0;
 const HARNESS_STARTED = Date.now();
+const ANDROID = process.env.KIND === "android";
 
 async function openControl(): Promise<DeviceLink> {
   for (;;) {
@@ -64,8 +65,8 @@ function boxView() {
   return {
     id: "harness-box",
     name: "harness-box",
-    kind: "ios",
-    kindLabel: "iOS Simulator",
+    kind: ANDROID ? "android" : "ios",
+    kindLabel: ANDROID ? "Android emulator" : "iOS Simulator",
     backendLabel: "Harness",
     nature: "virtual",
     form: "vm",
@@ -76,8 +77,8 @@ function boxView() {
     stopped: null,
     createdAt: HARNESS_STARTED,
     readyAt: HARNESS_STARTED,
-    os: "macos",
-    arch: "arm64",
+    os: ANDROID ? "linux" : "macos",
+    arch: ANDROID ? "x64" : "arm64",
     gpu: false,
     requires: [],
     extras: [],

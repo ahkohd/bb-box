@@ -258,7 +258,7 @@ describe("controls", () => {
 });
 
 describe("supports", () => {
-  const platformOnly: Readonly<Partial<Record<DeviceAction, "ios" | "android" | "foldable">>> = { back: "android", recents: "android", posture: "foldable", network: "android", status_bar: "ios" };
+  const platformOnly: Readonly<Partial<Record<DeviceAction, "ios" | "android" | "foldable">>> = { back: "android", recents: "android", posture: "foldable", network: "android" };
   const sample: Readonly<Record<DeviceAction, DeviceControl>> = {
     home: { action: "home" },
     back: { action: "back" },
@@ -542,6 +542,37 @@ describe("box_device's parameters, refusals and words (063, 6.3)", () => {
     assert.equal(controlDeadlineMs({ action: "install", paths: ["a.app"] }), 300_000);
     assert.equal(controlDeadlineMs({ action: "home" }), 10_000);
   });
+
+  test("answers on Android in Android's words: a clean status bar with the battery set, the emulator's own location and battery, and the network presets", () => {
+    const pixel = deviceModel("Pixel 8") as DeviceModel;
+    const known = <T,>(value: T, by: "bb-box" | "outside" = "bb-box") => ({ known: true as const, value, at: 1, by });
+    const state: DeviceState = {
+      platform: "android",
+      form: "phone",
+      model: "Pixel 8",
+      power: { is: "booted", awake: true },
+      geometry: { generation: 3, physical: "upright", content: "upright", video: { width: 1080, height: 2400 } },
+      settings: {
+        appearance: known("light" as const),
+        fontScale: known(1.3 as const),
+        location: known({ latitude: 37.422, longitude: -122.0841 }),
+        battery: known({ level: 100, charging: true }),
+        network: known("online" as const),
+        statusBar: { set: null, at: null },
+      },
+      at: 1,
+    };
+    const done = (control: DeviceControl) => answerText(control, pixel, { id: "a", ok: true, ms: 200, state, result: { type: "done" } });
+    assert.equal(deviceStateWords(state), "booted, upright, 1080x2400, light, font scale 1.3, network online");
+    assert.equal(done({ action: "status_bar", to: "clean" }), "Made the Pixel 8's status bar clean in 0.2 s. It shows 9:41, full signal and Wi-Fi, no notifications, and the battery as battery set it, or full. Now: booted, upright, 1080x2400, light, font scale 1.3, network online.");
+    assert.match(done({ action: "location", to: null }), /^Cleared the Pixel 8's location in 0\.2 s\. An Android emulator always has a location, so it is the emulator's own again: 37\.422, -122\.0841\./);
+    assert.match(done({ action: "battery", to: null }), /^Gave the Pixel 8 its own battery back in 0\.2 s\. That is the emulator's own: 100%, charging\./);
+    assert.match(done({ action: "network", to: "slow" }), /Its Wi-Fi carries 473\.6 kbit\/s each way, 100 ms later on the way out\./);
+    assert.match(done({ action: "install", paths: ["app.apk"] }), /written to the device's disk/);
+    const set = { ...state, settings: { ...state.settings, statusBar: { set: "clean" as const, at: 2 }, battery: known({ level: 42, charging: false }), location: known({ latitude: 51.5072, longitude: -0.1276 }, "outside"), network: known("slow" as const, "outside") } } as DeviceState;
+    assert.equal(deviceStateWords(set), "booted, upright, 1080x2400, light, font scale 1.3, network slow, changed outside bb-box, status bar clean, battery 42%, location 51.5072, -0.1276, changed outside bb-box");
+    assert.ok(supports(pixel, { action: "status_bar", to: "clean" }).supported);
+  });
 });
 
 describe("large messages", () => {
@@ -576,7 +607,7 @@ describe("the toolbar's controls (063, 6.4)", () => {
     assert.deepEqual(rowControls(model("Pixel Fold")), ["home", "back", "recents", "rotate-left", "fold"]);
     assert.deepEqual(overflowControls(model("Pixel 8")), ["rotate-right", "appearance", "text-size", "screenshot"]);
     assert.deepEqual(moreItems(model("iPhone 17")), ["lock", "open-link", "location", "status-bar", "battery", "reboot"]);
-    assert.deepEqual(moreItems(model("Pixel Tablet")), ["lock", "open-link", "location", "battery", "network", "reboot"]);
+    assert.deepEqual(moreItems(model("Pixel Tablet")), ["lock", "open-link", "location", "status-bar", "battery", "network", "reboot"]);
     assert.ok(barGroups(model("Pixel Fold")).flat().length <= 9);
   });
 

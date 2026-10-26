@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { turnedFrom } from "../core/device-settings.ts";
 import {
   DEVICE_HUB_PROCESS,
@@ -29,7 +28,7 @@ import { iosElementAt, readIosTree } from "./ios-tree.ts";
 import { IosSettingsKeeper } from "./ios-controls.ts";
 import { IosInput, PasteboardAccess, typesWithOption } from "./ios-input.ts";
 import { IosVideo } from "./ios-video.ts";
-import type { DevicePaths } from "./paths.ts";
+import { inBox, type DevicePaths } from "./paths.ts";
 import { Simctl, type SimDevice } from "./simctl.ts";
 
 export const SLIM_LISTS = "/usr/local/share/bb-box/ios";
@@ -122,12 +121,6 @@ function readAppInfo(app: string): Promise<AppInfo | null> {
       }
     }),
   );
-}
-
-export function inBox(path: string): string {
-  if (path === "~") return homedir();
-  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
-  return isAbsolute(path) ? path : join(homedir(), path);
 }
 
 function words(error: unknown): string {

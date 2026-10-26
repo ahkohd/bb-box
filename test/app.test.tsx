@@ -3176,7 +3176,7 @@ test("a Pixel 8's toolbar adds Back and Recent apps, and a narrow panel puts the
     const more = await openMenu(within(toolbar).getByRole("button", { name: "More device controls" }));
     for (const name of ["Rotate right", "Copy screenshot", "Lock", "Open link…", /^Reboot device ?Takes about 18 s\. Keeps apps and data\.$/]) expect(within(more).getByRole("menuitem", { name })).toBeTruthy();
     expect(within(more).getByRole("menuitemcheckbox", { name: "Dark appearance" })).toBeTruthy();
-    expect(within(more).queryByRole("menuitemcheckbox", { name: /Clean status bar/ })).toBeNull();
+    expect(within(more).getByRole("menuitemcheckbox", { name: /Clean status bar/ })).toBeTruthy();
   } finally {
     unsize();
     undo();

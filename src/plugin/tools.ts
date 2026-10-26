@@ -18,6 +18,7 @@ import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECO
 import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
+import { ANDROID_ID_FIRST_BOOT_WORDS } from "../core/device-settings.ts";
 import { wantsDevice } from "./devices.ts";
 import { captionDeviceRecording, deviceClipWords, recordsDevice, startDeviceRecording, stopDeviceRecording, type DeviceRecordDeps } from "./record-device.ts";
 import type { BbBox } from "./setup.ts";
@@ -210,9 +211,12 @@ async function deviceBooted(app: BbBox, box: BoxRecord, signal: AbortSignal, aft
   if (!wantsDevice(box)) return "";
   const began = Date.now();
   const model = box.askedDevice ?? box.capabilities.device!.devices[0].model;
+  let firstBootHere: boolean | null = null;
   while (Date.now() - began < DEVICE_BOOT_WAIT_MS && !signal.aborted) {
     const view = app.devices.view(box.id);
-    if (view.is === "connected" && view.state.power.is === "booted") return `\nThe ${view.state.model} ${after} ${((Date.now() - began) / 1000).toFixed(1)} s after the box was ready.`;
+    if (view.is === "connected" && firstBootHere === null) firstBootHere = view.state.power.is !== "booted" && !(view.bootedHere ?? []).includes(view.state.model);
+    if (view.is === "connected" && view.state.power.is === "booted")
+      return `\nThe ${view.state.model} ${after} ${((Date.now() - began) / 1000).toFixed(1)} s after the box was ready${view.state.platform === "android" && firstBootHere ? `, ${ANDROID_ID_FIRST_BOOT_WORDS}` : ""}.`;
     if (view.is === "connected" && view.state.power.is === "failed") return `\nThe ${view.state.model} did not boot: ${view.state.power.error.words}`;
     await new Promise((resolve) => setTimeout(resolve, DEVICE_POLL_MS));
   }

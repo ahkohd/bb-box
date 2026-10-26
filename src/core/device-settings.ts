@@ -42,6 +42,10 @@ export function controlDeadlineMs(control: DeviceControl, deadlines: { readonly 
 }
 
 export const CLEAN_STATUS_BAR_BATTERY: Battery = { level: 100, charging: false };
+export const EMULATOR_OWN_LOCATION: LatLon = { latitude: 37.422, longitude: -122.0841 };
+export const EMULATOR_OWN_BATTERY: Battery = { level: 100, charging: true };
+export const SLOW_NETWORK = { kbitPerSecond: 473.6, delayMs: 100 } as const;
+export const ANDROID_ID_FIRST_BOOT_WORDS = "about 8 s of it giving the device its own Android ID, as each device's first boot in a box does";
 
 export function locationWords(to: LatLon): string {
   return `${to.latitude}, ${to.longitude}`;
@@ -77,7 +81,13 @@ export function deviceStateWords(state: DeviceState): string {
     if (location) parts.push(`location ${locationWords(location)}`);
   } else {
     if (state.settings.fontScale.known) parts.push(`font scale ${state.settings.fontScale.value}${outside(state.settings.fontScale)}`);
-    if (state.settings.network.known) parts.push(`network ${state.settings.network.value}`);
+    if (state.settings.network.known) parts.push(`network ${state.settings.network.value}${outside(state.settings.network)}`);
+    if (state.settings.statusBar.set === "clean") parts.push("status bar clean");
+    const battery = state.settings.battery;
+    if (battery.known && (battery.value.level !== EMULATOR_OWN_BATTERY.level || battery.value.charging !== EMULATOR_OWN_BATTERY.charging)) parts.push(`battery ${batteryWords(battery.value)}${outside(battery)}`);
+    const location = state.settings.location;
+    if (location.known && location.value && (location.value.latitude !== EMULATOR_OWN_LOCATION.latitude || location.value.longitude !== EMULATOR_OWN_LOCATION.longitude))
+      parts.push(`location ${locationWords(location.value)}${outside(location)}`);
   }
   return parts.join(", ");
 }

@@ -66,3 +66,24 @@ template's layer, or a box of the template itself.
 
 CPU and memory are read from `/proc` as for `bench.ts`. Frames are counted
 as the viewer receives them, so on a still screen there are none.
+
+## Input and controls
+
+Units 5.1 and 6.2 on Android
+([063 results](../../../docs/decisions/063-results.md#units-51-and-62-on-android-input-and-controls))
+use these, in a box with the template's devices and this checkout:
+
+| File | What it does |
+| --- | --- |
+| `page.ts` | Serves `probe.html` on port 8765 and appends what the page logs to `/tmp/android-page.log`. Open it in the device's Chrome as `http://10.0.2.2:8765/`. `/clear` empties its field and list, and `/fetch?kib=<n>&after=<s>` has the page fetch `n` KiB from the box `s` seconds later and log how long it took, or why it failed |
+| `probe.html` | A pad that turns black or white at each touch, a text field and a long list. It logs each touch with its point, each pinch's scale, each key, the field's value and the list's scroll |
+| `controls.ts` | As the iOS `controls.ts`: box_device's parameters through `controlFromParameters` and the plugin's own `DeviceServers`, `twice`, `lost`, `read-back` (each Android read, 10 times), `watch`, `tap`, `input` and `shot`, which keeps `adb exec-out screencap` |
+
+The panel's own client and relay come from the iOS harness, which takes the
+platform from the environment: run `KIND=android node
+scripts/measure/ios/viewer.ts` in the background, and drive it with
+`CHROME=/usr/bin/google-chrome DEVICE_SCALE=1
+PAGE="http://127.0.0.1:8770/device.html?model=Pixel%208&guest=linux" node
+scripts/measure/ios/drive.ts owner:person e14:540:800:100:600:idle`, where
+points are the video's pixels. `PROBE_DX` and `PROBE_DY` move the pixel
+`e14` watches from the tap, 30 by default.
