@@ -1,0 +1,71 @@
+{
+ "label": "bcss-sbu1",
+ "at": "2026-10-26T15:45:47.801Z",
+ "seconds": 60,
+ "gapMs": 1000,
+ "devices": [
+  {
+   "name": "sbu1",
+   "udid": "FE8804B9-684A-4B97-A98E-3620F68011ED",
+   "fps": 21.2,
+   "gapP95Ms": 24,
+   "gapWorstMs": 45,
+   "mbitPerSecond": 1.1,
+   "tap": {
+    "around": [
+     "-50:4k -39:6k -16:7k 1:7k 12:7k 34:7k 76:7k 94:21k 107:7k 118:6k 142:6k 152:1k 175:7k 186:7k 208:6k 218:5k 243:8k 276:8k 292:6k 302:6k 325:6k 342:5k 359:5k 369:6k 386:5k",
+     "-34:5k -17:5k 0:6k 23:5k 40:5k 53:1k 68:25k 85:11k 101:2k 126:9k 135:1k 152:8k 176:9k 192:8k 201:2k 218:9k 234:9k 251:8k 274:8k 284:7k 301:8k 318:8k 336:6k 351:8k 368:7k 385:6k",
+     "-39:7k -22:7k -11:7k 6:7k 24:7k 48:1k 57:8k 82:23k 92:8k 115:6k 126:6k 150:6k 159:6k 184:7k 195:7k 212:7k 238:7k 255:7k 271:6k 288:7k 298:6k 323:6k 331:6k 348:5k 365:6k 381:5k 398:6k",
+     "-45:21k -22:6k -4:6k 15:5k 26:6k 42:1k 63:5k 76:26k 92:10k 114:8k 137:7k 153:8k 164:9k 183:8k 206:8k 216:10k 232:8k 256:10k 266:8k 289:9k 299:9k 316:2k 333:8k 350:7k 373:8k 389:7k 399:8k",
+     "-40:7k -17:7k -6:7k 17:7k 28:8k 44:7k 73:1k 89:21k 100:7k 112:5k 133:5k 148:8k 165:6k 182:7k 198:7k 215:6k 231:8k 249:6k 265:7k 298:6k 315:6k 332:5k 348:6k 365:5k 382:5k 399:6k",
+     "-44:5k -22:5k -10:6k 7:5k 30:5k 40:1k 64:5k 79:26k 90:10k 113:8k 124:7k 140:8k 163:9k 174:8k 197:9k 208:8k 224:7k 241:10k 258:8k 280:9k 298:8k 308:8k 331:8k 350:7k 360:7k 377:8k 394:7k"
+    ],
+    "taps": 23,
+    "missed": 23,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": [
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded"
+   ]
+  }
+ ],
+ "vm": null
+}

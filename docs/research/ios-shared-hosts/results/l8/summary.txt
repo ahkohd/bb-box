@@ -1,0 +1,62 @@
+l8-n1 shared-1: 56.5 fps, 2.9 Mbit/s, gap p95 23 ms worst 45 ms, 29 taps
+l8-n1 vm: cpu 6.34% user 4.86% sys 88.78% idle, summed 0.81 cores, gpu 275,283,281,281,281,285,284,284,284,324,284,284,284,284,284, free 93%, swap 0 MiB
+l8-n1 footprint summed 671.4 MiB over 1 devices
+l8-n2 shared-1: 57.1 fps, 3.1 Mbit/s, gap p95 21 ms worst 40 ms, 29 taps
+l8-n2 shared-2: 56.9 fps, 2.9 Mbit/s, gap p95 20 ms worst 42 ms, 29 taps
+l8-n2 vm: cpu 9.38% user 7.53% sys 83.7% idle, summed 1.23 cores, gpu 424,441,441,441,441,445,445,484,444,444,444,444,444,444,444, free 93%, swap 0 MiB
+l8-n2 footprint summed 1353.2 MiB over 2 devices
+l8-n4 shared-1: 58.5 fps, 3.2 Mbit/s, gap p95 24 ms worst 42 ms, 29 taps
+l8-n4 shared-2: 58.5 fps, 3.1 Mbit/s, gap p95 23 ms worst 44 ms, 29 taps
+l8-n4 shared-3: 58.5 fps, 3.2 Mbit/s, gap p95 23 ms worst 41 ms, 29 taps
+l8-n4 shared-4: 58.8 fps, 3.1 Mbit/s, gap p95 23 ms worst 41 ms, 29 taps
+l8-n4 vm: cpu 16.1% user 12.43% sys 71.45% idle, summed 2.06 cores, gpu 765,802,802,802,805,804,802,804,802,804,802,804,802,804,802, free 91%, swap 0 MiB
+l8-n4 footprint summed 2708.8 MiB over 4 devices
+l8-n6 shared-1: 52.4 fps, 3 Mbit/s, gap p95 23 ms worst 25 ms, 29 taps
+l8-n6 shared-2: 52.6 fps, 2.9 Mbit/s, gap p95 23 ms worst 25 ms, 29 taps
+l8-n6 shared-3: 52.4 fps, 2.9 Mbit/s, gap p95 24 ms worst 25 ms, 29 taps
+l8-n6 shared-4: 52.5 fps, 2.9 Mbit/s, gap p95 23 ms worst 25 ms, 29 taps
+l8-n6 shared-5: 52.4 fps, 2.9 Mbit/s, gap p95 24 ms worst 25 ms, 29 taps
+l8-n6 shared-6: 52.6 fps, 2.9 Mbit/s, gap p95 23 ms worst 25 ms, 29 taps
+l8-n6 vm: cpu 24.36% user 18.74% sys 56.88% idle, summed 3.11 cores, gpu 1163,1217,1212,1213,1216,1220,1215,1215,1215,1215,1233,1228,1215,1215,1215, free 89%, swap 0 MiB
+l8-n6 footprint summed 4090.5 MiB over 6 devices
+l8-n8 shared-1: 31.6 fps, 2 Mbit/s, gap p95 34 ms worst 104 ms, 29 taps
+l8-n8 shared-2: 52.5 fps, 3.1 Mbit/s, gap p95 25 ms worst 105 ms, 29 taps
+l8-n8 shared-3: 52.6 fps, 3 Mbit/s, gap p95 25 ms worst 104 ms, 29 taps
+l8-n8 shared-4: 31.6 fps, 2 Mbit/s, gap p95 34 ms worst 123 ms, 29 taps
+l8-n8 shared-5: 31.6 fps, 2 Mbit/s, gap p95 34 ms worst 117 ms, 29 taps
+l8-n8 shared-6: 31.6 fps, 1.9 Mbit/s, gap p95 34 ms worst 130 ms, 29 taps
+l8-n8 shared-7: 31.6 fps, 2 Mbit/s, gap p95 34 ms worst 104 ms, 29 taps
+l8-n8 shared-8: 52.5 fps, 2.9 Mbit/s, gap p95 25 ms worst 117 ms, 29 taps
+l8-n8 vm: cpu 32.3% user 23.28% sys 44.68% idle, summed 3.98 cores, gpu 1517,1596,1601,1595,1594,1599,1595,1599,1594,1592,1601,1600,1592,1601,1599, free 87%, swap 0 MiB
+l8-n8 footprint summed 5503.7 MiB over 8 devices
+l8-n1 taps:
+shared-1: tap to frame median 63 ms, p95 73 ms, worst 75 ms, missed 0 of 29
+all: 29 taps, median 63 ms, p95 73 ms, worst 75 ms, missed 0
+l8-n2 taps:
+shared-1: tap to frame median 64 ms, p95 74 ms, worst 76 ms, missed 0 of 29
+shared-2: tap to frame median 65 ms, p95 70 ms, worst 74 ms, missed 0 of 29
+all: 58 taps, median 64 ms, p95 74 ms, worst 76 ms, missed 0
+l8-n4 taps:
+shared-1: tap to frame median 60 ms, p95 69 ms, worst 70 ms, missed 0 of 29
+shared-2: tap to frame median 64 ms, p95 72 ms, worst 76 ms, missed 0 of 29
+shared-3: tap to frame median 66 ms, p95 77 ms, worst 79 ms, missed 0 of 29
+shared-4: tap to frame median 64 ms, p95 73 ms, worst 80 ms, missed 0 of 29
+all: 116 taps, median 64 ms, p95 75 ms, worst 80 ms, missed 0
+l8-n6 taps:
+shared-1: tap to frame median 141 ms, p95 157 ms, worst 159 ms, missed 0 of 29
+shared-2: tap to frame median 143 ms, p95 158 ms, worst 161 ms, missed 0 of 29
+shared-3: tap to frame median 148 ms, p95 156 ms, worst 158 ms, missed 0 of 29
+shared-4: tap to frame median 145 ms, p95 159 ms, worst 160 ms, missed 0 of 29
+shared-5: tap to frame median 149 ms, p95 153 ms, worst 157 ms, missed 0 of 29
+shared-6: tap to frame median 149 ms, p95 159 ms, worst 161 ms, missed 0 of 29
+all: 174 taps, median 146 ms, p95 158 ms, worst 161 ms, missed 0
+l8-n8 taps:
+shared-1: tap to frame median 215 ms, p95 233 ms, worst 235 ms, missed 0 of 29
+shared-2: tap to frame median 149 ms, p95 153 ms, worst 240 ms, missed 0 of 29
+shared-3: tap to frame median 150 ms, p95 160 ms, worst 183 ms, missed 0 of 29
+shared-4: tap to frame median 214 ms, p95 224 ms, worst 226 ms, missed 0 of 29
+shared-5: tap to frame median 214 ms, p95 231 ms, worst 240 ms, missed 0 of 29
+shared-6: tap to frame median 214 ms, p95 232 ms, worst 233 ms, missed 0 of 29
+shared-7: tap to frame median 212 ms, p95 237 ms, worst 243 ms, missed 0 of 29
+shared-8: tap to frame median 143 ms, p95 152 ms, worst 153 ms, missed 0 of 29
+all: 232 taps, median 202 ms, p95 231 ms, worst 243 ms, missed 0

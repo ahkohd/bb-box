@@ -1,0 +1,218 @@
+{
+ "label": "l8-n2",
+ "at": "2026-10-26T16:07:16.664Z",
+ "seconds": 30,
+ "gapMs": 1000,
+ "devices": [
+  {
+   "name": "shared-1",
+   "udid": "62A4BB89-2FB0-486E-9FFD-63EB00ABD274",
+   "fps": 57.1,
+   "gapP95Ms": 21,
+   "gapWorstMs": 40,
+   "mbitPerSecond": 3.1,
+   "tap": {
+    "around": [
+     "-47:4k -34:4k -19:5k -3:5k 14:5k 30:1k 47:5k 68:22k 80:12k 97:8k 114:7k 130:7k 147:8k 164:8k 182:8k 200:8k 218:7k 236:9k 255:7k 273:5k 290:6k 311:6k 330:6k 347:6k 364:7k 382:7k 398:7k",
+     "-42:5k -26:7k -9:7k 9:6k 27:7k 58:19k 77:9k 96:5k 113:6k 130:6k 147:6k 164:7k 181:6k 198:6k 215:7k 232:6k 248:6k 264:6k 282:4k 298:5k 315:5k 331:5k 347:6k 363:5k 379:5k 396:6k",
+     "-37:5k -20:5k -3:5k 14:5k 30:5k 46:6k 64:27k 79:10k 96:9k 113:7k 130:9k 147:9k 163:7k 180:9k 197:8k 214:7k 230:10k 248:7k 266:6k 283:6k 303:7k 319:7k 341:6k 355:6k 374:8k 396:7k",
+     "-33:7k -21:9k 1:7k 13:8k 32:1k 49:8k 67:24k 82:8k 101:7k 119:6k 136:6k 155:7k 173:6k 190:7k 208:7k 225:7k 243:7k 261:6k 280:4k 297:5k 313:6k 331:6k 347:5k 363:6k 381:5k 397:5k",
+     "-39:5k -23:5k -6:6k 11:5k 28:4k 44:6k 62:28k 77:10k 94:8k 111:9k 128:8k 144:8k 161:9k 178:10k 195:9k 211:8k 249:9k 267:6k 286:6k 305:7k 324:8k 342:7k 359:7k 376:7k 394:5k",
+     "-20:7k -3:7k 13:7k 31:1k 49:7k 65:22k 83:6k 101:7k 120:6k 138:6k 157:7k 174:6k 193:7k 210:7k 227:6k 246:7k 261:6k 278:5k 295:5k 312:5k 328:5k 345:5k 362:5k 380:6k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  },
+  {
+   "name": "shared-2",
+   "udid": "26A24D49-8241-4411-A9C0-00119559DA60",
+   "fps": 56.9,
+   "gapP95Ms": 20,
+   "gapWorstMs": 42,
+   "mbitPerSecond": 2.9,
+   "tap": {
+    "around": [
+     "-49:7k -32:8k -15:7k 0:7k 16:8k 32:1k 49:8k 65:23k 82:6k 99:7k 115:6k 132:6k 149:6k 166:6k 184:5k 202:8k 222:6k 239:5k 259:6k 276:6k 293:6k 325:5k 335:5k 348:5k 366:5k 381:5k",
+     "-34:5k -16:6k 2:5k 17:5k 34:1k 51:6k 66:26k 86:8k 103:8k 120:7k 138:7k 154:8k 170:8k 190:7k 209:8k 229:7k 245:4k 262:6k 279:8k 295:7k 312:6k 329:7k 346:7k 363:6k 379:8k 396:6k",
+     "-30:7k -18:7k -3:7k 13:8k 29:1k 50:7k 67:22k 83:8k 98:6k 115:6k 132:6k 149:7k 168:6k 184:6k 201:7k 219:6k 237:5k 256:6k 275:5k 292:5k 311:5k 329:5k 348:5k 365:5k 381:6k 397:5k",
+     "-35:6k -19:4k -2:6k 15:5k 30:5k 46:7k 63:27k 79:9k 96:2k 113:9k 129:7k 146:7k 163:8k 179:7k 196:8k 231:7k 247:7k 264:7k 282:7k 302:7k 318:6k 335:7k 353:7k 371:8k 388:7k",
+     "-38:7k -22:7k -5:8k 12:7k 29:7k 45:7k 63:24k 79:7k 95:6k 112:6k 129:6k 146:7k 162:6k 179:6k 200:1k 218:8k 236:5k 254:5k 273:5k 292:6k 312:5k 328:5k 345:5k 362:5k 379:6k 396:6k",
+     "-38:5k -21:1k 0:6k 33:5k 48:6k 73:25k 90:5k 106:6k 125:8k 143:8k 160:8k 177:8k 197:8k 216:6k 231:10k 247:6k 263:7k 280:8k 300:8k 317:7k 332:7k 350:8k 368:7k 387:8k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  }
+ ],
+ "vm": {
+  "top": {
+   "user": 9.38,
+   "sys": 7.53,
+   "idle": 83.7
+  },
+  "gpuUtilisation": [
+   424,
+   441,
+   441,
+   441,
+   441,
+   445,
+   445,
+   484,
+   444,
+   444,
+   444,
+   444,
+   444,
+   444,
+   444
+  ],
+  "memoryBefore": {
+   "freePercent": 93,
+   "swapUsedMiB": 0,
+   "freeGiB": 13.61,
+   "activeGiB": 8.11,
+   "inactiveGiB": 5.89,
+   "wiredGiB": 2.17,
+   "compressorGiB": 0,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "memoryAfter": {
+   "freePercent": 93,
+   "swapUsedMiB": 0,
+   "freeGiB": 13.6,
+   "activeGiB": 8.12,
+   "inactiveGiB": 5.9,
+   "wiredGiB": 2.16,
+   "compressorGiB": 0,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "processes": {
+   "windowSeconds": 30,
+   "summedCores": 1.23,
+   "perDevice": {
+    "62A4BB89-2FB0-486E-9FFD-63EB00ABD274": {
+     "processes": 80,
+     "cores": 0.322,
+     "rssMiB": 9047,
+     "companionCores": 0.077,
+     "companionRssMiB": 56,
+     "user": "admin"
+    },
+    "26A24D49-8241-4411-A9C0-00119559DA60": {
+     "processes": 81,
+     "cores": 0.327,
+     "rssMiB": 9381,
+     "companionCores": 0.076,
+     "companionRssMiB": 55,
+     "user": "admin"
+    }
+   },
+   "busiest": [
+    {
+     "name": "idb_companion",
+     "cores": 0.153,
+     "rssMiB": 111,
+     "count": 2
+    },
+    {
+     "name": "SimRenderServer",
+     "cores": 0.131,
+     "rssMiB": 107,
+     "count": 2
+    },
+    {
+     "name": "VTEncoderXPCService",
+     "cores": 0.113,
+     "rssMiB": 96,
+     "count": 2
+    },
+    {
+     "name": "SimMetalHost",
+     "cores": 0.088,
+     "rssMiB": 259,
+     "count": 6
+    },
+    {
+     "name": "diagnosticd",
+     "cores": 0.045,
+     "rssMiB": 97,
+     "count": 1
+    },
+    {
+     "name": "node",
+     "cores": 0.028,
+     "rssMiB": 623,
+     "count": 8
+    },
+    {
+     "name": "(top)",
+     "cores": 0.004,
+     "rssMiB": 8,
+     "count": 1
+    },
+    {
+     "name": "networkserviceproxy",
+     "cores": 0.003,
+     "rssMiB": 34,
+     "count": 1
+    },
+    {
+     "name": "com.apple.CoreSimulator.CoreSimulatorService",
+     "cores": 0.002,
+     "rssMiB": 45,
+     "count": 1
+    },
+    {
+     "name": "coreaudiod",
+     "cores": 0.002,
+     "rssMiB": 45,
+     "count": 1
+    },
+    {
+     "name": "launchd",
+     "cores": 0.002,
+     "rssMiB": 32,
+     "count": 1
+    },
+    {
+     "name": "logd",
+     "cores": 0.001,
+     "rssMiB": 48,
+     "count": 1
+    },
+    {
+     "name": "mediaremoted",
+     "cores": 0.001,
+     "rssMiB": 27,
+     "count": 1
+    },
+    {
+     "name": "airportd",
+     "cores": 0.001,
+     "rssMiB": 34,
+     "count": 1
+    },
+    {
+     "name": "FeatureAccessAgent",
+     "cores": 0.001,
+     "rssMiB": 26,
+     "count": 1
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,360 @@
+{
+ "label": "life4",
+ "at": "2026-10-26T15:08:26.884Z",
+ "seconds": 110,
+ "gapMs": 1000,
+ "devices": [
+  {
+   "name": "shared-1",
+   "udid": "62A4BB89-2FB0-486E-9FFD-63EB00ABD274",
+   "fps": 58.2,
+   "gapP95Ms": 23,
+   "gapWorstMs": 200,
+   "mbitPerSecond": 3.1,
+   "tap": {
+    "around": [
+     "-33:7k -23:6k 1:6k 17:7k 27:1k 57:6k 70:31k 101:6k 111:7k 134:8k 151:8k 168:8k 179:7k 201:7k 218:9k 228:7k 245:7k 266:7k 287:7k 302:5k 316:7k 332:6k 352:6k 366:6k 382:7k 399:6k",
+     "-49:6k -32:6k -16:6k 1:7k 18:7k 35:6k 64:20k 75:4k 85:6k 108:8k 119:5k 136:7k 159:5k 174:7k 187:6k 214:6k 231:6k 248:7k 258:1k 275:8k 291:5k 315:6k 325:5k 341:6k 358:5k 375:7k 391:7k",
+     "-37:6k -22:6k -3:6k 14:6k 32:1k 47:6k 65:31k 81:6k 98:8k 115:7k 131:7k 148:7k 169:8k 182:8k 198:7k 215:8k 231:7k 249:6k 270:9k 282:5k 304:4k 320:6k 332:6k 348:7k 365:6k 382:6k",
+     "-27:7k -17:7k 6:7k 23:8k 40:7k 58:23k 73:4k 90:6k 107:8k 124:6k 140:5k 157:5k 168:7k 191:7k 207:6k 221:6k 236:5k 263:6k 280:7k 296:5k 330:9k 340:7k 363:6k 379:6k 396:6k",
+     "-37:6k -20:6k -3:5k 14:7k 32:1k 49:6k 65:32k 81:6k 98:8k 115:7k 132:8k 149:8k 165:8k 183:6k 199:6k 216:7k 232:7k 250:8k 268:8k 284:6k 300:4k 315:7k 332:7k 350:7k 366:6k 383:8k 400:6k",
+     "-30:8k -14:7k 4:6k 21:7k 32:6k 48:21k 65:4k 88:5k 99:7k 122:6k 133:6k 149:6k 166:6k 186:6k 211:6k 220:6k 237:6k 254:7k 271:6k 295:4k 322:8k 338:5k 361:7k 379:7k 395:6k"
+    ],
+    "taps": 109,
+    "missed": 109,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  },
+  {
+   "name": "shared-2",
+   "udid": "26A24D49-8241-4411-A9C0-00119559DA60",
+   "fps": 48.4,
+   "gapP95Ms": 23,
+   "gapWorstMs": 268,
+   "mbitPerSecond": 2.7,
+   "tap": {
+    "around": [
+     "-39:7k -23:7k -6:7k 15:8k 32:2k 52:7k 66:24k 82:4k 98:3k 116:5k 132:9k 149:8k 166:7k 182:9k 199:4k 215:8k 232:8k 248:4k 265:7k 283:5k 302:6k 316:6k 332:5k 355:6k 365:6k 388:5k",
+     "-34:6k -17:6k 0:6k 17:5k 27:1k 49:6k 67:28k 77:11k 100:9k 116:8k 133:9k 150:10k 167:9k 183:9k 200:10k 216:9k 233:11k 250:9k 266:8k 283:4k 300:9k 318:9k 334:5k 350:9k 367:4k 384:6k",
+     "-47:6k -30:7k -13:7k 0:6k 21:8k 55:7k 71:22k 83:3k 105:8k 122:6k 133:6k 150:8k 172:7k 189:8k 205:7k 222:7k 239:8k 250:6k 267:7k 283:5k 300:5k 323:5k 340:5k 351:5k 374:6k 384:6k",
+     "-40:4k -23:6k -2:6k 4:5k 25:6k 48:5k 66:25k 82:12k 116:10k 132:9k 149:10k 165:9k 175:9k 199:10k 210:9k 233:9k 243:9k 260:8k 283:8k 300:8k 317:7k 326:7k 350:8k 360:8k 383:7k 400:7k",
+     "-47:8k -35:8k -18:8k 4:7k 21:8k 38:8k 55:1k 70:25k 87:8k 104:7k 120:7k 131:8k 154:8k 171:7k 182:9k 205:5k 221:8k 238:9k 256:4k 273:8k 283:6k 299:6k 316:7k 333:6k 350:5k 373:6k 383:6k",
+     "-35:6k -18:6k -8:7k 9:1k 27:7k 50:6k 67:31k 83:10k 94:9k 117:9k 127:9k 150:9k 160:9k 177:10k 201:10k 211:6k 227:4k 244:7k 268:9k 282:7k 299:8k 315:8k 334:4k 351:9k 365:8k 379:4k 396:10k"
+    ],
+    "taps": 87,
+    "missed": 87,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": [
+    "tap: New streams cannot be created after receiving a GOAWAY",
+    "tap: New streams cannot be created after receiving a GOAWAY",
+    "tap: New streams cannot be created after receiving a GOAWAY",
+    "tap: New streams cannot be created after receiving a GOAWAY",
+    "tap: New streams cannot be created after receiving a GOAWAY",
+    "stream: Premature close",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed",
+    "tap: The session has been destroyed"
+   ]
+  },
+  {
+   "name": "shared-3",
+   "udid": "25C5E11D-6277-4C90-B53B-98A3C18DABA3",
+   "fps": 58.2,
+   "gapP95Ms": 23,
+   "gapWorstMs": 201,
+   "mbitPerSecond": 3.2,
+   "tap": {
+    "around": [
+     "-46:6k -29:5k -12:5k 5:6k 22:6k 39:1k 59:5k 73:26k 89:8k 101:10k 123:7k 134:7k 150:8k 173:8k 184:10k 206:9k 218:9k 240:9k 257:8k 274:9k 290:8k 303:31k 318:8k 342:7k 359:7k 375:7k 392:7k",
+     "-40:8k -23:6k -6:8k 10:8k 27:1k 44:7k 66:21k 78:7k 94:8k 111:6k 128:6k 144:7k 161:7k 178:8k 195:7k 211:7k 228:7k 245:7k 262:7k 283:6k 300:6k 316:6k 328:6k 346:6k 362:5k 382:6k 397:6k",
+     "-34:7k -17:6k 6:6k 23:6k 39:6k 67:29k 84:5k 107:7k 117:7k 140:5k 157:8k 174:8k 185:8k 208:7k 224:8k 241:7k 258:7k 269:8k 285:6k 301:6k 318:6k 341:6k 352:6k 375:6k 386:5k",
+     "-34:7k -23:7k 0:7k 17:7k 27:1k 45:7k 65:22k 84:4k 94:6k 117:7k 127:6k 144:7k 161:6k 184:6k 194:6k 217:7k 234:7k 250:6k 264:6k 284:5k 299:7k 315:5k 334:6k 348:6k 368:5k 384:6k",
+     "-49:6k -33:6k -16:5k 1:6k 18:7k 40:6k 74:29k 91:5k 108:8k 118:7k 141:5k 157:7k 168:7k 185:8k 208:7k 225:7k 241:8k 258:7k 269:8k 291:7k 308:18k 319:5k 342:10k 359:7k 369:6k 386:8k",
+     "-32:6k -15:5k 1:7k 11:7k 35:1k 53:8k 69:21k 79:4k 96:8k 119:5k 135:6k 152:6k 168:6k 182:7k 202:6k 215:6k 236:6k 249:6k 266:8k 284:6k 301:6k 316:5k 333:5k 350:5k 367:5k 383:5k 400:6k"
+    ],
+    "taps": 109,
+    "missed": 109,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  },
+  {
+   "name": "shared-4",
+   "udid": "F2241631-BA8C-4F1D-B3D0-FCCC88D433ED",
+   "fps": 52.1,
+   "gapP95Ms": 23,
+   "gapWorstMs": 249,
+   "mbitPerSecond": 2.7,
+   "tap": {
+    "around": [
+     "-33:7k -17:6k 0:7k 23:6k 33:6k 59:29k 73:25k 85:4k 108:7k 124:6k 141:6k 151:6k 168:7k 192:6k 209:6k 226:7k 242:5k 260:4k 276:7k 293:6k 305:7k 320:5k 344:6k 354:6k 377:6k 398:7k",
+     "-34:8k -17:6k 0:7k 17:7k 34:1k 52:7k 67:25k 83:4k 100:6k 117:7k 134:6k 150:6k 167:7k 184:6k 201:6k 217:6k 234:5k 251:5k 268:5k 285:6k 302:6k 318:5k 335:5k 352:5k 368:5k 385:5k",
+     "-44:6k -27:6k -11:4k 6:6k 18:5k 40:5k 56:27k 73:5k 90:6k 107:7k 117:7k 141:8k 151:7k 168:7k 191:7k 207:6k 218:7k 241:6k 251:6k 269:6k 285:6k 302:7k 318:6k 335:7k 352:7k 369:6k 385:7k",
+     "-42:6k -25:6k -8:7k 9:6k 26:1k 47:7k 60:21k 76:3k 92:5k 110:8k 127:6k 144:5k 160:6k 180:6k 196:5k 213:7k 230:5k 247:5k 263:5k 280:5k 297:5k 314:5k 331:5k 347:5k 363:5k 380:6k 397:5k",
+     "-27:5k -17:5k 0:5k 23:5k 33:5k 50:29k 67:6k 90:4k 101:6k 123:7k 140:7k 151:7k 167:7k 184:6k 207:6k 218:8k 234:5k 251:5k 269:7k 293:6k 308:7k 326:6k 336:6k 359:6k 370:6k 393:6k",
+     "-33:7k -20:6k 0:7k 17:6k 35:1k 52:7k 67:23k 81:5k 101:5k 115:6k 131:6k 151:6k 168:6k 182:6k 201:6k 215:6k 234:6k 248:5k 269:6k 282:6k 304:6k 319:5k 333:6k 352:5k 369:5k 383:7k 399:5k"
+    ],
+    "taps": 98,
+    "missed": 98,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": [
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded",
+    "tap: The dtuhidd connection (com.apple.coredevice.feature.remote.hid.digitizer) has been invalidated; events sent on it would be discarded"
+   ]
+  }
+ ],
+ "vm": {
+  "top": {
+   "user": 42.86,
+   "sys": 23.95,
+   "idle": 33.17
+  },
+  "gpuUtilisation": [
+   783,
+   819,
+   818,
+   822,
+   821,
+   822,
+   821,
+   821,
+   821,
+   825,
+   901,
+   880,
+   886,
+   898,
+   930,
+   880,
+   819,
+   826,
+   821,
+   822,
+   822,
+   823,
+   904,
+   897,
+   898,
+   898,
+   898,
+   898,
+   897,
+   897,
+   897,
+   898,
+   901,
+   901,
+   912,
+   926,
+   950,
+   967,
+   823,
+   821,
+   821,
+   821,
+   826,
+   822,
+   811,
+   814,
+   786,
+   786,
+   784,
+   653,
+   637,
+   639,
+   748,
+   747,
+   747
+  ],
+  "memoryBefore": {
+   "freePercent": 74,
+   "swapUsedMiB": 0,
+   "freeGiB": 4.38,
+   "activeGiB": 3.77,
+   "inactiveGiB": 3.73,
+   "wiredGiB": 2.91,
+   "compressorGiB": 1.16,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "memoryAfter": {
+   "freePercent": 75,
+   "swapUsedMiB": 0,
+   "freeGiB": 2.89,
+   "activeGiB": 4.32,
+   "inactiveGiB": 4.23,
+   "wiredGiB": 2.91,
+   "compressorGiB": 1.07,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "processes": {
+   "windowSeconds": 110,
+   "summedCores": 1.99,
+   "perDevice": {
+    "62A4BB89-2FB0-486E-9FFD-63EB00ABD274": {
+     "processes": 79,
+     "cores": 0.252,
+     "rssMiB": 8255,
+     "companionCores": 0.066,
+     "companionRssMiB": 56,
+     "user": "admin"
+    },
+    "26A24D49-8241-4411-A9C0-00119559DA60": {
+     "processes": 80,
+     "cores": 0.246,
+     "rssMiB": 8100,
+     "companionCores": 0.001,
+     "companionRssMiB": 28,
+     "user": "admin"
+    },
+    "25C5E11D-6277-4C90-B53B-98A3C18DABA3": {
+     "processes": 85,
+     "cores": 0.252,
+     "rssMiB": 8762,
+     "companionCores": 0.065,
+     "companionRssMiB": 54,
+     "user": "admin"
+    },
+    "06738217-4ED4-449F-9636-1E30086FF8C9": {
+     "processes": 59,
+     "cores": 0.346,
+     "rssMiB": 4549,
+     "companionCores": null,
+     "companionRssMiB": null,
+     "user": "admin"
+    }
+   },
+   "busiest": [
+    {
+     "name": "idb_companion",
+     "cores": 0.189,
+     "rssMiB": 192,
+     "count": 4
+    },
+    {
+     "name": "SimRenderServer",
+     "cores": 0.149,
+     "rssMiB": 212,
+     "count": 4
+    },
+    {
+     "name": "VTEncoderXPCService",
+     "cores": 0.146,
+     "rssMiB": 147,
+     "count": 3
+    },
+    {
+     "name": "SimMetalHost",
+     "cores": 0.116,
+     "rssMiB": 439,
+     "count": 12
+    },
+    {
+     "name": "diagnosticd",
+     "cores": 0.102,
+     "rssMiB": 13,
+     "count": 1
+    },
+    {
+     "name": "node",
+     "cores": 0.04,
+     "rssMiB": 361,
+     "count": 6
+    },
+    {
+     "name": "spindump",
+     "cores": 0.037,
+     "rssMiB": 127,
+     "count": 1
+    },
+    {
+     "name": "nsurlsessiond",
+     "cores": 0.028,
+     "rssMiB": 51,
+     "count": 2
+    },
+    {
+     "name": "com.apple.CoreSimulator.CoreSimulatorService",
+     "cores": 0.017,
+     "rssMiB": 89,
+     "count": 2
+    },
+    {
+     "name": "fseventsd",
+     "cores": 0.011,
+     "rssMiB": 16,
+     "count": 1
+    },
+    {
+     "name": "com.apple.StreamingUnzipService.privileged",
+     "cores": 0.008,
+     "rssMiB": 50,
+     "count": 1
+    },
+    {
+     "name": "launchd",
+     "cores": 0.005,
+     "rssMiB": 23,
+     "count": 1
+    },
+    {
+     "name": "opendirectoryd",
+     "cores": 0.005,
+     "rssMiB": 28,
+     "count": 1
+    },
+    {
+     "name": "mds",
+     "cores": 0.004,
+     "rssMiB": 25,
+     "count": 1
+    },
+    {
+     "name": "coresymbolicationd",
+     "cores": 0.003,
+     "rssMiB": 6,
+     "count": 1
+    }
+   ]
+  }
+ }
+}

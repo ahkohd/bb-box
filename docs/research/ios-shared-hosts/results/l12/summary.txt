@@ -1,0 +1,37 @@
+l12-busy12-stream4 shared-1: 53.4 fps, 2.9 Mbit/s, gap p95 26 ms worst 68 ms, 29 taps
+l12-busy12-stream4 shared-2: 53.4 fps, 3 Mbit/s, gap p95 26 ms worst 62 ms, 29 taps
+l12-busy12-stream4 shared-3: 53.4 fps, 2.8 Mbit/s, gap p95 26 ms worst 56 ms, 29 taps
+l12-busy12-stream4 shared-4: 57.5 fps, 3.1 Mbit/s, gap p95 29 ms worst 58 ms, 29 taps
+l12-busy12-stream4 vm: cpu 55.97% user 33.1% sys 11.1% idle, summed 6.54 cores, gpu 1971,2012,2006,2007,2004,2013,2000,2009,2009,2004,2001,2002,2002,2004,2005, free 84%, swap 0 MiB
+l12-half shared-1: 57.9 fps, 0.5 Mbit/s, gap p95 31 ms worst 51 ms, 30 taps
+l12-half shared-2: 58 fps, 0.5 Mbit/s, gap p95 30 ms worst 50 ms, 29 taps
+l12-half shared-3: 57.7 fps, 0.6 Mbit/s, gap p95 31 ms worst 51 ms, 29 taps
+l12-half shared-4: 57.8 fps, 0.6 Mbit/s, gap p95 31 ms worst 51 ms, 29 taps
+l12-half shared-5: 58.1 fps, 0.5 Mbit/s, gap p95 30 ms worst 51 ms, 29 taps
+l12-half shared-6: 58.1 fps, 0.5 Mbit/s, gap p95 30 ms worst 36 ms, 29 taps
+l12-half shared-7: 58.1 fps, 0.5 Mbit/s, gap p95 30 ms worst 50 ms, 29 taps
+l12-half shared-8: 57.9 fps, 0.5 Mbit/s, gap p95 31 ms worst 51 ms, 29 taps
+l12-half shared-9: 57.6 fps, 0.5 Mbit/s, gap p95 31 ms worst 50 ms, 29 taps
+l12-half shared-10: 57.7 fps, 0.5 Mbit/s, gap p95 32 ms worst 50 ms, 29 taps
+l12-half shared-11: 0 fps, 0 Mbit/s, gap p95 NaN ms worst -Infinity ms, 29 taps
+l12-half shared-12: 57.8 fps, 0.6 Mbit/s, gap p95 31 ms worst 51 ms, 29 taps
+l12-half vm: cpu 47.71% user 35.93% sys 16.34% idle, summed 6.01 cores, gpu 1906,2016,2012,2013,2009,2009,2011,2016,2011,2013,2012,2012,2012,2012,2016, free 84%, swap 0 MiB
+l12-full shared-1: 26.4 fps, 1.9 Mbit/s, gap p95 47 ms worst 72 ms, 29 taps
+l12-full shared-2: 31.6 fps, 2.1 Mbit/s, gap p95 35 ms worst 56 ms, 29 taps
+l12-full shared-3: 31.6 fps, 2.1 Mbit/s, gap p95 35 ms worst 72 ms, 29 taps
+l12-full shared-4: 26.3 fps, 1.9 Mbit/s, gap p95 47 ms worst 53 ms, 29 taps
+l12-full shared-5: 26.3 fps, 1.8 Mbit/s, gap p95 47 ms worst 57 ms, 29 taps
+l12-full shared-6: 26.3 fps, 1.8 Mbit/s, gap p95 47 ms worst 72 ms, 29 taps
+l12-full shared-7: 31.6 fps, 2.1 Mbit/s, gap p95 35 ms worst 72 ms, 29 taps
+l12-full shared-8: 31.6 fps, 2.1 Mbit/s, gap p95 35 ms worst 66 ms, 29 taps
+l12-full shared-9: 26.3 fps, 1.8 Mbit/s, gap p95 47 ms worst 85 ms, 29 taps
+l12-full shared-10: 26.3 fps, 1.8 Mbit/s, gap p95 47 ms worst 66 ms, 29 taps
+l12-full shared-11: 0 fps, 0 Mbit/s, gap p95 NaN ms worst -Infinity ms, 29 taps
+l12-full shared-12: 31.6 fps, 2.2 Mbit/s, gap p95 35 ms worst 51 ms, 29 taps
+l12-full vm: cpu 47.1% user 33.22% sys 19.66% idle, summed 5.54 cores, gpu 2262,2371,2379,2368,2377,2370,2364,2362,2369,2378,2368,2363,2377,2377,2372, free 83%, swap 0 MiB
+stream4 taps:
+all: 116 taps, median 136 ms, p95 151 ms, worst 167 ms, missed 0
+half taps:
+all: 320 taps, median 78 ms, p95 97 ms, worst 118 ms, missed 29
+full taps:
+all: 319 taps, median 235 ms, p95 268 ms, worst 296 ms, missed 29

@@ -1,0 +1,185 @@
+{
+ "label": "m6-n1",
+ "at": "2026-10-26T14:57:30.483Z",
+ "seconds": 30,
+ "gapMs": 1000,
+ "devices": [
+  {
+   "name": "shared-1",
+   "udid": "62A4BB89-2FB0-486E-9FFD-63EB00ABD274",
+   "fps": 57.1,
+   "gapP95Ms": 22,
+   "gapWorstMs": 42,
+   "mbitPerSecond": 3,
+   "tap": {
+    "around": [
+     "-36:7k -20:7k -3:6k 13:5k 31:7k 47:7k 65:20k 81:7k 97:6k 114:5k 131:7k 148:4k 164:1k 181:7k 197:6k 215:6k 232:6k 248:6k 282:6k 299:5k 317:5k 333:4k 350:5k 367:4k 384:5k",
+     "-36:5k -20:5k -3:4k 14:5k 31:1k 47:5k 65:24k 83:9k 99:7k 115:9k 132:7k 150:6k 166:8k 183:8k 200:8k 219:8k 236:8k 253:8k 272:7k 288:8k 305:7k 322:7k 339:7k 358:7k 375:7k 393:7k",
+     "-36:7k -19:8k -2:6k 15:1k 31:7k 47:6k 63:21k 80:7k 114:6k 130:6k 147:4k 164:5k 181:6k 198:6k 215:5k 232:6k 250:6k 269:5k 286:7k 304:5k 321:5k 338:4k 355:5k 375:5k 393:5k",
+     "-37:5k -21:5k 0:5k 15:1k 31:5k 48:5k 65:26k 82:9k 100:7k 116:8k 135:7k 154:6k 172:7k 189:8k 206:8k 226:7k 253:8k 264:7k 280:7k 299:9k 317:2k 331:7k 349:7k 365:7k 383:6k 400:7k",
+     "-45:9k -25:7k -5:7k 16:6k 29:7k 45:7k 62:19k 80:7k 97:6k 115:6k 134:6k 152:5k 171:6k 190:6k 209:7k 229:6k 245:6k 263:6k 280:6k 296:5k 312:4k 330:4k 346:5k 363:5k 381:5k 399:5k",
+     "-47:5k -33:6k -21:5k -5:4k 11:5k 28:1k 46:5k 61:25k 78:9k 95:7k 112:9k 131:7k 149:5k 166:7k 185:7k 204:8k 221:8k 240:8k 258:8k 276:7k 294:8k 310:7k 327:8k 344:7k 360:7k 378:7k 394:7k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  }
+ ],
+ "vm": {
+  "top": {
+   "user": 7.88,
+   "sys": 6.67,
+   "idle": 85.43
+  },
+  "gpuUtilisation": [
+   280,
+   281,
+   282,
+   281,
+   285,
+   284,
+   284,
+   284,
+   284,
+   284,
+   284,
+   284,
+   284,
+   284,
+   284
+  ],
+  "memoryBefore": {
+   "freePercent": 82,
+   "swapUsedMiB": 0,
+   "freeGiB": 3.81,
+   "activeGiB": 4.17,
+   "inactiveGiB": 4.67,
+   "wiredGiB": 2.13,
+   "compressorGiB": 0.62,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "memoryAfter": {
+   "freePercent": 82,
+   "swapUsedMiB": 0,
+   "freeGiB": 3.85,
+   "activeGiB": 4.13,
+   "inactiveGiB": 4.68,
+   "wiredGiB": 2.12,
+   "compressorGiB": 0.62,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "processes": {
+   "windowSeconds": 30,
+   "summedCores": 0.75,
+   "perDevice": {
+    "62A4BB89-2FB0-486E-9FFD-63EB00ABD274": {
+     "processes": 79,
+     "cores": 0.361,
+     "rssMiB": 8912,
+     "companionCores": 0.09,
+     "companionRssMiB": 55,
+     "user": "admin"
+    }
+   },
+   "busiest": [
+    {
+     "name": "idb_companion",
+     "cores": 0.09,
+     "rssMiB": 55,
+     "count": 1
+    },
+    {
+     "name": "SimRenderServer",
+     "cores": 0.072,
+     "rssMiB": 53,
+     "count": 1
+    },
+    {
+     "name": "VTEncoderXPCService",
+     "cores": 0.068,
+     "rssMiB": 44,
+     "count": 1
+    },
+    {
+     "name": "SimMetalHost",
+     "cores": 0.049,
+     "rssMiB": 129,
+     "count": 3
+    },
+    {
+     "name": "nsurlsessiond",
+     "cores": 0.04,
+     "rssMiB": 54,
+     "count": 2
+    },
+    {
+     "name": "node",
+     "cores": 0.023,
+     "rssMiB": 327,
+     "count": 6
+    },
+    {
+     "name": "diagnosticd",
+     "cores": 0.022,
+     "rssMiB": 16,
+     "count": 1
+    },
+    {
+     "name": "com.apple.StreamingUnzipService.privileged",
+     "cores": 0.006,
+     "rssMiB": 38,
+     "count": 1
+    },
+    {
+     "name": "com.apple.MobileAsset.DownloadService.Builtin",
+     "cores": 0.004,
+     "rssMiB": 22,
+     "count": 1
+    },
+    {
+     "name": "launchd",
+     "cores": 0.002,
+     "rssMiB": 23,
+     "count": 1
+    },
+    {
+     "name": "opendirectoryd",
+     "cores": 0.002,
+     "rssMiB": 28,
+     "count": 1
+    },
+    {
+     "name": "logd",
+     "cores": 0.001,
+     "rssMiB": 43,
+     "count": 1
+    },
+    {
+     "name": "com.apple.CoreSimulator.CoreSimulatorService",
+     "cores": 0.001,
+     "rssMiB": 149,
+     "count": 2
+    },
+    {
+     "name": "dasd",
+     "cores": 0.001,
+     "rssMiB": 32,
+     "count": 1
+    },
+    {
+     "name": "notifyd",
+     "cores": 0.001,
+     "rssMiB": 4,
+     "count": 1
+    }
+   ]
+  }
+ }
+}

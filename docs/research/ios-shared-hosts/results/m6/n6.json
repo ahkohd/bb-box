@@ -1,0 +1,350 @@
+{
+ "label": "m6-n6",
+ "at": "2026-10-26T15:01:20.649Z",
+ "seconds": 30,
+ "gapMs": 1000,
+ "devices": [
+  {
+   "name": "shared-1",
+   "udid": "62A4BB89-2FB0-486E-9FFD-63EB00ABD274",
+   "fps": 52.4,
+   "gapP95Ms": 27,
+   "gapWorstMs": 49,
+   "mbitPerSecond": 3,
+   "tap": {
+    "around": [
+     "-48:6k -29:5k -9:6k 9:6k 34:7k 52:6k 68:6k 85:6k 104:6k 123:6k 143:28k 167:6k 184:8k 201:7k 219:8k 238:8k 257:9k 276:8k 300:8k 320:8k 334:7k 352:7k 371:5k 389:9k",
+     "-43:9k -24:7k 0:9k 17:8k 34:8k 52:7k 71:8k 91:8k 110:1k 134:8k 151:22k 168:5k 188:7k 206:8k 225:8k 250:27k 267:5k 284:6k 302:7k 320:6k 340:7k 359:5k 383:6k",
+     "-33:6k -15:6k 4:6k 23:6k 42:5k 67:5k 85:6k 100:5k 117:6k 136:27k 155:7k 174:7k 200:7k 216:6k 233:8k 251:7k 269:7k 288:10k 307:5k 332:9k 351:5k 367:4k 384:7k",
+     "-49:6k -31:7k -11:8k 7:7k 26:7k 51:7k 67:7k 84:8k 103:7k 122:7k 141:21k 165:5k 184:7k 199:6k 218:6k 236:7k 254:7k 273:8k 292:6k 316:5k 332:8k 350:6k 368:5k 387:5k",
+     "-43:7k -24:5k 0:7k 17:5k 35:5k 53:5k 71:5k 90:6k 108:1k 133:6k 150:27k 166:7k 184:8k 204:9k 222:10k 241:7k 265:7k 284:7k 300:8k 318:7k 337:8k 355:7k 375:7k 399:8k",
+     "-49:7k -33:7k -15:6k 4:9k 22:8k 41:8k 60:7k 83:8k 100:7k 118:8k 136:24k 155:5k 174:7k 193:8k 217:7k 234:7k 250:27k 270:5k 288:7k 306:6k 325:5k 350:6k 369:5k 385:6k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  },
+  {
+   "name": "shared-2",
+   "udid": "26A24D49-8241-4411-A9C0-00119559DA60",
+   "fps": 52.5,
+   "gapP95Ms": 27,
+   "gapWorstMs": 53,
+   "mbitPerSecond": 2.9,
+   "tap": {
+    "around": [
+     "-33:6k -16:6k 1:6k 22:6k 39:7k 58:7k 82:7k 100:6k 118:1k 134:8k 153:21k 172:8k 190:7k 210:6k 234:7k 252:7k 267:7k 285:6k 304:6k 323:9k 342:6k 368:6k 384:6k",
+     "-49:4k -30:5k -11:5k 7:6k 27:4k 51:18k 68:7k 85:9k 103:6k 122:6k 142:25k 161:11k 186:8k 201:8k 218:9k 237:9k 256:10k 275:10k 294:7k 318:9k 335:8k 350:7k 370:7k 388:7k",
+     "-44:5k -25:7k 0:7k 16:6k 33:7k 52:7k 70:6k 90:9k 108:1k 133:7k 150:22k 166:7k 185:6k 204:7k 222:7k 241:8k 265:7k 283:7k 299:6k 317:6k 334:6k 354:7k 372:6k 390:5k",
+     "-34:4k -17:6k 0:6k 19:5k 38:6k 56:5k 76:7k 99:5k 117:1k 133:25k 151:10k 171:9k 189:10k 208:10k 232:9k 251:10k 266:9k 284:9k 303:8k 322:10k 341:8k 366:8k 383:8k 400:7k",
+     "-49:5k -32:6k -14:7k 6:8k 24:7k 50:7k 67:7k 84:8k 101:7k 119:7k 138:18k 157:9k 176:6k 201:7k 217:7k 234:7k 253:9k 272:7k 291:8k 310:6k 335:7k 350:6k 368:5k 386:6k",
+     "-43:5k -24:5k 0:5k 18:5k 34:6k 53:26k 71:6k 90:6k 108:1k 132:6k 153:26k 167:9k 184:8k 203:9k 222:9k 241:9k 260:9k 284:8k 301:7k 317:8k 336:8k 355:7k 373:9k 392:6k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  },
+  {
+   "name": "shared-3",
+   "udid": "25C5E11D-6277-4C90-B53B-98A3C18DABA3",
+   "fps": 52.5,
+   "gapP95Ms": 27,
+   "gapWorstMs": 51,
+   "mbitPerSecond": 2.9,
+   "tap": {
+    "around": [
+     "-43:4k -26:6k -7:6k 11:5k 30:6k 49:6k 74:5k 92:6k 106:1k 125:5k 143:24k 162:10k 181:8k 207:8k 224:8k 241:9k 257:9k 276:10k 295:10k 314:8k 333:9k 357:8k 374:6k 392:8k",
+     "-38:6k -19:7k 0:7k 25:8k 41:7k 58:7k 77:7k 96:7k 114:7k 133:7k 157:21k 174:6k 190:6k 209:6k 227:7k 246:7k 265:7k 290:6k 306:6k 324:6k 342:6k 361:6k 380:6k 398:5k",
+     "-26:3k -10:4k 7:5k 26:5k 44:4k 63:7k 81:4k 105:7k 124:1k 140:5k 157:22k 175:8k 195:8k 213:7k 231:9k 255:8k 274:9k 290:8k 308:9k 326:7k 346:9k 365:7k 389:7k",
+     "-43:6k -28:5k -9:6k 10:7k 28:8k 48:7k 71:7k 91:7k 106:7k 124:7k 143:19k 162:8k 181:6k 205:6k 222:7k 239:7k 257:6k 276:8k 295:8k 313:6k 332:6k 357:6k 373:5k 390:5k",
+     "-47:5k -28:4k -9:6k 10:5k 35:5k 50:5k 67:5k 86:5k 105:6k 124:5k 143:23k 169:9k 184:8k 202:8k 220:9k 238:9k 257:10k 276:8k 300:9k 318:8k 334:8k 353:8k 372:7k 391:8k",
+     "-34:7k -13:7k 0:7k 18:7k 37:7k 55:7k 74:8k 93:1k 118:7k 135:21k 150:6k 169:5k 188:6k 207:6k 225:7k 250:6k 267:7k 284:7k 301:7k 320:6k 339:8k 358:5k 384:6k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  },
+  {
+   "name": "shared-4",
+   "udid": "F2241631-BA8C-4F1D-B3D0-FCCC88D433ED",
+   "fps": 52.6,
+   "gapP95Ms": 26,
+   "gapWorstMs": 68,
+   "mbitPerSecond": 2.8,
+   "tap": {
+    "around": [
+     "-43:6k -24:6k 1:5k 17:6k 34:6k 52:5k 71:7k 90:6k 108:1k 133:5k 150:28k 167:11k 185:8k 203:9k 222:9k 241:9k 265:10k 283:8k 299:9k 317:9k 336:8k 355:8k 374:8k 392:8k",
+     "-50:6k -34:8k -16:8k 4:7k 22:10k 41:6k 66:9k 83:7k 99:8k 117:8k 136:23k 155:9k 174:6k 199:6k 216:7k 233:7k 250:7k 269:7k 288:8k 307:6k 332:6k 351:7k 367:6k 384:6k",
+     "-49:6k -30:6k -12:5k 7:5k 26:6k 49:6k 66:7k 83:6k 102:5k 121:5k 140:28k 159:9k 183:9k 200:9k 217:9k 235:11k 254:9k 273:10k 292:9k 319:9k 334:8k 350:7k 368:8k 387:7k",
+     "-43:9k -24:7k 0:7k 16:8k 34:8k 52:8k 71:7k 90:9k 109:2k 133:7k 150:24k 166:6k 185:7k 204:6k 223:7k 242:6k 266:6k 283:5k 300:7k 318:7k 337:5k 355:7k 375:5k 400:7k",
+     "-34:5k -18:6k 1:5k 20:5k 39:6k 57:6k 81:5k 99:5k 115:1k 134:27k 152:11k 172:10k 191:9k 215:8k 233:10k 248:9k 267:8k 286:7k 305:11k 324:7k 349:8k 366:7k 383:5k",
+     "-49:6k -31:7k -12:8k 7:8k 33:8k 49:7k 66:9k 83:6k 101:8k 120:7k 140:24k 158:8k 183:7k 200:7k 217:7k 235:8k 254:7k 273:7k 292:6k 316:7k 333:6k 350:6k 369:6k 387:6k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  },
+  {
+   "name": "shared-5",
+   "udid": "F63BC144-9446-4209-AA5A-B661A967D549",
+   "fps": 52.6,
+   "gapP95Ms": 27,
+   "gapWorstMs": 48,
+   "mbitPerSecond": 2.9,
+   "tap": {
+    "around": [
+     "-43:7k -25:8k -6:7k 13:7k 32:8k 59:8k 74:6k 91:8k 108:7k 126:7k 145:21k 164:8k 183:6k 207:6k 224:7k 241:6k 259:6k 278:8k 297:8k 316:6k 341:7k 357:6k 374:6k 393:6k",
+     "-43:6k -24:5k 1:3k 17:5k 34:5k 52:5k 71:5k 91:6k 110:1k 134:5k 151:25k 167:8k 186:7k 206:8k 224:9k 243:9k 268:9k 284:8k 300:10k 319:7k 338:8k 357:8k 376:21k",
+     "-33:7k -15:6k 0:4k 19:6k 38:7k 57:7k 76:6k 100:7k 117:1k 133:6k 154:22k 172:6k 190:7k 209:7k 233:6k 250:7k 267:7k 285:5k 303:8k 322:7k 341:6k 360:6k 385:5k",
+     "-32:7k -13:5k 6:4k 25:4k 49:5k 70:5k 84:5k 101:5k 119:5k 138:27k 157:10k 176:8k 201:8k 217:8k 234:8k 253:9k 272:10k 290:10k 310:8k 334:9k 350:7k 369:8k 386:8k",
+     "-45:5k -26:8k -7:5k 18:7k 34:7k 51:7k 69:7k 89:7k 108:8k 132:7k 150:23k 166:7k 185:6k 204:6k 223:8k 242:7k 267:7k 284:7k 300:7k 318:6k 337:7k 355:7k 375:6k 393:6k",
+     "-33:6k -17:5k 0:4k 19:5k 38:6k 56:5k 75:6k 100:6k 117:1k 133:5k 152:27k 171:9k 190:10k 209:9k 233:8k 250:8k 267:10k 285:9k 303:10k 322:10k 341:8k 367:8k 385:25k 400:11k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  },
+  {
+   "name": "shared-6",
+   "udid": "222FDA1A-C3E1-4D69-9EF3-DDC39A74466C",
+   "fps": 52.7,
+   "gapP95Ms": 26,
+   "gapWorstMs": 53,
+   "mbitPerSecond": 2.9,
+   "tap": {
+    "around": [
+     "-49:7k -33:7k -15:6k 4:7k 22:6k 41:7k 60:7k 84:7k 101:7k 118:7k 136:1k 156:19k 175:9k 193:6k 217:5k 234:6k 252:7k 271:6k 290:7k 309:7k 334:7k 351:5k 367:6k 386:5k",
+     "-43:6k -25:5k 0:5k 19:5k 35:4k 52:5k 71:5k 90:6k 109:1k 127:5k 152:25k 168:10k 185:8k 204:19k 222:9k 241:13k 260:9k 284:9k 301:8k 318:6k 336:9k 356:7k 374:8k 393:7k",
+     "-41:7k -14:6k 0:8k 17:6k 35:4k 53:6k 73:9k 91:7k 116:1k 134:7k 149:20k 168:8k 187:6k 205:7k 224:7k 249:6k 267:6k 282:6k 301:7k 320:6k 339:7k 358:5k 382:5k 400:6k",
+     "-50:6k -33:5k -16:4k 4:7k 22:4k 42:5k 67:5k 85:6k 100:5k 118:5k 137:26k 156:10k 175:8k 202:9k 218:8k 234:8k 251:9k 269:8k 288:11k 307:9k 326:8k 350:8k 368:8k 384:6k",
+     "-46:7k -27:7k -8:7k 17:6k 34:4k 51:5k 69:7k 89:7k 107:5k 126:7k 151:18k 167:8k 183:6k 202:6k 221:6k 240:8k 259:6k 284:5k 300:7k 317:6k 335:7k 355:5k 374:6k 392:5k",
+     "-41:5k -17:5k 0:5k 17:4k 36:4k 54:5k 73:7k 92:5k 117:1k 133:6k 149:25k 169:9k 188:8k 206:25k 225:9k 250:9k 268:8k 283:9k 302:9k 321:8k 340:10k 359:8k 383:7k 400:7k"
+    ],
+    "taps": 29,
+    "missed": 29,
+    "medianMs": null,
+    "p95Ms": null,
+    "worstMs": null,
+    "delaysMs": []
+   },
+   "errors": []
+  }
+ ],
+ "vm": {
+  "top": {
+   "user": 36.7,
+   "sys": 27.72,
+   "idle": 36.2
+  },
+  "gpuUtilisation": [
+   1217,
+   1265,
+   1279,
+   1268,
+   1277,
+   1279,
+   1281,
+   1283,
+   1280,
+   1283,
+   1278,
+   1276,
+   1278,
+   1274,
+   1251
+  ],
+  "memoryBefore": {
+   "freePercent": 71,
+   "swapUsedMiB": 0,
+   "freeGiB": 0.08,
+   "activeGiB": 5.72,
+   "inactiveGiB": 5.7,
+   "wiredGiB": 3.63,
+   "compressorGiB": 0.85,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "memoryAfter": {
+   "freePercent": 72,
+   "swapUsedMiB": 0,
+   "freeGiB": 0.08,
+   "activeGiB": 5.74,
+   "inactiveGiB": 5.72,
+   "wiredGiB": 3.6,
+   "compressorGiB": 0.85,
+   "swapins": 0,
+   "swapouts": 0
+  },
+  "processes": {
+   "windowSeconds": 30,
+   "summedCores": 3.52,
+   "perDevice": {
+    "62A4BB89-2FB0-486E-9FFD-63EB00ABD274": {
+     "processes": 79,
+     "cores": 0.303,
+     "rssMiB": 8752,
+     "companionCores": 0.074,
+     "companionRssMiB": 56,
+     "user": "admin"
+    },
+    "26A24D49-8241-4411-A9C0-00119559DA60": {
+     "processes": 80,
+     "cores": 0.304,
+     "rssMiB": 8839,
+     "companionCores": 0.075,
+     "companionRssMiB": 56,
+     "user": "admin"
+    },
+    "25C5E11D-6277-4C90-B53B-98A3C18DABA3": {
+     "processes": 85,
+     "cores": 0.301,
+     "rssMiB": 9235,
+     "companionCores": 0.074,
+     "companionRssMiB": 55,
+     "user": "admin"
+    },
+    "F2241631-BA8C-4F1D-B3D0-FCCC88D433ED": {
+     "processes": 85,
+     "cores": 0.301,
+     "rssMiB": 9153,
+     "companionCores": 0.074,
+     "companionRssMiB": 55,
+     "user": "admin"
+    },
+    "F63BC144-9446-4209-AA5A-B661A967D549": {
+     "processes": 84,
+     "cores": 0.316,
+     "rssMiB": 9091,
+     "companionCores": 0.074,
+     "companionRssMiB": 54,
+     "user": "admin"
+    },
+    "222FDA1A-C3E1-4D69-9EF3-DDC39A74466C": {
+     "processes": 85,
+     "cores": 0.311,
+     "rssMiB": 9471,
+     "companionCores": 0.074,
+     "companionRssMiB": 56,
+     "user": "admin"
+    }
+   },
+   "busiest": [
+    {
+     "name": "idb_companion",
+     "cores": 0.444,
+     "rssMiB": 333,
+     "count": 6
+    },
+    {
+     "name": "SimRenderServer",
+     "cores": 0.367,
+     "rssMiB": 307,
+     "count": 6
+    },
+    {
+     "name": "VTEncoderXPCService",
+     "cores": 0.331,
+     "rssMiB": 274,
+     "count": 6
+    },
+    {
+     "name": "SimMetalHost",
+     "cores": 0.294,
+     "rssMiB": 767,
+     "count": 18
+    },
+    {
+     "name": "diagnosticd",
+     "cores": 0.101,
+     "rssMiB": 12,
+     "count": 1
+    },
+    {
+     "name": "node",
+     "cores": 0.069,
+     "rssMiB": 338,
+     "count": 6
+    },
+    {
+     "name": "nsurlsessiond",
+     "cores": 0.042,
+     "rssMiB": 50,
+     "count": 2
+    },
+    {
+     "name": "top",
+     "cores": 0.008,
+     "rssMiB": 9,
+     "count": 1
+    },
+    {
+     "name": "com.apple.CoreSimulator.CoreSimulatorService",
+     "cores": 0.007,
+     "rssMiB": 84,
+     "count": 2
+    },
+    {
+     "name": "com.apple.StreamingUnzipService.privileged",
+     "cores": 0.005,
+     "rssMiB": 36,
+     "count": 1
+    },
+    {
+     "name": "com.apple.MobileAsset.DownloadService.Builtin",
+     "cores": 0.004,
+     "rssMiB": 22,
+     "count": 1
+    },
+    {
+     "name": "logd",
+     "cores": 0.004,
+     "rssMiB": 43,
+     "count": 1
+    },
+    {
+     "name": "launchd",
+     "cores": 0.003,
+     "rssMiB": 22,
+     "count": 1
+    },
+    {
+     "name": "SimLaunchHost.arm64",
+     "cores": 0.002,
+     "rssMiB": 15,
+     "count": 2
+    },
+    {
+     "name": "airportd",
+     "cores": 0.001,
+     "rssMiB": 25,
+     "count": 1
+    }
+   ]
+  }
+ }
+}

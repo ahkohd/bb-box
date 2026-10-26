@@ -1,0 +1,250 @@
+[
+ {
+  "device": "shared-1",
+  "event": "baseline, 14 s before the first event",
+  "fps": 59.2,
+  "worstGapMs": 33
+ },
+ {
+  "device": "shared-2",
+  "event": "baseline, 14 s before the first event",
+  "fps": 59.0,
+  "worstGapMs": 40
+ },
+ {
+  "device": "shared-3",
+  "event": "baseline, 14 s before the first event",
+  "fps": 59.1,
+  "worstGapMs": 40
+ },
+ {
+  "device": "shared-4",
+  "event": "baseline, 14 s before the first event",
+  "fps": 59.1,
+  "worstGapMs": 40
+ },
+ {
+  "device": "shared-1",
+  "event": "boot a fifth device",
+  "eventMs": 3943,
+  "fps": 58.7,
+  "worstGapMs": 66
+ },
+ {
+  "device": "shared-2",
+  "event": "boot a fifth device",
+  "eventMs": 3943,
+  "fps": 58.7,
+  "worstGapMs": 67
+ },
+ {
+  "device": "shared-3",
+  "event": "boot a fifth device",
+  "eventMs": 3943,
+  "fps": 57.9,
+  "worstGapMs": 73
+ },
+ {
+  "device": "shared-4",
+  "event": "boot a fifth device",
+  "eventMs": 3943,
+  "fps": 58.7,
+  "worstGapMs": 65
+ },
+ {
+  "device": "shared-1",
+  "event": "release the fifth: shut down and erase",
+  "eventMs": 3646,
+  "fps": 58.3,
+  "worstGapMs": 65
+ },
+ {
+  "device": "shared-2",
+  "event": "release the fifth: shut down and erase",
+  "eventMs": 3646,
+  "fps": 58.4,
+  "worstGapMs": 58
+ },
+ {
+  "device": "shared-3",
+  "event": "release the fifth: shut down and erase",
+  "eventMs": 3646,
+  "fps": 58.3,
+  "worstGapMs": 74
+ },
+ {
+  "device": "shared-4",
+  "event": "release the fifth: shut down and erase",
+  "eventMs": 3646,
+  "fps": 58.6,
+  "worstGapMs": 67
+ },
+ {
+  "device": "shared-1",
+  "event": "boot the erased fifth again",
+  "eventMs": 25669,
+  "fps": 58.7,
+  "worstGapMs": 88
+ },
+ {
+  "device": "shared-2",
+  "event": "boot the erased fifth again",
+  "eventMs": 25669,
+  "fps": 58.7,
+  "worstGapMs": 91
+ },
+ {
+  "device": "shared-3",
+  "event": "boot the erased fifth again",
+  "eventMs": 25669,
+  "fps": 58.8,
+  "worstGapMs": 90
+ },
+ {
+  "device": "shared-4",
+  "event": "boot the erased fifth again",
+  "eventMs": 25669,
+  "fps": 58.6,
+  "worstGapMs": 89
+ },
+ {
+  "device": "shared-1",
+  "event": "shut the fifth down",
+  "eventMs": 3274,
+  "fps": 57.8,
+  "worstGapMs": 52
+ },
+ {
+  "device": "shared-2",
+  "event": "shut the fifth down",
+  "eventMs": 3274,
+  "fps": 57.6,
+  "worstGapMs": 47
+ },
+ {
+  "device": "shared-3",
+  "event": "shut the fifth down",
+  "eventMs": 3274,
+  "fps": 58.0,
+  "worstGapMs": 52
+ },
+ {
+  "device": "shared-4",
+  "event": "shut the fifth down",
+  "eventMs": 3274,
+  "fps": 58.4,
+  "worstGapMs": 46
+ },
+ {
+  "device": "shared-1",
+  "event": "kill shared-2's companion",
+  "eventMs": 39,
+  "fps": 58.9,
+  "worstGapMs": 35
+ },
+ {
+  "device": "shared-2",
+  "event": "kill shared-2's companion",
+  "eventMs": 39,
+  "fps": 59.8,
+  "worstGapMs": 25
+ },
+ {
+  "device": "shared-3",
+  "event": "kill shared-2's companion",
+  "eventMs": 39,
+  "fps": 59.8,
+  "worstGapMs": 24
+ },
+ {
+  "device": "shared-4",
+  "event": "kill shared-2's companion",
+  "eventMs": 39,
+  "fps": 59.8,
+  "worstGapMs": 26
+ },
+ {
+  "device": "shared-1",
+  "event": "restart shared-2's companion",
+  "eventMs": 247,
+  "fps": 59.2,
+  "worstGapMs": 45
+ },
+ {
+  "device": "shared-2",
+  "event": "restart shared-2's companion",
+  "eventMs": 247,
+  "fps": 51.6,
+  "worstGapMs": 39
+ },
+ {
+  "device": "shared-3",
+  "event": "restart shared-2's companion",
+  "eventMs": 247,
+  "fps": 58.7,
+  "worstGapMs": 49
+ },
+ {
+  "device": "shared-4",
+  "event": "restart shared-2's companion",
+  "eventMs": 247,
+  "fps": 59.2,
+  "worstGapMs": 43
+ },
+ {
+  "device": "shared-1",
+  "event": "switch shared-4's box to the iPad: shut shared-4 down",
+  "eventMs": 3213,
+  "fps": 57.4,
+  "worstGapMs": 130
+ },
+ {
+  "device": "shared-2",
+  "event": "switch shared-4's box to the iPad: shut shared-4 down",
+  "eventMs": 3213,
+  "fps": 0.0,
+  "worstGapMs": null
+ },
+ {
+  "device": "shared-3",
+  "event": "switch shared-4's box to the iPad: shut shared-4 down",
+  "eventMs": 3213,
+  "fps": 57.7,
+  "worstGapMs": 124
+ },
+ {
+  "device": "shared-4",
+  "event": "switch shared-4's box to the iPad: shut shared-4 down",
+  "eventMs": 3213,
+  "fps": 1.9,
+  "worstGapMs": 130
+ },
+ {
+  "device": "shared-1",
+  "event": "switch: boot the iPad",
+  "eventMs": 2262,
+  "fps": 57.7,
+  "worstGapMs": 49
+ },
+ {
+  "device": "shared-2",
+  "event": "switch: boot the iPad",
+  "eventMs": 2262,
+  "fps": 0.0,
+  "worstGapMs": null
+ },
+ {
+  "device": "shared-3",
+  "event": "switch: boot the iPad",
+  "eventMs": 2262,
+  "fps": 58.0,
+  "worstGapMs": 50
+ },
+ {
+  "device": "shared-4",
+  "event": "switch: boot the iPad",
+  "eventMs": 2262,
+  "fps": 0.0,
+  "worstGapMs": null
+ }
+]

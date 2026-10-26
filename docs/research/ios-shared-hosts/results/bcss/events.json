@@ -1,0 +1,41 @@
+[
+ {
+  "device": "sbu1",
+  "event": "baseline, 14 s before the first event",
+  "fps": 58.2,
+  "worstGapMs": 43
+ },
+ {
+  "device": "sbu2",
+  "event": "baseline, 14 s before the first event",
+  "fps": 58.0,
+  "worstGapMs": 38
+ },
+ {
+  "device": "sbu3",
+  "event": "baseline, 14 s before the first event",
+  "fps": 57.9,
+  "worstGapMs": 39
+ },
+ {
+  "device": "sbu1",
+  "event": "kill sbu1's CoreSimulatorService",
+  "eventMs": 216,
+  "fps": 1.8,
+  "worstGapMs": 16
+ },
+ {
+  "device": "sbu2",
+  "event": "kill sbu1's CoreSimulatorService",
+  "eventMs": 216,
+  "fps": 55.5,
+  "worstGapMs": 42
+ },
+ {
+  "device": "sbu3",
+  "event": "kill sbu1's CoreSimulatorService",
+  "eventMs": 216,
+  "fps": 56.9,
+  "worstGapMs": 48
+ }
+]
