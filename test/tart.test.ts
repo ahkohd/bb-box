@@ -1116,3 +1116,93 @@ test("a Linux VM resizes with a restart: shut down, tart set, booted, and its ro
   await backend.stop(guest);
   await assert.rejects(backend.planResize(guest, "linux-arm64", to, [], signal()), /start it first/);
 });
+
+const IOS_DEVICE = (model: string, native: string) => ({
+  model,
+  native,
+  runtime: { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" },
+  slim: { list: "ios-27.0-24A434", labels: 112, sha256: "a".repeat(64) },
+});
+const IOS_DEVICES = [IOS_DEVICE("iPhone 18 Pro", "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro"), IOS_DEVICE("iPhone 17", "com.apple.CoreSimulator.SimDeviceType.iPhone-17")];
+
+test("the iOS image: listed when set, built by prepare-ios-image.sh on the macOS image, replaced without touching that image, checked by bb-box-check-ios, and judged by the doctor (063, 3.2)", async () => {
+  const { mac, context } = setup({ "tart-ios-image": "bb-box-ios" });
+  addImage(mac, "bb-box-ios");
+  const iosRecord = (build: string, base = "build.20261003-021500") => imageRecord("ios", { build, base, devices: IOS_DEVICES, tools: { idb_companion: "1.7.7" } });
+  writeFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-ios.json"), `${iosRecord("build.20261003-040000-1111")}\n`);
+  const backend = new TartBackend(tartConfig({ "tart-ios-image": "bb-box-ios" }), context, FAKES);
+  made.push(backend);
+  const images = backend.images;
+
+  const listed = await images.list();
+  const ios = listed.builds.find((build) => build.ref === "mac1/bb-box-ios")!;
+  assert.deepEqual([ios.kind, ios.image, ios.current, ios.build], ["ios", "standard", true, "build.20261003-040000-1111"]);
+  assert.equal(ios.record?.devices?.length, 2);
+  assert.ok(!backend.kinds().some((kind) => kind.id === "ios"), "not offered until the iOS driver (4.2)");
+  assert.match(images.check!("ios"), /cua-driver[\s\S]*\/usr\/local\/bin\/bb-box-check-ios$/);
+
+  const iosCheck = async () => (await backend.doctor()).checks.find((check) => check.id === "image.mac1.ios")!;
+  const healthy = await iosCheck();
+  assert.equal(healthy.status, "ok", healthy.detail);
+  writeFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-ios.json"), `${iosRecord("build.20261003-040000-1111", "build.20260901-000000")}\n`);
+  const behind = await iosCheck();
+  assert.equal(behind.status, "warn");
+  assert.match(behind.detail, /It is built on build build\.20260901-000000 of the macOS image, which is now build\.20261003-021500/);
+  assert.match(behind.fix ?? "", /prepare-ios-image\.sh --from bb-box-macos --name bb-box-ios --replace/);
+  writeFileSync(
+    join(mac, ".bb-box", "tart", "images", "bb-box-ios.json"),
+    `${imageRecord("ios", { build: "b", base: "build.20261003-021500", devices: [{ ...IOS_DEVICES[0], runtime: { ...IOS_DEVICES[0]!.runtime, companion: "1.6.0" } }] })}\n`,
+  );
+  const untested = await iosCheck();
+  assert.equal(untested.status, "fail");
+  assert.match(untested.detail, /idb_companion 1\.6\.0 with Xcode 27\.0, a pairing no image check has passed/);
+  writeFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-ios.json"), `${iosRecord("build.20261003-040000-1111")}\n`);
+
+  const setupDir = join(mac, "..", `ios-image-${counter++}`, "setup");
+  for (const sub of ["tart", "proxmox-lxc", "ssh-pool"]) mkdirSync(join(setupDir, sub), { recursive: true });
+  writeFileSync(join(setupDir, "ssh-pool", "mac-stream.swift"), "// bb-box-stream\n");
+  writeFileSync(join(setupDir, "ssh-pool", "mac-chrome.sh"), "# Chrome\n");
+  writeFileSync(
+    join(setupDir, "tart", "prepare-ios-image.sh"),
+    [
+      "#!/bin/sh",
+      "set -eu",
+      'printf "%s\\n" "$@" > "$HOME/prepare-ios-args"',
+      'while [ $# -gt 0 ]; do case $1 in --name) name=$2; shift 2 ;; --from) from=$2; shift 2 ;; *) shift ;; esac; done',
+      'export PATH="$HOME/.nix-profile/bin:$PATH"',
+      'tart clone "$from" "$name"',
+      'mkdir -p "$HOME/.bb-box/tart/images"',
+      `printf '%s\\n' '${iosRecord("build.20261004-040000-2222")}' > "$HOME/.bb-box/tart/images/$name.json"`,
+      'echo "done: $name is ready to clone"',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  const built = await images.build!(ios, setupDir, { bbUrl: "https://bb.example.com", log: () => {}, signal: signal() });
+  const args = readFileSync(join(mac, "prepare-ios-args"), "utf8").trim().split("\n");
+  assert.deepEqual(args, ["--from", "bb-box-macos", "--name", built.ref.slice(5)], "no key, no BB URL and no pull: it is a clone of the macOS image");
+  assert.deepEqual([built.kind, built.build], ["ios", "build.20261004-040000-2222"]);
+
+  const replaced = await images.replace(built, ios, signal());
+  assert.deepEqual([replaced.ref, replaced.current, replaced.build], ["mac1/bb-box-ios", true, "build.20261004-040000-2222"]);
+  assert.ok(existsSync(join(mac, ".tart", "vms", "bb-box-macos")), "the macOS image it is built on stays");
+  assert.ok(!tartCalls(mac).some((call) => call[1] === "delete" && call[2] === "bb-box-macos"));
+  await assert.rejects(images.remove("mac1/bb-box-ios", signal()), /bb-box-ios on mac1 is not an image box or build of this install's/);
+});
+
+test("the iOS image setting is a Tart VM name of its own, and needs a macOS image to be built on (063, 3.2)", () => {
+  const parse = (values: Record<string, unknown>) =>
+    parseTartSettings({ "tart-enabled": true, "tart-hosts": `mac1 bbbox-admin@${FAKE_MAC}`, "tart-host-keys": `${FAKE_MAC} ssh-ed25519 AAAA`, ...values });
+  const off = parse({});
+  assert.ok(off.enabled && off.ok && off.config.iosImage === null, "off by default");
+  const on = parse({ "tart-ios-image": "bb-box-ios" });
+  assert.ok(on.enabled && on.ok && on.config.iosImage === "bb-box-ios");
+  const problems = (values: Record<string, unknown>) => {
+    const parsed = parse(values);
+    return parsed.enabled && !parsed.ok ? parsed.problems : [];
+  };
+  assert.deepEqual(problems({ "tart-ios-image": "bb box ios" }), ['Tart: the iOS image "bb box ios" is not a Tart VM name bb-box can use.']);
+  assert.deepEqual(problems({ "tart-ios-image": "bb-box-ios", "tart-macos-image": "", "tart-macos-desktop-image": "", "tart-linux-image": "bb-box-linux" }), [
+    "Tart: the iOS image is built on the macOS image, so give a macOS image too.",
+  ]);
+  assert.deepEqual(problems({ "tart-ios-image": "bb-box-macos" }), ['Tart: "bb-box-macos" is another kind\'s image; the iOS image is a VM of its own.']);
+});

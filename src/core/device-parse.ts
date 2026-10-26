@@ -52,6 +52,7 @@ import {
   type NonEmpty,
   type Observed,
   type OfferedDevice,
+  type SlimList,
   type OfferedDevices,
   type Override,
   type Point,
@@ -216,10 +217,24 @@ function runtimeOf(value: unknown, path: string): Runtime {
   return runtime;
 }
 
+const SHA256 = /^[0-9a-f]{64}$/;
+const SLIM_LIST_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+
+function slimList(value: unknown, path: string): SlimList {
+  const read = fields(value, path, ["list", "labels", "sha256"]);
+  const list = text(read.list, `${path}.list`, 64);
+  if (!SLIM_LIST_NAME.test(list)) refuse(`${path}.list`, `must be a list's name, such as "ios-27.0-24A434", not ${shown(list)}.`);
+  const sha256 = text(read.sha256, `${path}.sha256`, 64);
+  if (!SHA256.test(sha256)) refuse(`${path}.sha256`, `must be a SHA-256 in hex, not ${shown(sha256)}.`);
+  return { list, labels: whole(read.labels, `${path}.labels`, 1, 10_000), sha256 };
+}
+
 function offeredDevice(value: unknown, path: string): OfferedDevice {
-  const read = fields(value, path, ["model", "native", "runtime"]);
+  const read = fields(value, path, ["model", "native", "runtime", "slim"]);
   const runtime = runtimeOf(read.runtime, `${path}.runtime`);
-  return { model: modelOf(read.model, `${path}.model`, runtime.platform), native: text(read.native, `${path}.native`, 200), runtime } as OfferedDevice;
+  if (read.slim !== undefined && runtime.platform !== "ios") refuse(`${path}.slim`, "is only for iOS devices, whose image slims them.");
+  const device = { model: modelOf(read.model, `${path}.model`, runtime.platform), native: text(read.native, `${path}.native`, 200), runtime };
+  return (read.slim === undefined ? device : { ...device, slim: slimList(read.slim, `${path}.slim`) }) as OfferedDevice;
 }
 
 function offeredDevices(value: unknown, path: string): OfferedDevices {

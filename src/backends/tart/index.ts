@@ -13,7 +13,7 @@ export const tartDriver: BackendDriver<TartConfig> = {
   hostFields: TART_HOST_FIELDS,
   setup: {
     guide: "setup/tart/README.md",
-    scripts: ["setup/tart/prepare-image.sh", "setup/tart/prepare-linux-image.sh"],
+    scripts: ["setup/tart/prepare-image.sh", "setup/tart/prepare-linux-image.sh", "setup/tart/prepare-ios-image.sh"],
   },
   parse: parseTartPart,
   create: (config, context) => new TartBackend(config, context),

@@ -356,3 +356,24 @@ test("Rebuild now starts the night's refresh, shows it image by image with its b
   );
   assert.ok(changes.count >= 5, `the page heard of each change: ${changes.count}`);
 });
+
+test("the iOS image is due after 30 days or when the macOS image under it has a newer build, and comes after that macOS image (063, 3.2)", async () => {
+  const runtime = { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" } as const;
+  const devices = [{ model: "iPhone 18 Pro", native: "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", runtime }] as unknown as ImageRecord["devices"];
+  const ios = (days: number, base: string) => build("mac1/bb-box-ios", "ios", record(days, { kind: "ios", arch: "arm64", base, bbApp: null, devices }));
+  const macos = (days: number) => build("mac1/bb-box-macos", "macos", record(days, { kind: "macos", arch: "arm64", bbApp: null }));
+  const due = async (builds: ImageBuild[]) => (await jobs([backend("tart", builds).backend]).job.list()).map((view) => [view.name, view.due]);
+  assert.deepEqual(await due([macos(5), ios(1, "build.5")]), [
+    ["tart/mac1/bb-box-ios", null],
+    ["tart/mac1/bb-box-macos", null],
+  ]);
+  assert.deepEqual(await due([macos(1), ios(3, "build.5")]), [
+    ["tart/mac1/bb-box-ios", "it is built on another build of the macOS image than build.1"],
+    ["tart/mac1/bb-box-macos", null],
+  ]);
+  assert.deepEqual(await due([ios(40, "build.40"), macos(40)]), [
+    ["tart/mac1/bb-box-macos", "it is 40 days old, past its 30-day interval"],
+    ["tart/mac1/bb-box-ios", "it is 40 days old, past its 30-day interval"],
+  ]);
+  assert.deepEqual(await due([build("mac1/bb-box-ios", "ios", record(1, { kind: "ios", base: "build.1", devices: null }))]), [["tart/mac1/bb-box-ios", "it fails the doctor"]]);
+});

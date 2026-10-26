@@ -1,0 +1,135 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { judgeImage, parseImageRecord, pinsDigest } from "../src/backends/images.ts";
+import { DEVICE_MODELS } from "../src/core/device-models.ts";
+import { parseOfferedDevices } from "../src/core/device-parse.ts";
+import { IOS_COMPANION_PAIRINGS } from "../src/core/device.ts";
+
+const SETUP = join(import.meta.dirname, "..", "setup");
+const IOS = join(SETUP, "tart", "ios");
+const read = (name: string) => readFileSync(join(IOS, name), "utf8");
+const devices = read("devices.tsv")
+  .trim()
+  .split("\n")
+  .map((line) => line.split("\t"));
+const slimList = read("slim/ios-27.0-24A434.txt").trim().split("\n");
+const pins = Object.fromEntries(
+  read("pins")
+    .trim()
+    .split("\n")
+    .map((line) => line.split("=", 2) as [string, string]),
+);
+
+test("the image's devices are the model table's iOS models, with its screens' pixels, which the image's check compares", () => {
+  const ios = DEVICE_MODELS.filter((model) => model.platform === "ios");
+  assert.deepEqual(
+    devices.map(([model]) => model),
+    ios.map((model) => model.name),
+  );
+  for (const model of ios) {
+    const [, native, width, height] = devices.find(([name]) => name === model.name)!;
+    assert.match(native!, /^com\.apple\.CoreSimulator\.SimDeviceType\.[A-Za-z0-9-]+$/, model.name);
+    assert.deepEqual([Number(width), Number(height)], [model.screen.pixels.width, model.screen.pixels.height], model.name);
+  }
+});
+
+test("idb_companion is Meta's release, pinned by URL and SHA-256, at a version an image check passed with Xcode, with its MIT notice", () => {
+  assert.deepEqual(Object.keys(pins), ["IDB_VERSION", "IDB_URL", "IDB_SHA256"]);
+  assert.equal(pins.IDB_URL, `https://github.com/facebook/idb/releases/download/v${pins.IDB_VERSION}/idb-companion.macos-arm64.tar.gz`);
+  assert.match(pins.IDB_SHA256!, /^[0-9a-f]{64}$/);
+  assert.ok(IOS_COMPANION_PAIRINGS.some((pairing) => pairing.companion === pins.IDB_VERSION));
+  const notice = read("idb-companion-LICENSE");
+  assert.match(notice, /^MIT License\n\nCopyright \(c\) Meta Platforms, Inc\. and affiliates\./);
+  assert.equal(createHash("sha256").update(notice).digest("hex"), "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93", "facebook/idb's LICENSE at the pinned tag");
+});
+
+test("the slimming list is the research's full list: 112 labels, sorted, none of them launchd's one-shot labels or a service kept for a stated reason", () => {
+  assert.equal(slimList.length, 112);
+  assert.deepEqual(slimList, [...new Set(slimList)].sort());
+  for (const label of slimList) assert.match(label, /^com\.apple\.[A-Za-z0-9._-]+$/);
+  assert.ok(!slimList.some((label) => label.includes(".oneshot.")));
+  for (const kept of ["com.apple.nanoregistryd", "com.apple.sleepd", "com.apple.gamed", "com.apple.SpringBoard", "com.apple.backboardd", "com.apple.CoreSimulator.bridge", "com.apple.pasteboard.pasted"]) {
+    assert.ok(!slimList.includes(kept), `${kept} is kept`);
+  }
+  for (const gone of ["com.apple.apsd", "com.apple.PosterBoard", "com.apple.chronod", "com.apple.assistantd", "com.apple.healthd"]) assert.ok(slimList.includes(gone), gone);
+});
+
+test("the image's pins digest is the build's: pins, then devices.tsv, as prepare-ios-image.sh hashes them", async () => {
+  const expected = createHash("sha256").update(read("pins")).update(read("devices.tsv")).digest("hex");
+  assert.equal(await pinsDigest(SETUP, "ios"), expected);
+  assert.match(readFileSync(join(SETUP, "tart", "prepare-ios-image.sh"), "utf8"), /cat "\$here\/ios\/pins" "\$here\/ios\/devices\.tsv" \| shasum -a 256/);
+});
+
+test("the record the build writes is the macOS image's, with kind ios, the macOS build as its base, idb_companion, and each device with its runtime and slimming list", (t) => {
+  const python = spawnSync("python3", ["--version"]);
+  if (python.status !== 0) return t.skip("no python3");
+  const dir = mkdtempSync(join(tmpdir(), "ios-record-"));
+  const base = { contract: 1, image: "standard", kind: "macos", arch: "arm64", build: "build.20261022-033224-9658", built: "2026-10-22T03:32:24Z", base: null, os: "macOS 27.0", aptSnapshot: null, pins: "p", bbApp: "app", tools: { xcode: "27.0", node: "24.21.0" }, nvidia: null, layer: null, sizeGiB: null };
+  writeFileSync(join(dir, "macos.json"), JSON.stringify(base));
+  const sha = "b".repeat(64);
+  writeFileSync(
+    join(dir, "build.txt"),
+    [
+      ...devices.map(([model, native]) => `device=${model}\t${native}\tUDID\t27.6\t89.5\t112`),
+      "runtime=27.0\t24A434\t27.0\t1.7.7\tcom.apple.CoreSimulator.SimRuntime.iOS-27-0",
+      `slim=ios-27.0-24A434\t112\t${sha}`,
+      "",
+    ].join("\n"),
+  );
+  const made = spawnSync("python3", ["-I", join(IOS, "record-ios.py"), join(dir, "macos.json"), join(dir, "build.txt"), "build.20261026-071000-abcd", "2026-10-26T07:10:00Z", "pins"], { encoding: "utf8" });
+  assert.equal(made.status, 0, made.stderr);
+  const record = parseImageRecord(JSON.parse(made.stdout));
+  assert.ok(record);
+  assert.deepEqual([record.kind, record.base, record.build, record.pins, record.bbApp, record.tools.idb_companion, record.tools.xcode], ["ios", base.build, "build.20261026-071000-abcd", "pins", "app", "1.7.7", "27.0"]);
+  assert.deepEqual(
+    record.devices?.map((device) => [device.model, device.runtime.platform === "ios" && device.runtime.companion, "slim" in device && device.slim]),
+    devices.map(([model]) => [model, "1.7.7", { list: "ios-27.0-24A434", labels: 112, sha256: sha }]),
+  );
+  assert.equal(judgeImage(record, { os: "ios", pins: "pins", bbApp: "app", macosBuild: base.build, now: Date.parse("2026-10-27T00:00:00Z") }, "rebuild").status, "ok");
+});
+
+test("an iOS device's slimming list is read where records are read, and refused on Android devices or when malformed", () => {
+  const runtime = { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" };
+  const slim = { list: "ios-27.0-24A434", labels: 112, sha256: "c".repeat(64) };
+  const parsed = parseOfferedDevices([{ model: "iPhone 17", native: "x", runtime, slim }]);
+  assert.ok(parsed.ok && "slim" in parsed.value[0] && parsed.value[0].slim?.labels === 112);
+  const stock = parseOfferedDevices([{ model: "iPhone 17", native: "x", runtime }]);
+  assert.ok(stock.ok && !("slim" in stock.value[0]), "a device built without slimming");
+  const android = { platform: "android", api: 35, image: "google_apis", revision: 9, abi: "x86_64", emulator: "37.2.12.0", snapshot: null };
+  const refused = parseOfferedDevices([{ model: "Pixel 8", native: "pixel_8", runtime: android, slim }]);
+  assert.ok(!refused.ok && /\[0\]\.slim is only for iOS devices/.test(refused.words));
+  const badSha = parseOfferedDevices([{ model: "iPhone 17", native: "x", runtime, slim: { ...slim, sha256: "nope" } }]);
+  assert.ok(!badSha.ok && /slim\.sha256 must be a SHA-256 in hex/.test(badSha.words));
+});
+
+test("an iOS image with no devices fails the doctor, and one with a stock device warns", () => {
+  const record = parseImageRecord({ contract: 1, image: "standard", kind: "ios", arch: "arm64", build: "b", built: new Date().toISOString(), base: "m", os: "macOS 27.0", pins: "p", tools: {} })!;
+  const none = judgeImage(record, { os: "ios", pins: null, bbApp: null, macosBuild: "m" }, "rebuild");
+  assert.equal(none.status, "fail");
+  assert.match(none.detail, /It offers no iOS devices in its record/);
+  const runtime = { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" };
+  const stock = parseImageRecord({ ...record, devices: [{ model: "iPhone 17", native: "x", runtime }] })!;
+  const judged = judgeImage(stock, { os: "ios", pins: null, bbApp: null, macosBuild: "m" }, "rebuild");
+  assert.equal(judged.status, "warn");
+  assert.match(judged.detail, /iPhone 17 is not slimmed, so it takes about 1 GiB more memory/);
+});
+
+test("the build and the check are POSIX sh that parses, and the check runs the three checks the slimming note asks for", () => {
+  for (const script of ["build-ios.sh", "check-ios.sh"]) {
+    const parsed = spawnSync("sh", ["-n", join(IOS, script)], { encoding: "utf8" });
+    assert.equal(parsed.status, 0, `${script}: ${parsed.stderr}`);
+  }
+  assert.equal(spawnSync("sh", ["-n", join(SETUP, "tart", "prepare-ios-image.sh")]).status, 0);
+  const check = read("check-ios.sh");
+  assert.match(check, /boot_limit_s=\$\{BOOT_LIMIT_S:-60\}/, "nanoregistryd: bootstatus within 60 s");
+  assert.match(check, /idle_cores_most=\$\{IDLE_CORES_MOST:-0\.1\}/, "sleepd: idle CPU at most 0.1 of a core");
+  assert.match(check, /launch_limit_s=\$\{LAUNCH_LIMIT_S:-3\}/, "gamed: an XCUITest launch within 3 s");
+  const build = read("build-ios.sh");
+  assert.match(build, /apply_slimming "\$udid" "\$list"\n  restart_device "\$udid"\n  apply_slimming "\$udid" "\$list"/, "apply, reboot, apply again");
+  assert.match(build, /\[ "\$count" -eq "\$labels" \] \|\| die/, "then the count is checked");
+});

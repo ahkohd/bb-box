@@ -153,6 +153,7 @@ export interface BoxRecord {
   readonly endToldAt?: number | null;
   readonly device?: BoxDevice | null;
   readonly askedDevice?: ModelName;
+  readonly slim?: boolean;
 }
 
 /** A resize of a box (061): what it asked for, and how it went. */
@@ -571,10 +572,13 @@ export function withDeviceChecked(box: BoxRecord): BoxRecord {
   const storedDevice: unknown = box.device;
   const deviceReadable = storedDevice === undefined || storedDevice === null || parseBoxDevice(storedDevice).ok;
   const askedReadable = box.askedDevice === undefined || deviceModels().some((model) => model.name === box.askedDevice);
-  if (offerReadable && deviceReadable && askedReadable) return box;
-  const { askedDevice: _, ...rest } = box;
+  const slimReadable = box.slim === undefined || typeof box.slim === "boolean";
+  if (offerReadable && deviceReadable && askedReadable && slimReadable) return box;
+  const { askedDevice: _, slim: __, ...rest } = box;
   return {
-    ...(askedReadable ? box : rest),
+    ...rest,
+    ...(askedReadable && box.askedDevice !== undefined ? { askedDevice: box.askedDevice } : {}),
+    ...(slimReadable && box.slim !== undefined ? { slim: box.slim } : {}),
     capabilities: offerReadable ? box.capabilities : { ...box.capabilities, device: null },
     ...(deviceReadable ? {} : { device: null }),
   };
@@ -780,6 +784,12 @@ export class Boxes {
     return choice.model.name;
   }
 
+  #slimAsked(slim: boolean | undefined, kind: string, platform: DevicePlatform | null): boolean | null {
+    if (platform === "ios") return slim ?? true;
+    if (slim === undefined) return null;
+    throw new BoxError("unsupported", `slim is only for ios boxes, whose iOS Simulator runs without the services a device box does not need unless slim is false. Boxes of kind ${kind} have no such device.`);
+  }
+
   /**
    * Records a new box and starts acquiring it. Returns at once, once a
    * backend has said the box fits; the box is ready when its command
@@ -802,12 +812,14 @@ export class Boxes {
      */
     from?: { readonly name: string; readonly build: string | null; readonly ref: string };
     device?: string;
+    slim?: boolean;
   }): Promise<BoxRecord> {
     const requested = this.#now();
     const { kind: wanted, features } = kindRequest(input.kind);
     const ofKind = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
     const platform = kindPlatform(wanted, ofKind);
     const askedDevice = this.#askedDevice(input.device, wanted, platform, ofKind);
+    const slim = this.#slimAsked(input.slim, wanted, platform);
     // An alias takes only the offers that have its features (041).
     // A VM's offer comes after the others', which start sooner and hold less, unless the request asks for a VM (057).
     const asksVm = features.some((feature) => VM_FEATURES.includes(feature));
@@ -875,7 +887,7 @@ export class Boxes {
         }
         const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
-        const spare = claims ? await this.#claim({ ...input, askedDevice }, offered, features, sized.size, taken, requested, image?.name ?? null) : null;
+        const spare = claims ? await this.#claim({ ...input, askedDevice, slim }, offered, features, sized.size, taken, requested, image?.name ?? null) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
         const chosen = await this.#place({ threadId: input.threadId, named }, offered, withDevice, sized.size, features);
         if (tried && !chosen.backend.images?.startsFrom) throw new BoxError("unsupported", `${chosen.backend.label} starts no box from a build.`);
@@ -906,6 +918,7 @@ export class Boxes {
           timings: {},
           enrol: { state: "off", hostId: null, error: null },
           ...(askedDevice ? { askedDevice } : {}),
+          ...(slim !== null ? { slim } : {}),
           ...(tried
             ? { image: { name: tried.name, state: "baked" as const, build: tried.build, from: tried.ref } }
             : image
@@ -953,7 +966,7 @@ export class Boxes {
    * names of its boxes. The box's timings are the claim's, from `requested`.
    */
   async #claim(
-    input: { threadId: string; projectId: string | null; name?: string; askedDevice: ModelName | null },
+    input: { threadId: string; projectId: string | null; name?: string; askedDevice: ModelName | null; slim: boolean | null },
     offered: OfferedKind[],
     features: readonly string[],
     size: BoxSize,
@@ -1001,6 +1014,7 @@ export class Boxes {
             name: input.name ?? (taken.has(spare.name) ? generateName(await this.#liveNames(taken), this.#random) : spare.name),
             requires: [...new Set([...spare.requires, ...features])],
             ...(input.askedDevice ? { askedDevice: input.askedDevice } : {}),
+            ...(input.slim !== null ? { slim: input.slim } : {}),
             timings: { spare: ms, total: ms },
           };
           await this.#deps.kv.set(indexKey(box.id), box.threadId);

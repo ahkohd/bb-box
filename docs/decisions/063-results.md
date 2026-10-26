@@ -4,8 +4,10 @@ The numbers unit 2.4 of [063](063-device-boxes.md) measured, so the
 android kind's sizes, its encoder and the way frames reach the encoder come
 from measurements: E17 (each model's cost), E6 (shared memory or a pipe)
 and E7 (x264 or OpenH264). Unit 3.1's, for the Android template, are
-[at the end](#unit-31-the-android-template): E2 (snapshots in another VM),
-E13 (typing), E19 (the gRPC port) and E24 (disk).
+[after them](#unit-31-the-android-template): E2 (snapshots in another VM),
+E13 (typing), E19 (the gRPC port) and E24 (disk). Unit 3.2's, for the iOS
+image, are [at the end](#unit-32-the-ios-image): E1 (boot times), E13, E20
+(Xcode's Run and Device Hub), E24, and its slimming.
 
 ## How they were measured
 
@@ -357,3 +359,164 @@ each AVD asks for: the emulator raises it to 2.5 GiB for the Pixel 8 and
 used in a box, a hibernated spare, and a build and trial beside the current
 template were not measured: they need the template (4.1, 7.5).
 
+
+## Unit 3.2: the iOS image
+
+Measured on 26 October 2026 with the image's own scripts in
+[setup/tart/ios](../../setup/tart/ios/README.md), in one Tart
+macos-desktop box at the ios kind's default size, 6 cores and 16 GiB,
+cloned from the standard macOS image (build.20261022-033224-9658): macOS
+27.0, Xcode 27.0 (27A266a), iOS 27.0 (24A434), idb_companion 1.7.7.
+
+The image itself was not made. `prepare-ios-image.sh` clones the macOS
+image and boots the clone with `tart` on the Mac, and the refresh does the
+same through bb-box's SSH to the Mac, which a box cannot do. What ran is
+the build's layer, `build-ios.sh`, in the box, which is a clone of the
+macOS image as the build's VM is; then the image's check,
+`bb-box-check-ios`, in the same box; then `prepare-ios-image.sh` itself with
+a stand-in for `tart` that runs each `tart exec` in the box. The capture,
+the trial box and the replace are the Tart backend's, as for the macOS
+image, and were run against the fake Mac in the tests only.
+
+### The build
+
+| Step | Time |
+| --- | --- |
+| idb_companion downloaded, checked by SHA-256 and installed | 5 s |
+| Xcode's own devices removed | 3 s |
+| iPhone 18 Pro: made, first boot, defaults, slimmed (two passes and three reboots), shut down | first boot 27.6 s; slimming 89.5 s |
+| iPhone 17: the same | first boot 26.8 s; slimming 88.6 s |
+| iPad Pro 13-inch (M5): the same | first boot 20.9 s; slimming 101.1 s |
+| The whole layer | 6 min 58 s |
+| The check, all three devices | about 10 min |
+
+Each device had all 112 labels of its list disabled after the second pass,
+and again after a further reboot. A second build, by `prepare-ios-image.sh`
+with the stand-in for `tart`, took 6 min 16 s for the layer, with first
+boots of 17.6 to 26.1 s; its check passed all 24 lines, and the record it
+wrote names the macOS build as its base, idb_companion 1.7.7, and each
+device's runtime and list, with the pins digest bb-box computes.
+
+### The check
+
+Every line passed, on two full runs. The second run's numbers:
+
+| Device | Boots in | Processes, idle over 60 s | XCUITest launch to automation session | Pixels |
+| --- | --- | --- | --- | --- |
+| iPhone 18 Pro | 2.5 s | 61, 0.013 of a core | 0.7 s | 1206x2622 |
+| iPhone 17 | 1.9 s | 61, 0.021 of a core | 0.7 s | 1206x2622 |
+| iPad Pro 13-inch (M5) | 1.9 s | 64, 0.020 of a core | 0.7 s | 2064x2752 |
+
+### The check fails when a needed service is off
+
+One of the three services the slimming research found needed was turned off
+in each device by hand, with `launchctl disable`, and the check run again:
+
+| Turned off | On | The check said |
+| --- | --- | --- |
+| `gamed` | iPhone 18 Pro | xcuitest launch FAIL: an XCUITest launch took 11.3 s to reach its automation session, over 3 s |
+| `sleepd` | iPhone 17 | idle cpu FAIL: 1.662 of a core idle over 60 s, at most 0.1 |
+| `nanoregistryd` | iPhone 18 Pro | boots FAIL: simctl bootstatus did not return within 60 s |
+| `nanoregistryd` | iPad Pro 13-inch (M5) | nothing: the iPad booted in 1.9 s without it |
+
+So the boot check catches `nanoregistryd` on the iPhone, as the research
+found it, but the iPad does not need it. The check now also has a direct
+line, needed services, which fails if any of the three is disabled.
+
+After the run with `gamed` off, CoreSimulatorService stopped answering:
+every `simctl` waited, unkillable, and the VM stalled on its way down at
+the restart. Whether `gamed` caused it, or the XCUITest stopped after its
+test, is not known; it did not happen on the runs with every service on.
+The check now gives each `simctl` call 120 s and each XCUITest 300 s, and
+runs XCUITest with `-collect-test-diagnostics never`: once, on the iPad
+with every service on, xcodebuild sat in `simctl diagnose` for 4 minutes
+after the test had passed.
+
+### Slimming against the research
+
+Settled 5 minutes after boot, then idle over 5 minutes, measured with the
+research's `simtree.py` (summed `phys_footprint` of the device's process
+tree):
+
+| Device | Processes | phys_footprint | Idle CPU over 5 minutes | Research, the same list |
+| --- | --- | --- | --- | --- |
+| iPhone 18 Pro | 61 | 478 MiB | 0.012 of a core | 62, 528 MiB, 0.009 |
+| iPhone 17 | 61 | 478 MiB | 0.012 of a core | not measured |
+| iPad Pro 13-inch (M5) | 64 | 507 MiB | 0.012 of a core | iPad Pro 11-inch: 66, 509 MiB, 0.015 |
+
+Stock, the research measured 240 processes, 1,997 to 2,201 MiB and 0.37 of
+a core on the iPhone 18 Pro. macOS's own free memory, by `memory_pressure`,
+fell from 90% to 88 or 89% with each device booted: 0.2 to 0.3 GiB of the
+16 GiB VM, as the research's 0.21 GiB a slim device.
+
+### E1: boot times
+
+| Device | First boot, at build | Cold: the first boot after the VM's own, 10 to 47 s into it | Again, warm |
+| --- | --- | --- | --- |
+| iPhone 18 Pro | 27.6 s | 8.8 s | 1.9 to 2.5 s |
+| iPhone 17 | 26.8 s | 10.9 s | 1.9 to 2.0 s |
+| iPad Pro 13-inch (M5) | 20.9 s | 11.9 s | 1.9 to 2.0 s |
+
+A box from the image boots each device in 9 to 12 s cold, within 063's
+1.9 to 13.1 s, and in about 2 s once booted before in that box. The cold
+boots were in the build box after a restart, not in a fresh clone of the
+image: a clone shares the image's blocks on the Mac's APFS and so may read
+them from the Mac's cache, so a clone may be quicker, not slower. That a
+fresh clone keeps the slimming, which the research found, was not checked
+again here.
+
+### E13: typing
+
+In the probe app on the iPhone 18 Pro and the iPad Pro 13-inch (M5), keys
+sent as HID through idb_companion, with the software keyboard showing:
+"Hello idb 123 teh adn recieve x.", two spaces, then "i", arrived as
+typed. Nothing was corrected, no full stop was added, and no capital. The
+keyboard's "slide to type" sheet did not show. Misspelt words are still
+underlined, as spell checking is on; it changes nothing.
+
+### E20: Xcode's Run and Device Hub
+
+- **Run opens Device Hub.** In the box's desktop, the probe app run from
+  Xcode with Cmd+R opened Device Hub 8 s later with no device booted, and
+  4 s later with the device booted already by `simctl`, as an ios box's
+  will be.
+- **No preference found stops it.** With
+  `IDEAlwaysLaunchSimulatorWhenRunningAgainstSimulator` set to NO, a name
+  in Xcode's IDEiOSSupportCore, Device Hub still opened, 2 s after Run.
+  Xcode's other device keys found by name
+  (`IDELaunchSimulatorApplicationForTestSessions`) are for tests. So the
+  Desktop view's warning and the device server's watch (4.2) stay.
+- **Quitting Device Hub shuts the device down.** Quit by AppleScript, it
+  shut the booted iPhone down with it. Killed with SIGKILL, it left the
+  device booted. The watch's Quit Device Hub must not quit it.
+- **No microphone prompt** showed in either run: tccd's log showed Device
+  Hub asking only whether it had the microphone. The image grants the
+  microphone, which is BlackHole, to the Simulator's trampoline and to
+  Device Hub, in the user's TCC database, so neither can ask.
+- **Xcode's first launch** shows a Components sheet, then External Agent
+  Access, then What's New, over the desktop. The image answers the first,
+  as Xcode's own preferences record it; a person opening Xcode in an ios
+  box sees the other two. The macOS image's own Xcode set-up could answer
+  them for every macOS box.
+
+### E24: disk
+
+Allocated and apparent, after the build and the checks:
+
+| Part | Allocated | Apparent |
+| --- | --- | --- |
+| iPhone 18 Pro's device | 1.60 GiB | 1.61 GiB |
+| iPhone 17's device | 1.54 GiB | 1.55 GiB |
+| iPad Pro 13-inch (M5)'s device | 1.84 GiB | 1.84 GiB |
+| idb_companion | 0.11 GiB | 0.11 GiB |
+| bb-box's check, list and probe app | 48 KiB | |
+
+The image adds about 5.1 GiB to the macOS image, not 063's 0.6 GB. Most of
+each device is what it downloads in its first boot, before slimming can
+start: 0.9 to 1.0 GiB of MobileAsset, two thirds of it Siri's
+understanding model, and 0.2 to 0.4 GiB of wallpaper posters. A box from
+the image is an APFS clone, so this costs the Mac's disk once, in the
+image, not in each box. Removing the Siri assets after slimming would save
+about 0.8 GiB a device; it was not tried. A device used in a box, a
+suspended spare, and a build and trial beside the current image were not
+measured: they need the image on the Mac (4.2, 7.5).

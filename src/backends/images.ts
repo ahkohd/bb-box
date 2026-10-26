@@ -7,7 +7,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { OfferedDevices } from "../core/device.ts";
+import { companionWorksWith, IOS_PAIRINGS_WORDS, type OfferedDeviceOf, type OfferedDevices } from "../core/device.ts";
 import { parseOfferedDevices } from "../core/device-parse.ts";
 
 /**
@@ -112,7 +112,7 @@ export function recordInDescription(description: string): ImageRecord | null {
  * adds the desktop's; a macOS image's on a Mac; a Windows template's on
  * Proxmox, or a Windows image's on a Mac.
  */
-export type PinSet = "linux" | "linux-desktop" | "android" | "macos" | "windows" | "windows-arm64";
+export type PinSet = "linux" | "linux-desktop" | "android" | "macos" | "ios" | "windows" | "windows-arm64";
 
 /**
  * What each set's digest covers, under setup/: Linux's are files in
@@ -125,6 +125,7 @@ const PINS: Readonly<Record<PinSet, { readonly files: readonly string[] } | { re
   "linux-desktop": { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot", "proxmox-lxc/template/desktop-pins.tsv"] },
   android: { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot", "android/pins.json"] },
   macos: { lines: "tart/prepare-image.sh" },
+  ios: { files: ["tart/ios/pins", "tart/ios/devices.tsv"] },
   windows: { lines: "proxmox-qemu/build.sh" },
   "windows-arm64": { lines: "tart/prepare-windows-image.sh" },
 };
@@ -160,7 +161,7 @@ export interface ImageFacts {
 }
 
 /** Days after which an image warns: twice the interval it is rebuilt at, a week for Linux and a month for Android, Windows and macOS. */
-export const STALE_DAYS: Readonly<Record<"linux" | "android" | "windows" | "macos", number>> = { linux: 14, android: 60, windows: 60, macos: 60 };
+export const STALE_DAYS: Readonly<Record<"linux" | "android" | "windows" | "macos" | "ios", number>> = { linux: 14, android: 60, windows: 60, macos: 60, ios: 60 };
 
 /** The Node.js BB's Windows installer needs (#539). */
 const WINDOWS_NODE = "22.19.0";
@@ -227,6 +228,7 @@ export function judgeImage(
     readonly hostNvidia?: { readonly version: string; readonly seen: string } | null;
     /** Whether its boxes join BB, for a Windows image, which must then carry Node.js and an agent CLI (#539). */
     readonly joins?: boolean;
+    readonly macosBuild?: string | null;
     readonly now?: number;
   },
   rebuild: string,
@@ -268,6 +270,7 @@ export function judgeImage(
   if (facts.os === "android" && record.devices?.some((device) => device.runtime.platform === "android" && device.runtime.snapshot === null)) {
     warnings.push("A device in it has no snapshot, so its boxes boot that device cold, in about 17 s rather than 2 to 4.");
   }
+  if (facts.os === "ios") judgeIosImage(record, facts.macosBuild ?? null, failures, warnings);
   if (facts.os === "macos" && !record.tools.xcode) {
     warnings.push("It has no Xcode, so its boxes have no XCTest, Metal compiler or iOS Simulator (#475).");
   }
@@ -286,4 +289,23 @@ export function judgeImage(
     detail: [describeImage(record, now), ...problems].join(" "),
     fix: problems.length ? rebuild : null,
   };
+}
+
+function judgeIosImage(record: ImageRecord, macosBuild: string | null, failures: string[], warnings: string[]): void {
+  const devices = record.devices && record.devices[0].runtime.platform === "ios" ? (record.devices as readonly OfferedDeviceOf<"ios">[]) : null;
+  if (!devices) {
+    failures.push("It offers no iOS devices in its record, so no ios box can boot one from it.");
+    return;
+  }
+  for (const pairing of new Set(devices.map((device) => `${device.runtime.xcode}\t${device.runtime.companion}`))) {
+    const [xcode = "", companion = ""] = pairing.split("\t");
+    if (!companionWorksWith(xcode, companion)) {
+      failures.push(`It has idb_companion ${companion} with Xcode ${xcode}, a pairing no image check has passed, so its devices may not stream or take input. ${IOS_PAIRINGS_WORDS}`);
+    }
+  }
+  const stock = devices.filter((device) => !device.slim).map((device) => device.model);
+  if (stock.length) warnings.push(`${stock.join(", ")} ${stock.length === 1 ? "is" : "are"} not slimmed, so ${stock.length === 1 ? "it takes" : "each takes"} about 1 GiB more memory and a third of a core idle.`);
+  if (macosBuild && record.base !== macosBuild) {
+    warnings.push(`It is built on ${record.base ? `build ${record.base}` : "an unrecorded build"} of the macOS image, which is now ${macosBuild}, so its boxes lack what the macOS image's refresh brought.`);
+  }
 }

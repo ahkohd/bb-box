@@ -17,7 +17,7 @@ import { defaultSize, kindSizes } from "../core/sizes.ts";
 import type { ImageBakes } from "./bakes.ts";
 
 /** The days after which a standard image is due (049): a week for Linux, a month for macOS and Windows. */
-const INTERVAL_DAYS = { linux: 7, android: 30, macos: 30, windows: 30 } as const;
+const INTERVAL_DAYS = { linux: 7, android: 30, macos: 30, ios: 30, windows: 30 } as const;
 /** A refresh run stops starting images after this long (049). */
 export const RUN_LIMIT_MS = 4 * 60 * 60_000;
 /** The doctor warns when no run has ended for this long (049). */
@@ -142,7 +142,7 @@ export interface RunResult {
 
 /** A kind's OS and pins, by its name. */
 function osOf(kind: string): keyof typeof INTERVAL_DAYS {
-  return kind === "android" ? "android" : kind.startsWith("macos") ? "macos" : kind.startsWith("windows") ? "windows" : "linux";
+  return kind === "android" ? "android" : kind === "ios" ? "ios" : kind.startsWith("macos") ? "macos" : kind.startsWith("windows") ? "windows" : "linux";
 }
 function carriesBbApp(kind: string): boolean {
   return osOf(kind) === "linux" || osOf(kind) === "android";
@@ -150,7 +150,14 @@ function carriesBbApp(kind: string): boolean {
 function pinSet(kind: string): PinSet {
   if (osOf(kind) === "windows") return kind.includes("arm64") ? "windows-arm64" : "windows";
   if (osOf(kind) === "android") return "android";
+  if (osOf(kind) === "ios") return "ios";
   return osOf(kind) === "macos" ? "macos" : kind.includes("desktop") ? "linux-desktop" : "linux";
+}
+
+function macosBuildBeside(build: ImageBuild, backend: Backend, standard: readonly { readonly backend: Backend; readonly build: ImageBuild }[]): string | null {
+  if (osOf(build.kind) !== "ios") return null;
+  const host = build.ref.split("/")[0];
+  return standard.find((other) => other.backend === backend && osOf(other.build.kind) === "macos" && other.build.ref.split("/")[0] === host)?.build.build ?? null;
 }
 
 export class ImageJobs {
@@ -186,11 +193,18 @@ export class ImageJobs {
   }
 
   /** Why an image is due (049), in the decision's order of need, or null: [rank, reason]. */
-  async #why(build: ImageBuild, app: string | null): Promise<[number, string] | null> {
+  async #why(build: ImageBuild, app: string | null, macosBuild: string | null): Promise<[number, string] | null> {
+    const why = await this.#whyAlone(build, app, macosBuild);
+    const afterTheMacosImageItIsBuiltOn = 0.5;
+    return why && osOf(build.kind) === "ios" ? [why[0] + afterTheMacosImageItIsBuiltOn, why[1]] : why;
+  }
+
+  async #whyAlone(build: ImageBuild, app: string | null, macosBuild: string | null): Promise<[number, string] | null> {
     const os = osOf(build.kind);
     const pins = await this.#deps.facts.pins(pinSet(build.kind)).catch(() => null);
     const record = build.record;
     if (record && judgeImage(record, { os, pins, bbApp: carriesBbApp(build.kind) ? app : null, now: this.#now() }, "").status === "fail") return [1, "it fails the doctor"];
+    if (record && os === "ios" && macosBuild && record.base !== macosBuild) return [3, `it is built on another build of the macOS image than ${macosBuild}`];
     if (!record) return [2, "it has no record, so its age is not known"];
     const days = (this.#now() - Date.parse(record.built)) / DAY_MS;
     if (days > INTERVAL_DAYS[os]) return [2, `it is ${Math.floor(days)} days old, past its ${INTERVAL_DAYS[os]}-day interval`];
@@ -207,9 +221,10 @@ export class ImageJobs {
   async list(signal?: AbortSignal): Promise<ImageView[]> {
     const app = await this.#deps.facts.bbApp(signal).catch(() => null);
     const views: (ImageView & { rank: number })[] = [];
-    for (const { backend, build } of await this.#standard(signal)) {
+    const standard = await this.#standard(signal);
+    for (const { backend, build } of standard) {
       const name = `${backend.id}/${build.ref}`;
-      const why = await this.#why(build, app);
+      const why = await this.#why(build, app, macosBuildBeside(build, backend, standard));
       views.push({ name, backend: backend.id, build, due: why?.[1] ?? null, last: await this.#state(name), rank: why?.[0] ?? 9 });
     }
     return views.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)).map(({ rank: _, ...view }) => view);

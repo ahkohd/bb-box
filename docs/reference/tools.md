@@ -45,6 +45,7 @@ Get a fresh box for this thread: a Linux or macOS computer for commands, builds,
 | `on` | string or array of string | no | Where the box goes, from box_list: a provider such as Docker on devpc, or a list of them for the first with room among them. Leave it out for the first with room. |
 | `image` | string | no | The image the box starts from, from box_list: a project's image by name, or "standard" for bb-box's own. Leave it out for this project's image for the kind, or the standard one. |
 | `device` | string | no | For an ios or android box, the device it boots, from box_list, such as iPhone 18 Pro or Pixel Fold. Defaults to the kind's first. |
+| `slim` | boolean | no | For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them. |
 
 ## box_copy
 

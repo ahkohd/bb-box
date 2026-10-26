@@ -372,8 +372,14 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         .min(1)
         .optional()
         .describe("For an ios or android box, the device it boots, from box_list, such as iPhone 18 Pro or Pixel Fold. Defaults to the kind's first."),
+      slim: z
+        .boolean()
+        .optional()
+        .describe(
+          "For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them.",
+        ),
     }),
-    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device }, { threadId, projectId, signal }) {
+    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device, slim }, { threadId, projectId, signal }) {
       try {
         const box = await boxes.acquire({
           threadId: thread(threadId),
@@ -383,6 +389,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           ...(on !== undefined ? { on } : {}),
           ...(image !== undefined ? { image } : {}),
           ...(device !== undefined ? { device } : {}),
+          ...(slim !== undefined ? { slim } : {}),
         });
         if (wait === false) {
           const asked = boxSize(box);
