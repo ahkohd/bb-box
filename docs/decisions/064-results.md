@@ -363,3 +363,311 @@ restarts, taking the Mac's encoder from the streams people watch.
   server's streams.** Not in 064; found here.
 - **The delivery is compressed,** in a commit of its own, as the server's
   files passed the 512 KB budget at 520,644 bytes.
+
+## Unit 3: the host's helper
+
+Built and checked on 26 October 2026.
+
+### What it adds
+
+- **`device-host`,** [`setup/tart/ios/device-host.sh`](../../setup/tart/ios/device-host.sh),
+  the shared host's helper, run as root: `init`, `make`, `promise`,
+  `claim`, `release`, `reset`, `daemon`, `resume`, `status`, `carry` and
+  `install`, each written to be run again from the step it records before
+  taking it. Its commands, state and exit codes are in the
+  [iOS image's guide](../../setup/tart/ios/README.md#shared-hosts-device-host).
+- **The last release decides under the lock.** `release` looks for any
+  other claim, live promise or slot being made for a box; with none it
+  writes `deleting` before it lets go, and answers `last=yes`. Every later
+  `claim`, `promise` and `make` is refused with exit 7 and "This host is
+  being deleted; ask again."
+- **A release stops a slot gently,** in this order: its daemons, its
+  devices through `simctl shutdown`, every process but its
+  `containermanagerd` by SIGTERM, a second's pause, its launchd domain,
+  then SIGKILL for what is left. See
+  [a host that cannot boot a device](#a-host-that-cannot-boot-a-device).
+- **The sweep queue** takes at most `resetting-most` UIDs a pass, in one
+  `find` over the Data volume at background priority, logs those users out
+  again, sweeps `/private/var/folders` again, and removes their IPC
+  objects. It refuses a UID outside the slots' ranges.
+- **The held ports** are a small perl program,
+  [`device-host-ports.pl`](../../setup/tart/ios/device-host-ports.pl), run
+  as `nobody` by the helper's daemon, on 127.0.0.1 and ::1.
+- **`resume`** runs at every boot, from the helper's own LaunchDaemon. It
+  carries on every slot cut short, starts the sweep queue, and once a boot
+  clears each slot's stale BB lock and installer pid file, as the image
+  does for its own user (017).
+- **The bound:** a second booted device in a slot is shut down after 10
+  minutes, with words in `status`. Each slot's cores, memory (its
+  processes' physical footprint) and home size are in `status`.
+- **The image's additions,** [`host-ios.sh`](../../setup/tart/ios/host-ios.sh),
+  which `build-ios.sh` runs as root: the helper and its daemons, the slots'
+  home from the pool's `.zshenv`, each runtime's `disabled.plist` kept
+  from the image's slim devices, and the carried slots `bbd-i1` and
+  `bbd-i2`. `bb-box-check-ios` checks the helper, its daemons, the held
+  ports, the carried slots and the UID ranges.
+- **The device server under a host's daemon.** A slot's server is
+  `host`-managed: `install` and `restart` end it, and launchd starts the
+  delivered version within a second; a server that gave up waits for a
+  restart instead of exiting. Version 21.
+- **Enrolment's hook.** A backend's transports may give
+  `daemonKeptByHost`: bb-box then runs BB's installer with its environment,
+  `BB_INSTALL_SKIP_SERVICE=1` for a slot, and calls its `takeOver` after
+  every bootstrap. [`src/backends/tart/device-host.ts`](../../src/backends/tart/device-host.ts)
+  has the slot's hook, the helper's exit codes and a parser of its
+  `status`, for unit 4.
+
+### How it was measured
+
+On Linux first, with stub macOS tools: the helper runs against a fake
+Mac's disk, users, launchd and simulator
+([`test/fake-device-host.sh`](../../test/fake-device-host.sh)), in
+[`test/device-host-helper.test.ts`](../../test/device-host-helper.test.ts),
+24 cases. [`test/device-host-server.test.ts`](../../test/device-host-server.test.ts)
+runs the real device server under a loop standing in for launchd's
+`KeepAlive`, and delivers to it with 063's delivery.
+
+Then live, in a dedicated ios box at 8 cores and 32 GiB, from the ios
+image of 26 October (macOS 27.0, Xcode 27.0, iOS 27.0 24A434), as root.
+The image was not rebuilt: `host-ios.sh` ran in the box as `build-ios.sh`
+runs it. Times are wall-clock in the box, from `perl`'s
+`Time::HiRes`; the helper's own step times are in its `took=` answers.
+The image's own iPhone 18 Pro stayed booted throughout.
+
+### The image's additions
+
+`host-ios.sh` ran in 54.2 s: it kept the iOS 27.0 `disabled.plist` from
+the image's iPhone 18 Pro, loaded the helper's daemons, and made
+`bbd-i1` in 28.1 s and `bbd-i2` in 25.5 s (user 2.0 and 1.9 s, device
+7.3 and 5.7 s, first boot 18.8 and 17.8 s). The check's new lines all
+passed but the held ports, whose daemon failed to start as `nobody` with a
+log path it could not write; fixed, and passed. The UID check walks the
+Data volume in about 30 s.
+
+### Eight slots, made and timed
+
+Made one after another by `make`, each with the device server the box's
+own user had (063's delivery, version 19), so each slot's server ran as
+soon as its slot was ready:
+
+| Slot | Whole | User | Device | First boot | Server listening after |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 47.5 s | 2.7 s | 9.5 s | 34.7 s | 0.4 s |
+| 2 | 38.1 s | 2.2 s | 11.3 s | 24.0 s | 0.3 s |
+| 3 | 28.5 s | 2.1 s | 7.0 s | 18.9 s | 0.3 s |
+| 4 | 31.7 s | 2.3 s | 8.0 s | 20.8 s | 0.3 s |
+| 5 | 30.3 s | 2.1 s | 7.5 s | 20.0 s | 0.3 s |
+| 6 | 32.8 s | 2.1 s | 7.4 s | 22.8 s | 0.3 s |
+| 7 | 32.8 s | 2.1 s | 7.2 s | 22.9 s | 0.3 s |
+| 8 | 34.1 s | 2.3 s | 7.2 s | 23.9 s | 0.4 s |
+
+Each server's boot check found all 112 services off, so seeding held. M3
+gave 38.7 s to a booted device in a VM that had run a while; M13 24.1 to
+26.1 s in a VM just booted. Ten slots took the Data volume from 42 to 38
+GiB free, about 0.4 GiB each. With 8 ready, each slot's processes had a
+physical footprint of about 0.7 GiB, by `top`; summed resident memory said
+9.1 GiB, as it counts the simulator's shared mappings once per process, so
+`status` reports the footprint. With all 8 ready and idle, no process
+used more than 0.13 of a core over 10 s, by `top`.
+
+### H3: enrolment, on a fresh BB
+
+H3 through the plugin moves to unit 4, which gives slots a backend; the
+lead agreed. Here a fresh BB, `npx bb-app` with no account, ran as the
+box's own user at 127.0.0.1:4999, with direct machine access. For each
+slot, `bb machine create --provider manual` gave the enrolment command,
+which ran over SSH as the slot's user under `env BB_INSTALL_SKIP_SERVICE=1`,
+as enrol.ts now runs it; then the helper's `daemon`:
+
+| Slot | Installer | `daemon` | Connected after `daemon` |
+| --- | --- | --- | --- |
+| `bbd-i1` | 5.8 s | 0.98 s | 0.8 s |
+| `bbd-1` | 4.7 s | 1.43 s | |
+| `bbd-2` | 6.3 s | 1.43 s | 0.6 s |
+| `bbd-3` | 5.5 s | 1.40 s | 0.6 s |
+
+Each installer's own daemon connected 0.6 s after it returned, as M14
+found. `daemon` moved it into a LaunchDaemon as the slot's user, with its
+command, port (38889 and 38890, as the installer chose) and data folder,
+and stopped the installer's. A terminal made through the fresh BB on
+`bbd-i1`'s machine ran as `bbd-i1`, UID 79991, with `BB_PORT_BASE=20000`,
+and `simctl` listed one device, its own.
+
+### A new device server delivered to a slot
+
+063's delivery script, version 20 from this branch (21 after the rebase),
+run as the slot's user against a running version 19:
+
+| Slot | Delivery | Serving the new version after |
+| --- | --- | --- |
+| `bbd-3` | 0.12 s | 0.25 s |
+| `bbd-4` | 0.11 s | 0.26 s |
+| `bbd-5` | 0.10 s | 0.25 s |
+
+Asked: within 2 s. M15 measured 1.67 s. The log says `start ... by host`.
+The carried `bbd-i1`, claimed with no server, got one by the same
+delivery in 0.19 s; its device, first booted when the image's setup made
+it, booted cold in 1.5 s, and its companion listened 108 ms after it
+started. The claim itself took 0.13 s, and booted `bbd-i2` in the
+background as the ready slot.
+
+### A cold restart with slots held
+
+Twice, by a resize with restart, as M16 did.
+
+| | First | Second |
+| --- | --- | --- |
+| Restart | 79.6 s | 91.8 s |
+| Servers serving after the VM booted | 7 s | 38 s |
+| Devices booted cold, all at once | 9, in 63 to 66 s | 7, in 31 to 59 s |
+| Every companion listening after the VM booted | 86 s | 112 s |
+| Slot BB daemons | failing on a stale lock | running at their first start |
+| Machines connected after the fresh BB answered | | 31.7 and 34.2 s |
+
+Nobody signed in for any of it: the helper's daemon, the held ports, every
+slot's device server and BB's daemons came up by themselves. The first
+restart found two faults. BB's daemons in the slots failed at every start
+on the `daemon.lock.lock` the hard stop left, so `resume` now clears it
+once a boot. And the fresh BB, started from `/tmp` by mistake, came back
+empty as macOS clears `/tmp` at boot; the second run kept it in the
+user's home. M16 had its machines connected 10.9 s after BB answered; here
+31.7 and 34.2 s. BB's daemons had tried for about 50 s against a BB that
+was down, and are likely backing off between tries. That is BB's own; the
+daemons were running throughout.
+
+### A CoreSimulatorService killed while three slots stream
+
+Slots 4, 5 and 6 each showed the research's busy page and streamed through
+idb, read by the research's [`multi.ts`](../research/ios-shared-hosts/multi.ts)
+with its taps off. 15 s in, slot 7's CoreSimulatorService got SIGKILL.
+Frames a second in each 5 s window from the kill:
+
+| Slot | Before | During and after | Worst gap, 5 s before to 15 s after |
+| --- | --- | --- | --- |
+| 4 | 19.4 to 19.6 | 19.2 to 19.6 | 55 ms |
+| 5 | 19.4 to 19.6 | 19.2 to 19.6 | 54 ms |
+| 6 | 22.2 to 22.4 | 22.0 to 22.2 | 48 ms |
+
+The busy page draws at about 20 frames a second in this VM; nothing
+changed through the kill. Slot 7's own device: its server saw it stop 3.0
+s after the kill, booted it again in 2.9 s, and had it back 8.3 s after
+the kill, streaming 1.2 s later. Two more kills within 5 minutes met 063's
+rule, and the server left the device stopped with "Restart the box to
+start it again", which a box in a slot cannot do.
+
+### H7: plant and check, with the held ports
+
+As box A, slot 7, over SSH as its user, as `box_run` reaches a box:
+files in `/tmp`, `/Users/Shared`, `/private/var/tmp` and its home; a
+LaunchAgent; a crontab; a keychain with an item; a second device, booted;
+a process that ignores SIGTERM; and a server on 127.0.0.1 at its
+`BB_PORT_BASE`. As box B, slot 10, at the same time:
+
+| B reaching A's | Result |
+| --- | --- |
+| home, and a file in it | refused |
+| keychain | refused |
+| device set | refused |
+| device server's socket, idb's socket | refused: permission denied |
+| process, by signal | refused: operation not permitted |
+| a file A left readable in `/tmp` | readable, as 064 says |
+| server on A's port, 127.0.0.1:20800 | reached, HTTP 200: loopback is shared, as 064 says |
+| 8081 or 3000, to bind | refused: address already in use |
+| 8081 or 3000, to ask | HTTP 421, with the held ports' words |
+
+The image's own user binding 8081 on 127.0.0.1 and on 0.0.0.0, with
+`SO_REUSEADDR`, was refused too.
+
+A's release took 15.6 s: 5 s of it waiting for the process that ignores
+SIGTERM, the rest the devices' shutdown. Its sweep found 32 paths and left
+none. Then, as the next slot's user, `bbd-14`: every planted file, the
+home, the crontab and the cron job's file gone; no process of UID 80007;
+A's port free to bind. A check as root, `find -xdev -uid 80007` over the
+Data volume, found nothing, in 35 s. One run had found one process of the
+old UID left: a `distnoted` started after the release, as the pool's
+helper describes for Spotlight. The sweep now logs the users out again and
+sweeps `/private/var/folders` again; after that, a release cut short and
+run again left no process and no folder of its UID 20 s after its sweep.
+
+### A release cut short, and run again
+
+The helper was killed with SIGKILL 0.15 s into a release, and again 1.2 s
+into one with the gentle stop. Each time the slot was left in
+`resetting processes`, with no answer given. Run again, each carried on
+from that step and answered `released=yes last=no`, in 0.88 and 8.24 s,
+with the user removed and the sweep queued.
+
+### Releases and sweeps
+
+| | Release | Its processes step | Sweep, one pass |
+| --- | --- | --- | --- |
+| Before the gentle stop, slots with a booted device | 2.0 to 4.1 s | 0.4 to 1.3 s | 26 to 149 s for one UID |
+| With it | 5.6 to 15.6 s | 4.5 to 12.1 s | 44.6 to 203.9 s for one UID; 57.8 s for two in one pass |
+
+Every sweep left nothing. Sweeps run at background priority, so they are
+slower than M17's 31.8 s, most when devices are busy beside them.
+
+### A host that cannot boot a device
+
+After a few releases, no slot could boot a device, while the image's own
+user could. CoreSimulatorService asserted in
+`-[SimDeviceIOServer loadAllBundlesWithError:]`: "Failed to create audio
+route descriptor", after a 30 s timeout. The simulator's audio service
+was waiting on `com.apple.cmio.registerassistantservice`, which had hung
+in a container query. Its log showed why: the release ended a slot's
+processes in one SIGKILL, so the service, as it cleaned up after the
+slot's idb_companion, queried that user's `containermanagerd` while it was
+being killed ("XPC connection to containermanagerd interrupted. Retry
+attempt 1 of 6"), and never answered again. Restarting the service did not
+help; a restart of the VM did.
+
+The gentle stop ends every other process of the user first, and its
+`containermanagerd` a second later with its launchd domain. Checked both
+ways on one boot: after a release with the gentle stop, a new slot's first
+boot passed in 17.2 s; after a release with the old stop, the next first
+boot failed as before. After the next restart, four releases with the
+gentle stop, one of them H7's and one cut short, were each followed by a
+first boot that passed, in 27.7 to 47.2 s.
+
+### Checks
+
+| Check | Result |
+| --- | --- |
+| tsc, the node suite, vitest, on a Linux box | pass |
+| The docs test, from a clone of the bundle | pass |
+| 064's live check for unit 3, in a dedicated ios box as root | every item above, H3 by bb-box's exact commands |
+
+### What limits these checks
+
+- **One ios box, one Mac, one evening.** The cold restarts, the wedge and
+  its fix were each seen on one VM; the gentle stop held for 5 releases.
+- **H3 through the plugin** waits for unit 4, which places boxes in slots.
+- **The streams** were read from idb in the box, not through BB's relay
+  and a browser. The busy page drew at about 20 frames a second, so the
+  check shows steadiness through a kill, not the encoder's room.
+- **The image was not rebuilt.** `host-ios.sh` ran in a box made from the
+  current image, as `build-ios.sh` will run it. The carried slots in a
+  real build are made before the image is shut down and cloned.
+
+### Deviations from 064
+
+- **A release takes 6 to 16 s,** not 1.5 s: the gentle stop shuts the
+  devices down and waits for the user's processes, so the host's
+  CoreMediaIO service never wedges. A slot still leaves `most` when its
+  user is removed.
+- **`disk-reserve-gib` 40 does not fit this image.** The ios box had 42
+  GiB free, so a host would refuse its second slot. The live check used 5.
+  Unit 4 should give hosts a larger disk, or the default a smaller
+  reserve: a slot took about 0.4 GiB.
+- **Status reports memory as physical footprint,** not resident memory,
+  which counts the simulator's shared mappings once per process.
+- **A slot's device server is `host`-managed:** 063's delivery installs
+  it by ending it, and `connect` waits for it, as 064 says; its words say
+  the host's daemon runs it. "bb-box has asked the host to start it again"
+  is unit 4's, which can ask the helper.
+- **`ahead` is kept by the helper,** which makes a spare slot after a
+  claim or a release that leaves fewer ready than `ahead`.
+- **`carry` makes each carried slot once in a host's life,** and keeps
+  any that exists, so a rerun of `host-ios.sh` never gives a carried UID
+  again. A rerun before this fix, in the live check, gave UID 79991 a
+  second time.

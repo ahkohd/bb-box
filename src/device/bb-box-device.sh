@@ -10,6 +10,7 @@ unit_file="$HOME/.config/systemd/user/$unit"
 log="$dir/server.log"
 starts="$dir/starts"
 gave_up="$dir/gave-up"
+host_managed="$dir/host-managed"
 limit_burst=10
 limit_seconds=60
 log_most_bytes=1048576
@@ -40,6 +41,7 @@ node_or_words() {
 
 manager() {
   if [ -n "${BB_BOX_DEVICE_MANAGER:-}" ]; then echo "$BB_BOX_DEVICE_MANAGER"
+  elif [ -e "$host_managed" ]; then echo host
   elif [ "$(uname -s)" = Darwin ]; then echo launchd
   elif command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then echo systemd
   else echo supervisor; fi
@@ -72,7 +74,8 @@ record_start() {
     words=$(last_words)
     printf 'The device server stopped %s times in a minute, so it is left stopped. Its last words: %s\n' "$limit_burst" "${words:-none}" >"$gave_up"
     say "$(cat "$gave_up")"
-    exit 0
+    [ "$(manager)" = host ] || exit 0
+    while [ -e "$gave_up" ]; do sleep 1; done
   fi
 }
 
@@ -146,6 +149,11 @@ WantedBy=default.target
 UNIT
 }
 
+end_server_for_host() {
+  [ -s "$dir/server.pid" ] && kill "$(cat "$dir/server.pid")" 2>/dev/null
+  return 0
+}
+
 supervisor_alive() {
   [ -s "$dir/supervisor.pid" ] && kill -0 "$(cat "$dir/supervisor.pid")" 2>/dev/null
 }
@@ -199,6 +207,7 @@ install() {
       stop_supervised
       start_supervisor
       ;;
+    host) end_server_for_host ;;
   esac
 }
 
@@ -217,6 +226,7 @@ start() {
       esac
       ;;
     supervisor) supervisor_alive || start_supervisor ;;
+    host) ;;
   esac
   return 0
 }
@@ -228,6 +238,7 @@ restart() {
     launchd) launchctl kickstart -k "$(launchd_domain)/$label" 2>/dev/null || start ;;
     systemd) systemctl --user reset-failed "$unit" 2>/dev/null; systemctl --user restart "$unit" ;;
     supervisor) stop_supervised; start_supervisor ;;
+    host) end_server_for_host ;;
   esac
 }
 
@@ -237,6 +248,7 @@ stop() {
     launchd) launchctl bootout "$(launchd_domain)/$label" 2>/dev/null ;;
     systemd) systemctl --user stop "$unit" 2>/dev/null ;;
     supervisor) stop_supervised ;;
+    host) end_server_for_host ;;
   esac
   return 0
 }

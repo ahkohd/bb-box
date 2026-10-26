@@ -115,6 +115,7 @@ export interface FakeBackendOptions {
   readonly keepsSession?: (kind: string) => boolean;
   /** Its desktops' pointer, as bb-box-cursor gives it on Sway 1.11 (060): the RFB display's followPointer. None by default. */
   readonly pointer?: (onEvent: (event: BoxPointer) => void, signal: AbortSignal) => Promise<void>;
+  readonly daemonKeptByHost?: boolean;
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -527,7 +528,10 @@ export class FakeBackend implements Backend {
       }),
     );
     const power = this.faults.silent === guest.ref ? async (): Promise<PowerState> => "unknown" : () => this.power(guest);
-    return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal, this.#options.shell), displays, access: null };
+    const daemonKeptByHost = this.#options.daemonKeptByHost
+      ? { installerEnvironment: { BB_INSTALL_SKIP_SERVICE: "1" }, takeOver: async () => void this.calls.push(`take over ${guest.ref}`) }
+      : undefined;
+    return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal, this.#options.shell), displays, access: null, ...(daemonKeptByHost ? { daemonKeptByHost } : {}) };
   }
 
   async #resize(size: DisplaySize): Promise<void> {

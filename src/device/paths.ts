@@ -38,6 +38,7 @@ export function devicePaths(home: string) {
     gaveUp: join(dir, "gave-up"),
     lastError: join(dir, "last-error"),
     manager: join(dir, "manager"),
+    hostManaged: join(dir, "host-managed"),
     recording: join(home, RECORD_DIR),
   };
 }

@@ -219,6 +219,65 @@ sys.exit(0 if took <= limit and passed else 1)
 ' "$log" "$launch_limit_s"
 }
 
+helper=/usr/local/libexec/bb-box/device-host
+data=/System/Volumes/Data
+
+slot_uids_only_carried() {
+  carried=
+  for slot in i1 i2; do
+    uid=$(id -u "bbd-$slot" 2>/dev/null) && carried="$carried $uid"
+  done
+  sudo -n perl -MFile::Find -e '
+my ($root, @carried) = @ARGV;
+my %carried = map { $_ => 1 } @carried;
+my $device = (lstat $root)[0];
+my @found;
+find({ no_chdir => 1, wanted => sub {
+  my @st = lstat $_ or return;
+  if ($st[0] != $device) { $File::Find::prune = 1; return }
+  my $uid = $st[4];
+  push @found, "$uid $_" if ($uid >= 80000 && $uid <= 89999) || ($uid >= 79990 && $uid <= 79999 && !$carried{$uid});
+} }, $root);
+if (@found) { print scalar(@found), " files owned by a slot UID, such as ", $found[0], "\n"; exit 1 }
+print "no file owned by a UID from 80000 to 89999, and from 79990 to 79999 only the carried slots\x27", (@carried ? " (@carried)" : ""), "\n";
+' "$data" $carried 2>/dev/null
+}
+
+carried_slots_ready() {
+  out=$(sudo -n "$helper" status 2>&1) || { echo "device-host status failed: $out"; return 1; }
+  for slot in i1 i2; do
+    line=$(printf '%s\n' "$out" | awk -F '\t' -v s="slot=$slot" '$1 == s')
+    [ -n "$line" ] || { echo "no carried slot $slot"; return 1; }
+    [ "$(printf '%s\n' "$line" | cut -f 3)" = "$(id -u "bbd-$slot" 2>/dev/null)" ] || { echo "bbd-$slot is not the carried slot $slot's user"; return 1; }
+    [ "$(printf '%s\n' "$line" | cut -f 6)" = ready ] || { echo "carried slot $slot is $(printf '%s\n' "$line" | cut -f 6)"; return 1; }
+    udid=$(printf '%s\n' "$line" | cut -f 12)
+    sudo -n test -s "/private/var/tmp/com.apple.CoreSimulator.SimDevice.$udid/disabled.plist" || { echo "carried slot $slot's device $udid is not seeded"; return 1; }
+    [ "$(printf '%s\n' "$line" | cut -f 13)" = 0 ] || { echo "carried slot $slot's device is booted"; return 1; }
+  done
+  echo "bbd-i1 and bbd-i2 ready, each with its own seeded device, shut down"
+}
+
+daemons_loaded() {
+  for label in app.bb-box.device-host app.bb-box.device-host.ports; do
+    sudo -n launchctl print "system/$label" >/dev/null 2>&1 || { echo "launchd has no $label"; return 1; }
+  done
+  echo "app.bb-box.device-host and its held ports loaded"
+}
+
+ports_held() {
+  for port in 3000 4200 5000 5173 8000 8080 8081 19000; do
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/")
+    [ "$code" = 421 ] || { echo "127.0.0.1:$port answered ${code:-nothing}, not 421"; return 1; }
+  done
+  echo "3000, 4200, 5000, 5173, 8000, 8080, 8081 and 19000 answer 421"
+}
+
+check "device-host" sudo -n "$helper" version
+check "device-host daemons" daemons_loaded
+check "held ports" ports_held
+check "carried slots" carried_slots_ready
+check "slot uids" slot_uids_only_carried
+check "disabled.plist kept" sh -c 'ls /usr/local/share/bb-box/ios/*.disabled.plist'
 check "idb_companion" /usr/local/bin/idb_companion --version
 check "idb_companion's notice" sh -c 'ls /usr/local/share/bb-box/notices/idb_companion-*-LICENSE'
 check "device hub not running" sh -c '! pgrep -x DeviceHub >/dev/null || { echo "Device Hub runs"; exit 1; }; echo "Device Hub is not running"'

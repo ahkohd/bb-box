@@ -185,6 +185,9 @@ sudo rm -rf "$share/ios/probe"
 sudo cp -R "$here/probe" "$share/ios/probe"
 sudo chmod -R a+rX "$share/ios"
 
+step "adding device-host, each runtime's disabled.plist and the two carried slots"
+sudo -n /bin/sh "$here/host-ios.sh" "$here" "$(id -un)" || die "adding device-host and the carried slots failed"
+
 device_hub_off
 rm -rf "$HOME/Library/Logs/CoreSimulator" "$HOME/Library/Developer/Xcode/DerivedData" /tmp/idb "$HOME/.idb" 2>/dev/null || :
 
