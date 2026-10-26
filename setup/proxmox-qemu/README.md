@@ -152,6 +152,16 @@ allow nested virtualization. If it does, turn on `linux-kvm` too: boxes
 then have `/dev/kvm`, for VMs and emulators of their own, and the
 `linux-kvm` kind asks for one.
 
+### 4. Android templates, if you want them
+
+On a host with nested virtualization, `./build.sh android 9108` builds the
+Android template: the Linux template with the Android SDK, the emulator and
+a booted device for each model bb-box offers
+([063](../../docs/decisions/063-device-boxes.md)). It needs your acceptance
+of the Android SDK's licence first. The [Android template guide](../android/README.md)
+says how. Add its VMID to `android-templates`. bb-box does not offer
+android boxes yet; it refreshes and checks the template meanwhile.
+
 ## Check it worked
 
 `build.sh`'s own check, above, runs in a clone of the new template. Then run
@@ -211,6 +221,9 @@ The image must be older than the apt snapshot in
 `../proxmox-lxc/template/apt-snapshot`, and the build refuses one that is
 not: a newer image has libraries the snapshot's -dev packages cannot
 match, which the desktop template installs.
+
+bb-box refreshes each Android template monthly, in a box cloned from it, as
+the [Android template guide](../android/README.md#update) says.
 
 ## Remove
 

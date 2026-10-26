@@ -1,0 +1,9 @@
+table inet bb_box_device
+delete table inet bb_box_device
+table inet bb_box_device {
+	chain input {
+		type filter hook input priority -300; policy accept;
+		iifname "lo" accept
+		tcp dport { 5037, 5554-5585, 8554 } drop
+	}
+}

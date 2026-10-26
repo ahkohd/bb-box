@@ -27,6 +27,7 @@ const BUILDS: Readonly<Record<string, { readonly artifacts: string; readonly fin
   "linux-desktop": { artifacts: "desktop", finalize: "desktop", gpu: "nvidia", session: "", check: "bb-box-check-desktop" },
   "linux-desktop-cpu": { artifacts: "desktop-cpu", finalize: "desktop", gpu: "none", session: "", check: "bb-box-check-desktop" },
   "linux-desktop-wayland-cpu": { artifacts: "desktop-wayland-cpu", finalize: "desktop", gpu: "none", session: "wayland", check: "bb-box-check-desktop" },
+  android: { artifacts: "linux", finalize: "android", gpu: "", session: "", check: "bb-box-check-android" },
 };
 
 /** Lines of a build's output that its result keeps. */
@@ -125,6 +126,7 @@ export function buildScript(kind: string, bbUrl: string | null, buildId: string)
     `sudo bash ${src}/guest/customize-base.sh ${src}`,
     `[ "$runtime" != vm ] || sudo bash ${BUILD_DIR}/proxmox-qemu/linux/customize-vm.sh ${src}`,
     ...(build.finalize === "desktop" ? [`sudo bash ${src}/guest/customize-desktop.sh ${src}`] : []),
+    ...(kind === "android" ? [`sudo bash ${BUILD_DIR}/android/customize-android.sh ${src}`] : []),
     `sudo bash ${src}/guest/finalize.sh ${src} ${build.finalize}`,
   ].join("\n");
 }
@@ -528,7 +530,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       captured = await images.build(current, join(staged, "setup"), { bbUrl: options.bbUrl, log: buildOutput, signal });
       made.push(captured.ref);
     } else {
-      const tar = spawnSync("tar", ["-C", join(staged, "setup"), "-czf", "-", "proxmox-lxc/template", "proxmox-lxc/host/common.sh", "proxmox-qemu/linux"], { maxBuffer: 64 * 1024 * 1024 });
+      const tar = spawnSync("tar", ["-C", join(staged, "setup"), "-czf", "-", "proxmox-lxc/template", "proxmox-lxc/host/common.sh", "proxmox-qemu/linux", "android"], { maxBuffer: 64 * 1024 * 1024 });
       if (tar.status !== 0) return end(false, null, `tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
 
       // The build, in a box of the image.

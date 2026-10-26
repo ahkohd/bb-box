@@ -118,7 +118,7 @@ test("a rebuild takes upstream's latest of the tools that follow it, each with i
   // The tools that do not follow upstream keep their pins.
   assert.deepEqual(tool("node"), pinOf("node"));
   assert.deepEqual([resolved.aptSnapshot, resolved.resolvedAt], ["20261003T000000Z", "2026-10-03T02:15:00.000Z"]);
-  assert.deepEqual(resolved.pinned, { linux: await pinsDigest(SETUP, "linux"), "linux-desktop": await pinsDigest(SETUP, "linux-desktop") });
+  assert.deepEqual(resolved.pinned, { linux: await pinsDigest(SETUP, "linux"), "linux-desktop": await pinsDigest(SETUP, "linux-desktop"), android: await pinsDigest(SETUP, "android") });
 
   const chrome = versions.files["desktop-pins.tsv"].split("\n").filter((line) => line.startsWith("chrome\t")).map((line) => line.split("\t"));
   assert.deepEqual(chrome[0], [

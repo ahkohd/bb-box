@@ -3,7 +3,8 @@
 Status: accepted, 26 October 2026, with [the owner's answers](#the-owners-answers); revised the same day after two
 independent reviews, answered finding by finding under
 [Review answers](#review-answers). Unit 2.4's measurements of each Android
-model and encoder (E6, E7, E17) are in [063 results](063-results.md). Built
+model and encoder (E6, E7, E17), and unit 3.1's of the Android template
+(E2, E13, E19, E24), are in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
 [Android emulator boxes](../research/android-emulator-boxes.md). Extends

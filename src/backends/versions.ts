@@ -345,8 +345,8 @@ export async function resolveVersions(
   const aptSnapshot = today > snapshot ? today : snapshot;
   // The repository's pins' SHA-256, which the image's record keeps (image-record.sh), so that an
   // image built from them with newer versions counts as built with this bb-box's pins.
-  const [linux, desktop] = await Promise.all([pinsDigest(setup, "linux"), pinsDigest(setup, "linux-desktop")]);
-  const resolvedPins = { ...pins, resolvedAt, aptSnapshot, pinned: { linux, "linux-desktop": desktop }, tools: resolvedTools };
+  const [linux, desktop, android] = await Promise.all([pinsDigest(setup, "linux"), pinsDigest(setup, "linux-desktop"), pinsDigest(setup, "android")]);
+  const resolvedPins = { ...pins, resolvedAt, aptSnapshot, pinned: { linux, "linux-desktop": desktop, android }, tools: resolvedTools };
   const order = (tool: ToolVersion) => [FOLLOWED.indexOf(tool.name as (typeof FOLLOWED)[number]), tool.arch === "x86_64" ? 0 : 1];
   tools.sort((a, b) => order(a)[0]! - order(b)[0]! || order(a)[1]! - order(b)[1]!);
   return {
