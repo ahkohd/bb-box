@@ -396,6 +396,18 @@ export type DeviceServerMessage =
 
 export type DeviceServerVerb = DeviceServerMessage["verb"];
 export const DEVICE_REQUEST_VERB = "BB_DEVICE";
+export const DEVICE_STILLS_VERB = "BB_DEVICE_STILLS";
+export const STILLS_EVERY_MS = 200;
+export const DEVICE_FIRST_FRAME_MS = 3_000;
+
+export function stillsRequestText(on: boolean): string {
+  return `${DEVICE_STILLS_VERB} ${JSON.stringify({ on })}`;
+}
+
+export function stillsAsked(message: string): boolean | null {
+  const match = /^BB_DEVICE_STILLS \{"on":(true|false)\}$/.exec(message);
+  return match ? match[1] === "true" : null;
+}
 
 export const LOCATION_RANGE = { latitude: 90, longitude: 180 } as const;
 export const BATTERY_LEVELS = { least: 0, most: 100 } as const;
@@ -564,7 +576,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 1;
+export const DEVICE_SERVER_VERSION = 2;
 
 export function speaksProtocol(protocol: number): boolean {
   return protocol >= DEVICE_PROTOCOLS.least && protocol <= DEVICE_PROTOCOLS.most;

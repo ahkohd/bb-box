@@ -19,6 +19,8 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
+import { DEVICE_FIRST_FRAME_MS, stillsRequestText, type DeviceState } from "../core/device.ts";
+import { parseDeviceServerMessage } from "../core/device-parse.ts";
 import { KeysAfterPaste, astralKeysym, keyLog, textKeys, typeTextShortcut, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_SHIFT_L, XK_V, boxKey, macBrowser, pasteChordKeys, pasteShortcut, retryWait, type Connection, type PasteShortcut } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
@@ -189,6 +191,14 @@ function closeDecoder(decoder: VideoDecoder | null): void {
   if (decoder && decoder.state !== "closed") decoder.close();
 }
 
+export interface DeviceShown {
+  readonly model: string | null;
+  readonly state: DeviceState | null;
+  readonly stills: boolean;
+}
+
+export const STILLS_WORDS = "This browser cannot play the device's video, so it shows a picture a few times a second.";
+
 export class SelkiesSession implements Kept {
   readonly element = document.createElement("div");
   readonly #canvas = document.createElement("canvas");
@@ -311,9 +321,13 @@ export class SelkiesSession implements Kept {
   /** A copy the box sends in parts, until its last. */
   #incoming: { readonly mime: string; readonly size: number; readonly parts: Uint8Array<ArrayBuffer>[]; received: number } | null = null;
   #transfers = 0;
+  #device: DeviceShown | null;
+  #undecoded: ReturnType<typeof setTimeout> | undefined;
+  #stillDrawn = 0;
 
-  constructor(url: string) {
+  constructor(url: string, options: { readonly device?: { readonly model: string | null } } = {}) {
     this.#url = url;
+    this.#device = options.device ? { model: options.device.model, state: null, stills: !canShowVideo() } : null;
     this.#afterPaste.join(tabOf(url));
     this.#afterPaste.pressChord = (shifted) => this.#pressPaste(shifted);
     this.element.className = "absolute inset-0";
@@ -353,12 +367,28 @@ export class SelkiesSession implements Kept {
     document.addEventListener("paste", this.#onPasteEvent, true);
     document.addEventListener("visibilitychange", this.#onVisibility);
     window.addEventListener("focus", this.#onFocus);
-    if (!canShowVideo()) {
+    if (!canShowVideo() && !this.#device) {
       this.connection = { state: "disconnected", reason: "This browser cannot decode video here.", retryMs: 0 };
       queueMicrotask(() => this.#fallBack("This browser cannot decode video here."));
       return;
     }
     this.connect();
+  }
+
+  get device(): DeviceShown | null {
+    return this.#device;
+  }
+
+  #showStills(): void {
+    const device = this.#device;
+    clearTimeout(this.#undecoded);
+    this.#undecoded = undefined;
+    if (!device || device.stills) return;
+    this.#device = { ...device, stills: true };
+    closeDecoder(this.#decoder);
+    this.#decoder = null;
+    this.#send(stillsRequestText(true));
+    for (const listener of this.#listeners) listener();
   }
 
   /** No tab shows it now: its video stops, so the relay never counts a hidden viewer as slow. */
@@ -432,7 +462,7 @@ export class SelkiesSession implements Kept {
    */
   #awaitFirstFrame(socket: WebSocket): void {
     clearTimeout(this.#firstFrame);
-    if (this.#everShown) return;
+    if (this.#everShown || this.#device) return;
     this.#firstFrame = setTimeout(() => {
       if (this.#everShown || this.#socket !== socket || this.#stopped || this.#disposed) return;
       this.#drop();
@@ -459,8 +489,13 @@ export class SelkiesSession implements Kept {
     this.#reset();
     this.#set({ state: "connecting" });
     socket.onopen = () => {
-      socket.send(`SETTINGS,${JSON.stringify({ displayId: "primary" })}`);
       this.#stopped = this.#hidden || document.visibilityState === "hidden";
+      if (this.#device) {
+        if (this.#device.stills) socket.send(stillsRequestText(true));
+        socket.send(this.#stopped ? "STOP_VIDEO" : "START_VIDEO");
+        return;
+      }
+      socket.send(`SETTINGS,${JSON.stringify({ displayId: "primary" })}`);
       socket.send(this.#stopped ? "STOP_VIDEO" : "START_VIDEO");
       if (!this.#stopped) this.#awaitFirstFrame(socket);
       // Whether this browser decodes 4:4:4: the box streams it while every viewer does (the relay keeps this message).
@@ -495,6 +530,8 @@ export class SelkiesSession implements Kept {
   #drop(): void {
     clearTimeout(this.#fitting);
     this.#fitting = undefined;
+    clearTimeout(this.#undecoded);
+    this.#undecoded = undefined;
     const socket = this.#socket;
     this.#socket = null;
     clearInterval(this.#ackTimer);
@@ -515,13 +552,13 @@ export class SelkiesSession implements Kept {
   #ended(reason: string): void {
     this.#drop();
     if (this.#disposed) return;
-    if (!this.#everShown) {
+    if (!this.#everShown && !this.#device) {
       this.#fallBack(reason ? reason.replace(/\.?$/, ".") : "The connection ended before the first frame.");
       return;
     }
     const wait = retryWait(this.#failures);
     this.#failures += 1;
-    this.#set({ state: "disconnected", reason: reason || "The connection to the desktop ended.", retryMs: wait });
+    this.#set({ state: "disconnected", reason: reason || (this.#device ? "The connection to the device ended." : "The connection to the desktop ended."), retryMs: wait });
     if (this.hidden) {
       this.onEnded?.();
       return;
@@ -532,12 +569,22 @@ export class SelkiesSession implements Kept {
   /** A new decoder, which takes nothing until a key frame. */
   #reset(): void {
     closeDecoder(this.#decoder);
+    this.#decoder = null;
     this.#needKey = true;
+    if (this.#device?.stills) return;
     this.#decoder = new VideoDecoder({
       output: (frame) => this.#draw(frame),
       error: (error) => {
         // A decoder this browser cannot make for the stream's codec, as Safari's for H.264 past level 5.2, fails again however often
         // it is made, and making it again at once spun (19 October 2026): the desktop shows over VNC instead, which any size suits.
+        if (this.#device) {
+          if (error?.name === "NotSupportedError") this.#showStills();
+          else {
+            this.#reset();
+            this.#send("REQUEST_KEYFRAME");
+          }
+          return;
+        }
         if (error?.name === "NotSupportedError") {
           // A stream larger than this browser decodes, as while the box makes it smaller for this viewer (#864): the decoder waits
           // for a key frame of a size it decodes, for a while.
@@ -570,8 +617,10 @@ export class SelkiesSession implements Kept {
     if (!(data instanceof ArrayBuffer)) return;
     const bytes = new Uint8Array(data);
     if (bytes[0] !== VIDEO || bytes.byteLength < 12 || bytes[1]! >> 4 !== H264) return;
+    if (this.#device?.stills) return;
     const key = (bytes[1]! & 15) === 1;
     const id = (bytes[2]! << 8) | bytes[3]!;
+    if (this.#device && !this.#everShown && this.#undecoded === undefined) this.#undecoded = setTimeout(() => this.#showStills(), DEVICE_FIRST_FRAME_MS);
     this.#received = id;
     this.#undrawnSince ??= performance.now();
     this.#unansweredSince = null;
@@ -599,6 +648,10 @@ export class SelkiesSession implements Kept {
     const comma = text.indexOf(",");
     const verb = (comma < 0 ? text : text.slice(0, comma)).split(" ")[0];
     const rest = comma < 0 ? "" : text.slice(comma + 1);
+    if (this.#device && text.startsWith("BB_DEVICE_")) {
+      this.#deviceText(text);
+      return;
+    }
     switch (verb) {
       case "clipboard":
         try {
@@ -676,6 +729,33 @@ export class SelkiesSession implements Kept {
     }
   }
 
+  #deviceText(text: string): void {
+    const parsed = parseDeviceServerMessage(text);
+    if (!parsed.ok || !this.#device) return;
+    const message = parsed.value;
+    if (message.verb === "BB_DEVICE_STILL") {
+      if (this.#device.stills && !this.#stopped) void this.#drawStill(message.png);
+      return;
+    }
+    const state = message.verb === "BB_DEVICE_HELLO" ? message.hello.state : message.verb === "BB_DEVICE_STATE" ? message.state : null;
+    if (!state) return;
+    this.#device = { ...this.#device, model: state.model, state };
+    for (const listener of this.#listeners) listener();
+  }
+
+  async #drawStill(png: string): Promise<void> {
+    const drawn = ++this.#stillDrawn;
+    const bitmap = await createImageBitmap(new Blob([base64Bytes(png)], { type: "image/png" })).catch(() => null);
+    if (!bitmap) return;
+    try {
+      if (drawn !== this.#stillDrawn || this.#disposed || !this.#device?.stills) return;
+      this.#unansweredSince = null;
+      this.#paint(bitmap, bitmap.width, bitmap.height);
+    } finally {
+      bitmap.close();
+    }
+  }
+
   /** A copy in the box that came whole: text, or an image. */
   #copied(mime: string, bytes: Uint8Array<ArrayBuffer>): void {
     if (mime.startsWith("image/")) {
@@ -707,34 +787,38 @@ export class SelkiesSession implements Kept {
   #draw(frame: VideoFrame): void {
     try {
       if (this.#disposed) return;
-      const width = frame.displayWidth;
-      const height = frame.displayHeight;
-      const resized = this.#width !== width || this.#height !== height;
-      if (this.#canvas.width !== width || this.#canvas.height !== height) {
-        this.#canvas.width = width;
-        this.#canvas.height = height;
-      }
-      this.#width = width;
-      this.#height = height;
-      if (resized) this.#drawPointer();
-      this.#canvas.getContext("2d")?.drawImage(frame, 0, 0);
-      this.#undrawnSince = null;
-      if (this.#hold && this.#hold.resized === null && this.#hold.size !== `${width}x${height}`) {
-        this.#hold.resized = performance.now();
-        this.#holdUntil();
-      }
-      if (this.connection.state !== "connected") {
-        this.#everShown = true;
-        clearTimeout(this.#firstFrame);
-        this.#failures = 0;
-        this.#set({ state: "connected" });
-        this.#apply();
-        // Control held before this connection, as after a reload, a reconnect or a switch from VNC: the desktop keeps its size,
-        // unless this tab's size changed while it had control.
-        this.#sendSize();
-      }
+      clearTimeout(this.#undecoded);
+      this.#undecoded = undefined;
+      this.#paint(frame, frame.displayWidth, frame.displayHeight);
     } finally {
       frame.close();
+    }
+  }
+
+  #paint(picture: CanvasImageSource, width: number, height: number): void {
+    const resized = this.#width !== width || this.#height !== height;
+    if (this.#canvas.width !== width || this.#canvas.height !== height) {
+      this.#canvas.width = width;
+      this.#canvas.height = height;
+    }
+    this.#width = width;
+    this.#height = height;
+    if (resized) this.#drawPointer();
+    this.#canvas.getContext("2d")?.drawImage(picture, 0, 0);
+    this.#undrawnSince = null;
+    if (this.#hold && this.#hold.resized === null && this.#hold.size !== `${width}x${height}`) {
+      this.#hold.resized = performance.now();
+      this.#holdUntil();
+    }
+    if (this.connection.state !== "connected") {
+      this.#everShown = true;
+      clearTimeout(this.#firstFrame);
+      this.#failures = 0;
+      this.#set({ state: "connected" });
+      this.#apply();
+      // Control held before this connection, as after a reload, a reconnect or a switch from VNC: the desktop keeps its size,
+      // unless this tab's size changed while it had control.
+      this.#sendSize();
     }
   }
 
@@ -1137,6 +1221,7 @@ export class SelkiesSession implements Kept {
     this.#disposed = true;
     clearTimeout(this.#retry);
     clearTimeout(this.#firstFrame);
+    clearTimeout(this.#undecoded);
     clearTimeout(this.#settle);
     clearTimeout(this.#pasteWait);
     document.removeEventListener("paste", this.#onPasteEvent, true);

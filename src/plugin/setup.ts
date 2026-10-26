@@ -62,7 +62,7 @@ import { registerRpc } from "./rpc.ts";
 import { ReloadTimes } from "./reload-times.ts";
 import { registerTools } from "./tools.ts";
 import { DeviceServers, type DeviceServersDeps } from "./devices.ts";
-import { deviceServerFiles } from "../core/device-delivery.ts";
+import { connectScript, deviceServerFiles } from "../core/device-delivery.ts";
 import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile } from "./views.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
@@ -808,6 +808,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     reconnectMs: options.controlReconnectMs,
     pause: (boxId) => computing.pause(boxId),
     controlChanged: (boxId) => devices.controlChanged(boxId),
+    openDevice: async (box) => {
+      await devices.ensure(box).catch((error) => logError(`device server of box ${box.name}`, error));
+      return boxes.spawnOwn(box, connectScript());
+    },
   });
   desktops = desktop;
   const terminal = registerTerminals(bb, { boxes, logError, idleMs: options.terminalIdleMs });

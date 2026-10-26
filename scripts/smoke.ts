@@ -28,7 +28,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Backends, DRIVERS } from "../src/backends/index.ts";
-import type { BackendDriver, BackendStorage } from "../src/backends/types.ts";
+import { DEVICE_DISPLAY, desktopDisplays, type BackendDriver, type BackendStorage } from "../src/backends/types.ts";
 import { Boxes, describeError, type BoxRecord } from "../src/core/boxes.ts";
 import { generalConfig, readDraft, withSecretChanges, type ConfigDocument, type Secrets } from "../src/core/document.ts";
 import { driverCommand } from "../src/core/in-box.ts";
@@ -227,11 +227,11 @@ export async function smoke(values: Readonly<Record<string, unknown>>, options: 
           problems.push(describeError(error, "Running the command"));
         }
       }
-      if (box.capabilities.displays.length && !options.signal?.aborted) {
+      if (desktopDisplays(box.capabilities.displays).length && !options.signal?.aborted) {
         log("Opening the desktop as the viewer's relay does...");
         started = performance.now();
         try {
-          const [display] = (await boxes.transports(box)).displays;
+          const [display] = (await boxes.transports(box)).displays.filter((each) => each.id !== DEVICE_DISPLAY.id);
           if (!display) throw new Error("The box's backend gave no desktop.");
           desktop = await desktopSize(displayOpener(display));
           timings.desktop = performance.now() - started;

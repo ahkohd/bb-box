@@ -15,11 +15,12 @@ import { clipboardCommands } from "../core/in-box.ts";
 import { macClipboardWatchCommand, startClipboardWatch, type ClipboardWatch } from "../core/mac-clipboard.ts";
 import { RfbRelay, desktopSize, displayOpener, restoreSize, type OpenDisplay, type Size } from "../core/relay.ts";
 import type { Screen } from "../core/rfb.ts";
-import { SelkiesBox, SelkiesRelay, type OpenStream } from "../core/selkies.ts";
+import { DEVICE_PATHS, SelkiesBox, SelkiesRelay, type OpenStream } from "../core/selkies.ts";
+import { DEVICE_DISPLAY, desktopDisplays, deviceDisplayOf } from "../backends/types.ts";
 import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { scaleScript } from "../backends/windows.ts";
 import { openRoute } from "../transports/route.ts";
-import type { BoxPointer, Display } from "../transports/types.ts";
+import type { BoxPointer, ByteChannel, Display } from "../transports/types.ts";
 import { argbToRgba, rgbaPng } from "../core/png.ts";
 import { POINTER_NONE, POINTER_VERB } from "../core/pointer.ts";
 import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
@@ -98,7 +99,7 @@ interface SharpKept {
  * its encoder already limits the video at 1x (060).
  */
 export function sharpOffered(box: BoxRecord): boolean {
-  const video = box.capabilities.displays.some((each) => each.protocol === "selkies");
+  const video = desktopDisplays(box.capabilities.displays).some((each) => each.protocol === "selkies");
   const x11 = kindInfo(currentKindId(box.kind)).windowing === "x11";
   return video && ((box.capabilities.os === "linux" && !box.capabilities.gpu && x11) || (box.capabilities.os === "windows" && box.capabilities.arch === "x86_64"));
 }
@@ -144,6 +145,7 @@ export interface DesktopDeps {
   /** How long a holder's viewer has to connect again after the box ended its connection. */
   readonly reconnectMs?: number;
   controlChanged?(boxId: string): void;
+  openDevice?(box: BoxRecord): Promise<ByteChannel>;
 }
 
 export interface Desktops {
@@ -175,13 +177,18 @@ export interface Desktops {
 /** The screen a Selkies viewer's resize sets, through the RFB display: screen 0, as noVNC's before the server names one. */
 const SELKIES_SCREEN: Screen = { id: 0, flags: 0 };
 
-/** The box's displays, when it is running and has one. */
-async function displays(boxes: Boxes, boxId: string): Promise<readonly Display[]> {
+async function readyBox(boxes: Boxes, boxId: string, what: string): Promise<BoxRecord> {
   const box = await boxes.find(boxId);
   if (!box) throw new Error("bb-box has no such box. It may have been released.");
-  if (box.state !== "ready") throw new Error(`Box ${box.name} is not running, so its desktop cannot show.`);
-  const found = (await boxes.transports(box)).displays;
-  if (!found.length) throw new Error(`Box ${box.name} has no desktop.`);
+  if (box.state !== "ready") throw new Error(`Box ${box.name} is not running, so its ${what} cannot show.`);
+  return box;
+}
+
+/** The box's displays, when it is running and has one. */
+async function displays(boxes: Boxes, boxId: string): Promise<readonly Display[]> {
+  const box = await readyBox(boxes, boxId, "desktop");
+  const found = (await boxes.transports(box)).displays.filter((each) => each.id !== DEVICE_DISPLAY.id);
+  if (!found.length || !desktopDisplays(box.capabilities.displays).length) throw new Error(`Box ${box.name} has no desktop.`);
   return found;
 }
 
@@ -190,6 +197,12 @@ async function display(boxes: Boxes, boxId: string): Promise<Display> {
   const [first] = await displays(boxes, boxId);
   if (first!.protocol !== "rfb") throw new Error(`The viewer cannot show a ${first!.protocol} desktop yet.`);
   return first!;
+}
+
+async function deviceBoxRecord(boxes: Boxes, boxId: string): Promise<BoxRecord> {
+  const box = await readyBox(boxes, boxId, "device");
+  if (!deviceDisplayOf(box.capabilities.displays)) throw new Error(`Box ${box.name} has no device.`);
+  return box;
 }
 
 /** The box's Selkies display (056). */
@@ -269,7 +282,10 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       changed(boxId);
       deps.controlChanged?.(boxId);
       // A person took control of a box with Selkies viewers: its input connection opens now, not at their first key.
-      if (control.view(boxId).owner === "human") selkiesBoxes.get(boxId)?.box.warm();
+      if (control.view(boxId).owner === "human") {
+        selkiesBoxes.get(boxId)?.box.warm();
+        deviceBoxes.get(boxId)?.box.warm();
+      }
       cursorFor(boxId);
       pointerFor(boxId);
     },
@@ -350,6 +366,38 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     entry.viewers += 1;
     selkiesBoxes.set(boxId, entry);
     return entry.box;
+  };
+  const deviceBoxes = new Map<string, { box: SelkiesBox; viewers: number; relays: Set<SelkiesRelay> }>();
+  const deviceStream = (boxId: string): OpenStream => async () => {
+    const box = await deviceBoxRecord(boxes, boxId);
+    if (!deps.openDevice) throw new Error(`bb-box cannot reach box ${box.name}'s device server.`);
+    return deps.openDevice(box);
+  };
+  const deviceBox = (boxId: string): SelkiesBox => {
+    const entry = deviceBoxes.get(boxId) ?? {
+      box: new SelkiesBox(deviceStream(boxId), {
+        paths: DEVICE_PATHS,
+        spacingMs: 0,
+        apart: () => true,
+        onError: (error) => deps.logError("open the device's input", error),
+        onText: (message) => {
+          for (const relay of deviceBoxes.get(boxId)?.relays ?? []) relay.fromBox(message);
+        },
+      }),
+      viewers: 0,
+      relays: new Set<SelkiesRelay>(),
+    };
+    entry.viewers += 1;
+    deviceBoxes.set(boxId, entry);
+    return entry.box;
+  };
+  const leftDevice = (boxId: string, relay: SelkiesRelay | null): void => {
+    const entry = deviceBoxes.get(boxId);
+    if (!entry) return;
+    if (relay) entry.relays.delete(relay);
+    if (--entry.viewers > 0) return;
+    deviceBoxes.delete(boxId);
+    void entry.box.close();
   };
   /**
    * Each box's pointer from bb-box-cursor, where its image has it (060), while anything listens: its video viewers and its
@@ -583,7 +631,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   };
   /** Whether a box's video is told a new size before its desktop takes it, as Selkies on Sway (060). */
   const tellsSizeFirst = async (boxId: string): Promise<boolean> =>
-    (await boxes.find(boxId))?.capabilities.displays.some((each) => each.protocol === "selkies" && each.tellSize === "first") ?? false;
+    desktopDisplays((await boxes.find(boxId))?.capabilities.displays ?? []).some((each) => each.protocol === "selkies" && each.tellSize === "first");
   /**
    * Sets a box's desktop to `size` with its backend's resize, having told its
    * video the size first, while it has Selkies viewers. A resize that fails
@@ -662,7 +710,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   /** The box, when it is running and its desktop's clipboard goes through bb-box's commands. */
   const byCommands = async (boxId: string): Promise<BoxRecord | null> => {
     const box = await boxes.find(boxId);
-    return box?.state === "ready" && box.capabilities.displays[0]?.clipboard === "commands" && clipboardCommands(box.capabilities.os) ? box : null;
+    return box?.state === "ready" && desktopDisplays(box.capabilities.displays)[0]?.clipboard === "commands" && clipboardCommands(box.capabilities.os) ? box : null;
   };
   /**
    * One read of a box's clipboard at a time, which the next calls share: a Windows desktop's read takes seconds,
@@ -743,10 +791,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const boxId = url.searchParams.get("box") ?? "";
       const viewer = url.searchParams.get("viewer") ?? "";
       const keyLog = url.searchParams.get("keylog") === "1" ? (line: string) => bb.log.info(`key log, box ${boxId}, viewer ${viewer.slice(0, 8)}: ${line}`) : undefined;
-      const selkies = url.searchParams.get("stream") === "selkies";
+      const device = url.searchParams.get("display") === DEVICE_DISPLAY.id;
+      const selkies = !device && url.searchParams.get("stream") === "selkies";
       // A VNC viewer's own stream of the box's pointer (060): it carries no picture and no input, only the pointer messages a
       // video viewer gets, as RFB has no place for where the box's pointer is.
-      const pointerOnly = url.searchParams.get("stream") === "pointer";
+      const pointerOnly = !device && url.searchParams.get("stream") === "pointer";
       let unlistenPointer: (() => void) | null = null;
       let relay: RfbRelay | SelkiesRelay | null = null;
       let shown: Display | null = null;
@@ -759,7 +808,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       };
       const onEnd = (by: "viewer" | "box", error: Error | null) => {
         relays.delete(relay!);
-        if (selkies) leftSelkies(boxId, relay instanceof SelkiesRelay ? relay : null);
+        if (device) leftDevice(boxId, relay instanceof SelkiesRelay ? relay : null);
+        else if (selkies) leftSelkies(boxId, relay instanceof SelkiesRelay ? relay : null);
         else {
           rfbViewer(boxId, viewer, -1);
           pointerFor(boxId);
@@ -770,7 +820,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
           void boxes
             .find(boxId)
             .then((box) =>
-              bb.log.warn(`Box ${box?.name ?? boxId}'s desktop ended the connection of the viewer with control. ${why} Control goes back to the agent unless the viewer connects again within ${reconnectMs / 1000} s.`),
+              bb.log.warn(`Box ${box?.name ?? boxId}'s ${device ? "device" : "desktop"} ended the connection of the viewer with control. ${why} Control goes back to the agent unless the viewer connects again within ${reconnectMs / 1000} s.`),
             )
             .catch((caught) => deps.logError("log a desktop's end", caught));
         }
@@ -790,7 +840,15 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
             return;
           }
           const end = { send: (message: string | Uint8Array) => socket.send(message), close: (code: number, reason: string) => socket.close(code, reason) };
-          if (selkies) {
+          if (device) {
+            if (!VIEWER_ID.test(viewer)) {
+              socket.close(1008, "The viewer gave no viewer ID, so it cannot be told apart from other tabs.");
+              return;
+            }
+            const deviceKeyLog = keyLog ? (line: string) => keyLog(`device: ${line}`) : undefined;
+            relay = new SelkiesRelay({ viewer: end, box: deviceBox(boxId), open: deviceStream(boxId), mayInput: () => control.mayInput(boxId, viewer), keyLog: deviceKeyLog, onEnd });
+            deviceBoxes.get(boxId)?.relays.add(relay);
+          } else if (selkies) {
             if (!VIEWER_ID.test(viewer)) {
               socket.close(1008, "The viewer gave no viewer ID, so it cannot be told apart from other tabs.");
               return;
@@ -884,7 +942,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
           }
           relays.add(relay);
           control.attach(boxId, connection);
-          if (!selkies) {
+          if (!selkies && !device) {
             rfbViewer(boxId, viewer, 1);
             keepSharp(boxId);
             pointerFor(boxId);

@@ -47,6 +47,7 @@ import {
   type Resizing,
   type SizePart,
   type StopReason,
+  desktopDisplays,
 } from "../backends/types.ts";
 import { TransportError, type ByteChannel, type CommandTransport, type RunResult } from "../transports/types.ts";
 import type { GeneralConfig } from "./config.ts";
@@ -2302,7 +2303,7 @@ export class Boxes {
     const found = await this.get(threadId, ref);
     const box = options.waitForEnrolment === false ? found : await this.enrolled(found, options.signal);
     const capabilities = box.capabilities;
-    if (options.session === "desktop" && !capabilities.displays.length) {
+    if (options.session === "desktop" && !desktopDisplays(capabilities.displays).length) {
       throw new BoxError("unsupported", `Box ${box.name} has no desktop. Run the command without session "desktop", or use a desktop box.`);
     }
     // A transport that already runs commands in the desktop session needs no wrapper.

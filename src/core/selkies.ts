@@ -23,6 +23,7 @@
 
 import type { ByteChannel } from "../transports/types.ts";
 import { BoxWebSocket, WebSocketError, type Message } from "./websocket.ts";
+import { DEVICE_STILLS_VERB } from "./device.ts";
 
 const PATH = "/api/websockets";
 /** Selkies' RECONNECT_DEBOUNCE_MS, with a margin. */
@@ -49,7 +50,7 @@ export type OpenStream = (signal: AbortSignal) => Promise<ByteChannel>;
 
 /** What a message from a viewer is, by its first comma-separated field. */
 type Kind = "video" | "ack" | "input" | "drop";
-const VIDEO_VERBS = new Set(["SETTINGS", "START_VIDEO", "STOP_VIDEO", "REQUEST_KEYFRAME"]);
+const VIDEO_VERBS = new Set(["SETTINGS", "START_VIDEO", "STOP_VIDEO", "REQUEST_KEYFRAME", DEVICE_STILLS_VERB]);
 /** Keys, pointer, typing and the clipboard: what Selkies takes only from a page with control. */
 const INPUT_VERBS = new Set(["kd", "ku", "kh", "kr", "m", "m2", "co", "cw", "cb", "cws", "cbs", "cwd", "cbd", "cwe", "cbe", "cr", "REQUEST_CLIPBOARD"]);
 /** What Selkies sends of the box's clipboard: only the viewer with control gets it, as with RFB. */
@@ -111,11 +112,21 @@ export class Spacing {
   }
 }
 
+export interface StreamPaths {
+  readonly viewer: string;
+  readonly input: string;
+  readonly server: string;
+  readonly shows: string;
+}
+
+export const SELKIES_PATHS: StreamPaths = { viewer: `${PATH}?role=viewer`, input: PATH, server: "The box's Selkies", shows: "The box's desktop" };
+export const DEVICE_PATHS: StreamPaths = { viewer: "/device?role=viewer", input: "/device?role=input", server: "The box's device server", shows: "The box's device server" };
+
 /** Opens a WebSocket to the box's Selkies, spaced from the box's other connections, again when Selkies says it came too soon. */
-async function connect(open: OpenStream, spacing: Spacing, query: string, signal: AbortSignal): Promise<{ socket: BoxWebSocket; first: Message | null }> {
+async function connect(open: OpenStream, spacing: Spacing, path: string, signal: AbortSignal): Promise<{ socket: BoxWebSocket; first: Message | null }> {
   for (let attempt = 1; ; attempt++) {
     await spacing.turn();
-    const socket = await BoxWebSocket.upgrade(await open(signal), { host: "localhost", path: `${PATH}${query}`, signal });
+    const socket = await BoxWebSocket.upgrade(await open(signal), { host: "localhost", path, signal });
     // Selkies accepts the upgrade, then closes a connection that came too soon.
     const first = await socket.next();
     if (first !== null || socket.closedWith?.code !== TOO_SOON || attempt >= OPEN_TRIES) return { socket, first };
@@ -150,12 +161,14 @@ export class SelkiesBox {
    */
   readonly #apart: () => boolean;
   readonly #onText: (message: string) => void;
+  readonly paths: StreamPaths;
 
   constructor(
     open: OpenStream,
-    options: { onError?: (error: Error) => void; spacingMs?: number; clock?: Clock; apart?: () => boolean; onText?: (message: string) => void } = {},
+    options: { onError?: (error: Error) => void; spacingMs?: number; clock?: Clock; apart?: () => boolean; onText?: (message: string) => void; paths?: StreamPaths } = {},
   ) {
     this.#open = open;
+    this.paths = options.paths ?? SELKIES_PATHS;
     this.onError = options.onError ?? (() => undefined);
     this.#apart = options.apart ?? (() => false);
     this.#onText = options.onText ?? (() => undefined);
@@ -200,8 +213,8 @@ export class SelkiesBox {
 
   #connection(): Promise<BoxWebSocket> {
     this.#input ??= (async () => {
-      const { socket, first } = await connect(this.#open, this.spacing, "", AbortSignal.timeout(20_000));
-      if (first === null) throw new WebSocketError(`The box's Selkies closed the input connection${socket.closedWith ? ` (${socket.closedWith.code})` : ""}.`);
+      const { socket, first } = await connect(this.#open, this.spacing, this.paths.input, AbortSignal.timeout(20_000));
+      if (first === null) throw new WebSocketError(`${this.paths.server} closed the input connection${socket.closedWith ? ` (${socket.closedWith.code})` : ""}.`);
       // Selkies ignores SET_NATIVE_CURSOR_RENDERING on a connection that has sent no SETTINGS yet, after waiting 15 s
       // for them: so a viewer that connected while the agent held control saw no pointer in the video until control
       // changed hands. A SETTINGS that names only the display keeps its size and lets the cursor message through. It
@@ -396,8 +409,8 @@ export class SelkiesRelay {
   constructor(options: SelkiesRelayOptions) {
     this.#options = options;
     this.#socket = (async () => {
-      const { socket, first } = await connect(options.open, options.box.spacing, "?role=viewer", AbortSignal.timeout(options.connectTimeoutMs ?? 20_000));
-      if (first === null) throw new WebSocketError(`The box's Selkies closed the connection${socket.closedWith ? ` (${socket.closedWith.code})` : ""}.`);
+      const { socket, first } = await connect(options.open, options.box.spacing, options.box.paths.viewer, AbortSignal.timeout(options.connectTimeoutMs ?? 20_000));
+      if (first === null) throw new WebSocketError(`${options.box.paths.server} closed the connection${socket.closedWith ? ` (${socket.closedWith.code})` : ""}.`);
       return { socket, first };
     })();
     this.#socket.catch(() => undefined);
@@ -420,7 +433,7 @@ export class SelkiesRelay {
       this.#early = null;
       for (; message !== null && !this.#ended; message = await socket.next()) this.#toViewer(socket, message);
       const closed = socket.closedWith;
-      await this.#end("box", closed && closed.code !== 1000 && closed.code !== 1005 ? new Error(`The box's Selkies closed the connection (${closed.code}).`) : null);
+      await this.#end("box", closed && closed.code !== 1000 && closed.code !== 1005 ? new Error(`${this.#options.box.paths.server} closed the connection (${closed.code}).`) : null);
     } catch (error) {
       await this.#end("box", error instanceof Error ? error : new Error(String(error)));
     }
@@ -643,7 +656,7 @@ export class SelkiesRelay {
     this.#ended = true;
     if (by === "viewer") await this.release().catch(() => undefined);
     await this.#socket.then(({ socket }) => socket.close()).catch(() => undefined);
-    if (by === "box") this.#options.viewer.close(error ? 1011 : 1000, (error?.message ?? "The box's desktop closed the connection.").slice(0, 120));
+    if (by === "box") this.#options.viewer.close(error ? 1011 : 1000, (error?.message ?? `${this.#options.box.paths.shows} closed the connection.`).slice(0, 120));
     this.#options.onEnd?.(by, error);
   }
 }

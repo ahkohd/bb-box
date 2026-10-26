@@ -15,6 +15,7 @@ import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-s
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
 import { BackendError, type BackendDriver, type BoxKind } from "../src/backends/types.ts";
+import { stillsRequestText } from "../src/core/device.ts";
 import type { BoxPointer } from "../src/transports/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
@@ -3314,6 +3315,69 @@ test("the desktop route carries a box's Selkies stream message by message, and o
   await until("the video following it back", async () => input.received.includes(follow(1280, 800)));
   await session.close();
   await until("the page closed", async () => page.closed);
+});
+
+test("a box with the test device shows its device by the display's ID beside its desktop: video, stills, input and the clipboard reach only the device, and a box without one says so (063)", async (t) => {
+  const kind: BoxKind = { ...FAKE_SELKIES_KIND, id: "linux-desktop-cpu" };
+  const { harness, app, world, tool } = await start(undefined, { kinds: [kind] });
+  t.after(() => harness.lifecycle.dispose());
+  const { kinds: _, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: { ...rest, general: { ...rest.general, testDevice: true } }, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: kind.id });
+  await app.boxes.idle();
+  const box = await only(app);
+  const shown = (await harness.behavior.callRpc("desktop", { threadId: THREAD, box: box.id })) as { box: { desktop: boolean; device: { model: string | null } | null; display: { protocol: string } | null }; video: boolean };
+  assert.equal(shown.box.desktop, true);
+  assert.equal(shown.box.display?.protocol, "rfb");
+  assert.deepEqual(shown.box.device, { model: "Pixel 8" });
+  assert.equal(shown.video, true, "the desktop's own video, not the device's");
+  const selkies = world.backend!.selkies;
+  const viewer = "viewer-one-0001";
+  const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&display=device`);
+  await until("the device server's hello", async () => session.sent.some((message) => typeof message === "string" && message.startsWith("BB_DEVICE_HELLO ")));
+  assert.ok(session.sent.includes("MODE websockets"));
+  await session.receive("START_VIDEO");
+  const frame = await until("a frame of the device", async () => session.sent.find((message): message is Uint8Array => typeof message !== "string"));
+  assert.equal(frame[0], 4);
+  assert.equal(frame[1]! & 15, 1, "the first frame is a key frame");
+  assert.deepEqual([(frame[6]! << 8) | frame[7]!, (frame[8]! << 8) | frame[9]!], [360, 800]);
+  const clipboard = `cw,${Buffer.from("Hello device").toString("base64")}`;
+  await session.receive("kd,97");
+  await session.receive(clipboard);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const log = async () => /stdout:\n([\s\S]*?)\n\n/.exec(text(await tool("box_run", { box: box.name, command: "cat ~/.bb-box/device/server.log" })))?.[1] ?? "";
+  assert.doesNotMatch(await log(), /clipboard: the person's/, "nothing of a viewer without control reaches the device");
+  const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: null };
+  assert.equal(took.error, null);
+  await session.receive(clipboard);
+  await until("the clipboard on the device", async () => /clipboard: the person's, 12 characters, is the device's now/.test(await log()));
+  await session.receive("kd,97");
+  await session.receive("ku,97");
+  await session.receive("m,10,10,1,0");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(selkies.pages.length, 0, "the desktop's Selkies never hears of the device's viewer, its input or its clipboard");
+  const stills = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-two-0002&display=device`);
+  await until("the second viewer's hello", async () => stills.sent.some((message) => typeof message === "string" && message.startsWith("BB_DEVICE_HELLO ")));
+  await stills.receive(stillsRequestText(true));
+  await stills.receive("START_VIDEO");
+  const still = await until("a still", async () => stills.sent.find((message): message is string => typeof message === "string" && message.startsWith("BB_DEVICE_STILL ")));
+  const png = Buffer.from((JSON.parse(still.slice("BB_DEVICE_STILL ".length)) as { png: string }).png, "base64");
+  assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [360, 800]);
+  assert.ok(!stills.sent.some((message) => typeof message !== "string"), "no video to a viewer that asked for stills");
+  await stills.close();
+  await session.receive("STOP_VIDEO");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const hidden = session.sent.length;
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  assert.equal(session.sent.filter((message) => typeof message !== "string").length, session.sent.slice(0, hidden).filter((message) => typeof message !== "string").length, "a hidden viewer gets no frames");
+  await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
+  await session.close();
+  assert.equal(selkies.pages.length, 0);
+
+  const plain = await harness.behavior.experimental_openWebSocket(`/desktop?box=nope&viewer=${viewer}&display=device`);
+  const refusal = await until("the refusal", async () => plain.closeCalls[0]);
+  assert.match(refusal.reason ?? "", /no such box/);
 });
 
 test("a video display the backend resizes, as the GPU desktop with xrandr, takes a controller's size and has the video follow it with no RFB connection, which starved its capture (#916)", async (t) => {

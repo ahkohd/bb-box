@@ -3015,6 +3015,146 @@ test("with the setting on, a desktop shows as video whatever the round trip to B
   }
 });
 
+function deviceSocket(): FakeSocket {
+  const socket = FakeSocket.made.find((made) => new URL(made.url).searchParams.get("display") === "device");
+  if (!socket) throw new Error("no device socket");
+  return socket;
+}
+
+const PIXEL_8_STATE = {
+  platform: "android",
+  form: "phone",
+  model: "Pixel 8",
+  power: { is: "booted", awake: true },
+  geometry: { generation: 1, physical: "upright", content: "upright", video: { width: 360, height: 800 } },
+  settings: {
+    appearance: { known: true, value: "light", at: 1, by: "bb-box" },
+    fontScale: { known: true, value: 1, at: 1, by: "bb-box" },
+    location: { known: true, value: null, at: 1, by: "bb-box" },
+    battery: { known: true, value: { level: 100, charging: true }, at: 1, by: "bb-box" },
+    network: { known: true, value: "online", at: 1, by: "bb-box" },
+    statusBar: { set: null, at: null },
+  },
+  at: 1,
+};
+
+test("a box with a device and a desktop opens on the device, and Device and Desktop switch between two kept sessions, each with its own socket, input and clipboard, with no hand-back (063)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.clear();
+    const { handlers, changes } = server([desktopBox({ device: { model: "Pixel 8" } })], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
+    expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(false);
+    expect(novnc.FakeRfb.made).toHaveLength(0);
+    const device = deviceSocket();
+    expect(device.url).not.toContain("stream=");
+    expect(await slot.findByText("Pixel 8")).toBeTruthy();
+    expect(slot.getByText("Connecting")).toBeTruthy();
+    act(() => device.open());
+    expect(device.sent).toEqual(["START_VIDEO"]);
+    act(() => void device.onmessage?.({ data: "MODE websockets" }));
+    act(() => void device.onmessage?.({ data: videoFrame(1, true, 360, 800) }));
+    expect(await slot.findByText("The agent has control.")).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Device" }).getAttribute("aria-pressed")).toBe("true");
+    const actions = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+    expect(within(actions).queryByText("Display")).toBeNull();
+    fireEvent.keyDown(actions, { key: "Escape" });
+
+    const readText = vi.fn(() => Promise.resolve("for the device"));
+    fakeClipboard(readText);
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    await waitFor(() => expect(device.sent).toContain(`cw,${btoa("for the device")}`));
+    const canvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
+    fireEvent.keyDown(canvas, { key: "a", code: "KeyA" });
+    fireEvent.keyUp(canvas, { key: "a", code: "KeyA" });
+    expect(device.sent).toContain("kd,97");
+
+    vi.useFakeTimers();
+    fireEvent.click(slot.getByRole("button", { name: "Desktop" }));
+    vi.useRealTimers();
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const desktop = videoSocket();
+    expect(window.sessionStorage.getItem("bb-box:display:box_2")).toBe("desktop");
+    expect(device.readyState).toBe(1);
+    expect(device.sent.at(-1)).toBe("STOP_VIDEO");
+    act(() => desktop.open());
+    act(() => void desktop.onmessage?.({ data: videoFrame(1, true) }));
+    await waitFor(() => expect(desktop.sent).toContain(`cw,${btoa("for the device")}`));
+    readText.mockImplementation(() => Promise.resolve("for the desktop"));
+    act(() => void window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(desktop.sent).toContain(`cw,${btoa("for the desktop")}`));
+    expect(device.sent).not.toContain(`cw,${btoa("for the desktop")}`);
+    const desktopCanvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
+    const keysBefore = device.sent.filter((sent) => sent === "kd,98").length;
+    fireEvent.keyDown(desktopCanvas, { key: "b", code: "KeyB" });
+    expect(desktop.sent).toContain("kd,98");
+    expect(device.sent.filter((sent) => sent === "kd,98").length).toBe(keysBefore);
+
+    vi.useFakeTimers();
+    fireEvent.click(slot.getByRole("button", { name: "Device" }));
+    await vi.advanceTimersByTimeAsync(HAND_BACK_MS + 50);
+    vi.useRealTimers();
+    expect(changes).toEqual(["takeControl box_2"]);
+    expect(FakeSocket.made.filter((made) => made.url.includes("display=device"))).toHaveLength(1);
+    const back = device.sent.slice(device.sent.lastIndexOf("STOP_VIDEO") + 1);
+    expect(back.filter((sent) => sent === "START_VIDEO" || sent === "REQUEST_KEYFRAME")).toEqual(["START_VIDEO", "REQUEST_KEYFRAME"]);
+    await waitFor(() => expect(device.sent.at(-1)).toBe(`cw,${btoa("for the desktop")}`));
+    expect(desktop.readyState).toBe(1);
+    expect(desktop.sent.at(-1)).toBe("STOP_VIDEO");
+  } finally {
+    undo();
+  }
+});
+
+test("where the browser has no WebCodecs, the device shows stills over its own connection, with words above it, and never the desktop (063)", async () => {
+  window.sessionStorage.clear();
+  vi.stubGlobal("createImageBitmap", async () => ({ width: 360, height: 800, close() {} }));
+  try {
+    const { handlers } = server([desktopBox({ device: { model: "Pixel 8" } })], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
+    const device = deviceSocket();
+    act(() => device.open());
+    expect(device.sent).toEqual(['BB_DEVICE_STILLS {"on":true}', "START_VIDEO"]);
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_HELLO ${JSON.stringify({ protocol: 1, version: 2, platform: "android", devices: [{ model: "Pixel 8", native: "bb-box-test-device", runtime: { platform: "android", api: 35, image: "google_apis", revision: 1, abi: "x86_64", emulator: "bb-box test driver", snapshot: null } }], state: { ...PIXEL_8_STATE, power: { is: "booting", since: 1 } }, lease: false })}` }));
+    expect(await slot.findByText("Booting")).toBeTruthy();
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_STATE ${JSON.stringify({ state: PIXEL_8_STATE })}` }));
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_STILL ${JSON.stringify({ png: "iVBORw0KGgo=", generation: 1 })}` }));
+    expect(await slot.findByText("This browser cannot play the device's video, so it shows a picture a few times a second.")).toBeTruthy();
+    expect(slot.getByText("The agent has control.")).toBeTruthy();
+    expect(novnc.FakeRfb.made).toHaveLength(0);
+    expect(FakeSocket.made.some((made) => made.url.includes("stream="))).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("WebSocket", FakeSocket);
+    vi.stubGlobal("ResizeObserver", FakeObserver);
+  }
+});
+
+test("a device whose first frame does not decode within 3 s asks for stills instead, on the same connection (063)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.clear();
+    FakeDecoder.silent = true;
+    const { handlers } = server([desktopBox({ device: { model: "Pixel 8" } })], { video: true });
+    desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
+    const device = deviceSocket();
+    act(() => device.open());
+    vi.useFakeTimers();
+    act(() => void device.onmessage?.({ data: videoFrame(1, true, 360, 800) }));
+    await vi.advanceTimersByTimeAsync(3_050);
+    vi.useRealTimers();
+    expect(device.sent).toContain('BB_DEVICE_STILLS {"on":true}');
+    expect(FakeSocket.made.filter((made) => made.url.includes("display=device"))).toHaveLength(1);
+    expect(novnc.FakeRfb.made).toHaveLength(0);
+  } finally {
+    undo();
+  }
+});
+
 test("a desktop whose video is shown only by choice, as a Tart Mac's, opens over VNC with Show as VNC ticked, and unticking it shows video, kept for the box", async () => {
   const undo = withVideo();
   try {

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import type { BoxView } from "../plugin/views.ts";
 
 export function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -326,6 +327,10 @@ export const BOXES_ACTION = "boxes";
 /** BB's chip: one small bordered word, as its machine picker and settings sections show one. */
 export function Badge({ children, tone = "muted", className }: { children: ReactNode; tone?: "muted" | "warn"; className?: string }) {
   return <span className={cn("shrink-0 rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-2xs leading-none", tone === "warn" ? "text-warning-text" : "text-subtle-foreground", className)}>{children}</span>;
+}
+
+export function hasViewer(box: Pick<BoxView, "desktop" | "device">): boolean {
+  return box.desktop || !!box.device;
 }
 
 /** The name the panel gives a kind or a box: its OS. Badges say the rest (the operator, 1 October 2026). */

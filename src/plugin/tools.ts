@@ -15,7 +15,7 @@ import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, chaptersOf, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, type Chapter } from "../core/record.ts";
-import { GRANT_PERMISSIONS, type BoxGrants } from "../backends/types.ts";
+import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import type { BbBox } from "./setup.ts";
@@ -715,7 +715,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       try {
         const id = thread(threadId);
         const { owner, box: found } = await app.resolve(id, ref, signal);
-        if (!found.capabilities.displays.length) throw new BoxError("unsupported", `Box ${found.name} has no desktop to record.`);
+        if (!desktopDisplays(found.capabilities.displays).length) throw new BoxError("unsupported", `Box ${found.name} has no desktop to record.`);
         // On Windows both run in the desktop session: gdigrab reads the desktop it runs in, and the stop closes its window.
         const os = found.capabilities.os;
         const session = os === "windows" || os === "macos" ? ("desktop" as const) : undefined;

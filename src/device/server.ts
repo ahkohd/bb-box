@@ -2,7 +2,9 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   DEVICE_PROTOCOL,
+  STILLS_EVERY_MS,
   deviceModel,
+  stillsAsked,
   listWords,
   orientationWord,
   supports,
@@ -63,8 +65,16 @@ interface Connection {
   readonly started: number;
   readonly instance: string;
   wantsVideo: boolean;
+  stills: boolean;
   needsKey: boolean;
   frameId: number;
+  readonly clipboardParts: Map<string, string[]>;
+}
+
+const CLIPBOARD_PARTS_MOST = 4096;
+
+function watchesStills(connection: Connection): boolean {
+  return connection.role === "viewer" && connection.wantsVideo && connection.stills;
 }
 
 type Kept = { readonly done: true; readonly answer: DeviceAnswer } | { readonly done: false; readonly type: DeviceRequest["type"] };
@@ -135,6 +145,8 @@ export class DeviceServer {
   #owner = { generation: 0, holder: "agent" as "agent" | "person" };
   #inputQueue: Promise<unknown> = Promise.resolve();
   #lastStateText = "";
+  #stillTimer: ReturnType<typeof setTimeout> | null = null;
+  #lastStillAt = -Infinity;
 
   constructor(options: DeviceServerOptions) {
     this.#options = options;
@@ -228,6 +240,7 @@ export class DeviceServer {
 
   async stop(): Promise<void> {
     this.#stop.abort();
+    if (this.#stillTimer) clearTimeout(this.#stillTimer);
     for (const connection of this.#connections) connection.ws.close(1001, "the device server is stopping");
     await new Promise<void>((resolve) => (this.#server ? this.#server.close(() => resolve()) : resolve()));
     this.#options.driver.close();
@@ -283,7 +296,7 @@ export class DeviceServer {
       return;
     }
     const started = Number(upgrade.query.get("started") ?? "0");
-    const connection: Connection = { ws, role, started: Number.isFinite(started) ? started : 0, instance: upgrade.query.get("instance") ?? "", wantsVideo: false, needsKey: true, frameId: 0 };
+    const connection: Connection = { ws, role, started: Number.isFinite(started) ? started : 0, instance: upgrade.query.get("instance") ?? "", wantsVideo: false, stills: false, needsKey: true, frameId: 0, clipboardParts: new Map() };
     this.#connections.add(connection);
     ws.onClose = () => this.#closed(connection);
     ws.onMessage = (message) => this.#message(connection, message);
@@ -323,6 +336,7 @@ export class DeviceServer {
       this.#viewerMessage(connection, message);
       return;
     }
+    if (connection.role === "input" && this.#clipboardMessage(connection, message)) return;
     if (!message.startsWith("BB_DEVICE ")) return;
     const parsed = parseDeviceRequest(message);
     if (!parsed.ok) {
@@ -334,15 +348,86 @@ export class DeviceServer {
   }
 
   #viewerMessage(connection: Connection, message: string): void {
+    const stills = stillsAsked(message);
+    if (stills !== null) {
+      connection.stills = stills;
+      connection.needsKey = true;
+      if (stills) this.#stillsDue();
+      else this.#options.driver.video().keyframe();
+      return;
+    }
     const verb = message.split(",")[0];
     if (verb === "START_VIDEO") {
       connection.wantsVideo = true;
       connection.needsKey = true;
-      this.#options.driver.video().keyframe();
+      if (connection.stills) this.#stillsDue();
+      else this.#options.driver.video().keyframe();
     } else if (verb === "STOP_VIDEO") connection.wantsVideo = false;
     else if (verb === "REQUEST_KEYFRAME") {
       connection.needsKey = true;
-      this.#options.driver.video().keyframe();
+      if (connection.stills) this.#stillsDue();
+      else this.#options.driver.video().keyframe();
+    }
+  }
+
+  #clipboardMessage(connection: Connection, message: string): boolean {
+    const fields = message.split(",");
+    const [verb, id = "", data = ""] = fields;
+    const set = (base64: string) => {
+      const text = Buffer.from(base64, "base64").toString("utf8");
+      void this.#options.driver
+        .setClipboard(text)
+        .then(() => this.#log(`clipboard: the person's, ${[...text].length} characters, is the device's now`))
+        .catch((error) => this.#log(`clipboard: could not set the device's: ${error}`));
+    };
+    switch (verb) {
+      case "cw":
+        set(fields[1] ?? "");
+        return true;
+      case "cws":
+        connection.clipboardParts.set(id, []);
+        return true;
+      case "cwd": {
+        const parts = connection.clipboardParts.get(id);
+        if (parts && parts.length < CLIPBOARD_PARTS_MOST) parts.push(Buffer.from(data, "base64").toString("latin1"));
+        else connection.clipboardParts.delete(id);
+        return true;
+      }
+      case "cwe": {
+        const parts = connection.clipboardParts.get(id);
+        connection.clipboardParts.delete(id);
+        if (parts) set(Buffer.from(parts.join(""), "latin1").toString("base64"));
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  #stillsDue(): void {
+    if (this.#stillTimer || ![...this.#connections].some(watchesStills)) return;
+    const wait = Math.max(0, this.#lastStillAt + STILLS_EVERY_MS - performance.now());
+    this.#stillTimer = setTimeout(() => {
+      this.#stillTimer = null;
+      void this.#sendStills();
+    }, wait);
+  }
+
+  async #sendStills(): Promise<void> {
+    this.#lastStillAt = performance.now();
+    if (this.#state.power.is !== "booted" || this.#switching) return;
+    let png: Uint8Array;
+    try {
+      png = await this.#options.driver.screenshot();
+    } catch (error) {
+      this.#log(`stills: no screenshot: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    const still: DeviceServerMessage = { verb: "BB_DEVICE_STILL", png: Buffer.from(png).toString("base64"), generation: this.#state.geometry?.generation ?? 0 };
+    for (const connection of this.#connections) {
+      if (!watchesStills(connection)) continue;
+      connection.needsKey = false;
+      this.#send(connection, still);
     }
   }
 
@@ -352,8 +437,9 @@ export class DeviceServer {
   }
 
   #frame(frame: EncodedFrame): void {
+    this.#stillsDue();
     for (const connection of this.#connections) {
-      if (!connection.wantsVideo) continue;
+      if (!connection.wantsVideo || connection.stills) continue;
       if (connection.needsKey && !frame.key) continue;
       connection.needsKey = false;
       connection.frameId = (connection.frameId + 1) & 0xffff;

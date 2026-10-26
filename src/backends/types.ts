@@ -140,6 +140,16 @@ export function displayShows(display: DisplayCapability): "desktop" | "device" {
   return display.shows ?? "desktop";
 }
 
+export const DEVICE_DISPLAY: DeviceDisplayCapability = { id: "device", shows: "device", protocol: "selkies", resizable: false };
+
+export function desktopDisplays(displays: readonly DisplayCapability[]): readonly DesktopDisplayCapability[] {
+  return displays.filter((display): display is DesktopDisplayCapability => displayShows(display) === "desktop");
+}
+
+export function deviceDisplayOf(displays: readonly DisplayCapability[]): DeviceDisplayCapability | null {
+  return displays.find((display): display is DeviceDisplayCapability => displayShows(display) === "device") ?? null;
+}
+
 /**
  * What a box of one offer has. Offers of one kind agree exactly on os, arch,
  * gpu, computerUse, enrol and having a desktop display; doctor warns when
