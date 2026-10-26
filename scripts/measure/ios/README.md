@@ -48,3 +48,24 @@ CPU is each process's CPU time from `ps` over each window, as a share of
 one core. Memory is the processes' resident set at the window's end. Frames
 are counted as the viewer receives them, so on a still screen there are
 none, as idb sends a frame only when the screen changes.
+
+## Controls
+
+`controls.ts` checks `box_device` on the device (unit 6.3). It runs the
+plugin's own `DeviceServers` against the box's device server, as bb-box
+does, and prints for each control what the agent reads: the answer's words,
+the server's time and the round trip, and the settings read back.
+
+| Step | What it does |
+| --- | --- |
+| `controls.ts control '<parameters>'` | Sends box_device's parameters as JSON, such as `'{"action":"rotate","turn":"left"}'`, through `controlFromParameters` and `DeviceServers.control`. `--shot <name>` takes a screenshot with `simctl io` after it, into `/tmp/bb-box-controls`; `--person` says a person has control |
+| `controls.ts twice '<parameters>'` | Sends one control twice with the same ID, then asks for its result, and prints whether the device changed once |
+| `controls.ts lost '<parameters>' --times <ms>` | Ends the plugin's connection that many milliseconds after sending, so the plugin asks for the answer again by its ID |
+| `controls.ts read-back --times <n>` | Times each read-back command `n` times: appearance, content size, the status bar's overrides and the lock state |
+| `controls.ts watch '<command>' --times <s>` | Watches as a viewer, runs a command in the box a second in, and prints each state the server sends for `s` seconds |
+| `controls.ts native <name>` | Takes idb's screenshot through the device server: the device's own pixels, upright, whichever way it is held |
+| `controls.ts tap <x> <y>` and `input '<DeviceInput>'` | Sends the agent's input, as the computer tools will |
+| `controls.ts shot <name>` | Takes a screenshot with `simctl io` |
+
+`simctl io` screenshots are turned with the app on screen, as the stream
+is. idb's are not, so `native` shows which way the device itself turned.

@@ -2,11 +2,11 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import {
   DEVICE_PROTOCOL,
+  PERSON_HAS_CONTROL_WORDS,
   STILLS_EVERY_MS,
   deviceModel,
   stillsAsked,
   listWords,
-  orientationWord,
   supports,
   type AnswerResult,
   type DeviceAnswer,
@@ -27,6 +27,7 @@ import {
   type TableModel,
   type TouchContact,
 } from "../core/device.ts";
+import { CONTROL_DEADLINES_MS, controlDeadlineMs, deviceStateWords } from "../core/device-settings.ts";
 import { deviceServerMessageText, parseDeviceRequest, parseIntent } from "../core/device-parse.ts";
 import { DriverError, type DeviceDriver, type EncodedFrame } from "./driver.ts";
 import { InputLane, splitByCharacters, TEXT_BATCH } from "./input-lane.ts";
@@ -36,7 +37,7 @@ import type { DevicePaths } from "./paths.ts";
 import { ServerWebSocket, type WsMessage } from "./ws.ts";
 
 export const KEPT_ANSWERS = 200;
-export const DEADLINES_MS = { control: 10_000, switch: 120_000, reboot: 120_000, install: 300_000 } as const;
+export const DEADLINES_MS = CONTROL_DEADLINES_MS;
 const FIRST_FRAME_MS = 10_000;
 const VIDEO = 4;
 const H264 = 1;
@@ -49,6 +50,7 @@ const GEOMETRY_WAIT_MS = 130_000;
 const GEOMETRY_SETTLE_MS = 1_500;
 const GEOMETRY_ACTIONS: ReadonlySet<DeviceControl["action"]> = new Set(["rotate", "posture", "switch", "reboot"]);
 const MODIFIER_NAMES = { shift: "Shift", control: "Control", alt: "Alt", meta: "Meta" } as const;
+export const SETTINGS_READ_EVERY_MS = 10_000;
 
 export type Role = "viewer" | "input" | "control";
 
@@ -66,6 +68,7 @@ export interface DeviceServerOptions {
   readonly clock?: ServerClock;
   readonly log?: (line: string) => void;
   readonly deadlines?: Partial<Deadlines>;
+  readonly settingsEveryMs?: number;
 }
 
 interface Connection {
@@ -131,22 +134,13 @@ export function placeholderState(model: TableModel, power: Power, at: number, wh
 }
 
 export function stateWords(state: DeviceState): string {
-  const power = state.power;
-  const parts: string[] = [];
-  if (power.is === "booted") parts.push(power.awake ? "booted" : "booted, asleep");
-  else if (power.is === "switching") parts.push(`switching to the ${power.to}, ${power.step}`);
-  else if (power.is === "failed") parts.push(`failed: ${power.error.words}`);
-  else parts.push(power.is);
-  if (state.geometry) parts.push(orientationWord(state.geometry.physical), `${state.geometry.video.width}x${state.geometry.video.height}`);
-  const appearance = state.settings.appearance;
-  if (appearance.known) parts.push(appearance.value);
-  return parts.join(", ");
+  return deviceStateWords(state);
 }
 
 export type Deadlines = { readonly [Kind in keyof typeof DEADLINES_MS]: number };
 
 function deadlineFor(control: DeviceControl, deadlines: Deadlines): number {
-  return control.action === "switch" ? deadlines.switch : control.action === "reboot" ? deadlines.reboot : control.action === "install" ? deadlines.install : deadlines.control;
+  return controlDeadlineMs(control, deadlines);
 }
 
 let written = 0;
@@ -180,6 +174,8 @@ export class DeviceServer {
   #lastStateText = "";
   #stillTimer: ReturnType<typeof setTimeout> | null = null;
   #lastStillAt = -Infinity;
+  #settingsTimer: ReturnType<typeof setInterval> | null = null;
+  #readingSettings: Promise<void> | null = null;
 
   constructor(options: DeviceServerOptions) {
     this.#options = options;
@@ -247,7 +243,24 @@ export class DeviceServer {
     const intent = (await this.#readIntent()) ?? this.#intent;
     await this.#writeIntent(intent);
     await this.#listen();
+    this.#settingsTimer = setInterval(() => {
+      if ([...this.#connections].some((connection) => connection.role === "viewer" && connection.wantsVideo)) void this.#readSettings();
+    }, this.#options.settingsEveryMs ?? SETTINGS_READ_EVERY_MS);
+    this.#settingsTimer.unref?.();
     void this.#boot(intent);
+  }
+
+  #readSettings(): Promise<void> {
+    const driver = this.#options.driver;
+    if (!driver.readSettings || this.#switching || this.#controlBusy !== null || this.#state.power.is !== "booted") return Promise.resolve();
+    if (this.#readingSettings) return this.#readingSettings;
+    const began = this.#clock.monotonic();
+    this.#readingSettings = driver
+      .readSettings(AbortSignal.any([this.#stop.signal, AbortSignal.timeout(DEADLINES_MS.control)]))
+      .then(() => this.#log(`settings: read back in ${Math.round(this.#clock.monotonic() - began)} ms`))
+      .catch((error) => this.#log(`settings: not read: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => (this.#readingSettings = null));
+    return this.#readingSettings;
   }
 
   async #boot(intent: Intent): Promise<void> {
@@ -289,6 +302,7 @@ export class DeviceServer {
     for (const source of ["agent", "person"] as const) this.#lanes[source].cancel(new Refused("superseded", "The device server is stopping."));
     if (this.#geometryWait) clearTimeout(this.#geometryWait.timer);
     if (this.#stillTimer) clearTimeout(this.#stillTimer);
+    if (this.#settingsTimer) clearInterval(this.#settingsTimer);
     for (const connection of this.#connections) connection.ws.close(1001, "the device server is stopping");
     await new Promise<void>((resolve) => (this.#server ? this.#server.close(() => resolve()) : resolve()));
     this.#options.driver.close();
@@ -351,6 +365,7 @@ export class DeviceServer {
     if (role === "control" && !this.#takeLease(connection)) return;
     if (role === "viewer") ws.send("MODE websockets");
     this.#send(connection, { verb: "BB_DEVICE_HELLO", hello: this.#hello(connection) });
+    if (role !== "input") void this.#readSettings();
   }
 
   #takeLease(connection: Connection): boolean {
@@ -554,7 +569,7 @@ export class DeviceServer {
         await this.#agentInput(request.input);
         return { type: "done" };
       case "control":
-        return this.#control(request.id, request.control);
+        return this.#control(request.id, request.control, connection);
       case "result":
         return { type: "done" };
     }
@@ -798,10 +813,13 @@ export class DeviceServer {
     for (const connection of this.#connections) if (connection.role === "viewer") this.#send(connection, { verb: "BB_DEVICE_TOUCH", contacts, by, generation });
   }
 
-  async #control(id: string, control: DeviceControl): Promise<AnswerResult> {
+  async #control(id: string, control: DeviceControl, from: Connection): Promise<AnswerResult> {
     const model = deviceModel(this.#state.model);
     const support = supports(model, control);
     if (!support.supported) throw new Refused(support.error.code, support.error.words);
+    const personHasControl = this.#owner.holder === "person";
+    const byAgent = from.role === "control";
+    if (byAgent && personHasControl && control.action !== "install") throw new Refused("person-has-control", PERSON_HAS_CONTROL_WORDS);
     if (this.#controlBusy !== null) throw new Refused("busy", this.#switching ? `The box is switching to the ${this.#switching.to}. Try again when it has booted.` : "Another control is under way on this device. Try again when it has finished.");
     if (control.action !== "switch" && control.action !== "reboot") this.#booted();
     this.#controlBusy = id;
@@ -811,7 +829,7 @@ export class DeviceServer {
       this.#person.forget();
       await this.#liftAll(`the device is about to ${control.action.replace("_", " ")}`);
     }
-    const work = (control.action === "switch" ? this.#switch(id, control.device) : this.#options.driver.control(control, this.#stop.signal).then(() => this.#refresh())).finally(() => {
+    const work = (control.action === "switch" ? this.#switch(id, control.device) : this.#options.driver.control(control, this.#stop.signal, { personHasControl: byAgent && personHasControl }).then(() => this.#refresh())).finally(() => {
       this.#controlBusy = null;
       if (GEOMETRY_ACTIONS.has(control.action)) this.#geometryControlDone();
     });

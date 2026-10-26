@@ -7,6 +7,7 @@ import { RECORD_DIR } from "./record.ts";
 export const DEVICE_SERVER_FILES = [
   "src/core/device-models.ts",
   "src/core/device-parse.ts",
+  "src/core/device-settings.ts",
   "src/core/device.ts",
   "src/core/png.ts",
   "src/device/annexb.ts",
@@ -17,6 +18,7 @@ export const DEVICE_SERVER_FILES = [
   "src/device/h264-encoder.ts",
   "src/device/idb.ts",
   "src/device/input-lane.ts",
+  "src/device/ios-controls.ts",
   "src/device/ios-driver.ts",
   "src/device/ios-input.ts",
   "src/device/ios-video.ts",

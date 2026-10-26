@@ -219,3 +219,9 @@ export async function orientation(client: GrpcClient, signal?: AbortSignal): Pro
   const decoded = decode(IDB_SCHEMA, "idb.GetOrientationResponse", answer) as { orientation?: number };
   return ORIENTATIONS[decoded.orientation ?? 0] ?? null;
 }
+
+const SET_ORIENTATIONS: Readonly<Record<Orientation, number>> = { upright: 0, "upside-down": 1, "turned-left": 2, "turned-right": 3 };
+
+export async function setOrientation(client: GrpcClient, to: Orientation, signal?: AbortSignal): Promise<void> {
+  await client.unary(GRPC_METHODS.idb.setOrientation, encode(IDB_SCHEMA, "idb.SetOrientationRequest", { orientation: SET_ORIENTATIONS[to] }), { signal });
+}

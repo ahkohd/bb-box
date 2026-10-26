@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAnswer, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type OfferedDevice } from "../core/device.ts";
+import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAnswer, type DeviceControl, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type OfferedDevice } from "../core/device.ts";
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
-import { DeviceLink, DeviceLinkError } from "../core/device-link.ts";
+import { lostWords } from "../core/device-control.ts";
+import { controlDeadlineMs } from "../core/device-settings.ts";
+import { DeviceLink, DeviceLinkError, newRequestId } from "../core/device-link.ts";
 import type { ByteChannel, RunResult } from "../transports/types.ts";
 import type { DoctorCheck } from "../backends/types.ts";
 
@@ -11,6 +13,9 @@ export const HELLO_TRIES = 2;
 const SCRIPT_TIMEOUT_MS = 60_000;
 const DEVICE_HUB_CHECK_MS = 15_000;
 const BAD_KEY = (boxId: string) => `device-bad:${boxId}`;
+const ANSWER_MARGIN_MS = 15_000;
+const RESULT_ASK_MS = 10_000;
+const RESULT_POLL_MS = 1_000;
 
 export interface DeviceBoxes {
   find(boxId: string): Promise<BoxRecord | null>;
@@ -55,7 +60,6 @@ interface Held {
   owner: { readonly generation: number; readonly holder: ControlHolder } | null;
 }
 
-export const PERSON_HAS_CONTROL_WORDS = "A person has control of this box's device. Wait for them to hand it back, or take it back with computer_take_control when they ask.";
 
 export function wantsDevice(box: BoxRecord): boolean {
   const offer = box.capabilities.device;
@@ -164,6 +168,48 @@ export class DeviceServers {
     if (owner.changed) await this.#tellOwner(box);
     this.#touch(box.id);
     return link.request({ type: "input", input, owner: owner.generation }, { timeoutMs: SCRIPT_TIMEOUT_MS });
+  }
+
+  async control(box: BoxRecord, control: DeviceControl, options: { readonly id?: string; readonly signal?: AbortSignal } = {}): Promise<DeviceAnswer> {
+    const id = options.id ?? newRequestId();
+    const last = () => this.#lastState(box.id);
+    if (control.action !== "install" && this.#deps.personHasControl(box.id)) return { id, ok: false, error: { code: "person-has-control", words: PERSON_HAS_CONTROL_WORDS }, state: last() };
+    const deadline = controlDeadlineMs(control) + ANSWER_MARGIN_MS;
+    const began = Date.now();
+    const link = await this.#controlLink(box);
+    if (!link) return { id, ok: false, error: { code: "not-booted", words: `Box ${box.name}'s device server is not connected.` }, state: null };
+    const owner = this.#owner(box.id);
+    if (owner.changed) await this.#tellOwner(box);
+    this.#touch(box.id);
+    try {
+      const answer = await link.request({ type: "control", control }, { id, timeoutMs: deadline });
+      if (answer.ok || answer.error.code !== "in-progress") return answer;
+    } catch (error) {
+      if (!(error instanceof DeviceLinkError)) throw error;
+      this.#deps.log(`Box ${box.name}'s device server: the connection ended during request ${id} (${error.message}); asking for its result again`);
+    }
+    while (Date.now() - began < deadline && !options.signal?.aborted) {
+      const again = await this.#controlLink(box).catch(() => null);
+      if (again) {
+        const answer = await again.request({ type: "result" }, { id, timeoutMs: RESULT_ASK_MS }).catch(() => null);
+        if (answer && (answer.ok || answer.error.code !== "in-progress")) return answer;
+      }
+      await new Promise((resolve) => setTimeout(resolve, RESULT_POLL_MS));
+    }
+    return { id, ok: false, error: { code: "outcome-unknown", words: lostWords(control.action, last()) }, state: last() };
+  }
+
+  #lastState(boxId: string): DeviceState | null {
+    const link = this.#held.get(boxId)?.link;
+    if (link) return link.state;
+    const view = this.view(boxId);
+    return view.is === "connected" ? view.state : null;
+  }
+
+  async #controlLink(box: BoxRecord): Promise<DeviceLink | null> {
+    await this.ensure(box);
+    const link = this.#held.get(box.id)?.link;
+    return link && !link.closed ? link : null;
   }
 
   #retry(boxId: string): void {

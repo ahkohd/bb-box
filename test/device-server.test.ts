@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { Duplex } from "node:stream";
 import { after, describe, test } from "node:test";
-import { DEVICE_PROTOCOL, DEVICE_SERVER_VERSION, STILLS_EVERY_MS, stillsRequestText, testDeviceOffer, type DeviceControl, type OfferedDevices } from "../src/core/device.ts";
+import { DEVICE_PROTOCOL, DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, STILLS_EVERY_MS, stillsRequestText, testDeviceOffer, type DeviceControl, type OfferedDevices } from "../src/core/device.ts";
 import { DeviceLink, DeviceLinkError, type DeviceRole } from "../src/core/device-link.ts";
 import { parseDeviceServerMessage, parseDeviceState, parseIntent } from "../src/core/device-parse.ts";
 import type { DeviceDriver } from "../src/device/driver.ts";
@@ -32,7 +32,7 @@ function channelTo(path: string): Promise<ByteChannel> {
   });
 }
 
-async function started(options: { platform?: "ios" | "android"; driver?: DeviceDriver; intent?: unknown; deadlines?: Partial<Deadlines> } = {}) {
+async function started(options: { platform?: "ios" | "android"; driver?: DeviceDriver; intent?: unknown; deadlines?: Partial<Deadlines>; settingsEveryMs?: number } = {}) {
   const home = tempDir("device");
   const paths = devicePaths(home);
   const offer = testDeviceOffer(options.platform ?? "android");
@@ -42,7 +42,7 @@ async function started(options: { platform?: "ios" | "android"; driver?: DeviceD
     writeFileSync(paths.intent, JSON.stringify(options.intent));
   }
   const log: string[] = [];
-  const server = new DeviceServer({ paths, platform: offer.platform, devices: offer.devices as OfferedDevices, driver, version: DEVICE_SERVER_VERSION, log: (line) => log.push(line), deadlines: options.deadlines });
+  const server = new DeviceServer({ paths, platform: offer.platform, devices: offer.devices as OfferedDevices, driver, version: DEVICE_SERVER_VERSION, log: (line) => log.push(line), deadlines: options.deadlines, settingsEveryMs: options.settingsEveryMs });
   servers.push(server);
   await server.start();
   for (let tries = 0; server.state.power.is !== "booted" && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -120,6 +120,46 @@ describe("the device server", () => {
     assert.equal(home.ok, true);
     assert.equal(!back.ok && back.error.code, "busy");
     await link.close();
+  });
+
+  test("refuses the agent's controls while a person holds control, but not an install, nor the person's own from the input connection (063, 6.3)", async () => {
+    const { open, driver } = await started();
+    const control = await open("control", { started: 1, instance: "a" });
+    const input = await open("input");
+    assert.equal((await control.request({ type: "owner", generation: 1, holder: "person" })).ok, true);
+    const home = await control.request({ type: "control", control: { action: "home" } });
+    assert.deepEqual(!home.ok && home.error, { code: "person-has-control", words: PERSON_HAS_CONTROL_WORDS });
+    const install = await control.request({ type: "control", control: { action: "install", paths: ["/tmp/app.apk"] } });
+    assert.equal(install.ok, true);
+    const toolbar = await input.request({ type: "control", control: { action: "appearance", to: "dark" } });
+    assert.equal(toolbar.ok, true);
+    assert.deepEqual((driver as TestDriver).record.controls.map((each) => each.action), ["install", "appearance"]);
+    assert.equal((await control.request({ type: "owner", generation: 2, holder: "agent" })).ok, true);
+    assert.equal((await control.request({ type: "control", control: { action: "home" } })).ok, true);
+    await input.close();
+    await control.close();
+  });
+
+  test("reads the device's settings back when a client connects and every so often while a viewer watches, and not while none does", async () => {
+    let reads = 0;
+    class ReadingDriver extends TestDriver {
+      async readSettings(): Promise<void> {
+        reads++;
+      }
+    }
+    const { open, log } = await started({ platform: "ios", driver: new ReadingDriver("ios"), settingsEveryMs: 40 });
+    const control = await open("control", { started: 1, instance: "a" });
+    for (let tries = 0; reads < 1 && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(reads, 1, "one read as the control connection said hello");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(reads, 1, "no reads while no viewer watches");
+    const viewer = await open("viewer");
+    await viewer.send("START_VIDEO");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.ok(reads >= 4, `${reads} reads while a viewer watched`);
+    assert.ok(log.some((line) => /^settings: read back in \d+ ms$/.test(line)));
+    await viewer.close();
+    await control.close();
   });
 
   test("answers outcome-unknown, with the state read back, past a control's deadline", async () => {

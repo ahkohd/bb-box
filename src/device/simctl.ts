@@ -113,6 +113,33 @@ export class Simctl {
     await this.#spawn(udid, ["launchctl", on ? "enable" : "disable", `system/${label}`], signal);
   }
 
+  async ui(udid: string, option: "appearance" | "content_size", value?: string, signal?: AbortSignal): Promise<string> {
+    const args = ["ui", udid, option, ...(value === undefined ? [] : [value])];
+    return (await this.#must(value === undefined ? `read the device's ${option.replace("_", " ")}` : `set the device's ${option.replace("_", " ")} to ${value}`, args, { signal, timeoutMs: 30_000 })).trim();
+  }
+
+  async statusBar(udid: string, args: readonly string[], signal?: AbortSignal): Promise<string> {
+    return this.#must(args[0] === "list" ? "read the status bar's overrides" : args[0] === "clear" ? "clear the status bar's overrides" : "override the status bar", ["status_bar", udid, ...args], { signal, timeoutMs: 30_000 });
+  }
+
+  async location(udid: string, to: { readonly latitude: number; readonly longitude: number } | null, signal?: AbortSignal): Promise<void> {
+    await this.#must(to ? "set the device's location" : "clear the device's location", ["location", udid, ...(to ? ["set", `${to.latitude},${to.longitude}`] : ["clear"])], { signal, timeoutMs: 30_000 });
+  }
+
+  async install(udid: string, app: string, signal?: AbortSignal): Promise<void> {
+    await this.#must(`install ${app}`, ["install", udid, app], { signal, timeoutMs: 300_000 });
+  }
+
+  async installed(udid: string, bundleId: string, signal?: AbortSignal): Promise<boolean> {
+    return (await this.#simctl(["get_app_container", udid, bundleId], { signal, timeoutMs: 30_000 })).code === 0;
+  }
+
+  async notifyState(udid: string, name: string, signal?: AbortSignal): Promise<number | null> {
+    const printed = await this.#spawn(udid, ["notifyutil", "-g", name], signal);
+    const value = Number(printed.trim().split(/\s+/).at(-1));
+    return Number.isFinite(value) ? value : null;
+  }
+
   async setClipboard(udid: string, text: string): Promise<void> {
     await this.#must("set the device's clipboard", ["pbcopy", udid], { input: text, env: UTF8, timeoutMs: 30_000 });
   }

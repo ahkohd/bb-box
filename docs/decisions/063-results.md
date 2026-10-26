@@ -11,8 +11,10 @@ image, are [after them](#unit-32-the-ios-image): E1 (boot times), E13, E20
 driver, are [after them](#unit-42-the-ios-driver): E5 (idb's stream), the
 stream of each model, recovery, slimming kept and turned off, Device Hub,
 and E4 (a suspend). Units 5.1's shared parts and 5.2's, for input on iOS,
-are [at the end](#units-51-and-52-input-shared-and-on-ios): E8, E9, E14,
-E21, and how iOS pastes.
+are [after them](#units-51-and-52-input-shared-and-on-ios): E8, E9, E14,
+E21, and how iOS pastes. Unit 6.3's, for the iOS controls and box_device,
+are [at the end](#unit-63-the-ios-controls-and-box_device): each action,
+its read-back, requests by ID, and E11.
 
 ## How they were measured
 
@@ -867,3 +869,132 @@ way, every 16 ms until it lifts.
 - The pages and the probe app are small; an app's own paste handling,
   such as one that reads the pasteboard itself, was not tried.
 
+
+## Unit 6.3: the iOS controls and box_device
+
+Measured on 26 October 2026 in one Tart macos-desktop box at the ios kind's
+default size, 6 cores and 16 GiB, cloned from the standard macOS image
+(build.20261022-033224-9658): macOS 27.0, Xcode 27.0, iOS 27.0 (24A434),
+idb_companion 1.7.7. The ios kind was not offered on the production BB that
+day, so the box ran the iOS image's layer, `build-ios.sh`, and its record,
+as unit 4.2's boxes did. The device server was version 7 from this unit's
+checkout, delivered as bb-box delivers it.
+
+The harness, `controls.ts` in
+[scripts/measure/ios](../../scripts/measure/ios/README.md), runs the
+plugin's own `DeviceServers` and box_device's own parsing and words against
+the box's device server, so each line below is what the agent reads. BB's
+server and the panel are not in these numbers. Each effect was seen in a
+screenshot taken after the answer.
+
+### Each action, on the iPhone 18 Pro
+
+Server time is from the request to its answer, read-back included.
+
+| Action | Server time | Seen |
+| --- | --- | --- |
+| home | 563 ms | Settings closed to the Home Screen |
+| lock | 1.7 s, until the lock state reads locked | the lock screen; the state says asleep |
+| wake | 1.2 s: Home twice, as the first shows the lock screen | the Home Screen |
+| rotate, turn left or right | 260 to 270 ms | Safari turned; the stream 2622x1206 sideways, 1206x2622 upright |
+| rotate, to an orientation | 242 to 245 ms | the same |
+| appearance | 381 to 444 ms | dark and light |
+| text_size, each of the 12 content sizes | 356 to 486 ms | each read back as set; the largest made Safari's toolbar larger |
+| text_size, larger, smaller, default | 462 to 487 ms | a step up or down, and `large` |
+| status_bar clean | 459 ms | 9:41, full signal and Wi-Fi, a full battery |
+| battery, 42%, not charging | 488 ms | the status bar's battery at 42% |
+| status_bar live | 334 ms | the time and battery live again; the answer says "The status bar is live again, so the battery shows the Mac's." |
+| location, set and cleared | 239 to 241 ms | in Maps, the blue dot at Elizabeth Tower, then at Tokyo Tower |
+| install, a .app built for the simulator | 6.4 to 6.8 s; 0.3 to 0.6 s again | the app installed and launched |
+| switch, to the iPhone 17 and back | 8.1 to 8.4 s | each model with its own settings |
+| reboot | 6.7 to 8.8 s, to the first frame | the device back, with its settings |
+| back, recents, posture, network | refused at once, unsupported | |
+
+On the iPad Pro 13-inch (M5), rotate, appearance, text_size and the status
+bar did the same; its Home Screen turns, so the stream went to 2752x2064.
+
+Refused with bad-value, in words: a turn with `to` as well, a font scale on
+iOS, half of latitude and longitude or of level and charging, a latitude of
+91, a parameter of another action, a device build of the app, an `.ipa`,
+and a path with no app. A model the box does not offer is unknown-device.
+
+### Read-backs
+
+Each command 10 times, one after another, in the box:
+
+| Read | Time |
+| --- | --- |
+| `simctl ui appearance` | 89 to 119 ms |
+| `simctl ui content_size` | 90 to 110 ms |
+| `simctl status_bar list` | 89 to 104 ms |
+| the lock state, `notifyutil -g com.apple.springboard.lockstate` | 102 to 117 ms |
+
+The server reads appearance, text size and the lock state together, in 122
+to 126 ms on the iPhone and 180 to 357 ms on the iPad, when a client
+connects, after each control, and every 10 s while a viewer watches. After
+`xcrun simctl ui booted appearance dark` in a shell, a watching viewer's
+state said dark, changed outside bb-box, 1.0 s later.
+
+### Requests by ID
+
+- **Twice with one ID:** a turn left sent twice with one ID turned the
+  device once; the second answer and the result asked for after were the
+  first, twice over.
+- **A lost connection:** with the plugin's connection ended 50 and 150 ms
+  after it sent a turn, the plugin connected again and asked for the answer
+  by the request's ID. The device turned once, and the answer came 1.3 s
+  after the request.
+- **A person's control:** the plugin refused Home at once; the server
+  refuses it too, which its tests check. An install of an app the device had was refused; an
+  install of an app it did not have ran.
+
+### E11: which way left and right turn
+
+idb's screenshot is the device's own framebuffer, upright whichever way the
+device is held. After `turn: "left"` the picture's top was at the
+framebuffer's right edge, on the iPhone in Safari and on the iPad's Home
+Screen, whose dock was at the left edge. So the device's top points left: a
+quarter turn anticlockwise, the way the toolbar's left arrow points, and
+right is clockwise. idb's `set_orientation` names these LANDSCAPE_LEFT and
+LANDSCAPE_RIGHT, and `get_orientation` reads them back.
+
+### What this found
+
+- **simctl reads two sizes in another case:** `extra-Small` and `Small`,
+  though it takes them as `extra-small` and `small`. The server reads
+  without regard to case.
+- **A reboot leaves idb_companion's HID connection dead:** "The dtuhidd
+  connection ... has been invalidated". So Home, lock and every touch after
+  a reboot failed. The reboot now starts a new companion. The server's
+  restart of a device that stopped by itself keeps its companion, and so
+  may meet the same.
+- **A locked simulator keeps drawing its lock screen.**
+  `hasBlankedScreen` turns 1 only 1 to 3 s after the lock, but the lock
+  state at once, so the state's `awake` is the lock state.
+- **`charged` at 100% draws a charging bolt,** which a clean status bar
+  should not have, so a battery not charging is `discharging`.
+- **A reboot clears the status bar's overrides,** and so does switching
+  back to a model, which boots it again. bb-box sets them again, and the
+  location, which simctl cannot read back, each time it attaches to the
+  device.
+- **An iPhone does not draw upside down,** so a turn to upside-down leaves
+  the picture as it was, and its answer waits its 1 s for a new picture.
+- **The stream's first frame after a turn comes after `set_orientation`
+  answers.** A turn's answer waits up to 1 s for it, so the state it gives
+  has the new size: 0.25 s in Safari.
+- **A large screenshot overflowed the parser:** the base64 check backtracked
+  through a 5 MB PNG of the iPad held sideways and ran out of stack. It is
+  now one character class and a length check, and a 12 MB still parses.
+- **`simctl io screenshot` turns with the app,** as the stream does, and
+  idb's does not. That is a way to the sideways screenshots unit 5.2 left
+  for 7.1, at a cost not measured here.
+- **Recents:** no way was found. Cmd+Tab, Cmd and the up arrow, a slow swipe
+  up from the bottom edge, a hold there, and Home pressed twice 100 and
+  250 ms apart all left Settings in front. Recents stays refused on iOS.
+
+### Not checked here
+
+- Through the panel: the toolbar is unit 6.4, and BB's panel needs a
+  person's session.
+- Android: its driver's controls are unit 6.2's. The shared parts, the
+  parsing, `supports` and the words, cover Android's actions in tests only.

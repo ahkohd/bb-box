@@ -21,6 +21,10 @@ export interface PinchGesture {
   readonly ms: number;
 }
 
+export interface ControlContext {
+  readonly personHasControl: boolean;
+}
+
 export interface DeviceDriver {
   attach(target: OfferedDevice, signal: AbortSignal): Promise<"reattached" | "booted">;
   shutdown(signal: AbortSignal): Promise<void>;
@@ -33,7 +37,8 @@ export interface DeviceDriver {
   prepareInput(): Promise<void>;
   setClipboard(text: string): Promise<void>;
   clipboard(): Promise<string>;
-  control(control: DeviceControl, signal: AbortSignal): Promise<void>;
+  control(control: DeviceControl, signal: AbortSignal, context: ControlContext): Promise<void>;
+  readSettings?(signal: AbortSignal): Promise<void>;
   screenshot(): Promise<Uint8Array>;
   tree(): Promise<readonly DeviceElement[]>;
   readBack(): Promise<DeviceState>;
@@ -41,9 +46,11 @@ export interface DeviceDriver {
   close(): void;
 }
 
+export type DriverErrorCode = "unsupported" | "failed" | "not-booted" | "bad-value" | "person-has-control";
+
 export class DriverError extends Error {
-  readonly code: "unsupported" | "failed" | "not-booted";
-  constructor(code: "unsupported" | "failed" | "not-booted", words: string) {
+  readonly code: DriverErrorCode;
+  constructor(code: DriverErrorCode, words: string) {
     super(words);
     this.name = "DriverError";
     this.code = code;

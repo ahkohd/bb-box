@@ -7,7 +7,8 @@ model and encoder (E6, E7, E17), and unit 3.1's of the Android template
 (E2, E13, E19, E24), and unit 3.2's of the iOS image (E1, E13, E20, E24,
 and its slimming), and unit 4.2's of the iOS driver (E4, E5), and units
 5.1's shared parts and 5.2's of input on iOS (E8, E9, E14, E21, and how iOS
-pastes), are in [063 results](063-results.md). Built
+pastes), and unit 6.3's of the iOS controls (E11, and each read-back), are
+in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
 [Android emulator boxes](../research/android-emulator-boxes.md). Extends

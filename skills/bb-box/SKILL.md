@@ -202,6 +202,41 @@ Open an app or a URL with `computer_launch`, then read a window with
   itself, such as a GPUI app, has no accessibility tree: drive it with
   `computer_screenshot` and pixel actions.
 
+## A device's controls
+
+`box_device` controls an ios box's device as the panel's toolbar does: Home,
+lock and wake, rotate, light or dark, text size, location, the status bar
+and its battery, install an app, switch to another model, and reboot.
+`box_status` lists the actions the device has. Each answer says what
+changed, how long it took, and the device's state after it, read back from
+the device.
+
+- `rotate` with `turn: "left"` turns the device a quarter turn
+  anticlockwise, the way the toolbar's left arrow points; `to` turns it to
+  one orientation. An app that does not turn, such as an iPhone's Home
+  Screen, stays upright on a device held sideways, and the screen keeps
+  its size.
+- `text_size` takes iOS's own content sizes, such as `accessibility-large`,
+  or `larger`, `smaller` and `default`, which is `large`.
+- `status_bar: "clean"` shows 9:41, full signal and a full battery, for
+  screenshots. `battery` on iOS changes only the status bar's picture: an
+  app that reads the battery sees the Mac's. `status_bar: "live"` clears
+  every override, the battery's too.
+- `location` sets the simulated location. Leave out both `latitude` and
+  `longitude` to clear it. iOS cannot read it back, so the state shows what
+  bb-box set.
+- `install` takes one `.app` in the box, built for the simulator with
+  `xcodebuild -sdk iphonesimulator`.
+- `switch` changes the model. Each model keeps its own apps and settings.
+- While a person has control of the box, `box_device` refuses every action
+  but installing an app the device does not have. Wait for the hand-back.
+- iOS has no Back, Recents or network control, and no iOS device folds.
+  `xcrun simctl` in `box_run` does what `box_device` does not, such as
+  `xcrun simctl privacy booted grant photos <bundle id>` to give an app the
+  photo library, and `xcrun simctl push booted <bundle id> payload.json` to
+  send it a push notification. An appearance or text size set this way
+  shows in the state as changed outside bb-box.
+
 ## Recording a desktop
 
 `box_record` records a desktop box's screen, on Linux, macOS or Windows,

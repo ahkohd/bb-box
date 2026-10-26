@@ -415,6 +415,8 @@ export function stillsAsked(message: string): boolean | null {
   return match ? match[1] === "true" : null;
 }
 
+export const PERSON_HAS_CONTROL_WORDS = "A person has control of this box's device. Wait for them to hand it back, or take it back with computer_take_control when they ask.";
+
 export const LOCATION_RANGE = { latitude: 90, longitude: 180 } as const;
 export const BATTERY_LEVELS = { least: 0, most: 100 } as const;
 
@@ -574,15 +576,19 @@ function valueProblem(model: DeviceModel, control: DeviceControl): Support {
   }
 }
 
+export function actionSupport(model: DeviceModel, action: DeviceAction): Support {
+  const reason = lacking(model, action);
+  return reason === null ? SUPPORTED : refused("unsupported", `${reason} The ${model.name}'s actions are: ${actionsOf(model).join(", ")}.`);
+}
+
 export function supports(model: DeviceModel, control: DeviceControl): Support {
-  const reason = lacking(model, control.action);
-  if (reason !== null) return refused("unsupported", `${reason} The ${model.name}'s actions are: ${actionsOf(model).join(", ")}.`);
-  return valueProblem(model, control);
+  const support = actionSupport(model, control.action);
+  return support.supported ? valueProblem(model, control) : support;
 }
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 6;
+export const DEVICE_SERVER_VERSION = 7;
 
 export function speaksProtocol(protocol: number): boolean {
   return protocol >= DEVICE_PROTOCOLS.least && protocol <= DEVICE_PROTOCOLS.most;
