@@ -7,6 +7,8 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { OfferedDevices } from "../core/device.ts";
+import { parseOfferedDevices } from "../core/device-parse.ts";
 
 /**
  * The entry a Windows image's record lists among its tools where its VirtIO
@@ -45,6 +47,7 @@ export interface ImageRecord {
   /** A project's image's script, and how long it ran. */
   readonly layer: { readonly sha256: string; readonly seconds: number } | null;
   readonly sizeGiB: number | null;
+  readonly devices: OfferedDevices | null;
 }
 
 const text = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
@@ -59,6 +62,8 @@ export function parseImageRecord(value: unknown): ImageRecord | null {
   if (typeof record.contract !== "number" || !Number.isInteger(record.contract) || !kind || !build || !built || Number.isNaN(Date.parse(built))) return null;
   const tools = typeof record.tools === "object" && record.tools !== null && !Array.isArray(record.tools) ? record.tools : {};
   const layer = record.layer as { sha256?: unknown; seconds?: unknown } | null;
+  const devices = record.devices === undefined || record.devices === null ? null : parseOfferedDevices(record.devices);
+  if (devices && !devices.ok) return null;
   return {
     contract: record.contract,
     image: text(record.image) ?? "standard",
@@ -78,6 +83,7 @@ export function parseImageRecord(value: unknown): ImageRecord | null {
         ? { sha256: layer.sha256, seconds: layer.seconds }
         : null,
     sizeGiB: typeof record.sizeGiB === "number" ? record.sizeGiB : null,
+    devices: devices && devices.value,
   };
 }
 

@@ -30,6 +30,7 @@ function record(days = 1, changes: Partial<ImageRecord> = {}): ImageRecord {
     nvidia: "580.95.05",
     layer: null,
     sizeGiB: 6.2,
+    devices: null,
     ...changes,
   };
 }
@@ -63,6 +64,7 @@ test("a record reads from its JSON and from a description's last JSON line (049)
     nvidia: null,
     layer: null,
     sizeGiB: null,
+    devices: null,
   });
 });
 

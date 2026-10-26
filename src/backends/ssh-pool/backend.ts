@@ -117,6 +117,7 @@ function linuxOffer(docker: boolean): BoxKind {
       displays: [],
       computerUse: null,
       enrol: true,
+      device: null,
     },
     readyTimeoutMs: READY_TIMEOUT_MS,
   };
@@ -144,6 +145,7 @@ function macOffer(desktop: boolean, features: readonly string[], video = false):
       displays: desktop ? [{ id: "desktop", protocol: "rfb", resizable: false }, ...(video ? [MAC_VIDEO] : [])] : [],
       computerUse: desktop ? MAC_CUA : null,
       enrol: true,
+      device: null,
     },
     readyTimeoutMs: MAC_READY_TIMEOUT_MS,
   };

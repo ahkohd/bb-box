@@ -3170,7 +3170,7 @@ test("a box whose video is shown only by choice, as a Tart Mac's, offers video b
   };
   const byChoice: BoxKind = {
     ...FAKE_SELKIES_KIND,
-    capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" ? { ...display, byChoice: true } : display)) },
+    capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" && display.shows !== "device" ? { ...display, byChoice: true } : display)) },
   };
   const chosen = await state(byChoice);
   assert.deepEqual([chosen.video, chosen.videoByDefault], [true, false]);
@@ -3344,7 +3344,7 @@ test("a video display the backend resizes, as the GPU desktop with xrandr, takes
 test("a video display told a size first, as Selkies on Sway, hears it before the backend resizes the desktop, and the size the desktop kept after a resize that fails (the owner's note of 18 October 2026)", async (t) => {
   const kind: BoxKind = {
     ...FAKE_SELKIES_KIND,
-    capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" ? { ...display, tellSize: "first" as const } : display)) },
+    capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" && display.shows !== "device" ? { ...display, tellSize: "first" as const } : display)) },
   };
   const { harness, app, world } = await start(undefined, { resize: "backend", kinds: [kind] });
   t.after(() => harness.lifecycle.dispose());
@@ -4046,7 +4046,7 @@ for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_C
   test(`a video desktop (cursor ${how}) leaves the box's cursor out while a person holds control, and draws it while the agent has control`, async (t) => {
     const kind: BoxKind = {
       ...FAKE_SELKIES_KIND,
-      capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" ? { ...display, cursor: how } : display)) },
+      capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" && display.shows !== "device" ? { ...display, cursor: how } : display)) },
     };
     const { harness, box, world } = await desktopBox({ kind });
     t.after(() => harness.lifecycle.dispose());
@@ -4138,7 +4138,7 @@ test("a Wayland desktop's pointer script switches Sway's and GTK's cursor theme 
 test("a video desktop whose box's image cannot leave the cursor out is never told, whatever its kind says (060)", async (t) => {
   const kind: BoxKind = {
     ...FAKE_SELKIES_KIND,
-    capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" ? { ...display, cursor: "stream" as const } : display)) },
+    capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" && display.shows !== "device" ? { ...display, cursor: "stream" as const } : display)) },
   };
   const { harness, box, world } = await desktopBox({ kind });
   t.after(() => harness.lifecycle.dispose());
@@ -4186,7 +4186,7 @@ test("a macOS desktop whose server moves no clipboard has it through pbcopy and 
   });
   const { displays, command } = FAKE_KINDS[1]!.capabilities;
   // A fake box has no launchctl asuser, so its commands count as in the desktop session already; in-box's wrapper is 030's.
-  const capabilities = { ...FAKE_KINDS[1]!.capabilities, os: "macos" as const, command: { ...command!, inDesktopSession: true }, displays: [{ ...displays[0]!, resizable: false, clipboard: "commands" as const }] };
+  const capabilities = { ...FAKE_KINDS[1]!.capabilities, os: "macos" as const, command: { ...command!, inDesktopSession: true }, displays: [{ id: displays[0]!.id, protocol: "rfb" as const, resizable: false, clipboard: "commands" as const }] };
   const kind: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities };
   const { harness, app, box, tool } = await desktopBox({ kind });
   t.after(() => harness.lifecycle.dispose());
@@ -4247,7 +4247,7 @@ test("a desktop's clipboard is read once at a time, and a read that began before
     process.env.PATH = path;
   });
   const { displays, command } = FAKE_KINDS[1]!.capabilities;
-  const capabilities = { ...FAKE_KINDS[1]!.capabilities, os: "macos" as const, command: { ...command!, inDesktopSession: true }, displays: [{ ...displays[0]!, resizable: false, clipboard: "commands" as const }] };
+  const capabilities = { ...FAKE_KINDS[1]!.capabilities, os: "macos" as const, command: { ...command!, inDesktopSession: true }, displays: [{ id: displays[0]!.id, protocol: "rfb" as const, resizable: false, clipboard: "commands" as const }] };
   const kind: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities };
   const { harness, app, box, tool } = await desktopBox({ kind });
   t.after(() => harness.lifecycle.dispose());
@@ -4287,7 +4287,7 @@ test("a macOS desktop's clipboard comes from a watcher in the box once it runs, 
     process.env.PATH = path;
   });
   const { displays, command } = FAKE_KINDS[1]!.capabilities;
-  const capabilities = { ...FAKE_KINDS[1]!.capabilities, os: "macos" as const, command: { ...command!, inDesktopSession: true }, displays: [{ ...displays[0]!, resizable: false, clipboard: "commands" as const }] };
+  const capabilities = { ...FAKE_KINDS[1]!.capabilities, os: "macos" as const, command: { ...command!, inDesktopSession: true }, displays: [{ id: displays[0]!.id, protocol: "rfb" as const, resizable: false, clipboard: "commands" as const }] };
   const kind: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities };
   const { harness, app, box, tool } = await desktopBox({ kind });
   let disposed = false;
@@ -5502,4 +5502,27 @@ test("an enrolment that cannot reach BB's server says so, and how to fix it, bef
     `BB's server is not reachable from Namespace: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). ${curl}`,
   );
   assert.equal(withReachHint("Enrolling box quiet-oak failed: exit 1", "Namespace"), "Enrolling box quiet-oak failed: exit 1");
+});
+
+test("box_acquire and bb box acquire take a device, refuse it on other kinds, and refuse a device kind no backend offers (063)", async (t) => {
+  const { harness, app, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const ios = await tool("box_acquire", { kind: "ios" });
+  assert.ok(isError(ios));
+  assert.match(text(ios), /^No backend offers ios boxes \(iOS Simulator\) now\. The kinds you can acquire are: linux, linux-desktop\.\n\nNext: Call box_list to see the kinds you can acquire\.$/);
+  const linux = await tool("box_acquire", { kind: "linux", device: "iPhone 18 Pro" });
+  assert.ok(isError(linux));
+  assert.match(text(linux), /A linux box has no device\. device is only for ios and android boxes, such as iPhone 18 Pro or Pixel 8\./);
+  const wrong = await tool("box_acquire", { kind: "android", device: "iPhone 17" });
+  assert.match(text(wrong), /The iPhone 17 is an iOS device, not an Android one\. The Android devices are: Pixel 8, Pixel Fold, Pixel Tablet\.\n\nNext: Pick one of the devices this names, or leave device out for the kind's first\.$/);
+  const cli = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD, "--device", "Pixel 8"]);
+  assert.equal(cli.exitCode, 1);
+  assert.match(cli.stderr ?? "", /A linux box has no device\..*\(unsupported\)/s);
+  const cliIos = await harness.behavior.runCli(["acquire", "ios", "--thread", THREAD, "--device", "iPhone 17"]);
+  assert.equal(cliIos.exitCode, 1);
+  assert.match(cliIos.stderr ?? "", /No backend offers ios boxes \(iOS Simulator\) now\..*\(unknown_kind\)/s);
+  assert.deepEqual(await app.boxes.list(THREAD), [], "nothing was acquired");
+  const list = text(await tool("box_list", {}));
+  assert.doesNotMatch(list, /\bios\b|\bandroid\b|Devices:/, "box_list lists no kind no backend offers");
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })), "a box with no device is as before");
 });

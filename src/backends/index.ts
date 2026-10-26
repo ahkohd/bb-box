@@ -117,6 +117,7 @@ const PROMISES: readonly [string, (kind: BoxKind) => unknown][] = [
   ["computer-use driver", (kind) => kind.capabilities.computerUse?.driver ?? "none"],
   ["enrolment", (kind) => kind.capabilities.enrol],
   ["having a desktop", (kind) => kind.capabilities.displays.length > 0],
+  ["device platform", (kind) => kind.capabilities.device?.platform ?? "none"],
   ["required features", (kind) => [...kind.requires].sort().join(", ") || "none"],
 ];
 

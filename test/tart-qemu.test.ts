@@ -178,6 +178,7 @@ test("offers windows-arm64-desktop only with a Windows image, as a Windows deskt
     displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands", refresh: "viewer", quality: 4 }],
     computerUse: { driver: "cua", version: "0.30.4", socket: CUA_PIPE },
     enrol: true,
+    device: null,
   });
   assert.equal(kind.readyTimeoutMs, 3 * 60_000);
   assert.match(kind.description, /x64 apps run under Windows' emulation, more slowly; x64 drivers do not/);

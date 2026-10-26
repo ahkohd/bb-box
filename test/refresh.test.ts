@@ -30,6 +30,7 @@ const record = (build: string, tools: Record<string, string>, changes: Partial<I
   nvidia: null,
   layer: null,
   sizeGiB: 2.4,
+  devices: null,
   ...changes,
 });
 const OLD = record("build.20260926-060000-a1b2", { node: "24.21.0", "claude-code": "2.1.283" });

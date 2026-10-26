@@ -302,7 +302,7 @@ export function msbKinds(config: MsbConfig, arch: Arch = "x86_64"): BoxKind[] {
       label: "Linux",
       description: "A Linux box for builds, backend services and the agent's own work.",
       requires: [],
-      capabilities: { os: "linux", arch: "x86_64", gpu: false, features: docker, command: MSB_COMMAND, displays: [], computerUse: null, enrol: true },
+      capabilities: { os: "linux", arch: "x86_64", gpu: false, features: docker, command: MSB_COMMAND, displays: [], computerUse: null, enrol: true, device: null },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
     "linux-desktop-cpu": {
@@ -321,6 +321,7 @@ export function msbKinds(config: MsbConfig, arch: Arch = "x86_64"): BoxKind[] {
         displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
         computerUse: CUA_DRIVER,
         enrol: true,
+        device: null,
       },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
@@ -329,7 +330,7 @@ export function msbKinds(config: MsbConfig, arch: Arch = "x86_64"): BoxKind[] {
       label: "Linux on arm64",
       description: "A Linux box on an arm64 host, such as a Mac with Apple silicon. amd64 container images and x86_64 binaries do not run there.",
       requires: [],
-      capabilities: { os: "linux", arch: "arm64", gpu: false, features: docker, command: MSB_COMMAND, displays: [], computerUse: null, enrol: true },
+      capabilities: { os: "linux", arch: "arm64", gpu: false, features: docker, command: MSB_COMMAND, displays: [], computerUse: null, enrol: true, device: null },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
     "linux-arm64-desktop-cpu": {
@@ -349,6 +350,7 @@ export function msbKinds(config: MsbConfig, arch: Arch = "x86_64"): BoxKind[] {
         displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
         computerUse: CUA_DRIVER,
         enrol: true,
+        device: null,
       },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },

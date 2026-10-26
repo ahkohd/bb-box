@@ -146,6 +146,7 @@ const KIND: BoxKind = {
     displays: [{ id: "desktop", protocol: "rfb", resizable: true, clipboard: "commands" }, { ...WINDOWS_VIDEO, cursor: "stream" }],
     computerUse: CUA_DRIVER,
     enrol: false,
+    device: null,
   },
   readyTimeoutMs: READY_TIMEOUT_MS,
 };
@@ -172,6 +173,7 @@ const LINUX_KIND: BoxKind = {
     displays: [],
     computerUse: null,
     enrol: true,
+    device: null,
   },
   readyTimeoutMs: READY_TIMEOUT_MS,
 };
