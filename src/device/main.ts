@@ -74,6 +74,8 @@ class AbsentDriver implements DeviceDriver {
   }
   async touch(): Promise<void> {}
   async key(): Promise<void> {}
+  async paste(): Promise<void> {}
+  async prepareInput(): Promise<void> {}
   async setClipboard(): Promise<void> {}
   async clipboard(): Promise<string> {
     return "";

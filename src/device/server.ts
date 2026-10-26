@@ -29,6 +29,9 @@ import {
 } from "../core/device.ts";
 import { deviceServerMessageText, parseDeviceRequest, parseIntent } from "../core/device-parse.ts";
 import { DriverError, type DeviceDriver, type EncodedFrame } from "./driver.ts";
+import { InputLane, splitByCharacters, TEXT_BATCH } from "./input-lane.ts";
+import { keyOfCharacter, typedOnUsKeyboard } from "./keys.ts";
+import { PersonInput, waitFor } from "./person-input.ts";
 import type { DevicePaths } from "./paths.ts";
 import { ServerWebSocket, type WsMessage } from "./ws.ts";
 
@@ -40,6 +43,12 @@ const H264 = 1;
 const FRAME_HEADER_BYTES = 12;
 const SUPERSEDED_CLOSE = 4000;
 const TAP_MS = 60;
+export const PASTE_PUT_BACK_MS = 100;
+const GESTURE_STEP_MS = 16;
+const GEOMETRY_WAIT_MS = 130_000;
+const GEOMETRY_SETTLE_MS = 1_500;
+const GEOMETRY_ACTIONS: ReadonlySet<DeviceControl["action"]> = new Set(["rotate", "posture", "switch", "reboot"]);
+const MODIFIER_NAMES = { shift: "Shift", control: "Control", alt: "Alt", meta: "Meta" } as const;
 
 export type Role = "viewer" | "input" | "control";
 
@@ -68,10 +77,29 @@ interface Connection {
   stills: boolean;
   needsKey: boolean;
   frameId: number;
-  readonly clipboardParts: Map<string, string[]>;
 }
 
-const CLIPBOARD_PARTS_MOST = 4096;
+type InputSource = "agent" | "person";
+
+export type TextRun = { readonly keys: boolean; readonly text: string };
+
+export function textRuns(text: string, typesAsKeys: (character: string) => boolean): readonly TextRun[] {
+  const runs: { keys: boolean; text: string }[] = [];
+  for (const character of text) {
+    const keys = typesAsKeys(character);
+    const last = runs.at(-1);
+    if (last && last.keys === keys) last.text += character;
+    else runs.push({ keys, text: character });
+  }
+  const joinsPastes = (run: TextRun) => run.keys && !/[\p{L}\p{N}]/u.test(run.text);
+  for (let at = 1; at < runs.length - 1; at++) {
+    if (!joinsPastes(runs[at]!) || runs[at - 1]!.keys || runs[at + 1]!.keys) continue;
+    runs[at - 1]!.text += runs[at]!.text + runs[at + 1]!.text;
+    runs.splice(at, 2);
+    at--;
+  }
+  return runs;
+}
 
 function watchesStills(connection: Connection): boolean {
   return connection.role === "viewer" && connection.wantsVideo && connection.stills;
@@ -143,7 +171,12 @@ export class DeviceServer {
   #controlBusy: string | null = null;
   #lease: Connection | null = null;
   #owner = { generation: 0, holder: "agent" as "agent" | "person" };
-  #inputQueue: Promise<unknown> = Promise.resolve();
+  readonly #lanes: { readonly [Source in InputSource]: InputLane };
+  readonly #person: PersonInput;
+  readonly #keysDown = new Set<string>();
+  #touching: InputSource | null = null;
+  #seenGeneration: number | null = null;
+  #geometryWait: { readonly from: number; readonly timer: ReturnType<typeof setTimeout> } | null = null;
   #lastStateText = "";
   #stillTimer: ReturnType<typeof setTimeout> | null = null;
   #lastStillAt = -Infinity;
@@ -155,6 +188,20 @@ export class DeviceServer {
     this.#intent = { target: first.model, switching: null } as Intent;
     this.#state = placeholderState(deviceModel(first.model), { is: "booting", since: this.#clock.now() }, this.#clock.now(), "The device is starting.");
     options.driver.onChange(() => void this.#refresh());
+    const lane = (source: InputSource) =>
+      new InputLane({ paste: (text, signal) => this.#paste(text, signal, source), failed: (error) => this.#log(`${source}: a paste did not finish: ${error instanceof Error ? error.message : String(error)}`) });
+    this.#lanes = { agent: lane("agent"), person: lane("person") };
+    this.#person = new PersonInput({
+      lane: this.#lanes.person,
+      geometry: () => this.#state.geometry,
+      waitingForGeometry: () => this.#geometryWait !== null || this.#switching !== null,
+      touch: (contacts) => this.#touch(contacts, "person"),
+      typesAsKeys: (character) => this.#typesAsKeys(character),
+      key: (key, down) => this.#key(key, down),
+      setClipboard: (text) => this.#options.driver.setClipboard(text),
+      acting: () => this.#personActs(),
+      log: (line) => this.#log(line),
+    });
   }
 
   #log(line: string): void {
@@ -206,11 +253,10 @@ export class DeviceServer {
   async #boot(intent: Intent): Promise<void> {
     const target = this.#offered(intent.target)!;
     try {
-      await this.#options.driver.touch([]).catch(() => undefined);
       const how = await this.#options.driver.attach(target, AbortSignal.any([this.#stop.signal, AbortSignal.timeout(DEADLINES_MS.switch)]));
       this.#log(`device: ${how === "reattached" ? "reattached to" : "booted"} the ${target.model}`);
-      await this.#options.driver.touch([]).catch(() => undefined);
       if (intent.switching) await this.#writeIntent({ target: intent.target, switching: null } as Intent);
+      await this.#liftAll("the server started");
     } catch (error) {
       const words = error instanceof Error ? error.message : String(error);
       if (intent.switching) {
@@ -240,6 +286,8 @@ export class DeviceServer {
 
   async stop(): Promise<void> {
     this.#stop.abort();
+    for (const source of ["agent", "person"] as const) this.#lanes[source].cancel(new Refused("superseded", "The device server is stopping."));
+    if (this.#geometryWait) clearTimeout(this.#geometryWait.timer);
     if (this.#stillTimer) clearTimeout(this.#stillTimer);
     for (const connection of this.#connections) connection.ws.close(1001, "the device server is stopping");
     await new Promise<void>((resolve) => (this.#server ? this.#server.close(() => resolve()) : resolve()));
@@ -296,7 +344,7 @@ export class DeviceServer {
       return;
     }
     const started = Number(upgrade.query.get("started") ?? "0");
-    const connection: Connection = { ws, role, started: Number.isFinite(started) ? started : 0, instance: upgrade.query.get("instance") ?? "", wantsVideo: false, stills: false, needsKey: true, frameId: 0, clipboardParts: new Map() };
+    const connection: Connection = { ws, role, started: Number.isFinite(started) ? started : 0, instance: upgrade.query.get("instance") ?? "", wantsVideo: false, stills: false, needsKey: true, frameId: 0 };
     this.#connections.add(connection);
     ws.onClose = () => this.#closed(connection);
     ws.onMessage = (message) => this.#message(connection, message);
@@ -327,7 +375,7 @@ export class DeviceServer {
   #closed(connection: Connection): void {
     this.#connections.delete(connection);
     if (this.#lease === connection) this.#lease = null;
-    if (connection.role === "input") void this.#options.driver.touch([]).catch(() => undefined);
+    if (connection.role === "input") this.#personStops("its input connection ended");
   }
 
   #message(connection: Connection, message: WsMessage): void {
@@ -336,7 +384,7 @@ export class DeviceServer {
       this.#viewerMessage(connection, message);
       return;
     }
-    if (connection.role === "input" && this.#clipboardMessage(connection, message)) return;
+    if (connection.role === "input" && this.#person.message(message)) return;
     if (!message.startsWith("BB_DEVICE ")) return;
     const parsed = parseDeviceRequest(message);
     if (!parsed.ok) {
@@ -367,40 +415,6 @@ export class DeviceServer {
       connection.needsKey = true;
       if (connection.stills) this.#stillsDue();
       else this.#options.driver.video().keyframe();
-    }
-  }
-
-  #clipboardMessage(connection: Connection, message: string): boolean {
-    const fields = message.split(",");
-    const [verb, id = "", data = ""] = fields;
-    const set = (base64: string) => {
-      const text = Buffer.from(base64, "base64").toString("utf8");
-      void this.#options.driver
-        .setClipboard(text)
-        .then(() => this.#log(`clipboard: the person's, ${[...text].length} characters, is the device's now`))
-        .catch((error) => this.#log(`clipboard: could not set the device's: ${error}`));
-    };
-    switch (verb) {
-      case "cw":
-        set(fields[1] ?? "");
-        return true;
-      case "cws":
-        connection.clipboardParts.set(id, []);
-        return true;
-      case "cwd": {
-        const parts = connection.clipboardParts.get(id);
-        if (parts && parts.length < CLIPBOARD_PARTS_MOST) parts.push(Buffer.from(data, "base64").toString("latin1"));
-        else connection.clipboardParts.delete(id);
-        return true;
-      }
-      case "cwe": {
-        const parts = connection.clipboardParts.get(id);
-        connection.clipboardParts.delete(id);
-        if (parts) set(Buffer.from(parts.join(""), "latin1").toString("base64"));
-        return true;
-      }
-      default:
-        return false;
     }
   }
 
@@ -437,6 +451,7 @@ export class DeviceServer {
   }
 
   #frame(frame: EncodedFrame): void {
+    if (this.#seenGeneration !== frame.generation) this.#newGeneration(frame.generation);
     this.#stillsDue();
     for (const connection of this.#connections) {
       if (!connection.wantsVideo || connection.stills) continue;
@@ -507,9 +522,7 @@ export class DeviceServer {
       case "owner":
         this.#leaseOnly(connection, "set who has control");
         if (request.generation < this.#owner.generation) throw new Refused("superseded", `Control's owner is at generation ${this.#owner.generation} already, past ${request.generation}.`);
-        this.#owner = { generation: request.generation, holder: request.holder };
-        this.#inputQueue = Promise.resolve();
-        await this.#options.driver.touch([]).catch(() => undefined);
+        await this.#setOwner(request.generation, request.holder);
         return { type: "done" };
       case "record":
         this.#leaseOnly(connection, "record the device");
@@ -523,17 +536,22 @@ export class DeviceServer {
         this.#booted();
         return { type: "tree", elements: await this.#options.driver.tree(), generation: this.#state.geometry?.generation ?? 0 };
       case "touch":
+        this.#personOnly(connection);
         this.#booted();
-        await this.#options.driver.touch(request.contacts);
+        await this.#personTouches(request.contacts, request.generation);
         return { type: "done" };
       case "text":
+        this.#personOnly(connection);
         this.#booted();
-        await this.#typeText(request.text);
+        this.#personActs();
+        await this.#lanes.person.run((signal) => this.#committedText(request.text, signal));
         return { type: "done" };
       case "input":
+        this.#leaseOnly(connection, "send the agent's input");
+        if (this.#owner.holder === "person") throw new Refused("person-has-control", "A person has control of this box's device, so the agent's input was dropped.");
         if (request.owner < this.#owner.generation) throw new Refused("superseded", "Control changed hands since this input was sent, so it was dropped.");
         this.#booted();
-        await this.#queueInput(request.input);
+        await this.#agentInput(request.input);
         return { type: "done" };
       case "control":
         return this.#control(request.id, request.control);
@@ -547,71 +565,237 @@ export class DeviceServer {
     if (this.#state.power.is !== "booted") throw new Refused("not-booted", `The ${this.#state.model} is ${stateWords(this.#state)}. Try again in a few seconds.`);
   }
 
-  async #typeText(text: string): Promise<void> {
+  #personOnly(connection: Connection): void {
+    if (connection.role !== "input") throw new Refused("bad-value", "Touches and committed text come from the person's input connection. Send the agent's as an input request.");
+  }
+
+  async #touch(contacts: readonly TouchContact[], by: InputSource): Promise<void> {
+    await this.#options.driver.touch(contacts);
+    this.#touching = contacts.length ? by : null;
+    this.#echo(contacts, by);
+  }
+
+  async #key(key: string, down: boolean): Promise<void> {
+    await this.#options.driver.key(key, down);
+    if (down) this.#keysDown.add(key);
+    else this.#keysDown.delete(key);
+  }
+
+  async #liftAll(why: string): Promise<void> {
+    const keys = [...this.#keysDown];
+    this.#keysDown.clear();
+    const touching = this.#touching;
+    this.#touching = null;
+    await this.#options.driver.touch([]).catch(() => undefined);
+    if (touching) this.#echo([], touching);
+    for (const key of keys.reverse()) await this.#options.driver.key(key, false).catch(() => undefined);
+    if (touching || keys.length) this.#log(`input: lifted ${touching ? `the ${touching}'s touch` : "no touch"} and ${keys.length} key${keys.length === 1 ? "" : "s"}, as ${why}`);
+  }
+
+  #stopSource(source: InputSource, why: string): void {
+    this.#lanes[source].cancel(new Refused(source === "agent" ? "person-has-control" : "superseded", why));
+    if (source === "person") this.#person.forget();
+  }
+
+  #personActs(): void {
+    if (!this.#lanes.agent.busy) return;
+    this.#stopSource("agent", "A person acted on the device, so the agent's input under way was stopped.");
+    void this.#liftAll("a person acted on the device");
+  }
+
+  #personStops(why: string): void {
+    this.#stopSource("person", `The person's input stopped: ${why}.`);
+    void this.#liftAll(why);
+  }
+
+  async #setOwner(generation: number, holder: "agent" | "person"): Promise<void> {
+    if (generation === this.#owner.generation && holder === this.#owner.holder) return;
+    const was = this.#owner.holder;
+    this.#owner = { generation, holder };
+    if (holder === "person") {
+      this.#stopSource("agent", "A person took control of the device, so the agent's input was stopped.");
+      await this.#liftAll("a person took control");
+      void this.#options.driver.prepareInput().catch((error) => this.#log(`input: could not get the device's input ready: ${error instanceof Error ? error.message : String(error)}`));
+    } else if (was === "person") {
+      this.#stopSource("person", "The person handed control back.");
+      await this.#liftAll("the person handed control back");
+    } else {
+      this.#stopSource("agent", "Control changed hands since this input was sent, so it was dropped.");
+      await this.#liftAll("control changed hands");
+    }
+    this.#log(`owner: ${holder}, generation ${generation}`);
+  }
+
+  async #personTouches(contacts: readonly TouchContact[], generation: number): Promise<void> {
+    if (contacts.length && (this.#geometryWait || generation !== this.#state.geometry?.generation)) {
+      await this.#lanes.person.run(() => this.#touch([], "person"));
+      throw new Refused("stale-geometry", "The device turned or changed since that touch began, so it was ended.");
+    }
+    this.#personActs();
+    await this.#lanes.person.run(() => this.#touch(contacts, "person"));
+  }
+
+  #typesAsKeys(character: string): boolean {
+    return typedOnUsKeyboard(character) || !!this.#options.driver.typesAsKeys?.(character);
+  }
+
+  async #committedText(text: string, signal: AbortSignal): Promise<void> {
+    if ([...text].every((character) => this.#typesAsKeys(character))) {
+      await this.#typeKeys(text, signal);
+      return;
+    }
+    for (const part of splitByCharacters(text, TEXT_BATCH.most)) await this.#paste(part, signal, "person");
+  }
+
+  async #typeKeys(text: string, signal: AbortSignal): Promise<void> {
     for (const character of text) {
-      await this.#options.driver.key(character, true);
-      await this.#options.driver.key(character, false);
+      signal.throwIfAborted();
+      const key = keyOfCharacter(character);
+      await this.#key(key, true);
+      await this.#key(key, false);
     }
   }
 
-  #queueInput(input: DeviceInput): Promise<void> {
-    const run = this.#inputQueue.then(() => this.#input(input));
-    this.#inputQueue = run.catch(() => undefined);
-    return run;
+  async #typeText(text: string, signal: AbortSignal, source: InputSource): Promise<void> {
+    for (const run of textRuns(text, (character) => this.#typesAsKeys(character))) {
+      if (run.keys) await this.#typeKeys(run.text, signal);
+      else for (const part of splitByCharacters(run.text, TEXT_BATCH.most)) await this.#paste(part, signal, source);
+    }
   }
 
-  async #input(input: DeviceInput): Promise<void> {
+  async #paste(text: string, signal: AbortSignal, source: InputSource): Promise<void> {
+    const driver = this.#options.driver;
+    const saved = await driver.clipboard().catch(() => null);
+    await driver.setClipboard(text);
+    if (signal.aborted) {
+      if (saved !== null) await driver.setClipboard(saved).catch(() => undefined);
+      this.#log(`${source}: a paste of ${[...text].length} characters was abandoned before its paste key, and the clipboard put back`);
+      throw signal.reason;
+    }
+    await driver.paste();
+    await new Promise((resolve) => setTimeout(resolve, PASTE_PUT_BACK_MS));
+    if (saved !== null && saved !== text) await driver.setClipboard(saved).catch((error) => this.#log(`${source}: the clipboard was not put back after a paste: ${error instanceof Error ? error.message : String(error)}`));
+  }
+
+  #newGeneration(generation: number): void {
+    const before = this.#seenGeneration;
+    this.#seenGeneration = generation;
+    if (this.#geometryWait && generation !== this.#geometryWait.from) {
+      clearTimeout(this.#geometryWait.timer);
+      this.#geometryWait = null;
+    }
+    if (before === null) return;
+    if (this.#touching) {
+      if (this.#touching === "person") this.#person.forget();
+      void this.#liftAll(`the picture changed to generation ${generation}`);
+    }
+  }
+
+  #awaitGeometry(ms = GEOMETRY_WAIT_MS, from = this.#seenGeneration ?? this.#state.geometry?.generation ?? 0): void {
+    if (this.#geometryWait) clearTimeout(this.#geometryWait.timer);
+    const timer = setTimeout(() => (this.#geometryWait = null), ms);
+    timer.unref?.();
+    this.#geometryWait = { from, timer };
+  }
+
+  #geometryControlDone(): void {
+    const wait = this.#geometryWait;
+    if (wait) this.#awaitGeometry(GEOMETRY_SETTLE_MS, wait.from);
+  }
+
+  #agentInput(input: DeviceInput): Promise<void> {
+    void this.#options.driver.prepareInput().catch(() => undefined);
+    const lane = this.#lanes.agent;
+    if (input.type === "text") return lane.run((signal) => this.#typeText(input.text, signal, "agent"));
+    return lane.run(async (signal) => {
+      try {
+        await this.#agentGesture(input, signal);
+      } catch (error) {
+        if (this.#touching === "agent") await this.#touch([], "agent").catch(() => undefined);
+        throw error;
+      }
+    });
+  }
+
+  async #agentGesture(input: Exclude<DeviceInput, { readonly type: "text" }>, signal: AbortSignal): Promise<void> {
     const driver = this.#options.driver;
     const generation = this.#state.geometry?.generation;
+    const current = () => {
+      if (this.#geometryWait || this.#state.geometry?.generation !== generation) throw new Refused("stale-geometry", "The device turned or changed since that point was taken. Take another screenshot.");
+    };
     const point = (at: { readonly x: number; readonly y: number; readonly generation: number }): TouchContact => {
       if (at.generation !== generation) throw new Refused("stale-geometry", "The device turned or changed since that point was taken. Take another screenshot.");
+      current();
       return { id: 0, x: at.x, y: at.y };
     };
-    const hold = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const hold = (ms: number) => waitFor(ms, signal);
+    const steps = (ms: number) => Math.max(2, Math.round(ms / GESTURE_STEP_MS));
     switch (input.type) {
       case "tap":
-        await driver.touch([point(input.at)]);
+        await this.#touch([point(input.at)], "agent");
         await hold(TAP_MS);
-        await driver.touch([]);
+        await this.#touch([], "agent");
         return;
       case "long_press":
-        await driver.touch([point(input.at)]);
+        await this.#touch([point(input.at)], "agent");
         await hold(input.ms);
-        await driver.touch([]);
+        await this.#touch([], "agent");
         return;
       case "swipe": {
         const from = point(input.from);
         const to = point(input.to);
-        const steps = Math.max(2, Math.round(input.ms / 16));
-        for (let step = 0; step <= steps; step++) {
-          await driver.touch([{ id: 0, x: from.x + ((to.x - from.x) * step) / steps, y: from.y + ((to.y - from.y) * step) / steps }]);
-          await hold(input.ms / steps);
+        const count = steps(input.ms);
+        for (let step = 0; step <= count; step++) {
+          current();
+          await this.#touch([{ id: 0, x: from.x + ((to.x - from.x) * step) / count, y: from.y + ((to.y - from.y) * step) / count }], "agent");
+          await hold(input.ms / count);
         }
-        await driver.touch([]);
+        await this.#touch([], "agent");
         return;
       }
       case "pinch": {
         const centre = point(input.centre);
-        const steps = Math.max(2, Math.round(input.ms / 16));
-        for (let step = 0; step <= steps; step++) {
-          const half = (input.from + ((input.to - input.from) * step) / steps) / 2;
-          await driver.touch([
-            { id: 0, x: centre.x - half, y: centre.y },
-            { id: 1, x: centre.x + half, y: centre.y },
-          ]);
-          await hold(input.ms / steps);
+        if (driver.pinch) {
+          const ends = (span: number): readonly TouchContact[] => [
+            { id: 0, x: centre.x - span / 2, y: centre.y },
+            { id: 1, x: centre.x + span / 2, y: centre.y },
+          ];
+          this.#echo(ends(input.from), "agent");
+          await driver.pinch({ centre, from: input.from, to: input.to, ms: input.ms }, signal);
+          this.#echo(ends(input.to), "agent");
+          this.#echo([], "agent");
+          return;
         }
-        await driver.touch([]);
+        const count = steps(input.ms);
+        for (let step = 0; step <= count; step++) {
+          current();
+          const half = (input.from + ((input.to - input.from) * step) / count) / 2;
+          await this.#touch(
+            [
+              { id: 0, x: centre.x - half, y: centre.y },
+              { id: 1, x: centre.x + half, y: centre.y },
+            ],
+            "agent",
+          );
+          await hold(input.ms / count);
+        }
+        await this.#touch([], "agent");
         return;
       }
-      case "key":
-        await driver.key(input.key, true);
-        await driver.key(input.key, false);
+      case "key": {
+        const modifiers = input.modifiers.map((modifier) => MODIFIER_NAMES[modifier]);
+        for (const modifier of modifiers) await this.#key(modifier, true);
+        await this.#key(input.key, true);
+        await this.#key(input.key, false);
+        for (const modifier of modifiers.reverse()) await this.#key(modifier, false);
         return;
-      case "text":
-        await this.#typeText(input.text);
-        return;
+      }
     }
+  }
+
+  #echo(contacts: readonly TouchContact[], by: InputSource): void {
+    const generation = this.#state.geometry?.generation ?? 0;
+    for (const connection of this.#connections) if (connection.role === "viewer") this.#send(connection, { verb: "BB_DEVICE_TOUCH", contacts, by, generation });
   }
 
   async #control(id: string, control: DeviceControl): Promise<AnswerResult> {
@@ -621,8 +805,15 @@ export class DeviceServer {
     if (this.#controlBusy !== null) throw new Refused("busy", this.#switching ? `The box is switching to the ${this.#switching.to}. Try again when it has booted.` : "Another control is under way on this device. Try again when it has finished.");
     if (control.action !== "switch" && control.action !== "reboot") this.#booted();
     this.#controlBusy = id;
+    if (GEOMETRY_ACTIONS.has(control.action)) {
+      this.#awaitGeometry();
+      this.#stopSource("agent", `The device is about to ${control.action.replace("_", " ")}, so the agent's input under way was stopped.`);
+      this.#person.forget();
+      await this.#liftAll(`the device is about to ${control.action.replace("_", " ")}`);
+    }
     const work = (control.action === "switch" ? this.#switch(id, control.device) : this.#options.driver.control(control, this.#stop.signal).then(() => this.#refresh())).finally(() => {
       this.#controlBusy = null;
+      if (GEOMETRY_ACTIONS.has(control.action)) this.#geometryControlDone();
     });
     const deadline = deadlineFor(control, { ...DEADLINES_MS, ...this.#options.deadlines });
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -655,7 +846,7 @@ export class DeviceServer {
     const signal = AbortSignal.any([this.#stop.signal, AbortSignal.timeout(DEADLINES_MS.switch)]);
     try {
       await this.#step(id, from, device, "stopping", since);
-      await driver.touch([]).catch(() => undefined);
+      await this.#liftAll("the box switches its device");
       await driver.shutdown(signal);
       await this.#step(id, from, device, "booting", since);
       await driver.attach(target, signal);

@@ -14,12 +14,23 @@ export interface VideoSource {
   keyframe(): void;
 }
 
+export interface PinchGesture {
+  readonly centre: { readonly x: number; readonly y: number };
+  readonly from: number;
+  readonly to: number;
+  readonly ms: number;
+}
+
 export interface DeviceDriver {
   attach(target: OfferedDevice, signal: AbortSignal): Promise<"reattached" | "booted">;
   shutdown(signal: AbortSignal): Promise<void>;
   video(): VideoSource;
   touch(contacts: readonly TouchContact[]): Promise<void>;
+  pinch?(gesture: PinchGesture, signal: AbortSignal): Promise<void>;
   key(key: string, down: boolean): Promise<void>;
+  typesAsKeys?(character: string): boolean;
+  paste(): Promise<void>;
+  prepareInput(): Promise<void>;
   setClipboard(text: string): Promise<void>;
   clipboard(): Promise<string>;
   control(control: DeviceControl, signal: AbortSignal): Promise<void>;

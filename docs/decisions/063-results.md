@@ -8,9 +8,11 @@ and E7 (x264 or OpenH264). Unit 3.1's, for the Android template, are
 E13 (typing), E19 (the gRPC port) and E24 (disk). Unit 3.2's, for the iOS
 image, are [after them](#unit-32-the-ios-image): E1 (boot times), E13, E20
 (Xcode's Run and Device Hub), E24, and its slimming. Unit 4.2's, for the iOS
-driver, are [at the end](#unit-42-the-ios-driver): E5 (idb's stream), the
+driver, are [after them](#unit-42-the-ios-driver): E5 (idb's stream), the
 stream of each model, recovery, slimming kept and turned off, Device Hub,
-and E4 (a suspend).
+and E4 (a suspend). Units 5.1's shared parts and 5.2's, for input on iOS,
+are [at the end](#units-51-and-52-input-shared-and-on-ios): E8, E9, E14,
+E21, and how iOS pastes.
 
 ## How they were measured
 
@@ -662,3 +664,206 @@ Xcode's Run could not be driven from a command: Xcode refused Apple events
 from a program run by `box_run`, whose shell, not the program, is the one
 macOS asks about, so Device Hub was opened directly, which is what Run
 does (E20).
+
+## Units 5.1 and 5.2: input, shared and on iOS
+
+Measured on 26 October 2026 in one ios box on Tart, the iPhone 18 Pro, 6
+cores and 16 GiB, from the iOS image build.20261026-091450-8505: macOS 27.0,
+Xcode 27.0, iOS 27.0 (24A434), idb_companion 1.7.7. The device server was
+version 6 from this unit's checkout, delivered as bb-box delivers it.
+
+Two ways in:
+
+- **Straight to idb.** Probes on idb_companion's socket sent HID events and
+  read the device's accessibility tree, for what idb and iOS do.
+- **As the panel does, without BB's server.** A harness in
+  [scripts/measure/ios](../../scripts/measure/ios/README.md) ran the
+  plugin's own relay (`SelkiesRelay` and `SelkiesBox`) beside the device
+  server, the panel's own video client (`SelkiesSession`) in Chrome 156,
+  headless, on the box's macOS, and a control connection standing in for
+  the plugin. Chrome's DevTools protocol pressed the pointer, the wheel and
+  keys, and ran an input method, as a person would. BB's server, the
+  network and another computer's browser are not in these numbers. Through
+  BB is the lead's check.
+
+A page served from the box's macOS, open in the device's Safari, reported
+each touch, pinch, scroll and field value to its server's log.
+
+### E14: tap to screen, in the browser
+
+From the browser's `pointerdown` to the first decoded frame whose pixel
+beside the tap changed, on a page that turns black or white at each
+touch, 100 taps 0.6 s apart:
+
+| Load in the box | Taps seen | Median | 95th percentile | Worst |
+| --- | --- | --- | --- | --- |
+| Idle | 100 of 100 | 64 ms | 83 ms | 93 ms |
+| Four `xcodebuild` loops of the probe app, the box's 6 cores 89 to 97% busy | 100 of 100 | 52 ms | 81 ms | 96 ms |
+
+The first idle run's driver missed its own first tap, as it read the pixel
+before the page had a frame to compare with; the frames show that tap
+landed at 111 ms. The driver now reads the pixel first. With BB's own
+path, about 25 ms (060), these are about 80 to 110 ms at the median, inside
+063's bar.
+
+### The first tap after taking control
+
+The device server opens idb's HID stream as a person takes control, and as
+the agent sends its first input.
+
+| Case | Times | First tap to screen |
+| --- | --- | --- |
+| Control handed back, then taken again | 5 | 72, 82, 74, 93 and 98 ms |
+| idb_companion killed, started again by the server, then control taken | 2 runs of 20 taps | 20 of 20 seen in each; the first 95 and 83 ms |
+
+The research's first tap took 578 ms, and the slimming research saw 15 of
+20 taps land in the first stream after the companion started. Neither
+happened here, with the stream opened ahead.
+
+### E8: the space each takes touches in
+
+- **idb takes points in the screen as the app draws it.** Safari turned
+  left and turned right alike: idb's point (100, 300) reached the page at
+  (38, 190), past a 62-point inset and 110 points of toolbar.
+- **The stream turns with what is drawn,** to 2622x1206 while Safari is
+  sideways, and stays 1206x2622 while the Home Screen stays upright on a
+  phone held sideways. So a point in the stream's pixels, divided by the
+  model's scale, is idb's point in every case tried, and the server needs
+  no turn of its own on iOS.
+- **Through the viewer,** taps at (300, 200) and (100, 300) in the
+  sideways picture's points reached the page at (238, 90) and (38, 190);
+  upright, (300, 200) reached (300, 138), past its 62-point inset.
+- **A turn ends idb's HID stream** at the next event: idb answers 'Simulator
+  display changed during the operation', and that event is lost. From one
+  sideways to the other, the stream's size does not change, so no new
+  geometry generation ends the gesture first. The driver now sends the
+  touch events of the last 300 ms again on a new stream: 5 of 5 taps after
+  turns landed, against 0 of 1 before.
+- **Not settled here:** an app held upright while the device turns, and an
+  agent's screenshot. idb's screenshot stays 1206x2622 with the picture on
+  its side while the stream is 2622x1206, and a stream started while the
+  device is sideways sends one first key frame of 1206x2622, on its side,
+  then 2622x1206. Both are for unit 6.1's frame and 7.1's screenshots.
+
+### E9: two fingers on iOS
+
+idb's HID stream has one finger. Its `HIDPinch` event is a whole pinch: a
+centre, a scale, a start radius and a duration, as two touches.
+
+- Straight to idb, a pinch of scale 2 at the page's centre reached the page
+  as two touches, scale 2.00.
+- Through the viewer, Alt and drag from (241, 477) to (301, 557) reached the
+  page as two touches mirrored about the centre, scale 2.759 against 2.76
+  from the pointer's path.
+- So on iOS a pinch from a person runs when its fingers lift, from the
+  span at its start and its end, over the time it took, 0.2 to 1 s. It does
+  not follow the fingers live. The agent's pinch is one `HIDPinch`.
+
+### How iOS pastes, and E21
+
+063 expected an Allow Paste alert for the server to answer. iOS 27 in the
+simulator shows none:
+
+- **Cmd+V from outside the device is refused silently.** With text put on
+  the device's pasteboard by `simctl pbcopy`, HID Cmd+V pasted nothing, in
+  the probe app and in Safari. Cmd+A, Cmd+C and Cmd+V of text copied inside
+  the device worked. The device's log said why: `pasted` asked to prompt,
+  and SpringBoard refused it, as `pasted` lacks the entitlement
+  `com.apple.springboard.CFUserNotification`. TCC recorded the app's
+  `kTCCServicePasteboard` as 3, limited.
+- **Allowed, it pastes.** With that row set to 2, allowed, in the device's
+  own `TCC.db`, Cmd+V pasted at once, in the app and in Safari, with no
+  restart. This is iOS's per-app 'Paste from Other Apps: Allow'.
+- **The keyboard's suggestion and the edit menu also paste,** with no
+  prompt, but neither serves: the suggestion shows only when a field begins
+  editing, and the menu needs a tap on the caret, which moves it.
+
+So the server pastes this way: put the text on the device's pasteboard,
+allow pasting from other apps for the apps running in the device, press
+Cmd+V on the HID stream, then put the pasteboard back, and the apps' paste
+setting 5 s later.
+
+After each such paste, iOS shows '<app> pasted from CoreSimulatorBridge'
+at the top of the screen. While it shows, the device takes no keys:
+
+| Keys after a paste | Runs | Lost |
+| --- | --- | --- |
+| 16 letters, 240 ms apart, from 0.1 s after the paste | 3 | the first 10, to 2.4 s, in each |
+| 2 taps at 0.3 and 0.6 s | 1 | none |
+| 16 letters after a swipe up on the notice | 2 | none |
+
+So the server holds keys, not touches, for 2.6 s after a paste. A swipe up
+dismisses the notice, but the notice has no element in the accessibility
+tree to find, so the server never swipes blind.
+
+E21, putting the pasteboard back: 15 pastes, 3 at each of 0, 10, 25, 50
+and 100 ms after the paste key's release, each then followed by `pbcopy`
+of other text. All 15 pasted the new text. `pbcopy` itself takes 100 to
+170 ms, so the server waits 100 ms more and puts the pasteboard back.
+
+What else pasting does on iOS:
+
+- **iOS adds a space before pasted text that follows a word,** its smart
+  paste: 'üße' pasted after 'Gr' gave 'Gr üße', an emoji pasted after
+  Arabic letters gained a space, and so did こんにちは pasted after '!'.
+  Japanese after Japanese, and Arabic after Japanese, gained none.
+- **So letters with an accent go as keys,** with Option as a Mac's keyboard
+  types them: Option+u then u gave ü, Option+s ß, Option+e then e é,
+  Option+n then n ñ, Option+c ç: 'grüßéñç' arrived exactly.
+- **And the agent's text is pasted in as few pieces as it can.** A run of
+  spaces and punctuation between two pastes joins them: 'Grüße, señor. 日本
+  😀 مرحبا!' arrived exactly in 3.0 s, as keys and one paste, and the
+  device's pasteboard held its own text again after.
+- **A person's text from keys is gathered for 0.5 s,** not 063's 150 ms, so
+  a slow typist's word is one paste, not several with spaces between.
+
+### Control's owner
+
+The plugin tells the server control's owner, with a generation that only
+rises, at each change and on each new control connection.
+
+- **Halfway through the agent's swipe.** A 2 s swipe up the page's list
+  scrolled it to 230 when left alone. Taken over 0.8 s in, the list stopped
+  at 76, the touch was lifted at once, and the agent's answer was
+  `person-has-control`. Its next input was refused the same way, and one
+  sent under the old generation after hand-back was refused as
+  `superseded`.
+- **Halfway through the agent's paste.** Taken over 150 ms into a paste of
+  '中断されるテキスト', the paste was dropped before its paste key: the field
+  stayed empty, the device's pasteboard held 'kept on the device' again,
+  and the server logged that it put it back.
+- **A reload while a person holds control.** The harness was stopped and
+  started again mid-drag, as bb-box is in a reload: the server lifted the
+  person's touch as the old input connection ended, the new instance took
+  the lease and said the person had control, the viewer connected again by
+  itself, and its next tap landed.
+
+### The person's text and pointer
+
+Through the viewer, into the probe app's field and a page in Safari:
+
+| What the person did | What arrived |
+| --- | --- |
+| An input method composing 'nihongo', then committing 日本語 | 日本語, as one text message, one paste |
+| Arabic letters as keys, as from an Arabic keyboard layout | مرحبا, as one paste |
+| An emoji, inserted as the Mac's emoji picker inserts | 😀 |
+| Dead keys, through Type text: ' crème brûlée, naïve façade' | exactly, as keys |
+| Cmd+V of ' Привет' from the computer's clipboard | ' Привет', left on the device's pasteboard, as on desktops |
+| One wheel notch, in Settings | a row moved 94 points; another notch, 95; two back, to where it began |
+| A trackpad's 160 pixels | a row moved 64 points, with no fling |
+| Alt and drag | a pinch, as under E9 |
+
+The first wheel version lifted 100 ms after its last move, and iOS flung
+the list to its end: it keeps a drag's speed when the finger stops sending.
+The swipe now eases out, and the finger reports its place, one pixel either
+way, every 16 ms until it lifts.
+
+### What limits these numbers
+
+- One device, the iPhone 18 Pro, on one Mac; the iPad and the iPhone 17 were
+  not driven.
+- Chrome was headless on the box's own macOS, so decoding shared the box's
+  cores with the device and the builds.
+- The pages and the probe app are small; an app's own paste handling,
+  such as one that reads the pasteboard itself, was not tried.
+

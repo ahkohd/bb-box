@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   DEVICE_HUB_PROCESS,
   deviceModel,
+  screensOf,
   type DeviceControl,
   type DeviceElement,
   type DeviceState,
@@ -16,8 +17,9 @@ import {
   type TouchContact,
   type VideoSize,
 } from "../core/device.ts";
-import { DriverError, type DeviceDriver, type VideoSource } from "./driver.ts";
+import { DriverError, type DeviceDriver, type PinchGesture, type VideoSource } from "./driver.ts";
 import { Companion, orientation, screenshot, videoStream } from "./idb.ts";
+import { IosInput, PasteboardAccess, typesWithOption } from "./ios-input.ts";
 import { IosVideo } from "./ios-video.ts";
 import type { DevicePaths } from "./paths.ts";
 import { Simctl, type SimDevice } from "./simctl.ts";
@@ -46,6 +48,7 @@ export interface IosDriverOptions {
   readonly clockTickMs?: number;
   readonly clock?: IosDriverClock;
   readonly processes?: (name: string) => Promise<number[]>;
+  readonly access?: PasteboardAccess;
 }
 
 export interface DeviceHubKills {
@@ -97,6 +100,7 @@ export class IosDriver implements DeviceDriver {
   readonly #clock: IosDriverClock;
   readonly #companion: Companion;
   readonly #video: IosVideo;
+  readonly #input: IosInput;
   readonly #listeners = new Set<() => void>();
   readonly #processes: (name: string) => Promise<number[]>;
   readonly #deviceHubFile: string;
@@ -127,6 +131,12 @@ export class IosDriver implements DeviceDriver {
       sized: (size) => this.#sized(size),
       log: options.log,
       monotonic: () => this.#clock.monotonic(),
+    });
+    this.#input = new IosInput({
+      client: () => this.#companion.client,
+      scale: () => screensOf(this.#model())[0].scale,
+      access: options.access ?? new PasteboardAccess({ udid: () => this.#udid, log: options.log }),
+      log: options.log,
     });
   }
 
@@ -199,6 +209,7 @@ export class IosDriver implements DeviceDriver {
     if (!running) this.#log(`device: the ${target.model} (${device.udid}) booted in ${((this.#clock.monotonic() - began) / 1000).toFixed(1)} s`);
     const rebooted = await this.#slimming(target, device.udid, signal);
     const companion = await this.#companion.ensure(device.udid, signal);
+    if (companion === "started") this.#input.close();
     this.#physical = await orientation(this.#companion.client, signal).catch(() => null) ?? "upright";
     if (this.#video.running) this.#video.restart(`idb_companion was ${companion}`);
     else this.#video.start();
@@ -254,6 +265,7 @@ export class IosDriver implements DeviceDriver {
 
   #sized(size: VideoSize): number {
     this.#generation++;
+    this.#input.close();
     this.#log(`video: the ${this.#target?.model ?? "device"} streams at ${size.width}x${size.height}, generation ${this.#generation}`);
     void this.#readOrientation();
     this.#changed();
@@ -271,7 +283,7 @@ export class IosDriver implements DeviceDriver {
   async #recover(error: unknown): Promise<void> {
     if (this.#busy || !this.#udid || this.#closed.signal.aborted) return;
     if (!(await this.#companion.alive())) this.#log(`companion: idb_companion is gone (${words(error)}); starting it again`);
-    await this.#companion.ensure(this.#udid, this.#closed.signal);
+    if ((await this.#companion.ensure(this.#udid, this.#closed.signal)) === "started") this.#input.close();
   }
 
   #watch(): void {
@@ -369,6 +381,7 @@ export class IosDriver implements DeviceDriver {
     this.#busy = true;
     try {
       await this.#video.stop();
+      this.#input.close();
       await this.#companion.restart(this.#udid, this.#closed.signal);
     } catch (error) {
       this.#log(`resume: idb_companion did not start again: ${words(error)}`);
@@ -383,6 +396,7 @@ export class IosDriver implements DeviceDriver {
     this.#busy = true;
     try {
       await this.#video.stop();
+      this.#input.close();
       await this.#companion.stop();
       if (this.#udid) await this.#simctl.shutdown(this.#udid, signal);
       this.#power = { is: "stopped" };
@@ -397,6 +411,7 @@ export class IosDriver implements DeviceDriver {
     if (this.#watchTimer) clearInterval(this.#watchTimer);
     if (this.#clockTimer) clearInterval(this.#clockTimer);
     this.#watchTimer = this.#clockTimer = null;
+    this.#input.close();
     void this.#video.stop();
     this.#companion.close();
   }
@@ -406,11 +421,33 @@ export class IosDriver implements DeviceDriver {
   }
 
   async touch(contacts: readonly TouchContact[]): Promise<void> {
-    if (contacts.length) throw new DriverError("unsupported", "This bb-box cannot send touches to an iOS device yet.");
+    if (!contacts.length && this.#power.is !== "booted") return;
+    this.#booted();
+    this.#input.touch(contacts);
   }
 
-  async key(): Promise<void> {
-    throw new DriverError("unsupported", "This bb-box cannot send keys to an iOS device yet.");
+  async pinch(gesture: PinchGesture, signal: AbortSignal): Promise<void> {
+    this.#booted();
+    await this.#input.pinch(gesture, signal);
+  }
+
+  async key(key: string, down: boolean): Promise<void> {
+    if (!down && this.#power.is !== "booted") return;
+    this.#booted();
+    await this.#input.key(key, down);
+  }
+
+  typesAsKeys(character: string): boolean {
+    return typesWithOption(character);
+  }
+
+  async paste(): Promise<void> {
+    this.#booted();
+    await this.#input.paste();
+  }
+
+  async prepareInput(): Promise<void> {
+    if (this.#power.is === "booted") this.#input.prepare();
   }
 
   #booted(): string {

@@ -60,11 +60,13 @@ export const IDB_SCHEMA: Schema = {
   [`${HID}.HIDPress`]: [message("action", 1, `${HID}.HIDPressAction`), field("direction", 2, "enum")],
   [`${HID}.HIDSwipe`]: [message("start", 1, "idb.Point"), message("end", 2, "idb.Point"), field("delta", 5, "double"), field("duration", 6, "double")],
   [`${HID}.HIDDelay`]: [field("duration", 1, "double")],
+  [`${HID}.HIDPinch`]: [message("center", 1, "idb.Point"), field("scale", 2, "double"), field("duration", 3, "double"), field("radius", 4, "double")],
   [`${HID}.HIDOrientation`]: [field("orientation", 1, "enum")],
   [HID]: [
     message("press", 1, `${HID}.HIDPress`, { oneof: "event" }),
     message("swipe", 2, `${HID}.HIDSwipe`, { oneof: "event" }),
     message("delay", 3, `${HID}.HIDDelay`, { oneof: "event" }),
+    message("pinch", 4, `${HID}.HIDPinch`, { oneof: "event" }),
     message("orientation", 5, `${HID}.HIDOrientation`, { oneof: "event" }),
   ],
   "idb.ScreenshotRequest": [field("format", 1, "enum"), field("compression_quality", 2, "double"), field("scale_factor", 4, "double", { oneof: "scale" }), field("unit", 6, "enum")],

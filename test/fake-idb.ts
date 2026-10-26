@@ -2,7 +2,7 @@ import { appendFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http2";
 import { parseArgs } from "node:util";
 import { Deframer, frame } from "../src/device/grpc.ts";
-import { encode } from "../src/device/protobuf.ts";
+import { decode, encode } from "../src/device/protobuf.ts";
 import { GRPC_METHODS, IDB_SCHEMA } from "../src/device/schemas.ts";
 
 const IPHONE_SPS = "27640032ac13142404c0149e6a9a80868083c2010898";
@@ -53,6 +53,17 @@ server.on("stream", (stream, headers) => {
         if (timer) clearInterval(timer);
         stream.end();
       }
+    });
+    return;
+  }
+  if (path === GRPC_METHODS.idb.hid) {
+    stream.on("error", () => undefined);
+    stream.on("data", (chunk: Buffer) => {
+      for (const message of deframer.push(new Uint8Array(chunk))) note(`hid ${JSON.stringify(decode(IDB_SCHEMA, "idb.HIDEvent", message))}`);
+    });
+    stream.on("end", () => {
+      ok();
+      stream.end(Buffer.from(frame(new Uint8Array(0))));
     });
     return;
   }

@@ -1,0 +1,42 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#222;overflow:hidden}#screen{position:relative;width:100vw;height:100vh}.absolute{position:absolute}.inset-0{inset:0}</style></head><body><div id="screen"></div>
+<script type="module">
+import "./client.js";
+const q = new URLSearchParams(location.search);
+const session = new SelkiesSession(`ws://127.0.0.1:${q.get("socket") ?? 8771}/device`, { device: { model: q.get("model") ?? "iPhone 18 Pro" } });
+document.getElementById("screen").appendChild(session.element);
+session.setGuest("macos");
+const canvas = session.element.querySelector("canvas");
+const sampler = new OffscreenCanvas(1, 1).getContext("2d", { willReadFrequently: true });
+window.session = session;
+window.drawn = [];
+window.downs = [];
+window.probe = null;
+const draw = CanvasRenderingContext2D.prototype.drawImage;
+CanvasRenderingContext2D.prototype.drawImage = function (...args) {
+  const result = draw.apply(this, args);
+  if (this.canvas === canvas) {
+    const at = performance.now();
+    let shade = -1;
+    if (window.probe) {
+      sampler.drawImage(canvas, window.probe.x, window.probe.y, 1, 1, 0, 0, 1, 1);
+      const [r, g, b] = sampler.getImageData(0, 0, 1, 1).data;
+      shade = Math.round((r + g + b) / 3);
+    }
+    window.drawn.push([at, shade, canvas.width, canvas.height]);
+  }
+  return result;
+};
+canvas.addEventListener("pointerdown", (event) => window.downs.push(event.timeStamp), true);
+window.shadeNow = () => {
+  if (!window.probe) return -1;
+  sampler.drawImage(canvas, window.probe.x, window.probe.y, 1, 1, 0, 0, 1, 1);
+  const [r, g, b] = sampler.getImageData(0, 0, 1, 1).data;
+  return Math.round((r + g + b) / 3);
+};
+window.control = (mine) => session.setControl(mine, false);
+window.screenRect = () => {
+  const rect = canvas.getBoundingClientRect();
+  const scale = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+  return { left: rect.left + (rect.width - canvas.width * scale) / 2, top: rect.top + (rect.height - canvas.height * scale) / 2, scale, width: canvas.width, height: canvas.height };
+};
+</script></body></html>

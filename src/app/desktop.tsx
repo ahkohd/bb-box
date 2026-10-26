@@ -1357,7 +1357,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   }, [typingOpen]);
   const sendTyped = (text: string) => {
     if (!text) return;
-    const long = [...text].length > TYPE_TEXT_PASTE_FROM && (!box || noClipboardThroughServer(box) === null);
+    const long = !deviceShown && [...text].length > TYPE_TEXT_PASTE_FROM && (!box || noClipboardThroughServer(box) === null);
     if (long) session.current?.paste(text);
     else session.current?.typeText(text);
     setTyping("");

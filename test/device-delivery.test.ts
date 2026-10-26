@@ -40,9 +40,9 @@ describe("the device server's files", () => {
     assert.equal(DEVICE_SERVER_VERSION, PINNED.version, "test/fixtures/device-server-version.json names another version than src/core/device.ts.");
   });
 
-  test("are about 100 KB to deliver", async () => {
+  test("are under 300 KB to deliver", async () => {
     const bytes = (await deviceServerFiles(ROOT)).reduce((sum, file) => sum + file.data.byteLength, 0);
-    assert.ok(bytes < 250_000, `${bytes} bytes`);
+    assert.ok(bytes < 300_000, `${bytes} bytes`);
   });
 
   test("a status says which version runs and why it is down", () => {
@@ -170,6 +170,9 @@ describe("delivering the device server", { skip: process.platform === "win32" },
     servers.controlChanged(box.id);
     for (let tries = 0; servers.view(box.id).is !== "connected" && tries < 200; tries++) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(await runs(), 3);
+    const told = () => readFileSync(join(home, ".bb-box/device/server.log"), "utf8").split("\n").filter((line) => /owner: (agent|person), generation \d+/.test(line));
+    for (let tries = 0; !told().some((line) => line.includes("owner: agent")) && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(told().some((line) => line.includes("owner: agent")), "the new server is told the agent has control");
     await servers.dispose();
   });
 
