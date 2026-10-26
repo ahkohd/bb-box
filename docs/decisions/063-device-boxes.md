@@ -10,7 +10,8 @@ and its slimming), and unit 4.2's of the iOS driver (E4, E5), and units
 pastes), and unit 6.3's of the iOS controls (E11, and each read-back), and unit 6.1's
 of the frame (turns, folds drawn from the table, and the island), and unit
 6.4's of the toolbar, and unit 4.1's of the Android driver (the stream of
-each model, recovery, E3 and E23), are in [063 results](063-results.md). Built
+each model, recovery, E3 and E23), and unit 7.1's of computer use on iOS,
+are in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
 [Android emulator boxes](../research/android-emulator-boxes.md). Extends
@@ -1130,10 +1131,11 @@ The agent's work on the host is commands.
 | `computer_act` double_click | two taps 120 ms apart |
 | `computer_act` right_click | a long press of 1.2 s, which opened the context menu on both platforms; the description says so |
 | `computer_act` scroll | a swipe within the nearest scrollable element holding the target, or the screen's middle 80% where the platform does not say which scrolls: a fifth of that height per step, points every 16 ms, stopped when the picture stops moving |
-| `computer_act` set_value | on an editable field only: a tap, select all, and a paste of the value. Refused on anything else, a slider included, with the words "Drag it with computer_act's drag instead" |
+| `computer_act` set_value | on an editable field only: a tap, select all, and the value typed as `computer_type` types it, keys where a US keyboard has them and the rest pasted. Refused on anything else, a slider included, with the words "Drag it with computer_act's drag instead" |
+| `computer_act` drag | a swipe from ref, or x and y, to `to_x` and `to_y` in the latest image, held still before it lifts; device boxes only. Added in unit 7.1, as the refusal above names it |
 | `computer_act` key, `computer_type` keys | the key or chord, by W3C key name |
 | `computer_type` text | ASCII as keys, with autocorrect off in the image; the rest pasted, as above |
-| `computer_launch` app | an app by its bundle ID or package: `simctl launch`, `am start` |
+| `computer_launch` app | an app by its bundle ID or package, or its name: `simctl launch`, `am start`; the answer waits until the app is in the tree, as a new app's elements take 3 to 6 s on iOS |
 | `computer_launch` url | `simctl openurl`, `am start -a android.intent.action.VIEW` |
 | `computer_take_control` | as today |
 
@@ -1142,7 +1144,10 @@ The agent's work on the host is commands.
   desktops. When two elements match, the action is refused with
   `ambiguous`, naming both. iOS gives a flat list; the server nests it by
   frames, which is only an approximation, so on iOS the identifier and the
-  frame count for more than the nesting.
+  frame count for more than the nesting. Unit 7.1 found idb's nested form
+  gives the nesting itself. Before a tap by reference, bb-box asks the
+  device what is at the point, and refuses, naming it, when something else
+  covers the element, as a title bar, the keyboard or a hidden page can.
 - **After an action** the tool waits until the screen has not changed for
   300 ms, at most 2 s, and answers with what changed, as on desktops.
 - **Web pages** in Safari show only Safari's toolbar in the tree, so the

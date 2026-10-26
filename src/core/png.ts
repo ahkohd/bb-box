@@ -131,3 +131,46 @@ export function clockwiseTurnedPixels(pixels: RgbaPixels, turns: number): RgbaPi
   }
   return { ...turned, rgba: new Uint8Array(target.buffer) };
 }
+
+export function sizeWithin(width: number, height: number, longestEdge: number): { readonly width: number; readonly height: number } {
+  const longest = Math.max(width, height);
+  if (longest <= longestEdge) return { width, height };
+  const ratio = longestEdge / longest;
+  return { width: Math.max(1, Math.round(width * ratio)), height: Math.max(1, Math.round(height * ratio)) };
+}
+
+export function pixelsWithin(pixels: RgbaPixels, longestEdge: number): RgbaPixels {
+  const size = sizeWithin(pixels.width, pixels.height, longestEdge);
+  if (size.width === pixels.width && size.height === pixels.height) return pixels;
+  const rgba = new Uint8Array(size.width * size.height * 4);
+  const across = pixels.width / size.width;
+  const down = pixels.height / size.height;
+  for (let y = 0; y < size.height; y++) {
+    const top = Math.floor(y * down);
+    const bottom = Math.max(top + 1, Math.floor((y + 1) * down));
+    for (let x = 0; x < size.width; x++) {
+      const left = Math.floor(x * across);
+      const right = Math.max(left + 1, Math.floor((x + 1) * across));
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      for (let sy = top; sy < bottom; sy++) {
+        let at = (sy * pixels.width + left) * 4;
+        for (let sx = left; sx < right; sx++, at += 4) {
+          r += pixels.rgba[at]!;
+          g += pixels.rgba[at + 1]!;
+          b += pixels.rgba[at + 2]!;
+          a += pixels.rgba[at + 3]!;
+        }
+      }
+      const count = (bottom - top) * (right - left);
+      const to = (y * size.width + x) * 4;
+      rgba[to] = Math.round(r / count);
+      rgba[to + 1] = Math.round(g / count);
+      rgba[to + 2] = Math.round(b / count);
+      rgba[to + 3] = Math.round(a / count);
+    }
+  }
+  return { ...size, rgba };
+}

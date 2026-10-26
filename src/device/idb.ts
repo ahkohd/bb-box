@@ -15,6 +15,8 @@ const LOG_MOST_BYTES = 1024 * 1024;
 const H264 = 0;
 const STREAM_QUALITY = 0.2;
 const PNG = 0;
+const LEGACY = 0;
+const NESTED = 1;
 
 export interface CompanionPaths {
   readonly socket: string;
@@ -211,6 +213,18 @@ export async function screenshot(client: GrpcClient, signal?: AbortSignal): Prom
   const decoded = decode(IDB_SCHEMA, "idb.ScreenshotResponse", answer) as { image_data?: Uint8Array };
   if (!decoded.image_data?.byteLength) throw new DriverError("failed", "idb_companion sent an empty screenshot.");
   return decoded.image_data;
+}
+
+export async function accessibilityTree(client: GrpcClient, signal?: AbortSignal, point?: { readonly x: number; readonly y: number }): Promise<unknown> {
+  const request = point ? { point, format: LEGACY } : { format: NESTED };
+  const answer = await client.unary(GRPC_METHODS.idb.accessibilityInfo, encode(IDB_SCHEMA, "idb.AccessibilityInfoRequest", request), { signal });
+  const decoded = decode(IDB_SCHEMA, "idb.AccessibilityInfoResponse", answer) as { json?: string };
+  if (!decoded.json) throw new DriverError("failed", "idb_companion sent no accessibility tree.");
+  try {
+    return JSON.parse(decoded.json);
+  } catch {
+    throw new DriverError("failed", "idb_companion's accessibility tree is not JSON.");
+  }
 }
 
 const ORIENTATIONS: Readonly<Record<number, Orientation>> = { 1: "upright", 2: "upside-down", 3: "turned-left", 4: "turned-right" };

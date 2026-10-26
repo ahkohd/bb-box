@@ -216,6 +216,36 @@ Open an app or a URL with `computer_launch`, then read a window with
   itself, such as a GPUI app, has no accessibility tree: drive it with
   `computer_screenshot` and pixel actions.
 
+## Computer use on a device
+
+On an ios box the computer tools drive the device, never the macOS host:
+use `box_run` for the host.
+
+- The device is one window, window 1. `computer_observe` gives its
+  accessibility tree, with each element's identifier where the app gives
+  one, as in `button "General" (id com.apple.settings.general)`. An alert
+  shows inside it. Elements below or above the screen say so: scroll to
+  them first.
+- `computer_act` taps for a click and long-presses for a right click.
+  Before a tap by reference it checks what is at that point, and refuses
+  when something else covers the element, such as a title bar or the
+  keyboard. Scroll it clear, or tap what you see by pixels.
+- `scroll` swipes within the list that holds the element, a fifth of it a
+  step, and stops when the list moves no further. `set_value` sets text
+  fields only. Move a slider with `drag`, from x and y to `to_x` and
+  `to_y` in your latest `computer_screenshot`.
+- `computer_type` types what a US keyboard has as keys, and pastes the
+  rest. Give `keys` such as `Return` in the same call: bb-box presses them
+  once the field holds the text, and says so when it never does. `cmd` is
+  the Command key.
+- `computer_launch` opens an app by bundle ID or name, such as `Settings`,
+  or a URL. An app just started takes a few seconds before iOS shows its
+  elements: the tool waits for them, about 4 to 6 s in all.
+- A turn or a switch of the device voids earlier references and images.
+  Observe again.
+- While a person has control, reading goes on, and every other computer
+  tool is refused at once.
+
 ## A device's controls
 
 `box_device` controls an ios box's device as the panel's toolbar does: Home,

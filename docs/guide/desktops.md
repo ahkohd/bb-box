@@ -198,4 +198,6 @@ After a lost connection, the viewer tries again by itself, waiting a little long
 
 Agents see and use a desktop through computer tools, such as taking a screenshot, clicking and typing. See [agent tools](../reference/tools.md).
 
+On a box with a device, the agent's computer tools drive the device and never the box's desktop. The agent reads the device's screen as a list of its elements, taps, swipes, types, and opens apps and links. While you have control, the agent can still read the screen and take screenshots, but every touch, key and launch of its own is refused, so it cannot change what you are testing.
+
 An agent can record a desktop with `box_record` and show you the clip in the thread, with each step it tests and its result captioned. See [recordings](recording.md).

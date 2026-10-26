@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAnswer, type DeviceControl, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type OfferedDevice } from "../core/device.ts";
+import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type OfferedDevice } from "../core/device.ts";
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { lostWords } from "../core/device-control.ts";
 import { controlDeadlineMs } from "../core/device-settings.ts";
@@ -170,11 +170,25 @@ export class DeviceServers {
     return link.request({ type: "input", input, owner: owner.generation }, { timeoutMs: SCRIPT_TIMEOUT_MS });
   }
 
-  async screenshot(box: BoxRecord): Promise<DeviceAnswer> {
+  screenshot(box: BoxRecord): Promise<DeviceAnswer> {
+    return this.read(box, { type: "screenshot" });
+  }
+
+  async read(box: BoxRecord, request: DeviceRead): Promise<DeviceAnswer> {
     const link = await this.#controlLink(box);
     if (!link) return { id: "", ok: false, error: { code: "not-booted", words: `Box ${box.name}'s device server is not connected.` }, state: null };
     this.#touch(box.id);
-    return link.request({ type: "screenshot" }, { timeoutMs: SCRIPT_TIMEOUT_MS });
+    return link.request(request, { timeoutMs: SCRIPT_TIMEOUT_MS });
+  }
+
+  async agentRequest(box: BoxRecord, request: DeviceAgentRequest): Promise<DeviceAnswer> {
+    if (this.#deps.personHasControl(box.id)) return { id: "", ok: false, error: { code: "person-has-control", words: PERSON_HAS_CONTROL_WORDS }, state: this.#lastState(box.id) };
+    const link = await this.#controlLink(box);
+    if (!link) return { id: "", ok: false, error: { code: "not-booted", words: `Box ${box.name}'s device server is not connected.` }, state: null };
+    const owner = this.#owner(box.id);
+    if (owner.changed) await this.#tellOwner(box);
+    this.#touch(box.id);
+    return link.request(request, { timeoutMs: SCRIPT_TIMEOUT_MS });
   }
 
   async control(box: BoxRecord, control: DeviceControl, options: { readonly id?: string; readonly signal?: AbortSignal } = {}): Promise<DeviceAnswer> {

@@ -22,6 +22,7 @@ import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer , type Resiz
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
+import { DeviceComputer } from "../core/device-computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { GENERAL_DEFAULTS, emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig } from "../core/document.ts";
 import { INSTALL_ID_KEY, loadInstallId, requireInstallId, storeInstallId } from "../core/install.ts";
@@ -144,6 +145,7 @@ export interface BbBox {
   readonly terminals: Terminals;
   /** The agent's computer use of desktop boxes (015). */
   readonly computer: Computer;
+  readonly deviceComputer: DeviceComputer;
   /** The configuration document (029). */
   readonly configuration: Configuration;
   /** The Docker API relay to BB machines that are Docker hosts (042). */
@@ -625,6 +627,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   let desktops: Desktops | undefined;
   let terminals: Terminals | undefined;
   let computer: Computer | undefined;
+  let deviceComputer: DeviceComputer | undefined;
   // Projects' names, for a choice of image (049): asked of BB at most once a minute, as the panel polls.
   const projectNames = new Refreshing<Map<string, string>>({
     freshMs: 60_000,
@@ -673,6 +676,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (deleted || box.state !== "ready") {
         desktops?.control.forget(box.id);
         computer?.forget(box.id);
+        deviceComputer?.forget(box.id);
         // Its shells are gone with it; their tabs hear why.
         void terminals?.end(box.id, deleted ? "The box was released." : box.state === "stopped" || box.state === "stopping" ? "The box stopped." : "The box is no longer running.");
       }
@@ -801,6 +805,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     ...options.devices,
   });
   deviceServers = devices;
+  const deviceComputing = new DeviceComputer({
+    read: (box, request) => devices.read(box, request),
+    input: (box, input) => devices.input(box, input),
+    agentRequest: (box, request) => devices.agentRequest(box, request),
+    personHasControl: (boxId) => desktops?.control.view(boxId).owner === "human",
+    takeBack: (boxId) => desktops?.control.takeBack(boxId) ?? Promise.resolve(false),
+  });
+  deviceComputer = deviceComputing;
   const desktop = registerDesktop(bb, {
     boxes,
     notify,
@@ -1141,6 +1153,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     devices,
     terminals: terminal,
     computer: computing,
+    deviceComputer: deviceComputing,
     configuration,
     general,
     view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), backends.get(box.backend)?.resizing?.(box.kind) ?? null),

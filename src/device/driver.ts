@@ -1,4 +1,4 @@
-import type { DeviceControl, DeviceElement, DeviceState, OfferedDevice, TouchContact } from "../core/device.ts";
+import type { DeviceControl, DeviceElement, DeviceState, LaunchedApp, OfferedDevice, TouchContact } from "../core/device.ts";
 
 export interface EncodedFrame {
   readonly data: Uint8Array;
@@ -40,8 +40,10 @@ export interface DeviceDriver {
   control(control: DeviceControl, signal: AbortSignal, context: ControlContext): Promise<void>;
   readSettings?(signal: AbortSignal): Promise<void>;
   openUrl?(url: string, signal: AbortSignal): Promise<void>;
+  launchApp?(app: string, signal: AbortSignal): Promise<LaunchedApp>;
   screenshot(): Promise<Uint8Array>;
   tree(): Promise<readonly DeviceElement[]>;
+  elementAt?(point: { readonly x: number; readonly y: number }): Promise<DeviceElement | null>;
   readBack(): Promise<DeviceState>;
   onChange(listener: () => void): void;
   close(): void;

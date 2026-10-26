@@ -12,6 +12,7 @@ import {
   type DeviceControl,
   type DeviceElement,
   type DeviceState,
+  type LaunchedApp,
   type OfferedDevice,
   type OfferedDeviceOf,
   type Orientation,
@@ -23,7 +24,8 @@ import {
 import { parseDeviceState } from "../core/device-parse.ts";
 import { clockwiseTurnedPixels, pngPixels, rgbaPng } from "../core/png.ts";
 import { DriverError, type ControlContext, type DeviceDriver, type PinchGesture, type VideoSource } from "./driver.ts";
-import { Companion, orientation, screenshot, setOrientation, videoStream } from "./idb.ts";
+import { Companion, accessibilityTree, orientation, screenshot, setOrientation, videoStream } from "./idb.ts";
+import { iosElementAt, iosTree } from "./ios-tree.ts";
 import { IosSettingsKeeper } from "./ios-controls.ts";
 import { IosInput, PasteboardAccess, typesWithOption } from "./ios-input.ts";
 import { IosVideo } from "./ios-video.ts";
@@ -717,7 +719,38 @@ export class IosDriver implements DeviceDriver {
   }
 
   async tree(): Promise<readonly DeviceElement[]> {
-    throw new DriverError("unsupported", "This bb-box cannot read an iOS device's elements yet.");
+    this.#booted();
+    return iosTree(await accessibilityTree(this.#companion.client), screensOf(this.#model())[0].scale);
+  }
+
+  async elementAt(point: { readonly x: number; readonly y: number }): Promise<DeviceElement | null> {
+    this.#booted();
+    const scale = screensOf(this.#model())[0].scale;
+    return iosElementAt(await accessibilityTree(this.#companion.client, undefined, { x: point.x / scale, y: point.y / scale }), scale);
+  }
+
+  async launchApp(app: string, signal: AbortSignal): Promise<LaunchedApp> {
+    const udid = this.#booted();
+    const began = this.#clock.monotonic();
+    const looksLikeId = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(app);
+    if (looksLikeId) {
+      const ran = await this.#simctl.launch(udid, app, signal);
+      if (ran.code === 0) {
+        this.#log(`launch: ${app} in ${Math.round(this.#clock.monotonic() - began)} ms`);
+        return { id: app, name: (await this.#simctl.apps(udid, signal).catch(() => [])).find((each) => each.id === app)?.name ?? app };
+      }
+    }
+    const apps = await this.#simctl.apps(udid, signal);
+    const wanted = app.trim().toLowerCase();
+    const found = apps.find((each) => each.id.toLowerCase() === wanted) ?? apps.find((each) => each.name.toLowerCase() === wanted);
+    if (!found) {
+      const named = [...apps].sort((a, b) => Number(a.system) - Number(b.system) || a.name.localeCompare(b.name)).map((each) => `${each.name} (${each.id})`);
+      throw new DriverError("bad-value", `The ${this.#model().name} has no app ${JSON.stringify(app)}. Its apps are: ${named.join(", ")}.`);
+    }
+    const ran = await this.#simctl.launch(udid, found.id, signal);
+    if (ran.code !== 0) throw new DriverError("failed", `simctl could not launch ${found.name} (${found.id}): ${(ran.stderr || ran.stdout).trim().split("\n").slice(-2).join(" ") || `exit code ${ran.code}`}`);
+    this.#log(`launch: ${found.id} in ${Math.round(this.#clock.monotonic() - began)} ms`);
+    return { id: found.id, name: found.name };
   }
 
   async readBack(): Promise<DeviceState> {

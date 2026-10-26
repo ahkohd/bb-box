@@ -23,11 +23,11 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | [`box_status`](#box_status) | Show one box: its state, kind, address, whether it is a BB machine, and how long it took to start and to become one. |
 | [`box_stop`](#box_stop) | Stop a box to free its memory and CPU while keeping its disk. |
 | [`box_thread`](#box_thread) | Start a child thread on a box, as a BB machine, in this thread's project, with the task as its prompt. |
-| [`computer_act`](#computer_act) | Click, double-click, right-click, scroll or set a value on a desktop box: on an element by its reference from computer_observe, or at x and y in your latest image of a window or the desktop. |
+| [`computer_act`](#computer_act) | Click, double-click, right-click, scroll or set a value on a desktop or device box: on an element by its reference from computer_observe, or at x and y in your latest image of a window or the desktop. |
 | [`computer_launch`](#computer_launch) | Open an app on a desktop box by its name or path, or open a URL in the box's browser. |
-| [`computer_observe`](#computer_observe) | Read a window on a desktop box as text: its accessibility tree, one element per line, with a reference such as e12 for each element you can act on. |
-| [`computer_screenshot`](#computer_screenshot) | Take an image of a window on a desktop box, or of the whole desktop. |
-| [`computer_take_control`](#computer_take_control) | Take control of a desktop box's desktop back from a person who took it in BB, so the computer tools work again. |
+| [`computer_observe`](#computer_observe) | Read a window on a desktop or device box as text: its accessibility tree, one element per line, with a reference such as e12 for each element you can act on, and on a device the element's identifier where the app gives one. |
+| [`computer_screenshot`](#computer_screenshot) | Take an image of a window on a desktop box, or of the whole desktop, or of a device box's screen. |
+| [`computer_take_control`](#computer_take_control) | Take control of a desktop box's desktop, or a device box's device, back from a person who took it in BB, so the computer tools work again. |
 | [`computer_type`](#computer_type) | Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. |
 | [`computer_windows`](#computer_windows) | List the windows on a desktop box's screen, with the window IDs the other computer tools take. |
 
@@ -223,12 +223,12 @@ Start a child thread on a box, as a BB machine, in this thread's project, with t
 
 ## computer_act
 
-Click, double-click, right-click, scroll or set a value on a desktop box: on an element by its reference from computer_observe, or at x and y in your latest image of a window or the desktop. Or press a key or chord with action key and keys, as computer_type does. Says what changed in the window, which menus or popups opened or closed, and on the desktop which windows opened, closed or changed.
+Click, double-click, right-click, scroll or set a value on a desktop or device box: on an element by its reference from computer_observe, or at x and y in your latest image of a window or the desktop. Or press a key or chord with action key and keys, as computer_type does. On a device box a click is a tap, right_click a long press of 1.2 s, scroll a swipe within the list that holds the element, which stops at the list's end, set_value sets text fields only, and drag drags from ref or x and y to to_x and to_y, as for a slider. Says what changed in the window, which menus or popups opened or closed, and on the desktop which windows opened, closed or changed.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
-| `action` | `click`, `double_click`, `right_click`, `scroll`, `set_value`, `key` | yes | What to do: click, double_click or right_click on ref or at x and y; scroll in direction; set_value to value; key to press keys. |
+| `action` | `click`, `double_click`, `right_click`, `scroll`, `set_value`, `key`, `drag` | yes | What to do: click, double_click or right_click on ref or at x and y; scroll in direction; set_value to value; key to press keys; drag, on a device box, to to_x and to_y. |
 | `ref` | string | no | The element's reference from computer_observe, such as e12. |
 | `window` | integer or string or string | no | With x and y: the window whose image they are pixels of, or "desktop". For key without ref: the window that gets the key, or "desktop" for whatever has the focus. |
 | `x` | integer | no | Pixels from the left of your latest image of the window. |
@@ -237,20 +237,22 @@ Click, double-click, right-click, scroll or set a value on a desktop box: on an 
 | `direction` | `up`, `down`, `left`, `right` | no | For scroll. |
 | `amount` | integer | no | For scroll: how many steps. Defaults to 3. |
 | `keys` | string | no | For key: the key or chord, such as Escape or ctrl+a. |
+| `to_x` | integer | no | For drag: where to drag to, in pixels from the left of your latest image of the device. |
+| `to_y` | integer | no | For drag: where to drag to, in pixels from the top of your latest image of the device. |
 
 ## computer_launch
 
-Open an app on a desktop box by its name or path, or open a URL in the box's browser. Says which windows it opened; for a URL, waits up to 10 s for the page's title.
+Open an app on a desktop box by its name or path, or open a URL in the box's browser. Says which windows it opened; for a URL, waits up to 10 s for the page's title. On a device box, open an app by its bundle ID or package, such as com.apple.Preferences, or its name, such as Settings, or open a URL, which the device's own handler takes.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
-| `app` | string | no | The app's name, such as firefox or mousepad, or the path of its program. |
+| `app` | string | no | The app's name, such as firefox or mousepad, or the path of its program. On a device, its bundle ID or package, or its name. |
 | `url` | string | no | A URL to open in the default browser. |
 
 ## computer_observe
 
-Read a window on a desktop box as text: its accessibility tree, one element per line, with a reference such as e12 for each element you can act on. Pass query to see only matching elements, or screenshot for an image of the window as well.
+Read a window on a desktop or device box as text: its accessibility tree, one element per line, with a reference such as e12 for each element you can act on, and on a device the element's identifier where the app gives one. Pass query to see only matching elements, or screenshot for an image of the window as well.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -262,7 +264,7 @@ Read a window on a desktop box as text: its accessibility tree, one element per 
 
 ## computer_screenshot
 
-Take an image of a window on a desktop box, or of the whole desktop. Use it when appearance matters or the tree does not show what you need. Pixels you give computer_act are pixels of your latest image of that window, which may be smaller than the window or screen: the result says the scale.
+Take an image of a window on a desktop box, or of the whole desktop, or of a device box's screen. Use it when appearance matters or the tree does not show what you need. Pixels you give computer_act are pixels of your latest image of that window, which may be smaller than the window or screen: the result says the scale.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -271,7 +273,7 @@ Take an image of a window on a desktop box, or of the whole desktop. Use it when
 
 ## computer_take_control
 
-Take control of a desktop box's desktop back from a person who took it in BB, so the computer tools work again. Keys they held down are let go, and the desktop gets back its size. Use it when the person asks you to continue, or when the thread makes clear they have finished; otherwise wait for them to hand control back.
+Take control of a desktop box's desktop, or a device box's device, back from a person who took it in BB, so the computer tools work again. Keys they held down are let go, and the desktop gets back its size. Use it when the person asks you to continue, or when the thread makes clear they have finished; otherwise wait for them to hand control back.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -279,7 +281,7 @@ Take control of a desktop box's desktop back from a person who took it in BB, so
 
 ## computer_type
 
-Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards.
+Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. On a device box, text a US keyboard has goes as keys and the rest as one paste, and cmd is the Command key. For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -291,7 +293,7 @@ Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+s
 
 ## computer_windows
 
-List the windows on a desktop box's screen, with the window IDs the other computer tools take.
+List the windows on a desktop box's screen, with the window IDs the other computer tools take. A device box has one, window 1, the device's screen.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

@@ -102,3 +102,29 @@ test offer in `~/.bb-box/device`, and `node src/device/main.ts serve`.
    person's control refuses, `api:owner?holder=agent`, `wait:<ms>`,
    `eval:<js>` and `quit`. `CHROME` names the browser; `OUT` the files'
    prefix.
+
+## Computer use
+
+`computer.ts` drives the device as the agent's computer tools do (unit 7.1).
+It runs the plugin's own `DeviceServers` and `DeviceComputer` against the
+box's device server, and takes a JSON file of steps, run in order in one
+process, so references stay valid from one step to the next. It prints each
+step as a line of JSON, with what the agent reads and the step's time, and
+keeps images in `/tmp/bb-box-computer`.
+
+| Step | What it does |
+| --- | --- |
+| `{"tool": "observe"}`, `windows`, `screenshot` | the tool, as the agent calls it; `observe` takes `query`, `limit` and `screenshot` |
+| `{"tool": "act", "action": "click", "ref": "/\"General\"/"}` | `computer_act`; a `ref` written as `/pattern/` is the reference on the first line of the last observe that matches it, or the line `nth` |
+| `type`, `launch`, `take_control` | the other tools, with their own parameters |
+| `{"tool": "control", "control": {"action": "home"}}` | a `box_device` control |
+| `{"tool": "person", "has": true}` | a person takes control, or hands it back with `false` |
+| `{"tool": "wait", "ms": 1000}` | waits |
+| `{"tool": "frames", "ms": 3000}` | counts the device's frames every 100 ms, to see when the screen is still |
+| `{"tool": "chars", "text": "abc", "gapMs": 15}` | types each character as its own input |
+
+`check.json` is 063's live check for unit 7.1. Run it after delivering the
+server: `node scripts/measure/ios/computer.ts scripts/measure/ios/check.json`.
+On a Mac without the iOS image, such as a pool Mac, `--companion <path>`
+runs the device server in the harness's own process with that
+idb_companion, and the devices simctl lists.

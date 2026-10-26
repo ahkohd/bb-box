@@ -1,0 +1,713 @@
+[
+ {
+  "frame": {
+   "width": 402,
+   "height": 874,
+   "x": 0,
+   "y": 0
+  },
+  "AXFrame": "{{0, 0}, {402, 874}}",
+  "role_description": "application",
+  "type": "Application",
+  "role": "AXApplication",
+  "AXValue": null,
+  "traits": [
+   "None"
+  ],
+  "help": null,
+  "AXUniqueId": null,
+  "content_required": false,
+  "AXLabel": "Safari",
+  "custom_actions": [],
+  "title": null,
+  "enabled": true,
+  "children": [
+   {
+    "role": "AXGroup",
+    "title": null,
+    "AXFrame": "{{0, 0}, {402, 874}}",
+    "AXLabel": null,
+    "AXValue": null,
+    "traits": [
+     "Scrollable"
+    ],
+    "frame": {
+     "y": 0,
+     "x": 0,
+     "width": 402,
+     "height": 874
+    },
+    "custom_actions": [],
+    "help": null,
+    "pid": 79084,
+    "children": [
+     {
+      "custom_actions": [],
+      "role_description": "text",
+      "AXUniqueId": null,
+      "type": "StaticText",
+      "pid": 79084,
+      "AXValue": null,
+      "subrole": null,
+      "children": [],
+      "frame": {
+       "y": 146,
+       "height": 20.333333333333343,
+       "x": 159.33333333333334,
+       "width": 83.66666666666666
+      },
+      "AXFrame": "{{159.33333333333334, 146}, {83.666666666666657, 20.333333333333343}}",
+      "traits": [
+       "StaticText",
+       "Scrollable"
+      ],
+      "role": "AXStaticText",
+      "AXLabel": "Start Page",
+      "content_required": false,
+      "help": null,
+      "title": null,
+      "enabled": true
+     },
+     {
+      "pid": 79084,
+      "type": "StaticText",
+      "subrole": null,
+      "enabled": true,
+      "content_required": false,
+      "children": [],
+      "AXLabel": "Customise your wallpaper and sections that appear when creating new tabs.",
+      "title": null,
+      "AXValue": null,
+      "AXUniqueId": null,
+      "frame": {
+       "height": 38,
+       "width": 330,
+       "x": 36,
+       "y": 320.33333333333337
+      },
+      "traits": [
+       "StaticText",
+       "Scrollable"
+      ],
+      "role": "AXStaticText",
+      "help": null,
+      "AXFrame": "{{36, 320.33333333333337}, {330, 38}}",
+      "custom_actions": [],
+      "role_description": "text"
+     },
+     {
+      "AXUniqueId": "onboardingButton-CustomizeStartPage",
+      "type": "Button",
+      "frame": {
+       "y": 370.33333333333337,
+       "width": 330,
+       "height": 34.333333333333314,
+       "x": 36
+      },
+      "AXValue": null,
+      "AXFrame": "{{36, 370.33333333333337}, {330, 34.333333333333314}}",
+      "custom_actions": [],
+      "subrole": null,
+      "title": null,
+      "role_description": "button",
+      "content_required": false,
+      "children": [],
+      "pid": 79084,
+      "help": null,
+      "enabled": true,
+      "traits": [
+       "Button",
+       "Scrollable"
+      ],
+      "AXLabel": "Customise Start Page",
+      "role": "AXButton"
+     },
+     {
+      "custom_actions": [],
+      "help": null,
+      "AXFrame": "{{347, 142}, {23, 23}}",
+      "AXLabel": "close",
+      "role": "AXButton",
+      "content_required": false,
+      "AXUniqueId": null,
+      "subrole": null,
+      "traits": [
+       "Button",
+       "Scrollable"
+      ],
+      "pid": 79084,
+      "role_description": "button",
+      "title": null,
+      "frame": {
+       "x": 347,
+       "width": 23,
+       "height": 23,
+       "y": 142
+      },
+      "AXValue": null,
+      "type": "Button",
+      "enabled": true,
+      "children": []
+     },
+     {
+      "frame": {
+       "y": 454.6666666666667,
+       "x": 16,
+       "height": 24,
+       "width": 95.33333333333333
+      },
+      "title": null,
+      "AXLabel": "Favourites",
+      "content_required": false,
+      "AXValue": null,
+      "role": "AXStaticText",
+      "children": [],
+      "custom_actions": [],
+      "role_description": "text",
+      "type": "StaticText",
+      "traits": [
+       "StaticText",
+       "Scrollable"
+      ],
+      "AXUniqueId": null,
+      "help": null,
+      "enabled": true,
+      "subrole": null,
+      "pid": 79084,
+      "AXFrame": "{{16, 454.66666666666669}, {95.333333333333329, 24}}"
+     },
+     {
+      "traits": [
+       "Button",
+       "Scrollable",
+       "TextOperationsAvailable"
+      ],
+      "custom_actions": [],
+      "AXFrame": "{{16, 488.66666666666669}, {72, 94.333333333333314}}",
+      "title": null,
+      "pid": 79084,
+      "enabled": true,
+      "role": "AXButton",
+      "AXUniqueId": "favoritesItemIdentifierContent",
+      "subrole": null,
+      "children": [],
+      "help": null,
+      "type": "Button",
+      "AXValue": null,
+      "content_required": false,
+      "frame": {
+       "y": 488.6666666666667,
+       "width": 72,
+       "height": 94.33333333333331,
+       "x": 16
+      },
+      "AXLabel": "Apple",
+      "role_description": "button"
+     },
+     {
+      "help": null,
+      "role": "AXButton",
+      "type": "Button",
+      "AXFrame": "{{115.33333333333331, 488.66666666666669}, {72, 94.333333333333314}}",
+      "enabled": true,
+      "role_description": "button",
+      "frame": {
+       "x": 115.33333333333331,
+       "y": 488.6666666666667,
+       "height": 94.33333333333331,
+       "width": 72
+      },
+      "subrole": null,
+      "traits": [
+       "Button",
+       "Scrollable",
+       "TextOperationsAvailable"
+      ],
+      "content_required": false,
+      "custom_actions": [],
+      "AXLabel": "iCloud",
+      "AXUniqueId": "favoritesItemIdentifierContent",
+      "children": [],
+      "title": null,
+      "pid": 79084,
+      "AXValue": null
+     },
+     {
+      "AXFrame": "{{214.66666666666666, 488.66666666666669}, {71.999999999999972, 94.333333333333314}}",
+      "title": null,
+      "help": null,
+      "traits": [
+       "Button",
+       "Scrollable",
+       "TextOperationsAvailable"
+      ],
+      "type": "Button",
+      "enabled": true,
+      "role_description": "button",
+      "content_required": false,
+      "role": "AXButton",
+      "children": [],
+      "AXValue": null,
+      "pid": 79084,
+      "frame": {
+       "height": 94.33333333333331,
+       "width": 71.99999999999997,
+       "x": 214.66666666666666,
+       "y": 488.6666666666667
+      },
+      "AXUniqueId": "favoritesItemIdentifierContent",
+      "subrole": null,
+      "custom_actions": [],
+      "AXLabel": "Google"
+     },
+     {
+      "help": null,
+      "pid": 79084,
+      "title": null,
+      "frame": {
+       "y": 488.6666666666667,
+       "x": 314,
+       "height": 94.33333333333331,
+       "width": 72
+      },
+      "role": "AXButton",
+      "AXUniqueId": "favoritesItemIdentifierContent",
+      "type": "Button",
+      "children": [],
+      "traits": [
+       "Button",
+       "Scrollable",
+       "TextOperationsAvailable"
+      ],
+      "subrole": null,
+      "AXLabel": "Yahoo",
+      "AXFrame": "{{314, 488.66666666666669}, {72, 94.333333333333314}}",
+      "content_required": false,
+      "custom_actions": [],
+      "role_description": "button",
+      "enabled": true,
+      "AXValue": null
+     },
+     {
+      "role": "AXButton",
+      "children": [],
+      "AXValue": null,
+      "type": "Button",
+      "subrole": null,
+      "pid": 79084,
+      "role_description": "button",
+      "title": null,
+      "help": null,
+      "content_required": false,
+      "AXUniqueId": "favoritesItemIdentifierContent",
+      "traits": [
+       "Button",
+       "Scrollable",
+       "TextOperationsAvailable"
+      ],
+      "custom_actions": [],
+      "AXLabel": "Wikipedia",
+      "frame": {
+       "x": 16,
+       "y": 597,
+       "width": 72,
+       "height": 94.33333333333337
+      },
+      "enabled": true,
+      "AXFrame": "{{16, 597}, {72, 94.333333333333371}}"
+     },
+     {
+      "AXFrame": "{{115.33333333333331, 597}, {72, 94.333333333333371}}",
+      "children": [],
+      "role": "AXButton",
+      "title": null,
+      "frame": {
+       "y": 597,
+       "height": 94.33333333333337,
+       "x": 115.33333333333331,
+       "width": 72
+      },
+      "custom_actions": [],
+      "role_description": "button",
+      "type": "Button",
+      "AXValue": null,
+      "traits": [
+       "Button",
+       "Scrollable",
+       "TextOperationsAvailable"
+      ],
+      "enabled": true,
+      "subrole": null,
+      "content_required": false,
+      "help": null,
+      "AXLabel": "Facebook",
+      "AXUniqueId": "favoritesItemIdentifierContent",
+      "pid": 79084
+     },
+     {
+      "help": null,
+      "AXValue": null,
+      "children": [],
+      "enabled": true,
+      "frame": {
+       "x": 214.66666666666666,
+       "y": 597,
+       "width": 71.99999999999997,
+       "height": 94.33333333333337
+      },
+      "title": null,
+      "AXLabel": "Twitter",
+      "role": "AXButton",
+      "AXFrame": "{{214.66666666666666, 597}, {71.999999999999972, 94.333333333333371}}",
+      "content_required": false,
+      "custom_actions": [],
+      "subrole": null,
+      "pid": 79084,
+      "type": "Button",
+      "AXUniqueId": "favoritesItemIdentifierContent",
+      "role_description": "button",
+      "traits": [
+       "Button",
+       "Scrollable",
+       "TextOperationsAvailable"
+      ]
+     },
+     {
+      "frame": {
+       "width": 72,
+       "height": 94.33333333333337,
+       "x": 314,
+       "y": 597
+      },
+      "subrole": null,
+      "role": "AXButton",
+      "role_description": "button",
+      "children": [],
+      "enabled": true,
+      "AXUniqueId": "favoritesItemIdentifierContent",
+      "help": null,
+      "custom_actions": [],
+      "type": "Button",
+      "title": null,
+      "AXLabel": "BBC",
+      "AXValue": null,
+      "pid": 79084,
+      "AXFrame": "{{314, 597}, {72, 94.333333333333371}}",
+      "content_required": false,
+      "traits": [
+       "Button",
+       "Scrollable",
+       "TextOperationsAvailable"
+      ]
+     },
+     {
+      "frame": {
+       "height": 24,
+       "y": 721.3333333333334,
+       "x": 16,
+       "width": 152.66666666666666
+      },
+      "AXValue": null,
+      "AXUniqueId": null,
+      "AXLabel": "Recently Viewed",
+      "enabled": true,
+      "role_description": "text",
+      "type": "StaticText",
+      "traits": [
+       "StaticText",
+       "Scrollable"
+      ],
+      "content_required": false,
+      "custom_actions": [],
+      "children": [],
+      "pid": 79084,
+      "AXFrame": "{{16, 721.33333333333337}, {152.66666666666666, 24}}",
+      "role": "AXStaticText",
+      "title": null,
+      "help": null,
+      "subrole": null
+     },
+     {
+      "AXFrame": "{{48.666666666666657, 765.33333333333337}, {305, 24}}",
+      "pid": 79084,
+      "AXUniqueId": null,
+      "traits": [
+       "StaticText",
+       "Scrollable"
+      ],
+      "AXLabel": "Include topics from other devices",
+      "children": [],
+      "help": null,
+      "AXValue": null,
+      "enabled": true,
+      "content_required": false,
+      "title": null,
+      "role_description": "text",
+      "custom_actions": [],
+      "subrole": null,
+      "frame": {
+       "width": 305,
+       "height": 24,
+       "x": 48.66666666666666,
+       "y": 765.3333333333334
+      },
+      "type": "StaticText",
+      "role": "AXStaticText"
+     },
+     {
+      "role_description": "text",
+      "AXUniqueId": null,
+      "role": "AXStaticText",
+      "AXLabel": null,
+      "subrole": null,
+      "children": [],
+      "frame": {
+       "y": 807.3333333333334,
+       "width": 310.47412109375,
+       "height": 66,
+       "x": 47.937744140625
+      },
+      "help": "Double-tap to activate embedded link",
+      "custom_actions": [],
+      "traits": [
+       "StaticText",
+       "Scrollable",
+       "TextArea"
+      ],
+      "AXValue": "Safari can include topics on your other devices signed in to this iCloud account. About Safari & Privacy…",
+      "content_required": false,
+      "title": null,
+      "pid": 79084,
+      "type": "StaticText",
+      "enabled": true,
+      "AXFrame": "{{47.937744140625, 807.33333333333337}, {310.47412109375, 66}}"
+     },
+     {
+      "pid": 79084,
+      "AXFrame": "{{105.66666666666667, 891.33333333333337}, {90.333333333333329, 34.333333333333371}}",
+      "AXValue": null,
+      "AXUniqueId": null,
+      "role": "AXButton",
+      "children": [],
+      "help": null,
+      "role_description": "button",
+      "AXLabel": "Not Now",
+      "enabled": true,
+      "traits": [
+       "Button",
+       "Scrollable"
+      ],
+      "custom_actions": [],
+      "type": "Button",
+      "subrole": null,
+      "title": null,
+      "content_required": false,
+      "frame": {
+       "y": 891.3333333333334,
+       "width": 90.33333333333333,
+       "x": 105.66666666666667,
+       "height": 34.33333333333337
+      }
+     },
+     {
+      "frame": {
+       "width": 90.33333333333331,
+       "y": 891.3333333333334,
+       "x": 206,
+       "height": 34.33333333333337
+      },
+      "role": "AXButton",
+      "AXLabel": "Turn On",
+      "AXFrame": "{{206, 891.33333333333337}, {90.333333333333314, 34.333333333333371}}",
+      "AXValue": null,
+      "children": [],
+      "pid": 79084,
+      "AXUniqueId": null,
+      "title": null,
+      "enabled": true,
+      "content_required": false,
+      "traits": [
+       "Button",
+       "Scrollable"
+      ],
+      "custom_actions": [],
+      "help": null,
+      "role_description": "button",
+      "type": "Button",
+      "subrole": null
+     }
+    ],
+    "AXUniqueId": "StartPageCollectionView",
+    "content_required": false,
+    "enabled": true,
+    "role_description": "Group",
+    "type": "Group",
+    "subrole": null
+   },
+   {
+    "title": null,
+    "type": "TabGroup",
+    "children": [],
+    "AXUniqueId": null,
+    "role_description": "tab group",
+    "custom_actions": [],
+    "frame": {
+     "width": 370,
+     "height": 44,
+     "x": 16,
+     "y": 62
+    },
+    "subrole": null,
+    "content_required": false,
+    "AXLabel": null,
+    "help": null,
+    "pid": 79084,
+    "role": "AXTabGroup",
+    "traits": [
+     "Scrollable"
+    ],
+    "AXValue": null,
+    "enabled": true,
+    "AXFrame": "{{16, 62}, {370, 44}}"
+   },
+   {
+    "AXValue": null,
+    "content_required": false,
+    "AXFrame": "{{34, 792}, {48, 48}}",
+    "traits": [
+     "Button",
+     "NotEnabled",
+     "Scrollable"
+    ],
+    "frame": {
+     "x": 34,
+     "width": 48,
+     "height": 48,
+     "y": 792
+    },
+    "help": null,
+    "role_description": "button",
+    "role": "AXButton",
+    "pid": 79084,
+    "children": [],
+    "AXUniqueId": "BackButton",
+    "enabled": false,
+    "custom_actions": [],
+    "title": null,
+    "AXLabel": "Back",
+    "type": "Button",
+    "subrole": null
+   },
+   {
+    "AXLabel": "Page Menu",
+    "children": [],
+    "type": "Button",
+    "custom_actions": [],
+    "role": "AXButton",
+    "frame": {
+     "x": 90,
+     "height": 48,
+     "y": 792,
+     "width": 48
+    },
+    "enabled": true,
+    "traits": [
+     "Button",
+     "Scrollable"
+    ],
+    "subrole": null,
+    "AXValue": null,
+    "content_required": false,
+    "AXFrame": "{{90, 792}, {48, 48}}",
+    "pid": 79084,
+    "AXUniqueId": "MoreMenuButton",
+    "title": null,
+    "role_description": "button",
+    "help": null
+   },
+   {
+    "traits": [
+     "TextEntry",
+     "Scrollable"
+    ],
+    "AXLabel": "Address",
+    "children": [],
+    "title": null,
+    "AXUniqueId": "TabBarItemTitle",
+    "frame": {
+     "x": 149,
+     "height": 20.33333333333337,
+     "y": 806,
+     "width": 104
+    },
+    "role_description": "text field",
+    "type": "TextField",
+    "AXValue": "‎example.com",
+    "role": "AXTextField",
+    "AXFrame": "{{149, 806}, {104, 20.333333333333371}}",
+    "custom_actions": [],
+    "pid": 79084,
+    "help": null,
+    "subrole": null,
+    "enabled": true,
+    "content_required": false
+   },
+   {
+    "frame": {
+     "width": 17.666666666666686,
+     "x": 281.33333333333337,
+     "height": 20.33333333333337,
+     "y": 806
+    },
+    "AXLabel": "Close",
+    "title": null,
+    "content_required": false,
+    "pid": 79084,
+    "help": null,
+    "AXValue": null,
+    "role": "AXButton",
+    "children": [],
+    "AXFrame": "{{281.33333333333337, 806}, {17.666666666666686, 20.333333333333371}}",
+    "role_description": "button",
+    "traits": [
+     "Button",
+     "Scrollable"
+    ],
+    "custom_actions": [],
+    "enabled": true,
+    "AXUniqueId": "StopButton",
+    "type": "Button",
+    "subrole": null
+   },
+   {
+    "AXFrame": "{{320, 792}, {48, 48}}",
+    "enabled": true,
+    "type": "Button",
+    "AXValue": null,
+    "traits": [
+     "Button",
+     "Scrollable"
+    ],
+    "AXLabel": "Tabs",
+    "help": null,
+    "role_description": "button",
+    "children": [],
+    "title": null,
+    "custom_actions": [],
+    "role": "AXButton",
+    "frame": {
+     "height": 48,
+     "x": 320,
+     "y": 792,
+     "width": 48
+    },
+    "AXUniqueId": "TabOverviewButton",
+    "subrole": null,
+    "content_required": false,
+    "pid": 79084
+   }
+  ],
+  "subrole": null,
+  "pid": 79084
+ }
+]

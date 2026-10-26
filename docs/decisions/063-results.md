@@ -16,8 +16,9 @@ E21, and how iOS pastes. Unit 6.3's, for the iOS controls and box_device,
 are [after them](#unit-63-the-ios-controls-and-box_device): each action,
 its read-back, requests by ID, and E11. Unit 6.1's, for the frame, follow,
 then unit 6.4's, for the toolbar. Unit 4.1's, for the Android driver, are
-[at the end](#unit-41-the-android-driver): the stream of each model,
-recovery, E3 and E23.
+[after them](#unit-41-the-android-driver): the stream of each model,
+recovery, E3 and E23. Unit 7.1's, for the computer tools on an iOS device,
+are [at the end](#unit-71-computer-use-on-an-ios-device).
 
 ## How they were measured
 
@@ -1559,3 +1560,154 @@ GiB was the device scrolled, with no app opened.
 - **Android's ID.** Unit 3.1 found the device's serial and Android ID the
   same in every box from one template, as the snapshot holds them. This
   unit does not change that.
+
+## Unit 7.1: computer use on an iOS device
+
+Measured on 26 October 2026 in one ios box acquired through the production
+BB, on Tart, at the kind's default size, 6 cores and 16 GiB: macOS 27.0,
+Xcode 27.0, iOS 27.0 (24A434), idb_companion 1.7.7, the iPhone 18 Pro,
+slim. The device server was this unit's, delivered as bb-box delivers it:
+version 11 before unit 4.1 merged, and version 12, rebased on it, for the
+second box's run of the whole check and the typing checks. The harness, `computer.ts` in
+[scripts/measure/ios](../../scripts/measure/ios/README.md#computer-use),
+runs the plugin's own `DeviceServers` and `DeviceComputer` against it, so
+each answer below is what the agent reads, and `check.json` is 063's live
+check as one run. BB's server and the tools called from a thread are not in
+these numbers: that is the live check after the deploy.
+
+### How the device's tree is read
+
+- **As VoiceOver reads the app.** idb's `accessibility_info` in its nested
+  form gave 16 elements for Settings' first page. Asked as an XCUITest
+  client, it gave 142, most of them empty groups. Identifiers came either
+  way, so bb-box asks as VoiceOver does.
+- **Frames are points of the screen as the app draws it,** as E8 found for
+  touches. So an element's pixels in the video are its points times the
+  model's scale, upright and sideways alike. Sideways, Safari read as
+  2622x1206 and a tap by a new reference opened its tab overview.
+- **A read takes 38 to 52 ms,** median 43.5 ms over 10 on a still screen.
+  The first read after idb_companion starts took 1.1 to 2.9 s.
+- **A newly started app shows only the status bar for 3.2 s,** then its
+  first read takes 2.6 s more: Settings, cold, read every 150 to 200 ms. So
+  `computer_launch` waits, at most 5 s, until the app it launched is the
+  tree's root. A read of only the status bar is never answered: bb-box
+  reads again for up to 5 s.
+- **The tree lists some elements the screen does not show.** Safari's start
+  page listed buttons below the screen, so each such line says so: 'below
+  the screen'. The tree also kept a page hidden under another: the
+  Settings list under its search suggestions, and both pages for a moment
+  after a push.
+- **iOS marks every element inside a scroll view as scrollable,** so bb-box
+  takes the first of a run of them, such as Settings' list, as the
+  scroller. A scroller narrower than a third of the screen along the scroll
+  is passed over for the screen.
+
+### A tap by reference checks what is there
+
+idb also says which element is at a point, in 5 to 17 ms. Before a tap by
+reference, bb-box asks at the element's centre, then at four other points
+of its visible part, and taps the first where the element, or one of its
+descendants, is. Where none is, it refuses and names what covers it.
+
+| Seen live | What bb-box did |
+| --- | --- |
+| Settings' Accessibility row under the title bar and the Dynamic Island, the list scrolled | refused: 'e5, button "Accessibility", is covered by generic element "Dynamic Island, Empty" where it is now', with a hint to scroll up. After a scroll up, the tap opened Accessibility |
+| Settings' General row, listed under the search suggestions | refused, covered by the suggestion "Accessibility" |
+| Before this check: the same Accessibility row | the tap went to what covered it, and nothing opened |
+
+### What else the first runs found
+
+- **Keys were lost in Safari's address field.** On a Safari just started,
+  'example.com' typed as keys, all within a millisecond, arrived as 'exam',
+  and 'wikipedia.org' as 'wikip', 4 times of 4. Sent a character a request,
+  so a few milliseconds apart, every key arrived. The server now waits
+  15 ms between typed keys: 'en.wikipedia.org' and 'example.com' then
+  arrived whole, 4 times of 4. 100 characters take 1.5 s more.
+- **On a device's first typing, keys came slowly.** In a second, fresh box,
+  paced keys and Return gave a search for 'exam' once. On the iPhone 17,
+  never typed into, the field read part of the text 150 ms after the last
+  key, and the rest came later: typing the rest again gave
+  'example.comcom'. Neither came back after a reboot, nor on a field
+  typed into before. So `computer_type` and `set_value` now wait until the
+  field holds the text, or has not changed for three reads, at most 5 s,
+  and never type it again. Keys such as Return go only once the text is
+  there; otherwise the answer says what the field reads and that bb-box
+  did not press them. On the iPad, never typed into, 'example.com' and
+  Return then loaded the page, 3.5 s for the call.
+- **Return pressed with the text in one call went before the text.** Safari
+  searched for what it had so far. `computer_type` now lets the screen
+  settle, 150 ms with no new frame, between its text and its keys.
+- **A read straight after Home showed the app still there.** Home's
+  animation was still running. `computer_observe` and `computer_windows`
+  now wait for the screen to be still, at most 1 s. On a still screen this
+  costs nothing.
+- **Just after a switch, iOS names no app in front.** The first read
+  failed with idb's 'The simulator's accessibility service named no
+  frontmost application'. A read that fails is now tried again within the
+  same 5 s: `computer_windows` answered 2.5 and 2.7 s after a switch to
+  the iPhone 17 and back.
+- **iOS's Dynamic Island lies inside a row's frame,** so a point read that
+  found it counted as the row, until only the row and its descendants
+  counted.
+- **Escape does not close an iOS context menu.** The menu's 'Dismiss
+  context menu' is a button in the tree.
+
+### Each tool's time
+
+Times are the tool's, in the plugin, from the call to its answer.
+
+| Tool | What | Time | Times run |
+| --- | --- | --- | --- |
+| `computer_windows` | the device's one window and the app in front | 36 to 45 ms, median 40 ms | 5 |
+| `computer_observe` | the tree, a still screen | 38 to 52 ms, median 43.5 ms | 10 |
+| `computer_observe` | straight after a tap that opened a Settings page | 0.95 to 1.04 s: the page's last frames came about 0.8 s after the tap's answer | 10 |
+| `computer_screenshot` | 721x1568, scaled from 1206x2622 in the box | 104 to 138 ms, median 108.5 ms | 10 |
+| `computer_act` click | a tap by reference that opens or closes a Settings page, the change waited for and listed | 1.50 to 1.71 s, median 1.55 s | 10 |
+| `computer_act` right_click | a 1.2 s press on Safari's icon, its menu's six items listed | 2.4 s | 1 |
+| `computer_act` double_click | two taps on a page in Safari | 1.1 s | 1 |
+| `computer_act` scroll | Settings' list to its end, 5 of 50 steps; General's, 2 of 50 | 5.8 s; 3.6 s | 1 each |
+| `computer_act` set_value | Settings' search field, a tap, Cmd+A and 'Wallpaper', read back | 2.6 to 2.9 s | 3 |
+| `computer_act` set_value on a slider | refused | 28 to 46 ms | 2 |
+| `computer_act` drag | Larger Text's slider, 50% to 67% | 2.7 s | 1 |
+| `computer_type` | 11 to 16 characters and Return into Safari's address | 2.0 to 3.5 s | 7 |
+| `computer_launch` | an app already running | 0.6 to 0.7 s | 5 |
+| `computer_launch` | an app not running, until its tree is read | 3.6 to 5.9 s | 9 |
+| `computer_launch` | Safari, first on a model just switched to | 11.0 to 12.0 s | 2 |
+| `computer_launch` | a URL in Safari | 2.5 to 2.6 s | 2 |
+| any act, type or launch while a person has control | refused | under 1 ms | 4 |
+
+Most of an action's time is waiting: for the screen to be still for 300 ms,
+at most 2 s, then reading the tree again to list what changed.
+
+### 063's live check, through the harness
+
+| Step | Result |
+| --- | --- |
+| Settings, General, About by references | each by its reference; About read as 13 lines, such as 'static text "Model Name, iPhone 18 Pro" (id ProductModelName)' |
+| A URL typed into Safari | 'Typed "example.com" and pressed Return', and example.com loaded |
+| A long list scrolled | Settings' list to Developer, its last row, in 5 of 50 steps, and General's in 2: '... it moved no further, so it is at its end.' |
+| A text field set | Settings' search field: 'Set e84, search field "Search", to "Wallpaper". e84 reads "Wallpaper" now.' |
+| Refused on a slider | Larger Text's slider and the Home Screen's page dots, each refused with 'Drag it with computer_act's drag instead.' |
+| Two with one label | the Home Screen's two 'Calendar' buttons, the widget and the app, got e3 and e4; a tap on e4 opened Calendar. Safari's two tabs, each 'Example Domain', got their own too |
+| A turn | a reference read before a turn refused: 'The device turned or changed since you read e26, button "Tabs", so its reference is void.' |
+| A person's control | reading and screenshots went on; a tap, typing and a launch were refused at once with the device's words; `computer_take_control` took it back |
+
+### What limits these numbers
+
+- One device, the iPhone 18 Pro, slim, in one box. The iPhone 17 and the
+  iPad were not driven.
+- Settings, Safari and the Home Screen only. An app of the agent's own,
+  with its own identifiers, was not tried.
+- The harness ran in the box, beside the device server. Through BB, each
+  tool adds the round trip to the box.
+
+### Not checked here
+
+- **Through the tools in a thread,** on an ios box from the production BB:
+  after the deploy.
+- **The image's check** does not yet read a tree or take a screenshot of
+  each model, as 063 asks of units 7.1 and 7.2. It would need idb_companion
+  started in the check, as no device server runs there.
+- **Android:** unit 7.2. The shared parts, `DeviceComputer`, the tool
+  routing and the server's requests, are tested with the test device only.
+

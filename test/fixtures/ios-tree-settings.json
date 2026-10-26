@@ -1,0 +1,447 @@
+[
+ {
+  "frame": {
+   "height": 874,
+   "width": 402,
+   "x": 0,
+   "y": 0
+  },
+  "AXFrame": "{{0, 0}, {402, 874}}",
+  "role_description": "application",
+  "type": "Application",
+  "role": "AXApplication",
+  "AXValue": null,
+  "traits": [
+   "None"
+  ],
+  "help": null,
+  "AXUniqueId": null,
+  "content_required": false,
+  "AXLabel": "Settings",
+  "custom_actions": [],
+  "title": null,
+  "enabled": true,
+  "children": [
+   {
+    "role": "AXHeading",
+    "title": null,
+    "AXFrame": "{{16, 119.66666666666667}, {133, 40.666666666666671}}",
+    "AXLabel": "Settings",
+    "AXValue": null,
+    "traits": [
+     "Header",
+     "Scrollable"
+    ],
+    "frame": {
+     "y": 119.66666666666667,
+     "x": 16,
+     "width": 133,
+     "height": 40.66666666666667
+    },
+    "custom_actions": [],
+    "help": null,
+    "pid": 78968,
+    "children": [],
+    "AXUniqueId": null,
+    "content_required": false,
+    "enabled": true,
+    "role_description": "heading",
+    "type": "Heading",
+    "subrole": null
+   },
+   {
+    "custom_actions": [],
+    "role_description": "Group",
+    "AXUniqueId": "com.apple.settings.sidebar.collectionView",
+    "type": "Group",
+    "pid": 78968,
+    "AXValue": null,
+    "subrole": null,
+    "children": [
+     {
+      "pid": 78968,
+      "type": "Button",
+      "subrole": null,
+      "enabled": true,
+      "content_required": false,
+      "children": [],
+      "AXLabel": "Apple Account, Sign in to access your iCloud data, the App Store, Apple services and more.",
+      "title": null,
+      "AXValue": null,
+      "AXUniqueId": "com.apple.settings.primaryAppleAccount",
+      "frame": {
+       "height": 90.33333333333331,
+       "width": 370,
+       "x": 16,
+       "y": 168
+      },
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "role": "AXButton",
+      "help": null,
+      "AXFrame": "{{16, 168}, {370, 90.333333333333314}}",
+      "custom_actions": [],
+      "role_description": "button"
+     },
+     {
+      "AXUniqueId": "com.apple.settings.general",
+      "type": "Button",
+      "frame": {
+       "width": 370,
+       "height": 52,
+       "x": 16,
+       "y": 293.3333333333333
+      },
+      "AXValue": null,
+      "AXFrame": "{{16, 293.33333333333331}, {370, 52}}",
+      "custom_actions": [],
+      "subrole": null,
+      "title": null,
+      "role_description": "button",
+      "content_required": false,
+      "children": [],
+      "pid": 78968,
+      "help": null,
+      "enabled": true,
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "AXLabel": "General",
+      "role": "AXButton"
+     },
+     {
+      "custom_actions": [],
+      "help": null,
+      "AXFrame": "{{16, 345.33333333333337}, {370, 52}}",
+      "AXLabel": "Accessibility",
+      "role": "AXButton",
+      "content_required": false,
+      "AXUniqueId": "com.apple.settings.accessibility",
+      "subrole": null,
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "pid": 78968,
+      "role_description": "button",
+      "title": null,
+      "frame": {
+       "y": 345.33333333333337,
+       "width": 370,
+       "height": 52,
+       "x": 16
+      },
+      "AXValue": null,
+      "type": "Button",
+      "enabled": true,
+      "children": []
+     },
+     {
+      "frame": {
+       "width": 370,
+       "x": 16,
+       "y": 397.33333333333337,
+       "height": 52
+      },
+      "title": null,
+      "AXLabel": "Action Button",
+      "content_required": false,
+      "AXValue": null,
+      "role": "AXButton",
+      "children": [],
+      "custom_actions": [],
+      "role_description": "button",
+      "type": "Button",
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "AXUniqueId": "com.apple.settings.actionButton",
+      "help": null,
+      "enabled": true,
+      "subrole": null,
+      "pid": 78968,
+      "AXFrame": "{{16, 397.33333333333337}, {370, 52}}"
+     },
+     {
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "custom_actions": [],
+      "AXFrame": "{{16, 449.33333333333331}, {370, 52}}",
+      "title": null,
+      "pid": 78968,
+      "enabled": true,
+      "role": "AXButton",
+      "AXUniqueId": "com.apple.settings.appearance",
+      "subrole": null,
+      "children": [],
+      "help": null,
+      "type": "Button",
+      "AXValue": null,
+      "content_required": false,
+      "frame": {
+       "x": 16,
+       "y": 449.3333333333333,
+       "height": 52,
+       "width": 370
+      },
+      "AXLabel": "Appearance",
+      "role_description": "button"
+     },
+     {
+      "help": null,
+      "role": "AXButton",
+      "type": "Button",
+      "AXFrame": "{{16, 501.33333333333331}, {370, 51.999999999999943}}",
+      "enabled": true,
+      "role_description": "button",
+      "frame": {
+       "x": 16,
+       "width": 370,
+       "height": 51.99999999999994,
+       "y": 501.3333333333333
+      },
+      "subrole": null,
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "content_required": false,
+      "custom_actions": [],
+      "AXLabel": "Camera",
+      "AXUniqueId": "com.apple.settings.camera",
+      "children": [],
+      "title": null,
+      "pid": 78968,
+      "AXValue": null
+     },
+     {
+      "title": null,
+      "content_required": false,
+      "role": "AXButton",
+      "AXUniqueId": "com.apple.settings.homeScreen",
+      "enabled": true,
+      "subrole": null,
+      "custom_actions": [],
+      "type": "Button",
+      "role_description": "button",
+      "pid": 78968,
+      "AXLabel": "Home Screen & App Library",
+      "AXFrame": "{{16, 553.33333333333326}, {370, 52}}",
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "children": [],
+      "frame": {
+       "y": 553.3333333333333,
+       "width": 370,
+       "height": 52,
+       "x": 16
+      },
+      "help": null,
+      "AXValue": null
+     },
+     {
+      "AXFrame": "{{16, 605.33333333333326}, {370, 52}}",
+      "children": [],
+      "AXValue": null,
+      "frame": {
+       "y": 605.3333333333333,
+       "width": 370,
+       "x": 16,
+       "height": 52
+      },
+      "title": null,
+      "help": null,
+      "AXUniqueId": "com.apple.settings.search",
+      "custom_actions": [],
+      "AXLabel": "Search",
+      "role": "AXButton",
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "pid": 78968,
+      "enabled": true,
+      "type": "Button",
+      "subrole": null,
+      "role_description": "button",
+      "content_required": false
+     },
+     {
+      "AXLabel": "Siri",
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "content_required": false,
+      "AXUniqueId": "com.apple.settings.siri",
+      "role": "AXButton",
+      "frame": {
+       "height": 52,
+       "x": 16,
+       "y": 657.3333333333333,
+       "width": 370
+      },
+      "type": "Button",
+      "enabled": true,
+      "AXFrame": "{{16, 657.33333333333326}, {370, 52}}",
+      "custom_actions": [],
+      "children": [],
+      "title": null,
+      "role_description": "button",
+      "AXValue": null,
+      "pid": 78968,
+      "help": null,
+      "subrole": null
+     },
+     {
+      "AXValue": null,
+      "help": null,
+      "subrole": null,
+      "AXLabel": "StandBy",
+      "title": null,
+      "pid": 78968,
+      "content_required": false,
+      "enabled": true,
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "AXUniqueId": "com.apple.settings.standBy",
+      "role_description": "button",
+      "custom_actions": [],
+      "role": "AXButton",
+      "frame": {
+       "y": 709.3333333333334,
+       "x": 16,
+       "height": 52,
+       "width": 370
+      },
+      "AXFrame": "{{16, 709.33333333333337}, {370, 52}}",
+      "type": "Button",
+      "children": []
+     },
+     {
+      "AXValue": null,
+      "role": "AXButton",
+      "frame": {
+       "x": 16,
+       "y": 796.3333333333334,
+       "width": 370,
+       "height": 52
+      },
+      "content_required": false,
+      "title": null,
+      "traits": [
+       "Button",
+       "StaticText",
+       "Scrollable"
+      ],
+      "custom_actions": [],
+      "AXUniqueId": "com.apple.settings.screenTime",
+      "subrole": null,
+      "enabled": true,
+      "help": null,
+      "pid": 78968,
+      "children": [],
+      "AXFrame": "{{16, 796.33333333333337}, {370, 52}}",
+      "role_description": "button",
+      "AXLabel": "Screen Time",
+      "type": "Button"
+     }
+    ],
+    "frame": {
+     "y": 0,
+     "x": 0,
+     "height": 874,
+     "width": 402
+    },
+    "AXFrame": "{{0, 0}, {402, 874}}",
+    "traits": [
+     "Scrollable"
+    ],
+    "role": "AXGroup",
+    "AXLabel": null,
+    "content_required": false,
+    "help": null,
+    "title": null,
+    "enabled": true
+   },
+   {
+    "type": "TextField",
+    "subrole": "AXSearchField",
+    "title": null,
+    "AXLabel": null,
+    "enabled": true,
+    "role": "AXTextField",
+    "AXFrame": "{{28, 808}, {346, 28}}",
+    "content_required": false,
+    "frame": {
+     "y": 808,
+     "height": 28,
+     "x": 28,
+     "width": 346
+    },
+    "children": [],
+    "role_description": "search text field",
+    "AXUniqueId": null,
+    "traits": [
+     "SearchField",
+     "TextEntry",
+     "Scrollable",
+     "TextOperationsAvailable"
+    ],
+    "help": null,
+    "AXValue": "Search",
+    "pid": 78968,
+    "custom_actions": []
+   },
+   {
+    "role": "AXButton",
+    "title": null,
+    "AXFrame": "{{341.66666666666669, 811}, {17.333333333333314, 22}}",
+    "AXUniqueId": "Dictate",
+    "subrole": null,
+    "AXValue": null,
+    "traits": [
+     "Button",
+     "Scrollable"
+    ],
+    "help": "Double-tap to start dictation. Double-tap with two fingers when finished.",
+    "enabled": true,
+    "content_required": false,
+    "frame": {
+     "x": 341.6666666666667,
+     "y": 811,
+     "width": 17.333333333333314,
+     "height": 22
+    },
+    "AXLabel": "Dictate",
+    "children": [],
+    "pid": 78968,
+    "role_description": "button",
+    "type": "Button",
+    "custom_actions": []
+   }
+  ],
+  "subrole": null,
+  "pid": 78968
+ }
+]
