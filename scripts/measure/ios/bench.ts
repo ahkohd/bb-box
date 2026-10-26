@@ -12,6 +12,8 @@ import type { ByteChannel } from "../../../src/transports/types.ts";
 import { GrpcClient } from "../../../src/device/grpc.ts";
 import { encode } from "../../../src/device/protobuf.ts";
 import { GRPC_METHODS, IDB_SCHEMA } from "../../../src/device/schemas.ts";
+import { orientation as readOrientation, screenshot as idbScreenshot } from "../../../src/device/idb.ts";
+import { ORIENTATIONS, type Orientation } from "../../../src/core/device.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const DIR = join(homedir(), ".bb-box", "device");
@@ -27,6 +29,8 @@ const { positionals, values } = parseArgs({
     device: { type: "string" },
     "no-slim": { type: "boolean", default: false },
     url: { type: "string" },
+    to: { type: "string", default: "turned-left" },
+    out: { type: "string" },
   },
 });
 
@@ -247,6 +251,73 @@ async function tap(): Promise<void> {
   await link.close();
 }
 
+const IDB_HID_ORIENTATION: Readonly<Record<Orientation, number>> = { upright: 0, "upside-down": 1, "turned-right": 2, "turned-left": 3 };
+
+async function turnWithIdb(client: GrpcClient, to: Orientation): Promise<void> {
+  const event = encode(IDB_SCHEMA, "idb.HIDEvent", { orientation: { orientation: IDB_HID_ORIENTATION[to] } });
+  for await (const _ of client.call(GRPC_METHODS.idb.hid, [event])) void _;
+}
+
+function pngSize(png: Uint8Array): string {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  return `${view.getUint32(16)}x${view.getUint32(20)}`;
+}
+
+async function rotate(): Promise<void> {
+  const to = values.to as Orientation;
+  if (!ORIENTATIONS.includes(to)) throw new Error(`--to takes ${ORIENTATIONS.join(", ")}`);
+  if (values.url) execFileSync("xcrun", ["simctl", "openurl", "booted", values.url]);
+  const began = performance.now();
+  const since = () => Math.round(performance.now() - began);
+  const events: Record<string, unknown>[] = [];
+  const link = await DeviceLink.open(channel(), {
+    role: "viewer",
+    onFrame: (frame) => {
+      if (frame[0] !== 4) return;
+      events.push({ t: since(), frame: `${(frame[6]! << 8) | frame[7]!}x${(frame[8]! << 8) | frame[9]!}`, key: (frame[1]! & 1) === 1, generation: (frame[10]! << 8) | frame[11]! });
+    },
+    onState: (state) => events.push({ t: since(), state: state.geometry }),
+  });
+  await link.send("START_VIDEO");
+  await wait(1500);
+  const client = new GrpcClient({ socket: join(DIR, "idb.sock") });
+  const before = await readOrientation(client);
+  events.push({ t: since(), turning: to, from: before });
+  const sent = performance.now();
+  await turnWithIdb(client, to);
+  events.push({ t: since(), sentMs: Math.round(performance.now() - sent) });
+  let last = before;
+  const until = performance.now() + Number(values.seconds) * 1000;
+  while (performance.now() < until) {
+    const read = await readOrientation(client).catch(() => null);
+    if (read !== last) events.push({ t: since(), orientation: read });
+    last = read;
+    await wait(20);
+  }
+  const shot = await idbScreenshot(client);
+  if (values.out) await import("node:fs/promises").then((fs) => fs.writeFile(values.out!, shot));
+  events.push({ t: since(), screenshot: pngSize(shot) });
+  client.close();
+  await link.close();
+  for (const event of events) report(event);
+}
+
+async function screenshotStep(): Promise<void> {
+  const link = await DeviceLink.open(channel(), { role: "input" });
+  const times: number[] = [];
+  let last: { png: string; generation: number } | null = null;
+  for (let index = 0; index < Number(values.times); index++) {
+    const began = performance.now();
+    const answer = await link.request({ type: "screenshot" });
+    times.push(performance.now() - began);
+    if (answer.ok && answer.result.type === "screenshot") last = answer.result;
+  }
+  const png = last ? Buffer.from(last.png, "base64") : null;
+  if (png && values.out) await import("node:fs/promises").then((fs) => fs.writeFile(values.out!, png));
+  report({ step: "screenshot", ms: times.map(Math.round), median: Math.round(median(times)), size: png ? pngSize(png) : null, generation: last?.generation ?? null, geometry: link.state.geometry });
+  await link.close();
+}
+
 async function clock(): Promise<void> {
   const mac = Date.now() / 1000;
   const device = Number(execFileSync("xcrun", ["simctl", "spawn", "booted", "date", "+%s"], { encoding: "utf8" }).trim());
@@ -259,7 +330,7 @@ async function state(): Promise<void> {
   await link.close();
 }
 
-const steps: Record<string, () => Promise<void>> = { deliver, stream, keyframes, "kill-companion": killCompanion, "kill-server": killServer, switch: switchTo, tap, clock, state };
+const steps: Record<string, () => Promise<void>> = { deliver, stream, keyframes, "kill-companion": killCompanion, "kill-server": killServer, switch: switchTo, tap, rotate, screenshot: screenshotStep, clock, state };
 const step = steps[positionals[0] ?? ""];
 if (!step) {
   process.stderr.write(`usage: bench.ts ${Object.keys(steps).join(" | ")}\n`);

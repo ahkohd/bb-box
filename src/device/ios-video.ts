@@ -7,6 +7,8 @@ import type { StreamOutput } from "./idb.ts";
 export const STOP_GRACE_MS = 500;
 export const RETRY_LEAST_MS = 100;
 export const RETRY_MOST_MS = 2_000;
+export const SIDEWAYS_FIRST_KEY_WAIT_MS = 150;
+export const REGENERATED_FRAME_WAIT_MS = 100;
 
 export interface IosVideoOptions {
   readonly open: (stopped: Promise<void>, signal: AbortSignal) => AsyncIterable<StreamOutput>;
@@ -19,6 +21,17 @@ export interface IosVideoOptions {
 interface Stream {
   readonly end: (why: string) => void;
   readonly asked: () => boolean;
+  pictures: number;
+}
+
+interface Picture {
+  readonly data: Uint8Array;
+  readonly key: boolean;
+  readonly size: VideoSize | null;
+}
+
+function uprightShaped(size: VideoSize): boolean {
+  return size.height > size.width;
 }
 
 const wait = (ms: number, signal: AbortSignal) =>
@@ -45,6 +58,9 @@ export class IosVideo implements VideoSource {
   #parameterSets: Uint8Array | null = null;
   #framesSent = 0;
   #restarts = 0;
+  #heldFirst: { readonly picture: Picture; readonly timer: ReturnType<typeof setTimeout> } | null = null;
+  #sidewaysFirstKeysDropped = 0;
+  #regenerated: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: IosVideoOptions) {
     this.#options = options;
@@ -64,6 +80,28 @@ export class IosVideo implements VideoSource {
     return this.#restarts;
   }
 
+  get sidewaysFirstKeysDropped(): number {
+    return this.#sidewaysFirstKeysDropped;
+  }
+
+  get generation(): number {
+    return this.#generation;
+  }
+
+  regenerate(generation: number): void {
+    this.#generation = generation;
+    clearTimeout(this.#regenerated);
+    if (this.#lastKey && !this.#deltaSinceKey) {
+      this.keyframe();
+      return;
+    }
+    const sent = this.#framesSent;
+    this.#regenerated = setTimeout(() => {
+      if (this.#framesSent === sent) this.keyframe();
+    }, REGENERATED_FRAME_WAIT_MS);
+    this.#regenerated.unref?.();
+  }
+
   get running(): boolean {
     return this.#running !== null;
   }
@@ -74,6 +112,7 @@ export class IosVideo implements VideoSource {
 
   keyframe(): void {
     if (this.#lastKey && !this.#deltaSinceKey) {
+      this.#lastKey = { ...this.#lastKey, generation: this.#generation };
       this.#send({ ...this.#lastKey, monotonicMs: this.#monotonic() });
       return;
     }
@@ -95,6 +134,7 @@ export class IosVideo implements VideoSource {
   }
 
   async stop(): Promise<void> {
+    clearTimeout(this.#regenerated);
     this.#stopping.abort();
     this.#stream?.end("the video stops");
     await this.#running;
@@ -115,6 +155,7 @@ export class IosVideo implements VideoSource {
           setTimeout(() => call.abort(new Error(`idb_companion did not end its stream within ${STOP_GRACE_MS} ms of being asked`)), STOP_GRACE_MS).unref?.();
         },
         asked: () => asked !== null,
+        pictures: 0,
       };
       this.#stream = stream;
       let received = 0;
@@ -127,7 +168,7 @@ export class IosVideo implements VideoSource {
           if (!output.data?.byteLength) continue;
           received++;
           retry = 0;
-          this.#unit(output.data);
+          this.#unit(output.data, stream);
         }
         if (!asked && !signal.aborted) throw new Error(received ? "idb_companion ended the video stream" : "idb_companion ended the video stream before its first frame");
       } catch (error) {
@@ -141,12 +182,14 @@ export class IosVideo implements VideoSource {
       } finally {
         endRequests();
         this.#stream = null;
+        if (signal.aborted) this.#forgetHeldFirst();
+        else this.#releaseHeldFirst();
       }
       if (asked) this.#restarts++;
     }
   }
 
-  #unit(data: Uint8Array): void {
+  #unit(data: Uint8Array, stream: Stream): void {
     const units = nalUnits(data);
     if (!hasPicture(units)) {
       if (units.some((unit) => unit.type === NAL_TYPES.sps || unit.type === NAL_TYPES.pps)) this.#parameterSets = data;
@@ -161,17 +204,52 @@ export class IosVideo implements VideoSource {
     }
     const all = whole === data ? units : nalUnits(whole);
     const key = isKeyFrame(all);
-    if (key) {
-      const sps = all.find((unit) => unit.type === NAL_TYPES.sps);
-      const size = sps ? spsPictureSize(sps) : null;
-      if (size && (!this.#size || size.width !== this.#size.width || size.height !== this.#size.height)) {
-        this.#size = size;
-        this.#generation = this.#options.sized(size);
-      }
+    const sps = key ? all.find((unit) => unit.type === NAL_TYPES.sps) : undefined;
+    const picture: Picture = { data: whole, key, size: sps ? spsPictureSize(sps) : null };
+    const first = stream.pictures++ === 0;
+    const held = this.#heldFirst;
+    if (held) {
+      clearTimeout(held.timer);
+      this.#heldFirst = null;
+      if (picture.key && picture.size && !uprightShaped(picture.size)) {
+        this.#sidewaysFirstKeysDropped++;
+        this.#options.log(`video: dropped a new stream's first key frame, ${held.picture.size!.width}x${held.picture.size!.height} with the picture on its side, as ${picture.size.width}x${picture.size.height} followed it`);
+      } else this.#accept(held.picture);
+    }
+    if (first && this.#mayBeOnItsSide(picture)) {
+      this.#heldFirst = { picture, timer: setTimeout(() => this.#releaseHeldFirst(), SIDEWAYS_FIRST_KEY_WAIT_MS) };
+      return;
+    }
+    this.#accept(picture);
+  }
+
+  #mayBeOnItsSide(picture: Picture): boolean {
+    if (!picture.key || !picture.size || !uprightShaped(picture.size)) return false;
+    return !this.#size || !uprightShaped(this.#size);
+  }
+
+  #forgetHeldFirst(): void {
+    if (this.#heldFirst) clearTimeout(this.#heldFirst.timer);
+    this.#heldFirst = null;
+  }
+
+  #releaseHeldFirst(): void {
+    const held = this.#heldFirst;
+    if (!held) return;
+    clearTimeout(held.timer);
+    this.#heldFirst = null;
+    this.#accept(held.picture);
+  }
+
+  #accept(picture: Picture): void {
+    const { size } = picture;
+    if (size && (!this.#size || size.width !== this.#size.width || size.height !== this.#size.height)) {
+      this.#size = size;
+      this.#generation = this.#options.sized(size);
     }
     if (!this.#size) return;
-    const frame: EncodedFrame = { data: whole, key, generation: this.#generation, monotonicMs: this.#monotonic(), width: this.#size.width, height: this.#size.height };
-    if (key) {
+    const frame: EncodedFrame = { data: picture.data, key: picture.key, generation: this.#generation, monotonicMs: this.#monotonic(), width: this.#size.width, height: this.#size.height };
+    if (picture.key) {
       this.#lastKey = frame;
       this.#deltaSinceKey = false;
     } else this.#deltaSinceKey = true;

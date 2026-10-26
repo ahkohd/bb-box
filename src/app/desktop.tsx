@@ -51,6 +51,7 @@ import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
 import { MachineRow } from "./settings-machines.tsx";
 import { DEVICE_HUB_WORDS, STILLS_WORDS, SelkiesSession, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
+import { DEFAULT_DEVICE_VIEW, type DeviceStageAction, type DeviceView } from "./device-stage.ts";
 import {
   KeysAfterPaste,
   astralKeysym,
@@ -155,6 +156,27 @@ function storedDisplay(boxId: string): Shows | null {
 function storeDisplay(boxId: string, shows: Shows): void {
   try {
     window.sessionStorage.setItem(displayChoiceKey(boxId), shows);
+  } catch {
+    return;
+  }
+}
+
+export function deviceViewKey(boxId: string): string {
+  return `bb-box:device-view:${boxId}`;
+}
+
+function storedDeviceView(boxId: string): DeviceView {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(deviceViewKey(boxId)) ?? "null") as Partial<DeviceView> | null;
+    return { frame: typeof stored?.frame === "boolean" ? stored.frame : DEFAULT_DEVICE_VIEW.frame, pixelForPixel: typeof stored?.pixelForPixel === "boolean" ? stored.pixelForPixel : DEFAULT_DEVICE_VIEW.pixelForPixel };
+  } catch {
+    return DEFAULT_DEVICE_VIEW;
+  }
+}
+
+function storeDeviceView(boxId: string, view: DeviceView): void {
+  try {
+    window.localStorage.setItem(deviceViewKey(boxId), JSON.stringify(view));
   } catch {
     return;
   }
@@ -792,6 +814,39 @@ export const WINDOWS_HIGH_RESOLUTION_WORDS =
  * The desktop menu's Display items (the owner's notes of 17 October 2026): Show as VNC and High resolution, each with
  * its tick, in a submenu; on a small screen, whose menu is a sheet with no submenus, under a Display label.
  */
+function DeviceDisplayItems({ compact, view, onChange }: { compact: boolean; view: DeviceView; onChange: (view: DeviceView) => void }) {
+  const items = (
+    <>
+      <DropdownMenuCheckboxItem className="gap-2" checked={view.frame} onCheckedChange={(checked) => onChange({ ...view, frame: checked === true })}>
+        <MonitorGlyph />
+        Show frame
+      </DropdownMenuCheckboxItem>
+      <DropdownMenuCheckboxItem className="gap-2" checked={view.pixelForPixel} onCheckedChange={(checked) => onChange({ ...view, pixelForPixel: checked === true })}>
+        <Icon name="Maximize2" aria-hidden />
+        Pixel for pixel
+      </DropdownMenuCheckboxItem>
+    </>
+  );
+  if (compact) {
+    return (
+      <>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Display</DropdownMenuLabel>
+        {items}
+      </>
+    );
+  }
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <MonitorGlyph />
+        Display
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>{items}</DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
 function DisplayItems({
   compact,
   vnc,
@@ -1032,6 +1087,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   const target = useRef<HTMLDivElement>(null);
   const session = useRef<ViewerSession | null>(null);
   const mineNow = useRef(false);
+  const deviceViewNow = useRef<DeviceView>(DEFAULT_DEVICE_VIEW);
   mineNow.current = mine;
   const boxNow = useRef(box);
   boxNow.current = box;
@@ -1088,6 +1144,9 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   // A kept session shows at once, before the box's state has loaded; the state can only confirm or end it.
   const [connection, setConnection] = useState<Connection>(() => (key ? keptFree<ViewerSession>(key)?.connection : undefined) ?? { state: "connecting" });
   const [device, setDevice] = useState<DeviceShown | null>(null);
+  const [deviceView, setDeviceView] = useState<DeviceView>(() => storedDeviceView(boxId));
+  useEffect(() => setDeviceView(storedDeviceView(boxId)), [boxId]);
+  const pendingDeviceAction = useRef<DeviceStageAction | null>(null);
   /** When the viewer tries again after the connection ended, so its note counts down to it rather than stand still. */
   const retryAt = useMemo(() => (connection.state === "disconnected" ? Date.now() + connection.retryMs : null), [connection]);
   const retryNow = useNow(retryAt !== null, 250);
@@ -1173,6 +1232,16 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     current.putClipboard = (text, automatic) =>
       ownShows === "desktop" && boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text, ...(automatic ? { automatic: true } : {}) }) : null;
     current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
+    if (current instanceof SelkiesSession && current.device) {
+      current.setDeviceView(deviceViewNow.current);
+      current.onDeviceAction = (action) => {
+        if (mineNow.current) current.sendDeviceControl(action);
+        else {
+          pendingDeviceAction.current = action;
+          void take();
+        }
+      };
+    }
     const deviceOf = () => (current instanceof SelkiesSession ? current.device : null);
     const unsubscribe = current.subscribe(() => {
       setConnection(current.connection);
@@ -1189,6 +1258,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
       if (current instanceof SelkiesSession) {
         current.onFallback = undefined;
         current.onClipboardImage = undefined;
+        current.onDeviceAction = undefined;
       }
       current.element.remove();
       session.current = null;
@@ -1224,7 +1294,20 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   useLayoutEffect(() => {
     // A desktop at high resolution keeps its density through the video viewer's resizes; noVNC would ask for its pane's own size, so it asks for none.
     session.current?.setControl(mine, !deviceShown && resizable && !(sharp === true && stream === "rfb"));
+    const action = pendingDeviceAction.current;
+    if (mine && action && session.current instanceof SelkiesSession) {
+      pendingDeviceAction.current = null;
+      session.current.sendDeviceControl(action);
+    }
   }, [mine, resizable, connection, sharp, stream, deviceShown]);
+  const deviceModelName = box?.device?.model ?? null;
+  useEffect(() => {
+    if (session.current instanceof SelkiesSession) session.current.setDeviceModel(deviceModelName);
+  }, [deviceModelName, connection]);
+  useEffect(() => {
+    deviceViewNow.current = deviceView;
+    if (session.current instanceof SelkiesSession) session.current.setDeviceView(deviceView);
+  }, [deviceView]);
   const guestOs = box?.os ?? null;
   useLayoutEffect(() => {
     if (guestOs) session.current?.setGuest(guestOs);
@@ -1516,6 +1599,16 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
                     Reconnect
                   </DropdownMenuItem>
                 ) : null}
+                {showing && deviceShown ? (
+                  <DeviceDisplayItems
+                    compact={compact}
+                    view={deviceView}
+                    onChange={(next) => {
+                      storeDeviceView(boxId, next);
+                      setDeviceView(next);
+                    }}
+                  />
+                ) : null}
                 {showing && !deviceShown && ((video === true && canShowVideo() && stream) || sharp !== null) ? (
                   <DisplayItems
                     compact={compact}
@@ -1631,9 +1724,9 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
           <Notice>{box.name} was deleted outside bb-box.</Notice>
         ) : box.state !== "ready" ? (
           <Notice>{box.name} is being released.</Notice>
-        ) : connection.state === "connecting" && deviceShown ? (
-          <Notice detail={deviceWaitWords(device)}>{device?.model ?? box.device?.model ?? "The device"}</Notice>
-        ) : connection.state === "connecting" ? (
+        ) : connection.state === "connecting" && deviceShown && !(device?.model ?? box.device?.model) ? (
+          <Notice detail={deviceWaitWords(device)}>The device</Notice>
+        ) : connection.state === "connecting" && deviceShown ? null : connection.state === "connecting" ? (
           <Notice>Connecting to the desktop…</Notice>
         ) : connection.state === "disconnected" ? (
           <Notice

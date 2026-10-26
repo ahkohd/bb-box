@@ -5,6 +5,8 @@ import { isAbsolute, join } from "node:path";
 import { turnedFrom } from "../core/device-settings.ts";
 import {
   DEVICE_HUB_PROCESS,
+  clockwiseTurns,
+  isSideways,
   deviceModel,
   screensOf,
   type DeviceControl,
@@ -18,6 +20,8 @@ import {
   type TouchContact,
   type VideoSize,
 } from "../core/device.ts";
+import { parseDeviceState } from "../core/device-parse.ts";
+import { clockwiseTurnedPixels, pngPixels, rgbaPng } from "../core/png.ts";
 import { DriverError, type ControlContext, type DeviceDriver, type PinchGesture, type VideoSource } from "./driver.ts";
 import { Companion, orientation, screenshot, setOrientation, videoStream } from "./idb.ts";
 import { IosSettingsKeeper } from "./ios-controls.ts";
@@ -30,6 +34,9 @@ export const SLIM_LISTS = "/usr/local/share/bb-box/ios";
 export const WATCH_MS = 5_000;
 export const CLOCK_TICK_MS = 1_000;
 export const RESUME_GAP_MS = 5_000;
+export const ORIENTATION_EVERY_MS = 250;
+export const ORIENTATION_STILL_EVERY_MS = 2_000;
+export const ORIENTATION_READ_MS = 2_000;
 export const DEVICE_EXITS_WINDOW_MS = 5 * 60_000;
 const SHUTTING_DOWN_WAIT_MS = 30_000;
 export const BUTTON_SETTLE_MS = 400;
@@ -55,6 +62,7 @@ export interface IosDriverOptions {
   readonly slimLists?: string;
   readonly watchMs?: number;
   readonly clockTickMs?: number;
+  readonly orientationEveryMs?: number;
   readonly clock?: IosDriverClock;
   readonly processes?: (name: string) => Promise<number[]>;
   readonly access?: PasteboardAccess;
@@ -83,15 +91,12 @@ function ownProcesses(name: string): Promise<number[]> {
   );
 }
 
-function sideways(orientation: Orientation): boolean {
-  return orientation === "turned-left" || orientation === "turned-right";
-}
-
-export function contentOrientation(physical: Orientation, video: VideoSize, model: TableModel): Orientation {
+export function contentOrientation(physical: Orientation, video: VideoSize, model: TableModel, lastSideways: Orientation = "turned-left"): Orientation {
   const screen = model.form === "foldable" ? model.outer : model.screen;
   const turned = video.width > video.height !== screen.pixels.width > screen.pixels.height;
-  if (turned === sideways(physical)) return physical;
-  return turned ? "turned-left" : "upright";
+  if (turned) return isSideways(physical) ? physical : isSideways(lastSideways) ? lastSideways : "turned-left";
+  if (physical === "upside-down") return model.form === "phone" ? "upright" : "upside-down";
+  return "upright";
 }
 
 export interface AppInfo {
@@ -140,6 +145,10 @@ export class IosDriver implements DeviceDriver {
   #power: Power<"ios"> = { is: "stopped" };
   #generation = 0;
   #physical: Orientation = "upright";
+  #lastSideways: Orientation = "turned-left";
+  #orientationTimer: ReturnType<typeof setInterval> | null = null;
+  #readingOrientation = false;
+  #orientationRead = { at: 0, frames: -1 };
   #busy = false;
   #lastExit: number | null = null;
   #watchTimer: ReturnType<typeof setInterval> | null = null;
@@ -242,15 +251,30 @@ export class IosDriver implements DeviceDriver {
     await this.#simctl.boot(device.udid, signal);
     if (!running) this.#log(`device: the ${target.model} (${device.udid}) booted in ${((this.#clock.monotonic() - began) / 1000).toFixed(1)} s`);
     const rebooted = await this.#slimming(target, device.udid, signal);
+    await this.#rememberContent(target);
     const reattached = running && !rebooted;
     const companion = reattached ? await this.#companion.ensure(device.udid, signal) : await this.#companion.restart(device.udid, signal);
     if (companion === "started") this.#input.close();
-    this.#physical = await orientation(this.#companion.client, signal).catch(() => null) ?? "upright";
+    this.#physical = (await orientation(this.#companion.client, AbortSignal.any([signal, AbortSignal.timeout(ORIENTATION_READ_MS)])).catch(() => null)) ?? this.#physical;
     if (this.#video.running) this.#video.restart(`idb_companion was ${companion}`);
     else this.#video.start();
     await this.#settings.use(target.model, device.udid, signal).catch((error) => this.#log(`settings: ${words(error)}`));
     await this.#readSettings(signal).catch((error) => this.#log(`settings: not read: ${words(error)}`));
     return reattached ? "reattached" : "booted";
+  }
+
+  async #rememberContent(target: OfferedDeviceOf<"ios">): Promise<void> {
+    const text = await readFile(this.#options.paths.state, "utf8").catch(() => null);
+    if (text === null) return;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      return;
+    }
+    const parsed = parseDeviceState(value);
+    const geometry = parsed.ok && parsed.value.model === target.model ? parsed.value.geometry : null;
+    if (geometry && isSideways(geometry.content)) this.#lastSideways = geometry.content;
   }
 
   async #slimList(name: string): Promise<readonly string[] | null> {
@@ -309,12 +333,42 @@ export class IosDriver implements DeviceDriver {
     return this.#generation;
   }
 
+  #watchOrientation(): void {
+    const frames = this.#video.framesSent;
+    const still = frames === this.#orientationRead.frames;
+    if (still && this.#clock.monotonic() - this.#orientationRead.at < ORIENTATION_STILL_EVERY_MS) return;
+    void this.#readOrientation();
+  }
+
   async #readOrientation(): Promise<void> {
-    const read = await orientation(this.#companion.client).catch(() => null);
-    if (read && read !== this.#physical) {
-      this.#physical = read;
-      this.#changed();
+    if (this.#readingOrientation) return;
+    this.#readingOrientation = true;
+    this.#orientationRead = { at: this.#clock.monotonic(), frames: this.#video.framesSent };
+    try {
+      const read = await orientation(this.#companion.client, AbortSignal.timeout(ORIENTATION_READ_MS)).catch(() => null);
+      if (!read || this.#busy || this.#power.is !== "booted") return;
+      this.#turned(read);
+    } finally {
+      this.#readingOrientation = false;
     }
+  }
+
+  #turned(to: Orientation): number {
+    if (to === this.#physical) return this.#generation;
+    const from = this.#physical;
+    this.#physical = to;
+    this.#generation++;
+    this.#input.close();
+    this.#log(`orientation: the ${this.#target?.model ?? "device"} turned from ${from} to ${to}, generation ${this.#generation}`);
+    this.#video.regenerate(this.#generation);
+    this.#changed();
+    return this.#generation;
+  }
+
+  #contentOf(size: VideoSize, model: TableModel): Orientation {
+    const content = contentOrientation(this.#physical, size, model, this.#lastSideways);
+    if (isSideways(content)) this.#lastSideways = content;
+    return content;
   }
 
   async #recover(error: unknown): Promise<void> {
@@ -329,6 +383,8 @@ export class IosDriver implements DeviceDriver {
     this.#watchTimer.unref?.();
     this.#clockTimer = setInterval(() => this.#tick(), this.#options.clockTickMs ?? CLOCK_TICK_MS);
     this.#clockTimer.unref?.();
+    this.#orientationTimer = setInterval(() => this.#watchOrientation(), this.#options.orientationEveryMs ?? ORIENTATION_EVERY_MS);
+    this.#orientationTimer.unref?.();
     void this.#look();
   }
 
@@ -447,7 +503,8 @@ export class IosDriver implements DeviceDriver {
     this.#closed.abort();
     if (this.#watchTimer) clearInterval(this.#watchTimer);
     if (this.#clockTimer) clearInterval(this.#clockTimer);
-    this.#watchTimer = this.#clockTimer = null;
+    if (this.#orientationTimer) clearInterval(this.#orientationTimer);
+    this.#watchTimer = this.#clockTimer = this.#orientationTimer = null;
     this.#input.close();
     void this.#video.stop();
     this.#companion.close();
@@ -549,7 +606,6 @@ export class IosDriver implements DeviceDriver {
         break;
       case "rotate": {
         const to = control.turn ? turnedFrom(this.#physical, control.turn) : control.to;
-        const generation = this.#generation;
         await setOrientation(this.#companion.client, to, signal);
         const until = this.#clock.monotonic() + ROTATE_SETTLE_MS;
         let read = await orientation(this.#companion.client, signal).catch(() => null);
@@ -558,8 +614,7 @@ export class IosDriver implements DeviceDriver {
           read = await orientation(this.#companion.client, signal).catch(() => null);
         }
         if (read !== to) throw new DriverError("failed", `idb_companion was asked to turn the device ${to.replace("-", " ")}, but it reads ${read?.replace("-", " ") ?? "nothing"}.`);
-        this.#physical = to;
-        await this.#newPicture(generation, signal);
+        await this.#newPicture(this.#turned(to), signal);
         break;
       }
       case "appearance":
@@ -638,7 +693,12 @@ export class IosDriver implements DeviceDriver {
 
   async screenshot(): Promise<Uint8Array> {
     this.#booted();
-    return screenshot(this.#companion.client);
+    const png = await screenshot(this.#companion.client);
+    const size = this.#video.size;
+    const turns = size ? clockwiseTurns(this.#contentOf(size, this.#model())) : 0;
+    if (!turns) return png;
+    const turned = clockwiseTurnedPixels(pngPixels(png), turns);
+    return rgbaPng(turned.width, turned.height, turned.rgba);
   }
 
   async tree(): Promise<readonly DeviceElement[]> {
@@ -650,7 +710,7 @@ export class IosDriver implements DeviceDriver {
     if (model.platform !== "ios") throw new DriverError("failed", `The ${model.name} is not an iOS device.`);
     const size = this.#video.size;
     const geometry =
-      this.#power.is === "booted" && size ? { generation: this.#generation, physical: this.#physical, content: contentOrientation(this.#physical, size, model), video: size } : null;
+      this.#power.is === "booted" && size ? { generation: this.#generation, physical: this.#physical, content: this.#contentOf(size, model), video: size } : null;
     const power: Power<"ios"> = this.#power.is === "booted" ? { is: "booted", awake: this.#awake } : this.#power;
     return { platform: "ios", model: model.name, power, geometry, settings: this.#settings.settings(), at: this.#clock.now() };
   }

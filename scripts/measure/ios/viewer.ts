@@ -6,7 +6,7 @@ import { extname, join } from "node:path";
 import { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import type { DeviceInput } from "../../../src/core/device.ts";
+import type { DeviceControl, DeviceInput } from "../../../src/core/device.ts";
 import { DeviceLink } from "../../../src/core/device-link.ts";
 import { DEVICE_PATHS, SelkiesBox, SelkiesRelay, type OpenStream } from "../../../src/core/selkies.ts";
 import { devicePaths } from "../../../src/device/paths.ts";
@@ -37,7 +37,19 @@ const relays = new Set<SelkiesRelay>();
 const box = new SelkiesBox(open, { paths: DEVICE_PATHS, spacingMs: 0, apart: () => true, onText: (message) => relays.forEach((relay) => relay.fromBox(message)) });
 let personHasControl = false;
 let generation = 0;
-const control = await DeviceLink.open(await channel(), { role: "control", started: Date.now(), instance: "harness" });
+const HARNESS_STARTED = Date.now();
+
+async function openControl(): Promise<DeviceLink> {
+  for (;;) {
+    try {
+      return await DeviceLink.open(await channel(), { role: "control", started: HARNESS_STARTED, instance: "harness", onClosed: () => void openControl().then((link) => (control = link)) });
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+}
+
+let control = await openControl();
 
 async function setOwner(holder: "agent" | "person") {
   generation = Math.max(generation + 1, Date.now());
@@ -68,6 +80,12 @@ createHttpServer(async (request, response) => {
       const input = (await body(request)) as DeviceInput;
       const began = performance.now();
       const answer = await control.request({ type: "input", input, owner: Number(url.searchParams.get("owner") ?? generation) });
+      reply(response, 200, { answer, ms: Math.round(performance.now() - began) });
+      return;
+    }
+    if (url.pathname === "/api/control") {
+      const began = performance.now();
+      const answer = await control.request({ type: "control", control: (await body(request)) as DeviceControl }, { timeoutMs: 180_000 });
       reply(response, 200, { answer, ms: Math.round(performance.now() - began) });
       return;
     }

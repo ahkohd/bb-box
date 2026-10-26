@@ -1078,3 +1078,171 @@ Run in the box on all three models, the check passed every line, 36 of
 36. Each model took dark and light, and all 12 text sizes, and read each
 back, then went back to light and large. Each listed its status bar
 override, then none once cleared, and read unlocked just after boot.
+
+## Unit 6.1: the device frame
+
+Measured on 26 October 2026 in one ios box acquired through the production
+BB, on Tart, at the kind's default size, 6 cores and 16 GiB: macOS 27.0,
+Xcode 27.0, iOS 27.0 (24A434), idb_companion 1.7.7. The device server was
+this unit's, delivered from its checkout as bb-box delivers it. The panel's
+own client, `SelkiesSession` with its new `DeviceStage`, ran in Chrome 156,
+headless, on the box's macOS, behind the plugin's own relay, with BB's theme
+loaded from BB's source: the harness in
+[scripts/measure/ios](../../scripts/measure/ios/README.md). BB's server and
+the panel through it are not in these numbers. The owner's checks of the
+panel are listed under [Not checked here](#not-checked-here-1).
+
+### What iOS does when it turns
+
+Turns were sent as idb's HID orientation event, with the device's Safari
+showing a page.
+
+- **idb's HID orientation event counts from 0:** 0 upright, 1 upside down,
+  2 turned right, 3 turned left. Its orientation read uses iOS's own
+  numbers, 1 to 4, and 0 before the first turn, which the server takes as
+  upright.
+- **The video turns with what iOS draws,** as E8 found: turned left, the
+  stream is the device's own picture turned a quarter anticlockwise, with
+  the island at the left; turned right, at the right.
+- **An iPhone does not draw upside down,** as 6.3 found, and keeps the side
+  it was drawn on before: turned right, then upside down, the stream stays
+  2622x1206 with the island at the right. **An iPad draws upside down:**
+  idb's screenshot then has its interface upside down in the device's own
+  picture, and the stream shows it the right way up.
+- **iOS changes its layout 8 to 70 ms after the turn reads back,** in most
+  turns, and 2.5 s after it once, in the box's first turn after it started.
+  So a turn is two changes of geometry: the turn, then the new size.
+- **The video, idb's screenshot and the video's island.** The stream draws
+  the Dynamic Island as a black pill, and idb's screenshot does too;
+  `simctl io screenshot` leaves it out. The island measured from the
+  stream, upright: on the iPhone 18 Pro 284x110 pixels at (461, 42); on the
+  iPhone 17 376x110 at (415, 42). The model table had 374x110 at (416, 33)
+  for both, and now has these. The frame draws its island over the
+  stream's, in place. Neither the stream nor the screenshot rounds the
+  screen's corners, so the frame clips them.
+
+### The first key frame of a sideways stream
+
+Unit 5.2 found that a stream started while the picture is sideways sends
+one key frame upright-sized, its picture on its side, then the right one.
+
+| | Before | After |
+| --- | --- | --- |
+| A key frame asked for on a busy screen while sideways, 5 times | each restart sent 1206x2622 then 2622x1206, 50 to 80 ms apart: two new geometry generations a time | the first is dropped when the second follows within 150 ms; one generation, as before the restart |
+| The server started with the device sideways | two generations | one |
+| On a still screen | the second key frame came 51 ms after the first | the same |
+
+The server drops it in the video, not the panel, so the agent's points and
+the person's touches see one geometry, and none of its touches are lifted
+by a change that was never there.
+
+### Turns in the panel
+
+`drive.ts turn` sent each turn through idb and logged, on every animation
+frame, the frame's angle, the veil and which picture the panel showed. The
+server reads idb's orientation every 250 ms while the screen changes and
+every 2 s while it is still, so a turn made outside bb-box, as here, raises
+the geometry generation; box_device's rotate goes through the same step.
+
+| Model | Turns | Turning | Frames while turning | Gap between frames | New picture after the turn |
+| --- | --- | --- | --- | --- | --- |
+| iPhone 18 Pro | upright, left, right, upside down, upright | 267 to 283 ms | 19 to 20 | 16.7 ms at the median, 16.8 ms at worst | 301 to 304 ms |
+| iPhone 17 | left, right, upside down, upright | 267 to 283 ms | 19 to 20 | 16.7, 16.8 ms | 301 to 303 ms |
+| iPad Pro 13-inch (M5) | upright, left, right, upside down, upright | 267 to 283 ms | 19 to 20 | 16.7, 16.8 ms | 301 to 305 ms |
+
+The animation is 300 ms; the first and last frames that moved are 267 to
+283 ms apart. In every turn the new picture had come before the turn ended,
+so the panel showed it as the turn ended and the veil never showed. The
+turned old picture held until then, as 063 asks.
+
+What the first runs found, and the panel now does:
+
+- **The second change cut the turn short.** The size change 8 to 70 ms
+  after the turn ended the animation, and the frame snapped. A change that
+  comes while the frame turns now waits for the turn to end.
+- **A half turn waited 1.6 s under the veil:** a key frame by restarting
+  idb's stream took that long while iOS changed its layout. The frames that
+  come anyway now carry the new generation, and the stream restarts only if
+  none comes within 100 ms.
+- **Upside down after the server restarted showed two islands:** the server
+  had forgotten which side the iPhone last drew on, and guessed. It now
+  reads the side from its own state file when it attaches, and keeps the
+  last sideways side through an upright-sized frame.
+
+### A tap after a turn lands where it is drawn
+
+`touch.html` in the device's Safari put a red dot where each touch landed.
+`drive.ts landing` took a pixel of the picture, pressed where the panel drew
+it, and read the same pixel after: 16 of 16 taps landed where drawn, on the
+three models, upright, turned left, turned right and upside down. Taps that
+began where a dot already was are not counted.
+
+### The agent's screenshot, turned
+
+The agent's screenshot is idb's, which is the device's own picture whatever
+way the device is held. The server now turns it as the video is drawn, so
+its pixels are the video's and a point in one is a point in the other.
+
+| iPad Pro 13-inch (M5), 5 each | Size | Time, at the median |
+| --- | --- | --- |
+| upright | 2064x2752 | 141 ms |
+| turned left | 2752x2064 | 196 ms |
+| upside down | 2064x2752 | 286 ms |
+
+Each read upright. Turning costs 55 to 145 ms on the iPad's 5.7 million
+pixels, most of it compressing the PNG again. Stills, for browsers that
+cannot play the video, come the same way.
+
+### What watching the orientation costs
+
+On a still screen, over 20 s: the server took 0.001 to 0.002 of a core and
+idb_companion 0.002 to 0.004, as unit 4.2 measured without the watch.
+idb_companion logs two lines for each read, so the watch slows to every 2 s
+while the screen is still.
+
+### Foldables, drawn from the table
+
+No Android device has run in a box yet, so the Pixel Fold, the Pixel 8 and
+the Pixel Tablet were drawn by `frames.html` from the model table, with a
+test card for a picture, in both themes, upright and turned. The fold's
+times, with the new picture 600 or 900 ms after the change, as a device
+would send it:
+
+| Change | Moving | Frames | Gap between frames | Veil | Picture |
+| --- | --- | --- | --- | --- | --- |
+| open to closed, 2 times | 500 ms: 350 folding, 150 fading | 31 to 32 | 16.7 ms at the median; 33.4 ms at worst once, 16.8 otherwise | from 503 to 509 ms | at 606 to 613 ms |
+| closed to open, 2 times | 500 ms | 32 | 16.7, 16.8 ms | from 503 to 504 ms | at 606 ms |
+| closed to half open | 500 ms | 32 | 16.7, 16.8 ms | from 504 ms | at 906 ms |
+| half open to closed, the picture at 100 ms | 500 ms | 31 | 16.7, 16.7 ms | none | held to 501 ms |
+
+### Booting, asleep and failed
+
+Drawn by `frames.html` with each state: booting shows the model's name and
+'Booting' on a black screen; asleep, the last picture dimmed, 'Asleep' and
+**Wake**; failed, the model, the error's words and **Reboot device**. Wake
+and Reboot device take control first when the viewer does not have it.
+
+### What limits these numbers
+
+- Chrome was headless, on the box's own macOS, at a device pixel ratio of 1,
+  and drew on the CPU; a person's browser on a display with a GPU may draw
+  more smoothly, not less.
+- The turns were idb's; box_device's rotate goes through the same step in
+  the server, but was not driven here.
+- The Android frames are the table's numbers: no Pixel has been seen in a
+  frame beside its own picture.
+
+### Not checked here
+
+- **For the owner, in the panel through BB:** the frame on each iOS model in
+  both themes; a turn by box_device's rotate and by Rotate in a later
+  toolbar; Show frame and Pixel for pixel under Display in the menu, kept
+  for the box; the frame in a narrow panel, at 360 px; on a phone's BB;
+  with reduced motion; and whether the body's graphite, the light edge in
+  the dark theme and the shadow in the light one look right.
+- **For Android, once its template is built:** the Pixel 8, Pixel Fold and
+  Pixel Tablet in their frames beside their own pictures; whether the
+  emulator's stream turns with what Android draws, as iOS's does, which the
+  frame assumes; a fold and an unfold by `adb` and the emulator's posture,
+  with the stream's change of size; the Pixel Fold's half open posture; and
+  each model's bezel, corner and button numbers against the device.

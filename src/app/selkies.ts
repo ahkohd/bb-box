@@ -19,9 +19,10 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { DEVICE_FIRST_FRAME_MS, stillsRequestText, type DeviceRequest, type DeviceState, type TouchContact } from "../core/device.ts";
+import { DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, frameGenerationOf, stillsRequestText, type DeviceRequest, type DeviceState, type TouchContact } from "../core/device.ts";
 import { deviceRequestText, parseDeviceServerMessage } from "../core/device-parse.ts";
-import { DeviceFingers, DeviceTyping, TouchEcho, pictureIn } from "./device-input.ts";
+import { DeviceFingers, DeviceTyping, TouchEcho } from "./device-input.ts";
+import { DeviceStage, type DeviceStageAction, type DeviceView } from "./device-stage.ts";
 import { KeysAfterPaste, astralKeysym, keyLog, textKeys, typeTextShortcut, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_SHIFT_L, XK_V, boxKey, macBrowser, pasteChordKeys, pasteShortcut, retryWait, type Connection, type PasteShortcut } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
@@ -330,6 +331,10 @@ export class SelkiesSession implements Kept {
   readonly #deviceTyping: DeviceTyping | null;
   readonly #fingers = new DeviceFingers();
   #deviceRequests = 0;
+  readonly #stage: DeviceStage | null;
+  #framesCarryGeneration = false;
+  readonly #frameGenerations = new Map<number, number>();
+  onDeviceAction?: (action: DeviceStageAction) => void;
 
   constructor(url: string, options: { readonly device?: { readonly model: string | null } } = {}) {
     this.#url = url;
@@ -341,7 +346,9 @@ export class SelkiesSession implements Kept {
     this.element.style.background = "transparent";
     this.#canvas.style.cssText = "width:100%;height:100%;object-fit:contain;outline:none;display:block";
     this.#canvas.tabIndex = -1;
-    this.element.appendChild(this.#canvas);
+    this.#stage = options.device ? new DeviceStage(this.#canvas, options.device.model) : null;
+    this.element.appendChild(this.#stage?.element ?? this.#canvas);
+    if (this.#stage) this.#stage.onAction = (action) => (this.onDeviceAction ? this.onDeviceAction(action) : this.sendDeviceControl(action));
     this.#echo = this.#device ? new TouchEcho() : null;
     this.#deviceTyping = this.#device ? new DeviceTyping({ text: (text) => this.#deviceText(text), key: (keysym) => this.#tapKeysym(keysym) }) : null;
     if (this.#echo) this.element.appendChild(this.#echo.element);
@@ -392,6 +399,26 @@ export class SelkiesSession implements Kept {
 
   get device(): DeviceShown | null {
     return this.#device;
+  }
+
+  get deviceStage(): DeviceStage | null {
+    return this.#stage;
+  }
+
+  setDeviceModel(model: string | null): void {
+    const device = this.#device;
+    if (!device || device.state || !model || device.model === model) return;
+    this.#device = { ...device, model };
+    this.#stage?.setModel(model);
+    for (const listener of this.#listeners) listener();
+  }
+
+  setDeviceView(view: DeviceView): void {
+    this.#stage?.setView(view);
+  }
+
+  sendDeviceControl(action: DeviceStageAction): void {
+    if (this.#mine) this.#deviceRequest({ type: "control", control: { action } });
   }
 
   #showStills(): void {
@@ -492,6 +519,7 @@ export class SelkiesSession implements Kept {
 
   #set(connection: Connection): void {
     this.connection = connection;
+    this.#stage?.setConnected(connection.state === "connected");
     for (const listener of this.#listeners) listener();
   }
 
@@ -635,6 +663,10 @@ export class SelkiesSession implements Kept {
     if (this.#device?.stills) return;
     const key = (bytes[1]! & 15) === 1;
     const id = (bytes[2]! << 8) | bytes[3]!;
+    if (this.#stage && this.#framesCarryGeneration) {
+      this.#frameGenerations.set(id, frameGenerationOf(bytes));
+      if (this.#frameGenerations.size > 256) this.#frameGenerations.delete(this.#frameGenerations.keys().next().value!);
+    }
     if (this.#device && !this.#everShown && this.#undecoded === undefined) this.#undecoded = setTimeout(() => this.#showStills(), DEVICE_FIRST_FRAME_MS);
     this.#received = id;
     this.#undrawnSince ??= performance.now();
@@ -749,27 +781,29 @@ export class SelkiesSession implements Kept {
     if (!parsed.ok || !this.#device) return;
     const message = parsed.value;
     if (message.verb === "BB_DEVICE_TOUCH") {
-      if (!this.#mine && message.contacts.length) this.#echo?.show(message.contacts, pictureIn(this.element.clientWidth, this.element.clientHeight, this.#width, this.#height));
+      if (!this.#mine && message.contacts.length && this.#stage) this.#echo?.show(message.contacts, (point) => this.#stage!.toElement(point));
       return;
     }
     if (message.verb === "BB_DEVICE_STILL") {
-      if (this.#device.stills && !this.#stopped) void this.#drawStill(message.png);
+      if (this.#device.stills && !this.#stopped) void this.#drawStill(message.png, message.generation);
       return;
     }
     const state = message.verb === "BB_DEVICE_HELLO" ? message.hello.state : message.verb === "BB_DEVICE_STATE" ? message.state : null;
+    if (message.verb === "BB_DEVICE_HELLO") this.#framesCarryGeneration = message.hello.version >= FRAME_GENERATIONS_SINCE_VERSION;
     if (!state) return;
     this.#device = { ...this.#device, model: state.model, state };
+    this.#stage?.setState(state);
     for (const listener of this.#listeners) listener();
   }
 
-  async #drawStill(png: string): Promise<void> {
+  async #drawStill(png: string, generation: number): Promise<void> {
     const drawn = ++this.#stillDrawn;
     const bitmap = await createImageBitmap(new Blob([base64Bytes(png)], { type: "image/png" })).catch(() => null);
     if (!bitmap) return;
     try {
       if (drawn !== this.#stillDrawn || this.#disposed || !this.#device?.stills) return;
       this.#unansweredSince = null;
-      this.#paint(bitmap, bitmap.width, bitmap.height);
+      this.#paint(bitmap, bitmap.width, bitmap.height, this.#framesCarryGeneration ? generation & 0xffff : null);
     } finally {
       bitmap.close();
     }
@@ -808,13 +842,22 @@ export class SelkiesSession implements Kept {
       if (this.#disposed) return;
       clearTimeout(this.#undecoded);
       this.#undecoded = undefined;
-      this.#paint(frame, frame.displayWidth, frame.displayHeight);
+      const generation = this.#frameGenerations.get(frame.timestamp) ?? null;
+      this.#frameGenerations.delete(frame.timestamp);
+      this.#paint(frame, frame.displayWidth, frame.displayHeight, generation);
     } finally {
       frame.close();
     }
   }
 
-  #paint(picture: CanvasImageSource, width: number, height: number): void {
+  #paint(picture: CanvasImageSource, width: number, height: number, generation: number | null = null): void {
+    if (this.#stage) {
+      this.#stage.paint(picture, width, height, generation);
+      this.#width = this.#canvas.width;
+      this.#height = this.#canvas.height;
+      this.#painted();
+      return;
+    }
     const resized = this.#width !== width || this.#height !== height;
     if (this.#canvas.width !== width || this.#canvas.height !== height) {
       this.#canvas.width = width;
@@ -824,11 +867,15 @@ export class SelkiesSession implements Kept {
     this.#height = height;
     if (resized) this.#drawPointer();
     this.#canvas.getContext("2d")?.drawImage(picture, 0, 0);
-    this.#undrawnSince = null;
     if (this.#hold && this.#hold.resized === null && this.#hold.size !== `${width}x${height}`) {
       this.#hold.resized = performance.now();
       this.#holdUntil();
     }
+    this.#painted();
+  }
+
+  #painted(): void {
+    this.#undrawnSince = null;
     if (this.connection.state !== "connected") {
       this.#everShown = true;
       clearTimeout(this.#firstFrame);
@@ -1025,7 +1072,11 @@ export class SelkiesSession implements Kept {
 
   #fingerEvent(event: PointerEvent): void {
     event.preventDefault();
-    const at = this.#position(event);
+    const at = this.#stage?.toVideo(event.clientX, event.clientY) ?? null;
+    if (!at) {
+      if (event.type !== "pointerdown" && event.type !== "pointermove" && this.#fingers.has(event.pointerId)) this.#deviceTouches(this.#fingers.lift(event.pointerId));
+      return;
+    }
     if (event.type === "pointerdown") {
       this.#canvas.setPointerCapture?.(event.pointerId);
       this.#deviceTouches(this.#fingers.set(event.pointerId, at));
@@ -1040,7 +1091,11 @@ export class SelkiesSession implements Kept {
       this.#fingerEvent(event);
       return;
     }
-    this.#pointer = this.#position(event);
+    if (this.#stage) {
+      const at = this.#stage.toVideo(event.clientX, event.clientY);
+      if (!at && (event.type === "pointerdown" || !this.#mask)) return;
+      if (at) this.#pointer = at;
+    } else this.#pointer = this.#position(event);
     if (event.type !== "pointermove" && event.button >= 0 && event.button <= 2) {
       // Selkies numbers buttons as the Pointer Events do: 1 primary, 2 middle, 4 secondary.
       const bit = 1 << event.button;
@@ -1291,6 +1346,7 @@ export class SelkiesSession implements Kept {
     document.removeEventListener("visibilitychange", this.#onVisibility);
     window.removeEventListener("focus", this.#onFocus);
     this.#observer?.disconnect();
+    this.#stage?.dispose();
     this.#keyboard.ungrab();
     this.#drop();
     this.#listeners.clear();

@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>html,body{margin:0;height:100%;background:#fff;touch-action:none;user-select:none;-webkit-user-select:none}.dot{position:fixed;width:24px;height:24px;margin:-12px 0 0 -12px;border-radius:50%;background:#e01020}</style></head><body>
+<script>
+document.addEventListener("pointerdown", (event) => {
+  for (const old of document.querySelectorAll(".dot")) old.remove();
+  const dot = document.createElement("div");
+  dot.className = "dot";
+  dot.style.left = `${event.clientX}px`;
+  dot.style.top = `${event.clientY}px`;
+  document.body.appendChild(dot);
+});
+</script></body></html>

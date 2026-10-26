@@ -15,14 +15,18 @@ It runs as the box user, with this checkout copied into the box.
 | `bench.ts switch --device <model>` | Switches the box's device through a control connection, and times it to the answer |
 | `bench.ts tap` | Taps the screen's middle through idb's HID stream `--times` times, and times each to the next frame |
 | `bench.ts state` | Prints the device's state from a viewer's hello |
+| `bench.ts rotate --to <orientation>` | Turns the device with idb's HID orientation event, then prints, for `--seconds`, each frame with the geometry generation in its header, each state the server sends and each change idb's orientation reads. `--out` keeps idb's own screenshot |
+| `bench.ts screenshot` | Asks the device server for the agent's screenshot `--times` times, and prints each time, its size and generation, and the geometry. `--out` keeps the last |
 
 Input, as the panel sends it (units 5.1 and 5.2), with three more files:
 
 | File | What it does |
 | --- | --- |
-| `viewer.ts` | Runs the plugin's own relay for device viewers beside the device server, without BB's server: pages on port 8770, viewers' WebSockets on 8771. It takes the box's lease, as bb-box does, and stands in for the plugin: `/api/owner?holder=person` or `agent` sets control's owner, and `/api/input` sends the agent's input, a `DeviceInput` as JSON |
-| `device.html` | The panel's own video client on a device display, logging each frame it draws, with a pixel's shade where `window.probe` points |
-| `drive.ts` | Drives `device.html` in headless Chrome through its DevTools protocol, one step an argument: `owner:person`, `tap:x:y`, `press`, `move` and `release`, `drag:x1:y1:x2:y2:ms[:alt]`, `wheel:x:y:delta:count:ms`, `ime:reading:committed`, `insert:text`, `type:text`, `typetext:text`, `agent:<json>`, `e14:x:y:taps:gapMs:label`, `wait:ms` and `eval:js`. Points are the device's, upright or as drawn |
+| `viewer.ts` | Runs the plugin's own relay for device viewers beside the device server, without BB's server: pages on port 8770, viewers' WebSockets on 8771. It takes the box's lease, as bb-box does, and stands in for the plugin: `/api/owner?holder=person` or `agent` sets control's owner, `/api/input` sends the agent's input, a `DeviceInput` as JSON, and `/api/control` a `DeviceControl`, such as a switch. It takes the lease again if the server restarts |
+| `device.html` | The panel's own video client on a device display, in its frame, logging each frame it draws, with a pixel's shade where `window.probe` points. `?theme=light` or `dark` loads BB's theme; `frame=0` and `pfp=1` set Show frame and Pixel for pixel |
+| `touch.html` | A page for the device's Safari that puts a red dot where each touch lands |
+| `frames.html` | Every model's frame from the table, with a test card and no device: `?model=`, `physical`, `content`, `posture`, `theme`, `frame` and `power`. `change({posture})` changes it as a device would, and `foldTimes(posture, pictureAfterMs)` times a fold's frames |
+| `drive.ts` | Drives `device.html` in headless Chrome through its DevTools protocol, one step an argument: `owner:person`, `tap:x:y`, `press`, `move` and `release`, `drag:x1:y1:x2:y2:ms[:alt]`, `wheel:x:y:delta:count:ms`, `ime:reading:committed`, `insert:text`, `type:text`, `typetext:text`, `agent:<json>`, `e14:x:y:taps:gapMs:label`, `wait:ms` and `eval:js`. Points are the device's, upright or as drawn. For the frame: `shot:<file>`, `theme:dark` or `light`, `view:frame` or `noframe` with `:pfp`, `size:w:h:scale`; `turn:<orientation>:<ms>:<label>` turns the device with idb and logs the frame's angle, the veil and the picture on each animation frame; `landing:x:y` taps a video pixel where it is drawn and says whether `touch.html`'s dot appeared there; `freehid` restarts the device server, so idb's HID stream is free for `turn` and `idbturn`. `PAGE` names another page, such as `frames.html` |
 
 ## Doing a run
 
@@ -49,6 +53,11 @@ one core. Memory is the processes' resident set at the window's end. Frames
 are counted as the viewer receives them, so on a still screen there are
 none, as idb sends a frame only when the screen changes.
 
+While the device server holds idb's HID stream, as it does once a person has
+taken control, idb answers no other client's HID event until that stream
+closes: `drive.ts freehid` restarts the server first. bb-box itself sends
+every HID event through its own stream.
+
 ## Controls
 
 `controls.ts` checks `box_device` on the device (unit 6.3). It runs the
@@ -63,7 +72,7 @@ the server's time and the round trip, and the settings read back.
 | `controls.ts lost '<parameters>' --times <ms>` | Ends the plugin's connection that many milliseconds after sending, so the plugin asks for the answer again by its ID |
 | `controls.ts read-back --times <n>` | Times each read-back command `n` times: appearance, content size, the status bar's overrides and the lock state |
 | `controls.ts watch '<command>' --times <s>` | Watches as a viewer, runs a command in the box a second in, and prints each state the server sends for `s` seconds |
-| `controls.ts native <name>` | Takes idb's screenshot through the device server: the device's own pixels, upright, whichever way it is held |
+| `controls.ts native <name>` | Takes the agent's screenshot through the device server: since version 9, idb's own pixels turned as the video shows them |
 | `controls.ts tap <x> <y>` and `input '<DeviceInput>'` | Sends the agent's input, as the computer tools will |
 | `controls.ts shot <name>` | Takes a screenshot with `simctl io` |
 
