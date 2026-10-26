@@ -17,7 +17,8 @@ import { PRESETS, describeSize, formatMiB, kindSizes, type Preset, type SizeChan
 import type { ConfigState } from "./configuration.ts";
 import type { ThreadOnBox } from "./contract.ts";
 import type { DisplayProtocol } from "../transports/types.ts";
-import { isTestOffer, orientationWord, platformWord, type DevicePlatform, type DeviceState, type Runtime } from "../core/device.ts";
+import { actionsOf, deviceModel, isTestOffer, platformWord, type DevicePlatform, type DeviceState, type Runtime } from "../core/device.ts";
+import { deviceStateWords } from "../core/device-settings.ts";
 
 export interface BoxView {
   readonly id: string;
@@ -449,22 +450,6 @@ export function runtimeWords(runtime: Runtime): string {
   return `Android, API ${runtime.api}, Google APIs, emulator ${runtime.emulator}`;
 }
 
-function powerWords(state: DeviceState): string {
-  const power = state.power;
-  switch (power.is) {
-    case "booted":
-      return power.awake ? "booted" : "booted, asleep";
-    case "booting":
-      return "booting";
-    case "switching":
-      return `switching to the ${power.to}, ${power.step}`;
-    case "stopped":
-      return "stopped";
-    case "failed":
-      return `failed: ${power.error.words}`;
-  }
-}
-
 export function deviceLines(box: BoxRecord, state: DeviceState | null, server: string | null): string[] {
   const offer = box.capabilities.device;
   if (!offer) return [];
@@ -472,12 +457,8 @@ export function deviceLines(box: BoxRecord, state: DeviceState | null, server: s
   const runtime = box.device?.runtime ?? offer.devices.find((device) => device.model === model)?.runtime ?? null;
   const lines = [`Device: ${model}${runtime ? `, ${runtimeWords(runtime)}` : ""}`];
   if (state) {
-    const geometry = state.geometry;
-    const settings = state.settings;
-    const parts = [powerWords(state)];
-    if (geometry) parts.push(orientationWord(geometry.physical), `${geometry.video.width}x${geometry.video.height}`);
-    if (settings.appearance.known) parts.push(settings.appearance.value);
-    lines.push(`Device state: ${parts.join(", ")}`);
+    lines.push(`Device state: ${deviceStateWords(state)}`);
+    lines.push(`Device actions, for box_device: ${actionsOf(deviceModel(state.model)).join(", ")}`);
   } else lines.push(`Device state: ${server ?? "not known yet: bb-box has not reached the box's device server"}`);
   if (offer.platform === "ios") lines.push(`Device commands: simctl in box_run takes booted as the ${platformWord(offer.platform)} device, as in xcrun simctl openurl booted <url>`);
   if (offer.platform === "ios" && box.slim === false) lines.push("Slim: off. The device runs every service iOS starts");

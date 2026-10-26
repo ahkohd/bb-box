@@ -1,3 +1,4 @@
+import { CLEAN_STATUS_BAR_BATTERY, nextContentSize, nextFontScale } from "../core/device-settings.ts";
 import { rgbaPng } from "../core/png.ts";
 import {
   deviceModel,
@@ -277,6 +278,40 @@ export class TestDriver implements DeviceDriver {
         this.#appearance = control.to;
         if (this.#iosSettings) this.#iosSettings = { ...this.#iosSettings, appearance: { known: true, value: control.to, at, by: "bb-box" } };
         if (this.#androidSettings) this.#androidSettings = { ...this.#androidSettings, appearance: { known: true, value: control.to, at, by: "bb-box" } };
+        break;
+      case "text_size": {
+        const ios = this.#iosSettings;
+        const android = this.#androidSettings;
+        if (ios?.textSize.known && typeof control.to !== "number") {
+          const to = control.to === "larger" || control.to === "smaller" || control.to === "default" ? nextContentSize(ios.textSize.value, control.to) : control.to;
+          this.#iosSettings = { ...ios, textSize: { known: true, value: to, at, by: "bb-box" } };
+        }
+        if (android?.fontScale.known) {
+          const to = typeof control.to === "number" ? control.to : control.to === "larger" || control.to === "smaller" || control.to === "default" ? nextFontScale(android.fontScale.value, control.to) : null;
+          if (to !== null) this.#androidSettings = { ...android, fontScale: { known: true, value: to, at, by: "bb-box" } };
+        }
+        break;
+      }
+      case "location":
+        if (this.#iosSettings) this.#iosSettings = { ...this.#iosSettings, location: control.to ? { set: control.to, at } : { set: null, at } };
+        if (this.#androidSettings) this.#androidSettings = { ...this.#androidSettings, location: { known: true, value: control.to, at, by: "bb-box" } };
+        break;
+      case "status_bar":
+        if (this.#iosSettings) {
+          const battery = this.#iosSettings.statusBar.set?.battery ?? CLEAN_STATUS_BAR_BATTERY;
+          this.#iosSettings = { ...this.#iosSettings, statusBar: control.to === "clean" ? { set: { clean: true, battery }, at } : { set: null, at } };
+        }
+        if (this.#androidSettings) this.#androidSettings = { ...this.#androidSettings, statusBar: control.to === "clean" ? { set: "clean", at } : { set: null, at } };
+        break;
+      case "battery":
+        if (this.#iosSettings) {
+          const clean = this.#iosSettings.statusBar.set?.clean ?? false;
+          this.#iosSettings = { ...this.#iosSettings, statusBar: clean || control.to ? { set: { clean, battery: control.to }, at } : { set: null, at } };
+        }
+        if (this.#androidSettings) this.#androidSettings = { ...this.#androidSettings, battery: { known: true, value: control.to ?? { level: 100, charging: true }, at, by: "bb-box" } };
+        break;
+      case "network":
+        if (this.#androidSettings) this.#androidSettings = { ...this.#androidSettings, network: { known: true, value: control.to, at, by: "bb-box" } };
         break;
       case "lock":
         this.#power = { is: "booted", awake: false };

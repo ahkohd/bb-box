@@ -28,6 +28,8 @@ const log = process.env.FAKE_IDB_LOG;
 const still = process.env.FAKE_IDB_STILL === "1";
 const note = (line: string) => log && appendFileSync(log, `${process.pid} ${line}\n`);
 
+let orientation = 1;
+
 rmSync(socket, { force: true });
 const server = createServer();
 server.on("stream", (stream, headers) => {
@@ -67,10 +69,16 @@ server.on("stream", (stream, headers) => {
     });
     return;
   }
-  stream.on("data", () => undefined);
+  const asked: Uint8Array[] = [];
+  stream.on("data", (chunk: Buffer) => asked.push(...deframer.push(new Uint8Array(chunk))));
   stream.on("end", () => {
     ok();
-    if (path === GRPC_METHODS.idb.getOrientation) stream.end(Buffer.from(frame(encode(IDB_SCHEMA, "idb.GetOrientationResponse", { orientation: 1 }))));
+    if (path === GRPC_METHODS.idb.setOrientation) {
+      const to = (decode(IDB_SCHEMA, "idb.SetOrientationRequest", asked[0] ?? new Uint8Array(0)) as { orientation?: number }).orientation ?? 0;
+      orientation = to + 1;
+      note(`orientation ${to}`);
+      stream.end(Buffer.from(frame(new Uint8Array(0))));
+    } else if (path === GRPC_METHODS.idb.getOrientation) stream.end(Buffer.from(frame(encode(IDB_SCHEMA, "idb.GetOrientationResponse", { orientation }))));
     else if (path === GRPC_METHODS.idb.screenshot) stream.end(Buffer.from(frame(encode(IDB_SCHEMA, "idb.ScreenshotResponse", { image_data: Uint8Array.of(137, 80, 78, 71) }))));
     else stream.end(Buffer.from(frame(new Uint8Array(0))));
   });

@@ -15,7 +15,7 @@ import type { PluginAgentToolResult, PluginSettingValue } from "@get-bb/plugin-s
 import { createFakePluginHost, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS } from "../src/backends/index.ts";
 import { BackendError, DEVICE_DISPLAY, type BackendDriver, type BoxKind } from "../src/backends/types.ts";
-import { stillsRequestText } from "../src/core/device.ts";
+import { PERSON_HAS_CONTROL_WORDS, stillsRequestText } from "../src/core/device.ts";
 import type { BoxPointer } from "../src/transports/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
@@ -5592,6 +5592,44 @@ test("box_acquire and box_start answer once an ios box's device has booted or co
   const started = text(await tool("box_start", { box: box.name }));
   assert.match(started, /\nDevice: iPhone 17, iOS 27\.0 \(24A434\), Xcode 27\.0, idb_companion 1\.7\.7\nDevice state: booted, upright, 1206x2622\n/);
   assert.match(started, /\nThe iPhone 17 came back \d+\.\d s after the box was ready\./);
+});
+
+test("box_device sends a control with its own parameters only, answers in words with the state after it, and passes refusals on with what to do (063, 6.3)", async (t) => {
+  const runtime = { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" };
+  const offer = { platform: "ios", devices: [{ model: "iPhone 18 Pro", native: "phone-18", runtime }, { model: "iPhone 17", native: "phone-17", runtime }] };
+  const kind: BoxKind = { ...FAKE_KINDS[0]!, id: "ios", label: "iOS Simulator", capabilities: { ...FAKE_KINDS[0]!.capabilities, displays: [DEVICE_DISPLAY], device: offer as never } };
+  const { harness, app, tool } = await start(undefined, { kinds: [kind, FAKE_KINDS[0]!] });
+  t.after(() => harness.lifecycle.dispose());
+  const state = {
+    platform: "ios",
+    model: "iPhone 18 Pro",
+    power: { is: "booted", awake: true },
+    geometry: { generation: 2, physical: "turned-left", content: "turned-left", video: { width: 2622, height: 1206 } },
+    settings: { appearance: { known: true, value: "dark", at: 1, by: "bb-box" }, textSize: { known: true, value: "large", at: 1, by: "bb-box" }, location: { set: null, at: null }, statusBar: { set: null, at: 1 } },
+    at: 0,
+  };
+  const sent: unknown[] = [];
+  let answer: unknown = { id: "a", ok: true, ms: 312, state, result: { type: "done" } };
+  Object.assign(app.devices, { recorded: () => undefined, view: () => ({ is: "connected", version: 7, protocol: 1, state }), control: async (_box: unknown, control: unknown) => (sent.push(control), answer) });
+  assert.ok(!isError(await tool("box_acquire", { kind: "ios" })));
+  const phone = (await app.boxes.list(THREAD)).find((box) => box.kind === "ios")!;
+  const turned = await tool("box_device", { box: phone.name, action: "rotate", turn: "left" });
+  assert.equal(text(turned), "Turned the iPhone 18 Pro left in 0.3 s. Now: booted, turned left, 2622x1206, dark, text size large.\n\nNext: Call box_status for the device's details.");
+  const live = text(await tool("box_device", { box: phone.name, action: "status_bar", to: "live" }));
+  assert.match(live, /^Made the iPhone 18 Pro's status bar live in 0\.3 s\. The status bar is live again, so the battery shows the Mac's\. Now: /);
+  assert.deepEqual(sent, [{ action: "rotate", turn: "left" }, { action: "status_bar", to: "live" }]);
+  const back = await tool("box_device", { box: phone.name, action: "back" });
+  assert.ok(isError(back));
+  assert.match(text(back), /: iOS has no back button\. The iPhone 18 Pro's actions are: home, lock, wake, rotate, .*\n\nNext: Call box_device with one of the actions it names\.$/);
+  const extra = await tool("box_device", { box: phone.name, action: "appearance", to: "dark", latitude: 1 });
+  assert.match(text(extra), /appearance does not take latitude\. appearance takes to: light or dark\./);
+  assert.equal(sent.length, 2, "refusals of the parameters never reach the device");
+  answer = { id: "b", ok: false, error: { code: "person-has-control", words: PERSON_HAS_CONTROL_WORDS }, state };
+  const held = text(await tool("box_device", { box: phone.name, action: "home" }));
+  assert.match(held, /A person has control of this box's device\. .* The iPhone 18 Pro is booted, turned left, .*\n\nNext: Leave the device alone until the person hands control back/);
+  assert.ok(!isError(await tool("box_acquire", { kind: FAKE_KINDS[0]!.id })));
+  const plain = (await app.boxes.list(THREAD)).find((box) => box.kind !== "ios")!;
+  assert.match(text(await tool("box_device", { box: plain.name, action: "home" })), /has no device: box_device works on ios and android boxes\./);
 });
 
 test("box_acquire and bb box acquire take a device, refuse it on other kinds, and refuse a device kind no backend offers (063)", async (t) => {

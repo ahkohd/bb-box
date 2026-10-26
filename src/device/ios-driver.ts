@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
-import { readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { turnedFrom } from "../core/device-settings.ts";
 import {
   DEVICE_HUB_PROCESS,
   deviceModel,
@@ -8,7 +10,6 @@ import {
   type DeviceControl,
   type DeviceElement,
   type DeviceState,
-  type IosSettings,
   type OfferedDevice,
   type OfferedDeviceOf,
   type Orientation,
@@ -17,8 +18,9 @@ import {
   type TouchContact,
   type VideoSize,
 } from "../core/device.ts";
-import { DriverError, type DeviceDriver, type PinchGesture, type VideoSource } from "./driver.ts";
-import { Companion, orientation, screenshot, videoStream } from "./idb.ts";
+import { DriverError, type ControlContext, type DeviceDriver, type PinchGesture, type VideoSource } from "./driver.ts";
+import { Companion, orientation, screenshot, setOrientation, videoStream } from "./idb.ts";
+import { IosSettingsKeeper } from "./ios-controls.ts";
 import { IosInput, PasteboardAccess, typesWithOption } from "./ios-input.ts";
 import { IosVideo } from "./ios-video.ts";
 import type { DevicePaths } from "./paths.ts";
@@ -30,6 +32,13 @@ export const CLOCK_TICK_MS = 1_000;
 export const RESUME_GAP_MS = 5_000;
 export const DEVICE_EXITS_WINDOW_MS = 5 * 60_000;
 const SHUTTING_DOWN_WAIT_MS = 30_000;
+export const BUTTON_SETTLE_MS = 400;
+export const ROTATE_SETTLE_MS = 2_000;
+export const ROTATE_PICTURE_MS = 1_000;
+export const LOCK_SETTLE_MS = 3_000;
+export const REBOOT_PICTURE_MS = 10_000;
+const LOCK_STATE = "com.apple.springboard.lockstate";
+const PLUTIL = "/usr/bin/plutil";
 const SLIM_PASSES = 2;
 
 export interface IosDriverClock {
@@ -49,6 +58,8 @@ export interface IosDriverOptions {
   readonly clock?: IosDriverClock;
   readonly processes?: (name: string) => Promise<number[]>;
   readonly access?: PasteboardAccess;
+  readonly appInfo?: (app: string) => Promise<AppInfo | null>;
+  readonly buttonSettleMs?: number;
 }
 
 export interface DeviceHubKills {
@@ -60,6 +71,7 @@ export function iosPaths(paths: DevicePaths) {
   return {
     companion: { socket: join(paths.dir, "idb.sock"), record: join(paths.dir, "companion.json"), log: join(paths.dir, "companion.log") },
     deviceHub: join(paths.dir, "device-hub.json"),
+    settings: join(paths.dir, "ios-settings.json"),
   };
 }
 
@@ -82,10 +94,29 @@ export function contentOrientation(physical: Orientation, video: VideoSize, mode
   return turned ? "turned-left" : "upright";
 }
 
-const NOT_READ = "This bb-box does not read the device's settings yet.";
+export interface AppInfo {
+  readonly bundleId: string;
+  readonly platforms: readonly string[];
+}
 
-function unreadSettings(): IosSettings {
-  return { appearance: { known: false, why: NOT_READ }, textSize: { known: false, why: NOT_READ }, location: { set: null, at: null }, statusBar: { set: null, at: null } };
+function readAppInfo(app: string): Promise<AppInfo | null> {
+  return new Promise((resolve) =>
+    execFile(PLUTIL, ["-convert", "json", "-o", "-", join(app, "Info.plist")], { timeout: 10_000 }, (error, stdout) => {
+      if (error) return resolve(null);
+      try {
+        const info = JSON.parse(String(stdout)) as { CFBundleIdentifier?: unknown; CFBundleSupportedPlatforms?: unknown };
+        resolve(typeof info.CFBundleIdentifier === "string" ? { bundleId: info.CFBundleIdentifier, platforms: Array.isArray(info.CFBundleSupportedPlatforms) ? info.CFBundleSupportedPlatforms.map(String) : [] } : null);
+      } catch {
+        resolve(null);
+      }
+    }),
+  );
+}
+
+export function inBox(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  return isAbsolute(path) ? path : join(homedir(), path);
 }
 
 function words(error: unknown): string {
@@ -116,6 +147,8 @@ export class IosDriver implements DeviceDriver {
   #watching = false;
   #lastTick: { readonly wall: number; readonly mono: number } | null = null;
   #closed = new AbortController();
+  #awake = true;
+  readonly #settings: IosSettingsKeeper;
 
   constructor(options: IosDriverOptions) {
     this.#options = options;
@@ -124,6 +157,7 @@ export class IosDriver implements DeviceDriver {
     this.#processes = options.processes ?? ownProcesses;
     const own = iosPaths(options.paths);
     this.#deviceHubFile = own.deviceHub;
+    this.#settings = new IosSettingsKeeper({ simctl: this.#simctl, file: own.settings, log: options.log, now: () => this.#clock.now() });
     this.#companion = new Companion({ program: options.companionProgram, paths: own.companion, log: options.log });
     this.#video = new IosVideo({
       open: (stopped, signal) => videoStream(this.#companion.client, stopped, signal),
@@ -213,6 +247,8 @@ export class IosDriver implements DeviceDriver {
     this.#physical = await orientation(this.#companion.client, signal).catch(() => null) ?? "upright";
     if (this.#video.running) this.#video.restart(`idb_companion was ${companion}`);
     else this.#video.start();
+    await this.#settings.use(target.model, device.udid, signal).catch((error) => this.#log(`settings: ${words(error)}`));
+    await this.#readSettings(signal).catch((error) => this.#log(`settings: not read: ${words(error)}`));
     return running && !rebooted ? "reattached" : "booted";
   }
 
@@ -463,8 +499,141 @@ export class IosDriver implements DeviceDriver {
     return this.#simctl.clipboard(this.#booted());
   }
 
-  async control(control: DeviceControl): Promise<void> {
-    throw new DriverError("unsupported", `This bb-box cannot ${control.action.replace("_", " ")} an iOS device yet.`);
+  async #readSettings(signal: AbortSignal): Promise<void> {
+    if (!this.#udid) return;
+    const [, locked] = await Promise.all([this.#settings.read(signal), this.#simctl.notifyState(this.#udid, LOCK_STATE, signal).catch(() => null)]);
+    if (locked !== null) this.#awake = locked === 0;
+  }
+
+  async readSettings(signal: AbortSignal): Promise<void> {
+    if (this.#busy || this.#power.is !== "booted") return;
+    const before = JSON.stringify([this.#settings.settings(), this.#awake]);
+    await this.#readSettings(signal);
+    if (JSON.stringify([this.#settings.settings(), this.#awake]) !== before) this.#changed();
+  }
+
+  async #press(button: "home" | "lock", signal: AbortSignal): Promise<void> {
+    this.#input.button(button);
+    await new Promise((resolve) => setTimeout(resolve, this.#options.buttonSettleMs ?? BUTTON_SETTLE_MS));
+    signal.throwIfAborted();
+  }
+
+  async #locked(udid: string, signal: AbortSignal): Promise<boolean> {
+    return (await this.#simctl.notifyState(udid, LOCK_STATE, signal)) === 1;
+  }
+
+  async #lockedBecomes(udid: string, locked: boolean, signal: AbortSignal): Promise<void> {
+    const until = this.#clock.monotonic() + LOCK_SETTLE_MS;
+    while ((await this.#locked(udid, signal)) !== locked) {
+      if (this.#clock.monotonic() > until) throw new DriverError("failed", `The device was ${locked ? "locked" : "woken"}, but it still reads ${locked ? "unlocked" : "locked"} after ${LOCK_SETTLE_MS / 1000} s.`);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    this.#awake = !locked;
+  }
+
+  async control(control: DeviceControl, signal: AbortSignal, context: ControlContext): Promise<void> {
+    const udid = this.#booted();
+    switch (control.action) {
+      case "home":
+        await this.#press("home", signal);
+        break;
+      case "lock":
+        await this.#press("lock", signal);
+        await this.#lockedBecomes(udid, true, signal);
+        break;
+      case "wake":
+        await this.#press("home", signal);
+        if (await this.#locked(udid, signal)) await this.#press("home", signal);
+        await this.#lockedBecomes(udid, false, signal);
+        break;
+      case "rotate": {
+        const to = control.turn ? turnedFrom(this.#physical, control.turn) : control.to;
+        const generation = this.#generation;
+        await setOrientation(this.#companion.client, to, signal);
+        const until = this.#clock.monotonic() + ROTATE_SETTLE_MS;
+        let read = await orientation(this.#companion.client, signal).catch(() => null);
+        while (read !== to && this.#clock.monotonic() < until) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          read = await orientation(this.#companion.client, signal).catch(() => null);
+        }
+        if (read !== to) throw new DriverError("failed", `idb_companion was asked to turn the device ${to.replace("-", " ")}, but it reads ${read?.replace("-", " ") ?? "nothing"}.`);
+        this.#physical = to;
+        await this.#newPicture(generation, signal);
+        break;
+      }
+      case "appearance":
+        await this.#settings.setAppearance(control.to, signal);
+        break;
+      case "text_size":
+        if (typeof control.to === "number") throw new DriverError("bad-value", "iOS takes a content size, not a font scale.");
+        await this.#settings.setTextSize(control.to, signal);
+        break;
+      case "location":
+        await this.#settings.setLocation(control.to, signal);
+        break;
+      case "status_bar":
+        await this.#settings.setStatusBar(control.to, signal);
+        break;
+      case "battery":
+        await this.#settings.setBattery(control.to, signal);
+        break;
+      case "install":
+        await this.#install(udid, control.paths, signal, context);
+        break;
+      case "reboot":
+        await this.#reboot(signal);
+        break;
+      default:
+        throw new DriverError("unsupported", `iOS has no ${control.action.replace("_", " ")} control.`);
+    }
+    await this.#readSettings(signal).catch((error) => this.#log(`settings: not read after ${control.action}: ${words(error)}`));
+    this.#changed();
+  }
+
+  async #newPicture(since: number, signal: AbortSignal, waitMs = ROTATE_PICTURE_MS): Promise<void> {
+    const until = this.#clock.monotonic() + waitMs;
+    while (this.#generation === since && this.#clock.monotonic() < until && !signal.aborted) await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  async #install(udid: string, paths: readonly string[], signal: AbortSignal, context: ControlContext): Promise<void> {
+    const app = inBox(paths[0]!);
+    const found = await stat(app).catch(() => null);
+    if (!found?.isDirectory()) throw new DriverError("bad-value", `There is no .app folder at ${app} in the box. Copy it there with box_copy, as a tar, and unpack it, or build it in the box.`);
+    const info = await (this.#options.appInfo ?? readAppInfo)(app);
+    if (!info) throw new DriverError("bad-value", `${app} has no Info.plist with a CFBundleIdentifier, so it is not an app.`);
+    if (!info.platforms.includes("iPhoneSimulator"))
+      throw new DriverError("bad-value", `${app} is a build for a physical device${info.platforms.length ? ` (${info.platforms.join(", ")})` : ""}. Build for the simulator, for example xcodebuild -sdk iphonesimulator, and install the .app.`);
+    if (context.personHasControl && (await this.#simctl.installed(udid, info.bundleId, signal)))
+      throw new DriverError("person-has-control", `A person has control of this box's device, and ${info.bundleId} is installed on it already: installing it again would stop it if it is open. Wait for them to hand control back, or take it back with computer_take_control when they ask.`);
+    const began = this.#clock.monotonic();
+    await this.#simctl.install(udid, app, signal);
+    this.#log(`install: ${info.bundleId} from ${app} in ${((this.#clock.monotonic() - began) / 1000).toFixed(1)} s`);
+  }
+
+  async #reboot(signal: AbortSignal): Promise<void> {
+    const target = this.#target!;
+    this.#busy = true;
+    const began = this.#clock.monotonic();
+    this.#power = { is: "booting", since: this.#clock.now() };
+    this.#changed();
+    try {
+      await this.#video.stop();
+      this.#input.close();
+      await this.#companion.stop();
+      const generation = this.#generation;
+      await this.#simctl.shutdown(this.#udid!, signal);
+      await this.#start(target, signal);
+      await this.#newPicture(generation, signal, REBOOT_PICTURE_MS);
+      this.#power = { is: "booted", awake: true };
+      this.#awake = true;
+      this.#log(`device: the ${target.model} rebooted in ${((this.#clock.monotonic() - began) / 1000).toFixed(1)} s`);
+    } catch (error) {
+      this.#power = { is: "failed", error: { code: "boot-failed", words: words(error) }, since: this.#clock.now() };
+      throw error;
+    } finally {
+      this.#busy = false;
+      this.#changed();
+    }
   }
 
   async screenshot(): Promise<Uint8Array> {
@@ -482,6 +651,7 @@ export class IosDriver implements DeviceDriver {
     const size = this.#video.size;
     const geometry =
       this.#power.is === "booted" && size ? { generation: this.#generation, physical: this.#physical, content: contentOrientation(this.#physical, size, model), video: size } : null;
-    return { platform: "ios", model: model.name, power: this.#power, geometry, settings: unreadSettings(), at: this.#clock.now() };
+    const power: Power<"ios"> = this.#power.is === "booted" ? { is: "booted", awake: this.#awake } : this.#power;
+    return { platform: "ios", model: model.name, power, geometry, settings: this.#settings.settings(), at: this.#clock.now() };
   }
 }

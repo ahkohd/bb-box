@@ -10,7 +10,8 @@ import { hasPicture, isKeyFrame, nalUnits, spsPictureSize, startsWithStartCode }
 import type { EncodedFrame } from "../src/device/driver.ts";
 import { FrameFanout } from "../src/device/frame-fanout.ts";
 import type { StreamOutput } from "../src/device/idb.ts";
-import { IosDriver, contentOrientation } from "../src/device/ios-driver.ts";
+import { IosDriver, contentOrientation, type AppInfo } from "../src/device/ios-driver.ts";
+import { overridesListed, statusBarOverride } from "../src/device/ios-controls.ts";
 import { PasteboardAccess, hidKey, runningApps } from "../src/device/ios-input.ts";
 import { IosVideo } from "../src/device/ios-video.ts";
 import { devicePaths } from "../src/device/paths.ts";
@@ -180,6 +181,15 @@ class FakeSimulator {
   state = "Shutdown";
   readonly disabled = new Set<string>();
   readonly calls: string[] = [];
+  appearance = "light";
+  contentSize = "large";
+  statusBar: string[] = [];
+  installed = new Set<string>();
+  idbLog: string | null = null;
+  locked(): number {
+    const presses = this.idbLog && existsSync(this.idbLog) ? [...readFileSync(this.idbLog, "utf8").matchAll(/"button":\{"button":(\d)\}\}(?!,"direction":1)/g)].map((match) => Number(match[1])) : [];
+    return presses.at(-1) === 2 ? 1 : 0;
+  }
   readonly runner: Runner = async (_program, args) => {
     const [, verb, ...rest] = args;
     const ok = (stdout = ""): Ran => ({ code: 0, stdout, stderr: "" });
@@ -196,8 +206,27 @@ class FakeSimulator {
       case "shutdown":
         this.state = "Shutdown";
         return ok();
+      case "ui": {
+        const [, option, value] = rest;
+        const key = option === "appearance" ? "appearance" : "contentSize";
+        if (value === undefined) return ok(`${key === "contentSize" && this.contentSize === "small" ? "Small" : this[key]}\n`);
+        this[key] = value;
+        return ok();
+      }
+      case "status_bar": {
+        const [, operation, ...flags] = rest;
+        if (operation === "clear") this.statusBar = [];
+        else if (operation === "override") this.statusBar = [...flags];
+        return ok(`Current Status Bar Overrides:\n=============================\n${this.statusBar.length ? `${this.statusBar.join(" ")}\n` : ""}`);
+      }
+      case "install":
+        this.installed.add(rest[1]!);
+        return ok();
+      case "get_app_container":
+        return this.installed.size ? ok("/container") : { code: 2, stdout: "", stderr: "No such app" };
       case "spawn": {
         const [, , command, target] = rest;
+        if (rest[1] === "notifyutil") return ok(`${rest[3]} ${this.locked()}\n`);
         if (command === "print-disabled") return ok(`disabled services = {\n${[...this.disabled].map((label) => `\t"${label}" => disabled`).join("\n")}\n}`);
         const label = target!.replace("system/", "");
         if (command === "disable") this.disabled.add(label);
@@ -250,7 +279,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     return { home, paths, lists, program, log, target };
   }
 
-  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess } = {}) {
+  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null> } = {}) {
     const logs: string[] = [];
     const driver = new IosDriver({
       clock: { now: () => Date.now() + (options.wallAhead?.() ?? 0), monotonic: () => performance.now() },
@@ -264,6 +293,8 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
       watchMs: 50,
       processes: async () => options.hubs?.() ?? [],
       access: options.access,
+      appInfo: options.appInfo,
+      buttonSettleMs: 20,
     });
     started.push(driver);
     return { driver, logs };
@@ -501,6 +532,102 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     driver.close();
   });
 
+  test("does each iOS control, reads the settings back, and keeps what it set through a restart of the server (063, 6.3)", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    simulator.idbLog = setup.log;
+    const app = join(setup.home, "Probe.app");
+    mkdirSync(app);
+    const device = join(setup.home, "Device.app");
+    mkdirSync(device);
+    const appInfo = async (path: string): Promise<AppInfo> => ({ bundleId: "dev.example.probe", platforms: [path === device ? "iPhoneOS" : "iPhoneSimulator"] });
+    const { driver, logs } = driverOf(setup, simulator, { appInfo });
+    await driver.attach(setup.target, AbortSignal.timeout(20_000));
+    const signal = () => AbortSignal.timeout(10_000);
+    const agent = { personHasControl: false };
+    const settings = async () => {
+      const state = await driver.readBack();
+      assert.equal(state.platform, "ios");
+      return state.platform === "ios" ? state.settings : null!;
+    };
+    const first = (await settings()).appearance;
+    assert.ok(first.known && first.value === "light" && first.by === "bb-box", "read as the server attached");
+
+    await driver.control({ action: "appearance", to: "dark" }, signal(), agent);
+    assert.equal(simulator.appearance, "dark");
+    const dark = (await settings()).appearance;
+    assert.ok(dark.known && dark.value === "dark" && dark.by === "bb-box");
+
+    await driver.control({ action: "text_size", to: "small" }, signal(), agent);
+    assert.equal(simulator.contentSize, "small");
+    const small = (await settings()).textSize;
+    assert.ok(small.known && small.value === "small", "simctl's Small reads back as small");
+    await driver.control({ action: "text_size", to: "larger" }, signal(), agent);
+    assert.equal(simulator.contentSize, "medium");
+    await driver.control({ action: "text_size", to: "default" }, signal(), agent);
+    assert.equal(simulator.contentSize, "large");
+
+    simulator.appearance = "light";
+    await driver.readSettings(signal());
+    const outside = (await settings()).appearance;
+    assert.ok(outside.known && outside.value === "light" && outside.by === "outside", "a change by simctl in box_run is the outside's");
+
+    await driver.control({ action: "status_bar", to: "clean" }, signal(), agent);
+    assert.deepEqual(simulator.statusBar, [...statusBarOverride({ clean: true, battery: { level: 100, charging: false } })]);
+    assert.ok(simulator.statusBar.includes("9:41") && simulator.statusBar.includes("discharging"));
+    await driver.control({ action: "battery", to: { level: 20, charging: true } }, signal(), agent);
+    assert.deepEqual((await settings()).statusBar.set, { clean: true, battery: { level: 20, charging: true } });
+    await driver.control({ action: "battery", to: null }, signal(), agent);
+    assert.deepEqual((await settings()).statusBar.set, { clean: true, battery: null });
+    assert.ok(!simulator.statusBar.includes("--batteryLevel"));
+    await driver.control({ action: "battery", to: { level: 5, charging: false } }, signal(), agent);
+    await driver.control({ action: "status_bar", to: "live" }, signal(), agent);
+    assert.deepEqual(simulator.statusBar, []);
+    assert.equal((await settings()).statusBar.set, null, "the status bar going live clears the battery too");
+
+    await driver.control({ action: "location", to: { latitude: 51.5, longitude: -0.12 } }, signal(), agent);
+    assert.ok(simulator.calls.includes(`location ${UDID} set 51.5,-0.12`));
+    assert.deepEqual((await settings()).location.set, { latitude: 51.5, longitude: -0.12 });
+
+    await driver.control({ action: "home" }, signal(), agent);
+    await driver.control({ action: "lock" }, signal(), agent);
+    assert.deepEqual((await driver.readBack()).power, { is: "booted", awake: false });
+    await driver.control({ action: "wake" }, signal(), agent);
+    assert.deepEqual((await driver.readBack()).power, { is: "booted", awake: true });
+    const presses = [...readFileSync(setup.log, "utf8").matchAll(/"button":\{"button":(\d)\}\}(?!,"direction":1)/g)].map((match) => Number(match[1]));
+    assert.deepEqual(presses, [1, 2, 1]);
+
+    await driver.control({ action: "rotate", turn: "left" }, signal(), agent);
+    assert.equal((await driver.readBack()).geometry?.physical, "turned-left");
+    await driver.control({ action: "rotate", to: "upright" }, signal(), agent);
+    assert.equal((await driver.readBack()).geometry?.physical, "upright");
+    assert.match(readFileSync(setup.log, "utf8"), /orientation 2\n[\s\S]*orientation 0\n/);
+
+    await assert.rejects(driver.control({ action: "install", paths: [device] }, signal(), agent), /is a build for a physical device \(iPhoneOS\)\. Build for the simulator/);
+    await assert.rejects(driver.control({ action: "install", paths: [join(setup.home, "Gone.app")] }, signal(), agent), /There is no \.app folder at /);
+    await driver.control({ action: "install", paths: [app] }, signal(), { personHasControl: true });
+    await assert.rejects(driver.control({ action: "install", paths: [app] }, signal(), { personHasControl: true }), (error: unknown) => error instanceof Error && (error as { code?: string }).code === "person-has-control");
+    await driver.control({ action: "install", paths: [app] }, signal(), agent);
+    assert.ok(logs.some((line) => line.startsWith("install: dev.example.probe from ")));
+    await assert.rejects(driver.control({ action: "back" }, signal(), agent), /iOS has no back control/);
+    driver.close();
+
+    simulator.statusBar = [];
+    const again = driverOf(setup, simulator, { appInfo });
+    simulator.calls.length = 0;
+    await again.driver.attach(setup.target, AbortSignal.timeout(20_000));
+    const kept = await again.driver.readBack();
+    assert.ok(kept.platform === "ios" && kept.settings.location.set?.latitude === 51.5, "the location bb-box set is kept across a restart");
+    assert.ok(simulator.calls.includes(`location ${UDID} set 51.5,-0.12`), "and set again on the device");
+    again.driver.close();
+  });
+
+  test("reads simctl's list of status bar overrides", () => {
+    assert.equal(overridesListed("Current Status Bar Overrides:\n=============================\n"), false);
+    assert.equal(overridesListed("Current Status Bar Overrides:\n=============================\nBattery State: 1, Battery Level: 50, Not Charging: 0\n"), true);
+    assert.deepEqual(statusBarOverride({ clean: false, battery: { level: 50, charging: true } }), ["--batteryState", "charging", "--batteryLevel", "50"]);
+  });
+
   test("names the apps a booted device runs, and maps W3C keys to HID usages", () => {
     assert.deepEqual(runningApps([`/d/${UDID}/data/Containers/Bundle/Application/A/One.app/One`, "/x/RuntimeRoot/Applications/MobileSafari.app/MobileSafari", "/x/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard", "/Applications/Xcode.app/Contents/MacOS/Xcode"], `/d/${UDID}/data`), [`/d/${UDID}/data/Containers/Bundle/Application/A/One.app`, "/x/RuntimeRoot/Applications/MobileSafari.app"]);
     assert.deepEqual(hidKey("a"), { usage: 4, shift: false });
@@ -546,6 +673,7 @@ describe("an ios box in bb-box's words", () => {
     assert.deepEqual(deviceLines(box({ slim: false }), state, null), [
       "Device: iPhone 17, iOS 27.0 (24A434), Xcode 27.0, idb_companion 1.7.7",
       "Device state: booted, upright, 1206x2622",
+      "Device actions, for box_device: home, lock, wake, rotate, appearance, text_size, location, status_bar, battery, install, switch, reboot",
       "Device commands: simctl in box_run takes booted as the iOS device, as in xcrun simctl openurl booted <url>",
       "Slim: off. The device runs every service iOS starts",
     ]);

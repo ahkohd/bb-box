@@ -32,6 +32,7 @@ import { Configuration, boundedDoctor, type ApplyResult } from "./configuration.
 import { agentFor } from "./agents.ts";
 import { registerCli } from "./cli.ts";
 import { registerComputerTools } from "./computer-tools.ts";
+import { registerDeviceTools } from "./device-tools.ts";
 import { registerDesktop, type Desktops } from "./desktop.ts";
 import { LoopWatch } from "./loop-watch.ts";
 import { sweepStaleTempFolders } from "../core/temp-folders.ts";
@@ -1472,6 +1473,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   registerTools(bb, api, { drainMs: options.drainMs, runWaitMs: options.runWaitMs });
   registerComputerTools(bb, api);
+  registerDeviceTools(bb, api);
   registerRpc(bb, api);
   registerCli(bb, api);
   reloadTimes.phase("the rest");

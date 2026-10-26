@@ -8,6 +8,7 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | --- | --- |
 | [`box_acquire`](#box_acquire) | Get a fresh box for this thread: a Linux or macOS computer for commands, builds, tests, servers or Docker, away from the thread's own machine. |
 | [`box_copy`](#box_copy) | Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. |
+| [`box_device`](#box_device) | Control an ios or android box's device, as the panel's toolbar does: Home, Back and Recents, lock and wake, rotate, fold, appearance, text size, location, status bar, battery, network, install an app, switch device, and reboot. |
 | [`box_grant`](#box_grant) | Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. |
 | [`box_image_draft`](#box_image_draft) | Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. |
 | [`box_image_set`](#box_image_set) | Set this thread's project's image (049): a shell script run as root on the standard image of its kinds, so the project's boxes start with what it needs, such as a language's toolchain. |
@@ -57,6 +58,23 @@ Copy one file, of any size, between this thread's workspace or its storage folde
 | `direction` | `to_box`, `from_box` | yes | to_box copies from the workspace or storage folder into the box; from_box copies from the box into the workspace or storage folder. |
 | `from` | string | yes | The file to copy. |
 | `to` | string | no | Where to put it. Defaults to the file's own name, in the box user's home or in the workspace's directory. |
+
+## box_device
+
+Control an ios or android box's device, as the panel's toolbar does: Home, Back and Recents, lock and wake, rotate, fold, appearance, text size, location, status bar, battery, network, install an app, switch device, and reboot. Each action takes only its own parameters. The answer says what happened, how long it took, and the device's state after it. While a person has control of the box, every action but install is refused, and so is an install that would replace an installed app. Screenshots, taps and URLs are the computer tools'.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
+| `action` | `home`, `back`, `recents`, `lock`, `wake`, `rotate`, `posture`, `appearance`, `text_size`, `location`, `status_bar`, `battery`, `network`, `install`, `switch`, `reboot` | yes | What to do. iOS has no back, recents, posture or network; only foldables take posture. box_status lists the device's actions. |
+| `turn` | `left`, `right` | no | rotate: a quarter turn from where the device is, the way the toolbar's arrows point. |
+| `to` | string or number | no | rotate: upright, turned-left, upside-down, turned-right. posture: closed, half-open, open. appearance: light, dark. text_size: larger, smaller, default, or a step of the platform: an iOS content size from extra-small to accessibility-extra-extra-extra-large, such as accessibility-large, or an Android font scale such as 1.3. status_bar: clean, live. network: online, offline, slow. |
+| `latitude` | number | no | location: with longitude, from -90 to 90. Leave both out to clear the simulated location. |
+| `longitude` | number | no | location: with latitude, from -180 to 180. |
+| `level` | number | no | battery: with charging, a whole number from 0 to 100. Leave both out for the device's own. On iOS only the status bar's picture changes. |
+| `charging` | boolean | no | battery: with level, whether it charges. |
+| `paths` | array of string | no | install: in the box, as box_copy puts them there. On iOS one .app folder built for the simulator; on Android one .apk, or the split APKs of one app. |
+| `device` | string | no | switch: a model this box offers, from box_list, such as iPhone 17. Each model keeps its own apps and data. |
 
 ## box_grant
 

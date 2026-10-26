@@ -75,7 +75,7 @@ const MAX_ELEMENT_DEPTH = 64;
 const MAX_ELEMENTS = 20_000;
 const MAX_GESTURE_MS = 60_000;
 const REQUEST_ID = /^[A-Za-z0-9._:-]{1,64}$/;
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 
 function refuse(path: string, problem: string): never {
   throw new Refusal(`${path} ${problem}`);
@@ -562,7 +562,7 @@ function contacts(value: unknown, path: string): readonly TouchContact[] {
 }
 
 function base64(value: unknown, path: string): string {
-  if (typeof value !== "string" || value === "" || !BASE64.test(value)) refuse(path, "must be base64.");
+  if (typeof value !== "string" || value === "" || value.length % 4 !== 0 || !BASE64.test(value)) refuse(path, "must be base64.");
   return value;
 }
 

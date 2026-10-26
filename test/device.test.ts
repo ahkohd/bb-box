@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { parseImageRecord } from "../src/backends/images.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
+import { answerText, controlFromParameters, lostWords, type DeviceControlParameters } from "../src/core/device-control.ts";
+import { controlDeadlineMs, deviceStateWords, nextContentSize, nextFontScale, turnedFrom } from "../src/core/device-settings.ts";
 import {
   ANDROID_FONT_SCALES,
   DEVICE_ACTIONS,
@@ -419,5 +421,122 @@ describe("messages", () => {
     refusal(parseDeviceServerMessage(`BB_DEVICE_HELLO ${JSON.stringify(hello)}`), /state\.model is the Pixel Fold, which the box's devices do not include/);
     refusal(parseDeviceServerMessage(`BB_DEVICE_HELLO ${JSON.stringify({ ...hello, platform: "ios" })}`), /are Android devices, from an iOS server/);
     refusal(parseDeviceServerMessage(`BB_DEVICE_ANSWER ${JSON.stringify({ id: "a", ok: false, result: { type: "done" }, state: null })}`), /has "result", which it does not take/);
+  });
+});
+
+describe("box_device's parameters, refusals and words (063, 6.3)", () => {
+  const phone = deviceModel("iPhone 18 Pro");
+  const pixel = deviceModel("Pixel 8");
+  const fold = deviceModel("Pixel Fold");
+  const iosModels: readonly ModelName[] = ["iPhone 18 Pro", "iPhone 17", "iPad Pro 13-inch (M5)"];
+  const parsed = (parameters: DeviceControlParameters, model: DeviceModel = phone, offered: readonly ModelName[] = iosModels) => controlFromParameters(parameters, model, offered);
+  const control = (parameters: DeviceControlParameters, model?: DeviceModel) => {
+    const result = parsed(parameters, model);
+    assert.ok(result.ok, JSON.stringify(result));
+    return result.control;
+  };
+  const refusedWith = (parameters: DeviceControlParameters, model?: DeviceModel, offered?: readonly ModelName[]) => {
+    const result = parsed(parameters, model, offered);
+    assert.ok(!result.ok, `${JSON.stringify(parameters)} is refused`);
+    return result.error;
+  };
+
+  test("makes each action's control from exactly its own parameters", () => {
+    assert.deepEqual(control({ action: "home" }), { action: "home" });
+    assert.deepEqual(control({ action: "rotate", turn: "left" }), { action: "rotate", turn: "left" });
+    assert.deepEqual(control({ action: "rotate", to: "upside-down" }), { action: "rotate", to: "upside-down" });
+    assert.deepEqual(control({ action: "appearance", to: "dark" }), { action: "appearance", to: "dark" });
+    assert.deepEqual(control({ action: "text_size", to: "accessibility-large" }), { action: "text_size", to: "accessibility-large" });
+    assert.deepEqual(control({ action: "text_size", to: "larger" }), { action: "text_size", to: "larger" });
+    assert.deepEqual(control({ action: "text_size", to: "1.3" }, pixel), { action: "text_size", to: 1.3 });
+    assert.deepEqual(control({ action: "location", latitude: 51.5, longitude: -0.12 }), { action: "location", to: { latitude: 51.5, longitude: -0.12 } });
+    assert.deepEqual(control({ action: "location" }), { action: "location", to: null });
+    assert.deepEqual(control({ action: "status_bar", to: "live" }), { action: "status_bar", to: "live" });
+    assert.deepEqual(control({ action: "battery", level: 20, charging: true }), { action: "battery", to: { level: 20, charging: true } });
+    assert.deepEqual(control({ action: "battery" }), { action: "battery", to: null });
+    assert.deepEqual(control({ action: "posture", to: "half-open" }, fold), { action: "posture", to: "half-open" });
+    assert.deepEqual(control({ action: "network", to: "slow" }, pixel), { action: "network", to: "slow" });
+    assert.deepEqual(control({ action: "install", paths: ["Build/App.app"] }), { action: "install", paths: ["Build/App.app"] });
+    assert.deepEqual(control({ action: "switch", device: " iphone 17 " }), { action: "switch", device: "iPhone 17" });
+  });
+
+  test("refuses another action's parameter, half a pair, both turn and to, and values out of range, saying what the action takes", () => {
+    assert.deepEqual(refusedWith({ action: "home", to: "dark" }), { code: "bad-value", words: "home does not take to. home takes no other parameters." });
+    assert.deepEqual(refusedWith({ action: "rotate", turn: "left", to: "upright" }), {
+      code: "bad-value",
+      words: "rotate takes turn, left or right, or to, one of upright, turned-left, upside-down or turned-right, not both.",
+    });
+    assert.equal(refusedWith({ action: "rotate" }).code, "bad-value");
+    assert.equal(refusedWith({ action: "location", latitude: 10 }).words, "location takes latitude and longitude, both, or neither to clear it.");
+    assert.equal(refusedWith({ action: "battery", level: 10 }).words, "battery takes level, a whole number from 0 to 100, and charging, true or false: both, or neither for the device's own.");
+    assert.equal(refusedWith({ action: "location", latitude: 91, longitude: 0 }).words, "location takes a latitude from -90 to 90 and a longitude from -180 to 180.");
+    assert.equal(refusedWith({ action: "battery", level: 100.5, charging: false }).code, "bad-value");
+    assert.match(refusedWith({ action: "text_size", to: 1.3 }).words, /^text_size on iOS takes to: larger, smaller, default or a content size: /);
+    assert.match(refusedWith({ action: "text_size", to: "huge" }, pixel).words, /^text_size on Android takes to: larger, smaller, default or a font scale: 0\.85, /);
+    assert.equal(refusedWith({ action: "appearance", to: "sepia" }).words, "appearance takes to: light or dark.");
+    assert.deepEqual(refusedWith({ action: "dance" }), { code: "bad-value", words: `box_device has no action dance. Its actions are: ${DEVICE_ACTIONS.join(", ")}.` });
+  });
+
+  test("refuses what the device lacks as unsupported before its parameters, and a device the box does not offer as unknown-device", () => {
+    assert.equal(refusedWith({ action: "back", to: "x" }).code, "unsupported");
+    assert.match(refusedWith({ action: "recents" }).words, /^iOS has no command for recent apps\. The iPhone 18 Pro's actions are: home, lock, /);
+    assert.match(refusedWith({ action: "posture", to: "open" }, pixel).words, /^The Pixel 8 does not fold\. The Pixel Fold does\./);
+    assert.equal(refusedWith({ action: "network", to: "offline" }).code, "unsupported");
+    assert.deepEqual(refusedWith({ action: "switch", device: "iPhone 9" }, phone, ["iPhone 18 Pro", "iPhone 17"]), {
+      code: "unknown-device",
+      words: "This box has no iPhone 9. Its devices are: iPhone 18 Pro and iPhone 17.",
+    });
+    assert.equal(refusedWith({ action: "switch", device: "iPad Pro 13-inch (M5)" }, phone, ["iPhone 18 Pro", "iPhone 17"]).code, "unknown-device");
+  });
+
+  test("steps text sizes within each platform's own, and turns a quarter each way", () => {
+    assert.equal(nextContentSize("large", "larger"), "extra-large");
+    assert.equal(nextContentSize("extra-small", "smaller"), "extra-small");
+    assert.equal(nextContentSize("accessibility-extra-extra-extra-large", "larger"), "accessibility-extra-extra-extra-large");
+    assert.equal(nextContentSize("accessibility-medium", "default"), "large");
+    assert.equal(nextFontScale(1, "larger"), 1.15);
+    assert.equal(nextFontScale(0.85, "smaller"), 0.85);
+    assert.equal(nextFontScale(2, "default"), 1);
+    assert.equal(turnedFrom("upright", "left"), "turned-left");
+    assert.equal(turnedFrom("turned-left", "left"), "upside-down");
+    assert.equal(turnedFrom("upright", "right"), "turned-right");
+    assert.equal(turnedFrom("turned-right", "right"), "upside-down");
+  });
+
+  test("answers in words: what was done, how long it took, and the state after it; the status bar going live says the battery is the Mac's", () => {
+    const state: DeviceState = {
+      platform: "ios",
+      model: "iPhone 18 Pro",
+      power: { is: "booted", awake: true },
+      geometry: { generation: 2, physical: "turned-left", content: "turned-left", video: { width: 2622, height: 1206 } },
+      settings: {
+        appearance: { known: true, value: "dark", at: 1, by: "bb-box" },
+        textSize: { known: true, value: "large", at: 1, by: "bb-box" },
+        location: { set: null, at: null },
+        statusBar: { set: null, at: 1 },
+      },
+      at: 1,
+    };
+    const done = (control: DeviceControl, ms = 300) => answerText(control, phone, { id: "a", ok: true, ms, state, result: { type: "done" } });
+    assert.equal(done({ action: "rotate", turn: "left" }), "Turned the iPhone 18 Pro left in 0.3 s. Now: booted, turned left, 2622x1206, dark, text size large.");
+    assert.equal(done({ action: "status_bar", to: "live" }), "Made the iPhone 18 Pro's status bar live in 0.3 s. The status bar is live again, so the battery shows the Mac's. Now: booted, turned left, 2622x1206, dark, text size large.");
+    assert.match(done({ action: "battery", to: { level: 20, charging: true } }), /^Set the iPhone 18 Pro's status bar to show its battery at 20%, charging in 0\.3 s\. Only the status bar's picture changes: the device's battery API is unchanged\./);
+    const clean = { ...state, settings: { ...state.settings, statusBar: { set: { clean: true, battery: { level: 100, charging: false } }, at: 2 }, location: { set: { latitude: 51.5, longitude: -0.12 }, at: 2 } } };
+    assert.equal(deviceStateWords(clean), "booted, turned left, 2622x1206, dark, text size large, status bar clean, battery shown at 100%, location 51.5, -0.12");
+    assert.equal(deviceStateWords({ ...state, power: { is: "booted", awake: false } }).startsWith("booted, asleep"), true);
+    const outside = { ...state, settings: { ...state.settings, appearance: { known: true, value: "light", at: 3, by: "outside" } } } as DeviceState;
+    assert.equal(deviceStateWords(outside), "booted, turned left, 2622x1206, light, changed outside bb-box, text size large");
+    assert.equal(lostWords("rotate", state), "The connection to the box ended while turning the device, so bb-box cannot tell whether it turned. It is now booted, turned left, 2622x1206, dark, text size large. Read box_status before trying again.");
+    assert.equal(controlDeadlineMs({ action: "install", paths: ["a.app"] }), 300_000);
+    assert.equal(controlDeadlineMs({ action: "home" }), 10_000);
+  });
+});
+
+describe("large messages", () => {
+  test("a still or screenshot of many megabytes is read, and base64 of the wrong length is refused", () => {
+    const big = parseDeviceServerMessage(`BB_DEVICE_STILL ${JSON.stringify({ png: "QUJD".repeat(3_000_000), generation: 1 })}`);
+    assert.ok(big.ok, big.ok ? "" : big.words);
+    const short = parseDeviceServerMessage(`BB_DEVICE_STILL ${JSON.stringify({ png: "QUJ", generation: 1 })}`);
+    assert.ok(!short.ok);
   });
 });
