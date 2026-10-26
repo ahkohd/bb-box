@@ -365,9 +365,17 @@ export class IosDriver implements DeviceDriver {
 
   async #resumed(seconds: number): Promise<void> {
     if (this.#busy || !this.#udid || this.#power.is !== "booted") return;
-    this.#log(`resume: the clock moved ${seconds} s past this server's own, as after a stop of the box; checking the ${this.#target?.model} and starting its video again`);
-    await this.#companion.ensure(this.#udid, this.#closed.signal).catch((error) => this.#log(`resume: idb_companion did not answer: ${words(error)}`));
-    this.#video.restart("the box resumed");
+    this.#log(`resume: the clock moved ${seconds} s past this server's own, as after a stop of the box; starting idb_companion again, as one from before the stop grows without bound, and checking the ${this.#target?.model}`);
+    this.#busy = true;
+    try {
+      await this.#video.stop();
+      await this.#companion.restart(this.#udid, this.#closed.signal);
+    } catch (error) {
+      this.#log(`resume: idb_companion did not start again: ${words(error)}`);
+    } finally {
+      this.#busy = false;
+      this.#video.start();
+    }
     await this.#look();
   }
 
