@@ -3016,6 +3016,54 @@ test("with the setting on, a desktop shows as video whatever the round trip to B
   }
 });
 
+test("on a device, an input method's committed text, an emoji and Type text each go as one text message, and a person watching sees the agent's touches (063)", async () => {
+  const undo = withVideo();
+  try {
+    window.sessionStorage.clear();
+    const { handlers } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
+    const device = deviceSocket();
+    act(() => device.open());
+    act(() => void device.onmessage?.({ data: "MODE websockets" }));
+    act(() => void device.onmessage?.({ data: videoFrame(1, true, 360, 800) }));
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_STATE ${JSON.stringify({ state: PIXEL_8_STATE })}` }));
+    expect(await slot.findByText("The agent has control.")).toBeTruthy();
+    const screen = slot.getByTestId("desktop-screen");
+    const circles = () => screen.querySelectorAll('[aria-hidden="true"] > div').length;
+    const sized = (name: "clientWidth" | "clientHeight", value: number) => vi.spyOn(HTMLElement.prototype, name, "get").mockReturnValue(value);
+    const spies = [sized("clientWidth", 360), sized("clientHeight", 800)];
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_TOUCH ${JSON.stringify({ contacts: [{ id: 0, x: 180, y: 400 }], by: "agent", generation: 1 })}` }));
+    expect(circles()).toBe(1);
+    const circle = screen.querySelector<HTMLElement>('[aria-hidden="true"] > div')!;
+    expect(circle.style.width).toBe("36px");
+
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_TOUCH ${JSON.stringify({ contacts: [{ id: 0, x: 10, y: 10 }], by: "person", generation: 1 })}` }));
+    expect(circles()).toBe(1);
+    for (const spy of spies) spy.mockRestore();
+    const strings = () => device.sent.filter((sent): sent is string => typeof sent === "string");
+    const texts = () => strings().filter((sent) => sent.startsWith("BB_DEVICE ")).map((sent) => JSON.parse(sent.slice("BB_DEVICE ".length)) as { type: string; text?: string });
+    const keys = slot.getByLabelText("Keyboard input for the device");
+    expect(document.activeElement).toBe(keys);
+    fireEvent.keyDown(keys, { key: "Process", code: "KeyN", keyCode: 229, isComposing: true });
+    expect(strings().some((sent) => sent.startsWith("kd,"))).toBe(false);
+    fireEvent.compositionEnd(keys, { data: "日本語" });
+    fireEvent.input(keys, { data: "😀", inputType: "insertText" });
+    expect(texts()).toEqual([expect.objectContaining({ type: "text", text: "日本語" }), expect.objectContaining({ type: "text", text: "😀" })]);
+
+    fireEvent.click(slot.getByRole("button", { name: "Type text (Ctrl+Alt+Space)" }));
+    const field = await slot.findByRole("textbox", { name: "Text to type" });
+    fireEvent.change(field, { target: { value: "مرحبا ".repeat(40) } });
+    fireEvent.keyDown(field, { key: "Enter", code: "Enter" });
+    expect(texts().at(-1)).toEqual(expect.objectContaining({ type: "text", text: "مرحبا ".repeat(40) }));
+    expect(strings().some((sent) => sent.startsWith("cw,"))).toBe(false);
+  } finally {
+    undo();
+  }
+});
+
 function deviceSocket(): FakeSocket {
   const socket = FakeSocket.made.find((made) => new URL(made.url).searchParams.get("display") === "device");
   if (!socket) throw new Error("no device socket");
@@ -3067,9 +3115,9 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     fireEvent.click(slot.getByRole("button", { name: "Take control" }));
     await slot.findByText(/You have control/);
     await waitFor(() => expect(device.sent).toContain(`cw,${btoa("for the device")}`));
-    const canvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
-    fireEvent.keyDown(canvas, { key: "a", code: "KeyA" });
-    fireEvent.keyUp(canvas, { key: "a", code: "KeyA" });
+    const keys = slot.getByLabelText("Keyboard input for the device");
+    fireEvent.keyDown(keys, { key: "a", code: "KeyA" });
+    fireEvent.keyUp(keys, { key: "a", code: "KeyA" });
     expect(device.sent).toContain("kd,97");
 
     vi.useFakeTimers();

@@ -23,7 +23,7 @@
 
 import type { ByteChannel } from "../transports/types.ts";
 import { BoxWebSocket, WebSocketError, type Message } from "./websocket.ts";
-import { DEVICE_STILLS_VERB } from "./device.ts";
+import { DEVICE_REQUEST_VERB, DEVICE_STILLS_VERB } from "./device.ts";
 
 const PATH = "/api/websockets";
 /** Selkies' RECONNECT_DEBOUNCE_MS, with a margin. */
@@ -49,7 +49,7 @@ const JPEG = 3;
 export type OpenStream = (signal: AbortSignal) => Promise<ByteChannel>;
 
 /** What a message from a viewer is, by its first comma-separated field. */
-type Kind = "video" | "ack" | "input" | "drop";
+type Kind = "video" | "ack" | "input" | "device" | "drop";
 const VIDEO_VERBS = new Set(["SETTINGS", "START_VIDEO", "STOP_VIDEO", "REQUEST_KEYFRAME", DEVICE_STILLS_VERB]);
 /** Keys, pointer, typing and the clipboard: what Selkies takes only from a page with control. */
 const INPUT_VERBS = new Set(["kd", "ku", "kh", "kr", "m", "m2", "co", "cw", "cb", "cws", "cbs", "cwd", "cbd", "cwe", "cbe", "cr", "REQUEST_CLIPBOARD"]);
@@ -68,6 +68,7 @@ export function classify(text: string): Kind {
   if (first === "CLIENT_FRAME_ACK") return "ack";
   if (VIDEO_VERBS.has(first)) return "video";
   if (INPUT_VERBS.has(first)) return "input";
+  if (first === DEVICE_REQUEST_VERB) return "device";
   return "drop";
 }
 
@@ -615,6 +616,10 @@ export class SelkiesRelay {
         }
         return;
       }
+      case "device":
+        if (this.#options.box.paths !== DEVICE_PATHS || !this.#options.mayInput()) return;
+        await this.#options.box.input(message);
+        return;
       case "drop":
         return;
     }

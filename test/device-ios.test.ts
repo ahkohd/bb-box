@@ -11,6 +11,7 @@ import type { EncodedFrame } from "../src/device/driver.ts";
 import { FrameFanout } from "../src/device/frame-fanout.ts";
 import type { StreamOutput } from "../src/device/idb.ts";
 import { IosDriver, contentOrientation } from "../src/device/ios-driver.ts";
+import { PasteboardAccess, hidKey, runningApps } from "../src/device/ios-input.ts";
 import { IosVideo } from "../src/device/ios-video.ts";
 import { devicePaths } from "../src/device/paths.ts";
 import { Simctl, disabledLabels, type Ran, type Runner } from "../src/device/simctl.ts";
@@ -249,7 +250,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     return { home, paths, lists, program, log, target };
   }
 
-  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number } = {}) {
+  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess } = {}) {
     const logs: string[] = [];
     const driver = new IosDriver({
       clock: { now: () => Date.now() + (options.wallAhead?.() ?? 0), monotonic: () => performance.now() },
@@ -262,6 +263,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
       slimLists: setup.lists,
       watchMs: 50,
       processes: async () => options.hubs?.() ?? [],
+      access: options.access,
     });
     started.push(driver);
     return { driver, logs };
@@ -287,7 +289,6 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     assert.equal(state.power.is, "booted");
     assert.deepEqual(state.geometry, { generation: 1, physical: "upright", content: "upright", video: { width: 1206, height: 2622 } });
     assert.deepEqual([...(await driver.screenshot())], [137, 80, 78, 71]);
-    await assert.rejects(driver.touch([{ id: 0, x: 1, y: 1 }]), /cannot send touches/);
     stop.abort();
     driver.close();
 
@@ -391,6 +392,123 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     stop.abort();
     driver.close();
     await driver.shutdown(AbortSignal.timeout(5000));
+  });
+
+  test("sends touches in points, keys by W3C name, idb's pinch for two fingers, and a paste with the running apps let paste", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    for (const label of LIST) simulator.disabled.add(label);
+    const statements: string[] = [];
+    const access = new PasteboardAccess({
+      udid: () => UDID,
+      log: () => undefined,
+      devicesDir: "/devices",
+      processes: async () => [`/devices/${UDID}/data/Containers/Bundle/Application/X/Probe.app/Probe`, "/runtime/RuntimeRoot/Applications/MobileSafari.app/MobileSafari", "/usr/bin/other"],
+      bundleId: async (app) => (app.endsWith("Probe.app") ? "dev.example.probe" : "com.apple.mobilesafari"),
+      sql: async (_database, statement) => {
+        statements.push(statement);
+        return statement.startsWith("select") ? "com.apple.mobilesafari|3\n" : "";
+      },
+    });
+    const { driver } = driverOf(setup, simulator, { access });
+    await driver.attach(setup.target, AbortSignal.timeout(20_000));
+    const events = () =>
+      readFileSync(setup.log, "utf8")
+        .split("\n")
+        .filter((line) => line.includes(" hid "))
+        .map((line) => JSON.parse(line.slice(line.indexOf(" hid ") + 5)) as { press?: { action: { touch?: { point: { x: number; y: number } }; key?: { keycode: number } }; direction?: number }; pinch?: { center: { x: number; y: number }; scale: number; radius: number; duration: number } });
+    await driver.prepareInput();
+    await driver.touch([{ id: 0, x: 300, y: 600 }]);
+    await driver.touch([{ id: 0, x: 330, y: 660 }]);
+    await driver.touch([]);
+    await until("the tap's three events", () => events().length >= 3);
+    assert.deepEqual(
+      events().map((event) => [event.press?.action.touch?.point, event.press?.direction ?? 0]),
+      [
+        [{ x: 100, y: 200 }, 0],
+        [{ x: 110, y: 220 }, 0],
+        [{ x: 110, y: 220 }, 1],
+      ],
+    );
+    await driver.key("A", true);
+    await driver.key("A", false);
+    await driver.key("Enter", true);
+    await driver.key("Enter", false);
+    await until("the keys", () => events().length >= 9);
+    assert.deepEqual(
+      events().slice(3).map((event) => [event.press?.action.key?.keycode, event.press?.direction ?? 0]),
+      [
+        [225, 0],
+        [4, 0],
+        [4, 1],
+        [225, 1],
+        [40, 0],
+        [40, 1],
+      ],
+    );
+    await assert.rejects(driver.key("Hyper", true), /iOS has no key named "Hyper"/);
+    const beforeAccent = events().length;
+    assert.equal(driver.typesAsKeys("ü"), true);
+    assert.equal(driver.typesAsKeys("日"), false);
+    await driver.key("Ü", true);
+    await driver.key("Ü", false);
+    await until("the accented letter", () => events().length >= beforeAccent + 8);
+    assert.deepEqual(
+      events().slice(beforeAccent).map((event) => [event.press?.action.key?.keycode, event.press?.direction ?? 0]),
+      [
+        [226, 0],
+        [24, 0],
+        [24, 1],
+        [226, 1],
+        [225, 0],
+        [24, 0],
+        [24, 1],
+        [225, 1],
+      ],
+    );
+    await driver.touch([
+      { id: 0, x: 503, y: 1311 },
+      { id: 1, x: 703, y: 1311 },
+    ]);
+    await driver.touch([
+      { id: 0, x: 403, y: 1311 },
+      { id: 1, x: 803, y: 1311 },
+    ]);
+    await driver.touch([]);
+    await until("the pinch", () => events().some((event) => event.pinch));
+    const pinch = events().find((event) => event.pinch)!.pinch!;
+    assert.deepEqual(pinch.center, { x: 201, y: 437 });
+    assert.ok(Math.abs(pinch.scale - 2) < 1e-9 && Math.abs(pinch.radius - 100 / 3) < 1e-9 && pinch.duration >= 0.2);
+    await driver.pinch({ centre: { x: 603, y: 1311 }, from: 600, to: 300, ms: 20 }, AbortSignal.timeout(1000));
+    await until("the agent's pinch", () => events().filter((event) => event.pinch).length === 2);
+    assert.deepEqual(events().filter((event) => event.pinch)[1]!.pinch, { center: { x: 201, y: 437 }, scale: 0.5, duration: 0.02, radius: 100 });
+    const before = events().length;
+    await driver.paste();
+    await until("the paste chord", () => events().length >= before + 4);
+    assert.deepEqual(
+      events().slice(before).map((event) => [event.press?.action.key?.keycode, event.press?.direction ?? 0]),
+      [
+        [227, 0],
+        [25, 0],
+        [25, 1],
+        [227, 1],
+      ],
+    );
+    assert.match(statements[0]!, /^select client/);
+    assert.match(statements[1]!, /^insert into access .*'dev\.example\.probe', 0, 2.*'com\.apple\.mobilesafari', 0, 2.*do update set auth_value = 2;$/);
+    await access.putBack();
+    assert.equal(statements[2], "delete from access where service = 'kTCCServicePasteboard' and client = 'dev.example.probe' and client_type = 0; update access set auth_value = 3 where service = 'kTCCServicePasteboard' and client = 'com.apple.mobilesafari' and client_type = 0;");
+    driver.close();
+  });
+
+  test("names the apps a booted device runs, and maps W3C keys to HID usages", () => {
+    assert.deepEqual(runningApps([`/d/${UDID}/data/Containers/Bundle/Application/A/One.app/One`, "/x/RuntimeRoot/Applications/MobileSafari.app/MobileSafari", "/x/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard", "/Applications/Xcode.app/Contents/MacOS/Xcode"], `/d/${UDID}/data`), [`/d/${UDID}/data/Containers/Bundle/Application/A/One.app`, "/x/RuntimeRoot/Applications/MobileSafari.app"]);
+    assert.deepEqual(hidKey("a"), { usage: 4, shift: false });
+    assert.deepEqual(hidKey("?"), { usage: 56, shift: true });
+    assert.deepEqual(hidKey(" "), { usage: 44, shift: false });
+    assert.deepEqual(hidKey("ArrowUp"), { usage: 82, shift: false });
+    assert.deepEqual(hidKey("Meta"), { usage: 227, shift: false });
+    assert.equal(hidKey("é"), null);
   });
 });
 

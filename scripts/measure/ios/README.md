@@ -16,6 +16,14 @@ It runs as the box user, with this checkout copied into the box.
 | `bench.ts tap` | Taps the screen's middle through idb's HID stream `--times` times, and times each to the next frame |
 | `bench.ts state` | Prints the device's state from a viewer's hello |
 
+Input, as the panel sends it (units 5.1 and 5.2), with three more files:
+
+| File | What it does |
+| --- | --- |
+| `viewer.ts` | Runs the plugin's own relay for device viewers beside the device server, without BB's server: pages on port 8770, viewers' WebSockets on 8771. It takes the box's lease, as bb-box does, and stands in for the plugin: `/api/owner?holder=person` or `agent` sets control's owner, and `/api/input` sends the agent's input, a `DeviceInput` as JSON |
+| `device.html` | The panel's own video client on a device display, logging each frame it draws, with a pixel's shade where `window.probe` points |
+| `drive.ts` | Drives `device.html` in headless Chrome through its DevTools protocol, one step an argument: `owner:person`, `tap:x:y`, `press`, `move` and `release`, `drag:x1:y1:x2:y2:ms[:alt]`, `wheel:x:y:delta:count:ms`, `ime:reading:committed`, `insert:text`, `type:text`, `typetext:text`, `agent:<json>`, `e14:x:y:taps:gapMs:label`, `wait:ms` and `eval:js`. Points are the device's, upright or as drawn |
+
 ## Doing a run
 
 1. In a macos-desktop Tart box, run the iOS image's layer as the
@@ -27,6 +35,14 @@ It runs as the box user, with this checkout copied into the box.
    `python3 -m http.server 8765 --bind 127.0.0.1`.
 3. `node scripts/measure/ios/bench.ts deliver`, then the steps above, such as
    `node scripts/measure/ios/bench.ts stream --seconds 15 --url "http://127.0.0.1:8765/page.html?busy"`.
+4. For input, build the panel's client into `scripts/measure/web/client.js`
+   as the [desktop harness](../README.md) does, start
+   `node scripts/measure/ios/viewer.ts` in the background, open a page in
+   the device that turns black or white at each touch, and run, for E14,
+   `node scripts/measure/ios/drive.ts owner:person e14:300:500:100:600:idle`.
+   It writes `/tmp/e14-<label>.json` and prints the median, the 95th
+   percentile and the worst. Stop `viewer.ts` when done, so bb-box takes the
+   box's lease back.
 
 CPU is each process's CPU time from `ps` over each window, as a share of
 one core. Memory is the processes' resident set at the window's end. Frames

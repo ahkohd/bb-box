@@ -50,7 +50,9 @@ function turned(from: Orientation, turn: "left" | "right"): Orientation {
 export interface TestRecord {
   readonly touches: (readonly TouchContact[])[];
   readonly keys: { readonly key: string; readonly down: boolean }[];
+  readonly pastes: string[];
   readonly controls: DeviceControl[];
+  prepared: number;
 }
 
 class Frames implements VideoSource {
@@ -70,7 +72,7 @@ class Frames implements VideoSource {
 
 export class TestDriver implements DeviceDriver {
   readonly platform: DevicePlatform;
-  readonly record: TestRecord = { touches: [], keys: [], controls: [] };
+  readonly record: TestRecord = { touches: [], keys: [], pastes: [], controls: [], prepared: 0 };
   readonly #clock: TestDriverClock;
   readonly #listeners = new Set<() => void>();
   readonly #frameWaiters = new Set<() => void>();
@@ -241,6 +243,15 @@ export class TestDriver implements DeviceDriver {
   async key(key: string, down: boolean): Promise<void> {
     this.#booted();
     this.record.keys.push({ key, down });
+  }
+
+  async paste(): Promise<void> {
+    this.#booted();
+    this.record.pastes.push(this.#clipboard);
+  }
+
+  async prepareInput(): Promise<void> {
+    this.record.prepared++;
   }
 
   async setClipboard(text: string): Promise<void> {

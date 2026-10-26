@@ -440,6 +440,8 @@ test("messages are told apart by their first field, and a pointer loses its sequ
   assert.equal(classify("REQUEST_CLIPBOARD"), "input");
   assert.equal(classify("r,1x1"), "drop");
   assert.equal(classify("kdx,1"), "drop");
+  assert.equal(classify('BB_DEVICE {"id":"a","type":"text","text":"日本"}'), "device");
+  assert.equal(classify("BB_DEVICE_STATE {}"), "drop");
   assert.equal(unsequenced("m,1,2,0,0,99"), "m,1,2,0,0");
   assert.equal(unsequenced("m2,1,2,0,0"), "m2,1,2,0,0");
   assert.equal(unsequenced("kd,65"), "kd,65");

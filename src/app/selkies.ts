@@ -19,8 +19,9 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { DEVICE_FIRST_FRAME_MS, stillsRequestText, type DeviceState } from "../core/device.ts";
-import { parseDeviceServerMessage } from "../core/device-parse.ts";
+import { DEVICE_FIRST_FRAME_MS, stillsRequestText, type DeviceRequest, type DeviceState, type TouchContact } from "../core/device.ts";
+import { deviceRequestText, parseDeviceServerMessage } from "../core/device-parse.ts";
+import { DeviceFingers, DeviceTyping, TouchEcho, pictureIn } from "./device-input.ts";
 import { KeysAfterPaste, astralKeysym, keyLog, textKeys, typeTextShortcut, OptionComposer, PASTE_LANDS_MS, tabOf, ShiftedLetters, PASTE_CHORD_DELAY_MS, PASTE_EVENT_WAIT_MS, SETTLE_MS, XK_CONTROL_L, XK_META_L, XK_SHIFT_L, XK_V, boxKey, macBrowser, pasteChordKeys, pasteShortcut, retryWait, type Connection, type PasteShortcut } from "./viewer.ts";
 
 /** X's own keysyms for characters past Latin-1, such as 0x20ac for €, which noVNC sends, by their character. */
@@ -325,6 +326,10 @@ export class SelkiesSession implements Kept {
   #device: DeviceShown | null;
   #undecoded: ReturnType<typeof setTimeout> | undefined;
   #stillDrawn = 0;
+  readonly #echo: TouchEcho | null;
+  readonly #deviceTyping: DeviceTyping | null;
+  readonly #fingers = new DeviceFingers();
+  #deviceRequests = 0;
 
   constructor(url: string, options: { readonly device?: { readonly model: string | null } } = {}) {
     this.#url = url;
@@ -337,11 +342,20 @@ export class SelkiesSession implements Kept {
     this.#canvas.style.cssText = "width:100%;height:100%;object-fit:contain;outline:none;display:block";
     this.#canvas.tabIndex = -1;
     this.element.appendChild(this.#canvas);
-    this.#keyboard = new Keyboard(this.#canvas);
+    this.#echo = this.#device ? new TouchEcho() : null;
+    this.#deviceTyping = this.#device ? new DeviceTyping({ text: (text) => this.#deviceText(text), key: (keysym) => this.#tapKeysym(keysym) }) : null;
+    if (this.#echo) this.element.appendChild(this.#echo.element);
+    if (this.#deviceTyping) {
+      this.element.appendChild(this.#deviceTyping.element);
+      this.#canvas.style.touchAction = "none";
+      for (const type of ["keydown", "keyup"] as const) this.element.addEventListener(type, (event) => this.#deviceTyping?.composing(event) && event.stopPropagation(), true);
+    }
+    this.#keyboard = new Keyboard(this.#deviceTyping?.element ?? this.#canvas);
     this.#keyboard.onkeyevent = (keysym, code, down, _numlock, capslock) => {
       for (const each of this.#letters.keys(keysym, code, down, capslock)) this.#key(each.keysym, each.code, each.down);
     };
     for (const type of ["pointerdown", "pointerup", "pointermove"] as const) this.#canvas.addEventListener(type, (event) => this.#pointerEvent(event));
+    if (this.#device) this.#canvas.addEventListener("pointercancel", (event) => this.#mine && event.pointerType === "touch" && this.#fingerEvent(event));
     this.#canvas.addEventListener("wheel", (event) => this.#wheelEvent(event), { passive: false });
     this.#canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     this.#observer =
@@ -650,7 +664,7 @@ export class SelkiesSession implements Kept {
     const verb = (comma < 0 ? text : text.slice(0, comma)).split(" ")[0];
     const rest = comma < 0 ? "" : text.slice(comma + 1);
     if (this.#device && text.startsWith("BB_DEVICE_")) {
-      this.#deviceText(text);
+      this.#deviceMessage(text);
       return;
     }
     switch (verb) {
@@ -730,10 +744,14 @@ export class SelkiesSession implements Kept {
     }
   }
 
-  #deviceText(text: string): void {
+  #deviceMessage(text: string): void {
     const parsed = parseDeviceServerMessage(text);
     if (!parsed.ok || !this.#device) return;
     const message = parsed.value;
+    if (message.verb === "BB_DEVICE_TOUCH") {
+      if (!this.#mine && message.contacts.length) this.#echo?.show(message.contacts, pictureIn(this.element.clientWidth, this.element.clientHeight, this.#width, this.#height));
+      return;
+    }
     if (message.verb === "BB_DEVICE_STILL") {
       if (this.#device.stills && !this.#stopped) void this.#drawStill(message.png);
       return;
@@ -855,7 +873,7 @@ export class SelkiesSession implements Kept {
   #apply(): void {
     if (this.#mine) {
       this.#keyboard.grab();
-      if (this.connection.state === "connected" && !this.#typing) this.#canvas.focus({ preventScroll: true });
+      if (this.connection.state === "connected" && !this.#typing) this.#keyTarget().focus({ preventScroll: true });
     } else this.#keyboard.ungrab();
     this.#refreshCursor();
   }
@@ -914,6 +932,10 @@ export class SelkiesSession implements Kept {
 
   typeText(text: string): void {
     if (this.connection.state !== "connected") return;
+    if (this.#device) {
+      this.#deviceText(text);
+      return;
+    }
     for (const key of textKeys(text)) {
       for (const down of [true, false]) {
         for (const each of this.#letters.keys(key.keysym, key.code, down, false)) this.#key(each.keysym, each.code, each.down);
@@ -931,7 +953,7 @@ export class SelkiesSession implements Kept {
   }
 
   focusDesktop(): void {
-    if (this.#mine && this.connection.state === "connected") this.#canvas.focus({ preventScroll: true });
+    if (this.#mine && this.connection.state === "connected") this.#keyTarget().focus({ preventScroll: true });
   }
 
   #key(keysym: number, code: string, down: boolean): void {
@@ -962,6 +984,10 @@ export class SelkiesSession implements Kept {
       this.#mask = 0;
       this.#send(`m,${this.#pointer.x},${this.#pointer.y},0,0`);
     }
+    if (this.#fingers.count) {
+      this.#fingers.clear();
+      this.#deviceTouches([]);
+    }
   }
 
   /** A point on the canvas, in the desktop's pixels: the canvas scales the desktop to fit, centred. */
@@ -976,15 +1002,51 @@ export class SelkiesSession implements Kept {
     return { x: Math.max(0, Math.min(this.#width - 1, x)), y: Math.max(0, Math.min(this.#height - 1, y)) };
   }
 
+  #keyTarget(): HTMLElement {
+    return this.#deviceTyping?.element ?? this.#canvas;
+  }
+
+  #deviceRequest(body: DeviceRequest extends infer R ? (R extends DeviceRequest ? Omit<R, "id"> : never) : never): void {
+    this.#send(deviceRequestText({ ...body, id: `v${Date.now().toString(36)}${(++this.#deviceRequests).toString(36)}` } as DeviceRequest));
+  }
+
+  #deviceText(text: string): void {
+    if (this.#mine && text) this.#deviceRequest({ type: "text", text });
+  }
+
+  #tapKeysym(keysym: number): void {
+    this.#key(keysym, "Unidentified", true);
+    this.#key(keysym, "Unidentified", false);
+  }
+
+  #deviceTouches(contacts: readonly TouchContact[]): void {
+    this.#deviceRequest({ type: "touch", contacts, generation: this.#device?.state?.geometry?.generation ?? 0 });
+  }
+
+  #fingerEvent(event: PointerEvent): void {
+    event.preventDefault();
+    const at = this.#position(event);
+    if (event.type === "pointerdown") {
+      this.#canvas.setPointerCapture?.(event.pointerId);
+      this.#deviceTouches(this.#fingers.set(event.pointerId, at));
+    } else if (event.type === "pointermove") {
+      if (this.#fingers.has(event.pointerId)) this.#deviceTouches(this.#fingers.set(event.pointerId, at));
+    } else if (this.#fingers.has(event.pointerId)) this.#deviceTouches(this.#fingers.lift(event.pointerId));
+  }
+
   #pointerEvent(event: PointerEvent): void {
     if (!this.#mine) return;
+    if (this.#device && event.pointerType === "touch") {
+      this.#fingerEvent(event);
+      return;
+    }
     this.#pointer = this.#position(event);
     if (event.type !== "pointermove" && event.button >= 0 && event.button <= 2) {
       // Selkies numbers buttons as the Pointer Events do: 1 primary, 2 middle, 4 secondary.
       const bit = 1 << event.button;
       this.#mask = event.type === "pointerdown" ? this.#mask | bit : this.#mask & ~bit;
       if (event.type === "pointerdown") {
-        this.#canvas.focus({ preventScroll: true });
+        this.#keyTarget().focus({ preventScroll: true });
         this.#canvas.setPointerCapture?.(event.pointerId);
       }
       event.preventDefault();

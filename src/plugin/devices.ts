@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, isTestOffer, speaksProtocol, type BoxDevice, type DeviceHello, type DeviceState, type Intent, type OfferedDevice } from "../core/device.ts";
+import { DEVICE_SERVER_VERSION, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAnswer, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type OfferedDevice } from "../core/device.ts";
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { DeviceLink, DeviceLinkError } from "../core/device-link.ts";
 import type { ByteChannel, RunResult } from "../transports/types.ts";
@@ -52,7 +52,10 @@ interface Held {
   view: DeviceServerView;
   idle: ReturnType<typeof setTimeout> | null;
   work: Promise<unknown>;
+  owner: { readonly generation: number; readonly holder: ControlHolder } | null;
 }
+
+export const PERSON_HAS_CONTROL_WORDS = "A person has control of this box's device. Wait for them to hand it back, or take it back with computer_take_control when they ask.";
 
 export function wantsDevice(box: BoxRecord): boolean {
   const offer = box.capabilities.device;
@@ -71,6 +74,7 @@ export class DeviceServers {
   readonly instance: string;
   readonly version: number;
   #disposed = false;
+  #generation = 0;
 
   constructor(deps: DeviceServersDeps) {
     this.#deps = deps;
@@ -86,7 +90,7 @@ export class DeviceServers {
   #entry(boxId: string): Held {
     let held = this.#held.get(boxId);
     if (!held) {
-      held = { link: null, view: { is: "none" }, idle: null, work: Promise.resolve() };
+      held = { link: null, view: { is: "none" }, idle: null, work: Promise.resolve(), owner: null };
       this.#held.set(boxId, held);
     }
     return held;
@@ -113,8 +117,53 @@ export class DeviceServers {
 
   controlChanged(boxId: string): void {
     const held = this.#held.get(boxId);
-    if (held?.view.is !== "waiting" || held.view.why !== "person" || this.#deps.personHasControl(boxId)) return;
-    this.#retry(boxId);
+    if (held?.view.is === "waiting" && held.view.why === "person" && !this.#deps.personHasControl(boxId)) {
+      this.#retry(boxId);
+      return;
+    }
+    const owner = this.#owner(boxId);
+    if (!owner.changed) return;
+    void this.#deps.boxes
+      .find(boxId)
+      .then(async (box) => {
+        if (!box || !wantsDevice(box)) return;
+        await this.ensure(box);
+        await this.#tellOwner(box);
+      })
+      .catch((error) => this.#deps.logError("tell the device server who has control", error));
+  }
+
+  #nextGeneration(): number {
+    this.#generation = Math.max(this.#generation + 1, Date.now());
+    return this.#generation;
+  }
+
+  #owner(boxId: string): { readonly generation: number; readonly holder: ControlHolder; readonly changed: boolean } {
+    const held = this.#entry(boxId);
+    const holder: ControlHolder = this.#deps.personHasControl(boxId) ? "person" : "agent";
+    if (held.owner?.holder === holder) return { ...held.owner, changed: false };
+    held.owner = { generation: this.#nextGeneration(), holder };
+    return { ...held.owner, changed: true };
+  }
+
+  async #tellOwner(box: BoxRecord): Promise<void> {
+    const held = this.#held.get(box.id);
+    const link = held?.link;
+    if (!held || !link || link.closed || !link.hello.lease) return;
+    const owner = this.#owner(box.id);
+    const answer = await link.request({ type: "owner", generation: owner.generation, holder: owner.holder }, { timeoutMs: SCRIPT_TIMEOUT_MS });
+    if (!answer.ok) this.#deps.log(`Box ${box.name}'s device server did not take control's owner, ${owner.holder} at generation ${owner.generation}: ${answer.error.words}`);
+  }
+
+  async input(box: BoxRecord, input: DeviceInput): Promise<DeviceAnswer> {
+    if (this.#deps.personHasControl(box.id)) return { id: "", ok: false, error: { code: "person-has-control", words: PERSON_HAS_CONTROL_WORDS }, state: this.#held.get(box.id)?.link?.state ?? null };
+    await this.ensure(box);
+    const link = this.#held.get(box.id)?.link;
+    if (!link || link.closed) return { id: "", ok: false, error: { code: "not-booted", words: `Box ${box.name}'s device server is not connected.` }, state: null };
+    const owner = this.#owner(box.id);
+    if (owner.changed) await this.#tellOwner(box);
+    this.#touch(box.id);
+    return link.request({ type: "input", input, owner: owner.generation }, { timeoutMs: SCRIPT_TIMEOUT_MS });
   }
 
   #retry(boxId: string): void {
@@ -248,6 +297,7 @@ export class DeviceServers {
     held.view = { is: "connected", version: hello.version, protocol: hello.protocol, state: hello.state };
     this.#touch(box.id);
     await this.#copied(box, hello.state, hello);
+    await this.#tellOwner(box).catch((error) => this.#deps.logError("tell the device server who has control", error));
     const older = hello.version < this.version;
     const foreign = !speaksProtocol(hello.protocol);
     if (!older && !foreign) return held.view;
@@ -302,6 +352,7 @@ export class DeviceServers {
         held.view = { is: "connected", version: fresh.hello.version, protocol: fresh.hello.protocol, state: fresh.hello.state };
         this.#touch(box.id);
         await this.#copied(box, fresh.hello.state, fresh.hello);
+        await this.#tellOwner(box).catch((error) => this.#deps.logError("tell the device server who has control", error));
         this.#deps.log(`Box ${box.name}'s device server: version ${fresh.hello.version} said hello ${((Date.now() - began) / 1000).toFixed(1)} s after its delivery.`);
         return held.view;
       } catch (error) {
@@ -324,6 +375,7 @@ export class DeviceServers {
       held.link = restored;
       held.view = { is: "connected", version: restored.hello.version, protocol: restored.hello.protocol, state: restored.hello.state };
       this.#touch(box.id);
+      await this.#tellOwner(box).catch((error) => this.#deps.logError("tell the device server who has control", error));
       return held.view;
     } catch (error) {
       held.view = { is: "down", words: error instanceof Error ? error.message : String(error) };

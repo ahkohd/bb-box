@@ -107,7 +107,7 @@ Video also keeps coloured text sharp: when every browser watching a desktop can 
 
 A box can have a device beside its desktop, such as a phone, or a device and no desktop. An `ios` box has an iOS Simulator device, an iPhone or iPad, beside its macOS host's desktop. The test device, a test card that stands in for a phone, is turned on by the advanced `testDevice` setting in the [configuration reference](../reference/configuration.md). The Android emulator comes later.
 
-The device's screen shows as it is now, but your clicks and keys do not reach an iOS device yet, nor do its controls: those come in later versions of bb-box. Commands do: `xcrun simctl` in the box's terminal takes `booted` as the device.
+Take control to use the device, as with a desktop: one control covers the device and the box's desktop. The device's controls, such as Home and Rotate, come in a later version of bb-box. Commands work now: `xcrun simctl` in the box's terminal takes `booted` as the device.
 
 On an `ios` box, the Desktop view is the macOS host's, for Xcode. It says above it: 'Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Device view.' Xcode's Run opens Device Hub even so. bb-box closes it within 5 seconds, by stopping its process: quitting it would shut the device down. `bb box doctor` says whether Device Hub runs on each `ios` box, and how often bb-box has closed it.
 
@@ -118,6 +118,31 @@ The display you see is the only one that gets your keys, your pointer and your c
 A device always shows as video, at its own size. It has no VNC, no **Show as VNC** and no High resolution, and it ignores the **Linux desktops as video** setting. Resizing the panel does not resize the device.
 
 Where your browser cannot play the device's video, as where it has no WebCodecs or the video does not start within 3 seconds, the device shows a picture of its screen a few times a second instead, over the same connection, and says so above it: 'This browser cannot play the device's video, so it shows a picture a few times a second.' It never shows the box's desktop in its place, so a click never lands on the wrong screen. While it waits for its first picture, it shows the device's name and 'Connecting', or 'Booting' while the device starts.
+
+### Device input
+
+With control, the device takes your pointer, keys and text:
+
+| You | The device gets |
+| --- | --- |
+| Click, or drag | a touch where you click, which follows the pointer until you let go |
+| Right-click | a long press, held for 1.2 seconds |
+| Alt and drag (Option on a Mac) | a pinch: two fingers mirrored about the screen's centre. Alt itself never reaches the device |
+| Scroll with a wheel or trackpad | a swipe from the pointer, a twelfth of the screen for each notch, held still before it lifts so the list does not fling |
+| Two fingers on a touch screen | two touches |
+| Keys | the same keys, by name. Cmd is Command, Option is Option |
+| A letter with an accent, from your keyboard or a dead key | on iOS, typed as Option keys, as a Mac's keyboard types it |
+| Japanese, Chinese or Korean from your input method, an emoji, or Arabic, Cyrillic and other letters with no Option key | pasted, as one paste for each word your input method commits, or for letters you type within half a second of each other |
+| Cmd+V (Ctrl+V off a Mac) | your computer's clipboard, pasted into the device |
+| **Type text** | the whole text: as keys when every letter has a key, otherwise as one paste |
+
+When bb-box pastes for you or the agent, it puts the device's own clipboard back afterwards. Your Cmd+V leaves your text on the device's clipboard, as on a desktop.
+
+On iOS, each paste shows 'pasted from CoreSimulatorBridge' at the top of the screen for about 2.5 seconds, and the device takes no keys while it shows, so bb-box holds your keys until it goes. Touches are not held. iOS also adds a space before pasted text that follows a word or a punctuation mark directly, as it does on a phone; type long or mixed text with **Type text**, which pastes it in one piece.
+
+While someone watches without control, each touch, the agent's or the person's with control, shows as a circle where it lands.
+
+Control changes hands cleanly. When you take control, the agent's input stops at once: a swipe under way ends where it is, and a paste whose paste key has not gone is dropped, with the device's clipboard put back. When you hand back, or your connection ends, or bb-box reloads, every touch and key you held is let go. Turning or switching the device ends a touch under way, and a touch that starts before the new picture comes is not sent.
 
 ## When the desktop is not showing
 
