@@ -1,7 +1,8 @@
 # 064: iOS shared hosts: ios boxes as macOS users with their own device, many to a Mac
 
-Status: proposed, 26 October 2026; revised the same day after an
-independent review, answered finding by finding under
+Status: accepted, 26 October 2026, with the owner's answers to its open
+questions under [The owner's answers](#the-owners-answers). Revised the
+same day after an independent review, answered finding by finding under
 [Review answers](#review-answers). Built on the research note on
 [several iOS Simulators in one macOS VM](../research/ios-shared-hosts.md),
 which this note calls the research. Changes
@@ -1373,6 +1374,18 @@ delivery and restart under a daemon, and a cold restart.
    words, so a box that forgets its range fails loudly. The other way
    leaves them free, first come first served, with the risk of a test
    passing against another box's server.
+
+## The owner's answers
+
+Given on 26 October 2026, to the open questions above. Each is the
+default:
+
+1. **The pool's Mac lends slots before whole boxes.** A `macos` or
+   `macos-desktop` box for the pool goes elsewhere or waits while slots
+   are held.
+2. **A size without `dedicated` is refused,** in words that name
+   `dedicated`.
+3. **The host holds the common dev ports** listed above, with words.
 
 ## Rejected
 
