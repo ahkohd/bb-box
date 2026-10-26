@@ -14,8 +14,10 @@ and E4 (a suspend). Units 5.1's shared parts and 5.2's, for input on iOS,
 are [after them](#units-51-and-52-input-shared-and-on-ios): E8, E9, E14,
 E21, and how iOS pastes. Unit 6.3's, for the iOS controls and box_device,
 are [after them](#unit-63-the-ios-controls-and-box_device): each action,
-its read-back, requests by ID, and E11. Unit 6.4's, for the toolbar, are
-[at the end](#unit-64-the-toolbar).
+its read-back, requests by ID, and E11. Unit 6.1's, for the frame, follow,
+then unit 6.4's, for the toolbar. Unit 4.1's, for the Android driver, are
+[at the end](#unit-41-the-android-driver): the stream of each model,
+recovery, E3 and E23.
 
 ## How they were measured
 
@@ -1394,3 +1396,166 @@ switch from its intent, as 063 says it should.
   BB with touch; and VoiceOver or another screen reader on the bar.
 - **For Android, once its driver is built (unit 6.2):** Back, Recent apps,
   Fold and Network driven on the emulator, and their effect seen.
+
+## Unit 4.1: the Android driver
+
+Measured on 26 October 2026 with the harness in
+[scripts/measure/android](../../scripts/measure/android/README.md#the-device-servers-driver),
+in a Linux VM box on Proxmox QEMU with KVM, 16 cores and 32 GiB, on the AMD
+Ryzen Threadripper PRO 9975WX host. The box ran the Android template's
+layer, `customize-android.sh` with x264, as the template's build does: in
+168 s, with the three devices booted once and saved. The device server was
+this unit's, delivered from its checkout as bb-box delivers it. Every
+number is in the box, from a viewer on the server's socket: BB's relay,
+the network and the browser are not in them. Nothing was pinned, so the
+emulator could use all 16 cores.
+
+### How the driver runs the device
+
+- **The emulator runs in a service of its own,** the box user's
+  `bb-box-emulator@<avd>.service`, which the server writes. It checks the
+  device's firewall before each start, starts the emulator with no window
+  and its gRPC behind a token made new at each start, and saves the
+  snapshot when it stops, through `adb emu kill`. A restart of the server
+  leaves it running.
+- **Attach and reattach.** The server finds a running emulator by its
+  discovery file under `/run/user/<uid>/avd/running/`, whose process must
+  be alive; files of dead ones are removed. It reattaches to one running
+  the target device, stops one running another, and otherwise starts the
+  target from its snapshot. The gRPC token is read from that file.
+- **Frames.** The server asks the emulator's gRPC for its screen in RGB by
+  shared memory, in `~/.bb-box/device/frames`, sized for the largest
+  screen, 12.3 MB, and feeds `bb-box-h264` an `S` command for each frame. A
+  key frame on demand is the helper's `K`: the last picture again as an
+  IDR, with SPS and PPS. A change of size or orientation starts a new
+  generation.
+- **The emulator's picture turns with the device as it is held,** not with
+  what Android draws. Turned by the console's `rotate`, the stream went to
+  2400x1080 with the cutout's black band on the right: the picture upright
+  to the viewer, the device turned right. Held upside down, Android kept
+  Settings in its last landscape rotation, and the picture was 1080x2400
+  with Settings sideways in it. So the driver reports `content` as
+  `physical`, which is what the frame needs to draw the picture the right
+  way up, and 063's note says so.
+- **Android's clock.** A device booted from a snapshot keeps the clock it
+  had when the snapshot was saved: 64 to 551 s behind the box's, after
+  snapshots 1 to 9 minutes old. The server sets it at each boot and
+  reattach, and after a resume, with `su 0 toybox date`, to within a
+  second.
+
+### The stream, each model
+
+Busy is unit 2.4's load, `adb shell input swipe` up and down the launcher's
+list. Windows of 5 s, two or three each. Cores are shares of one core.
+
+| Model | First frame after a viewer asks | Frames a second, busy | Mbit/s, busy | Gaps between frames, busy: median, worst | Server: cores, resident | bb-box-h264: cores, resident | Emulator: cores busy, resident |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Pixel 8 | 4 to 5 ms | 57.4 to 58.6 | 7.6 to 7.8 | 16 to 17 ms, 33 to 43 ms | 0.022 to 0.032, 102 MiB | 0.46, 46 MiB | 8.8, 4.0 GiB |
+| Pixel Fold, open | 13 ms | 34.4 to 34.6 | 4.5 to 4.7 | 28 to 29 ms, 72 to 115 ms | 0.018, 101 MiB | 0.37, 64 MiB | 11.0 to 11.8, 6.2 GiB |
+| Pixel Fold, closed | | 53.8 | 7.1 | 19 ms, 23 ms | 0.024 | 0.33 | 7.1 |
+| Pixel Tablet | 5 ms | 27.4 to 31.2 | 3.6 to 4.4 | 32 ms, 54 to 206 ms | 0.014 to 0.016, 101 MiB | 0.29 to 0.33, 65 MiB | 11.1 to 12.2, 6.0 GiB |
+
+On a still screen no frames came. The server and the helper took no
+measurable CPU, and the emulator 0.13 to 0.15 of a core. A viewer's hello
+came 104 to 113 ms after it connected. The rates are unit 2.4's on 16
+cores: the encoder adds nothing visible to the frame rate.
+
+Key frames on request, 10 asks 0.5 s apart on the Pixel 8 and 5 on the
+others:
+
+| Model | Still: median, worst | Busy: median, worst |
+| --- | --- | --- |
+| Pixel 8 | 4.2 ms, 4.9 ms | 6.0 ms, 13.7 ms |
+| Pixel Fold, open | | 6.6 ms, 8.8 ms |
+| Pixel Tablet | | 6.3 ms, 9.2 ms |
+
+### Recovery
+
+| What happened | Times | What it took |
+| --- | --- | --- |
+| `bb-box-h264` killed (SIGKILL), busy | 3 | the server started it again and gave it the last frame, which it encoded as a key frame: 13 to 14 ms after the kill; a viewer's stall of 49 to 61 ms |
+| The device server killed (SIGKILL) | 3 | systemd started it again; it found the emulator by its discovery file and reattached: hello 1.13 to 1.21 s after the kill, a key frame 1.49 to 1.52 s after it; the emulator kept |
+| The emulator killed (SIGKILL) | 2 | the server saw its stream end, and booted it again. Cold, as no snapshot had been saved (below): a key frame 14.95 s after the kill. Before that rule, from its snapshot: 2.7 s |
+| The same again within 5 minutes | 2 | the device left failed: "The Pixel 8 stopped twice within 5 minutes, so bb-box leaves it stopped. Reboot the device, or restart the box, to start it again." |
+| Reboot, from failed | 2 | stopped, then booted cold: 14.9 s to the answer |
+| A switch of model, through a control connection | 5 | the old device stopped and saved, the new one booted from its snapshot, to the answer with its first key frame: Pixel Fold 6.2 and 7.1 s, Pixel Tablet 5.6 s, Pixel 8 4.3 and 5.7 s |
+| A fold and an unfold, by the console | 1 each | the stream went from 2208x1840 to 1080x2092 and back, each a new generation, the state's screen inner, outer, inner |
+| The agent's screenshot | 1 | the emulator's PNG through gRPC, 46 ms, at the stream's size, 2400x1080 turned |
+
+### E23: what a boot after a kill keeps
+
+Before each kill, a file was written to `/sdcard/Download` and a setting
+with `settings put global`, then `sync`.
+
+| The emulator ended by | Next boot | The file | The setting |
+| --- | --- | --- | --- |
+| SIGKILL | from the last snapshot saved, 063's rule | lost | lost |
+| SIGKILL | cold | kept | lost: Android writes settings a moment later, and the kill came first |
+| The VM reset (sysrq `b`), 1 s after writing | cold | kept | lost, likewise |
+| A clean reboot of the VM (`systemctl reboot`) | from the snapshot the service's stop saved | kept | kept |
+
+An app was then installed, as `adb install -r` of the Calendar app's own
+APK, which puts an update in `/data/app`:
+
+| Between the install and the SIGKILL | Next boot | The app |
+| --- | --- | --- |
+| 2 s | cold | lost: back to the system's copy |
+| 30 s, a setting written at the install kept | cold | lost: Android had recorded it, but the APK's bytes had not reached the emulator's disk ("is not zip"), so it went back to the system's copy |
+| `adb shell sync`, then at once | cold | kept |
+
+Loading the last snapshot saved puts the device's disk back as it was
+then, so an app installed since, or anything else written, is gone. A cold
+boot keeps what reached the device's disk, as a phone does after a power
+cut. So the service keeps a marker for each device, written at each start
+and removed only when the emulator answered `adb emu kill` and ended, which
+saves the snapshot. A start that finds the marker boots cold: 14.5 to
+15.0 s rather than 2 to 4 s. A clean stop, a switch, and the VM's own
+shutdown all remove it. What Android has not yet written to its disk is
+lost all the same, as on a phone: `adb shell sync` after an install writes
+it, and the skill says so.
+
+### The box's stop and start, a restart and a crash
+
+| What happened | The device | Time |
+| --- | --- | --- |
+| `box_stop`, a Proxmox hibernation, and `box_start`, after 2 minutes, a viewer watching with the screen changing every second | survived: frames went on at once, `sys.boot_completed` still 1, a key frame on request in 4.8 ms at the median of 5 | the resume, 14.6 s |
+| The same: the clocks | the VM's clock came back 2 minutes behind, and `systemd-timesyncd` had not stepped it 3 minutes later, as it asks only every 34 minutes at most. So the server saw no jump, and Android's clock, which follows the VM's, was 2 minutes behind too. Set by hand, as bb-box now does for an android box at `box_start`: the server saw the clock move 116 s, set Android's clock to within a second of it, and restarted the stream | |
+| E3: `box_stop`, 61 minutes, then `box_start`, a viewer connected throughout | survived: `sys.boot_completed` still 1, the files written before kept, key frames on request in 4.5 to 14.6 ms. The VM's clock came back 61 minutes behind; set as `box_start` now sets it, the server saw it move 3654 s, set Android's clock, which was 3655 s behind, to the second, and restarted the stream: 54.8 fps busy after it | the resume, 14.2 s |
+| `systemctl reboot` | the service's stop saved the snapshot; the server started with the VM and booted the device from it | 16.6 s from the reboot to the device booted, 7.0 s of it after the VM's kernel started |
+| The VM reset by sysrq | booted cold, by the marker above | 23.7 s from the reset to the device booted, 14.8 s of it the cold boot |
+
+### Memory after real use
+
+The Pixel 8's emulator held 4,025 MiB just booted. After Chrome opened a
+Wikipedia page, then Maps, YouTube, Gmail, Calendar and Settings, each
+given 10 s, it held 4,980 MiB, 5.2 GB, and the same a minute later.
+Android itself, given 2.5 GiB by the emulator, used 1.4 GiB of it. So the
+research's 4.8 to 4.9 GB after use stands, a little over; unit 2.4's 3.9
+GiB was the device scrolled, with no app opened.
+
+### What limits these numbers
+
+- One box, of 16 cores rather than the android kind's default 8, on one
+  host, with nothing pinned. The frame rates are unit 2.4's at 16 cores.
+- The kills were of processes in the box. The 5-minute rule held each
+  second kill; a crash loop longer than that was not tried.
+- The box was a Linux VM with the template's layer, not a clone of the
+  template, as production does not offer android boxes before this unit.
+  The template, its record and a box acquired through BB are the lead's
+  checks after the deploy.
+- The settings lost in E23 were written about a second before each kill.
+  How long Android takes to write a setting was not measured.
+
+### Not checked here
+
+- **Through the production BB, after the deploy:** `box_acquire({kind:
+  "android"})` and each model by `device`; the panel's Device view of each
+  model in its frame, the Pixel Fold's included, with the toolbar; E3
+  through `box_stop` and `box_start` after 1 hour, with the clock set by
+  bb-box, and after 24 hours; E23 through `box_restart` and a crash of a box
+  from the template; two android boxes from the template compared: their
+  adb keys, console and gRPC tokens, and Android IDs; a refused android
+  size reaching the agent in words.
+- **Android's ID.** Unit 3.1 found the device's serial and Android ID the
+  same in every box from one template, as the snapshot holds them. This
+  unit does not change that.

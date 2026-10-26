@@ -38,3 +38,31 @@ encode it, how frames reach the encoder, and how the picture holds up at
 CPU is from `/proc/<pid>/stat` over each window, as a share of one core:
 the emulator's whole process tree, the helper, and Node's own
 `process.cpuUsage()`. Memory is the emulator tree's resident set.
+
+## The device server's driver
+
+`device.ts` measures unit 4.1's Android driver
+([063 results](../../../docs/decisions/063-results.md#unit-41-the-android-driver)):
+the device server in the box, as bb-box delivers it, with its viewer on the
+server's socket through `bb-box-device connect`. It runs as the box user,
+with this checkout copied into the box, in a box with the Android
+template's layer, or a box of the template itself.
+
+| Step | What it does |
+| --- | --- |
+| `device.ts deliver` | Delivers the device server from this checkout as bb-box does, with the devices of the image's record, or of `/usr/share/bb-box/android-devices.json` where the box has the layer but no record. `--device` names a first model |
+| `device.ts stream` | Connects as a viewer, times its hello and its first frame, then counts frames, key frames, Mbit/s and the gaps between frames in windows of `--window` seconds for `--seconds`, with the cores and resident memory of the server, `bb-box-h264` and the emulator's process tree. `--busy` scrolls with `adb shell input swipe`, as unit 2.4 did |
+| `device.ts keyframes` | Asks for a key frame `--times` times, 0.5 s apart, and times each to its arrival; `--busy` as above |
+| `device.ts kill-encoder` | Kills `bb-box-h264` while a viewer watches, and times the stall to the next key frame |
+| `device.ts kill-emulator` | Kills the emulator, and times the stall to the next key frame, or reports the state the server left the device in |
+| `device.ts kill-server` | Kills the device server, and times its hello and a key frame after it is back, and whether the emulator was kept |
+| `device.ts switch --device <model>` | Switches the box's device through a control connection, and times it to the answer |
+| `device.ts reboot` | Reboots the device through a control connection, and times it |
+| `device.ts screenshot` | Asks for the agent's screenshot `--times` times; `--out` keeps the last |
+| `device.ts clock` | The box's clock and the device's, and how far apart |
+| `device.ts memory` | The resident memory of the emulator, the server and the encoder, and what Android says it uses |
+| `device.ts state` | The device's state, from a viewer's hello |
+| `device.ts watch --seconds <s>` | Logs each second's frames and key frames, and each state, connecting again when the server goes, for a stop and start of the box |
+
+CPU and memory are read from `/proc` as for `bench.ts`. Frames are counted
+as the viewer receives them, so on a still screen there are none.

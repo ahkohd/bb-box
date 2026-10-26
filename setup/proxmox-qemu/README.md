@@ -159,8 +159,9 @@ Android template: the Linux template with the Android SDK, the emulator and
 a booted device for each model bb-box offers
 ([063](../../docs/decisions/063-device-boxes.md)). It needs your acceptance
 of the Android SDK's licence first. The [Android template guide](../android/README.md)
-says how. Add its VMID to `android-templates`. bb-box does not offer
-android boxes yet; it refreshes and checks the template meanwhile.
+says how. Add its VMID to `android-templates`, and turn `linux-kvm` on if
+it is not. bb-box then offers android boxes, cloned from the template, once
+it has read the devices the template's record lists.
 
 ## Check it worked
 

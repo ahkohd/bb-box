@@ -303,7 +303,8 @@ export class DeviceServer {
         return;
       }
       this.#log(`device: the ${target.model} did not start: ${words}`);
-      this.#setState(placeholderState(deviceModel(target.model), { is: "failed", error: { code: "boot-failed", words }, since: this.#clock.now() }, this.#clock.now(), words));
+      const read = await this.#options.driver.readBack().catch(() => null);
+      this.#setState(read?.power.is === "failed" ? read : placeholderState(deviceModel(target.model), { is: "failed", error: { code: "boot-failed", words }, since: this.#clock.now() }, this.#clock.now(), words));
       return;
     }
     await this.#refresh();

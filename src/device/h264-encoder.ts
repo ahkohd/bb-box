@@ -8,6 +8,8 @@ export interface EncodedFrame {
   readonly key: boolean;
   readonly generation: number;
   readonly monotonicMs: number;
+  readonly width: number;
+  readonly height: number;
 }
 
 export interface EncodedUnit {
@@ -250,7 +252,7 @@ export class H264Encoder {
       this.#inFlight = null;
       if (unit.data.length > 0 && answered) {
         this.#onEncoded?.(unit);
-        this.#encoded.push({ data: unit.data, key: unit.key, generation: answered.generation, monotonicMs: answered.at });
+        this.#encoded.push({ data: unit.data, key: unit.key, generation: answered.generation, monotonicMs: answered.at, width: unit.width, height: unit.height });
         this.#wakeReader();
       }
       this.#pump();

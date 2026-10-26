@@ -11,7 +11,7 @@ import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { ProxmoxQemuBackend, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
 import { parseQemuPart, type QemuConfig } from "../src/backends/proxmox-qemu/config.ts";
 import { proxmoxQemuDriver } from "../src/backends/proxmox-qemu/index.ts";
-import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, DEVICE_DISPLAY, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { backendPart, checkDocument, type BackendConfig, type ConfigDocument, type Secrets } from "../src/core/document.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { driverFields } from "../src/plugin/configuration.ts";
@@ -1341,7 +1341,7 @@ test("a Linux VM's root file system grows live over its disk (061)", async () =>
   assert.match(log, /^growpart \/dev\/sda \S*\nresize2fs \/dev\/sda1\n$/);
 });
 
-test("an Android template is no kind's yet, but its image is listed, boxed at the android kind's size, captured, and checked by the doctor (063)", async () => {
+test("an Android template with KVM off offers no kind, but its image is listed, boxed at the android kind's size, captured, and checked by the doctor (063)", async () => {
   const runtime = { platform: "android", api: 35, image: "google_apis", revision: 9, abi: "x86_64", emulator: "37.2.12.0", snapshot: { emulator: "37.2.12.0", cpu: "Example CPU", made: "2026-10-26T05:15:46Z" } };
   const devices = [
     { model: "Pixel 8", native: "pixel_8", runtime },
@@ -1361,7 +1361,9 @@ test("an Android template is no kind's yet, but its image is listed, boxed at th
     mkdirSync(ssh.home(host), { recursive: true });
     ssh.powershell(host, `case "$1" in\n  *"cat /usr/share/bb-box/image.json"*) echo '${JSON.stringify(record)}';;\n  *) exec sh -c "$1";;\nesac\n`);
   }
-  assert.ok(!backend.kinds().some((kind) => kind.id === "android"), "not offered until the Android driver");
+  assert.ok(!backend.kinds().some((kind) => kind.id === "android"), "not offered while KVM is off");
+  const [withheld] = await backend.withheldKinds("android");
+  assert.match(withheld!.why, /KVM in Linux VM boxes is off/);
 
   const report = await backend.doctor();
   const check = (id: string) => report.checks.find((one) => one.id === id);
@@ -1401,5 +1403,56 @@ test("an Android template is no kind's yet, but its image is listed, boxed at th
   assert.equal(judged.status, "fail");
   assert.match(judged.detail, /It offers no Android devices in its record/);
   assert.match(judged.fix!, /build\.sh android 9108 --replace\.$/);
+  const [none] = await setupWithKvmAndNoDevices(record).withheldKinds("android");
+  assert.match(none!.why, /Android template 9108 lists no Android devices in its record/);
+});
 
+function setupWithKvmAndNoDevices(record: Record<string, unknown>) {
+  const { backend, proxmox } = setup({ "android-templates": "9108", "linux-kvm": true });
+  proxmox.addVmTemplate(9108);
+  proxmox.guests.get(9108)!.config.description = `bb-box android vm template.\n${JSON.stringify({ ...record, devices: undefined })}`;
+  return backend;
+}
+
+test("with an Android template and KVM on, android boxes are offered once its record lists its devices: clones of it with the device display and no desktop, and a resume sets Linux's clock (063)", async () => {
+  const runtime = { platform: "android", api: 35, image: "google_apis", revision: 9, abi: "x86_64", emulator: "37.2.12.0", snapshot: { emulator: "37.2.12.0", cpu: "Example CPU", made: "2026-10-26T05:15:46Z" } };
+  const devices = [
+    { model: "Pixel 8", native: "pixel_8", runtime },
+    { model: "Pixel Fold", native: "pixel_fold", runtime },
+  ];
+  const record = { contract: 1, image: "standard", kind: "android", arch: "x86_64", build: "build.20261026-051500-1a2b", built: new Date().toISOString(), os: "Ubuntu 24.04", pins: "p".repeat(64), tools: {}, devices };
+  const { backend, proxmox, ssh, context } = setup({ "android-templates": "9108", "linux-kvm": true });
+  proxmox.addVmTemplate(9108);
+  proxmox.guests.get(9108)!.config.description = `bb-box android vm template.\n${JSON.stringify(record)}`;
+  proxmox.guests.get(9108)!.config.tags = "bbbox;android;build.20261026-051500-1a2b";
+  const host = "192.0.2.150";
+  rmSync(join(ssh.dir, "windows", host), { force: true });
+  ssh.powershell(host, `case "$1" in\n  *"date -u -s"*) printf "%s" "$1" > "$HOME/clock";;\n  *) exec sh -c "$1";;\nesac\n`);
+  let changed = 0;
+  (context as { kindsChanged?: () => void }).kindsChanged = () => changed++;
+
+  assert.ok(!backend.kinds().some((kind) => kind.id === "android"), "not before its record is read");
+  assert.deepEqual(await backend.withheldKinds("android"), []);
+  const android = backend.kinds().find((kind) => kind.id === "android")!;
+  assert.ok(android, "offered once the record is read");
+  assert.equal(changed, 1, "and the core is told the kinds changed");
+  assert.deepEqual(android.capabilities.device, { platform: "android", devices });
+  assert.deepEqual(android.capabilities.displays, [DEVICE_DISPLAY]);
+  assert.deepEqual([android.capabilities.os, android.capabilities.features, android.capabilities.enrol], ["linux", ["docker", "kernel", "kvm"], true]);
+  assert.equal((await backend.capacity("android", sized(), [])).ok, true);
+
+  const box = identity({ ...sized(), cores: 8, memoryMiB: 16_384 }, "android");
+  const guest = await backend.acquire(box, null, hooks().value, signal());
+  assert.equal(guest.data?.template, 9108);
+  assert.equal(proxmox.calls.find((call) => call.path.endsWith("/clone"))!.path, "/nodes/pve/qemu/9108/clone");
+  assert.deepEqual((await backend.transports(guest)).displays, [], "the device display is the device server's, not the VM's");
+  assert.equal(await backend.asOffered!(guest, "android", box.createdAt, signal()), true);
+
+  await backend.stop(guest, signal());
+  const before = Date.now() / 1000;
+  const steps: string[] = [];
+  await backend.start(guest, signal(), (step) => steps.push(step));
+  assert.deepEqual(steps, ["resume", "network", "ssh", "clock"]);
+  const set = Number(/date -u -s @([\d.]+)/.exec(readFileSync(join(ssh.home(host), "clock"), "utf8"))?.[1]);
+  assert.ok(set >= before - 1 && set <= Date.now() / 1000 + 1, "set to BB's server's time");
 });

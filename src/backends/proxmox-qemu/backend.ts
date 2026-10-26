@@ -54,8 +54,10 @@ import { addressFor, proxmoxFootprint } from "../proxmox/settings.ts";
 import { proxmoxFetch } from "../proxmox/tls.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
+import type { DeviceOffer } from "../../core/device.ts";
 import {
   BackendError,
+  DEVICE_DISPLAY,
   type AcquireHooks,
   type Backend,
   type BackendContext,
@@ -80,6 +82,7 @@ import {
   type PowerState,
   type ReleaseHooks,
   type WarmShortfall,
+  type WithheldKind,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, recordInDescription } from "../images.ts";
@@ -211,6 +214,20 @@ const ANDROID_IMAGE_KIND: BoxKind = {
   readyTimeoutMs: READY_TIMEOUT_MS,
 };
 const LINUX_TEMPLATE_KINDS: readonly BoxKind[] = [...LINUX_KINDS, ANDROID_IMAGE_KIND];
+
+function androidKind(device: DeviceOffer): BoxKind {
+  return {
+    id: ANDROID_IMAGE_KIND.id,
+    label: "Android emulator",
+    description:
+      "An Android emulator device, a phone, foldable or tablet, booted in a Linux VM, for installing, running and testing Android apps, with its screen shown in the panel. Commands run on the Linux host, as the box user with sudo, with the Android SDK in /opt/android-sdk; adb takes the device as emulator-5554.",
+    requires: [],
+    capabilities: { ...LINUX_KIND.capabilities, features: [...LINUX_KIND.capabilities.features, "kvm"], displays: [DEVICE_DISPLAY], device },
+    readyTimeoutMs: READY_TIMEOUT_MS,
+  };
+}
+
+const ANDROID_DEVICES_KEPT_MS = 60_000;
 
 /** The guest's VNC server, as in Proxmox LXC's desktops, and the password its desktop writes at boot. */
 const LINUX_VNC_PORT = 5900;
@@ -401,6 +418,8 @@ export class ProxmoxQemuBackend implements Backend {
   readonly #streaming = new Map<number, { has: boolean; cursor: boolean; at: number }>();
   /** Image boxes (054) from before their clone until their capture or removal, which no sweep counts. */
   readonly #imageBoxes = new Set<number>();
+  #androidDevices: { readonly offer: DeviceOffer | null; readonly at: number; readonly why: string | null } | null = null;
+  #androidReading: Promise<void> | null = null;
 
   /**
    * Image operations (054): a box from a template, its capture as a template
@@ -439,7 +458,54 @@ export class ProxmoxQemuBackend implements Backend {
       if (!this.#templatesOf(kind.id).length) continue;
       kinds.push(this.#config.kvm ? { ...kind, capabilities: { ...kind.capabilities, features: [...kind.capabilities.features, "kvm"] } } : kind);
     }
+    if (this.#config.androidTemplates.length && this.#config.kvm) {
+      if (!this.#androidDevices || Date.now() - this.#androidDevices.at > ANDROID_DEVICES_KEPT_MS) void this.#readAndroidDevices();
+      const offer = this.#androidDevices?.offer;
+      if (offer) kinds.push(androidKind(offer));
+    }
     return kinds;
+  }
+
+  #readAndroidDevices(signal?: AbortSignal): Promise<void> {
+    this.#androidReading ??= (async () => {
+      const api = await this.client();
+      const whys: string[] = [];
+      let offer: DeviceOffer | null = null;
+      for (const template of this.#config.androidTemplates) {
+        const config = await api.config(template, signal).catch((error: unknown) => {
+          whys.push(`Android template ${template} could not be read: ${error instanceof Error ? error.message : String(error)}`);
+          return null;
+        });
+        if (!config) continue;
+        const devices = recordInDescription(String(config.description ?? ""))?.devices ?? null;
+        if (devices && devices[0].runtime.platform === "android") {
+          offer = { platform: "android", devices } as DeviceOffer;
+          break;
+        }
+        whys.push(`Android template ${template} lists no Android devices in its record, so there is none to boot. bb box doctor says why`);
+      }
+      const before = JSON.stringify(this.#androidDevices?.offer ?? null);
+      this.#androidDevices = { offer, at: Date.now(), why: offer ? null : `${whys.join("; ")}.` };
+      if (JSON.stringify(offer) !== before) this.#context.kindsChanged?.();
+    })()
+      .catch((error) => this.#context.logError("read the Android templates' devices", error))
+      .finally(() => (this.#androidReading = null));
+    return this.#androidReading;
+  }
+
+  async withheldKinds(kind: string, signal?: AbortSignal): Promise<readonly WithheldKind[]> {
+    if (kind !== ANDROID_IMAGE_KIND.id || !this.#config.androidTemplates.length) return [];
+    if (!this.#config.kvm) {
+      return [{ kind, why: "Android templates are listed, but KVM in Linux VM boxes is off in Proxmox QEMU's settings, and the Android emulator needs it. bb box doctor says how to turn it on.", passing: false }];
+    }
+    if (this.kinds().some((offered) => offered.id === kind)) return [];
+    await this.#readAndroidDevices(signal);
+    if (this.kinds().some((offered) => offered.id === kind)) return [];
+    return [{ kind, why: this.#androidDevices?.why ?? "bb-box has not read the Android templates' records yet.", passing: false }];
+  }
+
+  #linuxKind(kind: string): boolean {
+    return kind === ANDROID_IMAGE_KIND.id || LINUX_KINDS.some((linux) => linux.id === kind);
   }
 
   /** The templates of a kind's boxes. */
@@ -498,7 +564,7 @@ export class ProxmoxQemuBackend implements Backend {
     const api = await this.client();
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
     // Linux boxes have no warm pool here: their spares wait hibernated (#612).
-    if (LINUX_KINDS.some((linux) => linux.id === kind)) return this.#room(api, size, guests, pending, { ready: 0, target: 0 }, false, signal, kind);
+    if (this.#linuxKind(kind)) return this.#room(api, size, guests, pending, { ready: 0, target: 0 }, false, signal, kind);
     const ready = await this.#ready(api, guests, signal);
     // Acquires here that hold a warm VM need no other.
     const waiting = Math.max(0, pending.length - this.#claimed.size);
@@ -598,7 +664,7 @@ export class ProxmoxQemuBackend implements Backend {
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     this.#offer(box.kind);
-    const linux = LINUX_KINDS.some((kind) => kind.id === box.kind);
+    const linux = this.#linuxKind(box.kind);
     const os: GuestOs = linux ? "linux" : "windows";
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs);
     const api = await this.client();
@@ -746,11 +812,13 @@ export class ProxmoxQemuBackend implements Backend {
     if (!status) throw gone(vmid);
     const step = timed(timing);
     // A hibernated VM resumes; one shut down from Windows boots.
-    if (status.status !== "running") await step(status.lock === "suspended" ? "resume" : "boot", () => api.start(vmid, signal));
+    const resumed = status.status !== "running" && status.lock === "suspended";
+    if (status.status !== "running") await step(resumed ? "resume" : "boot", () => api.start(vmid, signal));
     const os = this.#osOf(guest.data?.template);
     await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS, signal, step, os);
     // Linux keeps its clock with its own time service.
     if (os === "windows") await step("clock", () => this.#setClock(vmid, signal));
+    else if (resumed && this.#kindOf(guest.data?.template) === ANDROID_IMAGE_KIND) await step("clock", () => this.#setLinuxClock(vmid, signal));
   }
 
   /**
@@ -1328,9 +1396,10 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** A guest of a Windows template listed now, from that template's build as it is now. */
-  async asOffered(guest: Guest, _kind: string, createdAt: number, signal?: AbortSignal): Promise<boolean> {
+  async asOffered(guest: Guest, kind: string, createdAt: number, signal?: AbortSignal): Promise<boolean> {
     const template = guest.data?.template;
     if (typeof template !== "number" || !this.#allTemplates().includes(template)) return false;
+    if (kind === ANDROID_IMAGE_KIND.id && !this.#androidDevices?.offer) return false;
     return fromBuild(guest, await templateBuild(await this.client(), [], template, signal), createdAt);
   }
 
@@ -1590,6 +1659,11 @@ export class ProxmoxQemuBackend implements Backend {
       }
       await sleep(200, signal);
     }
+  }
+
+  async #setLinuxClock(vmid: number, signal?: AbortSignal): Promise<void> {
+    const result = await (await this.#command(vmid, "linux")).run(`sudo -n date -u -s @${(Date.now() / 1000).toFixed(3)} >/dev/null`, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 });
+    if (result.exitCode !== 0) throw new Error(`Linux could not set its clock: ${result.stderr.trim() || `exit code ${result.exitCode}.`}`);
   }
 
   /** Sets Windows' clock from BB's server's. */

@@ -84,6 +84,20 @@ where it is built ahead, which its boxes claim at once (#440). The
   `slim: false` for an app that uses one of them; its first boot then takes
   about a minute more. Do not open Device Hub on the host: it
   takes the device's clipboard, and bb-box closes it.
+- An `android` box is a Linux VM with one Android emulator device booted,
+  a Pixel 8, Pixel Fold or Pixel Tablet, shown to the person in the panel.
+  It has no desktop. `device` picks the model as for `ios`, and the device
+  boots from its snapshot in about 3 s once the box is up. Build and run on
+  the host with `box_run`, where the Android SDK is in `/opt/android-sdk`
+  and `adb` reaches the device as `emulator-5554`, as in `adb install
+  app.apk` and `adb shell am start -n <package>/<activity>`. Its apps and
+  data stay through a stop and start of the box. If the emulator ends
+  without saving, as when it crashes, bb-box boots it cold, in about 15 s,
+  which keeps what Android had written to its disk: run `adb shell sync`
+  after `adb install`, so a crash cannot lose the app. bb-box does not yet send
+  touches, keys or text to an Android device, and of `box_device`'s
+  actions it does only `switch` and `reboot`: use `adb` for the rest, such
+  as `adb shell input tap <x> <y>`, until it does.
 - Cloud providers cost money while a box exists, so release such a box as
   soon as you are done. Hetzner Cloud's Linux boxes are containers on hosts
   bb-box makes as boxes need them: a box on a host with room is ready in

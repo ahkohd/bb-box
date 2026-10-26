@@ -461,6 +461,7 @@ export function deviceLines(box: BoxRecord, state: DeviceState | null, server: s
     lines.push(`Device actions, for box_device: ${actionsOf(deviceModel(state.model)).join(", ")}`);
   } else lines.push(`Device state: ${server ?? "not known yet: bb-box has not reached the box's device server"}`);
   if (offer.platform === "ios") lines.push(`Device commands: simctl in box_run takes booted as the ${platformWord(offer.platform)} device, as in xcrun simctl openurl booted <url>`);
+  if (offer.platform === "android") lines.push("Device commands: adb in box_run reaches the device as emulator-5554, as in adb install app.apk; the Android SDK is in /opt/android-sdk");
   if (offer.platform === "ios" && box.slim === false) lines.push("Slim: off. The device runs every service iOS starts");
   else if (offer.platform === "ios") lines.push("Slim: on. Widgets, Siri, iCloud, Health, Wallet and the like are off; acquire with slim false for an app that needs them");
   return lines;
