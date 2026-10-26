@@ -30,6 +30,8 @@ Mac. A clone boots to SSH in about 10 s and to a logged-in desktop in about
 | `prepare-image.sh` | Builds the macOS image |
 | `prepare-linux-image.sh` | Builds the Linux images (040) |
 | `prepare-windows-image.sh` | Builds the Windows image, in QEMU (046) |
+| `prepare-ios-image.sh` | Builds the iOS image on the macOS image (063) |
+| `ios/` | What that script adds, and the iOS image's check: [its guide](ios/README.md) |
 | `windows/` | What that script adds to the Proxmox Windows template's files |
 | `guest/customize.sh` | Runs inside the image's VM while it is built |
 | `guest/launcher.sh` | Builds bb-box's launcher for desktop commands in the image, with its permissions (#628) |
@@ -229,6 +231,17 @@ keys must be ed25519. Packages come from Ubuntu's live ports archive, which
 has no snapshots, so the arm64 image is not pinned to a date. Everything in it
 is arm64: amd64 container images and x86_64 binaries do not run there.
 
+#### iOS
+
+```sh
+./prepare-ios-image.sh
+```
+
+It clones the macOS image and adds idb_companion and a booted-once, slimmed
+iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5), in about 17 minutes. bb-box
+does not offer ios boxes yet. [The iOS image's guide](ios/README.md) says what
+it has, and how it is checked and refreshed.
+
 #### Windows (arm64)
 
 Download Windows 11 Arm64 in English (United States) from Microsoft
@@ -278,6 +291,7 @@ its boxes and takes no new ones. The backend's own fields:
 | `macos-image`, `macos-desktop-image` | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
 | `linux-image` | empty | The image of `linux-arm64` boxes, such as `bb-box-linux`. Empty, the default, turns them off |
 | `linux-desktop-image` | empty | The image of `linux-arm64-desktop-cpu` boxes, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
+| `ios-image` | empty | The iOS image, such as `bb-box-ios`, which `prepare-ios-image.sh` builds on the macOS image. Empty, the default, turns it off. bb-box checks and refreshes it; ios boxes are not offered yet |
 | `windows-image` | empty | The image in `~/.bb-box/qemu/images` of `windows-arm64-desktop` boxes: the name `prepare-windows-image.sh` was given with `--name`, or its default. Empty, the default, turns them off |
 | `tart-windows-enrol` | on | Windows boxes join BB as machines, as the Proxmox QEMU backend's do. Off, they are boxes only |
 | `video` | off | macOS desktops open as video, from bb-box-stream in the image (060), not VNC. Off by default: they open as VNC, which is already smooth on a Tart Mac, at 52 to 55 frames a second, and a person can choose video under Display. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31 |

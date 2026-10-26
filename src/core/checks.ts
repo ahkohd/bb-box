@@ -92,7 +92,11 @@ export const CHECKS = {
   "tart.ssh-key": { name: "SSH key", from: ["tart"], what: "bb-box's SSH key for the Macs reads, and its public key to install." },
   "tart.hosts": { name: "Macs", from: ["tart"], what: "At least one Mac is set up." },
   "host.<mac>": { name: "Mac <mac>", from: ["tart"], what: "The Mac answers over SSH, is Apple silicon, and has Tart." },
-  "image.<mac>.<kind>": { name: "<kind> image on <mac>", from: ["tart"], what: "The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old." },
+  "image.<mac>.<kind>": {
+    name: "<kind> image on <mac>",
+    from: ["tart"],
+    what: "The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together.",
+  },
   "qemu.<mac>": { name: "QEMU on <mac>", from: ["tart"], what: "QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac." },
   "qemu-video.<mac>": { name: "Windows video on <mac>", from: ["tart"], what: "bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865)." },
   "capacity.<mac>": { name: "Room on <mac>", from: ["tart"], what: "Room on the Mac for a macOS box at its default size." },

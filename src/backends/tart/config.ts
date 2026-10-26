@@ -35,11 +35,14 @@ export interface TartKindConfig {
   readonly image: string | null;
 }
 
+export const IOS_IMAGE_KIND = "ios";
+
 export interface TartConfig {
   readonly hosts: readonly TartHost[];
   /** known_hosts lines for the Macs. Every Mac's key is pinned. */
   readonly hostKeys: readonly string[];
   readonly kinds: Readonly<Record<TartKind, TartKindConfig>>;
+  readonly iosImage: string | null;
   /** The most macOS VMs bb-box lets run on each Mac, counting every VM Tart lists there. */
   readonly vmsPerHost: number;
   /** A null key means bb-box generates one and shows its public key. */
@@ -72,6 +75,7 @@ export const TART_KEYS = {
   linuxImage: "tart-linux-image",
   linuxDesktopImage: "tart-linux-desktop-image",
   windowsImage: "tart-windows-image",
+  iosImage: "tart-ios-image",
   windowsEnrol: "tart-windows-enrol",
   video: "tart-video",
   vmsPerHost: "tart-vms-per-host",
@@ -163,6 +167,13 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     label: "Tart: Windows image",
     description:
       "The Windows image on each Mac, in ~/.bb-box/qemu/images, that windows-arm64-desktop boxes are made from, run by QEMU. Empty turns them off.",
+    default: "",
+  },
+  [TART_KEYS.iosImage]: {
+    type: "string",
+    label: "Tart: iOS image",
+    description:
+      "The Tart VM on each Mac that ios boxes are cloned from, as setup/tart/prepare-ios-image.sh builds it on the macOS image (bb-box-ios): idb_companion and a booted-once, slimmed iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5). bb-box checks and refreshes it with the macOS image. Empty, the default, turns it off. ios boxes are not offered yet.",
     default: "",
   },
   [TART_KEYS.windowsEnrol]: {
@@ -292,6 +303,10 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
     kinds[kind] = { image: image || null };
   }
   if (TART_KINDS.every((kind) => !kinds[kind].image)) problem(TART_KEYS.macosImage, "Tart: give an image for macOS, Linux or Windows boxes.");
+  const iosImage = text(values, TART_KEYS.iosImage);
+  if (iosImage && !VM_NAME.test(iosImage)) problem(TART_KEYS.iosImage, `Tart: the iOS image "${iosImage}" is not a Tart VM name bb-box can use.`);
+  if (iosImage && !kinds.macos.image && !kinds["macos-desktop"].image) problem(TART_KEYS.iosImage, "Tart: the iOS image is built on the macOS image, so give a macOS image too.");
+  if (iosImage && TART_KINDS.some((kind) => kinds[kind].image === iosImage)) problem(TART_KEYS.iosImage, `Tart: "${iosImage}" is another kind's image; the iOS image is a VM of its own.`);
 
   const vmsPerHost = number(values, TART_KEYS.vmsPerHost, MACOS_VMS_PER_MAC);
   if (!Number.isInteger(vmsPerHost) || vmsPerHost < 1 || vmsPerHost > MACOS_VMS_PER_MAC) {
@@ -316,6 +331,7 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
     hosts,
     hostKeys,
     kinds,
+    iosImage: iosImage || null,
     vmsPerHost,
     ssh: { privateKey, vmUser },
     reserve: { memoryMiB: reserveMemoryMiB, diskGiB: reserveDiskGiB },
@@ -334,6 +350,7 @@ const IMAGE_LABELS: Readonly<Record<string, string>> = {
   [TART_KEYS.linuxImage]: "Linux image (arm64)",
   [TART_KEYS.linuxDesktopImage]: "Linux desktop image (arm64)",
   [TART_KEYS.windowsImage]: "Windows image (arm64)",
+  [TART_KEYS.iosImage]: "iOS image",
 };
 
 /** The backend's fields in bb-box's configuration: the settings above without the prefix, but the Macs. */
@@ -345,6 +362,7 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.linuxImage, "boxes"],
     [TART_KEYS.linuxDesktopImage, "boxes"],
     [TART_KEYS.windowsImage, "boxes"],
+    [TART_KEYS.iosImage, "boxes"],
     [TART_KEYS.windowsEnrol, "boxes"],
     [TART_KEYS.video, "boxes"],
     [TART_KEYS.vmUser, "advanced"],

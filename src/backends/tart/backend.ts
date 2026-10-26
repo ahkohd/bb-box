@@ -94,7 +94,7 @@ import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, followWind
 import type { OpenStream } from "../../core/selkies.ts";
 import { SELKIES_DISPLAY, SELKIES_LAUNCHER, selkiesDisplay } from "../selkies.ts";
 import { openRoute } from "../../transports/route.ts";
-import { TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
+import { IOS_IMAGE_KIND, TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
 import {
   captureScript,
   claimScript,
@@ -263,9 +263,16 @@ export function macWindowsCheck(check: string, clock: string): string {
   return out.join("\n");
 }
 
+export const IOS_CHECK = "/usr/local/bin/bb-box-check-ios";
+
+function iosPrepareCommand(macosImage: string, vm: string): string[] {
+  return ["./prepare-ios-image.sh", "--from", macosImage, "--name", vm];
+}
+
 /** The check a trial box of each kind runs; none of Tart's own for Windows, whose shared check.ps1 runs, adapted (adaptCheck). */
 function tartCheck(kind: string): string {
   if (guestOsOf(kind) === "windows") return "";
+  if (kind === IOS_IMAGE_KIND) return `${MAC_CHECK}\n${IOS_CHECK}`;
   if (guestOsOf(kind) === "macos") return MAC_CHECK;
   if (kind === "linux-arm64") return "bb-box-check-headless";
   return "for i in $(seq 1 60); do [ -s /run/bb-box/display-mode ] && break; sleep 1; done; bb-box-check-desktop";
@@ -2253,9 +2260,10 @@ export class TartBackend implements Backend {
       images?.pins("macos") ?? null,
       images?.pins("windows-arm64") ?? null,
       images?.bbApp(signal) ?? null,
-    ]).catch(() => [null, null, null, null, null] as const);
+      this.#config.iosImage ? (images?.pins("ios") ?? null) : null,
+    ]).catch(() => [null, null, null, null, null, null] as const);
     const states = keys ? await this.#states(signal) : new Map<string, MacState | Error>();
-    const [linuxPins, desktopPins, macosPins, windowsPins, app] = await judging;
+    const [linuxPins, desktopPins, macosPins, windowsPins, app, iosPins] = await judging;
     /** An image's record judged, with the prepare script's command that builds it again as the fix. */
     const judge = (kind: TartKind, image: string, record: ImageRecord | null, on: string): ImageJudgement => {
       const os = guestOsOf(kind);
@@ -2322,6 +2330,7 @@ export class TartBackend implements Backend {
           );
         }
       }
+      if (this.#config.iosImage) this.#doctorIos(host, state, this.#config.iosImage, iosPins, app, push);
       const room = this.#room(host, state, this.#context.kind("macos").defaultSize);
       push(
         `capacity.${host.name}`,
@@ -2369,6 +2378,27 @@ export class TartBackend implements Backend {
       checks,
       notes,
     };
+  }
+
+  #doctorIos(
+    host: TartHost,
+    state: MacState,
+    image: string,
+    pins: string | null,
+    app: string | null,
+    push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void,
+  ): void {
+    const id = `image.${host.name}.${IOS_IMAGE_KIND}` as const;
+    const name = `${IOS_IMAGE_KIND} image on ${host.name}`;
+    const macosImage = this.#config.kinds.macos.image ?? this.#config.kinds["macos-desktop"].image;
+    const rebuild = `Build it again on ${host.name} with setup/tart/prepare-ios-image.sh --from ${macosImage ?? "<the macOS image>"} --name ${image} --replace.`;
+    if (!state.vms.some((vm) => vm.name === image)) {
+      push(id, name, "fail", `${host.name} has no Tart VM ${image}.`, `Build it with setup/tart/prepare-ios-image.sh${macosImage ? ` --from ${macosImage}` : ""} --name ${image}, or clear the iOS image in bb-box's settings.`);
+      return;
+    }
+    const macosBuild = macosImage ? (state.records.get(macosImage)?.build ?? null) : null;
+    const judged = judgeImage(state.records.get(image) ?? null, { os: "ios", pins, bbApp: app, macosBuild }, rebuild);
+    push(id, name, judged.status, `${image}. ${judged.detail}`, judged.fix);
   }
 
   /** The doctor's checks of QEMU and the Windows image on a Mac that answered (046). */
@@ -2881,6 +2911,11 @@ export class TartBackend implements Backend {
         const record = state.records.get(image) ?? null;
         builds.push({ ref: `${host.name}/${image}`, image: "standard", kind, build: record?.build ?? null, record, current: true });
       }
+      const ios = this.#config.iosImage;
+      if (ios && exists(ios)) {
+        const record = state.records.get(ios) ?? null;
+        builds.push({ ref: `${host.name}/${ios}`, image: "standard", kind: IOS_IMAGE_KIND, build: record?.build ?? null, record, current: true });
+      }
       for (const [vm, fields] of state.owners) {
         if (fields.install !== this.#context.installId) continue;
         if (fields["image-box"]) boxes.push(`${host.name}/${vm}`);
@@ -2900,7 +2935,7 @@ export class TartBackend implements Backend {
     const vm = `${VM_PREFIX}image-${randomBytes(6).toString("hex")}`;
     if (os === "windows") return this.#windowsImageBox(host, image, vm, build, label, signal);
     const { cores, memoryMiB } = this.#context.kind(build.kind).defaultSize;
-    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? this.#kind(build.kind).readyTimeoutMs);
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? (build.kind === IOS_IMAGE_KIND ? READY_TIMEOUT_MS : this.#kind(build.kind).readyTimeoutMs));
     const owner = ownerText({ install: this.#context.installId, kind: build.kind, "image-box": label.replace(/[^\w .:-]/g, "").slice(0, 80) || "box", created: Date.now() });
     try {
       if ((await this.#run(host, claimScript(vm, owner), { signal })).stdout.trim() !== "claimed") throw new Error(`VM ${vm} on ${host.name} is taken.`);
@@ -2994,7 +3029,8 @@ export class TartBackend implements Backend {
     if (!current.current || build.current || target.host !== source.host) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is not a build on its Mac.`);
     await this.#run(target.host, replaceScript(source.vm, target.vm), { timeoutMs: 10 * 60_000, signal });
     // The base's copies no tag names, as a pull before the build left them (#475).
-    const from = await this.#baseOf(target.host, target.vm, signal).catch(() => "");
+    const builtOnTheMacosImage = current.kind === IOS_IMAGE_KIND;
+    const from = builtOnTheMacosImage ? "" : await this.#baseOf(target.host, target.vm, signal).catch(() => "");
     if (from) await this.#run(target.host, pruneBaseScript(from), { timeoutMs: 10 * 60_000, signal }).catch((error: unknown) => this.#context.logError("remove an old base", error));
     return { ...build, ref: current.ref, image: "standard", current: true };
   }
@@ -3015,7 +3051,7 @@ export class TartBackend implements Backend {
     }
     const state = await this.#state(host, signal);
     const fields = state.owners.get(vm);
-    const configured = TART_KINDS.some((kind) => this.#config.kinds[kind].image === vm);
+    const configured = TART_KINDS.some((kind) => this.#config.kinds[kind].image === vm) || this.#config.iosImage === vm;
     if (configured || !fields || fields.install !== this.#context.installId || !(fields["image-box"] || fields["image-build"])) {
       throw new Error(`${vm} on ${host.name} is not an image box or build of this install's, so bb-box leaves it.`);
     }
@@ -3040,6 +3076,9 @@ export class TartBackend implements Backend {
     const vm = `${VM_PREFIX}img-refresh-${stamp}`;
     const dir = `.bb-box/tart/setup-${stamp}`;
     // bb-box-stream's source is the pool Mac's (060).
+    const ios = current.kind === IOS_IMAGE_KIND;
+    const macosImage = this.#config.kinds.macos.image ?? this.#config.kinds["macos-desktop"].image;
+    if (ios && !macosImage) throw new Error("The iOS image is built on the macOS image, and bb-box's Tart settings name none.");
     const tar = spawnSync("tar", ["-C", setup, "-czf", "-", "tart", "proxmox-lxc", "ssh-pool/mac-stream.swift", "ssh-pool/mac-chrome.sh"], { maxBuffer: 64 * 1024 * 1024 });
     if (tar.status !== 0) throw new Error(`tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
     const mac = new SshTransport(ssh, await this.#mac(host), "macos");
@@ -3049,13 +3088,13 @@ export class TartBackend implements Backend {
     await this.#run(host, claimScript(vm, owner), { signal: options.signal });
     try {
       await mac.writeFile(`${dir}.tgz`, tar.stdout, { signal: options.signal });
-      const from = await this.#baseOf(host, image, options.signal);
+      const from = ios ? macosImage! : await this.#baseOf(host, image, options.signal);
       // A newer push to the base's tag is pulled first, room allowing (#475).
-      if (from) {
+      if (from && !ios) {
         const pulled = await this.#run(host, baseScript(from, this.#config.reserve.diskGiB), { timeoutMs: 3 * 60 * 60_000, signal: options.signal });
         for (const line of pulled.stdout.split("\n")) if (line.trim()) options.log(line);
       }
-      const args = [
+      const args = ios ? iosPrepareCommand(from, vm) : [
         os === "macos" ? "./prepare-image.sh" : "./prepare-linux-image.sh",
         ...(current.kind === "linux-arm64-desktop-cpu" ? ["--desktop"] : []),
         "--key", key,

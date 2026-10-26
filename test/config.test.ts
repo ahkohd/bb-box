@@ -526,7 +526,7 @@ test("apply tops the warm pools up at once, and a pool short of room is in the l
 test("every driver's fields have labels for the settings page: a capital first, and no backend name in front", () => {
   for (const driver of DRIVERS) {
     for (const [key, field] of [...Object.entries(driver.fields), ...Object.entries(driver.hostFields ?? {})]) {
-      assert.match(field.label, /^(?:[A-Z]|macOS)/, `${driver.type}.${key}: "${field.label}"`);
+      assert.match(field.label, /^(?:[A-Z]|macOS|iOS)/, `${driver.type}.${key}: "${field.label}"`);
       assert.doesNotMatch(field.label, /^[^:]+: /, `${driver.type}.${key}: "${field.label}"`);
     }
   }

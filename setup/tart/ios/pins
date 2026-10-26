@@ -1,0 +1,3 @@
+IDB_VERSION=1.7.7
+IDB_URL=https://github.com/facebook/idb/releases/download/v1.7.7/idb-companion.macos-arm64.tar.gz
+IDB_SHA256=d0e4e10a7bbd85a6ce67966acb5fca0a87fd14cd026b79f8ec3ee6c338f4a166

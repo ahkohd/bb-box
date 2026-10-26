@@ -13,7 +13,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, ut
 import { userInfo } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, restartSeconds, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
+import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, restartSeconds, withDeviceChecked, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, MAC_CLIPBOARD, MAC_LAUNCHER, WINDOWS_CLIPBOARD, accessCheck, accessSetup, accessSetupMs, clipboardCommands, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
 import { READER_SOURCE, READER_TYPE } from "../src/core/windows-access.ts";
@@ -3040,6 +3040,21 @@ function androidKind(...models: ("Pixel 8" | "Pixel Fold" | "Pixel Tablet")[]): 
   };
 }
 
+const IOS_RUNTIME = { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" } as const;
+
+function iosKind(): BoxKind {
+  return {
+    ...FAKE_KINDS[0]!,
+    id: "ios",
+    label: "iOS Simulator",
+    capabilities: {
+      ...FAKE_KINDS[0]!.capabilities,
+      displays: [{ id: "device", shows: "device", protocol: "selkies", resizable: false }],
+      device: { platform: "ios", devices: [{ model: "iPhone 18 Pro", native: "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", runtime: IOS_RUNTIME }] },
+    },
+  };
+}
+
 const refusedWith = (code: string, words: RegExp) => (error: unknown) => {
   assert.ok(error instanceof BoxError, String(error));
   assert.equal(error.code, code);
@@ -3107,4 +3122,25 @@ test("with the test device on, a linux box asked for the Test device keeps it th
   assert.deepEqual((await world.boxes.find(box.id))?.capabilities.device, testDeviceOffer("android"));
   world.testDevice = false;
   await assert.rejects(world.boxes.acquire({ threadId: "t1", projectId: null, kind: "linux", device: "Test device" }), (error: unknown) => error instanceof BoxError && error.code === "unsupported");
+});
+
+test("an ios box is slim unless it asks for slim false, which it keeps; slim is refused on every other kind (063, 3.2)", async () => {
+  const world = setup({ kinds: [iosKind(), androidKind("Pixel 8")] });
+  const acquire = (kind: string, slim?: boolean) => world.boxes.acquire({ threadId: THREAD, projectId: null, kind, ...(slim !== undefined ? { slim } : {}) });
+  const slim = await acquire("ios");
+  assert.equal(slim.slim, true, "slim by default");
+  const stock = await acquire("ios", false);
+  assert.equal(stock.slim, false);
+  assert.equal((await world.boxes.get(THREAD, stock.name)).slim, false, "as stored");
+  assert.equal((await acquire("android")).slim, undefined, "an android box carries no slim");
+  await assert.rejects(acquire("android", false), refusedWith("unsupported", /^slim is only for ios boxes, .* Boxes of kind android have no such device\.$/));
+  await assert.rejects(acquire("linux", true), refusedWith("unsupported", /Boxes of kind linux have no such device\.$/));
+});
+
+test("a stored slim that is not true or false is dropped where records are read, and the rest of the record kept (063, 3.2)", () => {
+  const box = { kind: "ios", askedDevice: "iPhone 17", slim: "yes", capabilities: { device: null } } as unknown as BoxRecord;
+  const checked = withDeviceChecked(box);
+  assert.equal(checked.slim, undefined);
+  assert.equal(checked.askedDevice, "iPhone 17");
+  assert.equal(withDeviceChecked({ ...box, slim: false } as unknown as BoxRecord).slim, false);
 });

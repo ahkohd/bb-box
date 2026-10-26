@@ -1,0 +1,40 @@
+name: BBProbe
+options:
+  bundleIdPrefix: dev.bb-box
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "5"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+targets:
+  BBProbe:
+    type: application
+    platform: iOS
+    sources: [BBProbe]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bb-box.probe
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: BBProbe
+  BBProbeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [BBProbeUITests]
+    dependencies:
+      - target: BBProbe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bb-box.probe.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  BBProbe:
+    build:
+      targets:
+        BBProbe: all
+        BBProbeUITests: [test]
+    test:
+      targets: [BBProbeUITests]

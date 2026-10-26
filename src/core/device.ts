@@ -90,18 +90,24 @@ export type Runtime = IosRuntime | AndroidRuntime;
 
 export type NonEmpty<T> = readonly [T, ...T[]];
 
+export interface SlimList {
+  readonly list: string;
+  readonly labels: number;
+  readonly sha256: string;
+}
+
 interface PlatformParts {
-  readonly ios: { readonly model: IosModelName; readonly runtime: IosRuntime; readonly failure: IosFailureCode };
-  readonly android: { readonly model: AndroidModelName; readonly runtime: AndroidRuntime; readonly failure: AndroidFailureCode };
+  readonly ios: { readonly model: IosModelName; readonly runtime: IosRuntime; readonly failure: IosFailureCode; readonly built: { readonly slim?: SlimList } };
+  readonly android: { readonly model: AndroidModelName; readonly runtime: AndroidRuntime; readonly failure: AndroidFailureCode; readonly built: { readonly slim?: never } };
 }
 
 export type ModelNameOf<P extends DevicePlatform> = PlatformParts[P]["model"];
 
-export interface OfferedDeviceOf<P extends DevicePlatform> {
+export type OfferedDeviceOf<P extends DevicePlatform> = {
   readonly model: ModelNameOf<P>;
   readonly native: string;
   readonly runtime: PlatformParts[P]["runtime"];
-}
+} & PlatformParts[P]["built"];
 
 export type OfferedDevice = { readonly [P in DevicePlatform]: OfferedDeviceOf<P> }[DevicePlatform];
 
@@ -576,10 +582,18 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 2;
+export const DEVICE_SERVER_VERSION = 3;
 
 export function speaksProtocol(protocol: number): boolean {
   return protocol >= DEVICE_PROTOCOLS.least && protocol <= DEVICE_PROTOCOLS.most;
+}
+
+export const IOS_COMPANION_PAIRINGS = [{ xcode: "27.0", companion: "1.7.7" }] as const satisfies readonly { readonly xcode: string; readonly companion: string }[];
+
+export const IOS_PAIRINGS_WORDS = `The pairings checked are: ${IOS_COMPANION_PAIRINGS.map((pairing) => `Xcode ${pairing.xcode} with idb_companion ${pairing.companion}`).join(", ")}.`;
+
+export function companionWorksWith(xcode: string, companion: string): boolean {
+  return IOS_COMPANION_PAIRINGS.some((pairing) => pairing.xcode === xcode && pairing.companion === companion);
 }
 
 export const TEST_DEVICE_NAME = "Test device";

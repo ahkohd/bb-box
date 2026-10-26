@@ -198,6 +198,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             ...onOption,
             image: { type: "string", description: 'The image to start from: a project\'s image, from bb box image list, or "standard". The thread\'s project\'s image for the kind by default.' },
             device: { type: "string", description: "For an ios or android box, the device it boots, such as iPhone 18 Pro or Pixel Fold. The kind's first by default." },
+            "no-slim": { type: "boolean", description: "For an ios box: its iOS Simulator keeps every service, for an app that uses widgets, Siri, iCloud, Health, Wallet or the like. Slimmed by default." },
             "no-wait": { type: "boolean", description: "Return once the box is recorded." },
           },
           run: ({ positionals, options }, ctx) =>
@@ -205,7 +206,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const threadId = threadOf(options.thread, ctx);
               const projectId = ctx.projectId ?? (await app.projectOf(threadId));
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
-              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}), ...(options.image ? { image: String(options.image) } : {}), ...(options.device !== undefined ? { device: String(options.device) } : {}) });
+              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}), ...(options.image ? { image: String(options.image) } : {}), ...(options.device !== undefined ? { device: String(options.device) } : {}), ...(options["no-slim"] ? { slim: false } : {}) });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
               const follow = `bb box status ${box.name}${options.thread ? ` --thread ${threadId}` : ""}`;
