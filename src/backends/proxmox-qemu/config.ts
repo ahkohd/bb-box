@@ -24,7 +24,7 @@ import {
 } from "../proxmox/settings.ts";
 import type { BackendDriver, BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 
-export const QEMU_KINDS = ["windows-desktop", "linux", "linux-desktop-cpu"] as const;
+export const QEMU_KINDS = ["windows-desktop", "linux", "linux-desktop-cpu", "android"] as const;
 
 export interface QemuConfig {
   readonly proxmox: ProxmoxConnection;
@@ -170,7 +170,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Android templates",
     description:
-      "VMIDs of the Android templates, separated by spaces or commas: the Linux template with the Android SDK, the emulator and a booted device for each model. setup/proxmox-qemu/build.sh android builds one, on a host with nested virtualization, and the nightly job refreshes it monthly. Android boxes are not offered yet.",
+      "VMIDs of the Android templates, separated by spaces or commas: the Linux template with the Android SDK, the emulator and a booted device for each model. setup/proxmox-qemu/build.sh android builds one, on a host with nested virtualization, and the nightly job refreshes it monthly. bb-box offers android boxes from it while linux-kvm is on and its record lists its devices.",
     group: "boxes",
     default: "",
   },

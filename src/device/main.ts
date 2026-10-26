@@ -10,6 +10,7 @@ import { parseDeviceOffer } from "../core/device-parse.ts";
 import { DriverError, type DeviceDriver, type VideoSource } from "./driver.ts";
 import { EXITS, devicePaths, type DevicePaths } from "./paths.ts";
 import { DeviceServer, placeholderState } from "./server.ts";
+import { AndroidDriver } from "./android-driver.ts";
 import { IosDriver } from "./ios-driver.ts";
 import { TestDriver } from "./test-driver.ts";
 import { deviceModel } from "../core/device.ts";
@@ -109,6 +110,7 @@ async function choices(paths: DevicePaths): Promise<{ readonly slim: boolean }> 
 async function driverFor(offer: DeviceOffer, paths: DevicePaths): Promise<DeviceDriver> {
   if (offer.devices.every(isTestDevice)) return new TestDriver(offer.platform);
   if (offer.platform === "ios" && process.platform === "darwin") return new IosDriver({ paths, slim: (await choices(paths)).slim, log });
+  if (offer.platform === "android" && process.platform === "linux") return new AndroidDriver({ paths, log });
   return new AbsentDriver(offer.platform, `This device server has no ${platformWord(offer.platform)} driver yet.`);
 }
 

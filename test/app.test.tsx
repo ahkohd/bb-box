@@ -5926,6 +5926,11 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
     ["Linux", "3 providers"],
     ["macOS", "mac-mini"],
   ]);
+  const android: KindView = { ...linux, id: "android", devices: { platform: "android", models: ["Pixel 8", "Pixel Fold", "Pixel Tablet"] } };
+  expect(systemsOf([linux, android]).map((system) => [system.label, system.device ?? null, system.words])).toEqual([
+    ["Linux", null, "pve"],
+    ["Android device", "android", "pve"],
+  ]);
   // The nearest choice that exists: the system stays when it can, then the arch, the type and the GPU snap to what there is.
   expect(nearest(KINDS, { os: "linux", arch: "arm64", desktop: true, gpu: false, windowing: "x11" })).toEqual({ os: "linux", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" });
   expect(nearest([mac], { os: "windows", arch: "x86_64", desktop: true, gpu: true, windowing: "x11" })).toEqual({ os: "macos", arch: "arm64", desktop: false, gpu: false, windowing: "x11" });

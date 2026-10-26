@@ -12,9 +12,10 @@ template with:
 - `bb-box-h264`, the device's frame encoder
 - the device's firewall, which keeps the emulator's ports to the box
 
-bb-box does not offer android boxes yet. This guide builds the template, so
-the nightly job can refresh it and `bb box doctor` can check it until the
-Android driver comes.
+bb-box offers android boxes from the template once it is listed in Proxmox
+QEMU's settings, `linux-kvm` is on, and the template's record lists its
+devices. A box clones the template, and its device server boots the box's
+device from its snapshot, as [below](#a-box-from-the-template).
 
 ## What you need
 
@@ -121,6 +122,24 @@ its discovery file under `/run/user/<uid>/avd/running/`. With a token, the
 pinned emulator listens for gRPC on loopback only. Its console, adb and
 adb's server listen on loopback too.
 
+## A box from the template
+
+bb-box delivers its device server to each android box, as a service of the
+box user's, `bb-box-device.service`. The server starts the emulator in a
+service of its own, `bb-box-emulator@<avd>.service`, so a restart of the
+server leaves the device running, and reattaches to it. The service checks
+the device's firewall before each start. Stopping it saves the device's
+snapshot, as `adb emu kill` does, so a switch of model, a stop of the box
+and a restart keep each device's apps and data. If the emulator ends
+without saving, as when it crashes or the VM does, the next start boots
+the device cold, in about 15 s, as its snapshot would lose what was written
+since it was saved.
+
+The server reads the screen from the emulator's gRPC, by shared memory in
+`~/.bb-box/device/frames`, and encodes it with `bb-box-h264`. Its log is
+`~/.bb-box/device/server.log`, and the emulator's
+`~/.bb-box/device/emulator.log`.
+
 ## The device's firewall
 
 `bb-box-device-firewall.service` loads a table of bb-box's own, `inet
@@ -164,5 +183,8 @@ repository manifest lists, and the SHA-256 is of the file it names.
 - **A device does not boot from its snapshot in a box:** the snapshot is tied
   to the emulator and may be to the host's CPU. The image record names both
   for each device. Refresh the template on the host its boxes run on.
+- **An android box's device does not boot:** `box_status` gives the
+  device's state in words. In the box, `~/.bb-box/device/server.log` and
+  `~/.bb-box/device/emulator.log` have the rest.
 - **Anything else:** build again with `--keep`, and look in the build VM.
   `~/.bb-box/device/emulator/emulator.log` has the last emulator's output.

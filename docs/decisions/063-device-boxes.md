@@ -9,8 +9,8 @@ and its slimming), and unit 4.2's of the iOS driver (E4, E5), and units
 5.1's shared parts and 5.2's of input on iOS (E8, E9, E14, E21, and how iOS
 pastes), and unit 6.3's of the iOS controls (E11, and each read-back), and unit 6.1's
 of the frame (turns, folds drawn from the table, and the island), and unit
-6.4's of the toolbar, are
-in [063 results](063-results.md). Built
+6.4's of the toolbar, and unit 4.1's of the Android driver (the stream of
+each model, recovery, E3 and E23), are in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
 [Android emulator boxes](../research/android-emulator-boxes.md). Extends
@@ -299,7 +299,10 @@ What each shape rules out:
 Rotation has two meanings, kept apart. `physical` is how the device is
 held, which bb-box sets. `content` is how the app in front draws, which the
 device decides: on a phone turned sideways, Android's launcher stays
-upright. Both are counted from the screen's own upright, not named
+upright. The frame turns the picture by `content`. The emulator's picture
+turns with the device as it is held, whatever the app draws, so the Android
+driver reports `content` as `physical`, and what the app draws is in the
+picture (unit 4.1). Both are counted from the screen's own upright, not named
 portrait or landscape: the Pixel Tablet's upright is landscape, and a
 foldable's inner screen is wider than tall. People and agents see words:
 "upright", "turned left", "upside down", "turned right".
@@ -532,7 +535,7 @@ interface EncodedFrame { readonly data: Uint8Array; readonly key: boolean; reado
 
 | | iOS driver | Android driver | Test driver |
 | --- | --- | --- | --- |
-| Device | `simctl boot`, `shutdown`, `bootstatus`; reattaches to a booted device of the target's UDID | the emulator in its own user service, `bb-box-emulator@<avd>`, `-no-window -gpu swiftshader_indirect -grpc 8554 -grpc-use-token`; `adb emu kill` saves the snapshot; reattaches to a running emulator found by a discovery file whose process is alive | none |
+| Device | `simctl boot`, `shutdown`, `bootstatus`; reattaches to a booted device of the target's UDID | the emulator in its own user service, `bb-box-emulator@<avd>`, `-no-window -gpu swiftshader_indirect -grpc 8554 -grpc-use-token`; `adb emu kill` saves the snapshot; reattaches to a running emulator found by a discovery file whose process is alive; boots cold after an end that saved no snapshot (E23) | none |
 | Frames | idb_companion's `video_stream`, H.264, encoded by VideoToolbox in the box | gRPC `streamScreenshot` RGB888 at the device's size, given width and height both; encoded by `bb-box-h264` | a test card, drawn and encoded in the server's own process |
 | Key frame on demand | idb's, if E5 shows it gives one on a still screen; otherwise the stream is restarted, which gave its first frame in 61 ms on a warm companion | the helper encodes the last raw frame again as an IDR | encodes the card again |
 | Touch, keys | idb's HID stream, opened when a person takes control or the agent sends its first input, as the first tap after the companion starts took 578 ms | gRPC `sendTouch`, `sendKey`, held open | recorded, for tests |
@@ -733,10 +736,10 @@ E16 times each, through to a frame the viewer has drawn.
 | A connection ends: input, control, relay or SSH | lives on | stays up | every touch and key that connection held is lifted, and its queued input dropped | goes on |
 | bb-box reloads, two instances at once (045) | lives on | stays up; the later instance takes the lease; the earlier is `superseded` | the relay's input connection ends, so its touches and keys are lifted; a person keeps control (045) | goes on |
 | The server's code changes | lives on | updated only when no person has control and no recording runs, by the lease holder (below) | lifted, as for a crash | not touched: the update waits for it |
-| The box stops and starts: a Tart suspend, a Proxmox hibernation | suspended with the VM | on resume it sees its monotonic and wall clocks part by more than 5 s, then sets the device's clock if it lags (E3, E4), opens idb's HID stream or the emulator's gRPC again, and sends a key frame | lifted on resume | ends at the stop; box_record says so |
+| The box stops and starts: a Tart suspend, a Proxmox hibernation | suspended with the VM | on resume it sees its monotonic and wall clocks part by more than 5 s, then sets the device's clock if it lags (E3, E4), opens idb's HID stream or the emulator's gRPC again, and sends a key frame. A resumed Linux VM's clock stays behind until its time service next asks, up to about half an hour, so bb-box sets an android box's clock as it resumes it | lifted on resume | ends at the stop; box_record says so |
 | A spare is claimed after hours suspended | as above | as above, and E3 and E4 check it after 1 h and after 24 h | none | none |
 | The VM restarts cold: `box_restart`, a resize by restart (061), a crash | before a restart it asks for, bb-box stops the device with its snapshot saved; after any restart the device boots again | starts with the VM, reads its intent, and boots `target` | none | ends; box_record says so |
-| The emulator is killed with no snapshot saved | its next boot loads the last snapshot saved; what that keeps of apps installed since is E23 | as for a device crash | lifted | as for a device crash |
+| The emulator is killed with no snapshot saved | its next boot is cold, in about 15 s: the last snapshot saved would lose everything written since, apps installed included (E23). A cold boot keeps what reached the device's disk | as for a device crash | lifted | as for a device crash |
 
 ### Delivering the server's code
 
