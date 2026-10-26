@@ -7,8 +7,9 @@ usage: prepare-avds.sh <pins.json> <devices.json>
 
 Run as the box user in an Android image's build. Makes one AVD for each device
 in pins.json with avdmanager, with a hardware keyboard, boots it cold, sets the
-image's defaults in it, clears its clipboard and logcat, and stops it, which
-saves its snapshot. Then boots it once from that snapshot to check that it
+image's defaults in it, waits until Android has written the emulator's
+AndroidWifi network to its Wi-Fi store, clears its clipboard and logcat, and
+stops it, which saves its snapshot. Then boots it once from that snapshot to check that it
 loads. Writes the image record's devices, with each runtime and the
 snapshot's origin, to <devices.json>.
 USAGE
@@ -49,6 +50,20 @@ apply_defaults() {
   shell wm dismiss-keyguard 2>/dev/null || true
 }
 
+wifi_written() {
+  [ "$(shell su 0 grep -c AndroidWifi /data/misc/apexdata/com.android.wifi/WifiConfigStore.xml | tr -d '\r')" -gt 0 ] 2>/dev/null
+}
+
+wait_wifi_written() {
+  local model=$1 began
+  began=$(date +%s)
+  until wifi_written; do
+    [ $(($(date +%s) - began)) -lt 60 ] || { echo "prepare-avds: $model's AndroidWifi network was not in its Wi-Fi store 60 s after boot" >&2; return 1; }
+    sleep 1
+  done
+  log "$model: AndroidWifi in its Wi-Fi store after $(($(date +%s) - began)) s"
+}
+
 check_defaults() {
   local failed=0 got
   for expect in "secure stylus_handwriting_enabled 0" "secure spell_checker_enabled 0" "system accelerometer_rotation 1" "system screen_off_timeout 2147483647"; do
@@ -86,6 +101,7 @@ for i in $(seq 0 $((count - 1))); do
     if check_defaults 2>/dev/null; then break; fi
     [ "$attempt" -lt 10 ] || check_defaults
   done
+  wait_wifi_written "$model"
   status=$(bb-box-emulator grpc setClipboard)
   [ "$status" = 0 ] || { echo "prepare-avds: setClipboard answered gRPC status ${status:-none}" >&2; exit 1; }
   shell logcat -c
@@ -100,6 +116,7 @@ for i in $(seq 0 $((count - 1))); do
   log "$model: from its snapshot: $booted"
   case "$booted" in *snapshot=loaded*) ;; *) echo "prepare-avds: $avd did not boot from its snapshot" >&2; exit 1 ;; esac
   check_defaults
+  wifi_written || { echo "prepare-avds: $avd's snapshot has no AndroidWifi in its Wi-Fi store" >&2; exit 1; }
   bb-box-emulator stop
 
   devices=$(jq -c --arg model "$model" --arg avd "$avd" --arg emulator "$emulator_version" --arg cpu "$cpu" --arg made "$made" \

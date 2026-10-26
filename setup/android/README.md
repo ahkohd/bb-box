@@ -110,6 +110,10 @@ Before its snapshot is saved, each device has:
 - the system spell checker off
 - auto-rotate on, which rotation by the emulator needs
 - the screen always on, with no lock screen
+- the emulator's AndroidWifi network written to Android's Wi-Fi store on
+  disk, not only held in memory: Android writes a new network about 10 s
+  after it is saved, and a snapshot taken sooner loses it at the device's
+  next restart
 - an empty clipboard, and logcat cleared
 
 Keys from a hardware keyboard reach apps as typed: "Hello idb 123", "teh",

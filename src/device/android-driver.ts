@@ -256,12 +256,14 @@ export class AndroidDriver implements DeviceDriver {
     }
     this.#connect(running);
     await this.#setClockIfBehind(signal).catch((error) => this.#log(`clock: not checked: ${words(error)}`));
+    await this.#settings.keepEmulatorWifi(signal).catch((error) => this.#log(`network: the emulator's Wi-Fi was not checked: ${words(error)}`));
     await this.#ownIdentity(target, running, signal).catch((error) => this.#log(`identity: the ${target.model} keeps the Android ID it has: ${words(error)}`));
     this.#touches.liftAll();
     if (this.#video.running) this.#video.restart(how === "booted" ? "the device booted" : "the server reattached");
     else this.#video.start();
     await this.#settings.use(target.model, signal).catch((error) => this.#log(`settings: ${words(error)}`));
     await this.#settings.read(signal).catch((error) => this.#log(`settings: not read: ${words(error)}`));
+    await this.#settings.waitNetworkAfterBoot(signal).catch((error) => this.#log(`network: ${words(error)}`));
     return how;
   }
 
@@ -282,8 +284,11 @@ export class AndroidDriver implements DeviceDriver {
     if (marker?.box === box && marker.androidId === now) return;
     const began = this.#clock.monotonic();
     const androidId = randomBytes(8).toString("hex");
-    this.#log(`identity: the ${target.model} has the Android ID it came with (${now}), as every box from this image has; giving it its own, which restarts Android's framework once`);
-    await this.#emulator.shell(asRoot(`rm -f ${SSAID}; setprop sys.boot_completed 0; stop; start`), { signal });
+    this.#log(`identity: the ${target.model} has the Android ID it came with (${now}), as every box from this image has; giving it its own, which reboots the device once`);
+    await this.#settings.waitEmulatorWifiWritten(signal);
+    await this.#emulator.shell(asRoot(`rm -f ${SSAID}; setprop sys.boot_completed 0`), { signal });
+    const rebooted = await this.#emulator.adbRun(["reboot"], { signal });
+    if (rebooted.code !== 0) throw new DriverError("failed", `adb could not reboot the ${target.model}: ${rebooted.output || `it ended with ${rebooted.code}`}`);
     await this.#emulator.waitBooted(target.native, running.pid, signal);
     await this.#emulator.shell(`settings put secure android_id ${androidId}`, { signal });
     const read = (await this.#emulator.shell("settings get secure android_id", { signal })).trim();

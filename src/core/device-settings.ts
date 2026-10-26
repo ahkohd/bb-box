@@ -45,7 +45,7 @@ export const CLEAN_STATUS_BAR_BATTERY: Battery = { level: 100, charging: false }
 export const EMULATOR_OWN_LOCATION: LatLon = { latitude: 37.422, longitude: -122.0841 };
 export const EMULATOR_OWN_BATTERY: Battery = { level: 100, charging: true };
 export const SLOW_NETWORK = { kbitPerSecond: 473.6, delayMs: 100 } as const;
-export const ANDROID_ID_FIRST_BOOT_WORDS = "about 8 s of it giving the device its own Android ID, as each device's first boot in a box does";
+export const ANDROID_ID_FIRST_BOOT_WORDS = "about 25 s of it giving the device its own Android ID, as each device's first boot in a box does";
 
 export function locationWords(to: LatLon): string {
   return `${to.latitude}, ${to.longitude}`;

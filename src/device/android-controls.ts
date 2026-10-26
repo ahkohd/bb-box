@@ -17,7 +17,11 @@ import { DriverError } from "./driver.ts";
 type Appearance = "light" | "dark";
 
 export const NETWORK_SETTLE_MS = 8_000;
+export const BOOT_NETWORK_MS = 20_000;
+export const WIFI_WRITTEN_MS = 30_000;
 export const SETTING_SETTLE_MS = 3_000;
+export const EMULATOR_WIFI = "AndroidWifi";
+export const WIFI_STORE = "/data/misc/apexdata/com.android.wifi/WifiConfigStore.xml";
 const POLL_MS = 100;
 
 const DEMO = "am broadcast -a com.android.systemui.demo";
@@ -38,6 +42,7 @@ const READ_PARTS = [
   "settings get global wifi_on",
   "su 0 tc qdisc show dev wlan0",
   "cmd device_state print-state",
+  "dumpsys connectivity | grep -E '^Active default network:|^  NetworkAgentInfo[{]'",
 ] as const;
 const PART_MARK = "@@bb-box@@";
 
@@ -65,6 +70,28 @@ export function demoScript(battery: Battery): readonly string[] {
 
 export const DEMO_EXIT = `${DEMO} -e command exit`;
 
+export const WIFI_NETWORKS = "cmd wifi list-networks 2>/dev/null; true";
+export const ADD_EMULATOR_WIFI = `cmd wifi add-network ${EMULATOR_WIFI} open`;
+export const WIFI_WRITTEN = asRoot(`grep -c ${EMULATOR_WIFI} ${WIFI_STORE}; true`);
+
+export interface DefaultNetwork {
+  readonly id: string | null;
+  readonly validated: boolean;
+}
+
+export function parseDefaultNetwork(printed: string): DefaultNetwork {
+  const id = /^Active default network: (\d+)/m.exec(printed)?.[1] ?? null;
+  if (id === null) return { id, validated: false };
+  const agent = printed.split("\n").find((line) => line.includes(`NetworkAgentInfo{network{${id}}`)) ?? "";
+  const capabilities = /Capabilities: (\S+)/.exec(agent)?.[1]?.split("&") ?? [];
+  return { id, validated: capabilities.includes("VALIDATED") };
+}
+
+function defaultNetworkWords(network: DefaultNetwork): string {
+  if (network.id === null) return "no default network";
+  return network.validated ? "a validated default network" : "a default network Android has not validated";
+}
+
 export interface DeviceReading {
   readonly appearance: Appearance | null;
   readonly fontScale: number | null;
@@ -82,7 +109,7 @@ export function readScript(): string {
 
 export function parseReading(printed: string): DeviceReading {
   const parts = printed.split(PART_MARK).map((part) => part.trim());
-  const [night = "", scale = "", power = "", airplane = "", wifi = "", shaping = "", fold = ""] = parts;
+  const [night = "", scale = "", power = "", airplane = "", wifi = "", shaping = "", fold = "", connectivity = ""] = parts;
   const nightMode = /Night mode:\s*(\w+)/.exec(night)?.[1];
   const appearance = nightMode === "yes" ? "dark" : nightMode === "no" ? "light" : null;
   const fontScale = scale === "null" || scale === "" ? 1 : Number.parseFloat(scale);
@@ -91,10 +118,11 @@ export function parseReading(printed: string): DeviceReading {
   const airplaneOn = airplane === "enabled" ? true : airplane === "disabled" ? false : null;
   const wifiOn = wifi === "1" ? true : wifi === "0" ? false : null;
   const shaped = /netem/.test(shaping);
+  const reached = parseDefaultNetwork(connectivity);
   let network: NetworkPreset | null = null;
-  if (airplaneOn === true && wifiOn === false) network = "offline";
-  else if (airplaneOn === false && wifiOn === true) network = shaped ? "slow" : "online";
-  const networkWords = `airplane mode ${airplane || "unread"}, Wi-Fi ${wifiOn === null ? "unread" : wifiOn ? "on" : "off"}, ${shaped ? "slowed" : "not slowed"}`;
+  if (airplaneOn === true && wifiOn === false && !reached.validated) network = "offline";
+  else if (airplaneOn === false && wifiOn === true && reached.validated) network = shaped ? "slow" : "online";
+  const networkWords = `airplane mode ${airplane || "unread"}, Wi-Fi ${wifiOn === null ? "unread" : wifiOn ? "on" : "off"}, ${shaped ? "slowed" : "not slowed"}, ${defaultNetworkWords(reached)}`;
   return { appearance, fontScale: Number.isFinite(fontScale) ? fontScale : null, awake, network, networkWords, posture: POSTURE_STATES[fold.split("\n")[0]!.trim()] ?? null };
 }
 
@@ -149,7 +177,7 @@ export interface AndroidSettingsOptions {
   readonly file: string;
   readonly log: (line: string) => void;
   readonly now: () => number;
-  readonly settleMs?: { readonly setting: number; readonly network: number };
+  readonly settleMs?: { readonly setting: number; readonly network: number; readonly boot?: number; readonly wifiWritten?: number };
 }
 
 export class AndroidSettingsKeeper {
@@ -162,6 +190,7 @@ export class AndroidSettingsKeeper {
   #location: Observed<LatLon | null> = NOT_READ;
   #battery: Observed<Battery> = NOT_READ;
   #network: Observed<NetworkPreset> = NOT_READ;
+  #networkWords = "nothing";
   #posture: Observed<Posture> = NOT_READ;
   #awake: boolean | null = null;
 
@@ -245,6 +274,7 @@ export class AndroidSettingsKeeper {
         : { known: false, why: `Android's font scale is ${read.fontScale ?? "unread"}, which is not one of bb-box's steps: ${ANDROID_FONT_SCALES.join(", ")}.` };
     this.#location = gps ? { known: true, value: gps, at, by: own.location && !sameSpot(own.location, gps) ? "outside" : "bb-box" } : { known: false, why: "The emulator did not say where it is." };
     this.#battery = battery ? { known: true, value: battery, at, by: own.battery && !sameBattery(own.battery, battery) ? "outside" : "bb-box" } : { known: false, why: "The emulator did not say how its battery is." };
+    this.#networkWords = read.networkWords;
     this.#network = read.network
       ? { known: true, value: read.network, at, by: read.network === own.network ? "bb-box" : "outside" }
       : { known: false, why: `The network is none of bb-box's presets: ${read.networkWords}.` };
@@ -326,18 +356,39 @@ export class AndroidSettingsKeeper {
     await this.#options.device.shell(networkScript(to), signal);
     await this.#until(
       () => this.#network.known && this.#network.value === to,
-      () => `The network was set to ${to}, but the device reads ${this.#network.known ? this.#network.value : "none of the presets"}.`,
+      () => `The network was set to ${to}, but ${(this.#options.settleMs?.network ?? NETWORK_SETTLE_MS) / 1000} s later the device reads ${this.#network.known ? this.#network.value : this.#networkWords}.`,
       signal,
+      this.#options.settleMs?.network ?? NETWORK_SETTLE_MS,
     );
-    if (to !== "offline") await this.#wifiConnected(signal);
   }
 
-  async #wifiConnected(signal: AbortSignal): Promise<void> {
-    const until = performance.now() + (this.#options.settleMs?.network ?? NETWORK_SETTLE_MS);
-    while (!/inet /.test(await this.#options.device.shell("ip -o -4 addr show wlan0 2>/dev/null; true", signal))) {
-      if (performance.now() > until) throw new DriverError("failed", `Wi-Fi is on, but the device had no address on it ${(this.#options.settleMs?.network ?? NETWORK_SETTLE_MS) / 1000} s later.`);
-      await wait(POLL_MS * 2, signal);
+  async waitNetworkAfterBoot(signal: AbortSignal): Promise<void> {
+    const wanted = this.#own().setByBbBox.network;
+    const ms = this.#options.settleMs?.boot ?? BOOT_NETWORK_MS;
+    await this.#until(
+      () => this.#network.known && this.#network.value === wanted,
+      () => `bb-box set the network ${wanted}, but ${ms / 1000} s after the boot the device reads ${this.#network.known ? this.#network.value : this.#networkWords}.`,
+      signal,
+      ms,
+    );
+  }
+
+  async keepEmulatorWifi(signal: AbortSignal): Promise<void> {
+    if ((await this.#options.device.shell(WIFI_NETWORKS, signal)).includes(EMULATOR_WIFI)) return;
+    this.#options.log(`network: the device has no saved ${EMULATOR_WIFI}, the emulator's Wi-Fi, so it has no network; saving it again`);
+    await this.#options.device.shell(ADD_EMULATOR_WIFI, signal);
+  }
+
+  async waitEmulatorWifiWritten(signal: AbortSignal): Promise<void> {
+    const ms = this.#options.settleMs?.wifiWritten ?? WIFI_WRITTEN_MS;
+    const began = performance.now();
+    let checks = 0;
+    while (!(Number.parseInt(await this.#options.device.shell(WIFI_WRITTEN, signal), 10) > 0)) {
+      if (performance.now() - began > ms) throw new DriverError("failed", `Android had not written ${EMULATOR_WIFI} to its Wi-Fi store ${ms / 1000} s later, so a restart would lose the device's network.`);
+      checks++;
+      await wait(POLL_MS * 5, signal);
     }
+    if (checks > 0) this.#options.log(`network: Android wrote ${EMULATOR_WIFI} to its Wi-Fi store on disk ${((performance.now() - began) / 1000).toFixed(1)} s after bb-box first looked`);
   }
 
   async waitPosture(to: Posture, signal: AbortSignal): Promise<void> {

@@ -7,7 +7,7 @@ import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { DeviceState, OfferedDeviceOf } from "../src/core/device.ts";
 import { AndroidDriver, foldScreenOf, identityFile, largestFrameBytes, shellQuoted, skinRotation } from "../src/device/android-driver.ts";
-import { networkScript, parseReading, readScript } from "../src/device/android-controls.ts";
+import { ADD_EMULATOR_WIFI, AndroidSettingsKeeper, WIFI_NETWORKS, WIFI_WRITTEN, networkScript, parseDefaultNetwork, parseReading, readScript } from "../src/device/android-controls.ts";
 import { panelPoint, touchPanel } from "../src/device/android-input.ts";
 import { apkPackage } from "../src/device/apk.ts";
 import { EMULATOR_OWN_LOCATION } from "../src/core/device-settings.ts";
@@ -242,6 +242,11 @@ class FakeEmulator implements EmulatorControl {
   shaped = false;
   deviceState = "2";
   androidId = "91f5432055d42a8c";
+  wifiSaved = true;
+  wifiWrittenAfterChecks = 0;
+  reachable = true;
+  reboots = 0;
+  readonly order: string[] = [];
   installed = new Set<string>();
   runningNow: RunningEmulator | null = null;
   nextPid = 100;
@@ -275,7 +280,14 @@ class FakeEmulator implements EmulatorControl {
   async shell(command: string): Promise<string> {
     if (command === "date +%s") return `${Math.round(Date.now() / 1000)}\n`;
     if (command === readScript())
-      return [`Night mode: ${this.night}`, this.fontScale, `  mWakefulness=${this.wakefulness}`, this.airplane, this.wifi, this.shaped ? "qdisc netem 8001: root" : "qdisc noqueue 0: root", this.deviceState].join("\n@@bb-box@@\n");
+      return [`Night mode: ${this.night}`, this.fontScale, `  mWakefulness=${this.wakefulness}`, this.airplane, this.wifi, this.shaped ? "qdisc netem 8001: root" : "qdisc noqueue 0: root", this.deviceState, this.connectivity()].join("\n@@bb-box@@\n");
+    if (command === WIFI_NETWORKS) return this.wifiSaved ? "Network Id      SSID                         Security type\n0            AndroidWifi                      open\n" : "No networks\n";
+    if (command === WIFI_WRITTEN) {
+      this.order.push("written?");
+      if (this.wifiWrittenAfterChecks > 0) this.wifiWrittenAfterChecks--;
+      return this.wifiSaved && this.wifiWrittenAfterChecks === 0 ? "2\n" : "0\n";
+    }
+    if (command === ADD_EMULATOR_WIFI) this.wifiSaved = true;
     this.shells.push(command);
     const night = /^cmd uimode night (yes|no)$/.exec(command);
     if (night) this.night = night[1]!;
@@ -292,14 +304,24 @@ class FakeEmulator implements EmulatorControl {
       this.wifi = preset === "offline" ? "0" : "1";
       this.shaped = preset === "slow";
     }
-    if (command.startsWith("ip -o -4 addr show wlan0")) return this.wifi === "1" ? "18: wlan0    inet 10.0.2.16/24\n" : "";
     const path = /^pm path '([^']+)'/.exec(command);
     if (path) return this.installed.has(path[1]!) ? `package:/data/app/${path[1]}/base.apk\n` : "";
     if (command.startsWith("am start")) return "Starting: Intent { act=android.intent.action.VIEW }\n";
     return "";
   }
+  connectivity(): string {
+    if (this.airplane !== "disabled" || this.wifi !== "1" || !this.wifiSaved) return "Active default network: none";
+    const capabilities = this.reachable ? "NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&VALIDATED&NOT_ROAMING" : "NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_ROAMING";
+    return `Active default network: 100\n  NetworkAgentInfo{network{100}  handle{432902426637}  ni{WIFI CONNECTED extra: } Score(Policies : TRANSPORT_PRIMARY&EVER_VALIDATED&IS_VALIDATED ; KeepConnected : 0)  nc{[ Transports: WIFI Capabilities: ${capabilities} LinkUpBandwidth>=12000Kbps ]}  factorySerialNumber=5}`;
+  }
   async adbRun(args: readonly string[]): Promise<{ readonly code: number; readonly output: string }> {
     this.adb.push(args);
+    if (args[0] === "reboot") {
+      this.reboots++;
+      this.order.push("reboot");
+      if (this.wifiWrittenAfterChecks > 0) this.wifiSaved = false;
+      return { code: 0, output: "" };
+    }
     return { code: 0, output: "Performing Streamed Install\nSuccess" };
   }
 }
@@ -613,11 +635,12 @@ describe("the Android driver", () => {
     assert.equal(shellQuoted("it's"), `'it'\\''s'`);
   });
 
-  test("each box gives each device its own Android ID once, restarting Android's framework, and keeps it until the box changes", async () => {
+  test("each box gives each device its own Android ID once, by a reboot of the device, not a restart of Android's framework, and keeps it until the box changes", async () => {
     const { emulator, driver, paths } = await rig({ adbKey: "a key of this box" });
     await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
-    const restarts = () => emulator.shells.filter((command) => command.includes("settings_ssaid.xml") && command.includes("stop; start")).length;
+    const restarts = () => emulator.reboots;
     assert.equal(restarts(), 1);
+    assert.ok(emulator.shells.some((command) => command.includes("settings_ssaid.xml") && !command.includes("stop")));
     assert.notEqual(emulator.androidId, "91f5432055d42a8c");
     const marker = JSON.parse(readFileSync(identityFile(paths, "pixel_8"), "utf8")) as { androidId: string };
     assert.equal(marker.androidId, emulator.androidId);
@@ -628,6 +651,55 @@ describe("the Android driver", () => {
     assert.equal(restarts(), 2);
   });
 
+  test("the reboot for a device's own Android ID waits until Android has written the emulator's Wi-Fi to its disk, so the device comes back online (F-3)", async () => {
+    const { emulator, driver } = await rig({ adbKey: "a key of this box" });
+    emulator.wifiWrittenAfterChecks = 3;
+    await driver.attach(PIXEL_8, AbortSignal.timeout(10_000));
+    assert.deepEqual(emulator.order, ["written?", "written?", "written?", "reboot"]);
+    assert.equal(emulator.wifiSaved, true);
+    assert.notEqual(emulator.androidId, "91f5432055d42a8c");
+    const state = await driver.readBack();
+    assert.ok(state.platform === "android" && state.settings.network.known && state.settings.network.value === "online");
+  });
+
+  test("a device with no saved Wi-Fi network has the emulator's AndroidWifi saved again as it boots, and comes up online (F-3)", async () => {
+    const { emulator, driver, lines } = await rig();
+    emulator.wifiSaved = false;
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    assert.ok(emulator.shells.includes(ADD_EMULATOR_WIFI));
+    assert.ok(lines.some((line) => /no saved AndroidWifi/.test(line)));
+    const state = await driver.readBack();
+    assert.ok(state.platform === "android" && state.settings.network.known && state.settings.network.value === "online");
+    const before = emulator.shells.filter((command) => command === ADD_EMULATOR_WIFI).length;
+    await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+    assert.equal(emulator.shells.filter((command) => command === ADD_EMULATOR_WIFI).length, before);
+  });
+
+  test("the network reads online only with a validated default network, and setting it or booting says what the device reads when it has none (F-3)", async () => {
+    const emulator = new FakeEmulator();
+    const dir = tempDir("android-keeper");
+    const keeper = new AndroidSettingsKeeper({
+      device: { shell: (command) => emulator.shell(command), gps: async () => EMULATOR_OWN_LOCATION, setGps: async () => {}, battery: async () => ({ level: 100, charging: true }), setBattery: async () => {} },
+      file: join(dir, "settings.json"),
+      log: () => {},
+      now: () => Date.now(),
+      settleMs: { setting: 100, network: 300, boot: 300, wifiWritten: 300 },
+    });
+    await keeper.use("Pixel 8", AbortSignal.timeout(5000));
+    emulator.reachable = false;
+    await keeper.read(AbortSignal.timeout(5000));
+    assert.deepEqual(keeper.settings().network, { known: false, why: "The network is none of bb-box's presets: airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated." });
+    await assert.rejects(keeper.waitNetworkAfterBoot(AbortSignal.timeout(5000)), /bb-box set the network online, but 0\.3 s after the boot the device reads airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated\./);
+    emulator.wifiSaved = false;
+    await assert.rejects(keeper.setNetwork("online", AbortSignal.timeout(5000)), /The network was set to online, but 0\.3 s later the device reads airplane mode disabled, Wi-Fi on, not slowed, no default network\./);
+    await assert.rejects(keeper.waitEmulatorWifiWritten(AbortSignal.timeout(5000)), /had not written AndroidWifi to its Wi-Fi store 0\.3 s later/);
+    await keeper.setNetwork("offline", AbortSignal.timeout(5000));
+    emulator.wifiSaved = true;
+    emulator.reachable = true;
+    await keeper.setNetwork("online", AbortSignal.timeout(5000));
+    assert.ok(keeper.settings().network.known);
+  });
+
   test("a box with no adb key yet leaves the Android ID as it is", async () => {
     const { emulator, driver, lines } = await rig();
     await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
@@ -636,10 +708,17 @@ describe("the Android driver", () => {
   });
 
   test("the read-back reads every setting in one shell command", () => {
-    const read = parseReading(["Night mode: yes", "1.15", "  mWakefulness=Dozing", "enabled", "0", "qdisc noqueue 0: root", "1"].join("\n@@bb-box@@\n"));
-    assert.deepEqual(read, { appearance: "dark", fontScale: 1.15, awake: false, network: "offline", networkWords: "airplane mode enabled, Wi-Fi off, not slowed", posture: "half-open" });
-    assert.equal(parseReading(["Night mode: no", "null", "", "disabled", "1", "qdisc netem 8001: root", ""].join("\n@@bb-box@@\n")).network, "slow");
-    assert.equal(parseReading(["Night mode: no", "1.0", "", "enabled", "1", "", ""].join("\n@@bb-box@@\n")).network, null);
+    const validated = new FakeEmulator().connectivity();
+    const read = parseReading(["Night mode: yes", "1.15", "  mWakefulness=Dozing", "enabled", "0", "qdisc noqueue 0: root", "1", "Active default network: none"].join("\n@@bb-box@@\n"));
+    assert.deepEqual(read, { appearance: "dark", fontScale: 1.15, awake: false, network: "offline", networkWords: "airplane mode enabled, Wi-Fi off, not slowed, no default network", posture: "half-open" });
+    assert.equal(parseReading(["Night mode: no", "null", "", "disabled", "1", "qdisc netem 8001: root", "", validated].join("\n@@bb-box@@\n")).network, "slow");
+    assert.equal(parseReading(["Night mode: no", "null", "", "disabled", "1", "qdisc noqueue 0: root", "", validated].join("\n@@bb-box@@\n")).network, "online");
+    assert.equal(parseReading(["Night mode: no", "null", "", "disabled", "1", "qdisc noqueue 0: root", "", "Active default network: none"].join("\n@@bb-box@@\n")).network, null);
+    assert.equal(parseReading(["Night mode: no", "1.0", "", "enabled", "1", "", "", validated].join("\n@@bb-box@@\n")).network, null);
+    assert.deepEqual(parseDefaultNetwork(validated), { id: "100", validated: true });
+    assert.deepEqual(parseDefaultNetwork(validated.replace("&VALIDATED", "")), { id: "100", validated: false });
+    assert.deepEqual(parseDefaultNetwork(validated.replace("network{100}", "network{101}")), { id: "100", validated: false });
+    assert.deepEqual(parseDefaultNetwork("Active default network: none"), { id: null, validated: false });
   });
 
   test("rotations and screens are read as 063 names them", () => {

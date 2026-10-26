@@ -4,10 +4,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { Duplex } from "node:stream";
 import { after, describe, test } from "node:test";
-import { DEVICE_PROTOCOL, DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, STILLS_EVERY_MS, stillsRequestText, testDeviceOffer, type DeviceControl, type OfferedDevices } from "../src/core/device.ts";
+import { DEVICE_PROTOCOL, DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, STILLS_EVERY_MS, stillsRequestText, testDeviceOffer, type DeviceControl, type DeviceState, type OfferedDevices } from "../src/core/device.ts";
 import { DeviceLink, DeviceLinkError, type DeviceRole } from "../src/core/device-link.ts";
 import { parseDeviceServerMessage, parseDeviceState, parseIntent } from "../src/core/device-parse.ts";
-import type { DeviceDriver } from "../src/device/driver.ts";
+import { DriverError, type DeviceDriver } from "../src/device/driver.ts";
 import { devicePaths } from "../src/device/paths.ts";
 import { PcmH264Encoder, yuvFromRgba } from "../src/device/pcm-h264.ts";
 import { DeviceServer, KEPT_ANSWERS, SWIPE_HELD_MS, type Deadlines } from "../src/device/server.ts";
@@ -161,6 +161,26 @@ describe("the device server", () => {
     assert.ok(log.some((line) => /^settings: read back in \d+ ms$/.test(line)));
     await viewer.close();
     await control.close();
+  });
+
+  test("a control that fails answers with the state read back after it, not the one before (F-3)", async () => {
+    class FailingDriver extends TestDriver {
+      failed = false;
+      async control(): Promise<void> {
+        this.failed = true;
+        throw new DriverError("failed", "The network was set to online, but 8 s later the device reads airplane mode disabled, Wi-Fi on, not slowed, no default network.");
+      }
+      async readBack(): Promise<DeviceState> {
+        const state = await super.readBack();
+        return this.failed ? { ...state, power: { is: "booted", awake: false } } : state;
+      }
+    }
+    const { open } = await started({ driver: new FailingDriver("android") });
+    const link = await open("control", { started: 1, instance: "a" });
+    const failed = await link.request({ type: "control", control: { action: "network", to: "online" } });
+    assert.equal(!failed.ok && failed.error.words, "The network was set to online, but 8 s later the device reads airplane mode disabled, Wi-Fi on, not slowed, no default network.");
+    assert.deepEqual(failed.state?.power, { is: "booted", awake: false });
+    await link.close();
   });
 
   test("answers outcome-unknown, with the state read back, past a control's deadline", async () => {
