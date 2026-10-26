@@ -13,7 +13,9 @@ of the frame (turns, folds drawn from the table, and the island), and unit
 each model, recovery, E3 and E23), and unit 7.1's of computer use on iOS,
 and unit 7.4's of recording a device (E15), and units 5.1's and 6.2's of
 input and controls on Android (E8, E10, E11, E14, E21, E22, each read-back,
-and each device's own Android ID), are in [063 results](063-results.md). Built
+and each device's own Android ID), and units 7.2's and 7.3's of computer use
+on Android (E12, and how the tree server gives way to instrumentation tests),
+are in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
 [Android emulator boxes](../research/android-emulator-boxes.md). Extends
@@ -550,7 +552,7 @@ interface EncodedFrame { readonly data: Uint8Array; readonly key: boolean; reado
 | Key frame on demand | idb's, if E5 shows it gives one on a still screen; otherwise the stream is restarted, which gave its first frame in 61 ms on a warm companion | the helper encodes the last raw frame again as an IDR | encodes the card again |
 | Touch, keys | idb's HID stream, opened when a person takes control or the agent sends its first input, as the first tap after the companion starts took 578 ms | gRPC `sendTouch`, `sendKey`, held open | recorded, for tests |
 | Clipboard | `simctl pbcopy` with `LANG=en_US.UTF-8`, `simctl pbpaste` | gRPC `setClipboard`, `getClipboard` | recorded |
-| Tree | idb `describe-all`, 18 ms | `uiautomator dump`, 1.9 s, until a server in the device answers sooner (unit 7.3) | a fixed tree |
+| Tree | idb `describe-all`, 18 ms | bb-box's tree server in the device, run by `app_process` with UiAutomation, 2 to 4 ms a read; `uiautomator dump`, 1.9 s, when the server cannot run (units 7.2, 7.3) | a fixed tree |
 | Screenshot | idb, 22 ms | gRPC `getScreenshot` PNG, 80 ms | the test card |
 
 The test driver lets the shared path, the plugin, the relay and the viewer
@@ -1163,8 +1165,16 @@ The agent's work on the host is commands.
 - **After an action** the tool waits until the screen has not changed for
   300 ms, at most 2 s, and answers with what changed, as on desktops.
 - **Web pages** in Safari show only Safari's toolbar in the tree, so the
-  agent uses screenshots there. On Android each tree takes 1.9 s until
-  unit 7.3.
+  agent uses screenshots there. Chrome on Android shows a page's contents
+  only some of the time, to `uiautomator dump` and the tree server alike;
+  otherwise the tree has a `web view` whose value says so.
+- **Android's tree** comes from bb-box's tree server in the device, in 2 to
+  4 ms a read, and from `uiautomator dump`, 1.9 s, when the server cannot
+  run (units 7.2 and 7.3). Android lets one UiAutomation client in at a
+  time, and the dump is one too, so while an instrumentation test runs the
+  tree is refused in words and screenshots go on: unit 7.3 measured a dump
+  during a test's start crashing it. This changes 7.3's row, which used the
+  dump while tests ran; see [063 results](063-results.md#e12-beside-an-instrumentation-test).
 
 ### What waits while a person has control
 
