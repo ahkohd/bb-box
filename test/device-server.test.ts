@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { Duplex } from "node:stream";
 import { after, describe, test } from "node:test";
-import { DEVICE_PROTOCOL, DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, STILLS_EVERY_MS, stillsRequestText, testDeviceOffer, type DeviceControl, type DeviceState, type OfferedDevices } from "../src/core/device.ts";
+import { DEVICE_PROTOCOL, DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, STILLS_EVERY_MS, drawnShare, screensOf, deviceModel, stepCovering, stillsRequestText, testDeviceOffer, viewAsked, viewRequestText, type DeviceControl, type DeviceState, type OfferedDevices } from "../src/core/device.ts";
 import { DeviceLink, DeviceLinkError, type DeviceRole } from "../src/core/device-link.ts";
 import { parseDeviceServerMessage, parseDeviceState, parseIntent } from "../src/core/device-parse.ts";
 import { DriverError, type DeviceDriver } from "../src/device/driver.ts";
@@ -33,7 +33,7 @@ function channelTo(path: string): Promise<ByteChannel> {
   });
 }
 
-async function started(options: { platform?: "ios" | "android"; driver?: DeviceDriver; intent?: unknown; deadlines?: Partial<Deadlines>; settingsEveryMs?: number } = {}) {
+async function started(options: { platform?: "ios" | "android"; driver?: DeviceDriver; intent?: unknown; deadlines?: Partial<Deadlines>; settingsEveryMs?: number; video?: { holdMs?: number; lingerMs?: number } } = {}) {
   const home = tempDir("device");
   const paths = devicePaths(home);
   const offer = testDeviceOffer(options.platform ?? "android");
@@ -43,7 +43,7 @@ async function started(options: { platform?: "ios" | "android"; driver?: DeviceD
     writeFileSync(paths.intent, JSON.stringify(options.intent));
   }
   const log: string[] = [];
-  const server = new DeviceServer({ paths, platform: offer.platform, devices: offer.devices as OfferedDevices, driver, version: DEVICE_SERVER_VERSION, log: (line) => log.push(line), deadlines: options.deadlines, settingsEveryMs: options.settingsEveryMs });
+  const server = new DeviceServer({ paths, platform: offer.platform, devices: offer.devices as OfferedDevices, driver, version: DEVICE_SERVER_VERSION, log: (line) => log.push(line), deadlines: options.deadlines, settingsEveryMs: options.settingsEveryMs, video: options.video });
   servers.push(server);
   await server.start();
   for (let tries = 0; server.state.power.is !== "booted" && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -366,6 +366,102 @@ describe("the device server", () => {
     const changed = encoder.encode(card("2"), false);
     assert.equal(changed?.key, false);
     assert.ok(changed!.data.byteLength < key!.data.byteLength / 2);
+  });
+});
+
+async function eventually(what: string, check: () => boolean, ms = 3_000): Promise<void> {
+  const deadline = performance.now() + ms;
+  while (!check()) {
+    if (performance.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+describe("the device server's video at the viewer's size (064, unit 1)", () => {
+  test("reads a viewer's drawn size, and picks the smallest step that covers it, less 5%", () => {
+    assert.deepEqual(viewAsked(viewRequestText({ width: 603.4, height: 1311.6 })), { width: 603, height: 1312 });
+    assert.equal(viewAsked('BB_DEVICE_VIEW {"width":0,"height":10}'), null);
+    assert.equal(viewAsked('BB_DEVICE_VIEW {"width":20000,"height":10}'), null);
+    assert.equal(viewAsked("BB_DEVICE_VIEW {}"), null);
+    const phone = screensOf(deviceModel("iPhone 18 Pro"));
+    const stepOf = (width: number, height: number) => stepCovering(drawnShare({ width, height }, phone));
+    assert.equal(stepOf(402, 874), "third");
+    assert.equal(stepOf(450, 980), "third", "a share 5% over a third is still a third");
+    assert.equal(stepOf(560, 1300), "half");
+    assert.equal(stepOf(700, 1520), "two-thirds");
+    assert.equal(stepOf(1300, 2100), "full");
+    assert.equal(stepOf(1206, 2622), "full");
+    assert.equal(stepOf(2000, 5000), "full");
+  });
+
+  test("streams at the step of the largest viewer, holds a change for 1 s, takes a recording, a wait and a cap, and closes after the last want's linger", async () => {
+    const { open, driver, server, log } = await started({ platform: "ios", video: { holdMs: 150, lingerMs: 400 } });
+    const steps = (driver as TestDriver).record.steps;
+    await eventually("the boot's word to the video", () => steps.length === 1);
+    assert.deepEqual(steps, [null], "nothing wants the video at boot");
+    const small = await open("viewer");
+    await small.send(viewRequestText({ width: 560, height: 1300 }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(server.videoStep, null, "a viewer's size alone asks for no video");
+    await small.send("START_VIDEO");
+    await eventually("a half for the small viewer", () => server.videoStep === "half");
+    const old = await open("viewer");
+    await old.send("START_VIDEO");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(server.videoStep, "half", "a change waits for its hold");
+    await eventually("full size for a viewer that never said its size", () => server.videoStep === "full");
+    await old.close();
+    await eventually("a half again", () => server.videoStep === "half");
+    await small.send(viewRequestText({ width: 1206, height: 2622 }));
+    await small.send(viewRequestText({ width: 560, height: 1300 }));
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(server.videoStep, "half", "a wish that comes back within the hold changes nothing");
+    await small.send("STOP_VIDEO");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(server.videoStep, "half", "the stream lingers after its last viewer");
+    await eventually("the stream to close", () => server.videoStep === null, 2_000);
+    assert.deepEqual(steps.slice(1), ["half", "full", "half", null]);
+
+    const control = await open("control", { started: 1, instance: "a" });
+    const waited = await control.request({ type: "settle", quietMs: 30, mostMs: 500, fromNow: true });
+    assert.equal(waited.ok, true);
+    assert.equal(server.videoStep, "third", "the agent's wait opened the stream at a third");
+    await eventually("the wait's linger to end", () => server.videoStep === null, 2_000);
+
+    const recording = await control.request({ type: "record", to: "start" });
+    assert.equal(recording.ok, true);
+    assert.equal(server.videoStep, "two-thirds");
+    assert.equal((await control.request({ type: "record", to: "stop" })).ok, true);
+    const watcher = await open("viewer");
+    await watcher.send("START_VIDEO");
+    await eventually("full size", () => server.videoStep === "full");
+    const input = await open("input");
+    const inputCap = await input.request({ type: "cap", most: "third" });
+    assert.equal(!inputCap.ok && inputCap.error.code, "superseded", "only the lease holder caps the video");
+    await input.close();
+    assert.equal((await control.request({ type: "cap", most: "third" })).ok, true);
+    await eventually("the cap", () => server.videoStep === "third");
+    assert.equal((await control.request({ type: "cap", most: null })).ok, true);
+    await eventually("full size again", () => server.videoStep === "full");
+    assert.ok(log.some((line) => line.startsWith("video: the stream at half, for viewer ")));
+    await watcher.close();
+    await control.close();
+  });
+
+  test("does not count a stream's opening frame, nor a key frame sent again, as a change on the screen", async () => {
+    const stopped = new TestDriver("ios", { now: () => Date.UTC(2026, 9, 26), monotonic: () => performance.now() });
+    const { open } = await started({ platform: "ios", driver: stopped, video: { holdMs: 50, lingerMs: 100 } });
+    const control = await open("control", { started: 1, instance: "a" });
+    const first = await control.request({ type: "settle", quietMs: 0, mostMs: 0, fromNow: false });
+    const before = first.ok && first.result.type === "settled" ? first.result.frames : -1;
+    const viewer = await open("viewer");
+    await viewer.send("START_VIDEO");
+    await viewer.send("REQUEST_KEYFRAME");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const again = await control.request({ type: "settle", quietMs: 0, mostMs: 0, fromNow: false });
+    assert.equal(again.ok && again.result.type === "settled" ? again.result.frames : -1, before);
+    await viewer.close();
+    await control.close();
   });
 });
 

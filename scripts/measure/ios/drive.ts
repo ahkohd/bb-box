@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { GrpcClient } from "../../../src/device/grpc.ts";
 import { encode } from "../../../src/device/protobuf.ts";
 import { GRPC_METHODS, IDB_SCHEMA } from "../../../src/device/schemas.ts";
+import { VIDEO_STEP_SCALES, drawnShare, deviceModel, screensOf, stepCovering } from "../../../src/core/device.ts";
 
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = Number(process.env.CDP_PORT ?? 9333);
@@ -198,6 +199,59 @@ async function tapToScreen(cdp: Cdp, x: number, y: number, times: number, gapMs:
   writeFileSync(`/tmp/e14-${label}.json`, JSON.stringify({ summary, results, drawn }));
 }
 
+type Sized = { width: number; height: number; own: { width: number; height: number }; drawn: { width: number; height: number } | null };
+
+async function follow(cdp: Cdp, label: string, width: number, height: number, ratio: number, view: string): Promise<void> {
+  const before = await cdp.evaluate<Sized>("frameSize()");
+  const began = await cdp.evaluate<number>("window.drawn.length = 0; performance.now()");
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: ratio, mobile: false });
+  await cdp.evaluate(`view(${view !== "noframe"}, ${view === "pfp"}); true`);
+  let sized = await cdp.evaluate<Sized>("frameSize()");
+  let drawnAt: number | null = null;
+  const sameDrawn = (a: Sized["drawn"], b: Sized["drawn"]) => a?.width === b?.width && a?.height === b?.height;
+  for (let tries = 0; tries < 150; tries++) {
+    if (!sameDrawn(sized.drawn, before.drawn)) {
+      drawnAt = await cdp.evaluate<number>("performance.now()");
+      break;
+    }
+    await wait(20);
+    sized = await cdp.evaluate<Sized>("frameSize()");
+  }
+  const model = process.env.MODEL ?? "iPhone 18 Pro";
+  const step = sized.drawn ? stepCovering(drawnShare(sized.drawn, screensOf(deviceModel(model as never)))) : "full";
+  const even = (value: number) => Math.max(2, Math.round((value * VIDEO_STEP_SCALES[step]) / 2) * 2);
+  const expected = { width: even(sized.own.width), height: even(sized.own.height) };
+  let arrived: number | null = null;
+  for (let tries = 0; tries < 300 && arrived === null; tries++) {
+    await wait(20);
+    arrived = await cdp.evaluate<number | null>(`(() => { const hit = window.drawn.find(([, , w, h]) => w === ${expected.width} && h === ${expected.height}); return hit ? hit[0] : null; })()`);
+  }
+  await wait(1500);
+  const drawn = await cdp.evaluate<[number, number, number, number][]>("window.drawn");
+  const sizes = [...new Set(drawn.map(([, , w, h]) => `${w}x${h}`))];
+  const gaps = drawn.slice(1).map((frame, index) => ({ gap: frame[0] - drawn[index]![0], from: `${drawn[index]![2]}x${drawn[index]![3]}`, to: `${frame[2]}x${frame[3]}` }));
+  const change = gaps.find((each) => each.from !== each.to) ?? null;
+  const steady = gaps.filter((each) => each.from === each.to).map((each) => each.gap);
+  const summary = {
+    label,
+    viewport: `${width}x${height}@${ratio}`,
+    view,
+    drawn: sized.drawn,
+    share: sized.drawn ? Math.round(drawnShare(sized.drawn, screensOf(deviceModel(model as never))) * 1000) / 1000 : null,
+    step,
+    before: `${before.width}x${before.height}`,
+    expected: `${expected.width}x${expected.height}`,
+    sizes,
+    msToDrawn: drawnAt === null ? null : Math.round(drawnAt - began),
+    msToStep: arrived === null ? null : Math.round(arrived - began),
+    stallAtChangeMs: change ? Math.round(change.gap) : null,
+    steadyGapMedianMs: steady.length ? Math.round(percentile(steady, 0.5)) : null,
+    frames: drawn.length,
+  };
+  console.log(JSON.stringify(summary));
+  writeFileSync(`/tmp/follow-${label}.json`, JSON.stringify({ summary, drawn }));
+}
+
 async function main(): Promise<void> {
   const cdp = await Cdp.open(await chrome());
   await cdp.send("Runtime.enable");
@@ -324,6 +378,9 @@ async function main(): Promise<void> {
         break;
       case "landing":
         await landing(cdp, numbers[0]!, numbers[1]!);
+        break;
+      case "follow":
+        await follow(cdp, rest[0]!, numbers[1]!, numbers[2]!, numbers[3] ?? 1, rest[4] ?? "frame");
         break;
       case "eval":
         console.log(JSON.stringify(await cdp.evaluate(rest.join(":"))));

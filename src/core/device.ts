@@ -376,6 +376,7 @@ export type DeviceRequest =
   | { readonly id: string; readonly type: "record"; readonly to: "start"; readonly position?: CaptionPosition }
   | { readonly id: string; readonly type: "record"; readonly to: "caption"; readonly kind: StepKind; readonly text: string }
   | { readonly id: string; readonly type: "record"; readonly to: "stop" }
+  | { readonly id: string; readonly type: "cap"; readonly most: VideoStep | null }
   | { readonly id: string; readonly type: "result" };
 
 export type DeviceRequestType = DeviceRequest["type"];
@@ -434,6 +435,45 @@ export function stillsRequestText(on: boolean): string {
 export function stillsAsked(message: string): boolean | null {
   const match = /^BB_DEVICE_STILLS \{"on":(true|false)\}$/.exec(message);
   return match ? match[1] === "true" : null;
+}
+
+export const DEVICE_VIEW_VERB = "BB_DEVICE_VIEW";
+export const DRAWN_PIXELS_MOST = 16_384;
+
+export function viewRequestText(drawn: VideoSize): string {
+  return `${DEVICE_VIEW_VERB} ${JSON.stringify({ width: Math.round(drawn.width), height: Math.round(drawn.height) })}`;
+}
+
+export function viewAsked(message: string): VideoSize | null {
+  const match = /^BB_DEVICE_VIEW \{"width":(\d{1,5}),"height":(\d{1,5})\}$/.exec(message);
+  if (!match) return null;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  return width > 0 && height > 0 && width <= DRAWN_PIXELS_MOST && height <= DRAWN_PIXELS_MOST ? { width, height } : null;
+}
+
+export const VIDEO_STEPS = ["third", "half", "two-thirds", "full"] as const;
+export type VideoStep = (typeof VIDEO_STEPS)[number];
+export const VIDEO_STEP_SCALES: { readonly [Step in VideoStep]: number } = { third: 1 / 3, half: 1 / 2, "two-thirds": 2 / 3, full: 1 };
+export const VIDEO_STEP_SLACK = 0.05;
+
+export function stepCovering(share: number): VideoStep {
+  return VIDEO_STEPS.find((step) => VIDEO_STEP_SCALES[step] >= share - VIDEO_STEP_SLACK) ?? "full";
+}
+
+export function largerStep(a: VideoStep, b: VideoStep): VideoStep {
+  return VIDEO_STEPS.indexOf(a) >= VIDEO_STEPS.indexOf(b) ? a : b;
+}
+
+export function smallerStep(a: VideoStep, b: VideoStep): VideoStep {
+  return VIDEO_STEPS.indexOf(a) <= VIDEO_STEPS.indexOf(b) ? a : b;
+}
+
+export function drawnShare(drawn: VideoSize, screens: readonly { readonly pixels: VideoSize }[]): number {
+  const drawnAspect = drawn.width / drawn.height;
+  const nearest = [...screens].sort((a, b) => Math.abs(a.pixels.width / a.pixels.height - drawnAspect) - Math.abs(b.pixels.width / b.pixels.height - drawnAspect))[0];
+  if (!nearest) return 1;
+  return Math.max(drawn.width / nearest.pixels.width, drawn.height / nearest.pixels.height);
 }
 
 export const PERSON_HAS_CONTROL_WORDS = "A person has control of this box's device. Wait for them to hand it back, or take it back with computer_take_control when they ask.";
@@ -617,9 +657,9 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
   return support.supported ? valueProblem(model, control) : support;
 }
 
-export const DEVICE_PROTOCOL = 1;
-export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 19;
+export const DEVICE_PROTOCOL = 2;
+export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
+export const DEVICE_SERVER_VERSION = 20;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 
 export function frameGenerationOf(header: Uint8Array): number {

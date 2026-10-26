@@ -186,6 +186,14 @@ function arrangementOf(state: DeviceState): Arrangement | null {
   return { generation: geometry.generation, physical: geometry.physical, content: geometry.content, video: geometry.video, view };
 }
 
+function sameShape(a: VideoSize, b: VideoSize): boolean {
+  return a.width > a.height === b.width > b.height;
+}
+
+function sameDrawn(a: VideoSize | null, b: VideoSize | null): boolean {
+  return a === b || (!!a && !!b && a.width === b.width && a.height === b.height);
+}
+
 function sameLayout(a: Arrangement, b: Arrangement): boolean {
   return a.physical === b.physical && a.content === b.content && a.video.width === b.video.width && a.video.height === b.video.height && a.view?.screen === b.view?.screen && a.view?.posture === b.view?.posture;
 }
@@ -221,6 +229,10 @@ export class DeviceStage {
   #toolbar: ToolbarRoom | null = null;
   #reported: DeviceLayout | null = null;
   #onLayout: ((layout: DeviceLayout | null) => void) | undefined;
+  #drawn: VideoSize | null = null;
+  #pixelRatio: MediaQueryList | null = null;
+  #laidOutAtRatio = 1;
+  onDrawn?: (drawn: VideoSize | null) => void;
   onAction?: (action: DeviceStageAction) => void;
   onChange?: () => void;
 
@@ -248,7 +260,30 @@ export class DeviceStage {
     this.#observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this.#layout());
     this.#observer?.observe(this.element);
     this.element.addEventListener("scroll", () => this.#report(), { passive: true });
+    this.#watchPixelRatio();
     this.#layout();
+  }
+
+  get drawn(): VideoSize | null {
+    return this.#drawn;
+  }
+
+  #watchPixelRatio(): void {
+    if (typeof matchMedia !== "function" || this.#disposed) return;
+    this.#pixelRatio?.removeEventListener("change", this.#pixelRatioChanged);
+    this.#pixelRatio = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    this.#pixelRatio.addEventListener("change", this.#pixelRatioChanged);
+  }
+
+  readonly #pixelRatioChanged = (): void => {
+    this.#watchPixelRatio();
+    this.#layout();
+  };
+
+  #reportDrawn(drawn: VideoSize | null): void {
+    if (sameDrawn(drawn, this.#drawn)) return;
+    this.#drawn = drawn;
+    this.onDrawn?.(drawn);
   }
 
   get layout(): DeviceLayout | null {
@@ -410,6 +445,7 @@ export class DeviceStage {
 
   paint(picture: CanvasImageSource, width: number, height: number, generation: number | null): boolean {
     if (this.#disposed) return false;
+    if ((window.devicePixelRatio || 1) !== this.#laidOutAtRatio) this.#pixelRatioChanged();
     const change = this.#change;
     const size = { width, height };
     if (change) {
@@ -428,7 +464,7 @@ export class DeviceStage {
       if (this.#newer(generation, shown.generation)) this.#stash(picture, width, height, generation);
       return false;
     }
-    if (!shown || shown.video.width !== width || shown.video.height !== height) {
+    if (!shown || !sameShape(shown.video, size)) {
       this.#shown = { generation: shown?.generation ?? 0, physical: shown?.physical ?? "upright", content: shown?.content ?? "upright", video: size, view: shown?.view ?? null };
       this.#layout();
     }
@@ -453,7 +489,7 @@ export class DeviceStage {
 
   #show(target: Arrangement, picture: CanvasImageSource, width: number, height: number): void {
     const change = this.#change;
-    this.#shown = { ...target, video: { width, height } };
+    this.#shown = sameShape(target.video, { width, height }) ? target : { ...target, video: { width, height } };
     if (change) {
       this.#times = { ...this.#times!, pictured: performance.now() };
       this.#settle(change);
@@ -475,6 +511,7 @@ export class DeviceStage {
 
   #layout(): void {
     if (this.#disposed) return;
+    this.#laidOutAtRatio = window.devicePixelRatio || 1;
     const model = this.#model;
     const shown = this.#shown;
     const area = { width: this.element.clientWidth, height: this.element.clientHeight };
@@ -484,6 +521,7 @@ export class DeviceStage {
       this.#arranged = null;
       this.#drawWords();
       this.#report();
+      this.#reportDrawn(null);
       return;
     }
     const view = shown?.view ?? (model.form === "foldable" ? { screen: foldScreenFor("open"), posture: "open" as const } : null);
@@ -509,6 +547,8 @@ export class DeviceStage {
     this.#drawWords();
     this.#arranged = arrangement ? { arrangement, shape, physical, place, label } : null;
     this.#report();
+    const ratio = this.#laidOutAtRatio * place.scale;
+    this.#reportDrawn({ width: Math.round(shape.screen.width * ratio), height: Math.round(shape.screen.height * ratio) });
   }
 
   #arranged: { readonly arrangement: BarArrangement; readonly shape: FrameShape; readonly physical: Orientation; readonly place: Placement; readonly label: boolean } | null = null;
@@ -585,7 +625,7 @@ export class DeviceStage {
     const shown = this.#shown;
     if (!shape || !place) return;
     const video = { width: this.#canvas.width || shape.pixels.width, height: this.#canvas.height || shape.pixels.height };
-    const content = shown && shown.video.width === video.width && shown.video.height === video.height ? shown.content : "upright";
+    const content = shown && sameShape(shown.video, video) ? shown.content : "upright";
     const toScreen = chain(videoToScreen(shape, content, video), moved(-shape.screen.x, -shape.screen.y), scaled(place.scale));
     this.#canvas.style.width = px(video.width);
     this.#canvas.style.height = px(video.height);
@@ -636,8 +676,10 @@ export class DeviceStage {
     const shown = this.#shown;
     if (!shape || !place || !shown || !this.#canvas.width || this.#change) return null;
     const rect = this.#content.getBoundingClientRect();
-    const video = { width: this.#canvas.width, height: this.#canvas.height };
-    const content = shown.video.width === video.width && shown.video.height === video.height ? shown.content : "upright";
+    const picture = { width: this.#canvas.width, height: this.#canvas.height };
+    const own = sameShape(shown.video, picture);
+    const video = own ? shown.video : picture;
+    const content = own ? shown.content : "upright";
     const point = applied(inverse(videoToStage(shape, shown.physical, content, video, place)), { x: clientX - rect.left, y: clientY - rect.top });
     if (point.x < 0 || point.y < 0 || point.x >= video.width || point.y >= video.height) return null;
     return { x: Math.floor(point.x), y: Math.floor(point.y) };
@@ -762,6 +804,7 @@ export class DeviceStage {
     this.#disposed = true;
     this.#endChange();
     this.#observer?.disconnect();
+    this.#pixelRatio?.removeEventListener("change", this.#pixelRatioChanged);
     this.element.remove();
   }
 }

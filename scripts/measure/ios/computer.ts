@@ -110,6 +110,7 @@ async function main(): Promise<void> {
     log: (line) => process.stderr.write(`plugin: ${line}\n`),
     logError: (operation, error) => process.stderr.write(`plugin: ${operation}: ${error}\n`),
     instance: `bench-computer-${process.pid}`,
+    ...(process.env.HARNESS_STARTED ? { started: Number(process.env.HARNESS_STARTED) + 1 } : {}),
   });
   const computer = new DeviceComputer({
     read: (each, request) => servers.read(each, request),
@@ -165,6 +166,11 @@ async function main(): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, Number(step.gapMs)));
       }
       process.stdout.write(`${JSON.stringify({ step: index, tool: "chars", given: step, ms: Math.round(performance.now() - began) })}\n`);
+      continue;
+    }
+    if (step.tool === "run") {
+      const ran = spawnSync("/bin/sh", ["-c", String(step.command)], { encoding: "utf8", timeout: 120_000 });
+      process.stdout.write(`${JSON.stringify({ step: index, tool: "run", given: step, exit: ran.status, out: ran.stdout.trim().split("\n").filter((line) => line.startsWith("{")).slice(-3) })}\n`);
       continue;
     }
     if (step.tool === "wait") {

@@ -9,11 +9,12 @@ import { deviceHubScript, parseDeviceHub } from "../src/core/device-delivery.ts"
 import { hasPicture, isKeyFrame, nalUnits, spsPictureSize, startsWithStartCode } from "../src/device/annexb.ts";
 import type { EncodedFrame } from "../src/device/driver.ts";
 import { FrameFanout } from "../src/device/frame-fanout.ts";
-import type { StreamOutput } from "../src/device/idb.ts";
+import { streamsEncodingIn, type StreamOutput } from "../src/device/idb.ts";
 import { HID_DAEMON, HID_DAEMON_ACTIVE, IosDriver, SPRINGBOARD, contentOrientation, parseProcessStart, type AppInfo, type ProcessStart } from "../src/device/ios-driver.ts";
 import { overridesListed, statusBarOverride } from "../src/device/ios-controls.ts";
 import { INERT_KEY_USAGE, PasteboardAccess, hidKey, runningApps } from "../src/device/ios-input.ts";
-import { IosVideo } from "../src/device/ios-video.ts";
+import { IosVideo, scaledBack } from "../src/device/ios-video.ts";
+import { evenScaled, spsOfSize } from "./sps.ts";
 import { devicePaths } from "../src/device/paths.ts";
 import { Simctl, disabledLabels, runningServicePid, type LineSpawner, type Ran, type Runner } from "../src/device/simctl.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
@@ -116,6 +117,7 @@ describe("the iOS video", () => {
     void (async () => {
       for await (const frame of video.frames(stop.signal)) frames.push(frame);
     })();
+    video.want("full");
     video.start();
     await until("the first key frame", () => frames.length === 1);
     assert.deepEqual(sizes, ["1206x2622"]);
@@ -135,6 +137,7 @@ describe("the iOS video", () => {
     void (async () => {
       for await (const frame of busyVideo.frames(halt.signal)) seen.push(frame);
     })();
+    busyVideo.want("full");
     busyVideo.start();
     await until("deltas", () => seen.filter((frame) => !frame.key).length >= 2);
     busyVideo.keyframe();
@@ -151,11 +154,116 @@ describe("the iOS video", () => {
     void (async () => {
       for await (const frame of failingVideo.frames(end.signal)) if (frame.key) keys.push(frame);
     })();
+    failingVideo.want("full");
     failingVideo.start();
     await until("a key frame after the failure", () => keys.length === 2);
     assert.equal(recovered, 1);
     await failingVideo.stop();
     end.abort();
+  });
+});
+
+describe("the iOS video, at the viewer's size", () => {
+  function scaledStreams() {
+    const scales: number[] = [];
+    const endings: string[] = [];
+    let open = 0;
+    const streams = (stopped: Promise<void>, signal: AbortSignal, scale: number): AsyncIterable<StreamOutput> => {
+      scales.push(scale);
+      open++;
+      let stoppedFirst = false;
+      void stopped.then(() => (stoppedFirst = !signal.aborted));
+      return (async function* () {
+        try {
+          yield { data: annexB([...spsOfSize(evenScaled(1206, scale), evenScaled(2622, scale))], [0x68, 0xee, 0x3c, 0x80], [0x65, 0x88, 0x84, 0x00]), log: null };
+          let ended = false;
+          void stopped.then(() => (ended = true));
+          while (!ended && !signal.aborted) {
+            await wait(15);
+            yield { data: DELTA, log: null };
+          }
+        } finally {
+          await Promise.resolve();
+          endings.push(stoppedFirst ? "stop" : "cancelled");
+          open--;
+        }
+      })();
+    };
+    return { streams, scales, endings, open: () => open };
+  }
+
+  const toPhone = (frame: { readonly width: number; readonly height: number }, scale: number) => {
+    const back = scaledBack(frame, scale);
+    return Math.abs(back.width - 1206) <= 4 && Math.abs(back.height - 2622) <= 4 ? { width: 1206, height: 2622 } : back;
+  };
+
+  test("peeks once at a third to learn the screen, opens only while wanted, at the step's scale, and keeps the generation through a step change", async () => {
+    const fake = scaledStreams();
+    const sizes: string[] = [];
+    const video = new IosVideo({ open: fake.streams, recover: async () => undefined, sized: (size) => (sizes.push(`${size.width}x${size.height}`), sizes.length), fullSize: toPhone, log: () => undefined });
+    const frames: EncodedFrame[] = [];
+    const stop = new AbortController();
+    void (async () => {
+      for await (const frame of video.frames(stop.signal)) frames.push(frame);
+    })();
+    video.start();
+    await until("the peek's key frame", () => frames.length >= 1);
+    await until("the peek to close", () => !video.running && fake.open() === 0);
+    assert.deepEqual(fake.scales, [1 / 3]);
+    assert.deepEqual(video.size, { width: 1206, height: 2622 });
+    assert.deepEqual(video.frameSize, { width: 402, height: 874 });
+    assert.deepEqual(sizes, ["1206x2622"]);
+    assert.equal(frames[0]!.unchanged, true);
+    video.keyframe();
+    await wait(50);
+    assert.equal(fake.scales.length, 1, "a key frame asked for while nothing wants the video opens nothing");
+
+    video.want("half");
+    await until("a stream at a half", () => frames.some((frame) => frame.width === 604));
+    assert.deepEqual(fake.scales, [1 / 3, 1 / 2]);
+    const half = frames.find((frame) => frame.width === 604)!;
+    assert.deepEqual({ height: half.height, generation: half.generation, key: half.key, unchanged: half.unchanged }, { height: 1312, generation: 1, key: true, unchanged: true });
+    await until("deltas at a half", () => frames.filter((frame) => frame.width === 604 && !frame.key).length >= 2);
+    assert.ok(frames.filter((frame) => !frame.key).every((frame) => !frame.unchanged), "a delta is a change on the screen");
+
+    video.want("full");
+    await until("a stream at full size", () => frames.some((frame) => frame.width === 1206));
+    assert.deepEqual(fake.scales, [1 / 3, 1 / 2, 1]);
+    assert.deepEqual(sizes, ["1206x2622"], "a step change is not a change of the device's size");
+    assert.ok(frames.every((frame) => frame.generation === 1));
+
+    video.want(null);
+    await until("the stream to close", () => !video.running && fake.open() === 0);
+    assert.deepEqual(fake.endings, ["stop", "stop", "stop"], "every stream ends with idb's stop, as idb_companion encodes on for good a stream whose call is only cancelled");
+    const closedAt = frames.length;
+    await wait(80);
+    assert.equal(frames.length, closedAt, "no frame comes once nothing wants the video");
+    assert.deepEqual(video.size, { width: 1206, height: 2622 }, "the device's size outlives the stream");
+
+    video.regenerate(5);
+    await until("a peek after a turn", () => fake.scales.length === 4);
+    assert.equal(fake.scales[3], 1 / 3);
+    await until("the peek to close again", () => !video.running && fake.open() === 0);
+    await video.stop();
+    stop.abort();
+  });
+});
+
+describe("idb_companion's log", () => {
+  test("counts the video streams it encodes now by their stats, which it writes every 5 s for each", () => {
+    const at = (time: string, offset = "+0000") => `2026-10-26 ${time}${offset} [C6E6A352-C4EA-4769-B08E-2CBA6B3183A3]`;
+    const log = [
+      `${at("22:05:30.100")} Video stats (interval): 290 callbacks in 5.0s (58.0 fps, 300 kbps, 1.3 ms/frame encode)`,
+      `${at("22:05:35.120")} Framebuffer stats (interval): 330 frames in 5.0s (65.8/s)`,
+      `${at("22:05:35.134")} Video stats (interval): 294 callbacks in 5.0s (58.7 fps, 2324 kbps, 1.25 ms/frame encode)`,
+      `${at("22:05:35.134")} Video stats (total): 22916 callbacks in 1049.0s`,
+      `${at("22:05:35.153")} Video stats (interval): 292 callbacks in 5.0s (58.2 fps, 291 kbps, 1.38 ms/frame encode)`,
+      `${at("23:05:35.160", "+0100")} Video stats (interval): 0 callbacks in 5.0s (0.0 fps, 0 kbps, 0 ms/frame encode)`,
+    ].join("\n");
+    const now = Date.parse("2026-10-26T22:05:37Z");
+    assert.equal(streamsEncodingIn(log, now), 3);
+    assert.equal(streamsEncodingIn(log, now + 10_000), 0, "stats older than one and a half periods are of streams that ended");
+    assert.equal(streamsEncodingIn("2026-10-26 22:05:35.153+0000 video_stream called with: []", now), 0);
   });
 });
 
@@ -380,12 +488,17 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     void (async () => {
       for await (const frame of driver.video().frames(stop.signal)) frames.push(frame);
     })();
+    driver.video().want?.("full");
     driver.video().keyframe();
     await until("frames", () => frames.some((frame) => frame.key) && frames.length > 2);
     const state = await driver.readBack();
     assert.equal(state.power.is, "booted");
     assert.deepEqual(state.geometry, { generation: 1, physical: "upright", content: "upright", video: { width: 1206, height: 2622 } });
     assert.deepEqual([...(await driver.screenshot())], [137, 80, 78, 71]);
+    driver.video().want?.("half");
+    await until("frames at a half", () => frames.some((frame) => frame.width === 604 && frame.height === 1312));
+    assert.deepEqual((await driver.readBack()).geometry, state.geometry, "the device's geometry stays in its own pixels at a half");
+    assert.match(readFileSync(setup.log, "utf8"), /stream \S+ scale 0\.5/);
     stop.abort();
     driver.close();
 
@@ -609,6 +722,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     void (async () => {
       for await (const frame of driver.video().frames(stop.signal)) if (frame.key) keys.push(frame);
     })();
+    driver.video().want?.("full");
     driver.video().keyframe();
     await until("a key frame", () => keys.length >= 1);
     const record = JSON.parse(readFileSync(join(setup.paths.dir, "companion.json"), "utf8")) as { pid: number };

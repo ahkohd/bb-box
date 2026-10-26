@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, frameGenerationOf, stillsRequestText, type DeviceAnswer, type DeviceControl, type DeviceRequest, type DeviceState, type ModelName, type TouchContact } from "../core/device.ts";
+import { DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, frameGenerationOf, stillsRequestText, viewRequestText, type DeviceAnswer, type DeviceControl, type DeviceRequest, type DeviceState, type ModelName, type TouchContact } from "../core/device.ts";
 import { personLostWords } from "../core/device-control.ts";
 import { CONTROL_DEADLINES_MS, controlDeadlineMs } from "../core/device-settings.ts";
 import { DeviceAnswers, viewerRequestId } from "./device-answers.ts";
@@ -64,6 +64,7 @@ export const HOLD_NO_SIZE_MS = 2_000;
 const WATCH_MS = 1_000;
 /** How long frames may come with none shown, or input go with no frame back, before the video starts again from a key frame. */
 export const STALL_MS = 3_000;
+export const DRAWN_SETTLE_MS = 500;
 /** The least time between two such starts, or a start as the window regains focus: each costs the box a key frame. */
 export const RESTART_GAP_MS = 10_000;
 /** The cross-fade from the held picture to the new one. */
@@ -342,6 +343,8 @@ export class SelkiesSession implements Kept {
   #framesCarryGeneration = false;
   readonly #frameGenerations = new Map<number, number>();
   readonly #answers = new DeviceAnswers();
+  #drawnSent: string | null = null;
+  #drawnSettle: ReturnType<typeof setTimeout> | undefined;
   onDeviceAction?: (control: DeviceControl) => void;
 
   constructor(url: string, options: { readonly device?: { readonly model: string | null } } = {}) {
@@ -356,7 +359,13 @@ export class SelkiesSession implements Kept {
     this.#canvas.tabIndex = -1;
     this.#stage = options.device ? new DeviceStage(this.#canvas, options.device.model) : null;
     this.element.appendChild(this.#stage?.element ?? this.#canvas);
-    if (this.#stage) this.#stage.onAction = (action) => (this.onDeviceAction ? this.onDeviceAction({ action }) : void this.sendDeviceControl({ action }));
+    if (this.#stage) {
+      this.#stage.onAction = (action) => (this.onDeviceAction ? this.onDeviceAction({ action }) : void this.sendDeviceControl({ action }));
+      this.#stage.onDrawn = () => {
+        clearTimeout(this.#drawnSettle);
+        this.#drawnSettle = setTimeout(() => this.#sayDrawn(), DRAWN_SETTLE_MS);
+      };
+    }
     this.#echo = this.#device ? new TouchEcho() : null;
     this.#deviceTyping = this.#device ? new DeviceTyping({ text: (text) => this.#deviceText(text), key: (keysym) => this.#tapKeysym(keysym) }) : null;
     if (this.#echo) this.element.appendChild(this.#echo.element);
@@ -560,6 +569,8 @@ export class SelkiesSession implements Kept {
       this.#stopped = this.#hidden || document.visibilityState === "hidden";
       if (this.#device) {
         if (this.#device.stills) socket.send(stillsRequestText(true));
+        this.#drawnSent = null;
+        this.#sayDrawn();
         socket.send(this.#stopped ? "STOP_VIDEO" : "START_VIDEO");
         return;
       }
@@ -1108,6 +1119,17 @@ export class SelkiesSession implements Kept {
     this.#key(keysym, "Unidentified", false);
   }
 
+  #sayDrawn(): void {
+    clearTimeout(this.#drawnSettle);
+    const drawn = this.#stage?.drawn;
+    const socket = this.#socket;
+    if (!drawn || !socket || socket.readyState !== WebSocket.OPEN) return;
+    const text = viewRequestText(drawn);
+    if (text === this.#drawnSent) return;
+    this.#drawnSent = text;
+    socket.send(text);
+  }
+
   #deviceTouches(contacts: readonly TouchContact[]): void {
     this.#deviceRequest({ type: "touch", contacts, generation: this.#device?.state?.geometry?.generation ?? 0 });
   }
@@ -1388,6 +1410,7 @@ export class SelkiesSession implements Kept {
     document.removeEventListener("visibilitychange", this.#onVisibility);
     window.removeEventListener("focus", this.#onFocus);
     this.#observer?.disconnect();
+    clearTimeout(this.#drawnSettle);
     this.#stage?.dispose();
     this.#answers.ended(this.#device?.state ?? null);
     this.#keyboard.ungrab();

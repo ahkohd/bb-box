@@ -23,11 +23,12 @@ Input, as the panel sends it (units 5.1 and 5.2), with three more files:
 
 | File | What it does |
 | --- | --- |
-| `viewer.ts` | Runs the plugin's own relay for device viewers beside the device server, without BB's server: pages on port 8770, viewers' WebSockets on 8771. It takes the box's lease, as bb-box does, and stands in for the plugin: `/api/owner?holder=person` or `agent` sets control's owner, `/api/input` sends the agent's input, a `DeviceInput` as JSON, and `/api/control` a `DeviceControl`, such as a switch. It takes the lease again if the server restarts |
+| `viewer.ts` | Runs the plugin's own relay for device viewers beside the device server, without BB's server: pages on port 8770, viewers' WebSockets on 8771. It takes the box's lease, as bb-box does, and stands in for the plugin: `/api/owner?holder=person` or `agent` sets control's owner, `/api/input` sends the agent's input, a `DeviceInput` as JSON, and `/api/control` a `DeviceControl`, such as a switch. It takes the lease again if the server restarts. `HARNESS_STARTED` gives the start time it takes the lease with: a time far ahead keeps the lease from a bb-box instance that starts later, which would otherwise deliver its own version over this checkout's |
 | `device.html` | The panel's own video client on a device display, in its frame, logging each frame it draws, with a pixel's shade where `window.probe` points. `?theme=light` or `dark` loads BB's theme; `frame=0` and `pfp=1` set Show frame and Pixel for pixel |
 | `touch.html` | A page for the device's Safari that puts a red dot where each touch lands |
+| `flip.html` | A page that turns black or white at each touch, for `e14`; `?busy` adds a bar that changes colour every frame, so frames flow |
 | `frames.html` | Every model's frame from the table, with a test card and no device: `?model=`, `physical`, `content`, `posture`, `theme`, `frame` and `power`. `change({posture})` changes it as a device would, and `foldTimes(posture, pictureAfterMs)` times a fold's frames |
-| `drive.ts` | Drives `device.html` in headless Chrome through its DevTools protocol, one step an argument: `owner:person`, `tap:x:y`, `press`, `move` and `release`, `drag:x1:y1:x2:y2:ms[:alt]`, `wheel:x:y:delta:count:ms`, `ime:reading:committed`, `insert:text`, `type:text`, `typetext:text`, `agent:<json>`, `e14:x:y:taps:gapMs:label`, `wait:ms` and `eval:js`. Points are the device's, upright or as drawn. For the frame: `shot:<file>`, `theme:dark` or `light`, `view:frame` or `noframe` with `:pfp`, `size:w:h:scale`; `turn:<orientation>:<ms>:<label>` turns the device with idb and logs the frame's angle, the veil and the picture on each animation frame; `landing:x:y` taps a video pixel where it is drawn and says whether `touch.html`'s dot appeared there; `freehid` restarts the device server, so idb's HID stream is free for `turn` and `idbturn`. `PAGE` names another page, such as `frames.html` |
+| `drive.ts` | Drives `device.html` in headless Chrome through its DevTools protocol, one step an argument: `owner:person`, `tap:x:y`, `press`, `move` and `release`, `drag:x1:y1:x2:y2:ms[:alt]`, `wheel:x:y:delta:count:ms`, `ime:reading:committed`, `insert:text`, `type:text`, `typetext:text`, `agent:<json>`, `e14:x:y:taps:gapMs:label`, `wait:ms` and `eval:js`. Points are the device's, upright or as drawn. For the frame: `shot:<file>`, `theme:dark` or `light`, `view:frame` or `noframe` with `:pfp`, `size:w:h:scale`; `turn:<orientation>:<ms>:<label>` turns the device with idb and logs the frame's angle, the veil and the picture on each animation frame; `landing:x:y` taps a video pixel where it is drawn and says whether `touch.html`'s dot appeared there; `freehid` restarts the device server, so idb's HID stream is free for `turn` and `idbturn`; `follow:<label>:w:h:scale[:frame|noframe|pfp]` sets the panel's size and view, and times its drawn size reaching the stage and the first frame at the step the server should pick, with the gap between frames at the change (064, unit 1). `PAGE` names another page, such as `frames.html`, and `MODEL` the device's model for `follow` |
 
 ## Doing a run
 
@@ -123,9 +124,15 @@ keeps images in `/tmp/bb-box-computer`.
 | `{"tool": "wait", "ms": 1000}` | waits |
 | `{"tool": "frames", "ms": 3000}` | counts the device's frames every 100 ms, to see when the screen is still |
 | `{"tool": "chars", "text": "abc", "gapMs": 15}` | types each character as its own input |
+| `{"tool": "run", "command": "..."}` | runs a shell command, such as `drive.ts follow:...` to resize the panel between two steps |
 
 `check.json` is 063's live check for unit 7.1. Run it after delivering the
 server: `node scripts/measure/ios/computer.ts scripts/measure/ios/check.json`.
 On a Mac without the iOS image, such as a pool Mac, `--companion <path>`
 runs the device server in the harness's own process with that
 idb_companion, and the devices simctl lists.
+
+`steps.json` is 064's check for unit 1: references read at one video step
+and used after the panel moved to another, and taps placed in a downscaled
+screenshot. With `viewer.ts` running, give both the same `HARNESS_STARTED`:
+`computer.ts` and `record.ts` then take the lease from it, one later.

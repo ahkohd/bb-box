@@ -29,7 +29,7 @@ async function open(): Promise<DeviceLink> {
         socket.once("error", reject);
       });
       const web = Duplex.toWeb(socket);
-      const link = await DeviceLink.open({ readable: web.readable as ReadableStream<Uint8Array>, writable: web.writable as WritableStream<Uint8Array>, close: async () => void socket.destroy() }, { role: "control", started: Date.now(), instance: "record-check" });
+      const link = await DeviceLink.open({ readable: web.readable as ReadableStream<Uint8Array>, writable: web.writable as WritableStream<Uint8Array>, close: async () => void socket.destroy() }, { role: "control", started: Number(process.env.HARNESS_STARTED ?? Date.now()) + 1, instance: "record-check" });
       await link.request({ type: "owner", generation: Date.now(), holder: "agent" });
       return link;
     } catch {

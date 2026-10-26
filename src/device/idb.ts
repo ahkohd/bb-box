@@ -46,6 +46,21 @@ function commandOf(pid: number): Promise<string | null> {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+export const STREAM_STATS_EVERY_MS = 5_000;
+const STREAM_STATS_LINE = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d\.\d{3})([+-]\d\d)(\d\d) .*Video stats \(interval\)/;
+const LOG_TAIL_BYTES = 64 * 1024;
+
+export function streamsEncodingIn(log: string, now: number): number {
+  const times: number[] = [];
+  for (const line of log.split("\n")) {
+    const match = STREAM_STATS_LINE.exec(line);
+    if (match) times.push(Date.parse(`${match[1]}T${match[2]}${match[3]}:${match[4]}`));
+  }
+  const latest = Math.max(...times.filter(Number.isFinite));
+  if (!Number.isFinite(latest) || now - latest > STREAM_STATS_EVERY_MS * 1.5) return 0;
+  return times.filter((at) => latest - at < 1_000).length;
+}
+
 export class Companion {
   readonly #program: string;
   readonly #paths: CompanionPaths;
@@ -85,6 +100,11 @@ export class Companion {
   async #ours(pid: number): Promise<boolean> {
     const command = await commandOf(pid);
     return !!command && command.includes("--grpc-domain-sock") && command.includes(this.#paths.socket);
+  }
+
+  async streamsEncoding(now = Date.now()): Promise<number> {
+    const text = await readFile(this.#paths.log, "utf8").catch(() => "");
+    return streamsEncodingIn(text.slice(-LOG_TAIL_BYTES), now);
   }
 
   async alive(): Promise<boolean> {
@@ -184,8 +204,8 @@ export class Companion {
   }
 }
 
-export function videoStreamStart(): Uint8Array {
-  return encode(IDB_SCHEMA, "idb.VideoStreamRequest", { start: { format: H264, compression_quality: STREAM_QUALITY, scale_factor: 1 } });
+export function videoStreamStart(scale = 1): Uint8Array {
+  return encode(IDB_SCHEMA, "idb.VideoStreamRequest", { start: { format: H264, compression_quality: STREAM_QUALITY, scale_factor: scale } });
 }
 
 export function videoStreamStop(): Uint8Array {
@@ -203,9 +223,9 @@ export function streamOutput(message: Uint8Array): StreamOutput {
   return { data: decoded.payload?.data ?? null, log: null };
 }
 
-export async function* videoStream(client: GrpcClient, stopped: Promise<void>, signal: AbortSignal): AsyncIterable<StreamOutput> {
+export async function* videoStream(client: GrpcClient, stopped: Promise<void>, signal: AbortSignal, scale = 1): AsyncIterable<StreamOutput> {
   async function* requests() {
-    yield videoStreamStart();
+    yield videoStreamStart(scale);
     await stopped;
     yield videoStreamStop();
   }

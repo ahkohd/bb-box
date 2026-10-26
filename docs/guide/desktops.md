@@ -115,7 +115,11 @@ A box with a device opens on the device. A box with both shows **Device** and **
 
 The display you see is the only one that gets your keys, your pointer and your clipboard. Control is one for the box, covering both: switching between them keeps it, and does not start the minute after which a hidden tab hands control back.
 
-A device always shows as video, at its own size. It has no VNC, no **Show as VNC** and no High resolution, and it ignores the **Linux desktops as video** setting. Resizing the panel does not resize the device.
+A device always shows as video. It has no VNC, no **Show as VNC** and no High resolution, and it ignores the **Linux desktops as video** setting. Resizing the panel does not resize the device.
+
+An `ios` box sends its device's video at the size your panel draws it, not at the device's own size, as the Mac's video encoder is what limits how many devices can be watched at once. The video comes at a third, a half, two thirds or all of the device's own size, the smallest of those that covers what the panel draws on your display. After you resize the panel, zoom, choose **Show frame** or **Pixel for pixel**, or move the window to a screen of another pixel density, the video changes to the new size within about 2 seconds; until then the picture is a little softer, never smaller. **Pixel for pixel** always gets the full size. When two people watch, the video comes at the size the larger of them draws. Touches land where you make them whatever the video's size, and an agent's screenshots and element references stay good when the panel is resized. An `android` box sends its device's video at full size.
+
+While nobody watches a device, it sends no video at all: its video starts when a panel shows it, a recording runs, or the agent waits for the screen to settle, and stops 10 seconds after the last of them.
 
 The device shows in a frame drawn by bb-box: a phone or tablet in its body, with its side buttons and, on an iPhone, its Dynamic Island. The body is graphite in both of BB's themes, with a light edge in the dark theme and a soft shadow in the light one. The device, its frame and its bar of controls fit the panel, and the screen is never drawn larger than its own pixels on your display. In the bar's **More** menu, two choices change how it shows, and last for that box in that browser:
 

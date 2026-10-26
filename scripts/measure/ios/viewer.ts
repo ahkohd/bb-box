@@ -38,7 +38,7 @@ const box = new SelkiesBox(open, { paths: DEVICE_PATHS, spacingMs: 0, apart: () 
 let personHasControl = false;
 let holder: string | null = null;
 let generation = 0;
-const HARNESS_STARTED = Date.now();
+const HARNESS_STARTED = Number(process.env.HARNESS_STARTED ?? Date.now());
 const ANDROID = process.env.KIND === "android";
 
 async function openControl(): Promise<DeviceLink> {

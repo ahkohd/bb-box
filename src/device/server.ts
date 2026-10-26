@@ -5,7 +5,11 @@ import {
   PERSON_HAS_CONTROL_WORDS,
   STILLS_EVERY_MS,
   deviceModel,
+  drawnShare,
+  screensOf,
+  stepCovering,
   stillsAsked,
+  viewAsked,
   listWords,
   supports,
   type AnswerResult,
@@ -27,6 +31,8 @@ import {
   type SwitchStep,
   type TableModel,
   type TouchContact,
+  type VideoSize,
+  type VideoStep,
 } from "../core/device.ts";
 import { CONTROL_DEADLINES_MS, controlDeadlineMs, deviceStateWords } from "../core/device-settings.ts";
 import { deviceServerMessageText, parseDeviceRequest, parseIntent } from "../core/device-parse.ts";
@@ -37,6 +43,7 @@ import { PersonInput, WHEEL_SWIPE, easedOut, waitFor } from "./person-input.ts";
 import { pixelsWithin, pngPixels, rgbaPng } from "../core/png.ts";
 import type { DevicePaths } from "./paths.ts";
 import { DeviceRecorder, type RecorderClock, type RecordingAnswer } from "./recorder.ts";
+import { VideoWants } from "./video-wants.ts";
 import { ServerWebSocket, type WsMessage } from "./ws.ts";
 
 export const KEPT_ANSWERS = 200;
@@ -57,6 +64,10 @@ const GEOMETRY_SETTLE_MS = 1_500;
 const GEOMETRY_ACTIONS: ReadonlySet<DeviceControl["action"]> = new Set(["rotate", "posture", "switch", "reboot"]);
 const MODIFIER_NAMES = { shift: "Shift", control: "Control", alt: "Alt", meta: "Meta" } as const;
 export const SETTINGS_READ_EVERY_MS = 10_000;
+export const OPENING_FRAME_WAIT_MS = 1_500;
+export const RECORDING_STEP: VideoStep = "two-thirds";
+export const WAITING_STEP: VideoStep = "third";
+export const STILLS_STEP: VideoStep = "third";
 
 export type Role = "viewer" | "input" | "control";
 
@@ -76,6 +87,7 @@ export interface DeviceServerOptions {
   readonly deadlines?: Partial<Deadlines>;
   readonly settingsEveryMs?: number;
   readonly recording?: { readonly limitMs?: number; readonly clock?: RecorderClock };
+  readonly video?: { readonly holdMs?: number; readonly lingerMs?: number };
 }
 
 interface Connection {
@@ -83,7 +95,9 @@ interface Connection {
   readonly role: Role;
   readonly started: number;
   readonly instance: string;
+  readonly number: number;
   wantsVideo: boolean;
+  view: VideoSize | null;
   stills: boolean;
   needsKey: boolean;
   frameId: number;
@@ -186,7 +200,11 @@ export class DeviceServer {
   readonly #bootedHere = new Set<ModelName>();
   #framesSeen = 0;
   #lastFrameAt = -Infinity;
+  #connected = 0;
+  #waits = 0;
+  #opening: { readonly since: number; readonly waiters: Set<() => void> } | null = null;
   readonly #recorder: DeviceRecorder;
+  readonly #video: VideoWants;
 
   constructor(options: DeviceServerOptions) {
     this.#options = options;
@@ -209,6 +227,7 @@ export class DeviceServer {
       acting: () => this.#personActs(),
       log: (line) => this.#log(line),
     });
+    this.#video = new VideoWants({ apply: (step, wants) => this.#streamAt(step, wants), holdMs: options.video?.holdMs, lingerMs: options.video?.lingerMs });
     this.#recorder = new DeviceRecorder({
       dir: options.paths.recording,
       video: () => options.driver.video(),
@@ -217,6 +236,69 @@ export class DeviceServer {
       log: (line) => this.#log(line),
       limitMs: options.recording?.limitMs,
       clock: options.recording?.clock,
+      recording: (on) => this.#video.set("a recording", on ? RECORDING_STEP : null),
+    });
+  }
+
+  get videoStep(): VideoStep | null {
+    return this.#video.applied;
+  }
+
+  #streamAt(step: VideoStep | null, wants: readonly string[]): void {
+    this.#log(step === null ? "video: the stream closes, as nothing has wanted it for a while" : `video: the stream at ${step}, for ${wants.join(", ")}`);
+    const video = this.#options.driver.video();
+    if (step === null) this.#endOpening();
+    else if (this.#streamClosed && video.want) this.#opening = { since: this.#clock.monotonic(), waiters: new Set() };
+    this.#streamClosed = step === null;
+    video.want?.(step);
+  }
+
+  #streamClosed = true;
+
+  #endOpening(): void {
+    const opening = this.#opening;
+    this.#opening = null;
+    for (const wake of opening?.waiters ?? []) wake();
+  }
+
+  #viewerStep(connection: Connection): VideoStep | null {
+    if (connection.role !== "viewer" || !connection.wantsVideo) return null;
+    if (connection.stills) return STILLS_STEP;
+    if (!connection.view) return "full";
+    return stepCovering(drawnShare(connection.view, screensOf(deviceModel(this.#state.model))));
+  }
+
+  #viewerWants(connection: Connection): void {
+    if (connection.role === "viewer") this.#video.set(`viewer ${connection.number}`, this.#connections.has(connection) ? this.#viewerStep(connection) : null);
+  }
+
+  #allViewerWants(): void {
+    for (const connection of this.#connections) this.#viewerWants(connection);
+  }
+
+  async #whileWanted<T>(who: string, step: VideoStep, work: () => Promise<T>): Promise<T> {
+    this.#video.set(who, step);
+    try {
+      return await work();
+    } finally {
+      this.#video.set(who, null);
+    }
+  }
+
+  async #openingFrame(): Promise<void> {
+    const opening = this.#opening;
+    if (!opening) return;
+    const left = OPENING_FRAME_WAIT_MS - (this.#clock.monotonic() - opening.since);
+    if (left <= 0) return;
+    const { waiters } = opening;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        waiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, left);
+      waiters.add(done);
     });
   }
 
@@ -332,6 +414,7 @@ export class DeviceServer {
       return;
     }
     await this.#refresh();
+    this.#options.driver.video().want?.(this.#video.applied);
     void this.#pumpFrames();
   }
 
@@ -352,6 +435,7 @@ export class DeviceServer {
     if (this.#geometryWait) clearTimeout(this.#geometryWait.timer);
     if (this.#stillTimer) clearTimeout(this.#stillTimer);
     if (this.#settingsTimer) clearInterval(this.#settingsTimer);
+    this.#video.close();
     this.#recorder.close();
     for (const connection of this.#connections) connection.ws.close(1001, "the device server is stopping");
     await new Promise<void>((resolve) => (this.#server ? this.#server.close(() => resolve()) : resolve()));
@@ -418,7 +502,7 @@ export class DeviceServer {
       return;
     }
     const started = Number(upgrade.query.get("started") ?? "0");
-    const connection: Connection = { ws, role, started: Number.isFinite(started) ? started : 0, instance: upgrade.query.get("instance") ?? "", wantsVideo: false, stills: false, needsKey: true, frameId: 0 };
+    const connection: Connection = { ws, role, started: Number.isFinite(started) ? started : 0, instance: upgrade.query.get("instance") ?? "", number: ++this.#connected, wantsVideo: false, view: null, stills: false, needsKey: true, frameId: 0 };
     this.#connections.add(connection);
     ws.onClose = () => this.#closed(connection);
     ws.onMessage = (message) => this.#message(connection, message);
@@ -451,6 +535,7 @@ export class DeviceServer {
     this.#connections.delete(connection);
     if (this.#lease === connection) this.#lease = null;
     if (connection.role === "input") this.#personStops("its input connection ended");
+    this.#viewerWants(connection);
   }
 
   #message(connection: Connection, message: WsMessage): void {
@@ -471,10 +556,17 @@ export class DeviceServer {
   }
 
   #viewerMessage(connection: Connection, message: string): void {
+    const view = viewAsked(message);
+    if (view) {
+      connection.view = view;
+      this.#viewerWants(connection);
+      return;
+    }
     const stills = stillsAsked(message);
     if (stills !== null) {
       connection.stills = stills;
       connection.needsKey = true;
+      this.#viewerWants(connection);
       if (stills) this.#stillsDue();
       else this.#options.driver.video().keyframe();
       return;
@@ -483,10 +575,13 @@ export class DeviceServer {
     if (verb === "START_VIDEO") {
       connection.wantsVideo = true;
       connection.needsKey = true;
+      this.#viewerWants(connection);
       if (connection.stills) this.#stillsDue();
       else this.#options.driver.video().keyframe();
-    } else if (verb === "STOP_VIDEO") connection.wantsVideo = false;
-    else if (verb === "REQUEST_KEYFRAME") {
+    } else if (verb === "STOP_VIDEO") {
+      connection.wantsVideo = false;
+      this.#viewerWants(connection);
+    } else if (verb === "REQUEST_KEYFRAME") {
       connection.needsKey = true;
       if (connection.stills) this.#stillsDue();
       else this.#options.driver.video().keyframe();
@@ -526,8 +621,11 @@ export class DeviceServer {
   }
 
   #frame(frame: EncodedFrame): void {
-    this.#framesSeen++;
-    this.#lastFrameAt = this.#clock.monotonic();
+    if (this.#opening) this.#endOpening();
+    if (!frame.unchanged) {
+      this.#framesSeen++;
+      this.#lastFrameAt = this.#clock.monotonic();
+    }
     if (this.#seenGeneration !== frame.generation) this.#newGeneration(frame.generation);
     this.#stillsDue();
     for (const connection of this.#connections) {
@@ -618,7 +716,15 @@ export class DeviceServer {
         return { type: "screenshot", png: Buffer.from(shown).toString("base64"), generation, source: { width: pixels.width, height: pixels.height } };
       }
       case "settle":
-        return this.#settle(request.quietMs, request.mostMs, request.fromNow);
+        return this.#whileWanted(`the agent's wait ${++this.#waits}`, WAITING_STEP, async () => {
+          await this.#openingFrame();
+          return this.#settle(request.quietMs, request.mostMs, request.fromNow);
+        });
+      case "cap":
+        this.#leaseOnly(connection, "cap the device's video");
+        this.#video.capAt(request.most);
+        this.#log(`video: capped at ${request.most ?? "nothing"}`);
+        return { type: "done" };
       case "launch":
         return { type: "launched", app: await this.#launch(request.app, connection) };
       case "tree":
@@ -1006,10 +1112,11 @@ export class DeviceServer {
       void this.#bootedIn(device);
       await this.#step(id, from, device, "waiting", since);
       await this.#step(id, from, device, "streaming", since);
-      await this.#firstFrame(signal);
+      await this.#whileWanted("a switch's first frame", WAITING_STEP, () => this.#firstFrame(signal));
       this.#switching = null;
       await this.#writeIntent({ target: device, switching: null } as Intent);
       await this.#refresh();
+      this.#allViewerWants();
       this.#log(`switch: now the ${device}`);
     } catch (error) {
       const words = error instanceof Error ? error.message : String(error);

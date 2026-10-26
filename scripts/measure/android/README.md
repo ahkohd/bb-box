@@ -107,6 +107,12 @@ line of JSON a step with its time and what the agent would read.
 | `watch` | Reads the tree every `gapMs` for `seconds`, with each read's time, its elements and why it was refused |
 | `shell` | Runs a command in the box; with `background`, leaves it running and writes its output to `out` |
 
+With `viewer.ts` of the iOS harness running, `HARNESS_STARTED` gives the
+start time this takes the box's lease with, as there, one after the
+viewer's. `steps.json` is 064's check for unit 1 on the Pixel Fold:
+references read before the panel moved to Pixel for pixel, and taps placed in
+a downscaled screenshot.
+
 `check.json` is 063's live check, and `e12.json` is E12: tree times on
 Settings and Chrome, an instrumentation test that uses UiAutomation and one
 that does not run beside the reads, and the tree server killed. E12 needs
