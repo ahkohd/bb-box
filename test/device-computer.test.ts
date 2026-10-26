@@ -6,7 +6,8 @@ import { ComputerError } from "../src/core/computer.ts";
 import { DeviceComputer, deviceKey, scrollSwipe, type DeviceComputerDeps } from "../src/core/device-computer.ts";
 import { PERSON_HAS_CONTROL_WORDS, type DeviceAgentRequest, type DeviceAnswer, type DeviceElement, type DeviceInput, type DeviceRead, type DeviceState } from "../src/core/device.ts";
 import { rgbaPng } from "../src/core/png.ts";
-import { iosTree, roleWords } from "../src/device/ios-tree.ts";
+import { GrpcError } from "../src/device/grpc.ts";
+import { READ_BY_POINTS_WORDS, iosTree, readIosTree, roleWords, type TreeReads } from "../src/device/ios-tree.ts";
 
 const SCALE = 3;
 const SCREEN = { width: 1206, height: 2622 };
@@ -148,6 +149,32 @@ describe("iOS's accessibility tree, read from idb (063, 7.1)", () => {
     assert.equal(back.can?.tap, false);
   });
 
+  test("reads the Home Screen point by point when iOS names no app in front, as on a new box, and says so", async () => {
+    const raw = (fixture("home") as { children: { frame: { x: number; y: number; width: number; height: number } }[] }[])[0]!.children;
+    const reads: TreeReads = {
+      tree: async () => {
+        throw new GrpcError(2, "The simulator's accessibility service named no frontmost application");
+      },
+      at: async (point) => raw.find(({ frame }) => point.x >= frame.x && point.y >= frame.y && point.x < frame.x + frame.width && point.y < frame.y + frame.height) ?? { role: "AXApplication", AXLabel: " ", frame: { x: 0, y: 0, width: 402, height: 874 }, pid: 78378 },
+      processName: async () => "/Library/Developer/CoreSimulator/Volumes/iOS_24A434/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard",
+    };
+    const read = await readIosTree(reads, { width: 402, height: 874 }, SCALE);
+    assert.equal(read.byPoints, true);
+    const root = read.elements[0]!;
+    assert.equal(root.label, "Home Screen");
+    assert.equal(root.value, READ_BY_POINTS_WORDS);
+    const labels = root.children.map((each) => each.label);
+    assert.equal(labels.filter((label) => label === "Calendar").length, 2, "the widget and the app, each once");
+    assert.ok(labels.includes("Safari") && labels.includes("Settings"));
+    assert.equal(new Set(root.children.map((each) => JSON.stringify(each.frame))).size, root.children.length, "no element twice");
+    const device = new FakeDevice(read.elements);
+    const computer = new DeviceComputer(device.deps());
+    assert.match((await computer.windows(BOX)).text, /^Window 1: iPhone 18 Pro \(device\), Home Screen in front,/);
+    assert.match((await computer.observe(BOX, { window: 1 })).text, /- \[e\d+\] application "Home Screen" = "read point by point, as iOS named no app in front"/);
+    await assert.rejects(readIosTree({ ...reads, tree: async () => { throw new GrpcError(14, "connection refused"); } }, { width: 402, height: 874 }, SCALE), /connection refused/);
+    assert.equal((await readIosTree({ ...reads, tree: async () => fixture("settings") }, { width: 402, height: 874 }, SCALE)).byPoints, false);
+  });
+
   test("names roles in words", () => {
     assert.equal(roleWords("AXStaticText"), "static text");
     assert.equal(roleWords("AXSearchField"), "search field");
@@ -255,6 +282,17 @@ describe("the computer tools on a device (063, 7.1)", () => {
       (error: unknown) => error instanceof ComputerError && /is covered by (heading "Settings"|generic element "Dynamic Island") where it is now/.test(error.message) && /^Scroll up/.test(error.hint ?? ""),
     );
     assert.equal(device.inputs.length, 1);
+  });
+
+  test("names the system's screen when what comes in front has no name, as an alert", async () => {
+    const button = element("button", "Continue", { x: 100, y: 2000, width: 1000, height: 150 });
+    const device = new FakeDevice(screenOf([button]));
+    device.onInput = () => {
+      device.tree = [element("application", "", { x: 0, y: 0, ...SCREEN }, { can: { tap: false, edit: false, scroll: false }, children: [element("button", "Allow Once", { x: 100, y: 1200, width: 1000, height: 150 })] })];
+    };
+    const computer = new DeviceComputer(device.deps());
+    const done = await computer.act(BOX, { action: "click", ref: refOf((await computer.observe(BOX, { window: 1 })).text, /"Continue"/) });
+    assert.match(done.text, /Now in front: the Home Screen or a system screen\./);
   });
 
   test("a turn of the device voids its references, and a point of an older image", async () => {

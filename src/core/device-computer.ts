@@ -399,7 +399,7 @@ export class DeviceComputer {
   }
 
   #heading(snapshot: Snapshot): string {
-    const front = snapshot.app ? `${snapshot.app} in front` : "the Home Screen or another of the system's in front";
+    const front = `${frontWords(snapshot)} in front`;
     return `Window ${DEVICE_WINDOW}: ${this.#name(snapshot)}, ${front}, ${snapshot.screen.width}x${snapshot.screen.height} pixels, ${snapshot.orientation}.`;
   }
 
@@ -519,7 +519,7 @@ export class DeviceComputer {
       parts.push(`The device's screen changed shape: now ${after.screen.width}x${after.screen.height}, ${after.orientation}. Earlier references and images are void.`);
       return { parts, after };
     }
-    if (after.app !== before.app) parts.push(`Now in front: ${after.app}.`);
+    if (after.app !== before.app) parts.push(`Now in front: ${frontWords(after)}.`);
     const was = new Set(before.shown.map((shown) => lineOf({ ...shown, depth: 0 }, before.screen)));
     const now = after.shown.map((shown) => lineOf({ ...shown, depth: 0 }, after.screen));
     const nowSet = new Set(now);
@@ -738,6 +738,10 @@ export class DeviceComputer {
     }
     return { text: `You already have control of box ${box.name}'s device.`, hints: [] };
   }
+}
+
+function frontWords(snapshot: Snapshot): string {
+  return snapshot.app || "the Home Screen or a system screen";
 }
 
 function drawn(snapshot: Snapshot): boolean {
