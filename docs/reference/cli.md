@@ -84,7 +84,7 @@ Acquire a box for a thread and wait until it answers.
 
 ```text
 Usage:
-  bb box acquire <kind> [--thread <value>] [--json] [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--on <value>] [--image <value>] [--device <value>] [--no-slim] [--no-wait]
+  bb box acquire <kind> [--thread <value>] [--json] [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--on <value>] [--image <value>] [--device <value>] [--no-slim] [--dedicated] [--shared] [--no-wait]
 
 Arguments:
   <kind>  The kind of box, from bb box kinds. (required)
@@ -100,6 +100,8 @@ Options:
   --image <value>              The image to start from: a project's image, from bb box image list, or "standard". The thread's project's image for the kind by default.
   --device <value>             For an ios or android box, the device it boots, such as iPhone 18 Pro or Pixel Fold. The kind's first by default.
   --no-slim                    For an ios box: its iOS Simulator keeps every service, for an app that uses widgets, Siri, iCloud, Health, Wallet or the like. Slimmed by default.
+  --dedicated                  For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop. Give it with a size: once shared ios boxes are the default, a size without it is refused.
+  --shared                     For an ios or macos box: a macOS user on a Mac or VM shared with other boxes. Not offered until a shared iOS host is set up.
   --no-wait                    Return once the box is recorded.
   --help, -h                   Show this help and exit
 ```

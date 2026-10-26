@@ -84,6 +84,14 @@ where it is built ahead, which its boxes claim at once (#440). The
   `slim: false` for an app that uses one of them; its first boot then takes
   about a minute more. Do not open Device Hub on the host: it
   takes the device's clipboard, and bb-box closes it.
+- Each `ios` box is a macOS VM of its own for now: no shared iOS host is
+  set up, so `shared: true` is refused. Ask for `dedicated: true` when the
+  box must have a VM of its own: a build that needs the cores, `brew
+  install` or sudo, an app that needs fixed ports, Xcode's window, or a
+  project with its own ios image. Give `dedicated: true` with a `size`,
+  `cores`, `memory_gib` or `disk_gib` for an ios box: once shared ios boxes
+  are the default, a size without it is refused. `box_status` says where
+  the box is, on its Where line.
 - An `android` box is a Linux VM with one Android emulator device booted,
   a Pixel 8, Pixel Fold or Pixel Tablet, shown to the person in the panel.
   It has no desktop. `device` picks the model as for `ios`, and the device

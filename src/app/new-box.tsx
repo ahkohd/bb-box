@@ -40,6 +40,13 @@ export interface SizeRequest {
 }
 
 type Choice2 = string;
+
+type Placement = "shared" | "own";
+
+const PLACEMENTS: readonly { readonly id: Placement; readonly title: string; readonly words: string }[] = [
+  { id: "shared", title: "Shared", words: "Ready in seconds. No sudo or Homebrew installs. Other iOS boxes on the host share its cores and ports, and see its processes." },
+  { id: "own", title: "A VM of its own", words: "sudo, Homebrew, its own cores, ports and desktop. Takes one of the Mac's two VMs, so it can wait for one." },
+];
 const CUSTOM: Choice2 = "custom";
 
 interface Fields {
@@ -160,7 +167,7 @@ export function NewBox({
 }: {
   kinds: readonly KindView[];
   /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036), and its image (049). */
-  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[], image?: string, device?: string) => Promise<string | null>;
+  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[], image?: string, device?: string, dedicated?: boolean) => Promise<string | null>;
   /** The projects' images a box can choose (049), this project's marked mine; the choice shows where one covers the chosen kind. */
   images?: readonly ImageOptionView[];
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
@@ -195,6 +202,7 @@ export function NewBox({
   /** The image chosen by hand (049): a name or "standard"; null until then, so the form starts on the project's image each time. */
   const [image, setImage] = useState<string | null>(null);
   const [device, setDevice] = useState<string | null>(null);
+  const [placement, setPlacement] = useState<Placement>("shared");
   /** The preset last chosen, which Custom starts from. */
   const [viewed, setViewed] = useState<string | null>(last.size && last.size !== CUSTOM ? last.size : null);
   // Custom fields belong to a kind: edited ones are kept per kind, and a
@@ -209,6 +217,7 @@ export function NewBox({
   const [on, setOn] = useState<string | null>(null);
   const sizeOptions = useRef<(HTMLButtonElement | null)[]>([]);
   const providerOptions = useRef<(HTMLButtonElement | null)[]>([]);
+  const placementOptions = useRef<(HTMLButtonElement | null)[]>([]);
   // Every listed provider's profile, fetched in the background once the form has painted, all at once, and kept for the form's life, so the (i) opens filled (the operator's note of 2 October 2026). Nothing is fetched while the form is closed.
   const [profiles, setProfiles] = useState<ReadonlyMap<string, Loaded>>(() => new Map());
   const profilesNow = useRef(profiles);
@@ -261,6 +270,10 @@ export function NewBox({
   const chosenImage = imageChoice ? (image && imageOptions.some((option) => option.value === image) ? image : (covering.find((candidate) => candidate.mine)?.name ?? "standard")) : undefined;
   const systems = systemsOf(kinds);
   const devices = kind?.devices?.models ?? [];
+  const placementChoice = !machine && kind?.placement ? kind.placement : null;
+  const placements = placementChoice ? PLACEMENTS.filter((option) => option.id !== "shared" || placementChoice.shared) : [];
+  const chosenPlacement: Placement | null = placementChoice ? (placements.some((option) => option.id === placement) ? placement : "own") : null;
+  const sharedChosen = chosenPlacement === "shared";
   const chosenDevice = devices.length ? (device && devices.includes(device) ? device : devices[0]) : undefined;
   const systemOf = (system: { readonly os: string; readonly device?: string }) => system.device ?? system.os;
   const pickedSystem = picked.device ?? picked.os;
@@ -375,7 +388,9 @@ export function NewBox({
     setMaking(true);
     try {
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
-      const refused = buildsFirst ? await onDemand!.build(kind.id, request, machine && typedName ? typedName : undefined) : await make(kind.id, request, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice);
+      const refused = buildsFirst
+        ? await onDemand!.build(kind.id, request, machine && typedName ? typedName : undefined)
+        : await make(kind.id, sharedChosen ? undefined : request, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice, chosenPlacement === "own" ? true : undefined);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
@@ -471,6 +486,49 @@ export function NewBox({
                 <OptionCard key={systemOf(system)} title={system.label} words={system.words} selected={systemOf(system) === pickedSystem} onClick={() => pick({ os: system.os, device: system.device })} />
               ))}
             </div>
+            {placementChoice && chosenPlacement ? (
+              <div className="space-y-1">
+                <p id="new-box-placement" className="text-xs text-muted-foreground">
+                  Machine
+                </p>
+                <div
+                  role="radiogroup"
+                  aria-labelledby="new-box-placement"
+                  className="space-y-2"
+                  onKeyDown={(event) =>
+                    arrows(event, placements.length, placements.findIndex((option) => option.id === chosenPlacement), (position) => {
+                      setPlacement(placements[position]!.id);
+                      placementOptions.current[PLACEMENTS.indexOf(placements[position]!)]?.focus();
+                    })
+                  }
+                >
+                  {PLACEMENTS.map((option, index) => {
+                    const available = option.id !== "shared" || placementChoice.shared;
+                    const selected = option.id === chosenPlacement;
+                    return (
+                      <button
+                        key={option.id}
+                        ref={(element) => {
+                          placementOptions.current[index] = element;
+                        }}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        aria-disabled={!available || undefined}
+                        tabIndex={selected ? 0 : -1}
+                        onClick={() => {
+                          if (available) setPlacement(option.id);
+                        }}
+                        className={cn(rowClass(selected), !available && "cursor-default opacity-50 hover:bg-transparent")}
+                      >
+                        <span className="block text-xs font-medium text-foreground">{option.title}</span>
+                        <span className="mt-0.5 block text-2xs leading-snug text-muted-foreground">{available ? option.words : `${placementChoice.why ?? "Not available"}.`}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             {devices.length ? (
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Device</p>
@@ -519,7 +577,7 @@ export function NewBox({
               </FormSection>
             </>
           )}
-          {kind ? (
+          {kind && !sharedChosen ? (
             <FormSection title="Resources" description={`Configure the box's cores, memory${gpuChoice ? ", disk and GPU" : " and disk"}: pick a size, or Custom to set your own.`}>
               <div role="radiogroup" aria-label="Size" className="flex flex-wrap gap-2" onKeyDown={(event) => arrows(event, choices.length, sizeIndex, (position) => chooseSize(choices[position]!, true))}>
                 {choices.map((candidate, position) => {

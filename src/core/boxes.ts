@@ -55,6 +55,7 @@ import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
 import { command, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
+import { grantRefusal, inSlot, isSlotKind, resizeRefusal, restartRefusal, sharedRefusal, SHARED_HOSTS_OFF, SHARED_IOS_BY_DEFAULT, SIZE_NEEDS_DEDICATED, slotCapabilities, stopRefusal, type SharedHosts } from "./device-host.ts";
 import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
 
 export type BoxState =
@@ -404,6 +405,7 @@ export interface BoxesDeps {
   log?(message: string): void;
   /** How long a command waits for its box to finish enrolling, or reconnecting after a start. */
   readonly enrolWaitMs?: number;
+  readonly sharedIosByDefault?: boolean;
   now?(): number;
   random?(bytes: number): Uint8Array;
 }
@@ -566,6 +568,15 @@ const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
 /** The error of a box restored running whose guest did not answer. The sweep clears it once the guest answers. */
 const SILENT = "Its guest was running but did not answer when bb-box restored the box's lost record. Stop and start it if commands fail.";
+
+function sizeAsked(size: SizeRequest | undefined): boolean {
+  return !!size && [size.preset, size.cores, size.memoryGiB, size.diskGiB].some((part) => part !== undefined && part !== "");
+}
+
+function placed(box: BoxRecord, guest: Guest): Partial<BoxRecord> {
+  if (!inSlot({ guest }) || inSlot(box)) return { guest };
+  return { guest, capabilities: slotCapabilities(box.capabilities) };
+}
 
 export function withDeviceChecked(box: BoxRecord): BoxRecord {
   const storedOffer: unknown = box.capabilities.device;
@@ -819,6 +830,20 @@ export class Boxes {
     return choice.model.name;
   }
 
+  #ownVmAsked(input: { readonly dedicated?: boolean; readonly shared?: boolean; readonly size?: SizeRequest }, kind: string, impliedOwnVm: boolean): void {
+    if (input.dedicated !== undefined && kind !== "ios") {
+      throw new BoxError("unsupported", `dedicated is only for ios boxes, which may one day share a Mac or VM with other ios boxes. A ${kind} box is a machine of its own already.`);
+    }
+    if (input.shared !== undefined && !isSlotKind(kind)) throw new BoxError("unsupported", `shared is only for ios and macos boxes, which can be a macOS user on a shared iOS host. A ${kind} box cannot.`);
+    if (input.dedicated === true && input.shared === true) throw new BoxError("unsupported", "Ask for dedicated or shared, not both: dedicated is a VM of its own, shared a macOS user on a host shared with other boxes.");
+    if (input.shared === true && isSlotKind(kind)) throw new BoxError("no_capacity", sharedRefusal(kind));
+    if (kind === "ios" && this.sharedHosts().byDefault && input.dedicated !== true && !impliedOwnVm && sizeAsked(input.size)) throw new BoxError("invalid_size", SIZE_NEEDS_DEDICATED);
+  }
+
+  sharedHosts(): SharedHosts {
+    return { ...SHARED_HOSTS_OFF, byDefault: this.#deps.sharedIosByDefault ?? SHARED_IOS_BY_DEFAULT };
+  }
+
   #slimAsked(slim: boolean | undefined, kind: string, platform: DevicePlatform | null): boolean | null {
     if (platform === "ios") return slim ?? true;
     if (slim === undefined) return null;
@@ -848,6 +873,8 @@ export class Boxes {
     from?: { readonly name: string; readonly build: string | null; readonly ref: string };
     device?: string;
     slim?: boolean;
+    dedicated?: boolean;
+    shared?: boolean;
   }): Promise<BoxRecord> {
     const requested = this.#now();
     const { kind: wanted, features } = kindRequest(input.kind);
@@ -910,6 +937,7 @@ export class Boxes {
       throw new BoxError("not_found", `There is no image ${input.image} for ${wanted} boxes. box_list names each kind's images; "standard" is bb-box's own.`);
     }
     // Spares left over from a kind that keeps none now are released, not claimed. A project's image's box claims a spare of its image's current build (#440).
+    this.#ownVmAsked(input, wanted, input.threadId === SPARES || yours || role === "machine" || tried !== null || image !== null);
     const claims = claimsSpare && !tried && (image !== null || (general.spares[wanted] ?? 0) > 0);
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
@@ -1644,7 +1672,7 @@ export class Boxes {
     const hooks: AcquireHooks = {
       claim: async (guest) => {
         // Recorded even when a release is waiting, so the release finds it.
-        const next = await this.update(box, () => ({ guest }));
+        const next = await this.update(box, (current) => placed(current, guest));
         if (!next) throw released();
         box = next;
         if (next.state === "releasing") throw released();
@@ -1695,8 +1723,8 @@ export class Boxes {
     const now = this.#now();
     const next = await this.update(box, (current) =>
       current.state === "releasing"
-        ? { guest }
-        : { guest, state: "ready", readyAt: now, error: null, timings: { ...timings, total: now - current.createdAt }, waitingOn: null },
+        ? placed(current, guest)
+        : { ...placed(current, guest), state: "ready", readyAt: now, error: null, timings: { ...timings, total: now - current.createdAt }, waitingOn: null },
     );
     if (next?.state === "ready") void this.#recordReady(next).catch((error) => this.#deps.logError("ready history", error));
     // A spare's own start is not a use of its image: a claim is (#440).
@@ -1914,11 +1942,13 @@ export class Boxes {
 
   /** Whether the box's backend can stop and start it. The panel and tools offer stop and start only then. */
   canStopStart(box: BoxRecord): boolean {
+    if (inSlot(box)) return false;
     const backend = this.#deps.backends.get(box.backend);
     return !!(backend?.stop && backend.start);
   }
 
   #stopStart(box: BoxRecord): { stop: NonNullable<Backend["stop"]>; start: NonNullable<Backend["start"]> } {
+    if (inSlot(box)) throw new BoxError("unsupported", stopRefusal(box.kind));
     const backend = this.#backend(box);
     if (!backend.stop || !backend.start) {
       throw new BoxError("unsupported", `${box.backendLabel} cannot stop and start its boxes, so box ${box.name} keeps running until it is released.`);
@@ -2034,6 +2064,7 @@ export class Boxes {
     options: { readonly restart?: boolean; readonly check?: boolean; readonly beforeRestart?: (box: BoxRecord) => Promise<void>; readonly signal?: AbortSignal },
   ): Promise<ResizeAnswer> {
     if (!ownedByThread(box.threadId) && box.threadId !== OPERATOR) throw new BoxError("unsupported", `Box ${box.name} is a spare, which takes its size when it is claimed.`);
+    if (inSlot(box)) throw new BoxError("unsupported", options.restart ? restartRefusal(box.kind) : resizeRefusal(box.kind));
     const backend = this.#deps.backends.get(box.backend);
     const resizing = backend?.resizing?.(box.kind) ?? null;
     if (!backend?.planResize || !backend.resize || !resizing || (resizing.cores === "no" && resizing.memory === "no" && resizing.disk === "no")) {
@@ -2281,6 +2312,7 @@ export class Boxes {
   /** Grants a program in a ready box macOS permissions (058). */
   async grant(threadId: string, ref: string, request: GrantRequest, signal?: AbortSignal): Promise<{ box: BoxRecord; answer: GrantAnswer }> {
     const box = await this.get(threadId, ref);
+    if (inSlot(box)) throw new BoxError("unsupported", grantRefusal(box.kind));
     const backend = this.#backend(box);
     if (!backend.grant) throw new BoxError("unsupported", `${box.backendLabel} cannot grant macOS permissions: only Tart's macOS boxes and Macs of the SSH host pool with SIP off can.`);
     this.#require(box, "ready");
