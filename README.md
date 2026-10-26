@@ -24,16 +24,18 @@ Boxes join BB by reaching BB's server. If BB is signed in to your bb account, bb
 1. In BB, open Settings, then Installed plugins, then the arrow beside **New plugin**, then **Install from source**, and enter:
 
    ```text
-   git:https://github.com/moonstead/bb-box.git@main
+   git:https://github.com/moonstead/bb-box.git@stable
    ```
 
    Or with BB's command line, `bb`, or `npx --package bb-app bb` where `bb` is not installed:
 
    ```sh
-   bb plugin install git:https://github.com/moonstead/bb-box.git@main
+   bb plugin install git:https://github.com/moonstead/bb-box.git@stable
    ```
 
    It asks you to confirm. An agent or a script adds `--yes`, as it cannot answer.
+
+   `stable` is the release branch. `main` is where new work lands first and is tried before it reaches `stable`; install `@main` only to try that work.
 
 2. Open a thread's **Box** panel, or BB Box in BB's settings, and select **Use Docker on this machine**, or have an agent run `bb box setup docker`. The Linux image usually builds in 5 to 12 minutes, depending on the machine.
 3. Select the plus, then **Create box**. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
