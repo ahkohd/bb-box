@@ -580,6 +580,13 @@ test("a draft's problems are at their fields' paths", () => {
   assert.deepEqual(off.map((problem) => problem.path), ["general.defaultKind"], "a default kind that is off is a problem");
   const unoffered = checkDocument(readDraft({ general: { defaultKind: "linux-desktop-cpu" } }, DRIVERS).document, {}, DRIVERS);
   assert.deepEqual(unoffered, [], "a kind no backend offers just now is fine");
+
+  const fake = fakeDriver(tempDir("least"));
+  const withAndroid = [...DRIVERS, { ...fake, kinds: [...fake.kinds, "android"] }];
+  const tooSmall = checkDocument(readDraft({ kinds: { android: { presets: { small: { cores: 2 } } } } }, withAndroid).document, {}, withAndroid);
+  assert.deepEqual(tooSmall.map((problem) => `${problem.path}: ${problem.message}`), [
+    "kinds.android.presets.small: The small android preset is too small. An android box needs at least 4 cores and 10 GiB memory, not 2 cores, 16 GiB memory: its emulator draws the device on the CPU and holds 4 to 5.5 GiB once booted.",
+  ]);
 });
 
 test("an earlier kind ID's entries move to its kind once, unless the kind has its own (041)", () => {

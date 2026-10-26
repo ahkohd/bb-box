@@ -51,6 +51,34 @@ const ANDROID_EMULATOR: KindSizes = {
   largest: size(32, 64, 256),
 };
 
+interface LeastSize {
+  readonly cores: number;
+  readonly memoryGiB: number;
+  readonly because: string;
+}
+
+const LEAST_SIZES: Readonly<Record<string, LeastSize>> = {
+  android: {
+    cores: 4,
+    memoryGiB: 10,
+    because: "its emulator draws the device on the CPU and holds 4 to 5.5 GiB once booted",
+  },
+};
+
+export function leastSize(kind: string): LeastSize | null {
+  return LEAST_SIZES[currentKindId(kind)] ?? null;
+}
+
+export function belowLeast(kind: string, size: BoxSize, changed: { readonly cores: boolean; readonly memory: boolean } = { cores: true, memory: true }): string | null {
+  const least = leastSize(kind);
+  if (!least) return null;
+  const fewCores = changed.cores && size.cores < least.cores;
+  const littleMemory = changed.memory && size.memoryMiB < least.memoryGiB * 1024;
+  if (!fewCores && !littleMemory) return null;
+  const article = /^[aeiou]/.test(kind) ? "An" : "A";
+  return `${article} ${kind} box needs at least ${least.cores} cores and ${least.memoryGiB} GiB memory, not ${describeSize(size)}: ${least.because}.`;
+}
+
 /**
  * The least memory of a custom size of a Linux kind. BB's daemon uses about
  * 260 MB in a box, and a 1 GiB box ran out of memory as it became a BB
@@ -179,6 +207,8 @@ function readKind(kind: string, value: unknown, problems: string[]): KindSizesCh
     if (!fits(sizes.presets[preset], sizes.largest)) {
       problems.push(`${kind}'s ${preset} preset, ${describeSize(sizes.presets[preset])}, is above its largest size, ${describeSize(sizes.largest)}.`);
     }
+    const tooSmall = belowLeast(kind, sizes.presets[preset]);
+    if (tooSmall) problems.push(`${kind}'s ${preset} preset is too small. ${tooSmall}`);
   }
   return problems.length > before ? undefined : change;
 }
@@ -332,6 +362,8 @@ export function chooseSize(kind: string, sizes: KindSizes, request: SizeRequest 
   if (!fits(chosen, sizes.largest)) {
     return { ok: false, message: `A ${kind} box can be at most ${describeSize(sizes.largest)}, not ${describeSize(chosen)}. ${presets}.` };
   }
+  const tooSmall = belowLeast(kind, chosen);
+  if (tooSmall) return { ok: false, message: `${tooSmall} ${presets}.` };
   return { ok: true, size: chosen };
 }
 
@@ -369,6 +401,8 @@ export function chooseResize(kind: string, sizes: KindSizes, current: BoxSize, r
     (chosen.memoryMiB !== current.memoryMiB && chosen.memoryMiB > largest.memoryMiB) ||
     (chosen.diskGiB !== current.diskGiB && chosen.diskGiB !== null && largest.diskGiB !== null && chosen.diskGiB > largest.diskGiB);
   if (over) return { ok: false, message: `A ${kind} box can be at most ${describeSize(largest)}, not ${describeSize(chosen)}. ${presets}.` };
+  const tooSmall = belowLeast(kind, chosen, { cores: chosen.cores !== current.cores, memory: chosen.memoryMiB !== current.memoryMiB });
+  if (tooSmall) return { ok: false, message: `${tooSmall} ${presets}.` };
   if (chosen.diskGiB !== null && current.diskGiB !== null && chosen.diskGiB < current.diskGiB) {
     return { ok: false, message: `A box's disk only grows, and this box's is ${current.diskGiB} GiB, more than the ${chosen.diskGiB} GiB asked for. Leave the disk out to keep it.` };
   }
