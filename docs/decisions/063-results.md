@@ -2346,7 +2346,8 @@ report. It did not show after a full reboot.
 - **Online means reached.** The read-back adds the default network from
   `dumpsys connectivity`, which takes 14 to 16 ms. `online` and `slow` need
   a default network Android has validated; `offline` needs none. A boot
-  waits up to 20 s for the network bb-box set. The network control waits up
+  waits up to 10 s for the network bb-box set, then restarts Wi-Fi once and
+  waits up to 15 s more (below, after the deploy). The network control waits up
   to 8 s, then says what the device reads, for example "The network was
   set to online, but 8 s later the device reads airplane mode disabled,
   Wi-Fi on, not slowed, no default network."
@@ -2392,3 +2393,36 @@ against 20 s.
   rebuilt with the new prepare-avds.sh. The reboot, about 20 s, stays.
 - On Proxmox a stop and start resumes the device; a backend that boots it
   again was not tried.
+
+### After the deploy: five fresh boxes
+
+Version 17 in the production BB, five android boxes acquired one after
+another, at most two held at a time, each released after its check. Each
+row is the box's Pixel 8 as box_acquire handed it over.
+
+| Box | Boot time box_acquire said | Android ID, the wait for the write in it | Default network | Fetch | Phone ANRs | Network and internet |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 34.8 s | 26.7 s, 6.4 s | 100, validated | 200 OK | 0 | opened, no crash |
+| 2 | 35.5 s | 26.5 s, 5.9 s | 100, validated | 200 OK | 0 | opened, no crash |
+| 3 | 32.8 s | 26.7 s, 6.4 s | 100, validated | 200 OK | 0 | opened, no crash |
+| 4 | 32.3 s | 26.7 s, 6.4 s | 100, validated | 200 OK | 0 | opened, no crash |
+| 5 | 49.5 s, and no "network online" | 26.8 s, 5.9 s | 100, not validated | DNS failed | 0 | opened, no crash |
+| 6, while version 18 was made | 33.4 s | 26.3 s, 5.8 s | 100, validated | 200 OK | 0 | opened |
+
+Box 5 had a different fault. AndroidWifi was saved and on disk, and Wi-Fi
+connected, but the device could not reach even its gateway: "Network is
+unreachable". Its routing table for Wi-Fi had no IPv4 routes, though
+`dumpsys connectivity` listed them. netd's log shows why: ConnectivityService
+added wlan0 and its routes to network 100 54 ms before it created that
+network in netd, which refused them with "Machine is not on the network".
+Its retry left the default route out, with "Network is unreachable". Version
+17 said so after its 20 s wait, and box_acquire did not claim "network
+online". Turning Wi-Fi off and on gave a validated network in 5.3 s.
+
+So version 18, when the network bb-box set has not come 10 s after a boot
+and airplane mode is off with Wi-Fi on, restarts Wi-Fi once, and waits up
+to 15 s more. On a box with version 18, a loop flushed the Wi-Fi table's
+IPv4 routes for 8 s after a cold reboot, which leaves the network
+unvalidated as on box 5. The server restarted Wi-Fi 10 s after the boot
+and read the network online 5.4 s later; a fetch gave 200 OK. One of six
+boxes is too few to say how often Android does this.

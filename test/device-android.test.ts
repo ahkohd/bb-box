@@ -7,7 +7,7 @@ import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { DeviceState, OfferedDeviceOf } from "../src/core/device.ts";
 import { AndroidDriver, foldScreenOf, identityFile, largestFrameBytes, shellQuoted, skinRotation } from "../src/device/android-driver.ts";
-import { ADD_EMULATOR_WIFI, AndroidSettingsKeeper, WIFI_NETWORKS, WIFI_WRITTEN, networkScript, parseDefaultNetwork, parseReading, readScript } from "../src/device/android-controls.ts";
+import { ADD_EMULATOR_WIFI, AndroidSettingsKeeper, RESTART_WIFI, WIFI_NETWORKS, WIFI_WRITTEN, networkScript, parseDefaultNetwork, parseReading, readScript } from "../src/device/android-controls.ts";
 import { panelPoint, touchPanel } from "../src/device/android-input.ts";
 import { apkPackage } from "../src/device/apk.ts";
 import { EMULATOR_OWN_LOCATION } from "../src/core/device-settings.ts";
@@ -245,6 +245,7 @@ class FakeEmulator implements EmulatorControl {
   wifiSaved = true;
   wifiWrittenAfterChecks = 0;
   reachable = true;
+  routesLostUntilWifiRestarts = false;
   reboots = 0;
   readonly order: string[] = [];
   installed = new Set<string>();
@@ -288,6 +289,7 @@ class FakeEmulator implements EmulatorControl {
       return this.wifiSaved && this.wifiWrittenAfterChecks === 0 ? "2\n" : "0\n";
     }
     if (command === ADD_EMULATOR_WIFI) this.wifiSaved = true;
+    if (command === RESTART_WIFI) this.routesLostUntilWifiRestarts = false;
     this.shells.push(command);
     const night = /^cmd uimode night (yes|no)$/.exec(command);
     if (night) this.night = night[1]!;
@@ -311,7 +313,7 @@ class FakeEmulator implements EmulatorControl {
   }
   connectivity(): string {
     if (this.airplane !== "disabled" || this.wifi !== "1" || !this.wifiSaved) return "Active default network: none";
-    const capabilities = this.reachable ? "NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&VALIDATED&NOT_ROAMING" : "NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_ROAMING";
+    const capabilities = this.reachable && !this.routesLostUntilWifiRestarts ? "NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&VALIDATED&NOT_ROAMING" : "NOT_METERED&INTERNET&NOT_RESTRICTED&TRUSTED&NOT_VPN&NOT_ROAMING";
     return `Active default network: 100\n  NetworkAgentInfo{network{100}  handle{432902426637}  ni{WIFI CONNECTED extra: } Score(Policies : TRANSPORT_PRIMARY&EVER_VALIDATED&IS_VALIDATED ; KeepConnected : 0)  nc{[ Transports: WIFI Capabilities: ${capabilities} LinkUpBandwidth>=12000Kbps ]}  factorySerialNumber=5}`;
   }
   async adbRun(args: readonly string[]): Promise<{ readonly code: number; readonly output: string }> {
@@ -683,13 +685,13 @@ describe("the Android driver", () => {
       file: join(dir, "settings.json"),
       log: () => {},
       now: () => Date.now(),
-      settleMs: { setting: 100, network: 300, boot: 300, wifiWritten: 300 },
+      settleMs: { setting: 100, network: 300, boot: 300, wifiRestarted: 300, wifiWritten: 300 },
     });
     await keeper.use("Pixel 8", AbortSignal.timeout(5000));
     emulator.reachable = false;
     await keeper.read(AbortSignal.timeout(5000));
     assert.deepEqual(keeper.settings().network, { known: false, why: "The network is none of bb-box's presets: airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated." });
-    await assert.rejects(keeper.waitNetworkAfterBoot(AbortSignal.timeout(5000)), /bb-box set the network online, but 0\.3 s after the boot the device reads airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated\./);
+    await assert.rejects(keeper.waitNetworkAfterBoot(AbortSignal.timeout(5000)), /bb-box set the network online, and restarted Wi-Fi as the device had no validated network 0\.3 s after the boot, but 0\.3 s later it reads airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated\./);
     emulator.wifiSaved = false;
     await assert.rejects(keeper.setNetwork("online", AbortSignal.timeout(5000)), /The network was set to online, but 0\.3 s later the device reads airplane mode disabled, Wi-Fi on, not slowed, no default network\./);
     await assert.rejects(keeper.waitEmulatorWifiWritten(AbortSignal.timeout(5000)), /had not written AndroidWifi to its Wi-Fi store 0\.3 s later/);
@@ -698,6 +700,31 @@ describe("the Android driver", () => {
     emulator.reachable = true;
     await keeper.setNetwork("online", AbortSignal.timeout(5000));
     assert.ok(keeper.settings().network.known);
+  });
+
+  test("a boot whose Wi-Fi network has no validated network 10 s on restarts Wi-Fi once, as Android sometimes adds its routes before the network, and not when Wi-Fi was turned off (F-3)", async () => {
+    const emulator = new FakeEmulator();
+    const lines: string[] = [];
+    const keeper = new AndroidSettingsKeeper({
+      device: { shell: (command) => emulator.shell(command), gps: async () => EMULATOR_OWN_LOCATION, setGps: async () => {}, battery: async () => ({ level: 100, charging: true }), setBattery: async () => {} },
+      file: join(tempDir("android-keeper"), "settings.json"),
+      log: (line) => lines.push(line),
+      now: () => Date.now(),
+      settleMs: { setting: 100, network: 300, boot: 200, wifiRestarted: 300 },
+    });
+    await keeper.use("Pixel 8", AbortSignal.timeout(5000));
+    emulator.routesLostUntilWifiRestarts = true;
+    await keeper.waitNetworkAfterBoot(AbortSignal.timeout(5000));
+    assert.equal(emulator.shells.filter((command) => command === RESTART_WIFI).length, 1);
+    assert.ok(lines.some((line) => /0\.2 s after the boot the device reads .*a default network Android has not validated\. Restarting Wi-Fi once/.test(line)), lines.join("\n"));
+    assert.ok(keeper.settings().network.known);
+    emulator.routesLostUntilWifiRestarts = true;
+    emulator.reachable = false;
+    await assert.rejects(keeper.waitNetworkAfterBoot(AbortSignal.timeout(5000)), /restarted Wi-Fi as the device had no validated network 0\.2 s after the boot, but 0\.3 s later it reads/);
+    emulator.wifi = "0";
+    const before = emulator.shells.filter((command) => command === RESTART_WIFI).length;
+    await assert.rejects(keeper.waitNetworkAfterBoot(AbortSignal.timeout(5000)), /0\.2 s after the boot the device reads airplane mode disabled, Wi-Fi off/);
+    assert.equal(emulator.shells.filter((command) => command === RESTART_WIFI).length, before);
   });
 
   test("a box with no adb key yet leaves the Android ID as it is", async () => {
@@ -710,7 +737,7 @@ describe("the Android driver", () => {
   test("the read-back reads every setting in one shell command", () => {
     const validated = new FakeEmulator().connectivity();
     const read = parseReading(["Night mode: yes", "1.15", "  mWakefulness=Dozing", "enabled", "0", "qdisc noqueue 0: root", "1", "Active default network: none"].join("\n@@bb-box@@\n"));
-    assert.deepEqual(read, { appearance: "dark", fontScale: 1.15, awake: false, network: "offline", networkWords: "airplane mode enabled, Wi-Fi off, not slowed, no default network", posture: "half-open" });
+    assert.deepEqual(read, { appearance: "dark", fontScale: 1.15, awake: false, network: "offline", radiosOn: false, networkWords: "airplane mode enabled, Wi-Fi off, not slowed, no default network", posture: "half-open" });
     assert.equal(parseReading(["Night mode: no", "null", "", "disabled", "1", "qdisc netem 8001: root", "", validated].join("\n@@bb-box@@\n")).network, "slow");
     assert.equal(parseReading(["Night mode: no", "null", "", "disabled", "1", "qdisc noqueue 0: root", "", validated].join("\n@@bb-box@@\n")).network, "online");
     assert.equal(parseReading(["Night mode: no", "null", "", "disabled", "1", "qdisc noqueue 0: root", "", "Active default network: none"].join("\n@@bb-box@@\n")).network, null);
