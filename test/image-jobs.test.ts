@@ -27,6 +27,7 @@ const record = (days: number, changes: Partial<ImageRecord> = {}): ImageRecord =
   nvidia: null,
   layer: null,
   sizeGiB: null,
+  devices: null,
   ...changes,
 });
 const build = (ref: string, kind: string, rec: ImageRecord | null, changes: Partial<ImageBuild> = {}): ImageBuild => ({ ref, image: "standard", kind, build: rec?.build ?? null, record: rec, current: true, ...changes });

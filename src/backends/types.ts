@@ -17,6 +17,7 @@ import type { Tailnet } from "../core/tailnet.ts";
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import type { Arch, CommandTransport, Display, DisplayProtocol, GuestOs, SshAccess } from "../transports/types.ts";
+import type { DeviceOffer } from "../core/device.ts";
 import type { ImageFacts, ImageRecord } from "./images.ts";
 
 export type { Arch, GuestOs } from "../transports/types.ts";
@@ -58,8 +59,9 @@ export interface ComputerUse {
   readonly socket: string;
 }
 
-export interface DisplayCapability {
+export interface DesktopDisplayCapability {
   readonly id: string;
+  readonly shows?: "desktop";
   readonly protocol: DisplayProtocol;
   readonly resizable: boolean;
   /**
@@ -118,6 +120,26 @@ export interface DisplayCapability {
   readonly macKeys?: "alt-command";
 }
 
+export interface DeviceDisplayCapability {
+  readonly id: "device";
+  readonly shows: "device";
+  readonly protocol: "selkies";
+  readonly resizable: false;
+  readonly clipboard?: never;
+  readonly refresh?: never;
+  readonly quality?: never;
+  readonly cursor?: never;
+  readonly byChoice?: never;
+  readonly tellSize?: never;
+  readonly macKeys?: never;
+}
+
+export type DisplayCapability = DesktopDisplayCapability | DeviceDisplayCapability;
+
+export function displayShows(display: DisplayCapability): "desktop" | "device" {
+  return display.shows ?? "desktop";
+}
+
 /**
  * What a box of one offer has. Offers of one kind agree exactly on os, arch,
  * gpu, computerUse, enrol and having a desktop display; doctor warns when
@@ -140,6 +162,7 @@ export interface KindCapabilities {
   readonly computerUse: ComputerUse | null;
   /** The box can enrol as a BB machine. Only when command.shell is "sh" and os is linux or macos. */
   readonly enrol: boolean;
+  readonly device: DeviceOffer | null;
 }
 
 /** A kind of box a backend offers, such as linux. */

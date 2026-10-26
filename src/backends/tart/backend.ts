@@ -498,7 +498,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
       label: "macOS",
       description: "macOS on a Mac with Apple silicon, for builds and commands. Its desktop is not shown.",
       requires: [],
-      capabilities: { os: "macos", arch: "arm64", gpu: false, features: [], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
+      capabilities: { os: "macos", arch: "arm64", gpu: false, features: [], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true, device: null },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
     "macos-desktop": {
@@ -518,6 +518,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands", macKeys: "alt-command" }],
         computerUse: cua,
         enrol: true,
+        device: null,
       },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
@@ -526,7 +527,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
       label: "Linux on arm64",
       description: "A Linux box on an arm64 host, such as a Mac with Apple silicon. amd64 container images and x86_64 binaries do not run there.",
       requires: [],
-      capabilities: { os: "linux", arch: "arm64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
+      capabilities: { os: "linux", arch: "arm64", gpu: false, features: ["docker"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true, device: null },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
     "linux-arm64-desktop-cpu": {
@@ -547,6 +548,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         displays: [{ id: "desktop", protocol: "rfb", resizable: true }, { ...SELKIES_DISPLAY, byChoice: true }],
         computerUse: LINUX_CUA,
         enrol: true,
+        device: null,
       },
       readyTimeoutMs: READY_TIMEOUT_MS,
     },
@@ -569,6 +571,7 @@ export function tartKinds(config: TartConfig): BoxKind[] {
         computerUse: WINDOWS_CUA,
         // Windows boxes join BB unless the switch is set off (#539).
         enrol: config.windowsEnrol,
+        device: null,
       },
       readyTimeoutMs: WINDOWS_READY_TIMEOUT_MS,
     },

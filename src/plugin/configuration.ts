@@ -7,6 +7,7 @@ import { layeredStorage, scopedStorage, type Backends } from "../backends/index.
 import { kindInfo } from "../backends/kinds.ts";
 import type { Arch, BackendDriver, BackendStorage, BoxSize, DoctorReport, FieldDescriptor, MachineNature, BoxForm, GuestOs, WarmShortfall } from "../backends/types.ts";
 import type { BoxRecord } from "../core/boxes.ts";
+import type { DevicePlatform } from "../core/device.ts";
 import {
   GENERAL_DEFAULTS,
   SCHEMA,
@@ -64,6 +65,7 @@ export interface KindInfoView {
   readonly os: GuestOs;
   readonly arch: Arch;
   readonly features: readonly string[];
+  readonly device: DevicePlatform | null;
   /** Its boxes have Docker on every backend that offers it now, on none, or, when null, on some or while none offers it (041). */
   readonly docker: boolean | null;
   /** Driver types that can make it. */

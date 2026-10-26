@@ -292,7 +292,7 @@ export class NamespaceBackend implements Backend {
         label: "macOS",
         description: "A Mac of its own on Namespace, for builds and Apple's tools, with Xcode. It lasts at most the workspace plan's longest life. Its desktop is not shown.",
         requires: [],
-        capabilities: { os: "macos", arch: "arm64", gpu: false, features: ["xcode"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true },
+        capabilities: { os: "macos", arch: "arm64", gpu: false, features: ["xcode"], command: SSH_COMMAND, displays: [], computerUse: null, enrol: true, device: null },
         readyTimeoutMs,
       },
       {
@@ -309,6 +309,7 @@ export class NamespaceBackend implements Backend {
           displays: [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands" }, MAC_VIDEO],
           computerUse: { driver: "cua", version: CUA_VERSION, socket: CUA_SOCKET },
           enrol: true,
+          device: null,
         },
         readyTimeoutMs,
       },

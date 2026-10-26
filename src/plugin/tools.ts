@@ -50,6 +50,7 @@ const HINTS: Record<BoxErrorCode, string> = {
   released: "Acquire a new box with box_acquire.",
   unreachable: "Call box_status. If the box still does not answer, release it and acquire a new one.",
   invalid_name: "Pick another name: a lower-case letter first, then letters, digits and \"-\".",
+  unknown_device: "Pick one of the devices this names, or leave device out for the kind's first.",
   not_owner: "Keep using it with box_run, box_copy and the other box tools; its owner releases or stops it.",
   memory_in_use: "Give the box at least the memory this names, or end what uses memory in it first. box_resize with check says what a size would change.",
   needs_restart: "Call box_resize again with restart true only if ending everything running in the box is fine; otherwise pick parts that change live, or ask the user.",
@@ -366,8 +367,13 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         .min(1)
         .optional()
         .describe('The image the box starts from, from box_list: a project\'s image by name, or "standard" for bb-box\'s own. Leave it out for this project\'s image for the kind, or the standard one.'),
+      device: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("For an ios or android box, the device it boots, from box_list, such as iPhone 18 Pro or Pixel Fold. Defaults to the kind's first."),
     }),
-    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image }, { threadId, projectId, signal }) {
+    async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device }, { threadId, projectId, signal }) {
       try {
         const box = await boxes.acquire({
           threadId: thread(threadId),
@@ -376,6 +382,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           size: { preset: size, cores, memoryGiB: memory_gib, diskGiB: disk_gib },
           ...(on !== undefined ? { on } : {}),
           ...(image !== undefined ? { image } : {}),
+          ...(device !== undefined ? { device } : {}),
         });
         if (wait === false) {
           const asked = boxSize(box);

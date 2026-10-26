@@ -35,7 +35,11 @@ import {
   type MachineNature,
   type ReleaseHooks,
 } from "../../src/backends/types.ts";
+import { KIND_INFO } from "../../src/backends/kinds.ts";
+import { displayShows } from "../../src/backends/types.ts";
 import type { BoxRecord } from "../../src/core/boxes.ts";
+import { deviceModel, type DevicePlatform } from "../../src/core/device.ts";
+import { parseDeviceOffer } from "../../src/core/device-parse.ts";
 import { Computer } from "../../src/core/computer.ts";
 import { DESKTOP_EXITS, command as inBox, driverCommand } from "../../src/core/in-box.ts";
 import { McpSession } from "../../src/core/mcp.ts";
@@ -278,6 +282,37 @@ export function checkKind(kind: BoxKind): void {
   if (capabilities.features.includes("ios-simulator")) {
     assert.ok(capabilities.features.includes("xcode") && command?.shell === "sh", `${kind.id} has the iOS Simulator, so it has Xcode and runs sh commands`);
   }
+  checkDevice(kind);
+}
+
+const DEVICE_HOSTS: Readonly<Record<DevicePlatform, { readonly os: string; readonly arch: string }>> = {
+  ios: { os: "macos", arch: "arm64" },
+  android: { os: "linux", arch: "x86_64" },
+};
+
+export function checkDevice(kind: BoxKind): void {
+  const capabilities = kind.capabilities;
+  const deviceDisplays = capabilities.displays.filter((display) => displayShows(display) === "device");
+  const promised = KIND_INFO[kind.id]?.device ?? null;
+  const device = capabilities.device;
+  if (device === null) {
+    assert.equal(promised, null, `${kind.id} is a ${promised} device kind, so its offer has a device`);
+    assert.equal(deviceDisplays.length, 0, `${kind.id} has no device, so no display shows one`);
+    return;
+  }
+  const parsed = parseDeviceOffer(device);
+  assert.ok(parsed.ok, `${kind.id}'s device reads back: ${parsed.ok ? "" : parsed.words}`);
+  if (promised) assert.equal(device.platform, promised, `${kind.id} offers ${promised} devices`);
+  assert.deepEqual({ os: capabilities.os, arch: capabilities.arch }, DEVICE_HOSTS[device.platform], `${kind.id}'s ${device.platform} devices run on their platform's host`);
+  for (const offered of device.devices) {
+    assert.equal(offered.runtime.platform, device.platform, `${kind.id}'s ${offered.model} runs a ${device.platform} runtime`);
+    assert.equal(deviceModel(offered.model).platform, device.platform, `${kind.id}'s ${offered.model} is a ${device.platform} model`);
+  }
+  assert.equal(deviceDisplays.length, 1, `${kind.id} shows its device in one display`);
+  assert.equal(deviceDisplays[0]!.protocol, "selkies", `${kind.id}'s device display is video`);
+  assert.equal(deviceDisplays[0]!.resizable, false, `${kind.id}'s device display keeps the device's own size`);
+  assert.equal(capabilities.computerUse, null, `${kind.id}'s computer use is the device server's, not Cua's`);
+  if (device.platform === "android") assert.equal(capabilities.displays.length, 1, `${kind.id} has no host desktop`);
 }
 
 export function checkCapacity(capacity: Capacity, nature: MachineNature): void {

@@ -19,7 +19,9 @@
 import { foldName, providerKeys, providerName } from "./provider-name.ts";
 import { randomBytes } from "node:crypto";
 import type { OfferedKind } from "../backends/index.ts";
-import { VM_FEATURES, currentKindId, featureWord, isEarlierKindId, kindRequest, vmOffersLast } from "../backends/kinds.ts";
+import { KIND_INFO, VM_FEATURES, currentKindId, featureWord, isEarlierKindId, kindRequest, vmOffersLast } from "../backends/kinds.ts";
+import { DEVICE_PLATFORMS, deviceModels, listWords, offeredModels, offersModel, type BoxDevice, type DevicePlatform, type ModelName } from "./device.ts";
+import { chooseModel, parseBoxDevice, parseDeviceOffer } from "./device-parse.ts";
 import {
   BackendError,
   type AcquireHooks,
@@ -148,6 +150,8 @@ export interface BoxRecord {
   /** The box's last resize (061), recorded before it changes anything. */
   readonly resize?: ResizeRecord | null;
   readonly endToldAt?: number | null;
+  readonly device?: BoxDevice | null;
+  readonly askedDevice?: ModelName;
 }
 
 /** A resize of a box (061): what it asked for, and how it went. */
@@ -420,6 +424,7 @@ export type BoxErrorCode =
   | "memory_in_use"
   /** A name for one of your machines that is not a hostname label, or is taken. */
   | "invalid_name"
+  | "unknown_device"
   /** The box this thread runs on belongs to another owner, who releases or stops it (036). */
   | "not_owner"
   /** bb-box is stopping, as for an update, and takes no new commands (#405). */
@@ -543,6 +548,7 @@ const UNKNOWN_KIND: KindCapabilities = {
   displays: [],
   computerUse: null,
   enrol: false,
+  device: null,
 };
 
 /** How much longer than the timeout in the box bb-box waits before it stops the command itself. */
@@ -556,6 +562,31 @@ const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
 /** The error of a box restored running whose guest did not answer. The sweep clears it once the guest answers. */
 const SILENT = "Its guest was running but did not answer when bb-box restored the box's lost record. Stop and start it if commands fail.";
+
+export function withDeviceChecked(box: BoxRecord): BoxRecord {
+  const storedOffer: unknown = box.capabilities.device;
+  const offerReadable = storedOffer === null || (storedOffer !== undefined && parseDeviceOffer(storedOffer).ok);
+  const storedDevice: unknown = box.device;
+  const deviceReadable = storedDevice === undefined || storedDevice === null || parseBoxDevice(storedDevice).ok;
+  const askedReadable = box.askedDevice === undefined || deviceModels().some((model) => model.name === box.askedDevice);
+  if (offerReadable && deviceReadable && askedReadable) return box;
+  const { askedDevice: _, ...rest } = box;
+  return {
+    ...(askedReadable ? box : rest),
+    capabilities: offerReadable ? box.capabilities : { ...box.capabilities, device: null },
+    ...(deviceReadable ? {} : { device: null }),
+  };
+}
+
+function kindPlatform(kind: string, offers: readonly OfferedKind[]): DevicePlatform | null {
+  return KIND_INFO[kind]?.device ?? offers.find((offer) => offer.kind.capabilities.device)?.kind.capabilities.device?.platform ?? null;
+}
+
+function deviceKindIds(): string[] {
+  return Object.entries(KIND_INFO)
+    .filter(([, info]) => info.device !== null)
+    .map(([id]) => id);
+}
 
 /** Whether a box or offer with `capabilities` has every one of `features`. */
 export function hasFeatures(capabilities: Pick<KindCapabilities, "features">, features: readonly string[]): boolean {
@@ -650,7 +681,8 @@ export class Boxes {
   }
 
   /** A stored record with its kind's current ID and label, when the kind was renamed (027). */
-  #current(box: BoxRecord): BoxRecord {
+  #current(stored: BoxRecord): BoxRecord {
+    const box = withDeviceChecked(stored);
     if (!isEarlierKindId(box.kind)) return box;
     const kind = currentKindId(box.kind);
     return { ...box, kind, kindLabel: this.kinds().find((candidate) => candidate.id === kind)?.label ?? box.kindLabel };
@@ -731,6 +763,18 @@ export class Boxes {
       .filter((kind) => !seen.has(kind.id) && !!seen.add(kind.id));
   }
 
+  #askedDevice(name: string | undefined, kind: string, platform: DevicePlatform | null, offered: boolean): ModelName | null {
+    if (name === undefined) return null;
+    if (!platform) {
+      if (!offered && !KIND_INFO[kind]) return null;
+      const examples = DEVICE_PLATFORMS.map((each) => deviceModels(each)[0]!.name);
+      throw new BoxError("unsupported", `A ${kind} box has no device. device is only for ${deviceKindIds().join(" and ")} boxes, such as ${examples.join(" or ")}.`);
+    }
+    const choice = chooseModel(name, platform);
+    if (!choice.ok) throw new BoxError("unknown_device", choice.words);
+    return choice.model.name;
+  }
+
   /**
    * Records a new box and starts acquiring it. Returns at once, once a
    * backend has said the box fits; the box is ready when its command
@@ -752,10 +796,13 @@ export class Boxes {
      * which must start boxes from builds.
      */
     from?: { readonly name: string; readonly build: string | null; readonly ref: string };
+    device?: string;
   }): Promise<BoxRecord> {
     const requested = this.#now();
     const { kind: wanted, features } = kindRequest(input.kind);
     const ofKind = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
+    const platform = kindPlatform(wanted, ofKind);
+    const askedDevice = this.#askedDevice(input.device, wanted, platform, ofKind.length > 0);
     // An alias takes only the offers that have its features (041).
     // A VM's offer comes after the others', which start sooner and hold less, unless the request asks for a VM (057).
     const asksVm = features.some((feature) => VM_FEATURES.includes(feature));
@@ -763,6 +810,7 @@ export class Boxes {
     const everywhere = asksVm ? matching : vmOffersLast(matching);
     if (!ofKind.length) {
       const kinds = this.kinds().map((kind) => kind.id);
+      if (platform && kinds.length) throw new BoxError("unknown_kind", `No backend offers ${wanted} boxes (${KIND_INFO[wanted]?.label ?? wanted}) now. The kinds you can acquire are: ${kinds.join(", ")}.`);
       throw new BoxError(
         "unknown_kind",
         kinds.length
@@ -775,16 +823,22 @@ export class Boxes {
       const from = [...new Set(ofKind.map((candidate) => candidate.backend.label))].join(" and ");
       throw new BoxError("unknown_kind", `No backend offers ${input.kind} now: ${wanted} boxes from ${from} have no ${lacking}. Ask for ${wanted} if the box can do without it.`);
     }
+    const withDevice = askedDevice ? everywhere.filter((candidate) => offersModel(candidate.kind.capabilities.device, askedDevice)) : everywhere;
+    if (!withDevice.length) {
+      const offered = [...new Set(everywhere.flatMap((candidate) => (candidate.kind.capabilities.device ? offeredModels(candidate.kind.capabilities.device) : [])))];
+      throw new BoxError("unknown_device", `No backend offers the ${askedDevice} now.${offered.length ? ` The ${wanted} devices offered are: ${offered.join(", ")}.` : ""}`);
+    }
     // The named providers are the only ones tried, in acquire order (044).
-    const named = input.on !== undefined ? this.#on(input.on, input.kind, everywhere) : null;
-    const offered = named ? named.offers : everywhere;
+    const namedForKind = input.on !== undefined ? this.#on(input.on, input.kind, everywhere) : null;
+    const named = namedForKind && askedDevice ? this.#namedWithDevice(namedForKind, askedDevice, withDevice) : namedForKind;
+    const offered = named ? named.offers : withDevice;
     const role = input.role ?? "box";
     const yours = input.threadId === OPERATOR;
     if (yours) {
       if (input.name !== undefined && !isMachineName(input.name)) {
         throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${input.name}" is not one.`);
       }
-      const kind = everywhere[0]!.kind;
+      const kind = withDevice[0]!.kind;
       if (!kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so it cannot be one of your machines.`);
     }
     // Spares and your machines are outside the per-thread limit.
@@ -816,9 +870,9 @@ export class Boxes {
         }
         const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
-        const spare = claims ? await this.#claim(input, offered, features, sized.size, taken, requested, image?.name ?? null) : null;
+        const spare = claims ? await this.#claim({ ...input, askedDevice }, offered, features, sized.size, taken, requested, image?.name ?? null) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
-        const chosen = await this.#place({ threadId: input.threadId, named }, offered, everywhere, sized.size, features);
+        const chosen = await this.#place({ threadId: input.threadId, named }, offered, withDevice, sized.size, features);
         if (tried && !chosen.backend.images?.startsFrom) throw new BoxError("unsupported", `${chosen.backend.label} starts no box from a build.`);
         // A current baked build of the image on the backend chosen starts the box with it (049); otherwise its script runs at start.
         const baked =
@@ -846,6 +900,7 @@ export class Boxes {
           resetAt: null,
           timings: {},
           enrol: { state: "off", hostId: null, error: null },
+          ...(askedDevice ? { askedDevice } : {}),
           ...(tried
             ? { image: { name: tried.name, state: "baked" as const, build: tried.build, from: tried.ref } }
             : image
@@ -893,7 +948,7 @@ export class Boxes {
    * names of its boxes. The box's timings are the claim's, from `requested`.
    */
   async #claim(
-    input: { threadId: string; projectId: string | null; name?: string },
+    input: { threadId: string; projectId: string | null; name?: string; askedDevice: ModelName | null },
     offered: OfferedKind[],
     features: readonly string[],
     size: BoxSize,
@@ -913,6 +968,7 @@ export class Boxes {
           if (imageName && (spare.image?.state !== "baked" || (await this.#deps.baked?.(imageName, spare.backend, spare.kind).catch(() => null))?.ref !== spare.image.from)) continue;
           // A spare made before its backend's offer gained a feature lacks it.
           if (!hasFeatures(spare.capabilities, features)) continue;
+          if (input.askedDevice && !offersModel(spare.capabilities.device, input.askedDevice)) continue;
           if (!(await this.#claimable(spare)) || !sameSize(await this.#size(spare), size)) continue;
           // A spare of an older build of its kind's image than its backend starts
           // boxes from now is not claimed, from the moment the image is
@@ -939,6 +995,7 @@ export class Boxes {
             projectId: input.projectId,
             name: input.name ?? (taken.has(spare.name) ? generateName(await this.#liveNames(taken), this.#random) : spare.name),
             requires: [...new Set([...spare.requires, ...features])],
+            ...(input.askedDevice ? { askedDevice: input.askedDevice } : {}),
             timings: { spare: ms, total: ms },
           };
           await this.#deps.kv.set(indexKey(box.id), box.threadId);
@@ -1357,6 +1414,14 @@ export class Boxes {
     if (chosen && !chosen.ok) return null;
     const size = chosen ? chosen.size : defaultSize(sizes);
     return candidate.backend.capacity(kindId, size, await this.#pending(backendId), signal);
+  }
+
+  #namedWithDevice(named: Named, device: ModelName, withDevice: readonly OfferedKind[]): Named {
+    const offers = named.offers.filter((candidate) => offersModel(candidate.kind.capabilities.device, device));
+    if (offers.length) return { ...named, offers };
+    const lacking = [...new Set(named.offers.map((candidate) => this.#providerName(candidate.backend)))];
+    const having = [...new Set(withDevice.map((candidate) => this.#providerName(candidate.backend)))];
+    throw new BoxError("unknown_device", `${listWords(lacking, "and")} ${lacking.length === 1 ? "has" : "have"} no ${device}. The ${device} comes from: ${having.join(", ")}. Leave "on" out for the first with room.`);
   }
 
   #providerName(backend: Backend): string {

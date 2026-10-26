@@ -156,7 +156,7 @@ export const FAKE_KINDS: readonly BoxKind[] = [
     label: "Linux",
     description: "A fake box: a directory on the test machine.",
     requires: [],
-    capabilities: { os: "linux", arch: ARCH, gpu: false, features: [], command: COMMAND, displays: [], computerUse: null, enrol: true },
+    capabilities: { os: "linux", arch: ARCH, gpu: false, features: [], command: COMMAND, displays: [], computerUse: null, enrol: true, device: null },
     readyTimeoutMs: 10_000,
   },
   {
@@ -174,6 +174,7 @@ export const FAKE_KINDS: readonly BoxKind[] = [
       // The fake driver keeps its desktop in this file, in the box's directory.
       computerUse: { driver: "cua", version: "test", socket: "cua-driver.json" },
       enrol: true,
+      device: null,
     },
     readyTimeoutMs: 10_000,
   },

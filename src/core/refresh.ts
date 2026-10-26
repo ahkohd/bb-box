@@ -195,6 +195,7 @@ export function windowsRecord(current: ImageBuild, pins: readonly WindowsPin[], 
     nvidia: null,
     layer: null,
     sizeGiB: null,
+    devices: null,
   };
 }
 

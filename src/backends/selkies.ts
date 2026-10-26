@@ -4,14 +4,14 @@
 // through the box's command transport. Its size is the RFB display's, which
 // Selkies follows, so it has no resize of its own.
 
-import type { DisplayCapability } from "./types.ts";
+import type { DesktopDisplayCapability, DisplayCapability } from "./types.ts";
 import type { BoxPointer, CommandTransport, Display, Route } from "../transports/types.ts";
 
 /** Where the image's bb-box-selkies.service listens, on 127.0.0.1 only. */
 export const SELKIES_PORT = 5980;
 
 /** The display an X11 desktop kind lists after its RFB one. */
-export const SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies" };
+export const SELKIES_DISPLAY: DesktopDisplayCapability = { id: "selkies", protocol: "selkies", resizable: true, cursor: "selkies" };
 
 /**
  * The display a Wayland desktop kind lists after its RFB one (060), which the
@@ -26,7 +26,7 @@ export const SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "se
  * told first, it came in 0.05 to 0.2 s, with none black (measured 18 October
  * 2026).
  */
-export const WAYLAND_SELKIES_DISPLAY: DisplayCapability = { id: "selkies", protocol: "selkies", resizable: true, tellSize: "first" };
+export const WAYLAND_SELKIES_DISPLAY: DesktopDisplayCapability = { id: "selkies", protocol: "selkies", resizable: true, tellSize: "first" };
 
 /** Where a Wayland image runs Selkies from: an image built before it has none (060). */
 export const SELKIES_LAUNCHER = "/usr/local/libexec/bb-box/selkies";

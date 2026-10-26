@@ -3022,3 +3022,72 @@ test("a restart's estimate comes from the box's own last restart resize, or else
   assert.equal(restartSeconds({ ...box, resize: null, timings: { "start.total": 4_000 } }, true), null, "a backend whose stop keeps the session resumes, unless its timings name a boot");
   assert.equal(restartSeconds({ ...box, resize: null, timings: { "start.total": 4_000, "start.boot": 3_000 } }, true), 8);
 });
+
+const ANDROID_RUNTIME = { platform: "android", api: 35, image: "google_apis", revision: 9, abi: "x86_64", emulator: "37.2.12.0", snapshot: null } as const;
+
+function androidKind(...models: ("Pixel 8" | "Pixel Fold" | "Pixel Tablet")[]): BoxKind {
+  const [first, ...rest] = models.map((model) => ({ model, native: model.toLowerCase().replace(" ", "_"), runtime: ANDROID_RUNTIME }));
+  return {
+    ...FAKE_KINDS[0]!,
+    id: "android",
+    label: "Android emulator",
+    capabilities: { ...FAKE_KINDS[0]!.capabilities, displays: [{ id: "device", shows: "device", protocol: "selkies", resizable: false }], device: { platform: "android", devices: [first!, ...rest] } },
+  };
+}
+
+const refusedWith = (code: string, words: RegExp) => (error: unknown) => {
+  assert.ok(error instanceof BoxError, String(error));
+  assert.equal(error.code, code);
+  assert.match(error.message, words);
+  return true;
+};
+
+test("an acquire of a device kind no backend offers is refused, naming no offer, and device is refused on other kinds and for unknown models (063)", async () => {
+  const world = setup();
+  const acquire = (kind: string, device?: string) => world.boxes.acquire({ threadId: THREAD, projectId: null, kind, ...(device !== undefined ? { device } : {}) });
+  await assert.rejects(acquire("ios"), refusedWith("unknown_kind", /^No backend offers ios boxes \(iOS Simulator\) now\. The kinds you can acquire are: linux, linux-desktop\.$/));
+  await assert.rejects(acquire("android"), refusedWith("unknown_kind", /^No backend offers android boxes \(Android emulator\) now\./));
+  await assert.rejects(acquire("ios", "iphone 18 pro"), refusedWith("unknown_kind", /^No backend offers ios boxes/));
+  await assert.rejects(acquire("linux", "iPhone 18 Pro"), refusedWith("unsupported", /^A linux box has no device\. device is only for ios and android boxes, such as iPhone 18 Pro or Pixel 8\.$/));
+  await assert.rejects(acquire("linux-docker", "Pixel 8"), refusedWith("unsupported", /^A linux box has no device\./));
+  await assert.rejects(acquire("windows-desktop", "Pixel 8"), refusedWith("unsupported", /^A windows-desktop box has no device\./));
+  await assert.rejects(acquire("ios", "Pixel 8"), refusedWith("unknown_device", /^The Pixel 8 is an Android device, not an iOS one\. The iOS devices are: iPhone 18 Pro, iPhone 17, iPad Pro 13-inch \(M5\)\.$/));
+  await assert.rejects(acquire("android", "Pixel 99"), refusedWith("unknown_device", /^There is no Android device called "Pixel 99"\./));
+  await assert.rejects(acquire("no-such-kind", "Pixel 8"), refusedWith("unknown_kind", /^There is no "no-such-kind" kind\./));
+  assert.deepEqual(await world.boxes.list(THREAD), [], "nothing was recorded");
+});
+
+test("an acquire with a device tries only the offers whose image has it, and the box keeps what it asked for (063)", async () => {
+  const world = setup({ kinds: [androidKind("Pixel 8")] });
+  world.others = [new FakeBackend({ root: tempDir("boxes-fold"), storage: scopedStorage(world.kv, "backend/fake:fold/"), id: "fake:fold", hosts: ["lab"], kinds: [androidKind("Pixel 8", "Pixel Fold")] }) as unknown as Backend];
+  const acquire = (device?: string) => world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "android", ...(device !== undefined ? { device } : {}) });
+  const plain = await acquire();
+  assert.equal(plain.backend, world.backend.id, "with no device, the first offer");
+  assert.equal(plain.askedDevice, undefined);
+  const fold = await acquire("pixel fold");
+  assert.equal(fold.backend, "fake:fold", "only the offer with the Pixel Fold");
+  assert.equal(fold.askedDevice, "Pixel Fold");
+  assert.equal((await world.boxes.get(THREAD, fold.name)).askedDevice, "Pixel Fold", "as stored");
+  await assert.rejects(acquire("Pixel Tablet"), refusedWith("unknown_device", /^No backend offers the Pixel Tablet now\. The android devices offered are: Pixel 8, Pixel Fold\.$/));
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "android", device: "Pixel Fold", on: world.backend.id }), refusedWith("unknown_device", /^Fake host has no Pixel Fold\. The Pixel Fold comes from: Fake host on lab\. Leave "on" out for the first with room\.$/));
+  assert.equal((await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "android", device: "Pixel 8", on: world.backend.id })).backend, world.backend.id);
+  await world.boxes.idle();
+});
+
+test("a stored box's device data is read through its validators: what does not read is dropped, and a record from before devices has none (063)", async () => {
+  const world = setup();
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
+  const key = `box/${THREAD}/${box.id}`;
+  const stored = (await world.kv.get<BoxRecord>(key))!;
+  const { device: _, ...before } = stored.capabilities;
+  await world.kv.set(key, { ...stored, capabilities: before });
+  assert.equal((await world.boxes.get(THREAD, box.id)).capabilities.device, null, "a record from before devices");
+  const good = { platform: "android", model: "Pixel 8", runtime: ANDROID_RUNTIME } as const;
+  await world.kv.set(key, { ...stored, device: good, askedDevice: "Pixel 8" });
+  const read = await world.boxes.get(THREAD, box.id);
+  assert.deepEqual([read.device, read.askedDevice], [good, "Pixel 8"]);
+  await world.kv.set(key, { ...stored, capabilities: { ...stored.capabilities, device: { platform: "ios", devices: [] } }, device: { ...good, model: "Pixel 99" }, askedDevice: "Pixel 99" });
+  const dropped = await world.boxes.get(THREAD, box.id);
+  assert.deepEqual([dropped.capabilities.device, dropped.device, dropped.askedDevice], [null, null, undefined]);
+  await world.boxes.idle();
+});

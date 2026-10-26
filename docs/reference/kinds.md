@@ -4,18 +4,33 @@
 
 The kinds of box bb-box knows, the backends that can offer each, and each kind's sizes as shipped. The configuration's `kinds` section changes the sizes (see the [configuration reference](configuration.md)).
 
-| Kind | What it is | OS | Architecture | Desktop | GPU | Backends |
-| --- | --- | --- | --- | --- | --- | --- |
-| `linux` | A Linux box for builds, backend services and the agent's own work. | linux | x86_64 | no | no | Proxmox LXC, Proxmox QEMU, SSH host pool, Docker, microsandbox, Hetzner Cloud, Namespace |
-| `linux-desktop` | A Linux desktop on a GPU, for computer use, browsers and app development. | linux | x86_64 | yes | yes | Proxmox LXC, Docker |
-| `linux-desktop-cpu` | A Linux desktop drawn by the CPU, for computer use and browsers. | linux | x86_64 | yes | no | Proxmox LXC, Proxmox QEMU, Docker, microsandbox, Hetzner Cloud, Namespace |
-| `linux-desktop-wayland-cpu` | A Linux desktop on Wayland (Sway), drawn by the CPU, for computer use, browsers and apps built for Wayland. X11-only apps do not run there. | linux | x86_64 | yes, Wayland | no | Proxmox LXC, Docker, Hetzner Cloud, Namespace |
-| `linux-arm64` | A Linux box on arm64. amd64 container images and x86_64 binaries do not run there. | linux | arm64 | no | no | Tart, microsandbox, Hetzner Cloud |
-| `linux-arm64-desktop-cpu` | A Linux desktop on arm64, drawn by the CPU. amd64 container images and x86_64 binaries do not run there. | linux | arm64 | yes | no | Tart, microsandbox, Hetzner Cloud |
-| `macos` | A Mac for builds and Apple's tools. | macos | arm64 | no | no | SSH host pool, Tart, Namespace |
-| `macos-desktop` | A macOS desktop for computer use and app development. | macos | arm64 | yes | no | SSH host pool, Tart, Namespace |
-| `windows-desktop` | A Windows desktop for computer use, browsers and Windows apps. | windows | x86_64 | yes | no | Proxmox QEMU |
-| `windows-arm64-desktop` | A Windows desktop on arm64, for computer use, browsers and Windows apps. x64 apps run under Windows' emulation, more slowly; x64 drivers do not. | windows | arm64 | yes | no | Tart |
+| Kind | What it is | OS | Architecture | Desktop | GPU | Device | Backends |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `linux` | A Linux box for builds, backend services and the agent's own work. | linux | x86_64 | no | no | no | Proxmox LXC, Proxmox QEMU, SSH host pool, Docker, microsandbox, Hetzner Cloud, Namespace |
+| `linux-desktop` | A Linux desktop on a GPU, for computer use, browsers and app development. | linux | x86_64 | yes | yes | no | Proxmox LXC, Docker |
+| `linux-desktop-cpu` | A Linux desktop drawn by the CPU, for computer use and browsers. | linux | x86_64 | yes | no | no | Proxmox LXC, Proxmox QEMU, Docker, microsandbox, Hetzner Cloud, Namespace |
+| `linux-desktop-wayland-cpu` | A Linux desktop on Wayland (Sway), drawn by the CPU, for computer use, browsers and apps built for Wayland. X11-only apps do not run there. | linux | x86_64 | yes, Wayland | no | no | Proxmox LXC, Docker, Hetzner Cloud, Namespace |
+| `linux-arm64` | A Linux box on arm64. amd64 container images and x86_64 binaries do not run there. | linux | arm64 | no | no | no | Tart, microsandbox, Hetzner Cloud |
+| `linux-arm64-desktop-cpu` | A Linux desktop on arm64, drawn by the CPU. amd64 container images and x86_64 binaries do not run there. | linux | arm64 | yes | no | no | Tart, microsandbox, Hetzner Cloud |
+| `macos` | A Mac for builds and Apple's tools. | macos | arm64 | no | no | no | SSH host pool, Tart, Namespace |
+| `macos-desktop` | A macOS desktop for computer use and app development. | macos | arm64 | yes | no | no | SSH host pool, Tart, Namespace |
+| `windows-desktop` | A Windows desktop for computer use, browsers and Windows apps. | windows | x86_64 | yes | no | no | Proxmox QEMU |
+| `windows-arm64-desktop` | A Windows desktop on arm64, for computer use, browsers and Windows apps. x64 apps run under Windows' emulation, more slowly; x64 drivers do not. | windows | arm64 | yes | no | no | Tart |
+| `ios` | An iOS Simulator device, an iPhone or iPad, on a macOS VM: for installing, running and testing iOS apps, shared with a person in the panel. | macos | arm64 | no | no | iOS | none yet |
+| `android` | An Android emulator device, a phone, foldable or tablet, on a Linux VM: for installing, running and testing Android apps, shared with a person in the panel. | linux | x86_64 | no | no | Android | none yet |
+
+## Devices
+
+The devices an `ios` or `android` box can boot (063), which `box_acquire`'s `device` and `bb box acquire --device` take by name. An image offers some of them, each with its runtime; the first an offer lists is the kind's default. The screen is in the device's own pixels, upright.
+
+| Device | Platform | Form | Screen | Scale |
+| --- | --- | --- | --- | --- |
+| `iPhone 18 Pro` | iOS | phone | 1206x2622 | 3 |
+| `iPhone 17` | iOS | phone | 1206x2622 | 3 |
+| `iPad Pro 13-inch (M5)` | iOS | tablet | 2064x2752 | 2 |
+| `Pixel 8` | Android | phone | 1080x2400 | 2.625 |
+| `Pixel Fold` | Android | foldable | outer 1080x2092, inner 2208x1840; closed, half-open, open | 2.625, 2.625 |
+| `Pixel Tablet` | Android | tablet | 2560x1600 | 2 |
 
 ## Aliases
 
@@ -44,3 +59,5 @@ Each kind has the presets small, medium, large, a default preset, and a largest 
 | `macos-desktop` | 4 cores, 8 GiB memory | 6 cores, 16 GiB memory | 8 cores, 32 GiB memory | small | 16 cores, 64 GiB memory, 256 GiB disk |
 | `windows-desktop` | 4 cores, 8 GiB memory | 8 cores, 16 GiB memory | 16 cores, 32 GiB memory | small | 32 cores, 64 GiB memory, 256 GiB disk |
 | `windows-arm64-desktop` | 4 cores, 8 GiB memory | 8 cores, 16 GiB memory | 16 cores, 32 GiB memory | small | 32 cores, 64 GiB memory, 256 GiB disk |
+| `ios` | 4 cores, 8 GiB memory | 6 cores, 16 GiB memory | 8 cores, 32 GiB memory | small | 16 cores, 64 GiB memory, 256 GiB disk |
+| `android` | 8 cores, 16 GiB memory | 12 cores, 24 GiB memory | 16 cores, 32 GiB memory | small | 32 cores, 64 GiB memory, 256 GiB disk |

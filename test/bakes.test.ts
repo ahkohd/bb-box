@@ -31,6 +31,7 @@ const record = (build: string, changes: Partial<ImageRecord> = {}): ImageRecord 
   nvidia: null,
   layer: null,
   sizeGiB: 3.1,
+  devices: null,
   ...changes,
 });
 const standard = (ref: string, kind: string, build: string): ImageBuild => ({ ref, image: "standard", kind, build, record: record(build, { kind }), current: true });

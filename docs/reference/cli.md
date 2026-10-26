@@ -84,7 +84,7 @@ Acquire a box for a thread and wait until it answers.
 
 ```text
 Usage:
-  bb box acquire <kind> [--thread <value>] [--json] [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--on <value>] [--image <value>] [--no-wait]
+  bb box acquire <kind> [--thread <value>] [--json] [--size <small|medium|large>] [--cores <1-1024>] [--memory-gib <1-65536>] [--disk-gib <1-65536>] [--on <value>] [--image <value>] [--device <value>] [--no-wait]
 
 Arguments:
   <kind>  The kind of box, from bb box kinds. (required)
@@ -98,6 +98,7 @@ Options:
   --disk-gib <1-65536>         Root disk in GiB, for a custom size. Presets keep the kind's own disk.
   --on <value>                 The provider to use, from bb box kinds, such as "Docker on devpc", or several with commas between (pve1,devpc) for the first with room among them: only they are tried. Without it, the first with room.
   --image <value>              The image to start from: a project's image, from bb box image list, or "standard". The thread's project's image for the kind by default.
+  --device <value>             For an ios or android box, the device it boots, such as iPhone 18 Pro or Pixel Fold. The kind's first by default.
   --no-wait                    Return once the box is recorded.
   --help, -h                   Show this help and exit
 ```

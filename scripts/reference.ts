@@ -15,6 +15,8 @@ import { DRIVERS } from "../src/backends/index.ts";
 import { KIND_INFO, kindAliases } from "../src/backends/kinds.ts";
 import type { FieldDescriptor } from "../src/backends/types.ts";
 import { CHECKS, type CheckInfo } from "../src/core/checks.ts";
+import { DEVICE_MODELS } from "../src/core/device-models.ts";
+import { platformWord, screensOf, type DeviceModel, type Screen } from "../src/core/device.ts";
 import { GENERAL_DEFAULTS, MAX_SPARES, MAX_WARM } from "../src/core/document.ts";
 import { PRESETS, describeSize, kindSizes } from "../src/core/sizes.ts";
 import plugin from "../server.ts";
@@ -213,6 +215,11 @@ function configurationPage(): string {
   return `${HEADER}${lines.join("\n")}\n`;
 }
 
+function screenWords(model: DeviceModel): string {
+  const size = (screen: Screen) => `${screen.pixels.width}x${screen.pixels.height}`;
+  return model.form === "foldable" ? `outer ${size(model.outer)}, inner ${size(model.inner)}; ${model.postures.join(", ")}` : size(model.screen);
+}
+
 function kindsPage(): string {
   const offeredBy = (kind: string) => DRIVERS.filter((driver) => driver.kinds.includes(kind)).map((driver) => driver.label);
   const kinds = Object.keys(KIND_INFO);
@@ -222,11 +229,20 @@ function kindsPage(): string {
     "The kinds of box bb-box knows, the backends that can offer each, and each kind's sizes as shipped. The configuration's `kinds` section changes the sizes (see the [configuration reference](configuration.md)).",
     "",
     table(
-      ["Kind", "What it is", "OS", "Architecture", "Desktop", "GPU", "Backends"],
+      ["Kind", "What it is", "OS", "Architecture", "Desktop", "GPU", "Device", "Backends"],
       kinds.map((id) => {
         const info = KIND_INFO[id]!;
-        return [`\`${id}\``, info.description, info.os, info.arch, info.desktop ? (info.windowing === "wayland" ? "yes, Wayland" : "yes") : "no", info.gpu ? "yes" : "no", offeredBy(id).join(", ")];
+        return [`\`${id}\``, info.description, info.os, info.arch, info.desktop ? (info.windowing === "wayland" ? "yes, Wayland" : "yes") : "no", info.gpu ? "yes" : "no", info.device ? platformWord(info.device) : "no", offeredBy(id).join(", ") || "none yet"];
       }),
+    ),
+    "",
+    "## Devices",
+    "",
+    "The devices an `ios` or `android` box can boot (063), which `box_acquire`'s `device` and `bb box acquire --device` take by name. An image offers some of them, each with its runtime; the first an offer lists is the kind's default. The screen is in the device's own pixels, upright.",
+    "",
+    table(
+      ["Device", "Platform", "Form", "Screen", "Scale"],
+      DEVICE_MODELS.map((model) => [`\`${model.name}\``, platformWord(model.platform), model.form, screenWords(model), screensOf(model).map((screen) => screen.scale).join(", ")]),
     ),
     "",
     "## Aliases",

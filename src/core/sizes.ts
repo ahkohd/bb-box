@@ -45,6 +45,12 @@ const MACOS: KindSizes = {
   largest: size(16, 64, 256),
 };
 
+const ANDROID_EMULATOR: KindSizes = {
+  presets: { small: size(8, 16), medium: size(12, 24), large: size(16, 32) },
+  default: "small",
+  largest: size(32, 64, 256),
+};
+
 /**
  * The least memory of a custom size of a Linux kind. BB's daemon uses about
  * 260 MB in a box, and a 1 GiB box ran out of memory as it became a BB
@@ -68,6 +74,8 @@ const SHIPPED: Readonly<Record<string, KindSizes>> = {
   "windows-desktop": DESKTOP,
   // Windows on a Mac takes the presets of Windows on Proxmox (046).
   "windows-arm64-desktop": DESKTOP,
+  ios: MACOS,
+  android: ANDROID_EMULATOR,
 };
 
 /** Part of a size in the box-sizes setting. A disk of null is the base. */

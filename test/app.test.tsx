@@ -702,8 +702,8 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
       },
     },
     kinds: [
-      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], docker: true, drivers: ["fake", "other"], spares: { ready: 0, making: 0 } },
-      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], docker: true, drivers: ["fake"], spares: { ready: 0, making: 0 } },
+      { id: "linux", label: "Linux", description: "A Linux box.", gpu: false, desktop: false, os: "linux", arch: "x86_64", features: [], device: null, docker: true, drivers: ["fake", "other"], spares: { ready: 0, making: 0 } },
+      { id: "linux-desktop", label: "Linux desktop", description: "A desktop on a GPU.", gpu: true, desktop: true, os: "linux", arch: "x86_64", features: [], device: null, docker: true, drivers: ["fake"], spares: { ready: 0, making: 0 } },
     ],
     drivers: [
       {

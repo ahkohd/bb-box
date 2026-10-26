@@ -686,6 +686,7 @@ test("config.get gives the document with each secret as set or not, the defaults
     arch: "x86_64",
     windowing: "x11",
     features: [],
+    device: null,
     docker: false,
     drivers: ["fake", "proxmox-lxc"],
     spares: { ready: 0, making: 0 },
