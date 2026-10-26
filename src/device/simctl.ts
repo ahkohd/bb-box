@@ -1,0 +1,123 @@
+import { execFile } from "node:child_process";
+import { DriverError } from "./driver.ts";
+
+export const XCRUN = "/usr/bin/xcrun";
+const COMMAND_MS = 120_000;
+const SPAWN_TRIES = 5;
+const SPAWN_RETRY_MS = 1_000;
+const UTF8 = { LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" };
+
+export interface SimDevice {
+  readonly udid: string;
+  readonly name: string;
+  readonly type: string;
+  readonly runtime: string;
+  readonly state: string;
+  readonly available: boolean;
+}
+
+export interface Ran {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+export type Runner = (program: string, args: readonly string[], options: { readonly timeoutMs: number; readonly input?: string; readonly env?: Readonly<Record<string, string>>; readonly signal?: AbortSignal }) => Promise<Ran>;
+
+export const runProgram: Runner = (program, args, options) =>
+  new Promise((resolve) => {
+    const child = execFile(
+      program,
+      [...args],
+      { timeout: options.timeoutMs, maxBuffer: 64 * 1024 * 1024, signal: options.signal, env: { ...process.env, ...options.env } },
+      (error, stdout, stderr) => {
+        const code = error ? (typeof (error as { code?: unknown }).code === "number" ? (error as { code: number }).code : 1) : 0;
+        resolve({ code, stdout: String(stdout), stderr: String(stderr) || (error && code === 1 && !stderr ? error.message : "") });
+      },
+    );
+    if (options.input !== undefined) child.stdin?.end(options.input);
+  });
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export function disabledLabels(printed: string): ReadonlySet<string> {
+  return new Set([...printed.matchAll(/"([^"]+)" => (?:disabled|true)/g)].map((match) => match[1]!));
+}
+
+type SimctlOptions = { readonly timeoutMs?: number; readonly input?: string; readonly env?: Readonly<Record<string, string>>; readonly signal?: AbortSignal };
+
+export class Simctl {
+  readonly #xcrun: string;
+  readonly #run: Runner;
+
+  constructor(options: { readonly xcrun?: string; readonly run?: Runner } = {}) {
+    this.#xcrun = options.xcrun ?? XCRUN;
+    this.#run = options.run ?? runProgram;
+  }
+
+  async #simctl(args: readonly string[], options: SimctlOptions = {}): Promise<Ran> {
+    return this.#run(this.#xcrun, ["simctl", ...args], { timeoutMs: options.timeoutMs ?? COMMAND_MS, ...options });
+  }
+
+  async #must(what: string, args: readonly string[], options: SimctlOptions = {}): Promise<string> {
+    const ran = await this.#simctl(args, options);
+    if (ran.code !== 0) throw new DriverError("failed", `simctl could not ${what}: ${(ran.stderr || ran.stdout).trim().split("\n").slice(-2).join(" ") || `exit code ${ran.code}`}`);
+    return ran.stdout;
+  }
+
+  async devices(signal?: AbortSignal): Promise<SimDevice[]> {
+    const text = await this.#must("list its devices", ["list", "devices", "--json"], { signal, timeoutMs: 30_000 });
+    const listed = JSON.parse(text) as { devices?: Record<string, { udid: string; name: string; deviceTypeIdentifier?: string; state: string; isAvailable?: boolean }[]> };
+    return Object.entries(listed.devices ?? {}).flatMap(([runtime, devices]) =>
+      devices.map((device) => ({ udid: device.udid, name: device.name, type: device.deviceTypeIdentifier ?? "", runtime, state: device.state, available: device.isAvailable !== false })),
+    );
+  }
+
+  async device(udid: string, signal?: AbortSignal): Promise<SimDevice | null> {
+    return (await this.devices(signal)).find((device) => device.udid === udid) ?? null;
+  }
+
+  async boot(udid: string, signal?: AbortSignal): Promise<void> {
+    const ran = await this.#simctl(["boot", udid], { signal });
+    if (ran.code !== 0 && !/current state: Booted/i.test(ran.stderr)) throw new DriverError("failed", `simctl could not boot the device: ${ran.stderr.trim().split("\n").slice(-2).join(" ")}`);
+    await this.#must("wait for the device to boot", ["bootstatus", udid, "-b"], { signal });
+  }
+
+  async shutdown(udid: string, signal?: AbortSignal): Promise<void> {
+    const ran = await this.#simctl(["shutdown", udid], { signal });
+    if (ran.code !== 0 && !/current state: Shutdown/i.test(ran.stderr)) throw new DriverError("failed", `simctl could not shut the device down: ${ran.stderr.trim().split("\n").slice(-2).join(" ")}`);
+  }
+
+  async reboot(udid: string, signal?: AbortSignal): Promise<void> {
+    await this.shutdown(udid, signal);
+    await this.boot(udid, signal);
+  }
+
+  async #spawn(udid: string, args: readonly string[], signal?: AbortSignal): Promise<string> {
+    let last = "";
+    for (let attempt = 1; attempt <= SPAWN_TRIES; attempt++) {
+      const ran = await this.#simctl(["spawn", udid, ...args], { signal, timeoutMs: 30_000 });
+      if (ran.code === 0) return ran.stdout;
+      last = (ran.stderr || ran.stdout).trim();
+      if (signal?.aborted) break;
+      await wait(SPAWN_RETRY_MS);
+    }
+    throw new DriverError("failed", `simctl spawn ${args.join(" ")} failed ${SPAWN_TRIES} times: ${last}`);
+  }
+
+  async disabled(udid: string, signal?: AbortSignal): Promise<ReadonlySet<string>> {
+    return disabledLabels(await this.#spawn(udid, ["launchctl", "print-disabled", "system"], signal));
+  }
+
+  async setService(udid: string, label: string, on: boolean, signal?: AbortSignal): Promise<void> {
+    await this.#spawn(udid, ["launchctl", on ? "enable" : "disable", `system/${label}`], signal);
+  }
+
+  async setClipboard(udid: string, text: string): Promise<void> {
+    await this.#must("set the device's clipboard", ["pbcopy", udid], { input: text, env: UTF8, timeoutMs: 30_000 });
+  }
+
+  async clipboard(udid: string): Promise<string> {
+    return this.#must("read the device's clipboard", ["pbpaste", udid], { env: UTF8, timeoutMs: 30_000 });
+  }
+}

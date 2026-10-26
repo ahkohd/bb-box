@@ -89,6 +89,8 @@ export const IDB_SCHEMA: Schema = {
   "idb.VideoStreamRequest": [message("start", 1, "idb.VideoStreamRequest.Start", { oneof: "control" }), message("stop", 2, "idb.VideoStreamRequest.Stop", { oneof: "control" })],
   "idb.Payload": [field("file_path", 1, "string", { oneof: "source" }), field("data", 2, "bytes", { oneof: "source" }), field("url", 3, "string", { oneof: "source" })],
   "idb.VideoStreamResponse": [field("log_output", 1, "bytes", { oneof: "output" }), message("payload", 2, "idb.Payload", { oneof: "output" })],
+  "idb.GetOrientationRequest": [],
+  "idb.GetOrientationResponse": [field("orientation", 1, "enum")],
 };
 
 export const GRPC_METHODS = {
@@ -109,5 +111,6 @@ export const GRPC_METHODS = {
     hid: "/idb.CompanionService/hid",
     screenshot: "/idb.CompanionService/screenshot",
     videoStream: "/idb.CompanionService/video_stream",
+    getOrientation: "/idb.CompanionService/get_orientation",
   },
 } as const;

@@ -8,6 +8,7 @@
 
 import { useEffect, type ReactNode } from "react";
 import type { GuestOs, Windowing } from "../backends/types.ts";
+import { platformWord, type DevicePlatform } from "../core/device.ts";
 import type { KindView, OfferView } from "../plugin/views.ts";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -24,6 +25,11 @@ export interface Choice {
   readonly gpu: boolean;
   /** A desktop's windowing system (048); "x11" for a server, which never shows the choice. */
   readonly windowing: Windowing;
+  readonly device?: DevicePlatform;
+}
+
+function deviceOf(kind: KindView): DevicePlatform | undefined {
+  return kind.devices?.platform;
 }
 
 const OS_ORDER: readonly GuestOs[] = ["linux", "macos", "windows"];
@@ -54,20 +60,32 @@ export function providerTitle(offer: OfferView, among: readonly OfferView[] = []
 }
 
 /** The systems on offer, each with the names of its hosts, or how many providers it has when there are many. */
-export function systemsOf(kinds: readonly KindView[]): { readonly os: GuestOs; readonly label: string; readonly words: string }[] {
-  const present = new Set(kinds.map((kind) => kind.os));
-  return OS_ORDER.filter((os) => present.has(os)).map((os) => {
-    const offers = kinds.filter((kind) => kind.os === os).flatMap((kind) => kind.offers);
+export function systemsOf(kinds: readonly KindView[]): { readonly os: GuestOs; readonly device?: DevicePlatform; readonly label: string; readonly words: string }[] {
+  const wordsOf = (of: readonly KindView[]) => {
+    const offers = of.flatMap((kind) => kind.offers);
     const providers = new Set(offers.map((offer) => offer.backend));
     const hosts = [...new Set(offers.flatMap((offer) => (offer.hosts.length ? offer.hosts : [providerTitle(offer)])))];
-    const words = hosts.length && hosts.length <= 2 ? hosts.join(", ") : `${providers.size} ${providers.size === 1 ? "provider" : "providers"}`;
-    return { os, label: osName(os), words };
-  });
+    return hosts.length && hosts.length <= 2 ? hosts.join(", ") : `${providers.size} ${providers.size === 1 ? "provider" : "providers"}`;
+  };
+  const plain = kinds.filter((kind) => !deviceOf(kind));
+  const present = new Set(plain.map((kind) => kind.os));
+  const systems: { readonly os: GuestOs; readonly device?: DevicePlatform; readonly label: string; readonly words: string }[] = OS_ORDER.filter((os) => present.has(os)).map((os) => ({
+    os,
+    label: osName(os),
+    words: wordsOf(plain.filter((kind) => kind.os === os)),
+  }));
+  for (const kind of kinds) {
+    const device = deviceOf(kind);
+    if (!device || systems.some((system) => system.device === device)) continue;
+    const of = kinds.filter((candidate) => deviceOf(candidate) === device);
+    systems.push({ os: kind.os, device, label: `${platformWord(device)} device`, words: wordsOf(of) });
+  }
+  return systems;
 }
 
 /** Kinds of a system on an architecture. */
 function kindsAt(kinds: readonly KindView[], os: GuestOs, arch: Arch): KindView[] {
-  return kinds.filter((kind) => kind.os === os && archOf(kind) === arch);
+  return kinds.filter((kind) => !deviceOf(kind) && kind.os === os && archOf(kind) === arch);
 }
 
 export function archAvailable(kinds: readonly KindView[], os: GuestOs, arch: Arch): boolean {
@@ -109,6 +127,7 @@ export function displayChoices(kinds: readonly KindView[], os: GuestOs, arch: Ar
 
 /** The kind the choice names: the desktop of its windowing and GPU, falling back to its windowing, then to any that exists. */
 export function kindFor(kinds: readonly KindView[], choice: Choice): KindView | null {
+  if (choice.device) return kinds.find((kind) => deviceOf(kind) === choice.device) ?? null;
   const at = kindsAt(kinds, choice.os, choice.arch).filter((kind) => kind.desktop === choice.desktop);
   if (!at.length) return null;
   if (!choice.desktop) return at.find((kind) => kind.gpu === choice.gpu) ?? at[0]!;
@@ -117,7 +136,11 @@ export function kindFor(kinds: readonly KindView[], choice: Choice): KindView | 
 
 /** The nearest choice that exists: the OS stays, then the arch, the type, the windowing, and the GPU snap to what there is. */
 export function nearest(kinds: readonly KindView[], wanted: Choice): Choice {
-  const os = kinds.some((kind) => kind.os === wanted.os) ? wanted.os : (systemsOf(kinds)[0]?.os ?? wanted.os);
+  const deviceKind = wanted.device ? kinds.find((kind) => deviceOf(kind) === wanted.device) : undefined;
+  if (deviceKind) return choiceOf(deviceKind);
+  const first = systemsOf(kinds)[0];
+  if (!kinds.some((kind) => !deviceOf(kind)) && first?.device) return { os: first.os, arch: "arm64", desktop: false, gpu: false, windowing: "x11", device: first.device };
+  const os = kinds.some((kind) => !deviceOf(kind) && kind.os === wanted.os) ? wanted.os : (systemsOf(kinds).find((system) => !system.device)?.os ?? wanted.os);
   const arch = archAvailable(kinds, os, wanted.arch) ? wanted.arch : (ARCHS.find((candidate) => archAvailable(kinds, os, candidate.id))?.id ?? wanted.arch);
   const desktop = typeAvailable(kinds, os, arch, wanted.desktop) ? wanted.desktop : !wanted.desktop;
   const displays = displayChoices(kinds, os, arch);
@@ -130,6 +153,8 @@ export function nearest(kinds: readonly KindView[], wanted: Choice): Choice {
 
 /** The choice a kind stands for, for the form to open on a remembered kind. */
 export function choiceOf(kind: KindView): Choice {
+  const device = deviceOf(kind);
+  if (device) return { os: kind.os, arch: archOf(kind), desktop: false, gpu: false, windowing: "x11", device };
   return { os: kind.os, arch: archOf(kind), desktop: kind.desktop, gpu: kind.gpu, windowing: kind.windowing };
 }
 

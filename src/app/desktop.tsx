@@ -50,7 +50,7 @@ import { SetupProgress } from "./first-run.tsx";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
 import { MachineRow } from "./settings-machines.tsx";
-import { STILLS_WORDS, SelkiesSession, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
+import { DEVICE_HUB_WORDS, STILLS_WORDS, SelkiesSession, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
 import {
   KeysAfterPaste,
   astralKeysym,
@@ -1578,6 +1578,11 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
             Dismiss
           </Button>
         </div>
+      ) : null}
+      {!deviceShown && showing && box?.device?.simulatorHost ? (
+        <p role="note" className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+          {DEVICE_HUB_WORDS}
+        </p>
       ) : null}
       {deviceShown && showing && device?.stills && connection.state === "connected" ? (
         <p role="status" className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">

@@ -17,6 +17,7 @@ import { PRESETS, describeSize, formatMiB, kindSizes, type Preset, type SizeChan
 import type { ConfigState } from "./configuration.ts";
 import type { ThreadOnBox } from "./contract.ts";
 import type { DisplayProtocol } from "../transports/types.ts";
+import { isTestOffer, orientationWord, platformWord, type DevicePlatform, type DeviceState, type Runtime } from "../core/device.ts";
 
 export interface BoxView {
   readonly id: string;
@@ -49,7 +50,7 @@ export interface BoxView {
   readonly desktop: boolean;
   /** The desktop the viewer shows, when the box has one. */
   readonly display: { readonly protocol: DisplayProtocol; readonly resizable: boolean; readonly clipboard: "commands" | null; readonly refresh: "viewer" | null; readonly quality: number | null; readonly macKeys: "alt-command" | null } | null;
-  readonly device?: { readonly model: string | null } | null;
+  readonly device?: { readonly model: string | null; readonly simulatorHost: boolean } | null;
   /** Who controls the desktop's input, when the box has one. */
   readonly control: ControlView | null;
   readonly computerUse: boolean;
@@ -93,7 +94,10 @@ function sizeWords(box: BoxRecord): string | null {
 
 export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlView, resizing: Resizing | null = null): BoxView {
   const [display] = desktopDisplays(box.capabilities.displays);
-  const device = deviceDisplayOf(box.capabilities.displays) ? { model: box.device?.model ?? box.askedDevice ?? box.capabilities.device?.devices[0].model ?? null } : null;
+  const offer = box.capabilities.device;
+  const device = deviceDisplayOf(box.capabilities.displays)
+    ? { model: box.device?.model ?? box.askedDevice ?? offer?.devices[0].model ?? null, simulatorHost: offer?.platform === "ios" && !isTestOffer(offer) }
+    : null;
   return {
     id: box.id,
     name: box.name,
@@ -184,6 +188,12 @@ export interface KindView {
   readonly offers: readonly OfferView[];
   /** Its boxes run a computer-use driver, on every backend that offers it. */
   readonly computerUse: boolean;
+  readonly devices: KindDevices | null;
+}
+
+export interface KindDevices {
+  readonly platform: DevicePlatform;
+  readonly models: readonly string[];
 }
 
 /** One backend's offer of a kind, as the picker's pane shows it. */
@@ -290,6 +300,8 @@ export function kindViews(
       gpuRoom: gpus[key] ?? null,
     };
     const computerUse = kind.capabilities.computerUse !== null;
+    const offerDevices = kind.capabilities.device;
+    const models = offerDevices ? offerDevices.devices.map((device) => device.model as string) : [];
     if (existing) {
       views.set(kind.id, {
         ...existing,
@@ -299,6 +311,7 @@ export function kindViews(
         forms: form && !existing.forms.includes(form) ? [...existing.forms, form] : existing.forms,
         offers: [...existing.offers, offer],
         computerUse: existing.computerUse && computerUse,
+        devices: existing.devices ? { ...existing.devices, models: [...existing.devices.models, ...models.filter((model) => !existing.devices!.models.includes(model))] } : offerDevices ? { platform: offerDevices.platform, models } : null,
       });
       continue;
     }
@@ -326,6 +339,7 @@ export function kindViews(
       forms: form ? [form] : [],
       offers: [offer],
       computerUse,
+      devices: offerDevices ? { platform: offerDevices.platform, models } : null,
     });
   }
   return [...views.values()];
@@ -417,9 +431,58 @@ export function boxLine(box: BoxRecord): string {
   if (box.state === "ready" && box.timings.total !== undefined) parts.push(`ready in ${seconds(box.timings.total)}`);
   if (box.role === "machine") parts.push("this thread's machine");
   else if (box.enrol.state === "enrolled") parts.push(`enrolled as a BB machine${box.timings.enrol !== undefined ? ` in ${seconds(box.timings.enrol)}` : ""}`);
+  const model = box.device?.model ?? box.askedDevice;
+  if (model) parts.push(`device: ${model}`);
   if (box.error) parts.push(box.error);
   if (box.unrequestedStop && box.state !== "ready") parts.push(stopWords(box));
   return `- ${parts.join("; ")}`;
+}
+
+export function devicesText(kind: Pick<KindView, "devices">): string {
+  if (!kind.devices?.models.length) return "";
+  const [first, ...rest] = kind.devices.models;
+  return ` Devices: ${[`${first} (default)`, ...rest].join(", ")}.`;
+}
+
+export function runtimeWords(runtime: Runtime): string {
+  if (runtime.platform === "ios") return `iOS ${runtime.os} (${runtime.build}), Xcode ${runtime.xcode}, idb_companion ${runtime.companion}`;
+  return `Android, API ${runtime.api}, Google APIs, emulator ${runtime.emulator}`;
+}
+
+function powerWords(state: DeviceState): string {
+  const power = state.power;
+  switch (power.is) {
+    case "booted":
+      return power.awake ? "booted" : "booted, asleep";
+    case "booting":
+      return "booting";
+    case "switching":
+      return `switching to the ${power.to}, ${power.step}`;
+    case "stopped":
+      return "stopped";
+    case "failed":
+      return `failed: ${power.error.words}`;
+  }
+}
+
+export function deviceLines(box: BoxRecord, state: DeviceState | null, server: string | null): string[] {
+  const offer = box.capabilities.device;
+  if (!offer) return [];
+  const model = state?.model ?? box.device?.model ?? box.askedDevice ?? offer.devices[0].model;
+  const runtime = box.device?.runtime ?? offer.devices.find((device) => device.model === model)?.runtime ?? null;
+  const lines = [`Device: ${model}${runtime ? `, ${runtimeWords(runtime)}` : ""}`];
+  if (state) {
+    const geometry = state.geometry;
+    const settings = state.settings;
+    const parts = [powerWords(state)];
+    if (geometry) parts.push(orientationWord(geometry.physical), `${geometry.video.width}x${geometry.video.height}`);
+    if (settings.appearance.known) parts.push(settings.appearance.value);
+    lines.push(`Device state: ${parts.join(", ")}`);
+  } else lines.push(`Device state: ${server ?? "not known yet: bb-box has not reached the box's device server"}`);
+  if (offer.platform === "ios") lines.push(`Device commands: simctl in box_run takes booted as the ${platformWord(offer.platform)} device, as in xcrun simctl openurl booted <url>`);
+  if (offer.platform === "ios" && box.slim === false) lines.push("Slim: off. The device runs every service iOS starts");
+  else if (offer.platform === "ios") lines.push("Slim: on. Widgets, Siri, iCloud, Health, Wallet and the like are off; acquire with slim false for an app that needs them");
+  return lines;
 }
 
 const CONTROL_WORDS: Record<ControlView["owner"], string> = {

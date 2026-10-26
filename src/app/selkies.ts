@@ -198,6 +198,7 @@ export interface DeviceShown {
 }
 
 export const STILLS_WORDS = "This browser cannot play the device's video, so it shows a picture a few times a second.";
+export const DEVICE_HUB_WORDS = "Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Device view.";
 
 export class SelkiesSession implements Kept {
   readonly element = document.createElement("div");

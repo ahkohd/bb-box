@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, speaksProtocol, type BoxDevice, type DeviceHello, type DeviceState, type Intent, type OfferedDevice } from "../core/device.ts";
-import { DELIVERY_EXITS, connectScript, deliveryScript, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
+import { DEVICE_SERVER_VERSION, isTestOffer, speaksProtocol, type BoxDevice, type DeviceHello, type DeviceState, type Intent, type OfferedDevice } from "../core/device.ts";
+import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { DeviceLink, DeviceLinkError } from "../core/device-link.ts";
 import type { ByteChannel, RunResult } from "../transports/types.ts";
 import type { DoctorCheck } from "../backends/types.ts";
@@ -9,6 +9,7 @@ import type { DoctorCheck } from "../backends/types.ts";
 export const IDLE_CLOSE_MS = 10 * 60_000;
 export const HELLO_TRIES = 2;
 const SCRIPT_TIMEOUT_MS = 60_000;
+const DEVICE_HUB_CHECK_MS = 15_000;
 const BAD_KEY = (boxId: string) => `device-bad:${boxId}`;
 
 export interface DeviceBoxes {
@@ -54,7 +55,8 @@ interface Held {
 }
 
 export function wantsDevice(box: BoxRecord): boolean {
-  return box.state === "ready" && !!box.capabilities.device && (!!box.askedDevice || !!box.device);
+  const offer = box.capabilities.device;
+  return box.state === "ready" && !!offer && (!isTestOffer(offer) || !!box.askedDevice || !!box.device);
 }
 
 function boxDevice(hello: DeviceHello, state: DeviceState): BoxDevice | null {
@@ -280,7 +282,7 @@ export class DeviceServers {
     const began = Date.now();
     const link = held.link;
     held.link = null;
-    const result = await this.#run(box, deliveryScript(this.version), deliveryStdin({ version: this.version, files, offer, intent: this.#intentFor(box) }));
+    const result = await this.#run(box, deliveryScript(this.version), deliveryStdin({ version: this.version, files, offer, intent: this.#intentFor(box), choices: { slim: box.slim !== false } }));
     if (result.exitCode === DELIVERY_EXITS.recording) {
       held.link = link;
       return this.#wait(box, held, running, "recording");
@@ -356,8 +358,33 @@ export class DeviceServers {
       } else {
         checks.push({ id, name, status: "skipped", detail: "bb-box has not connected to it since it started.", fix: null });
       }
+      if (box.capabilities.device?.platform === "ios" && !isTestOffer(box.capabilities.device)) checks.push(await this.#deviceHubCheck(box));
     }
     return checks;
+  }
+
+  async #deviceHubCheck(box: BoxRecord): Promise<DoctorCheck> {
+    const id = `device-hub.${box.name}` as DoctorCheck["id"];
+    const name = `Device Hub in ${box.name}`;
+    let seen: DeviceHubSeen | null = null;
+    let why = "";
+    try {
+      seen = parseDeviceHub((await this.#deps.boxes.runOwn(box, deviceHubScript(), { timeoutMs: DEVICE_HUB_CHECK_MS })).stdout);
+    } catch (error) {
+      why = `: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (!seen) return { id, name, status: "skipped", detail: `bb-box could not look in box ${box.name}${why}.`, fix: null };
+    const kills = seen.killed ? ` The device server has killed it ${seen.killed === 1 ? "once" : `${seen.killed} times`}, last at ${new Date(seen.last ?? 0).toISOString().slice(0, 16).replace("T", " ")} UTC: Xcode's Run opens it.` : "";
+    if (seen.running) {
+      return {
+        id,
+        name,
+        status: "fail",
+        detail: `Device Hub runs on box ${box.name}'s macOS host. It takes the device's pasteboard, so pasting into the device stops working.${kills}`,
+        fix: `The device server kills it within 5 s. If it stays, its server is not running: read ~/.bb-box/device/server.log in box ${box.name}. Do not quit Device Hub: quitting it shuts the device down.`,
+      };
+    }
+    return { id, name, status: "ok", detail: `Device Hub is not running.${kills}`, fix: null };
   }
 
   async dispose(): Promise<void> {

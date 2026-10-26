@@ -1138,7 +1138,11 @@ test("the iOS image: listed when set, built by prepare-ios-image.sh on the macOS
   const ios = listed.builds.find((build) => build.ref === "mac1/bb-box-ios")!;
   assert.deepEqual([ios.kind, ios.image, ios.current, ios.build], ["ios", "standard", true, "build.20261003-040000-1111"]);
   assert.equal(ios.record?.devices?.length, 2);
-  assert.ok(!backend.kinds().some((kind) => kind.id === "ios"), "not offered until the iOS driver (4.2)");
+  const offered = backend.kinds().find((kind) => kind.id === "ios");
+  assert.ok(offered, "offered once a Mac's record of the iOS image lists its devices (4.2)");
+  assert.deepEqual(offered.capabilities.device, { platform: "ios", devices: IOS_DEVICES });
+  assert.deepEqual(offered.capabilities.displays.map((display) => display.id), ["desktop", "device"]);
+  assert.equal(offered.capabilities.computerUse, null);
   assert.match(images.check!("ios"), /cua-driver[\s\S]*\/usr\/local\/bin\/bb-box-check-ios$/);
 
   const iosCheck = async () => (await backend.doctor()).checks.find((check) => check.id === "image.mac1.ios")!;
@@ -1187,6 +1191,27 @@ test("the iOS image: listed when set, built by prepare-ios-image.sh on the macOS
   assert.ok(existsSync(join(mac, ".tart", "vms", "bb-box-macos")), "the macOS image it is built on stays");
   assert.ok(!tartCalls(mac).some((call) => call[1] === "delete" && call[2] === "bb-box-macos"));
   await assert.rejects(images.remove("mac1/bb-box-ios", signal()), /bb-box-ios on mac1 is not an image box or build of this install's/);
+});
+
+test("offers ios once a Mac's iOS image lists its devices: a box clones that image, keeps no warm VM, and opens only its desktop by RFB, as the device has a display of its own (063, 4.2)", async () => {
+  const { mac, context } = setup({ "tart-ios-image": "bb-box-ios" });
+  addImage(mac, "bb-box-ios");
+  writeFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-ios.json"), `${imageRecord("ios", { build: "build.20261003-040000-1111", base: "build.20261003-021500", devices: IOS_DEVICES, tools: { idb_companion: "1.7.7" } })}\n`);
+  const backend = new TartBackend(tartConfig({ "tart-ios-image": "bb-box-ios" }), context, FAKES);
+  made.push(backend);
+  assert.ok(!backend.kinds().some((kind) => kind.id === "ios"), "not offered before a Mac has answered with the image's devices");
+  const deadline = Date.now() + 10_000;
+  while (!backend.kinds().some((kind) => kind.id === "ios") && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+  const ios = backend.kinds().find((kind) => kind.id === "ios")!;
+  assert.deepEqual(ios.capabilities.device?.devices.map((device) => device.model), ["iPhone 18 Pro", "iPhone 17"]);
+  assert.equal(await backend.asOffered({ ref: "x", host: "mac1", address: null, size: null, data: {} }, "ios"), true);
+  assert.equal((await backend.capacity("ios", SMALL, [], signal())).warm?.target ?? 0, 0, "ios boxes keep no warm VM: their spares are 063 unit 7.5's");
+
+  const guest = await backend.acquire(identity("ios"), null, hooks().hooks, signal());
+  assert.ok(tartCalls(mac).some((call) => call[1] === "clone" && call[2] === "bb-box-ios" && call[3] === guest.ref), "cloned from the iOS image");
+  const { displays } = await backend.transports(guest, "ios");
+  assert.deepEqual(displays.map((display) => [display.id, display.protocol]), [["desktop", "rfb"]]);
+  await backend.release(guest, releasing);
 });
 
 test("the iOS image setting is a Tart VM name of its own, and needs a macOS image to be built on (063, 3.2)", () => {

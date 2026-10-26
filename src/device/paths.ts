@@ -24,6 +24,7 @@ export function devicePaths(home: string) {
     intent: join(dir, "intent.json"),
     state: join(dir, "state.json"),
     devices: join(dir, "devices.json"),
+    choices: join(dir, "choices.json"),
     servers: join(dir, "server"),
     current: join(dir, "current"),
     previous: join(dir, "previous"),

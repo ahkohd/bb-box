@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { DeviceOffer, Intent } from "./device.ts";
+import { DEVICE_HUB_PROCESS, type DeviceOffer, type Intent } from "./device.ts";
 import { RECORD_DIR } from "./record.ts";
 
 export const DEVICE_SERVER_FILES = [
@@ -9,16 +9,22 @@ export const DEVICE_SERVER_FILES = [
   "src/core/device-parse.ts",
   "src/core/device.ts",
   "src/core/png.ts",
+  "src/device/annexb.ts",
   "src/device/bb-box-device.sh",
   "src/device/driver.ts",
+  "src/device/frame-fanout.ts",
   "src/device/grpc.ts",
   "src/device/h264-encoder.ts",
+  "src/device/idb.ts",
+  "src/device/ios-driver.ts",
+  "src/device/ios-video.ts",
   "src/device/main.ts",
   "src/device/paths.ts",
   "src/device/pcm-h264.ts",
   "src/device/protobuf.ts",
   "src/device/schemas.ts",
   "src/device/server.ts",
+  "src/device/simctl.ts",
   "src/device/test-card.ts",
   "src/device/test-driver.ts",
   "src/device/ws.ts",
@@ -48,11 +54,16 @@ export function deviceServerDigest(files: readonly ServerFile[]): string {
   return hash.digest("hex");
 }
 
+export interface DeviceChoices {
+  readonly slim: boolean;
+}
+
 export interface Delivery {
   readonly version: number;
   readonly files: readonly ServerFile[];
   readonly offer: DeviceOffer;
   readonly intent: Intent | null;
+  readonly choices: DeviceChoices;
 }
 
 export function deliveryStdin(delivery: Delivery): string {
@@ -60,6 +71,7 @@ export function deliveryStdin(delivery: Delivery): string {
     files: delivery.files.map((file) => ({ path: file.path, data: Buffer.from(file.data).toString("base64") })),
     devices: delivery.offer,
     intent: delivery.intent,
+    choices: delivery.choices,
   });
 }
 
@@ -73,7 +85,8 @@ const UNPACK =
   'const fs=require("fs"),path=require("path");const d=JSON.parse(fs.readFileSync(0,"utf8"));' +
   'for(const f of d.files){const p=path.join(process.argv[1],f.path);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,Buffer.from(f.data,"base64"))}' +
   'fs.writeFileSync(process.argv[2],JSON.stringify(d.devices)+"\\n",{mode:0o600});' +
-  'if(d.intent&&!fs.existsSync(process.argv[3]))fs.writeFileSync(process.argv[3],JSON.stringify(d.intent)+"\\n",{mode:0o600});';
+  'if(d.intent&&!fs.existsSync(process.argv[3]))fs.writeFileSync(process.argv[3],JSON.stringify(d.intent)+"\\n",{mode:0o600});' +
+  'if(d.choices)fs.writeFileSync(process.argv[4],JSON.stringify(d.choices)+"\\n",{mode:0o600});';
 
 export function deliveryScript(version: number): string {
   if (!Number.isInteger(version) || version < 1) throw new Error(`${version} is not a device server version.`);
@@ -83,7 +96,7 @@ export function deliveryScript(version: number): string {
     `mkdir -p "$dir/server"; chmod 700 "$dir"; ` +
     FIND_NODE +
     `staging="$dir/server/.incoming-$$"; rm -rf "$staging"; mkdir -p "$staging"; ` +
-    `"$node" -e '${UNPACK}' "$staging" "$dir/devices.json" "$dir/intent.json"; ` +
+    `"$node" -e '${UNPACK}' "$staging" "$dir/devices.json" "$dir/intent.json" "$dir/choices.json"; ` +
     `rm -rf "$dir/server/${version}"; mv "$staging" "$dir/server/${version}"; ` +
     `old=$(readlink "$dir/current" 2>/dev/null || true); ` +
     `if [ -n "$old" ] && [ "$old" != "server/${version}" ]; then ln -sfn "$old" "$dir/previous"; fi; ` +
@@ -128,4 +141,27 @@ export function parseStatus(exitCode: number | null, stdout: string, stderr: str
 
 export function connectScript(): string {
   return `f=${LAUNCHER}; [ -f "$f" ] || { echo "bb-box: this box has no device server yet." >&2; exit ${STATUS_EXITS.none}; }; exec sh "$f" connect`;
+}
+
+export function deviceHubScript(): string {
+  return `if pgrep -x -U "$(id -u)" ${DEVICE_HUB_PROCESS} >/dev/null 2>&1; then echo running; else echo none; fi; cat ${DIR}/device-hub.json 2>/dev/null || true`;
+}
+
+export interface DeviceHubSeen {
+  readonly running: boolean;
+  readonly killed: number;
+  readonly last: number | null;
+}
+
+export function parseDeviceHub(stdout: string): DeviceHubSeen | null {
+  const [first, ...rest] = stdout.trim().split("\n");
+  if (first !== "running" && first !== "none") return null;
+  let killed = 0;
+  let last: number | null = null;
+  try {
+    const kills = JSON.parse(rest.join("\n") || "{}") as { killed?: unknown; last?: unknown };
+    if (typeof kills.killed === "number") killed = kills.killed;
+    if (typeof kills.last === "number") last = kills.last;
+  } catch {}
+  return { running: first === "running", killed, last };
 }

@@ -69,6 +69,7 @@ export class GrpcClient {
       { ":method": "POST", ":path": path, "content-type": "application/grpc", te: "trailers", ...options.metadata },
       { signal: options.signal },
     );
+    stream.on("error", () => undefined);
     let status: number | null = null;
     let words = "";
     let httpStatus = 0;
@@ -92,7 +93,6 @@ export class GrpcClient {
     sending.catch(() => stream.close(constants.NGHTTP2_CANCEL));
     const deframer = new Deframer();
     for await (const chunk of stream) for (const message of deframer.push(chunk as Uint8Array)) yield message;
-    await sending;
     if (httpStatus !== 0 && httpStatus !== 200) throw new GrpcError(UNKNOWN, `The server answered HTTP ${httpStatus}.`);
     if (status === null) throw new GrpcError(UNKNOWN, "The server ended the call with no status.");
     if (status !== 0) throw new GrpcError(status, words || `gRPC status ${status}`);

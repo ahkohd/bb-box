@@ -18,8 +18,9 @@ import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECO
 import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
+import { wantsDevice } from "./devices.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, kindResizeText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
+import { adminText, boxDetail, deviceLines, devicesText, kindResizeText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -186,6 +187,39 @@ async function ready(app: BbBox, box: BoxRecord, signal: AbortSignal): Promise<B
 const FORM_PLURAL: Record<string, string> = { VM: "VMs", LXC: "LXC containers", Docker: "Docker containers", Physical: "physical machines" };
 
 /** A kind's providers, in acquire order: each with what its boxes are, where that differs between them or the provider says more. */
+const DEVICE_BOOT_WAIT_MS = 120_000;
+const DEVICE_POLL_MS = 250;
+
+function deviceText(app: BbBox, box: BoxRecord): string {
+  const view = app.devices.view(box.id);
+  const state = view.is === "connected" ? view.state : null;
+  const server =
+    view.is === "down"
+      ? `not known: its device server is down: ${view.words}`
+      : view.is === "waiting"
+        ? `not known while its device server waits for version ${view.for}`
+        : view.is === "superseded"
+          ? "not known here: another bb-box instance holds its device server"
+          : null;
+  const lines = deviceLines(box, state, server);
+  return lines.length ? `\n${lines.join("\n")}` : "";
+}
+
+async function deviceBooted(app: BbBox, box: BoxRecord, signal: AbortSignal): Promise<string> {
+  if (!wantsDevice(box)) return "";
+  const began = Date.now();
+  const model = box.askedDevice ?? box.capabilities.device!.devices[0].model;
+  while (Date.now() - began < DEVICE_BOOT_WAIT_MS && !signal.aborted) {
+    const view = app.devices.view(box.id);
+    if (view.is === "connected" && view.state.power.is === "booted") return `\nThe ${view.state.model} booted ${((Date.now() - began) / 1000).toFixed(1)} s after the box was ready.`;
+    if (view.is === "connected" && view.state.power.is === "failed") return `\nThe ${view.state.model} did not boot: ${view.state.power.error.words}`;
+    await new Promise((resolve) => setTimeout(resolve, DEVICE_POLL_MS));
+  }
+  const view = app.devices.view(box.id);
+  if (view.is === "down") return `\nThe ${model} has not booted after ${DEVICE_BOOT_WAIT_MS / 1000} s: its device server is down: ${view.words}`;
+  return `\nThe ${model} is still booting after ${DEVICE_BOOT_WAIT_MS / 1000} s. Call box_status to see when it has booted.`;
+}
+
 export function offersText(kind: KindView): string {
   const differ = new Set(kind.offers.map((offer) => offer.form)).size > 1;
   return kind.offers
@@ -408,7 +442,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         }
         // box_run would wait for enrolment anyway, so the result can say how it went.
         const enrolled = await boxes.enrolled(settled, signal);
-        return `${boxDetail(enrolled, app.control(enrolled))}${next(...using(enrolled))}`;
+        const booted = await deviceBooted(app, enrolled, signal);
+        return `${boxDetail(enrolled, app.control(enrolled))}${deviceText(app, enrolled)}${booted}${next(...using(enrolled))}`;
       } catch (error) {
         return failure(error, "Acquiring a box");
       }
@@ -432,7 +467,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${devicesText(kind)}${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         const hints = list.length
@@ -466,7 +501,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           gone: [`Release it with box_release, then box_acquire another.`],
         };
         const grants = await boxes.grants(box, signal);
-        return `${boxDetail(box, app.control(box))}${grants ? grantsText(grants) : ""}${next(...(hints[box.state] ?? []))}`;
+        return `${boxDetail(box, app.control(box))}${deviceText(app, box)}${grants ? grantsText(grants) : ""}${next(...(hints[box.state] ?? []))}`;
       } catch (error) {
         return failure(error, "Checking the box");
       }

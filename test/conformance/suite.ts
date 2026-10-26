@@ -38,7 +38,7 @@ import {
 import { KIND_INFO } from "../../src/backends/kinds.ts";
 import { displayShows } from "../../src/backends/types.ts";
 import type { BoxRecord } from "../../src/core/boxes.ts";
-import { deviceModel, type DevicePlatform } from "../../src/core/device.ts";
+import { deviceModel, isTestOffer, type DevicePlatform } from "../../src/core/device.ts";
 import { parseDeviceOffer } from "../../src/core/device-parse.ts";
 import { connectScript, deviceServerFiles } from "../../src/core/device-delivery.ts";
 import { DeviceLink } from "../../src/core/device-link.ts";
@@ -76,7 +76,8 @@ export type ConformanceCheck =
   | "ios-simulator"
   /** Building a small image with the backend's image operations, which needs root in its box (049). */
   | "images"
-  | "test-device";
+  | "test-device"
+  | "device";
 
 /** A new Simulator device's first boot is slow (047). */
 const SIMULATOR_TIMEOUT_MS = 600_000;
@@ -324,7 +325,9 @@ export function checkDevice(kind: BoxKind): void {
 
 const BACK_WITHIN_MS = 2000;
 
-export async function testDeviceCase(command: CommandTransport, kind: BoxKind): Promise<{ readonly helloMs: number; readonly keyframeMs: number; readonly backMs: number }> {
+const FIRST_FRAME_MS = { test: 10_000, real: 120_000 } as const;
+
+export async function testDeviceCase(command: CommandTransport, kind: BoxKind, firstFrameMs: number = FIRST_FRAME_MS.test): Promise<{ readonly helloMs: number; readonly keyframeMs: number; readonly backMs: number }> {
   const os = kind.capabilities.os;
   const offer = kind.capabilities.device!;
   const record = { id: `bx-${kind.id}`, threadId: THREAD, name: `conformance-${kind.id}`, state: "ready", kind: kind.id, capabilities: kind.capabilities, askedDevice: offer.devices[0].model } as unknown as BoxRecord;
@@ -346,13 +349,13 @@ export async function testDeviceCase(command: CommandTransport, kind: BoxKind): 
   try {
     const began = Date.now();
     const view = await servers.ensure(record);
-    assert.equal(view.is, "connected", `the test device's server answers: ${JSON.stringify(view)}`);
+    assert.equal(view.is, "connected", `the device's server answers: ${JSON.stringify(view)}`);
     const helloMs = Date.now() - began;
     assert.equal(view.is === "connected" && view.state.model, offer.devices[0].model, "it runs the model asked for");
     const keys: number[] = [];
     const watching = await DeviceLink.open(await command.spawn!(inBox(os, connectScript())), { role: "viewer", onFrame: (frame) => frame[0] === 4 && (frame[1]! & 15) === 1 && keys.push(Date.now()) });
     await watching.send("START_VIDEO");
-    await until(async () => keys.length > 0, 10_000, "a first key frame", 20);
+    await until(async () => keys.length > 0, firstFrameMs, "a first key frame", 20);
     const asked = Date.now();
     await watching.send("REQUEST_KEYFRAME");
     await until(async () => keys.length > 1, 5_000, "a key frame on request", 10);
@@ -724,6 +727,14 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
               const { command } = need();
               const measured = await testDeviceCase(command, withDevice);
               console.log(`# ${options.name} ${kind.id}: the test device's server said hello ${measured.helloMs} ms after its delivery began, gave a key frame ${measured.keyframeMs} ms after it was asked, and said hello again ${measured.backMs} ms after it was killed`);
+            });
+          }
+
+          if (capabilities.device && !isTestOffer(capabilities.device)) {
+            it("serves its device: delivered, says hello, streams a key frame, gives one on request, and is back within 2 s of being killed (063, 4.2)", { timeout: Math.max(timeout, 300_000), skip: skip.device ?? false }, async () => {
+              const { command } = need();
+              const measured = await testDeviceCase(command, kind, FIRST_FRAME_MS.real);
+              console.log(`# ${options.name} ${kind.id}: the ${capabilities.device!.devices[0].model}'s server said hello ${measured.helloMs} ms after its delivery began, gave a key frame ${measured.keyframeMs} ms after it was asked, and said hello again ${measured.backMs} ms after it was killed`);
             });
           }
 

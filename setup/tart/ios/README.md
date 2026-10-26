@@ -15,9 +15,9 @@ macOS image, with:
   predictions or slide to type, and the keyboard's first-use sheet answered
 - `bb-box-check-ios`, the image's check
 
-bb-box does not offer ios boxes yet. This guide builds the image, so the
-nightly job can refresh it and `bb box doctor` can check it until the iOS
-driver comes.
+Each ios box is a clone of this image. Its device server, which bb-box
+delivers to the box, boots the device the box asked for, finds it by its
+name and device type, and streams it to the panel through idb_companion.
 
 ## What you need
 
@@ -105,6 +105,14 @@ measured again in this image.
   Center's own services and Apple's push service. An app under test that
   uses one of them needs a box with `slim: false`.
 - **The record** names each device's list, its labels and its SHA-256.
+- **In each box,** the device server counts the list's labels in
+  `launchctl print-disabled system` each time it boots or reattaches to the
+  device, about 0.3 s. When some are on, as in a device made in the box or
+  after a later Xcode clears them, it turns them off and reboots the device
+  before its first frame: 8 s for three labels, 30 s for all 112.
+- **A box with `slim: false`** has every label of the list turned on by its
+  device server, and the device rebooted, before its first frame: 43 s for
+  the 112, measured.
 - **A new runtime** needs its own list: the labels change between runtimes.
   Make it from a stock device of that runtime with the research's
   `lists.py full`, and check it with `bb-box-check-ios`.
@@ -145,4 +153,7 @@ and no preference found stops it
 ([063 results](../../../docs/decisions/063-results.md#e20-xcodes-run-and-device-hub)).
 Device Hub takes the device's pasteboard, so pasting stops working. The
 image never starts it, and clears its preferences. Quitting Device Hub shuts
-the device down.
+the device down, so in each box the device server looks for it every 5 s and
+kills it (SIGKILL), which leaves the device booted: 2.9 s after it opened,
+measured. `bb box doctor`'s check **Device Hub in** each ios box says whether
+it runs, and how often the server has killed it.
