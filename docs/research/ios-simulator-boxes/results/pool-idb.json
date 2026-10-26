@@ -1,0 +1,34 @@
+{
+  "source": "idb",
+  "first_frame_ms": 877.0,
+  "idle": {
+    "seconds": 10,
+    "frames": 13,
+    "fps": 1.3,
+    "cpu_percent_of_one_core": 0.1,
+    "rss_mib": 61.7
+  },
+  "tap_to_frame_ms": {
+    "n": 19,
+    "median": 53.7,
+    "p95": 59.2,
+    "min": 34.8,
+    "max": 59.2
+  },
+  "taps_missed": 1,
+  "busy": {
+    "seconds": 10,
+    "frames": 600,
+    "fps": 60.0,
+    "gap_ms": {
+      "n": 599,
+      "median": 16.7,
+      "p95": 17.0,
+      "min": 0.0,
+      "max": 33.4
+    },
+    "kbit_per_s": 3109,
+    "cpu_percent_of_one_core": 10.7,
+    "rss_mib": 39.5
+  }
+}
