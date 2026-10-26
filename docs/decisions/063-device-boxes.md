@@ -1289,9 +1289,14 @@ A snapshot keeps what the device holds in its memory and on its disk, its
 Android ID among them, so every box from one template began with the same
 one. The device server gives each device its own the first time it boots
 in a box: a new `android_id`, and a new key for the IDs apps read, which
-Android makes only as its framework starts, so the server restarts the
-framework once. That adds about 8 s to the device's first boot in a box,
-and nothing to its later boots or switches, which keep it. A spare (unit
+Android makes only as its framework starts, so the server reboots the
+device once. Restarting only the framework, with `stop` and `start`, lost
+the device's Wi-Fi network and left the phone service failing (F-3 in
+[063 results](063-results.md#f-3-android-boxes-start-with-no-network)).
+Before the reboot the server waits until Android has written the
+emulator's Wi-Fi network to its disk. That adds about 25 s to the
+device's first boot in a box, and nothing to its later boots or switches,
+which keep it. A spare (unit
 7.5) pays it before it is claimed.
 
 Defaults in the image, so typing and pasting are predictable:

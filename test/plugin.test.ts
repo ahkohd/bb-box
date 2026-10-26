@@ -5658,7 +5658,7 @@ test("box_acquire of an android box says when its device's first boot in the box
   ];
   Object.assign(app.devices, { recorded: () => undefined, view: () => (views.length > 1 ? views.shift() : views[0]) });
   const first = text(await tool("box_acquire", { kind: "android" }));
-  assert.match(first, /\nThe Pixel 8 booted \d+\.\d s after the box was ready, about 8 s of it giving the device its own Android ID, as each device's first boot in a box does\./);
+  assert.match(first, /\nThe Pixel 8 booted \d+\.\d s after the box was ready, about 25 s of it giving the device its own Android ID, as each device's first boot in a box does\./);
   views = [{ is: "connected", version: 15, protocol: 1, state: state({ is: "booted", awake: true }), bootedHere: ["Pixel 8"] }];
   const again = text(await tool("box_acquire", { kind: "android" }));
   assert.match(again, /\nThe Pixel 8 booted \d+\.\d s after the box was ready\./);

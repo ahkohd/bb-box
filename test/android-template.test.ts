@@ -148,11 +148,13 @@ case "$1" in
       "settings get system screen_off_timeout") echo 2147483647 ;;
       "settings get "*) echo 0 ;;
       "dumpsys power") echo "mStayOn=true" ;;
+      "su 0 grep -c AndroidWifi /data/misc/apexdata/com.android.wifi/WifiConfigStore.xml") if [ -e "$STATE/wifi-in-memory-only" ]; then echo 0; else echo 2; fi ;;
+      "dumpsys connectivity") printf 'Active default network: 100\n  NetworkAgentInfo{network{100}  nc{[ Transports: WIFI Capabilities: NOT_METERED&INTERNET&VALIDATED&NOT_ROAMING ]}}\n' ;;
     esac ;;
 esac`,
 };
 
-function checkAt(stage: "before finalize" | "after finalize" | "no devices", staleKey = false) {
+function checkAt(stage: "before finalize" | "after finalize" | "no devices", staleKey = false, wifiInMemoryOnly = false) {
   const root = mkdtempSync(join(tmpdir(), "android-check-"));
   try {
     const bin = join(root, "bin");
@@ -160,6 +162,7 @@ function checkAt(stage: "before finalize" | "after finalize" | "no devices", sta
     const home = join(root, "home");
     const state = join(root, "state");
     for (const dir of [bin, share, home, state]) mkdirSync(dir, { recursive: true });
+    if (wifiInMemoryOnly) writeFileSync(join(state, "wifi-in-memory-only"), "");
     for (const [name, body] of Object.entries(STAND_INS)) writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
     writeFileSync(join(share, "android-pins.json"), read("pins.json"));
     if (stage !== "no devices") writeFileSync(join(share, "android-devices.json"), JSON.stringify(pins.devices.map((device) => ({ model: device.model, native: device.avd }))));
@@ -191,7 +194,8 @@ test("the image's check passes in build.sh's order, before finalize.sh writes th
     assert.deepEqual(lines.filter((line) => /\bFAIL\b/.test(line)), [], `${stage}:\n${lines.join("\n")}`);
     for (const device of pins.devices) assert.ok(lines.some((line) => line.startsWith(`${device.model} boots from its snapshot`) && /\bok\b/.test(line)), `${stage}: ${device.model}`);
     assert.ok(lines.some((line) => /^Pixel Fold screens +ok +closed 1080x2092, open 2208x1840$/.test(line)), stage);
-    assert.equal(lines.filter((line) => /\bok\b/.test(line)).length, 4 + 5 * pins.devices.length, stage);
+    assert.ok(lines.some((line) => /^Pixel 8 Wi-Fi +ok +AndroidWifi saved on disk, a validated default network$/.test(line)), stage);
+    assert.equal(lines.filter((line) => /\bok\b/.test(line)).length, 4 + 6 * pins.devices.length, stage);
   }
 });
 
@@ -201,4 +205,9 @@ test("the image's check fails, not passes, when the build made no devices, and w
   assert.ok(none.some((line) => /^devices the build made +FAIL /.test(line)), none.join("\n"));
   const stale = checkAt("after finalize", true);
   assert.ok(stale.some((line) => /^this box's own adb identity +FAIL .*adbkey is older than the image's build/.test(line)), stale.join("\n"));
+});
+
+test("the image's check fails a snapshot whose AndroidWifi is only in its memory, not in the Wi-Fi store on disk (F-3)", () => {
+  const lines = checkAt("after finalize", false, true);
+  for (const device of pins.devices) assert.ok(lines.some((line) => line.startsWith(`${device.model} Wi-Fi`) && /FAIL AndroidWifi is not in the Wi-Fi store on disk/.test(line)), lines.join("\n"));
 });

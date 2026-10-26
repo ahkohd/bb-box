@@ -10,7 +10,8 @@ Linux VM's own checks (bb-box-check-headless) unless --no-base, then KVM, the
 device's firewall and that the emulator does not start without it, that this
 box's adb key is its own, and for each device the build made, as
 /usr/share/bb-box/android-devices.json lists them: it boots from its snapshot, its screens' pixels are the model table's, the
-image's defaults hold, its gRPC refuses no token and a wrong one, and its
+image's defaults hold, AndroidWifi is in its Wi-Fi store on disk and it has a
+validated default network, its gRPC refuses no token and a wrong one, and its
 ports are closed to another interface over IPv4 and IPv6. It runs before
 finalize.sh writes the image's record, in build.sh's check, and after it, in
 a clone's and a refresh's trial box. BB_BOX_SHARE gives another folder than
@@ -89,6 +90,18 @@ fold_pixels() {
   echo "closed $closed, open $opened"
 }
 
+wifi() {
+  local stored validated=
+  stored=$(shell su 0 grep -c AndroidWifi /data/misc/apexdata/com.android.wifi/WifiConfigStore.xml)
+  [ "${stored:-0}" -gt 0 ] 2>/dev/null || { echo "AndroidWifi is not in the Wi-Fi store on disk, so the device loses its network at its first restart"; return 1; }
+  for _ in $(seq 1 40); do
+    shell dumpsys connectivity | grep -E '^  NetworkAgentInfo[{]' | grep -q 'Capabilities: [^ ]*&VALIDATED&' && validated=yes && break
+    sleep 0.5
+  done
+  [ -n "$validated" ] || { echo "AndroidWifi is saved, but the device has no validated default network after 20 s"; return 1; }
+  echo "AndroidWifi saved on disk, a validated default network"
+}
+
 defaults() {
   local avd=$1 got failed=
   for expect in "secure stylus_handwriting_enabled 0" "secure spell_checker_enabled 0" "system accelerometer_rotation 1" "system screen_off_timeout 2147483647"; do
@@ -155,6 +168,7 @@ for i in $(seq 0 $((count - 1))); do
   esac
   if [ "$(wc -w <<<"$screens")" = 2 ]; then t "$model screens" fold_pixels $screens; else t "$model screen" pixels "$screens"; fi
   t "$model defaults" defaults "$avd"
+  t "$model Wi-Fi" wifi
   t "$model gRPC token" tokens
   t "$model ports" ports_closed
   bb-box-emulator stop >/dev/null 2>&1

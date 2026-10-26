@@ -96,7 +96,7 @@ where it is built ahead, which its boxes claim at once (#440). The
   which keeps what Android had written to its disk: run `adb shell sync`
   after `adb install`, so a crash cannot lose the app; `box_device`'s
   `install` does that itself. Each device gets its own Android ID the
-  first time it boots in a box, which takes about 8 s more, once.
+  first time it boots in a box, which takes about 25 s more, once.
 - Cloud providers cost money while a box exists, so release such a box as
   soon as you are done. Hetzner Cloud's Linux boxes are containers on hosts
   bb-box makes as boxes need them: a box on a host with room is ready in

@@ -358,6 +358,14 @@ export class DeviceServer {
     this.#options.driver.close();
   }
 
+  async #controlThenRead(control: DeviceControl, personHasControl: boolean): Promise<void> {
+    try {
+      await this.#options.driver.control(control, this.#stop.signal, { personHasControl });
+    } finally {
+      await this.#refresh();
+    }
+  }
+
   async #refresh(): Promise<void> {
     if (this.#switching) return;
     try {
@@ -956,7 +964,7 @@ export class DeviceServer {
       this.#person.forget();
       await this.#liftAll(`the device is about to ${control.action.replace("_", " ")}`);
     }
-    const work = (control.action === "switch" ? this.#switch(id, control.device) : this.#options.driver.control(control, this.#stop.signal, { personHasControl: byAgent && personHasControl }).then(() => this.#refresh())).finally(() => {
+    const work = (control.action === "switch" ? this.#switch(id, control.device) : this.#controlThenRead(control, byAgent && personHasControl)).finally(() => {
       this.#controlBusy = null;
       if (GEOMETRY_ACTIONS.has(control.action)) this.#geometryControlDone();
     });

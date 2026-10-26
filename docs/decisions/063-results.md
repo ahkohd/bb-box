@@ -2298,3 +2298,97 @@ The Box tab names a device box's device beside its OS, for example
 "Linux Pixel 8" or "macOS iPhone 18 Pro", with no VM badge for its host.
 Its details have a Device line. box_status says "Device control" on android
 and ios boxes, rather than "Desktop control".
+
+## F-3: Android boxes start with no network
+
+Checked on 26 October 2026 on two android boxes from the production BB, 8
+cores and 16 GiB, Proxmox QEMU, with the image of that day. Device server
+version 16 as the image started it, then version 17 from this checkout,
+delivered into each box as bb-box does.
+
+### What was wrong
+
+New Pixel 8 boxes had no network: `cmd wifi list-networks` said "No
+networks", `dumpsys connectivity` "Active default network: none", and 3 to
+15 "ANR in com.android.phone" in the first minutes. box_acquire still said
+"network online", as the read-back read airplane mode and Wi-Fi's setting,
+not whether the device reached anything.
+
+The cause is in the template. On the device's first boot in the image
+build, GoogleSdkSetup saves the emulator's AndroidWifi network. Android
+writes a new network to its Wi-Fi store on disk about 10 s later, on a
+timer. prepare-avds.sh saved the snapshot sooner, about 22 s after the
+device booted, so AndroidWifi was in the snapshot's memory and not on its
+disk:
+
+| Where | AndroidWifi |
+| --- | --- |
+| The untouched snapshot, loaded read-only beside a box's device | listed by `cmd wifi list-networks`; 0 times in `WifiConfigStore.xml`, dated as the build |
+| The same device left running | in `WifiConfigStore.xml` within 11 s of the load, by Android's timer; 4.4 and 5.8 s after bb-box first looked, in two boxes |
+| A box's device after version 16 gave it its own Android ID | "No stored networks found" as Android read its store; none since |
+
+Version 16 restarted Android's framework, with `stop` and `start`, 0.1 s
+after the snapshot loaded, before that timer. The network was lost, and
+every later boot read the empty store, a cold reboot too. The same restart
+left the phone service failing to start. Its effect, "telephony service is
+null" when Settings opened Network and internet, is the 7.2 worker's
+report. It did not show after a full reboot.
+
+### What changed
+
+- **The Android ID by a reboot.** The server waits until AndroidWifi is in
+  the Wi-Fi store on disk, removes `settings_ssaid.xml`, and reboots the
+  device with `adb reboot`, in the same emulator. It no longer restarts
+  the framework.
+- **The emulator's Wi-Fi kept.** At each boot or reattach, a device with
+  no saved AndroidWifi has it saved again, with `cmd wifi add-network
+  AndroidWifi open`. That mends boxes version 16 left offline.
+- **Online means reached.** The read-back adds the default network from
+  `dumpsys connectivity`, which takes 14 to 16 ms. `online` and `slow` need
+  a default network Android has validated; `offline` needs none. A boot
+  waits up to 20 s for the network bb-box set. The network control waits up
+  to 8 s, then says what the device reads, for example "The network was
+  set to online, but 8 s later the device reads airplane mode disabled,
+  Wi-Fi on, not slowed, no default network."
+- **The state after a failed control.** A control that fails now answers
+  with the state read after it. Before, the failed network control above
+  still said "network online".
+- **The template.** prepare-avds.sh waits until AndroidWifi is in the Wi-Fi
+  store before it saves each snapshot, and bb-box-check-android fails an
+  image whose snapshot lacks it or has no validated network. The image
+  needs a rebuild for this; until then the server's wait covers it.
+
+### Live, with version 17
+
+Each row read `dumpsys connectivity`'s default network and whether Android
+validated it, AndroidWifi in `cmd wifi list-networks` and on disk, and
+fetched http://example.com from the device with `toybox nc`.
+
+| Check | Time | Default network | Fetch | Phone ANRs |
+| --- | --- | --- | --- | --- |
+| Pixel Fold, first boot in a box, by a switch | switch 43.5 s; Android ID 29.0 s | 100, validated | 200 OK | 0 |
+| Pixel Tablet, first boot, by a switch | switch 39.4 s; Android ID 25.1 s | 100, validated | 200 OK | 0 |
+| Pixel Fold, first boot, second box | switch 41.7 s; Android ID 23.5 s, 4.4 s of it the wait for the write | 100, validated | 200 OK | 0 |
+| Pixel Tablet, first boot, second box | switch 40.5 s; Android ID 25.9 s, 5.8 s of it the wait | 100, validated | 200 OK | 0 |
+| Pixel 8 offline under version 16, then version 17 delivered | AndroidWifi saved again at reattach; validated 11 s later | 100, validated | 200 OK | the earlier ones stay until a reboot |
+| Switch back to the Pixel 8 | 7.6 s | 100, validated | 200 OK | 0 |
+| Cold reboot, from box_device | 23.3 s | 100, validated | 200 OK | 0 |
+| Offline, then online | 0.5 s, then 4.4 s | none, then 101, validated | fails, then 200 OK | 0 |
+| Stop and start of the box | resumed in 8.0 s; the device back 0.5 s after | 101, validated | 200 OK | 0 |
+| AndroidWifi forgotten by hand, then online | refused after 8 s, in the words above | none | | |
+
+Settings opened Network and internet on the Fold with no crash. Chrome on
+the Pixel 8 showed example.com. With `adb reboot` the apps' key changed,
+for example from 7A94DC07… to F57C2B3B…. `svc power reboot` took 35 s,
+against 20 s.
+
+### What limits these numbers
+
+- Two boxes on one host. Each device's first boot came from a switch, as
+  each box's image server gave the Pixel 8 its ID before version 17 could
+  run; five fresh boxes from the production BB, each with a fetch within
+  the boot time box_acquire reports, need version 17 delivered there.
+- The wait for the write, 4.4 to 5.8 s here, goes once the image is
+  rebuilt with the new prepare-avds.sh. The reboot, about 20 s, stays.
+- On Proxmox a stop and start resumes the device; a backend that boots it
+  again was not tried.
