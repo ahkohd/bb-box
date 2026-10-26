@@ -426,6 +426,18 @@ export function platformWord(platform: DevicePlatform): string {
   return PLATFORM_WORDS[platform];
 }
 
+export type QuarterTurns = 0 | 1 | 2 | 3;
+
+const CLOCKWISE_TURNS: Readonly<Record<Orientation, QuarterTurns>> = { upright: 0, "turned-right": 1, "upside-down": 2, "turned-left": 3 };
+
+export function clockwiseTurns(orientation: Orientation): QuarterTurns {
+  return CLOCKWISE_TURNS[orientation];
+}
+
+export function isSideways(orientation: Orientation): boolean {
+  return clockwiseTurns(orientation) % 2 === 1;
+}
+
 export function orientationWord(orientation: Orientation): string {
   return orientation.replace("-", " ");
 }
@@ -588,7 +600,12 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 1;
 export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
-export const DEVICE_SERVER_VERSION = 8;
+export const DEVICE_SERVER_VERSION = 9;
+export const FRAME_GENERATIONS_SINCE_VERSION = 9;
+
+export function frameGenerationOf(header: Uint8Array): number {
+  return (header[10]! << 8) | header[11]!;
+}
 
 export function speaksProtocol(protocol: number): boolean {
   return protocol >= DEVICE_PROTOCOLS.least && protocol <= DEVICE_PROTOCOLS.most;

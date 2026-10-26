@@ -7,7 +7,8 @@ model and encoder (E6, E7, E17), and unit 3.1's of the Android template
 (E2, E13, E19, E24), and unit 3.2's of the iOS image (E1, E13, E20, E24,
 and its slimming), and unit 4.2's of the iOS driver (E4, E5), and units
 5.1's shared parts and 5.2's of input on iOS (E8, E9, E14, E21, and how iOS
-pastes), and unit 6.3's of the iOS controls (E11, and each read-back), are
+pastes), and unit 6.3's of the iOS controls (E11, and each read-back), and unit 6.1's
+of the frame (turns, folds drawn from the table, and the island), are
 in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
@@ -621,7 +622,7 @@ The Selkies subset, as bb-box-stream speaks it:
 | input | `kd,<keysym>`, `ku,<keysym>`, `kr` | physical keys down and up, and all keys up. A keysym with no US key joins the text batch |
 | input | `cw,<base64>` and the chunked forms | the person's clipboard, for the device's |
 | server | `MODE websockets` | as Selkies |
-| server | binary type 4 | an H.264 access unit, with its frame number |
+| server | binary type 4 | an H.264 access unit, with its frame number, and since version 9 the low 16 bits of its geometry generation in the header's last two bytes, so the viewer holds a turned picture until the first frame of the new generation |
 | server | `clipboard,<base64>` | the device's clipboard, to the input connection only, which passes it to the viewer with control |
 
 bb-box's own, each a verb, then one JSON value, as `BB_CURSOR` is a verb of
@@ -888,9 +889,11 @@ put a person's clicks on the wrong screen.
   pixels round the screen, the side buttons, and the screen's corners
   clipped to `cornerRadius`. No Apple or Google artwork.
 - **Cutouts.** On iOS the frame draws the Dynamic Island over the screen,
-  as Device Hub's chrome does; the framebuffer leaves it out. On Android
-  the device draws its own cutout, so the frame draws none. Checked by eye
-  per model in unit 6.1.
+  as Device Hub's chrome does. idb's stream and screenshot draw it as a
+  black pill, which the frame's covers in place; `simctl io screenshot`
+  leaves it out. The island's numbers were measured from the stream in
+  unit 6.1. On Android the device draws its own cutout, so the frame draws
+  none.
 - **Per form and posture:**
 
 | Form | Posture | Drawn |

@@ -7,14 +7,15 @@ const IPHONE_BUTTONS = [
   { edge: "right", from: 0.27, to: 0.37 },
 ] as const;
 
-const DYNAMIC_ISLAND = { x: 416, y: 33, width: 374, height: 110, shape: "pill" } as const;
+const DYNAMIC_ISLAND_PRO = { x: 461, y: 42, width: 284, height: 110, shape: "pill" } as const;
+const DYNAMIC_ISLAND = { x: 415, y: 42, width: 376, height: 110, shape: "pill" } as const;
 
 export const DEVICE_MODELS = [
   {
     platform: "ios",
     name: "iPhone 18 Pro",
     form: "phone",
-    screen: { pixels: { width: 1206, height: 2622 }, scale: 3, cornerRadius: 186, cutout: DYNAMIC_ISLAND },
+    screen: { pixels: { width: 1206, height: 2622 }, scale: 3, cornerRadius: 186, cutout: DYNAMIC_ISLAND_PRO },
     body: { bezel: 54, radius: 240, buttons: IPHONE_BUTTONS },
   },
   {

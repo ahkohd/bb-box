@@ -1,0 +1,108 @@
+<!doctype html><html><head><meta charset="utf-8"><style id="bb-theme"></style><style>html,body{margin:0;background:var(--background,#222);font-family:system-ui,sans-serif;overflow:hidden}#stage{position:relative;width:100vw;height:100vh}</style></head><body><div id="stage"></div>
+<script type="module">
+import "./client.js";
+const q = new URLSearchParams(location.search);
+const THEME_URL = "https://raw.githubusercontent.com/get-bb/bb/desktop-v0.44.0/apps/web/src/components/ui/theme.css";
+window.theme = (name) => {
+  document.documentElement.classList.toggle("dark", name !== "light");
+  document.documentElement.classList.toggle("light", name === "light");
+};
+window.theme(q.get("theme") ?? "dark");
+await fetch(THEME_URL).then((response) => response.text()).then((css) => (document.getElementById("bb-theme").textContent = css.replace(/@theme(?:\s+inline)?\s*\{/g, ":root {"))).catch(() => undefined);
+const MODELS = {
+  "iPhone 18 Pro": { platform: "ios", screens: { only: [1206, 2622] } },
+  "iPhone 17": { platform: "ios", screens: { only: [1206, 2622] } },
+  "iPad Pro 13-inch (M5)": { platform: "ios", screens: { only: [2064, 2752] } },
+  "Pixel 8": { platform: "android", form: "phone", screens: { only: [1080, 2400] } },
+  "Pixel Tablet": { platform: "android", form: "tablet", screens: { only: [2560, 1600] } },
+  "Pixel Fold": { platform: "android", form: "foldable", screens: { outer: [1080, 2092], inner: [2208, 1840] } },
+};
+const model = q.get("model") ?? "Pixel 8";
+const known = MODELS[model];
+const canvas = document.createElement("canvas");
+const stage = new DeviceStage(canvas, model);
+stage.setView({ frame: q.get("frame") !== "0", pixelForPixel: q.get("pfp") === "1" });
+stage.setConnected(true);
+document.getElementById("stage").appendChild(stage.element);
+const TURNS = { upright: 0, "turned-right": 1, "upside-down": 2, "turned-left": 3 };
+let generation = 1;
+let current = { physical: q.get("physical") ?? "upright", content: q.get("content") ?? q.get("physical") ?? "upright", posture: q.get("posture") ?? "open" };
+function card(screenName, content) {
+  const [w, h] = known.screens[screenName];
+  const turns = TURNS[content];
+  const native = document.createElement("canvas");
+  native.width = w;
+  native.height = h;
+  const g = native.getContext("2d");
+  const hue = { only: 210, outer: 150, inner: 280 }[screenName];
+  const gradient = g.createLinearGradient(0, 0, w, h);
+  gradient.addColorStop(0, `hsl(${hue} 60% 52%)`);
+  gradient.addColorStop(1, `hsl(${hue + 40} 55% 30%)`);
+  g.fillStyle = gradient;
+  g.fillRect(0, 0, w, h);
+  g.strokeStyle = "rgba(255,255,255,0.25)";
+  g.lineWidth = 3;
+  for (let x = 0; x < w; x += 120) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+  for (let y = 0; y < h; y += 120) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+  g.fillStyle = "#ffcc00";
+  g.fillRect(0, 0, w, 36);
+  const drawn = document.createElement("canvas");
+  drawn.width = turns % 2 ? h : w;
+  drawn.height = turns % 2 ? w : h;
+  const d = drawn.getContext("2d");
+  d.translate(drawn.width / 2, drawn.height / 2);
+  d.rotate((turns * Math.PI) / 2);
+  d.drawImage(native, -w / 2, -h / 2);
+  d.setTransform(1, 0, 0, 1, 0, 0);
+  d.fillStyle = "#fff";
+  d.font = `600 ${Math.round(Math.min(drawn.width, drawn.height) / 14)}px system-ui`;
+  d.textAlign = "center";
+  d.fillText(model, drawn.width / 2, drawn.height / 2 - 40);
+  d.font = `${Math.round(Math.min(drawn.width, drawn.height) / 22)}px system-ui`;
+  d.fillText(`${screenName === "only" ? "" : `${screenName} screen, `}${content}`, drawn.width / 2, drawn.height / 2 + 50);
+  return drawn;
+}
+function state(power = { is: "booted", awake: true }) {
+  const screenName = known.form === "foldable" ? (current.posture === "closed" ? "outer" : "inner") : "only";
+  const [w, h] = known.screens[screenName];
+  const sideways = TURNS[current.content] % 2 === 1;
+  const geometry = { generation, physical: current.physical, content: current.content, video: { width: sideways ? h : w, height: sideways ? w : h }, ...(known.form === "foldable" ? { screen: screenName } : {}) };
+  const settings = { appearance: { known: false, why: "" } };
+  if (known.platform === "ios") return { platform: "ios", model, power, geometry, settings, at: Date.now() };
+  return { platform: "android", form: known.form, model, power, geometry, ...(known.form === "foldable" ? { posture: { known: true, value: current.posture, at: Date.now(), by: "bb-box" } } : {}), settings, at: Date.now() };
+}
+function picture() {
+  const screenName = known.form === "foldable" ? (current.posture === "closed" ? "outer" : "inner") : "only";
+  const drawn = card(screenName, current.content);
+  stage.paint(drawn, drawn.width, drawn.height, generation & 0xffff);
+}
+stage.setState(state(q.get("power") ? JSON.parse(q.get("power")) : undefined));
+picture();
+window.foldTimes = async (posture, pictureAfterMs = 600) => {
+  const frames = [];
+  let recording = true;
+  const step = (now) => {
+    frames.push(now);
+    if (recording) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  const began = performance.now();
+  await window.change({ posture }, pictureAfterMs);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  recording = false;
+  const times = stage.times;
+  const animating = frames.filter((at) => at - began <= 520);
+  const gaps = animating.slice(1).map((at, index) => at - animating[index]).sort((a, b) => a - b);
+  return { posture, pictureAfterMs, framesWhileMoving: animating.length, gapMedian: gaps[Math.floor(gaps.length / 2)], gapWorst: gaps.at(-1), veiledAfterMs: times?.veiled != null ? Math.round(times.veiled - times.began) : null, pictureAfterChangeMs: times?.pictured != null ? Math.round(times.pictured - times.began) : null, waitedMs: Math.round(performance.now() - began) };
+};
+window.change = (next, pictureAfterMs = 600) => {
+  current = { ...current, ...next };
+  generation++;
+  stage.setState(state());
+  return new Promise((resolve) => setTimeout(() => { picture(); resolve(stage.times); }, pictureAfterMs));
+};
+window.stage = stage;
+window.drawn = [1];
+window.screenRect = () => null;
+window.ready = true;
+</script></body></html>

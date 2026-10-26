@@ -5,7 +5,6 @@ import { after, describe, test } from "node:test";
 import { DEVICE_SERVER_VERSION, testDeviceOffer, type OfferedDevices, type TouchContact } from "../src/core/device.ts";
 import { DeviceLink, type DeviceRole } from "../src/core/device-link.ts";
 import { parseDeviceServerMessage } from "../src/core/device-parse.ts";
-import { pictureIn } from "../src/app/device-input.ts";
 import { InputLane, splitByCharacters } from "../src/device/input-lane.ts";
 import { keysymMeaning, typedOnUsKeyboard, usKey } from "../src/device/keys.ts";
 import { devicePaths } from "../src/device/paths.ts";
@@ -78,12 +77,6 @@ describe("keys", () => {
     assert.deepEqual(usKey("?"), { code: "Slash", shift: true });
     assert.equal(typedOnUsKeyboard("~"), true);
     assert.equal(typedOnUsKeyboard("ß"), false);
-  });
-
-  test("places a watcher's touch circle on the picture as the canvas fits it", () => {
-    assert.deepEqual(pictureIn(400, 800, 360, 800), { left: 20, top: 0, scale: 1 });
-    assert.deepEqual(pictureIn(360, 400, 360, 800), { left: 90, top: 0, scale: 0.5 });
-    assert.equal(pictureIn(0, 800, 360, 800), null);
   });
 
   test("types what it can as keys, and pastes the rest in as few pieces as it can without pasting inside a word", () => {

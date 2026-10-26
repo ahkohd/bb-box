@@ -117,6 +117,15 @@ The display you see is the only one that gets your keys, your pointer and your c
 
 A device always shows as video, at its own size. It has no VNC, no **Show as VNC** and no High resolution, and it ignores the **Linux desktops as video** setting. Resizing the panel does not resize the device.
 
+The device shows in a frame drawn by bb-box: a phone or tablet in its body, with its side buttons and, on an iPhone, its Dynamic Island. The body is graphite in both of BB's themes, with a light edge in the dark theme and a soft shadow in the light one. The device and its frame fit the panel, and the screen is never drawn larger than its own pixels on your display. In the menu, **Display** has two choices, which last for that box in that browser:
+
+- **Show frame**, on at first: off, the screen shows alone, with its own corners and island.
+- **Pixel for pixel**: each of the device's pixels is one of your display's, and the panel scrolls.
+
+When the device turns, the frame turns with it in a third of a second, its last picture turning too, as a phone held sideways does, and the new picture shows once the device has drawn it. If that takes longer, as it can while iOS turns its own layout, the old picture waits under a faint veil. A phone held sideways whose app stays upright, as the iPhone's Home Screen does, shows its picture on its side, as the phone would. With reduced motion set on your computer, the frame turns at once.
+
+While the device starts, its screen is black, with its name and 'Booting'. A device that is asleep shows its last picture dimmed, with 'Asleep' and **Wake**, and one that failed shows why, with **Reboot device**. Either button takes control if you do not have it.
+
 Where your browser cannot play the device's video, as where it has no WebCodecs or the video does not start within 3 seconds, the device shows a picture of its screen a few times a second instead, over the same connection, and says so above it: 'This browser cannot play the device's video, so it shows a picture a few times a second.' It never shows the box's desktop in its place, so a click never lands on the wrong screen. While it waits for its first picture, it shows the device's name and 'Connecting', or 'Booting' while the device starts.
 
 ### Device input

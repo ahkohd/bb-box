@@ -1,5 +1,10 @@
-import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { GrpcClient } from "../../../src/device/grpc.ts";
+import { encode } from "../../../src/device/protobuf.ts";
+import { GRPC_METHODS, IDB_SCHEMA } from "../../../src/device/schemas.ts";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = Number(process.env.CDP_PORT ?? 9333);
@@ -7,14 +12,20 @@ const PAGE = process.env.PAGE ?? "http://127.0.0.1:8770/device.html";
 const HARNESS = process.env.HARNESS ?? "http://127.0.0.1:8770";
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function targets(): Promise<{ type: string; url: string; webSocketDebuggerUrl: string }[]> {
-  return (await fetch(`http://127.0.0.1:${PORT}/json`)).json() as Promise<{ type: string; url: string; webSocketDebuggerUrl: string }[]>;
+async function targets(): Promise<{ id: string; type: string; url: string; webSocketDebuggerUrl: string }[]> {
+  return (await fetch(`http://127.0.0.1:${PORT}/json`)).json() as Promise<{ id: string; type: string; url: string; webSocketDebuggerUrl: string }[]>;
 }
 
 async function chrome(): Promise<string> {
   try {
     const page = (await targets()).find((target) => target.type === "page" && target.url.startsWith(PAGE));
-    if (page) return page.webSocketDebuggerUrl;
+    if (page) {
+      await fetch(`http://127.0.0.1:${PORT}/json/activate/${page.id}`);
+      return page.webSocketDebuggerUrl;
+    }
+    const opened = (await (await fetch(`http://127.0.0.1:${PORT}/json/new?${PAGE}`, { method: "PUT" })).json()) as { webSocketDebuggerUrl: string };
+    await wait(1500);
+    return opened.webSocketDebuggerUrl;
   } catch {}
   const child = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${PORT}`, "--user-data-dir=/tmp/bb-box-device-chrome", "--window-size=600,1100", "--no-first-run", PAGE], { detached: true, stdio: "ignore" });
   child.unref();
@@ -66,8 +77,86 @@ type Rect = { left: number; top: number; scale: number; width: number; height: n
 const SCALE = Number(process.env.DEVICE_SCALE ?? 3);
 
 async function at(cdp: Cdp, x: number, y: number): Promise<{ x: number; y: number }> {
+  const point = await cdp.evaluate<{ x: number; y: number } | null>(`clientOfVideo(${x * SCALE}, ${y * SCALE})`);
+  if (point) return point;
   const rect = await cdp.evaluate<Rect>("screenRect()");
   return { x: rect.left + x * SCALE * rect.scale, y: rect.top + y * SCALE * rect.scale };
+}
+
+const IDB_HID_ORIENTATION: Readonly<Record<string, number>> = { upright: 0, "upside-down": 1, "turned-right": 2, "turned-left": 3 };
+
+async function turnWithIdb(to: string): Promise<void> {
+  const value = IDB_HID_ORIENTATION[to];
+  if (value === undefined) throw new Error(`turn takes ${Object.keys(IDB_HID_ORIENTATION).join(", ")}`);
+  const client = new GrpcClient({ socket: join(homedir(), ".bb-box", "device", "idb.sock") });
+  try {
+    for await (const _ of client.call(GRPC_METHODS.idb.hid, [encode(IDB_SCHEMA, "idb.HIDEvent", { orientation: { orientation: value } })])) void _;
+  } finally {
+    client.close();
+  }
+}
+
+const RECORD_FRAMES = `(() => {
+  const device = session.element.querySelector(".bb-device-stage > div > div");
+  const veil = device.querySelectorAll("div")[0].querySelectorAll("div")[1];
+  window.turnLog = [];
+  const began = performance.now();
+  const step = (now) => {
+    const style = getComputedStyle(device);
+    const matrix = new DOMMatrixReadOnly(style.transform === "none" ? undefined : style.transform);
+    window.turnLog.push([Math.round((now - began) * 10) / 10, Math.round(Math.atan2(matrix.b, matrix.a) * 1800 / Math.PI) / 10, Number(getComputedStyle(veil).opacity), session.deviceStage.shownGeneration, window.drawn.length]);
+    if (window.turnLog.length < 2000 && !window.turnStop) requestAnimationFrame(step);
+  };
+  window.turnStop = false;
+  requestAnimationFrame(step);
+  return true;
+})()`;
+
+async function turnFrames(cdp: Cdp, to: string, ms: number, label: string): Promise<void> {
+  await cdp.evaluate(RECORD_FRAMES);
+  const sent = performance.now();
+  await turnWithIdb(to);
+  const sentMs = Math.round(performance.now() - sent);
+  await wait(ms);
+  await cdp.evaluate("window.turnStop = true");
+  const log = await cdp.evaluate<[number, number, number, number | null, number][]>("window.turnLog");
+  const times = await cdp.evaluate<{ began: number; turned: number | null; pictured: number | null; veiled: number | null } | null>("session.deviceStage.times");
+  const moving = log.filter((entry, index) => index > 0 && entry[1] !== log[index - 1]![1]);
+  const first = moving[0]?.[0] ?? null;
+  const last = moving.at(-1)?.[0] ?? null;
+  const during = first === null || last === null ? [] : log.filter((entry) => entry[0] >= first - 20 && entry[0] <= last + 20);
+  const gaps = during.slice(1).map((entry, index) => entry[0] - during[index]![0]);
+  const summary = {
+    label,
+    to,
+    sentMs,
+    angle: log.at(-1)?.[1],
+    turnStartMs: first,
+    turnEndMs: last,
+    animationMs: first !== null && last !== null ? Math.round(last - first) : null,
+    framesDuring: during.length,
+    frameGapMedian: gaps.length ? percentile(gaps, 0.5) : null,
+    frameGapWorst: gaps.length ? Math.max(...gaps) : null,
+    pictureAfterChangeMs: times?.pictured != null ? Math.round(times.pictured - times.began) : null,
+    veiledAfterChangeMs: times?.veiled != null ? Math.round(times.veiled - times.began) : null,
+    generation: log.at(-1)?.[3],
+  };
+  console.log(JSON.stringify(summary));
+  writeFileSync(`/tmp/turn-${label}.json`, JSON.stringify({ summary, times, log }));
+}
+
+async function landing(cdp: Cdp, x: number, y: number): Promise<void> {
+  const point = await cdp.evaluate<{ x: number; y: number } | null>(`clientOfVideo(${x}, ${y})`);
+  if (!point) throw new Error(`video pixel ${x},${y} is not on the drawn screen`);
+  const before = await cdp.evaluate<number[]>(`pixel(${x}, ${y})`);
+  await mouse(cdp, "mousePressed", point);
+  await wait(60);
+  await mouse(cdp, "mouseReleased", point);
+  await wait(700);
+  const after = await cdp.evaluate<number[]>(`pixel(${x}, ${y})`);
+  const red = (rgb: number[]) => rgb[0]! > 180 && rgb[1]! < 90 && rgb[2]! < 90;
+  const geometry = await cdp.evaluate<unknown>("session.device.state.geometry");
+  console.log(JSON.stringify({ step: "landing", video: [x, y], client: [Math.round(point.x), Math.round(point.y)], before, after, landedWhereDrawn: red(after), geometry }));
 }
 
 async function mouse(cdp: Cdp, type: string, point: { x: number; y: number }, extra: Record<string, unknown> = {}): Promise<void> {
@@ -198,6 +287,42 @@ async function main(): Promise<void> {
         break;
       case "wait":
         await wait(numbers[0]!);
+        break;
+      case "shot": {
+        const shot = (await cdp.send("Page.captureScreenshot", { format: "png" })) as { data: string };
+        writeFileSync(rest.join(":"), Buffer.from(shot.data, "base64"));
+        break;
+      }
+      case "theme":
+        await cdp.evaluate(`theme(${JSON.stringify(rest[0])}); true`);
+        break;
+      case "view":
+        await cdp.evaluate(`view(${rest[0] !== "noframe"}, ${rest[1] === "pfp"}); true`);
+        break;
+      case "size":
+        await cdp.send("Emulation.setDeviceMetricsOverride", { width: numbers[0]!, height: numbers[1]!, deviceScaleFactor: numbers[2] ?? 1, mobile: false });
+        break;
+      case "turn":
+        await turnFrames(cdp, rest[0]!, numbers[1] || 1500, rest[2] ?? rest[0]!);
+        break;
+      case "freehid": {
+        const pid = Number(readFileSync(join(homedir(), ".bb-box", "device", "server.pid"), "utf8").trim());
+        await fetch(`${HARNESS}/api/owner?holder=agent`);
+        await cdp.evaluate("control(false)");
+        process.kill(pid, "SIGTERM");
+        for (let tries = 0; tries < 100 && spawnSync("kill", ["-0", String(pid)]).status === 0; tries++) await wait(50);
+        spawnSync("launchctl", ["kickstart", `gui/${process.getuid!()}/app.bb-box.device`]);
+        await wait(1500);
+        await cdp.send("Page.reload");
+        for (let tries = 0; tries < 150 && !(await cdp.evaluate<boolean>("typeof session !== 'undefined' && session.connection.state === 'connected' && window.drawn.length > 0").catch(() => false)); tries++) await wait(100);
+        await wait(1000);
+        break;
+      }
+      case "idbturn":
+        await turnWithIdb(rest[0]!);
+        break;
+      case "landing":
+        await landing(cdp, numbers[0]!, numbers[1]!);
         break;
       case "eval":
         console.log(JSON.stringify(await cdp.evaluate(rest.join(":"))));

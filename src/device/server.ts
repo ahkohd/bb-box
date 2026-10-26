@@ -474,7 +474,7 @@ export class DeviceServer {
       connection.needsKey = false;
       connection.frameId = (connection.frameId + 1) & 0xffff;
       const message = new Uint8Array(FRAME_HEADER_BYTES + frame.data.byteLength);
-      message.set([VIDEO, (H264 << 4) | (frame.key ? 1 : 0), connection.frameId >> 8, connection.frameId & 255, 0, 0, frame.width >> 8, frame.width & 255, frame.height >> 8, frame.height & 255, 0, 0]);
+      message.set([VIDEO, (H264 << 4) | (frame.key ? 1 : 0), connection.frameId >> 8, connection.frameId & 255, 0, 0, frame.width >> 8, frame.width & 255, frame.height >> 8, frame.height & 255, (frame.generation >> 8) & 255, frame.generation & 255]);
       message.set(frame.data, FRAME_HEADER_BYTES);
       connection.ws.send(message);
     }

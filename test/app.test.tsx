@@ -3106,9 +3106,14 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     act(() => void device.onmessage?.({ data: videoFrame(1, true, 360, 800) }));
     expect(await slot.findByText("The agent has control.")).toBeTruthy();
     expect(slot.getByRole("button", { name: "Device" }).getAttribute("aria-pressed")).toBe("true");
-    const actions = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
-    expect(within(actions).queryByText("Display")).toBeNull();
-    fireEvent.keyDown(actions, { key: "Escape" });
+    const display = await openDisplay(slot.getByRole("button", { name: "Desktop actions" }));
+    expect(within(display).getByRole("menuitemcheckbox", { name: "Show frame" }).getAttribute("aria-checked")).toBe("true");
+    expect(within(display).getByRole("menuitemcheckbox", { name: "Pixel for pixel" }).getAttribute("aria-checked")).toBe("false");
+    expect(within(display).queryByRole("menuitemcheckbox", { name: "Show as VNC" })).toBeNull();
+    fireEvent.click(within(display).getByRole("menuitemcheckbox", { name: "Pixel for pixel" }));
+    const viewKey = Object.keys(window.localStorage).find((key) => key.startsWith("bb-box:device-view:"))!;
+    expect(JSON.parse(window.localStorage.getItem(viewKey)!)).toEqual({ frame: true, pixelForPixel: true });
+    window.localStorage.removeItem(viewKey);
 
     const readText = vi.fn(() => Promise.resolve("for the device"));
     fakeClipboard(readText);
