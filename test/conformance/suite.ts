@@ -40,6 +40,11 @@ import { displayShows } from "../../src/backends/types.ts";
 import type { BoxRecord } from "../../src/core/boxes.ts";
 import { deviceModel, type DevicePlatform } from "../../src/core/device.ts";
 import { parseDeviceOffer } from "../../src/core/device-parse.ts";
+import { connectScript, deviceServerFiles } from "../../src/core/device-delivery.ts";
+import { DeviceLink } from "../../src/core/device-link.ts";
+import { withTestDevice } from "../../src/backends/index.ts";
+import { DeviceServers } from "../../src/plugin/devices.ts";
+import { fileURLToPath } from "node:url";
 import { Computer } from "../../src/core/computer.ts";
 import { DESKTOP_EXITS, command as inBox, driverCommand } from "../../src/core/in-box.ts";
 import { McpSession } from "../../src/core/mcp.ts";
@@ -70,7 +75,8 @@ export type ConformanceCheck =
   /** Booting an iOS Simulator device and running a command in it (047). */
   | "ios-simulator"
   /** Building a small image with the backend's image operations, which needs root in its box (049). */
-  | "images";
+  | "images"
+  | "test-device";
 
 /** A new Simulator device's first boot is slow (047). */
 const SIMULATOR_TIMEOUT_MS = 600_000;
@@ -124,6 +130,7 @@ export interface ConformanceOptions {
   readonly bb?: ConformanceBb;
   /** For each step that talks to the backend. */
   readonly timeoutMs?: number;
+  readonly testDevice?: boolean;
 }
 
 const THREAD = "thr_conformance";
@@ -313,6 +320,64 @@ export function checkDevice(kind: BoxKind): void {
   assert.equal(deviceDisplays[0]!.resizable, false, `${kind.id}'s device display keeps the device's own size`);
   assert.equal(capabilities.computerUse, null, `${kind.id}'s computer use is the device server's, not Cua's`);
   if (device.platform === "android") assert.equal(capabilities.displays.length, 1, `${kind.id} has no host desktop`);
+}
+
+const BACK_WITHIN_MS = 2000;
+
+export async function testDeviceCase(command: CommandTransport, kind: BoxKind): Promise<{ readonly helloMs: number; readonly keyframeMs: number; readonly backMs: number }> {
+  const os = kind.capabilities.os;
+  const offer = kind.capabilities.device!;
+  const record = { id: `bx-${kind.id}`, threadId: THREAD, name: `conformance-${kind.id}`, state: "ready", kind: kind.id, capabilities: kind.capabilities, askedDevice: offer.devices[0].model } as unknown as BoxRecord;
+  const servers = new DeviceServers({
+    boxes: {
+      find: async () => record,
+      all: async () => [record],
+      update: async () => record,
+      spawnOwn: async (_box, script) => command.spawn!(inBox(os, script)),
+      runOwn: (_box, script, options) => command.run(inBox(os, script, { timeoutMs: options.timeoutMs }), { stdin: options.stdin, timeoutMs: options.timeoutMs + 5_000 }),
+    },
+    kv: { get: async () => null, set: async () => undefined, delete: async () => undefined },
+    files: () => deviceServerFiles(fileURLToPath(new URL("../../", import.meta.url))),
+    personHasControl: () => false,
+    log: (line) => console.log(`# ${line}`),
+    logError: (operation, error) => console.log(`# ${operation}: ${error}`),
+  });
+  const viewer = async () => DeviceLink.open(await command.spawn!(inBox(os, connectScript())), { role: "viewer", helloWaitMs: 5_000 });
+  try {
+    const began = Date.now();
+    const view = await servers.ensure(record);
+    assert.equal(view.is, "connected", `the test device's server answers: ${JSON.stringify(view)}`);
+    const helloMs = Date.now() - began;
+    assert.equal(view.is === "connected" && view.state.model, offer.devices[0].model, "it runs the model asked for");
+    const keys: number[] = [];
+    const watching = await DeviceLink.open(await command.spawn!(inBox(os, connectScript())), { role: "viewer", onFrame: (frame) => frame[0] === 4 && (frame[1]! & 15) === 1 && keys.push(Date.now()) });
+    await watching.send("START_VIDEO");
+    await until(async () => keys.length > 0, 10_000, "a first key frame", 20);
+    const asked = Date.now();
+    await watching.send("REQUEST_KEYFRAME");
+    await until(async () => keys.length > 1, 5_000, "a key frame on request", 10);
+    const keyframeMs = keys[1]! - asked;
+    await watching.close();
+    await servers.dispose();
+    const killed = await command.run(inBox(os, 'kill -9 "$(cat "$HOME/.bb-box/device/server.pid")"'), { timeoutMs: 10_000 });
+    assert.equal(killed.exitCode, 0, `the server was killed: ${killed.stderr}`);
+    const down = Date.now();
+    let backMs: number | null = null;
+    while (Date.now() - down < 15_000) {
+      const link = await viewer().catch(() => null);
+      if (link) {
+        backMs = Date.now() - down;
+        await link.close();
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(backMs !== null && backMs <= BACK_WITHIN_MS, `the server is back within ${BACK_WITHIN_MS / 1000} s of being killed: ${backMs ?? "never"} ms`);
+    return { helloMs, keyframeMs, backMs: backMs! };
+  } finally {
+    await servers.dispose();
+    await command.run(inBox(os, `f="$HOME/.bb-box/device/current/src/device/bb-box-device.sh"; [ ! -f "$f" ] || sh "$f" stop`), { timeoutMs: 30_000 }).catch(() => undefined);
+  }
 }
 
 export function checkCapacity(capacity: Capacity, nature: MachineNature): void {
@@ -650,6 +715,15 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
               assert.equal(result.exitCode, 0, `the Simulator: ${result.stderr}`);
               assert.equal(result.stdout.trim(), "ok", "defaults in the Simulator reads back what it wrote");
               console.log(`# ${options.name} ${kind.id}: an iOS Simulator device booted and ran a command in ${Date.now() - started} ms`);
+            });
+          }
+
+          const withDevice = withTestDevice(kind);
+          if (withDevice.capabilities.device && !capabilities.device) {
+            it("serves the test device: delivered, says hello, gives a key frame on request, and is back within 2 s of being killed (063)", { timeout: Math.max(timeout, 120_000), skip: skip["test-device"] ?? (options.testDevice ? false : "the run does not turn the test device on") }, async () => {
+              const { command } = need();
+              const measured = await testDeviceCase(command, withDevice);
+              console.log(`# ${options.name} ${kind.id}: the test device's server said hello ${measured.helloMs} ms after its delivery began, gave a key frame ${measured.keyframeMs} ms after it was asked, and said hello again ${measured.backMs} ms after it was killed`);
             });
           }
 

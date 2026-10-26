@@ -21,6 +21,7 @@ import { WarmShortfalls } from "./warm.ts";
 import { GENERAL_SECRETS } from "../core/box-files.ts";
 import { Tailnet, type TailnetFetch } from "../core/tailnet.ts";
 import { tailnetUse } from "../core/tailnet-settings.ts";
+import { testDeviceOffer, testDevicePlatformFor } from "../core/device.ts";
 
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver, microsandboxDriver, hetznerDriver, namespaceDriver];
 
@@ -102,6 +103,14 @@ export interface BackendStatus {
   readonly fieldProblems: readonly Problem[];
   /** The kinds it offers now: none while it or they are off. */
   readonly kinds: readonly string[];
+}
+
+export const TEST_DEVICE_KINDS: readonly string[] = ["linux", "linux-desktop-cpu", "macos", "macos-desktop"];
+
+export function withTestDevice(kind: BoxKind): BoxKind {
+  const platform = testDevicePlatformFor(kind.capabilities.os);
+  if (!TEST_DEVICE_KINDS.includes(kind.id) || kind.capabilities.device || kind.capabilities.command?.shell !== "sh" || !platform) return kind;
+  return { ...kind, capabilities: { ...kind.capabilities, device: testDeviceOffer(platform) } };
 }
 
 export interface OfferedKind {
@@ -446,6 +455,11 @@ export class Backends {
    * same kind; acquire uses the first with room, and `offerChecks` warns
    * when their offers disagree.
    */
+  offered(backend: Backend): readonly BoxKind[] {
+    const kinds = backend.kinds();
+    return this.#document?.general.testDevice ? kinds.map(withTestDevice) : kinds;
+  }
+
   kinds(): OfferedKind[] {
     const document = this.#document;
     if (!document) return [];
@@ -453,7 +467,7 @@ export class Backends {
     for (const entry of this.#entries.values()) {
       if (!this.#config(entry.id)?.enabled) continue;
       try {
-        for (const kind of entry.backend.kinds()) if (kindOn(document, kind.id)) offered.push({ kind, backend: entry.backend });
+        for (const kind of entry.backend.kinds()) if (kindOn(document, kind.id)) offered.push({ kind: document.general.testDevice ? withTestDevice(kind) : kind, backend: entry.backend });
       } catch (error) {
         this.#logError(`kinds ${entry.id}`, error);
       }

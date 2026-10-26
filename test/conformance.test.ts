@@ -50,6 +50,7 @@ await conformance({
   bb: fakeBb(),
   skip: { size: machineSize },
   timeoutMs: 20_000,
+  testDevice: process.platform === "linux",
 });
 
 const realHost = new MemoryStorage();

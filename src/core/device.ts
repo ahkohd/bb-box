@@ -561,3 +561,39 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
   if (reason !== null) return refused("unsupported", `${reason} The ${model.name}'s actions are: ${actionsOf(model).join(", ")}.`);
   return valueProblem(model, control);
 }
+
+export const DEVICE_PROTOCOL = 1;
+export const DEVICE_PROTOCOLS = { least: 1, most: 1 } as const;
+export const DEVICE_SERVER_VERSION = 1;
+
+export function speaksProtocol(protocol: number): boolean {
+  return protocol >= DEVICE_PROTOCOLS.least && protocol <= DEVICE_PROTOCOLS.most;
+}
+
+export const TEST_DEVICE_NAME = "Test device";
+export const TEST_DEVICE_NATIVE = "bb-box-test-device";
+export const TEST_DEVICE_DRIVER = "bb-box test driver";
+
+const TEST_RUNTIMES: { readonly [P in DevicePlatform]: PlatformParts[P]["runtime"] } = {
+  ios: { platform: "ios", os: "test", build: "test", xcode: "none", companion: TEST_DEVICE_DRIVER },
+  android: { platform: "android", api: 35, image: "google_apis", revision: 1, abi: "x86_64", emulator: TEST_DEVICE_DRIVER, snapshot: null },
+};
+
+export const TEST_DEVICE_STAND_INS = { ios: ["iPhone 18 Pro", "iPhone 17"], android: ["Pixel 8", "Pixel Tablet"] } as const satisfies { readonly [P in DevicePlatform]: NonEmpty<ModelNameOf<P>> };
+
+export function testDeviceOffer(platform: DevicePlatform): DeviceOffer {
+  if (platform === "ios") return { platform, devices: [TEST_DEVICE_STAND_INS.ios[0], TEST_DEVICE_STAND_INS.ios[1]].map((model) => ({ model, native: TEST_DEVICE_NATIVE, runtime: TEST_RUNTIMES.ios })) as unknown as NonEmpty<OfferedDeviceOf<"ios">> };
+  return { platform, devices: [TEST_DEVICE_STAND_INS.android[0], TEST_DEVICE_STAND_INS.android[1]].map((model) => ({ model, native: TEST_DEVICE_NATIVE, runtime: TEST_RUNTIMES.android })) as unknown as NonEmpty<OfferedDeviceOf<"android">> };
+}
+
+export function isTestDevice(device: Pick<OfferedDevice, "native">): boolean {
+  return device.native === TEST_DEVICE_NATIVE;
+}
+
+export function isTestOffer(offer: DeviceOffer | null): boolean {
+  return !!offer && offer.devices.every(isTestDevice);
+}
+
+export function testDevicePlatformFor(os: "linux" | "macos" | "windows"): DevicePlatform | null {
+  return os === "macos" ? "ios" : os === "linux" ? "android" : null;
+}

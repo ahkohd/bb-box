@@ -753,6 +753,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         if (prepared.result.exitCode === RECORD_STOP_EXITS.none) return noRecording;
         const facts = prepared.result.exitCode === 0 ? parsePrepared(prepared.result.stdout) : null;
         if (!facts) throw new BoxError("unreachable", `Stopping box ${found.name}'s recording failed: ${prepared.result.stderr.trim() || `exit code ${prepared.result.exitCode}`}`);
+        app.devices.recordingEnded(found.id);
         const plan = planClip(facts, times);
         const { result } = await runLong(recordMakeScript(plan, os));
         const said = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;

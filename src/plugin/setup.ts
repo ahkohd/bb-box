@@ -61,6 +61,8 @@ import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
 import { ReloadTimes } from "./reload-times.ts";
 import { registerTools } from "./tools.ts";
+import { DeviceServers, type DeviceServersDeps } from "./devices.ts";
+import { deviceServerFiles } from "../core/device-delivery.ts";
 import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile } from "./views.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
@@ -137,6 +139,7 @@ export interface BbBox {
   readonly enrolment: Enrolment;
   /** Desktop viewers and who controls each desktop's input. */
   readonly desktops: Desktops;
+  readonly devices: DeviceServers;
   readonly terminals: Terminals;
   /** The agent's computer use of desktop boxes (015). */
   readonly computer: Computer;
@@ -326,6 +329,8 @@ export interface SetupOptions {
   readonly daemonParent?: string;
   /** How long a viewer holding control may be gone before the agent has it again. */
   readonly controlStaleMs?: number;
+  readonly devices?: Partial<Pick<DeviceServersDeps, "helloWaitMs" | "idleCloseMs" | "started" | "instance" | "version">>;
+  readonly deviceServerRoot?: string;
   /** How long a deploy waits for box_run's commands still running (#405). */
   readonly drainMs?: number;
   /** How long box_run waits before a command goes on as a job (#486). */
@@ -615,6 +620,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   });
 
   let enrolment: Enrolment;
+  let deviceServers: DeviceServers | undefined;
   let desktops: Desktops | undefined;
   let terminals: Terminals | undefined;
   let computer: Computer | undefined;
@@ -671,6 +677,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       }
       // A box that joins BB, or starts again, gets the files for every box it lacks.
       files?.recorded(box, deleted);
+      deviceServers?.recorded(box, deleted);
     },
     async thread(threadId): Promise<ThreadAnswer> {
       try {
@@ -783,7 +790,25 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     ...options.computer,
   });
   computer = computing;
-  const desktop = registerDesktop(bb, { boxes, notify, logError, staleMs: options.controlStaleMs, reconnectMs: options.controlReconnectMs, pause: (boxId) => computing.pause(boxId) });
+  const devices = new DeviceServers({
+    boxes,
+    kv,
+    files: () => deviceServerFiles(options.deviceServerRoot ?? join(setupDir(), "..")),
+    personHasControl: (boxId) => desktops?.control.view(boxId).owner === "human",
+    log: (line) => bb.log.info(line),
+    logError,
+    ...options.devices,
+  });
+  deviceServers = devices;
+  const desktop = registerDesktop(bb, {
+    boxes,
+    notify,
+    logError,
+    staleMs: options.controlStaleMs,
+    reconnectMs: options.controlReconnectMs,
+    pause: (boxId) => computing.pause(boxId),
+    controlChanged: (boxId) => devices.controlChanged(boxId),
+  });
   desktops = desktop;
   const terminal = registerTerminals(bb, { boxes, logError, idleMs: options.terminalIdleMs });
   terminals = terminal;
@@ -823,6 +848,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.onDispose(() => desktop.dispose());
   bb.onDispose(() => terminal.dispose());
   bb.onDispose(() => computing.dispose());
+  bb.onDispose(() => devices.dispose());
+  void devices.startAll().catch((error) => logError("device servers", error));
 
   /** Asks for configuration while no backend is on and valid. */
   function needsConfiguration(): void {
@@ -1106,6 +1133,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return { hostId: found.id, name: found.name, endpoint, info, firstMs, againMs: Math.round(performance.now() - started) };
     },
     desktops: desktop,
+    devices,
     terminals: terminal,
     computer: computing,
     configuration,
@@ -1254,6 +1282,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         sections.push({
           title: "Files for every box",
           report: { ok: true, summary: "bb-box writes them into each Linux and macOS box as it joins BB or starts, and into running boxes when they change.", checks: fileChecks, notes: [] },
+        });
+      }
+      const deviceChecks = (await deviceServers?.checks()) ?? [];
+      if (deviceChecks.length) {
+        sections.push({
+          title: "Device servers",
+          report: { ok: deviceChecks.every((check) => check.status !== "fail"), summary: `The device server each device box runs, against version ${deviceServers?.version} that this bb-box delivers.`, checks: deviceChecks, notes: [] },
         });
       }
       const small = presetMemoryChecks((await general()).sizes);

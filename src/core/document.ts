@@ -108,6 +108,13 @@ export interface GeneralSettings {
    */
   readonly nightlyImages?: boolean;
   /**
+   * Advanced: whether linux, linux-desktop-cpu, macos and macos-desktop boxes offer the test device (063), a test card
+   * served by bb-box's device server in place of a phone, for checking the device path with no simulator or emulator.
+   * It stands in for an Android phone or tablet on Linux and an iPhone on macOS, under those models' names, so a box
+   * acquired with device "Pixel 8" or "Test device" gets one. Off unless set; the conformance suite turns it on.
+   */
+  readonly testDevice?: boolean;
+  /**
    * How bb-box joins machines it makes to the operator's tailnet: off, where BB is reached without one, or through a
    * Tailscale OAuth client, from which it makes a single-use key for each machine. The client's ID and secret are
    * general secrets.
@@ -138,7 +145,7 @@ export interface Problem {
   readonly message: string;
 }
 
-export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false } as const;
+export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false } as const;
 
 export const MAX_WARM = 20;
 export const MAX_SPARES = 10;
@@ -274,7 +281,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
 
   const general: Record<string, unknown> = {};
   if (input.general !== undefined) {
-    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages and tailnet.");
+    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice and tailnet.");
     else {
       for (const [key, value] of Object.entries(input.general)) {
         if (value === undefined || value === null) continue;
@@ -296,12 +303,15 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "nightlyImages") {
           if (typeof value === "boolean") general[key] = value;
           else problem("general.nightlyImages", "nightlyImages is true or false.");
+        } else if (key === "testDevice") {
+          if (typeof value === "boolean") general[key] = value;
+          else problem("general.testDevice", "testDevice is true or false.");
         } else if (key === "tailnet") {
           const changes: Record<string, string | null> = {};
           const tailnet = readTailnet(value, problem, changes);
           if (tailnet) general[key] = tailnet;
           if (Object.keys(changes).length) secrets[GENERAL_SECRETS] = { ...secrets[GENERAL_SECRETS], ...changes };
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages and tailnet.`);
+        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice and tailnet.`);
       }
     }
   }

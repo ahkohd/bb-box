@@ -1,6 +1,8 @@
 // The registry against the fake backend: acquire and release, limits and
 // capacity, commands and copies, stop and start, and the sweep.
 
+import { withTestDevice } from "../src/backends/index.ts";
+import { testDeviceOffer } from "../src/core/device.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { scopedStorage } from "../src/backends/index.ts";
@@ -42,6 +44,7 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
     off: new Set<string>(),
     /** False when the backend is off in settings. */
     active: true,
+    testDevice: false,
     general: { perThreadLimit: null, enrol: true, sizes: {}, spares: {} } as GeneralConfig,
     threads: new Map<string, ThreadLiveness>(),
     notified: [] as string[],
@@ -59,14 +62,16 @@ function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps:
       return world.boxes;
     },
   };
+  const offered = (backend: Backend): readonly BoxKind[] => (world.testDevice ? backend.kinds().map(withTestDevice) : backend.kinds());
   const backends = {
     get: (id: string): Backend | null => (world.active ? ([world.backend, ...world.others] as Backend[]).find((backend) => backend.id === id) ?? null : null),
     active: (): Backend[] => (world.active ? [world.backend, ...world.others] : []),
     on: (): Backend[] => (world.active ? [world.backend, ...world.others].filter((backend) => !world.off.has(backend.id)) : []),
     kinds: () =>
       world.active
-        ? [world.backend, ...world.others].filter((backend) => !world.off.has(backend.id)).flatMap((backend) => backend.kinds().map((kind) => ({ kind, backend: backend as Backend })))
+        ? [world.backend, ...world.others].filter((backend) => !world.off.has(backend.id)).flatMap((backend) => offered(backend).map((kind) => ({ kind, backend: backend as Backend })))
         : [],
+    offered,
     driverLabel: (id: string) => (id.startsWith("fake") ? "Fake host" : id.split(":")[0]!),
   };
   const registry = () =>
@@ -3090,4 +3095,16 @@ test("a stored box's device data is read through its validators: what does not r
   const dropped = await world.boxes.get(THREAD, box.id);
   assert.deepEqual([dropped.capabilities.device, dropped.device, dropped.askedDevice], [null, null, undefined]);
   await world.boxes.idle();
+});
+
+test("with the test device on, a linux box asked for the Test device keeps it through a placement and a refresh of its capabilities (063)", async () => {
+  const world = setup();
+  world.testDevice = true;
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: "t1", projectId: null, kind: "linux", device: "Test device" }));
+  assert.equal(box.askedDevice, "Pixel 8");
+  assert.deepEqual(box.capabilities.device, testDeviceOffer("android"));
+  await world.boxes.refreshCapabilities();
+  assert.deepEqual((await world.boxes.find(box.id))?.capabilities.device, testDeviceOffer("android"));
+  world.testDevice = false;
+  await assert.rejects(world.boxes.acquire({ threadId: "t1", projectId: null, kind: "linux", device: "Test device" }), (error: unknown) => error instanceof BoxError && error.code === "unsupported");
 });

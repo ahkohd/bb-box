@@ -1,0 +1,299 @@
+{
+ "protoc": "libprotoc 3.21.12",
+ "cases": [
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.TouchEvent",
+   "text": "touches { x: 100 y: 200 identifier: 1 pressure: 1 } touches { x: -5 identifier: 2 expiration: NEVER_EXPIRE }",
+   "value": {
+    "touches": [
+     {
+      "x": 100,
+      "y": 200,
+      "identifier": 1,
+      "pressure": 1
+     },
+     {
+      "x": -5,
+      "identifier": 2,
+      "expiration": 1
+     }
+    ]
+   },
+   "hex": "0a09086410c801180120010a0f08fbffffffffffffffff0118023801"
+  },
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.TouchEvent",
+   "text": "touches { x: 0 y: 0 identifier: 0 } display: 1",
+   "value": {
+    "touches": [
+     {}
+    ],
+    "display": 1
+   },
+   "hex": "0a001001"
+  },
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.KeyboardEvent",
+   "text": "codeType: Evdev eventType: keyup keyCode: 30 key: \"a\" text: \"h\\303\\251llo \\346\\227\\245\\346\\234\\254\"",
+   "value": {
+    "codeType": 1,
+    "eventType": 1,
+    "keyCode": 30,
+    "key": "a",
+    "text": "héllo 日本"
+   },
+   "hex": "08011001181e2201612a0d68c3a96c6c6f20e697a5e69cac"
+  },
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.ImageFormat",
+   "text": "format: RGB888 rotation { rotation: LANDSCAPE zAxis: -90 } width: 1080 height: 2400 transport { channel: MMAP handle: \"file:///tmp/frames\" }",
+   "value": {
+    "format": 2,
+    "rotation": {
+     "rotation": 1,
+     "zAxis": -90
+    },
+    "width": 1080,
+    "height": 2400,
+    "transport": {
+     "channel": 1,
+     "handle": "file:///tmp/frames"
+    }
+   },
+   "hex": "0802120b08012100000000008056c018b80820e01232160801121266696c653a2f2f2f746d702f6672616d6573"
+  },
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.Image",
+   "text": "format { format: PNG width: 2 height: 1 } image: \"\\000\\001\\377\" seq: 7 timestampUs: 1792987216164123",
+   "value": {
+    "format": {
+     "width": 2,
+     "height": 1
+    },
+    "image": {
+     "base64": "AAH/"
+    },
+    "seq": 7,
+    "timestampUs": 1792987216164123
+   },
+   "hex": "0a041802200122030001ff2807309beaecf0e5d69703"
+  },
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.PhysicalModelValue",
+   "text": "target: ROTATION value { data: 0 data: 0 data: -90.5 }",
+   "value": {
+    "target": 1,
+    "value": {
+     "data": [
+      0,
+      0,
+      -90.5
+     ]
+    }
+   },
+   "hex": "08011a0e0a0c00000000000000000000b5c2"
+  },
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.Posture",
+   "text": "value: POSTURE_HALF_OPENED",
+   "value": {
+    "value": 2
+   },
+   "hex": "1802"
+  },
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.BatteryState",
+   "text": "hasBattery: true isPresent: true charger: AC chargeLevel: 42",
+   "value": {
+    "hasBattery": true,
+    "isPresent": true,
+    "charger": 1,
+    "chargeLevel": 42
+   },
+   "hex": "080110011801202a"
+  },
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.GpsState",
+   "text": "latitude: 51.5074 longitude: -0.1278 altitude: 11 satellites: 8",
+   "value": {
+    "latitude": 51.5074,
+    "longitude": -0.1278,
+    "altitude": 11,
+    "satellites": 8
+   },
+   "hex": "11c5feb27bf2c0494019ebe2361ac05bc0bf3100000000000026403808"
+  },
+  {
+   "proto": "emulator_controller.proto",
+   "message": "android.emulation.control.ClipData",
+   "text": "text: \"\\346\\227\\245\\346\\234\\254\\350\\252\\236 \\303\\251\"",
+   "value": {
+    "text": "日本語 é"
+   },
+   "hex": "0a0ce697a5e69cace8aa9e20c3a9"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.HIDEvent",
+   "text": "press { action { touch { point { x: 201.5 y: 437 } } } direction: DOWN }",
+   "value": {
+    "press": {
+     "action": {
+      "touch": {
+       "point": {
+        "x": 201.5,
+        "y": 437
+       }
+      }
+     }
+    }
+   },
+   "hex": "0a180a160a140a12090000000000306940110000000000507b40"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.HIDEvent",
+   "text": "press { action { button { button: HOME } } direction: UP }",
+   "value": {
+    "press": {
+     "action": {
+      "button": {
+       "button": 1
+      }
+     },
+     "direction": 1
+    }
+   },
+   "hex": "0a080a04120208011001"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.HIDEvent",
+   "text": "press { action { key { keycode: 4 } } }",
+   "value": {
+    "press": {
+     "action": {
+      "key": {
+       "keycode": 4
+      }
+     }
+    }
+   },
+   "hex": "0a060a041a020804"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.HIDEvent",
+   "text": "swipe { start { x: 10 y: 800 } end { x: 10 y: 200 } delta: 10 duration: 0.5 }",
+   "value": {
+    "swipe": {
+     "start": {
+      "x": 10,
+      "y": 800
+     },
+     "end": {
+      "x": 10,
+      "y": 200
+     },
+     "delta": 10,
+     "duration": 0.5
+    }
+   },
+   "hex": "123a0a12090000000000002440110000000000008940121209000000000000244011000000000000694029000000000000244031000000000000e03f"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.HIDEvent",
+   "text": "delay { duration: 0.1 }",
+   "value": {
+    "delay": {
+     "duration": 0.1
+    }
+   },
+   "hex": "1a09099a9999999999b93f"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.VideoStreamRequest",
+   "text": "start { fps: 60 format: H264 compression_quality: 0.8 scale_factor: 1 avg_bitrate: 8000000 key_frame_rate: 2 }",
+   "value": {
+    "start": {
+     "fps": 60,
+     "compression_quality": 0.8,
+     "scale_factor": 1,
+     "avg_bitrate": 8000000,
+     "key_frame_rate": 2
+    }
+   },
+   "hex": "0a26103c219a9999999999e93f29000000000000f03f310000000080845e41390000000000000040"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.VideoStreamRequest",
+   "text": "stop {}",
+   "value": {
+    "stop": {}
+   },
+   "hex": "1200"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.VideoStreamResponse",
+   "text": "payload { data: \"\\000\\000\\000\\001g\" }",
+   "value": {
+    "payload": {
+     "data": {
+      "base64": "AAAAAWc="
+     }
+    }
+   },
+   "hex": "120712050000000167"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.VideoStreamResponse",
+   "text": "log_output: \"started\"",
+   "value": {
+    "log_output": {
+     "base64": "c3RhcnRlZA=="
+    }
+   },
+   "hex": "0a0773746172746564"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.ScreenshotRequest",
+   "text": "format: PNG scale_factor: 0",
+   "value": {
+    "scale_factor": 0
+   },
+   "hex": "210000000000000000"
+  },
+  {
+   "proto": "idb.proto",
+   "message": "idb.ScreenshotResponse",
+   "text": "image_data: \"\\211PNG\" image_format: \"png\" source { width: 1206 height: 2622 } screen_scale: 3",
+   "value": {
+    "image_data": {
+     "base64": "iVBORw=="
+    },
+    "image_format": "png",
+    "source": {
+     "width": 1206,
+     "height": 2622
+    },
+    "screen_scale": 3
+   },
+   "hex": "0a0489504e471203706e67220608b60910be14290000000000000840"
+  }
+ ]
+}
