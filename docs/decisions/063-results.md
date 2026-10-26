@@ -618,5 +618,8 @@ kernel, so its clock is the macOS VM's.
 | Suspended for | The server | Frames | HID | The clock |
 | --- | --- | --- | --- | --- |
 | 110 s | saw its clock move 102 s past its own, restarted the stream, and checked the device and the companion | a viewer's key frame at once | a tap changed the screen in 56 ms at the median of 5, the first 143 ms | the status bar said 10:04, as the Mac did |
-| 1 h | to come | | | |
-| 24 h | to come | | | |
+| 62 minutes | saw its clock move 3,704 s past its own, restarted the stream, and checked the device and the companion; the device was still booted | a viewer's key frame at once | a tap changed the screen in 57 ms at the median of 5, 28 to 91 ms | the status bar said 11:16, as the Mac did |
+| 24 h | suspended again at 11:16 UTC on 26 October; to be read after 11:16 UTC on 27 October | | | |
+
+The 62-minute run was in a second box, which ran the device server as it
+was before its last changes, none of them to the driver's resume.
