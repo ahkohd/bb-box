@@ -302,6 +302,8 @@ class FakeSimulator {
   statusBar: string[] = [];
   installed = new Set<string>();
   idbLog: string | null = null;
+  bootFailures = 0;
+  bootstatusTimeouts = 0;
   get state(): string {
     return this.#state;
   }
@@ -368,9 +370,17 @@ class FakeSimulator {
         return ok(JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{ udid: UDID, name: "iPhone 18 Pro", deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", state: this.state, isAvailable: true }] } }));
       case "boot":
         if (this.state === "Booted") return { code: 149, stdout: "", stderr: "Unable to boot device in current state: Booted" };
+        if (this.bootFailures > 0) {
+          this.bootFailures--;
+          return { code: 1, stdout: "", stderr: "Unable to boot the Simulator." };
+        }
         this.state = "Booted";
         return ok();
       case "bootstatus":
+        if (this.bootstatusTimeouts > 0) {
+          this.bootstatusTimeouts--;
+          return { code: -1, stdout: "", stderr: "timed out after 120000 ms" };
+        }
         return ok();
       case "shutdown":
         this.state = "Shutdown";
@@ -588,6 +598,29 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     replaced(before);
     slimmed.driver.close();
     await slimmed.driver.shutdown(AbortSignal.timeout(5000));
+  });
+
+  test("a reboot whose wait for the boot times out reads the device, and attaches to it where it booted; a failed device can be rebooted (F-8)", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    for (const label of LIST) simulator.disabled.add(label);
+    const { driver, logs } = driverOf(setup, simulator);
+    await driver.attach(setup.target, AbortSignal.timeout(20_000));
+    const reboot = () => driver.control({ action: "reboot" }, AbortSignal.timeout(20_000), { personHasControl: false });
+
+    simulator.bootstatusTimeouts = 1;
+    await reboot();
+    assert.equal((await driver.readBack()).power.is, "booted", "booted, as simctl reads it");
+    assert.ok(logs.some((line) => /reads Booted, though its start said: simctl could not wait for the device to boot/.test(line)), logs.join("\n"));
+
+    simulator.bootFailures = 1;
+    await assert.rejects(reboot(), /could not boot the device/);
+    assert.equal((await driver.readBack()).power.is, "failed", "a device that did not boot is failed");
+
+    await reboot();
+    assert.equal((await driver.readBack()).power.is, "booted", "the failed device rebooted");
+    await assert.doesNotReject(driver.control({ action: "home" }, AbortSignal.timeout(20_000), { personHasControl: false }));
+    driver.close();
   });
 
   test("says its device is booted, or back after it stopped by itself, only once the device's HID daemon, which starts at the first input, took input", async () => {
