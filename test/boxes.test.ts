@@ -3336,6 +3336,17 @@ test("a take that loses its race is asked again, three times, then the box is re
   );
 });
 
+test("a box in a slot has its placement on a shared host in its timings, which its total counts (F-7)", async () => {
+  const world = setup({ kinds: [sharedIosKind()], slots: { kinds: ["ios"], most: 8 } });
+  world.backend.takeLosses = 1;
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true }));
+  assert.equal(typeof box.timings["shared-host"], "number");
+  assert.ok(box.timings.total! >= box.timings["shared-host"]!);
+  assert.match(boxDetail(box), /\nTimings: choosing a shared host \d+ ms, /);
+  const plain = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios" }));
+  assert.equal(plain.timings["shared-host"], undefined, "a VM of its own is placed as before");
+});
+
 test("a box in a slot whose host's VM stopped, as after its Mac restarted, is started again by bb-box, though a person's start is refused (064, unit 4)", async () => {
   const world = setup({ kinds: [sharedIosKind()], slots: { kinds: ["ios"], most: 8 } });
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true }));

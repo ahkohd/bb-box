@@ -31,6 +31,7 @@ const ROOM_POLL_MS = 10_000;
 const DELETING_LEFT_MS = 2 * 60_000;
 const HANDING_OVER_MS = 5 * 60_000;
 export const DOCTOR_HOST_MS = 15_000;
+const CHAIN_WAIT_LOGGED_MS = 2_000;
 
 export type HostPhase = "starting" | "serving" | "failed";
 
@@ -510,7 +511,10 @@ export class IosHosts implements SlotLender {
     if (!mac) return { lost: `There is no Mac ${macName} in bb-box's Tart settings.` };
     const settings = this.#settings;
     const image = this.#access.config().iosImage!;
+    const asked = performance.now();
     return this.#access.placement(async (): Promise<SlotTaken> => {
+      const queued = performance.now() - asked;
+      if (queued >= CHAIN_WAIT_LOGGED_MS) this.#access.log(`A new shared iOS host for box ${box.name} waited ${(queued / 1000).toFixed(1)} s for the Tart backend's other placements.`);
       const states = await this.#readStates(signal);
       const leaving = this.#leavingOf(await this.#survey(states, signal));
       const why = this.#newHostWhy(mac, states, this.#owners(states), leaving);

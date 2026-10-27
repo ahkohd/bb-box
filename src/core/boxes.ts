@@ -1034,6 +1034,7 @@ export class Boxes {
         const slot = inSlotAsked
           ? await this.#placeInSlot(offered, wanted as SlotKind, askedDevice, { boxId: id, threadId: input.threadId, name, kind: wanted, createdAt, size: sized.size })
           : null;
+        const placedIn: Record<string, number> = slot ? { "shared-host": this.#now() - createdAt } : {};
         const chosen = slot ? slot.chosen : await this.#place({ threadId: input.threadId, named }, offered, withDevice, sized.size, features).catch((error: unknown) => {
           throw this.#withSharedHint(error, wanted, input.shared, impliedOwnVm, offered);
         });
@@ -1062,7 +1063,7 @@ export class Boxes {
           readyAt: null,
           releaseRequestedAt: null,
           resetAt: null,
-          timings: {},
+          timings: placedIn,
           enrol: { state: "off", hostId: null, error: null },
           ...(askedDevice ? { askedDevice } : {}),
           ...(slim !== null ? { slim } : {}),

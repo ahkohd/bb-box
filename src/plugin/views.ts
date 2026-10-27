@@ -436,6 +436,7 @@ const STEP_WORDS: Readonly<Record<string, string>> = {
   spareReconnect: "BB machine reconnecting",
   relabel: "naming it for its owner",
   clock: "setting the clock",
+  "shared-host": "choosing a shared host",
 };
 
 /** Where a box's timings name the steps of its last start. */
