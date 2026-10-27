@@ -671,3 +671,86 @@ first boot that passed, in 27.7 to 47.2 s.
   any that exists, so a rerun of `host-ios.sh` never gives a carried UID
   again. A rerun before this fix, in the live check, gave UID 79991 a
   second time.
+
+## F-5: safety fixes to the host helper
+
+Built and checked on 26 and 27 October 2026, after an independent safety
+review of unit 3's helper. The helper is in no image yet; the ios image is
+rebuilt after this.
+
+### What changed
+
+| Finding | Fix |
+| --- | --- |
+| 1, high: `daemon` made and chowned `logs` in the slot user's own BB folder as root, so a link there gave the user `/Library/LaunchDaemons` | BB's launchd log is `/private/var/log/bb-box-slots/<user>.log`: the folder root's, mode 755, the file made by root and then given to the user, mode 644. Root writes nothing in the user's BB data. It reads the pid and port files as the user, only from folders and files the user owns that are not links, and stops the installer's daemon as the user |
+| 2, high: a sweep file named "80001 0" reached `find -uid 0` and `pkill -u 0` | The queue is read by path. A file whose whole name is not a slot UID is removed by that name before anything acts. `sweep_pass`, `log_out_again` and `remove_ipc` each refuse any argument that is not a slot UID; `remove_ipc` takes the UID alone and works out the user from it |
+| 3: a release cut between moving `claim` and writing `releasing` stranded the slot | `releasing` is written first. The `last` decision is made once, by the release run again or by `resume`, and a held slot whose claim was already moved is released by its `released` file |
+| 4: a claim whose slot lock timed out stayed `held` | The claim is removed and the slot is `ready` again |
+| 5: a failed macOS lend made the slot `ready` with its device gone | Any failed lend sends the slot to `resetting`, and it is removed. A slot touched for a box is never lent again |
+| 6: the seed ran `mkdir -p` in `/private/var/tmp` | `mkdir` alone. A store that exists must be a folder, not a link, of root's or the slot user's. A `disabled.plist` already there is removed, not written through |
+| 7: the sweep removed the slot folder named by the file's `slot=` | A sweep file's `slot=` must be a slot number or a carried slot whose UID is the file's name, and its `user=` that slot's user, or the file is removed unswept |
+| 8: UIDs wrapped at generation 10000 | No modulo. `make`, `promise` and the top-up refuse once the generation would reach 10000: "let its boxes go, then set it up again" |
+| 9: box IDs of dots passed | A box ID starts with a letter or digit |
+| 10: boot clean-up followed links | It skips a linked `.bb-machines` or data folder, and one the user does not own, and removes the lock and pid file as the user |
+| Floor | `resetting-most` is at least 1: `init` refuses 0, and a hand-written 0 reads as 1. At 0 the sweep looped forever |
+
+One more fault turned up while fixing these. `top_up` set the shell's
+`id` and `dir`. A claim that topped up the host lent the new slot it had
+just started instead of the one claimed: root wrote the box's key into
+that slot's home, and the claim answered with that slot. A release that
+topped up carried on the new slot instead of its own. `top_up` and the
+`last` decision now run in subshells.
+
+### How it was checked
+
+On Linux, with the stub tools: 14 new cases in
+[`test/device-host-helper.test.ts`](../../test/device-host-helper.test.ts),
+each planting exactly the link, hand-written file or cut state it is
+about. All 37 cases pass. Run against the helper as merged in PR 1169, all
+14 new cases fail, and so does the `daemon` case, whose log moved. tsc
+and the node suite passed on a Linux box; vitest ran there too.
+
+Then live, in a dedicated ios box at 6 cores and 16 GiB, from the ios
+image of 26 October, as root. The image was not rebuilt or changed:
+`host-ios.sh` installed this branch's helper in 69.7 s and made both
+carried slots.
+
+| Step | Slot 1 | Slot 2 | Slot 3 |
+| --- | --- | --- | --- |
+| `make` | 52.9 s | 34.1 s | 32.4 s |
+| `claim` | 0.11 s | 0.12 s | 0.13 s |
+| `release` | 8.8 s | 8.2 s | 8.2 s |
+
+The sweep queue was empty 118 s after the last release: 80001 alone in
+60.2 s, then 80002 and 80003 together in 73.6 s, 8 paths found for each
+UID and none left. The users, their processes and their logs were gone,
+and the image check's slot-UID line found no file of 80000 to 89999 on the
+Data volume, in 21 s. Its daemons, held-ports and carried-slots lines
+passed too.
+
+**Finding 1's attack.** As `bbd-1`, over SSH with the box's key, as
+`box_run` reaches a box: a stand-in for BB's daemon running as the user,
+its pid and port files, and `logs` linked to `/Library/LaunchDaemons`.
+`daemon` took 0.17 s. `/Library/LaunchDaemons` stayed `root:wheel`,
+`drwxr-xr-x`, with the same entries, owners and modes, plus only
+`app.bb-box.bb.bbd-1.plist`. launchd ran the stand-in as `bbd-1`, writing
+to `/private/var/log/bb-box-slots/bbd-1.log`. As `bbd-1`, adding a link,
+moving the log or making a file in that folder were each refused. At a
+new boot, `resume` left a root folder behind a linked data folder and a
+linked `.bb-machines` alone, and cleared `bbd-2`'s own lock as `bbd-2`.
+
+**The sweep file "80001 0",** written as root with a root file, a root
+process and the IPC table as canaries. `reset`, traced with `sh -x`,
+answered `refused=80001 0` and ran one command that acts:
+`rm -f '/var/db/bb-box/host/sweep/80001 0'`. No `find`, `pkill`,
+`launchctl bootout` or `ipcrm` ran, and every canary was unchanged.
+
+### Deviation from the brief
+
+The brief asked for a log file made by root, mode 644. launchd opens a
+LaunchDaemon's `StandardOutPath` as its `UserName`: in the box, a
+root-owned log, in a folder of mode 700 or 755, failed the spawn with
+exit 78 (EX_CONFIG), as the held ports' daemon did in unit 3. So root
+makes the file and then gives it to the user, in a folder of root's that
+the user cannot write. The user can write their own log, but cannot swap
+it for a link or add a file.
