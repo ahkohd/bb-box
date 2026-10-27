@@ -1652,3 +1652,69 @@ meanwhile, waits for the Mac's second VM slot.
   host: E1's slowdowns came from a box's VM and a host's alike.
 - **A server before version 25 is not counted.** It keeps unit 4's cap
   until the delivery on its first connection replaces it.
+
+## F-8: follow-ups from units 4 to 6
+
+Built on 27 October 2026. Device server version 26; the host's helper
+version 4.
+
+### What changed
+
+| Item | Found | Fix |
+| --- | --- | --- |
+| 1, a failed Tart slot acquire | A Tart slot acquire that failed after its take kept the slot or promise it was placed with, as the pool's did before PR 1187: the registry expects a backend to give back what a failed acquire took | It releases the slot, or gives back the promise, unless its acquire was aborted or its instance is stopping, as at a reload, when the next instance resumes the box in the same place (F-7) |
+| 2, a reboot under load | Under load, `simctl bootstatus` timed out at 120 s on devices that had booted, and the reboot marked them failed. `box_device reboot` then refused a failed device as not booted, as the driver checked that before every control | A reboot whose start fails reads the device from `simctl`; where it reads Booted, the driver attaches to it again instead of failing it. `box_device reboot` acts on a failed device, as Android's driver did |
+| 3, the doctor's device server line | It gave the state the link last had: "booted" while the shared host's VM was stopped | The doctor asks the server for its state, waiting 3 s at most. With no answer, or no connection, it says the state now is not known, why, and what the server last said when |
+| 4, BB's app for slots | The ios image kept the image user's BB app for the slots (F-7), stale after each BB update: slots then downloaded and installed the newer build over it, and the doctor warned | bb-box installs the build BB's server gives as the host's own user (the image user on a Tart host, bb-box's admin user on the pool's Mac), checked against the server's SHA-256, at a host's start and in its upkeep. The helper's new `keep-app`, as root, copies it into the slots' home and every ready slot no box has claimed: no link that is absolute or leaves the app, nothing writable by others or owned by another user, the build read from the copy. Otherwise it removes the slots' home's copy, so slots download the app. The image keeps no BB app |
+| 5, a start re-run by another instance | Another instance's upkeep ran again a host start that had been `starting` for over 5 minutes, while the first still waited for room | A start writes `start-by=<instance>` and `start-beat=<time>` in the host's owner file, under its lock, and the beat every 30 s. Another instance's upkeep, or a box's acquire, waits for a start whose instance beat in the last 2 minutes, however old. A start cut short by its instance stopping gives up its claim at once. The doctor gives a starting host's instance and age |
+| 6, a still device at full size | A still device kept a full-size place over a busy one, as the ledger keeps the streams already at full | A busy stream, over 5 frames a second, that has wanted full size for 10 s takes a still one's place, and rises at once. The person in control keeps theirs first, and a busy stream at full keeps its place |
+
+### How it was checked, before the live check
+
+On a Linux box:
+
+| Check | Result |
+| --- | --- |
+| 1: a Tart acquire whose claim hook throws after its slot is claimed | the slot is released, no promise is left, and the next box gets a slot. On main the slot stayed held |
+| 2: the iOS driver on a fake `simctl` | a reboot whose `bootstatus` fails once while the device reads Booted is booted, and says why; a boot that fails leaves the device failed; a reboot of the failed device boots it, and a control works after. On main the reboot of a failed device was refused |
+| 3: the doctor, with a real device server | answering: its state now; stopped with SIGSTOP: "it did not answer within 1 s, so the device's state now is not known. It last said ... at ... UTC."; idle-closed: says bb-box closed its connection, ok |
+| 4: the helper's `keep-app` on stub macOS | the host user's app copied into the slots' home and the ready slot, the claimed slot untouched, a slot made after has it; another build removes the copy and new slots have none; an absolute link, a link out of the app and a file others can write each refused; `from` a slot's home and a bad server folder refused. The install script with stub `curl` and `npm` and the real `shasum`: installs once, refuses another digest. A Tart host that serves runs the install and `keep-app`, and the doctor says the slots get the build. `machine slot keep-app` takes the home of the user who ran it through sudo, whatever `from` it is given |
+| 5: two Tart backends of one install, the first's start held at its helper's `init`, the owner file aged 10 minutes | the second's upkeep and a box's acquire wait for it; `init` ran once; the doctor gives "starting, made 600 s ago, started by bb-box instance ..., last heard from 0 s ago"; a serving host's owner file has no start fields. F-7's reload case still passes |
+| 6: the ledger | a busy stream at two thirds rises to full 10 s after it began waiting, a still one goes to two thirds, the person in control keeps theirs; a busy one at full keeps its place over still and busy streams. On main the still one kept its place |
+| The suite | on a clone of the bundle on origin/main at 56a8b2c3: tsc clean; the node suite 2,201 passed, 0 failed, 288 skipped, the docs test among them; vitest 222 passed |
+
+### The live check
+
+Through production BB on 27 October 2026, after the lead deployed F-8 (PR
+1190, main 552b0ce, device server version 26, helper version 4), on the
+pool's Mac, an M5 Max, as both of the Tart Mac's VM slots were held by
+other threads' boxes. Boxes were acquired with `shared: true`; the panels
+were the owner's Helium, driven by playwriter.
+
+| Item | Check | Result |
+| --- | --- | --- |
+| 3 | A slot box's device server stopped with SIGSTOP as its slot's user, then `bb box doctor` | "Version 26, protocol 2: it did not answer within 3 s, so the device's state now is not known. It last said the iPhone 18 Pro was booted, at 18:26:59 UTC." Before the stop: "the iPhone 18 Pro, booted." The doctor took 11 s |
+| 2 | The device shut down twice within 5 minutes with `simctl`, so the driver left it failed ("stopped twice within 5 minutes"), then `box_device reboot` | "Rebooted the iPhone 18 Pro in 6.7 s. Now: booted". On main it was refused as not booted |
+| 6 | Three slot boxes' panels in one tab, each with Pixel for pixel, all on the Home Screen | two at full size; the third, box honest-marsh, shown lower, as the doctor said |
+| 6 | That third made busy, a page that repaints every frame, at 18:32:29 | between 18:32:46 and 18:32:57 it rose to full and a still one, box amber-brook, went lower, with the words under its toolbar. Counted over 10 s in the panels: the busy one 60.0 frames a second at 1206x2622, the still one at 804x1748, the other still one at 1206x2622 |
+| 4 | The pool Mac's upkeep | it installed the server's build as bb-box's admin user, then `machine slot keep-app` was refused: the Mac's helper predates it, as the pool's Mac runs the helper `setup-mac.sh` installed. Slots there download the app until its slots are set up again |
+
+### Faults the live check found, and their fixes
+
+| Found | Fix |
+| --- | --- |
+| The doctor's fix for a silent device server in a pool Mac's slot named a host VM | in the follow-up commit: it names the Tart host's VM for a Tart slot, and the iOS slots check of its Mac for a pool Mac's slot |
+
+### What limits these checks
+
+- **Items 1 and 4 wait for the Tart Mac.** Both its VM slots were held by
+  other threads' boxes from 17:50 to 22:00 UTC, so no shared Tart host
+  could start for item 1, nor a dedicated ios box for item 4's enrolment
+  measurement before and after, as F-7 measured. The lead runs them later.
+  Item 4 on the pool's Mac waits for its slots to be set up again, as above.
+- **Item 2's timed-out reboot was not seen live.** It needs a host whose
+  cores are saturated, as unit 6's 8 busy slots on an 8-core host were; the
+  pool's Mac has 18. It is checked on the fakes.
+- **Item 5 was not seen live.** It needs two instances of one install and a
+  start waiting for room.
+- **Item 6's person in control** was not checked again live; unit 6 did.
