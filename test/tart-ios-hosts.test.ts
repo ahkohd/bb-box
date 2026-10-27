@@ -145,6 +145,24 @@ test("a take that loses its race answers lost, and a box's release before its sl
   assert.equal(hosts().length, 1, "two boxes still hold the host");
 });
 
+test("a slot acquire that fails after its slot is claimed gives the slot back, as the registry expects of a backend (F-8)", async () => {
+  const { backend, device } = setup();
+  for (const box of [identity(), identity()]) {
+    const { guest } = await place(backend, box);
+    await backend.acquire(box, guest, hooks().hooks, signal());
+  }
+  const box = identity();
+  const { tier, guest } = await place(backend, box);
+  assert.equal(tier.tier, "make");
+  const failing: AcquireHooks = { ...hooks().hooks, claim: async () => { throw new Error("the box's record could not be written"); } };
+  await assert.rejects(backend.acquire(box, guest, failing, signal()), /could not be written/);
+  assert.ok(!device.status().slots.some((slot) => slot.box === box.boxId), "no slot is held for the box");
+  assert.ok(!device.status().lines.some((line) => line.startsWith(`promise=${box.boxId}\t`)), "nor a promise");
+  const again = identity();
+  const { guest: next } = await place(backend, again);
+  assert.equal(placementOf({ guest: await backend.acquire(again, next, hooks().hooks, signal()) }).on, "slot", "the next box gets a slot");
+});
+
 test("a slot box's transports reach it as its slot's user, with the host keeping BB's daemon; its device server is started again through the helper (064)", async () => {
   const { backend, ssh } = setup();
   const box = identity();

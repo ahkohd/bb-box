@@ -683,6 +683,7 @@ export class IosHosts implements SlotLender {
     if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${previous.host ?? "unknown"}, which is not in bb-box's Tart settings.`);
     this.#acquiring.set(ref.vm, (this.#acquiring.get(ref.vm) ?? 0) + 1);
     this.#acquiringBoxes.add(box.boxId);
+    let taken = previous;
     try {
       await hooks.starting();
       const timed = async <T>(step: string, run: () => Promise<T>): Promise<T> => {
@@ -696,6 +697,7 @@ export class IosHosts implements SlotLender {
       const claimed = readPlacement(previous.data).ok && ref.slot !== null;
       const address = claimed && previous.address ? previous.address : await timed("host", () => this.#serving(mac, ref.vm, signal));
       let guest = claimed ? { ...previous, address } : await timed("slot", () => this.#slotFor(mac, ref.vm, address, box, signal));
+      taken = guest;
       await hooks.claim(guest);
       const placement = readPlacement(guest.data);
       if (!placement.ok || placement.value.on !== "slot") throw new Error(`Box ${box.name}'s slot could not be read: ${placement.ok ? "no slot" : placement.words}`);
@@ -704,6 +706,9 @@ export class IosHosts implements SlotLender {
       guest = { ...guest, address };
       await hooks.claim(guest);
       return guest;
+    } catch (error) {
+      if (!signal.aborted && !this.#stopping.signal.aborted) await this.release(taken).catch((cause) => this.#access.logError(`release ${taken.ref} after a failed acquire`, cause));
+      throw error;
     } finally {
       this.#acquiringBoxes.delete(box.boxId);
       const left = (this.#acquiring.get(ref.vm) ?? 1) - 1;
