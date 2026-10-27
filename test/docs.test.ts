@@ -109,3 +109,17 @@ test("the skill names every tool the agent gets", async () => {
   const missing = (await registered()).tools.map((tool) => tool.name).filter((name) => !new RegExp(`\\b${name}\\b`).test(skill));
   assert.deepEqual(missing, [], "skills/bb-box/SKILL.md does not mention these tools");
 });
+
+test("the iOS guide gives the shared host's slot log folder, its last slot and UID, and that a failed lend removes the slot, as device-host.sh has them", () => {
+  const guide = readFileSync(join(root, "setup", "tart", "ios", "README.md"), "utf8").replace(/\s+/g, " ");
+  const helper = readFileSync(join(root, "setup", "tart", "ios", "device-host.sh"), "utf8");
+  const setting = (name: string) => new RegExp(`^${name}=(.+)$`, "m").exec(helper)?.[1];
+  const logs = setting("SLOT_LOGS")!.replace("$ROOT", "");
+  const lastSlot = Number(setting("SLOT_UID_SPAN")) - 1;
+  const lastUid = Number(setting("SLOT_UID_BASE")) + lastSlot;
+  assert.ok(guide.includes(`Its log is \`${logs}/<user>.log\``), `the guide gives ${logs}`);
+  assert.ok(guide.includes(`to slot ${lastSlot}, UID ${lastUid}`), `the guide ends the slots at ${lastSlot}, UID ${lastUid}`);
+  assert.ok(guide.includes(`refuse once a host has given slot ${lastSlot}`));
+  assert.match(helper, /fail "Could not lend slot \$id, so it is removed: /);
+  assert.ok(guide.includes("A lend that fails, as when its server cannot be copied, sends the slot to `resetting`, and it is removed"));
+});
