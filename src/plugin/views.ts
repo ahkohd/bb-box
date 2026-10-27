@@ -458,6 +458,13 @@ export function placementText(kind: Pick<KindView, "placement">): string {
   if (!kind.placement) return "";
   const why = kind.placement.why ?? "";
   const asking = kind.placement.sizeNeedsDedicated ? "dedicated: true asks for one, and a size needs it" : "dedicated: true asks for one";
+  if (kind.placement.shared) {
+    return (
+      ` Each box is a macOS VM of its own, with sudo, brew install and its own cores, ports and desktop, unless it asks for shared: true: then a macOS user on a VM shared with other ios boxes, ready in seconds,` +
+      " with its own device, files and keychain, but no sudo, and cores and processes shared. Servers on localhost are reachable from every box on the host: use your box's ports, from BB_PORT_BASE." +
+      ` ${asking.charAt(0).toUpperCase()}${asking.slice(1)}.`
+    );
+  }
   return ` Each box is a macOS VM of its own, with sudo, brew install and its own cores, ports and desktop; ${asking}. ${why}, so shared ios boxes, a macOS user on a Mac or VM shared with other ios boxes, are not offered yet.`;
 }
 

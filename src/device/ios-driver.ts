@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { turnedFrom } from "../core/device-settings.ts";
@@ -57,6 +58,11 @@ const SLIM_PASSES = 2;
 export interface IosDriverClock {
   now(): number;
   monotonic(): number;
+}
+
+export function stoppedTwiceWords(model: string, hostManaged: boolean): string {
+  const again = hostManaged ? "Reboot it with box_device reboot to start it again, or release the box for a new one: a shared box cannot be restarted." : "Restart the box to start it again.";
+  return `The ${model} stopped twice within ${DEVICE_EXITS_WINDOW_MS / 60_000} minutes, so bb-box leaves it stopped. ${again}`;
 }
 
 export interface IosDriverOptions {
@@ -516,7 +522,7 @@ export class IosDriver implements DeviceDriver {
     try {
       await this.#video.stop();
       if (again) {
-        const words = `The ${target.model} stopped twice within ${DEVICE_EXITS_WINDOW_MS / 60_000} minutes, so bb-box leaves it stopped. Restart the box to start it again.`;
+        const words = stoppedTwiceWords(target.model, existsSync(this.#options.paths.hostManaged));
         this.#log(`device: ${words}`);
         this.#power = { is: "failed", error: { code: "device-exited", words }, since: now };
         this.#changed();

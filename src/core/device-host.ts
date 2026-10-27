@@ -1,5 +1,5 @@
 import { displayShows, type BoxIdentity, type Guest, type KindCapabilities } from "../backends/types.ts";
-import { deviceModels, listWords, type IosModelName, type IosRuntime } from "./device.ts";
+import { deviceModels, listWords, type DeviceOffer, type IosModelName, type IosRuntime } from "./device.ts";
 
 export const HOST_KINDS = ["pool-mac", "tart", "namespace"] as const;
 export type HostKind = (typeof HOST_KINDS)[number];
@@ -73,9 +73,10 @@ export type Slot = SlotName & {
 export const CARRIED_UID_BASE = 79990;
 export const MADE_UID_BASE = 80000;
 export const MADE_UID_SPAN = 10000;
+export const LAST_GENERATION = MADE_UID_SPAN - 1;
 
 export const slotUser = (slot: SlotName): string => (slot.carried ? `bbd-i${slot.generation}` : `bbd-${slot.generation}`);
-export const slotUid = (slot: SlotName): number => (slot.carried ? CARRIED_UID_BASE + slot.generation : MADE_UID_BASE + (slot.generation % MADE_UID_SPAN));
+export const slotUid = (slot: SlotName): number => (slot.carried ? CARRIED_UID_BASE + slot.generation : MADE_UID_BASE + slot.generation);
 
 export const PORT_BASE = 20000;
 export const PORTS_PER_SLOT = 100;
@@ -110,9 +111,48 @@ export type SlotTier =
 export const SLOT_KINDS = ["ios", "macos"] as const;
 export type SlotKind = (typeof SLOT_KINDS)[number];
 
+export type SlotTaken = Guest | { readonly lost: string };
+
 export interface SlotLender {
-  offer(kind: SlotKind, model: string, signal: AbortSignal): Promise<SlotTier>;
-  take(choice: SlotTier, box: BoxIdentity, signal: AbortSignal): Promise<Guest | { readonly lost: string }>;
+  readonly on: HostKind;
+  lends(kind: SlotKind): boolean;
+  offer(kind: SlotKind, model: string | null, signal: AbortSignal): Promise<SlotTier>;
+  take(choice: SlotTier, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken>;
+}
+
+export const TAKE_TRIES = 3;
+
+const TIER_RANKS: Readonly<Record<SlotTier["tier"], number>> = { ready: 0, join: 1, make: 2, "new-host": 3, "own-vm": 4, wait: 5 };
+const HOST_RANKS: Readonly<Record<HostKind, number>> = { "pool-mac": 0, tart: 1, namespace: 2 };
+
+export interface LenderAnswer<L> {
+  readonly lender: L;
+  readonly on: HostKind;
+  readonly tier: SlotTier;
+}
+
+function answerRank(answer: LenderAnswer<unknown>): readonly number[] {
+  const { tier } = answer;
+  const cost = tier.tier === "new-host" && tier.cost === "namespace-mac" ? 1 : 0;
+  return [TIER_RANKS[tier.tier], cost, HOST_RANKS[answer.on], "waitMs" in tier ? tier.waitMs : Number.MAX_SAFE_INTEGER];
+}
+
+export function bestAnswer<L>(answers: readonly LenderAnswer<L>[]): LenderAnswer<L> | null {
+  const ranked = answers.map((answer) => ({ answer, rank: answerRank(answer) }));
+  ranked.sort((a, b) => {
+    for (let at = 0; at < a.rank.length; at++) if (a.rank[at] !== b.rank[at]) return a.rank[at]! - b.rank[at]!;
+    return 0;
+  });
+  return ranked[0]?.answer ?? null;
+}
+
+export function waitWords(answers: readonly LenderAnswer<unknown>[]): string {
+  const words = [...new Set(answers.flatMap((answer) => (answer.tier.tier === "wait" ? [answer.tier.words] : [])))];
+  return words.join(" ") || "No shared iOS host has room now.";
+}
+
+export function lostWords(kind: string, lost: readonly string[]): string {
+  return `Every shared iOS host bb-box asked had its room taken first, ${TAKE_TRIES} times, so this ${kind} box has no slot: ${lost.join(" ")} Ask again.`;
 }
 
 export function isSlotKind(kind: string): kind is SlotKind {
@@ -199,7 +239,7 @@ const time = (value: unknown, path: string) => whole(value, path);
 
 function slotName(carried: unknown, generation: unknown, paths: { readonly carried: string; readonly generation: string }): SlotName {
   if (bool(carried, paths.carried)) return { carried: true, generation: oneOf(generation, paths.generation, CARRIED_GENERATIONS) };
-  return { carried: false, generation: whole(generation, paths.generation, 1) };
+  return { carried: false, generation: whole(generation, paths.generation, 1, LAST_GENERATION) };
 }
 
 function settingsOf(value: unknown, path: string): HostSettings {
@@ -348,7 +388,7 @@ export function readPlacement(data: Guest["data"]): Parsed<Placement> {
       host: text(data[PLACEMENT_KEYS.host], `${path}.${PLACEMENT_KEYS.host}`),
       hostOn: oneOf(data[PLACEMENT_KEYS.hostOn], `${path}.${PLACEMENT_KEYS.hostOn}`, HOST_KINDS),
       ...slotName(data[PLACEMENT_KEYS.carried], data[PLACEMENT_KEYS.generation], { carried: `${path}.${PLACEMENT_KEYS.carried}`, generation: `${path}.${PLACEMENT_KEYS.generation}` }),
-      place: whole(data[PLACEMENT_KEYS.place], `${path}.${PLACEMENT_KEYS.place}`, 1, most),
+      place: whole(data[PLACEMENT_KEYS.place], `${path}.${PLACEMENT_KEYS.place}`, 0, most - 1),
       most,
     };
   });
@@ -369,6 +409,7 @@ export function slotCapabilities(offer: KindCapabilities): KindCapabilities {
     command: offer.command ? { ...offer.command, admin: false } : null,
     displays: offer.displays.filter((display) => displayShows(display) === "device"),
     computerUse: null,
+    device: offer.device ? ({ ...offer.device, devices: [offer.device.devices[0]] } as DeviceOffer) : null,
   };
 }
 
@@ -377,12 +418,22 @@ export const NO_SHARED_IOS_HOST = "No shared iOS host is set up";
 export const SHARED_IOS_BY_DEFAULT = false;
 
 export interface SharedHosts {
-  readonly on: false;
-  readonly why: string;
+  readonly on: boolean;
+  readonly why: string | null;
   readonly byDefault: boolean;
 }
 
 export const SHARED_HOSTS_OFF: SharedHosts = { on: false, why: NO_SHARED_IOS_HOST, byDefault: SHARED_IOS_BY_DEFAULT };
+
+export function sharedHostsOn(byDefault: boolean): SharedHosts {
+  return { on: true, why: null, byDefault };
+}
+
+export const MACOS_SLOTS_LATER = "A macos box does not take a slot on a shared host yet. Leave shared out for a VM of its own.";
+
+export function slotModelRefusal(slotModel: string, asked: string): string {
+  return `A shared ios box has the ${slotModel}, the model every slot is made with. Leave device out for it, or ask for dedicated: true for the ${asked}.`;
+}
 
 const HOST_WORDS: Readonly<Record<HostKind, string>> = {
   "pool-mac": "the pool's Mac",
@@ -393,7 +444,7 @@ const HOST_WORDS: Readonly<Record<HostKind, string>> = {
 export function placementWords(placement: Placement): string {
   if (placement.on === "vm") return "A VM of its own.";
   const ports = slotPorts(placement.place);
-  return `On a shared iOS host (${HOST_WORDS[placement.hostOn]}), slot ${placement.place} of ${placement.most}. Ports ${ports.base} to ${ports.base + ports.count - 1}, in BB_PORT_BASE and BB_PORT_COUNT.`;
+  return `On a shared iOS host (${HOST_WORDS[placement.hostOn]}), slot ${placement.place + 1} of ${placement.most}. Ports ${ports.base} to ${ports.base + ports.count - 1}, in BB_PORT_BASE and BB_PORT_COUNT.`;
 }
 
 export function sharedBoxWords(kind: string): string {

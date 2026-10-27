@@ -117,7 +117,7 @@ test("init keeps the settings the host was made with, and status gives them with
   const { values, slots } = host.status();
   assert.deepEqual(
     ["helper", "deleting", "most", "ahead", "generation", "cores", "memory", "disk", "memory_free", "runtime", "model", "counted", "sweeping"].map((key) => values.get(key)),
-    ["1", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
+    ["2", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
   );
   assert.deepEqual(slots, []);
   assert.deepEqual(host.run(["init"], "most=many\n").status, 0, "settings are written once");
@@ -428,8 +428,33 @@ test("a promise or a slot being made for a box keeps the host at the last releas
   made(unpromised);
   assert.equal(unpromised.run(["claim", "1"], CLAIM()).status, 0);
   unpromised.run(["promise"], BOX("box_b"));
-  assert.equal(unpromised.run(["unpromise"], BOX("box_b")).stdout, "unpromised=box_b\n");
+  assert.equal(unpromised.run(["unpromise"], BOX("box_b")).stdout, "unpromised=box_b\nlast=no\n", "slot 1's box keeps the host");
   assert.equal(unpromised.run(["release", "1"], BOX()).stdout, "released=yes\nlast=yes\n");
+});
+
+test("a promise given back with nothing else on the host, and vacate on a host that holds nothing, write deleting and answer last; status names each claim's box; restart starts a held slot's device server again (064, unit 4)", () => {
+  const promised = quiet();
+  made(promised);
+  assert.equal(promised.run(["promise"], BOX("box_b")).status, 0);
+  assert.deepEqual(promised.run(["unpromise"], BOX("box_b")), { status: 0, stdout: "unpromised=box_b\nlast=yes\n", stderr: "" }, "a ready slot does not keep the host");
+  assert.match(promised.file(`${HOST}/deleting`) ?? "", /box=box_b/);
+  assert.equal(promised.run(["promise"], BOX("box_c")).status, EXIT.deleting);
+  assert.equal(promised.run(["vacate"], "install=inst_a\n").stdout, "last=yes\n", "a host being deleted stays so");
+
+  const held = quiet();
+  made(held);
+  assert.equal(held.run(["claim", "1"], CLAIM("box_a")).status, 0);
+  assert.deepEqual(held.run(["vacate"], "install=inst_a\n"), { status: 0, stdout: "last=no\n", stderr: "" });
+  assert.equal(held.file(`${HOST}/deleting`), null);
+  assert.ok(held.status().lines.includes("claim=1\tinst_a\tbox_a\tthr_a\tios-box\tios\t1790000000000"), held.status().lines.join("\n"));
+  assert.deepEqual(parseHostStatus(held.status().lines.join("\n"))?.claims, [{ slot: "1", install: "inst_a", box: "box_a", thread: "thr_a", name: "ios-box", kind: "ios", created: 1790000000000 }]);
+  assert.equal(held.run(["restart", "1"], BOX("box_b")).status, EXIT.notOurs);
+  assert.deepEqual(held.run(["restart", "1"], BOX("box_a")), { status: 0, stdout: "restarted=1\n", stderr: "" });
+  assert.ok(held.calls().some((line) => line === "launchctl kickstart -k system/app.bb-box.device.bbd-1"), held.calls().filter((line) => line.startsWith("launchctl")).join("\n"));
+
+  const empty = quiet();
+  assert.equal(empty.run(["vacate"], "install=inst_a\n").stdout, "last=yes\n");
+  assert.equal(empty.run(["make"], "install=inst_a\n").status, EXIT.deleting);
 });
 
 test("a release cut short carries on from its step when run again, and answers as it first decided", async () => {
@@ -637,8 +662,8 @@ test("init loads the held ports' daemon and the helper's, keeps them across the 
 
 test("the helper refuses to run as anyone but root, and its usage names its commands", () => {
   const host = fakeDeviceHost();
-  assert.match(host.run(["bogus"]).stderr, /^usage: device-host status \| init \| install \| make \| carry \| promise \| unpromise \| claim <slot> \| release <slot> \| reset \| daemon <slot> \| resume \| version\n$/);
-  assert.equal(host.run(["version"]).stdout, "1\n");
+  assert.match(host.run(["bogus"]).stderr, /^usage: device-host status \| init \| install \| make \| carry \| promise \| unpromise \| vacate \| claim <slot> \| release <slot> \| restart <slot> \| reset \| daemon <slot> \| resume \| version\n$/);
+  assert.equal(host.run(["version"]).stdout, "2\n");
   const text = readFileSync(new URL("../setup/tart/ios/device-host.sh", import.meta.url), "utf8");
   assert.match(text, /\[ "\$\(id -u\)" = 0 \] \|\| quit 2 "Run it as root, through sudo\."/);
   assert.doesNotMatch(text, /^\s*#(?!!)/m, "no comments: names carry intent");
@@ -656,10 +681,10 @@ test("bb-box reads the helper's status whole: settings, promises, every slot, a 
   const status = parseHostStatus(host.run(["status"]).stdout);
   assert.ok(status);
   assert.deepEqual(
-    { ...status, boot: "", promises: status.promises.map((promise) => promise.box), slots: status.slots.map((slot) => [slot.id, slot.is, slot.box, slot.portBase, slot.booted, slot.daemonsLoaded]), sweeps: status.sweeps.map((sweep) => [sweep.uid, sweep.uidsInPass]) },
+    { ...status, boot: "", promises: status.promises.map((promise) => promise.box), claims: status.claims.map((claim) => [claim.slot, claim.box]), slots: status.slots.map((slot) => [slot.id, slot.is, slot.box, slot.portBase, slot.booted, slot.daemonsLoaded]), sweeps: status.sweeps.map((sweep) => [sweep.uid, sweep.uidsInPass]) },
     {
-      helper: 1, boot: "", deletingSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 40, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60,
-      runtime: RUNTIME, model: "iPhone 18 Pro", counted: 1, promises: ["box_p"], slots: [["1", "held", "box_a", 20000, true, true]], secondDevices: [], deviceWords: [], sweeping: 0, sweeps: [[80002, 1]],
+      helper: 2, boot: "", deletingSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 40, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60,
+      runtime: RUNTIME, model: "iPhone 18 Pro", counted: 1, promises: ["box_p"], claims: [["1", "box_a"]], slots: [["1", "held", "box_a", 20000, true, true]], secondDevices: [], deviceWords: [], sweeping: 0, sweeps: [[80002, 1]],
     },
   );
   assert.equal(parseHostStatus("helper=1\n"), null, "no settings, no status");

@@ -55,7 +55,28 @@ import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
 import { command, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName } from "./names.ts";
-import { grantRefusal, inSlot, isSlotKind, resizeRefusal, restartRefusal, sharedRefusal, SHARED_HOSTS_OFF, SHARED_IOS_BY_DEFAULT, SIZE_NEEDS_DEDICATED, slotCapabilities, stopRefusal, type SharedHosts } from "./device-host.ts";
+import {
+  bestAnswer,
+  grantRefusal,
+  inSlot,
+  isSlotKind,
+  lostWords,
+  MACOS_SLOTS_LATER,
+  resizeRefusal,
+  restartRefusal,
+  sharedHostsOn,
+  sharedRefusal,
+  SHARED_HOSTS_OFF,
+  SHARED_IOS_BY_DEFAULT,
+  SIZE_NEEDS_DEDICATED,
+  slotCapabilities,
+  stopRefusal,
+  TAKE_TRIES,
+  waitWords,
+  type LenderAnswer,
+  type SharedHosts,
+  type SlotKind,
+} from "./device-host.ts";
 import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
 
 export type BoxState =
@@ -569,6 +590,17 @@ const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 /** The error of a box restored running whose guest did not answer. The sweep clears it once the guest answers. */
 const SILENT = "Its guest was running but did not answer when bb-box restored the box's lost record. Stop and start it if commands fail.";
 
+const SLOT_PLACE_MS = 120_000;
+
+function lendersOf(offers: readonly OfferedKind[], kind: SlotKind): OfferedKind[] {
+  const seen = new Set<string>();
+  return offers.filter((offer) => {
+    if (seen.has(offer.backend.id) || !offer.backend.slots?.lends(kind)) return false;
+    seen.add(offer.backend.id);
+    return true;
+  });
+}
+
 function sizeAsked(size: SizeRequest | undefined): boolean {
   return !!size && [size.preset, size.cores, size.memoryGiB, size.diskGiB].some((part) => part !== undefined && part !== "");
 }
@@ -830,18 +862,46 @@ export class Boxes {
     return choice.model.name;
   }
 
-  #ownVmAsked(input: { readonly dedicated?: boolean; readonly shared?: boolean; readonly size?: SizeRequest }, kind: string, impliedOwnVm: boolean): void {
+  #ownVmAsked(input: { readonly dedicated?: boolean; readonly shared?: boolean; readonly size?: SizeRequest }, kind: string, impliedOwnVm: boolean, offers: readonly OfferedKind[]): void {
     if (input.dedicated !== undefined && kind !== "ios") {
       throw new BoxError("unsupported", `dedicated is only for ios boxes, which may one day share a Mac or VM with other ios boxes. A ${kind} box is a machine of its own already.`);
     }
     if (input.shared !== undefined && !isSlotKind(kind)) throw new BoxError("unsupported", `shared is only for ios and macos boxes, which can be a macOS user on a shared iOS host. A ${kind} box cannot.`);
     if (input.dedicated === true && input.shared === true) throw new BoxError("unsupported", "Ask for dedicated or shared, not both: dedicated is a VM of its own, shared a macOS user on a host shared with other boxes.");
-    if (input.shared === true && isSlotKind(kind)) throw new BoxError("no_capacity", sharedRefusal(kind));
+    if (input.shared === true && isSlotKind(kind) && !lendersOf(offers, kind).length) {
+      throw new BoxError("no_capacity", kind === "macos" && this.sharedHosts().on ? MACOS_SLOTS_LATER : sharedRefusal(kind));
+    }
+    if (input.shared === true && impliedOwnVm) throw new BoxError("unsupported", "This box is a VM of its own, as a spare, one of your machines, a box from a build or one with a project's image is, so it cannot be shared.");
+    if (input.shared === true && sizeAsked(input.size)) throw new BoxError("invalid_size", SIZE_NEEDS_DEDICATED);
     if (kind === "ios" && this.sharedHosts().byDefault && input.dedicated !== true && !impliedOwnVm && sizeAsked(input.size)) throw new BoxError("invalid_size", SIZE_NEEDS_DEDICATED);
   }
 
   sharedHosts(): SharedHosts {
-    return { ...SHARED_HOSTS_OFF, byDefault: this.#deps.sharedIosByDefault ?? SHARED_IOS_BY_DEFAULT };
+    const byDefault = this.#deps.sharedIosByDefault ?? SHARED_IOS_BY_DEFAULT;
+    const offers = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === "ios");
+    return lendersOf(offers, "ios").length ? sharedHostsOn(byDefault) : { ...SHARED_HOSTS_OFF, byDefault };
+  }
+
+  async #placeInSlot(offers: readonly OfferedKind[], kind: SlotKind, model: string | null, box: BoxIdentity): Promise<{ readonly chosen: OfferedKind; readonly guest: Guest }> {
+    const lenders = lendersOf(offers, kind);
+    const lost: string[] = [];
+    for (let attempt = 0; attempt < TAKE_TRIES; attempt++) {
+      const signal = AbortSignal.timeout(SLOT_PLACE_MS);
+      const answers: LenderAnswer<OfferedKind>[] = await Promise.all(
+        lenders.map(async (lender) => ({
+          lender,
+          on: lender.backend.slots!.on,
+          tier: await lender.backend.slots!.offer(kind, model, signal).catch((error: unknown) => ({ tier: "wait" as const, words: describeError(error, `Asking ${lender.backend.label} for a slot`) })),
+        })),
+      );
+      const best = bestAnswer(answers);
+      if (!best || best.tier.tier === "wait" || best.tier.tier === "own-vm") throw new BoxError("no_capacity", waitWords(answers));
+      const taken = await best.lender.backend.slots!.take(best.tier, box, signal);
+      if (!("lost" in taken)) return { chosen: best.lender, guest: taken };
+      lost.push(taken.lost);
+      this.#deps.log?.(`A slot for box ${box.name} was lost to another box (${taken.lost}); asking again.`);
+    }
+    throw new BoxError("no_capacity", lostWords(kind, lost));
   }
 
   #slimAsked(slim: boolean | undefined, kind: string, platform: DevicePlatform | null): boolean | null {
@@ -937,8 +997,9 @@ export class Boxes {
       throw new BoxError("not_found", `There is no image ${input.image} for ${wanted} boxes. box_list names each kind's images; "standard" is bb-box's own.`);
     }
     // Spares left over from a kind that keeps none now are released, not claimed. A project's image's box claims a spare of its image's current build (#440).
-    this.#ownVmAsked(input, wanted, input.threadId === SPARES || yours || role === "machine" || tried !== null || image !== null);
-    const claims = claimsSpare && !tried && (image !== null || (general.spares[wanted] ?? 0) > 0);
+    this.#ownVmAsked(input, wanted, input.threadId === SPARES || yours || role === "machine" || tried !== null || image !== null, offered);
+    const inSlotAsked = input.shared === true && isSlotKind(wanted);
+    const claims = claimsSpare && !tried && !inSlotAsked && (image !== null || (general.spares[wanted] ?? 0) > 0);
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
     const { box, claimed } = await this.#admission.run(() =>
@@ -955,29 +1016,35 @@ export class Boxes {
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
         const spare = claims ? await this.#claim({ ...input, askedDevice, slim }, offered, features, sized.size, taken, requested, image?.name ?? null) : null;
         if (spare) return { box: spare.box, claimed: spare.from };
-        const chosen = await this.#place({ threadId: input.threadId, named }, offered, withDevice, sized.size, features);
+        const id = newBoxId(this.#random);
+        const name = input.name ?? generateName(await this.#liveNames(taken), this.#random);
+        const createdAt = this.#now();
+        const slot = inSlotAsked
+          ? await this.#placeInSlot(offered, wanted as SlotKind, askedDevice, { boxId: id, threadId: input.threadId, name, kind: wanted, createdAt, size: sized.size })
+          : null;
+        const chosen = slot ? slot.chosen : await this.#place({ threadId: input.threadId, named }, offered, withDevice, sized.size, features);
         if (tried && !chosen.backend.images?.startsFrom) throw new BoxError("unsupported", `${chosen.backend.label} starts no box from a build.`);
         // A current baked build of the image on the backend chosen starts the box with it (049); otherwise its script runs at start.
         const baked =
           image && chosen.backend.images?.startsFrom ? await this.#deps.baked?.(image.name, chosen.backend.id, chosen.kind.id).catch(() => null) : null;
         const box: BoxRecord = {
-          id: newBoxId(this.#random),
+          id,
           threadId: input.threadId,
           projectId: input.projectId,
-          name: input.name ?? generateName(await this.#liveNames(taken), this.#random),
+          name,
           kind: chosen.kind.id,
           kindLabel: chosen.kind.label,
           requires: [...new Set([...chosen.kind.requires, ...features])],
-          capabilities: chosen.kind.capabilities,
+          capabilities: slot && inSlot({ guest: slot.guest }) ? slotCapabilities(chosen.kind.capabilities) : chosen.kind.capabilities,
           backend: chosen.backend.id,
           backendLabel: chosen.backend.label,
           nature: chosen.backend.nature,
           role,
           size: sized.size,
-          guest: null,
+          guest: slot?.guest ?? null,
           state: "acquiring",
           error: null,
-          createdAt: this.#now(),
+          createdAt,
           readyAt: null,
           releaseRequestedAt: null,
           resetAt: null,
@@ -2329,6 +2396,13 @@ export class Boxes {
     const backend = this.#deps.backends.get(box.backend);
     if (!backend?.grants || box.state !== "ready" || !box.guest) return null;
     return backend.grants(box.guest, signal).catch(() => null);
+  }
+
+  async restartDeviceServer(box: BoxRecord, signal?: AbortSignal): Promise<boolean> {
+    const backend = this.#deps.backends.get(box.backend);
+    if (!inSlot(box) || !box.guest || !backend?.restartDeviceServer) return false;
+    await backend.restartDeviceServer(box.guest, signal);
+    return true;
   }
 
   /** The transports that reach a ready box. */

@@ -37,6 +37,19 @@ export interface TartKindConfig {
 
 export const IOS_IMAGE_KIND = "ios";
 
+export interface IosHostsConfig {
+  readonly on: boolean;
+  readonly most: number;
+  readonly ahead: number;
+  readonly resettingMost: number;
+  readonly cores: number;
+  readonly memoryGiB: number;
+  readonly perMac: number;
+  readonly diskReserveGiB: number;
+}
+
+export const IOS_HOSTS_DEFAULTS: IosHostsConfig = { on: false, most: 8, ahead: 1, resettingMost: 4, cores: 8, memoryGiB: 32, perMac: 1, diskReserveGiB: 10 };
+
 export interface TartConfig {
   readonly hosts: readonly TartHost[];
   /** known_hosts lines for the Macs. Every Mac's key is pinned. */
@@ -53,6 +66,7 @@ export interface TartConfig {
   /** macOS desktops open as video by default, where every Mac's image has bb-box-stream (060); else VNC, with video a choice. Off by default. */
   readonly video: boolean;
   readonly warmMaxHours: number;
+  readonly iosHosts: IosHostsConfig;
 }
 
 export const TART_DEFAULTS = {
@@ -82,6 +96,14 @@ export const TART_KEYS = {
   reserveMemoryMiB: "tart-reserve-memory-mib",
   reserveDiskGiB: "tart-reserve-disk-gib",
   warmMaxHours: "tart-warm-max-hours",
+  iosHostsOn: "tart-ios-hosts-on",
+  iosHostsMost: "tart-ios-hosts-most",
+  iosHostsAhead: "tart-ios-hosts-ahead",
+  iosHostsResettingMost: "tart-ios-hosts-resetting-most",
+  iosHostsCores: "tart-ios-hosts-cores",
+  iosHostsMemoryGiB: "tart-ios-hosts-memory-gib",
+  iosHostsPerMac: "tart-ios-hosts-per-mac",
+  iosHostsDiskReserveGiB: "tart-ios-hosts-disk-reserve-gib",
 } as const;
 
 const IMAGE_KEYS: Readonly<Record<TartKind, string>> = {
@@ -214,6 +236,55 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description: "A suspended macOS warm VM saved longer ago than this is replaced by a fresh one, as an old saved state may not restore.",
     default: TART_DEFAULTS.warmMaxHours,
   },
+  [TART_KEYS.iosHostsOn]: {
+    type: "boolean",
+    label: "Tart: shared iOS hosts",
+    description:
+      "ios boxes asked for with shared: true take a slot, a macOS user with its own device, on a VM of the iOS image made as a shared host: made when a box needs one, deleted when its last box is released. Off by default.",
+    default: IOS_HOSTS_DEFAULTS.on,
+  },
+  [TART_KEYS.iosHostsMost]: {
+    type: "number",
+    label: "Tart: slots per shared iOS host",
+    description: "The most slots a shared iOS host has making, ready or held at once.",
+    default: IOS_HOSTS_DEFAULTS.most,
+  },
+  [TART_KEYS.iosHostsAhead]: {
+    type: "number",
+    label: "Tart: ready slots kept on a shared iOS host",
+    description: "Slots a shared iOS host keeps ready while it holds a box, so the next box is ready in seconds.",
+    default: IOS_HOSTS_DEFAULTS.ahead,
+  },
+  [TART_KEYS.iosHostsResettingMost]: {
+    type: "number",
+    label: "Tart: slots a shared iOS host sweeps at once",
+    description: "The most released slots whose files a shared iOS host sweeps in one pass.",
+    default: IOS_HOSTS_DEFAULTS.resettingMost,
+  },
+  [TART_KEYS.iosHostsCores]: {
+    type: "number",
+    label: "Tart: cores of a shared iOS host",
+    description: "The cores of each shared iOS host's VM, shared by its slots.",
+    default: IOS_HOSTS_DEFAULTS.cores,
+  },
+  [TART_KEYS.iosHostsMemoryGiB]: {
+    type: "number",
+    label: "Tart: memory of a shared iOS host (GiB)",
+    description: "The memory of each shared iOS host's VM, shared by its slots.",
+    default: IOS_HOSTS_DEFAULTS.memoryGiB,
+  },
+  [TART_KEYS.iosHostsPerMac]: {
+    type: "number",
+    label: "Tart: shared iOS hosts per Mac",
+    description: "The most shared iOS hosts a Mac runs. Each is one of the Mac's two macOS VMs, and both share the Mac's video encoder.",
+    default: IOS_HOSTS_DEFAULTS.perMac,
+  },
+  [TART_KEYS.iosHostsDiskReserveGiB]: {
+    type: "number",
+    label: "Tart: disk a shared iOS host keeps free (GiB)",
+    description: "A shared iOS host makes no new slot while its VM has less free disk than this.",
+    default: IOS_HOSTS_DEFAULTS.diskReserveGiB,
+  },
 };
 
 /** A string setting, or `fallback` when the key is absent. An empty string stays empty. */
@@ -321,6 +392,9 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
   const warmMaxHours = number(values, TART_KEYS.warmMaxHours, TART_DEFAULTS.warmMaxHours);
   if (!(warmMaxHours > 0)) problem(TART_KEYS.warmMaxHours, "Tart: the hours a warm VM is kept must be more than 0.");
 
+  const iosHosts = checkIosHosts(values, problem);
+  if (iosHosts.on && !iosImage) problem(TART_KEYS.iosHostsOn, "Tart: shared iOS hosts are made from the iOS image, so give the iOS image too.");
+
   const vmUser = text(values, TART_KEYS.vmUser, TART_DEFAULTS.vmUser);
   if (!USER.test(vmUser)) problem(TART_KEYS.vmUser, `Tart: "${vmUser}" is not a user name.`);
   const keyText = text(values, TART_KEYS.sshPrivateKey);
@@ -338,6 +412,26 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
     windowsEnrol: values[TART_KEYS.windowsEnrol] !== false,
     video: values[TART_KEYS.video] === true,
     warmMaxHours,
+    iosHosts,
+  };
+}
+
+function checkIosHosts(values: Readonly<Record<string, unknown>>, problem: Problem): IosHostsConfig {
+  const read = (key: string, fallback: number, least: number, most: number, words: string): number => {
+    const value = number(values, key, fallback);
+    if (!Number.isInteger(value) || value < least || value > most) problem(key, `Tart: ${words} must be a whole number from ${least} to ${most}.`);
+    return value;
+  };
+  const most = read(TART_KEYS.iosHostsMost, IOS_HOSTS_DEFAULTS.most, 1, 64, "the slots per shared iOS host");
+  return {
+    on: values[TART_KEYS.iosHostsOn] === true,
+    most,
+    ahead: read(TART_KEYS.iosHostsAhead, IOS_HOSTS_DEFAULTS.ahead, 0, most, "the ready slots kept on a shared iOS host, at most its slots,"),
+    resettingMost: read(TART_KEYS.iosHostsResettingMost, IOS_HOSTS_DEFAULTS.resettingMost, 1, 64, "the slots a shared iOS host sweeps at once"),
+    cores: read(TART_KEYS.iosHostsCores, IOS_HOSTS_DEFAULTS.cores, 2, 64, "the cores of a shared iOS host"),
+    memoryGiB: read(TART_KEYS.iosHostsMemoryGiB, IOS_HOSTS_DEFAULTS.memoryGiB, 8, 512, "the memory of a shared iOS host"),
+    perMac: read(TART_KEYS.iosHostsPerMac, IOS_HOSTS_DEFAULTS.perMac, 1, MACOS_VMS_PER_MAC, "the shared iOS hosts per Mac"),
+    diskReserveGiB: read(TART_KEYS.iosHostsDiskReserveGiB, IOS_HOSTS_DEFAULTS.diskReserveGiB, 0, 1024, "the disk a shared iOS host keeps free"),
   };
 }
 
@@ -363,6 +457,7 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.linuxDesktopImage, "boxes"],
     [TART_KEYS.windowsImage, "boxes"],
     [TART_KEYS.iosImage, "boxes"],
+    [TART_KEYS.iosHostsOn, "boxes"],
     [TART_KEYS.windowsEnrol, "boxes"],
     [TART_KEYS.video, "boxes"],
     [TART_KEYS.vmUser, "advanced"],
@@ -370,6 +465,13 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.reserveMemoryMiB, "advanced"],
     [TART_KEYS.reserveDiskGiB, "advanced"],
     [TART_KEYS.warmMaxHours, "advanced"],
+    [TART_KEYS.iosHostsMost, "advanced"],
+    [TART_KEYS.iosHostsAhead, "advanced"],
+    [TART_KEYS.iosHostsResettingMost, "advanced"],
+    [TART_KEYS.iosHostsCores, "advanced"],
+    [TART_KEYS.iosHostsMemoryGiB, "advanced"],
+    [TART_KEYS.iosHostsPerMac, "advanced"],
+    [TART_KEYS.iosHostsDiskReserveGiB, "advanced"],
   ] as const).map(([key, group]) => {
     const setting = TART_SETTINGS[key]!;
     return [key.slice(TART_PREFIX.length), { ...setting, label: IMAGE_LABELS[key] ?? fieldLabel(setting.label), group } as FieldDescriptor];

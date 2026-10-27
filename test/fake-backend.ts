@@ -24,6 +24,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
+import { placementData, placementOf, type SlotKind, type SlotLender, type SlotPlacement } from "../src/core/device-host.ts";
 import { emptyDesktop } from "./fake-cua.ts";
 import { FakeRfb } from "./fake-rfb.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
@@ -116,6 +117,13 @@ export interface FakeBackendOptions {
   /** Its desktops' pointer, as bb-box-cursor gives it on Sway 1.11 (060): the RFB display's followPointer. None by default. */
   readonly pointer?: (onEvent: (event: BoxPointer) => void, signal: AbortSignal) => Promise<void>;
   readonly daemonKeptByHost?: boolean;
+  readonly slots?: { readonly kinds: readonly SlotKind[]; readonly most: number };
+}
+
+export interface FakeSlotHost {
+  readonly name: string;
+  readonly held: Map<string, { readonly slot: number; readonly place: number }>;
+  next: number;
 }
 
 /** Faults a test can inject. Each is used once. */
@@ -224,6 +232,11 @@ export class FakeBackend implements Backend {
   readonly members?: () => Promise<readonly PoolMember[]>;
   readonly returnToService?: (ref: string) => Promise<void>;
   readonly stamp?: (boxId: string, guest: Guest) => Promise<Guest>;
+  readonly slots?: SlotLender;
+  slotHost: FakeSlotHost | null = null;
+  hostsMade = 0;
+  hostsDeleted = 0;
+  takeLosses = 0;
   readonly #options: FakeBackendOptions;
   #kinds: readonly BoxKind[];
   readonly #installId: string;
@@ -301,6 +314,54 @@ export class FakeBackend implements Backend {
     } else {
       this.stamp = (boxId, guest) => this.#stamp(boxId, guest);
     }
+    if (options.slots) this.slots = this.#lender(options.slots);
+  }
+
+  #lender(settings: NonNullable<FakeBackendOptions["slots"]>): SlotLender {
+    return {
+      on: "tart",
+      lends: (kind) => settings.kinds.includes(kind),
+      offer: async (kind) => {
+        this.calls.push(`offer ${kind}`);
+        const host = this.slotHost;
+        if (!host) return { tier: "new-host", where: "fake-mac", waitMs: 50_000, cost: "vm-slot" };
+        if (host.held.size < settings.most) return { tier: "ready", host: host.name, waitMs: 1_000 };
+        return { tier: "wait", words: `The shared host ${host.name} has all its ${settings.most} slots held.` };
+      },
+      take: async (choice, box) => {
+        this.calls.push(`take ${choice.tier} ${box.boxId}`);
+        if (this.takeLosses > 0) {
+          this.takeLosses--;
+          return { lost: "Another box claimed it first." };
+        }
+        if (choice.tier === "new-host") {
+          if (this.slotHost) return { lost: "A host started meanwhile." };
+          this.hostsMade++;
+          this.slotHost = { name: `fake-host-${this.hostsMade}`, held: new Map(), next: 1 };
+        }
+        const host = this.slotHost;
+        if (!host || host.held.size >= settings.most) return { lost: "The host is full now." };
+        const places = new Set([...host.held.values()].map((each) => each.place));
+        let place = 0;
+        while (places.has(place)) place++;
+        const slot = host.next++;
+        host.held.set(box.boxId, { slot, place });
+        const ref = `${host.name}/${slot}`;
+        await this.#storage.set(`guest/${ref}`, { install: this.#installId, owner: box, power: "stopped" } satisfies GuestRecord);
+        const placement: SlotPlacement = { on: "slot", host: host.name, hostOn: "tart", carried: false, generation: slot, place, most: settings.most };
+        return { ref, host: HOST, address: null, size: null, data: { box: box.boxId, ...placementData(placement) } };
+      },
+    };
+  }
+
+  #slotReleased(guest: Guest): void {
+    const placement = placementOf({ guest });
+    const host = this.slotHost;
+    if (placement.on !== "slot" || !host || placement.host !== host.name || typeof guest.data?.box !== "string") return;
+    host.held.delete(guest.data.box);
+    if (host.held.size) return;
+    this.slotHost = null;
+    this.hostsDeleted++;
   }
 
   machines(): PoolMachine[] {
@@ -418,6 +479,7 @@ export class FakeBackend implements Backend {
       throw error;
     }
     if (await this.#still(guest)) await this.#discard(guest, hooks);
+    this.#slotReleased(guest);
   }
 
   async stopped(): Promise<StopReason | null> {

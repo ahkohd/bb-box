@@ -14,7 +14,9 @@ import { parseArgs } from "node:util";
 import { DRIVERS } from "../src/backends/index.ts";
 import { backendPart } from "../src/core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../src/core/sizes.ts";
-import { conformance, type ConformanceCheck } from "../test/conformance/suite.ts";
+import { conformance, slotConformance, type ConformanceCheck } from "../test/conformance/suite.ts";
+import { SLOT_KINDS } from "../src/core/device-host.ts";
+import type { BackendStorage } from "../src/backends/types.ts";
 import { MemoryStorage } from "../test/helpers.ts";
 import { readSettings, toConfiguration } from "./smoke.ts";
 
@@ -44,23 +46,30 @@ for (const item of values.skip ?? []) {
   skip[check as ConformanceCheck] = reason;
 }
 
+const live = (storage: BackendStorage, installId: string) =>
+  driver.create(parsed.config, {
+    id: backend.id,
+    storage,
+    installId,
+    warm: () => 0,
+    warmShortfalls: () => {},
+    hostOn: () => true,
+    kind: (id) => {
+      const sizes = kindSizes(id);
+      return { enabled: true, defaultSize: defaultSize(sizes), presets: presetSizes(sizes) };
+    },
+    logError: (operation, error) => console.error(`# ${operation}: ${error instanceof Error ? error.message : String(error)}`),
+  });
+
+const lending = live(new MemoryStorage(), "conformance");
+const slotKinds = SLOT_KINDS.filter((kind) => lending.slots?.lends(kind) && (!values.kind || values.kind.includes(kind)));
+await lending.dispose?.();
+for (const kind of slotKinds) await slotConformance({ name: driver.label, create: () => live(new MemoryStorage(), "conformance"), kind, elastic: driver.type !== "ssh-pool", timeoutMs: 600_000 });
+
 await conformance({
   name: driver.label,
   storage: new MemoryStorage(),
-  create: (storage, installId) =>
-    driver.create(parsed.config, {
-      id: backend.id,
-      storage,
-      installId,
-      warm: () => 0,
-      warmShortfalls: () => {},
-      hostOn: () => true,
-      kind: (id) => {
-        const sizes = kindSizes(id);
-        return { enabled: true, defaultSize: defaultSize(sizes), presets: presetSizes(sizes) };
-      },
-      logError: (operation, error) => console.error(`# ${operation}: ${error instanceof Error ? error.message : String(error)}`),
-    }),
+  create: live,
   kinds: values.kind,
   skip,
   timeoutMs: 600_000,

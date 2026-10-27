@@ -185,18 +185,22 @@ A shared host is a VM of this image that lends slots: a macOS user with its
 own device, many to a VM
 ([064](../../../docs/decisions/064-ios-shared-hosts.md)). Its helper,
 [`device-host.sh`](device-host.sh), is installed as
-`/usr/local/libexec/bb-box/device-host`, and runs as root. bb-box runs it
+`/usr/local/libexec/bb-box/device-host`, and runs as root. The image has it,
+and bb-box installs its own copy in each host as the host starts, so a host
+always runs the helper of the bb-box that lends its slots. bb-box runs it
 through sudo as the image's user. Input is one `name=value` a line on stdin.
 
 | Command | What |
 | --- | --- |
 | `init` | stdin: `most`, `ahead`, `resetting-most`, `disk-reserve-gib`. The host's settings, kept as given the first time. Loads the helper's daemon and the held ports' daemon, which launchd then starts at every boot; run again, it leaves them running |
-| `status` | the host, its promises, each slot with its state, ports, device and load, and the last sweeps |
+| `status` | the host, its promises, each claim's install, box, thread, name, kind and creation, each slot with its state, ports, device and load, and the last sweeps |
 | `make` | stdin: `install`, `box` (the box it is made for, if any), `server` (a device server's folder to copy). Makes a slot and answers its user, UID, device and ports |
-| `promise` and `unpromise` | stdin: `install`, `box`. Holds a place in `most` for a box |
+| `promise` and `unpromise` | stdin: `install`, `box`. Holds a place in `most` for a box, and gives it back. `unpromise` answers `last=yes` when nothing else keeps the host, having written `deleting` under the lock |
+| `vacate` | stdin: `install`. Answers `last=yes`, having written `deleting` under the lock, when no slot is held or made for a box and no promise is live: bb-box's upkeep deletes such a host |
 | `claim <slot>` | stdin: `install`, `box`, `thread`, `name`, `kind` (`ios` or `macos`), `created`, `key`, `server`. Lends a ready slot; the claim marker is made with `ln`, so one claim wins |
 | `release <slot>` | stdin: `install`, `box`. Removes the slot's user, queues its sweep, and answers `last=yes` when no other claim, promise or slot made for a box is left, having written `deleting` under the lock |
-| `daemon <slot>` | stdin: `install`, `box`. Moves BB's daemon, as its installer left it with `BB_INSTALL_SKIP_SERVICE=1`, into a LaunchDaemon as the slot's user |
+| `daemon <slot>` | stdin: `install`, `box`. Moves BB's daemon, as its installer left it with `BB_INSTALL_SKIP_SERVICE=1`, into a LaunchDaemon as the slot's user. Its log is `/private/var/log/bb-box-slots/<user>.log`, in a folder of root's |
+| `restart <slot>` | stdin: `install`, `box`. Starts the slot's device server daemon again, for bb-box when the box's device server has not started |
 | `reset` | runs the sweep queue: one `find` over the Data volume a pass, for at most `resetting-most` UIDs |
 | `resume` | carries on every slot whose step was cut short, and the sweep queue. Run at every boot by the helper's own daemon, on a host that has run `init`; in any other VM that daemon's `run` returns at once |
 | `carry` | the image build's: makes the carried slots `i1` and `i2`, their devices shut down and their daemons written but not loaded |
@@ -206,9 +210,11 @@ Exit codes: 0 done; 1 failed, with words; 2 usage; 3 lost a race, ask
 again; 4 not this box's; 5 no room; 6 the slot is not ready; 7 the host is
 being deleted, ask again.
 
-- **Slots.** Slot `n` is user `bbd-n` with UID 80000 plus `n`; the carried
-  slots are `bbd-i1` and `bbd-i2`, UIDs 79991 and 79992. A UID is never
-  given again while the host lives. Each user is standard and hidden, in
+- **Slots.** Slot `n` is user `bbd-n` with UID 80000 plus `n`, from slot 1
+  to slot 9999, UID 89999; the carried slots are `bbd-i1` and `bbd-i2`, UIDs
+  79991 and 79992. A UID is never given again while the host lives, and none
+  wraps: `make` and `promise` refuse once a host has given slot 9999, with
+  words to let its boxes go and set it up again. Each user is standard and hidden, in
   `_developer` and, where it exists, `com.apple.access_ssh`, with the
   pool's `.zshenv` and a home of mode 700.
 - **Devices.** Each slot's device is the first model of `devices.tsv`,
@@ -237,3 +243,6 @@ being deleted, ask again.
   `disk-reserve-gib` free or `memory_pressure` gives under 15% free. A
   second booted device in a slot is shut down after 10 minutes, with words
   in `status`.
+- **A slot is never lent twice.** A lend that fails, as when its server
+  cannot be copied, sends the slot to `resetting`, and it is removed; the
+  box is told to ask again.

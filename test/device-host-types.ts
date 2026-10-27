@@ -17,7 +17,7 @@ export const legal = {
   heldIos: { is: "held", box: "bx1", for: "ios", device, since: 0 } satisfies SlotState,
   heldMacos: { is: "held", box: "bx1", for: "macos", since: 0 } satisfies SlotState,
   vm: { on: "vm" } satisfies Placement,
-  slot: { on: "slot", host: "h", hostOn: "tart", carried: false, generation: 9, place: 3, most: 8 } satisfies Placement,
+  slot: { on: "slot", host: "h", hostOn: "tart", carried: false, generation: 9, place: 2, most: 8 } satisfies Placement,
   newHost: { tier: "new-host", where: "mac1", waitMs: 55_000, cost: "vm-slot" } satisfies SlotTier,
 };
 
@@ -55,7 +55,7 @@ export const illegal = {
   // @ts-expect-error
   vmOnAHost: { on: "vm", host: "h" } satisfies Placement,
   // @ts-expect-error
-  slotWithNoHost: { on: "slot", hostOn: "tart", carried: false, generation: 9, place: 3, most: 8 } satisfies Placement,
+  slotWithNoHost: { on: "slot", hostOn: "tart", carried: false, generation: 9, place: 2, most: 8 } satisfies Placement,
   // @ts-expect-error
   slotCarriedThird: { on: "slot", host: "h", hostOn: "tart", carried: true, generation: 3, place: 1, most: 8 } satisfies Placement,
   // @ts-expect-error

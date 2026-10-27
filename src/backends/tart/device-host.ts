@@ -42,6 +42,16 @@ export interface HostSweep {
   readonly at: number;
 }
 
+export interface HostClaim {
+  readonly slot: string;
+  readonly install: string;
+  readonly box: string;
+  readonly thread: string | null;
+  readonly name: string | null;
+  readonly kind: string | null;
+  readonly created: number | null;
+}
+
 export interface HostStatus {
   readonly helper: number;
   readonly boot: string;
@@ -59,6 +69,7 @@ export interface HostStatus {
   readonly model: string | null;
   readonly counted: number;
   readonly promises: readonly { readonly box: string; readonly install: string; readonly since: number }[];
+  readonly claims: readonly HostClaim[];
   readonly slots: readonly HostSlotLine[];
   readonly secondDevices: readonly { readonly slot: string; readonly booted: number; readonly since: number | null }[];
   readonly deviceWords: readonly { readonly slot: string; readonly words: string }[];
@@ -111,6 +122,7 @@ export function parseHostStatus(stdout: string): HostStatus | null {
   const secondDevices: { slot: string; booted: number; since: number | null }[] = [];
   const deviceWords: { slot: string; words: string }[] = [];
   const sweeps: HostSweep[] = [];
+  const claims: HostClaim[] = [];
   for (const line of stdout.split("\n")) {
     const at = line.indexOf("=");
     if (at < 1) continue;
@@ -125,6 +137,11 @@ export function parseHostStatus(stdout: string): HostStatus | null {
       case "promise":
         if (fields[0] && wholeOrNull(fields[2]) !== null) promises.push({ box: fields[0], install: fields[1] ?? "", since: Number(fields[2]) });
         break;
+      case "claim": {
+        const [slot, install, box, thread, name, kind, created] = fields;
+        if (slot && install && box) claims.push({ slot, install, box, thread: wordOrNull(thread), name: wordOrNull(name), kind: wordOrNull(kind), created: wholeOrNull(created) });
+        break;
+      }
       case "devices":
         if (fields[0] && wholeOrNull(fields[1]) !== null) secondDevices.push({ slot: fields[0], booted: Number(fields[1]), since: wholeOrNull(fields[2]) });
         break;
@@ -160,6 +177,7 @@ export function parseHostStatus(stdout: string): HostStatus | null {
     model: wordOrNull(values.get("model")),
     counted: wholeOrNull(values.get("counted")) ?? 0,
     promises,
+    claims,
     slots,
     secondDevices,
     deviceWords,

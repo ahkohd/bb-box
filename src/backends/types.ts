@@ -18,6 +18,7 @@ import type { Tailnet } from "../core/tailnet.ts";
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import type { Arch, CommandTransport, Display, DisplayProtocol, GuestOs, SshAccess } from "../transports/types.ts";
 import type { DeviceOffer } from "../core/device.ts";
+import type { SlotLender } from "../core/device-host.ts";
 import type { ImageFacts, ImageRecord } from "./images.ts";
 
 export type { Arch, GuestOs } from "../transports/types.ts";
@@ -622,6 +623,9 @@ export interface Backend {
    * same install ID finds it: the sweep rebuilds lost records from it.
    */
   held(signal?: AbortSignal): Promise<HeldGuest[]>;
+
+  readonly slots?: SlotLender;
+  restartDeviceServer?(guest: Guest, signal?: AbortSignal): Promise<void>;
 
   /**
    * Puts back what the backend lowered while a guest started, as its CPU weight (#888): the sweep asks for a ready

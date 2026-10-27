@@ -1,14 +1,17 @@
 import { randomBytes } from "node:crypto";
 import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice } from "../core/device.ts";
+import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice, type VideoStep } from "../core/device.ts";
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { lostWords } from "../core/device-control.ts";
 import { controlDeadlineMs } from "../core/device-settings.ts";
 import { DeviceLink, DeviceLinkError, newRequestId, type DeviceRequestBody } from "../core/device-link.ts";
 import type { ByteChannel, RunResult } from "../transports/types.ts";
 import type { DoctorCheck } from "../backends/types.ts";
+import { inSlot } from "../core/device-host.ts";
 
 export const IDLE_CLOSE_MS = 10 * 60_000;
+export const SLOT_STREAM_CAP: VideoStep = "two-thirds";
+export const ASKED_HOST_WORDS = "The device server for this box has not started. bb-box has asked the host to start it again.";
 export const HELLO_TRIES = 2;
 const SCRIPT_TIMEOUT_MS = 60_000;
 const DEVICE_HUB_CHECK_MS = 15_000;
@@ -23,6 +26,7 @@ export interface DeviceBoxes {
   update(box: Pick<BoxRecord, "threadId" | "id">, change: (current: BoxRecord) => Partial<BoxRecord>): Promise<BoxRecord | null>;
   spawnOwn(box: BoxRecord, script: string, options?: { signal?: AbortSignal }): Promise<ByteChannel>;
   runOwn(box: BoxRecord, script: string, options: { stdin?: string | Uint8Array; timeoutMs: number; signal?: AbortSignal }): Promise<RunResult>;
+  restartDeviceServer?(box: BoxRecord, signal?: AbortSignal): Promise<boolean>;
 }
 
 export interface DeviceKv {
@@ -363,6 +367,10 @@ export class DeviceServers {
         return this.#deliverIfAllowed(box, held, status.version, `its service manager gave up on version ${status.version ?? "unknown"}`);
       }
       if (status.none) return this.#deliverIfAllowed(box, held, null, "it has none yet");
+      if (inSlot(box) && (await this.#askHost(box))) {
+        held.view = { is: "down", words: ASKED_HOST_WORDS };
+        return held.view;
+      }
       held.view = { is: "down", words: error instanceof Error ? error.message : String(error) };
       return this.#deliverIfAllowed(box, held, null, "it did not say hello");
     }
@@ -372,11 +380,29 @@ export class DeviceServers {
     this.#touch(box.id);
     await this.#copied(box, hello.state, hello);
     await this.#tellOwner(box).catch((error) => this.#deps.logError("tell the device server who has control", error));
+    await this.#capSlot(box, link).catch((error) => this.#deps.logError("cap a shared box's video", error));
     const older = hello.version < this.version;
     const foreign = !speaksProtocol(hello.protocol);
     if (!older && !foreign) return held.view;
     if (!hello.lease) return held.view;
     return this.#deliverIfAllowed(box, held, hello.version, older ? `it runs version ${hello.version}` : `it speaks protocol ${hello.protocol}`);
+  }
+
+  async #askHost(box: BoxRecord): Promise<boolean> {
+    try {
+      const asked = (await this.#deps.boxes.restartDeviceServer?.(box)) ?? false;
+      if (asked) this.#deps.log(`Box ${box.name}'s device server has not started; bb-box asked its shared iOS host to start it again.`);
+      return asked;
+    } catch (error) {
+      this.#deps.logError(`ask box ${box.name}'s host to start its device server`, error);
+      return false;
+    }
+  }
+
+  async #capSlot(box: BoxRecord, link: DeviceLink): Promise<void> {
+    if (!inSlot(box) || !link.hello.lease || link.hello.platform !== "ios") return;
+    const answer = await link.request({ type: "cap", most: SLOT_STREAM_CAP }, { timeoutMs: SCRIPT_TIMEOUT_MS });
+    if (!answer.ok) this.#deps.log(`Box ${box.name}'s device server did not take the cap at ${SLOT_STREAM_CAP}: ${answer.error.words}`);
   }
 
   async #deliverIfAllowed(box: BoxRecord, held: Held, running: number | null, why: string): Promise<DeviceServerView> {
