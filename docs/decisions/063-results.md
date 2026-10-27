@@ -668,10 +668,22 @@ kernel, so its clock is the macOS VM's.
 | --- | --- | --- | --- | --- |
 | 110 s | saw its clock move 102 s past its own, restarted the stream, and checked the device and the companion | a viewer's key frame at once | a tap changed the screen in 56 ms at the median of 5, the first 143 ms | the status bar said 10:04, as the Mac did |
 | 62 minutes | saw its clock move 3,704 s past its own, restarted the stream, and checked the device and the companion; the device was still booted | a viewer's key frame at once | a tap changed the screen in 57 ms at the median of 5, 28 to 91 ms | the status bar said 11:16, as the Mac did |
-| 24 h | suspended again at 11:16 UTC on 26 October; to be read after 11:16 UTC on 27 October | | | |
+| 24 h | did not resume: started at 11:17 UTC on 27 October, about 24 h after its suspend at 11:16 UTC on 26 October, the VM booted cold (macOS's boot record has no boot between 26 October 10:05 and 27 October 11:18), so Tart had not kept its saved state. box_start took 33.8 s. The server started at login and booted the device in 7.5 s, slim as before | a viewer's first key frame 6.0 s after it asked, as a new companion's first stream after a boot is slow | 10 taps changed the screen in 34 ms at the median, 75 ms at worst | the status bar said 11:19 on Tuesday 27, as the Mac did |
 
 The 62-minute run was in a second box, which ran the device server as it
-was before its last changes, none of them to the driver's resume. Its screen
+was before its last changes, none of them to the driver's resume. The 24 h
+run was the same box, with the same server, version 3. Its suspended
+state was not restored because Tart refused it: bb-box's log has
+`VZErrorDomain Code=12 "The virtual machine failed to restore with error
+'invalid argument'"`, after which bb-box booted the VM from its disk and
+warned, as it does after an update. Neither applied: the Mac had been up
+for 3 days and Tart (2.40.1) had not changed since 22 October. Whether a box
+suspended for a day resumes is still open, and so is a spare that waits a
+day suspended (unit 7.5). After the cold boot, idb_companion's resident
+memory stayed at 56 MiB over 60 s while the screen changed; that companion
+started after a boot, not across a resume, so it says nothing of the leak
+below, which resident memory also hid (80 to 101 MiB while its footprint
+was 34 GB). Its screen
 did not change after the resume, which hid what the next section found.
 
 ### Through the production BB
