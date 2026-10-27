@@ -48,6 +48,7 @@ export const DEVICE_EXITS_WINDOW_MS = 5 * 60_000;
 export const CLOCK_LAG_MOST_S = 2;
 export const ROTATE_PICTURE_MS = 3_000;
 export const FOLD_PICTURE_MS = 3_000;
+export const FIRST_PICTURE_MS = 5_000;
 export const INSTALL_MS = 300_000;
 const SCREENSHOT_MS = 10_000;
 const INPUT_MS = 5_000;
@@ -578,6 +579,7 @@ export class AndroidDriver implements DeviceDriver {
         await this.#settings.waitAwake(true, signal);
         break;
       case "rotate":
+        await this.#heldWayKnown(signal);
         await this.#rotate(control.turn ? turnedFrom(this.#physical, control.turn) : control.to, signal);
         break;
       case "posture":
@@ -617,6 +619,12 @@ export class AndroidDriver implements DeviceDriver {
     const until = this.#clock.monotonic() + waitMs;
     while (!(this.#generation !== since && done()) && this.#clock.monotonic() < until && !signal.aborted) await new Promise((resolve) => setTimeout(resolve, 20));
     return this.#generation !== since && done();
+  }
+
+  async #heldWayKnown(signal: AbortSignal): Promise<void> {
+    if (this.#video.size) return;
+    if (!(await this.#newPicture(this.#generation, () => true, FIRST_PICTURE_MS, signal)))
+      throw new DriverError("failed", `The ${this.#target?.model ?? "device"}'s picture has not come ${FIRST_PICTURE_MS / 1000} s after the device server attached, so bb-box cannot tell which way it is held. Try again in a moment.`);
   }
 
   async #rotate(to: Orientation, signal: AbortSignal): Promise<void> {

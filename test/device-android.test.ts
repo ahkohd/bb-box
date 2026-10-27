@@ -145,6 +145,7 @@ class FakeEmulatorGrpc {
   gps = { latitude: 37.422, longitude: -122.0841 };
   battery = { charger: 1, chargeLevel: 100 };
   emulator: FakeEmulator | null = null;
+  holdFirstFrame = false;
 
   constructor() {
     this.server = createServer();
@@ -177,7 +178,7 @@ class FakeEmulatorGrpc {
         if (path === GRPC_METHODS.emulator.streamScreenshot) {
           this.streams.add(stream);
           stream.on("close", () => this.streams.delete(stream));
-          this.show(this.screen);
+          if (!this.holdFirstFrame) this.show(this.screen);
         } else if (path === GRPC_METHODS.emulator.getScreenshot) {
           stream.end(Buffer.from(frame(encode(EMULATOR_SCHEMA, `${EMU}.Image`, { format: { width: this.screen.width, height: this.screen.height }, image: Uint8Array.of(137, 80, 78, 71) }))));
         } else {
@@ -515,6 +516,21 @@ describe("the Android driver", () => {
     assert.equal((await driver.readBack()).geometry?.physical, "turned-right");
     await driver.touch([{ id: 0, x: 300, y: 700 }]);
     assert.deepEqual(touches().at(-1), [{ x: 700, y: 2099, pressure: 1 }]);
+  });
+
+  test("a rotate just after the device server reattaches waits for the first picture, so it turns a device held otherwise than upright (F-4)", async () => {
+    const { grpc, emulator, driver } = await rig();
+    emulator.runningNow = { pid: 7, avd: "pixel_8", grpcPort: 8554, token: TOKEN, discovery: "/nonexistent" };
+    grpc.screen = { width: 2400, height: 1080, rotation: 1 };
+    grpc.holdFirstFrame = true;
+    assert.equal(await driver.attach(PIXEL_8, AbortSignal.timeout(5000)), "reattached");
+    const rotating = driver.control({ action: "rotate", to: "upright" }, AbortSignal.timeout(5000), { personHasControl: false });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    grpc.show(grpc.screen);
+    await rotating;
+    const turns = grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.setPhysicalModel);
+    assert.equal(turns.length, 1);
+    assert.equal((await driver.readBack()).geometry?.physical, "upright");
   });
 
   test("the panel's pixels: each way the device is held, and the Pixel Fold's outer screen stretched onto its inner panel", () => {
