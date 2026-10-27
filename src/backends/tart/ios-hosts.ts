@@ -30,6 +30,7 @@ const LEAVING_WAIT_MS = 5 * 60_000;
 const ROOM_POLL_MS = 10_000;
 const DELETING_LEFT_MS = 2 * 60_000;
 const HANDING_OVER_MS = 5 * 60_000;
+export const DOCTOR_HOST_MS = 15_000;
 
 export type HostPhase = "starting" | "serving" | "failed";
 
@@ -236,10 +237,12 @@ export class IosHosts implements SlotLender {
   readonly #acquiring = new Map<string, number>();
   readonly #acquiringBoxes = new Set<string>();
   readonly #stopping = new AbortController();
+  readonly #doctorHostMs: number;
   #lock: Promise<unknown> = Promise.resolve();
 
-  constructor(access: HostsAccess) {
+  constructor(access: HostsAccess, doctorHostMs = DOCTOR_HOST_MS) {
     this.#access = access;
+    this.#doctorHostMs = doctorHostMs;
   }
 
   get #settings(): IosHostsConfig {
@@ -294,18 +297,30 @@ export class IosHosts implements SlotLender {
     return !!state && !(state instanceof Error) && state.vms.some((each) => each.name === vm && each.running);
   }
 
-  async #survey(states: ReadonlyMap<string, HostState | Error>, signal?: AbortSignal): Promise<Surveyed[]> {
+  async #survey(states: ReadonlyMap<string, HostState | Error>, signal?: AbortSignal, boundMs: number | null = null): Promise<Surveyed[]> {
     return Promise.all(
       this.#owners(states).map(async (owner): Promise<Surveyed> => {
         const running = this.#running(states.get(owner.mac.name), owner.vm);
         if (owner.phase !== "serving" || !running) return { owner, running, address: null, status: null, why: null };
-        try {
+        let waitingOn = `its address from Tart on ${owner.mac.name}`;
+        const bound = boundMs === null ? null : new AbortController();
+        const timer = bound && setTimeout(() => bound.abort(), boundMs!);
+        const hostSignal = bound ? (signal ? AbortSignal.any([signal, bound.signal]) : bound.signal) : signal;
+        const look = async (): Promise<Surveyed> => {
           const address = await this.#access.address(owner.mac, owner.vm);
           if (!address) return { owner, running, address: null, status: null, why: `The shared iOS host ${owner.vm} on ${owner.mac.name} has no address.` };
-          const status = await this.#status(await this.#access.vmCommand(owner.mac, address), signal);
+          waitingOn = `its helper's status over SSH at ${address}, through ${owner.mac.name}`;
+          const status = await this.#status(await this.#access.vmCommand(owner.mac, address), hostSignal);
           return { owner, running, address, status, why: null };
+        };
+        const gaveUp = bound && new Promise<never>((_, reject) => bound.signal.addEventListener("abort", () => reject(new Error("bounded")), { once: true }));
+        try {
+          return await (gaveUp ? Promise.race([look(), gaveUp]) : look());
         } catch (error) {
+          if (bound?.signal.aborted) return { owner, running, address: null, status: null, why: `The shared iOS host ${owner.vm} on ${owner.mac.name} did not answer within ${Math.round(boundMs! / 1000)} s: bb-box waited on ${waitingOn}.` };
           return { owner, running, address: null, status: null, why: `The shared iOS host ${owner.vm} on ${owner.mac.name} did not answer: ${error instanceof Error ? error.message : String(error)}` };
+        } finally {
+          if (timer) clearTimeout(timer);
         }
       }),
     );
@@ -889,7 +904,7 @@ export class IosHosts implements SlotLender {
 
   async doctor(states: ReadonlyMap<string, HostState | Error>, signal?: AbortSignal): Promise<DoctorCheck[]> {
     if (!this.#settings.on) return [];
-    const surveyed = await this.#survey(states, signal);
+    const surveyed = await this.#survey(states, signal, this.#doctorHostMs);
     return this.#access.macs().map((mac): DoctorCheck => {
       const here = surveyed.filter((each) => each.owner.mac.name === mac.name);
       if (!here.length) {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { TartBackend } from "../src/backends/tart/backend.ts";
+import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { HOST_VM_PREFIX, slotRefOf } from "../src/backends/tart/ios-hosts.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
 import type { AcquireHooks, BoxIdentity, Guest, ReleaseHooks } from "../src/backends/types.ts";
@@ -19,10 +19,10 @@ afterEach(async () => {
   for (const backend of made.splice(0)) await backend.dispose();
 });
 
-function setup(values: Record<string, unknown> = {}) {
+function setup(values: Record<string, unknown> = {}, options: TartBackendOptions = {}) {
   const world = fakeIosHostMac();
   const context = testContext(new MemoryStorage());
-  const backend = new TartBackend(tartConfig({ ...IOS_HOST_SETTINGS, ...values }), context, IOS_HOST_FAKES);
+  const backend = new TartBackend(tartConfig({ ...IOS_HOST_SETTINGS, ...values }), context, { ...IOS_HOST_FAKES, ...options });
   made.push(backend);
   return { ...world, context, backend };
 }
@@ -242,4 +242,24 @@ test("another instance of the same install never vacates a host this one is star
   assert.equal(hosts().length, 1, "a host holding a box stays");
   await backend.release(slot, releasing, signal());
   assert.deepEqual(hosts(), []);
+});
+
+test("the doctor bounds each shared host's check, and says what it waited on for a host that does not answer (F-7)", async () => {
+  const { backend, ssh } = setup({}, { iosHostDoctorMs: 1_000 });
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const slot = await backend.acquire(box, guest, hooks().hooks, signal());
+  const hold = join(ssh.home("192.168.64.2"), "hold-status");
+  writeFileSync(hold, "");
+  try {
+    const began = Date.now();
+    const doctor = await backend.doctor(signal());
+    assert.ok(Date.now() - began < 10_000, `${Date.now() - began} ms`);
+    const check = doctor.checks.find((each) => each.id === "ios-hosts.mac1");
+    assert.equal(check?.status, "warn");
+    assert.match(check?.detail ?? "", /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not answer within 1 s: bb-box waited on its helper's status over SSH at 192\.168\.64\.2, through mac1\. /);
+  } finally {
+    rmSync(hold);
+  }
+  await backend.release(slot, releasing, signal());
 });

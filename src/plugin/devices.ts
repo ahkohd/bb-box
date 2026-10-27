@@ -7,7 +7,7 @@ import { controlDeadlineMs } from "../core/device-settings.ts";
 import { DeviceLink, DeviceLinkError, newRequestId, type DeviceRequestBody } from "../core/device-link.ts";
 import type { ByteChannel, RunResult } from "../transports/types.ts";
 import type { DoctorCheck } from "../backends/types.ts";
-import { inSlot } from "../core/device-host.ts";
+import { inSlot, placementOf } from "../core/device-host.ts";
 
 export const IDLE_CLOSE_MS = 10 * 60_000;
 export const SLOT_STREAM_CAP: VideoStep = "two-thirds";
@@ -47,6 +47,7 @@ export interface DeviceServersDeps {
   readonly version?: number;
   readonly helloWaitMs?: number;
   readonly idleCloseMs?: number;
+  readonly deviceHubWaitMs?: number;
 }
 
 export type DeviceServerView =
@@ -64,6 +65,12 @@ interface Held {
   owner: { readonly generation: number; readonly holder: ControlHolder } | null;
 }
 
+
+function waitedWords(box: BoxRecord, waitMs: number): string {
+  const placement = placementOf(box);
+  const where = placement.on === "slot" ? ` as its slot's user on the shared iOS host ${placement.host}` : "";
+  return `it waited ${Math.round(waitMs / 1000)} s for box ${box.name} to answer a command over SSH${where}, and stopped waiting`;
+}
 
 export function wantsDevice(box: BoxRecord): boolean {
   const offer = box.capabilities.device;
@@ -486,34 +493,36 @@ export class DeviceServers {
   }
 
   async checks(): Promise<DoctorCheck[]> {
+    const boxes = (await this.#deps.boxes.all()).filter(wantsDevice);
+    return (await Promise.all(boxes.map((box) => this.#boxChecks(box)))).flat();
+  }
+
+  async #boxChecks(box: BoxRecord): Promise<DoctorCheck[]> {
     const checks: DoctorCheck[] = [];
-    for (const box of await this.#deps.boxes.all()) {
-      if (!wantsDevice(box)) continue;
-      const id = `device.${box.name}` as DoctorCheck["id"];
-      const name = `Device server of ${box.name}`;
-      const view = this.view(box.id);
-      const bad = await this.#bad(box.id);
-      const badWords = bad !== null ? ` Version ${bad} did not answer in this box, so it went back, and bb-box delivers no version before ${bad + 1} to it.` : "";
-      if (view.is === "connected") {
-        const behind = view.version < this.version;
-        checks.push({
-          id,
-          name,
-          status: behind || bad !== null ? "warn" : "ok",
-          detail: `Version ${view.version}, protocol ${view.protocol}: the ${view.state.model}, ${view.state.power.is}.${behind && bad === null ? ` This bb-box delivers version ${this.version} when it next connects as the box's lease holder.` : ""}${badWords}`,
-          fix: bad !== null ? `Read ~/.bb-box/device/server.log in box ${box.name} for why version ${bad} did not answer.` : null,
-        });
-      } else if (view.is === "waiting") {
-        checks.push({ id, name, status: "ok", detail: `Version ${view.version ?? "none"}; version ${view.for} waits until ${view.why === "person" ? "the person hands back control" : "the recording ends"}.`, fix: null });
-      } else if (view.is === "down") {
-        checks.push({ id, name, status: "fail", detail: view.words + badWords, fix: `Read ~/.bb-box/device/server.log in box ${box.name}. Once the cause is fixed, sh ~/.bb-box/device/current/src/device/bb-box-device.sh restart in the box starts it again, as a newer bb-box's delivery does.` });
-      } else if (view.is === "superseded") {
-        checks.push({ id, name, status: "ok", detail: "A bb-box instance started later holds this box's device.", fix: null });
-      } else {
-        checks.push({ id, name, status: "skipped", detail: "bb-box has not connected to it since it started.", fix: null });
-      }
-      if (box.capabilities.device?.platform === "ios" && !isTestOffer(box.capabilities.device)) checks.push(await this.#deviceHubCheck(box));
+    const id = `device.${box.name}` as DoctorCheck["id"];
+    const name = `Device server of ${box.name}`;
+    const view = this.view(box.id);
+    const bad = await this.#bad(box.id);
+    const badWords = bad !== null ? ` Version ${bad} did not answer in this box, so it went back, and bb-box delivers no version before ${bad + 1} to it.` : "";
+    if (view.is === "connected") {
+      const behind = view.version < this.version;
+      checks.push({
+        id,
+        name,
+        status: behind || bad !== null ? "warn" : "ok",
+        detail: `Version ${view.version}, protocol ${view.protocol}: the ${view.state.model}, ${view.state.power.is}.${behind && bad === null ? ` This bb-box delivers version ${this.version} when it next connects as the box's lease holder.` : ""}${badWords}`,
+        fix: bad !== null ? `Read ~/.bb-box/device/server.log in box ${box.name} for why version ${bad} did not answer.` : null,
+      });
+    } else if (view.is === "waiting") {
+      checks.push({ id, name, status: "ok", detail: `Version ${view.version ?? "none"}; version ${view.for} waits until ${view.why === "person" ? "the person hands back control" : "the recording ends"}.`, fix: null });
+    } else if (view.is === "down") {
+      checks.push({ id, name, status: "fail", detail: view.words + badWords, fix: `Read ~/.bb-box/device/server.log in box ${box.name}. Once the cause is fixed, sh ~/.bb-box/device/current/src/device/bb-box-device.sh restart in the box starts it again, as a newer bb-box's delivery does.` });
+    } else if (view.is === "superseded") {
+      checks.push({ id, name, status: "ok", detail: "A bb-box instance started later holds this box's device.", fix: null });
+    } else {
+      checks.push({ id, name, status: "skipped", detail: "bb-box has not connected to it since it started.", fix: null });
     }
+    if (box.capabilities.device?.platform === "ios" && !isTestOffer(box.capabilities.device)) checks.push(await this.#deviceHubCheck(box));
     return checks;
   }
 
@@ -522,10 +531,16 @@ export class DeviceServers {
     const name = `Device Hub in ${box.name}`;
     let seen: DeviceHubSeen | null = null;
     let why = "";
+    const waitMs = this.#deps.deviceHubWaitMs ?? DEVICE_HUB_CHECK_MS;
+    const bound = new AbortController();
+    const timer = setTimeout(() => bound.abort(), waitMs);
     try {
-      seen = parseDeviceHub((await this.#deps.boxes.runOwn(box, deviceHubScript(), { timeoutMs: DEVICE_HUB_CHECK_MS })).stdout);
+      const gaveUp = new Promise<never>((_, reject) => bound.signal.addEventListener("abort", () => reject(new Error(waitedWords(box, waitMs))), { once: true }));
+      seen = parseDeviceHub((await Promise.race([this.#deps.boxes.runOwn(box, deviceHubScript(), { timeoutMs: waitMs, signal: bound.signal }), gaveUp])).stdout);
     } catch (error) {
-      why = `: ${error instanceof Error ? error.message : String(error)}`;
+      why = bound.signal.aborted ? `: ${waitedWords(box, waitMs)}` : `: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      clearTimeout(timer);
     }
     if (!seen) return { id, name, status: "skipped", detail: `bb-box could not look in box ${box.name}${why}.`, fix: null };
     const kills = seen.killed ? ` The device server has killed it ${seen.killed === 1 ? "once" : `${seen.killed} times`}, last at ${new Date(seen.last ?? 0).toISOString().slice(0, 16).replace("T", " ")} UTC: Xcode's Run opens it.` : "";
