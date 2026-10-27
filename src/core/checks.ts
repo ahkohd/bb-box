@@ -135,7 +135,7 @@ export const CHECKS = {
   "machine.<machine>.slots": {
     name: "<machine>: iOS slots",
     from: ["ssh-pool"],
-    what: "On a Mac whose line lists ios (064): that its iOS slots are set up, whether it lends slots or is lent whole, its slots held, ready, making and sweeping, and the iOS runtime and seed they are made with.",
+    what: "On a Mac whose line lists ios (064): that its iOS slots are set up, whether it lends slots or is lent whole, its slots held, ready, making and sweeping, the iOS runtime and seed they are made with, each held slot's load, and what its last sweeps found and left.",
   },
   "machine.<machine>.homes": { name: "<machine>: people's homes", from: ["ssh-pool"], what: "On a Mac, box users cannot enter any person's home, such as an administrator's with BB's or an agent CLI's credentials." },
   "machine.<machine>.xcode": { name: "<machine>: Xcode", from: ["ssh-pool"], what: "On a Mac, Xcode and its iOS runtime." },

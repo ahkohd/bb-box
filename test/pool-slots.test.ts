@@ -63,9 +63,13 @@ describe("the SSH host pool's Mac lends iOS slots (064 unit 5)", { timeout: 300_
     const slots = doctor.checks.find((check) => check.id === "machine.mac-1.slots");
     assert.equal(slots?.status, "ok");
     assert.match(slots!.detail, /^Lends iOS slots, 1 held, 0 ready, 0 making, \d+ sweeping, of 12: iOS 27\.0 \(24A434\), the iPhone 18 Pro/);
+    assert.match(slots!.detail, new RegExp(`Slot 1 \\(box ${box.boxId}\\): \\d+\\.\\d\\d cores, \\d+\\.\\d GiB`));
 
     await backend.release(guest, releaseHooks().hooks, wait());
     assert.equal(await backend.power(guest, wait()), null);
+    await pool.mac.until("the released slot swept", () => pool.mac.status().values.get("sweeping") === "0");
+    const swept = (await backend.doctor(wait())).checks.find((check) => check.id === "machine.mac-1.slots");
+    assert.match(swept!.detail, /Its last sweeps: UID 80001: \d+ paths? found, 0 left, in \d+ s\./);
     const free = await backend.capacity("macos-desktop", sizeOf("macos-desktop"), [], wait());
     assert.equal(free.ok, true, free.message ?? "");
   });
