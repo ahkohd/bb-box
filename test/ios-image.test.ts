@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { judgeImage, parseImageRecord, pinsDigest } from "../src/backends/images.ts";
+import { HELD_PORTS } from "../src/backends/tart/device-host.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
 import { parseOfferedDevices } from "../src/core/device-parse.ts";
 import { IOS_COMPANION_PAIRINGS, IOS_CONTENT_SIZES } from "../src/core/device.ts";
@@ -156,4 +157,11 @@ test("the image's additions install device-host and its carried slots, and leave
   assert.doesNotMatch(host, /"\$helper" init/, "settings are a snapshot taken when a host is made, so the image writes none");
   assert.match(read("build-ios.sh"), /sudo -n \/bin\/sh "\$here\/host-ios\.sh" "\$here" "\$\(id -un\)"/);
   assert.match(readFileSync(join(SETUP, "tart", "prepare-ios-image.sh"), "utf8"), /-C "\$here\/\.\.\/ssh-pool" mac-home\/\.zshenv/, "the slots' home is the pool's");
+});
+
+test("the image's check finds the held ports free and their daemon written but not loaded, as a dedicated box needs them (064 F-6)", () => {
+  const check = read("check-ios.sh");
+  assert.match(check, new RegExp(`^held_ports="${HELD_PORTS.join(" ")}"$`, "m"));
+  assert.ok(check.includes('check "device-host daemons" daemons_written_not_loaded\ncheck "held ports free" held_ports_free\n'));
+  assert.doesNotMatch(check, /421/, "nothing answers the held ports in the image");
 });

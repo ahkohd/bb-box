@@ -754,3 +754,80 @@ exit 78 (EX_CONFIG), as the held ports' daemon did in unit 3. So root
 makes the file and then gives it to the user, in a folder of root's that
 the user cannot write. The user can write their own log, but cannot swap
 it for a link or add a file.
+
+## F-6: dedicated ios boxes keep the common dev ports free
+
+Found and fixed on 27 October 2026. The ios image built from unit 3 and
+F-5 held 3000, 4200, 5000, 5173, 8000, 8080, 8081 and 19000 in every VM
+made from it. That includes dedicated ios boxes, a whole VM for one box,
+which need those ports for their own servers: React Native's Metro listens
+on 8081. The cause: `device-host install`, run at the image's build,
+loaded the held ports' daemon, and launchd started it at every boot.
+
+### What changed
+
+- **`install` writes both plists and loads neither,** unless the host has
+  run `init`. In a VM that has not, it takes both out of launchd and out of
+  `/Library/LaunchDaemons`. That clears a VM made from the image before
+  this fix once the new helper is installed. On a host that has run
+  `init`, `install` loads both again, as before, so a new helper's daemons
+  start.
+- **`init` loads the held ports' daemon and the helper's own.** They are
+  in `/Library/LaunchDaemons`, so launchd starts both at each of the
+  host's restarts. A daemon already loaded from the same plist is left
+  running, so a second `init` does not let the ports go.
+- **The helper's daemon does nothing before `init`.** In such a VM, `run`
+  ran `resume` and then polled every 5 s. Now it returns at once, and its
+  `KeepAlive` is `SuccessfulExit` false, so launchd does not start it
+  again after that return.
+- **The image check** (`bb-box-check-ios`) now checks that the 2 plists
+  are written in `/var/db/bb-box/host`, that the held ports' plist lists
+  the 8 ports, that neither daemon is loaded or in
+  `/Library/LaunchDaemons`, and that nothing listens on the 8 ports at
+  127.0.0.1 or ::1. It does not run `init`, because that would change the
+  image. The helper's tests prove that `init` holds the ports.
+
+### What else the image's helper does in a dedicated box
+
+These were measured in a dedicated ios box made from the image built from
+`b6347c88`, at 6 cores and 16 GiB, before the fix.
+
+| Effect | Found | Now |
+| --- | --- | --- |
+| Held ports | `perl` as `nobody`, 9.0 MiB resident, 16 listening sockets: 8 ports on 127.0.0.1 and ::1 | gone |
+| The helper's daemon | `sh` as root, 2.6 MiB resident. Each boot it ran `resume`, then every 5 s ran `bound`, which uses `ps` and `awk`. One `bound` took 0.03 s of CPU, measured 3 times with `time`, so about 0.006 of a core | not loaded, and `run` returns before `init` |
+| Carried slot users | `bbd-i1` and `bbd-i2`, UIDs 79991 and 79992: hidden, standard, in `_developer` and `com.apple.access_ssh`, each with a random password that is never written down and no SSH key until a claim | unchanged |
+| Their homes in `/Users` | 283 MiB and 297 MiB, mode 700 | unchanged |
+| Their devices | one iPhone 18 Pro each, shut down, 0.4 MiB each in `/private/var/tmp`. The box user's `simctl` does not list them | unchanged |
+| Their processes | none, after a boot | unchanged |
+| Helper state | `/var/db/bb-box/host`, 76 KiB, mode 700 | unchanged |
+
+None of the unchanged effects breaks a dedicated box today. The carried
+slots cost a dedicated box about 580 MiB of disk and 2 hidden users. Every
+VM made from the image has the same 2 users, with the same password hash.
+
+### How it was checked
+
+On Linux, with the stub tools: 4 new cases in
+[`test/device-host-helper.test.ts`](../../test/device-host-helper.test.ts).
+They check that `install` loads nothing and that a restart then loads
+nothing. They check that `install` takes out daemons an older install
+loaded, and that `run` makes no call before `init`. They also check that
+`init` loads both daemons, keeps them across a restart and across a
+second `init`, and that `install` on a host reloads them. A restart in the
+stubs is launchd loading what is in `/Library/LaunchDaemons`. The carry
+case now follows the image's build: `install`, then `carry`, with no
+`init`. A case in [`test/ios-image.test.ts`](../../test/ios-image.test.ts)
+checks that the image check's ports are the helper's. tsc, the node suite
+and vitest passed on a Linux box.
+
+Then live, as root, in a dedicated ios box from the image built from
+`b6347c88`. The image was not rebuilt or changed.
+
+| Step | 8081 | Seen |
+| --- | --- | --- |
+| The box as made | held | `perl` as `nobody` on 127.0.0.1:8081 and [::1]:8081, HTTP 421 |
+| `host-ios.sh` installs this helper, then a reboot | free | launchd has neither daemon. All 8 ports free. `nc -l 127.0.0.1 8081` listened as the box user and received a line sent to it |
+| The image check, without device boots | free | the helper, daemons, held ports free, carried slots and slot UIDs lines passed |
+| `init` | held | both daemons loaded, HTTP 421. A second `init` left the ports daemon on the same pid. The image check's two lines then failed, as they should |
+| A reboot | held | all 8 ports held, `nc -l 127.0.0.1 8081` refused with "Address already in use", and `resume` ran at the new boot |

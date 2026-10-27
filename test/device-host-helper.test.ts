@@ -13,12 +13,17 @@ const EXIT = DEVICE_HOST_EXITS;
 const CLAIM = (box = "box_a", kind = "ios", install = "inst_a") => `install=${install}\nbox=${box}\nthread=thr_a\nname=ios-box\nkind=${kind}\ncreated=1790000000000\nkey=${KEY}\n`;
 const BOX = (box = "box_a", install = "inst_a") => `install=${install}\nbox=${box}\n`;
 const HOST = "/var/db/bb-box/host";
+const HOST_DAEMONS = ["app.bb-box.device-host", "app.bb-box.device-host.ports"];
 
 function quiet(settings = ""): FakeDeviceHost {
   const host = fakeDeviceHost();
   const init = host.run(["init"], `ahead=0\n${settings}`);
   assert.equal(init.status, 0, init.stderr);
   return host;
+}
+
+function slotDaemons(host: FakeDeviceHost): string[] {
+  return host.daemons().filter((label) => !HOST_DAEMONS.includes(label));
 }
 
 function count(host: FakeDeviceHost, call: string): number {
@@ -240,7 +245,8 @@ test("a make cut short carries on from its recorded step, and a step that fails 
 });
 
 test("carry makes the image's two slots, each seeded and first booted, then shut down, with daemons written but not loaded", () => {
-  const host = quiet();
+  const host = fakeDeviceHost();
+  assert.equal(host.run(["install"]).status, 0, "as the image's build does, with no init");
   const carry = host.run(["carry"]);
   assert.equal(carry.status, 0, carry.stderr);
   const lines = carry.stdout.trim().split("\n");
@@ -254,7 +260,9 @@ test("carry makes the image's two slots, each seeded and first booted, then shut
     assert.equal(device?.state, "Shutdown");
     assert.ok(host.file(`/var/db/bb-box/host/slots/${id}/daemons/app.bb-box.device.bbd-${id}.plist`));
   }
-  assert.deepEqual(host.daemons(), [], "nothing boots at a host's start");
+  assert.deepEqual(host.daemons(), [], "nothing boots in the image, and nothing holds the ports");
+  assert.equal(host.run(["init"], "ahead=0\n").status, 0);
+  assert.deepEqual(host.daemons(), HOST_DAEMONS, "a host's start loads the host's daemons and no slot's");
   assert.equal(host.run(["carry"]).status, 0, "run again, it keeps them");
   assert.equal(count(host, "sysadminctl -addUser"), 2);
   assert.equal(host.run(["claim", "i1"], CLAIM()).status, 0);
@@ -321,7 +329,7 @@ test("a claim for a macos box deletes the slot's device and its server's daemon"
   const claim = host.run(["claim", "1"], CLAIM("box_m", "macos"));
   assert.equal(claim.status, 0, claim.stderr);
   assert.deepEqual(host.devices("bbd-1"), {});
-  assert.deepEqual(host.daemons(), []);
+  assert.deepEqual(slotDaemons(host), []);
   assert.equal(answer(claim.stdout).get("udid"), "");
 });
 
@@ -358,7 +366,7 @@ test("a release removes the box's user with its home, processes, daemons and cro
   assert.ok(order.every((at, index) => at >= 0 && (index === 0 || at > order[index - 1]!)), `the slot is stopped gently first: its daemons, its devices, its companion, then its domain, then whatever is left (${order.join(", ")})`);
   assert.equal(count(host, "pkill -TERM -u 80001 -x containermanagerd"), 0, "its containermanagerd outlives its clients, so the system's CoreMediaIO service never queries a dead one");
   assert.ok(count(host, "launchctl bootout user/80001") >= 1);
-  assert.deepEqual(host.daemons(), ["app.bb-box.device.bbd-2"]);
+  assert.deepEqual(slotDaemons(host), ["app.bb-box.device.bbd-2"]);
   assert.equal(host.file(`${HOST}/deleting`), null, "another box keeps the host");
 
   await swept(host);
@@ -514,7 +522,7 @@ test("daemon moves BB's daemon, as its installer left it with BB_INSTALL_SKIP_SE
   writeFileSync(join(data, "install-daemon.pid"), "99999\n");
   assert.match(host.run(["daemon", "1"], BOX()).stderr, /^BB's installer left no daemon running as bbd-1: run BB's command with BB_INSTALL_SKIP_SERVICE=1 first\.\n$/);
   assert.equal(host.run(["release", "1"], BOX()).status, 0);
-  assert.deepEqual(host.daemons(), [], "a release unloads BB's daemon too");
+  assert.deepEqual(slotDaemons(host), [], "a release unloads BB's daemon too");
   await swept(host);
 });
 
@@ -560,18 +568,71 @@ test("status gives each slot's load, and a second booted device is shut down aft
   });
 });
 
-test("install loads the helper's own daemon, run at every boot, and the held ports' daemon, as nobody", () => {
+function restart(host: FakeDeviceHost): void {
+  const loaded = join(host.state, "daemons");
+  for (const label of readdirSync(loaded)) rmSync(join(loaded, label));
+  const installed = join(host.root, "Library/LaunchDaemons");
+  for (const name of readdirSync(installed)) if (name.endsWith(".plist")) writeFileSync(join(loaded, name.slice(0, -".plist".length)), readFileSync(join(installed, name)));
+}
+
+test("install writes the helper's daemon and the held ports' daemon but loads neither, so a dedicated box keeps the common dev ports free (064 F-6)", () => {
   const host = fakeDeviceHost();
   const install = host.run(["install"]);
-  assert.deepEqual(install, { status: 0, stdout: "installed=app.bb-box.device-host app.bb-box.device-host.ports\nheld_ports=3000 4200 5000 5173 8000 8080 8081 19000\n", stderr: "" });
-  assert.deepEqual(host.daemons(), ["app.bb-box.device-host", "app.bb-box.device-host.ports"]);
-  const helper = host.file("/Library/LaunchDaemons/app.bb-box.device-host.plist")!;
+  assert.deepEqual(install, { status: 0, stdout: "written=app.bb-box.device-host app.bb-box.device-host.ports\nloaded=\nheld_ports=\n", stderr: "" });
+  assert.deepEqual(host.daemons(), []);
+  assert.equal(host.file("/Library/LaunchDaemons/app.bb-box.device-host.ports.plist"), null);
+  assert.equal(host.file("/Library/LaunchDaemons/app.bb-box.device-host.plist"), null);
+  const helper = host.file(`${HOST}/app.bb-box.device-host.plist`)!;
   assert.match(helper, /<string>\/bin\/sh<\/string>\n    <string>\/usr\/local\/libexec\/bb-box\/device-host<\/string>\n    <string>run<\/string>/);
   assert.match(helper, /<key>RunAtLoad<\/key><true\/>/);
-  const ports = host.file("/Library/LaunchDaemons/app.bb-box.device-host.ports.plist")!;
+  assert.match(helper, /<key>KeepAlive<\/key><dict><key>SuccessfulExit<\/key><false\/><\/dict>/, "run's return before init is not run again");
+  const ports = host.file(`${HOST}/app.bb-box.device-host.ports.plist`)!;
   assert.match(ports, /<key>UserName<\/key><string>nobody<\/string>/);
   assert.deepEqual([...ports.matchAll(/^    <string>(\d+)<\/string>$/gm)].map((match) => Number(match[1])), [3000, 4200, 5000, 5173, 8000, 8080, 8081, 19000]);
   assert.equal(statSync(join(host.root, HOST)).mode & 0o777, 0o700, "no box reads the host's state");
+  restart(host);
+  assert.deepEqual(host.daemons(), [], "nothing holds the ports after a dedicated box's restart");
+});
+
+test("install takes the host's daemons out of launchd in a VM that an older image's install loaded them in", () => {
+  const host = fakeDeviceHost();
+  mkdirSync(join(host.root, "Library/LaunchDaemons"), { recursive: true });
+  for (const label of HOST_DAEMONS) {
+    writeFileSync(join(host.root, "Library/LaunchDaemons", `${label}.plist`), "an older install's plist\n");
+    writeFileSync(join(host.state, "daemons", label), "an older install's plist\n");
+  }
+  assert.equal(host.run(["install"]).status, 0);
+  assert.deepEqual(host.daemons(), []);
+  restart(host);
+  assert.deepEqual(host.daemons(), []);
+});
+
+test("run does nothing in a VM that never ran init", () => {
+  const host = fakeDeviceHost();
+  assert.equal(host.run(["install"]).status, 0);
+  const before = host.calls().length;
+  assert.deepEqual(host.run(["run"]), { status: 0, stdout: "", stderr: "" });
+  assert.deepEqual(host.calls().slice(before).filter((line) => line !== "id -u"), []);
+  assert.equal(host.file(`${HOST}/resumed-boot`), null);
+});
+
+test("init loads the held ports' daemon and the helper's, keeps them across the host's restarts, and leaves them running when run again", () => {
+  const host = fakeDeviceHost();
+  assert.equal(host.run(["install"]).status, 0);
+  assert.equal(host.run(["init"], "ahead=0\n").status, 0);
+  assert.deepEqual(host.daemons(), HOST_DAEMONS);
+  assert.equal(host.file("/Library/LaunchDaemons/app.bb-box.device-host.ports.plist"), host.file(`${HOST}/app.bb-box.device-host.ports.plist`));
+  restart(host);
+  assert.deepEqual(host.daemons(), HOST_DAEMONS, "a host's restart holds the ports again");
+  const bootouts = count(host, "launchctl bootout system/app.bb-box.device-host");
+  assert.equal(host.run(["init"], "").status, 0);
+  assert.equal(count(host, "launchctl bootout system/app.bb-box.device-host"), bootouts, "a second init does not let the ports go");
+  assert.deepEqual(host.daemons(), HOST_DAEMONS);
+  const reinstall = host.run(["install"]);
+  assert.deepEqual(reinstall, { status: 0, stdout: "written=app.bb-box.device-host app.bb-box.device-host.ports\nloaded=app.bb-box.device-host app.bb-box.device-host.ports\nheld_ports=3000 4200 5000 5173 8000 8080 8081 19000\n", stderr: "" });
+  assert.deepEqual(host.daemons(), HOST_DAEMONS, "install on a host loads the new helper's daemons");
+  restart(host);
+  assert.deepEqual(host.daemons(), HOST_DAEMONS);
 });
 
 test("the helper refuses to run as anyone but root, and its usage names its commands", () => {
@@ -776,7 +837,7 @@ test("the sweep's steps each refuse a UID outside the slots' before they act", (
   host.add("processes", "700 0 rootd 1");
   const refused = [["sweep_pass", host.data, "0"], ["sweep_pass", host.data, "80001", "0"], ["sweep_pass", host.data, "80001 0"], ["sweep_pass", host.data], ["log_out_again", "0"], ["log_out_again", "501"], ["log_out_again", "80001 0"], ["remove_ipc", "0"], ["remove_ipc", "80001 0"], ["remove_ipc", "root"]];
   for (const args of refused) assert.equal(internal(host, args).status, 1, args.join(" "));
-  assert.deepEqual(host.calls().filter((line) => /^(find|pkill|ipcrm|ipcs) /.test(line) || line.startsWith("launchctl bootout")), []);
+  assert.deepEqual(host.calls().filter((line) => /^(find|pkill|ipcrm|ipcs) /.test(line) || (line.startsWith("launchctl bootout") && !line.startsWith("launchctl bootout system/app.bb-box.device-host"))), []);
   assert.ok(host.lines("processes").includes("700 0 rootd 1"));
   assert.equal(internal(host, ["remove_ipc", "80001"]).status, 0);
   assert.deepEqual(host.lines("ipc"), ["q 1 person", "m 7 root"], "a slot's objects, by its user's name or its UID");

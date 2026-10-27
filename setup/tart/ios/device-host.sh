@@ -433,6 +433,15 @@ unload_daemon() {
   rm -f "$DAEMONS/$1.plist"
 }
 
+loaded_as_written() {
+  label=$(basename "$1" .plist)
+  launchctl print "system/$label" >/dev/null 2>&1 && cmp -s "$1" "$DAEMONS/$label.plist"
+}
+
+keep_loaded() { loaded_as_written "$1" || load_daemon "$1"; }
+
+initialised() { [ -f "$HOST/settings" ]; }
+
 load_slot_daemons() {
   id=$1
   for plist in "$(slot_dir "$id")"/daemons/*.plist; do
@@ -685,7 +694,7 @@ init() {
   read_input "most ahead resetting-most disk-reserve-gib"
   lock_host 60
   mkdir -p "$HOST/slots" "$HOST/promises" "$HOST/sweep"
-  if [ ! -f "$HOST/settings" ]; then
+  if ! initialised; then
     for pair in "most=$most" "ahead=$ahead" "resetting-most=$resetting_most" "disk-reserve-gib=$disk_reserve_gib"; do
       [ -z "${pair#*=}" ] || number "${pair#*=}" || quit 2 "${pair%%=*} must be a whole number."
     done
@@ -695,6 +704,8 @@ init() {
       put "$HOST/settings"
   fi
   number "$(cat "$HOST/generation" 2>/dev/null)" || echo 0 | put "$HOST/generation"
+  host_daemon_plists
+  keep_host_daemons_loaded || fail "launchd did not load the host's daemons."
   for key in most ahead resetting-most disk-reserve-gib; do echo "$key=$(setting "$key")"; done
 }
 
@@ -1175,6 +1186,7 @@ watch() {
 }
 
 run() {
+  initialised || exit 0
   resume
   watch
 }
@@ -1262,7 +1274,7 @@ host_daemon_plists() {
     plist_head
     plist_string Label "$HOST_LABEL"
     plist_arguments /bin/sh "$INSTALLED" run
-    printf '  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>ThrottleInterval</key><integer>10</integer>\n'
+    printf '  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n  <key>ThrottleInterval</key><integer>10</integer>\n'
     plist_string StandardErrorPath /var/log/bb-box-device-host.log
     plist_tail
   } | put "$HOST/$HOST_LABEL.plist"
@@ -1276,15 +1288,31 @@ host_daemon_plists() {
   } | put "$HOST/$PORTS_LABEL.plist"
 }
 
+keep_host_daemons_loaded() {
+  keep_loaded "$HOST/$PORTS_LABEL.plist" && keep_loaded "$HOST/$HOST_LABEL.plist"
+}
+
+unload_host_daemons() {
+  unload_daemon "$HOST_LABEL"
+  unload_daemon "$PORTS_LABEL"
+}
+
 install() {
   [ $# -eq 0 ] || quit 2 "usage: device-host install"
   mkdir -p "$HOST/slots" "$HOST/promises" "$HOST/sweep"
   chmod 700 "$HOST"
   host_daemon_plists
-  load_daemon "$HOST/$PORTS_LABEL.plist" || fail "launchd did not load the held ports' daemon."
-  load_daemon "$HOST/$HOST_LABEL.plist" || fail "launchd did not load the helper's daemon."
-  echo "installed=$HOST_LABEL $PORTS_LABEL"
-  echo "held_ports=$HELD_PORTS"
+  echo "written=$HOST_LABEL $PORTS_LABEL"
+  if initialised; then
+    load_daemon "$HOST/$PORTS_LABEL.plist" || fail "launchd did not load the held ports' daemon."
+    load_daemon "$HOST/$HOST_LABEL.plist" || fail "launchd did not load the helper's daemon."
+    echo "loaded=$HOST_LABEL $PORTS_LABEL"
+    echo "held_ports=$HELD_PORTS"
+  else
+    unload_host_daemons
+    echo "loaded="
+    echo "held_ports="
+  fi
 }
 
 [ "$(id -u)" = 0 ] || quit 2 "Run it as root, through sudo."

@@ -19,7 +19,7 @@ for candidate in "$here/../mac-home/.zshenv" "$here/../../ssh-pool/mac-home/.zsh
 done
 [ -n "$template" ] || die "found no mac-home/.zshenv beside $here: give it a whole copy of setup/, as prepare-ios-image.sh does"
 
-step "installing device-host, its held ports and the slots' home"
+step "installing device-host, its held ports' program and the slots' home"
 install -d -m 0755 "$libexec" "$share/ios" "$share/slot-home"
 install -m 0755 "$here/device-host.sh" "$helper"
 install -m 0644 "$here/device-host-ports.pl" "$libexec/device-host-ports"
@@ -64,7 +64,7 @@ done <"$runtimes"
 mv -f "$share/ios/runtimes.tsv.new" "$share/ios/runtimes.tsv"
 chmod -R a+rX "$share/ios" "$share/slot-home"
 
-step "loading device-host's daemons"
+step "writing device-host's daemons, loaded only by init"
 "$helper" install </dev/null >&2
 
 step "making the carried slots"
