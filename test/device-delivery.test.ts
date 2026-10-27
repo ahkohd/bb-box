@@ -9,6 +9,7 @@ import type { BoxRecord } from "../src/core/boxes.ts";
 import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, testDeviceOffer } from "../src/core/device.ts";
 import { DEVICE_SERVER_FILES, connectScript, deliveryStdin, deviceServerDigest, deviceServerFiles, parseStatus } from "../src/core/device-delivery.ts";
 import { DeviceLink } from "../src/core/device-link.ts";
+import { placementData } from "../src/core/device-host.ts";
 import { DeviceServers, type DeviceServersDeps } from "../src/plugin/devices.ts";
 import type { RunResult } from "../src/transports/types.ts";
 import { tempDir } from "./helpers.ts";
@@ -218,6 +219,19 @@ describe("delivering the device server", { skip: process.platform === "win32" },
     assert.ok(install.ok, JSON.stringify(install));
     person = false;
     servers.controlChanged(box.id);
+    await servers.dispose();
+  });
+
+  test("caps a box in a slot at two thirds as soon as a delivery's new server says hello (064, unit 4)", async () => {
+    logs.length = 0;
+    const slot = { ...record, guest: { ref: "bb-box-host-1/i1", host: "mac1", address: null, size: null, data: { box: record.id, ...placementData({ on: "slot", host: "bb-box-host-1", hostOn: "tart", carried: true, generation: 1, place: 0, most: 8 }) } } } as BoxRecord;
+    const capped = () => readFileSync(join(home, ".bb-box/device/server.log"), "utf8").split("\n").filter((line) => line.includes("video: capped at two-thirds")).length;
+    const before = capped();
+    const servers = make("slot", 70, 5, serverRoot(5));
+    assert.equal((await servers.ensure(slot)).is, "connected");
+    for (let tries = 0; capped() === before && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(logs.includes("slot: Box b-12's device server: delivered version 5, as it runs version 3."), logs.join("\n"));
+    assert.ok(capped() > before, "the delivery's own connection caps the stream");
     await servers.dispose();
   });
 });

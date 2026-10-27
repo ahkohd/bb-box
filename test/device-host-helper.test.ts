@@ -112,7 +112,7 @@ async function swept(host: FakeDeviceHost): Promise<void> {
 test("init keeps the settings the host was made with, and status gives them with the host's size", () => {
   const host = fakeDeviceHost();
   const first = host.run(["init"], "most=6\nahead=2\n");
-  assert.deepEqual(first, { status: 0, stdout: "most=6\nahead=2\nresetting-most=4\ndisk-reserve-gib=40\n", stderr: "" });
+  assert.deepEqual(first, { status: 0, stdout: "most=6\nahead=2\nresetting-most=4\ndisk-reserve-gib=10\n", stderr: "" });
   assert.equal(host.run(["init"], "most=12\n").stdout, first.stdout, "a snapshot: a later setting is for hosts made after it");
   const { values, slots } = host.status();
   assert.deepEqual(
@@ -206,8 +206,8 @@ test("make refuses with words while the host is being deleted, full, short of di
   assert.deepEqual(host.run(["make"]), { status: EXIT.full, stdout: "", stderr: "This host has all its 2 slots making, ready, held or promised.\n" });
 
   const disk = fakeDeviceHost();
-  disk.flag("disk-free-kib", true, String(30 * 1048576));
-  assert.deepEqual(disk.run(["make"]), { status: EXIT.full, stdout: "", stderr: "This host has 30 GiB of disk free, under the 40 GiB it keeps, so it makes no new slot.\n" });
+  disk.flag("disk-free-kib", true, String(8 * 1048576));
+  assert.deepEqual(disk.run(["make"]), { status: EXIT.full, stdout: "", stderr: "This host has 8 GiB of disk free, under the 10 GiB it keeps, so it makes no new slot.\n" });
   const memory = fakeDeviceHost();
   memory.flag("memory-free", true, "12");
   assert.deepEqual(memory.run(["make"]), { status: EXIT.full, stdout: "", stderr: "This host has 12% of its memory free, under 15%, so it makes no new slot.\n" });
@@ -683,7 +683,7 @@ test("bb-box reads the helper's status whole: settings, promises, every slot, a 
   assert.deepEqual(
     { ...status, boot: "", promises: status.promises.map((promise) => promise.box), claims: status.claims.map((claim) => [claim.slot, claim.box]), slots: status.slots.map((slot) => [slot.id, slot.is, slot.box, slot.portBase, slot.booted, slot.daemonsLoaded]), sweeps: status.sweeps.map((sweep) => [sweep.uid, sweep.uidsInPass]) },
     {
-      helper: 2, boot: "", deletingSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 40, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60,
+      helper: 2, boot: "", deletingSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60,
       runtime: RUNTIME, model: "iPhone 18 Pro", counted: 1, promises: ["box_p"], claims: [["1", "box_a"]], slots: [["1", "held", "box_a", 20000, true, true]], secondDevices: [], deviceWords: [], sweeping: 0, sweeps: [[80002, 1]],
     },
   );

@@ -1,6 +1,7 @@
 // The agent tools. Each result ends with "Next:" hints, and each refusal
 // says what to do instead, so an agent never has to guess.
 
+import { inSlot } from "../core/device-host.ts";
 import { toolsForPurposes } from "./purposes.ts";
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { createHash } from "node:crypto";
@@ -520,7 +521,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           ready: using(box),
           acquiring: [`Call box_status again in a few seconds.`],
           starting: [`Call box_status again in a few seconds.`],
-          stopped: [`Call box_start with box "${box.name}" to start it.`],
+          stopped: [inSlot(box) ? `bb-box starts its shared host again by itself; call box_status again in a minute, or box_release if you no longer need it.` : `Call box_start with box "${box.name}" to start it.`],
           failed: [`Release it with box_release, then box_acquire another.`],
           gone: [`Release it with box_release, then box_acquire another.`],
         };
