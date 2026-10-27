@@ -72,6 +72,12 @@ interface Held {
   linkEnded?: { readonly at: number; readonly idle: true } | { readonly at: number; readonly idle: false; readonly words: string };
 }
 
+export function hostCheckWords(box: BoxRecord): string {
+  const placement = placementOf(box);
+  if (placement.on !== "slot") return "";
+  return placement.hostOn === "tart" ? " The check of shared iOS hosts says whether its host's VM runs." : " The iOS slots check of its Mac says how the Mac's slots are.";
+}
+
 function utcWords(at: number): string {
   return `${new Date(at).toISOString().slice(0, 19).replace("T", " ")} UTC`;
 }
@@ -640,7 +646,7 @@ export class DeviceServers {
           name,
           status: idle ? "ok" : "warn",
           detail: `${said}${why}, so the device's state now is not known. ${lastWords}${deliveryWords}${badWords}`,
-          fix: idle ? null : `box_status ${box.name} says whether the box runs.${placementOf(box).on === "slot" ? " The check of shared iOS hosts says whether its host's VM runs." : ""}`,
+          fix: idle ? null : `box_status ${box.name} says whether the box runs.${hostCheckWords(box)}`,
         });
       }
     } else if (view.is === "waiting") {

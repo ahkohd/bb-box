@@ -11,7 +11,7 @@ import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, testDeviceOffer } from
 import { DEVICE_SERVER_FILES, connectScript, deliveryStdin, deviceServerDigest, deviceServerFiles, parseStatus } from "../src/core/device-delivery.ts";
 import { DeviceLink } from "../src/core/device-link.ts";
 import { placementData } from "../src/core/device-host.ts";
-import { DeviceServers, type DeviceServersDeps } from "../src/plugin/devices.ts";
+import { DeviceServers, hostCheckWords, type DeviceServersDeps } from "../src/plugin/devices.ts";
 import type { RunResult } from "../src/transports/types.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -339,4 +339,12 @@ test("the doctor looks for Device Hub in every ios box at once, each bounded, an
     fix: null,
   });
   await servers.dispose();
+});
+
+test("a device server that does not answer points to the check of the box's own host: a shared Tart host's VM, or the pool Mac's iOS slots (F-8)", () => {
+  const slotOn = (hostOn: "tart" | "pool-mac") =>
+    ({ guest: { ref: "x", host: "mac1", address: null, size: null, data: { box: "bx", ...placementData({ on: "slot", host: "h", hostOn, carried: false, generation: 1, place: 0, most: 8 }) } } }) as unknown as BoxRecord;
+  assert.equal(hostCheckWords(slotOn("tart")), " The check of shared iOS hosts says whether its host's VM runs.");
+  assert.equal(hostCheckWords(slotOn("pool-mac")), " The iOS slots check of its Mac says how the Mac's slots are.");
+  assert.equal(hostCheckWords({ guest: null } as unknown as BoxRecord), "");
 });
