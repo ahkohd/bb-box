@@ -187,11 +187,15 @@ install's key whenever you run it again.
 #### If sshd lets only some users in
 
 If sshd has `AllowUsers` or `AllowGroups`, add the admin user and box users,
-for example:
+and on a Mac that lends iOS slots the slot users, `bbd-*`, for example:
 
 ```text
-AllowUsers bbbox-admin bbx-* alice
+AllowUsers bbbox-admin bbx-* bbd-* alice
 ```
+
+Without `bbd-*`, every ios box on the Mac fails as its slot is lent: "SSH
+as bbd-1 did not answer". `mac-ios.sh` warns of it. On a Mac, sshd reads
+its settings at each new connection, so no restart is needed.
 
 Then reload sshd. `setup.sh` warns when it finds either setting.
 

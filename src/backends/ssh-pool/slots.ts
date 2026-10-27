@@ -316,6 +316,7 @@ export class PoolSlots implements SlotLender {
     const ref = poolSlotOf(previous)!;
     const machine = this.#machineOf(ref.mac);
     this.#acquiringBoxes.add(box.boxId);
+    let taken = previous;
     try {
       await hooks.starting();
       const timed = async <T>(step: string, run: () => Promise<T>): Promise<T> => {
@@ -328,9 +329,13 @@ export class PoolSlots implements SlotLender {
       };
       const claimed = ref.slot !== null && readPlacement(previous.data).ok;
       const guest = claimed ? previous : await timed("slot", () => this.#slotFor(machine, box, signal));
+      taken = guest;
       await hooks.claim(guest);
       await timed("ssh", () => this.#waitAnswers(machine, slotUserOf(guest), signal));
       return guest;
+    } catch (error) {
+      if (!signal.aborted) await this.release(taken).catch((cause) => this.#access.logError(`release ${taken.ref} after a failed acquire`, cause));
+      throw error;
     } finally {
       this.#acquiringBoxes.delete(box.boxId);
     }
@@ -340,7 +345,7 @@ export class PoolSlots implements SlotLender {
     const timeoutMs = this.#access.readyTimeoutMs() ?? SLOT_READY_MS;
     const command = await this.#access.command(machine, user);
     const ready = await waitUntilAnswers({ probe: (inner?: AbortSignal) => command.answers(inner) }, { timeoutMs, intervalMs: 250, signal, sleep: this.#access.sleep });
-    if (!ready) throw new Error(`The pool's Mac ${machine.name} lent slot user ${user}, but SSH as ${user} did not answer within ${Math.round(timeoutMs / 1000)} s. Check that Remote Login lets ${user} log in with a key.`);
+    if (!ready) throw new Error(`The pool's Mac ${machine.name} lent slot user ${user}, but SSH as ${user} did not answer within ${Math.round(timeoutMs / 1000)} s. Check that Remote Login lets ${user} log in with a key: where sshd has AllowUsers or AllowGroups, it must allow bbd-*, as it does bbx-*.`);
   }
 
   async #slotFor(machine: SshPoolMachine, box: BoxIdentity, signal: AbortSignal): Promise<Guest> {
