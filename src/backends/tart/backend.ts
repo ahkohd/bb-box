@@ -884,6 +884,11 @@ export class TartBackend implements Backend {
       },
       logError: (operation, error) => this.#context.logError(operation, error),
       log: (message) => this.#context.log?.(message),
+      serverApp: async (signal) => {
+        const url = this.#context.bbUrl?.() ?? null;
+        const digest = url ? await this.#context.images?.bbApp(signal).catch(() => null) : null;
+        return url && digest ? { url, digest } : null;
+      },
       ...(this.#options.sleep ? { sleep: this.#options.sleep } : {}),
     }, this.#options.iosHostDoctorMs);
   }

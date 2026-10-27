@@ -1046,7 +1046,15 @@ slot() {
       slot_number_or_quit "$verb" "$@"
       exec /bin/sh "$DEVICE_HOST" "$verb" "$1"
       ;;
-    *) quit 2 "usage: machine slot status | summary | open | close | make | promise | unpromise | claim <slot> | release <slot> | daemon <slot> | restart <slot>" ;;
+    keep-app)
+      [ $# -eq 0 ] || quit 2 "usage: machine slot keep-app"
+      caller=${SUDO_USER:-}
+      [ -n "$caller" ] && [ "$caller" != root ] || quit 2 "machine slot keep-app copies BB's app from the home of the user who runs it through sudo."
+      home=$(dscl . -read "/Users/$caller" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p')
+      [ -n "$home" ] || quit 2 "$caller has no home."
+      { grep -E '^(server|digest)=' || true; printf 'from=%s\n' "$home"; } | exec /bin/sh "$DEVICE_HOST" keep-app
+      ;;
+    *) quit 2 "usage: machine slot status | summary | open | close | make | promise | unpromise | claim <slot> | release <slot> | daemon <slot> | restart <slot> | keep-app" ;;
   esac
 }
 

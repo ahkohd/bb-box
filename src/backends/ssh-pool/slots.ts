@@ -4,7 +4,7 @@ import type { DeviceOffer, IosModelName } from "../../core/device.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import type { SshTransport } from "../../transports/ssh.ts";
 import type { RunResult, SshAccess } from "../../transports/types.ts";
-import { DEVICE_HOST_EXITS, SLOT_INSTALLER_ENVIRONMENT, claimantInput, parseHostStatus, type HostSlotLine, type HostStatus } from "../tart/device-host.ts";
+import { DEVICE_HOST_EXITS, SLOT_INSTALLER_ENVIRONMENT, claimantInput, keepServerApp, keptAppWords, parseHostStatus, type HostSlotLine, type HostStatus, type ServerApp } from "../tart/device-host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxTransports, type DoctorCheck, type Guest, type HeldGuest, type PoolMember, type PowerState } from "../types.ts";
 import { SLOT_KIND, type PoolSlotsConfig, type SshPoolMachine } from "./config.ts";
 import { SLOTS_HELPER_VERSION, fields, slotsBusy, type MachineStatus, type SlotsSummary } from "./protocol.ts";
@@ -21,6 +21,9 @@ const CLAIM_MS = 360_000;
 const RELEASE_MS = 300_000;
 const QUICK_MS = 90_000;
 const SSH_FAILED = 255;
+const APP_INSTALL_MS = 5 * 60_000;
+const APP_TRIED_AGAIN_MS = 30 * 60_000;
+const SERVER_APP_REUSED_MS = 2 * 60_000;
 
 export interface PoolMacView {
   readonly machine: SshPoolMachine;
@@ -44,6 +47,7 @@ export interface PoolSlotsAccess {
   log(message: string): void;
   logError(operation: string, error: unknown): void;
   sleep?(ms: number, signal?: AbortSignal): Promise<void>;
+  serverApp?(signal?: AbortSignal): Promise<ServerApp | null>;
 }
 
 export interface PoolSlotRef {
@@ -135,6 +139,10 @@ export class PoolSlots implements SlotLender {
   readonly on = "pool-mac" as const;
   readonly #access: PoolSlotsAccess;
   readonly #acquiringBoxes = new Set<string>();
+  readonly #appKeeping = new Set<string>();
+  readonly #appKept = new Map<string, string>();
+  readonly #appTried = new Map<string, { readonly digest: string; readonly at: number }>();
+  #serverAppRead: { readonly app: ServerApp | null; readonly at: number } | null = null;
   #lock: Promise<unknown> = Promise.resolve();
 
   constructor(access: PoolSlotsAccess) {
@@ -489,6 +497,7 @@ export class PoolSlots implements SlotLender {
       try {
         if (listsSlots(view.machine)) {
           if (view.state === "out-of-service") continue;
+          this.#keepAppAside(view.machine);
           const short = summary.ready + summary.making - summary.waiting < summary.ahead;
           if (summary.closedSince === null && !this.#settingsDiffer(summary) && !short) continue;
           const opened = await this.#open(view.machine, signal);
@@ -503,6 +512,48 @@ export class PoolSlots implements SlotLender {
         this.#access.logError(`upkeep of the iOS slots on ${name}`, error);
       }
     }
+  }
+
+  #keepAppAside(machine: SshPoolMachine): void {
+    if (this.#appKeeping.has(machine.name)) return;
+    this.#appKeeping.add(machine.name);
+    void this.#keepApp(machine)
+      .catch((error) => this.#access.logError(`keep BB's app on the pool's Mac ${machine.name}`, error))
+      .finally(() => this.#appKeeping.delete(machine.name));
+  }
+
+  async #keepApp(machine: SshPoolMachine, signal?: AbortSignal): Promise<void> {
+    const app = await this.#serverApp(signal);
+    if (!app || this.#appKept.get(machine.name) === app.digest) return;
+    const tried = this.#appTried.get(machine.name);
+    if (tried?.digest === app.digest && Date.now() - tried.at < APP_TRIED_AGAIN_MS) return;
+    const status = await this.#status(machine, signal).catch(() => null);
+    if (status?.bbAppKept && status.bbApp === app.digest) {
+      this.#appKept.set(machine.name, app.digest);
+      return;
+    }
+    this.#appTried.set(machine.name, { digest: app.digest, at: Date.now() });
+    const command = await this.#access.command(machine, machine.admin.user);
+    const kept = await keepServerApp(
+      app,
+      (script) => command.run(script, { timeoutMs: APP_INSTALL_MS, signal, maxOutputBytes: 1 << 16 }),
+      (input) => this.#access.helper(machine, ["slot", "keep-app"], input, QUICK_MS, signal),
+    );
+    if (!kept.kept) {
+      this.#access.log(`The pool's Mac ${machine.name} keeps no BB app for its iOS slots, so each slot downloads it: ${kept.why}`);
+      return;
+    }
+    this.#appTried.delete(machine.name);
+    this.#appKept.set(machine.name, app.digest);
+    this.#access.log(`The pool's Mac ${machine.name} keeps ${keptAppWords(app, kept)}.`);
+  }
+
+  async #serverApp(signal?: AbortSignal): Promise<ServerApp | null> {
+    const read = this.#serverAppRead;
+    if (read && Date.now() - read.at < SERVER_APP_REUSED_MS) return read.app;
+    const app = (await this.#access.serverApp?.(signal).catch(() => null)) ?? null;
+    this.#serverAppRead = { app, at: Date.now() };
+    return app;
   }
 
   async doctor(view: PoolMacView, signal?: AbortSignal): Promise<Omit<DoctorCheck, "id" | "name"> | null> {

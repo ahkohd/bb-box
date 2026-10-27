@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DEVICE_HOST_EXITS, HELD_PORTS, parseHostStatus, slotDaemonKeptByHost } from "../src/backends/tart/device-host.ts";
@@ -117,12 +117,82 @@ test("init keeps the settings the host was made with, and status gives them with
   const { values, slots } = host.status();
   assert.deepEqual(
     ["helper", "deleting", "most", "ahead", "generation", "cores", "memory", "disk", "memory_free", "runtime", "model", "counted", "sweeping"].map((key) => values.get(key)),
-    ["3", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
+    ["4", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
   );
   assert.deepEqual(slots, []);
   assert.deepEqual(host.run(["init"], "most=many\n").status, 0, "settings are written once");
   assert.equal(fakeDeviceHost().run(["init"], "most=many\n").status, 2);
   assert.match(fakeDeviceHost().run(["init"], "colour=blue\n").stderr, /^Unknown input: colour\.\n$/);
+});
+
+function hostUsersApp(host: FakeDeviceHost, digest: string): string {
+  const npm = join(host.root, "Users/admin/.bb-machines/bb.example.com/npm");
+  mkdirSync(join(npm, "lib/node_modules/bb-app/bin"), { recursive: true, mode: 0o755 });
+  mkdirSync(join(npm, "bin"), { recursive: true, mode: 0o755 });
+  writeFileSync(join(npm, "lib/node_modules/bb-app/package.json"), '{"name":"bb-app"}\n', { mode: 0o644 });
+  writeFileSync(join(npm, "lib/node_modules/bb-app/bin/bb.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+  symlinkSync("../lib/node_modules/bb-app/bin/bb.js", join(npm, "bin/bb"));
+  writeFileSync(join(npm, "../host-artifact.sha256"), `${digest}\n`, { mode: 0o600 });
+  writeFileSync(join(npm, "../auth.json"), "{}\n", { mode: 0o600 });
+  host.own("/Users/admin", 501);
+  host.own("/Users/admin/.bb-machines/bb.example.com/npm", 501);
+  return npm;
+}
+
+const KEEP = (digest: string) => `server=bb.example.com\ndigest=${digest}\nfrom=/Users/admin\n`;
+
+test("keep-app copies the host's own BB app into the slots' home and every ready slot no box has claimed, only when it is the server's build; a stale build is removed, so slots download it (F-8)", () => {
+  const host = quiet();
+  const digest = "c".repeat(64);
+  hostUsersApp(host, digest);
+  made(host);
+  made(host);
+  assert.equal(host.run(["claim", "2"], CLAIM("box_b")).status, 0);
+  const kept = host.run(["keep-app"], KEEP(digest));
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.match(kept.stdout, /^refreshed=1\nkept=yes\n$/);
+  const slots = "/usr/local/share/bb-box/slot-home/.bb-machines/bb.example.com";
+  assert.equal(host.file(`${slots}/host-artifact.sha256`), `${digest}\n`);
+  assert.equal(host.file(`${slots}/npm/lib/node_modules/bb-app/package.json`), '{"name":"bb-app"}\n');
+  assert.equal(readlinkSync(join(host.root, slots, "npm/bin/bb")), "../lib/node_modules/bb-app/bin/bb.js", "a link inside the app is copied as a link");
+  assert.equal(host.file(`${slots}/auth.json`), null, "nothing of the host user's own machine");
+  assert.equal(host.file("/Users/bbd-1/.bb-machines/bb.example.com/host-artifact.sha256"), `${digest}\n`, "the ready slot has it");
+  assert.ok(host.lines("owners").includes(`80001 ${host.data}/Users/bbd-1/.bb-machines/bb.example.com/host-artifact.sha256`), "owned by the slot's user");
+  assert.ok(!existsSync(join(host.root, "Users/bbd-2/.bb-machines/bb.example.com")), "the claimed slot is not touched");
+  assert.equal(host.status().values.get("bb-app"), digest);
+  assert.equal(host.status().values.get("bb-app-kept"), "yes");
+  made(host);
+  assert.equal(host.file("/Users/bbd-3/.bb-machines/bb.example.com/host-artifact.sha256"), `${digest}\n`, "a slot made after has it");
+
+  const stale = host.run(["keep-app"], KEEP("d".repeat(64)));
+  assert.equal(stale.status, 0, stale.stderr);
+  assert.match(stale.stdout, /kept=no\nwhy=BB's app in \/Users\/admin is another build than d{64}\n$/);
+  assert.ok(!existsSync(join(host.root, "usr/local/share/bb-box/slot-home/.bb-machines")), "the slots' home keeps no stale app");
+  assert.ok(!existsSync(join(host.root, "Users/bbd-1/.bb-machines/bb.example.com")), "nor the ready slot");
+  assert.equal(host.status().values.get("bb-app-kept"), "no");
+  made(host);
+  assert.ok(!existsSync(join(host.root, "Users/bbd-4/.bb-machines")), "a new slot downloads it");
+});
+
+test("keep-app copies no link that is absolute or leaves the app, nothing writable by others, and nothing from a slot's home (F-8)", () => {
+  const cases: [string, (npm: string) => void, RegExp][] = [
+    ["an absolute link", (npm) => symlinkSync("/etc/sudoers", join(npm, "lib/node_modules/bb-app/sudoers")), /links to an absolute path/],
+    ["a link out of the app", (npm) => symlinkSync("../../../../../../private/etc/sudoers", join(npm, "lib/node_modules/bb-app/sudoers")), /links outside/],
+    ["a file others can write", (npm) => chmodSync(join(npm, "lib/node_modules/bb-app/package.json"), 0o666), /writable by its group or others/],
+  ];
+  for (const [what, spoil, why] of cases) {
+    const host = quiet();
+    const digest = "c".repeat(64);
+    spoil(hostUsersApp(host, digest));
+    const kept = host.run(["keep-app"], KEEP(digest));
+    assert.equal(kept.status, 0, kept.stderr);
+    assert.match(kept.stdout, /^kept=no\n/, what);
+    assert.match(kept.stdout, why, what);
+    assert.ok(!existsSync(join(host.root, "usr/local/share/bb-box/slot-home/.bb-machines")), what);
+  }
+  const host = quiet();
+  assert.equal(host.run(["keep-app"], "server=bb.example.com\ndigest=" + "c".repeat(64) + "\nfrom=/Users/bbd-1\n").status, 2);
+  assert.equal(host.run(["keep-app"], "server=../x\ndigest=" + "c".repeat(64) + "\nfrom=/Users/admin\n").status, 2);
 });
 
 test("make gives a slot's home the BB app the slots' home keeps, owned by the slot's user, so its enrolment skips the download (F-7)", () => {
@@ -697,8 +767,8 @@ test("init loads the held ports' daemon and the helper's, keeps them across the 
 
 test("the helper refuses to run as anyone but root, and its usage names its commands", () => {
   const host = fakeDeviceHost();
-  assert.match(host.run(["bogus"]).stderr, /^usage: device-host status \| summary \| init \| install \| open \| close \| make \| carry \| promise \| unpromise \| vacate \| claim <slot> \| release <slot> \| restart <slot> \| reset \| daemon <slot> \| resume \| version\n$/);
-  assert.equal(host.run(["version"]).stdout, "3\n");
+  assert.match(host.run(["bogus"]).stderr, /^usage: device-host status \| summary \| init \| install \| open \| close \| make \| carry \| promise \| unpromise \| vacate \| claim <slot> \| release <slot> \| restart <slot> \| reset \| daemon <slot> \| resume \| keep-app \| version\n$/);
+  assert.equal(host.run(["version"]).stdout, "4\n");
   const text = readFileSync(new URL("../setup/tart/ios/device-host.sh", import.meta.url), "utf8");
   assert.match(text, /\[ "\$\(id -u\)" = 0 \] \|\| quit 2 "Run it as root, through sudo\."/);
   assert.doesNotMatch(text, /^\s*#(?!!)/m, "no comments: names carry intent");
@@ -718,7 +788,7 @@ test("bb-box reads the helper's status whole: settings, promises, every slot, a 
   assert.deepEqual(
     { ...status, boot: "", promises: status.promises.map((promise) => promise.box), claims: status.claims.map((claim) => [claim.slot, claim.box]), slots: status.slots.map((slot) => [slot.id, slot.is, slot.box, slot.portBase, slot.booted, slot.daemonsLoaded]), sweeps: status.sweeps.map((sweep) => [sweep.uid, sweep.uidsInPass]) },
     {
-      helper: 3, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60,
+      helper: 4, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60, bbApp: null, bbAppKept: false,
       runtime: RUNTIME, model: "iPhone 18 Pro", counted: 1, promises: ["box_p"], claims: [["1", "box_a"]], slots: [["1", "held", "box_a", 20000, true, true]], secondDevices: [], deviceWords: [], sweeping: 0, sweeps: [[80002, 1]],
     },
   );

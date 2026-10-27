@@ -54,6 +54,28 @@ async function swept(host: FakeDeviceHost): Promise<void> {
   await host.until("the sweep queue emptied", () => host.status().values.get("sweeping") === "0");
 }
 
+test("machine slot keep-app copies BB's app from the home of the user who runs it through sudo, whatever from= it is given (F-8)", () => {
+  const host = poolMac();
+  const digest = "c".repeat(64);
+  const npm = join(host.root, "Users/bbbox-admin/.bb-machines/bb.example.com/npm");
+  mkdirSync(join(npm, "lib/node_modules/bb-app"), { recursive: true, mode: 0o755 });
+  writeFileSync(join(npm, "lib/node_modules/bb-app/package.json"), '{"name":"bb-app"}\n', { mode: 0o644 });
+  writeFileSync(join(npm, "../host-artifact.sha256"), `${digest}\n`, { mode: 0o600 });
+  host.own("/Users/bbbox-admin", 502);
+  host.own("/Users/bbbox-admin/.bb-machines/bb.example.com/npm", 502);
+  mkdirSync(join(host.state, "users/bbbox-admin"), { recursive: true });
+  writeFileSync(join(host.state, "users/bbbox-admin/NFSHomeDirectory"), "/Users/bbbox-admin\n");
+  const keep = (sudoUser: string | null) =>
+    spawnSync("/bin/sh", [host.machineHelper, "slot", "keep-app"], { input: `server=bb.example.com\ndigest=${digest}\nfrom=/Users/person\n`, encoding: "utf8", env: { ...host.env, ...(sudoUser ? { SUDO_USER: sudoUser } : {}) } });
+  const unknown = keep(null);
+  assert.equal(unknown.status, 2);
+  assert.match(unknown.stderr, /copies BB's app from the home of the user who runs it through sudo/);
+  const kept = keep("bbbox-admin");
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.match(kept.stdout, /^kept=yes\n$/);
+  assert.equal(host.file("/usr/local/share/bb-box/slot-home/.bb-machines/bb.example.com/host-artifact.sha256"), `${digest}\n`);
+});
+
 test("a kept host, as the pool's Mac is, starts closed with no carried slots, holds no ports until bb-box opens it, and opens with the settings bb-box gives", () => {
   const host = kept();
   assert.equal(host.file(`${HOST}/kept`), "");
@@ -78,7 +100,7 @@ test("a kept host, as the pool's Mac is, starts closed with no carried slots, ho
   const values = lines(summary.stdout);
   assert.deepEqual(
     ["helper", "kept", "closed", "deleting", "most", "ahead", "held", "ready", "waiting", "sweeping", "runtime", "model", "labels"].map((key) => values.get(key)),
-    ["3", "1", "", "", "12", "1", "0", values.get("ready"), "0", "0", `${RUNTIME}\t27.0\t24A434\t${LIST}`, "iPhone 18 Pro\tcom.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", undefined],
+    ["4", "1", "", "", "12", "1", "0", values.get("ready"), "0", "0", `${RUNTIME}\t27.0\t24A434\t${LIST}`, "iPhone 18 Pro\tcom.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", undefined],
   );
   assert.equal(host.status().values.get("kept"), "1");
 

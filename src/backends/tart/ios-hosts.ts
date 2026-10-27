@@ -10,7 +10,7 @@ import type { SshTransport } from "../../transports/ssh.ts";
 import { setupDir } from "../setup-dir.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxTransports, type DoctorCheck, type Guest, type HeldGuest, type PowerState, type StopReason } from "../types.ts";
 import type { IosHostsConfig, TartConfig, TartHost } from "./config.ts";
-import { DEVICE_HOST_EXITS, DEVICE_HOST_HELPER, claimantInput, helperCommand, parseHostStatus, slotDaemonKeptByHost, type HostSlotLine, type HostStatus, type SlotClaimant } from "./device-host.ts";
+import { DEVICE_HOST_EXITS, DEVICE_HOST_HELPER, claimantInput, helperCommand, keepServerApp, keptAppWords, parseHostStatus, slotDaemonKeptByHost, type HostSlotLine, type HostStatus, type ServerApp, type SlotClaimant } from "./device-host.ts";
 import { claimScript, ownerText, parseFields, script, type HostState } from "./host.ts";
 
 export const HOST_ROLE = "device-host";
@@ -32,6 +32,9 @@ const DELETING_LEFT_MS = 2 * 60_000;
 const HANDING_OVER_MS = 5 * 60_000;
 export const START_BEAT_MS = 30_000;
 export const START_LIVE_MS = 2 * 60_000;
+const APP_TRIED_AGAIN_MS = 30 * 60_000;
+const APP_INSTALL_MS = 5 * 60_000;
+const SERVER_APP_REUSED_MS = 2 * 60_000;
 export const DOCTOR_HOST_MS = 15_000;
 const CHAIN_WAIT_LOGGED_MS = 2_000;
 
@@ -75,6 +78,7 @@ export interface HostsAccess {
   logError(operation: string, error: unknown): void;
   log(message: string): void;
   sleep?(ms: number, signal?: AbortSignal): Promise<void>;
+  serverApp?(signal?: AbortSignal): Promise<ServerApp | null>;
 }
 
 export interface SlotRef {
@@ -277,6 +281,9 @@ export class IosHosts implements SlotLender {
   readonly #starts = new Map<string, Promise<StartOutcome>>();
   readonly #instance = randomBytes(4).toString("hex");
   readonly #startsLeftTo = new Map<string, string>();
+  readonly #appKeeping = new Set<string>();
+  readonly #appTried = new Map<string, { readonly digest: string; readonly at: number }>();
+  #serverAppRead: { readonly app: ServerApp | null; readonly at: number } | null = null;
   readonly #boots = new Map<string, Promise<void>>();
   readonly #deletions = new Map<string, Promise<void>>();
   readonly #releasing = new Map<string, number>();
@@ -660,6 +667,7 @@ export class IosHosts implements SlotLender {
       });
       this.#access.log(`Shared iOS host ${vm} on ${mac.name} serves, ${((performance.now() - began) / 1000).toFixed(1)} s after its start (its VM ${((booted - began) / 1000).toFixed(1)} s), for ${promised.length} boxes.`);
       if (!promised.length) await this.#vacate(mac, vm, command, signal);
+      else void this.#keepApp(mac, vm, command, null);
       return "done";
     } catch (error) {
       if (signal.aborted) {
@@ -967,6 +975,7 @@ export class IosHosts implements SlotLender {
           if (!this.#releasing.has(vm) && now - status.deletingSince * 1000 >= DELETING_LEFT_MS) await this.#deleteHost(mac, vm, signal);
           continue;
         }
+        void this.#keepApp(mac, vm, await this.#access.vmCommand(mac, address), status);
         if (this.#acquiring.has(vm) || this.#handingOver(owner, now)) continue;
         const kept = status.slots.some((slot) => slot.is === "held" || (slot.is === "making" && slot.madeFor !== null)) || status.promises.length > 0;
         if (!kept) await this.#serial(async () => (this.#acquiring.has(vm) ? false : this.#vacate(mac, vm, await this.#access.vmCommand(mac, address), signal)));
@@ -974,6 +983,42 @@ export class IosHosts implements SlotLender {
         this.#access.logError(`upkeep of shared iOS host ${vm}`, error);
       }
     }
+  }
+
+  async #keepApp(mac: TartHost, vm: string, command: SshTransport, status: HostStatus | null): Promise<void> {
+    if (this.#appKeeping.has(vm) || this.#stopping.signal.aborted) return;
+    this.#appKeeping.add(vm);
+    try {
+      const signal = this.#stopping.signal;
+      const app = await this.#serverApp(signal);
+      if (!app || (status?.bbAppKept && status.bbApp === app.digest)) return;
+      const tried = this.#appTried.get(vm);
+      if (tried?.digest === app.digest && Date.now() - tried.at < APP_TRIED_AGAIN_MS) return;
+      this.#appTried.set(vm, { digest: app.digest, at: Date.now() });
+      const kept = await keepServerApp(
+        app,
+        (script) => command.run(script, { timeoutMs: APP_INSTALL_MS, signal, maxOutputBytes: 1 << 16 }),
+        (input) => this.#helper(command, "keep-app", [], input, 120_000, signal),
+      );
+      if (!kept.kept) {
+        this.#access.log(`Shared iOS host ${vm} keeps no BB app for its slots, so each slot downloads it: ${kept.why}`);
+        return;
+      }
+      this.#appTried.delete(vm);
+      this.#access.log(`Shared iOS host ${vm} on ${mac.name} keeps ${keptAppWords(app, kept)}.`);
+    } catch (error) {
+      if (!this.#stopping.signal.aborted) this.#access.logError(`keep BB's app on shared iOS host ${vm}`, error);
+    } finally {
+      this.#appKeeping.delete(vm);
+    }
+  }
+
+  async #serverApp(signal: AbortSignal): Promise<ServerApp | null> {
+    const read = this.#serverAppRead;
+    if (read && Date.now() - read.at < SERVER_APP_REUSED_MS) return read.app;
+    const app = (await this.#access.serverApp?.(signal).catch(() => null)) ?? null;
+    this.#serverAppRead = { app, at: Date.now() };
+    return app;
   }
 
   #startedElsewhere(owner: HostOwner, now: number): boolean {
@@ -1008,7 +1053,7 @@ export class IosHosts implements SlotLender {
           .filter((slot) => slot.is === "held")
           .map((slot) => `slot ${slot.id} (box ${slot.box ?? "?"}): ${slot.cores.toFixed(2)} cores, ${(slot.memoryMiB / 1024).toFixed(1)} GiB${slot.homeMiB !== null ? `, home ${(slot.homeMiB / 1024).toFixed(1)} GiB` : ""}`);
         const build = owner.build && owner.build !== this.#currentBuild(states.get(mac.name)) ? ` On build ${owner.build}, older than the iOS image's, so it lends only while no host on the new build can start.` : "";
-        return `${owner.vm}: ${count("held")} held, ${count("ready")} ready, ${count("making")} making, ${status.sweeping} sweeping, of ${status.most}; ${status.diskGiB ?? "?"} GiB disk free (keeps ${status.diskReserveGiB}), ${status.memoryFreePercent ?? "?"}% memory free.${build}${load.length ? ` ${load.join("; ")}.` : ""}`;
+        return `${owner.vm}: ${count("held")} held, ${count("ready")} ready, ${count("making")} making, ${status.sweeping} sweeping, of ${status.most}; ${status.diskGiB ?? "?"} GiB disk free (keeps ${status.diskReserveGiB}), ${status.memoryFreePercent ?? "?"}% memory free.${build} ${slotAppWords(status)}${load.length ? ` ${load.join("; ")}.` : ""}`;
       });
       const failing = here.some((each) => each.owner.phase === "failed" || each.why);
       return { id: `ios-hosts.${mac.name}`, name: `Shared iOS hosts on ${mac.name}`, status: failing ? "warn" : "ok", detail: lines.join(" "), fix: null };
@@ -1026,6 +1071,10 @@ export class IosHosts implements SlotLender {
   dispose(): void {
     this.#stopping.abort(new Error("bb-box stopped."));
   }
+}
+
+export function slotAppWords(status: Pick<HostStatus, "bbApp" | "bbAppKept">): string {
+  return status.bbAppKept && status.bbApp ? `Its slots get BB's app build ${status.bbApp.slice(0, 12)} from the host.` : "It keeps no BB app for its slots, so each downloads it as it enrols.";
 }
 
 export function slotUserOf(guest: Guest): string {
