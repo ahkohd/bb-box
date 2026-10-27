@@ -953,3 +953,93 @@ reached through the fake SSH as the VM's and each slot's user:
 | The registry, with the fake backend's elastic lender | three asked for at once make one host; a ninth on a host of 8 is refused with its words; `shared: true` with a size is refused; an ios box without `shared` stays a VM of its own; the last release deletes the host |
 | The helper's new verbs | `unpromise` and `vacate` answer `last` and write `deleting` only when nothing keeps the host; `status` gives each claim; `restart` kickstarts the slot's device daemon, for the claim's box only |
 | The suite | tsc clean; the node suite 2,108 passed, 0 failed, 288 skipped; vitest 219 passed |
+
+### The live check
+
+Through production BB on 27 October 2026, with `shared: true` asked for,
+after the lead deployed this unit (PR 1172) and set `ios-hosts-on`, the
+rest at their defaults. The Mac is the Tart Mac, an M4 Max; the iOS image
+`bb-box-ios` build.20261027-010302-d8ba, from main 359e7a8b (F-6), macOS
+27.0, Xcode 27.0, iOS 27.0; hosts at 8 cores and 32 GiB. The Mac's other
+VM slot held another thread's box throughout, so `per-mac` 1 and the Mac's
+two VMs both kept any second host out. Faults the check found were fixed
+in PRs 1173 and 1174 and deployed during it; each section says which code
+it ran on. Times are box_acquire's own timings, BB machines' state is from
+`bb machine list`, and the panel was the owner's Helium on the Mac,
+driven by playwriter.
+
+| Check | Result |
+| --- | --- |
+| Three asked for at once, by three `bb box acquire ios --shared` started together (PR 1174) | one host, `bb-box-host-<id>` at one address; slots 1, 2 and 3 (`bbd-i1`, `bbd-i2`, `bbd-1`). Ready in 47.0 s (the first carried slot), 66.3 s (the second, which waited 14.7 s for its warm-up) and 127.9 s (a slot made after the host started, 67.1 s); BB machines 20.4 to 22.0 s after each was ready |
+| 8 boxes, each its own device | 8 users, `bbd-i1`, `bbd-i2`, `bbd-1` to `bbd-6`, UIDs 79991, 79992, 80001 to 80006, ports 20000 to 20799, each device a UDID of its own. Each served a page on its own `BB_PORT_BASE` and opened it in its device: each agent screenshot showed its own box's name, user and port |
+| Tapped, by the agent | one tap each through `computer_act`; each box's own page server logged exactly one `GET /tapped-1` |
+| Tapped, by a person | in the panel, Take control, a tap on the device, control handed back, on each of the 8: every device showed "tapped 2" |
+| Streamed | the 8 devices' panels in one Helium tab, 200 px each, the busy page on each: 48.0 to 49.8 frames a second over 10 s each, every one at a third (402x874), as 200 px asks; the worst gap 284 to 304 ms in every panel at the same moment |
+| Capped at two thirds (PR 1173) | each connection to a slot's server logs "video: capped at two-thirds". A panel 1400x3000 at 1x with Pixel for pixel on drew 804x1748, and the server's step stayed at two thirds. Under PR 1172 the cap was never sent: see below |
+| A ninth | refused: "The shared iOS host bb-box-host-<id> has all its 8 slots making, ready, held or promised (8 held). No shared iOS host can start on mac-1: mac-1 runs a shared iOS host already, as many as it may (1)." PR 1173 adds what frees first |
+| A release racing a claim (PR 1174) | the host's last box released, and 1 s later a shared box acquired: the release marked the host deleting; the acquire was placed on a new host, which waited for the old VM to stop, then started: ready in 91.5 s, 61.3 s of it the host. A fault here: see below |
+| The last release deletes the host | after the race, and after each of the five first boxes below: the doctor's check says "No shared iOS host runs", and the Mac's room "guests 1 of 2", the other thread's box. The queued image build took the freed VM slot at 03:05:44, 36 s after the release began |
+| H3 through the plugin | every slot box was a connected BB machine, `enrolled` by bb-box's own enrolment, its daemon the helper's LaunchDaemon (`system/app.bb-box.bb.<user>` running). A terminal made through BB on two of them ran as `bbd-i1`, UID 79991, and `bbd-6`, UID 80006, each with its own booted device and ports |
+| H9: 8 held slots idle | each device on its Home Screen, no viewer, a minute to settle. `top`, three 10 s samples inside a slot: the host's 8 cores 87 to 91% idle, about 0.7 to 1.0 core used in all; the helper's `status`: each slot 0.01 to 0.08 cores, a footprint of 1.4 to 1.5 GiB, a home of 0.5 to 0.6 GiB; `memory_pressure` 86% free. 32 GiB and 8 cores carry 8 idle slots with room |
+| Disk | a host just made: 40.8 GiB free on its Data volume (the image's disk is 140 GB, its recovery partition after the main container). With 3 slots, 39.5 GiB; with 8, 36.5 GiB: about 0.5 to 0.6 GiB a slot as made. `disk-reserve-gib` 10 leaves about 26 GiB for 8 slots' builds, about 3.3 GiB each |
+| H5: the host's VM stopped with 8 held slots | `tart stop` by the lead at 01:59:37. Under PR 1172, bb-box started it again only at 02:04:09, at the end of a sweep (below); it ran at 02:04:29. Every slot's device server was listening as it ran; the 7 devices then held (one box had been released meanwhile) booted cold together in 33.5 to 35.2 s, their companions listening about 50 s after the VM ran, and all 7 BB machines connected at 02:05:50, 81 s after it ran. In the panel all 7 drew their devices |
+| H1: ready claims (PR 1173) | 10 claims, 40 to 50 s apart so the spare was made again: ready in 5.2 to 7.7 s, median 5.9 s; their BB machines 6.5 to 8.7 s after; the panel's first video frame 3.1 to 3.7 s after the view opened (3 claims timed with the counter below). Under PR 1172, 17.0 to 24.6 s |
+| H1: a first box on a new host | 5 boxes: ready in 43.3, 47.0, 48.5, 50.6 and 50.7 s, each with the host 34.1 to 42.4 s of it; BB machines 9.5 to 23.6 s after. Their devices booted 2.5 to 48.0 s after the box was ready: the carried slot's cold boot took 9.2 to 39.0 s. The panel's first frame 8.2 to 9.3 s after the view opened, opened as soon as the box was ready |
+| H6 | not run: see below |
+
+The first frame was timed by an init script in each panel that marks the
+first `drawImage` of a picture at a step of the iPhone 18 Pro's size;
+without the size test the page's other drawing counts, so first frames
+from before that counter are not given.
+
+### Faults the live check found, and their fixes
+
+| Found | Fix |
+| --- | --- |
+| The two-thirds cap was never sent: a delivery's own connection, the only one a new slot box gets, skipped it | PR 1173: the cap goes with the owner on every connection, a delivery's too |
+| H5: the registry's restart of a crashed box went through the person's stop and start check, which refuses a slot box ("cannot be stopped on its own"), so the host waited for the sweep's upkeep, 4.5 minutes here, as the sweep first observed the 8 stopped boxes one by one | PR 1173: the registry's own restart of a box in a slot is allowed; a person's is still refused. box_status no longer tells a stopped slot box's agent to call box_start |
+| A ready claim read the Mac's state three times, once in the offer, the take and the acquire: 17.0 to 24.6 s to ready | PR 1173: a box claimed in its take skips the host check, and a take reuses the offer's read for 15 s: 5.2 to 7.7 s |
+| An eighth box was refused while the host's spare was still being made, as the spare fills the eighth place | PR 1173: a spare being made can be joined on a full host |
+| The race: a claim that lost to the last release was asked again while the old VM still held the Mac's last VM slot, so it would have been refused | PR 1174: a host being deleted counts as leaving its Mac; the new host starts once the old VM has stopped, and waits up to its 10 minutes for a VM slot if another VM takes it first |
+| The race again: the upkeep saw the helper's `deleting` and deleted the VM while the release was still stopping its slot; the release failed with SSH exit 255, and its box stayed "being released" until the next sweep | in this commit: the upkeep leaves a deleting host to a release this instance runs, and to any release for 2 minutes |
+
+### What limits these checks
+
+- **One Mac, one host at a time,** as `per-mac` is 1 and the Mac's other VM
+  slot was another thread's. No two hosts ran at once, and new-host
+  placement across Macs was checked only on the fakes.
+- **H6 did not run.** The image rebuild it needs waited for a free VM
+  slot, which my host held, and then failed as `tart get` read a
+  `config.json` mid-deletion (the F-2 read race, seen on Tart 2.40.1). The
+  lead runs H6 with the next rebuild, holding 3 shared boxes on a host of
+  the old build. Soft draining is checked only on the fakes.
+- **H5 ran on PR 1172's code,** before the restart fix; the 81 s from the
+  VM running to every machine connected stands, the 4.5 minutes before it
+  started do not.
+- **Streams through the panel** were counted in one tab of the owner's
+  browser on a busy page, not tapped to the frame; unit 1's H4 times taps.
+- **Release times** were not taken here; unit 3 and F-5 measured them.
+
+### Deviations from 064
+
+- **`ios-hosts-on` is off by default,** the lead's condition for the deploy;
+  064 has it on for Tart.
+- **`shared: true` with no slot is refused with words,** not placed in a VM
+  of its own: tier `own-vm` waits for shared to be the default (unit 6).
+- **bb-box installs its own helper in each host as it starts,** so a host
+  always runs the helper of the bb-box that lends its slots.
+- **A placement's `place` counts from 0,** as the helper's does; box_status
+  says "slot 1 of 8" for place 0, whose ports are 20000 to 20099.
+- **Every slot has the image's first model;** another model is refused with
+  words naming `dedicated`. 064's switch in a slot, by `simctl create` and
+  seeding, is a follow-up.
+- **The registry's lock for device placement is its admission queue,**
+  which every acquire passes already.
+- **The doctor's page has no ledger;** the ledger is unit 6.
+- **A host's disk is the image's, not grown:** growing a macOS VM's disk
+  needs its recovery partition removed. `disk-reserve-gib` is 10 instead
+  of 40, from the numbers above.
+- **The New box form keeps A VM of its own chosen first** while shared is
+  opt-in.
+- **"A VM is starting on this Mac" for its viewers** is not built; it goes
+  with the ledger in unit 6.

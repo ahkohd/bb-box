@@ -28,6 +28,7 @@ const POLL_MS = 1_000;
 const STATES_REUSED_MS = 15_000;
 const LEAVING_WAIT_MS = 5 * 60_000;
 const ROOM_POLL_MS = 10_000;
+const DELETING_LEFT_MS = 2 * 60_000;
 
 export type HostPhase = "starting" | "serving" | "failed";
 
@@ -207,6 +208,7 @@ export class IosHosts implements SlotLender {
   readonly #starts = new Map<string, Promise<void>>();
   readonly #boots = new Map<string, Promise<void>>();
   readonly #deletions = new Map<string, Promise<void>>();
+  readonly #releasing = new Map<string, number>();
   #hostsSeen = false;
   #lastStates: { readonly at: number; readonly states: ReadonlyMap<string, HostState | Error> } | null = null;
   readonly #acquiring = new Map<string, number>();
@@ -704,6 +706,17 @@ export class IosHosts implements SlotLender {
 
   async release(guest: Guest, signal?: AbortSignal): Promise<{ readonly last: boolean; readonly hostDeleted: boolean }> {
     const ref = slotRefOf(guest)!;
+    this.#releasing.set(ref.vm, (this.#releasing.get(ref.vm) ?? 0) + 1);
+    try {
+      return await this.#release(guest, ref, signal);
+    } finally {
+      const left = (this.#releasing.get(ref.vm) ?? 1) - 1;
+      if (left > 0) this.#releasing.set(ref.vm, left);
+      else this.#releasing.delete(ref.vm);
+    }
+  }
+
+  async #release(guest: Guest, ref: SlotRef, signal?: AbortSignal): Promise<{ readonly last: boolean; readonly hostDeleted: boolean }> {
     const mac = this.#access.mac(guest.host);
     if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${guest.host ?? "unknown"}, which is not in bb-box's Tart settings.`);
     const boxId = typeof guest.data?.box === "string" ? guest.data.box : "";
@@ -836,7 +849,7 @@ export class IosHosts implements SlotLender {
         }
         if (!status || !address) continue;
         if (status.deletingSince !== null) {
-          await this.#deleteHost(mac, vm, signal);
+          if (!this.#releasing.has(vm) && now - status.deletingSince * 1000 >= DELETING_LEFT_MS) await this.#deleteHost(mac, vm, signal);
           continue;
         }
         if (this.#acquiring.has(vm)) continue;

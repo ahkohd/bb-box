@@ -260,7 +260,9 @@ an ios box asked for without it is a VM of its own, as before.
   the host makes, about 30 s each. A ready slot is claimed in about a
   second.
 - **The last release deletes the host,** and the Mac's VM slot is free
-  again. A host that starts again after its Mac restarted, or whose start
+  again. A box asked for while it is deleted gets a new host in that slot,
+  which starts once the old VM has stopped; a new host whose Mac has no
+  VM slot free as it starts waits for one, for up to 10 minutes. A host that starts again after its Mac restarted, or whose start
   was cut short, is carried on by the upkeep; one that failed, or holds no
   box, is deleted by it.
 - **An image change drains a host softly:** a host on an older build of the
