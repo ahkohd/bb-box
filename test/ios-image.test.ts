@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -154,6 +154,7 @@ test("the image's additions install device-host and its carried slots, and leave
   const host = read("host-ios.sh");
   assert.match(host, /"\$helper" install/);
   assert.match(host, /"\$helper" carry/);
+  assert.ok(host.indexOf("keep-bb-app.sh") < host.indexOf('"$helper" carry'), "BB's app is in the slots' home before the carried slots are made from it");
   assert.doesNotMatch(host, /"\$helper" init/, "settings are a snapshot taken when a host is made, so the image writes none");
   assert.match(read("build-ios.sh"), /sudo -n \/bin\/sh "\$here\/host-ios\.sh" "\$here" "\$\(id -un\)"/);
   assert.match(readFileSync(join(SETUP, "tart", "prepare-ios-image.sh"), "utf8"), /-C "\$here\/\.\.\/ssh-pool" mac-home\/\.zshenv/, "the slots' home is the pool's");
@@ -164,4 +165,36 @@ test("the image's check finds the held ports free and their daemon written but n
   assert.match(check, new RegExp(`^held_ports="${HELD_PORTS.join(" ")}"$`, "m"));
   assert.ok(check.includes('check "device-host daemons" daemons_written_not_loaded\ncheck "held ports free" held_ports_free\n'));
   assert.doesNotMatch(check, /421/, "nothing answers the held ports in the image");
+});
+
+test("keep-bb-app puts BB's app from the image user's home in the slots' home, only the installed package and its build, so a slot's enrolment skips the download (F-7)", () => {
+  const root = mkdtempSync(join(tmpdir(), "keep-bb-app-"));
+  const owner = join(root, "admin");
+  const slots = join(root, "slot-home");
+  const digest = "a".repeat(64);
+  const server = join(owner, ".bb-machines", "bb.example.com");
+  mkdirSync(join(server, "npm", "lib", "node_modules", "bb-app"), { recursive: true });
+  mkdirSync(join(server, "npm", "bin"), { recursive: true });
+  writeFileSync(join(server, "npm", "lib", "node_modules", "bb-app", "package.json"), '{"name":"bb-app"}\n');
+  symlinkSync("../lib/node_modules/bb-app/bin/bb.js", join(server, "npm", "bin", "bb"));
+  writeFileSync(join(server, "host-artifact.sha256"), `${digest}\n`);
+  writeFileSync(join(server, "auth.json"), "{}\n");
+  writeFileSync(join(server, "host-id"), "mch_1\n");
+  const unfinished = join(owner, ".bb-machines", "other.example.com");
+  mkdirSync(join(unfinished, "npm"), { recursive: true });
+  mkdirSync(join(slots, ".bb-machines", "stale.example.com"), { recursive: true });
+  const kept = spawnSync("sh", [join(IOS, "keep-bb-app.sh"), owner, slots], { encoding: "utf8" });
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.equal(kept.stdout, `kept BB's app for bb.example.com, build ${digest}\n`);
+  const copy = join(slots, ".bb-machines", "bb.example.com");
+  assert.equal(readFileSync(join(copy, "npm", "lib", "node_modules", "bb-app", "package.json"), "utf8"), '{"name":"bb-app"}\n');
+  assert.ok(lstatSync(join(copy, "npm", "bin", "bb")).isSymbolicLink());
+  assert.equal(readlinkSync(join(copy, "npm", "bin", "bb")), "../lib/node_modules/bb-app/bin/bb.js");
+  assert.equal(readFileSync(join(copy, "host-artifact.sha256"), "utf8"), `${digest}\n`);
+  assert.ok(!existsSync(join(copy, "auth.json")) && !existsSync(join(copy, "host-id")), "nothing of the image user's own machine");
+  assert.ok(!existsSync(join(slots, ".bb-machines", "other.example.com")), "a server with no build BB's installer wrote");
+  assert.ok(!existsSync(join(slots, ".bb-machines", "stale.example.com")), "an earlier build's copy goes");
+  const none = spawnSync("sh", [join(IOS, "keep-bb-app.sh"), mkdtempSync(join(tmpdir(), "keep-bb-app-")), mkdtempSync(join(tmpdir(), "keep-bb-app-"))], { encoding: "utf8" });
+  assert.equal(none.status, 0, none.stderr);
+  assert.match(none.stdout, /^kept no BB app: /);
 });

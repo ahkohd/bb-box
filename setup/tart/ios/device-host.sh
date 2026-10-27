@@ -312,7 +312,7 @@ make_user() {
   home=$ROOT/Users/$user
   [ -d "$home" ] || createhomedir -c -u "$user" >/dev/null 2>&1
   [ -d "$home" ] || return 1
-  if [ -d "$SLOT_HOME" ]; then cp -R "$SLOT_HOME/." "$home/" || return 1; fi
+  if [ -d "$SLOT_HOME" ]; then cp -Rc "$SLOT_HOME/." "$home/" 2>/dev/null || cp -R "$SLOT_HOME/." "$home/" || return 1; fi
   base=$(port_base "$id")
   printf '%s\n' "export BB_PORT_BASE=$base BB_PORT_COUNT=$PORT_COUNT" >>"$home/.zshenv" || return 1
   mkdir -p "$home/.bb-box/device" || return 1
