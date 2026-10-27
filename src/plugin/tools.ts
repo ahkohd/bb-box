@@ -204,7 +204,7 @@ function deviceText(app: BbBox, box: BoxRecord): string {
         : view.is === "superseded"
           ? "not known here: another bb-box instance holds its device server"
           : null;
-  const lines = deviceLines(box, state, server);
+  const lines = deviceLines(box, state, server, app.devices.encoderWords(box));
   return lines.length ? `\n${lines.join("\n")}` : "";
 }
 

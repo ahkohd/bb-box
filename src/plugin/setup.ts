@@ -45,6 +45,7 @@ import { CALL_TIMEOUT_MS, Holders, RETIRED_TITLE, type RetiredTerminals } from "
 import { DockerCli, type DockerInfo } from "../backends/docker/cli.ts";
 import { dockerDriver } from "../backends/docker/index.ts";
 import { backendPart } from "../core/document.ts";
+import { EncoderLedgers, type Decision } from "../core/encoder-ledger.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { setupDir } from "../backends/setup-dir.ts";
@@ -523,6 +524,19 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   // A kind a backend changed by itself, as when a Mac reports Windows video ready: its boxes take it, once there are boxes.
   let kindsChanged = () => notify(null);
+  let ledgerOn = (): boolean => GENERAL_DEFAULTS.encoderLedger;
+  let ledgerWasOn: boolean = GENERAL_DEFAULTS.encoderLedger;
+  let ledgerSent = (_box: string, _decision: Decision): void => {};
+  let probeEncoder = async (_mac: string, _signal: AbortSignal): Promise<number | null> => null;
+  const ledger = new EncoderLedgers({
+    on: () => ledgerOn(),
+    controlled: (boxId) => desktops?.control.view(boxId).owner === "human",
+    send: (box, decision) => ledgerSent(box, decision),
+    probe: (mac, signal) => probeEncoder(mac, signal),
+    log: (line) => bb.log.info(line),
+    logError,
+  });
+  bb.onDispose(() => ledger.dispose());
   const backends = new Backends({
     storage: kv,
     installId: await loadInstallId(kv),
@@ -534,6 +548,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     machines,
     images,
     bbUrl: () => bb.server.experimental_appUrl,
+    encoder: { load: (key) => ledger.load(key), vmStarting: (key, place) => ledger.vmStarting(key, place) },
   });
   // The files for every box (#455), once the boxes are there.
   let files: BoxFiles | null = null;
@@ -547,6 +562,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     changed: () => {
       notify(null);
       needsConfiguration();
+      if (ledger.on !== ledgerWasOn) {
+        ledgerWasOn = ledger.on;
+        deviceServers?.ledgerSwitched();
+      }
       // A kind may keep more or fewer spares now, and offer what older boxes lack.
       void boxes.keepSpares();
       void boxes.refreshCapabilities().catch((error) => logError("capabilities", error));
@@ -561,6 +580,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   for (const hostId of new Set(configuration.document.backends.map((backend) => backend.fields.host).filter((host): host is string => typeof host === "string" && host.startsWith("bb:")).map((host) => host.slice("bb:".length)))) {
     void machineConnected(hostId).catch(() => {});
   }
+  ledgerOn = () => configuration.document.general.encoderLedger ?? GENERAL_DEFAULTS.encoderLedger;
+  ledgerWasOn = ledger.on;
   await configuration.configure();
   reloadTimes.phase("configuration and backends");
   const general = async () => configuration.general();
@@ -725,6 +746,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logError,
     log: (message) => bb.log.info(message),
   });
+  probeEncoder = (mac, signal) => boxes.probeEncoder(mac, signal);
   kindsChanged = () => {
     notify(null);
     void boxes.refreshCapabilities().catch((error) => logError("capabilities", error));
@@ -800,11 +822,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     kv,
     files: () => deviceServerFiles(options.deviceServerRoot ?? join(setupDir(), "..")),
     personHasControl: (boxId) => desktops?.control.view(boxId).owner === "human",
+    ledger,
     log: (line) => bb.log.info(line),
     logError,
     ...options.devices,
   });
   deviceServers = devices;
+  ledgerSent = (box, decision) => devices.decided(box, decision);
   const deviceComputing = new DeviceComputer({
     read: (box, request) => devices.read(box, request),
     input: (box, input) => devices.input(box, input),

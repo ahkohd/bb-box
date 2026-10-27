@@ -489,7 +489,7 @@ export function runtimeWords(runtime: Runtime): string {
   return `Android, API ${runtime.api}, Google APIs, emulator ${runtime.emulator}`;
 }
 
-export function deviceLines(box: BoxRecord, state: DeviceState | null, server: string | null): string[] {
+export function deviceLines(box: BoxRecord, state: DeviceState | null, server: string | null, encoder: string | null = null): string[] {
   const offer = box.capabilities.device;
   if (!offer) return [];
   const model = state?.model ?? box.device?.model ?? box.askedDevice ?? offer.devices[0].model;
@@ -499,6 +499,7 @@ export function deviceLines(box: BoxRecord, state: DeviceState | null, server: s
     lines.push(`Device state: ${deviceStateWords(state)}`);
     lines.push(`Device actions, for box_device: ${actionsOf(deviceModel(state.model)).join(", ")}`);
   } else lines.push(`Device state: ${server ?? "not known yet: bb-box has not reached the box's device server"}`);
+  if (encoder) lines.push(encoder);
   if (offer.platform === "ios") lines.push(`Device commands: simctl in box_run takes booted as the ${platformWord(offer.platform)} device, as in xcrun simctl openurl booted <url>`);
   if (offer.platform === "android") lines.push("Device commands: adb in box_run reaches the device as emulator-5554, as in adb install app.apk; the Android SDK is in /opt/android-sdk");
   if (offer.platform === "ios" && box.slim === false) lines.push("Slim: off. The device runs every service iOS starts");

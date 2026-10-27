@@ -21,6 +21,7 @@ import { randomBytes } from "node:crypto";
 import type { OfferedKind, WithheldOffer } from "../backends/index.ts";
 import { KIND_INFO, VM_FEATURES, currentKindId, featureWord, isEarlierKindId, kindRequest, vmOffersLast } from "../backends/kinds.ts";
 import { DEVICE_PLATFORMS, TEST_DEVICE_NAME, deviceModels, isTestOffer, listWords, offeredModels, offersModel, type BoxDevice, type DevicePlatform, type ModelName } from "./device.ts";
+import { encoderKey, encoderKeyParts, type EncoderPlace } from "./encoder-ledger.ts";
 import { chooseModel, parseBoxDevice, parseDeviceOffer } from "./device-parse.ts";
 import {
   BackendError,
@@ -2422,6 +2423,19 @@ export class Boxes {
     if (!inSlot(box) || !box.guest || !backend?.restartDeviceServer) return false;
     await backend.restartDeviceServer(box.guest, signal);
     return true;
+  }
+
+  encoderOf(box: BoxRecord): EncoderPlace | null {
+    const backend = this.#deps.backends.get(box.backend);
+    if (!box.guest || !backend?.encoderOf) return null;
+    const place = backend.encoderOf(box.guest);
+    return place ? { mac: encoderKey(backend.id, place.mac), label: place.mac, chip: place.chip } : null;
+  }
+
+  async probeEncoder(key: string, signal: AbortSignal): Promise<number | null> {
+    const { backend: id, mac } = encoderKeyParts(key);
+    const backend = this.#deps.backends.get(id);
+    return backend?.probeEncoder ? backend.probeEncoder(mac, signal) : null;
   }
 
   /** The transports that reach a ready box. */

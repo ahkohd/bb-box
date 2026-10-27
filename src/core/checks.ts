@@ -31,6 +31,11 @@ export const CHECKS = {
     what: "An ios box's macOS host has no Device Hub running (063): it takes the device's pasteboard, and quitting it shuts the device down, so the device server kills it within 5 s of its start. Says how often it has.",
   },
   "device.<box>": { name: "Device server of <box>", from: ["bb-box"], what: "A device box's server (063): the version it runs against the one this bb-box delivers, a delivery waiting for a person or a recording, a version marked bad after it did not answer, and a server its service manager gave up on." },
+  "encoder.<mac>": {
+    name: "Video encoder on <mac>",
+    from: ["bb-box"],
+    what: "A Mac's video encoder, shared by every iOS device bb-box streams on it (064): its budget, from the chip or a probe, how much of it the streams use, and which are shown at a lower resolution to keep within it.",
+  },
   "spares.image.<image>.<backend>.<kind>": { name: "Spare of <image> for <kind> on <backend>", from: ["bb-box"], what: "A project image's spare whose build failed to start a box, so bb-box makes none of that build for a day. Its boxes start from the build meanwhile." },
 
   // Proxmox LXC and Proxmox QEMU.

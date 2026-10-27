@@ -195,6 +195,7 @@ switch (tool) {
     break;
   case "sysctl":
     if (args.includes("kern.boottime")) console.log("{ sec = 1700000000, usec = 0 } Tue Nov 14 22:13:20 2023");
+    else if (args.includes("machdep.cpu.brand_string")) console.log(existsSync(join(home, ".fake-chip")) ? readFileSync(join(home, ".fake-chip"), "utf8").trim() : "Apple M4 Max");
     else console.log(args.includes("hw.ncpu") ? "16" : args.includes("kern.hv_support") ? (existsSync(join(home, ".fake-no-hvf")) ? "0" : "1") : String(128 * 1024 * 1024 * 1024));
     break;
   case "sw_vers":

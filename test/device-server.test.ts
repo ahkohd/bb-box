@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { Duplex } from "node:stream";
 import { after, describe, test } from "node:test";
-import { DEVICE_PROTOCOL, DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, STILLS_EVERY_MS, drawnShare, screensOf, deviceModel, stepCovering, stillsRequestText, testDeviceOffer, viewAsked, viewRequestText, type DeviceControl, type DeviceState, type OfferedDevices } from "../src/core/device.ts";
+import { DEVICE_PROTOCOL, DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, STILLS_EVERY_MS, drawnShare, screensOf, deviceModel, stepCovering, stillsRequestText, testDeviceOffer, viewAsked, viewRequestText, type DeviceControl, type DeviceState, type OfferedDevices, type VideoReport } from "../src/core/device.ts";
 import { DeviceLink, DeviceLinkError, type DeviceRole } from "../src/core/device-link.ts";
 import { parseDeviceServerMessage, parseDeviceState, parseIntent } from "../src/core/device-parse.ts";
 import { DriverError, type DeviceDriver } from "../src/device/driver.ts";
@@ -33,7 +33,7 @@ function channelTo(path: string): Promise<ByteChannel> {
   });
 }
 
-async function started(options: { platform?: "ios" | "android"; driver?: DeviceDriver; intent?: unknown; deadlines?: Partial<Deadlines>; settingsEveryMs?: number; video?: { holdMs?: number; lingerMs?: number } } = {}) {
+async function started(options: { platform?: "ios" | "android"; driver?: DeviceDriver; intent?: unknown; deadlines?: Partial<Deadlines>; settingsEveryMs?: number; video?: { holdMs?: number; lingerMs?: number; reportEveryMs?: number } } = {}) {
   const home = tempDir("device");
   const paths = devicePaths(home);
   const offer = testDeviceOffer(options.platform ?? "android");
@@ -47,7 +47,7 @@ async function started(options: { platform?: "ios" | "android"; driver?: DeviceD
   servers.push(server);
   await server.start();
   for (let tries = 0; server.state.power.is !== "booted" && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
-  const open = async (role: DeviceRole, extra: { started?: number; instance?: string; onFrame?: (frame: Uint8Array) => void; onText?: (text: string) => void } = {}) => DeviceLink.open(await channelTo(paths.socket), { role, ...extra });
+  const open = async (role: DeviceRole, extra: { started?: number; instance?: string; onFrame?: (frame: Uint8Array) => void; onText?: (text: string) => void; onVideo?: (video: VideoReport) => void } = {}) => DeviceLink.open(await channelTo(paths.socket), { role, ...extra });
   return { server, paths, driver, log, open };
 }
 
@@ -559,6 +559,41 @@ describe("the device server's part in the agent's computer use (063, 7.1)", () =
     assert.ok(held >= SWIPE_HELD_MS / 16, `the finger held its end for ${held} reports`);
     const steps = path.slice(1, path.indexOf(200) + 1).map((y, index) => path[index]! - y);
     assert.ok(steps[0]! > steps.at(-1)!, `the swipe eases out: ${steps.join(", ")}`);
+    await control.close();
+  });
+});
+
+describe("the device server's reports to the encoder ledger (064, unit 6)", () => {
+  test("tells the lease holder what wants the stream, by whom, and its frames a second; and its viewers the ledger's words", async () => {
+    const { open, server } = await started({ platform: "ios", video: { holdMs: 50, lingerMs: 200, reportEveryMs: 50 } });
+    const reports: VideoReport[] = [];
+    const control = await open("control", { started: 1, instance: "a", onVideo: (video) => reports.push(video) });
+    await eventually("a first report", () => reports.length > 0);
+    assert.deepEqual(reports[0]!.wants, []);
+    assert.equal(reports[0]!.step, null);
+    const told: (string | null)[] = [];
+    const viewer = await open("viewer", { onVideo: (video) => told.push(video.words) });
+    await viewer.send(viewRequestText({ width: 560, height: 1300 }));
+    await viewer.send("START_VIDEO");
+    await eventually("a viewer's want", () => reports.at(-1)?.wants.some((want) => want.for === "viewer" && want.step === "half") === true);
+    assert.equal((await control.request({ type: "record", to: "start" })).ok, true);
+    await eventually("a recording's want", () => reports.at(-1)?.wants.some((want) => want.for === "recording" && want.step === "two-thirds") === true);
+    await eventually("the stream at two thirds", () => reports.at(-1)?.step === "two-thirds");
+    assert.equal(typeof reports.at(-1)!.fps, "number");
+    assert.equal((await control.request({ type: "record", to: "stop" })).ok, true);
+    const words = "Shown at a lower resolution: this Mac's video encoder is busy with 1 other device (box ios-2).";
+    assert.equal((await control.request({ type: "cap", most: "third", words })).ok, true);
+    await eventually("the viewer told", () => told.includes(words));
+    await eventually("the cap reported", () => reports.at(-1)?.cap === "third" && reports.at(-1)?.words === words);
+    await eventually("the stream at the cap", () => server.videoStep === "third");
+    const later = await open("viewer", { onVideo: (video) => told.push(`later: ${video.words}`) });
+    await eventually("a new viewer told at once", () => told.includes(`later: ${words}`));
+    assert.equal((await control.request({ type: "cap", most: null, words: null })).ok, true);
+    await eventually("the words cleared", () => told.includes(null));
+    assert.equal((await control.request({ type: "cap", most: null })).ok, true, "a cap with no words, as an older bb-box sends, still reads");
+    await later.close();
+    await viewer.close();
+    await eventually("no want reported", () => reports.at(-1)?.wants.length === 0);
     await control.close();
   });
 });

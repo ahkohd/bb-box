@@ -203,6 +203,7 @@ export interface DeviceShown {
   readonly stills: boolean;
   readonly offered: readonly ModelName[];
   readonly bootedHere: readonly ModelName[] | null;
+  readonly videoWords: string | null;
 }
 
 const NOT_MINE_WORDS = "This tab does not have control of the device, so the control was not sent.";
@@ -349,7 +350,7 @@ export class SelkiesSession implements Kept {
 
   constructor(url: string, options: { readonly device?: { readonly model: string | null } } = {}) {
     this.#url = url;
-    this.#device = options.device ? { model: options.device.model, state: null, stills: !canShowVideo(), offered: [], bootedHere: null } : null;
+    this.#device = options.device ? { model: options.device.model, state: null, stills: !canShowVideo(), offered: [], bootedHere: null, videoWords: null } : null;
     this.#afterPaste.join(tabOf(url));
     this.#afterPaste.pressChord = (shifted) => this.#pressPaste(shifted);
     this.element.className = "absolute inset-0";
@@ -827,6 +828,12 @@ export class SelkiesSession implements Kept {
     }
     if (message.verb === "BB_DEVICE_ANSWER") {
       this.#answers.answered(message.answer);
+      return;
+    }
+    if (message.verb === "BB_DEVICE_VIDEO") {
+      if (this.#device.videoWords === message.video.words) return;
+      this.#device = { ...this.#device, videoWords: message.video.words };
+      for (const listener of this.#listeners) listener();
       return;
     }
     if (message.verb === "BB_DEVICE_HELLO") {

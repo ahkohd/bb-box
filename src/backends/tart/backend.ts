@@ -83,6 +83,7 @@ import {
   type ImageBox,
   type ImageBuild,
   type Limit,
+  type MacEncoder,
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
@@ -91,6 +92,7 @@ import {
   type WithheldKind,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
+import { PROBE_SECONDS, encoderProbeScript, parseEncoderProbe } from "../encoder-probe.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
@@ -834,6 +836,7 @@ export class TartBackend implements Backend {
   readonly #qemuVideoBuilds = new Map<string, Promise<void>>();
   /** The Macs whose build is ready, as their state last said. */
   readonly #qemuVideoReady = new Set<string>();
+  readonly #chips = new Map<string, string>();
 
   constructor(config: TartConfig, context: BackendContext, options: TartBackendOptions = {}) {
     this.id = context.id;
@@ -859,6 +862,7 @@ export class TartBackend implements Backend {
       states: (signal) => this.#states(signal),
       hostRoom: (host, state, settings, leaving) => this.#hostRoom(host, state as MacState | Error, settings, leaving),
       placement: (task) => this.#chain(task),
+      encoderLoad: (host) => this.#context.encoder?.load(host.name) ?? 0,
       placing: (host, vm, memoryMiB) => {
         this.#placing.set(vm, { host: host.name, vm, memoryMiB, macos: true });
         return () => this.#placing.delete(vm);
@@ -1609,6 +1613,20 @@ export class TartBackend implements Backend {
   #slots(guest: Guest): IosHosts {
     if (!this.slots) throw new BackendError("unsupported", `${this.label} has no iOS image now, so it cannot reach box guest ${guest.ref} on a shared iOS host. Set the iOS image again.`);
     return this.slots;
+  }
+
+  encoderOf(guest: Guest): MacEncoder | null {
+    if (!guest.host || !this.#config.hosts.some((host) => host.name === guest.host)) return null;
+    return { mac: guest.host, chip: this.#chips.get(guest.host) ?? null };
+  }
+
+  async probeEncoder(mac: string, signal?: AbortSignal): Promise<number | null> {
+    const host = this.#hostNamed(mac);
+    if (!host) return null;
+    const result = await this.#run(host, encoderProbeScript(), { timeoutMs: (PROBE_SECONDS + 60) * 1000, signal });
+    const probe = parseEncoderProbe(result.stdout);
+    if (probe.fps === null) this.#context.log?.(`bb-box could not measure the video encoder of ${mac}: ${probe.words ?? `exit code ${result.exitCode}`}.`);
+    return probe.fps;
   }
 
   async restartDeviceServer(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -2739,7 +2757,9 @@ export class TartBackend implements Backend {
     if (qemuVideo?.status === "ready") this.#qemuVideoReady.add(host.name);
     else this.#qemuVideoReady.delete(host.name);
     if (qemuVideo?.status === "missing") this.#buildVideo(host);
-    return { ...parseState(text), qemu: parseQemuState(text), qemuVideo };
+    const state = parseState(text);
+    if (state.chip) this.#chips.set(host.name, state.chip);
+    return { ...state, qemu: parseQemuState(text), qemuVideo };
   }
 
   /** bb-box-stream's source and its build's name, read once. */
@@ -2801,6 +2821,7 @@ export class TartBackend implements Backend {
     const { ssh } = await this.#keys();
     const windows = os === "windows";
     const script = windows ? qemuStartScript(vm, seconds) : startScript(vm, seconds);
+    if (!windows) this.#context.encoder?.vmStarting(host.name, this.#chips.get(host.name) ?? null);
     const result = await ssh.run(await this.#mac(host), script, { timeoutMs: (seconds + 30) * 1000, signal, maxOutputBytes: 1 << 16 }, "macos");
     if (result.exitCode === 0) return;
     const said = result.stderr.trim();

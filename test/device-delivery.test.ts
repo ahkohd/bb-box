@@ -1,3 +1,4 @@
+import { EncoderLedgers } from "../src/core/encoder-ledger.ts";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -233,6 +234,37 @@ describe("delivering the device server", { skip: process.platform === "win32" },
     assert.ok(logs.includes("slot: Box b-12's device server: delivered version 5, as it runs version 3."), logs.join("\n"));
     assert.ok(capped() > before, "the delivery's own connection caps the stream");
     await servers.dispose();
+  });
+
+  test("with the encoder ledger on, a slot's stream takes the ledger's cap and words, not two thirds (064, unit 6)", async () => {
+    logs.length = 0;
+    const slot = { ...record, guest: { ref: "bb-box-host-1/i1", host: "mac1", address: null, size: null, data: { box: record.id, ...placementData({ on: "slot", host: "bb-box-host-1", hostOn: "tart", carried: true, generation: 1, place: 0, most: 8 }) } } } as BoxRecord;
+    record = slot;
+    const serverLog = () => readFileSync(join(home, ".bb-box/device/server.log"), "utf8").split("\n");
+    const before = serverLog().length;
+    const sent: string[] = [];
+    let on = true;
+    const ledger = new EncoderLedgers({ on: () => on, controlled: () => false, send: (box) => sent.push(box), probe: async () => null, log: () => {}, logError: () => {} });
+    const servers = make("ledger", 80, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION), () => false, { ledger });
+    assert.equal((await servers.ensure(slot)).is, "connected");
+    const since = () => {
+      const lines = serverLog().slice(before);
+      return lines.slice(Math.max(0, lines.findIndex((line) => line.includes(`serving version ${DEVICE_SERVER_VERSION}`))));
+    };
+    for (let tries = 0; !since().some((line) => line.includes("video: capped at nothing")) && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(since().some((line) => line.includes("video: capped at nothing")), since().join("\n"));
+    assert.ok(!since().some((line) => line.includes("video: capped at two-thirds")), since().join("\n"));
+    const words = "Shown at a lower resolution: this Mac's video encoder is busy with 1 other device (box ios-2).";
+    servers.decided(slot.id, { cap: "third", words });
+    for (let tries = 0; !since().some((line) => line.includes(`video: capped at third: ${words}`)) && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(since().some((line) => line.includes(`video: capped at third: ${words}`)));
+    on = false;
+    servers.ledgerSwitched();
+    for (let tries = 0; !since().some((line) => line.includes("video: capped at two-thirds")) && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(since().some((line) => line.includes("video: capped at two-thirds")), "off, a slot is capped at two thirds again");
+    await servers.dispose();
+    ledger.dispose();
+    record = box;
   });
 });
 

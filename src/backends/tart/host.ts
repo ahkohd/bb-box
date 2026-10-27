@@ -216,6 +216,7 @@ echo @disk; df -P -k "$home" | awk 'NR == 2 { m = $6; for (i = 7; i <= NF; i++) 
 echo @arch; uname -m
 echo @macos; sw_vers -productVersion
 echo @macosbuild; sw_vers -buildVersion
+echo @chip; sysctl -n machdep.cpu.brand_string 2>/dev/null
 `);
 }
 
@@ -258,6 +259,7 @@ export interface HostState {
   readonly macos: string;
   /** The Mac's macOS build, such as 26A428: a VM saved under another may not restore. */
   readonly macosBuild: string;
+  readonly chip: string | null;
 }
 
 /** Entries of a section made of `=name` lines, each followed by its text. */
@@ -337,6 +339,7 @@ export function parseState(text: string): HostState {
     arch: parts.get("arch")?.trim() ?? "",
     macos: parts.get("macos")?.trim() ?? "",
     macosBuild: parts.get("macosbuild")?.trim() ?? "",
+    chip: parts.get("chip")?.trim() || null,
   };
 }
 

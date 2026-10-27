@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, SETTINGS_ASKED_SINCE_VERSION, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice, type VideoStep } from "../core/device.ts";
+import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, SETTINGS_ASKED_SINCE_VERSION, VIDEO_REPORTS_SINCE_VERSION, deviceModel, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice, type VideoReport, type VideoStep } from "../core/device.ts";
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { lostWords } from "../core/device-control.ts";
 import { controlDeadlineMs } from "../core/device-settings.ts";
@@ -8,6 +8,7 @@ import { DeviceLink, DeviceLinkError, newRequestId, type DeviceRequestBody } fro
 import type { ByteChannel, RunResult } from "../transports/types.ts";
 import type { DoctorCheck } from "../backends/types.ts";
 import { inSlot, placementOf } from "../core/device-host.ts";
+import { type Decision, type EncoderLedgers, type EncoderPlace } from "../core/encoder-ledger.ts";
 
 export const IDLE_CLOSE_MS = 10 * 60_000;
 export const SLOT_STREAM_CAP: VideoStep = "two-thirds";
@@ -28,6 +29,7 @@ export interface DeviceBoxes {
   spawnOwn(box: BoxRecord, script: string, options?: { signal?: AbortSignal }): Promise<ByteChannel>;
   runOwn(box: BoxRecord, script: string, options: { stdin?: string | Uint8Array; timeoutMs: number; signal?: AbortSignal }): Promise<RunResult>;
   restartDeviceServer?(box: BoxRecord, signal?: AbortSignal): Promise<boolean>;
+  encoderOf?(box: BoxRecord): EncoderPlace | null;
 }
 
 export interface DeviceKv {
@@ -41,6 +43,7 @@ export interface DeviceServersDeps {
   readonly kv: DeviceKv;
   readonly files: () => Promise<readonly ServerFile[]>;
   readonly personHasControl: (boxId: string) => boolean;
+  readonly ledger?: EncoderLedgers;
   readonly log: (line: string) => void;
   readonly logError: (operation: string, error: unknown) => void;
   readonly started?: number;
@@ -71,6 +74,10 @@ function waitedWords(box: BoxRecord, waitMs: number): string {
   const placement = placementOf(box);
   const where = placement.on === "slot" ? ` as its slot's user on the shared iOS host ${placement.host}` : "";
   return `it waited ${Math.round(waitMs / 1000)} s for box ${box.name} to answer a command over SSH${where}, and stopped waiting`;
+}
+
+function videoWanted(video: VideoReport | null): boolean {
+  return !!video && (video.step !== null || video.wants.length > 0);
 }
 
 export function wantsDevice(box: BoxRecord): boolean {
@@ -132,6 +139,7 @@ export class DeviceServers {
   }
 
   controlChanged(boxId: string): void {
+    this.#deps.ledger?.controlChanged(boxId);
     const held = this.#held.get(boxId);
     if (held?.view.is === "waiting" && held.view.why === "person" && !this.#deps.personHasControl(boxId)) {
       this.#retry(boxId);
@@ -293,6 +301,10 @@ export class DeviceServers {
   async #closeIdle(boxId: string): Promise<void> {
     const held = this.#held.get(boxId);
     if (!held?.link) return;
+    if (this.#deps.ledger?.on && videoWanted(held.link.video)) {
+      this.#touch(boxId);
+      return;
+    }
     const link = held.link;
     held.link = null;
     await link.close();
@@ -302,6 +314,7 @@ export class DeviceServers {
     const held = this.#held.get(boxId);
     if (!held) return;
     this.#held.delete(boxId);
+    this.#deps.ledger?.forget(boxId);
     if (held.idle) clearTimeout(held.idle);
     await held.link?.close();
   }
@@ -314,14 +327,54 @@ export class DeviceServers {
       instance: this.instance,
       helloWaitMs: this.#deps.helloWaitMs,
       onState: (state) => void this.#copied(box, state).catch((error) => this.#deps.logError("record the device", error)),
+      onVideo: (video) => this.#videoReported(box, video),
       onClosed: (why) => this.#linkClosed(box, why),
     });
+  }
+
+  #videoReported(box: BoxRecord, video: VideoReport): void {
+    const ledger = this.#deps.ledger;
+    const offer = box.capabilities.device;
+    if (!ledger || offer?.platform !== "ios" || isTestOffer(offer)) return;
+    const place = this.#deps.boxes.encoderOf?.(box) ?? null;
+    if (!place) return;
+    const model = deviceModel(this.#held.get(box.id)?.link?.state.model ?? box.device?.model ?? offer.devices[0].model);
+    if (model.form === "foldable") return;
+    ledger.report(box, place, { pixels: model.screen.pixels, wants: video.wants, fps: video.fps });
+  }
+
+  decided(boxId: string, decision: Decision): void {
+    if (!this.#deps.ledger?.on) return;
+    const held = this.#held.get(boxId);
+    const link = held?.link;
+    if (!link || link.closed || !link.hello.lease) return;
+    void this.#deps.boxes
+      .find(boxId)
+      .then((box) => (box ? this.#capVideo(box, link, decision) : undefined))
+      .catch((error) => this.#deps.logError("cap a device's video", error));
+  }
+
+  encoderWords(box: BoxRecord): string | null {
+    return this.#deps.ledger?.roomWords(box.id) ?? null;
+  }
+
+  ledgerSwitched(): void {
+    this.#deps.ledger?.refresh();
+    for (const [boxId, held] of this.#held) {
+      const link = held.link;
+      if (!link || link.closed || !link.hello.lease) continue;
+      void this.#deps.boxes
+        .find(boxId)
+        .then((box) => (box ? this.#capSlot(box, link) : undefined))
+        .catch((error) => this.#deps.logError("cap a device's video", error));
+    }
   }
 
   #linkClosed(box: BoxRecord, why: { readonly superseded: boolean; readonly words: string }): void {
     const held = this.#held.get(box.id);
     if (!held || this.#disposed) return;
     held.link = null;
+    this.#deps.ledger?.forget(box.id);
     if (why.superseded) {
       held.view = { is: "superseded" };
       this.#deps.log(`Box ${box.name}'s device server: a bb-box instance started later holds it now, so this one lets it be.`);
@@ -422,9 +475,20 @@ export class DeviceServers {
   }
 
   async #capSlot(box: BoxRecord, link: DeviceLink): Promise<void> {
-    if (!inSlot(box) || !link.hello.lease) return;
-    const answer = await link.request({ type: "cap", most: SLOT_STREAM_CAP }, { timeoutMs: SCRIPT_TIMEOUT_MS });
-    if (!answer.ok) this.#deps.log(`Box ${box.name}'s device server did not take the cap at ${SLOT_STREAM_CAP}: ${answer.error.words}`);
+    if (!link.hello.lease) return;
+    const ledger = this.#deps.ledger;
+    if (ledger?.on && link.hello.version >= VIDEO_REPORTS_SINCE_VERSION) {
+      await this.#capVideo(box, link, ledger.decision(box.id));
+      return;
+    }
+    if (!inSlot(box)) return;
+    await this.#capVideo(box, link, { cap: SLOT_STREAM_CAP, words: null });
+  }
+
+  async #capVideo(box: BoxRecord, link: DeviceLink, decision: Decision): Promise<void> {
+    const words = link.hello.version >= VIDEO_REPORTS_SINCE_VERSION ? { words: decision.words } : {};
+    const answer = await link.request({ type: "cap", most: decision.cap, ...words }, { timeoutMs: SCRIPT_TIMEOUT_MS });
+    if (!answer.ok) this.#deps.log(`Box ${box.name}'s device server did not take the cap at ${decision.cap ?? "nothing"}: ${answer.error.words}`);
   }
 
   async #deliverIfAllowed(box: BoxRecord, held: Held, running: number | null, why: string): Promise<DeviceServerView> {
@@ -509,7 +573,7 @@ export class DeviceServers {
 
   async checks(): Promise<DoctorCheck[]> {
     const boxes = (await this.#deps.boxes.all()).filter(wantsDevice);
-    return (await Promise.all(boxes.map((box) => this.#boxChecks(box)))).flat();
+    return [...(await Promise.all(boxes.map((box) => this.#boxChecks(box)))).flat(), ...(this.#deps.ledger?.checks() ?? [])];
   }
 
   async #boxChecks(box: BoxRecord): Promise<DoctorCheck[]> {

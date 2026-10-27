@@ -681,7 +681,7 @@ test("config.get gives the document with each secret as set or not, the defaults
   assert.equal(state.revision, 1);
   assert.deepEqual(state.document.backends, [{ id: "fake", type: "fake", enabled: true, fields: { token: { set: true } } }]);
   assert.ok(!JSON.stringify(state).includes("t0ken"));
-  assert.deepEqual(state.defaults.general, { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false });
+  assert.deepEqual(state.defaults.general, { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true });
   assert.deepEqual(state.defaults.kinds.linux!.presets.small, { cores: 2, memoryMiB: 4096, diskGiB: null });
   assert.deepEqual(state.kinds.find((kind) => kind.id === "linux-desktop"), {
     id: "linux-desktop",

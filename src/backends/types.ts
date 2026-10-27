@@ -627,6 +627,8 @@ export interface Backend {
 
   readonly slots?: SlotLender;
   restartDeviceServer?(guest: Guest, signal?: AbortSignal): Promise<void>;
+  encoderOf?(guest: Guest): MacEncoder | null;
+  probeEncoder?(mac: string, signal?: AbortSignal): Promise<number | null>;
 
   /**
    * Puts back what the backend lowered while a guest started, as its CPU weight (#888): the sweep asks for a ready
@@ -923,6 +925,17 @@ export interface BackendContext {
    * take them, as they do at bb-box's start (#215), not only new boxes.
    */
   kindsChanged?(): void;
+  readonly encoder?: EncoderAccess;
+}
+
+export interface MacEncoder {
+  readonly mac: string;
+  readonly chip: string | null;
+}
+
+export interface EncoderAccess {
+  load(mac: string): number;
+  vmStarting(mac: string, chip: string | null): void;
 }
 
 /**
