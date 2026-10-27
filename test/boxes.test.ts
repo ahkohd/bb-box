@@ -2560,6 +2560,27 @@ test("dispose cancels acquires in progress, and the next start acquires them aga
   assert.equal((await ready(boxes, box)).state, "ready");
 });
 
+test("dispose during a shared box's acquire keeps its place on the shared host, and the next start acquires it there (F-7)", async () => {
+  const world = setup({ kinds: [sharedIosKind()], slots: { kinds: ["ios"], most: 8 } });
+  const gate = deferred();
+  world.backend.gate = gate.promise;
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true });
+  const placed = (await world.boxes.find(box.id))!.guest!;
+  assert.ok(inSlot({ guest: placed }));
+  const disposed = world.boxes.dispose();
+  gate.resolve();
+  await disposed;
+  const left = await world.boxes.find(box.id);
+  assert.equal(left?.state, "acquiring");
+  assert.deepEqual(left?.guest, placed, "its place on the host outlives the instance");
+  world.backend.gate = null;
+  const boxes = world.restart();
+  await boxes.sweep();
+  const done = await ready(boxes, box);
+  assert.equal(done.state, "ready");
+  assert.equal(done.guest?.ref, placed.ref, "the same slot, not a VM of its own");
+});
+
 test("a real backend's release resets the machine and returns it for the next box", async () => {
   const world = setup({ nature: "real", machines: 1 });
   const first = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));

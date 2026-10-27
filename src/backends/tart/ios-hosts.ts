@@ -599,6 +599,7 @@ export class IosHosts implements SlotLender {
       this.#access.log(`Shared iOS host ${vm} on ${mac.name} serves, ${((performance.now() - began) / 1000).toFixed(1)} s after its start (its VM ${((booted - began) / 1000).toFixed(1)} s), for ${promised.length} boxes.`);
       if (!promised.length) await this.#vacate(mac, vm, command, signal);
     } catch (error) {
+      if (signal.aborted) throw error;
       const words = error instanceof Error ? error.message : String(error);
       await this.#access.run(mac, hostPhaseScript(vm, this.#access.installId, "failed", words), { signal }).catch(() => undefined);
       await this.#access.deleteVm(mac, vm, signal).catch((cause) => this.#access.logError(`delete shared iOS host ${vm}`, cause));
