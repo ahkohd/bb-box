@@ -519,11 +519,11 @@ export class PoolSlots implements SlotLender {
     }
     const runtime = `iOS ${summary.runtime!.os} (${summary.runtime!.build}), the ${summary.model!.name}, idb_companion ${summary.companion ?? "of unknown version"}`;
     const counts = `${summary.held} held, ${summary.ready} ready, ${summary.making} making, ${summary.sweeping} sweeping, of ${summary.most}`;
-    if (status.marker === "owner") return { status: "ok", detail: `Lent whole to a box now, so it lends no iOS slot until that box is released. Its slots: ${runtime}.`, fix: null };
-    if (summary.closedSince !== null) return { status: "ok", detail: `Closed: it lends no iOS slot until bb-box opens it, at its next upkeep while it is not lent whole. Its slots: ${runtime}.`, fix: null };
     const slots = await this.#status(view.machine, signal).catch(() => null);
-    const more = slots ? `${heldLoadWords(slots)}${sweepWords(slots)}` : "";
-    return { status: "ok", detail: `Lends iOS slots, ${counts}: ${runtime}.${slotsBusy(summary) ? ` While any is held it is not lent whole.` : ""}${more}`, fix: null };
+    const swept = slots ? sweepWords(slots) : "";
+    if (status.marker === "owner") return { status: "ok", detail: `Lent whole to a box now, so it lends no iOS slot until that box is released. Its slots: ${runtime}.${swept}`, fix: null };
+    if (summary.closedSince !== null) return { status: "ok", detail: `Closed: it lends no iOS slot until bb-box opens it, at its next upkeep while it is not lent whole. Its slots: ${runtime}.${swept}`, fix: null };
+    return { status: "ok", detail: `Lends iOS slots, ${counts}: ${runtime}.${slotsBusy(summary) ? ` While any is held it is not lent whole.` : ""}${slots ? heldLoadWords(slots) : ""}${swept}`, fix: null };
   }
 }
 
@@ -534,11 +534,23 @@ function heldLoadWords(status: HostStatus): string {
 }
 
 export function sweepWords(status: HostStatus): string {
-  const last = status.sweeps.slice(-3);
+  const passes: (typeof status.sweeps)[number][][] = [];
+  for (const sweep of status.sweeps) {
+    const pass = passes.at(-1);
+    const same = pass?.[0] && pass.length < pass[0].uidsInPass && pass[0].seconds === sweep.seconds && pass[0].found === sweep.found && pass[0].left === sweep.left;
+    if (same) pass.push(sweep);
+    else passes.push([sweep]);
+  }
+  const last = passes.slice(-3);
   if (!last.length) return "";
-  const words = last.map((sweep) => `UID ${sweep.uid}: ${sweep.found} ${sweep.found === 1 ? "path" : "paths"} found, ${sweep.left} left, in ${Math.round(sweep.seconds)} s`);
-  const left = last.some((sweep) => sweep.left > 0) ? " A sweep that leaves a path needs the helper's Full Disk Access." : "";
-  return ` Its last sweeps: ${words.join("; ")}.${left}`;
+  const words = last.map((pass) => {
+    const { found, left, seconds } = pass[0]!;
+    const uids = pass.map((sweep) => sweep.uid);
+    const of = uids.length === 1 ? `UID ${uids[0]}` : `UIDs ${uids.slice(0, -1).join(", ")} and ${uids.at(-1)}`;
+    return `of ${of}, ${found} ${found === 1 ? "path" : "paths"} found and ${left} left, in ${Math.round(seconds)} s`;
+  });
+  const leaves = last.some((pass) => pass[0]!.left > 0) ? " A sweep that leaves a path needs the helper's Full Disk Access." : "";
+  return ` Its last sweeps: ${words.join("; ")}.${leaves}`;
 }
 
 export function slotUserOf(guest: Guest): string {
