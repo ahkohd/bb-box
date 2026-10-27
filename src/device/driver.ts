@@ -52,7 +52,7 @@ export interface DeviceDriver {
   close(): void;
 }
 
-export type DriverErrorCode = "unsupported" | "failed" | "not-booted" | "bad-value" | "person-has-control";
+export type DriverErrorCode = "unsupported" | "failed" | "not-booted" | "bad-value" | "person-has-control" | "held-elsewhere";
 
 export class DriverError extends Error {
   readonly code: DriverErrorCode;

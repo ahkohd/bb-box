@@ -48,6 +48,7 @@ export const DEVICE_EXITS_WINDOW_MS = 5 * 60_000;
 export const CLOCK_LAG_MOST_S = 2;
 export const ROTATE_PICTURE_MS = 3_000;
 export const FOLD_PICTURE_MS = 3_000;
+export const FIRST_PICTURE_MS = 5_000;
 export const INSTALL_MS = 300_000;
 const SCREENSHOT_MS = 10_000;
 const INPUT_MS = 5_000;
@@ -246,8 +247,13 @@ export class AndroidDriver implements DeviceDriver {
   async #start(target: OfferedDeviceOf<"android">, signal: AbortSignal, cold: boolean): Promise<"reattached" | "booted"> {
     await this.#prepareFrames();
     let running = await this.#emulator.running();
-    if (running && running.avd !== target.native) {
-      this.#log(`device: the emulator runs ${running.avd}, not ${target.native}; stopping it, which saves its snapshot`);
+    const unreachable = running && !running.token;
+    if (running && (running.avd !== target.native || unreachable)) {
+      this.#log(
+        unreachable
+          ? `device: the emulator for ${running.avd} runs, but bb-box cannot reach it without its gRPC token; stopping it, which saves its snapshot, to start it again`
+          : `device: the emulator runs ${running.avd}, not ${target.native}; stopping it, which saves its snapshot`,
+      );
       await this.#video.stop();
       await this.#emulator.stop(running, signal);
       running = null;
@@ -413,7 +419,7 @@ export class AndroidDriver implements DeviceDriver {
     this.#busy = true;
     try {
       const running = await this.#emulator.running();
-      if (running && running.pid === this.#running.pid) {
+      if (running?.token && running.pid === this.#running.pid) {
         this.#connect(running);
         await this.#setClockIfBehind(this.#closed.signal).catch((error) => this.#log(`resume: the device's clock was not checked: ${words(error)}`));
         this.#video.restart("the box resumed");
@@ -578,6 +584,7 @@ export class AndroidDriver implements DeviceDriver {
         await this.#settings.waitAwake(true, signal);
         break;
       case "rotate":
+        await this.#heldWayKnown(signal);
         await this.#rotate(control.turn ? turnedFrom(this.#physical, control.turn) : control.to, signal);
         break;
       case "posture":
@@ -617,6 +624,12 @@ export class AndroidDriver implements DeviceDriver {
     const until = this.#clock.monotonic() + waitMs;
     while (!(this.#generation !== since && done()) && this.#clock.monotonic() < until && !signal.aborted) await new Promise((resolve) => setTimeout(resolve, 20));
     return this.#generation !== since && done();
+  }
+
+  async #heldWayKnown(signal: AbortSignal): Promise<void> {
+    if (this.#video.size) return;
+    if (!(await this.#newPicture(this.#generation, () => true, FIRST_PICTURE_MS, signal)))
+      throw new DriverError("failed", `The ${this.#target?.model ?? "device"}'s picture has not come ${FIRST_PICTURE_MS / 1000} s after the device server attached, so bb-box cannot tell which way it is held. Try again in a moment.`);
   }
 
   async #rotate(to: Orientation, signal: AbortSignal): Promise<void> {

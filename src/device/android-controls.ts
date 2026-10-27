@@ -1,5 +1,5 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
-import { ANDROID_DEFAULT_FONT_SCALE, CLEAN_STATUS_BAR_BATTERY, EMULATOR_OWN_BATTERY, EMULATOR_OWN_LOCATION, SLOW_NETWORK, nextFontScale } from "../core/device-settings.ts";
+import { ANDROID_DEFAULT_FONT_SCALE, CLEAN_STATUS_BAR_BATTERY, EMULATOR_OWN_BATTERY, EMULATOR_OWN_LOCATION, SLOW_NETWORK, nextFontScale, notANetworkPreset } from "../core/device-settings.ts";
 import {
   ANDROID_FONT_SCALES,
   type AndroidFontScale,
@@ -282,7 +282,7 @@ export class AndroidSettingsKeeper {
     this.#radiosOn = read.radiosOn;
     this.#network = read.network
       ? { known: true, value: read.network, at, by: read.network === own.network ? "bb-box" : "outside" }
-      : { known: false, why: `The network is none of bb-box's presets: ${read.networkWords}.` };
+      : { known: false, why: notANetworkPreset(read.networkWords) };
     this.#posture = read.posture ? { known: true, value: read.posture, at, by: "bb-box" } : { known: false, why: "Android did not say how the device is folded." };
     if (read.awake !== null) this.#awake = read.awake;
   }

@@ -8,7 +8,7 @@ import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, ty
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
-import { FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
+import { FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
 import { FakeTart, Viewer } from "./fake-tart-vnc.ts";
 import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, tempDir, testContext } from "./helpers.ts";
@@ -1151,6 +1151,34 @@ const IOS_DEVICE = (model: string, native: string) => ({
   slim: { list: "ios-27.0-24A434", labels: 112, sha256: "a".repeat(64) },
 });
 const IOS_DEVICES = [IOS_DEVICE("iPhone 18 Pro", "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro"), IOS_DEVICE("iPhone 17", "com.apple.CoreSimulator.SimDeviceType.iPhone-17")];
+
+test("prepare-ios-image.sh reads the VMs again while tart list fails, as when a VM is deleted as it reads, and never takes that for the macOS image missing (F-4)", async () => {
+  const { mac } = setup();
+  addImage(mac, "bb-box-ios");
+  const script = join(import.meta.dirname, "..", "setup", "tart", "prepare-ios-image.sh");
+  const prepare = () =>
+    new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawn("/bin/sh", [script, "--from", FAKE_IMAGE, "--name", "bb-box-ios"], { env: { HOME: mac, PATH: `${join(mac, ".nix-profile", "bin")}:/usr/bin:/bin` } });
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
+      child.on("close", (code) => resolve({ code, stderr }));
+    });
+  const listFails = join(mac, ".fake-tart-list-fails");
+  writeFileSync(listFails, "");
+  const passing = setTimeout(() => rmSync(listFails, { force: true }), 500);
+  const raced = await prepare();
+  clearTimeout(passing);
+  assert.equal(raced.code, 1);
+  assert.match(raced.stderr, /tart list failed, as when a VM is deleted while it reads: trying again in 2 s: Error: The file “config\.json” couldn’t be opened/);
+  assert.match(raced.stderr, /prepare-ios-image: bb-box-ios exists; give --replace to build it again\n$/, "it got past the macOS image's check");
+
+  writeFileSync(listFails, "");
+  const failing = await prepare();
+  rmSync(listFails, { force: true });
+  assert.equal(failing.code, 1);
+  assert.match(failing.stderr, /prepare-ios-image: tart list failed 5 times, 2 s apart, so whether a VM exists is not known: Error: The file “config\.json” couldn’t be opened/);
+  assert.doesNotMatch(failing.stderr, /there is no Tart VM/);
+});
 
 test("the iOS image: listed when set, built by prepare-ios-image.sh on the macOS image, replaced without touching that image, checked by bb-box-check-ios, and judged by the doctor (063, 3.2)", async () => {
   const { mac, context } = setup({ "tart-ios-image": "bb-box-ios" });

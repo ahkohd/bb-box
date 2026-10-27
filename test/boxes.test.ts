@@ -1541,7 +1541,9 @@ test("a thread BB says was archived loses all its boxes, failed ones forgotten, 
   await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop" });
   await world.boxes.idle();
   world.backend.faults.acquire = { at: "claimed", error: new Error("boom") };
-  await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  const failed = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  await world.boxes.idle();
+  assert.equal((await world.boxes.find(failed.id))?.state, "failed", "the fault is one-shot: the next acquire must not start before this one takes it");
   const other = await world.boxes.acquire({ threadId: "thr_two", projectId: null, kind: "linux" });
   await world.boxes.idle();
   assert.equal(await world.boxes.releaseThread(THREAD, "archived"), 0);

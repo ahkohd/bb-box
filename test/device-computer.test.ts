@@ -6,6 +6,7 @@ import { ComputerError } from "../src/core/computer.ts";
 import { DeviceComputer, deviceKey, scrollSwipe, type DeviceComputerDeps } from "../src/core/device-computer.ts";
 import { PERSON_HAS_CONTROL_WORDS, type DeviceAgentRequest, type DeviceAnswer, type DeviceElement, type DeviceInput, type DeviceRead, type DeviceState } from "../src/core/device.ts";
 import { rgbaPng } from "../src/core/png.ts";
+import { instrumentationWords } from "../src/device/android-tree-source.ts";
 import { GrpcError } from "../src/device/grpc.ts";
 import { READ_BY_POINTS_WORDS, iosTree, readIosTree, roleWords, type TreeReads } from "../src/device/ios-tree.ts";
 
@@ -437,6 +438,30 @@ describe("the computer tools on a device (063, 7.1)", () => {
     };
     const computer = new DeviceComputer(deps);
     assert.match((await computer.windows(BOX)).text, /Settings in front/);
+  });
+
+  test("refuses a read at once while something else holds the device's elements, as an instrumentation test, without reading again", async () => {
+    const device = new FakeDevice(iosTree(fixture("settings"), SCALE));
+    device.platform = "android";
+    const deps = device.deps();
+    let reads = 0;
+    let slept = 0;
+    deps.sleep = async () => {
+      slept++;
+    };
+    const read = deps.read;
+    deps.read = async (box, request) => {
+      if (request.type !== "tree") return read(box, request);
+      reads++;
+      return { id: "r", ok: false, error: { code: "held-elsewhere", words: instrumentationWords() }, state: device.state() };
+    };
+    const computer = new DeviceComputer(deps);
+    await assert.rejects(
+      computer.observe(BOX, { window: 1 }),
+      (error: unknown) => error instanceof ComputerError && error.code === "refused" && error.message.endsWith(instrumentationWords()) && /computer_screenshot/.test(error.hint ?? ""),
+    );
+    assert.equal(reads, 1);
+    assert.equal(slept, 0);
   });
 
   test("names keys and modifiers as the device server takes them", () => {

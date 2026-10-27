@@ -9,12 +9,26 @@ import {
   type IosContentSize,
   type IosStatusBar,
   type LatLon,
+  type NetworkPreset,
+  type Observed,
   type Orientation,
 } from "./device.ts";
 
 export const IOS_DEFAULT_CONTENT_SIZE: IosContentSize = "large";
 export const ANDROID_DEFAULT_FONT_SCALE: AndroidFontScale = 1;
 export const IOS_DEFAULT_APPEARANCE = "light" as const;
+
+export const NOT_A_NETWORK_PRESET = "The network is none of bb-box's presets: ";
+
+export function notANetworkPreset(reads: string): string {
+  return `${NOT_A_NETWORK_PRESET}${reads}.`;
+}
+
+function networkWords(network: Observed<NetworkPreset>, outside: string): string | null {
+  if (network.known) return `network ${network.value}${outside}`;
+  if (!network.why.startsWith(NOT_A_NETWORK_PRESET)) return null;
+  return `network none of the presets (${network.why.slice(NOT_A_NETWORK_PRESET.length).replace(/\.$/, "")})`;
+}
 
 export const QUARTER_TURNS_CLOCKWISE: readonly Orientation[] = ["upright", "turned-right", "upside-down", "turned-left"];
 
@@ -81,7 +95,8 @@ export function deviceStateWords(state: DeviceState): string {
     if (location) parts.push(`location ${locationWords(location)}`);
   } else {
     if (state.settings.fontScale.known) parts.push(`font scale ${state.settings.fontScale.value}${outside(state.settings.fontScale)}`);
-    if (state.settings.network.known) parts.push(`network ${state.settings.network.value}${outside(state.settings.network)}`);
+    const network = networkWords(state.settings.network, state.settings.network.known ? outside(state.settings.network) : "");
+    if (network) parts.push(network);
     if (state.settings.statusBar.set === "clean") parts.push("status bar clean");
     const battery = state.settings.battery;
     if (battery.known && (battery.value.level !== EMULATOR_OWN_BATTERY.level || battery.value.charging !== EMULATOR_OWN_BATTERY.charging)) parts.push(`battery ${batteryWords(battery.value)}${outside(battery)}`);

@@ -150,7 +150,7 @@ function serverApps(line: string): readonly LauncherApp[] {
 
 class GivingWay extends DriverError {
   constructor(words: string) {
-    super("failed", words);
+    super("held-elsewhere", words);
     this.name = "GivingWay";
   }
 }
@@ -233,7 +233,7 @@ export class AndroidTreeSource {
   async #dump(): Promise<AndroidScreen> {
     const ran = await this.#options.adbRun(["exec-out", "uiautomator", "dump", "/dev/tty"], { timeoutMs: DUMP_MS });
     if (!ran.output.includes("<hierarchy")) {
-      if (/already registered|Killed/i.test(ran.output)) throw new DriverError("failed", heldElsewhereWords());
+      if (/already registered|Killed/i.test(ran.output)) throw new DriverError("held-elsewhere", heldElsewhereWords());
       throw new DriverError("failed", `uiautomator dump gave no tree: ${ran.output.split("\n").slice(-2).join(" ").slice(0, 200) || `it ended with ${ran.code}`}`);
     }
     return parseDump(ran.output);

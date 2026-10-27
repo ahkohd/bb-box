@@ -257,7 +257,7 @@ describe("where an Android tree comes from (063, 7.3)", () => {
     channel.answers.push(() => JSON.stringify({ ok: false, code: "instrumentation", words: "bb-box's tree server gives way to an instrumentation running on the device." }));
     channel.answers.push(() => TREE_LINE);
     const { tree, ran, logs } = source({ channels: [channel] });
-    await assert.rejects(tree.read(), (error: unknown) => error instanceof DriverError && error.message === instrumentationWords());
+    await assert.rejects(tree.read(), (error: unknown) => error instanceof DriverError && error.code === "held-elsewhere" && error.message === instrumentationWords());
     assert.deepEqual(ran, []);
     assert.ok(logs.some((line) => /gives way \(instrumentation\)/.test(line)));
     assert.equal((await tree.read()).screen.source, "server", "it reads again as soon as the test has ended");

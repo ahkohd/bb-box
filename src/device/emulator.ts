@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { access, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DriverError } from "./driver.ts";
 import { runProgram, type Runner } from "./simctl.ts";
 
@@ -14,6 +14,7 @@ export const GRPC_PORT = 8554;
 export const EMULATOR_UNIT = "bb-box-emulator@.service";
 export const STOP_WAIT_MS = 60_000;
 export const UNSAVED_PREFIX = "emulator-unsaved-";
+export const KEPT_DISCOVERY = "emulator-discovery.ini";
 const COMMAND_MS = 30_000;
 const POLL_MS = 200;
 const LOG_MOST_BYTES = 1024 * 1024;
@@ -22,8 +23,13 @@ export interface RunningEmulator {
   readonly pid: number;
   readonly avd: string;
   readonly grpcPort: number;
-  readonly token: string;
-  readonly discovery: string;
+  readonly token: string | null;
+  readonly discovery: string | null;
+}
+
+export interface HostProcess {
+  readonly pid: number;
+  readonly argv: readonly string[];
 }
 
 export type EmulatorManager = "systemd" | "detached";
@@ -38,6 +44,7 @@ export interface EmulatorOptions {
   readonly run?: Runner;
   readonly alive?: (pid: number) => boolean;
   readonly manager?: () => Promise<EmulatorManager>;
+  readonly processes?: () => Promise<readonly HostProcess[]>;
   readonly log: (line: string) => void;
 }
 
@@ -97,6 +104,32 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+async function processesOnHost(): Promise<readonly HostProcess[]> {
+  const names = await readdir("/proc").catch(() => [] as string[]);
+  const found: HostProcess[] = [];
+  for (const name of names) {
+    if (!/^\d+$/.test(name)) continue;
+    const argv = (await readFile(`/proc/${name}/cmdline`, "utf8").catch(() => "")).split("\0").filter(Boolean);
+    if (argv.length) found.push({ pid: Number(name), argv });
+  }
+  return found;
+}
+
+function flagValue(argv: readonly string[], flag: string): string | null {
+  const at = argv.indexOf(flag);
+  return at >= 0 ? (argv[at + 1] ?? null) : null;
+}
+
+function isEmulatorProgram(argv: readonly string[]): boolean {
+  return /^(qemu-system-|emulator$)/.test(basename(argv[0] ?? ""));
+}
+
+export function emulatorOnConsolePort(processes: readonly HostProcess[]): { readonly pid: number; readonly avd: string } | null {
+  const emulators = processes.filter((each) => isEmulatorProgram(each.argv) && flagValue(each.argv, "-port") === String(CONSOLE_PORT) && flagValue(each.argv, "-avd"));
+  const chosen = emulators.find((each) => basename(each.argv[0]!).startsWith("qemu-system-")) ?? emulators[0];
+  return chosen ? { pid: chosen.pid, avd: flagValue(chosen.argv, "-avd")! } : null;
+}
+
 async function systemdOrDetached(): Promise<EmulatorManager> {
   const ran = await runProgram("systemctl", ["--user", "show-environment"], { timeoutMs: 5_000 });
   return ran.code === 0 ? "systemd" : "detached";
@@ -118,7 +151,9 @@ export class Emulator {
   readonly #home: string;
   readonly #run: Runner;
   readonly #alive: (pid: number) => boolean;
+  readonly #processes: () => Promise<readonly HostProcess[]>;
   #manager: EmulatorManager | null = null;
+  #saidUndiscovered: number | null = null;
 
   constructor(options: EmulatorOptions) {
     this.#options = options;
@@ -126,6 +161,7 @@ export class Emulator {
     this.#home = options.home ?? homedir();
     this.#run = options.run ?? runProgram;
     this.#alive = options.alive ?? pidAlive;
+    this.#processes = options.processes ?? processesOnHost;
   }
 
   get adb(): string {
@@ -144,7 +180,53 @@ export class Emulator {
     );
   }
 
+  get keptDiscovery(): string {
+    return join(this.#options.dir, KEPT_DISCOVERY);
+  }
+
   async running(): Promise<RunningEmulator | null> {
+    const discovered = await this.#discovered();
+    if (discovered) {
+      await this.#keepDiscovery(discovered);
+      return discovered;
+    }
+    const undiscovered = (await this.#fromKeptDiscovery()) ?? (await this.#onConsolePort());
+    if (undiscovered && this.#saidUndiscovered !== undiscovered.pid) {
+      this.#saidUndiscovered = undiscovered.pid;
+      this.#options.log(
+        undiscovered.token
+          ? `emulator: ${undiscovered.avd} runs as process ${undiscovered.pid} without its discovery file; bb-box reaches it by its own copy of that file`
+          : `emulator: ${undiscovered.avd} runs as process ${undiscovered.pid} on console port ${CONSOLE_PORT} without its discovery file, and bb-box has no copy of it, so its gRPC token is unknown`,
+      );
+    }
+    return undiscovered;
+  }
+
+  async #keepDiscovery(running: RunningEmulator): Promise<void> {
+    const text = `pid=${running.pid}\navd.name=${running.avd}\ngrpc.port=${running.grpcPort}\ngrpc.token=${running.token}\n`;
+    if ((await readFile(this.keptDiscovery, "utf8").catch(() => null)) === text) return;
+    await mkdir(this.#options.dir, { recursive: true, mode: 0o700 });
+    await writeFile(`${this.keptDiscovery}.new`, text, { mode: 0o600 });
+    await rename(`${this.keptDiscovery}.new`, this.keptDiscovery);
+  }
+
+  async #fromKeptDiscovery(): Promise<RunningEmulator | null> {
+    const values = discoveryValues(await readFile(this.keptDiscovery, "utf8").catch(() => ""));
+    const pid = Number(values.get("pid"));
+    const avd = values.get("avd.name");
+    const token = values.get("grpc.token");
+    if (!pid || !avd || !token || !this.#alive(pid)) return null;
+    const emulator = (await this.#processes()).find((each) => each.pid === pid);
+    if (!emulator || !isEmulatorProgram(emulator.argv) || flagValue(emulator.argv, "-avd") !== avd) return null;
+    return { pid, avd, grpcPort: Number(values.get("grpc.port") ?? GRPC_PORT), token, discovery: null };
+  }
+
+  async #onConsolePort(): Promise<RunningEmulator | null> {
+    const found = emulatorOnConsolePort(await this.#processes());
+    return found && this.#alive(found.pid) ? { ...found, grpcPort: GRPC_PORT, token: null, discovery: null } : null;
+  }
+
+  async #discovered(): Promise<RunningEmulator | null> {
     let found: RunningEmulator | null = null;
     for (const dir of this.#discoveryDirs()) {
       const names = await readdir(dir).catch(() => [] as string[]);
@@ -248,8 +330,11 @@ export class Emulator {
 
   async waitRunning(avd: string, signal: AbortSignal): Promise<RunningEmulator> {
     while (!signal.aborted) {
-      const found = await this.running();
-      if (found?.avd === avd) return found;
+      const found = await this.#discovered();
+      if (found?.avd === avd) {
+        await this.#keepDiscovery(found);
+        return found;
+      }
       if ((await this.#managerOf()) === "systemd" && !(await this.unitActive(avd))) throw new EmulatorRefused("emulator-failed", `The emulator for ${avd} ended as it started. ${await this.lastLines()}`);
       await wait(POLL_MS, signal);
     }
@@ -316,7 +401,8 @@ export class Emulator {
         process.kill(running.pid, "SIGKILL");
       } catch {}
     }
-    await rm(running.discovery, { force: true });
+    if (running.discovery) await rm(running.discovery, { force: true });
+    await rm(this.keptDiscovery, { force: true });
   }
 
   alive(pid: number): boolean {

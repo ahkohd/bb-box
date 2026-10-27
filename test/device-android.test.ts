@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Http2Server, type ServerHttp2Stream } from "node:http2";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
@@ -13,7 +13,7 @@ import { apkPackage } from "../src/device/apk.ts";
 import { EMULATOR_OWN_LOCATION } from "../src/core/device-settings.ts";
 import { AndroidVideo } from "../src/device/android-video.ts";
 import { DriverError } from "../src/device/driver.ts";
-import { Emulator, EmulatorRefused, discoveryValues, emulatorUnit, type EmulatorControl, type RunningEmulator } from "../src/device/emulator.ts";
+import { Emulator, EmulatorRefused, discoveryValues, emulatorOnConsolePort, emulatorUnit, type EmulatorControl, type RunningEmulator } from "../src/device/emulator.ts";
 import { Deframer, GrpcClient, frame } from "../src/device/grpc.ts";
 import { H264Encoder } from "../src/device/h264-encoder.ts";
 import { devicePaths } from "../src/device/paths.ts";
@@ -145,6 +145,7 @@ class FakeEmulatorGrpc {
   gps = { latitude: 37.422, longitude: -122.0841 };
   battery = { charger: 1, chargeLevel: 100 };
   emulator: FakeEmulator | null = null;
+  holdFirstFrame = false;
 
   constructor() {
     this.server = createServer();
@@ -177,7 +178,7 @@ class FakeEmulatorGrpc {
         if (path === GRPC_METHODS.emulator.streamScreenshot) {
           this.streams.add(stream);
           stream.on("close", () => this.streams.delete(stream));
-          this.show(this.screen);
+          if (!this.holdFirstFrame) this.show(this.screen);
         } else if (path === GRPC_METHODS.emulator.getScreenshot) {
           stream.end(Buffer.from(frame(encode(EMULATOR_SCHEMA, `${EMU}.Image`, { format: { width: this.screen.width, height: this.screen.height }, image: Uint8Array.of(137, 80, 78, 71) }))));
         } else {
@@ -404,6 +405,14 @@ describe("the Android driver", () => {
     assert.deepEqual(emulator.calls, ["stop pixel_8", "start pixel_fold"]);
   });
 
+  test("an emulator running without its discovery file is stopped, which saves its snapshot, and started once, never beside a second (F-4)", async () => {
+    const { emulator, driver, lines } = await rig();
+    emulator.runningNow = { pid: 7, avd: "pixel_8", grpcPort: 8554, token: null, discovery: null };
+    assert.equal(await driver.attach(PIXEL_8, AbortSignal.timeout(5000)), "booted");
+    assert.deepEqual(emulator.calls, ["stop pixel_8", "start pixel_8"]);
+    assert.ok(lines.some((line) => /cannot reach it without its gRPC token; stopping it, which saves its snapshot/.test(line)));
+  });
+
   test("a turn or a fold starts a new generation; the picture turns with the device as it is held, and a fold names its screen", async () => {
     const { grpc, driver, frames } = await rig();
     grpc.screen = { width: 2208, height: 1840 };
@@ -515,6 +524,21 @@ describe("the Android driver", () => {
     assert.equal((await driver.readBack()).geometry?.physical, "turned-right");
     await driver.touch([{ id: 0, x: 300, y: 700 }]);
     assert.deepEqual(touches().at(-1), [{ x: 700, y: 2099, pressure: 1 }]);
+  });
+
+  test("a rotate just after the device server reattaches waits for the first picture, so it turns a device held otherwise than upright (F-4)", async () => {
+    const { grpc, emulator, driver } = await rig();
+    emulator.runningNow = { pid: 7, avd: "pixel_8", grpcPort: 8554, token: TOKEN, discovery: "/nonexistent" };
+    grpc.screen = { width: 2400, height: 1080, rotation: 1 };
+    grpc.holdFirstFrame = true;
+    assert.equal(await driver.attach(PIXEL_8, AbortSignal.timeout(5000)), "reattached");
+    const rotating = driver.control({ action: "rotate", to: "upright" }, AbortSignal.timeout(5000), { personHasControl: false });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    grpc.show(grpc.screen);
+    await rotating;
+    const turns = grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.setPhysicalModel);
+    assert.equal(turns.length, 1);
+    assert.equal((await driver.readBack()).geometry?.physical, "upright");
   });
 
   test("the panel's pixels: each way the device is held, and the Pixel Fold's outer screen stretched onto its inner panel", () => {
@@ -908,6 +932,29 @@ describe("the emulator's service", () => {
     assert.deepEqual(await emulator.running(), { pid: 41, avd: "pixel_8", grpcPort: 8554, token: "abc=", discovery: join(running, "pid_41.ini") });
     assert.ok(!existsSync(join(running, "pid_42.ini")));
     assert.equal(discoveryValues("a=b=c\nnone\n").get("a"), "b=c");
+  });
+
+  test("finds an emulator whose discovery file has gone by bb-box's own copy of it, or by its console port without a token, and waits only for one it can reach (F-4)", async () => {
+    const home = tempDir("android-home");
+    const running = join(home, ".android", "avd", "running");
+    mkdirSync(running, { recursive: true });
+    writeFileSync(join(running, "pid_41.ini"), "avd.name=pixel_8\ngrpc.port=8554\ngrpc.token=abc=\nport.serial=5554\n");
+    const qemu = { pid: 41, argv: ["/opt/android-sdk/emulator/qemu/linux-x86_64/qemu-system-x86_64-headless", "-avd", "pixel_8", "-port", "5554", "-grpc", "8554"] };
+    let processes = [{ pid: 7, argv: ["/usr/bin/node", "-avd", "pixel_8", "-port", "5554"] }, qemu];
+    const lines: string[] = [];
+    const emulator = new Emulator({ dir: join(home, ".bb-box", "device"), home, alive: (pid) => pid === 41, manager: async () => "detached", processes: async () => processes, log: (line) => lines.push(line), run: runner({}, []) });
+    assert.equal((await emulator.running())?.token, "abc=");
+    rmSync(join(running, "pid_41.ini"));
+    assert.deepEqual(await emulator.running(), { pid: 41, avd: "pixel_8", grpcPort: 8554, token: "abc=", discovery: null });
+    assert.ok(lines.some((line) => /process 41 without its discovery file; bb-box reaches it by its own copy/.test(line)));
+    rmSync(emulator.keptDiscovery);
+    assert.deepEqual(await emulator.running(), { pid: 41, avd: "pixel_8", grpcPort: 8554, token: null, discovery: null });
+    const said = lines.length;
+    await assert.rejects(emulator.waitRunning("pixel_8", AbortSignal.timeout(300)), (error: unknown) => error instanceof EmulatorRefused);
+    assert.equal(lines.length, said, "waiting for a started emulator reads only discovery files");
+    processes = [];
+    assert.equal(await emulator.running(), null);
+    assert.deepEqual(emulatorOnConsolePort([{ pid: 50, argv: ["emulator", "-avd", "pixel_fold", "-port", "5556"] }]), null);
   });
 
   test("refuses to start without the firewall, and boots cold after an end that saved no snapshot", async () => {

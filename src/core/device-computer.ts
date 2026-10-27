@@ -223,6 +223,7 @@ function failure(answer: Extract<DeviceAnswer, { ok: false }>, what: string): Co
     "bad-value": ["input", "Change what you gave, as the words say."],
     unsupported: ["unsupported", "Use box_run in the box instead."],
     superseded: ["driver", "Try again in a few seconds: another bb-box instance holds the box's device server."],
+    "held-elsewhere": ["refused", "Use computer_screenshot until it ends, then read the elements again."],
   };
   const [code, hint] = hints[answer.error.code] ?? (["driver", "Call box_status to see the device's state, then try again."] as const);
   return new ComputerError(code, answer.error.code === "person-has-control" ? PERSON_HAS_CONTROL_WORDS : `${what}: ${words}`, hint);
