@@ -90,6 +90,7 @@ export function boxSize(box: BoxRecord): BoxSize | null {
 }
 
 function sizeWords(box: BoxRecord): string | null {
+  if (inSlot(box)) return null;
   const size = boxSize(box);
   return size ? describeSize(size) : null;
 }
@@ -108,7 +109,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     backendLabel: box.backendLabel,
     provider: providerFamily(box.backend),
     nature: box.nature,
-    form: boxForm(box.backend),
+    form: inSlot(box) ? null : boxForm(box.backend),
     role: box.role,
     size: sizeWords(box),
     state: box.state,
@@ -564,6 +565,7 @@ function builtOn(build: string | null | undefined): string {
 
 /** What a box is, for its Form line: as its backend said of its machine, else as its backend's form makes it; null when unknown. */
 export function formLine(box: BoxRecord): string | null {
+  if (inSlot(box)) return "a macOS user on a shared iOS host";
   const said = box.guest?.facts?.find((fact) => fact.label === "Form")?.value;
   if (said) return said;
   const mac = box.capabilities.os === "macos";
@@ -597,7 +599,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     `Kind: ${box.kindLabel} (${box.kind}) from ${box.backendLabel}`,
     ...(formLine(box) ? [`Form: ${formLine(box)}`] : []),
     ...(box.kind === "ios" || inSlot(box) ? [`Where: ${placementWords(placementOf(box))}`] : []),
-    ...(sizeWords(box) && !inSlot(box) ? [`Size: ${sizeWords(box)}`] : []),
+    ...(sizeWords(box) ? [`Size: ${sizeWords(box)}`] : []),
     `System: ${capabilities.os} ${capabilities.arch}${capabilities.gpu ? " with a GPU" : ""}${desktopDisplays(capabilities.displays).length ? ", with a desktop" : ""}`,
   ];
   const admin = adminLine(capabilities, box.kind, inSlot(box));

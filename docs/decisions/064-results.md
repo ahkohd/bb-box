@@ -1259,8 +1259,51 @@ On a Linux box:
 
 ### The live check
 
-Waits for the lead's deploy: through production BB, a `macos` box with
-`shared: true` placed in a slot and its words read back, one without it
-waiting for a VM, a release resetting the slot, and the next ios claim on
-that host getting a fresh slot with a device; then the New box form's
-`macos` choice in the production panel at 360 px and by keyboard.
+Through production BB on 27 October 2026, after the lead deployed this unit
+(PR 1178, main 75298f5). Tart hosts only: the pool's Mac slots are not on.
+The Mac is the Tart Mac; its other VM slot held another install's VM
+throughout. Times are box_acquire's own timings; the panel was the owner's
+Helium, in its "var" profile, driven by playwriter in a tab of its own.
+
+| Check | Result |
+| --- | --- |
+| box_list | the `macos` line says what `shared: true` gives, as built |
+| A first `macos` box with `shared: true`, no host running | a new host, slot 1 of 8, ports 20000 to 20099: ready in 52.3 s (host 37.6 s, slot 5.2 s, SSH 0.3 s), a BB machine 8.6 s after |
+| In it, by box_run | user `bbd-i1`, UID 79991, in `_developer`; `BB_PORT_BASE` 20000; `sudo -n` asks for a password; `simctl list devices` lists no device; no device server daemon for the user; home `drwx------`; Xcode 27.0 |
+| A second `macos` box with `shared: true` | the ready spare: slot 2, ready in 9.4 s, a BB machine 6.1 s after |
+| box_status | Where, Root and Desktop lines as built; no Size line |
+| Refusals, each in its words, none naming `dedicated` | box_stop, box_start, box_resize, box_resize with restart, box_grant, box_run with `desktop`, box_record and computer_windows |
+| A size with `shared` | "A shared macos box has no size of its own. Leave shared out for a VM of its own at that size." |
+| A `macos` box without `shared`, on Tart, its two VMs in use | refused: "No Mac can take this macos box: Two macOS VMs already run on mac-1, Apple's limit (...). Release or stop a macOS box, or stop another VM there." and then what `shared: true` gives |
+| The second box released | within 15 s, from the first box: no user `bbd-i2`, no process of UID 79992, no LaunchDaemon for it |
+| The next ios box with `shared: true` on that host | slot 3, user `bbd-1`, UID 80001: a new slot, not `bbd-i2`'s, with its own booted iPhone 18 Pro. Ready in 8.1 s, a BB machine 9.7 s after |
+| The last release | the host deleted: the doctor says "No shared iOS host runs", and the Mac's room is back to 1 of 2 VMs |
+
+The New box form, in the production panel at 360 px wide:
+
+| Check | Result |
+| --- | --- |
+| macOS chosen | the Machine choice under System: Shared and A VM of its own, with their words, wrapped to the width; A VM of its own chosen, Size shown |
+| By keyboard | from A VM of its own, ArrowUp chose Shared and moved the focus and the tab stop to it, and Resources went; ArrowDown went back, and Size came back; Tab left the group for Architecture |
+| Type Desktop | no Machine choice, as `macos-desktop` takes no slot |
+| Create with Shared | a `macos` box in slot 1 of a new host: ready in 80.3 s (host 43.9 s, slot 4.0 s; the timings do not say where the rest went), a BB machine 10.6 s after. Released at once |
+
+### Faults the live check found, and their fixes
+
+| Found | Fix |
+| --- | --- |
+| box_list's line and the panel gave a slot box a size, "6 cores, 16 GiB memory", the kind's default it was asked at; the panel showed a VM badge; box_status's Form line said "a macOS VM". Unit 4's ios slot boxes had the same | in the follow-up commit: a slot box has no size in box_list or the panel and no form badge, and its Form line is "a macOS user on a shared iOS host" |
+
+The fix was checked from a clone of its bundle on main at 75298f5, on a
+Linux box: tsc clean; the reference check passed; the node suite 2,158
+passed, 0 failed, 288 skipped, the docs test among them; vitest 222 passed.
+It is not yet checked in the production panel.
+
+### What limits these checks
+
+- **Tart hosts only.** The pool's Mac slots are not on, so a `macos` box
+  in a pool slot was checked only on the fakes.
+- **Builds were not run in a slot here.** M12 measured a Swift package, an
+  iOS app built for testing and an XCUITest run as a slot's user.
+- **The host's deletion was not timed;** it was gone at the next doctor
+  run, about a minute after the last release.
