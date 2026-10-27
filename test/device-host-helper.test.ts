@@ -125,6 +125,19 @@ test("init keeps the settings the host was made with, and status gives them with
   assert.match(fakeDeviceHost().run(["init"], "colour=blue\n").stderr, /^Unknown input: colour\.\n$/);
 });
 
+test("make gives a slot's home the BB app the slots' home keeps, owned by the slot's user, so its enrolment skips the download (F-7)", () => {
+  const host = fakeDeviceHost();
+  const kept = join(host.data, "usr/local/share/bb-box/slot-home/.bb-machines/bb.example.com");
+  mkdirSync(join(kept, "npm/lib/node_modules/bb-app"), { recursive: true });
+  writeFileSync(join(kept, "npm/lib/node_modules/bb-app/package.json"), '{"name":"bb-app"}\n');
+  writeFileSync(join(kept, "host-artifact.sha256"), `${"b".repeat(64)}\n`);
+  made(host);
+  assert.equal(host.file("/Users/bbd-1/.bb-machines/bb.example.com/host-artifact.sha256"), `${"b".repeat(64)}\n`);
+  assert.equal(host.file("/Users/bbd-1/.bb-machines/bb.example.com/npm/lib/node_modules/bb-app/package.json"), '{"name":"bb-app"}\n');
+  assert.ok(host.lines("owners").includes(`80001 ${host.data}/Users/bbd-1/.bb-machines/bb.example.com/host-artifact.sha256`), "the slot's user owns it");
+  assert.match(host.file("/Users/bbd-1/.zshenv")!, /export BB_PORT_BASE=20000/);
+});
+
 test("make adds a slot as a new user with its own seeded device booted and its device server's daemon loaded", () => {
   const host = fakeDeviceHost();
   const slot = made(host);

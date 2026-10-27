@@ -58,7 +58,11 @@ It clones `bb-box-macos` to `bb-box-ios-build`, boots it, and runs
    the microphone, which is BlackHole in the macOS image, so neither asks;
 5. runs [`host-ios.sh`](host-ios.sh) as root, which installs `device-host`
    and its held ports, keeps each iOS runtime's `disabled.plist` from the
-   image's slim devices, and makes the two carried slots (about 55 s);
+   image's slim devices, puts BB's app from the image user's home in the
+   slots' home with [`keep-bb-app.sh`](keep-bb-app.sh), and makes the two
+   carried slots (about 55 s). Each slot's home is cloned from the slots'
+   home, so a slot's enrolment finds BB's app and skips its download while
+   BB's server has the build the image was made with;
 6. clears the devices' pasteboards, CoreSimulator's logs, Device Hub's
    preferences and idb's state.
 

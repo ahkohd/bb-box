@@ -528,6 +528,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           gone: [`Release it with box_release, then box_acquire another.`],
         };
         const grants = await boxes.grants(box, signal);
+        if (box.state === "ready") await app.devices.freshSettings(box);
         return `${boxDetail(box, app.control(box))}${deviceText(app, box)}${grants ? grantsText(grants) : ""}${next(...(hints[box.state] ?? []))}`;
       } catch (error) {
         return failure(error, "Checking the box");

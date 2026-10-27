@@ -235,3 +235,48 @@ describe("delivering the device server", { skip: process.platform === "win32" },
     await servers.dispose();
   });
 });
+
+test("the doctor looks for Device Hub in every ios box at once, each bounded, and says what it waited on for a box whose shared host does not answer (F-7)", async () => {
+  const offer = { platform: "ios", devices: [{ model: "iPhone 18 Pro", native: "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", runtime: { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" } }] };
+  const slot = (n: number) =>
+    ({
+      id: `bx-slot-${n}`,
+      threadId: "t",
+      name: `slot-box-${n}`,
+      state: "ready",
+      kind: "ios",
+      capabilities: { device: offer, os: "macos" },
+      guest: { ref: `bb-box-host-1/${n}`, host: "mac1", address: null, size: null, data: { box: `bx-slot-${n}`, ...placementData({ on: "slot", host: "bb-box-host-1", hostOn: "tart", carried: false, generation: n, place: n - 1, most: 8 }) } },
+    }) as unknown as BoxRecord;
+  const answering = { ...slot(9), id: "bx-own", name: "own-box", guest: null } as unknown as BoxRecord;
+  const boxes = [slot(1), slot(2), slot(3), slot(4), answering];
+  const servers = new DeviceServers({
+    boxes: {
+      find: async (id) => boxes.find((box) => box.id === id) ?? null,
+      all: async () => boxes,
+      update: async () => null,
+      spawnOwn: async () => assert.fail("no device server is reached"),
+      runOwn: (box) => (box.id === "bx-own" ? Promise.resolve({ exitCode: 0, stdout: "none\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 }) : new Promise<RunResult>(() => {})),
+    },
+    kv: { get: async () => null, set: async () => {}, delete: async () => {} },
+    files: async () => [],
+    personHasControl: () => false,
+    log: () => {},
+    logError: () => {},
+    deviceHubWaitMs: 1_000,
+  });
+  const began = Date.now();
+  const checks = await servers.checks();
+  assert.ok(Date.now() - began < 3_000, `${Date.now() - began} ms for 5 boxes, 4 not answering`);
+  const hub = checks.filter((check) => check.id.startsWith("device-hub."));
+  assert.equal(hub.length, 5);
+  assert.deepEqual(hub.find((check) => check.id === "device-hub.own-box")?.status, "ok");
+  assert.deepEqual(hub.find((check) => check.id === "device-hub.slot-box-2"), {
+    id: "device-hub.slot-box-2",
+    name: "Device Hub in slot-box-2",
+    status: "skipped",
+    detail: "bb-box could not look in box slot-box-2: it waited 1 s for box slot-box-2 to answer a command over SSH as its slot's user on the shared iOS host bb-box-host-1, and stopped waiting.",
+    fix: null,
+  });
+  await servers.dispose();
+});

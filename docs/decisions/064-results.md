@@ -1307,3 +1307,84 @@ It is not yet checked in the production panel.
   iOS app built for testing and an XCUITest run as a slot's user.
 - **The host's deletion was not timed;** it was gone at the next doctor
   run, about a minute after the last release.
+
+## F-7: follow-ups from units 4 and 8, and from 063
+
+Built on 27 October 2026. Device server version 24; the host's helper
+stays at version 3.
+
+### What changed
+
+| Item | Found | Fix |
+| --- | --- | --- |
+| 1, the reload race | A host's start marked it `serving` on the Mac, then gave its helper each waiting box's promise. Between the two, another instance of the same install, as during a reload, saw a serving host whose helper held nothing, and its upkeep vacated and deleted it | The start writes `handing-over=<time>` in the host's owner file under the same lock that marks it `serving`, and removes it once the helper has every promise. No instance's upkeep vacates a host handing over, for 5 minutes at most, so a start that died leaves no host kept for ever |
+| 2, BB's app in the ios image for slots | Each new slot's enrolment downloaded BB's app into an empty home and npm installed it | [`keep-bb-app.sh`](../../setup/tart/ios/keep-bb-app.sh), run by `host-ios.sh`, keeps the image user's BB app, only `npm` and `host-artifact.sha256` of each server BB's installer wrote, in the slots' home. `device-host` clones the slots' home into each new home with `cp -c`, so carried and made slots both have it, and APFS shares its blocks |
+| 3, 32 s missing from a slot box's timings | A slot box's total runs from its record's making. Its placement on a shared host, each lender's offer and the take, which for a new host waits on the Tart backend's placement chain, came before the backend's `host`, `slot` and `ssh` steps and no step counted it | A slot box's timings give it as `shared-host`, "choosing a shared host". A new host's take that waits 2 s or more for the Tart backend's other placements says so in the log. The live check says which part was the 32 s |
+| 4, the doctor past 120 s | Each backend's doctor was already bounded at 30 s. The device servers' section looked for Device Hub in each ios box one after another, each up to 15 s for its command and longer for the box's transports and power when it did not answer. A stopped host's boxes took about 40 s each | The device servers' checks run for every device box at once, and each look for Device Hub gives up after 15 s, saying "it waited 15 s for box ... to answer a command over SSH as its slot's user on the shared iOS host ..., and stopped waiting". The Tart backend's check of shared iOS hosts gives each host 15 s, and says what it waited on: its address from Tart, or its helper's status over SSH |
+| 5, Android's network line | Both reports were true. 063's 6.3 s was a watching viewer's state: the device server reads the settings every 10 s while a viewer wants video, and once as each connection opens. With no viewer, nothing read them, so box_status showed the last read until a box_device action read them again | box_status asks the device server for a `settings` read, which it makes at once, 41 to 82 ms on Android (063), and answers with the state read. bb-box asks only a server of version 24 or later, and waits 3 s at most |
+| 6, switching the model in a slot | Refused, but as "This box has no iPhone 17", while box_list lists the iPhone 17 for ios boxes. A slot has one model, the one every slot is made with; making another in a slot needs the device server to make and seed a device in the slot's user, not a small change | box_device switch to a model the slot lacks is refused before it reaches the device: "A shared ios box has only the iPhone 18 Pro, the model every slot is made with, so it cannot switch to the iPhone 17. Acquire an ios box with dedicated: true for the iPhone 17: a VM of its own, which switches between every model box_list gives." |
+
+### How it was checked, before the live check
+
+On a Linux box:
+
+| Check | Result |
+| --- | --- |
+| 1: two Tart backends of one install on one fake Mac | the first starts a host for a box, held at its promise to the helper; the second's upkeep, run while the host starts and again once it is serving with the promise not yet taken, leaves it; the box then gets its slot; the last release deletes the host. On the code before, the second upkeep deleted the host |
+| 2: `keep-bb-app.sh` on a fake home | the server's `npm`, links kept, and its build, nothing of the user's machine (`auth.json`, `host-id`), no server without a build, and an earlier copy removed; a home with none says so |
+| 2: the helper's `make` on the stub tools | the slot's home has the kept app and build, owned by the slot's user |
+| 3: the registry, on the fake backend lending slots | a slot box's timings have `shared-host`, which its total counts, and box_status gives "choosing a shared host"; a VM of its own has none |
+| 4: five ios boxes, four on a host that does not answer | the device servers' checks in about 1 s with a 1 s bound, each silent box's check saying what it waited on; the Tart backend's check of a host whose helper hangs ends in its bound with "bb-box waited on its helper's status over SSH at ..., through mac1" |
+| 5: the device server | a `settings` request reads the device and answers with a change made outside bb-box, with no viewer |
+| 5: box_status | asks the device server for the read before it answers, and gives the network it read |
+| 6: box_device on a shared ios box | the switch refused in those words; nothing reaches the device |
+| The suite | on origin/main at 7e616a96 with the six commits, on a Linux box: tsc clean; the reference unchanged; the node suite 2,167 passed, 0 failed, 288 skipped, the docs test among them; vitest 222 passed |
+
+### Item 2, measured in a dedicated ios box
+
+In a dedicated ios box at 8 cores and 32 GiB, from the ios image of 27
+October (build 20261027-010302, macOS 27.0, Xcode 27.0, iOS 27.0), as
+root. The image was not rebuilt. A fresh BB, `npx bb-app` with no
+account, ran as the box's own user at 127.0.0.1:4999, its machine access
+direct. For each slot, `bb machine create --provider manual` gave the
+enrolment command, which ran over SSH as the slot's user under
+`env BB_INSTALL_SKIP_SERVICE=1`, as bb-box's enrolment runs it. Times are
+from each installer line's arrival, by `perl`'s `Time::HiRes`.
+
+Before: two slots made by the image's own helper, whose homes have no BB
+app. After: BB's app for the fresh BB put in the image user's home as
+`customize.sh` puts production's, then this branch's `host-ios.sh` run as
+`build-ios.sh` runs it, and two slots made by its helper.
+
+| | Slot | `make` (user step) | The installer | Of it, BB's app |
+| --- | --- | --- | --- | --- |
+| Before | `bbd-3` | 27.8 s (2.2 s) | 5.80 s | downloaded and installed, 3.48 s |
+| Before | `bbd-4` | 25.2 s (2.0 s) | 4.72 s | downloaded and installed, 2.57 s |
+| After | `bbd-5` | 27.2 s (3.0 s) | 2.75 s | "The identical server host artifact is already installed", 0.14 s |
+| After | `bbd-6` | 31.9 s (3.7 s) | 2.64 s | the same, 0.13 s |
+
+- **The installer is 2.1 to 3.2 s shorter,** each daemon connected 1.2 s
+  after it was started either way.
+- **The saving is npm, not the download:** BB's app is 1.4 MB, and
+  production's took 0.03 to 0.04 s to fetch from the box. npm installed it
+  and its dependencies into an empty home in 2.4 to 3.4 s.
+- **The user step is about 1 s longer,** for the clone and its `chown` of
+  about 65 MB a server. `host-ios.sh`'s keep step took about 1 s for two
+  servers.
+- **No more disk:** free disk fell 0.31 and 0.37 GiB a slot, as without
+  the app (unit 3: about 0.4 GiB), as the clones share their blocks.
+- **The rest of 7 to 24 s** to a connected BB machine is elsewhere: 2.6 s
+  of the installer is enrolling and starting the daemon, then the helper's
+  `daemon`, about 1 to 1.4 s (unit 3), and bb-box's wait to see the machine
+  connected.
+
+### What the image rebuild needs
+
+Run `prepare-ios-image.sh` as for any ios image, from a macOS image built
+with `--bb-url` set to BB's server URL, so the image user's home has BB's
+app. Nothing else changes. The build's log then says "kept BB's app for
+<server>, build <digest>"; without it, "kept no BB app", and slots
+download it as before. A slot finds the app only while BB's server has the
+build the macOS image was made with. A newer server build downloads as
+before, so the image is worth rebuilding when BB updates, as the macOS
+image is.

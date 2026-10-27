@@ -163,6 +163,36 @@ describe("the device server", () => {
     await control.close();
   });
 
+  test("a settings request reads the device's settings at once and answers with them, so a change made outside bb-box shows with no viewer watching (F-7)", async () => {
+    class OutsideDriver extends TestDriver {
+      changedOutside = false;
+      seen = false;
+      readonly #told: (() => void)[] = [];
+      onChange(listener: () => void): void {
+        super.onChange(listener);
+        this.#told.push(listener);
+      }
+      async readSettings(): Promise<void> {
+        if (!this.changedOutside || this.seen) return;
+        this.seen = true;
+        for (const listener of this.#told) listener();
+      }
+      async readBack(): Promise<DeviceState> {
+        const state = await super.readBack();
+        return this.seen && state.platform === "android" ? { ...state, settings: { ...state.settings, network: { known: true, value: "offline", at: 1, by: "outside" } } } : state;
+      }
+    }
+    const driver = new OutsideDriver("android");
+    const { open } = await started({ driver, settingsEveryMs: 60_000 });
+    const control = await open("control", { started: 1, instance: "a" });
+    driver.changedOutside = true;
+    const answer = await control.request({ type: "settings" });
+    assert.ok(answer.ok, JSON.stringify(answer));
+    assert.deepEqual(answer.state?.platform === "android" && answer.state.settings.network, { known: true, value: "offline", at: 1, by: "outside" });
+    assert.deepEqual(control.state.platform === "android" && control.state.settings.network, { known: true, value: "offline", at: 1, by: "outside" });
+    await control.close();
+  });
+
   test("a control that fails answers with the state read back after it, not the one before (F-3)", async () => {
     class FailingDriver extends TestDriver {
       failed = false;

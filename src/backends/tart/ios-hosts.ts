@@ -29,6 +29,9 @@ const STATES_REUSED_MS = 15_000;
 const LEAVING_WAIT_MS = 5 * 60_000;
 const ROOM_POLL_MS = 10_000;
 const DELETING_LEFT_MS = 2 * 60_000;
+const HANDING_OVER_MS = 5 * 60_000;
+export const DOCTOR_HOST_MS = 15_000;
+const CHAIN_WAIT_LOGGED_MS = 2_000;
 
 export type HostPhase = "starting" | "serving" | "failed";
 
@@ -42,6 +45,7 @@ export interface HostOwner {
   readonly build: string | null;
   readonly settings: IosHostsConfig;
   readonly failure: string | null;
+  readonly handingOverSince: number | null;
 }
 
 export interface HostsAccess {
@@ -97,6 +101,7 @@ export function readHostOwner(vm: string, mac: TartHost, fields: Readonly<Record
     image: fields.image ?? "",
     build: fields.build || null,
     failure: fields.failed || null,
+    handingOverSince: fields["handing-over"] && /^\d+$/.test(fields["handing-over"]) ? Number(fields["handing-over"]) : null,
     settings: {
       on: true,
       most: wholeOf(fields.most, defaults.most),
@@ -145,6 +150,25 @@ left=$(printf '%s\n' $(value promised) | grep -vxF "$box" | grep . | tr '\n' ' '
 rewrite promised "$(echo $left)"
 echo "state=$(value host-state)"
 echo "left=$(echo $left)"
+`);
+}
+
+export function hostServingScript(vm: string, installId: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
+${OWNER_LOCK}
+mine_host ${quote(installId)} || { echo gone; exit 0; }
+rewrite handing-over "$(date +%s)"
+rewrite host-state serving
+echo "promised=$(value promised)"
+`);
+}
+
+export function hostHandedOverScript(vm: string, installId: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
+${OWNER_LOCK}
+mine_host ${quote(installId)} || { echo gone; exit 0; }
+grep -v '^handing-over=' "$f" > "$f.new" && mv -f "$f.new" "$f"
+echo handed
 `);
 }
 
@@ -214,10 +238,12 @@ export class IosHosts implements SlotLender {
   readonly #acquiring = new Map<string, number>();
   readonly #acquiringBoxes = new Set<string>();
   readonly #stopping = new AbortController();
+  readonly #doctorHostMs: number;
   #lock: Promise<unknown> = Promise.resolve();
 
-  constructor(access: HostsAccess) {
+  constructor(access: HostsAccess, doctorHostMs = DOCTOR_HOST_MS) {
     this.#access = access;
+    this.#doctorHostMs = doctorHostMs;
   }
 
   get #settings(): IosHostsConfig {
@@ -272,18 +298,30 @@ export class IosHosts implements SlotLender {
     return !!state && !(state instanceof Error) && state.vms.some((each) => each.name === vm && each.running);
   }
 
-  async #survey(states: ReadonlyMap<string, HostState | Error>, signal?: AbortSignal): Promise<Surveyed[]> {
+  async #survey(states: ReadonlyMap<string, HostState | Error>, signal?: AbortSignal, boundMs: number | null = null): Promise<Surveyed[]> {
     return Promise.all(
       this.#owners(states).map(async (owner): Promise<Surveyed> => {
         const running = this.#running(states.get(owner.mac.name), owner.vm);
         if (owner.phase !== "serving" || !running) return { owner, running, address: null, status: null, why: null };
-        try {
+        let waitingOn = `its address from Tart on ${owner.mac.name}`;
+        const bound = boundMs === null ? null : new AbortController();
+        const timer = bound && setTimeout(() => bound.abort(), boundMs!);
+        const hostSignal = bound ? (signal ? AbortSignal.any([signal, bound.signal]) : bound.signal) : signal;
+        const look = async (): Promise<Surveyed> => {
           const address = await this.#access.address(owner.mac, owner.vm);
           if (!address) return { owner, running, address: null, status: null, why: `The shared iOS host ${owner.vm} on ${owner.mac.name} has no address.` };
-          const status = await this.#status(await this.#access.vmCommand(owner.mac, address), signal);
+          waitingOn = `its helper's status over SSH at ${address}, through ${owner.mac.name}`;
+          const status = await this.#status(await this.#access.vmCommand(owner.mac, address), hostSignal);
           return { owner, running, address, status, why: null };
+        };
+        const gaveUp = bound && new Promise<never>((_, reject) => bound.signal.addEventListener("abort", () => reject(new Error("bounded")), { once: true }));
+        try {
+          return await (gaveUp ? Promise.race([look(), gaveUp]) : look());
         } catch (error) {
+          if (bound?.signal.aborted) return { owner, running, address: null, status: null, why: `The shared iOS host ${owner.vm} on ${owner.mac.name} did not answer within ${Math.round(boundMs! / 1000)} s: bb-box waited on ${waitingOn}.` };
           return { owner, running, address: null, status: null, why: `The shared iOS host ${owner.vm} on ${owner.mac.name} did not answer: ${error instanceof Error ? error.message : String(error)}` };
+        } finally {
+          if (timer) clearTimeout(timer);
         }
       }),
     );
@@ -473,7 +511,10 @@ export class IosHosts implements SlotLender {
     if (!mac) return { lost: `There is no Mac ${macName} in bb-box's Tart settings.` };
     const settings = this.#settings;
     const image = this.#access.config().iosImage!;
+    const asked = performance.now();
     return this.#access.placement(async (): Promise<SlotTaken> => {
+      const queued = performance.now() - asked;
+      if (queued >= CHAIN_WAIT_LOGGED_MS) this.#access.log(`A new shared iOS host for box ${box.name} waited ${(queued / 1000).toFixed(1)} s for the Tart backend's other placements.`);
       const states = await this.#readStates(signal);
       const leaving = this.#leavingOf(await this.#survey(states, signal));
       const why = this.#newHostWhy(mac, states, this.#owners(states), leaving);
@@ -546,12 +587,13 @@ export class IosHosts implements SlotLender {
       );
       if (init.exitCode !== DEVICE_HOST_EXITS.done) throw new Error(`Its helper's init failed: ${init.stderr.trim() || `exit code ${init.exitCode}`}`);
       const promised = await this.#serial(async () => {
-        const said = parseFields((await this.#access.run(mac, hostPhaseScript(vm, this.#access.installId, "serving"), { signal })).stdout);
+        const said = parseFields((await this.#access.run(mac, hostServingScript(vm, this.#access.installId), { signal })).stdout);
         const boxes = (said.promised ?? "").split(/\s+/).filter(Boolean);
         for (const box of boxes) {
           const result = await this.#helper(command, "promise", [], claimantInput({ install: this.#access.installId, box }), 90_000, signal);
           if (result.exitCode !== DEVICE_HOST_EXITS.done) this.#access.log(`Shared iOS host ${vm} did not take the promise for box ${box}: ${result.stderr.trim()}`);
         }
+        await this.#access.run(mac, hostHandedOverScript(vm, this.#access.installId), { signal });
         return boxes;
       });
       this.#access.log(`Shared iOS host ${vm} on ${mac.name} serves, ${((performance.now() - began) / 1000).toFixed(1)} s after its start (its VM ${((booted - began) / 1000).toFixed(1)} s), for ${promised.length} boxes.`);
@@ -851,7 +893,7 @@ export class IosHosts implements SlotLender {
           if (!this.#releasing.has(vm) && now - status.deletingSince * 1000 >= DELETING_LEFT_MS) await this.#deleteHost(mac, vm, signal);
           continue;
         }
-        if (this.#acquiring.has(vm)) continue;
+        if (this.#acquiring.has(vm) || this.#handingOver(owner, now)) continue;
         const kept = status.slots.some((slot) => slot.is === "held" || (slot.is === "making" && slot.madeFor !== null)) || status.promises.length > 0;
         if (!kept) await this.#serial(async () => (this.#acquiring.has(vm) ? false : this.#vacate(mac, vm, await this.#access.vmCommand(mac, address), signal)));
       } catch (error) {
@@ -860,9 +902,13 @@ export class IosHosts implements SlotLender {
     }
   }
 
+  #handingOver(owner: HostOwner, now: number): boolean {
+    return owner.handingOverSince !== null && now - owner.handingOverSince * 1000 < HANDING_OVER_MS;
+  }
+
   async doctor(states: ReadonlyMap<string, HostState | Error>, signal?: AbortSignal): Promise<DoctorCheck[]> {
     if (!this.#settings.on) return [];
-    const surveyed = await this.#survey(states, signal);
+    const surveyed = await this.#survey(states, signal, this.#doctorHostMs);
     return this.#access.macs().map((mac): DoctorCheck => {
       const here = surveyed.filter((each) => each.owner.mac.name === mac.name);
       if (!here.length) {

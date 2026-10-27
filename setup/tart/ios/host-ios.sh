@@ -26,6 +26,10 @@ install -m 0644 "$here/device-host-ports.pl" "$libexec/device-host-ports"
 install -m 0644 "$template" "$share/slot-home/.zshenv"
 install -m 0644 "$here/devices.tsv" "$share/ios/devices.tsv"
 
+step "keeping BB's app from $owner's home in the slots' home, so a slot enrols without downloading it"
+owner_home=$(dscl . -read "/Users/$owner" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p')
+/bin/sh "$here/keep-bb-app.sh" "${owner_home:-/Users/$owner}" "$share/slot-home" >&2
+
 step "keeping each iOS runtime's disabled.plist from $owner's slim devices"
 tab=$(printf '\t')
 runtimes=$(mktemp)

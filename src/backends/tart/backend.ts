@@ -300,6 +300,7 @@ export interface TartBackendOptions {
   readonly windowsShutdownWaitS?: number;
   /** How long fills wait after a box is ready, instead of FILL_QUIET_MS: none, in tests. */
   readonly fillQuietMs?: number;
+  readonly iosHostDoctorMs?: number;
 }
 
 interface SshKeys {
@@ -880,7 +881,7 @@ export class TartBackend implements Backend {
       logError: (operation, error) => this.#context.logError(operation, error),
       log: (message) => this.#context.log?.(message),
       ...(this.#options.sleep ? { sleep: this.#options.sleep } : {}),
-    });
+    }, this.#options.iosHostDoctorMs);
   }
 
   #hostRoom(host: TartHost, state: MacState | Error, settings: IosHostsConfig, leaving: ReadonlySet<string>): string | null {

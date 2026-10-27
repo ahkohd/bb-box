@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { TartBackend } from "../src/backends/tart/backend.ts";
+import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { HOST_VM_PREFIX, slotRefOf } from "../src/backends/tart/ios-hosts.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
 import type { AcquireHooks, BoxIdentity, Guest, ReleaseHooks } from "../src/backends/types.ts";
@@ -19,10 +19,10 @@ afterEach(async () => {
   for (const backend of made.splice(0)) await backend.dispose();
 });
 
-function setup(values: Record<string, unknown> = {}) {
+function setup(values: Record<string, unknown> = {}, options: TartBackendOptions = {}) {
   const world = fakeIosHostMac();
   const context = testContext(new MemoryStorage());
-  const backend = new TartBackend(tartConfig({ ...IOS_HOST_SETTINGS, ...values }), context, IOS_HOST_FAKES);
+  const backend = new TartBackend(tartConfig({ ...IOS_HOST_SETTINGS, ...values }), context, { ...IOS_HOST_FAKES, ...options });
   made.push(backend);
   return { ...world, context, backend };
 }
@@ -209,4 +209,57 @@ test("the upkeep finishes a host its helper marked deleting long ago, as when th
   marked(600);
   await backend.maintain(signal());
   assert.deepEqual(hosts(), [], "marked 10 minutes ago, with no release running here");
+});
+
+async function until(met: () => boolean, words: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (!met()) {
+    if (Date.now() > deadline) assert.fail(`never: ${words}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+test("another instance of the same install never vacates a host this one is starting, nor one serving whose boxes' promises its helper has not taken yet, as during a reload (F-7)", async () => {
+  const { backend, hosts, ssh, mac } = setup();
+  const other = new TartBackend(tartConfig(IOS_HOST_SETTINGS), testContext(new MemoryStorage()), IOS_HOST_FAKES);
+  made.push(other);
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const vm = slotRefOf(guest)!.vm;
+  const owner = () => readFileSync(join(mac, ".bb-box", "tart", "owners", vm), "utf8");
+  const hold = join(ssh.home("192.168.64.2"), "hold-promise");
+  writeFileSync(hold, "");
+  const acquired = backend.acquire(box, guest, hooks().hooks, signal());
+  await other.maintain(signal());
+  assert.equal(hosts().length, 1, "a starting host stays");
+  await until(() => /^host-state=serving$/m.test(owner()) && existsSync(join(ssh.home("192.168.64.2"), "promise-held")), "the host serves and gives its helper the box's promise");
+  await other.maintain(signal());
+  assert.equal(hosts().length, 1, "a serving host whose helper has not taken its box's promise yet stays");
+  rmSync(hold);
+  const slot = await acquired;
+  assert.equal(placementOf({ guest: slot }).on, "slot");
+  await other.maintain(signal());
+  assert.equal(hosts().length, 1, "a host holding a box stays");
+  await backend.release(slot, releasing, signal());
+  assert.deepEqual(hosts(), []);
+});
+
+test("the doctor bounds each shared host's check, and says what it waited on for a host that does not answer (F-7)", async () => {
+  const { backend, ssh } = setup({}, { iosHostDoctorMs: 1_000 });
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const slot = await backend.acquire(box, guest, hooks().hooks, signal());
+  const hold = join(ssh.home("192.168.64.2"), "hold-status");
+  writeFileSync(hold, "");
+  try {
+    const began = Date.now();
+    const doctor = await backend.doctor(signal());
+    assert.ok(Date.now() - began < 10_000, `${Date.now() - began} ms`);
+    const check = doctor.checks.find((each) => each.id === "ios-hosts.mac1");
+    assert.equal(check?.status, "warn");
+    assert.match(check?.detail ?? "", /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not answer within 1 s: bb-box waited on its helper's status over SSH at 192\.168\.64\.2, through mac1\. /);
+  } finally {
+    rmSync(hold);
+  }
+  await backend.release(slot, releasing, signal());
 });
