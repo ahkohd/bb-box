@@ -61,6 +61,7 @@ import {
   inSlot,
   isSlotKind,
   lostWords,
+  placedOnSharedHost,
   noDesktopRefusal,
   resizeRefusal,
   restartRefusal,
@@ -73,6 +74,7 @@ import {
   sizeRefusal,
   slotCapabilities,
   stopRefusal,
+  takenOnSharedHost,
   TAKE_TRIES,
   waitWords,
   type LenderAnswer,
@@ -908,7 +910,7 @@ export class Boxes {
       const best = bestAnswer(answers);
       if (!best || best.tier.tier === "wait" || best.tier.tier === "own-vm") throw new BoxError("no_capacity", waitWords(answers));
       const taken = await best.lender.backend.slots!.take(best.tier, box, signal);
-      if (!("lost" in taken)) return { chosen: best.lender, guest: taken };
+      if (!("lost" in taken)) return { chosen: best.lender, guest: takenOnSharedHost(taken) };
       lost.push(taken.lost);
       this.#deps.log?.(`A slot for box ${box.name} was lost to another box (${taken.lost}); asking again.`);
     }
@@ -1781,6 +1783,7 @@ export class Boxes {
     } catch (error) {
       // The backend released whatever it claimed before it threw.
       const next = await this.update(box, (current) => {
+        if (this.#disposed && current.state !== "releasing" && placedOnSharedHost(current)) return {};
         if (current.state === "releasing" || this.#disposed) return { guest: null };
         return { state: "failed", guest: null, error: describeError(error, "Acquiring the box"), timings: { ...timings }, waitingOn: null };
       });

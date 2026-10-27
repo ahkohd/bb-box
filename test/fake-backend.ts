@@ -24,7 +24,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { KvPoolStore, ReadyPool, type PoolMachine } from "../src/backends/pool.ts";
-import { placementData, placementOf, type SlotKind, type SlotLender, type SlotPlacement } from "../src/core/device-host.ts";
+import { placementData, placementOf, placedOnSharedHost, type SlotKind, type SlotLender, type SlotPlacement } from "../src/core/device-host.ts";
 import { emptyDesktop } from "./fake-cua.ts";
 import { FakeRfb } from "./fake-rfb.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
@@ -464,7 +464,7 @@ export class FakeBackend implements Backend {
     } catch (error) {
       // Counted as pending in full again before its guest goes, so never not at all.
       this.#holding.delete(box.boxId);
-      if (guest) await this.#discard(guest, null);
+      if (guest && !(signal.aborted && placedOnSharedHost({ guest }))) await this.#discard(guest, null);
       throw error;
     } finally {
       this.#holding.delete(box.boxId);

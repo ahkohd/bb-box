@@ -263,3 +263,27 @@ test("the doctor bounds each shared host's check, and says what it waited on for
   }
   await backend.release(slot, releasing, signal());
 });
+
+test("a box waiting for a host that one instance was starting as it stopped, as at a reload, is placed on that host by the next instance, which carries the start on; the stopped instance neither fails nor deletes the host (F-7)", async () => {
+  const { backend, hosts, clones, ssh, mac } = setup();
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const vm = slotRefOf(guest)!.vm;
+  const hold = join(ssh.home("192.168.64.2"), "hold-init");
+  writeFileSync(hold, "");
+  const first = backend.acquire(box, guest, hooks().hooks, AbortSignal.timeout(60_000)).catch((error: unknown) => error);
+  await until(() => existsSync(join(ssh.home("192.168.64.2"), "init-held")), "the host's start reaches its helper's init");
+  await backend.dispose();
+  rmSync(hold);
+  await first;
+  assert.doesNotMatch(readFileSync(join(mac, ".bb-box", "tart", "owners", vm), "utf8"), /^host-state=failed$/m, "the stopped instance did not fail the host");
+  assert.equal(hosts().length, 1, "nor delete it");
+  const next = new TartBackend(tartConfig(IOS_HOST_SETTINGS), testContext(new MemoryStorage()), IOS_HOST_FAKES);
+  made.push(next);
+  const slot = await next.acquire(box, guest, hooks().hooks, signal());
+  assert.equal(placementOf({ guest: slot }).on, "slot");
+  assert.equal(slotRefOf(slot)!.vm, vm);
+  assert.equal(clones().length, 1, "one host");
+  await next.release(slot, releasing, signal());
+  assert.deepEqual(hosts(), []);
+});

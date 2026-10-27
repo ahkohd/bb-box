@@ -403,6 +403,16 @@ export function inSlot(box: { readonly guest: Guest | null }): boolean {
   return placementOf(box).on === "slot";
 }
 
+export const TAKEN_ON_SHARED_HOST = "takenOnSharedHost";
+
+export function takenOnSharedHost(guest: Guest): Guest {
+  return { ...guest, data: { ...guest.data, [TAKEN_ON_SHARED_HOST]: true } };
+}
+
+export function placedOnSharedHost(box: { readonly guest: Guest | null }): boolean {
+  return inSlot(box) || box.guest?.data?.[TAKEN_ON_SHARED_HOST] === true;
+}
+
 export function slotCapabilities(offer: KindCapabilities): KindCapabilities {
   return {
     ...offer,
