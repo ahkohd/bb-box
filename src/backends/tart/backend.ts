@@ -856,7 +856,7 @@ export class TartBackend implements Backend {
       macs: () => this.#on(),
       mac: (name) => this.#hostNamed(name),
       states: (signal) => this.#states(signal),
-      hostRoom: (host, state, settings) => this.#hostRoom(host, state as MacState | Error, settings),
+      hostRoom: (host, state, settings, leaving) => this.#hostRoom(host, state as MacState | Error, settings, leaving),
       placement: (task) => this.#chain(task),
       placing: (host, vm, memoryMiB) => {
         this.#placing.set(vm, { host: host.name, vm, memoryMiB, macos: true });
@@ -883,9 +883,9 @@ export class TartBackend implements Backend {
     });
   }
 
-  #hostRoom(host: TartHost, state: MacState | Error, settings: IosHostsConfig): string | null {
+  #hostRoom(host: TartHost, state: MacState | Error, settings: IosHostsConfig, leaving: ReadonlySet<string>): string | null {
     const size: BoxSize = { cores: settings.cores, memoryMiB: settings.memoryGiB * MiB_PER_GiB, diskGiB: null };
-    return this.#room(host, state, size, NONE_UNPLACED, new Set(), "macos").why;
+    return this.#room(host, state, size, NONE_UNPLACED, leaving, "macos").why;
   }
 
   async #bootHost(host: TartHost, vm: string, size: { readonly cores: number; readonly memoryMiB: number } | null, deadline: number, signal?: AbortSignal): Promise<string> {

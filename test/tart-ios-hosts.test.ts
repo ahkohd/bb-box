@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { TartBackend } from "../src/backends/tart/backend.ts";
@@ -171,4 +171,27 @@ test("the upkeep deletes a host that holds no box, and the doctor lists each hos
   assert.equal(hosts().length, 1, "a host with a box stays");
   await backend.release(slot, releasing, signal());
   assert.deepEqual(hosts(), []);
+});
+
+test("a host whose last release is deleting it gives its VM slot to a new host at once, so a claim that lost the race is placed again (064)", async () => {
+  const { backend, device } = setup({ "tart-vms-per-host": 1 });
+  const box = identity();
+  const { guest } = await place(backend, box);
+  await backend.acquire(box, guest, hooks().hooks, signal());
+  const full = await backend.slots!.offer("ios", null, signal());
+  assert.equal(full.tier, "ready");
+  writeFileSync(join(device.root, "var/db/bb-box/host/deleting"), `since=${Math.floor(Date.now() / 1000)}\nslot=i1\nbox=${box.boxId}\n`);
+  const after = await backend.slots!.offer("ios", null, signal());
+  assert.deepEqual(after, { tier: "new-host", where: "mac1", waitMs: 55_000, cost: "vm-slot" }, "the deleting host's VM counts as leaving the Mac");
+});
+
+test("a new host whose Mac has no VM slot free when it starts waits for one, and its box is placed once it frees (064)", async () => {
+  const { backend, mac, context } = setup();
+  const box = identity();
+  const { guest } = await place(backend, box);
+  writeFileSync(join(mac, ".fake-other-macos-vms"), "2");
+  setTimeout(() => writeFileSync(join(mac, ".fake-other-macos-vms"), "0"), 1500);
+  const placed = await backend.acquire(box, guest, hooks().hooks, signal());
+  assert.equal(placementOf({ guest: placed }).on, "slot");
+  assert.ok(context.logs.some((line) => /waits for room on mac1/.test(line)), context.logs.join("\n"));
 });

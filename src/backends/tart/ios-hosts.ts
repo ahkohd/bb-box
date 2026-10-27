@@ -26,6 +26,8 @@ const MEMORY_FREE_LEAST = 15;
 const HELPER_SOURCE = "tart/ios/device-host.sh";
 const POLL_MS = 1_000;
 const STATES_REUSED_MS = 15_000;
+const LEAVING_WAIT_MS = 5 * 60_000;
+const ROOM_POLL_MS = 10_000;
 
 export type HostPhase = "starting" | "serving" | "failed";
 
@@ -47,7 +49,7 @@ export interface HostsAccess {
   macs(): readonly TartHost[];
   mac(name: string | null): TartHost | null;
   states(signal?: AbortSignal): Promise<ReadonlyMap<string, HostState | Error>>;
-  hostRoom(mac: TartHost, state: HostState | Error, settings: IosHostsConfig): string | null;
+  hostRoom(mac: TartHost, state: HostState | Error, settings: IosHostsConfig, leaving: ReadonlySet<string>): string | null;
   placement<T>(task: () => Promise<T>): Promise<T>;
   placing(mac: TartHost, vm: string, memoryMiB: number): () => void;
   run(mac: TartHost, body: string, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<RunResult>;
@@ -204,6 +206,7 @@ export class IosHosts implements SlotLender {
   readonly #access: HostsAccess;
   readonly #starts = new Map<string, Promise<void>>();
   readonly #boots = new Map<string, Promise<void>>();
+  readonly #deletions = new Map<string, Promise<void>>();
   #hostsSeen = false;
   #lastStates: { readonly at: number; readonly states: ReadonlyMap<string, HostState | Error> } | null = null;
   readonly #acquiring = new Map<string, number>();
@@ -300,14 +303,28 @@ export class IosHosts implements SlotLender {
     return null;
   }
 
-  #newHostWhy(mac: TartHost, states: ReadonlyMap<string, HostState | Error>, owners: readonly HostOwner[]): string | null {
+  #newHostWhy(mac: TartHost, states: ReadonlyMap<string, HostState | Error>, owners: readonly HostOwner[], leaving: ReadonlySet<string> = new Set()): string | null {
     const state = states.get(mac.name);
     if (!state || state instanceof Error) return `${mac.name} did not answer${state ? `: ${state.message}` : ""}`;
     const image = this.#access.config().iosImage;
     if (!image || !state.vms.some((vm) => vm.name === image)) return `${mac.name} has no iOS image ${image ?? ""}`;
-    const here = owners.filter((owner) => owner.mac.name === mac.name && owner.phase !== "failed").length;
+    const here = owners.filter((owner) => owner.mac.name === mac.name && owner.phase !== "failed" && !leaving.has(owner.vm)).length;
     if (here >= this.#settings.perMac) return `${mac.name} runs ${here === 1 ? "a shared iOS host" : `${here} shared iOS hosts`} already, as many as it may (${this.#settings.perMac})`;
-    return this.#access.hostRoom(mac, state, this.#settings);
+    return this.#access.hostRoom(mac, state, this.#settings, leaving);
+  }
+
+  #leavingOf(surveyed: readonly Surveyed[]): Set<string> {
+    return new Set([...this.#deletions.keys(), ...surveyed.flatMap(({ owner, status }) => (status?.deletingSince != null ? [owner.vm] : []))]);
+  }
+
+  async #gone(mac: TartHost, leaving: ReadonlySet<string>, signal: AbortSignal): Promise<void> {
+    const deadline = Date.now() + LEAVING_WAIT_MS;
+    while (leaving.size && Date.now() < deadline) {
+      const states = await this.#readStates(signal);
+      const state = states.get(mac.name);
+      if (state && !(state instanceof Error) && !state.vms.some((vm) => leaving.has(vm.name) && vm.running)) return;
+      await this.#sleep(POLL_MS * 2, signal);
+    }
   }
 
   async offer(kind: SlotKind, model: string | null, signal: AbortSignal): Promise<SlotTier> {
@@ -318,6 +335,7 @@ export class IosHosts implements SlotLender {
     if (model && slotModel && model !== slotModel) return { tier: "wait", words: slotModelRefusal(slotModel, model) };
     const surveyed = await this.#survey(states, signal);
     const owners = surveyed.map((each) => each.owner);
+    const leaving = this.#leavingOf(surveyed);
     const tiers: SlotTier[] = [];
     const words: string[] = [];
     const now = Date.now();
@@ -335,7 +353,7 @@ export class IosHosts implements SlotLender {
       }
       if (!status || status.deletingSince !== null) continue;
       const draining = owner.build !== null && owner.build !== this.#currentBuild(states.get(owner.mac.name));
-      if (draining && this.#newHostWhy(owner.mac, states, owners.filter((other) => other.vm !== owner.vm)) === null) continue;
+      if (draining && this.#newHostWhy(owner.mac, states, owners.filter((other) => other.vm !== owner.vm), leaving) === null) continue;
       if (status.slots.some((slot) => readyFor(slot, null, this.#acquiringBoxes))) {
         tiers.push({ tier: "ready", host: owner.vm, waitMs: CLAIM_WAIT_MS });
         continue;
@@ -346,7 +364,7 @@ export class IosHosts implements SlotLender {
       else words.push(full ?? `The shared iOS host ${owner.vm} on ${owner.mac.name} is on an older build of the iOS image, so it makes no new slot.`);
     }
     for (const mac of this.#access.macs()) {
-      const why = this.#newHostWhy(mac, states, owners);
+      const why = this.#newHostWhy(mac, states, owners, leaving);
       if (why === null) tiers.push({ tier: "new-host", where: mac.name, waitMs: HOST_STARTING_MS, cost: "vm-slot" });
       else words.push(`No shared iOS host can start on ${mac.name}: ${why}.`);
     }
@@ -455,8 +473,9 @@ export class IosHosts implements SlotLender {
     const settings = this.#settings;
     const image = this.#access.config().iosImage!;
     return this.#access.placement(async (): Promise<SlotTaken> => {
-      const states = await this.#access.states(signal);
-      const why = this.#newHostWhy(mac, states, this.#owners(states));
+      const states = await this.#readStates(signal);
+      const leaving = this.#leavingOf(await this.#survey(states, signal));
+      const why = this.#newHostWhy(mac, states, this.#owners(states), leaving);
       if (why) return { lost: `No shared iOS host can start on ${mac.name} now: ${why}.` };
       const vm = `${HOST_VM_PREFIX}${randomBytes(5).toString("hex")}`;
       const owner = ownerText({
@@ -477,7 +496,7 @@ export class IosHosts implements SlotLender {
       const claimed = (await this.#access.run(mac, claimScript(vm, owner), { signal })).stdout.trim();
       if (claimed !== "claimed") return { lost: `The name ${vm} was taken on ${mac.name}.` };
       const unplace = this.#access.placing(mac, vm, settings.memoryGiB * 1024);
-      void this.#start(mac, vm).finally(unplace).catch(() => undefined);
+      void this.#start(mac, vm, leaving).finally(unplace).catch(() => undefined);
       this.#access.log(`Starting shared iOS host ${vm} on ${mac.name} for box ${box.name}.`);
       return this.#promiseGuest(mac, vm, box.boxId);
     });
@@ -495,23 +514,24 @@ export class IosHosts implements SlotLender {
     return boot;
   }
 
-  #start(mac: TartHost, vm: string): Promise<void> {
+  #start(mac: TartHost, vm: string, leaving: ReadonlySet<string> = new Set()): Promise<void> {
     const running = this.#starts.get(vm);
     if (running) return running;
-    const started = this.#startHost(mac, vm).finally(() => this.#starts.delete(vm));
+    const started = this.#startHost(mac, vm, leaving).finally(() => this.#starts.delete(vm));
     this.#starts.set(vm, started);
     started.catch((error) => this.#access.logError(`start shared iOS host ${vm}`, error));
     return started;
   }
 
-  async #startHost(mac: TartHost, vm: string): Promise<void> {
+  async #startHost(mac: TartHost, vm: string, leaving: ReadonlySet<string>): Promise<void> {
     const signal = this.#stopping.signal;
     const began = performance.now();
     const { owner: found } = await this.#ownerOf(vm, signal);
     if (!found) throw new Error(`The shared iOS host ${vm} on ${mac.name} has no owner file.`);
     const owner = found;
     try {
-      const address = await this.#access.boot(mac, vm, { cores: owner.settings.cores, memoryMiB: owner.settings.memoryGiB * 1024 }, Date.now() + HOST_READY_MS, signal);
+      await this.#gone(mac, leaving, signal);
+      const address = await this.#bootWhenRoom(mac, vm, owner.settings, signal);
       const booted = performance.now();
       const command = await this.#access.vmCommand(mac, address);
       await this.#installHelper(command, signal);
@@ -543,6 +563,19 @@ export class IosHosts implements SlotLender {
     }
   }
 
+  async #bootWhenRoom(mac: TartHost, vm: string, settings: IosHostsConfig, signal: AbortSignal): Promise<string> {
+    const deadline = Date.now() + HOST_READY_MS;
+    for (;;) {
+      try {
+        return await this.#access.boot(mac, vm, { cores: settings.cores, memoryMiB: settings.memoryGiB * 1024 }, deadline, signal);
+      } catch (error) {
+        if (!(error instanceof BackendError) || error.code !== "no_capacity" || Date.now() + ROOM_POLL_MS > deadline) throw error;
+        this.#access.log(`Shared iOS host ${vm} waits for room on ${mac.name}: ${error.message}`);
+        await this.#sleep(ROOM_POLL_MS, signal);
+      }
+    }
+  }
+
   async #installHelper(command: SshTransport, signal?: AbortSignal): Promise<void> {
     const source = readFileSync(join(setupDir(), HELPER_SOURCE));
     const result = await command.run(helperInstallCommand(), { stdin: source, timeoutMs: 60_000, signal });
@@ -558,7 +591,13 @@ export class IosHosts implements SlotLender {
 
   async #deleteHost(mac: TartHost, vm: string, signal?: AbortSignal): Promise<void> {
     const began = performance.now();
-    await this.#access.deleteVm(mac, vm, signal);
+    const deletion = this.#access.deleteVm(mac, vm, signal);
+    this.#deletions.set(vm, deletion);
+    try {
+      await deletion;
+    } finally {
+      this.#deletions.delete(vm);
+    }
     this.#access.log(`Deleted shared iOS host ${vm} on ${mac.name}, as its last box went, in ${((performance.now() - began) / 1000).toFixed(1)} s.`);
   }
 
