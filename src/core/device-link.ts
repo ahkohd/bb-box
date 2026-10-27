@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { ByteChannel } from "../transports/types.ts";
-import type { DeviceAnswer, DeviceHello, DeviceRequest, DeviceState } from "./device.ts";
+import type { DeviceAnswer, DeviceHello, DeviceRequest, DeviceState, VideoReport } from "./device.ts";
 import { deviceRequestText, parseDeviceServerMessage } from "./device-parse.ts";
 import { BoxWebSocket, type Message } from "./websocket.ts";
 
@@ -16,6 +16,7 @@ export interface DeviceLinkOptions {
   readonly helloWaitMs?: number;
   readonly signal?: AbortSignal;
   readonly onState?: (state: DeviceState) => void;
+  readonly onVideo?: (video: VideoReport) => void;
   readonly onFrame?: (frame: Uint8Array) => void;
   readonly onText?: (text: string) => void;
   readonly onClosed?: (why: { readonly superseded: boolean; readonly words: string }) => void;
@@ -40,6 +41,7 @@ export class DeviceLink {
   readonly #options: DeviceLinkOptions;
   readonly #waiting = new Map<string, { resolve(answer: DeviceAnswer): void; reject(error: Error): void }>();
   #state: DeviceState;
+  #video: VideoReport | null = null;
   #closed = false;
 
   private constructor(socket: BoxWebSocket, hello: DeviceHello, options: DeviceLinkOptions) {
@@ -85,6 +87,10 @@ export class DeviceLink {
     return this.#state;
   }
 
+  get video(): VideoReport | null {
+    return this.#video;
+  }
+
   get closed(): boolean {
     return this.#closed;
   }
@@ -115,6 +121,9 @@ export class DeviceLink {
           const waiter = this.#waiting.get(value.answer.id);
           this.#waiting.delete(value.answer.id);
           waiter?.resolve(value.answer);
+        } else if (value.verb === "BB_DEVICE_VIDEO") {
+          this.#video = value.video;
+          this.#options.onVideo?.(value.video);
         } else this.#options.onText?.(message);
       }
       const closed = this.#socket.closedWith;

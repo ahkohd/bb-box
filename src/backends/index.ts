@@ -15,7 +15,8 @@ import { sshPoolDriver } from "./ssh-pool/index.ts";
 import { tartDriver } from "./tart/index.ts";
 import { GENERAL_DEFAULTS, backendPart, kindOn, sizeChanges, type BackendConfig, type ConfigDocument, type Problem, type Secrets } from "../core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../core/sizes.ts";
-import type { Backend, BackendContext, BackendDriver, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall, WithheldKind } from "./types.ts";
+import { encoderKey } from "../core/encoder-ledger.ts";
+import type { Backend, BackendContext, BackendDriver, EncoderAccess, BackendStorage, BoxKind, DoctorCheck, BoxForm, MachineAccess, WarmShortfall, WithheldKind } from "./types.ts";
 import { DEVICE_DISPLAY, desktopDisplays } from "./types.ts";
 import type { ImageFacts } from "./images.ts";
 import { WarmShortfalls } from "./warm.ts";
@@ -233,6 +234,11 @@ interface Entry {
   readonly backend: Backend;
 }
 
+export interface KeyedEncoderAccess {
+  load(key: string): number;
+  vmStarting(key: string, place: { readonly label: string; readonly chip: string | null }): void;
+}
+
 export class Backends {
   readonly #drivers: readonly BackendDriver<any>[];
   readonly #storage: BackendStorage;
@@ -251,6 +257,7 @@ export class Backends {
   readonly #images: ImageFacts | undefined;
   readonly #tailnetFetch: TailnetFetch | undefined;
   readonly #bbUrl: (() => string | null) | undefined;
+  readonly #encoder: KeyedEncoderAccess | undefined;
   #tailnetClient: { readonly made: string; readonly tailnet: Tailnet } | null = null;
 
   constructor(options: {
@@ -271,7 +278,9 @@ export class Backends {
     images?: ImageFacts;
     tailnetFetch?: TailnetFetch;
     bbUrl?: () => string | null;
+    encoder?: KeyedEncoderAccess;
   }) {
+    this.#encoder = options.encoder;
     this.#bbUrl = options.bbUrl;
     this.#tailnetFetch = options.tailnetFetch;
     this.#machines = options.machines;
@@ -332,6 +341,7 @@ export class Backends {
       tailnet: () => this.tailnet(),
       ...(this.#bbUrl ? { bbUrl: this.#bbUrl } : {}),
       kindsChanged: () => this.#kindsChanged(),
+      ...(this.#encoder ? { encoder: this.#encoderFor(id, this.#encoder) } : {}),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
       kind: (kind) => {
         const document = this.#document;
@@ -340,6 +350,10 @@ export class Backends {
         return { enabled: !!document && !!backend?.enabled && kindOn(document, kind), defaultSize: defaultSize(sizes), presets: presetSizes(sizes) };
       },
     };
+  }
+
+  #encoderFor(id: string, encoder: KeyedEncoderAccess): EncoderAccess {
+    return { load: (mac) => encoder.load(encoderKey(id, mac)), vmStarting: (mac, chip) => encoder.vmStarting(encoderKey(id, mac), { label: mac, chip }) };
   }
 
   /** Builds, keeps or disposes each backend to match the document. */

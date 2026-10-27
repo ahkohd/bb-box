@@ -56,6 +56,7 @@ export interface HostsAccess {
   states(signal?: AbortSignal): Promise<ReadonlyMap<string, HostState | Error>>;
   hostRoom(mac: TartHost, state: HostState | Error, settings: IosHostsConfig, leaving: ReadonlySet<string>): string | null;
   placement<T>(task: () => Promise<T>): Promise<T>;
+  encoderLoad?(mac: TartHost): number;
   placing(mac: TartHost, vm: string, memoryMiB: number): () => void;
   run(mac: TartHost, body: string, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<RunResult>;
   boot(mac: TartHost, vm: string, size: { readonly cores: number; readonly memoryMiB: number } | null, deadline: number, signal?: AbortSignal): Promise<string>;
@@ -408,7 +409,11 @@ export class IosHosts implements SlotLender {
       else words.push(`No shared iOS host can start on ${mac.name}: ${why}.`);
     }
     const order = ["ready", "join", "make", "new-host"];
-    tiers.sort((a, b) => order.indexOf(a.tier) - order.indexOf(b.tier) || ("waitMs" in a && "waitMs" in b ? a.waitMs - b.waitMs : 0));
+    const loadOf = (tier: SlotTier) => {
+      const mac = tier.tier === "new-host" ? this.#access.mac(tier.where) : null;
+      return mac ? (this.#access.encoderLoad?.(mac) ?? 0) : 0;
+    };
+    tiers.sort((a, b) => order.indexOf(a.tier) - order.indexOf(b.tier) || loadOf(a) - loadOf(b) || ("waitMs" in a && "waitMs" in b ? a.waitMs - b.waitMs : 0));
     if (tiers[0]) return tiers[0];
     const freesFirst = surveyed.some(({ status }) => status && heldCount(status) > 0) ? ` ${NEXT_SLOT_WORDS}` : "";
     return { tier: "wait", words: `${[...new Set(words)].join(" ") || "No Mac can hold a shared iOS host now."}${freesFirst}` };

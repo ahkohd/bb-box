@@ -1789,6 +1789,11 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
           {STILLS_WORDS}
         </p>
       ) : null}
+      {deviceShown && showing && device?.videoWords && connection.state === "connected" ? (
+        <p role="status" data-testid="device-video-words" className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+          {device.videoWords}
+        </p>
+      ) : null}
       <div className="relative min-h-0 flex-1 bg-muted">
         <div ref={target} className="absolute inset-0" data-testid="desktop-screen" />
         {mine ? <div aria-hidden data-testid="control-ring" className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-primary/60" /> : null}

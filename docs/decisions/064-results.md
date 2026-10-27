@@ -1451,3 +1451,121 @@ older than the server's build.
   "booted"**, from the last state the link had; only the Device Hub line
   said the box did not answer.
 - **Item 5 ran on Android only.** iOS settings take the same request.
+
+## Unit 6: the encoder ledger, then shared by default
+
+Part A, the ledger, built on 27 October 2026. Device server version 25.
+
+### What it adds
+
+- **A ledger per Mac, in the plugin**
+  ([`encoder-ledger.ts`](../../src/core/encoder-ledger.ts)). Every iOS
+  device bb-box streams on a Mac is in that Mac's ledger, in a VM of its
+  own or in a slot: a Tart backend's dedicated ios boxes and its hosts'
+  slots on one Mac share one, and the pool's Mac has its own. A stream
+  counts its frames a second over the last 10 s, with a floor of 20, times
+  its frame's cost from 064's table, interpolated by pixels: 0.18 for a
+  third of an iPhone 18 Pro, 1 for the whole, 1.75 for a whole iPad Pro
+  13-inch. Android and the test device are not counted: their frames are
+  not encoded by the Mac's encoder.
+- **Budgets by chip.** 320 full-size iPhone frames a second for an Apple M4
+  Max and 375 for an Apple M5 Max, from E1 and POOL. The Tart backend reads
+  each Mac's chip with its state; the pool backend reads it once over SSH.
+  A chip not in the table is measured by a probe of two encoders for 15 s,
+  run only while the Mac's ledger has no stream: ffmpeg's
+  `h264_videotoolbox`, hardware only, on the Mac, as M8 and M11 measured.
+  Until it is measured, or where the Mac has no ffmpeg, the ledger assumes
+  320 and the doctor warns.
+- **The cap and the order.** The ledger keeps the sum within three
+  quarters of the budget. Over it, it lowers the step of the lowest in 064's
+  order first, the largest stream first within it: the agent's waits, then
+  streams only watched, then recordings, then the device a person has
+  control of. A stream never goes below a third, nor a recording below a
+  half. At most two streams a Mac are at full size: the person in control
+  first, then those already at full. The person in control keeps a
+  full-size place for **Pixel for pixel**. A lowered stream rises again
+  only after there has been room for 10 s; a stream that was not lowered
+  follows its viewer at once, and so does the person in control.
+- **Caps sent to each server.** A stream not lowered has no cap. A lowered
+  one is capped at its step, with words. The cap goes on every connection
+  of the lease holder, as unit 4's did, and whenever the ledger changes
+  its mind.
+- **The device server reports** (`BB_DEVICE_VIDEO`, version 25): to the
+  lease holder, the step it streams at, each want with who wants it (a
+  viewer, a recording or the agent's wait) and its step, the cap, and its
+  frames a second over the last 10 s, at each change and every 2 s while
+  the stream is wanted; to its viewers, the ledger's words, at each change
+  and to each viewer as it connects. The cap request takes `words`. A
+  server before version 25 gets no words and is not counted, and keeps
+  unit 4's cap until the delivery on its first connection replaces it.
+- **The control connection stays open while the stream is wanted,** so
+  the ledger keeps hearing from it. Before, it closed after 10 minutes with
+  no agent request, whoever watched.
+- **The words.** Under the device's toolbar, while its stream is lowered:
+  "Shown at a lower resolution: this Mac's video encoder is busy with 3
+  other devices (box ios-2, box ios-5, box ios-7).", naming four and "and
+  N more". Beyond the cap, with every stream at its floor: "This Mac's
+  video encoder is full, so frames come more slowly." box_status, for an
+  ios box: "On this Mac: 4 of about 5 full-size streams' room in use." The
+  doctor's new check `encoder.<mac>`, Video encoder on each Mac: the room
+  in use, the streams, the budget and where it came from, and the boxes
+  shown lower.
+- **New hosts on the Mac with the fewest streams.** Tier `new-host` is
+  offered for each Mac with room, the Mac whose ledger uses least first.
+- **The warning while a VM starts.** Each time the Tart backend starts a
+  macOS VM on a Mac, a host or a box, every device streaming on that Mac
+  shows "A VM is starting on this Mac; video may slow for about 30 s." for
+  30 s.
+- **The setting `encoderLedger`,** general and advanced, on by default.
+  Off, every slot box's stream is capped at two thirds, as unit 4 left it,
+  and no other is.
+- **The guide** ([desktops](../guide/desktops.md)) says what a viewer sees.
+
+### How it was checked, before the live check
+
+On a Linux box, from the branch on origin/main at c8236a73:
+
+| Check | Result |
+| --- | --- |
+| Frame costs and budgets | the table's points read back: 0.18, 0.33, 0.57, 1 and 1.75; a still stream counts 20 frames a second; the cap is 240 for an M4 Max and 281 for an M5 Max |
+| The order, 10 busy devices on an M4 Max: the person in control at Pixel for pixel, one recording, eight watched at two thirds | the person in control at full, the recording at two thirds, the eight lowered to a half or a third, within 240 |
+| A recording's floor | six recordings beside the person in control, over the cap: each at a half, never a third, and the allotment says the cap is exceeded |
+| At most two at full | three at full asked: two; one already at full keeps its place; the person in control takes one from a stream already at full |
+| Rising | a lowered stream rises 10 s after room came, not before; a lower step, the person in control and a stream not lowered move at once |
+| The ledger, 10 devices on one Mac | the nine passive viewers capped, each told "busy with 9 other devices (box ios-0, box ios-2, box ios-3, box ios-4 and 5 more)"; box_status's line "4 of about 5"; control handed to another device moves the full-size place to it |
+| One Mac, two backends | a dedicated box and a slot on one Mac count in one ledger; the pool's Mac in its own, at 375 |
+| A VM starting | the words for 30 s, then gone |
+| Off | no cap and no words from the ledger; box_status has no line |
+| The probe | not run while a stream is on the Mac; run once when its ledger empties; its measure is the budget after; a chip in the table is never probed |
+| The device server | reports each want with who wants it, the step and frames a second to the lease holder; tells each viewer the words, and a viewer that connects later at once; a cap with no words, as an older bb-box sends, still reads |
+| The plugin's device servers | with the ledger on, a slot box's version 25 server is capped at nothing on connection, then at the ledger's step with its words; off, at two thirds again |
+| The Tart backend, two Macs | the new host offered on the Mac whose ledger uses least, and on the other when that changes; the host's VM start warns its Mac, with the chip read from the Mac; each box names its Mac and chip |
+| The suite | tsc clean; the node suite 2,190 passed, 0 failed, 288 skipped, the docs and reference tests among them; vitest 222 passed |
+
+### The live check
+
+H8 has not run. It needs this unit deployed: the ledger runs in the
+bb-box that holds each device server's lease, which for boxes made through
+production BB is production's bb-box, and a separate BB has no Mac it may
+reach. It also needs both of the Tart Mac's VM slots, for a host and a
+dedicated box, and the second was held by another project's box while
+this was built.
+
+### Deviations from 064
+
+- **Desktops are not counted.** 064 counts a macOS desktop's video from a
+  Tart VM (060) and a Windows desktop encoded on the Mac (046). Their
+  servers report no frames a second to bb-box, so the ledger cannot count
+  them; a follow-up.
+- **A stream that is not lowered has no cap,** so a viewer that asks for
+  more gets it at once where there is room. Where there is none, the
+  ledger's cap reaches the server within the server's 1 s hold.
+- **The person in control rises at once,** not after 10 s, as do streams
+  that were not lowered; only a lowered stream waits.
+- **The probe runs on the Mac itself, with ffmpeg,** where the Mac has it.
+  064 does not say where. Neither Mac here needs one: both chips are in the
+  table.
+- **Every macOS VM the Tart backend starts warns its Mac,** not only a new
+  host: E1's slowdowns came from a box's VM and a host's alike.
+- **A server before version 25 is not counted.** It keeps unit 4's cap
+  until the delivery on its first connection replaces it.

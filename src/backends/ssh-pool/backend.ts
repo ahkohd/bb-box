@@ -52,6 +52,7 @@ import {
   type Guest,
   type GuestFact,
   type HeldGuest,
+  type MacEncoder,
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
@@ -59,6 +60,7 @@ import {
 } from "../types.ts";
 import type { DeviceOffer } from "../../core/device.ts";
 import { sizesCheck } from "../fit.ts";
+import { PROBE_SECONDS, encoderProbeScript, parseEncoderProbe } from "../encoder-probe.ts";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -411,6 +413,7 @@ export class SshPoolBackend implements Backend {
   readonly #options: SshPoolBackendOptions;
   readonly #keyFile = new KeyFile();
   readonly #machines: ReadonlyMap<string, SshPoolMachine>;
+  readonly #chips = new Map<string, string | Promise<void>>();
   /** Every Linux machine gives Docker, so the pool's linux boxes have it. */
   readonly #docker: boolean;
   /** Machines this process is resetting, which held() leaves to it. */
@@ -502,6 +505,37 @@ export class SshPoolBackend implements Backend {
   #macVideo(): boolean {
     const macs = (this.#surveyed ?? []).filter((view) => view.probe.status?.mac && this.#lists(view.machine, "macos-desktop"));
     return macs.length > 0 && macs.every((view) => view.probe.status!.mac!.stream);
+  }
+
+  encoderOf(guest: Guest): MacEncoder | null {
+    const mac = poolSlotOf(guest)?.mac;
+    const machine = mac ? this.#machines.get(mac) : undefined;
+    if (!mac || !machine) return null;
+    const chip = this.#chips.get(mac);
+    if (chip === undefined) this.#chips.set(mac, this.#readChip(machine));
+    return { mac, chip: typeof chip === "string" && chip ? chip : null };
+  }
+
+  async #readChip(machine: SshPoolMachine): Promise<void> {
+    try {
+      const { ssh } = await this.#keys();
+      const result = await ssh.run(this.#access(machine, machine.admin.user), "sysctl -n machdep.cpu.brand_string", { timeoutMs: 30_000, maxOutputBytes: 4096 });
+      const chip = result.exitCode === 0 ? result.stdout.trim() : "";
+      this.#chips.set(machine.name, chip);
+    } catch (error) {
+      this.#chips.set(machine.name, "");
+      this.#context.logError(`read the chip of ${machine.name}`, error);
+    }
+  }
+
+  async probeEncoder(mac: string, signal?: AbortSignal): Promise<number | null> {
+    const machine = this.#machines.get(mac);
+    if (!machine) return null;
+    const { ssh } = await this.#keys();
+    const result = await ssh.run(this.#access(machine, machine.admin.user), encoderProbeScript(), { timeoutMs: (PROBE_SECONDS + 60) * 1000, signal, maxOutputBytes: 64 * 1024 });
+    const probe = parseEncoderProbe(result.stdout);
+    if (probe.fps === null) this.#context.log?.(`bb-box could not measure the video encoder of ${mac}: ${probe.words ?? `exit code ${result.exitCode}`}.`);
+    return probe.fps;
   }
 
   async restartDeviceServer(guest: Guest, signal?: AbortSignal): Promise<void> {

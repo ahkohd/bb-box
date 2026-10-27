@@ -378,7 +378,7 @@ export type DeviceRequest =
   | { readonly id: string; readonly type: "record"; readonly to: "start"; readonly position?: CaptionPosition }
   | { readonly id: string; readonly type: "record"; readonly to: "caption"; readonly kind: StepKind; readonly text: string }
   | { readonly id: string; readonly type: "record"; readonly to: "stop" }
-  | { readonly id: string; readonly type: "cap"; readonly most: VideoStep | null }
+  | { readonly id: string; readonly type: "cap"; readonly most: VideoStep | null; readonly words?: string | null }
   | { readonly id: string; readonly type: "result" };
 
 export type DeviceRequestType = DeviceRequest["type"];
@@ -421,7 +421,23 @@ export type DeviceServerMessage =
   | { readonly verb: "BB_DEVICE_STATE"; readonly state: DeviceState }
   | { readonly verb: "BB_DEVICE_TOUCH"; readonly contacts: readonly TouchContact[]; readonly by: ControlHolder; readonly generation: number }
   | { readonly verb: "BB_DEVICE_STILL"; readonly png: string; readonly generation: number }
-  | { readonly verb: "BB_DEVICE_ANSWER"; readonly answer: DeviceAnswer };
+  | { readonly verb: "BB_DEVICE_ANSWER"; readonly answer: DeviceAnswer }
+  | { readonly verb: "BB_DEVICE_VIDEO"; readonly video: VideoReport };
+
+export type WantFor = "viewer" | "recording" | "wait";
+
+export interface VideoWant {
+  readonly for: WantFor;
+  readonly step: VideoStep;
+}
+
+export interface VideoReport {
+  readonly step: VideoStep | null;
+  readonly wants: readonly VideoWant[];
+  readonly cap: VideoStep | null;
+  readonly fps: number;
+  readonly words: string | null;
+}
 
 export type DeviceServerVerb = DeviceServerMessage["verb"];
 export const DEVICE_REQUEST_VERB = "BB_DEVICE";
@@ -661,9 +677,10 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 2;
 export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
-export const DEVICE_SERVER_VERSION = 24;
+export const DEVICE_SERVER_VERSION = 25;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 export const SETTINGS_ASKED_SINCE_VERSION = 24;
+export const VIDEO_REPORTS_SINCE_VERSION = 25;
 
 export function frameGenerationOf(header: Uint8Array): number {
   return (header[10]! << 8) | header[11]!;

@@ -7,8 +7,8 @@ import { HOST_VM_PREFIX, slotRefOf } from "../src/backends/tart/ios-hosts.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
 import type { AcquireHooks, BoxIdentity, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { placementOf, type SlotTier } from "../src/core/device-host.ts";
-import { tartConfig } from "./fake-mac.ts";
-import { IOS_HOST_FAKES, IOS_HOST_SETTINGS, fakeIosHostMac } from "./fake-ios-host.ts";
+import { FAKE_MAC, addImage, fakeMacTools, imageRecord, tartConfig } from "./fake-mac.ts";
+import { IOS_HOST_DEVICES, IOS_HOST_FAKES, IOS_HOST_SETTINGS, IOS_IMAGE_BUILD, fakeIosHostMac } from "./fake-ios-host.ts";
 import { MemoryStorage, testContext } from "./helpers.ts";
 
 const signal = () => AbortSignal.timeout(60_000);
@@ -286,4 +286,34 @@ test("a box waiting for a host that one instance was starting as it stopped, as 
   assert.equal(clones().length, 1, "one host");
   await next.release(slot, releasing, signal());
   assert.deepEqual(hosts(), []);
+});
+
+test("a new shared host goes to the Mac whose video encoder streams least; a VM's start warns that Mac's viewers; each box names its Mac and chip (064, unit 6)", async () => {
+  const world = fakeIosHostMac();
+  const other = "192.0.2.21";
+  const second = world.ssh.home(other);
+  fakeMacTools(second);
+  addImage(second);
+  addImage(second, "bb-box-ios");
+  writeFileSync(join(second, ".bb-box", "tart", "images", "bb-box-ios.json"), `${imageRecord("ios", { build: IOS_IMAGE_BUILD, base: "build.20261003-021500", devices: IOS_HOST_DEVICES, tools: { idb_companion: "1.7.7" } })}\n`);
+  writeFileSync(join(second, ".fake-chip"), "Apple M5 Max\n");
+  const load = new Map([["mac1", 200], ["mac2", 10]]);
+  const starting: string[] = [];
+  const context = { ...testContext(new MemoryStorage()), encoder: { load: (mac: string) => load.get(mac) ?? 0, vmStarting: (mac: string, chip: string | null) => void starting.push(`${mac} ${chip}`) } };
+  const backend = new TartBackend(
+    tartConfig({ ...IOS_HOST_SETTINGS, "tart-hosts": `mac1 bbbox-admin@${FAKE_MAC}\nmac2 bbbox-admin@${other}`, "tart-host-keys": `${FAKE_MAC} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForTests\n${other} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForTests` }),
+    context,
+    IOS_HOST_FAKES,
+  );
+  made.push(backend);
+  assert.deepEqual(await backend.slots!.offer("ios", null, signal()), { tier: "new-host", where: "mac2", waitMs: 55_000, cost: "vm-slot" });
+  load.set("mac2", 300);
+  const tier = await backend.slots!.offer("ios", null, signal());
+  assert.deepEqual(tier, { tier: "new-host", where: "mac1", waitMs: 55_000, cost: "vm-slot" });
+  const taken = await backend.slots!.take(tier, identity(), signal());
+  assert.ok(!("lost" in taken));
+  await until(() => starting.length > 0, "the host's VM to start");
+  assert.deepEqual(starting, ["mac1 Apple M4 Max"]);
+  assert.deepEqual(backend.encoderOf(taken), { mac: "mac1", chip: "Apple M4 Max" });
+  assert.equal(backend.encoderOf({ ref: "elsewhere", host: "mac9", address: null, size: null, data: {} }), null);
 });

@@ -66,6 +66,8 @@ import {
   type Runtime,
   type TableModel,
   type TouchContact,
+  type VideoReport,
+  type VideoWant,
 } from "./device.ts";
 import type { RecordingSummary } from "./device-recording.ts";
 
@@ -636,8 +638,10 @@ function request(value: unknown, path: string): DeviceRequest {
       return read.longestEdge === undefined ? { id, type } : { id, type, longestEdge: whole(read.longestEdge, at("longestEdge"), SCREENSHOT_EDGE_LEAST, 16384) };
     }
     case "cap": {
-      const read = fields(value, path, ["id", "type", "most"]);
-      return { id: requestId(read.id, at("id")), type, most: read.most === null ? null : oneOf(read.most, at("most"), VIDEO_STEPS) };
+      const read = fields(value, path, ["id", "type", "most", "words"]);
+      const most = read.most === null ? null : oneOf(read.most, at("most"), VIDEO_STEPS);
+      if (read.words === undefined) return { id: requestId(read.id, at("id")), type, most };
+      return { id: requestId(read.id, at("id")), type, most, words: textOrNull(read.words, at("words")) };
     }
     case "tree":
     case "settings":
@@ -720,7 +724,25 @@ function hello(value: unknown, path: string): DeviceHello {
   return { ...said, bootedHere } as DeviceHello;
 }
 
-const SERVER_VERBS: readonly DeviceServerVerb[] = ["BB_DEVICE_HELLO", "BB_DEVICE_STATE", "BB_DEVICE_TOUCH", "BB_DEVICE_STILL", "BB_DEVICE_ANSWER"];
+const SERVER_VERBS: readonly DeviceServerVerb[] = ["BB_DEVICE_HELLO", "BB_DEVICE_STATE", "BB_DEVICE_TOUCH", "BB_DEVICE_STILL", "BB_DEVICE_ANSWER", "BB_DEVICE_VIDEO"];
+const VIDEO_WANTS_MOST = 64;
+const VIDEO_FPS_MOST = 1_000;
+
+function videoWant(value: unknown, path: string): VideoWant {
+  const read = fields(value, path, ["for", "step"]);
+  return { for: oneOf(read.for, `${path}.for`, ["viewer", "recording", "wait"]), step: oneOf(read.step, `${path}.step`, VIDEO_STEPS) };
+}
+
+function videoReport(value: unknown, path: string): VideoReport {
+  const read = fields(value, path, ["step", "wants", "cap", "fps", "words"]);
+  return {
+    step: read.step === null ? null : oneOf(read.step, `${path}.step`, VIDEO_STEPS),
+    wants: list(read.wants, `${path}.wants`, videoWant, VIDEO_WANTS_MOST),
+    cap: read.cap === null ? null : oneOf(read.cap, `${path}.cap`, VIDEO_STEPS),
+    fps: number(read.fps, `${path}.fps`, 0, VIDEO_FPS_MOST),
+    words: textOrNull(read.words, `${path}.words`),
+  };
+}
 
 function serverMessage(verb: DeviceServerVerb, body: unknown): DeviceServerMessage {
   switch (verb) {
@@ -738,6 +760,8 @@ function serverMessage(verb: DeviceServerVerb, body: unknown): DeviceServerMessa
     }
     case "BB_DEVICE_ANSWER":
       return { verb, answer: answer(body, verb) };
+    case "BB_DEVICE_VIDEO":
+      return { verb, video: videoReport(fields(body, verb, ["video"]).video, `${verb}.video`) };
   }
 }
 
