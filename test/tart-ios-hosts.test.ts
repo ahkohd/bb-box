@@ -306,6 +306,44 @@ test("a box waiting for a host that one instance was starting as it stopped, as 
   assert.deepEqual(hosts(), []);
 });
 
+test("a host's start names its bb-box instance and when it last said so in the host's owner file, so another instance never runs a start that is still under way, however old (F-8)", async () => {
+  const { backend, hosts, clones, ssh, mac } = setup();
+  const otherContext = testContext(new MemoryStorage());
+  const other = new TartBackend(tartConfig(IOS_HOST_SETTINGS), otherContext, IOS_HOST_FAKES);
+  made.push(other);
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const vm = slotRefOf(guest)!.vm;
+  const ownerFile = join(mac, ".bb-box", "tart", "owners", vm);
+  const hold = join(ssh.home("192.168.64.2"), "hold-init");
+  writeFileSync(hold, "");
+  const first = backend.acquire(box, guest, hooks().hooks, signal());
+  await until(() => existsSync(join(ssh.home("192.168.64.2"), "init-held")), "the host's start reaches its helper's init");
+  assert.match(readFileSync(ownerFile, "utf8"), /^start-by=[0-9a-f]{8}$/m);
+  assert.match(readFileSync(ownerFile, "utf8"), /^start-beat=\d+$/m);
+  writeFileSync(ownerFile, readFileSync(ownerFile, "utf8").replace(/^made=\d+$/m, `made=${Date.now() - 10 * 60_000}`));
+
+  await other.maintain(signal());
+  const second = identity();
+  const joined = await other.slots!.take({ tier: "join", host: vm, waitMs: 1 }, second, signal());
+  assert.ok(!("lost" in joined));
+  const waiting = other.acquire(second, joined, hooks().hooks, signal());
+  await until(() => otherContext.logs.some((line) => /is being started by another bb-box instance, [0-9a-f]{8}, which said so at \d+; this one waits for it/.test(line)), "the other instance waits for the start");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const inits = () => readFileSync(join(ssh.home("192.168.64.2"), "helper.log"), "utf8").split("\n").filter((line) => line === "init").length;
+  const doctor = (await other.doctor(signal())).checks.find((check) => check.id === "ios-hosts.mac1");
+  assert.match(doctor?.detail ?? "", /starting, made \d+ s ago, started by bb-box instance [0-9a-f]{8}, last heard from \d+ s ago, 2 boxes promised\./);
+
+  rmSync(hold);
+  const [one, two] = await Promise.all([first, waiting]);
+  assert.equal(inits(), 1, "the start ran once, in the first instance");
+  assert.equal(clones().length, 1, "one host");
+  assert.doesNotMatch(readFileSync(ownerFile, "utf8"), /^start-(by|beat)=/m, "a serving host has no start");
+  await backend.release(one, releasing, signal());
+  await other.release(two, releasing, signal());
+  assert.deepEqual(hosts(), []);
+});
+
 test("a new shared host goes to the Mac whose video encoder streams least; a VM's start warns that Mac's viewers; each box names its Mac and chip (064, unit 6)", async () => {
   const world = fakeIosHostMac();
   const other = "192.0.2.21";

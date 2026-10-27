@@ -30,6 +30,8 @@ const LEAVING_WAIT_MS = 5 * 60_000;
 const ROOM_POLL_MS = 10_000;
 const DELETING_LEFT_MS = 2 * 60_000;
 const HANDING_OVER_MS = 5 * 60_000;
+export const START_BEAT_MS = 30_000;
+export const START_LIVE_MS = 2 * 60_000;
 export const DOCTOR_HOST_MS = 15_000;
 const CHAIN_WAIT_LOGGED_MS = 2_000;
 
@@ -46,7 +48,11 @@ export interface HostOwner {
   readonly settings: IosHostsConfig;
   readonly failure: string | null;
   readonly handingOverSince: number | null;
+  readonly startBy: string | null;
+  readonly startBeat: number | null;
 }
+
+type StartOutcome = "done" | "elsewhere";
 
 export interface HostsAccess {
   readonly installId: string;
@@ -103,6 +109,8 @@ export function readHostOwner(vm: string, mac: TartHost, fields: Readonly<Record
     build: fields.build || null,
     failure: fields.failed || null,
     handingOverSince: fields["handing-over"] && /^\d+$/.test(fields["handing-over"]) ? Number(fields["handing-over"]) : null,
+    startBy: fields["start-by"] || null,
+    startBeat: fields["start-beat"] && /^\d+$/.test(fields["start-beat"]) ? Number(fields["start-beat"]) : null,
     settings: {
       on: true,
       most: wholeOf(fields.most, defaults.most),
@@ -160,7 +168,43 @@ ${OWNER_LOCK}
 mine_host ${quote(installId)} || { echo gone; exit 0; }
 rewrite handing-over "$(date +%s)"
 rewrite host-state serving
+grep -v -e '^start-by=' -e '^start-beat=' "$f" > "$f.new" && mv -f "$f.new" "$f"
 echo "promised=$(value promised)"
+`);
+}
+
+export function hostStartClaimScript(vm: string, installId: string, instance: string, liveMs: number = START_LIVE_MS): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"; me=${quote(instance)}
+${OWNER_LOCK}
+mine_host ${quote(installId)} || { echo gone; exit 0; }
+state=$(value host-state)
+[ "$state" = starting ] || { echo "state=$state"; exit 0; }
+by=$(value start-by); beat=$(value start-beat); now=$(date +%s)
+case "$beat" in ''|*[!0-9]*) beat=0 ;; esac
+if [ -n "$by" ] && [ "$by" != "$me" ] && [ $((now - beat)) -lt ${Math.ceil(liveMs / 1000)} ]; then echo "live=$by"; echo "beat=$beat"; exit 0; fi
+rewrite start-by "$me"
+rewrite start-beat "$now"
+echo claimed
+`);
+}
+
+export function hostStartBeatScript(vm: string, installId: string, instance: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"; me=${quote(instance)}
+${OWNER_LOCK}
+mine_host ${quote(installId)} || { echo gone; exit 0; }
+[ "$(value start-by)" = "$me" ] || { echo lost; exit 0; }
+rewrite start-beat "$(date +%s)"
+echo beat
+`);
+}
+
+export function hostStartLeftScript(vm: string, installId: string, instance: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"; me=${quote(instance)}
+${OWNER_LOCK}
+mine_host ${quote(installId)} || { echo gone; exit 0; }
+[ "$(value start-by)" = "$me" ] || { echo lost; exit 0; }
+grep -v -e '^start-by=' -e '^start-beat=' "$f" > "$f.new" && mv -f "$f.new" "$f"
+echo left
 `);
 }
 
@@ -230,7 +274,9 @@ export function noRoomWords(vm: string, status: HostStatus): string | null {
 export class IosHosts implements SlotLender {
   readonly on = "tart" as const;
   readonly #access: HostsAccess;
-  readonly #starts = new Map<string, Promise<void>>();
+  readonly #starts = new Map<string, Promise<StartOutcome>>();
+  readonly #instance = randomBytes(4).toString("hex");
+  readonly #startsLeftTo = new Map<string, string>();
   readonly #boots = new Map<string, Promise<void>>();
   readonly #deletions = new Map<string, Promise<void>>();
   readonly #releasing = new Map<string, number>();
@@ -561,7 +607,7 @@ export class IosHosts implements SlotLender {
     return boot;
   }
 
-  #start(mac: TartHost, vm: string, leaving: ReadonlySet<string> = new Set()): Promise<void> {
+  #start(mac: TartHost, vm: string, leaving: ReadonlySet<string> = new Set()): Promise<StartOutcome> {
     const running = this.#starts.get(vm);
     if (running) return running;
     const started = this.#startHost(mac, vm, leaving).finally(() => this.#starts.delete(vm));
@@ -570,12 +616,23 @@ export class IosHosts implements SlotLender {
     return started;
   }
 
-  async #startHost(mac: TartHost, vm: string, leaving: ReadonlySet<string>): Promise<void> {
+  async #startHost(mac: TartHost, vm: string, leaving: ReadonlySet<string>): Promise<StartOutcome> {
     const signal = this.#stopping.signal;
     const began = performance.now();
     const { owner: found } = await this.#ownerOf(vm, signal);
     if (!found) throw new Error(`The shared iOS host ${vm} on ${mac.name} has no owner file.`);
     const owner = found;
+    const said = (await this.#access.run(mac, hostStartClaimScript(vm, this.#access.installId, this.#instance), { signal })).stdout;
+    const claim = parseFields(said);
+    if (claim.live) {
+      if (this.#startsLeftTo.get(vm) !== claim.live) this.#access.log(`Shared iOS host ${vm} on ${mac.name} is being started by another bb-box instance, ${claim.live}, which said so at ${claim.beat ?? "?"}; this one waits for it.`);
+      this.#startsLeftTo.set(vm, claim.live);
+      return "elsewhere";
+    }
+    this.#startsLeftTo.delete(vm);
+    if (said.trim() !== "claimed") return "done";
+    const beat = setInterval(() => void this.#access.run(mac, hostStartBeatScript(vm, this.#access.installId, this.#instance), { signal, timeoutMs: START_BEAT_MS }).catch(() => undefined), START_BEAT_MS);
+    beat.unref?.();
     try {
       await this.#gone(mac, leaving, signal);
       const address = await this.#bootWhenRoom(mac, vm, owner.settings, signal);
@@ -603,12 +660,18 @@ export class IosHosts implements SlotLender {
       });
       this.#access.log(`Shared iOS host ${vm} on ${mac.name} serves, ${((performance.now() - began) / 1000).toFixed(1)} s after its start (its VM ${((booted - began) / 1000).toFixed(1)} s), for ${promised.length} boxes.`);
       if (!promised.length) await this.#vacate(mac, vm, command, signal);
+      return "done";
     } catch (error) {
-      if (signal.aborted) throw error;
+      if (signal.aborted) {
+        await this.#access.run(mac, hostStartLeftScript(vm, this.#access.installId, this.#instance), { timeoutMs: 10_000 }).catch(() => undefined);
+        throw error;
+      }
       const words = error instanceof Error ? error.message : String(error);
       await this.#access.run(mac, hostPhaseScript(vm, this.#access.installId, "failed", words), { signal }).catch(() => undefined);
       await this.#access.deleteVm(mac, vm, signal).catch((cause) => this.#access.logError(`delete shared iOS host ${vm}`, cause));
       throw new Error(`The shared iOS host ${vm} on ${mac.name} did not start: ${words}`);
+    } finally {
+      clearInterval(beat);
     }
   }
 
@@ -663,7 +726,7 @@ export class IosHosts implements SlotLender {
       if (!owner) throw new Error(`The shared iOS host ${vm} on ${mac.name} is gone.`);
       if (owner.phase === "failed") throw new Error(`The shared iOS host ${vm} on ${mac.name} failed: ${owner.failure ?? "no reason recorded"}.`);
       if (owner.phase === "starting") {
-        await this.#start(mac, vm);
+        if ((await this.#start(mac, vm)) === "elsewhere") await this.#sleep(POLL_MS, signal);
         continue;
       }
       if (!this.#running(states.get(mac.name), vm)) {
@@ -884,7 +947,7 @@ export class IosHosts implements SlotLender {
           continue;
         }
         if (owner.phase === "starting") {
-          if (now - owner.made < ABANDONED_START_MS) continue;
+          if (now - owner.made < ABANDONED_START_MS || this.#startedElsewhere(owner, now)) continue;
           if (owner.promised.length) void this.#start(mac, vm).catch(() => undefined);
           else await this.#access.deleteVm(mac, vm, signal);
           continue;
@@ -913,6 +976,10 @@ export class IosHosts implements SlotLender {
     }
   }
 
+  #startedElsewhere(owner: HostOwner, now: number): boolean {
+    return owner.startBy !== null && owner.startBy !== this.#instance && owner.startBeat !== null && now - owner.startBeat * 1000 < START_LIVE_MS;
+  }
+
   #handingOver(owner: HostOwner, now: number): boolean {
     return owner.handingOverSince !== null && now - owner.handingOverSince * 1000 < HANDING_OVER_MS;
   }
@@ -934,7 +1001,7 @@ export class IosHosts implements SlotLender {
       }
       const lines = here.map(({ owner, running, status, why }) => {
         if (why) return why;
-        if (owner.phase !== "serving") return `${owner.vm}: ${owner.phase}${owner.failure ? `, ${owner.failure}` : ""}, ${owner.promised.length} boxes promised.`;
+        if (owner.phase !== "serving") return `${owner.vm}: ${owner.phase}${owner.failure ? `, ${owner.failure}` : ""}${owner.phase === "starting" ? this.#startWords(owner) : ""}, ${owner.promised.length} boxes promised.`;
         if (!running || !status) return `${owner.vm}: its VM is not running.`;
         const count = (is: string) => status.slots.filter((slot) => slot.is === is).length;
         const load = status.slots
@@ -946,6 +1013,14 @@ export class IosHosts implements SlotLender {
       const failing = here.some((each) => each.owner.phase === "failed" || each.why);
       return { id: `ios-hosts.${mac.name}`, name: `Shared iOS hosts on ${mac.name}`, status: failing ? "warn" : "ok", detail: lines.join(" "), fix: null };
     });
+  }
+
+  #startWords(owner: HostOwner): string {
+    const now = Date.now();
+    const made = owner.made ? `, made ${Math.round((now - owner.made) / 1000)} s ago` : "";
+    if (!owner.startBy || owner.startBeat === null) return `${made}, no bb-box instance starting it`;
+    const by = owner.startBy === this.#instance ? "this bb-box instance" : `bb-box instance ${owner.startBy}`;
+    return `${made}, started by ${by}, last heard from ${Math.max(0, Math.round((now - owner.startBeat * 1000) / 1000))} s ago`;
   }
 
   dispose(): void {
