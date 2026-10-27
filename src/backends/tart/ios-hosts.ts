@@ -939,7 +939,7 @@ export class IosHosts implements SlotLender {
         return `${owner.vm}: ${count("held")} held, ${count("ready")} ready, ${count("making")} making, ${status.sweeping} sweeping, of ${status.most}; ${status.diskGiB ?? "?"} GiB disk free (keeps ${status.diskReserveGiB}), ${status.memoryFreePercent ?? "?"}% memory free.${build}${load.length ? ` ${load.join("; ")}.` : ""}`;
       });
       const failing = here.some((each) => each.owner.phase === "failed" || each.why);
-      return { id: `ios-hosts.${mac.name}`, name: `Shared iOS hosts on ${mac.name}`, status: failing ? "warn" : "ok", detail: `${lines.join(" ")} Each slot's stream is at two thirds at most until the encoder's ledger comes.`, fix: null };
+      return { id: `ios-hosts.${mac.name}`, name: `Shared iOS hosts on ${mac.name}`, status: failing ? "warn" : "ok", detail: lines.join(" "), fix: null };
     });
   }
 
