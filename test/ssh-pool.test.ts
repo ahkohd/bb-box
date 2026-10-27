@@ -765,9 +765,9 @@ describe("An SSH host pool of Macs (047)", () => {
   it("parses a Mac's line, and refuses one that mixes Linux and macOS kinds or asks for a whole-machine reset", () => {
     const parsed = config("mac-mini bbbox-admin@192.0.2.80 macos,macos-desktop").machines[0]!;
     assert.deepEqual([parsed.os, parsed.kinds, parsed.docker, parsed.reset], ["macos", ["macos", "macos-desktop"], false, "home"]);
-    assert.match(problems(settings("m 192.0.2.80 linux,macos")), /Machine m lists Linux and macOS kinds\. List linux on a Linux machine, and macos or macos-desktop on a Mac\./);
+    assert.match(problems(settings("m 192.0.2.80 linux,macos")), /Machine m lists Linux and macOS kinds\. List linux on a Linux machine, and macos, macos-desktop or ios on a Mac\./);
     assert.match(problems(settings("m 192.0.2.80 macos reset=machine")), /Machine m is a Mac, which has no whole-machine reset\. Remove reset=machine/);
-    assert.match(problems(settings("m 192.0.2.80 macos-docker")), /cannot serve kind "macos-docker": .*, and macos and macos-desktop on a Mac\./);
+    assert.match(problems(settings("m 192.0.2.80 macos-docker")), /cannot serve kind "macos-docker": .*, and macos, macos-desktop and ios slots on a Mac\./);
   });
 
   it("offers the kinds its lines list, says which OS its machines run, and gives Docker by its Linux machines alone", () => {

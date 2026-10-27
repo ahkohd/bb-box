@@ -109,6 +109,7 @@ export function fakeMacos(options: { template?: boolean } = {}): FakeMacos {
   mkdirSync(pool);
   rewrite(join(POOL, "machine-mac.sh"), join(pool, "machine-mac.sh"), root, bin);
   rewrite(join(POOL, "setup-mac.sh"), join(pool, "setup-mac.sh"), root, bin);
+  rewrite(join(POOL, "mac-ios.sh"), join(pool, "mac-ios.sh"), root, bin);
   cpSync(join(POOL, "mac-home"), join(pool, "mac-home"), { recursive: true });
   // It takes ROOT from setup-mac.sh, and the fake tools from its PATH.
   cpSync(join(POOL, "mac-chrome.sh"), join(pool, "mac-chrome.sh"));

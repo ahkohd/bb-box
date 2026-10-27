@@ -86,7 +86,7 @@ where it is built ahead, which its boxes claim at once (#440). The
   takes the device's clipboard, and bb-box closes it.
 - Each `ios` box is a macOS VM of its own unless it asks for
   `shared: true`, where `box_list` says a shared iOS host is set up. A
-  shared box is a macOS user on a VM shared with other ios boxes, ready in
+  shared box is a macOS user on a Mac or VM shared with other ios boxes, ready in
   seconds, with its own device, files and keychain, but no sudo, Homebrew
   installs or app windows, and cores and processes shared. Servers on
   localhost in a shared box are reachable from every box on its host: start

@@ -124,13 +124,13 @@ export interface WithheldOffer extends WithheldKind {
 }
 
 /** What offers of one kind must agree on, in words for the doctor. */
-const PROMISES: readonly [string, (kind: BoxKind) => unknown][] = [
+const PROMISES: readonly [string, (kind: BoxKind) => unknown, slotsLack?: true][] = [
   ["OS", (kind) => kind.capabilities.os],
   ["architecture", (kind) => kind.capabilities.arch],
   ["GPU", (kind) => kind.capabilities.gpu],
   ["computer-use driver", (kind) => kind.capabilities.computerUse?.driver ?? "none"],
   ["enrolment", (kind) => kind.capabilities.enrol],
-  ["having a desktop", (kind) => desktopDisplays(kind.capabilities.displays).length > 0],
+  ["having a desktop", (kind) => desktopDisplays(kind.capabilities.displays).length > 0, true],
   ["device platform", (kind) => kind.capabilities.device?.platform ?? "none"],
   ["required features", (kind) => [...kind.requires].sort().join(", ") || "none"],
 ];
@@ -206,7 +206,8 @@ export function offerChecks(offered: readonly OfferedKind[]): DoctorCheck[] {
     }
     const [first, ...rest] = offers;
     for (const other of rest) {
-      for (const [what, value] of PROMISES) {
+      for (const [what, value, slotsLack] of PROMISES) {
+        if (slotsLack && (first!.kind.slotsOnly || other.kind.slotsOnly)) continue;
         const expected = String(value(first!.kind));
         const actual = String(value(other.kind));
         if (expected !== actual) problems.push(`${first!.backend.label} and ${other.backend.label} disagree on ${what} for ${id}: ${expected} and ${actual}.`);

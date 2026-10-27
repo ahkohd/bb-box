@@ -48,7 +48,7 @@ Get a fresh box for this thread: a Linux or macOS computer for commands, builds,
 | `device` | string | no | For an ios or android box, the device it boots, from box_list, such as iPhone 18 Pro or Pixel Fold. Defaults to the kind's first. |
 | `slim` | boolean | no | For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them. |
 | `dedicated` | boolean | no | For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop, instead of a macOS user on a shared host. It takes one of the Mac's two VMs, so it may wait for one. Give it with a size, cores, memory_gib or disk_gib: once shared ios boxes are the default, a size without it is refused. |
-| `shared` | boolean | no | For an ios box: a macOS user on a VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. Only where a shared iOS host is set up; box_list says. macos boxes take no slot yet. |
+| `shared` | boolean | no | For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. Only where a shared iOS host is set up; box_list says. macos boxes take no slot yet. |
 
 ## box_copy
 

@@ -7,7 +7,7 @@ export PATH LC_ALL
 
 ROOT=
 
-VERSION=2
+VERSION=3
 HOST=$ROOT/var/db/bb-box/host
 SHARE=$ROOT/usr/local/share/bb-box
 IOS_SHARE=$SHARE/ios
@@ -50,8 +50,12 @@ EXIT_NOT_OURS=4
 EXIT_FULL=5
 EXIT_NOT_READY=6
 EXIT_DELETING=7
+EXIT_LENDING=8
 
 SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+KEPT_MARK=$HOST/kept
+CLOSED_MARK=$HOST/closed
+[ ! -e "$KEPT_MARK" ] || CARRIED_SLOTS=''
 
 quit() {
   code=$1
@@ -110,7 +114,7 @@ setting() {
 
 read_input() {
   allowed=$1
-  install='' box='' thread='' name='' kind='' created='' key='' server='' most='' ahead='' resetting_most='' disk_reserve_gib=''
+  install='' box='' thread='' name='' kind='' created='' key='' server='' most='' ahead='' resetting_most='' disk_reserve_gib='' kept=''
   if [ -t 0 ]; then return 0; fi
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
@@ -131,6 +135,7 @@ read_input() {
       ahead) ahead=$v ;;
       resetting-most) resetting_most=$v ;;
       disk-reserve-gib) disk_reserve_gib=$v ;;
+      kept) kept=$v ;;
     esac
   done
 }
@@ -144,7 +149,7 @@ box_word_or_quit() {
 carried() { case " $CARRIED_SLOTS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 slot_or_quit() {
   if carried "${1:-}"; then return 0; fi
-  number "${1:-}" && [ "$1" -gt 0 ] || quit 2 "usage: device-host $2 <slot>, a slot such as 3, or $(echo "$CARRIED_SLOTS" | sed 's/ / or /')."
+  number "${1:-}" && [ "$1" -gt 0 ] || quit 2 "usage: device-host $2 <slot>, a slot such as 3${CARRIED_SLOTS:+, or $(echo "$CARRIED_SLOTS" | sed 's/ / or /')}."
 }
 slot_user() { echo "$PREFIX$1"; }
 slot_uid() {
@@ -219,8 +224,12 @@ live_promises() {
 drop_promise() { [ -z "${1:-}" ] || rm -f "$HOST/promises/$1"; }
 
 deleting() { [ -e "$HOST/deleting" ]; }
+kept_host() { [ -e "$KEPT_MARK" ]; }
+closed() { [ -e "$CLOSED_MARK" ]; }
+lends_nothing() { deleting || closed; }
 refuse_if_deleting() {
   if deleting; then quit "$EXIT_DELETING" "This host is being deleted; ask again."; fi
+  if closed; then quit "$EXIT_DELETING" "This host is closed, as the pool's Mac is while it is lent whole, so it lends no slot now; ask again."; fi
 }
 
 others_keep_the_host() {
@@ -513,7 +522,9 @@ making_step() {
   words=$("$@" 2>&1 >/dev/null) || failed_step "$id" "$step" "${words:-it failed.}"
   record_timing "$id" "$step" "$(seconds_since "$started")"
   lock_host 60
-  if [ "$next" = ready ]; then
+  if closed && [ -z "$(state "$id" for)" ]; then
+    set_state "$id" is=resetting step=processes "after=the host closed while it was made"
+  elif [ "$next" = ready ]; then
     set_state "$id" is=ready
   else
     set_state "$id" is=making "step=$next" "for=$(state "$id" for)"
@@ -668,7 +679,7 @@ spare_count() {
 
 top_up() (
   from=$1
-  deleting && return 0
+  lends_nothing && return 0
   while [ "$(spare_count)" -lt "$(setting ahead)" ] && [ -z "$(no_room '')" ]; do
     id=$(($(generation) + 1))
     echo "$id" | put "$HOST/generation"
@@ -690,23 +701,114 @@ answer_slot() {
   [ ! -f "$(slot_dir "$id")/timings" ] || echo "took=$(awk '{ printf "%s%s %s", (NR > 1 ? "," : ""), $1, $2 }' "$(slot_dir "$id")/timings")"
 }
 
+write_settings() {
+  for pair in "most=$most" "ahead=$ahead" "resetting-most=$resetting_most" "disk-reserve-gib=$disk_reserve_gib"; do
+    [ -z "${pair#*=}" ] || number "${pair#*=}" || quit 2 "${pair%%=*} must be a whole number."
+  done
+  [ -z "$most" ] || [ "$most" -ge 1 ] || quit 2 "most must be at least 1."
+  [ -z "$resetting_most" ] || [ "$resetting_most" -ge "$RESETTING_MOST_LEAST" ] || quit 2 "resetting-most must be at least $RESETTING_MOST_LEAST."
+  made=$(field "$HOST/settings" made)
+  printf 'most=%s\nahead=%s\nresetting-most=%s\ndisk-reserve-gib=%s\nmade=%s\n' \
+    "${most:-$(setting most)}" "${ahead:-$(setting ahead)}" "${resetting_most:-$(setting resetting-most)}" "${disk_reserve_gib:-$(setting disk-reserve-gib)}" "${made:-$(now)}" |
+    put "$HOST/settings"
+}
+
+mark_closed() {
+  closed || printf 'since=%s\n' "$(now)" | put "$CLOSED_MARK"
+}
+
 init() {
-  read_input "most ahead resetting-most disk-reserve-gib"
+  read_input "most ahead resetting-most disk-reserve-gib kept"
+  case $kept in '' | yes) ;; *) quit 2 "kept= is yes, or left out." ;; esac
   lock_host 60
   mkdir -p "$HOST/slots" "$HOST/promises" "$HOST/sweep"
-  if ! initialised; then
-    for pair in "most=$most" "ahead=$ahead" "resetting-most=$resetting_most" "disk-reserve-gib=$disk_reserve_gib"; do
-      [ -z "${pair#*=}" ] || number "${pair#*=}" || quit 2 "${pair%%=*} must be a whole number."
-    done
-    [ -z "$resetting_most" ] || [ "$resetting_most" -ge "$RESETTING_MOST_LEAST" ] || quit 2 "resetting-most must be at least $RESETTING_MOST_LEAST."
-    printf 'most=%s\nahead=%s\nresetting-most=%s\ndisk-reserve-gib=%s\nmade=%s\n' \
-      "${most:-$DEFAULT_MOST}" "${ahead:-$DEFAULT_AHEAD}" "${resetting_most:-$DEFAULT_RESETTING_MOST}" "${disk_reserve_gib:-$DEFAULT_DISK_RESERVE_GIB}" "$(now)" |
-      put "$HOST/settings"
+  if [ "$kept" = yes ] && ! kept_host; then
+    initialised && quit 2 "This host was set up to be deleted with its last box, so it cannot be kept."
+    [ -z "$(slot_ids)" ] || quit 2 "This host has slots already, so it cannot be kept."
+    mark_closed
+    : >"$KEPT_MARK"
+    CARRIED_SLOTS=''
   fi
+  initialised || write_settings
   number "$(cat "$HOST/generation" 2>/dev/null)" || echo 0 | put "$HOST/generation"
   host_daemon_plists
   keep_host_daemons_loaded || fail "launchd did not load the host's daemons."
   for key in most ahead resetting-most disk-reserve-gib; do echo "$key=$(setting "$key")"; done
+  if kept_host; then echo kept=yes && echo "closed=$(closed && echo yes || echo no)"; fi
+}
+
+refuse_unless_kept() {
+  kept_host || quit 2 "$1 is only for a kept host, such as the pool's Mac. This host is deleted with its last box."
+}
+
+open_host() {
+  read_input "install most ahead resetting-most disk-reserve-gib"
+  lock_host 60
+  refuse_unless_kept "open"
+  write_settings
+  rm -f "$CLOSED_MARK"
+  host_daemon_plists
+  keep_host_daemons_loaded || fail "launchd did not load the held ports' daemon."
+  top_up ''
+  echo open=yes
+  for key in most ahead resetting-most disk-reserve-gib; do echo "$key=$(setting "$key")"; done
+}
+
+slots_in() {
+  n=0
+  for id in $(slot_ids); do [ "$(state "$id" is)" = "$1" ] && n=$((n + 1)); done
+  echo "$n"
+}
+
+waiting_boxes() {
+  n=$(live_promises | grep -c .)
+  for id in $(slot_ids); do [ "$(state "$id" is)" = making ] && [ -n "$(state "$id" for)" ] && n=$((n + 1)); done
+  echo "$n"
+}
+
+close_host() {
+  read_input "install"
+  lock_host 60
+  refuse_unless_kept "close"
+  if others_keep_the_host ''; then
+    echo "held=$(slots_in held)"
+    echo "waiting=$(waiting_boxes)"
+    quit "$EXIT_LENDING" "This host is lending slots: $(slots_in held) held, and $(waiting_boxes) promised or being made for a box."
+  fi
+  mark_closed
+  unload_daemon "$PORTS_LABEL"
+  spares=''
+  for id in $(slot_ids); do
+    [ "$(state "$id" is)" = ready ] || continue
+    set_state "$id" is=resetting step=processes "after=the host closed"
+    spares="$spares $id"
+  done
+  unlock_host
+  for id in $spares; do (carry_on "$id") >/dev/null 2>&1; done
+  echo closed=yes
+  echo "removed=$(echo $spares)"
+}
+
+summary() {
+  [ $# -eq 0 ] || quit 2 "usage: device-host summary"
+  echo "helper=$VERSION"
+  if kept_host; then echo kept=1; else echo kept=0; fi
+  echo "closed=$(field "$CLOSED_MARK" since)"
+  if deleting; then echo "deleting=$(field "$HOST/deleting" since)"; else echo deleting=; fi
+  for key in most ahead resetting-most disk-reserve-gib; do echo "$key=$(setting "$key")"; done
+  echo "counted=$(counted)"
+  for is in held ready making releasing resetting; do echo "$is=$(slots_in "$is")"; done
+  echo "waiting=$(waiting_boxes)"
+  echo "sweeping=$(sweep_queue | wc -l | tr -d ' ')"
+  line=$(runtime_line)
+  list=$(printf '%s\n' "$line" | cut -f 4)
+  printf 'runtime=%s\n' "$line"
+  printf 'model=%s\n' "$(default_model | cut -f 1,2)"
+  echo "companion=$(head -n 1 "$IOS_SHARE/companion" 2>/dev/null)"
+  if [ -n "$list" ] && [ -s "$IOS_SHARE/$list.txt" ]; then
+    echo "labels=$(grep -c . "$IOS_SHARE/$list.txt")"
+    echo "list_sha256=$(shasum -a 256 "$IOS_SHARE/$list.txt" </dev/null 2>/dev/null | cut -d ' ' -f 1)"
+  fi
 }
 
 make() {
@@ -730,6 +832,7 @@ carry() {
   [ ! -t 0 ] || exec </dev/null
   read_input ""
   lock_host 60
+  kept_host && quit 2 "A kept host, such as the pool's Mac, has no carried slots."
   mkdir -p "$HOST/slots"
   place=0
   for id in $CARRIED_SLOTS; do
@@ -773,6 +876,8 @@ decide_empty() {
     echo last=yes
   elif others_keep_the_host ''; then
     echo last=no
+  elif kept_host; then
+    echo last=yes
   else
     mark_deleting '' "$1"
     echo last=yes
@@ -902,6 +1007,9 @@ decide_last() (
   [ ! -f "$dir/last" ] || return 0
   if others_keep_the_host "$id"; then
     echo no | put "$dir/last"
+    top_up ''
+  elif kept_host; then
+    echo yes | put "$dir/last"
     top_up ''
   else
     mark_deleting "$id" "$box"
@@ -1269,6 +1377,8 @@ status() {
   echo "helper=$VERSION"
   echo "boot=$(boot_id)"
   if deleting; then echo "deleting=$(field "$HOST/deleting" since)"; else echo deleting=; fi
+  if kept_host; then echo kept=1; else echo kept=0; fi
+  echo "closed=$(field "$CLOSED_MARK" since)"
   for key in most ahead resetting-most disk-reserve-gib; do echo "$key=$(setting "$key")"; done
   echo "generation=$(cat "$HOST/generation" 2>/dev/null || echo 0)"
   echo "cores=$(sysctl -n hw.ncpu 2>/dev/null)"
@@ -1333,8 +1443,11 @@ host_daemon_plists() {
   } | put "$HOST/$PORTS_LABEL.plist"
 }
 
+ports_held_here() { ! kept_host || ! closed; }
+
 keep_host_daemons_loaded() {
-  keep_loaded "$HOST/$PORTS_LABEL.plist" && keep_loaded "$HOST/$HOST_LABEL.plist"
+  if ports_held_here; then keep_loaded "$HOST/$PORTS_LABEL.plist" || return 1; else unload_daemon "$PORTS_LABEL"; fi
+  keep_loaded "$HOST/$HOST_LABEL.plist"
 }
 
 unload_host_daemons() {
@@ -1348,7 +1461,12 @@ install() {
   chmod 700 "$HOST"
   host_daemon_plists
   echo "written=$HOST_LABEL $PORTS_LABEL"
-  if initialised; then
+  if initialised && ! ports_held_here; then
+    unload_daemon "$PORTS_LABEL"
+    load_daemon "$HOST/$HOST_LABEL.plist" || fail "launchd did not load the helper's daemon."
+    echo "loaded=$HOST_LABEL"
+    echo "held_ports="
+  elif initialised; then
     load_daemon "$HOST/$PORTS_LABEL.plist" || fail "launchd did not load the held ports' daemon."
     load_daemon "$HOST/$HOST_LABEL.plist" || fail "launchd did not load the helper's daemon."
     echo "loaded=$HOST_LABEL $PORTS_LABEL"
@@ -1368,6 +1486,9 @@ case $verb in
   init) init ;;
   install) install "$@" ;;
   status) status "$@" ;;
+  summary) summary "$@" ;;
+  open) open_host ;;
+  close) close_host ;;
   make) make ;;
   carry) carry ;;
   promise) promise ;;
@@ -1386,5 +1507,5 @@ case $verb in
   run) run ;;
   measure) measure "$@" ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: device-host status | init | install | make | carry | promise | unpromise | vacate | claim <slot> | release <slot> | restart <slot> | reset | daemon <slot> | resume | version" ;;
+  *) quit 2 "usage: device-host status | summary | init | install | open | close | make | carry | promise | unpromise | vacate | claim <slot> | release <slot> | restart <slot> | reset | daemon <slot> | resume | version" ;;
 esac

@@ -108,8 +108,8 @@ done
 [ -n "$keys" ] || die "Give --key the public key bb-box's doctor shows, starting ssh-ed25519."
 printf '%s\n' "$admin" | grep -Eq '^[a-z_][a-z0-9_-]{0,31}$' || die "--admin must be a user name."
 case $admin in bbx-*) die "bbx- names are for box users. Choose another admin user." ;; esac
-[ -f "$here/machine-mac.sh" ] && [ -d "$here/mac-home" ] && [ -f "$here/mac-chrome.sh" ] ||
-  die "machine-mac.sh, mac-chrome.sh and mac-home must be beside setup-mac.sh. Copy the whole setup/ssh-pool directory."
+[ -f "$here/machine-mac.sh" ] && [ -d "$here/mac-home" ] && [ -f "$here/mac-chrome.sh" ] && [ -f "$here/mac-ios.sh" ] ||
+  die "machine-mac.sh, mac-chrome.sh, mac-ios.sh and mac-home must be beside setup-mac.sh. Copy the whole setup/ssh-pool directory."
 fdesetup status 2>/dev/null | grep -qx 'FileVault is Off\.' ||
   die "FileVault is on, or fdesetup could not say. A Mac signs box users in by itself only with FileVault off. Turn it off in System Settings, Privacy and Security, wait until it has decrypted the disk, then run setup-mac.sh again."
 launchctl print system/com.openssh.sshd >/dev/null 2>&1 ||
@@ -342,6 +342,18 @@ if [ -d "$ROOT/Applications/Xcode.app" ]; then
   DevToolsSecurity -enable >/dev/null || warn "DevToolsSecurity -enable failed, so box users need a password to debug."
 fi
 
+ios_slots=no
+if [ "$xcode" = yes ] && [ -d "$here/../tart/ios" ]; then
+  echo "Setting up iOS slots (064): idb_companion, the slimming lists and a seed, and the slots' helper. Making the seed takes a few minutes the first time."
+  if ios_said=$(sh "$here/mac-ios.sh" "$here" "$admin"); then
+    ios_slots=yes
+  else
+    warn "iOS slots are not set up, so the Mac lends no ios box: mac-ios.sh says why above. Fix it, then run setup-mac.sh again."
+  fi
+elif [ "$xcode" = yes ]; then
+  warn "iOS slots are not set up, as setup/tart/ios is not beside setup/ssh-pool. To lend ios boxes from this Mac, copy the whole setup folder, then run setup-mac.sh again."
+fi
+
 "$ROOT$LIBEXEC/machine" init >/dev/null || die "The helper could not make the first box user. Fix what it says above, then run setup-mac.sh again."
 # `status xcode` notes Xcode's runtimes, which plain status, and so the pool, reads.
 status=$("$ROOT$LIBEXEC/machine" status xcode) || warn "The helper could not list Xcode's Simulator runtimes. Check that sudo xcrun simctl list runtimes works, then run setup-mac.sh again."
@@ -379,7 +391,13 @@ echo "This Mac is ready for bb-box's SSH host pool, at reset generation $generat
 echo
 echo "Add this line to the SSH host pool's machines setting. Use another name or address if bb-box reaches it by another:"
 echo
-echo "  $name $admin@$target macos,macos-desktop"
+if [ "$ios_slots" = yes ]; then
+  echo "  $name $admin@$target macos,macos-desktop,ios"
+  echo
+  echo "With ios, it lends iOS slots ($(printf '%s\n' "$ios_said" | sed -n 's/^ios=//p')): a macOS user with its own device for each ios box asked for with shared: true, and it is lent whole only while it lends none. Leave ios out to keep it for whole boxes."
+else
+  echo "  $name $admin@$target macos,macos-desktop"
+fi
 echo
 echo "Add these lines to the SSH host pool's host keys setting:"
 echo
