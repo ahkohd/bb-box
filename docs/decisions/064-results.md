@@ -1388,3 +1388,46 @@ download it as before. A slot finds the app only while BB's server has the
 build the macOS image was made with. A newer server build downloads as
 before, so the image is worth rebuilding when BB updates, as the macOS
 image is.
+
+### The live check
+
+Through production BB on 27 October 2026, after the lead deployed F-7 (PR
+1180, main e0b8509, device server version 24). Tart hosts only. The Mac's
+other VM slot held another thread's box throughout. Times are each tool's
+own, and `bb box doctor`'s wall-clock.
+
+| Item | Check | Result |
+| --- | --- | --- |
+| 1 | A shared ios box with no host running, and bb-box reloaded (`bb plugin reload`) 38 s later, while its new host started | **Failed: a fault, below.** The box failed after the reload: "No Mac can take this ios box: Two macOS VMs already run on mac-1 (..., shared iOS host bb-box-host-<id>)", with "Where: A VM of its own". The host stayed `starting` with no box promised. The window item 1 fixed was not reached |
+| 1 | The next shared box, 6 minutes later | joined the host left `starting`, and its acquire carried the start on: ready in 37.3 s (host 27.9 s). So a later instance does carry on an earlier one's start |
+| 3 | A shared `macos` box on that host | Timings: choosing a shared host 5.5 s, host 27.9 s, slot 3.6 s, ssh 0.3 s, total 37.3 s: every second counted. A ready claim on it, a shared ios box: choosing a shared host 5.4 s, ssh 0.3 s, total 5.7 s, as the claim is the take |
+| 3 | The first box, before the reload | choosing a shared host 10.5 s |
+| 4 | `bb box doctor`, the host running with two slot boxes | 12 s |
+| 4 | The host's VM stopped by the lead (`tart stop`), the doctor run twice | 29 s and 29 s, where it ran past 120 s. "Shared iOS hosts on mac-1: bb-box-host-<id>: its VM is not running." "Device Hub in <box>: bb-box could not look in box <box>: it waited 15 s for box <box> to answer a command over SSH as its slot's user on the shared iOS host bb-box-host-<id>, and stopped waiting." |
+| 5 | An Android box, Pixel 8, no viewer open. `adb shell` turned airplane mode on, Wi-Fi and data off, and night mode on, then box_status | the first box_status after it: "dark, changed outside bb-box", "network offline, changed outside bb-box". Turned back by `adb`, the next box_status: "light", "network online" |
+| 6 | box_device switch to the iPhone 17 in a shared ios box | refused: "A shared ios box has only the iPhone 18 Pro, the model every slot is made with, so it cannot switch to the iPhone 17. Acquire an ios box with dedicated: true for the iPhone 17: a VM of its own, which switches between every model box_list gives." |
+
+### The fault the live check found, and its fix
+
+| Found | Fix |
+| --- | --- |
+| A shared box being acquired across a reload failed. The old instance's dispose aborted its acquire, and the registry's catch set the box's guest to null, as for a VM a backend releases when it throws. A slot's place is not released so: the host kept the box's promise. The new instance resumed the box with no guest, so the Tart backend placed it as a VM of its own, which the Mac's two VMs, one of them the host, refused. The sweep then dropped the promise as no record's | in the follow-up commit: the registry marks the guest a lender's take gives, and keeps a slot box's guest when its instance stops mid-acquire; the next instance resumes the box on its host. A host's start cut short by its instance stopping no longer marks the host failed and deletes it: the next instance carries the start on, as it did here |
+
+Checked on a Linux box, from main at e0b8509 with the fix: a registry case
+where dispose keeps a shared box's place and the next start makes it ready
+in the same slot; a Tart case where one backend stops while its host's
+helper runs `init`, the host is neither failed nor deleted, and a second
+backend places the box on that host, one clone in all. tsc clean; the node
+suite 2,169 passed, 0 failed, 288 skipped, the docs test among them; vitest
+222 passed. Item 1's reload check runs again once the fix is deployed.
+
+### What limits these checks
+
+- **Item 1's handover window was not reached live:** the reload fault came
+  first. The two-instance case is checked on the fakes.
+- **Item 3's 32 s from unit 8 was not seen again:** these placements took
+  5.4 to 10.5 s. If it comes back, the timings now name it.
+- **With the host stopped, the doctor's device server line still said
+  "booted"**, from the last state the link had; only the Device Hub line
+  said the box did not answer.
+- **Item 5 ran on Android only.** iOS settings take the same request.
