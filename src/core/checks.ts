@@ -106,6 +106,11 @@ export const CHECKS = {
   "qemu-video.<mac>": { name: "Windows video on <mac>", from: ["tart"], what: "bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865)." },
   "capacity.<mac>": { name: "Room on <mac>", from: ["tart"], what: "Room on the Mac for a macOS box at its default size." },
   "sizes.<mac>": { name: "Room for each kind on <mac>", from: ["tart"], what: "The Mac holds a box of each kind at its default size." },
+  "ios-hosts.<mac>": {
+    name: "Shared iOS hosts on <mac>",
+    from: ["tart"],
+    what: "The shared iOS hosts on the Mac (064): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; or, with none, whether one can start.",
+  },
 
   // SSH host pool.
   machines: { name: "Machines", from: ["ssh-pool"], what: "At least one machine is listed." },

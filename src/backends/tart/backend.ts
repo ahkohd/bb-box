@@ -98,7 +98,8 @@ import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, followWind
 import type { OpenStream } from "../../core/selkies.ts";
 import { SELKIES_DISPLAY, SELKIES_LAUNCHER, selkiesDisplay } from "../selkies.ts";
 import { openRoute } from "../../transports/route.ts";
-import { IOS_IMAGE_KIND, TART_KINDS, type TartConfig, type TartHost, type TartKind } from "./config.ts";
+import { IOS_IMAGE_KIND, TART_KINDS, type IosHostsConfig, type TartConfig, type TartHost, type TartKind } from "./config.ts";
+import { IosHosts, isHostOwner, slotRefOf } from "./ios-hosts.ts";
 import {
   captureScript,
   claimScript,
@@ -825,6 +826,7 @@ export class TartBackend implements Backend {
   #devicesAsked = false;
   /** Whether windows-arm64-desktop's video is known: once a Mac has answered, as for macos-desktop's. */
   #windowsVideoKnown = false;
+  readonly slots: IosHosts | undefined;
   /** The build of bb-box-stream that Windows video runs on each Mac (#865), from mac-stream.swift's source. */
   #qemuVideo: { readonly source: string; readonly build: string } | null = null;
   /** Each Mac's build of it, while it runs, so a Mac builds it once at a time. */
@@ -844,6 +846,59 @@ export class TartBackend implements Backend {
       members: (signal) => this.#members(signal),
       hold: (member, box, signal) => this.#hold(member, box, signal),
     });
+    this.slots = config.iosImage ? this.#iosHosts() : undefined;
+  }
+
+  #iosHosts(): IosHosts {
+    return new IosHosts({
+      installId: this.#context.installId,
+      config: () => this.#config,
+      macs: () => this.#on(),
+      mac: (name) => this.#hostNamed(name),
+      states: (signal) => this.#states(signal),
+      hostRoom: (host, state, settings) => this.#hostRoom(host, state as MacState | Error, settings),
+      placement: (task) => this.#chain(task),
+      placing: (host, vm, memoryMiB) => {
+        this.#placing.set(vm, { host: host.name, vm, memoryMiB, macos: true });
+        return () => this.#placing.delete(vm);
+      },
+      run: (host, body, options) => this.#run(host, body, options),
+      boot: (host, vm, size, deadline, signal) => this.#bootHost(host, vm, size, deadline, signal),
+      address: async (host, vm) => this.#addresses.get(vm) ?? (await this.#lookup(host, vm).catch(() => null)),
+      vmCommand: async (host, address) => new SshTransport((await this.#keys()).ssh, this.#vm(await this.#mac(host), address, "macos"), "macos"),
+      slotAccess: async (host, address, user) => {
+        const access: SshAccess = { ...this.#vm(await this.#mac(host), address, "macos"), user };
+        return { command: new SshTransport((await this.#keys()).ssh, access, "macos"), access };
+      },
+      waitAnswers: (host, vm, access, deadline, signal) => this.#waitReady(host, vm, access, "macos", deadline, signal),
+      deleteVm: (host, vm, signal) => this.#delete(host, vm, "macos", null, signal),
+      publicKey: async () => {
+        const { publicKey } = await this.#keys();
+        if (!publicKey) throw new Error("bb-box has no public key for its Tart SSH key, so it cannot give a slot's user its key.");
+        return publicKey;
+      },
+      logError: (operation, error) => this.#context.logError(operation, error),
+      log: (message) => this.#context.log?.(message),
+      ...(this.#options.sleep ? { sleep: this.#options.sleep } : {}),
+    });
+  }
+
+  #hostRoom(host: TartHost, state: MacState | Error, settings: IosHostsConfig): string | null {
+    const size: BoxSize = { cores: settings.cores, memoryMiB: settings.memoryGiB * MiB_PER_GiB, diskGiB: null };
+    return this.#room(host, state, size, NONE_UNPLACED, new Set(), "macos").why;
+  }
+
+  async #bootHost(host: TartHost, vm: string, size: { readonly cores: number; readonly memoryMiB: number } | null, deadline: number, signal?: AbortSignal): Promise<string> {
+    const image = this.#config.iosImage;
+    if (!image) throw new Error("The Tart backend has no iOS image, so it cannot make a shared iOS host.");
+    const made = (await this.#state(host, signal)).vms.some((each) => each.name === vm);
+    if (size && !made) await this.#run(host, cloneScript(image, vm, size.cores, size.memoryMiB), { timeoutMs: 10 * 60_000, signal });
+    this.#addresses.delete(vm);
+    await this.#start(host, vm, "macos", deadline, signal, true, null);
+    const address = await this.#address(host, vm, deadline, signal);
+    await this.#waitReady(host, vm, this.#vm(await this.#mac(host), address, "macos"), "macos", deadline, signal);
+    await this.#identify(host, address, vm, "macos", signal);
+    return address;
   }
 
   kinds(): BoxKind[] {
@@ -1174,6 +1229,10 @@ export class TartBackend implements Backend {
   }
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    if (previous && slotRefOf(previous)) {
+      if (!this.slots) throw new BackendError("unsupported", `${this.label} has no iOS image now, so it lends no slot on a shared iOS host.`);
+      return this.slots.acquire(box, previous, hooks, signal);
+    }
     this.#acquiring++;
     try {
       return await this.#acquireOne(box, previous, hooks, signal);
@@ -1450,6 +1509,12 @@ export class TartBackend implements Backend {
   }
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
+    if (slotRefOf(guest)) {
+      const started = performance.now();
+      const { hostDeleted } = await this.#slots(guest).release(guest, signal);
+      hooks.timing(hostDeleted ? "release and host deleted" : "release", Math.round(performance.now() - started));
+      return;
+    }
     const host = this.#hostOf(guest);
     const started = performance.now();
     this.#windowsStreams.delete(this.#streamKey(guest));
@@ -1523,6 +1588,7 @@ export class TartBackend implements Backend {
   }
 
   async grant(guest: Guest, request: GrantRequest, signal?: AbortSignal): Promise<GrantAnswer> {
+    if (slotRefOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host has no console session, so there is nothing to grant macOS permissions to.");
     const command = await this.#macCommand(guest);
     const box = typeof guest.data?.box === "string" ? guest.data.box : guest.ref;
     const result = await this.#vmHelper(command, "vm-grant", grantInput(this.#context.installId, box, request), signal);
@@ -1533,12 +1599,23 @@ export class TartBackend implements Backend {
   }
 
   async grants(guest: Guest, signal?: AbortSignal): Promise<BoxGrants | null> {
+    if (slotRefOf(guest)) return null;
     if (this.#osOf(guest) !== "macos") return null;
     const result = await this.#vmHelper(await this.#macCommand(guest), "vm-granted", null, signal).catch(() => null);
     return result?.exitCode === 0 ? parseGranted(result.stdout) : null;
   }
 
+  #slots(guest: Guest): IosHosts {
+    if (!this.slots) throw new BackendError("unsupported", `${this.label} has no iOS image now, so it cannot reach box guest ${guest.ref} on a shared iOS host. Set the iOS image again.`);
+    return this.slots;
+  }
+
+  async restartDeviceServer(guest: Guest, signal?: AbortSignal): Promise<void> {
+    if (slotRefOf(guest)) await this.#slots(guest).restartDeviceServer(guest, signal);
+  }
+
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
+    if (slotRefOf(guest)) return this.#slots(guest).power(guest, signal);
     const host = this.#hostNamed(guest.host);
     if (!host) return "unknown";
     let result: RunResult;
@@ -1556,6 +1633,7 @@ export class TartBackend implements Backend {
 
   /** How `tart run`, or QEMU for a Windows VM, last exited, with macOS's crash report of it (#406). */
   async stopped(guest: Guest, signal?: AbortSignal): Promise<StopReason | null> {
+    if (slotRefOf(guest)) return this.#slots(guest).stopped(guest, signal);
     const host = this.#hostNamed(guest.host);
     if (!host) return null;
     const windows = this.#osOf(guest) === "windows";
@@ -1567,6 +1645,7 @@ export class TartBackend implements Backend {
   }
 
   async start(guest: Guest, signal?: AbortSignal): Promise<void> {
+    if (slotRefOf(guest)) return this.#slots(guest).start(guest, signal);
     const host = this.#hostOf(guest);
     const os = this.#osOf(guest);
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? (os === "windows" ? WINDOWS_READY_TIMEOUT_MS : READY_TIMEOUT_MS));
@@ -1604,6 +1683,7 @@ export class TartBackend implements Backend {
   }
 
   async planResize(guest: Guest, kind: string, to: BoxSize, pending: readonly Pending[], signal?: AbortSignal): Promise<ResizePlan> {
+    if (slotRefOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host has no size of its own, so it cannot be resized.");
     if (!this.resizing(kind)) throw new BackendError("unsupported", `${this.label} cannot resize its ${kind} boxes yet.`);
     const { host, from } = await this.#resizable(guest, to, signal);
     const parts: ResizePlan["parts"][number][] = [];
@@ -1624,6 +1704,7 @@ export class TartBackend implements Backend {
    * boots again; a disk that grew stays.
    */
   async resize(guest: Guest, kind: string, to: BoxSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+    if (slotRefOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host has no size of its own, so it cannot be resized.");
     if (!this.resizing(kind)) throw new BackendError("unsupported", `${this.label} cannot resize its ${kind} boxes yet.`);
     const { host, from } = await this.#resizable(guest, to, signal);
     if (!options.restart) throw new BackendError("unsupported", "A Tart VM changes size only with a restart.");
@@ -1751,6 +1832,7 @@ export class TartBackend implements Backend {
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
+    if (slotRefOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host cannot be stopped on its own: it shares its host with other boxes.");
     const host = this.#hostOf(guest);
     // A Linux VM shuts itself down, and the Mac waits for it; one that cannot be asked is stopped.
     // Only this install's box is asked, and only when it runs: another install's is "gone" (stopScript).
@@ -1780,6 +1862,7 @@ export class TartBackend implements Backend {
    * inside when it changed. Best effort, as core logs a failure.
    */
   async relabel(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void> {
+    if (slotRefOf(guest)) return;
     const host = this.#hostOf(guest);
     const result = (await this.#run(host, relabelScript(guest.ref, this.#context.installId, box.boxId, this.#owner(box)), { signal })).stdout.trim();
     if (result !== "relabelled") throw new Error(`The owner file of ${guest.ref} on ${host.name} does not name box ${box.boxId}.`);
@@ -1799,7 +1882,7 @@ export class TartBackend implements Backend {
       for (const [vm, fields] of state.owners) {
         if (fields.install !== this.#context.installId) continue;
         // An image box or build (049) is no box's: its build removes it.
-        if (fields["image-box"] || fields["image-build"]) continue;
+        if (fields["image-box"] || fields["image-build"] || isHostOwner(fields)) continue;
         // A warm VM is no box's, and neither is one this instance is filling.
         // One being filled when bb-box stopped is listed with no owner, so the
         // sweep releases it.
@@ -1834,6 +1917,10 @@ export class TartBackend implements Backend {
         });
       }
     }
+    if (this.slots) held.push(...(await this.slots.held(states, signal).catch((error: unknown) => {
+      this.#context.logError("held slots", error);
+      return [];
+    })));
     return held;
   }
 
@@ -1849,6 +1936,7 @@ export class TartBackend implements Backend {
   async maintain(signal?: AbortSignal): Promise<void> {
     try {
       await this.#upkeep.run(signal ?? this.#stopping.signal);
+      await this.slots?.maintain(signal ?? this.#stopping.signal).catch((error) => this.#context.logError("shared iOS hosts", error));
     } finally {
       await this.#leftovers(signal).catch((error) => this.#context.logError("image leftovers", error));
     }
@@ -2187,6 +2275,7 @@ export class TartBackend implements Backend {
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
+    if (slotRefOf(guest)) return this.#slots(guest).transports(guest);
     const host = this.#hostOf(guest);
     const { ssh } = await this.#keys();
     const mac = await this.#mac(host);
@@ -2436,6 +2525,10 @@ export class TartBackend implements Backend {
         `bb-box leaves alone the VMs of other installs on these Macs: ${[...others].map(([install, count]) => `${count} of install ${install}`).join(", ")}. They still count against each Mac's room.`,
       );
     }
+    if (this.slots) {
+      const unread = (error: unknown): DoctorCheck[] => [{ id: "ios-hosts.all", name: "Shared iOS hosts", status: "warn", detail: `bb-box could not read its shared iOS hosts: ${message(error)}`, fix: null }];
+      checks.push(...(await this.slots.doctor(states, signal).catch(unread)));
+    }
     const ok = checks.every((check) => check.status !== "fail");
     const first = checks.find((check) => check.status === "fail");
     const answering = [...states.values()].find((state): state is MacState => !(state instanceof Error));
@@ -2528,6 +2621,7 @@ export class TartBackend implements Backend {
 
   async dispose(): Promise<void> {
     this.#stopping.abort(new Error("bb-box is stopping."));
+    this.slots?.dispose();
     if (this.#quietKick) clearTimeout(this.#quietKick);
     await this.#upkeep.running?.catch(() => undefined);
     const pending = this.#ssh;
@@ -2598,6 +2692,7 @@ export class TartBackend implements Backend {
    * machines are core's SPARES and OPERATOR.
    */
   #vmWords(vm: string, owner: Readonly<Record<string, string>> | undefined): string {
+    if (owner && isHostOwner(owner) && owner.install === this.#context.installId) return `shared iOS host ${vm}`;
     if (!owner?.name || owner.install !== this.#context.installId) return vm;
     if (owner.thread === "spare") return `spare box ${owner.name}`;
     if (owner.thread === "operator") return `your machine ${owner.name}`;

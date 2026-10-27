@@ -39,6 +39,7 @@ import { KIND_INFO } from "../../src/backends/kinds.ts";
 import { displayShows } from "../../src/backends/types.ts";
 import type { BoxRecord } from "../../src/core/boxes.ts";
 import { deviceModel, isTestOffer, type DevicePlatform } from "../../src/core/device.ts";
+import { placementOf, type SlotKind } from "../../src/core/device-host.ts";
 import { parseDeviceOffer } from "../../src/core/device-parse.ts";
 import { connectScript, deviceServerFiles } from "../../src/core/device-delivery.ts";
 import { DeviceLink } from "../../src/core/device-link.ts";
@@ -1294,6 +1295,80 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           }
         });
       });
+    });
+  });
+}
+
+export interface SlotConformanceOptions {
+  readonly name: string;
+  readonly create: () => Backend;
+  readonly kind: SlotKind;
+  readonly elastic: boolean;
+  readonly timeoutMs?: number;
+}
+
+export async function slotConformance(options: SlotConformanceOptions): Promise<void> {
+  const timeout = options.timeoutMs ?? 120_000;
+  const wait = () => AbortSignal.timeout(timeout);
+  describe(`${options.name} slots`, { timeout: timeout * 8 }, () => {
+    const backend = options.create();
+    const lender = backend.slots;
+    after(async () => backend.dispose?.());
+    const place = async (box: BoxIdentity): Promise<Guest> => {
+      const tier = await lender!.offer(options.kind, null, wait());
+      assert.notEqual(tier.tier, "wait", `a slot is offered: ${tier.tier === "wait" ? tier.words : ""}`);
+      const taken = await lender!.take(tier, box, wait());
+      assert.ok(!("lost" in taken), `the take wins: ${"lost" in taken ? taken.lost : ""}`);
+      return taken;
+    };
+    const hostOf = (guest: Guest): string => {
+      const placement = placementOf({ guest });
+      assert.equal(placement.on, "slot", `${guest.ref} is in a slot`);
+      return placement.on === "slot" ? placement.host : "";
+    };
+    let first: Guest | null = null;
+    let second: Guest | null = null;
+
+    it("lends the kind", () => {
+      assert.ok(lender, "the backend has a lender");
+      assert.equal(lender.lends(options.kind), true);
+    });
+
+    it("two acquires at once share one new host, each in a slot of its own", { timeout }, async () => {
+      const boxes = [identity(options.kind), identity(options.kind)];
+      const taken = [await place(boxes[0]!), await place(boxes[1]!)];
+      const acquired = await Promise.all(boxes.map((box, n) => backend.acquire(box, taken[n]!, recordingHooks().hooks, wait())));
+      [first, second] = acquired;
+      assert.equal(hostOf(acquired[0]!), hostOf(acquired[1]!), "one host");
+      assert.notEqual(acquired[0]!.ref, acquired[1]!.ref, "two slots");
+      for (const guest of acquired) assert.equal(await backend.power(guest, wait()), "running");
+    });
+
+    it("refuses a stop, a resize and a grant of a box in a slot, in words", { timeout }, async () => {
+      assert.ok(first);
+      if (backend.stop) await assert.rejects(backend.stop(first, wait()), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && /shared/.test(error.message));
+      if (backend.planResize) await assert.rejects(backend.planResize(first, options.kind, { cores: 2, memoryMiB: 4096, diskGiB: null }, [], wait()), /no size of its own/);
+      if (backend.grant) await assert.rejects(backend.grant(first, { program: "/bin/sh", permissions: ["accessibility"] }, wait()), /no console session/);
+    });
+
+    it("a release of one leaves the other answering on the same host", { timeout }, async () => {
+      assert.ok(first && second);
+      await backend.release(first, releaseHooks().hooks, wait());
+      assert.equal(await backend.power(second, wait()), "running");
+      const command = (await backend.transports(second, options.kind)).command;
+      assert.ok(command, "a slot box has a command transport");
+      assert.equal((await command.run("true", { timeoutMs: 30_000 })).exitCode, 0);
+      assert.ok(!(await backend.held(wait())).some((guest) => guest.ref === first!.ref && guest.owner), "the released slot is no box's");
+    });
+
+    it(options.elastic ? "the last release deletes the host" : "the last release leaves the always-on host", { timeout }, async () => {
+      assert.ok(second);
+      const host = hostOf(second);
+      await backend.release(second, releaseHooks().hooks, wait());
+      assert.ok(!(await backend.held(wait())).some((guest) => placementOf({ guest }).on === "slot" && hostOf(guest) === host), "no slot of the host is held");
+      if (!options.elastic) return;
+      const next = await lender!.offer(options.kind, null, wait());
+      assert.equal(next.tier, "new-host", "the next box needs a new host");
     });
   });
 }

@@ -143,8 +143,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
           : null;
       return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn, imageOffer, images, desktopOnDemand, desktopProblem: app.desktopProblem(threadId), access };
     },
-    acquire: ({ threadId, kind, size, on, image, device, dedicated }) =>
-      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}), ...(image ? { image } : {}), ...(device ? { device } : {}), ...(dedicated ? { dedicated } : {}) })),
+    acquire: ({ threadId, kind, size, on, image, device, dedicated, shared }) =>
+      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}), ...(image ? { image } : {}), ...(device ? { device } : {}), ...(dedicated ? { dedicated } : {}), ...(shared ? { shared } : {}) })),
     images: async ({ threadId, projectId }) => app.imageOptions(projectId ?? (threadId ? await app.projectOf(threadId).catch(() => null) : null)),
     release: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Releasing the box", () => boxes.release(threadId, box, "released in BB Box's panel"))),
     stop: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Stopping the box", () => boxes.stop(threadId, box))),

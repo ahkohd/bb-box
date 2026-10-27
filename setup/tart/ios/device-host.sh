@@ -7,7 +7,7 @@ export PATH LC_ALL
 
 ROOT=
 
-VERSION=1
+VERSION=2
 HOST=$ROOT/var/db/bb-box/host
 SHARE=$ROOT/usr/local/share/bb-box
 IOS_SHARE=$SHARE/ios
@@ -764,12 +764,50 @@ promise() {
   echo "promised=$box"
 }
 
+mark_deleting() {
+  printf 'since=%s\nslot=%s\nbox=%s\n' "$(now)" "$1" "$2" | put "$HOST/deleting"
+}
+
+decide_empty() {
+  if deleting; then
+    echo last=yes
+  elif others_keep_the_host ''; then
+    echo last=no
+  else
+    mark_deleting '' "$1"
+    echo last=yes
+  fi
+}
+
 unpromise() {
   read_input "install box"
   box_word_or_quit "$box" "unpromise"
   lock_host 60
   drop_promise "$box"
   echo "unpromised=$box"
+  decide_empty "$box"
+}
+
+vacate() {
+  read_input "install"
+  lock_host 60
+  decide_empty ''
+}
+
+restart() {
+  id=${1:-}
+  slot_or_quit "$id" restart
+  read_input "install box"
+  box_word_or_quit "$box" "The restart"
+  dir=$(slot_dir "$id")
+  lock_host 60
+  [ "$(state "$id" is)" = held ] || quit "$EXIT_NOT_OURS" "Slot $id is $(state "$id" is): no box holds it."
+  [ "$(field "$dir/claim" install)" = "$install" ] && [ "$(field "$dir/claim" box)" = "$box" ] || quit "$EXIT_NOT_OURS" "Another box holds slot $id."
+  unlock_host
+  label=$DEVICE_LABEL.$(slot_user "$id")
+  launchctl print "system/$label" >/dev/null 2>&1 || fail "Slot $id's device server daemon is not loaded."
+  launchctl kickstart -k "system/$label" >/dev/null 2>&1 || fail "launchd did not start slot $id's device server again."
+  echo "restarted=$id"
 }
 
 lend() {
@@ -866,7 +904,7 @@ decide_last() (
     echo no | put "$dir/last"
     top_up ''
   else
-    printf 'since=%s\nslot=%s\nbox=%s\n' "$(now)" "$id" "$box" | put "$HOST/deleting"
+    mark_deleting "$id" "$box"
     echo yes | put "$dir/last"
   fi
 )
@@ -1241,6 +1279,13 @@ status() {
   echo "model=$(default_model | cut -f 1)"
   echo "counted=$(counted)"
   for box in $(live_promises); do printf 'promise=%s\t%s\t%s\n' "$box" "$(field "$HOST/promises/$box" install)" "$(field "$HOST/promises/$box" since)"; done
+  for id in $(slot_ids); do
+    claim=$(slot_dir "$id")/claim
+    [ -f "$claim" ] || continue
+    printf 'claim=%s' "$id"
+    for key in install box thread name kind created; do printf '\t%s' "$(field "$claim" "$key" | tr -d '\t')"; done
+    echo
+  done
   cores=$(ps -axo uid=,pcpu= 2>/dev/null | awk '{ cpu[$1] += $2 } END { for (u in cpu) printf "%s %.2f\n", u, cpu[u] / 100 }')
   memory=$(memory_by_uid)
   booted=$(booted_devices)
@@ -1327,6 +1372,8 @@ case $verb in
   carry) carry ;;
   promise) promise ;;
   unpromise) unpromise ;;
+  vacate) vacate ;;
+  restart) restart "$@" ;;
   claim) claim "$@" ;;
   warm) warm "$@" ;;
   release) release "$@" ;;
@@ -1339,5 +1386,5 @@ case $verb in
   run) run ;;
   measure) measure "$@" ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: device-host status | init | install | make | carry | promise | unpromise | claim <slot> | release <slot> | reset | daemon <slot> | resume | version" ;;
+  *) quit 2 "usage: device-host status | init | install | make | carry | promise | unpromise | vacate | claim <slot> | release <slot> | restart <slot> | reset | daemon <slot> | resume | version" ;;
 esac

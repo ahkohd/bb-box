@@ -831,3 +831,125 @@ Then live, as root, in a dedicated ios box from the image built from
 | The image check, without device boots | free | the helper, daemons, held ports free, carried slots and slot UIDs lines passed |
 | `init` | held | both daemons loaded, HTTP 421. A second `init` left the ports daemon on the same pid. The image check's two lines then failed, as they should |
 | A reboot | held | all 8 ports held, `nc -l 127.0.0.1 8081` refused with "Address already in use", and `resume` ran at the new boot |
+
+## Unit 4: Tart hosts, shared still opt-in
+
+Built on 27 October 2026. Device server version 22; the host's helper
+version 2.
+
+### What it adds
+
+- **The `ios-hosts` settings** on the Tart backend: `ios-hosts-on`, off by
+  default, and `-most` 8, `-ahead` 1, `-resetting-most` 4, `-cores` 8,
+  `-memory-gib` 32, `-per-mac` 1 and `-disk-reserve-gib` 10. A host keeps
+  the settings it was made with: bb-box gives them to its helper's `init`
+  as it starts.
+- **The registry places a shared box** ([`#placeInSlot`](../../src/core/boxes.ts)):
+  for `shared: true`, it asks every backend whose lender lends the kind for
+  its best tier, takes the best in 064's order (ready, join, make, new host;
+  the pool Mac before Tart before Namespace in each), and asks again when a
+  take loses its race, three times, then refuses with what each lost to. It
+  runs in the registry's admission queue, which every acquire passes, so it
+  is the one lock for device placement.
+- **`SlotLender` on the Tart backend**
+  ([`src/backends/tart/ios-hosts.ts`](../../src/backends/tart/ios-hosts.ts)):
+  - **`offer`** reads each Mac's owner files for its hosts, and each serving
+    host's `status`: a ready slot is `ready`; a slot being made, or a host
+    starting with room, is `join`; room for a slot is `make`; a Mac with a
+    free VM slot, the iOS image and fewer hosts than `per-mac` is
+    `new-host`. Otherwise `wait`, with one sentence per cause, such as
+    "The shared iOS host bb-box-host-... has all its 8 slots making, ready,
+    held or promised (8 held). No shared iOS host can start on mac1: mac1
+    runs a shared iOS host already, as many as it may (1)."
+  - **`take`** claims a ready slot with the helper's `claim`; promises a
+    place with its `promise`, or, on a host still starting, in the host's
+    owner file on the Mac; or makes a new host: in the backend's placement
+    chain, with the Mac's room checked again, it writes the host's owner
+    file, `starting` with the box promised, and counts the VM against the
+    Mac until it runs. So the next acquire joins it.
+  - **A host's start** clones the iOS image as `bb-box-host-<id>` at the
+    hosts' size, starts it, waits for SSH, installs this bb-box's helper,
+    runs `init`, then, under the lender's lock, marks the host serving and
+    gives the helper every promise from the owner file. A start that fails
+    marks the host failed and deletes it.
+  - **A box's acquire** waits for its host, then claims a ready slot, waits
+    for one being made for it or as a spare, or has the helper make one for
+    it, and is ready once SSH answers as the slot's user.
+  - **Release** is the helper's `release`, or `unpromise` for a box that
+    had no slot yet. When the helper answers `last=yes`, having written
+    `deleting` under its lock, the backend stops and deletes the VM.
+  - **The upkeep**: a host that failed and holds no box, one starting for 5
+    minutes with no box promised, one marked `deleting`, and one serving
+    with nothing held, promised or being made (the helper's new `vacate`
+    decides under its lock) are deleted; a host whose VM is not running, as
+    after its Mac restarted, is started again; a start an earlier instance
+    began is carried on.
+  - **Soft draining**: a host whose iOS image build is older than the
+    image's lends its ready slots, and joins of slots being made, only while
+    no host on the new build can start on its Mac, and makes no new slot.
+  - **`held()`** lists each claimed slot of this install as a box's guest,
+    with its box, thread, name, kind and creation from the claim, and each
+    promise with no owner; the host's own VM is no box's.
+  - **`transports`**: SSH to the host's VM as the slot's user, through the
+    Mac; no desktop display; and `daemonKeptByHost`, the hook unit 3 added,
+    so bb-box's own enrolment runs BB's installer with
+    `BB_INSTALL_SKIP_SERVICE=1` and has the helper's `daemon` keep BB's
+    daemon.
+  - `stop`, `resize`, `planResize` and `grant` refuse a slot's guest in
+    words, as the registry does first; `power` and `stopped` follow the
+    host's VM, and `start` starts it.
+- **The helper, version 2**
+  ([`device-host.sh`](../../setup/tart/ios/device-host.sh)): `status`
+  gives each claim's install, box, thread, name, kind and creation;
+  `unpromise` answers `last` as `release` does; `vacate` writes `deleting`
+  for a host that holds nothing; and `restart <slot>` starts a held slot's
+  device server daemon again. bb-box installs its own copy at each host's
+  start, so a host runs the helper of the bb-box that lends its slots.
+- **Every slot stream is capped at two thirds:** on each connection to a
+  slot box's device server, the plugin sends `{"type": "cap", "most":
+  "two-thirds"}`, until unit 6's ledger.
+- **"bb-box has asked the host to start it again."** When a slot box's
+  device server does not answer and is not missing, the plugin asks the
+  helper's `restart`, and the device's view says: "The device server for
+  this box has not started. bb-box has asked the host to start it again."
+- **063's words for a device that stopped twice** in 5 minutes, in a slot:
+  "Reboot it with box_device reboot to start it again, or release the box
+  for a new one: a shared box cannot be restarted." A VM of its own keeps
+  "Restart the box to start it again."
+- **`slotUid`** has no modulo: generations run from 1 to 9999, as the
+  helper refuses 10000, and a placement with a generation past 9999 is
+  refused in words.
+- **The doctor's check Shared iOS hosts on** each Mac: each host's state,
+  its slots held, ready, making and sweeping, its free disk and memory, and
+  each held slot's cores, memory and home; with none, whether one can
+  start.
+- **box_list, `box_acquire` and `bb box acquire`** say what `shared: true`
+  gives where a host is set up; the skill says when to ask for `dedicated`,
+  and to start servers on the box's ports. The New box form's Shared choice
+  is offered once a host is set up, and sends `shared`. A VM of its own
+  stays chosen first until shared is the default.
+- **Conformance cases** for any backend that lends slots
+  ([`slotConformance`](../../test/conformance/suite.ts)): two acquires at
+  once share one new host, each in a slot of its own; a box in a slot
+  refuses a stop, a resize and a grant in words; a release of one leaves
+  the other answering; the last release deletes an elastic host. They run
+  against Tart on fakes in `npm test`, and in `npm run conformance` for a
+  backend that lends slots.
+
+### How it was checked, before the live check
+
+On a Linux box, against a fake Mac whose host VMs run the real helper on
+unit 3's fake macOS ([`test/fake-ios-host.ts`](../../test/fake-ios-host.ts)),
+reached through the fake SSH as the VM's and each slot's user:
+
+| Check | Result |
+| --- | --- |
+| Three boxes placed one after another, as the registry's queue places three asked for at once, then acquired at once | tiers `new-host`, `join`, `join`; one clone of the iOS image; slots `i1`, `i2` and `1`; each reached as its own user |
+| A box on a serving host | its take is the claim of a ready slot |
+| Releases | the first leaves the host; the last deletes its VM and owner file, and the box's guest is gone |
+| A full host, `per-mac` 1 | `wait`, with the host's and the Mac's words |
+| Another device than the slot's | `wait`: "A shared ios box has the iPhone 18 Pro, the model every slot is made with. Leave device out for it, or ask for dedicated: true for the iPhone 17." |
+| A take that loses the last ready slot | `lost`; the registry asks again, and after three refuses with what each lost to |
+| The registry, with the fake backend's elastic lender | three asked for at once make one host; a ninth on a host of 8 is refused with its words; `shared: true` with a size is refused; an ios box without `shared` stays a VM of its own; the last release deletes the host |
+| The helper's new verbs | `unpromise` and `vacate` answer `last` and write `deleting` only when nothing keeps the host; `status` gives each claim; `restart` kickstarts the slot's device daemon, for the claim's box only |
+| The suite | tsc clean; the node suite 2,108 passed, 0 failed, 288 skipped; vitest 219 passed |

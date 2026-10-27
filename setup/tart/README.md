@@ -243,6 +243,39 @@ the Tart backend's `ios-image` set to it, bb-box offers ios boxes, each a clone
 of it with one device booted. [The iOS image's guide](ios/README.md) says what
 it has, and how it is checked and refreshed.
 
+#### Shared iOS hosts
+
+With `ios-hosts-on` set, an ios box asked for with `shared: true` is a macOS
+user with its own device on a VM of the iOS image shared with other ios
+boxes ([064](../../docs/decisions/064-ios-shared-hosts.md)). It is opt-in:
+an ios box asked for without it is a VM of its own, as before.
+
+- **A host is made for a box.** When no host has room, bb-box clones the iOS
+  image as `bb-box-host-<id>` at the hosts' size and starts it. Boxes asked
+  for while it starts join it, up to its slots, so three asked for at once
+  make one host. bb-box gives the host its own `device-host` helper and the
+  settings above as it starts; a change of setting applies to hosts made
+  after it.
+- **A box takes a slot.** The image's two carried slots go first, then slots
+  the host makes, about 30 s each. A ready slot is claimed in about a
+  second.
+- **The last release deletes the host,** and the Mac's VM slot is free
+  again. A host that starts again after its Mac restarted, or whose start
+  was cut short, is carried on by the upkeep; one that failed, or holds no
+  box, is deleted by it.
+- **An image change drains a host softly:** a host on an older build of the
+  iOS image lends its ready slots while no host on the new build can start on
+  its Mac, and is deleted at its last release.
+- **What a slot box gives up:** sudo, Homebrew, its own cores and ports, the
+  host's desktop, a size, a stop and a start. Its device's stream is at two
+  thirds at most until the encoder's ledger comes (064, unit 6). Every slot
+  has the image's first device model; ask for `dedicated: true` for another.
+- **`bb box doctor`'s check Shared iOS hosts on** each Mac lists each host,
+  its slots and what each held slot uses.
+
+The [iOS image's guide](ios/README.md#shared-hosts-device-host) has the
+helper's commands and state.
+
 #### Windows (arm64)
 
 Download Windows 11 Arm64 in English (United States) from Microsoft
@@ -292,7 +325,12 @@ its boxes and takes no new ones. The backend's own fields:
 | `macos-image`, `macos-desktop-image` | `bb-box-macos` | The Tart VM each kind is cloned from, on every Mac. Empty turns the kind off |
 | `linux-image` | empty | The image of `linux-arm64` boxes, such as `bb-box-linux`. Empty, the default, turns them off |
 | `linux-desktop-image` | empty | The image of `linux-arm64-desktop-cpu` boxes, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
-| `ios-image` | empty | The iOS image, such as `bb-box-ios`, which `prepare-ios-image.sh` builds on the macOS image. Empty, the default, turns it off. bb-box checks and refreshes it; ios boxes are not offered yet |
+| `ios-image` | empty | The iOS image, such as `bb-box-ios`, which `prepare-ios-image.sh` builds on the macOS image. Empty, the default, turns it off. bb-box checks and refreshes it |
+| `ios-hosts-on` | off | Shared iOS hosts, [below](#shared-ios-hosts): an ios box asked for with `shared: true` takes a slot on a VM of the iOS image made as a host |
+| `ios-hosts-most`, `ios-hosts-ahead`, `ios-hosts-resetting-most` | 8, 1, 4 | A host's slots making, ready or held at most; ready slots it keeps while it holds a box; and released slots it sweeps in one pass |
+| `ios-hosts-cores`, `ios-hosts-memory-gib` | 8, 32 | Each host's VM's size, which its slots share |
+| `ios-hosts-per-mac` | 1 | Hosts a Mac runs at most. Each is one of the Mac's two macOS VMs, and both share the Mac's video encoder |
+| `ios-hosts-disk-reserve-gib` | 10 | A host makes no new slot while its VM has less free disk than this |
 | `windows-image` | empty | The image in `~/.bb-box/qemu/images` of `windows-arm64-desktop` boxes: the name `prepare-windows-image.sh` was given with `--name`, or its default. Empty, the default, turns them off |
 | `tart-windows-enrol` | on | Windows boxes join BB as machines, as the Proxmox QEMU backend's do. Off, they are boxes only |
 | `video` | off | macOS desktops open as video, from bb-box-stream in the image (060), not VNC. Off by default: they open as VNC, which is already smooth on a Tart Mac, at 52 to 55 frames a second, and a person can choose video under Display. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31 |

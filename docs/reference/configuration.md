@@ -181,6 +181,7 @@ Setup: [setup/tart/README.md](../../setup/tart/README.md).
 | `linux-desktop-image` | Linux desktop image (arm64) | string | boxes |  | The Tart VM on each Mac that linux-arm64-desktop-cpu boxes are cloned from, as setup/tart/prepare-linux-image.sh --desktop builds it (bb-box-linux-desktop). Empty turns them off. |
 | `windows-image` | Windows image (arm64) | string | boxes |  | The Windows image on each Mac, in ~/.bb-box/qemu/images, that windows-arm64-desktop boxes are made from, run by QEMU. Empty turns them off. |
 | `ios-image` | iOS image | string | boxes |  | The Tart VM on each Mac that ios boxes are cloned from, as setup/tart/prepare-ios-image.sh builds it on the macOS image (bb-box-ios): idb_companion and a booted-once, slimmed iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5). bb-box checks and refreshes it with the macOS image. Empty, the default, turns it off. ios boxes are not offered yet. |
+| `ios-hosts-on` | Shared iOS hosts | boolean | boxes | `false` | ios boxes asked for with shared: true take a slot, a macOS user with its own device, on a VM of the iOS image made as a shared host: made when a box needs one, deleted when its last box is released. Off by default. |
 | `windows-enrol` | Windows boxes as BB machines | boolean | boxes | `true` | Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only. |
 | `video` | Video by default for macOS desktops | boolean | boxes | `false` | macOS desktops open as video, from bb-box-stream in the image, not VNC. Off by default: they open as VNC, which is already smooth on a Tart Mac, at 52 to 55 frames a second, and a person can choose video under Display. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31. |
 | `vm-user` | VM user | string | advanced | `admin` | The user in the macOS images that bb-box and BB work as. It is logged in to the desktop automatically. Linux boxes work as box. |
@@ -188,6 +189,13 @@ Setup: [setup/tart/README.md](../../setup/tart/README.md).
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `16384` | A new box is refused if the Mac would have less memory than this left for its own use, after its running VMs. |
 | `reserve-disk-gib` | Disk kept free (GiB) | number | advanced | `50` | A new box is refused if the Mac's disk has less free space than this. |
 | `warm-max-hours` | Hours a macOS warm VM is kept | number | advanced | `6` | A suspended macOS warm VM saved longer ago than this is replaced by a fresh one, as an old saved state may not restore. |
+| `ios-hosts-most` | Slots per shared iOS host | number | advanced | `8` | The most slots a shared iOS host has making, ready or held at once. |
+| `ios-hosts-ahead` | Ready slots kept on a shared iOS host | number | advanced | `1` | Slots a shared iOS host keeps ready while it holds a box, so the next box is ready in seconds. |
+| `ios-hosts-resetting-most` | Slots a shared iOS host sweeps at once | number | advanced | `4` | The most released slots whose files a shared iOS host sweeps in one pass. |
+| `ios-hosts-cores` | Cores of a shared iOS host | number | advanced | `8` | The cores of each shared iOS host's VM, shared by its slots. |
+| `ios-hosts-memory-gib` | Memory of a shared iOS host (GiB) | number | advanced | `32` | The memory of each shared iOS host's VM, shared by its slots. |
+| `ios-hosts-per-mac` | Shared iOS hosts per Mac | number | advanced | `1` | The most shared iOS hosts a Mac runs. Each is one of the Mac's two macOS VMs, and both share the Mac's video encoder. |
+| `ios-hosts-disk-reserve-gib` | Disk a shared iOS host keeps free (GiB) | number | advanced | `10` | A shared iOS host makes no new slot while its VM has less free disk than this. |
 
 Each host's fields:
 

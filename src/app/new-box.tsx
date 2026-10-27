@@ -167,7 +167,7 @@ export function NewBox({
 }: {
   kinds: readonly KindView[];
   /** Makes a box; resolves with the refusal to show, or null when the box was made. A machine's name goes with it (036), and its image (049). */
-  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[], image?: string, device?: string, dedicated?: boolean) => Promise<string | null>;
+  make: (kind: string, size?: SizeRequest, name?: string, on?: string | string[], image?: string, device?: string, placement?: "dedicated" | "shared") => Promise<string | null>;
   /** The projects' images a box can choose (049), this project's marked mine; the choice shows where one covers the chosen kind. */
   images?: readonly ImageOptionView[];
   /** "Add machine": a labelled button, and a Name field, for one of your machines (036). */
@@ -202,7 +202,7 @@ export function NewBox({
   /** The image chosen by hand (049): a name or "standard"; null until then, so the form starts on the project's image each time. */
   const [image, setImage] = useState<string | null>(null);
   const [device, setDevice] = useState<string | null>(null);
-  const [placement, setPlacement] = useState<Placement>("shared");
+  const [placement, setPlacement] = useState<Placement | null>(null);
   /** The preset last chosen, which Custom starts from. */
   const [viewed, setViewed] = useState<string | null>(last.size && last.size !== CUSTOM ? last.size : null);
   // Custom fields belong to a kind: edited ones are kept per kind, and a
@@ -272,7 +272,8 @@ export function NewBox({
   const devices = kind?.devices?.models ?? [];
   const placementChoice = !machine && kind?.placement ? kind.placement : null;
   const placements = placementChoice ? PLACEMENTS.filter((option) => option.id !== "shared" || placementChoice.shared) : [];
-  const chosenPlacement: Placement | null = placementChoice ? (placements.some((option) => option.id === placement) ? placement : "own") : null;
+  const placementByDefault: Placement = placementChoice?.shared && placementChoice.sizeNeedsDedicated ? "shared" : "own";
+  const chosenPlacement: Placement | null = placementChoice ? (placements.some((option) => option.id === placement) ? placement! : placementByDefault) : null;
   const sharedChosen = chosenPlacement === "shared";
   const chosenDevice = devices.length ? (device && devices.includes(device) ? device : devices[0]) : undefined;
   const systemOf = (system: { readonly os: string; readonly device?: string }) => system.device ?? system.os;
@@ -390,7 +391,7 @@ export function NewBox({
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
       const refused = buildsFirst
         ? await onDemand!.build(kind.id, request, machine && typedName ? typedName : undefined)
-        : await make(kind.id, sharedChosen ? undefined : request, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice, chosenPlacement === "own" ? true : undefined);
+        : await make(kind.id, sharedChosen ? undefined : request, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice, chosenPlacement === "own" ? "dedicated" : chosenPlacement === "shared" ? "shared" : undefined);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });

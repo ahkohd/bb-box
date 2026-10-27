@@ -24,7 +24,7 @@ import { gpuRoomText } from "../src/plugin/tools.ts";
 import { adminText, boxDetail, boxView, gpuRooms, kindResizeText, kindViews, startingWords, waitingWords, type KindView } from "../src/plugin/views.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_WINDOWS_KIND, FakeBackend, type FakeBackendOptions } from "./fake-backend.ts";
 import { MemoryStorage, fakeDaemon, tempDir } from "./helpers.ts";
-import { placementData, placementOf, SHARED_IOS_BY_DEFAULT, type SlotPlacement } from "../src/core/device-host.ts";
+import { inSlot, placementData, placementOf, SHARED_IOS_BY_DEFAULT, type SlotPlacement } from "../src/core/device-host.ts";
 import { placementText } from "../src/plugin/views.ts";
 
 const THREAD = "thr_one";
@@ -3226,7 +3226,7 @@ function sharedIosKind(): BoxKind {
   };
 }
 
-const SLOT_THREE: SlotPlacement = { on: "slot", host: "bb-box-host-1", hostOn: "tart", carried: false, generation: 7, place: 3, most: 8 };
+const SLOT_THREE: SlotPlacement = { on: "slot", host: "bb-box-host-1", hostOn: "tart", carried: false, generation: 7, place: 2, most: 8 };
 
 function lendingSlots(backend: FakeBackend, placement: SlotPlacement): void {
   const acquire = backend.acquire.bind(backend);
@@ -3284,7 +3284,7 @@ test("a box in a slot has the slot's capabilities, says where it is, and refuses
   assert.equal(stored.capabilities.computerUse, null);
   assert.equal(stored.capabilities.enrol, true, "a slot box still joins BB");
   const detail = boxDetail(stored);
-  assert.match(detail, /\nWhere: On a shared iOS host \(a Tart VM\), slot 3 of 8\. Ports 20300 to 20399, in BB_PORT_BASE and BB_PORT_COUNT\.\n/);
+  assert.match(detail, /\nWhere: On a shared iOS host \(a Tart VM\), slot 3 of 8\. Ports 20200 to 20299, in BB_PORT_BASE and BB_PORT_COUNT\.\n/);
   assert.match(detail, /\nRoot: no, the box user cannot use sudo or brew install on a shared host\. Ask for dedicated: true for a VM of its own\n/);
   assert.doesNotMatch(detail, /\nSize: /, "no size of its own");
   assert.equal(world.boxes.canStopStart(stored), false);
@@ -3295,4 +3295,41 @@ test("a box in a slot has the slot's capabilities, says where it is, and refuses
   await assert.rejects(world.boxes.resize(THREAD, box.name, { preset: "large" }, { restart: true }), refusedWith("unsupported", /^A shared ios box cannot be restarted on its own.* box_device reboot reboots its device\.$/));
   await assert.rejects(world.boxes.grant(THREAD, box.name, { program: "/bin/sh", permissions: ["accessibility"] }), refusedWith("unsupported", /^A shared ios box has no console session.*Ask for dedicated: true for a VM of its own\.$/));
   assert.deepEqual(world.errors, []);
+});
+
+test("with a backend lending slots, shared: true places an ios box in a slot: three asked for at once share one host, a ninth waits with words, and the last release deletes the host (064, unit 4)", async () => {
+  const world = setup({ kinds: [sharedIosKind(), { ...FAKE_KINDS[0]!, id: "macos", label: "macOS" }], slots: { kinds: ["ios"], most: 8 } });
+  assert.deepEqual(world.boxes.sharedHosts(), { on: true, why: null, byDefault: false });
+  const [kind] = kindViews(world.boxes.kinds().filter((each) => each.id === "ios").map((each) => ({ kind: each, backend: world.backend })), {}, {}, {}, {}, {}, undefined, {}, world.boxes.sharedHosts());
+  assert.match(placementText(kind!), /unless it asks for shared: true: then a macOS user on a VM shared with other ios boxes, ready in seconds/);
+  const shared = () => world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true });
+  const three = await Promise.all([shared(), shared(), shared()]);
+  assert.equal(world.backend.hostsMade, 1, "one host for three boxes asked for at once");
+  assert.deepEqual(world.backend.calls.filter((call) => call.startsWith("take ")).map((call) => call.split(" ")[1]), ["new-host", "ready", "ready"]);
+  const placed = await Promise.all(three.map((box) => ready(world.boxes, box)));
+  assert.deepEqual(placed.map((box) => box.state), ["ready", "ready", "ready"]);
+  assert.deepEqual(new Set(placed.map((box) => (placementOf(box).on === "slot" ? (placementOf(box) as SlotPlacement).place : -1))), new Set([0, 1, 2]));
+  assert.ok(placed.every((box) => box.capabilities.command?.admin === false), "slot capabilities from the claim");
+  for (let n = 3; n < 8; n++) await ready(world.boxes, await shared());
+  await assert.rejects(shared(), refusedWith("no_capacity", /^The shared host fake-host-1 has all its 8 slots held\.$/));
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true, size: { preset: "large" } }), refusedWith("invalid_size", /^A shared ios box has no size of its own/));
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "macos", shared: true }), refusedWith("no_capacity", /^A macos box does not take a slot on a shared host yet\./));
+  const plain = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios" }));
+  assert.deepEqual(placementOf(plain), { on: "vm" }, "shared stays opt-in until unit 6");
+  for (const box of await world.boxes.list(THREAD)) if (inSlot(box)) await world.boxes.release(THREAD, box.name, "the test is done with it");
+  await until(async () => (await world.boxes.list(THREAD)).every((box) => !inSlot(box) || box.state === "gone" || box.state === "failed"));
+  assert.equal(world.backend.hostsDeleted, 1);
+});
+
+test("a take that loses its race is asked again, three times, then the box is refused with what each lost to (064, unit 4)", async () => {
+  const world = setup({ kinds: [sharedIosKind()], slots: { kinds: ["ios"], most: 8 } });
+  world.backend.takeLosses = 2;
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true }));
+  assert.equal(placementOf(box).on, "slot", "placed again after two lost races");
+  assert.equal(world.backend.calls.filter((call) => call.startsWith("offer ")).length, 3);
+  world.backend.takeLosses = 3;
+  await assert.rejects(
+    world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true }),
+    refusedWith("no_capacity", /^Every shared iOS host bb-box asked had its room taken first, 3 times, so this ios box has no slot: Another box claimed it first\. Another box claimed it first\. Another box claimed it first\. Ask again\.$/),
+  );
 });
