@@ -3,7 +3,7 @@ import { describe, test } from "node:test";
 import { parseImageRecord } from "../src/backends/images.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
 import { answerText, controlFromParameters, lostWords, type DeviceControlParameters } from "../src/core/device-control.ts";
-import { controlDeadlineMs, deviceStateWords, nextContentSize, nextFontScale, turnedFrom } from "../src/core/device-settings.ts";
+import { controlDeadlineMs, deviceStateWords, nextContentSize, nextFontScale, notANetworkPreset, turnedFrom } from "../src/core/device-settings.ts";
 import { frameShape, placement } from "../src/core/device-frame.ts";
 import { arrangementFor, barGroups, barHeight, changeWords, moreItems, overflowControls, rowControls, textSizeSteps } from "../src/core/device-toolbar.ts";
 import {
@@ -572,6 +572,10 @@ describe("box_device's parameters, refusals and words (063, 6.3)", () => {
     const set = { ...state, settings: { ...state.settings, statusBar: { set: "clean" as const, at: 2 }, battery: known({ level: 42, charging: false }), location: known({ latitude: 51.5072, longitude: -0.1276 }, "outside"), network: known("slow" as const, "outside") } } as DeviceState;
     assert.equal(deviceStateWords(set), "booted, upright, 1080x2400, light, font scale 1.3, network slow, changed outside bb-box, status bar clean, battery 42%, location 51.5072, -0.1276, changed outside bb-box");
     assert.ok(supports(pixel, { action: "status_bar", to: "clean" }).supported);
+    const unshaped = { ...state, settings: { ...state.settings, network: { known: false as const, why: notANetworkPreset("airplane mode disabled, Wi-Fi off, not slowed, no default network") } } } as DeviceState;
+    assert.equal(deviceStateWords(unshaped), "booted, upright, 1080x2400, light, font scale 1.3, network none of the presets (airplane mode disabled, Wi-Fi off, not slowed, no default network)");
+    const unread = { ...state, settings: { ...state.settings, network: { known: false as const, why: "Not read from the device yet." } } } as DeviceState;
+    assert.equal(deviceStateWords(unread), "booted, upright, 1080x2400, light, font scale 1.3");
   });
 });
 
