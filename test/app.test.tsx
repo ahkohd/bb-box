@@ -1059,6 +1059,34 @@ test("while a desktop's image builds, the panel says so with its step and time; 
   expect(after.getByText("So the desktop box was not made. To try again, choose Desktop in New box.")).toBeTruthy();
 });
 
+test("New box as a sheet on a narrow screen: Tab skips the radio cards that are not chosen, the Android device's among them, as a wide screen's popover does (F-4)", async () => {
+  const narrow = (query: string) => ({ matches: query === "(max-width: 767px)", media: query, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false });
+  const wide = window.matchMedia;
+  window.matchMedia = narrow as unknown as typeof window.matchMedia;
+  try {
+    const android: KindView = { ...KINDS[0]!, id: "android", label: "Android emulator", devices: { platform: "android", models: ["Pixel 8", "Pixel Fold"] } };
+    const { handlers } = server([], { kinds: [...KINDS, android] });
+    const slot = panel(handlers);
+    await slot.findByText("No boxes yet");
+    fireEvent.click(slot.getByRole("button", { name: "New box" }));
+    const systems = await screen.findByRole("radiogroup", { name: "System" });
+    const cards = within(systems).getAllByRole("radio");
+    expect(within(systems).getByRole("radio", { name: /^Android device/ }).tabIndex).toBe(-1);
+    const chosen = cards.find((card) => card.getAttribute("aria-checked") === "true")!;
+    chosen.focus();
+    const reached: HTMLElement[] = [];
+    for (let press = 0; press < 40; press++) {
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Tab" });
+      reached.push(document.activeElement as HTMLElement);
+    }
+    expect(reached.filter((element) => element.tabIndex < 0)).toEqual([]);
+    expect(reached.filter((element) => element.getAttribute("role") === "radio" && element.getAttribute("aria-checked") !== "true")).toEqual([]);
+    expect(reached).toContain(screen.getByRole("button", { name: "Create box" }));
+  } finally {
+    window.matchMedia = wide;
+  }
+});
+
 test("New box offers to ask an agent to make the project a box image when it has none, in a new thread's composer (049)", async () => {
   const slot = panel(server([], { imageOffer: true }).handlers);
   await slot.findByText("No boxes yet");
