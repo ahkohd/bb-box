@@ -333,6 +333,28 @@ test("a claim for a macos box deletes the slot's device and its server's daemon"
   assert.equal(answer(claim.stdout).get("udid"), "");
 });
 
+test("a macos box's slot is removed at its release, never lent again, and the next ios claim gets a new slot with a device of its own (064, unit 8)", async () => {
+  const host = quiet();
+  made(host);
+  made(host);
+  made(host);
+  assert.equal(host.run(["claim", "3"], CLAIM("box_k")).status, 0, "another box keeps the host");
+  assert.equal(host.run(["claim", "1"], CLAIM("box_m", "macos")).status, 0);
+  assert.match(host.status().lines.find((line) => line.startsWith("claim=1\t")) ?? "", /^claim=1\tinst_a\tbox_m\tthr_a\tios-box\tmacos\t/);
+  assert.deepEqual(host.devices("bbd-1"), {});
+  assert.deepEqual(host.run(["release", "1"], BOX("box_m")), { status: 0, stdout: "released=yes\nlast=no\n", stderr: "" });
+  assert.equal(host.user("bbd-1"), null, "its user is removed with the release");
+  assert.deepEqual(host.run(["claim", "1"], CLAIM("box_i")), { status: EXIT.notReady, stdout: "", stderr: "Slot 1 is resetting, not ready.\n" }, "slot 1 is not lent again");
+  const next = host.run(["claim", "2"], CLAIM("box_i"));
+  assert.equal(next.status, 0, next.stderr);
+  const lent = answer(next.stdout);
+  assert.equal(lent.get("slot"), "2");
+  assert.notEqual(lent.get("udid"), "", "the ios box's slot has its device");
+  assert.deepEqual(Object.keys(host.devices("bbd-2")), [lent.get("udid")]);
+  await swept(host);
+  assert.deepEqual(host.status().slots.map((slot) => slot.id), ["2", "3"]);
+});
+
 test("a release removes the box's user with its home, processes, daemons and crontab, answers within its steps, and queues the sweep", async () => {
   const host = quiet();
   made(host);

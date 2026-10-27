@@ -8,6 +8,7 @@ import { BoxError, OPERATOR, describeError, isAcquiring, type BoxRecord } from "
 import type { DoctorReport } from "../backends/types.ts";
 import type { ImageBake, Problem } from "../core/document.ts";
 import { PRESETS } from "../core/sizes.ts";
+import { SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, dockerText, kindResizeText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
@@ -200,7 +201,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             device: { type: "string", description: "For an ios or android box, the device it boots, such as iPhone 18 Pro or Pixel Fold. The kind's first by default." },
             "no-slim": { type: "boolean", description: "For an ios box: its iOS Simulator keeps every service, for an app that uses widgets, Siri, iCloud, Health, Wallet or the like. Slimmed by default." },
             dedicated: { type: "boolean", description: "For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop. Give it with a size: once shared ios boxes are the default, a size without it is refused." },
-            shared: { type: "boolean", description: "For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. Only where a shared iOS host is set up; box_list says. macos boxes take no slot yet." },
+            shared: { type: "boolean", description: `For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. For a macos box: ${SHARED_MACOS_WORDS}. Only where a shared iOS host is set up; box_list says.` },
             "no-wait": { type: "boolean", description: "Return once the box is recorded." },
           },
           run: ({ positionals, options }, ctx) =>

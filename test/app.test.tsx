@@ -6449,7 +6449,7 @@ test("an ios box's New box form chooses Shared or a VM of its own before the dev
     os: "macos",
     arch: "arm64",
     devices: { platform: "ios", models: ["iPhone 18 Pro", "iPhone 17"] },
-    placement: { shared: false, why: "No shared iOS host is set up", sizeNeedsDedicated: false },
+    placement: { kind: "ios", shared: false, why: "No shared iOS host is set up", sizeNeedsDedicated: false },
   };
   const { handlers, changes } = server([], { kinds: [linux, ios] });
   const slot = panel(handlers);
@@ -6480,6 +6480,56 @@ test("an ios box's New box form chooses Shared or a VM of its own before the dev
   await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire ios dedicated", 'acquire ios {"preset":"large"} dedicated']));
 });
 
+test("a macos box's New box form offers Shared beside a VM of its own once a host lends slots, by click and by keyboard; Shared sends shared with no size, and a VM of its own sends neither shared nor dedicated (064, unit 8)", async () => {
+  const linux = KINDS[0]!;
+  const macos: KindView = {
+    ...linux,
+    id: "macos",
+    label: "macOS",
+    os: "macos",
+    arch: "arm64",
+    placement: { kind: "macos", shared: true, why: null, sizeNeedsDedicated: false },
+  };
+  const { handlers, changes } = server([], { kinds: [linux, macos] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "System" })).getByRole("radio", { name: /^macOS/ }));
+  const options = within(screen.getByRole("radiogroup", { name: "Machine" })).getAllByRole("radio");
+  expect(options.map((option) => [option.textContent, option.getAttribute("aria-checked"), option.getAttribute("aria-disabled"), option.tabIndex])).toEqual([
+    ["SharedReady in seconds, for commands, builds and the iOS Simulator. No sudo, Homebrew installs, desktop or app windows. Other boxes on the host share its cores and ports, and see its processes.", "false", null, -1],
+    ["A VM of its ownsudo, Homebrew, its own cores and ports. Takes one of the Mac's two VMs, so it can wait for one.", "true", null, 0],
+  ]);
+  expect(screen.getByRole("radiogroup", { name: "Size" })).toBeTruthy();
+  options[1]!.focus();
+  fireEvent.keyDown(options[1]!, { key: "ArrowUp" });
+  expect(options.map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+  expect(document.activeElement).toBe(options[0]);
+  expect(options.map((option) => option.tabIndex)).toEqual([0, -1]);
+  expect(screen.queryByRole("radiogroup", { name: "Size" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire macos shared"]));
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "System" })).getByRole("radio", { name: /^macOS/ }));
+  const again = within(screen.getByRole("radiogroup", { name: "Machine" })).getAllByRole("radio");
+  fireEvent.click(again[0]!);
+  fireEvent.keyDown(again[0]!, { key: "ArrowDown" });
+  expect(again.map((option) => option.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire macos shared", "acquire macos"]));
+});
+
+test("a macos kind with no host lending slots shows no Machine choice (064, unit 8)", async () => {
+  const linux = KINDS[0]!;
+  const macos: KindView = { ...linux, id: "macos", label: "macOS", os: "macos", arch: "arm64", placement: null };
+  const { handlers } = server([], { kinds: [linux, macos] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "System" })).getByRole("radio", { name: /^macOS/ }));
+  expect(screen.queryByRole("radiogroup", { name: "Machine" })).toBeNull();
+});
+
 test("with a shared iOS host set up, Shared can be chosen and sends shared with no size; A VM of its own stays the first choice until shared is the default (064, unit 4)", async () => {
   const linux = KINDS[0]!;
   const ios: KindView = {
@@ -6489,7 +6539,7 @@ test("with a shared iOS host set up, Shared can be chosen and sends shared with 
     os: "macos",
     arch: "arm64",
     devices: { platform: "ios", models: ["iPhone 18 Pro", "iPhone 17"] },
-    placement: { shared: true, why: null, sizeNeedsDedicated: false },
+    placement: { kind: "ios", shared: true, why: null, sizeNeedsDedicated: false },
   };
   const { handlers, changes } = server([], { kinds: [linux, ios] });
   const slot = panel(handlers);

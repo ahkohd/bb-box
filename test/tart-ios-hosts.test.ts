@@ -57,7 +57,8 @@ test("shared iOS hosts are off unless set on, and need the iOS image (064)", () 
   assert.equal(off.slots?.lends("ios"), false);
   const on = tartConfig(IOS_HOST_SETTINGS);
   assert.deepEqual(on.iosHosts, { on: true, most: 4, ahead: 0, resettingMost: 4, cores: 8, memoryGiB: 32, perMac: 1, diskReserveGiB: 10 });
-  assert.equal(new TartBackend(on, testContext(), IOS_HOST_FAKES).slots?.lends("macos"), false, "macos boxes take no slot yet (unit 8)");
+  assert.equal(new TartBackend(on, testContext(), IOS_HOST_FAKES).slots?.lends("macos"), true, "macos boxes asked for with shared take slots too (unit 8)");
+  assert.equal(off.slots?.lends("macos"), false);
 });
 
 test("three ios boxes acquired at once make one host, not three: the first starts it, the next two join it while it starts; each gets a slot of its own (064)", async () => {

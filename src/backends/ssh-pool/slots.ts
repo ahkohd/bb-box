@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, MACOS_SLOTS_LATER, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
+import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import type { DeviceOffer, IosModelName } from "../../core/device.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import type { SshTransport } from "../../transports/ssh.ts";
@@ -141,8 +141,8 @@ export class PoolSlots implements SlotLender {
     this.#access = access;
   }
 
-  lends(kind: SlotKind): boolean {
-    return kind === SLOT_KIND && this.#access.machines().some(listsSlots);
+  lends(_kind: SlotKind): boolean {
+    return this.#access.machines().some(listsSlots);
   }
 
   #serial<T>(task: () => Promise<T>): Promise<T> {
@@ -184,7 +184,6 @@ export class PoolSlots implements SlotLender {
   }
 
   async offer(kind: SlotKind, model: string | null, signal: AbortSignal): Promise<SlotTier> {
-    if (kind !== SLOT_KIND) return { tier: "wait", words: MACOS_SLOTS_LATER };
     const tiers: SlotTier[] = [];
     const words: string[] = [];
     let held = false;

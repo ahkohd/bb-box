@@ -272,6 +272,12 @@ an ios box asked for without it is a VM of its own, as before.
   host's desktop, a size, a stop and a start. Its device's stream is at two
   thirds at most until the encoder's ledger comes (064, unit 6). Every slot
   has the image's first device model; ask for `dedicated: true` for another.
+- **A macos box asked for with `shared: true`** takes a slot as an ios box
+  does, and the slot's device is deleted at the claim. It is a macOS user for
+  commands, builds and the simulator, with no sudo, Homebrew, desktop or
+  grants. A host with a macos box in it stays up for it as for an ios box,
+  and its slot is removed at the release, never lent to an ios box. A macos
+  box asked for without it is a VM of its own, as before.
 - **`bb box doctor`'s check Shared iOS hosts on** each Mac lists each host,
   its slots and what each held slot uses.
 

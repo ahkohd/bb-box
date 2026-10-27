@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, MACOS_SLOTS_LATER, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
+import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import { pause } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import type { RunResult, SshAccess } from "../../transports/types.ts";
@@ -234,8 +234,8 @@ export class IosHosts implements SlotLender {
     return (this.#access.sleep ?? pause)(ms, signal);
   }
 
-  lends(kind: SlotKind): boolean {
-    return kind === "ios" && this.#settings.on && !!this.#access.config().iosImage;
+  lends(_kind: SlotKind): boolean {
+    return this.#settings.on && !!this.#access.config().iosImage;
   }
 
   #owners(states: ReadonlyMap<string, HostState | Error>): HostOwner[] {
@@ -330,7 +330,6 @@ export class IosHosts implements SlotLender {
   }
 
   async offer(kind: SlotKind, model: string | null, signal: AbortSignal): Promise<SlotTier> {
-    if (kind !== "ios") return { tier: "wait", words: MACOS_SLOTS_LATER };
     if (!this.lends(kind)) return { tier: "wait", words: "Shared iOS hosts are off in bb-box's Tart settings." };
     const states = await this.#readStates(signal);
     const slotModel = this.#slotModel(states);
