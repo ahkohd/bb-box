@@ -500,7 +500,7 @@ export class PoolSlots implements SlotLender {
     }
   }
 
-  doctor(view: PoolMacView): Omit<DoctorCheck, "id" | "name"> | null {
+  async doctor(view: PoolMacView, signal?: AbortSignal): Promise<Omit<DoctorCheck, "id" | "name"> | null> {
     if (!listsSlots(view.machine)) return null;
     const name = view.machine.name;
     const { status } = view;
@@ -516,8 +516,24 @@ export class PoolSlots implements SlotLender {
     const counts = `${summary.held} held, ${summary.ready} ready, ${summary.making} making, ${summary.sweeping} sweeping, of ${summary.most}`;
     if (status.marker === "owner") return { status: "ok", detail: `Lent whole to a box now, so it lends no iOS slot until that box is released. Its slots: ${runtime}.`, fix: null };
     if (summary.closedSince !== null) return { status: "ok", detail: `Closed: it lends no iOS slot until bb-box opens it, at its next upkeep while it is not lent whole. Its slots: ${runtime}.`, fix: null };
-    return { status: "ok", detail: `Lends iOS slots, ${counts}: ${runtime}.${slotsBusy(summary) ? ` While any is held it is not lent whole.` : ""}`, fix: null };
+    const slots = await this.#status(view.machine, signal).catch(() => null);
+    const more = slots ? `${heldLoadWords(slots)}${sweepWords(slots)}` : "";
+    return { status: "ok", detail: `Lends iOS slots, ${counts}: ${runtime}.${slotsBusy(summary) ? ` While any is held it is not lent whole.` : ""}${more}`, fix: null };
   }
+}
+
+function heldLoadWords(status: HostStatus): string {
+  const held = status.slots.filter((slot) => slot.is === "held");
+  if (!held.length) return "";
+  return ` ${held.map((slot) => `Slot ${slot.id} (box ${slot.box ?? "?"}): ${slot.cores.toFixed(2)} cores, ${(slot.memoryMiB / 1024).toFixed(1)} GiB${slot.homeMiB !== null ? `, home ${(slot.homeMiB / 1024).toFixed(1)} GiB` : ""}`).join("; ")}.`;
+}
+
+export function sweepWords(status: HostStatus): string {
+  const last = status.sweeps.slice(-3);
+  if (!last.length) return "";
+  const words = last.map((sweep) => `UID ${sweep.uid}: ${sweep.found} ${sweep.found === 1 ? "path" : "paths"} found, ${sweep.left} left, in ${Math.round(sweep.seconds)} s`);
+  const left = last.some((sweep) => sweep.left > 0) ? " A sweep that leaves a path needs the helper's Full Disk Access." : "";
+  return ` Its last sweeps: ${words.join("; ")}.${left}`;
 }
 
 export function slotUserOf(guest: Guest): string {

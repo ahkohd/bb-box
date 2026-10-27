@@ -1193,7 +1193,7 @@ export class SshPoolBackend implements Backend {
       }
       if (mac && !status.mac) skip(...macChecks, ...slotChecks);
       else if (mac) this.#macChecks(status, machine, view.state === "out-of-service", grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, HOMES, SIP, XCODE, SCREEN, GRANTS, INPUT }, { pass, warn, fail });
-      const slotCheck = mac && status.mac && slotChecks.length ? this.slots.doctor(poolMacView(view)) : null;
+      const slotCheck = mac && status.mac && slotChecks.length ? await this.slots.doctor(poolMacView(view), signal) : null;
       if (slotCheck) checks.push({ id: SLOTS[0], name: SLOTS[1], ...slotCheck });
       // An operator's reset names no install.
       const install = status.owner?.install;
