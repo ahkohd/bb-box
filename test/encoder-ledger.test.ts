@@ -168,6 +168,31 @@ test("the ledger caps the passive viewers on one Mac and says which boxes use th
   assert.equal(sent.get("ios-0")?.cap, "half");
 });
 
+test("a busy stream takes a still one's full-size place once it has waited 10 s for one, and rises at once; the person in control keeps theirs (F-8)", () => {
+  const { ledger, sent, advance } = ledgers({ controlled: (box) => box === "still-1" });
+  const report = (box: string, fps: number) => ledger.report({ id: box, name: box }, MAC, { pixels: IPHONE, wants: [viewer("full")], fps });
+  report("still-1", 2);
+  report("still-2", 2);
+  report("busy", 50);
+  const caps = () => ["still-1", "still-2", "busy"].map((box) => sent.get(box)?.cap ?? null);
+  assert.deepEqual(caps(), [null, null, "two-thirds"], "the two at full keep their places at first");
+  advance(RISE_AFTER_MS - 1);
+  report("busy", 50);
+  assert.deepEqual(caps(), [null, null, "two-thirds"]);
+  advance(1);
+  report("busy", 50);
+  assert.deepEqual(caps(), [null, "two-thirds", null], "the busy stream takes the still one's place, not the person in control's");
+  assert.match(sent.get("still-2")!.words!, /^Shown at a lower resolution: this Mac's video encoder is busy with 2 other devices/);
+  advance(RISE_AFTER_MS);
+  report("still-2", 2);
+  report("busy", 50);
+  assert.deepEqual(caps(), [null, "two-thirds", null], "a busy stream at full keeps its place over a still one");
+  report("still-2", 50);
+  advance(RISE_AFTER_MS);
+  report("still-2", 50);
+  assert.deepEqual(caps(), [null, "two-thirds", null], "nor does a busy stream take a busy one's place");
+});
+
 test("a dedicated box and a host's slots on one Mac share one ledger; the pool's Mac has its own", () => {
   const { ledger } = ledgers();
   const POOL = { mac: "ssh-pool\u0000studio", label: "studio", chip: "Apple M5 Max" };
