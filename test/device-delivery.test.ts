@@ -266,6 +266,34 @@ describe("delivering the device server", { skip: process.platform === "win32" },
     ledger.dispose();
     record = box;
   });
+
+  test("the doctor says the device's state as its server gives it now, and what is not known when the server does not answer or bb-box closed its connection (F-8)", async () => {
+    const check = async (servers: DeviceServers) => (await servers.checks()).find((each) => each.id === "device.b-12")!;
+    const servers = make("doctor", 90, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION), () => false, { deviceStateWaitMs: 1000 });
+    assert.equal((await servers.ensure(box)).is, "connected");
+    const answering = await check(servers);
+    assert.match(answering.detail, new RegExp(`^Version ${DEVICE_SERVER_VERSION}, protocol \\d+: the Pixel Tablet, booted\\.`));
+
+    const server = Number(readFileSync(join(home, ".bb-box/device/server.pid"), "utf8"));
+    process.kill(server, "SIGSTOP");
+    try {
+      const silent = await check(servers);
+      assert.equal(silent.status, "warn");
+      assert.match(silent.detail, /: it did not answer within 1 s, so the device's state now is not known\. It last said the Pixel Tablet was booted, at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC\./);
+      assert.equal(silent.fix, "box_status b-12 says whether the box runs.");
+    } finally {
+      process.kill(server, "SIGCONT");
+    }
+    await servers.dispose();
+
+    const idle = make("doctor-idle", 100, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION), () => false, { deviceStateWaitMs: 1000, idleCloseMs: 100 });
+    assert.equal((await idle.ensure(box)).is, "connected");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const closed = await check(idle);
+    assert.equal(closed.status, "ok");
+    assert.match(closed.detail, /: bb-box closed its connection at .* UTC, as nothing used it, so the device's state now is not known\. It last said the Pixel Tablet was booted/);
+    await idle.dispose();
+  });
 });
 
 test("the doctor looks for Device Hub in every ios box at once, each bounded, and says what it waited on for a box whose shared host does not answer (F-7)", async () => {
