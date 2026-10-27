@@ -195,3 +195,17 @@ test("a new host whose Mac has no VM slot free when it starts waits for one, and
   assert.equal(placementOf({ guest: placed }).on, "slot");
   assert.ok(context.logs.some((line) => /waits for room on mac1/.test(line)), context.logs.join("\n"));
 });
+
+test("the upkeep finishes a host its helper marked deleting long ago, as when the release that marked it died, but leaves one a release is still stopping (064)", async () => {
+  const { backend, device, hosts } = setup();
+  const box = identity();
+  const { guest } = await place(backend, box);
+  await backend.acquire(box, guest, hooks().hooks, signal());
+  const marked = (secondsAgo: number) => writeFileSync(join(device.root, "var/db/bb-box/host/deleting"), `since=${Math.floor(Date.now() / 1000) - secondsAgo}\nslot=i1\nbox=${box.boxId}\n`);
+  marked(5);
+  await backend.maintain(signal());
+  assert.equal(hosts().length, 1, "a release marked it a moment ago and deletes it itself");
+  marked(600);
+  await backend.maintain(signal());
+  assert.deepEqual(hosts(), [], "marked 10 minutes ago, with no release running here");
+});
