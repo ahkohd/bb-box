@@ -351,6 +351,7 @@ export const DEVICE_ERROR_CODES = [
   "failed",
   "person-has-control",
   "in-progress",
+  "held-elsewhere",
 ] as const;
 export type DeviceErrorCode = (typeof DEVICE_ERROR_CODES)[number];
 
@@ -659,7 +660,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 2;
 export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
-export const DEVICE_SERVER_VERSION = 22;
+export const DEVICE_SERVER_VERSION = 23;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 
 export function frameGenerationOf(header: Uint8Array): number {
