@@ -400,7 +400,7 @@ export class DeviceServers {
   }
 
   async #capSlot(box: BoxRecord, link: DeviceLink): Promise<void> {
-    if (!inSlot(box) || !link.hello.lease || link.hello.platform !== "ios") return;
+    if (!inSlot(box) || !link.hello.lease) return;
     const answer = await link.request({ type: "cap", most: SLOT_STREAM_CAP }, { timeoutMs: SCRIPT_TIMEOUT_MS });
     if (!answer.ok) this.#deps.log(`Box ${box.name}'s device server did not take the cap at ${SLOT_STREAM_CAP}: ${answer.error.words}`);
   }
@@ -453,6 +453,7 @@ export class DeviceServers {
         this.#touch(box.id);
         await this.#copied(box, fresh.hello.state, fresh.hello);
         await this.#tellOwner(box).catch((error) => this.#deps.logError("tell the device server who has control", error));
+        await this.#capSlot(box, fresh).catch((error) => this.#deps.logError("cap a shared box's video", error));
         this.#deps.log(`Box ${box.name}'s device server: version ${fresh.hello.version} said hello ${((Date.now() - began) / 1000).toFixed(1)} s after its delivery.`);
         return held.view;
       } catch (error) {
@@ -476,6 +477,7 @@ export class DeviceServers {
       held.view = { is: "connected", version: restored.hello.version, protocol: restored.hello.protocol, state: restored.hello.state, bootedHere: restored.hello.bootedHere };
       this.#touch(box.id);
       await this.#tellOwner(box).catch((error) => this.#deps.logError("tell the device server who has control", error));
+      await this.#capSlot(box, restored).catch((error) => this.#deps.logError("cap a shared box's video", error));
       return held.view;
     } catch (error) {
       held.view = { is: "down", words: error instanceof Error ? error.message : String(error) };

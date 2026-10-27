@@ -3333,3 +3333,19 @@ test("a take that loses its race is asked again, three times, then the box is re
     refusedWith("no_capacity", /^Every shared iOS host bb-box asked had its room taken first, 3 times, so this ios box has no slot: Another box claimed it first\. Another box claimed it first\. Another box claimed it first\. Ask again\.$/),
   );
 });
+
+test("a box in a slot whose host's VM stopped, as after its Mac restarted, is started again by bb-box, though a person's start is refused (064, unit 4)", async () => {
+  const world = setup({ kinds: [sharedIosKind()], slots: { kinds: ["ios"], most: 8 } });
+  const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true }));
+  assert.equal(placementOf(box).on, "slot");
+  world.backend.stopReason = { reason: "The shared iOS host's VM is not running, as after its Mac restarted.", crashed: true, at: null };
+  await world.backend.stop!(box.guest!);
+  const found = await world.boxes.refresh(THREAD, box.name);
+  assert.equal(found.state, "stopped");
+  assert.ok(found.unrequestedStop!.restart);
+  const restarted = await world.boxes.settled(box);
+  assert.equal(restarted!.state, "ready");
+  assert.match(boxDetail(restarted!), /bb-box started it again at .* UTC\./);
+  await world.backend.stop!(box.guest!);
+  await assert.rejects(world.boxes.start(THREAD, box.name), refusedWith("unsupported", /^A shared ios box cannot be stopped on its own/));
+});

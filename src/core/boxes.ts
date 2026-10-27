@@ -2014,8 +2014,8 @@ export class Boxes {
     return !!(backend?.stop && backend.start);
   }
 
-  #stopStart(box: BoxRecord): { stop: NonNullable<Backend["stop"]>; start: NonNullable<Backend["start"]> } {
-    if (inSlot(box)) throw new BoxError("unsupported", stopRefusal(box.kind));
+  #stopStart(box: BoxRecord, hostRestart = false): { stop: NonNullable<Backend["stop"]>; start: NonNullable<Backend["start"]> } {
+    if (inSlot(box) && !hostRestart) throw new BoxError("unsupported", stopRefusal(box.kind));
     const backend = this.#backend(box);
     if (!backend.stop || !backend.start) {
       throw new BoxError("unsupported", `${box.backendLabel} cannot stop and start its boxes, so box ${box.name} keeps running until it is released.`);
@@ -2052,9 +2052,9 @@ export class Boxes {
   }
 
   /** start(), in the box's chain. */
-  async #start(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
+  async #start(box: BoxRecord, signal?: AbortSignal, hostRestart = false): Promise<BoxRecord> {
     const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, signal);
-    const { start } = this.#stopStart(current);
+    const { start } = this.#stopStart(current, hostRestart);
     if (current.state === "ready") return current;
     this.#require(current, "stopped");
     this.#require((await this.#move(current, "starting")) ?? { ...current, state: "releasing" }, "starting");
@@ -2270,7 +2270,7 @@ export class Boxes {
     const updated = (await this.update(box, (current) => (current.state === "stopped" ? { unrequestedStop: stop } : {}))) ?? box;
     this.#deps.log?.(`${describeBox(box)}: ${stopWords(updated)}`);
     if (restart && updated.unrequestedStop === stop) {
-      void this.#chain(box.id, () => this.#start(updated)).catch(async (error) => {
+      void this.#chain(box.id, () => this.#start(updated, undefined, inSlot(updated))).catch(async (error) => {
         this.#deps.logError("restart", error);
         const message = describeError(error, "The start");
         await this.update(box, (current) => {
