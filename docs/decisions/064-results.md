@@ -1419,12 +1419,32 @@ in the same slot; a Tart case where one backend stops while its host's
 helper runs `init`, the host is neither failed nor deleted, and a second
 backend places the box on that host, one clone in all. tsc clean; the node
 suite 2,169 passed, 0 failed, 288 skipped, the docs test among them; vitest
-222 passed. Item 1's reload check runs again once the fix is deployed.
+222 passed. Item 1's reload check ran again after the fix's deploy: below.
+
+### Item 1 again, and item 2's image, after the fix
+
+After the lead deployed the reload fix (PR 1181, main 7fa5e44) and
+rebuilt the ios image from main e0b8509 (build 20261027-064516), whose
+build log said "kept BB's app for <server>, build 3427d9e8...".
+
+| Check | Result |
+| --- | --- |
+| Item 1: a shared ios box with no host running, and bb-box reloaded 38 s later, while its host started | ready 83 s after the acquire, 45 s after the reload, in slot 1 of the host that was starting, a connected BB machine. Timings: choosing a shared host 14.7 s, host 35.6 s, slot 0.4 s, ssh 0.3 s, total 74.4 s. The 23.4 s no step counts is the time from the old instance stopping to the new one's sweep resuming the acquire |
+| A second shared ios box, the host's ready spare | choosing a shared host 6.5 s, ssh 0.3 s, total 6.8 s; BB enrolment 6.9 s. The first box's: 11.5 s |
+| Item 2: the slots' homes | the slots' home holds BB's app, build 3427d9e8..., and the carried slot `bbd-i2`'s home had it from the image build. BB's server gives build 634c1bfd... now, so its installer downloaded and installed that build over it, and the doctor warns that the ios image "has another build of BB's app than BB's server gives" |
+| The last release | the host deleted: "No shared iOS host runs" |
+
+Item 2 saves its 2 to 3 s only while BB's server gives the build the
+image kept. That build comes from the macOS image the ios image is made
+from, so both need rebuilding after BB updates; here the macOS image was
+older than the server's build.
 
 ### What limits these checks
 
-- **Item 1's handover window was not reached live:** the reload fault came
-  first. The two-instance case is checked on the fakes.
+- **Item 1's handover window was not seen live:** a reload 38 s into a
+  start overlapped it once, after the fix, and the box was placed; whether
+  the new instance's upkeep ran inside the window is not known. The
+  two-instance case is checked on the fakes.
 - **Item 3's 32 s from unit 8 was not seen again:** these placements took
   5.4 to 10.5 s. If it comes back, the timings now name it.
 - **With the host stopped, the doctor's device server line still said
