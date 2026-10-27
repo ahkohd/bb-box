@@ -30,6 +30,7 @@ function hostVmHome(home: string, device: FakeDeviceHost): void {
     [
       "#!/bin/sh",
       '[ "$1" = -n ] && shift',
+      `if [ "$1" = ${DEVICE_HOST_HELPER} ] && [ "$2" = promise ] && [ -f "$HOME/hold-promise" ]; then touch "$HOME/promise-held"; while [ -f "$HOME/hold-promise" ]; do sleep 0.05; done; fi`,
       `if [ "$1" = ${DEVICE_HOST_HELPER} ]; then shift; echo "$*" >> "$HOME/helper.log"; exec env ${env} /bin/sh '${helper}' "$@"; fi`,
       'for last in "$@"; do :; done',
       `if [ "$last" = ${DEVICE_HOST_HELPER} ]; then cat > "$HOME/installed-helper"; exit 0; fi`,

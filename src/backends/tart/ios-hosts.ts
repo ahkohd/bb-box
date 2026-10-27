@@ -29,6 +29,7 @@ const STATES_REUSED_MS = 15_000;
 const LEAVING_WAIT_MS = 5 * 60_000;
 const ROOM_POLL_MS = 10_000;
 const DELETING_LEFT_MS = 2 * 60_000;
+const HANDING_OVER_MS = 5 * 60_000;
 
 export type HostPhase = "starting" | "serving" | "failed";
 
@@ -42,6 +43,7 @@ export interface HostOwner {
   readonly build: string | null;
   readonly settings: IosHostsConfig;
   readonly failure: string | null;
+  readonly handingOverSince: number | null;
 }
 
 export interface HostsAccess {
@@ -97,6 +99,7 @@ export function readHostOwner(vm: string, mac: TartHost, fields: Readonly<Record
     image: fields.image ?? "",
     build: fields.build || null,
     failure: fields.failed || null,
+    handingOverSince: fields["handing-over"] && /^\d+$/.test(fields["handing-over"]) ? Number(fields["handing-over"]) : null,
     settings: {
       on: true,
       most: wholeOf(fields.most, defaults.most),
@@ -145,6 +148,25 @@ left=$(printf '%s\n' $(value promised) | grep -vxF "$box" | grep . | tr '\n' ' '
 rewrite promised "$(echo $left)"
 echo "state=$(value host-state)"
 echo "left=$(echo $left)"
+`);
+}
+
+export function hostServingScript(vm: string, installId: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
+${OWNER_LOCK}
+mine_host ${quote(installId)} || { echo gone; exit 0; }
+rewrite handing-over "$(date +%s)"
+rewrite host-state serving
+echo "promised=$(value promised)"
+`);
+}
+
+export function hostHandedOverScript(vm: string, installId: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
+${OWNER_LOCK}
+mine_host ${quote(installId)} || { echo gone; exit 0; }
+grep -v '^handing-over=' "$f" > "$f.new" && mv -f "$f.new" "$f"
+echo handed
 `);
 }
 
@@ -546,12 +568,13 @@ export class IosHosts implements SlotLender {
       );
       if (init.exitCode !== DEVICE_HOST_EXITS.done) throw new Error(`Its helper's init failed: ${init.stderr.trim() || `exit code ${init.exitCode}`}`);
       const promised = await this.#serial(async () => {
-        const said = parseFields((await this.#access.run(mac, hostPhaseScript(vm, this.#access.installId, "serving"), { signal })).stdout);
+        const said = parseFields((await this.#access.run(mac, hostServingScript(vm, this.#access.installId), { signal })).stdout);
         const boxes = (said.promised ?? "").split(/\s+/).filter(Boolean);
         for (const box of boxes) {
           const result = await this.#helper(command, "promise", [], claimantInput({ install: this.#access.installId, box }), 90_000, signal);
           if (result.exitCode !== DEVICE_HOST_EXITS.done) this.#access.log(`Shared iOS host ${vm} did not take the promise for box ${box}: ${result.stderr.trim()}`);
         }
+        await this.#access.run(mac, hostHandedOverScript(vm, this.#access.installId), { signal });
         return boxes;
       });
       this.#access.log(`Shared iOS host ${vm} on ${mac.name} serves, ${((performance.now() - began) / 1000).toFixed(1)} s after its start (its VM ${((booted - began) / 1000).toFixed(1)} s), for ${promised.length} boxes.`);
@@ -851,13 +874,17 @@ export class IosHosts implements SlotLender {
           if (!this.#releasing.has(vm) && now - status.deletingSince * 1000 >= DELETING_LEFT_MS) await this.#deleteHost(mac, vm, signal);
           continue;
         }
-        if (this.#acquiring.has(vm)) continue;
+        if (this.#acquiring.has(vm) || this.#handingOver(owner, now)) continue;
         const kept = status.slots.some((slot) => slot.is === "held" || (slot.is === "making" && slot.madeFor !== null)) || status.promises.length > 0;
         if (!kept) await this.#serial(async () => (this.#acquiring.has(vm) ? false : this.#vacate(mac, vm, await this.#access.vmCommand(mac, address), signal)));
       } catch (error) {
         this.#access.logError(`upkeep of shared iOS host ${vm}`, error);
       }
     }
+  }
+
+  #handingOver(owner: HostOwner, now: number): boolean {
+    return owner.handingOverSince !== null && now - owner.handingOverSince * 1000 < HANDING_OVER_MS;
   }
 
   async doctor(states: ReadonlyMap<string, HostState | Error>, signal?: AbortSignal): Promise<DoctorCheck[]> {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { TartBackend } from "../src/backends/tart/backend.ts";
@@ -209,4 +209,37 @@ test("the upkeep finishes a host its helper marked deleting long ago, as when th
   marked(600);
   await backend.maintain(signal());
   assert.deepEqual(hosts(), [], "marked 10 minutes ago, with no release running here");
+});
+
+async function until(met: () => boolean, words: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (!met()) {
+    if (Date.now() > deadline) assert.fail(`never: ${words}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+test("another instance of the same install never vacates a host this one is starting, nor one serving whose boxes' promises its helper has not taken yet, as during a reload (F-7)", async () => {
+  const { backend, hosts, ssh, mac } = setup();
+  const other = new TartBackend(tartConfig(IOS_HOST_SETTINGS), testContext(new MemoryStorage()), IOS_HOST_FAKES);
+  made.push(other);
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const vm = slotRefOf(guest)!.vm;
+  const owner = () => readFileSync(join(mac, ".bb-box", "tart", "owners", vm), "utf8");
+  const hold = join(ssh.home("192.168.64.2"), "hold-promise");
+  writeFileSync(hold, "");
+  const acquired = backend.acquire(box, guest, hooks().hooks, signal());
+  await other.maintain(signal());
+  assert.equal(hosts().length, 1, "a starting host stays");
+  await until(() => /^host-state=serving$/m.test(owner()) && existsSync(join(ssh.home("192.168.64.2"), "promise-held")), "the host serves and gives its helper the box's promise");
+  await other.maintain(signal());
+  assert.equal(hosts().length, 1, "a serving host whose helper has not taken its box's promise yet stays");
+  rmSync(hold);
+  const slot = await acquired;
+  assert.equal(placementOf({ guest: slot }).on, "slot");
+  await other.maintain(signal());
+  assert.equal(hosts().length, 1, "a host holding a box stays");
+  await backend.release(slot, releasing, signal());
+  assert.deepEqual(hosts(), []);
 });
