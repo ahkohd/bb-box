@@ -727,6 +727,10 @@ export class DeviceServer {
         return { type: "done" };
       case "launch":
         return { type: "launched", app: await this.#launch(request.app, connection) };
+      case "settings":
+        this.#booted();
+        await this.#readSettings();
+        return { type: "done" };
       case "tree":
         this.#booted();
         return { type: "tree", elements: await this.#options.driver.tree(), generation: this.#state.geometry?.generation ?? 0 };

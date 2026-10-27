@@ -575,7 +575,7 @@ function base64(value: unknown, path: string): string {
 }
 
 function request(value: unknown, path: string): DeviceRequest {
-  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "launch", "settle", "at", "screenshot", "tree", "record", "cap", "result"]);
+  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "launch", "settle", "at", "screenshot", "tree", "settings", "record", "cap", "result"]);
   const at = (key: string) => `${path}.${key}`;
   switch (type) {
     case "touch": {
@@ -640,6 +640,7 @@ function request(value: unknown, path: string): DeviceRequest {
       return { id: requestId(read.id, at("id")), type, most: read.most === null ? null : oneOf(read.most, at("most"), VIDEO_STEPS) };
     }
     case "tree":
+    case "settings":
     case "result":
       return { id: requestId(fields(value, path, ["id", "type"]).id, at("id")), type };
   }

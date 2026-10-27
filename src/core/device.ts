@@ -371,6 +371,7 @@ export type DeviceRequest =
   | { readonly id: string; readonly type: "open"; readonly url: string }
   | { readonly id: string; readonly type: "screenshot"; readonly longestEdge?: number }
   | { readonly id: string; readonly type: "tree" }
+  | { readonly id: string; readonly type: "settings" }
   | { readonly id: string; readonly type: "at"; readonly x: number; readonly y: number }
   | { readonly id: string; readonly type: "launch"; readonly app: string }
   | { readonly id: string; readonly type: "settle"; readonly quietMs: number; readonly mostMs: number; readonly fromNow: boolean }
@@ -660,8 +661,9 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 2;
 export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
-export const DEVICE_SERVER_VERSION = 23;
+export const DEVICE_SERVER_VERSION = 24;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
+export const SETTINGS_ASKED_SINCE_VERSION = 24;
 
 export function frameGenerationOf(header: Uint8Array): number {
   return (header[10]! << 8) | header[11]!;

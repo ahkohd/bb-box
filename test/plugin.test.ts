@@ -5734,6 +5734,37 @@ test("box_device sends a control with its own parameters only, answers in words 
   assert.match(text(await tool("box_device", { box: plain.name, action: "home" })), /has no device: box_device works on ios and android boxes\./);
 });
 
+test("box_status asks the device server to read the device's settings first, so a change made outside bb-box shows with no viewer watching (F-7)", async (t) => {
+  const runtime = { platform: "android", api: 35, image: "google_apis", revision: 9, abi: "x86_64", emulator: "37.2.12.0", snapshot: null };
+  const offer = { platform: "android", devices: [{ model: "Pixel 8", native: "pixel_8", runtime }] };
+  const kind: BoxKind = { ...FAKE_KINDS[0]!, id: "android", label: "Android emulator", capabilities: { ...FAKE_KINDS[0]!.capabilities, displays: [DEVICE_DISPLAY], device: offer as never } };
+  const { harness, app, tool } = await start(undefined, { kinds: [kind] });
+  t.after(() => harness.lifecycle.dispose());
+  const state = (network: unknown) => ({
+    platform: "android",
+    model: "Pixel 8",
+    power: { is: "booted", awake: true },
+    geometry: { generation: 1, physical: "upright", content: "upright", video: { width: 1080, height: 2400 } },
+    settings: { appearance: { known: false, why: "" }, fontScale: { known: false, why: "" }, location: { known: false, why: "" }, battery: { known: false, why: "" }, network, statusBar: { set: null, at: null } },
+    at: 0,
+  });
+  let view = { is: "connected", version: 24, protocol: 2, state: state({ known: true, value: "online", at: 1, by: "bb-box" }), bootedHere: [] };
+  const asked: string[] = [];
+  Object.assign(app.devices, {
+    recorded: () => undefined,
+    view: () => view,
+    freshSettings: async (box: BoxRecord) => {
+      asked.push(box.name);
+      view = { ...view, state: state({ known: true, value: "offline", at: 2, by: "outside" }) };
+    },
+  });
+  assert.ok(!isError(await tool("box_acquire", { kind: "android" })));
+  const phone = (await app.boxes.list(THREAD)).find((box) => box.kind === "android")!;
+  const status = text(await tool("box_status", { box: phone.name }));
+  assert.deepEqual(asked, [phone.name]);
+  assert.match(status, /network offline/);
+});
+
 test("box_device switch in a shared ios box is refused before it reaches the device, naming dedicated, as a slot has one model (F-7)", async (t) => {
   const runtime = { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" };
   const offer = { platform: "ios", devices: [{ model: "iPhone 18 Pro", native: "phone-18", runtime }, { model: "iPhone 17", native: "phone-17", runtime }] };

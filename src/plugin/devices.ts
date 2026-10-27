@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice, type VideoStep } from "../core/device.ts";
+import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, SETTINGS_ASKED_SINCE_VERSION, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice, type VideoStep } from "../core/device.ts";
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { lostWords } from "../core/device-control.ts";
 import { controlDeadlineMs } from "../core/device-settings.ts";
@@ -15,6 +15,7 @@ export const ASKED_HOST_WORDS = "The device server for this box has not started.
 export const HELLO_TRIES = 2;
 const SCRIPT_TIMEOUT_MS = 60_000;
 const DEVICE_HUB_CHECK_MS = 15_000;
+export const FRESH_SETTINGS_WAIT_MS = 3_000;
 const BAD_KEY = (boxId: string) => `device-bad:${boxId}`;
 const ANSWER_MARGIN_MS = 15_000;
 const RESULT_ASK_MS = 10_000;
@@ -190,6 +191,20 @@ export class DeviceServers {
     if (!link) return { id: "", ok: false, error: { code: "not-booted", words: `Box ${box.name}'s device server is not connected.` }, state: null };
     this.#touch(box.id);
     return link.request(request, { timeoutMs: SCRIPT_TIMEOUT_MS });
+  }
+
+  async freshSettings(box: BoxRecord, waitMs = FRESH_SETTINGS_WAIT_MS): Promise<void> {
+    const held = this.#held.get(box.id);
+    const link = held?.link;
+    if (!held || !link || held.view.is !== "connected" || held.view.version < SETTINGS_ASKED_SINCE_VERSION || held.view.state.power.is !== "booted") return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), waitMs)));
+    try {
+      const answer = await Promise.race([link.request({ type: "settings" }, { timeoutMs: waitMs }).catch(() => null), late]);
+      if (answer?.ok && answer.state && held.view.is === "connected") held.view = { ...held.view, state: answer.state };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async agentRequest(box: BoxRecord, request: DeviceAgentRequest): Promise<DeviceAnswer> {
