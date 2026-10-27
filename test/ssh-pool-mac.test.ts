@@ -113,9 +113,10 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
   assert.deepEqual(
     { ...status, diskGiB: null },
     {
-      helper: 1, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", owner: null, hook: false,
+      helper: 2, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", owner: null, hook: false,
       docker: false, systemd: false, cores: 8, memoryMiB: 16384, diskGiB: null, virt: "none", missing: [], enrolment: { node: "24.9.0", lacks: [] }, dirty: null,
       mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] }, leftovers: null, openHomes: null, sip: true, stream: false },
+      slots: null,
     },
   );
   const values = fields(result.stdout);
@@ -278,7 +279,7 @@ test("a release removes the box's user with everything it left, and signs in the
   mac.add("ipc", "s 131072 70003");
   mac.add("ipc", "q 1 person");
   mac.add("processes", "401 70000 Finder 1");
-  mac.add("processes", "402 70000 ignores-sigterm 2");
+  mac.add("processes", "402 70000 ignores-sigterm 3");
   mac.add("processes", "403 501 Terminal 1");
 
   const release = mac.helper(["release", "0"], RELEASE());
@@ -315,6 +316,23 @@ test("a release removes the box's user with everything it left, and signs in the
   assert.deepEqual(mac.helper(["release", "0"], RELEASE()), { status: 0, stdout: "generation=1\nreleased=already\n", stderr: "" });
   assert.equal(mac.helper(["claim", "1"], CLAIM("box_b")).status, 0, "the next box takes the next user");
   assert.equal(mac.helper(["release", "0"], RELEASE()).status, EXIT.notOurs);
+});
+
+test("a release stops the old user gently: its devices shut down and every process but containermanagerd ended before its launchd domain goes, as the iOS host's helper does (064)", () => {
+  const mac = lentMac();
+  mac.add("processes", "501 70000 launchd_sim 1");
+  mac.add("processes", "502 70000 idb_companion 1");
+  mac.add("processes", "503 70000 containermanagerd 1");
+  assert.equal(mac.helper(["release", "0"], RELEASE()).status, 0);
+  const calls = mac.calls();
+  const at = (call: string) => calls.findIndex((line) => line.startsWith(call));
+  const shutdown = at("sudo -n -H -u bbx-0 -- xcrun simctl shutdown all");
+  const term = at("pkill -TERM -u 70000 -x idb_companion");
+  const bootout = at("launchctl bootout user/70000");
+  const kill = at("pkill -KILL -u 70000");
+  assert.ok(shutdown >= 0 && term > shutdown && bootout > term && kill > bootout, `in order: ${[shutdown, term, bootout, kill].join(", ")}`);
+  assert.equal(at("pkill -TERM -u 70000 -x containermanagerd"), -1, "containermanagerd outlives its clients");
+  assert.deepEqual(mac.lines("processes"), []);
 });
 
 test("a release that cannot remove a file the old user owned fails, naming Full Disk Access when the helper lacks it, and the next reset finishes", { skip: process.getuid?.() === 0 && "root removes any file" }, () => {
@@ -701,6 +719,8 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   const again = mac.setup(["--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box", "--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherInstall bb-box", "--name", "studio"]);
   assert.equal(again.status, 0, again.stderr);
   assert.ok(again.stdout.includes("\n  studio bbbox-admin@192.0.2.30 macos,macos-desktop\n"));
+  assert.match(again.stdout, /- iOS slots are not set up, as setup\/tart\/ios is not beside setup\/ssh-pool\. To lend ios boxes from this Mac, copy the whole setup folder/);
+
   assert.ok(again.stdout.includes("\n5. Restart the Mac, so that it signs in the first box user, bbx-0.\n"), again.stdout);
   assert.equal(mac.file("/private/var/bbbox-admin/.ssh/authorized_keys")!.split("\n").length, 3);
   assert.equal(count(mac, "sysadminctl -addUser bbbox-admin"), 1);
@@ -729,6 +749,18 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
     spawnSync("sqlite3", [tcc, "select client_type || '|' || auth_value || '|' || cast(csreq as text) from access where service = 'kTCCServiceScreenCapture' and client = '/usr/libexec/sshd-keygen-wrapper';"], { encoding: "utf8" }).stdout.trim(),
     '1|2|identifier "com.apple.sshd-keygen-wrapper" and anchor apple',
   );
+  // With the whole setup folder, but no slimming list for this Mac's iOS runtime.
+  const ios = join(mac.root, "..", "tart", "ios");
+  mkdirSync(join(ios, "slim"), { recursive: true });
+  for (const file of ["device-host.sh", "device-host-ports.pl", "devices.tsv", "pins", "idb-companion-LICENSE"]) writeFileSync(join(ios, file), readFileSync(fileURLToPath(new URL(`../setup/tart/ios/${file}`, import.meta.url))));
+  const idb = tempDir("idb");
+  writeFileSync(join(idb, "idb_companion"), "#!/bin/sh\n", { mode: 0o755 });
+  assert.equal(spawnSync("tar", ["-czf", join(mac.state, "flags", "idb-companion.macos-arm64.tar.gz"), "-C", idb, "idb_companion"]).status, 0);
+  const unlisted = mac.setup(["--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box", "--name", "studio"]);
+  assert.equal(unlisted.status, 0, unlisted.stderr);
+  assert.match(unlisted.stderr, /mac-ios\.sh: bb-box has no slimming list for iOS 26\.0 \(23A343\), so it lends no iOS slot on this Mac/);
+  assert.match(unlisted.stdout, /- iOS slots are not set up, so the Mac lends no ios box: mac-ios\.sh says why above\./);
+  assert.ok(unlisted.stdout.includes("\n  studio bbbox-admin@192.0.2.30 macos,macos-desktop\n"), "no ios on its line");
 });
 
 test("setup-mac.sh refuses a Mac with FileVault on or Remote Login off, no key, someone else's admin user, or a Cua Driver that is not the pinned one", () => {

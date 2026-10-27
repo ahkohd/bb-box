@@ -127,6 +127,11 @@ export const CHECKS = {
   "machine.<machine>.signin": { name: "<machine>: sign-in", from: ["ssh-pool"], what: "On a Mac, the next box user is signed in at the console." },
   "machine.<machine>.fulldisk": { name: "<machine>: Full Disk Access", from: ["ssh-pool"], what: "On a Mac, the helper has Full Disk Access, which a reset needs." },
   "machine.<machine>.sip": { name: "<machine>: System Integrity Protection", from: ["ssh-pool"], what: "On a Mac, whether System Integrity Protection is on, and so whether bb-box can grant box users' programs macOS permissions (058)." },
+  "machine.<machine>.slots": {
+    name: "<machine>: iOS slots",
+    from: ["ssh-pool"],
+    what: "On a Mac whose line lists ios (064): that its iOS slots are set up, whether it lends slots or is lent whole, its slots held, ready, making and sweeping, and the iOS runtime and seed they are made with.",
+  },
   "machine.<machine>.homes": { name: "<machine>: people's homes", from: ["ssh-pool"], what: "On a Mac, box users cannot enter any person's home, such as an administrator's with BB's or an agent CLI's credentials." },
   "machine.<machine>.xcode": { name: "<machine>: Xcode", from: ["ssh-pool"], what: "On a Mac, Xcode and its iOS runtime." },
   "machine.<machine>.screensharing": { name: "<machine>: Screen Sharing", from: ["ssh-pool"], what: "On a Mac with desktops, Screen Sharing is on." },

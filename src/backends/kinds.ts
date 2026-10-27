@@ -135,7 +135,7 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
   },
   ios: {
     label: "iOS Simulator",
-    description: "An iOS Simulator device, an iPhone or iPad, on a macOS VM: for installing, running and testing iOS apps, shared with a person in the panel.",
+    description: "An iOS Simulator device, an iPhone or iPad, on a macOS VM, or in a slot on a shared Mac or VM: for installing, running and testing iOS apps, shared with a person in the panel.",
     gpu: false,
     desktop: false,
     os: "macos",

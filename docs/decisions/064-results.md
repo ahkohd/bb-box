@@ -1043,3 +1043,150 @@ from before that counter are not given.
   opt-in.
 - **"A VM is starting on this Mac" for its viewers** is not built; it goes
   with the ledger in unit 6.
+
+## Unit 5: pool Mac slots
+
+Built on 27 October 2026. The host's helper version 3; the pool's Mac
+helper version 2.
+
+### What it adds
+
+- **A Mac whose SSH host pool line lists `ios` lends iOS slots,** each a
+  macOS user with its own device, to ios boxes asked for with
+  `shared: true`. The owner's answer holds: the Mac lends slots before
+  whole boxes. Leaving `ios` off a Mac's line keeps it for whole boxes.
+- **The slots' helper is unit 3's `device-host`,** set up on the Mac as a
+  kept host ([the iOS image's guide](../../setup/tart/ios/README.md#shared-hosts-device-host)):
+  - never deleted: its last release and `vacate` answer `last=yes` and
+    write no `deleting`
+  - no carried slots, and no carried slot's UID
+  - closed while the Mac is lent whole: `close` is refused with exit 8
+    while a slot is held, promised or being made for a box. Otherwise it
+    lets the held ports go and removes every ready spare before it
+    answers. A spare being made is removed when its step ends
+  - `open` takes bb-box's settings each time, as the pool's Mac is never
+    made again, holds the common dev ports and makes the spares `ahead`
+    asks for
+  - `summary` gives what the pool's status needs
+- **`machine slot`** in `machine-mac.sh` runs the slots' helper, as the
+  admin user may run only the Mac's helper as root. Its commands are
+  `status`, `summary`, `open`, `close`, `make`, `promise`, `unpromise`,
+  `claim`, `release`, `daemon` and `restart`. `open`, `make`, `promise`
+  and `claim` are refused with exit 7 while the Mac's owner or resetting
+  marker is there: "The pool's Mac is lent whole to a box, so it lends no
+  iOS slot until that box is released." `status` adds `slots.*` lines.
+- **Whole or slots, never both.** A whole claim, and an operator's reset,
+  close the slots first, under the Mac's lock. While a slot is held, the
+  claim is refused with exit 3: "The pool's Mac is lending iOS slots (1
+  held). It is lent whole again when they are released." The pool's
+  capacity check says the same, naming the Mac, so a `macos` or
+  `macos-desktop` box goes to another offer or waits with those words.
+- **`SlotLender` on the pool backend**
+  ([`slots.ts`](../../src/backends/ssh-pool/slots.ts)):
+  - `offer` gives a ready slot as `ready`, a spare being made as `join`,
+    room as `make`, and a closed Mac that is not lent whole as `make`,
+    which the take opens. Otherwise it waits, with a sentence for each
+    Mac and "The next slot is likely free when a box on the pool's Mac is
+    released." while a slot is held. The registry already puts the pool's
+    Mac first in each tier.
+  - `take`, `acquire`, `release`, `held`, `power`, `transports` with
+    `daemonKeptByHost`, and `restartDeviceServer` follow Tart's. A slot
+    box reaches the Mac over SSH as its slot's user.
+  - The upkeep opens a Mac that lists `ios` and is not lent whole when it
+    is closed, its settings changed, or it has fewer spares than `ahead`.
+    It closes a Mac whose line no longer lists `ios` once nothing is held.
+- **The pool's `ios` offer is for slots only** (`slotsOnly` on the
+  kind): its capacity refuses a plain acquire with "The SSH host pool
+  lends ios boxes only as slots on its Macs, each a macOS user with its own
+  device. Ask for shared: true." Its device is the model and runtime the
+  Mac's slots are made with. The doctor's check that offers of a kind
+  agree does not count a slot offer's missing desktop. box_list takes the
+  kind's words from an offer that is not slots-only.
+- **`mac-ios.sh`,** which `setup-mac.sh` runs when Xcode has its iOS
+  platform and `setup/tart/ios` is beside `setup/ssh-pool`:
+  - installs idb_companion from its pin, checked by SHA-256
+  - installs the slots' helper, its held ports' program, the slots' home
+    and the device list
+  - for the newest iOS runtime, installs the slimming list and makes its
+    seed: a device made as bb-box's admin user, booted and slimmed twice.
+    The seed is kept only if its store has every label of the list off
+  - sets the helper up as a kept host, closed
+  - `setup-mac.sh` then prints the Mac's line with `ios`
+- **The pool's reset stops a box user gently,** as unit 3 found a slot
+  must be stopped: its devices shut down by `simctl` where one runs,
+  every process but its `containermanagerd` asked to end, a second's
+  pause, its launchd domains, then SIGKILL for what is left. Before, it
+  booted the user out and sent SIGKILL at once, the same fault.
+- **Settings** `ssh-pool-ios-hosts-most` (12), `-ahead` (1),
+  `-resetting-most` (4) and `-disk-reserve-gib` (40). The doctor's
+  `<machine>: iOS slots` check says whether the Mac's slots are set up,
+  whether it lends or is lent whole, and its slots held, ready, making and
+  sweeping.
+- **Conformance:** `slotConformance` for the pool, non-elastic, on the
+  fakes in `npm test`
+  ([`conformance-pool-slots.test.ts`](../../test/conformance-pool-slots.test.ts)),
+  and through `npm run conformance` for a pool whose Mac lists `ios`.
+
+### How it was checked, before the live check
+
+On a Linux box, against a fake Mac running the real `machine-mac.sh` and
+`device-host` on stub macOS tools:
+
+| Check | Result |
+| --- | --- |
+| The kept host | closed at `init`, no carried slots, no ports until `open`; `open` takes the settings each time; a last release and `vacate` write no `deleting`; `close` refused with `held=` and `waiting=` while a slot is held or a box waits, and otherwise removes the spares and lets the ports go; a spare being made as it closes is removed when its step ends |
+| The Mac's helper | a whole claim refused with 064's words while a slot is held, and the operator's reset too; once released, the whole claim closes the slots; while lent whole, `make`, `promise`, `claim` and `open` refused with words; a whole claim removes a ready spare's user first; slot commands need the slots set up and a slot's number |
+| The gentle stop | the old box user's devices shut down, then each process but `containermanagerd` sent SIGTERM, then its launchd domain, then SIGKILL |
+| `mac-ios.sh` | idb_companion from its pin, kept when at the pin; the seed has every label of the list off; a seed short of a label, or no slimming list for the runtime, fails with words; `setup-mac.sh` warns without `setup/tart/ios`, or when `mac-ios.sh` fails, and leaves `ios` off the line |
+| The pool backend | the `ios` offer after a survey, slots only; the first take opens the closed Mac; a slot made and lent, its placement "On a shared iOS host (the pool's Mac), slot 1 of 12"; the whole kinds refused with words while it is held, and lent once it is released; a whole box closes the slots, an ios box then waits with words, and the upkeep opens the Mac after the whole box's release; another model refused naming `dedicated` |
+| Conformance | the pool's slot cases on the fakes: two acquires share the Mac, each in a slot of its own; stop, resize and grant refused in words; a release leaves the other answering; the last leaves the Mac up |
+| The suite | from a clone of the bundle on origin/main at 184db15f, on a Linux box: tsc clean; the node suite 2,142 passed, 0 failed, 288 skipped; vitest 220 passed; the docs test passed |
+
+Then on a real Mac: a dedicated ios box, a Tart VM of the iOS image at 6
+cores and 16 GiB, macOS 27.0, Xcode 27.0, iOS 27.0, made to stand in for a
+fresh pool Mac. The image's carried slots, helper state and seed were
+removed, a `bbbox-admin` user made, and this branch's `machine-mac.sh`
+installed and initialised. Times are wall-clock in the VM.
+
+| Step | Result |
+| --- | --- |
+| `mac-ios.sh`, as root | 186 s: idb_companion 1.7.7 downloaded and checked; the seed made as `bbbox-admin`, 112 of 112 labels off; the helper kept and closed, its own daemon loaded, no ports held |
+| `machine slot open`, then `make` | 0.13 s; then 30.7 s: user 2.0 s, device 7.7 s, first boot 20.7 s |
+| `machine slot claim` | 0.15 s. SSH as `bbd-1` with the box's key: its own booted iPhone 18 Pro, `BB_PORT_BASE=20000`, no sudo. 127.0.0.1:8081 answered with the held ports' words |
+| A whole claim while slot 1 was held | refused, exit 3: "The pool's Mac is lending iOS slots (1 held). It is lent whole again when they are released." |
+| `machine slot release` | 11.7 s, with the gentle stop; no process of UID 80001 left |
+| A whole claim with a ready spare | 11.8 s: the spare's user removed, port 8081 free; then `promise` refused, exit 7 |
+| The sweeps | 91.1 s and 69.5 s, one UID a pass, each 8 paths found and 0 left; `find -x /System/Volumes/Data -uid` found nothing of 80001 or 80002 |
+| The slot conformance cases, through this branch's pool backend with the VM as its Mac | 5 of 5 passed in 92 s, the first opening the closed Mac and making two slots for two boxes acquired at once |
+
+### The live check on the pool's Mac
+
+Not run yet. It needs the Mac free of whole-Mac boxes, and the lead to run
+the setup on it and deploy this unit. The pool's Mac was lent whole to
+another thread's box throughout.
+
+### What limits these checks
+
+- **A Tart VM stood in for the pool's Mac.** It has the same macOS,
+  Xcode and runtime, but not the pool's console user, Full Disk Access
+  for remote users, or its encoder. A whole box's release and reset could
+  not run there, as a person was signed in at its console. So the gentle
+  stop of a whole box user is checked only on the fakes.
+- **H1 and H11 wait for the pool's Mac.**
+
+### Deviations from 064
+
+- **No `slots` marker in the pool's state.** The slots' `closed` marker,
+  written under the slots' lock, and the owner marker, under the Mac's
+  lock, decide between whole and slots. A whole claim closes the slots
+  under the Mac's lock before it makes its owner marker with `ln`. A slot
+  claim checks the owner marker under the Mac's lock, then claims under
+  the slots' lock, which a closed host refuses.
+- **The switch is `ios` on a Mac's line,** not an `on` setting: a Mac
+  lends slots only where its line lists `ios`.
+- **A release takes about 12 s, and removing a spare for a whole claim
+  as long,** not 1.5 s, as unit 3's gentle stop shuts the devices down.
+- **`disk-reserve-gib` is 40 on the pool,** as 064 says. Tart's is 10.
+- **Slot generations on the pool's Mac never restart.** After slot 9999
+  it lends no slot until its slots are set up again, which 064's ranges
+  imply.

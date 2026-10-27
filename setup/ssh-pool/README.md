@@ -209,14 +209,17 @@ through Cua Driver. Decision
 [047](../../docs/decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md)
 explains why.
 
-Copy this directory to the Mac, then run `setup-mac.sh` with sudo, from an
+Copy the setup folder to the Mac, then run `setup-mac.sh` with sudo, from an
 administrator's account:
 
 ```sh
-scp -r setup/ssh-pool mac-mini:
+scp -r setup mac-mini:bb-box-setup
 ssh mac-mini
-sudo sh ssh-pool/setup-mac.sh --key "ssh-ed25519 AAAA... bb-box"
+sudo sh bb-box-setup/ssh-pool/setup-mac.sh --key "ssh-ed25519 AAAA... bb-box"
 ```
+
+`setup/ssh-pool` alone is enough for whole boxes. iOS slots need
+`setup/tart/ios` beside it ([iOS slots on a Mac](#ios-slots-on-a-mac)).
 
 It takes the same options as `setup.sh`, except `--reset-hook`.
 `setup-mac.sh`:
@@ -239,6 +242,8 @@ It takes the same options as `setup.sh`, except `--reset-hook`.
 - prepares Xcode, if it is in `/Applications`: accepts its licence, runs
   its first launch and downloads the iOS platform, then notes its version
   and Simulator runtimes for the pool
+- with Xcode, its iOS platform and `setup/tart/ios` beside it, sets up iOS
+  slots with `mac-ios.sh`, as [below](#ios-slots-on-a-mac)
 - starts the Mac's reset generation at 0, in `/var/db/bb-box`, and makes
   the first box user, `bbx-0`, the automatic login
 
@@ -271,6 +276,86 @@ in `bbx-0`. Then add the line and host keys to bb-box, as for a Linux
 machine. Leave out `macos-desktop` if boxes should not get the Mac's
 desktop.
 
+#### iOS slots on a Mac
+
+A Mac whose line lists `ios` lends iOS slots
+([064](../../docs/decisions/064-ios-shared-hosts.md)): each `ios` box asked
+for with `shared: true` gets a macOS user of its own on the Mac, with its own
+booted device, files and keychain, ready in seconds. Slots use the Mac's
+cores and video encoder, not a VM's. A slot has no sudo, no Homebrew
+installs, no console and no app windows, and shares the Mac's loopback with
+the other slots: each has 100 ports from `BB_PORT_BASE`, and the Mac holds
+the common dev ports while it lends slots.
+
+The Mac lends slots before whole boxes. While any slot is held, promised
+or being made for a box, it is not lent whole, and a `macos` or
+`macos-desktop` box goes to another offer or waits, with words: "The pool's
+Mac mac-mini is lending iOS slots (3 held). It is lent whole again when
+they are released." While it is lent whole, it lends no slot. Leave `ios`
+off its line to keep it for whole boxes.
+
+`setup-mac.sh` sets slots up when Xcode, with its iOS platform, is in
+`/Applications` and `setup/tart/ios` is beside `setup/ssh-pool`. It runs
+`mac-ios.sh`, which:
+
+- installs idb_companion from its pin in `setup/tart/ios/pins`, checked by
+  SHA-256, in `/usr/local/lib/idb_companion-<version>`, linked from
+  `/usr/local/bin`
+- installs the slots' helper, `device-host`, its held ports' program, the
+  slots' home template (the pool's `.zshenv`) and the device list in
+  `/usr/local/share/bb-box`
+- for the newest iOS runtime, installs bb-box's slimming list and makes its
+  seed: a device made, booted and slimmed twice as `bbbox-admin`, whose
+  store of disabled services must have every label of the list off. It
+  takes a few minutes the first time, and is kept after
+- sets the helper up as a kept host, never deleted, closed until bb-box
+  opens it
+
+It needs a slimming list for the Mac's iOS runtime, as the iOS image does
+([Slimming](../tart/ios/README.md#slimming)). It prints the line with `ios`:
+
+```text
+  mac-mini bbbox-admin@192.0.2.30 macos,macos-desktop,ios
+```
+
+To add slots to a Mac already in the pool, without running `setup-mac.sh`
+again, which replaces the admin user's keys, run this on the Mac as an
+administrator, from the copied setup folder. It touches no key, sudo rule
+or box user, and may run while a box holds the Mac whole, though not while
+the Mac is resetting (`machine status` says `marker=resetting`):
+
+```sh
+sudo mkdir -m 700 /var/root/bb-box-backup
+sudo cp -p /usr/local/libexec/bb-box/machine /etc/sudoers.d/bb-box /var/root/bb-box-backup/
+sudo install -m 0755 bb-box-setup/ssh-pool/machine-mac.sh /usr/local/libexec/bb-box/machine.new
+sudo mv -f /usr/local/libexec/bb-box/machine.new /usr/local/libexec/bb-box/machine
+sudo sh bb-box-setup/ssh-pool/mac-ios.sh "$PWD/bb-box-setup/ssh-pool" bbbox-admin
+```
+
+`bbbox-admin` is the admin user `/etc/sudoers.d/bb-box` names. Its rule
+lets it run the helper with any arguments, so `machine slot` needs no new
+rule. To undo it, with `ios` off the Mac's line, every ios box there
+released and the doctor's `iOS slots` check showing none sweeping, put the
+helper back and remove what `mac-ios.sh` added:
+
+```sh
+sudo launchctl bootout system/app.bb-box.device-host
+sudo launchctl bootout system/app.bb-box.device-host.ports
+sudo rm -f /Library/LaunchDaemons/app.bb-box.device-host.plist /Library/LaunchDaemons/app.bb-box.device-host.ports.plist
+sudo rm -rf /var/db/bb-box/host /usr/local/libexec/bb-box/device-host /usr/local/libexec/bb-box/device-host-ports /usr/local/share/bb-box/ios /usr/local/share/bb-box/slot-home
+sudo cp -p /var/root/bb-box-backup/machine /usr/local/libexec/bb-box/machine.new
+sudo mv -f /usr/local/libexec/bb-box/machine.new /usr/local/libexec/bb-box/machine
+```
+
+idb_companion stays in `/usr/local/lib`, linked from `/usr/local/bin`.
+
+bb-box opens the Mac's slots at its next upkeep while the Mac is not lent
+whole, and keeps one ready. The helper is
+[`device-host`](../tart/ios/README.md#shared-hosts-device-host), as on a
+shared Tart host, run through `machine slot`. The doctor's `iOS slots`
+check says whether it lends, and how many slots are held, ready, making
+and sweeping.
+
 ### 4. Add the machines to bb-box
 
 1. Add the line `setup.sh` printed to **Machines**, one line per machine.
@@ -289,7 +374,7 @@ A line is:
 | --- | --- |
 | `<name>` | Lower-case letters, digits and `-`, unique in the pool |
 | `[user@]host[:port]` | The admin user and how to reach sshd. Put an IPv6 address in brackets |
-| `<kinds>` | `linux` on a Linux machine, and `macos`, `macos-desktop` or both on a Mac. `linux-docker`, linux with Docker, may be listed too, only with `reset=machine` |
+| `<kinds>` | `linux` on a Linux machine, and `macos`, `macos-desktop` and `ios` on a Mac. `ios` lends iOS slots, [above](#ios-slots-on-a-mac). `linux-docker`, linux with Docker, may be listed too, only with `reset=machine` |
 | `via=` | A jump host, reached with the same key |
 | `reset=machine` | The machine has a whole-machine reset, so its boxes get Docker. `setup.sh` adds it when you give `--reset-hook`. Not on a Mac |
 | `labels=` | Words for your own use |
@@ -473,7 +558,17 @@ starting, which a pool cannot do.
    ```
 
    Here `bbx-3` stands for the name the first command prints.
-5. Remove what `setup-mac.sh` added:
+5. With iOS slots, release every ios box on it first, wait for the
+   doctor's `iOS slots` check to say none is sweeping, then stop the slots'
+   daemons:
+
+   ```sh
+   sudo launchctl bootout system/app.bb-box.device-host
+   sudo launchctl bootout system/app.bb-box.device-host.ports
+   sudo rm -f /Library/LaunchDaemons/app.bb-box.device-host.plist /Library/LaunchDaemons/app.bb-box.device-host.ports.plist
+   ```
+
+6. Remove what `setup-mac.sh` added:
 
    ```sh
    sudo sysadminctl -deleteUser bbbox-admin
@@ -628,13 +723,47 @@ lists them. The helper grants only the box user's programs and apps in
 removes every grant. Each box user has a signing identity of its own,
 "bb-box local code signing", so a program it rebuilds keeps its grants.
 
+### How an ios box gets a slot
+
+An ios box asked for with `shared: true` goes to a ready slot on a pool
+Mac first, before a shared Tart host
+([064](../../docs/decisions/064-ios-shared-hosts.md#placing-a-box)). The
+claim gives the slot's user the box's key and loads its device server; the
+box is ready once SSH answers as that user. With no ready slot, the box is
+promised a place and the helper makes a slot for it: a new user, a device
+by `simctl create`, seeded, and its first boot. The Mac keeps
+`ios-hosts-ahead` slots ready, 1 by default, while it is not lent whole.
+
+A slot's release stops its user gently, removes it, and queues a sweep of
+every file its UID owns on the Data volume, as a shared Tart host's do. A
+slot's UID, from 80000, is never given again. The helper's `status`, read
+with `sudo /usr/local/libexec/bb-box/machine slot status`, gives each
+sweep's paths found and left.
+
+A whole claim of a Mac lending only ready spares removes them first, before
+it signs anything in. It is refused while a slot is held, promised or being
+made for a box. The helper's markers decide: the owner marker for a whole
+box, and the slots' `closed` marker, under the slots' lock, for slots.
+
+| Setting | Default | What |
+| --- | --- | --- |
+| `ios-hosts-most` | 12 | slots making, ready or held on each Mac |
+| `ios-hosts-ahead` | 1 | ready slots kept while the Mac is not lent whole |
+| `ios-hosts-resetting-most` | 4 | released slots swept in one pass |
+| `ios-hosts-disk-reserve-gib` | 40 | no new slot below this much free disk |
+
 ### What a Mac's reset does
 
 When a box is released, the helper:
 
 1. makes the next box's user, with a new random password, and sets it as
    the automatic login, so that macOS does not sign the old user in again
-2. logs the box's user out and ends its processes
+2. logs the box's user out and ends its processes gently: its simulator
+   devices shut down, then every process but its `containermanagerd`
+   asked to end, a second's pause, its launchd domains, and SIGKILL for
+   what is left. Ending them all at once can wedge the system's
+   CoreMediaIO service, and then no simulator device boots until the Mac
+   restarts ([064 results](../../docs/decisions/064-results.md#a-host-that-cannot-boot-a-device))
 3. starts the login window again, which signs the next user in
 4. removes the old user's crontab, at jobs, System V IPC objects, sudo rule,
    managed preferences, places in groups and every file it owns on the Data

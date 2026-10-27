@@ -13,7 +13,7 @@ export const sshPoolDriver: BackendDriver<SshPoolConfig> = {
   fields: SSH_POOL_FIELDS,
   setup: {
     guide: "setup/ssh-pool/README.md",
-    scripts: ["setup/ssh-pool/setup.sh", "setup/ssh-pool/machine.sh", "setup/ssh-pool/setup-mac.sh", "setup/ssh-pool/machine-mac.sh"],
+    scripts: ["setup/ssh-pool/setup.sh", "setup/ssh-pool/machine.sh", "setup/ssh-pool/setup-mac.sh", "setup/ssh-pool/machine-mac.sh", "setup/ssh-pool/mac-ios.sh"],
   },
   parse: parseSshPoolPart,
   create: (config, context) => new SshPoolBackend(config, context),

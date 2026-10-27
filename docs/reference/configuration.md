@@ -82,7 +82,7 @@ Projects' images, by name (049).
 | --- | --- | --- |
 | [`proxmox-lxc`](#proxmox-lxc) | Proxmox LXC | linux, linux-desktop, linux-desktop-cpu, linux-desktop-wayland-cpu |
 | [`proxmox-qemu`](#proxmox-qemu) | Proxmox QEMU | windows-desktop, linux, linux-desktop-cpu, android |
-| [`ssh-pool`](#ssh-pool) | SSH host pool | linux, macos, macos-desktop |
+| [`ssh-pool`](#ssh-pool) | SSH host pool | linux, macos, macos-desktop, ios |
 | [`tart`](#tart) | Tart | macos, macos-desktop, linux-arm64, linux-arm64-desktop-cpu, windows-arm64-desktop, ios |
 | [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
 | [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
@@ -162,9 +162,13 @@ Setup: [setup/ssh-pool/README.md](../../setup/ssh-pool/README.md).
 
 | Field | Label | Type | Group | Default | Description |
 | --- | --- | --- | --- | --- | --- |
-| `machines` | Machines | string | boxes |  | One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. |
+| `machines` | Machines | string | boxes |  | One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". ios on a Mac lends iOS slots there, each a macOS user with its own device, for ios boxes asked for with shared: true. setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. |
 | `known-hosts` | Host keys | string | connection |  | known_hosts lines for every machine and jump host, as setup.sh and setup-mac.sh print them. bb-box connects only to a machine whose key is here. |
 | `ssh-private-key` | SSH private key | string, secret | credentials |  | An unencrypted OpenSSH private key that the machines' admin user accepts. Leave empty and bb-box makes one and shows its public key, which you then give setup.sh. |
+| `ios-hosts-most` | Slots for ios boxes per Mac | number | advanced | `12` | The most iOS slots a Mac whose line lists ios has making, ready or held at once. It is lent whole only while it lends none. |
+| `ios-hosts-ahead` | Ready slots for ios boxes kept on a Mac | number | advanced | `1` | Slots a Mac whose line lists ios keeps ready while it is not lent whole, so the next ios box is ready in seconds. |
+| `ios-hosts-resetting-most` | Slots a Mac sweeps at once | number | advanced | `4` | The most released iOS slots whose files a Mac sweeps in one pass. |
+| `ios-hosts-disk-reserve-gib` | Disk a Mac keeps free of slots (GiB) | number | advanced | `40` | A Mac makes no new iOS slot while it has less free disk than this. |
 
 ### tart
 

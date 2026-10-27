@@ -8,6 +8,7 @@ import type { BoxGrants, BoxIdentity, GrantAnswer, GrantPermission, GrantRequest
 export const HELPER_COMMAND = "sudo -n /usr/local/libexec/bb-box/machine";
 /** The helper version this bb-box speaks. A machine with an older one needs setup.sh again. */
 export const HELPER_VERSION = 1;
+export const SLOTS_HELPER_VERSION = 2;
 
 export const EXIT = {
   ok: 0,
@@ -73,6 +74,73 @@ export interface MachineStatus {
   readonly dirty: string | null;
   /** What a Mac's helper adds, or null on Linux. */
   readonly mac: MacStatus | null;
+  readonly slots: SlotsSummary | null;
+}
+
+export interface SlotsRuntime {
+  readonly identifier: string;
+  readonly os: string;
+  readonly build: string;
+  readonly list: string;
+}
+
+export interface SlotsSummary {
+  readonly helper: number;
+  readonly kept: boolean;
+  readonly closedSince: number | null;
+  readonly most: number;
+  readonly ahead: number;
+  readonly resettingMost: number;
+  readonly diskReserveGiB: number;
+  readonly counted: number;
+  readonly held: number;
+  readonly ready: number;
+  readonly making: number;
+  readonly releasing: number;
+  readonly resetting: number;
+  readonly waiting: number;
+  readonly sweeping: number;
+  readonly runtime: SlotsRuntime | null;
+  readonly model: { readonly name: string; readonly native: string } | null;
+  readonly companion: string | null;
+  readonly labels: number | null;
+  readonly listSha256: string | null;
+}
+
+export function slotsBusy(summary: SlotsSummary): number {
+  return summary.held + summary.waiting;
+}
+
+function parseSlotsSummary(values: ReadonlyMap<string, string>): SlotsSummary | null {
+  const value = (key: string) => values.get(`slots.${key}`);
+  const helper = whole(value("helper"));
+  if (helper === null) return null;
+  const count = (key: string) => whole(value(key)) ?? 0;
+  const [identifier = "", os = "", build = "", list = ""] = (value("runtime") ?? "").split("\t");
+  const [name = "", native = ""] = (value("model") ?? "").split("\t");
+  const sha = value("list_sha256") ?? "";
+  return {
+    helper,
+    kept: value("kept") === "1",
+    closedSince: whole(value("closed")),
+    most: count("most"),
+    ahead: count("ahead"),
+    resettingMost: count("resetting-most"),
+    diskReserveGiB: count("disk-reserve-gib"),
+    counted: count("counted"),
+    held: count("held"),
+    ready: count("ready"),
+    making: count("making"),
+    releasing: count("releasing"),
+    resetting: count("resetting"),
+    waiting: count("waiting"),
+    sweeping: count("sweeping"),
+    runtime: identifier && os && build && list ? { identifier, os, build, list } : null,
+    model: name && native ? { name, native } : null,
+    companion: value("companion") || null,
+    labels: whole(value("labels")),
+    listSha256: /^[0-9a-f]{64}$/.test(sha) ? sha : null,
+  };
 }
 
 /** A Mac's own status (047). */
@@ -218,6 +286,7 @@ export function parseStatus(stdout: string): MachineStatus {
             stream: values.get("stream") === "1",
           }
         : null,
+    slots: parseSlotsSummary(values),
   };
 }
 

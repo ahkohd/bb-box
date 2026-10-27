@@ -82,7 +82,7 @@ export PATH LC_ALL
 # Empty on a Mac. The tests set it to a directory laid out as a Mac's, to run the helper on Linux with stub macOS tools.
 ROOT=
 
-VERSION=1
+VERSION=2
 STATE=$ROOT/var/db/bb-box
 TEMPLATE=$ROOT/usr/local/share/bb-box/home
 # Cua Driver's bundle ID, which macOS keys its screen-capture approval by.
@@ -100,6 +100,11 @@ ID_SPAN=10000
 # Remote Login or Screen Sharing allows only some users, their group exists,
 # and box users join it.
 JOINS="_developer com.apple.access_ssh com.apple.access_screensharing"
+DEVICE_HOST=$ROOT/usr/local/libexec/bb-box/device-host
+SLOTS_STATE=$STATE/host
+EXIT_LENT_WHOLE=7
+EXIT_SLOTS_HELD=3
+CONTAINERS_PROCESS=containermanagerd
 
 quit() {
   code=$1
@@ -404,6 +409,7 @@ status() {
     *) known_xcode ;;
   esac
   [ "${1:-}" != grants ] || grants
+  slots_set_up && device_host summary </dev/null 2>/dev/null | sed 's/^/slots./'
   # For the doctor alone, as du may take a moment.
   if [ -n "${1:-}" ]; then
     left=$(leftovers)
@@ -589,11 +595,31 @@ sign_in() {
   exit 10
 }
 
+clients_of() { pgrep -l -u "$1" 2>/dev/null | awk -v keep="$CONTAINERS_PROCESS" '$2 != keep { print $2 }' | sort -u; }
+
+end_clients_before_containers() {
+  for name in $(clients_of "$1"); do pkill -TERM -u "$1" -x "$name" >/dev/null 2>&1; done
+  tries=25
+  while [ -n "$(clients_of "$1")" ] && [ "$tries" -gt 0 ]; do
+    tries=$((tries - 1))
+    sleep 0.2
+  done
+}
+
+stop_gently() {
+  user=$1 uid=$2
+  pgrep -u "$uid" >/dev/null 2>&1 || return 0
+  if pgrep -u "$uid" -x launchd_sim >/dev/null 2>&1; then within 30 sudo -n -H -u "$user" -- xcrun simctl shutdown all >/dev/null 2>&1; fi
+  end_clients_before_containers "$uid"
+  sleep 1
+}
+
 # Logs a box user out and ends its processes.
 log_out() {
   user=$1 uid=${2:-}
   [ -n "$uid" ] || uid=$(attribute "$user" UniqueID)
   box_uid "$uid" || return 0
+  stop_gently "$user" "$uid"
   within 30 launchctl bootout "gui/$uid" >/dev/null 2>&1
   within 30 launchctl bootout "user/$uid" >/dev/null 2>&1
   tries=0
@@ -952,6 +978,78 @@ remove_user() {
   rm -f "$STATE/passwords/$user"
 }
 
+slots_set_up() { [ -f "$DEVICE_HOST" ] && [ -e "$SLOTS_STATE/kept" ]; }
+device_host() { /bin/sh "$DEVICE_HOST" "$@" 9>&-; }
+
+slots_words() {
+  held=$(printf '%s\n' "$1" | sed -n 's/^held=//p' | head -n 1)
+  waiting=$(printf '%s\n' "$1" | sed -n 's/^waiting=//p' | head -n 1)
+  words="${held:-0} held"
+  [ "${waiting:-0}" = 0 ] || words="$words, ${waiting} waiting for a box"
+  echo "The pool's Mac is lending iOS slots ($words). It is lent whole again when they are released."
+}
+
+close_slots_or_quit() {
+  slots_set_up || return 0
+  said=$(device_host close </dev/null 2>&1)
+  case $? in
+    0) ;;
+    8) quit "$1" "$(slots_words "$said")" ;;
+    *) fail "The Mac's iOS slots could not be closed, so it is not lent whole: $(printf '%s\n' "$said" | grep -v -e '^held=' -e '^waiting=' | tail -n 1)" ;;
+  esac
+}
+
+slot_number_or_quit() {
+  verb=$1
+  shift
+  number "${1:-}" && [ "$1" -gt 0 ] && [ $# -eq 1 ] || quit 2 "usage: machine slot $verb <slot>, a slot's number"
+}
+
+refuse_while_whole() {
+  if [ -e "$STATE/owner" ]; then quit "$EXIT_LENT_WHOLE" "The pool's Mac is lent whole to a box, so it lends no iOS slot until that box is released."; fi
+  if [ -e "$STATE/resetting" ]; then quit "$EXIT_LENT_WHOLE" "The pool's Mac is resetting after a box it was lent whole to, so it lends no iOS slot until its reset ends."; fi
+}
+
+slot() {
+  verb=${1:-}
+  [ $# -eq 0 ] || shift
+  slots_set_up || quit 2 "This Mac has no iOS slots set up. Run bb-box's setup-mac.sh on it, with Xcode and its iOS platform, and the whole setup folder beside it."
+  case $verb in
+    status | summary)
+      [ $# -eq 0 ] || quit 2 "usage: machine slot $verb"
+      exec /bin/sh "$DEVICE_HOST" "$verb" </dev/null
+      ;;
+    open | close)
+      [ $# -eq 0 ] || quit 2 "usage: machine slot $verb"
+      lock 60
+      [ "$verb" = close ] || refuse_while_whole
+      device_host "$verb"
+      exit $?
+      ;;
+    make | promise)
+      [ $# -eq 0 ] || quit 2 "usage: machine slot $verb"
+      lock 60
+      refuse_while_whole
+      exec /bin/sh "$DEVICE_HOST" "$verb" 9>&-
+      ;;
+    claim)
+      slot_number_or_quit claim "$@"
+      lock 60
+      refuse_while_whole
+      exec /bin/sh "$DEVICE_HOST" claim "$1" 9>&-
+      ;;
+    unpromise)
+      [ $# -eq 0 ] || quit 2 "usage: machine slot unpromise"
+      exec /bin/sh "$DEVICE_HOST" unpromise
+      ;;
+    release | daemon | restart)
+      slot_number_or_quit "$verb" "$@"
+      exec /bin/sh "$DEVICE_HOST" "$verb" "$1"
+      ;;
+    *) quit 2 "usage: machine slot status | summary | open | close | make | promise | unpromise | claim <slot> | release <slot> | daemon <slot> | restart <slot>" ;;
+  esac
+}
+
 claim() {
   expected=${1:-}
   number "$expected" || quit 2 "usage: machine claim <generation>"
@@ -978,6 +1076,7 @@ claim() {
   if [ "$(attribute "$user" UniqueID)" != "$uid" ] || [ ! -s "$STATE/passwords/$user" ]; then
     quit 5 "Box user $user is not ready. Reset the Mac: sudo /usr/local/libexec/bb-box/machine reset"
   fi
+  close_slots_or_quit "$EXIT_SLOTS_HELD"
   printf 'install=%s\nbox=%s\nthread=%s\nname=%s\nkind=%s\ncreated=%s\ngeneration=%s\nuser=%s\nuid=%s\n' \
     "$install" "$box" "$thread" "$name" "$kind" "$created" "$current" "$user" "$uid" >"$STATE/owner.new.$$"
   if ! ln "$STATE/owner.new.$$" "$STATE/owner" 2>/dev/null; then
@@ -1119,6 +1218,7 @@ reset() {
   if [ -e "$STATE/owner" ]; then
     quit 4 "Box $(field "$STATE/owner" name) of bb-box install $(field "$STATE/owner" install) holds the Mac. Release the box first."
   elif [ ! -e "$STATE/resetting" ]; then
+    close_slots_or_quit 4
     current=$(generation)
     number "$current" || current=0
     printf 'install=%s\ngeneration=%s\n' "$install" "$current" | put "$STATE/resetting"
@@ -1226,11 +1326,12 @@ case $verb in
   reset) reset "$@" ;;
   display) display "$@" ;;
   granted) granted "$@" ;;
+  slot) slot "$@" ;;
   vm-ready | vm-grant | vm-granted)
     [ $# -eq 1 ] && [ -n "$1" ] || quit 2 "usage: machine $verb <user>"
     case $verb in vm-ready) vm_ready "$1" ;; vm-grant) grant "$1" ;; vm-granted) vm_granted "$1" ;; esac
     ;;
   init) init ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: machine status [grants] | claim | grant | granted | release | reset | display | vm-ready | vm-grant | vm-granted | init | version" ;;
+  *) quit 2 "usage: machine status [grants] | claim | grant | granted | release | reset | display | slot | vm-ready | vm-grant | vm-granted | init | version" ;;
 esac

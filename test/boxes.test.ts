@@ -3303,7 +3303,7 @@ test("with a backend lending slots, shared: true places an ios box in a slot: th
   const world = setup({ kinds: [sharedIosKind(), { ...FAKE_KINDS[0]!, id: "macos", label: "macOS" }], slots: { kinds: ["ios"], most: 8 } });
   assert.deepEqual(world.boxes.sharedHosts(), { on: true, why: null, byDefault: false });
   const [kind] = kindViews(world.boxes.kinds().filter((each) => each.id === "ios").map((each) => ({ kind: each, backend: world.backend })), {}, {}, {}, {}, {}, undefined, {}, world.boxes.sharedHosts());
-  assert.match(placementText(kind!), /unless it asks for shared: true: then a macOS user on a VM shared with other ios boxes, ready in seconds/);
+  assert.match(placementText(kind!), /unless it asks for shared: true: then a macOS user on a Mac or VM shared with other ios boxes, ready in seconds/);
   const shared = () => world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true });
   const three = await Promise.all([shared(), shared(), shared()]);
   assert.equal(world.backend.hostsMade, 1, "one host for three boxes asked for at once");

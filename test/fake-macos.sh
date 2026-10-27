@@ -416,6 +416,7 @@ case $tool in
     ;;
   plutil)
     # plutil -extract <key> raw <plist>: a <key>'s <string> in an XML plist.
+    if [ "$1" = -convert ]; then exec cat "$5"; fi
     sed -n "s:.*<key>$2</key><string>\([^<]*\)</string>.*:\1:p" "$4" | head -n 1
     ;;
   codesign)
@@ -468,6 +469,10 @@ case $tool in
     ;;
   pkill)
     # pkill -KILL -u <uid>: each process loses a kill.
+    if [ "${4:-}" = -x ]; then
+      edit "$F/processes" awk -v u="$(uid_of "$3")" -v n="$5" '$2 == u && $3 == n { $4 -= 1; if ($4 <= 0) next } { print }'
+      exit 0
+    fi
     edit "$F/processes" awk -v u="$3" '$2 == u { $4 -= 1; if ($4 <= 0) next } { print }'
     ;;
 

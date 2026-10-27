@@ -2,7 +2,7 @@ import type { CommandTransport } from "../../transports/types.ts";
 import type { DaemonKeptByHost } from "../types.ts";
 
 export const DEVICE_HOST_HELPER = "/usr/local/libexec/bb-box/device-host";
-export const DEVICE_HOST_EXITS = { done: 0, failed: 1, usage: 2, lost: 3, notOurs: 4, full: 5, notReady: 6, deleting: 7 } as const;
+export const DEVICE_HOST_EXITS = { done: 0, failed: 1, usage: 2, lost: 3, notOurs: 4, full: 5, notReady: 6, deleting: 7, lending: 8 } as const;
 export const SLOT_INSTALLER_ENVIRONMENT: Readonly<Record<string, string>> = { BB_INSTALL_SKIP_SERVICE: "1" };
 export const HELD_PORTS = [3000, 4200, 5000, 5173, 8000, 8080, 8081, 19000] as const;
 
@@ -56,6 +56,8 @@ export interface HostStatus {
   readonly helper: number;
   readonly boot: string;
   readonly deletingSince: number | null;
+  readonly kept: boolean;
+  readonly closedSince: number | null;
   readonly most: number;
   readonly ahead: number;
   readonly resettingMost: number;
@@ -164,6 +166,8 @@ export function parseHostStatus(stdout: string): HostStatus | null {
     helper,
     boot: values.get("boot") ?? "",
     deletingSince: wholeOrNull(values.get("deleting")),
+    kept: values.get("kept") === "1",
+    closedSince: wholeOrNull(values.get("closed")),
     most,
     ahead: wholeOrNull(values.get("ahead")) ?? 0,
     resettingMost: wholeOrNull(values.get("resetting-most")) ?? 0,

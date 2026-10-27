@@ -33,6 +33,9 @@ export interface DeviceSlot {
 
 export interface FakeDeviceHost extends FakeMacos {
   run(args: readonly string[], input?: string): Run;
+  machine(args: readonly string[], input?: string): Run;
+  readonly env: Readonly<Record<string, string>>;
+  readonly machineHelper: string;
   status(): { readonly values: Map<string, string>; readonly slots: readonly DeviceSlot[]; readonly lines: readonly string[] };
   slot(id: string): DeviceSlot | undefined;
   daemons(): string[];
@@ -73,6 +76,10 @@ export function fakeDeviceHost(options: { slim?: boolean; template?: boolean } =
   mkdirSync(host);
   const helper = join(host, "device-host");
   rewrite(join(IOS, "device-host.sh"), helper, mac.root, bin);
+  const libexec = join(mac.data, "usr/local/libexec/bb-box");
+  mkdirSync(libexec, { recursive: true });
+  copyFileSync(helper, join(libexec, "device-host"));
+  const machineHelper = join(dir, "pool", "machine-mac.sh");
 
   const share = join(mac.data, "usr/local/share/bb-box");
   mkdirSync(join(share, "ios"), { recursive: true });
@@ -100,9 +107,16 @@ export function fakeDeviceHost(options: { slim?: boolean; template?: boolean } =
     for (const line of lines) if (!line.startsWith("slot=")) values.set(line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1));
     return { values, slots: lines.filter((line) => line.startsWith("slot=")).map(parseSlot), lines };
   };
+  const machine = (args: readonly string[], input = ""): Run => {
+    const result = spawnSync("/bin/sh", [machineHelper, ...args], { input, encoding: "utf8", env, timeout: 60_000 });
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  };
   return {
     ...mac,
     run,
+    machine,
+    env,
+    machineHelper,
     status,
     slot: (id) => status().slots.find((slot) => slot.id === id),
     daemons: () => readdirSync(join(mac.state, "daemons")).sort(),

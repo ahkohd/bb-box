@@ -285,7 +285,7 @@ export function kindViews(
   // Each kind's offers in the order a plain acquire tries them (057), the kinds where they first come.
   const first = new Map<string, number>();
   offered.forEach(({ kind }, index) => first.has(kind.id) || first.set(kind.id, index));
-  const ordered = vmOffersLast(offered).sort((a, b) => first.get(a.kind.id)! - first.get(b.kind.id)!);
+  const ordered = vmOffersLast(offered).sort((a, b) => first.get(a.kind.id)! - first.get(b.kind.id)! || Number(a.kind.slotsOnly === true) - Number(b.kind.slotsOnly === true));
   for (const { kind, backend } of ordered) {
     const existing = views.get(kind.id);
     const admin = kind.capabilities.command?.admin ?? false;
@@ -460,7 +460,7 @@ export function placementText(kind: Pick<KindView, "placement">): string {
   const asking = kind.placement.sizeNeedsDedicated ? "dedicated: true asks for one, and a size needs it" : "dedicated: true asks for one";
   if (kind.placement.shared) {
     return (
-      ` Each box is a macOS VM of its own, with sudo, brew install and its own cores, ports and desktop, unless it asks for shared: true: then a macOS user on a VM shared with other ios boxes, ready in seconds,` +
+      ` Each box is a macOS VM of its own, with sudo, brew install and its own cores, ports and desktop, unless it asks for shared: true: then a macOS user on a Mac or VM shared with other ios boxes, ready in seconds,` +
       " with its own device, files and keychain, but no sudo, and cores and processes shared. Servers on localhost are reachable from every box on the host: use your box's ports, from BB_PORT_BASE." +
       ` ${asking.charAt(0).toUpperCase()}${asking.slice(1)}.`
     );

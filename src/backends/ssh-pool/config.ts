@@ -24,8 +24,9 @@ import { kindRequest } from "../kinds.ts";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
-export const SSH_POOL_KINDS = ["linux", "macos", "macos-desktop"] as const;
+export const SSH_POOL_KINDS = ["linux", "macos", "macos-desktop", "ios"] as const;
 export type SshPoolKind = (typeof SSH_POOL_KINDS)[number];
+export const SLOT_KIND = "ios";
 
 export const SSH_POOL_DEFAULTS = { adminUser: "bbbox-admin", port: 22 } as const;
 
@@ -34,7 +35,20 @@ export const SSH_POOL_KEYS = {
   machines: "ssh-pool-machines",
   knownHosts: "ssh-pool-known-hosts",
   sshPrivateKey: "ssh-pool-ssh-private-key",
+  iosHostsMost: "ssh-pool-ios-hosts-most",
+  iosHostsAhead: "ssh-pool-ios-hosts-ahead",
+  iosHostsResettingMost: "ssh-pool-ios-hosts-resetting-most",
+  iosHostsDiskReserveGiB: "ssh-pool-ios-hosts-disk-reserve-gib",
 } as const;
+
+export interface PoolSlotsConfig {
+  readonly most: number;
+  readonly ahead: number;
+  readonly resettingMost: number;
+  readonly diskReserveGiB: number;
+}
+
+export const POOL_SLOTS_DEFAULTS: PoolSlotsConfig = { most: 12, ahead: 1, resettingMost: 4, diskReserveGiB: 40 };
 
 export interface SshPoolHost {
   readonly host: string;
@@ -64,6 +78,7 @@ export interface SshPoolConfig {
   readonly knownHosts: readonly string[];
   /** A null key means bb-box generates one and shows its public key. */
   readonly privateKey: string | null;
+  readonly slots: PoolSlotsConfig;
 }
 
 export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
@@ -77,7 +92,7 @@ export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "SSH host pool: machines",
     description:
-      'One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine.',
+      'One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". ios on a Mac lends iOS slots there, each a macOS user with its own device, for ios boxes asked for with shared: true. setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine.',
     experimental_multiline: true,
     default: "",
   },
@@ -94,6 +109,30 @@ export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
     description:
       "An unencrypted OpenSSH private key that the machines' admin user accepts. Leave empty and bb-box makes one and shows its public key, which you then give setup.sh.",
     secret: true,
+  },
+  [SSH_POOL_KEYS.iosHostsMost]: {
+    type: "number",
+    label: "SSH host pool: slots for ios boxes per Mac",
+    description: "The most iOS slots a Mac whose line lists ios has making, ready or held at once. It is lent whole only while it lends none.",
+    default: POOL_SLOTS_DEFAULTS.most,
+  },
+  [SSH_POOL_KEYS.iosHostsAhead]: {
+    type: "number",
+    label: "SSH host pool: ready slots for ios boxes kept on a Mac",
+    description: "Slots a Mac whose line lists ios keeps ready while it is not lent whole, so the next ios box is ready in seconds.",
+    default: POOL_SLOTS_DEFAULTS.ahead,
+  },
+  [SSH_POOL_KEYS.iosHostsResettingMost]: {
+    type: "number",
+    label: "SSH host pool: slots a Mac sweeps at once",
+    description: "The most released iOS slots whose files a Mac sweeps in one pass.",
+    default: POOL_SLOTS_DEFAULTS.resettingMost,
+  },
+  [SSH_POOL_KEYS.iosHostsDiskReserveGiB]: {
+    type: "number",
+    label: "SSH host pool: disk a Mac keeps free of slots (GiB)",
+    description: "A Mac makes no new iOS slot while it has less free disk than this.",
+    default: POOL_SLOTS_DEFAULTS.diskReserveGiB,
   },
 };
 
@@ -175,7 +214,7 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
     const asked = kindRequest(word);
     const kind = SSH_POOL_KINDS.includes(asked.kind as SshPoolKind) ? (asked.kind as SshPoolKind) : null;
     if (!kind || asked.features.some((feature) => feature !== "docker")) {
-      return bad(`Machine ${name} cannot serve kind "${word}": the SSH host pool offers linux, with Docker on a machine with reset=machine, and macos and macos-desktop on a Mac.`);
+      return bad(`Machine ${name} cannot serve kind "${word}": the SSH host pool offers linux, with Docker on a machine with reset=machine, and macos, macos-desktop and ios slots on a Mac.`);
     }
     if (!kinds.includes(kind)) kinds.push(kind);
     if (asked.features.includes("docker")) listsDocker = true;
@@ -200,7 +239,7 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
   }
   const os = kinds[0] === "linux" ? "linux" : "macos";
   if (kinds.some((kind) => (kind === "linux" ? "linux" : "macos") !== os)) {
-    return bad(`Machine ${name} lists Linux and macOS kinds. List linux on a Linux machine, and macos or macos-desktop on a Mac.`);
+    return bad(`Machine ${name} lists Linux and macOS kinds. List linux on a Linux machine, and macos, macos-desktop or ios on a Mac.`);
   }
   if (os === "macos" && reset === "machine") {
     problems.push(`Machine ${name} is a Mac, which has no whole-machine reset. Remove reset=machine: its reset removes the box's user and makes a new one.`);
@@ -223,6 +262,10 @@ export const SSH_POOL_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object
     [SSH_POOL_KEYS.machines, "boxes"],
     [SSH_POOL_KEYS.knownHosts, "connection"],
     [SSH_POOL_KEYS.sshPrivateKey, "credentials"],
+    [SSH_POOL_KEYS.iosHostsMost, "advanced"],
+    [SSH_POOL_KEYS.iosHostsAhead, "advanced"],
+    [SSH_POOL_KEYS.iosHostsResettingMost, "advanced"],
+    [SSH_POOL_KEYS.iosHostsDiskReserveGiB, "advanced"],
   ] as const).map(([key, group]) => {
     const setting = SSH_POOL_SETTINGS[key]!;
     return [key.slice(SSH_POOL_PREFIX.length), { ...setting, label: fieldLabel(setting.label), group } as FieldDescriptor];
@@ -302,6 +345,30 @@ function checkSshPool(values: Readonly<Record<string, unknown>>): { config: SshP
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
   if (keyText && !privateKey) at(SSH_POOL_KEYS.sshPrivateKey).push("Paste the whole SSH private key in OpenSSH form, or clear it so bb-box makes one.");
 
+  const slots = checkSlots(values, (key, message) => at(key).push(message));
+
   if (all.length) return { config: null, problems: all };
-  return { config: { machines, knownHosts, privateKey }, problems: all };
+  return { config: { machines, knownHosts, privateKey, slots }, problems: all };
+}
+
+function wholeSetting(values: Readonly<Record<string, unknown>>, key: string, fallback: number): number {
+  const value = values[key];
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "") return Number(value);
+  return fallback;
+}
+
+function checkSlots(values: Readonly<Record<string, unknown>>, problem: (key: string, message: string) => void): PoolSlotsConfig {
+  const read = (key: string, fallback: number, least: number, most: number, words: string): number => {
+    const value = wholeSetting(values, key, fallback);
+    if (!Number.isInteger(value) || value < least || value > most) problem(key, `SSH host pool: ${words} must be a whole number from ${least} to ${most}.`);
+    return value;
+  };
+  const most = read(SSH_POOL_KEYS.iosHostsMost, POOL_SLOTS_DEFAULTS.most, 1, 64, "the iOS slots per Mac");
+  return {
+    most,
+    ahead: read(SSH_POOL_KEYS.iosHostsAhead, POOL_SLOTS_DEFAULTS.ahead, 0, most, "the ready iOS slots kept on a Mac, at most its slots,"),
+    resettingMost: read(SSH_POOL_KEYS.iosHostsResettingMost, POOL_SLOTS_DEFAULTS.resettingMost, 1, 64, "the iOS slots a Mac sweeps at once"),
+    diskReserveGiB: read(SSH_POOL_KEYS.iosHostsDiskReserveGiB, POOL_SLOTS_DEFAULTS.diskReserveGiB, 0, 4096, "the disk a Mac keeps free of iOS slots"),
+  };
 }

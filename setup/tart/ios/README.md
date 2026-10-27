@@ -192,7 +192,9 @@ through sudo as the image's user. Input is one `name=value` a line on stdin.
 
 | Command | What |
 | --- | --- |
-| `init` | stdin: `most`, `ahead`, `resetting-most`, `disk-reserve-gib`. The host's settings, kept as given the first time. Loads the helper's daemon and the held ports' daemon, which launchd then starts at every boot; run again, it leaves them running |
+| `init` | stdin: `most`, `ahead`, `resetting-most`, `disk-reserve-gib`, and `kept=yes` for the pool's Mac. The host's settings, kept as given the first time. Loads the helper's daemon and the held ports' daemon, which launchd then starts at every boot; run again, it leaves them running. A kept host starts closed, and holds no ports until `open` |
+| `open` and `close` | a kept host's only. `open`, stdin: `install` and the settings, which it writes each time: lends slots again, holds the common dev ports and makes the spares `ahead` asks for. `close`, stdin: `install`: refused with exit 8, and `held=` and `waiting=`, while a slot is held, promised or being made for a box; otherwise lends no slot, lets the ports go and removes every ready spare before it answers, and a spare being made when its step ends |
+| `summary` | what the pool's helper adds to its status: kept or not, closed since when, the settings, slots in each state, boxes waiting, the sweep queue, and the runtime, model, idb_companion and slimming list slots are made with |
 | `status` | the host, its promises, each claim's install, box, thread, name, kind and creation, each slot with its state, ports, device and load, and the last sweeps |
 | `make` | stdin: `install`, `box` (the box it is made for, if any), `server` (a device server's folder to copy). Makes a slot and answers its user, UID, device and ports |
 | `promise` and `unpromise` | stdin: `install`, `box`. Holds a place in `most` for a box, and gives it back. `unpromise` answers `last=yes` when nothing else keeps the host, having written `deleting` under the lock |
@@ -208,7 +210,15 @@ through sudo as the image's user. Input is one `name=value` a line on stdin.
 
 Exit codes: 0 done; 1 failed, with words; 2 usage; 3 lost a race, ask
 again; 4 not this box's; 5 no room; 6 the slot is not ready; 7 the host is
-being deleted, ask again.
+being deleted, or a kept host is closed, ask again; 8 a kept host lends
+slots, so it does not close.
+
+- **A kept host** is the SSH host pool's Mac (064 unit 5), set up by
+  [`setup-mac.sh`](../../ssh-pool/README.md#ios-slots-on-a-mac). It is
+  never deleted: its last release and `vacate` answer `last=yes` but write
+  no `deleting`, and it keeps making the spares `ahead` asks for. It has no
+  carried slots, and accepts no carried slot's UID. It is closed while the
+  Mac is lent whole.
 
 - **Slots.** Slot `n` is user `bbd-n` with UID 80000 plus `n`, from slot 1
   to slot 9999, UID 89999; the carried slots are `bbd-i1` and `bbd-i2`, UIDs

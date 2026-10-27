@@ -197,6 +197,7 @@ export interface BoxKind {
   readonly capabilities: KindCapabilities;
   /** The longest an acquire of this kind may take, to ready. */
   readonly readyTimeoutMs: number;
+  readonly slotsOnly?: boolean;
 }
 
 /** Cores, memory and root disk (028). */

@@ -85,6 +85,11 @@ case $tool in
     fi
     case ${1:-} in
       list)
+        if [ "${2:-}" = runtimes ]; then
+          flag no-ios-runtime || echo 'iOS 27.0 (27.0 - 24A434) - com.apple.CoreSimulator.SimRuntime.iOS-27-0'
+          echo 'watchOS 27.0 (27.0 - 24R345) - com.apple.CoreSimulator.SimRuntime.watchOS-27-0'
+          exit 0
+        fi
         echo "== Devices =="
         echo "-- iOS 27.0 --"
         for file in "$sims"/*; do
@@ -123,6 +128,19 @@ case $tool in
         boot_device "$2"
         ;;
       bootstatus) [ "$(device_value "$2" state)" = Booted ] ;;
+      spawn)
+        [ "$(device_value "$2" state)" = Booted ] || { echo "Device is not booted." >&2; exit 149; }
+        [ "$3 $4" = "launchctl disable" ] || exit 1
+        flag spawn-skips && exit 0
+        store=$R/private/var/tmp/com.apple.CoreSimulator.SimDevice.$2
+        mkdir -p "$store"
+        echo "${5#system/}" >>"$store/labels"
+        {
+          printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0">\n<dict>\n'
+          sort -u "$store/labels" | sed 's|.*|\t<key>&</key>\n\t<true/>|'
+          printf '</dict>\n</plist>\n'
+        } >"$store/disabled.plist"
+        ;;
       shutdown)
         if [ "$2" = all ]; then
           for file in "$sims"/*; do [ -f "$file" ] && case $file in *.pid) ;; *) shutdown_device "${file##*/}" ;; esac; done

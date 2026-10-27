@@ -432,7 +432,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       shared: z
         .boolean()
         .optional()
-        .describe("For an ios box: a macOS user on a VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. Only where a shared iOS host is set up; box_list says. macos boxes take no slot yet."),
+        .describe("For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. Only where a shared iOS host is set up; box_list says. macos boxes take no slot yet."),
     }),
     async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device, slim, dedicated, shared }, { threadId, projectId, signal }) {
       try {

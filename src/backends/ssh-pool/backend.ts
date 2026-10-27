@@ -55,7 +55,9 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  DEVICE_DISPLAY,
 } from "../types.ts";
+import type { DeviceOffer } from "../../core/device.ts";
 import { sizesCheck } from "../fit.ts";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
@@ -64,7 +66,8 @@ import type { Arch, Display, DisplayInput, DisplayInputEvents, DisplayOpened, Ru
 import { startMacInput } from "../../core/mac-input.ts";
 import { MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { CUA_VERSION } from "../tart/backend.ts";
-import { EXAMPLE, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
+import { EXAMPLE, SLOT_KIND, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
+import { PoolSlots, lendingSlots, lendingWords, listsSlots, poolSlotOf, slotDeviceOffer, slotsSetUp, type PoolMacView } from "./slots.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, parseDisplay, parseGrant, parseGranted, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
 
 const SSH_KEY = "ssh-key";
@@ -151,6 +154,25 @@ function macOffer(desktop: boolean, features: readonly string[], video = false):
   };
 }
 
+const SLOTS_ONLY_WORDS = "The SSH host pool lends ios boxes only as slots on its Macs, each a macOS user with its own device. Ask for shared: true.";
+
+function slotOffer(device: DeviceOffer): BoxKind {
+  return {
+    id: SLOT_KIND,
+    label: "iOS Simulator",
+    description:
+      "An iOS Simulator device, an iPhone, in a macOS user of its own on a physical Mac shared with other ios boxes, for installing, running and testing iOS apps, with its screen shown in the panel. Only with shared: true. Commands run on the Mac as that user, with Xcode; simctl takes booted as the device. No sudo, Homebrew installs or app windows.",
+    requires: [],
+    slotsOnly: true,
+    capabilities: { os: "macos", arch: ARCH.macos, gpu: false, features: [], command: SSH_COMMAND, displays: [DEVICE_DISPLAY], computerUse: null, enrol: true, device },
+    readyTimeoutMs: MAC_READY_TIMEOUT_MS,
+  };
+}
+
+function poolMacView(view: View): PoolMacView {
+  return { machine: view.machine, status: view.probe.status, state: view.state, reason: view.state === "out-of-service" ? view.reason : view.probe.problem, unreachable: view.probe.unreachable };
+}
+
 export interface SshPoolBackendOptions {
   readonly sshBinary?: string;
   /** Replaces the command that runs the helper as root, for tests. */
@@ -210,7 +232,7 @@ interface SshKeys {
 
 type Check = readonly [id: CheckId, name: string];
 /** What a machine's checks are of: machine.<name>.<what> in the catalog. */
-type MachineCheck = "ssh" | "sizes" | "helper" | "arch" | "tools" | "docker" | "state" | "filevault" | "signin" | "fulldisk" | "homes" | "sip" | "screensharing" | "grants" | "xcode" | "input";
+type MachineCheck = "ssh" | "sizes" | "helper" | "arch" | "tools" | "docker" | "state" | "filevault" | "signin" | "fulldisk" | "homes" | "sip" | "screensharing" | "grants" | "xcode" | "input" | "slots";
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 const MACHINES_CHECK: Check = ["machines", "Machines"];
 const DOCKER_CHECK: Check = ["docker", "Docker"];
@@ -400,6 +422,8 @@ export class SshPoolBackend implements Backend {
   #ssh: Promise<SshKeys> | null = null;
   /** Claims in this process go one at a time, so two never pick the same machine. */
   #queue: Promise<unknown> = Promise.resolve();
+  readonly slots: PoolSlots;
+  #slotDevice: DeviceOffer | null = null;
 
   constructor(config: SshPoolConfig, context: BackendContext, options: SshPoolBackendOptions = {}) {
     this.id = context.id;
@@ -413,6 +437,34 @@ export class SshPoolBackend implements Backend {
     this.#docker = linux.length > 0 && linux.every((machine) => machine.docker);
     const systems = new Set(config.machines.map((machine) => machine.os));
     this.hostOs = systems.size > 1 ? null : systems.has("macos") ? "macos" : "linux";
+    this.slots = this.#poolSlots();
+  }
+
+  #poolSlots(): PoolSlots {
+    return new PoolSlots({
+      installId: this.#context.installId,
+      settings: () => this.#config.slots,
+      machines: () => this.#config.machines,
+      machine: (name) => this.#machines.get(name) ?? null,
+      survey: async (signal) => (await this.#survey(signal)).map(poolMacView),
+      helper: (machine, args, input, timeoutMs, signal) => this.#helper(machine, args, input, timeoutMs, signal),
+      command: (machine, user) => this.#command(machine, user),
+      access: (machine, user) => this.#access(machine, user),
+      publicKey: async () => {
+        const { publicKey } = await this.#keys();
+        if (!publicKey) throw new Error("ssh-keygen cannot read the SSH private key in bb-box's settings. Paste the whole key, or clear it so bb-box makes one.");
+        return publicKey;
+      },
+      readyTimeoutMs: () => this.#options.readyTimeoutMs ?? null,
+      log: (message) => this.#context.log?.(message),
+      logError: (operation, error) => this.#context.logError(operation, error),
+      sleep: this.#options.sleep,
+    });
+  }
+
+  #slotsOf(guest: Guest): PoolSlots {
+    if (!this.#machines.has(poolSlotOf(guest)!.mac)) throw new BackendError("gone", `The pool's Mac of box guest ${guest.ref} is not in the SSH host pool's settings now, so bb-box cannot reach its iOS slot. Put its line back in ssh-pool-machines.`);
+    return this.slots;
   }
 
   /** The kinds some machine lists. */
@@ -422,7 +474,17 @@ export class SshPoolBackend implements Backend {
       ...(listed.has("linux") ? [linuxOffer(this.#docker)] : []),
       ...(listed.has("macos") ? [macOffer(false, this.#macFeatures("macos"))] : []),
       ...(listed.has("macos-desktop") ? [macOffer(true, this.#macFeatures("macos-desktop"), this.#macVideo())] : []),
+      ...(listed.has(SLOT_KIND) && this.#slotDevice ? [slotOffer(this.#slotDevice)] : []),
     ];
+  }
+
+  #declareSlotDevice(views: readonly View[]): void {
+    const view = views.find((each) => listsSlots(each.machine) && slotsSetUp(each.probe.status));
+    if (!view) return;
+    const device = slotDeviceOffer(slotsSetUp(view.probe.status)!, view.probe.status?.mac?.xcode?.version ?? null);
+    if (JSON.stringify(device) === JSON.stringify(this.#slotDevice)) return;
+    this.#slotDevice = device;
+    this.#context.kindsChanged?.();
   }
 
   /**
@@ -442,6 +504,15 @@ export class SshPoolBackend implements Backend {
     return macs.length > 0 && macs.every((view) => view.probe.status!.mac!.stream);
   }
 
+  async restartDeviceServer(guest: Guest, signal?: AbortSignal): Promise<void> {
+    if (poolSlotOf(guest)) await this.#slotsOf(guest).restartDeviceServer(guest, signal);
+  }
+
+  async maintain(signal?: AbortSignal): Promise<void> {
+    if (!this.#config.machines.some((machine) => machine.os === "macos")) return;
+    await this.slots.maintain((await this.#survey(signal)).map(poolMacView), signal);
+  }
+
   /** The machines it lends whole, for the doctor's warning when a Mac is also a Tart host (047). One through a jump host is on another network. */
   footprint(): Footprint {
     const machines = this.#config.machines.filter((machine) => !machine.jump);
@@ -458,6 +529,7 @@ export class SshPoolBackend implements Backend {
    * survey, or while its Mac is off, it keeps the features it has (047).
    */
   async asOffered(guest: Guest, kind: string): Promise<boolean> {
+    if (kind === SLOT_KIND) return this.#slotDevice !== null;
     return kind === "linux" || Boolean(this.#surveyed?.some((view) => view.machine.name === guest.ref && view.probe.status?.mac));
   }
 
@@ -469,6 +541,7 @@ export class SshPoolBackend implements Backend {
 
   async capacity(kind: string, size: BoxSize, pending: readonly Acquiring[], signal?: AbortSignal): Promise<Capacity> {
     this.#offer(kind);
+    if (kind === SLOT_KIND) return { ok: false, message: SLOTS_ONLY_WORDS, warm: null, hosts: [{ host: POOL_HOST, ok: false, limits: [] }] };
     const all = await this.#survey(signal);
     const views = all.filter((view) => this.#lists(view.machine, kind));
     // Acquires that have not claimed a machine take theirs first, as their claims would; those that have claimed one show as held.
@@ -501,7 +574,7 @@ export class SshPoolBackend implements Backend {
   /** The free machines a box of `kind` at `size` may claim, in the order its claim tries them. */
   #candidates(views: readonly View[], kind: string, size: BoxSize): View[] {
     return views
-      .filter((view) => this.#lists(view.machine, kind) && view.state === "free" && this.#ready(view, kind) === null && fits(view.probe.status, size))
+      .filter((view) => this.#lists(view.machine, kind) && view.state === "free" && !lendingSlots(view.probe.status) && this.#ready(view, kind) === null && fits(view.probe.status, size))
       .sort((a, b) => bySize(a, b) || wholeReset(a) - wholeReset(b) || a.since - b.since);
   }
 
@@ -511,8 +584,10 @@ export class SshPoolBackend implements Backend {
     const others = views.filter((view) => view.state === "held").length - held;
     const resetting = views.filter((view) => view.state === "resetting").length;
     const out = views.filter((view) => view.state === "out-of-service");
-    const unready = views.filter((view) => view.state === "free" && this.#ready(view, kind) !== null);
-    const small = views.filter((view) => view.state === "free" && this.#ready(view, kind) === null && !fits(view.probe.status, size));
+    const lending = views.filter((view) => view.state === "free" && lendingSlots(view.probe.status));
+    const free = views.filter((view) => view.state === "free" && !lendingSlots(view.probe.status));
+    const unready = free.filter((view) => this.#ready(view, kind) !== null);
+    const small = free.filter((view) => this.#ready(view, kind) === null && !fits(view.probe.status, size));
     const parts = [
       held ? `${plural(held, "is", "are")} held by this install's boxes` : "",
       others ? `${others} by another install` : "",
@@ -524,12 +599,14 @@ export class SshPoolBackend implements Backend {
         : "",
       waited ? `${waited} about to be claimed by other boxes` : "",
     ].filter(Boolean);
+    const slotWords = lending.map((view) => ` ${lendingWords(view.machine.name, view.probe.status!.slots!)}`).join("");
     const all = `${plural(views.length, "machine")} that serve${views.length === 1 ? "s" : ""} ${kind}`;
     const why = parts.length ? ` Of the ${all}, ${parts.join(", ")}.` : "";
-    return `No machine in the SSH host pool is free for ${kind} at ${sizeWords(size)}.${why} Release a box to free one${small.length ? ", or ask for a smaller size" : ""}.`;
+    return `No machine in the SSH host pool is free for ${kind} at ${sizeWords(size)}.${why}${slotWords} Release a box to free one${small.length ? ", or ask for a smaller size" : ""}.`;
   }
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    if (previous && poolSlotOf(previous)) return this.#slotsOf(previous).acquire(box, previous, hooks, signal);
     const kind = this.#offer(box.kind);
     signal.throwIfAborted();
     if (previous) {
@@ -665,6 +742,12 @@ export class SshPoolBackend implements Backend {
   }
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
+    if (poolSlotOf(guest)) {
+      const started = performance.now();
+      await this.slots.release(guest, signal);
+      hooks.timing("release", Math.round(performance.now() - started));
+      return;
+    }
     const machine = this.#machines.get(guest.ref);
     const generation = whole(guest.data?.generation);
     const box = typeof guest.data?.box === "string" ? guest.data.box : null;
@@ -762,6 +845,7 @@ export class SshPoolBackend implements Backend {
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
+    if (poolSlotOf(guest)) return this.slots.power(guest, signal);
     const machine = this.#machines.get(guest.ref);
     // Out of the settings, the machine and its box user are as they were:
     // the box keeps what bb-box knows until the line comes back, or someone
@@ -792,6 +876,7 @@ export class SshPoolBackend implements Backend {
   }
 
   async grant(guest: Guest, request: GrantRequest, signal?: AbortSignal): Promise<GrantAnswer> {
+    if (poolSlotOf(guest)) throw new BackendError("unsupported", "A box in an iOS slot on the pool's Mac has no console session, so there is nothing to grant macOS permissions to.");
     const { machine, box } = this.#grantee(guest);
     const result = await this.#helper(machine, ["grant"], grantInput(this.#context.installId, box, request), STATUS_TIMEOUT_MS, signal);
     if (result.exitCode === EXIT.notOurs) throw new BackendError("gone", `Machine ${machine.name} is no longer this box's.`);
@@ -801,6 +886,7 @@ export class SshPoolBackend implements Backend {
   }
 
   async grants(guest: Guest, signal?: AbortSignal): Promise<BoxGrants | null> {
+    if (poolSlotOf(guest)) return null;
     const machine = this.#machines.get(guest.ref);
     if (machine?.os !== "macos") return null;
     const { box, generation } = this.#grantee(guest);
@@ -811,7 +897,9 @@ export class SshPoolBackend implements Backend {
 
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {
     const held: HeldGuest[] = [];
-    for (const { machine, probe, record } of await this.#survey(signal)) {
+    const views = await this.#survey(signal);
+    held.push(...(await this.slots.held(views.map(poolMacView), signal)));
+    for (const { machine, probe, record } of views) {
       if (record?.state === "out-of-service" || this.#resetting.has(machine.name)) continue;
       const { status } = probe;
       if (!status) {
@@ -832,6 +920,7 @@ export class SshPoolBackend implements Backend {
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
+    if (poolSlotOf(guest)) return this.#slotsOf(guest).transports(guest);
     const machine = this.#machines.get(guest.ref);
     if (!machine) throw new Error(missing(guest.ref));
     const user = typeof guest.data?.user === "string" ? guest.data.user : `${USER_PREFIX}${guest.data?.generation}`;
@@ -991,9 +1080,11 @@ export class SshPoolBackend implements Backend {
       const SIP = check("sip", "System Integrity Protection");
       const SCREEN = check("screensharing", "Screen Sharing"), GRANTS = check("grants", "Cua Driver's grants"), XCODE = check("xcode", "Xcode");
       const INPUT = check("input", "viewer's input");
+      const SLOTS = check("slots", "iOS slots");
+      const slotChecks = mac && listsSlots(machine) ? [SLOTS] : [];
       const desktop = this.#lists(machine, "macos-desktop");
       const macChecks = mac ? [FILEVAULT, SIGNIN, FULL_DISK, HOMES, SIP, XCODE, ...(desktop ? [SCREEN, GRANTS, INPUT] : [])] : [];
-      const after = [ARCH_CHECK, TOOLS, ...(docker ? [DOCKER] : []), ...macChecks, STATE];
+      const after = [ARCH_CHECK, TOOLS, ...(docker ? [DOCKER] : []), ...macChecks, ...slotChecks, STATE];
       const rest = [HELPER, ...after];
       const view = views.find((other) => other.machine === machine);
       const where = `${machine.admin.user}@${machine.admin.host}${machine.admin.port === 22 ? "" : `:${machine.admin.port}`}${machine.jump ? ` through ${machine.jump.host}` : ""}`;
@@ -1066,8 +1157,10 @@ export class SshPoolBackend implements Backend {
           fail(DOCKER, `${problem} Its line has reset=machine, so its boxes get Docker.`, `Install Docker on ${name}, and its reset-machine command with setup.sh --reset-hook, as the SSH host pool's setup guide says.`);
         } else pass(DOCKER, "Docker and a whole-machine reset are installed.");
       }
-      if (mac && !status.mac) skip(...macChecks);
+      if (mac && !status.mac) skip(...macChecks, ...slotChecks);
       else if (mac) this.#macChecks(status, machine, view.state === "out-of-service", grants.get(machine) ?? null, xcodes.get(machine) ?? null, { FILEVAULT, SIGNIN, FULL_DISK, HOMES, SIP, XCODE, SCREEN, GRANTS, INPUT }, { pass, warn, fail });
+      const slotCheck = mac && status.mac && slotChecks.length ? this.slots.doctor(poolMacView(view)) : null;
+      if (slotCheck) checks.push({ id: SLOTS[0], name: SLOTS[1], ...slotCheck });
       // An operator's reset names no install.
       const install = status.owner?.install;
       if (install && install !== this.#context.installId) others.set(install, (others.get(install) ?? 0) + 1);
@@ -1356,6 +1449,7 @@ export class SshPoolBackend implements Backend {
     const now = Date.now();
     const views = await Promise.all(this.#config.machines.map((machine) => this.#look(machine, now, signal)));
     this.#surveyed = views;
+    this.#declareSlotDevice(views);
     return views;
   }
 
@@ -1365,7 +1459,8 @@ export class SshPoolBackend implements Backend {
   /** Free machines for `kind`, from the last survey (an acquire, capacity check or doctor); no SSH here. Null before the first. */
   free(kind: string): number | null {
     if (!this.#surveyed) return null;
-    return this.#surveyed.filter((view) => this.#lists(view.machine, kind) && view.state === "free" && this.#ready(view, kind) === null).length;
+    if (kind === SLOT_KIND) return null;
+    return this.#surveyed.filter((view) => this.#lists(view.machine, kind) && view.state === "free" && !lendingSlots(view.probe.status) && this.#ready(view, kind) === null).length;
   }
 
   /**
@@ -1377,6 +1472,7 @@ export class SshPoolBackend implements Backend {
   offerNote(kind: string): string | null {
     const views = (this.#surveyed ?? []).filter((view) => this.#lists(view.machine, kind) && view.probe.status);
     if (!views.length) return null;
+    if (kind === SLOT_KIND) return this.#slotNote(views);
     const mac = views[0]!.machine.os === "macos";
     const thing = mac ? "Mac" : "machine";
     const count = (n: number, word: string) => (n === 1 ? `1 ${word}` : `${n} ${word}s`);
@@ -1409,6 +1505,14 @@ export class SshPoolBackend implements Backend {
       root,
       reset,
     ].join("; ");
+  }
+
+  #slotNote(views: readonly View[]): string {
+    const macs = views.filter((view) => slotsSetUp(view.probe.status));
+    const most = this.#config.slots.most;
+    const sizes = [...new Set(macs.map((view) => machineSizeWords(view.probe.status!)).filter((words): words is string => words !== null))];
+    const count = macs.length === 1 ? "1 physical Mac" : `${macs.length} physical Macs`;
+    return `iOS slots on ${count}${sizes.length ? ` (${sizes.join("; ")})` : ""}, up to ${most} on each, only with shared: true; each slot a macOS user with its own device, files and keychain; no root; the slot's user and every file it owns removed after release; a Mac lends slots only while it is not lent whole`;
   }
 
   /** `machine` as it is now. A state that its record does not have began at `now`, or for a held machine, when its box was made. */
@@ -1471,7 +1575,7 @@ export class SshPoolBackend implements Backend {
     if (status.arch !== ARCH[machine.os]) return out(`It is ${status.arch || "of unknown architecture"}, not ${ARCH[machine.os]}.`);
     if (status.missing.length) return out(`It lacks ${status.missing.join(", ")}.`);
     if (status.dirty) return out(`An earlier box left ${status.dirty}`);
-    const mac = status.mac && macProblem(status.mac, status.generation);
+    const mac = status.mac && machine.kinds.some((kind) => kind !== SLOT_KIND) && macProblem(status.mac, status.generation);
     if (mac) return out(mac);
     if (record && status.generation < record.generation) {
       return out(`Its reset generation went back from ${record.generation} to ${status.generation}, as if restored from an older copy. Check it, then reset it.`);
