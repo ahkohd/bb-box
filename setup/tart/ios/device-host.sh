@@ -15,6 +15,7 @@ SLOT_HOME=$SHARE/slot-home
 DAEMONS=$ROOT/Library/LaunchDaemons
 DATA=$ROOT/System/Volumes/Data
 SIM_STORE=$ROOT/private/var/tmp
+SLOT_LOGS=$ROOT/private/var/log/bb-box-slots
 INSTALLED=/usr/local/libexec/bb-box/device-host
 PORTS_PROGRAM=/usr/local/libexec/bb-box/device-host-ports
 HOST_LABEL=app.bb-box.device-host
@@ -33,6 +34,7 @@ PORT_COUNT=100
 DEFAULT_MOST=8
 DEFAULT_AHEAD=1
 DEFAULT_RESETTING_MOST=4
+RESETTING_MOST_LEAST=1
 DEFAULT_DISK_RESERVE_GIB=40
 MEMORY_FREE_LEAST=15
 PROMISE_MOST_S=600
@@ -40,6 +42,7 @@ HOME_SIZE_EVERY_S=600
 SECOND_DEVICE_MOST_S=600
 WATCH_EVERY_S=5
 STEP_TRIES=2
+CLAIM_WARM_WAIT_S=300
 SWEEPS_KEPT=20
 DAEMON_PATH=/opt/homebrew/opt/node@24/bin:/opt/homebrew/opt/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 EXIT_LOST=3
@@ -92,7 +95,11 @@ held_elsewhere() {
 
 setting() {
   value=$(field "$HOST/settings" "$1")
-  if number "$value"; then echo "$value"; return; fi
+  if number "$value"; then
+    if [ "$1" = resetting-most ] && [ "$value" -lt "$RESETTING_MOST_LEAST" ]; then value=$RESETTING_MOST_LEAST; fi
+    echo "$value"
+    return
+  fi
   case $1 in
     most) echo "$DEFAULT_MOST" ;;
     ahead) echo "$DEFAULT_AHEAD" ;;
@@ -130,7 +137,7 @@ read_input() {
 
 box_word_or_quit() {
   case $1 in
-    '' | *[!A-Za-z0-9_.-]*) quit 2 "$2 needs box=, a box ID of letters, digits, dots, dashes and underscores." ;;
+    '' | [!A-Za-z0-9]* | *[!A-Za-z0-9_.-]*) quit 2 "$2 needs box=, a box ID of letters, digits, dots, dashes and underscores that starts with a letter or digit." ;;
   esac
 }
 
@@ -141,7 +148,13 @@ slot_or_quit() {
 }
 slot_user() { echo "$PREFIX$1"; }
 slot_uid() {
-  if carried "$1"; then echo $((CARRIED_UID_BASE + ${1#i})); else echo $((SLOT_UID_BASE + $1 % SLOT_UID_SPAN)); fi
+  if carried "$1"; then echo $((CARRIED_UID_BASE + ${1#i})); else echo $((SLOT_UID_BASE + $1)); fi
+}
+slot_of_uid() {
+  for each in $CARRIED_SLOTS; do
+    [ "$1" = "$(slot_uid "$each")" ] && { echo "$each"; return 0; }
+  done
+  echo $(($1 - SLOT_UID_BASE))
 }
 slot_uid_allowed() {
   number "${1:-}" || return 1
@@ -149,6 +162,15 @@ slot_uid_allowed() {
   for each in $CARRIED_SLOTS; do [ "$1" = "$(slot_uid "$each")" ] && return 0; done
   return 1
 }
+all_slot_uids() {
+  for uid; do slot_uid_allowed "$uid" || return 1; done
+}
+owner_of() { stat -f %u "$1" 2>/dev/null; }
+users_own() {
+  path=$1 uid=$2
+  [ -e "$path" ] && [ ! -L "$path" ] && [ "$(owner_of "$path")" = "$uid" ]
+}
+users_folder() { [ -d "$1" ] && users_own "$1" "$2"; }
 slot_dir() { echo "$HOST/slots/$1"; }
 slot_ids() {
   for dir in "$HOST"/slots/*; do
@@ -299,7 +321,11 @@ seed() {
   plist=$IOS_SHARE/$list.disabled.plist
   [ -s "$plist" ] || { echo "This host has no $plist to slim the slot's device with." >&2; return 1; }
   store=$SIM_STORE/com.apple.CoreSimulator.SimDevice.$udid
-  mkdir -p "$store" && cp "$plist" "$store/disabled.plist" && chown -R "$uid:0" "$store" && chmod 700 "$store"
+  if ! mkdir "$store" 2>/dev/null; then
+    [ -d "$store" ] && [ ! -L "$store" ] && { [ "$(owner_of "$store")" = 0 ] || [ "$(owner_of "$store")" = "$uid" ]; } ||
+      { echo "${store#"$ROOT"} is not a folder of root's or $user's, so the slot's device is not seeded." >&2; return 1; }
+  fi
+  rm -f "$store/disabled.plist" && cp "$plist" "$store/disabled.plist" && chown -R "$uid:0" "$store" && chmod 700 "$store"
 }
 
 make_device() {
@@ -428,6 +454,7 @@ copy_server() {
   [ -n "$from" ] || return 0
   user=$(slot_user "$id") uid=$(slot_uid "$id")
   device=$(home_of "$id")/.bb-box/device
+  [ ! -L "$(home_of "$id")/.bb-box" ] && [ ! -L "$device" ] && [ ! -L "$device/server" ] || { echo "$user's device folder is a link." >&2; return 1; }
   [ ! -e "$device/current" ] || return 0
   case $from in /*) ;; *) echo "server= must be an absolute path to a device server's folder." >&2; return 1 ;; esac
   version=$(readlink "$ROOT$from/current" 2>/dev/null)
@@ -529,6 +556,7 @@ remove_slot_user() {
   rm -f "$ROOT/private/var/at/tabs/$user" "$ROOT/etc/sudoers.d/$user"
   remove_from_groups "$user"
   delete_user "$user" || { echo "Could not remove user $user." >&2; return 1; }
+  rm -f "$(slot_log "$user")"
   mkdir -p "$HOST/sweep"
   printf 'slot=%s\nuser=%s\nuid=%s\nsince=%s\n' "$id" "$user" "$uid" "$(now)" | put "$HOST/sweep/$uid"
 }
@@ -556,6 +584,7 @@ carry_on() {
       making:daemons) making_step "$id" daemons ready make_daemons "$id" ;;
       releasing:*)
         lock_host 60
+        decide_last "$id" "$(state "$id" box)"
         set_state "$id" is=resetting step=processes "box=$(state "$id" box)"
         unlock_host
         ;;
@@ -583,8 +612,17 @@ new_slot() {
 disk_free_gib() { df -Pk "$DATA" 2>/dev/null | awk 'NR == 2 { print int($4 / 1048576) }'; }
 memory_free_percent() { memory_pressure 2>/dev/null | sed -n 's/^System-wide memory free percentage: *\([0-9]*\)%.*/\1/p' | head -n 1; }
 
+generation() {
+  last=$(cat "$HOST/generation" 2>/dev/null)
+  number "$last" && echo "$last" || echo 0
+}
+
 no_room() {
   for_box=$1
+  if [ $(($(generation) + 1)) -ge "$SLOT_UID_SPAN" ]; then
+    echo "This host has given all its $((SLOT_UID_SPAN - 1)) slot UIDs, so it makes no new slot: let its boxes go, then set it up again."
+    return
+  fi
   most=$(setting most)
   promised=$(live_promises | grep -vx "${for_box:-}" | grep -c .)
   if [ $(($(counted) + promised)) -ge "$most" ]; then
@@ -619,18 +657,16 @@ spare_count() {
   echo "$n"
 }
 
-top_up() {
+top_up() (
   from=$1
   deleting && return 0
   while [ "$(spare_count)" -lt "$(setting ahead)" ] && [ -z "$(no_room '')" ]; do
-    last=$(cat "$HOST/generation" 2>/dev/null)
-    number "$last" || last=0
-    id=$((last + 1))
+    id=$(($(generation) + 1))
     echo "$id" | put "$HOST/generation"
     new_slot "$id" "$(free_place)" '' host "$from"
     later /bin/sh "$SELF" continue "$id"
   done
-}
+)
 
 answer_slot() {
   id=$1
@@ -653,6 +689,7 @@ init() {
     for pair in "most=$most" "ahead=$ahead" "resetting-most=$resetting_most" "disk-reserve-gib=$disk_reserve_gib"; do
       [ -z "${pair#*=}" ] || number "${pair#*=}" || quit 2 "${pair%%=*} must be a whole number."
     done
+    [ -z "$resetting_most" ] || [ "$resetting_most" -ge "$RESETTING_MOST_LEAST" ] || quit 2 "resetting-most must be at least $RESETTING_MOST_LEAST."
     printf 'most=%s\nahead=%s\nresetting-most=%s\ndisk-reserve-gib=%s\nmade=%s\n' \
       "${most:-$DEFAULT_MOST}" "${ahead:-$DEFAULT_AHEAD}" "${resetting_most:-$DEFAULT_RESETTING_MOST}" "${disk_reserve_gib:-$DEFAULT_DISK_RESERVE_GIB}" "$(now)" |
       put "$HOST/settings"
@@ -668,9 +705,7 @@ make() {
   lock_host 60
   refuse_if_deleting
   room_or_quit "$box"
-  last=$(cat "$HOST/generation" 2>/dev/null)
-  number "$last" || last=0
-  id=$((last + 1))
+  id=$(($(generation) + 1))
   echo "$id" | put "$HOST/generation"
   new_slot "$id" "$(free_place)" "$box" host "$server"
   drop_promise "$box"
@@ -730,6 +765,7 @@ lend() {
   id=$1 key=$2 kind=$3 from=$4
   user=$(slot_user "$id") uid=$(slot_uid "$id")
   home=$(home_of "$id")
+  [ ! -L "$home/.ssh" ] && [ ! -L "$home/.ssh/authorized_keys" ] || { echo "$user's .ssh is a link." >&2; return 1; }
   mkdir -p "$home/.ssh" && printf '%s\n' "$key" >"$home/.ssh/authorized_keys" &&
     chmod 700 "$home/.ssh" && chmod 600 "$home/.ssh/authorized_keys" && chown -R "$uid:20" "$home/.ssh" || return 1
   if [ "$kind" = macos ]; then
@@ -778,14 +814,21 @@ claim() {
   drop_promise "$box"
   top_up "$server"
   unlock_host
-  take_lock 8 "$dir/lock" 300 || fail "Slot $id's warm-up did not end within 5 minutes."
-  if ! words=$(lend "$id" "$key" "$kind" "$server" 2>&1); then
-    rm -f "$(home_of "$id")/.ssh/authorized_keys"
+  if ! take_lock 8 "$dir/lock" "$CLAIM_WARM_WAIT_S"; then
     lock_host 60
     rm -f "$dir/claim"
     set_state "$id" is=ready
     unlock_host
-    fail "Could not lend slot $id: ${words:-it failed.}"
+    fail "Slot $id's warm-up did not end within $CLAIM_WARM_WAIT_S s; ask again."
+  fi
+  if ! words=$(lend "$id" "$key" "$kind" "$server" 2>&1); then
+    lock_host 60
+    [ ! -f "$dir/claim" ] || mv -f "$dir/claim" "$dir/released"
+    set_state "$id" is=resetting step=processes "box=$box" "after=lending failed"
+    unlock_host
+    exec 8>&-
+    carry_on "$id" >/dev/null 2>&1
+    fail "Could not lend slot $id, so it is removed: ${words:-it failed.}"
   fi
   exec 8>&-
   carried "$id" && warm_carried_after "$id"
@@ -803,6 +846,20 @@ warm() {
   echo "warmed=$id"
 }
 
+decide_last() (
+  id=$1 box=$2
+  dir=$(slot_dir "$id")
+  [ ! -f "$dir/claim" ] || mv -f "$dir/claim" "$dir/released"
+  [ ! -f "$dir/last" ] || return 0
+  if others_keep_the_host "$id"; then
+    echo no | put "$dir/last"
+    top_up ''
+  else
+    printf 'since=%s\nslot=%s\nbox=%s\n' "$(now)" "$id" "$box" | put "$HOST/deleting"
+    echo yes | put "$dir/last"
+  fi
+)
+
 release() {
   id=${1:-}
   slot_or_quit "$id" release
@@ -818,19 +875,18 @@ release() {
   is=$(state "$id" is)
   case $is in
     held)
-      [ "$(field "$dir/claim" install)" = "$install" ] || quit "$EXIT_NOT_OURS" "Another bb-box install holds slot $id."
-      [ "$(field "$dir/claim" box)" = "$box" ] || quit "$EXIT_NOT_OURS" "Another box holds slot $id."
-      mv -f "$dir/claim" "$dir/released"
+      holder=$dir/claim
+      [ -f "$holder" ] || holder=$dir/released
+      [ "$(field "$holder" install)" = "$install" ] || quit "$EXIT_NOT_OURS" "Another bb-box install holds slot $id."
+      [ "$(field "$holder" box)" = "$box" ] || quit "$EXIT_NOT_OURS" "Another box holds slot $id."
       set_state "$id" is=releasing "box=$box"
-      if others_keep_the_host "$id"; then
-        echo no >"$dir/last"
-        top_up ''
-      else
-        printf 'since=%s\nslot=%s\nbox=%s\n' "$(now)" "$id" "$box" | put "$HOST/deleting"
-        echo yes >"$dir/last"
-      fi
+      decide_last "$id" "$box"
       ;;
-    releasing | resetting)
+    releasing)
+      [ "$(field "$dir/released" box)" = "$box" ] || [ "$(state "$id" box)" = "$box" ] || quit "$EXIT_NOT_OURS" "Slot $id was released for another box."
+      decide_last "$id" "$box"
+      ;;
+    resetting)
       [ "$(field "$dir/released" box)" = "$box" ] || [ "$(state "$id" box)" = "$box" ] || quit "$EXIT_NOT_OURS" "Slot $id was released for another box."
       ;;
     *) quit "$EXIT_NOT_OURS" "Slot $id is $is: no box holds it." ;;
@@ -848,15 +904,19 @@ ipc_objects() {
 }
 
 remove_ipc() {
-  ipc_objects | while read -r t id owner; do
-    [ "$owner" = "$1" ] || [ "$owner" = "$2" ] || continue
-    ipcrm -"$t" "$id" 2>/dev/null
+  uid=$1
+  all_slot_uids "$uid" || return 1
+  user=$(slot_user "$(slot_of_uid "$uid")")
+  ipc_objects | while read -r t object owner; do
+    [ "$owner" = "$user" ] || [ "$owner" = "$uid" ] || continue
+    ipcrm -"$t" "$object" 2>/dev/null
   done
 }
 
 sweep_pass() {
   root=$1
   shift
+  [ $# -gt 0 ] && all_slot_uids "$@" || return 1
   first=1
   for uid; do
     if [ "$first" = 1 ]; then set -- "$@" "("; first=0; else set -- "$@" -o; fi
@@ -873,6 +933,7 @@ sweep_pass() {
 }
 
 log_out_again() {
+  all_slot_uids "$1" || return 1
   launchctl bootout "user/$1" >/dev/null 2>&1
   tries=0
   while pgrep -u "$1" >/dev/null 2>&1 && [ "$tries" -lt 25 ]; do
@@ -884,8 +945,33 @@ log_out_again() {
 
 sweep_queue() {
   for file in "$HOST"/sweep/*; do
-    [ -f "$file" ] && echo "${file##*/}"
+    uid=${file##*/}
+    [ -f "$file" ] && [ ! -L "$file" ] && slot_uid_allowed "$uid" && echo "$uid"
   done | sort -n
+}
+
+sweep_waiting() {
+  for file in "$HOST"/sweep/*; do
+    [ -e "$file" ] || [ -L "$file" ] && return 0
+  done
+  return 1
+}
+
+sweep_file_sound() {
+  file=$1 uid=${1##*/}
+  [ -f "$file" ] && [ ! -L "$file" ] && slot_uid_allowed "$uid" || return 1
+  id=$(field "$file" slot)
+  number "$id" || carried "$id" || return 1
+  [ "$(slot_uid "$id")" = "$uid" ] && [ "$(field "$file" user)" = "$(slot_user "$id")" ]
+}
+
+refuse_unsound_sweep_files() {
+  for file in "$HOST"/sweep/*; do
+    [ -e "$file" ] || [ -L "$file" ] || continue
+    sweep_file_sound "$file" && continue
+    rm -f "$file"
+    echo "refused=${file##*/}: not a slot's UID with its own slot and user"
+  done
 }
 
 reset() {
@@ -895,9 +981,7 @@ reset() {
   while :; do
     take_lock 7 "$HOST/sweep.lock" 0 || { echo sweeping=elsewhere; exit 0; }
     while :; do
-      for uid in $(sweep_queue); do
-        slot_uid_allowed "$uid" || { rm -f "$HOST/sweep/$uid"; echo "refused=$uid outside the slots' UIDs"; }
-      done
+      refuse_unsound_sweep_files
       uids=$(sweep_queue | head -n "$(setting resetting-most)")
       [ -n "$uids" ] || break
       started=$(precise_now)
@@ -908,11 +992,10 @@ reset() {
       found=$(printf '%s\n' "$out" | grep -c '^found ')
       left=$(printf '%s\n' "$out" | grep -c '^left ')
       for uid in $uids; do
-        user=$(field "$HOST/sweep/$uid" user)
-        id=$(field "$HOST/sweep/$uid" slot)
-        remove_ipc "$user" "$uid"
+        id=$(slot_of_uid "$uid")
+        remove_ipc "$uid"
         lock_host 60
-        [ -z "$id" ] || [ "$(state "$id" is):$(state "$id" step)" != resetting:sweep ] || rm -rf "$(slot_dir "$id")"
+        [ "$(state "$id" is):$(state "$id" step)" != resetting:sweep ] || rm -rf "$(slot_dir "$id")"
         rm -f "$HOST/sweep/$uid"
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$uid" "$(echo $uids | wc -w | tr -d ' ')" "$found" "$left" "$took" "$(now)" >>"$HOST/sweeps"
         tail -n "$SWEEPS_KEPT" "$HOST/sweeps" | put "$HOST/sweeps"
@@ -926,16 +1009,26 @@ reset() {
 }
 
 newest_installer_daemon() {
-  home=$1 uid=$2
+  home=$1 uid=$2 user=$3
+  users_folder "$home/.bb-machines" "$uid" || return 1
   for dir in "$home"/.bb-machines/*; do
-    [ -d "$dir" ] && [ -s "$dir/install-daemon.pid" ] || continue
-    pid=$(cat "$dir/install-daemon.pid")
+    users_folder "$dir" "$uid" && users_own "$dir/install-daemon.pid" "$uid" || continue
+    pid=$(as_user "$user" cat "$dir/install-daemon.pid" 2>/dev/null)
     number "$pid" || continue
     [ "$(ps -o uid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$uid" ] || continue
     echo "$dir $pid"
     return 0
   done
   return 1
+}
+
+slot_log() { echo "$SLOT_LOGS/$1.log"; }
+make_slot_log() {
+  user=$1 uid=$2
+  log=$(slot_log "$user")
+  mkdir -p "$SLOT_LOGS" && [ -d "$SLOT_LOGS" ] && [ ! -L "$SLOT_LOGS" ] && chown root:wheel "$SLOT_LOGS" && chmod 755 "$SLOT_LOGS" || return 1
+  { [ -f "$log" ] && [ ! -L "$log" ]; } || { rm -f "$log" && : >"$log"; } || return 1
+  chown "$uid:20" "$log" && chmod 644 "$log"
 }
 
 daemon() {
@@ -950,9 +1043,10 @@ daemon() {
   unlock_host
   user=$(slot_user "$id") uid=$(slot_uid "$id")
   home=$(home_of "$id")
-  found=$(newest_installer_daemon "$home" "$uid") || fail "BB's installer left no daemon running as $user: run BB's command with BB_INSTALL_SKIP_SERVICE=1 first."
+  found=$(newest_installer_daemon "$home" "$uid" "$user") || fail "BB's installer left no daemon running as $user: run BB's command with BB_INSTALL_SKIP_SERVICE=1 first."
   data=${found% *} pid=${found##* }
-  port=$(cat "$data/host-daemon-port" 2>/dev/null)
+  port=''
+  ! users_own "$data/host-daemon-port" "$uid" || port=$(as_user "$user" cat "$data/host-daemon-port" 2>/dev/null)
   number "$port" || fail "BB's installer left no daemon port in ${data#"$ROOT"}."
   command=$(ps -ww -o command= -p "$pid" 2>/dev/null)
   [ -n "$command" ] || fail "BB's daemon, process $pid, ended before the helper read its command."
@@ -970,8 +1064,9 @@ daemon() {
   esac
   case " $* " in *" --host-daemon-port "*) ;; *) set -- "$@" --host-daemon-port "$port" ;; esac
   label=$BB_LABEL.$user
-  mkdir -p "$dir/daemons" "$data/logs"
-  chown "$uid:20" "$data/logs"
+  mkdir -p "$dir/daemons"
+  log=$(slot_log "$user")
+  make_slot_log "$user" "$uid" || fail "Could not make ${log#"$ROOT"} for BB's daemon."
   {
     plist_head
     plist_string Label "$label"
@@ -982,15 +1077,15 @@ daemon() {
     plist_arguments "$@"
     plist_string WorkingDirectory "/Users/$user"
     printf '  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>ThrottleInterval</key><integer>2</integer>\n'
-    plist_string StandardOutPath "${data#"$ROOT"}/logs/launchd.log"
-    plist_string StandardErrorPath "${data#"$ROOT"}/logs/launchd.log"
+    plist_string StandardOutPath "${log#"$ROOT"}"
+    plist_string StandardErrorPath "${log#"$ROOT"}"
     plist_tail
   } | put "$dir/daemons/$label.plist"
-  kill -TERM "$pid" 2>/dev/null
+  as_user "$user" kill -TERM "$pid" 2>/dev/null
   waited=0
   while kill -0 "$pid" 2>/dev/null; do
     waited=$((waited + 1))
-    [ "$waited" -lt 50 ] || { kill -KILL "$pid" 2>/dev/null; break; }
+    [ "$waited" -lt 50 ] || { as_user "$user" kill -KILL "$pid" 2>/dev/null; break; }
     sleep 0.2
   done
   load_daemon "$dir/daemons/$label.plist" || fail "launchd did not load BB's daemon for $user."
@@ -1011,8 +1106,11 @@ clear_bb_state_after_boot() {
   [ "$(cat "$HOST/resumed-boot" 2>/dev/null)" != "$boot" ] || return 0
   mkdir -p "$HOST"
   for id in $(slot_ids); do
-    for data in "$(home_of "$id")"/.bb-machines/*; do
-      [ -d "$data" ] && rm -rf "$data/daemon.lock.lock" "$data/install-daemon.pid"
+    user=$(slot_user "$id") uid=$(slot_uid "$id") home=$(home_of "$id")
+    users_folder "$home/.bb-machines" "$uid" || continue
+    for data in "$home"/.bb-machines/*; do
+      users_folder "$data" "$uid" || continue
+      as_user "$user" rm -rf "$data/daemon.lock.lock" "$data/install-daemon.pid"
     done
   done
   echo "$boot" | put "$HOST/resumed-boot"
@@ -1022,7 +1120,7 @@ resume() {
   [ ! -t 0 ] || exec </dev/null
   clear_bb_state_after_boot
   for id in $(stale_work); do later /bin/sh "$SELF" continue "$id"; done
-  if [ -n "$(sweep_queue)" ] && ! held_elsewhere "$HOST/sweep.lock"; then later /bin/sh "$SELF" reset; fi
+  if sweep_waiting && ! held_elsewhere "$HOST/sweep.lock"; then later /bin/sh "$SELF" reset; fi
   echo "resumed=$(stale_work | wc -l | tr -d ' ')"
 }
 
@@ -1070,7 +1168,7 @@ watch() {
   tick=0
   while :; do
     bound_devices
-    if [ $((tick % 12)) = 0 ] && [ -n "$(sweep_queue)" ] && ! held_elsewhere "$HOST/sweep.lock"; then later /bin/sh "$SELF" reset; fi
+    if [ $((tick % 12)) = 0 ] && sweep_waiting && ! held_elsewhere "$HOST/sweep.lock"; then later /bin/sh "$SELF" reset; fi
     tick=$((tick + 1))
     sleep "$WATCH_EVERY_S"
   done
