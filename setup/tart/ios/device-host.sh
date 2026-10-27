@@ -7,7 +7,7 @@ export PATH LC_ALL
 
 ROOT=
 
-VERSION=3
+VERSION=4
 HOST=$ROOT/var/db/bb-box/host
 SHARE=$ROOT/usr/local/share/bb-box
 IOS_SHARE=$SHARE/ios
@@ -114,7 +114,7 @@ setting() {
 
 read_input() {
   allowed=$1
-  install='' box='' thread='' name='' kind='' created='' key='' server='' most='' ahead='' resetting_most='' disk_reserve_gib='' kept=''
+  install='' box='' thread='' name='' kind='' created='' key='' server='' most='' ahead='' resetting_most='' disk_reserve_gib='' kept='' digest='' from=''
   if [ -t 0 ]; then return 0; fi
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
@@ -136,6 +136,8 @@ read_input() {
       resetting-most) resetting_most=$v ;;
       disk-reserve-gib) disk_reserve_gib=$v ;;
       kept) kept=$v ;;
+      digest) digest=$v ;;
+      from) from=$v ;;
     esac
   done
 }
@@ -828,6 +830,88 @@ make() {
   answer_slot "$id"
 }
 
+sound_app_tree() {
+  perl -e '
+    use strict; use File::Find; use File::Spec;
+    my ($top) = @ARGV; my $bad = "";
+    my @top = lstat $top or do { print "$top is missing\n"; exit 1 };
+    my $uid = $top[4];
+    find({ no_chdir => 1, wanted => sub {
+      return if $bad;
+      my @s = lstat $File::Find::name or do { $bad = "$File::Find::name went away"; return };
+      if ($s[4] != $uid) { $bad = "$File::Find::name is not owned by UID $uid, as the rest is"; return }
+      if (-l _) {
+        my $to = readlink $File::Find::name;
+        if (!defined $to || File::Spec->file_name_is_absolute($to)) { $bad = "$File::Find::name links to an absolute path"; return }
+        my @parts = File::Spec->splitdir(File::Spec->abs2rel((File::Spec->splitpath($File::Find::name))[1], $top));
+        for my $part (File::Spec->splitdir($to)) {
+          next if $part eq "" || $part eq ".";
+          if ($part eq "..") { if (!@parts || (@parts == 1 && $parts[0] eq ".")) { $bad = "$File::Find::name links outside $top"; return } pop @parts } else { push @parts, $part }
+        }
+        return;
+      }
+      if (!-d _ && !-f _) { $bad = "$File::Find::name is neither a file nor a folder"; return }
+      if ($s[2] & 022) { $bad = "$File::Find::name is writable by its group or others"; return }
+    } }, $top);
+    if ($bad) { print "$bad\n"; exit 1 }
+  ' "$1"
+}
+
+refresh_ready_homes() {
+  for id in $(slot_ids); do
+    [ "$(state "$id" is)" = ready ] && [ ! -e "$(slot_dir "$id")/claim" ] && user_made "$id" 2>/dev/null || continue
+    home=$(home_of "$id") uid=$(slot_uid "$id")
+    [ ! -L "$home" ] && [ ! -L "$home/.bb-machines" ] && [ ! -L "$home/.bb-machines/$server" ] || continue
+    rm -rf "$home/.bb-machines/$server"
+    [ -d "$SLOT_HOME/.bb-machines/$server" ] || continue
+    mkdir -p "$home/.bb-machines" && chmod 700 "$home/.bb-machines" &&
+      cp -Rc "$SLOT_HOME/.bb-machines/$server" "$home/.bb-machines/$server" 2>/dev/null || cp -RP "$SLOT_HOME/.bb-machines/$server" "$home/.bb-machines/$server" || continue
+    chown -R "$uid:20" "$home/.bb-machines" || continue
+    echo "refreshed=$id"
+  done
+}
+
+keep_app() {
+  read_input "server digest from"
+  case $server in '' | .* | *[!A-Za-z0-9.-]*) quit 2 "keep-app needs server=, the folder of BB's server under .bb-machines." ;; esac
+  printf '%s' "$digest" | grep -Eqx '[a-f0-9]{64}' || quit 2 "keep-app needs digest=, the SHA-256 BB's server gives for its app."
+  case $from in /*) ;; *) quit 2 "keep-app needs from=, the absolute home of the host's own user." ;; esac
+  case $from in */"$PREFIX"* | *..*) quit 2 "keep-app copies only from the host's own user, not $from." ;; esac
+  source=$ROOT$from/.bb-machines/$server
+  owner=$(owner_of "$ROOT$from")
+  number "$owner" && [ "$owner" -ne 0 ] || quit 2 "$from is not a user's home."
+  lock_host 120
+  staging=$SHARE/bb-app-staging.$$
+  rm -rf "$staging"
+  kept=no why=''
+  if [ ! -d "$source/npm/lib/node_modules/bb-app" ] || [ -L "$source" ] || [ -L "$source/npm" ]; then
+    why="$from has no BB app for $server"
+  elif [ "$(owner_of "$source/npm")" != "$owner" ]; then
+    why="BB's app in $from is not owned by its user"
+  elif ! why=$(sound_app_tree "$source/npm"); then
+    why="BB's app in $from was not copied: $why"
+  else
+    mkdir -p "$staging/$server" && chmod 700 "$staging" "$staging/$server"
+    if ! { cp -RPc "$source/npm" "$staging/$server/npm" 2>/dev/null || { rm -rf "$staging/$server/npm" && cp -RP "$source/npm" "$staging/$server/npm"; }; } ||
+      ! cp -P "$source/host-artifact.sha256" "$staging/$server/host-artifact.sha256" 2>/dev/null; then
+      why="BB's app in $from could not be copied"
+    elif [ -L "$staging/$server/host-artifact.sha256" ] || [ "$(cat "$staging/$server/host-artifact.sha256")" != "$digest" ]; then
+      why="BB's app in $from is another build than $digest"
+    elif ! why=$(sound_app_tree "$staging/$server/npm"); then
+      why="BB's app in $from changed as it was copied: $why"
+    else
+      chown -R 0:0 "$staging" && chmod 600 "$staging/$server/host-artifact.sha256" && kept=yes why=''
+    fi
+  fi
+  rm -rf "$SLOT_HOME/.bb-machines"
+  if [ "$kept" = yes ]; then mv "$staging" "$SLOT_HOME/.bb-machines"; else rm -rf "$staging"; fi
+  printf 'digest=%s\nserver=%s\nkept=%s\nsince=%s\n' "$digest" "$server" "$kept" "$(now)" | put "$HOST/bb-app"
+  refresh_ready_homes
+  unlock_host
+  echo "kept=$kept"
+  [ -z "$why" ] || echo "why=$why"
+}
+
 carry() {
   [ ! -t 0 ] || exec </dev/null
   read_input ""
@@ -1388,6 +1472,8 @@ status() {
   echo "runtime=$(runtime_line | cut -f 1)"
   echo "model=$(default_model | cut -f 1)"
   echo "counted=$(counted)"
+  echo "bb-app=$(field "$HOST/bb-app" digest)"
+  echo "bb-app-kept=$(field "$HOST/bb-app" kept)"
   for box in $(live_promises); do printf 'promise=%s\t%s\t%s\n' "$box" "$(field "$HOST/promises/$box" install)" "$(field "$HOST/promises/$box" since)"; done
   for id in $(slot_ids); do
     claim=$(slot_dir "$id")/claim
@@ -1506,6 +1592,7 @@ case $verb in
   watch) watch ;;
   run) run ;;
   measure) measure "$@" ;;
+  keep-app) keep_app ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: device-host status | summary | init | install | open | close | make | carry | promise | unpromise | vacate | claim <slot> | release <slot> | restart <slot> | reset | daemon <slot> | resume | version" ;;
+  *) quit 2 "usage: device-host status | summary | init | install | open | close | make | carry | promise | unpromise | vacate | claim <slot> | release <slot> | restart <slot> | reset | daemon <slot> | resume | keep-app | version" ;;
 esac

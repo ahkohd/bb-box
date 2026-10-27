@@ -58,11 +58,10 @@ It clones `bb-box-macos` to `bb-box-ios-build`, boots it, and runs
    the microphone, which is BlackHole in the macOS image, so neither asks;
 5. runs [`host-ios.sh`](host-ios.sh) as root, which installs `device-host`
    and its held ports, keeps each iOS runtime's `disabled.plist` from the
-   image's slim devices, puts BB's app from the image user's home in the
-   slots' home with [`keep-bb-app.sh`](keep-bb-app.sh), and makes the two
-   carried slots (about 55 s). Each slot's home is cloned from the slots'
-   home, so a slot's enrolment finds BB's app and skips its download while
-   BB's server has the build the image was made with;
+   image's slim devices, and makes the two carried slots (about 55 s). BB's
+   app is not kept in the image, as it would be stale after BB's next update:
+   bb-box puts the server's build in each host's slots' home as the host
+   runs (`keep-app`, below);
 6. clears the devices' pasteboards, CoreSimulator's logs, Device Hub's
    preferences and idb's state.
 
@@ -207,6 +206,7 @@ through sudo as the image's user. Input is one `name=value` a line on stdin.
 | `release <slot>` | stdin: `install`, `box`. Removes the slot's user, queues its sweep, and answers `last=yes` when no other claim, promise or slot made for a box is left, having written `deleting` under the lock |
 | `daemon <slot>` | stdin: `install`, `box`. Moves BB's daemon, as its installer left it with `BB_INSTALL_SKIP_SERVICE=1`, into a LaunchDaemon as the slot's user. Its log is `/private/var/log/bb-box-slots/<user>.log`, in a folder of root's |
 | `restart <slot>` | stdin: `install`, `box`. Starts the slot's device server daemon again, for bb-box when the box's device server has not started |
+| `keep-app` | stdin: `server` (the folder of BB's server under `.bb-machines`), `digest` (the SHA-256 BB's server gives for its app), `from` (the home of the host's own user). Copies the BB app bb-box installed in that home into the slots' home, if it is that build, and into every ready slot no box has claimed, so a slot's enrolment skips the download. It copies no link that is absolute or leaves the app's folder, nothing writable by others or owned by another user, and checks the build from the copy. With no such app, it removes the slots' home's copy, so slots download the app. `status` gives `bb-app` and `bb-app-kept` |
 | `reset` | runs the sweep queue: one `find` over the Data volume a pass, for at most `resetting-most` UIDs |
 | `resume` | carries on every slot whose step was cut short, and the sweep queue. Run at every boot by the helper's own daemon, on a host that has run `init`; in any other VM that daemon's `run` returns at once |
 | `carry` | the image build's: makes the carried slots `i1` and `i2`, their devices shut down and their daemons written but not loaded |

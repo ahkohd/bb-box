@@ -461,6 +461,11 @@ export class SshPoolBackend implements Backend {
       readyTimeoutMs: () => this.#options.readyTimeoutMs ?? null,
       log: (message) => this.#context.log?.(message),
       logError: (operation, error) => this.#context.logError(operation, error),
+      serverApp: async (signal) => {
+        const url = this.#context.bbUrl?.() ?? null;
+        const digest = url ? await this.#context.images?.bbApp(signal).catch(() => null) : null;
+        return url && digest ? { url, digest } : null;
+      },
       sleep: this.#options.sleep,
     });
   }

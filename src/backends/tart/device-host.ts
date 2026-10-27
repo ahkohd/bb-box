@@ -1,4 +1,6 @@
-import type { CommandTransport } from "../../transports/types.ts";
+import { performance } from "node:perf_hooks";
+import { quote } from "../../transports/process.ts";
+import type { CommandTransport, RunResult } from "../../transports/types.ts";
 import type { DaemonKeptByHost } from "../types.ts";
 
 export const DEVICE_HOST_HELPER = "/usr/local/libexec/bb-box/device-host";
@@ -77,6 +79,13 @@ export interface HostStatus {
   readonly deviceWords: readonly { readonly slot: string; readonly words: string }[];
   readonly sweeping: number;
   readonly sweeps: readonly HostSweep[];
+  readonly bbApp: string | null;
+  readonly bbAppKept: boolean;
+}
+
+export interface ServerApp {
+  readonly url: string;
+  readonly digest: string;
 }
 
 const SLOT_STATES: readonly SlotStateWord[] = ["making", "ready", "held", "releasing", "resetting"];
@@ -187,7 +196,64 @@ export function parseHostStatus(stdout: string): HostStatus | null {
     deviceWords,
     sweeping: wholeOrNull(values.get("sweeping")) ?? 0,
     sweeps,
+    bbApp: /^[a-f0-9]{64}$/.test(values.get("bb-app") ?? "") ? values.get("bb-app")! : null,
+    bbAppKept: values.get("bb-app-kept") === "yes",
   };
+}
+
+export function bbServerFolder(url: string): string {
+  return new URL(url).host.replace(/[^a-zA-Z0-9.-]/gu, "-");
+}
+
+export function hostAppInstallScript(app: ServerApp): string {
+  return `/bin/sh -c ${quote(String.raw`set -eu
+want=${quote(app.digest)}
+d="$HOME/.bb-machines/"${quote(bbServerFolder(app.url))}
+if [ "$(cat "$d/host-artifact.sha256" 2>/dev/null)" != "$want" ] || [ ! -d "$d/npm/lib/node_modules/bb-app" ]; then
+  PATH=$PATH:/opt/homebrew/opt/node@24/bin:/opt/homebrew/opt/node/bin:/opt/homebrew/bin:/usr/local/bin
+  command -v npm >/dev/null 2>&1 || { echo "There is no npm for $(id -un), so bb-box cannot install BB's app for the slots." >&2; exit 3; }
+  work=$(mktemp -d)
+  trap 'rm -rf "$work"' EXIT
+  curl -fsS --max-time 120 -o "$work/bb-app.tgz" ${quote(`${app.url.replace(/\/+$/, "")}/install/bb-app.tgz`)}
+  echo "$want  $work/bb-app.tgz" | shasum -a 256 -c --quiet - >/dev/null 2>&1 || { echo "BB's server gave an app that is not build $want." >&2; exit 4; }
+  umask 022
+  mkdir -p "$d"
+  chmod 700 "$HOME/.bb-machines" "$d"
+  rm -rf "$d/npm.new"
+  npm install -g --no-fund --no-audit --allow-scripts=better-sqlite3,node-pty,@parcel/watcher --prefix "$d/npm.new" "$work/bb-app.tgz" >"$work/npm.log" 2>&1 || { tail -n 5 "$work/npm.log" >&2; exit 5; }
+  rm -rf "$d/npm"
+  mv "$d/npm.new" "$d/npm"
+  (umask 077 && printf '%s\n' "$want" >"$d/host-artifact.sha256")
+  echo installed=yes
+fi
+echo "home=$HOME"
+`)}`;
+}
+
+export type KeptApp = { readonly kept: true; readonly installed: boolean; readonly installSeconds: number; readonly seconds: number } | { readonly kept: false; readonly why: string };
+
+export async function keepServerApp(app: ServerApp, installAsHostUser: (script: string) => Promise<RunResult>, keepAsRoot: (input: string) => Promise<RunResult>): Promise<KeptApp> {
+  const began = performance.now();
+  const installed = await installAsHostUser(hostAppInstallScript(app));
+  const home = fieldOf(installed.stdout, "home");
+  if (installed.exitCode !== 0 || !home) return { kept: false, why: `installing build ${app.digest.slice(0, 12)} as the host's user failed: ${installed.stderr.trim() || `exit code ${installed.exitCode}`}` };
+  const installSeconds = (performance.now() - began) / 1000;
+  const kept = await keepAsRoot(keepAppInput(app, home));
+  if (kept.exitCode !== DEVICE_HOST_EXITS.done || fieldOf(kept.stdout, "kept") !== "yes") return { kept: false, why: fieldOf(kept.stdout, "why") ?? (kept.stderr.trim() || `its helper's keep-app ended with exit code ${kept.exitCode}`) };
+  return { kept: true, installed: fieldOf(installed.stdout, "installed") === "yes", installSeconds, seconds: (performance.now() - began) / 1000 };
+}
+
+export function keptAppWords(app: ServerApp, kept: Extract<KeptApp, { kept: true }>): string {
+  return `BB's app build ${app.digest.slice(0, 12)} for its slots, in ${kept.seconds.toFixed(1)} s (${kept.installed ? `installed in ${kept.installSeconds.toFixed(1)} s` : "installed already"})`;
+}
+
+function fieldOf(stdout: string, key: string): string | null {
+  const line = stdout.split("\n").find((each) => each.startsWith(`${key}=`));
+  return line ? line.slice(key.length + 1) : null;
+}
+
+export function keepAppInput(app: ServerApp, home: string): string {
+  return `server=${bbServerFolder(app.url)}\ndigest=${app.digest}\nfrom=${home}\n`;
 }
 
 export function helperCommand(verb: string, ...args: readonly string[]): string {

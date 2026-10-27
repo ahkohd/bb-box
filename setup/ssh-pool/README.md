@@ -738,6 +738,14 @@ promised a place and the helper makes a slot for it: a new user, a device
 by `simctl create`, seeded, and its first boot. The Mac keeps
 `ios-hosts-ahead` slots ready, 1 by default, while it is not lent whole.
 
+Each slot's home starts with the build of BB's app that BB's server gives,
+so the slot's enrolment skips its download, about 2 to 3 s. bb-box's upkeep
+installs that build as bb-box's admin user, with the admin user's `npm`,
+when BB's server gives a new one. The helper's `machine slot keep-app` then
+copies it into the slots' home, and into each ready slot no box has
+claimed, once it has checked the copy. Without `npm` for the admin user,
+slots download the app as they enrol, and bb-box's log says why.
+
 A macos box asked for with `shared: true` takes a slot the same way, and
 the slot's device is deleted at the claim: a macOS user on the Mac for
 commands, builds and the simulator, with no sudo, Homebrew, console session

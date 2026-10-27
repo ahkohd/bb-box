@@ -677,7 +677,13 @@ export class IosDriver implements DeviceDriver {
   }
 
   async control(control: DeviceControl, signal: AbortSignal, context: ControlContext): Promise<void> {
-    const udid = this.#booted();
+    if (control.action === "reboot") await this.#reboot(signal);
+    else await this.#act(this.#booted(), control, signal, context);
+    await this.#readSettings(signal).catch((error) => this.#log(`settings: not read after ${control.action}: ${words(error)}`));
+    this.#changed();
+  }
+
+  async #act(udid: string, control: DeviceControl, signal: AbortSignal, context: ControlContext): Promise<void> {
     switch (control.action) {
       case "home":
         await this.#press("home", signal);
@@ -723,14 +729,9 @@ export class IosDriver implements DeviceDriver {
       case "install":
         await this.#install(udid, control.paths, signal, context);
         break;
-      case "reboot":
-        await this.#reboot(signal);
-        break;
       default:
         throw new DriverError("unsupported", `iOS has no ${control.action.replace("_", " ")} control.`);
     }
-    await this.#readSettings(signal).catch((error) => this.#log(`settings: not read after ${control.action}: ${words(error)}`));
-    this.#changed();
   }
 
   async openUrl(url: string, signal: AbortSignal): Promise<void> {
@@ -761,7 +762,9 @@ export class IosDriver implements DeviceDriver {
   }
 
   async #reboot(signal: AbortSignal): Promise<void> {
-    const target = this.#target!;
+    const target = this.#target;
+    if (!target) throw new DriverError("not-booted", "No iOS device has started in this box yet.");
+    if (this.#busy) throw new DriverError("not-booted", `The ${target.model} is booting. Try again when it has booted.`);
     this.#busy = true;
     const began = this.#clock.monotonic();
     this.#power = { is: "booting", since: this.#clock.now() };
@@ -770,11 +773,12 @@ export class IosDriver implements DeviceDriver {
       await this.#video.stop();
       this.#input.close();
       const generation = this.#generation;
-      await this.#simctl.shutdown(this.#udid!, signal);
-      await this.#start(target, signal);
+      if (this.#udid) await this.#simctl.shutdown(this.#udid, signal);
+      await this.#startUnlessSlowToSay(target, signal);
       await this.#newPicture(generation, signal, REBOOT_PICTURE_MS);
       this.#power = { is: "booted", awake: true };
       this.#awake = true;
+      this.#watch();
       this.#log(`device: the ${target.model} rebooted in ${((this.#clock.monotonic() - began) / 1000).toFixed(1)} s`);
     } catch (error) {
       this.#power = { is: "failed", error: { code: "boot-failed", words: words(error) }, since: this.#clock.now() };
@@ -782,6 +786,18 @@ export class IosDriver implements DeviceDriver {
     } finally {
       this.#busy = false;
       this.#changed();
+    }
+  }
+
+  async #startUnlessSlowToSay(target: OfferedDeviceOf<"ios">, signal: AbortSignal): Promise<"reattached" | "booted"> {
+    try {
+      return await this.#start(target, signal);
+    } catch (error) {
+      if (signal.aborted || !this.#udid) throw error;
+      const device = await this.#simctl.device(this.#udid, signal).catch(() => null);
+      if (device?.state !== "Booted") throw error;
+      this.#log(`device: the ${target.model} reads Booted, though its start said: ${words(error)}; attaching to it again`);
+      return await this.#start(target, signal);
     }
   }
 

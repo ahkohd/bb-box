@@ -32,6 +32,7 @@ export interface Allotment {
 }
 
 export const FPS_FLOOR = 20;
+export const STILL_FPS_MOST = 5;
 export const FULL_MOST = 2;
 export const CAP_SHARE = 0.75;
 export const RISE_AFTER_MS = 10_000;
@@ -111,7 +112,17 @@ interface Working {
   kept: boolean;
 }
 
-export function allot(streams: readonly LedgerStream[], budget: number, heldFull: ReadonlySet<string> = new Set()): Allotment {
+export function isStill(stream: Pick<LedgerStream, "fps">): boolean {
+  return stream.fps <= STILL_FPS_MOST;
+}
+
+function fullPlaceClaim(each: Working, heldFull: ReadonlySet<string>, busyWaiting: ReadonlySet<string>): number {
+  const held = heldFull.has(each.stream.box);
+  if (held && !(isStill(each.stream) && busyWaiting.size > 0)) return 2;
+  return busyWaiting.has(each.stream.box) ? 1 : 0;
+}
+
+export function allot(streams: readonly LedgerStream[], budget: number, heldFull: ReadonlySet<string> = new Set(), busyWaiting: ReadonlySet<string> = new Set()): Allotment {
   const cap = budget * CAP_SHARE;
   const working: Working[] = [];
   for (const stream of streams) {
@@ -120,7 +131,7 @@ export function allot(streams: readonly LedgerStream[], budget: number, heldFull
     working.push({ stream, wanted, room: roomOf(stream), floor: floorOf(stream, wanted), step: wanted, kept: false });
   }
   const wantFull = working.filter((each) => each.wanted === "full");
-  wantFull.sort((a, b) => rank(a.room) - rank(b.room) || Number(heldFull.has(b.stream.box)) - Number(heldFull.has(a.stream.box)) || a.stream.box.localeCompare(b.stream.box));
+  wantFull.sort((a, b) => rank(a.room) - rank(b.room) || fullPlaceClaim(b, heldFull, busyWaiting) - fullPlaceClaim(a, heldFull, busyWaiting) || a.stream.box.localeCompare(b.stream.box));
   wantFull.forEach((each, at) => {
     if (at >= FULL_MOST) each.step = "two-thirds";
     else if (each.room === "control") each.kept = true;
@@ -229,6 +240,7 @@ interface MacLedger {
   place: EncoderPlace;
   readonly streams: Map<string, Watched>;
   readonly held: Map<string, Held>;
+  readonly busyBelowFullSince: Map<string, number>;
   allotment: Allotment | null;
   startingUntil: number;
   startingTimer: ReturnType<typeof setTimeout> | null;
@@ -261,7 +273,7 @@ export class EncoderLedgers {
   #ledger(place: EncoderPlace): MacLedger {
     let ledger = this.#macs.get(place.mac);
     if (!ledger) {
-      ledger = { place, streams: new Map(), held: new Map(), allotment: null, startingUntil: 0, startingTimer: null };
+      ledger = { place, streams: new Map(), held: new Map(), busyBelowFullSince: new Map(), allotment: null, startingUntil: 0, startingTimer: null };
       this.#macs.set(place.mac, ledger);
     }
     if (place.chip !== null || ledger.place.chip === null) ledger.place = place;
@@ -347,7 +359,8 @@ export class EncoderLedgers {
     const now = this.#now();
     const streams: LedgerStream[] = [...ledger.streams.values()].map((each) => ({ box: each.box, name: each.name, pixels: each.report.pixels, wants: each.report.wants, fps: each.report.fps, controlled: this.#deps.controlled(each.box) }));
     const heldFull = new Set([...ledger.held].filter(([, held]) => held.step === "full").map(([box]) => box));
-    const allotment = allot(streams, budget, heldFull);
+    const busyWaiting = this.#busyWaitingForFull(ledger, streams, heldFull, now);
+    const allotment = allot(streams, budget, heldFull, busyWaiting);
     ledger.allotment = allotment;
     for (const box of [...ledger.held.keys()]) if (!allotment.streams.has(box)) ledger.held.delete(box);
     const starting = now < ledger.startingUntil;
@@ -358,7 +371,9 @@ export class EncoderLedgers {
         this.#send(stream.box, starting ? { cap: null, words: VM_STARTING_WORDS } : NO_DECISION);
         continue;
       }
-      const held = heldAfter(ledger.held.get(stream.box), fresh, now);
+      const previous = ledger.held.get(stream.box);
+      const waitedSince = busyWaiting.has(stream.box) ? ledger.busyBelowFullSince.get(stream.box) : undefined;
+      const held = heldAfter(previous && waitedSince !== undefined ? { ...previous, risingSince: Math.min(previous.risingSince ?? now, waitedSince) } : previous, fresh, now);
       ledger.held.set(stream.box, held);
       const isLowered = lowered(held);
       const others = watching.filter((other) => other.box !== stream.box).map((other) => other.name).sort();
@@ -366,6 +381,21 @@ export class EncoderLedgers {
       this.#send(stream.box, { cap: isLowered ? held.step : null, words: words.length ? words.join(" ") : null });
     }
     if (!watching.length) this.#probeIfUnknown(ledger);
+  }
+
+  #busyWaitingForFull(ledger: MacLedger, streams: readonly LedgerStream[], heldFull: ReadonlySet<string>, now: number): ReadonlySet<string> {
+    const waiting = new Set<string>();
+    for (const stream of streams) {
+      if (isStill(stream) || wantedStep(stream.wants) !== "full" || heldFull.has(stream.box)) {
+        ledger.busyBelowFullSince.delete(stream.box);
+        continue;
+      }
+      const since = ledger.busyBelowFullSince.get(stream.box) ?? now;
+      ledger.busyBelowFullSince.set(stream.box, since);
+      if (now - since >= RISE_AFTER_MS) waiting.add(stream.box);
+    }
+    for (const box of [...ledger.busyBelowFullSince.keys()]) if (!streams.some((stream) => stream.box === box)) ledger.busyBelowFullSince.delete(box);
+    return waiting;
   }
 
   #send(box: string, decision: Decision): void {

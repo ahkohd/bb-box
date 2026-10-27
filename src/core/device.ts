@@ -677,7 +677,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 2;
 export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
-export const DEVICE_SERVER_VERSION = 25;
+export const DEVICE_SERVER_VERSION = 26;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 export const SETTINGS_ASKED_SINCE_VERSION = 24;
 export const VIDEO_REPORTS_SINCE_VERSION = 25;

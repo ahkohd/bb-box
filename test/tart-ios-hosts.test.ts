@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { HOST_VM_PREFIX, slotRefOf } from "../src/backends/tart/ios-hosts.ts";
+import { hostAppInstallScript } from "../src/backends/tart/device-host.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
 import type { AcquireHooks, BoxIdentity, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { placementOf, type SlotTier } from "../src/core/device-host.ts";
@@ -143,6 +147,24 @@ test("a take that loses its race answers lost, and a box's release before its sl
   assert.ok(!("lost" in promised));
   await backend.release(promised, releasing, signal());
   assert.equal(hosts().length, 1, "two boxes still hold the host");
+});
+
+test("a slot acquire that fails after its slot is claimed gives the slot back, as the registry expects of a backend (F-8)", async () => {
+  const { backend, device } = setup();
+  for (const box of [identity(), identity()]) {
+    const { guest } = await place(backend, box);
+    await backend.acquire(box, guest, hooks().hooks, signal());
+  }
+  const box = identity();
+  const { tier, guest } = await place(backend, box);
+  assert.equal(tier.tier, "make");
+  const failing: AcquireHooks = { ...hooks().hooks, claim: async () => { throw new Error("the box's record could not be written"); } };
+  await assert.rejects(backend.acquire(box, guest, failing, signal()), /could not be written/);
+  assert.ok(!device.status().slots.some((slot) => slot.box === box.boxId), "no slot is held for the box");
+  assert.ok(!device.status().lines.some((line) => line.startsWith(`promise=${box.boxId}\t`)), "nor a promise");
+  const again = identity();
+  const { guest: next } = await place(backend, again);
+  assert.equal(placementOf({ guest: await backend.acquire(again, next, hooks().hooks, signal()) }).on, "slot", "the next box gets a slot");
 });
 
 test("a slot box's transports reach it as its slot's user, with the host keeping BB's daemon; its device server is started again through the helper (064)", async () => {
@@ -286,6 +308,102 @@ test("a box waiting for a host that one instance was starting as it stopped, as 
   assert.equal(clones().length, 1, "one host");
   await next.release(slot, releasing, signal());
   assert.deepEqual(hosts(), []);
+});
+
+test("a host's start names its bb-box instance and when it last said so in the host's owner file, so another instance never runs a start that is still under way, however old (F-8)", async () => {
+  const { backend, hosts, clones, ssh, mac } = setup();
+  const otherContext = testContext(new MemoryStorage());
+  const other = new TartBackend(tartConfig(IOS_HOST_SETTINGS), otherContext, IOS_HOST_FAKES);
+  made.push(other);
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const vm = slotRefOf(guest)!.vm;
+  const ownerFile = join(mac, ".bb-box", "tart", "owners", vm);
+  const hold = join(ssh.home("192.168.64.2"), "hold-init");
+  writeFileSync(hold, "");
+  const first = backend.acquire(box, guest, hooks().hooks, signal());
+  await until(() => existsSync(join(ssh.home("192.168.64.2"), "init-held")), "the host's start reaches its helper's init");
+  assert.match(readFileSync(ownerFile, "utf8"), /^start-by=[0-9a-f]{8}$/m);
+  assert.match(readFileSync(ownerFile, "utf8"), /^start-beat=\d+$/m);
+  writeFileSync(ownerFile, readFileSync(ownerFile, "utf8").replace(/^made=\d+$/m, `made=${Date.now() - 10 * 60_000}`));
+
+  await other.maintain(signal());
+  const second = identity();
+  const joined = await other.slots!.take({ tier: "join", host: vm, waitMs: 1 }, second, signal());
+  assert.ok(!("lost" in joined));
+  const waiting = other.acquire(second, joined, hooks().hooks, signal());
+  await until(() => otherContext.logs.some((line) => /is being started by another bb-box instance, [0-9a-f]{8}, which said so at \d+; this one waits for it/.test(line)), "the other instance waits for the start");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const inits = () => readFileSync(join(ssh.home("192.168.64.2"), "helper.log"), "utf8").split("\n").filter((line) => line === "init").length;
+  const doctor = (await other.doctor(signal())).checks.find((check) => check.id === "ios-hosts.mac1");
+  assert.match(doctor?.detail ?? "", /starting, made \d+ s ago, started by bb-box instance [0-9a-f]{8}, last heard from \d+ s ago, 2 boxes promised\./);
+
+  rmSync(hold);
+  const [one, two] = await Promise.all([first, waiting]);
+  assert.equal(inits(), 1, "the start ran once, in the first instance");
+  assert.equal(clones().length, 1, "one host");
+  assert.doesNotMatch(readFileSync(ownerFile, "utf8"), /^start-(by|beat)=/m, "a serving host has no start");
+  await backend.release(one, releasing, signal());
+  await other.release(two, releasing, signal());
+  assert.deepEqual(hosts(), []);
+});
+
+const TARBALL = "bb-app's tarball\n";
+const TARBALL_DIGEST = createHash("sha256").update(TARBALL).digest("hex");
+
+function appTools(home: string): void {
+  const bin = join(home, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(home, "served.tgz"), TARBALL);
+  writeFileSync(join(bin, "curl"), '#!/bin/sh\necho "curl $*" >> "$HOME/app-tools.log"\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && cp "$HOME/served.tgz" "$2"; shift; done\n', { mode: 0o755 });
+  writeFileSync(
+    join(bin, "npm"),
+    `#!/bin/sh\necho "npm $*" >> "$HOME/app-tools.log"\nwhile [ $# -gt 0 ]; do [ "$1" = --prefix ] && prefix=$2; shift; done\nmkdir -p "$prefix/lib/node_modules/bb-app/bin" "$prefix/bin"\necho '{"name":"bb-app"}' > "$prefix/lib/node_modules/bb-app/package.json"\nln -s ../lib/node_modules/bb-app/bin/bb.js "$prefix/bin/bb"\n`,
+    { mode: 0o755 },
+  );
+}
+
+test("BB's app goes to the host's own user from BB's server, checked against the server's digest, and once installed is not fetched again (F-8)", () => {
+  const home = mkdtempSync(join(tmpdir(), "host-app-"));
+  appTools(home);
+  const run = (digest: string) => spawnSync("/bin/sh", ["-c", hostAppInstallScript({ url: "https://bb.example.com/", digest })], { encoding: "utf8", env: { HOME: home, PATH: `${join(home, "bin")}:/usr/bin:/bin` } });
+  const first = run(TARBALL_DIGEST);
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.stdout, `installed=yes\nhome=${home}\n`);
+  const data = join(home, ".bb-machines/bb.example.com");
+  assert.equal(readFileSync(join(data, "host-artifact.sha256"), "utf8"), `${TARBALL_DIGEST}\n`);
+  assert.equal(readlinkSync(join(data, "npm/bin/bb")), "../lib/node_modules/bb-app/bin/bb.js");
+  assert.match(readFileSync(join(home, "app-tools.log"), "utf8"), /^curl .* https:\/\/bb\.example\.com\/install\/bb-app\.tgz\nnpm install -g .*--prefix .*\/npm\.new /);
+  const again = run(TARBALL_DIGEST);
+  assert.equal(again.stdout, `home=${home}\n`, "installed already");
+  assert.equal(readFileSync(join(home, "app-tools.log"), "utf8").split("\n").filter((line) => line.startsWith("curl")).length, 1);
+  const other = run("e".repeat(64));
+  assert.equal(other.status, 4);
+  assert.match(other.stderr, /BB's server gave an app that is not build e{64}/);
+  assert.equal(readFileSync(join(data, "host-artifact.sha256"), "utf8"), `${TARBALL_DIGEST}\n`, "the build kept stays");
+});
+
+test("a host that serves keeps the server's build of BB's app for its slots: installed as the host's user, then copied by its helper into the slots' home (F-8)", async () => {
+  const world = fakeIosHostMac();
+  const context = { ...testContext(new MemoryStorage()), bbUrl: () => "https://bb.example.com", images: { pins: async () => null, bbApp: async () => TARBALL_DIGEST } };
+  const backend = new TartBackend(tartConfig({ ...IOS_HOST_SETTINGS }), context, IOS_HOST_FAKES);
+  made.push(backend);
+  const vmHome = world.ssh.home("192.168.64.2");
+  appTools(vmHome);
+  mkdirSync(join(world.device.root, dirname(vmHome)), { recursive: true });
+  symlinkSync(vmHome, join(world.device.root, vmHome));
+  world.device.own(vmHome, 501);
+  appendFileSync(join(world.device.state, "owners"), `501 ${realpathSync(vmHome)}/.bb-machines/bb.example.com/npm\n`);
+  const box = identity();
+  const { guest } = await place(backend, box);
+  await backend.acquire(box, guest, hooks().hooks, signal());
+  await until(() => context.logs.some((line) => /keeps BB's app build|keeps no BB app/.test(line)), "the host keeps BB's app");
+  assert.ok(context.logs.some((line) => new RegExp(`keeps BB's app build ${TARBALL_DIGEST.slice(0, 12)} for its slots, in [\\d.]+ s \\(installed in [\\d.]+ s\\)`).test(line)), context.logs.join("\n"));
+  assert.match(readFileSync(join(vmHome, "helper.log"), "utf8"), /^keep-app$/m);
+  assert.equal(world.device.file("/usr/local/share/bb-box/slot-home/.bb-machines/bb.example.com/host-artifact.sha256"), `${TARBALL_DIGEST}\n`);
+  assert.equal(world.device.status().values.get("bb-app-kept"), "yes");
+  const doctor = (await backend.doctor(signal())).checks.find((check) => check.id === "ios-hosts.mac1");
+  assert.match(doctor?.detail ?? "", new RegExp(`Its slots get BB's app build ${TARBALL_DIGEST.slice(0, 12)} from the host\\.`));
 });
 
 test("a new shared host goes to the Mac whose video encoder streams least; a VM's start warns that Mac's viewers; each box names its Mac and chip (064, unit 6)", async () => {

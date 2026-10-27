@@ -17,6 +17,7 @@ export const HELLO_TRIES = 2;
 const SCRIPT_TIMEOUT_MS = 60_000;
 const DEVICE_HUB_CHECK_MS = 15_000;
 export const FRESH_SETTINGS_WAIT_MS = 3_000;
+const DOCTOR_STATE_WAIT_MS = 3_000;
 const BAD_KEY = (boxId: string) => `device-bad:${boxId}`;
 const ANSWER_MARGIN_MS = 15_000;
 const RESULT_ASK_MS = 10_000;
@@ -52,6 +53,7 @@ export interface DeviceServersDeps {
   readonly helloWaitMs?: number;
   readonly idleCloseMs?: number;
   readonly deviceHubWaitMs?: number;
+  readonly deviceStateWaitMs?: number;
 }
 
 export type DeviceServerView =
@@ -67,6 +69,11 @@ interface Held {
   idle: ReturnType<typeof setTimeout> | null;
   work: Promise<unknown>;
   owner: { readonly generation: number; readonly holder: ControlHolder } | null;
+  linkEnded?: { readonly at: number; readonly idle: true } | { readonly at: number; readonly idle: false; readonly words: string };
+}
+
+function utcWords(at: number): string {
+  return `${new Date(at).toISOString().slice(0, 19).replace("T", " ")} UTC`;
 }
 
 
@@ -215,6 +222,22 @@ export class DeviceServers {
     }
   }
 
+  async #stateNow(boxId: string, waitMs: number): Promise<DeviceState | null> {
+    const held = this.#held.get(boxId);
+    const link = held?.link;
+    if (!held || !link || link.closed || held.view.is !== "connected") return null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<null>((resolve) => (timer = setTimeout(() => resolve(null), waitMs)));
+    try {
+      const answer = await Promise.race([link.request({ type: "settings" }, { timeoutMs: waitMs }).catch(() => null), late]);
+      if (!answer) return null;
+      if (answer.state && held.view.is === "connected") held.view = { ...held.view, state: answer.state };
+      return held.view.is === "connected" ? held.view.state : null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async agentRequest(box: BoxRecord, request: DeviceAgentRequest): Promise<DeviceAnswer> {
     if (this.#deps.personHasControl(box.id)) return { id: "", ok: false, error: { code: "person-has-control", words: PERSON_HAS_CONTROL_WORDS }, state: this.#lastState(box.id) };
     const link = await this.#controlLink(box);
@@ -308,6 +331,7 @@ export class DeviceServers {
     const link = held.link;
     held.link = null;
     await link.close();
+    held.linkEnded = { at: Date.now(), idle: true };
   }
 
   async forget(boxId: string): Promise<void> {
@@ -374,6 +398,7 @@ export class DeviceServers {
     const held = this.#held.get(box.id);
     if (!held || this.#disposed) return;
     held.link = null;
+    held.linkEnded = { at: Date.now(), idle: false, words: why.words };
     this.#deps.ledger?.forget(box.id);
     if (why.superseded) {
       held.view = { is: "superseded" };
@@ -585,13 +610,39 @@ export class DeviceServers {
     const badWords = bad !== null ? ` Version ${bad} did not answer in this box, so it went back, and bb-box delivers no version before ${bad + 1} to it.` : "";
     if (view.is === "connected") {
       const behind = view.version < this.version;
-      checks.push({
-        id,
-        name,
-        status: behind || bad !== null ? "warn" : "ok",
-        detail: `Version ${view.version}, protocol ${view.protocol}: the ${view.state.model}, ${view.state.power.is}.${behind && bad === null ? ` This bb-box delivers version ${this.version} when it next connects as the box's lease holder.` : ""}${badWords}`,
-        fix: bad !== null ? `Read ~/.bb-box/device/server.log in box ${box.name} for why version ${bad} did not answer.` : null,
-      });
+      const waitMs = this.#deps.deviceStateWaitMs ?? DOCTOR_STATE_WAIT_MS;
+      const now = await this.#stateNow(box.id, waitMs);
+      const said = `Version ${view.version}, protocol ${view.protocol}: `;
+      const deliveryWords = behind && bad === null ? ` This bb-box delivers version ${this.version} when it next connects as the box's lease holder.` : "";
+      if (now) {
+        checks.push({
+          id,
+          name,
+          status: behind || bad !== null ? "warn" : "ok",
+          detail: `${said}the ${now.model}, ${now.power.is}.${deliveryWords}${badWords}`,
+          fix: bad !== null ? `Read ~/.bb-box/device/server.log in box ${box.name} for why version ${bad} did not answer.` : null,
+        });
+      } else {
+        const last = view.state;
+        const lastWords = `It last said the ${last.model} was ${last.power.is}, at ${utcWords(last.at)}.`;
+        const ended = this.#held.get(box.id)?.linkEnded ?? null;
+        const linkOpen = !!this.#held.get(box.id)?.link;
+        const idle = !linkOpen && ended?.idle === true;
+        const why = linkOpen
+          ? `it did not answer within ${Math.round(waitMs / 1000)} s`
+          : !ended
+            ? "bb-box has no connection to it now"
+            : ended.idle
+              ? `bb-box closed its connection at ${utcWords(ended.at)}, as nothing used it`
+              : `its connection ended at ${utcWords(ended.at)}: ${ended.words.replace(/\.$/, "")}`;
+        checks.push({
+          id,
+          name,
+          status: idle ? "ok" : "warn",
+          detail: `${said}${why}, so the device's state now is not known. ${lastWords}${deliveryWords}${badWords}`,
+          fix: idle ? null : `box_status ${box.name} says whether the box runs.${placementOf(box).on === "slot" ? " The check of shared iOS hosts says whether its host's VM runs." : ""}`,
+        });
+      }
     } else if (view.is === "waiting") {
       checks.push({ id, name, status: "ok", detail: `Version ${view.version ?? "none"}; version ${view.for} waits until ${view.why === "person" ? "the person hands back control" : "the recording ends"}.`, fix: null });
     } else if (view.is === "down") {
