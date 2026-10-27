@@ -257,7 +257,7 @@ test("the doctor bounds each shared host's check, and says what it waited on for
     assert.ok(Date.now() - began < 10_000, `${Date.now() - began} ms`);
     const check = doctor.checks.find((each) => each.id === "ios-hosts.mac1");
     assert.equal(check?.status, "warn");
-    assert.match(check?.detail ?? "", /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not answer within 1 s: bb-box waited on its helper's status over SSH at 192\.168\.64\.2, through mac1\. /);
+    assert.match(check?.detail ?? "", /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not answer within 1 s: bb-box waited on its helper's status over SSH at 192\.168\.64\.2, through mac1\.$/);
   } finally {
     rmSync(hold);
   }

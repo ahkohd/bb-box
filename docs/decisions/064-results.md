@@ -1542,14 +1542,66 @@ On a Linux box, from the branch on origin/main at c8236a73:
 | The Tart backend, two Macs | the new host offered on the Mac whose ledger uses least, and on the other when that changes; the host's VM start warns its Mac, with the chip read from the Mac; each box names its Mac and chip |
 | The suite | tsc clean; the node suite 2,190 passed, 0 failed, 288 skipped, the docs and reference tests among them; vitest 222 passed |
 
-### The live check
+### The live check, on one host
 
-H8 has not run. It needs this unit deployed: the ledger runs in the
-bb-box that holds each device server's lease, which for boxes made through
-production BB is production's bb-box, and a separate BB has no Mac it may
-reach. It also needs both of the Tart Mac's VM slots, for a host and a
-dedicated box, and the second was held by another project's box while
-this was built.
+Through production BB on 27 October 2026, after the lead deployed Part A
+(PR 1183, main a7ba5d7, device server version 25) and set
+`tart-ios-hosts-most` to 9 for the check. The Mac is the Tart Mac, an M4
+Max; the Mac's other VM slot held another install's VM throughout, so no
+dedicated box could run beside the host. 8 ios boxes with `shared: true`
+took slots 1 to 8 of one host. The panels were the owner's Helium, driven
+by playwriter: one tab holding the 8 boxes' pages, each 355x588 CSS
+pixels, each with Pixel for pixel on, so each asked for full size. Each
+panel's frames were counted for 10 s by wrapping its canvas's `drawImage`,
+with each frame's size. "Busy" is unit 1's `flip.html?busy` in Safari,
+whose bar changes colour each frame; the host's CPU is from `top` in a
+slot.
+
+| Case | Ledger | Steps | Frames a second in each panel | The host's CPU |
+| --- | --- | --- | --- | --- |
+| 8 busy | on | 2 at full, 6 at two thirds | 20.1 to 23.4 | 0% idle |
+| 4 busy, 4 on the Home Screen | on | 1 busy and 1 still at full, the rest at two thirds | the busy: 49.0 to 49.6; worst gap 255 to 267 ms, at the same moment in each | 32% idle |
+| The same, then a person takes control of a busy box at two thirds | on | that box at full at once; a still box at full drops to two thirds, with the words | the busy: 49.5 to 49.9 | |
+| The same | off | all at two thirds, the person in control's too | the busy: 42.2 to 42.4 | |
+| 8 busy | off | all at two thirds | 20.1 to 22.0 | |
+
+- **The words, seen in the panel,** under each lowered device's toolbar:
+  "Shown at a lower resolution: this Mac's video encoder is busy with 7
+  other devices (box calm-pebble, box fond-eagle, box merry-beacon, box
+  nimble-cloud and 3 more)." Not on a device at full size, and none with
+  the ledger off.
+- **box_status** on each: "On this Mac: 0 of about 5 full-size streams'
+  room in use." at the acquire. **The doctor:** "Video encoder on
+  <mac>: On this Mac: 2 of about 5 full-size streams' room in use. 8
+  streams; an Apple M4 Max, about 320 full-size iPhone frames a second.
+  Shown at a lower resolution: box calm-pebble, box fond-eagle, box
+  merry-beacon, box nimble-cloud and 2 more."
+- **Not 55 frames a second, and not for the encoder.** 8 busy slots took
+  the host's 8 cores to 0% idle: each busy slot's Safari about a third of a
+  core, and its own `cfprefsd` and `diagnosticd` about a tenth each. The
+  ledger counted about 120 of the encoder's 320, so its cap never acted
+  beyond the two at full size. With 4 busy and a third of the host idle,
+  the busy streams came at 49 frames a second, as unit 4 measured at a
+  third (48.0 to 49.8), with the same stalls in every panel at once: a
+  limit neither of the host's CPU nor of the encoder, and the same with the
+  ledger off.
+- **A still device kept a full-size place** over busy ones, as the ledger
+  keeps the streams already at full; the person in control took one at
+  once.
+- **A first busy page that redrew the whole screen** each frame saturated
+  the host at 8 devices (load 77, then over 300 after Safari was relaunched,
+  with 78 `MTLCompilerService` running). Rebooting the devices then: 5 of
+  8 rebooted in 11 to 104 s; 3 timed out at 120 s and their devices were
+  marked failed ("simctl could not wait for the device to boot"), though
+  booted. `box_device reboot` then refused them ("The iPhone 18 Pro is not
+  booted"), while the toolbar tells a person to reboot a failed device from
+  More. Restarting their device servers recovered them. A follow-up for
+  063.
+- **The Tart doctor still said** "Each slot's stream is at two thirds at
+  most until the encoder's ledger comes." Fixed in the follow-up commit.
+
+H8 proper, 10 devices across a host and a dedicated box with a VM starting
+meanwhile, waits for the Mac's second VM slot.
 
 ### Deviations from 064
 

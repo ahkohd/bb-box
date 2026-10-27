@@ -269,8 +269,9 @@ an ios box asked for without it is a VM of its own, as before.
   iOS image lends its ready slots while no host on the new build can start on
   its Mac, and is deleted at its last release.
 - **What a slot box gives up:** sudo, Homebrew, its own cores and ports, the
-  host's desktop, a size, a stop and a start. Its device's stream is at two
-  thirds at most until the encoder's ledger comes (064, unit 6). Every slot
+  host's desktop, a size, a stop and a start. Its device's stream shares the
+  Mac's video encoder with every device there, as a dedicated box's does,
+  and bb-box keeps them within it (064, unit 6). Every slot
   has the image's first device model; ask for `dedicated: true` for another.
 - **A macos box asked for with `shared: true`** takes a slot as an ios box
   does, and the slot's device is deleted at the claim. It is a macOS user for
