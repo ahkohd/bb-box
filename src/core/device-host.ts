@@ -433,6 +433,10 @@ export function slotModelRefusal(slotModel: string, asked: string): string {
   return `A shared ios box has the ${slotModel}, the model every slot is made with. Leave device out for it, or ask for dedicated: true for the ${asked}.`;
 }
 
+export function slotSwitchRefusal(slotModel: string, asked: string): string {
+  return `A shared ios box has only the ${slotModel}, the model every slot is made with, so it cannot switch to the ${asked}. Acquire an ios box with dedicated: true for the ${asked}: a VM of its own, which switches between every model box_list gives.`;
+}
+
 const HOST_WORDS: Readonly<Record<HostKind, string>> = {
   "pool-mac": "the pool's Mac",
   tart: "a Tart VM",

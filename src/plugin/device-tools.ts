@@ -3,7 +3,8 @@ import { z } from "zod";
 import { BoxError, type BoxRecord } from "../core/boxes.ts";
 import { answerText, controlFromParameters } from "../core/device-control.ts";
 import { deviceStateWords } from "../core/device-settings.ts";
-import { DEVICE_ACTIONS, IOS_CONTENT_SIZES, ORIENTATIONS, deviceModel, offeredModels, type DeviceAnswer, type DeviceErrorCode, type ModelName } from "../core/device.ts";
+import { DEVICE_ACTIONS, IOS_CONTENT_SIZES, ORIENTATIONS, deviceModel, modelNamed, offeredModels, type DeviceAnswer, type DeviceErrorCode, type ModelName } from "../core/device.ts";
+import { inSlot, slotSwitchRefusal } from "../core/device-host.ts";
 import { toolsForPurposes } from "./purposes.ts";
 import type { BbBox } from "./setup.ts";
 import { boxParam, failure, thread } from "./tools.ts";
@@ -70,6 +71,8 @@ export function registerDeviceTools(bb: BbPluginApi, app: BbBox): void {
         if (!offer) throw new BoxError("unsupported", `Box ${found.name} has no device: box_device works on ios and android boxes.`);
         if (found.state !== "ready") throw new BoxError("not_ready", `Box ${found.name} is ${found.state}.`);
         const model = deviceModel(modelOf(app, found));
+        const elsewhere = parameters.action === "switch" && parameters.device !== undefined && inSlot(found) ? modelNamed(parameters.device, model.platform) : null;
+        if (elsewhere && !offeredModels(offer).includes(elsewhere.name)) return { content: [{ type: "text", text: `Box ${found.name}: ${slotSwitchRefusal(model.name, elsewhere.name)}` }], isError: true };
         const parsed = controlFromParameters(parameters, model, offeredModels(offer));
         if (!parsed.ok) return refusal(found, { id: "", ok: false, error: parsed.error, state: null });
         const answer = await app.devices.control(found, parsed.control, { signal });
