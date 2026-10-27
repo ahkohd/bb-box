@@ -84,11 +84,14 @@ where it is built ahead, which its boxes claim at once (#440). The
   `slim: false` for an app that uses one of them; its first boot then takes
   about a minute more. Do not open Device Hub on the host: it
   takes the device's clipboard, and bb-box closes it.
-- Each `ios` box is a macOS VM of its own unless it asks for
-  `shared: true`, where `box_list` says a shared iOS host is set up. A
-  shared box is a macOS user on a Mac or VM shared with other ios boxes, ready in
-  seconds, with its own device, files and keychain, but no sudo, Homebrew
-  installs or app windows, and cores and processes shared. Servers on
+- Where `box_list` says a shared iOS host is set up, an `ios` box is shared
+  by default: a macOS user on a Mac or VM shared with other ios boxes, ready
+  in seconds, with its own device, files and keychain, but no sudo, Homebrew
+  installs or app windows, and cores and processes shared. Where no host has
+  room, or you ask for another device than the first or `slim: false`, it
+  is a macOS VM of its own instead; `shared: true` refuses rather than do
+  that. Where no shared iOS host is set up, each `ios` box is a VM of its
+  own. Servers on
   localhost in a shared box are reachable from every box on its host: start
   yours on your box's ports, from `BB_PORT_BASE`, such as Metro with
   `--port $BB_PORT_BASE`; the common dev ports are held and answer an error.
@@ -97,7 +100,7 @@ where it is built ahead, which its boxes claim at once (#440). The
   ports, Xcode's window, another device than the first, or a project with
   its own ios image. Give `dedicated: true` with a `size`, `cores`,
   `memory_gib` or `disk_gib` for an ios box: a shared box has no size, and
-  once shared ios boxes are the default, a size without it is refused.
+  where a shared iOS host is set up, a size without it is refused.
   `box_status` says where the box is, on its Where line.
 - A `macos` box is a macOS VM of its own unless it asks for `shared: true`,
   where `box_list` says so on the macos kind's line. A shared macos box is a

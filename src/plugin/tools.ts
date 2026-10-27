@@ -427,13 +427,13 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         .boolean()
         .optional()
         .describe(
-          "For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop, instead of a macOS user on a shared host. It takes one of the Mac's two VMs, so it may wait for one. Give it with a size, cores, memory_gib or disk_gib: once shared ios boxes are the default, a size without it is refused.",
+          "For an ios box: a macOS VM of its own, with sudo, brew install, its own cores, ports and desktop, instead of a macOS user on a shared host. It takes one of the Mac's two VMs, so it may wait for one. Without it, an ios box is shared where a shared iOS host has room, and a VM of its own otherwise. Give it with a size, cores, memory_gib or disk_gib: where a shared iOS host is set up, a size without it is refused.",
         ),
       shared: z
         .boolean()
         .optional()
         .describe(
-          `For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. For a macos box: ${SHARED_MACOS_WORDS}. Only where a shared iOS host is set up; box_list says. Without it a macos box is a VM of its own, which takes one of the Mac's two VMs.`,
+          `For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows; an ios box is one already where a shared iOS host has room, and shared: true refuses rather than give it a VM of its own. For a macos box: ${SHARED_MACOS_WORDS}. Only where a shared iOS host is set up; box_list says. Without it a macos box is a VM of its own, which takes one of the Mac's two VMs.`,
         ),
     }),
     async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device, slim, dedicated, shared }, { threadId, projectId, signal }) {

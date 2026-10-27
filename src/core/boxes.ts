@@ -878,7 +878,17 @@ export class Boxes {
     }
     if (input.shared === true && impliedOwnVm) throw new BoxError("unsupported", "This box is a VM of its own, as a spare, one of your machines, a box from a build or one with a project's image is, so it cannot be shared.");
     if (input.shared === true && sizeAsked(input.size)) throw new BoxError("invalid_size", sizeRefusal(kind));
-    if (kind === "ios" && this.sharedHosts().byDefault && input.dedicated !== true && !impliedOwnVm && sizeAsked(input.size)) throw new BoxError("invalid_size", SIZE_NEEDS_DEDICATED);
+    if (kind === "ios" && this.sharedHosts().byDefault && lendersOf(offers, "ios").length && input.dedicated !== true && !impliedOwnVm && sizeAsked(input.size)) throw new BoxError("invalid_size", SIZE_NEEDS_DEDICATED);
+  }
+
+  #slotByDefault(input: { readonly dedicated?: boolean; readonly shared?: boolean; readonly size?: SizeRequest; readonly slim?: boolean }, kind: string, impliedOwnVm: boolean, offers: readonly OfferedKind[]): boolean {
+    if (kind !== "ios" || input.shared !== undefined || input.dedicated === true || impliedOwnVm || sizeAsked(input.size) || input.slim === false) return false;
+    return this.sharedHosts().byDefault && lendersOf(offers, "ios").length > 0;
+  }
+
+  #withNoSlotWords(error: unknown, noSlotWords: string | null): unknown {
+    if (!noSlotWords || !(error instanceof BoxError) || error.code !== "no_capacity") return error;
+    return new BoxError("no_capacity", `No shared iOS host had a slot: ${noSlotWords} And no VM of its own could be had: ${error.message}`);
   }
 
   sharedHosts(kind: SlotKind = "ios"): SharedHosts {
@@ -1014,6 +1024,7 @@ export class Boxes {
     const impliedOwnVm = input.threadId === SPARES || yours || role === "machine" || tried !== null || image !== null;
     this.#ownVmAsked(input, wanted, impliedOwnVm, offered);
     const inSlotAsked = input.shared === true && isSlotKind(wanted);
+    const slotByDefault = this.#slotByDefault(input, wanted, impliedOwnVm, offered);
     const claims = claimsSpare && !tried && !inSlotAsked && (image !== null || (general.spares[wanted] ?? 0) > 0);
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
     if (!sized.ok) throw new BoxError("invalid_size", sized.message);
@@ -1029,17 +1040,31 @@ export class Boxes {
         }
         const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
-        const spare = claims ? await this.#claim({ ...input, askedDevice, slim }, offered, features, sized.size, taken, requested, image?.name ?? null) : null;
+        const claimSpare = async () => (claims ? await this.#claim({ ...input, askedDevice, slim }, offered, features, sized.size, taken, requested, image?.name ?? null) : null);
+        const spare = slotByDefault ? null : await claimSpare();
         if (spare) return { box: spare.box, claimed: spare.from };
         const id = newBoxId(this.#random);
         const name = input.name ?? generateName(await this.#liveNames(taken), this.#random);
         const createdAt = this.#now();
+        const identity = { boxId: id, threadId: input.threadId, name, kind: wanted, createdAt, size: sized.size };
+        let noSlotWords: string | null = null;
         const slot = inSlotAsked
-          ? await this.#placeInSlot(offered, wanted as SlotKind, askedDevice, { boxId: id, threadId: input.threadId, name, kind: wanted, createdAt, size: sized.size })
-          : null;
+          ? await this.#placeInSlot(offered, wanted as SlotKind, askedDevice, identity)
+          : slotByDefault
+            ? await this.#placeInSlot(offered, "ios", askedDevice, identity).catch((error: unknown) => {
+                if (!(error instanceof BoxError) || error.code !== "no_capacity") throw error;
+                noSlotWords = error.message;
+                this.#deps.log?.(`Box ${name} found no slot on a shared iOS host, so it gets a VM of its own: ${error.message}`);
+                return null;
+              })
+            : null;
+        if (!slot && slotByDefault) {
+          const fallback = await claimSpare();
+          if (fallback) return { box: fallback.box, claimed: fallback.from };
+        }
         const placedIn: Record<string, number> = slot ? { "shared-host": this.#now() - createdAt } : {};
         const chosen = slot ? slot.chosen : await this.#place({ threadId: input.threadId, named }, offered, withDevice, sized.size, features).catch((error: unknown) => {
-          throw this.#withSharedHint(error, wanted, input.shared, impliedOwnVm, offered);
+          throw this.#withNoSlotWords(this.#withSharedHint(error, wanted, input.shared, impliedOwnVm, offered), noSlotWords);
         });
         if (tried && !chosen.backend.images?.startsFrom) throw new BoxError("unsupported", `${chosen.backend.label} starts no box from a build.`);
         // A current baked build of the image on the backend chosen starts the box with it (049); otherwise its script runs at start.

@@ -425,7 +425,7 @@ export function slotCapabilities(offer: KindCapabilities): KindCapabilities {
 
 export const NO_SHARED_IOS_HOST = "No shared iOS host is set up";
 
-export const SHARED_IOS_BY_DEFAULT = false;
+export const SHARED_IOS_BY_DEFAULT = true;
 
 export interface SharedHosts {
   readonly on: boolean;

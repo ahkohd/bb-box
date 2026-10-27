@@ -1107,7 +1107,7 @@ export class IosHosts implements SlotLender {
           id: `ios-hosts.${mac.name}`,
           name: `Shared iOS hosts on ${mac.name}`,
           status: why ? "warn" : "ok",
-          detail: `${why ? `No shared iOS host runs, and none can start now: ${why}.` : "No shared iOS host runs. One starts when an ios box asks for shared: true."}${sized}`,
+          detail: `${why ? `No shared iOS host runs, and none can start now: ${why}.` : "No shared iOS host runs. One starts when an ios box needs a slot: one asked for with no options, or with shared: true."}${sized}`,
           fix: null,
         };
       }

@@ -1716,6 +1716,81 @@ throughout.
 - **A server before version 25 is not counted.** It keeps unit 4's cap
   until the delivery on its first connection replaces it.
 
+### Part B: shared by default
+
+`SHARED_IOS_BY_DEFAULT` is on. Built on 27 October 2026, in a commit of
+its own after Part A.
+
+- **An ios box asked for with no options takes a slot** where a backend
+  lends ios slots: by 064's order, the pool's Mac, then a serving Tart
+  host, a slot being made, then a new Tart host on the Mac whose encoder
+  streams least. Where every lender says wait, the box is a VM of its own,
+  as before, and the log says why it had no slot. Where neither can be
+  had, it is refused with both reasons: "No shared iOS host had a slot:
+  ... And no VM of its own could be had: ...".
+- **063's suspended ios spare** is claimed only when no slot can be had.
+- **The owner's answer 2:** a size, cores, memory or disk without
+  `dedicated: true` is refused, "A shared ios box has no size of its own.
+  Ask for dedicated: true with a size.", where a backend lends ios slots.
+- **A VM of its own without asking,** as no slot can give it: another device
+  than the slots' model, and `slim: false`. A project's own ios image, a
+  spare, your machines and a box from a build stay VMs of their own.
+- **`shared: true`** still takes a slot or is refused; `dedicated: true` is
+  today's box.
+- **box_list's ios line,** where a host lends slots: "Shared by default: a
+  macOS user on a Mac or VM shared with other ios boxes, ready in seconds,
+  with its own device, files and keychain, but no sudo, and cores and
+  processes shared; where no shared iOS host has room, a VM of its own. ...
+  Ask for dedicated: true for a VM of its own, with sudo, brew install and
+  its own cores, ports and desktop; a size needs it. Another device than the
+  first, or slim: false, gets a VM of its own."
+- **The New box form** chooses Shared first where a host lends slots, and
+  Shared sends `shared` with no size; A VM of its own sends `dedicated`
+  with its size.
+- **The skill, `box_acquire`'s and `bb box acquire`'s words, and the Tart
+  and pool guides** say shared is the default.
+
+#### What changes for an agent that acquires `ios` today
+
+In production, with `ios-hosts-on` set on the Tart backend:
+
+| The agent asks for | Today | With Part B |
+| --- | --- | --- |
+| `{kind: "ios"}` | a Tart VM of its own at 6 cores and 16 GiB, or a suspended spare: sudo, Homebrew, the host's desktop, stop, start and resize | a macOS user in a slot: ready in about 6 s from a ready slot (H1, unit 4), or about 45 to 50 s when it starts a host. No sudo, Homebrew installs or host desktop; stop, start, resize, restart and grant refused in words naming `dedicated`; the iPhone 18 Pro only, and a switch to another model refused; servers on its ports from `BB_PORT_BASE`, the common dev ports answering an error; a BB machine as before. Where no slot can be had, today's VM |
+| `{kind: "ios", size: "large"}` or `cores`, `memory_gib`, `disk_gib` | a VM at that size | refused: "A shared ios box has no size of its own. Ask for dedicated: true with a size." |
+| `{kind: "ios", dedicated: true}`, with or without a size | a VM | the same |
+| `{kind: "ios", device: "iPhone 17"}` | a VM with the iPhone 17 | the same |
+| `{kind: "ios", slim: false}` | a VM, not slimmed | the same |
+| `{kind: "ios", shared: true}` | a slot, or refused | the same |
+
+The first ios box on a Mac with no host now starts a host, which takes one
+of the Mac's two VM slots, as a VM of its own did, and later ios boxes join
+it.
+
+#### Checks
+
+| Check | Result |
+| --- | --- |
+| The switch on, a backend lending 2 slots | two ios boxes with no options in slots, with slot capabilities and Where lines; the third a VM of its own, with root; `shared: true` refused with the host's words; a size refused; `slim: false` and `dedicated: true` with a size VMs of their own; after a release the next box takes the slot |
+| Neither a slot nor a VM | refused with both reasons |
+| The switch on, no backend lending slots | an ios box with no options, and one with a size, are VMs of their own; box_list says no shared host is set up |
+| The switch off | units 2, 4, 8 and F-7's tests, each with the switch off: an ios box with no options a VM of its own, a size needs no `dedicated`, `shared: true` opt-in |
+| The form | with shared the default, Shared chosen first, no size, Create sends `acquire ios shared` |
+| The suite | tsc clean; the node suite 2,192 passed, 0 failed, 288 skipped; vitest 223 passed |
+
+The live acquire of `ios` with no options waits for Part B to be merged.
+
+#### Deviations from 064
+
+- **A size is refused only where a backend lends ios slots.** With no
+  shared iOS host set up, every ios box is a VM of its own, so a size needs
+  no `dedicated` there.
+- **Another device than the slots', and `slim: false`, give a VM of its
+  own** rather than a refusal, as they cannot be had in a slot.
+- **The form's Shared sends `shared`,** which refuses where no slot can be
+  had, as the person chose it; an agent's acquire with no options falls back
+  to a VM of its own.
+
 ## F-8: follow-ups from units 4 to 6
 
 Built on 27 October 2026. Device server version 26; the host's helper
@@ -1957,3 +2032,5 @@ failed, 288 skipped; vitest 223 passed. Item 7 is not checked live yet.
 - **Item 4 retries any failure of the VM's start,** a clone, the start, its
   address or SSH, not only Virtualization's error; not a start that waits
   for room.
+
+||||||| parent of 48b4f4a0 (feat(devices): 064 unit 6, part B: ios boxes are shared by default)

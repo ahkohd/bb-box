@@ -6594,3 +6594,26 @@ test("with a shared iOS host set up, Shared can be chosen and sends shared with 
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire ios shared"]));
 });
+
+test("with shared the default and a shared iOS host set up, Shared is chosen first and sends shared with no size; A VM of its own sends dedicated with its size (064, unit 6)", async () => {
+  const linux = KINDS[0]!;
+  const ios: KindView = {
+    ...linux,
+    id: "ios",
+    label: "iOS Simulator",
+    os: "macos",
+    arch: "arm64",
+    devices: { platform: "ios", models: ["iPhone 18 Pro", "iPhone 17"] },
+    placement: { kind: "ios", shared: true, why: null, sizeNeedsDedicated: true },
+  };
+  const { handlers, changes } = server([], { kinds: [linux, ios] });
+  const slot = panel(handlers);
+  await slot.findByText("No boxes yet");
+  fireEvent.click(slot.getByRole("button", { name: "New box" }));
+  fireEvent.click(within(await screen.findByRole("radiogroup", { name: "System" })).getByRole("radio", { name: /^iOS/ }));
+  const options = within(screen.getByRole("radiogroup", { name: "Machine" })).getAllByRole("radio");
+  expect(options.map((option) => option.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+  expect(screen.queryByRole("radiogroup", { name: "Size" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Create box" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire ios shared"]));
+});
