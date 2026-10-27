@@ -257,24 +257,33 @@ carried_slots_ready() {
   echo "bbd-i1 and bbd-i2 ready, each with its own seeded device, shut down"
 }
 
-daemons_loaded() {
+held_ports="3000 4200 5000 5173 8000 8080 8081 19000"
+host_state=/var/db/bb-box/host
+
+daemons_written_not_loaded() {
   for label in app.bb-box.device-host app.bb-box.device-host.ports; do
-    sudo -n launchctl print "system/$label" >/dev/null 2>&1 || { echo "launchd has no $label"; return 1; }
+    sudo -n test -s "$host_state/$label.plist" || { echo "device-host install did not write $label's plist"; return 1; }
+    ! sudo -n launchctl print "system/$label" >/dev/null 2>&1 || { echo "launchd has $label loaded before init"; return 1; }
+    [ ! -e "/Library/LaunchDaemons/$label.plist" ] || { echo "$label is in /Library/LaunchDaemons before init"; return 1; }
   done
-  echo "app.bb-box.device-host and its held ports loaded"
+  listed=$(sudo -n plutil -extract ProgramArguments json -o - "$host_state/app.bb-box.device-host.ports.plist" | python3 -I -c 'import json, sys; print(" ".join(json.load(sys.stdin)[2:]))')
+  [ "$listed" = "$held_ports" ] || { echo "the held ports' plist lists $listed, not $held_ports"; return 1; }
+  echo "app.bb-box.device-host and its held ports written for init, and not loaded"
 }
 
-ports_held() {
-  for port in 3000 4200 5000 5173 8000 8080 8081 19000; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/")
-    [ "$code" = 421 ] || { echo "127.0.0.1:$port answered ${code:-nothing}, not 421"; return 1; }
+held_ports_free() {
+  for port in $held_ports; do
+    for address in 127.0.0.1 '[::1]'; do
+      curl -s -o /dev/null --max-time 3 "http://$address:$port/"
+      [ $? = 7 ] || { echo "something listens at $address:$port"; return 1; }
+    done
   done
-  echo "3000, 4200, 5000, 5173, 8000, 8080, 8081 and 19000 answer 421"
+  echo "nothing listens at 3000, 4200, 5000, 5173, 8000, 8080, 8081 or 19000, on 127.0.0.1 or ::1"
 }
 
 check "device-host" sudo -n "$helper" version
-check "device-host daemons" daemons_loaded
-check "held ports" ports_held
+check "device-host daemons" daemons_written_not_loaded
+check "held ports free" held_ports_free
 check "carried slots" carried_slots_ready
 check "slot uids" slot_uids_only_carried
 check "disabled.plist kept" sh -c 'ls /usr/local/share/bb-box/ios/*.disabled.plist'

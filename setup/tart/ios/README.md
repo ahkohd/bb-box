@@ -148,8 +148,8 @@ For a shared host it checks:
 | Check | Fails when |
 | --- | --- |
 | device-host | the helper is not installed, or does not run as root |
-| device-host daemons | launchd has not loaded `app.bb-box.device-host` or its held ports |
-| held ports | 127.0.0.1 at 3000, 4200, 5000, 5173, 8000, 8080, 8081 or 19000 does not answer HTTP 421 |
+| device-host daemons | `install` did not write the plists of `app.bb-box.device-host` and its held ports, or launchd has either loaded before `init` |
+| held ports free | anything listens at 3000, 4200, 5000, 5173, 8000, 8080, 8081 or 19000, on 127.0.0.1 or ::1: a dedicated box keeps them for its own servers |
 | carried slots | `bbd-i1` or `bbd-i2` is missing, not ready, its device not seeded, or booted |
 | slot uids | any file on the Data volume is owned by a UID from 80000 to 89999, or from 79990 to 79999 but the carried users' own |
 | disabled.plist kept | the image kept no runtime's `disabled.plist` |
@@ -190,7 +190,7 @@ through sudo as the image's user. Input is one `name=value` a line on stdin.
 
 | Command | What |
 | --- | --- |
-| `init` | stdin: `most`, `ahead`, `resetting-most`, `disk-reserve-gib`. The host's settings, kept as given the first time |
+| `init` | stdin: `most`, `ahead`, `resetting-most`, `disk-reserve-gib`. The host's settings, kept as given the first time. Loads the helper's daemon and the held ports' daemon, which launchd then starts at every boot; run again, it leaves them running |
 | `status` | the host, its promises, each slot with its state, ports, device and load, and the last sweeps |
 | `make` | stdin: `install`, `box` (the box it is made for, if any), `server` (a device server's folder to copy). Makes a slot and answers its user, UID, device and ports |
 | `promise` and `unpromise` | stdin: `install`, `box`. Holds a place in `most` for a box |
@@ -198,9 +198,9 @@ through sudo as the image's user. Input is one `name=value` a line on stdin.
 | `release <slot>` | stdin: `install`, `box`. Removes the slot's user, queues its sweep, and answers `last=yes` when no other claim, promise or slot made for a box is left, having written `deleting` under the lock |
 | `daemon <slot>` | stdin: `install`, `box`. Moves BB's daemon, as its installer left it with `BB_INSTALL_SKIP_SERVICE=1`, into a LaunchDaemon as the slot's user |
 | `reset` | runs the sweep queue: one `find` over the Data volume a pass, for at most `resetting-most` UIDs |
-| `resume` | carries on every slot whose step was cut short, and the sweep queue. Run at every boot by the helper's own daemon |
+| `resume` | carries on every slot whose step was cut short, and the sweep queue. Run at every boot by the helper's own daemon, on a host that has run `init`; in any other VM that daemon's `run` returns at once |
 | `carry` | the image build's: makes the carried slots `i1` and `i2`, their devices shut down and their daemons written but not loaded |
-| `install` | loads the helper's daemon, `app.bb-box.device-host`, and the held ports' daemon, `app.bb-box.device-host.ports` |
+| `install` | writes the helper's daemon, `app.bb-box.device-host`, and the held ports' daemon, `app.bb-box.device-host.ports`. It loads them only on a host that has run `init`, and takes them out of launchd elsewhere, so a dedicated box from the image keeps the common dev ports free |
 
 Exit codes: 0 done; 1 failed, with words; 2 usage; 3 lost a race, ask
 again; 4 not this box's; 5 no room; 6 the slot is not ready; 7 the host is
