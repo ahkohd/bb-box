@@ -247,8 +247,13 @@ export class AndroidDriver implements DeviceDriver {
   async #start(target: OfferedDeviceOf<"android">, signal: AbortSignal, cold: boolean): Promise<"reattached" | "booted"> {
     await this.#prepareFrames();
     let running = await this.#emulator.running();
-    if (running && running.avd !== target.native) {
-      this.#log(`device: the emulator runs ${running.avd}, not ${target.native}; stopping it, which saves its snapshot`);
+    const unreachable = running && !running.token;
+    if (running && (running.avd !== target.native || unreachable)) {
+      this.#log(
+        unreachable
+          ? `device: the emulator for ${running.avd} runs, but bb-box cannot reach it without its gRPC token; stopping it, which saves its snapshot, to start it again`
+          : `device: the emulator runs ${running.avd}, not ${target.native}; stopping it, which saves its snapshot`,
+      );
       await this.#video.stop();
       await this.#emulator.stop(running, signal);
       running = null;
@@ -414,7 +419,7 @@ export class AndroidDriver implements DeviceDriver {
     this.#busy = true;
     try {
       const running = await this.#emulator.running();
-      if (running && running.pid === this.#running.pid) {
+      if (running?.token && running.pid === this.#running.pid) {
         this.#connect(running);
         await this.#setClockIfBehind(this.#closed.signal).catch((error) => this.#log(`resume: the device's clock was not checked: ${words(error)}`));
         this.#video.restart("the box resumed");
