@@ -1310,7 +1310,7 @@ export interface SlotConformanceOptions {
 export async function slotConformance(options: SlotConformanceOptions): Promise<void> {
   const timeout = options.timeoutMs ?? 120_000;
   const wait = () => AbortSignal.timeout(timeout);
-  describe(`${options.name} slots`, { timeout: timeout * 8 }, () => {
+  describe(`${options.name}, ${options.kind} slots`, { timeout: timeout * 8 }, () => {
     const backend = options.create();
     const lender = backend.slots;
     after(async () => backend.dispose?.());
@@ -1360,6 +1360,29 @@ export async function slotConformance(options: SlotConformanceOptions): Promise<
       assert.equal((await command.run("true", { timeoutMs: 30_000 })).exitCode, 0);
       assert.ok(!(await backend.held(wait())).some((guest) => guest.ref === first!.ref && guest.owner), "the released slot is no box's");
     });
+
+    if (options.kind === "macos") {
+      it("a macos box's slot is never lent again: after its release an ios box gets a slot of its own", { timeout }, async () => {
+        if (!lender?.lends("ios")) return;
+        const macos = identity("macos");
+        const held = await backend.acquire(macos, await place(macos), recordingHooks().hooks, wait());
+        assert.equal((await backend.held(wait())).find((guest) => guest.ref === held.ref)?.owner?.kind, "macos", "the host holds the slot for a macos box");
+        await backend.release(held, releaseHooks().hooks, wait());
+        const ios = identity("ios");
+        const tier = await lender.offer("ios", null, wait());
+        assert.notEqual(tier.tier, "wait", `an ios slot is offered: ${tier.tier === "wait" ? tier.words : ""}`);
+        const taken = await lender.take(tier, ios, wait());
+        assert.ok(!("lost" in taken), `the take wins: ${"lost" in taken ? taken.lost : ""}`);
+        const next = await backend.acquire(ios, taken, recordingHooks().hooks, wait());
+        try {
+          assert.notEqual(next.ref, held.ref, "a new slot, not the macos box's");
+          const [was, now] = [placementOf({ guest: held }), placementOf({ guest: next })];
+          assert.ok(was.on === "slot" && now.on === "slot" && (was.generation !== now.generation || was.carried !== now.carried), "another generation");
+        } finally {
+          await backend.release(next, releaseHooks().hooks, wait());
+        }
+      });
+    }
 
     it(options.elastic ? "the last release deletes the host" : "the last release leaves the always-on host", { timeout }, async () => {
       assert.ok(second);

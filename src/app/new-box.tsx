@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import type { Contract, DesktopOnDemandView } from "../plugin/contract.ts";
 import type { MachineAccessProblem } from "../plugin/setup-offer.ts";
 import type { ImageOptionView, KindView, OfferRoom, OfferView, ProviderProfile, SizeView } from "../plugin/views.ts";
+import type { SlotKind } from "../core/device-host.ts";
 import { ProviderInfo, type Loaded } from "./provider-profile.tsx";
 import { message } from "./common.tsx";
 import { DESKTOP_BUILD_WORDS, estimate, JoinHelp } from "./first-run.tsx";
@@ -43,9 +44,23 @@ type Choice2 = string;
 
 type Placement = "shared" | "own";
 
-const PLACEMENTS: readonly { readonly id: Placement; readonly title: string; readonly words: string }[] = [
-  { id: "shared", title: "Shared", words: "Ready in seconds. No sudo or Homebrew installs. Other iOS boxes on the host share its cores and ports, and see its processes." },
-  { id: "own", title: "A VM of its own", words: "sudo, Homebrew, its own cores, ports and desktop. Takes one of the Mac's two VMs, so it can wait for one." },
+const PLACEMENTS: readonly { readonly id: Placement; readonly title: string; readonly words: Readonly<Record<SlotKind, string>> }[] = [
+  {
+    id: "shared",
+    title: "Shared",
+    words: {
+      ios: "Ready in seconds. No sudo or Homebrew installs. Other iOS boxes on the host share its cores and ports, and see its processes.",
+      macos: "Ready in seconds, for commands, builds and the iOS Simulator. No sudo, Homebrew installs, desktop or app windows. Other boxes on the host share its cores and ports, and see its processes.",
+    },
+  },
+  {
+    id: "own",
+    title: "A VM of its own",
+    words: {
+      ios: "sudo, Homebrew, its own cores, ports and desktop. Takes one of the Mac's two VMs, so it can wait for one.",
+      macos: "sudo, Homebrew, its own cores and ports. Takes one of the Mac's two VMs, so it can wait for one.",
+    },
+  },
 ];
 const CUSTOM: Choice2 = "custom";
 
@@ -275,6 +290,8 @@ export function NewBox({
   const placementByDefault: Placement = placementChoice?.shared && placementChoice.sizeNeedsDedicated ? "shared" : "own";
   const chosenPlacement: Placement | null = placementChoice ? (placements.some((option) => option.id === placement) ? placement! : placementByDefault) : null;
   const sharedChosen = chosenPlacement === "shared";
+  const ownAsksDedicated = placementChoice?.kind === "ios";
+  const placementAsked = chosenPlacement === "shared" ? ("shared" as const) : chosenPlacement === "own" && ownAsksDedicated ? ("dedicated" as const) : undefined;
   const chosenDevice = devices.length ? (device && devices.includes(device) ? device : devices[0]) : undefined;
   const systemOf = (system: { readonly os: string; readonly device?: string }) => system.device ?? system.os;
   const pickedSystem = picked.device ?? picked.os;
@@ -391,7 +408,7 @@ export function NewBox({
       const request: SizeRequest | undefined = size === CUSTOM ? (custom ?? undefined) : size === kind.defaultPreset ? undefined : { preset: size };
       const refused = buildsFirst
         ? await onDemand!.build(kind.id, request, machine && typedName ? typedName : undefined)
-        : await make(kind.id, sharedChosen ? undefined : request, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice, chosenPlacement === "own" ? "dedicated" : chosenPlacement === "shared" ? "shared" : undefined);
+        : await make(kind.id, sharedChosen ? undefined : request, machine && typedName ? typedName : undefined, sendOn, chosenImage, chosenDevice, placementAsked);
       setProblem(refused);
       if (!refused) {
         remember(`${pluginId}:${machine ? "new-machine" : "new-box"}`, { kind: kind.id, size, ...(Object.keys(edited).length ? { custom: edited } : {}) });
@@ -523,7 +540,7 @@ export function NewBox({
                         className={cn(rowClass(selected), !available && "cursor-default opacity-50 hover:bg-transparent")}
                       >
                         <span className="block text-xs font-medium text-foreground">{option.title}</span>
-                        <span className="mt-0.5 block text-2xs leading-snug text-muted-foreground">{available ? option.words : `${placementChoice.why ?? "Not available"}.`}</span>
+                        <span className="mt-0.5 block text-2xs leading-snug text-muted-foreground">{available ? option.words[placementChoice.kind] : `${placementChoice.why ?? "Not available"}.`}</span>
                       </button>
                     );
                   })}

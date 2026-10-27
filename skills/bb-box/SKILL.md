@@ -99,6 +99,16 @@ where it is built ahead, which its boxes claim at once (#440). The
   `memory_gib` or `disk_gib` for an ios box: a shared box has no size, and
   once shared ios boxes are the default, a size without it is refused.
   `box_status` says where the box is, on its Where line.
+- A `macos` box is a macOS VM of its own unless it asks for `shared: true`,
+  where `box_list` says so on the macos kind's line. A shared macos box is a
+  macOS user on a shared iOS host, ready in seconds, for commands, builds,
+  `simctl` and XCUITest runs, with its own files and keychain. It has no
+  sudo, Homebrew installs, desktop, app windows, screenshots, computer use
+  or `box_grant`, and its cores, ports and processes are shared: start
+  servers on its ports, from `BB_PORT_BASE`. It has no device of its own;
+  make one with `simctl create`. Leave `shared` out for a build that needs
+  the cores, sudo or `brew install`, or acquire `macos-desktop` for app
+  windows and macOS UI tests.
 - An `android` box is a Linux VM with one Android emulator device booted,
   a Pixel 8, Pixel Fold or Pixel Tablet, shown to the person in the panel.
   It has no desktop. `device` picks the model as for `ios`, and the device

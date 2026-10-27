@@ -1,7 +1,7 @@
 // The agent tools. Each result ends with "Next:" hints, and each refusal
 // says what to do instead, so an agent never has to guess.
 
-import { inSlot } from "../core/device-host.ts";
+import { inSlot, noDesktopRefusal, SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { toolsForPurposes } from "./purposes.ts";
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { createHash } from "node:crypto";
@@ -432,7 +432,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       shared: z
         .boolean()
         .optional()
-        .describe("For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. Only where a shared iOS host is set up; box_list says. macos boxes take no slot yet."),
+        .describe(
+          `For an ios box: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, Homebrew installs or app windows. For a macos box: ${SHARED_MACOS_WORDS}. Only where a shared iOS host is set up; box_list says. Without it a macos box is a VM of its own, which takes one of the Mac's two VMs.`,
+        ),
     }),
     async execute({ kind, size, cores, memory_gib, disk_gib, wait, on, image, device, slim, dedicated, shared }, { threadId, projectId, signal }) {
       try {
@@ -784,7 +786,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const { owner, box: found } = await app.resolve(id, ref, signal);
         const onDevice = recordsDevice(found);
         const hasDesktop = desktopDisplays(found.capabilities.displays).length > 0;
-        if (!onDevice && !hasDesktop) throw new BoxError("unsupported", `Box ${found.name} has no desktop to record.`);
+        if (!onDevice && !hasDesktop) throw new BoxError("unsupported", inSlot(found) ? noDesktopRefusal(found.name, found.kind) : `Box ${found.name} has no desktop to record.`);
         // On Windows both run in the desktop session: gdigrab reads the desktop it runs in, and the stop closes its window.
         const os = found.capabilities.os;
         const session = (os === "windows" || os === "macos") && hasDesktop ? ("desktop" as const) : undefined;

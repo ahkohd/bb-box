@@ -734,6 +734,11 @@ promised a place and the helper makes a slot for it: a new user, a device
 by `simctl create`, seeded, and its first boot. The Mac keeps
 `ios-hosts-ahead` slots ready, 1 by default, while it is not lent whole.
 
+A macos box asked for with `shared: true` takes a slot the same way, and
+the slot's device is deleted at the claim: a macOS user on the Mac for
+commands, builds and the simulator, with no sudo, Homebrew, console session
+or grants. Its release removes the slot as an ios box's does.
+
 A slot's release stops its user gently, removes it, and queues a sweep of
 every file its UID owns on the Data volume, as a shared Tart host's do. A
 slot's UID, from 80000, is never given again. The helper's `status`, read

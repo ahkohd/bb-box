@@ -429,8 +429,6 @@ export function sharedHostsOn(byDefault: boolean): SharedHosts {
   return { on: true, why: null, byDefault };
 }
 
-export const MACOS_SLOTS_LATER = "A macos box does not take a slot on a shared host yet. Leave shared out for a VM of its own.";
-
 export function slotModelRefusal(slotModel: string, asked: string): string {
   return `A shared ios box has the ${slotModel}, the model every slot is made with. Leave device out for it, or ask for dedicated: true for the ${asked}.`;
 }
@@ -451,20 +449,49 @@ export function sharedBoxWords(kind: string): string {
   return `A shared ${kind} box`;
 }
 
+function ownVmAsking(kind: string): string {
+  return kind === "macos" ? "acquire a macos box without shared for a VM of its own" : "ask for dedicated";
+}
+
 export function stopRefusal(kind: string): string {
-  return `${sharedBoxWords(kind)} cannot be stopped on its own: it shares its host with other boxes. Release it, or ask for dedicated.`;
+  return `${sharedBoxWords(kind)} cannot be stopped on its own: it shares its host with other boxes. Release it, or ${ownVmAsking(kind)}.`;
 }
 
 export function restartRefusal(kind: string): string {
-  return `${sharedBoxWords(kind)} cannot be restarted on its own: it shares its host with other boxes. Release it, or ask for dedicated.${kind === "ios" ? " box_device reboot reboots its device." : ""}`;
+  return `${sharedBoxWords(kind)} cannot be restarted on its own: it shares its host with other boxes. Release it, or ${ownVmAsking(kind)}.${kind === "ios" ? " box_device reboot reboots its device." : ""}`;
 }
 
 export function resizeRefusal(kind: string): string {
-  return `${sharedBoxWords(kind)} has no size of its own, so it cannot be resized. Release it, and ask for dedicated: true with a size.`;
+  const asking = kind === "macos" ? "acquire a macos box without shared, with a size" : "ask for dedicated: true with a size";
+  return `${sharedBoxWords(kind)} has no size of its own, so it cannot be resized. Release it, and ${asking}.`;
 }
 
 export function grantRefusal(kind: string): string {
-  return `${sharedBoxWords(kind)} has no console session, so there is nothing to grant macOS permissions to. Ask for dedicated: true for a VM of its own.`;
+  const asking = kind === "macos" ? "Acquire a macos box without shared for a VM of its own, or macos-desktop for one with a desktop." : "Ask for dedicated: true for a VM of its own.";
+  return `${sharedBoxWords(kind)} has no console session, so there is nothing to grant macOS permissions to. ${asking}`;
+}
+
+export function noDesktopRefusal(name: string, kind: string): string {
+  const asking = kind === "macos" ? "acquire macos-desktop for a VM with a desktop" : "ask for dedicated: true for a VM with a desktop";
+  return `Box ${name} is ${sharedBoxWords(kind).toLowerCase()}, a macOS user on a shared iOS host with no console session: it has no desktop, so nothing it runs can open a window, take a screenshot or be driven by the computer tools. Run commands without desktop, or ${asking}.`;
+}
+
+export function rootRefusalWords(kind: string): string {
+  const asking = kind === "macos" ? "Acquire a macos box without shared for a VM of its own" : "Ask for dedicated: true for a VM of its own";
+  return `no, the box user cannot use sudo or brew install on a shared host. ${asking}`;
+}
+
+export const SHARED_MACOS_DESKTOP_WORDS = "none. A shared macos box has no console session: no app windows, screenshots, computer use or macOS permission grants. Acquire a macos box without shared for a VM of its own";
+
+export const SHARED_MACOS_WORDS =
+  "a macOS user on a Mac or VM shared with ios boxes, ready in seconds, for commands, builds and the iOS Simulator, with its own files and keychain, but no sudo, Homebrew installs, desktop or app windows, and cores, ports and processes shared";
+
+export function sharedMacosHint(): string {
+  return ` Or ask for shared: true: ${SHARED_MACOS_WORDS}.`;
+}
+
+export function sizeRefusal(kind: string): string {
+  return kind === "macos" ? "A shared macos box has no size of its own. Leave shared out for a VM of its own at that size." : SIZE_NEEDS_DEDICATED;
 }
 
 export const SIZE_NEEDS_DEDICATED = "A shared ios box has no size of its own. Ask for dedicated: true with a size.";

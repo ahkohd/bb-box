@@ -1190,3 +1190,77 @@ another thread's box throughout.
 - **Slot generations on the pool's Mac never restart.** After slot 9999
   it lends no slot until its slots are set up again, which 064's ranges
   imply.
+
+## Unit 8: `macos` boxes in slots
+
+Built on 27 October 2026. The host's helper is unchanged: its macOS lend,
+and F-5's reset of a failed one, were already there.
+
+### What it adds
+
+- **`shared: true` on a `macos` acquire takes a slot** on a shared iOS
+  host, by the same placement as an ios box: the pool's Mac first, then a
+  serving Tart host, then a slot being made, then a new Tart host. Both
+  lenders lend `macos` where they lend `ios`. The claim names the box's
+  kind, and the helper deletes the slot's device and its device server's
+  daemon before it answers. A host with a `macos` box in it stays up for it
+  as for an ios box.
+- **A `macos` slot is never lent back as an ios slot.** Its release removes
+  the slot's user and queues its sweep, as an ios slot's does; a later ios
+  claim gets another slot, made with a device of its own.
+- **A `macos` box without `shared` is a VM of its own,** as before. Where a
+  host lends slots and no VM has room, the refusal keeps the backend's
+  words and adds what `shared: true` gives.
+- **Words for a box in a slot by its kind.** `dedicated` is for ios boxes
+  only, so every refusal of a shared `macos` box names what to ask for
+  instead: a `macos` box without `shared` for a VM of its own, or
+  `macos-desktop` for a desktop. A stop, a start, a restart, a resize and a
+  grant are refused in those words, and so are `box_run` with `desktop`,
+  `box_record` and the computer tools, each saying the box has no console
+  session. box_status's Root line says so, and a new Desktop line: "none. A
+  shared macos box has no console session: no app windows, screenshots,
+  computer use or macOS permission grants." A size with `shared` is refused:
+  "A shared macos box has no size of its own. Leave shared out for a VM of
+  its own at that size."
+- **box_list's `macos` line** says what `shared: true` gives where a host
+  lends slots, and nothing of it where none does.
+- **A refresh of capabilities keeps a slot box's slot capabilities.**
+  Before, the registry's refresh gave any box its kind's capabilities once
+  its backend said the guest was as offered, which Tart says of every ios
+  guest once its devices are known: a slot box could get root and the
+  host's desktop back in its record. Found while building this unit.
+- **The New box form** offers the Machine choice for `macos` once a host
+  lends slots, with words of its own: Shared, "Ready in seconds, for
+  commands, builds and the iOS Simulator. No sudo, Homebrew installs,
+  desktop or app windows. Other boxes on the host share its cores and
+  ports, and see its processes."; and A VM of its own, chosen first. Shared
+  sends `shared` and no size; A VM of its own sends neither `shared` nor
+  `dedicated`.
+- **`box_acquire`'s and `bb box acquire`'s `shared`** say what it gives a
+  `macos` box. The skill and the Tart and pool guides say it too.
+- **Conformance:** `slotConformance` runs for `macos` on both fakes, in
+  files of their own, with a case for `macos`: a released `macos` slot is
+  not the slot a later ios box gets. `npm run conformance` runs it for any
+  backend that lends `macos` slots.
+
+### How it was checked, before the live check
+
+On a Linux box:
+
+| Check | Result |
+| --- | --- |
+| The registry, on the fake backend lending ios and macos slots | a `macos` box with `shared: true` placed in a slot, with no root, desktop, computer use or device; box_status's Where, Root and Desktop lines; a stop, a resize, a restart, a grant and `box_run` with `desktop` refused in their words, none naming `dedicated`; commands run; a size with `shared` refused; `dedicated` on `macos` refused; without `shared`, a VM of its own; the host deleted with its only `macos` box |
+| No room for a `macos` VM | refused with the backend's words and what `shared: true` gives; an ios box's refusal names no `macos` slot; with no host lending slots, no hint, and no Machine choice |
+| A refresh of capabilities | an ios and a `macos` slot box keep no root and no desktop |
+| The helper, on stub macOS tools | a `macos` claim leaves its user no device and no device daemon, and `status` names its kind; its release removes the user; the slot is refused to an ios claim while it resets; the next ios claim gets another slot with a device of its own; once swept, only that slot and the one keeping the host are left |
+| Conformance on the fakes | Tart and the pool, `macos`: two boxes share a host, the refusals, a release leaving the other answering, the `macos` slot not lent again, and the last release |
+| The form, in vitest | for `macos` with a host lending slots: both choices with their words, A VM of its own chosen; ArrowUp chooses Shared and moves the focus, the size goes, Create sends `acquire macos shared`; then ArrowDown back and Create sends `acquire macos`. With no host lending slots, no Machine choice |
+| The suite | from a clone of the bundle on origin/main at 4e425d92, on a Linux box: tsc clean; the reference check passed; the node suite 2,158 passed, 0 failed, 288 skipped, the docs test among them; vitest 222 passed |
+
+### The live check
+
+Waits for the lead's deploy: through production BB, a `macos` box with
+`shared: true` placed in a slot and its words read back, one without it
+waiting for a VM, a release resetting the slot, and the next ios claim on
+that host getting a fresh slot with a device; then the New box form's
+`macos` choice in the production panel at 360 px and by keyboard.

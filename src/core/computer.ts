@@ -11,6 +11,7 @@ import type { ByteChannel, GuestOs } from "../transports/types.ts";
 import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { BoxError, type BoxRecord } from "./boxes.ts";
 import type { Owner } from "./control.ts";
+import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 
@@ -1489,6 +1490,9 @@ export class Computer {
   /** Refuses a box with no desktop the computer tools can drive. */
   #drivable(box: BoxRecord): void {
     const driver = box.capabilities.computerUse;
+    if (!driver && inSlot(box) && box.kind === "macos") {
+      throw new ComputerError("unsupported", `Box ${box.name} is ${sharedBoxWords(box.kind).toLowerCase()}, a macOS user on a shared iOS host with no console session, so it has no desktop the computer tools can drive.`, "Use box_run in this box, or acquire macos-desktop for a Mac with a desktop and computer use.");
+    }
     if (!driver) {
       throw new ComputerError("unsupported", `Box ${box.name} has no computer use: its kind, ${box.kind}, has no desktop the computer tools can drive.`, "Acquire a desktop kind from box_list for computer use, or use box_run in this box.");
     }

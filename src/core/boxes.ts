@@ -61,14 +61,16 @@ import {
   inSlot,
   isSlotKind,
   lostWords,
-  MACOS_SLOTS_LATER,
+  noDesktopRefusal,
   resizeRefusal,
   restartRefusal,
   sharedHostsOn,
+  sharedMacosHint,
   sharedRefusal,
   SHARED_HOSTS_OFF,
   SHARED_IOS_BY_DEFAULT,
   SIZE_NEEDS_DEDICATED,
+  sizeRefusal,
   slotCapabilities,
   stopRefusal,
   TAKE_TRIES,
@@ -869,17 +871,26 @@ export class Boxes {
     if (input.shared !== undefined && !isSlotKind(kind)) throw new BoxError("unsupported", `shared is only for ios and macos boxes, which can be a macOS user on a shared iOS host. A ${kind} box cannot.`);
     if (input.dedicated === true && input.shared === true) throw new BoxError("unsupported", "Ask for dedicated or shared, not both: dedicated is a VM of its own, shared a macOS user on a host shared with other boxes.");
     if (input.shared === true && isSlotKind(kind) && !lendersOf(offers, kind).length) {
-      throw new BoxError("no_capacity", kind === "macos" && this.sharedHosts().on ? MACOS_SLOTS_LATER : sharedRefusal(kind));
+      throw new BoxError("no_capacity", sharedRefusal(kind));
     }
     if (input.shared === true && impliedOwnVm) throw new BoxError("unsupported", "This box is a VM of its own, as a spare, one of your machines, a box from a build or one with a project's image is, so it cannot be shared.");
-    if (input.shared === true && sizeAsked(input.size)) throw new BoxError("invalid_size", SIZE_NEEDS_DEDICATED);
+    if (input.shared === true && sizeAsked(input.size)) throw new BoxError("invalid_size", sizeRefusal(kind));
     if (kind === "ios" && this.sharedHosts().byDefault && input.dedicated !== true && !impliedOwnVm && sizeAsked(input.size)) throw new BoxError("invalid_size", SIZE_NEEDS_DEDICATED);
   }
 
-  sharedHosts(): SharedHosts {
-    const byDefault = this.#deps.sharedIosByDefault ?? SHARED_IOS_BY_DEFAULT;
-    const offers = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === "ios");
-    return lendersOf(offers, "ios").length ? sharedHostsOn(byDefault) : { ...SHARED_HOSTS_OFF, byDefault };
+  sharedHosts(kind: SlotKind = "ios"): SharedHosts {
+    const byDefault = kind === "ios" && (this.#deps.sharedIosByDefault ?? SHARED_IOS_BY_DEFAULT);
+    const offers = this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === kind);
+    return lendersOf(offers, kind).length ? sharedHostsOn(byDefault) : { ...SHARED_HOSTS_OFF, byDefault };
+  }
+
+  sharedHostsByKind(): Readonly<Record<SlotKind, SharedHosts>> {
+    return { ios: this.sharedHosts("ios"), macos: this.sharedHosts("macos") };
+  }
+
+  #withSharedHint(error: unknown, kind: string, shared: boolean | undefined, impliedOwnVm: boolean, offers: readonly OfferedKind[]): unknown {
+    if (!(error instanceof BoxError) || error.code !== "no_capacity" || kind !== "macos" || shared !== undefined || impliedOwnVm || !lendersOf(offers, "macos").length) return error;
+    return new BoxError("no_capacity", `${error.message}${sharedMacosHint()}`);
   }
 
   async #placeInSlot(offers: readonly OfferedKind[], kind: SlotKind, model: string | null, box: BoxIdentity): Promise<{ readonly chosen: OfferedKind; readonly guest: Guest }> {
@@ -997,7 +1008,8 @@ export class Boxes {
       throw new BoxError("not_found", `There is no image ${input.image} for ${wanted} boxes. box_list names each kind's images; "standard" is bb-box's own.`);
     }
     // Spares left over from a kind that keeps none now are released, not claimed. A project's image's box claims a spare of its image's current build (#440).
-    this.#ownVmAsked(input, wanted, input.threadId === SPARES || yours || role === "machine" || tried !== null || image !== null, offered);
+    const impliedOwnVm = input.threadId === SPARES || yours || role === "machine" || tried !== null || image !== null;
+    this.#ownVmAsked(input, wanted, impliedOwnVm, offered);
     const inSlotAsked = input.shared === true && isSlotKind(wanted);
     const claims = claimsSpare && !tried && !inSlotAsked && (image !== null || (general.spares[wanted] ?? 0) > 0);
     const sized = chooseSize(wanted, kindSizes(wanted, general.sizes), input.size);
@@ -1022,7 +1034,9 @@ export class Boxes {
         const slot = inSlotAsked
           ? await this.#placeInSlot(offered, wanted as SlotKind, askedDevice, { boxId: id, threadId: input.threadId, name, kind: wanted, createdAt, size: sized.size })
           : null;
-        const chosen = slot ? slot.chosen : await this.#place({ threadId: input.threadId, named }, offered, withDevice, sized.size, features);
+        const chosen = slot ? slot.chosen : await this.#place({ threadId: input.threadId, named }, offered, withDevice, sized.size, features).catch((error: unknown) => {
+          throw this.#withSharedHint(error, wanted, input.shared, impliedOwnVm, offered);
+        });
         if (tried && !chosen.backend.images?.startsFrom) throw new BoxError("unsupported", `${chosen.backend.label} starts no box from a build.`);
         // A current baked build of the image on the backend chosen starts the box with it (049); otherwise its script runs at start.
         const baked =
@@ -1306,9 +1320,10 @@ export class Boxes {
       // A box asked for by an alias keeps what it was made with when the offer now lacks the alias's features (041).
       if (!hasFeatures(kind.capabilities, box.requires)) continue;
       const requires = [...new Set([...kind.requires, ...box.requires])];
-      if (JSON.stringify(box.capabilities) === JSON.stringify(kind.capabilities) && JSON.stringify(box.requires) === JSON.stringify(requires)) continue;
+      const capabilities = inSlot(box) ? slotCapabilities(kind.capabilities) : kind.capabilities;
+      if (JSON.stringify(box.capabilities) === JSON.stringify(capabilities) && JSON.stringify(box.requires) === JSON.stringify(requires)) continue;
       if (backend.asOffered && !(await backend.asOffered(box.guest, kind.id, box.createdAt, signal).catch((error) => (this.#deps.logError("capabilities", error), false)))) continue;
-      const updated = await this.update(box, () => ({ capabilities: kind.capabilities, requires, kindLabel: kind.label })).catch((error) => {
+      const updated = await this.update(box, () => ({ capabilities, requires, kindLabel: kind.label })).catch((error) => {
         this.#deps.logError("capabilities", error);
         return null;
       });
@@ -2462,7 +2477,7 @@ export class Boxes {
     const box = options.waitForEnrolment === false ? found : await this.enrolled(found, options.signal);
     const capabilities = box.capabilities;
     if (options.session === "desktop" && !desktopDisplays(capabilities.displays).length) {
-      throw new BoxError("unsupported", `Box ${box.name} has no desktop. Run the command without session "desktop", or use a desktop box.`);
+      throw new BoxError("unsupported", inSlot(box) ? noDesktopRefusal(box.name, box.kind) : `Box ${box.name} has no desktop. Run the command without session "desktop", or use a desktop box.`);
     }
     // A transport that already runs commands in the desktop session needs no wrapper.
     const session = options.session === "desktop" && !capabilities.command?.inDesktopSession ? "desktop" : "default";
