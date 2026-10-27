@@ -347,6 +347,8 @@ if [ "$xcode" = yes ] && [ -d "$here/../tart/ios" ]; then
   echo "Setting up iOS slots (064): idb_companion, the slimming lists and a seed, and the slots' helper. Making the seed takes a few minutes the first time."
   if ios_said=$(sh "$here/mac-ios.sh" "$here" "$admin"); then
     ios_slots=yes
+    ios_warning=$(printf '%s\n' "$ios_said" | sed -n 's/^warning=//p')
+    [ -z "$ios_warning" ] || warn "$ios_warning"
   else
     warn "iOS slots are not set up, so the Mac lends no ios box: mac-ios.sh says why above. Fix it, then run setup-mac.sh again."
   fi

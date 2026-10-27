@@ -232,8 +232,17 @@ test("mac-ios.sh installs idb_companion from its pin, the slots' helper and home
   assert.match(host.file(`${HOST}/closed`)!, /^since=/, "closed until bb-box opens it");
   assert.match(host.file(`${HOST}/settings`)!, /^most=12\nahead=1\nresetting-most=4\ndisk-reserve-gib=40\n/);
 
+  assert.ok(!result.stdout.includes("warning="), "no sshd on the fake Mac, so nothing to warn of");
+
+  const sshd = join(host.root, "../bin/sshd");
+  writeFileSync(sshd, "#!/bin/sh\nprintf 'port 22\\nallowusers operator@192.0.2.9\\nallowusers bbbox-admin\\nallowusers bbx-*\\n'\n", { mode: 0o755 });
   const again = run();
   assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /\nwarning=sshd lets only some users log in, with AllowUsers or AllowGroups, and no slot user, bbd-\*, so no ios box can reach its slot\. Add bbd-\* beside bbx-\* to AllowUsers/);
+  writeFileSync(sshd, "#!/bin/sh\nprintf 'allowusers bbbox-admin\\nallowusers bbx-*\\nallowusers bbd-*\\n'\n", { mode: 0o755 });
+  assert.ok(!run().stdout.includes("warning="), "bbd-* allowed");
+  writeFileSync(sshd, "#!/bin/sh\nprintf 'allowgroups com.apple.access_ssh\\n'\n", { mode: 0o755 });
+  assert.ok(!run().stdout.includes("warning="), "slot users join com.apple.access_ssh");
   assert.match(again.stderr, /kept ios-27\.0-24A434's seed, which has every label off/);
   assert.equal(host.calls().filter((line) => line.startsWith("curl")).length, 1, "idb_companion at its pin is kept");
 

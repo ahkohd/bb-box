@@ -117,6 +117,23 @@ make_seed() {
   [ "$made" = yes ] || die "the seed for $list did not get all of its $(grep -c . "$ios/slim/$list.txt") labels off"
 }
 
+sshd_refuses_slots() {
+  command -v sshd >/dev/null 2>&1 || return 1
+  settings=$(sshd -T 2>/dev/null) || return 1
+  users=$(printf '%s\n' "$settings" | awk '$1 == "allowusers" { for (i = 2; i <= NF; i++) print $i }')
+  groups=$(printf '%s\n' "$settings" | awk '$1 == "allowgroups" { for (i = 2; i <= NF; i++) print $i }')
+  [ -n "$users$groups" ] || return 1
+  set -f
+  for pattern in $users; do
+    case bbd-1 in ${pattern%%@*}) set +f; return 1 ;; esac
+  done
+  for group in $groups; do
+    case $group in _developer | com.apple.access_ssh | staff | localaccounts | everyone) set +f; return 1 ;; esac
+  done
+  set +f
+  return 0
+}
+
 install_companion
 
 step "installing device-host, its held ports' program and the slots' home"
@@ -148,3 +165,6 @@ step "writing device-host's daemons and setting it up as a kept host, closed unt
 /bin/sh "$ROOT$helper" install </dev/null >/dev/null
 printf 'kept=yes\nmost=12\nahead=1\nresetting-most=4\ndisk-reserve-gib=40\n' | /bin/sh "$ROOT$helper" init >/dev/null
 echo "ios=$os $build $list companion=$idb_version"
+if sshd_refuses_slots; then
+  echo "warning=sshd lets only some users log in, with AllowUsers or AllowGroups, and no slot user, bbd-*, so no ios box can reach its slot. Add bbd-* beside bbx-* to AllowUsers in /etc/ssh/sshd_config or /etc/ssh/sshd_config.d; new connections read it."
+fi

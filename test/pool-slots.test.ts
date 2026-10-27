@@ -104,6 +104,22 @@ describe("the SSH host pool's Mac lends iOS slots (064 unit 5)", { timeout: 300_
   });
 });
 
+describe("a slot acquire that fails", { timeout: 120_000 }, () => {
+  it("gives back the promise it was placed with, as the registry expects of a backend", async () => {
+    const pool = fakePoolMac();
+    const backend = pool.backend();
+    await backend.members(wait());
+    const box = identity("ios");
+    const offer = await backend.slots.offer("ios", null, wait());
+    const taken = await backend.slots.take(offer, box, wait());
+    assert.ok(!("lost" in taken));
+    assert.equal(pool.mac.status().lines.filter((line) => line.startsWith(`promise=${box.boxId}`)).length, 1);
+    pool.mac.flag("simctl-create-fails");
+    await assert.rejects(backend.acquire(box, taken, recordingHooks().hooks, wait()), /could not make an iOS slot/);
+    assert.equal(pool.mac.status().lines.filter((line) => line.startsWith(`promise=${box.boxId}`)).length, 0, "the promise is given back");
+  });
+});
+
 describe("a pool Mac whose line does not list ios", { timeout: 120_000 }, () => {
   it("lends no slot, and the upkeep closes slots left open with nothing held", async () => {
     const pool = fakePoolMac({ kinds: "macos,macos-desktop" });
