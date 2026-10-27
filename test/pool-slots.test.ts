@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { placementOf, placementWords } from "../src/core/device-host.ts";
-import { poolSlotOf } from "../src/backends/ssh-pool/slots.ts";
+import { poolSlotOf, sweepWords } from "../src/backends/ssh-pool/slots.ts";
 import { offerChecks } from "../src/backends/index.ts";
 import { identity, recordingHooks, releaseHooks, sizeOf } from "./conformance/suite.ts";
 import { fakePoolMac } from "./fake-pool-mac.ts";
@@ -69,7 +69,7 @@ describe("the SSH host pool's Mac lends iOS slots (064 unit 5)", { timeout: 300_
     assert.equal(await backend.power(guest, wait()), null);
     await pool.mac.until("the released slot swept", () => pool.mac.status().values.get("sweeping") === "0");
     const swept = (await backend.doctor(wait())).checks.find((check) => check.id === "machine.mac-1.slots");
-    assert.match(swept!.detail, /Its last sweeps: UID 80001: \d+ paths? found, 0 left, in \d+ s\./);
+    assert.match(swept!.detail, /Its last sweeps: of UID 80001, \d+ paths? found and 0 left, in \d+ s\./);
     const free = await backend.capacity("macos-desktop", sizeOf("macos-desktop"), [], wait());
     assert.equal(free.ok, true, free.message ?? "");
   });
@@ -101,6 +101,14 @@ describe("the SSH host pool's Mac lends iOS slots (064 unit 5)", { timeout: 300_
     const vm = { ...ios, slotsOnly: undefined, capabilities: { ...ios.capabilities, displays: [{ id: "desktop", protocol: "rfb" as const, resizable: false }, ...ios.capabilities.displays] } };
     const checks = offerChecks([{ kind: vm, backend: { ...backend, label: "Tart" } as never }, { kind: ios, backend }]);
     assert.deepEqual(checks.map((check) => check.status), ["ok"]);
+  });
+});
+
+describe("the doctor's words for the slots' sweeps", () => {
+  it("give each pass once, with the UIDs it swept", () => {
+    const sweep = (uid: number, inPass: number, found: number, left: number, seconds: number) => ({ uid, uidsInPass: inPass, found, left, seconds, at: 1 });
+    const status = { sweeps: [sweep(80001, 1, 8, 0, 46), sweep(80002, 3, 38, 0, 36), sweep(80003, 3, 38, 0, 36), sweep(80004, 3, 38, 0, 36), sweep(80005, 1, 9, 1, 50)] } as unknown as Parameters<typeof sweepWords>[0];
+    assert.equal(sweepWords(status), " Its last sweeps: of UID 80001, 8 paths found and 0 left, in 46 s; of UIDs 80002, 80003 and 80004, 38 paths found and 0 left, in 36 s; of UID 80005, 9 paths found and 1 left, in 50 s. A sweep that leaves a path needs the helper's Full Disk Access.");
   });
 });
 

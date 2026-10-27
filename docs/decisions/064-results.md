@@ -1161,18 +1161,49 @@ installed and initialised. Times are wall-clock in the VM.
 
 ### The live check on the pool's Mac
 
-Not run yet. It needs the Mac free of whole-Mac boxes, and the lead to run
-the setup on it and deploy this unit. The pool's Mac was lent whole to
-another thread's box throughout.
+Through production BB on 27 October 2026, on main 23e94b9 and then this
+branch's doctor words, with `ios` on the pool Mac's line. The pool's Mac is
+the M5 Max with 18 cores and 36 GiB, macOS 27.0.1, Xcode 27.0, iOS 27.0
+(24A434), idb_companion 1.7.7. Its slots were set up with the iOS-only
+step in the pool's guide, not `setup-mac.sh`. Boxes were acquired with
+`bb box acquire ios --shared` from this thread. Times are box_acquire's
+own timings. The doctor's `iOS slots` line gives the slots' load and
+sweeps from the helper's status, as root.
+
+| Check | Result |
+| --- | --- |
+| 12 slots made and held | the first claimed the ready spare: ready in 5.0 s. The next 11 one after another, each claiming the spare made after the one before: ready in 10.3 to 26.4 s. Slots 1 to 12 of 12, users `bbd-4` to `bbd-15`, ports 20000 to 21199, one booted iPhone 18 Pro each. The doctor: "12 held, 0 ready, 0 making, 0 sweeping, of 12" |
+| 12 held, idle | each slot 0.00 to 0.01 cores, a footprint of 1.4 to 1.9 GiB, a home of 0.0 to 0.4 GiB. The Mac 94.6% idle over 3 s by `top`; `memory_pressure` 78% free; 293 GiB of disk free |
+| Between two slots | as `bbd-15`: `bbd-4`'s home refused, its process not signalled, a file it left readable in `/tmp` readable, 127.0.0.1:8081 answered with the held ports' words |
+| A whole box while slots are held | `bb box acquire macos-desktop --on "SSH host pool"` refused: "The pool's Mac mac-1 is lending iOS slots (12 held). It is lent whole again when they are released." A `macos` box earlier, with 1 held, the same words with "(1 held)" |
+| Releases | one slot box in 10 s; the other 11 together in 17 s |
+| Lent whole once they end | the same `macos-desktop` box: a claim of 12.6 s, which removed the ready spare first; ready in 13.9 s. A `macos` box earlier: a claim of 9.0 s |
+| A reset leaves nothing | one slot box planted a file in `/tmp`, `/private/var/tmp` and `/Users/Shared`, a crontab and a process that ignores SIGTERM. From the whole box, after the 12 releases: no process of a slot UID, none of the planted files, no `bbd-` user or home, 8081 free. 48 entries in `/private/var/tmp` and 12 folders in `/private/var/folders` of slot UIDs were left to the sweep queue, and gone 91 s later |
+| H11 | every sweep the doctor showed left nothing: passes of 1 to 4 UIDs found 8 to 38 paths and left 0, in 33 to 51 s; after the H1 boxes' releases, passes found 30 paths and left 0, in 34 s. The helper has Full Disk Access for remote users |
+| The whole box's release | 75 s and 35 s, two releases, each stopping the box user gently, as helper version 2 does; the next box user signed in, and the slots reopened at the next upkeep |
+| H1: ready claims | 10 claims, 50 s apart so the spare was made again: ready in 4.9 to 8.9 s, median 5.35 s; BB machines enrolled 6.8 to 11.7 s after. The first, opening the closed Mac and making its slot, 27.2 s |
+| A slot's device | `box_status` of a claimed box read its device live: booted, upright, 1206x2622, and "On this Mac: 0 of about 6 full-size streams' room in use" |
+
+### Faults the live check found, and their fixes
+
+| Found | Fix |
+| --- | --- |
+| The pool Mac's sshd had `AllowUsers ... bbbox-admin bbx-*`, so SSH as a slot user never answered and the first box failed after 300 s | a host step: the owner added `bbd-*`. PR 1187: the error, the pool's guide and `mac-ios.sh` name it, and `mac-ios.sh` warns when sshd refuses slot users |
+| That failed box's slot stayed held after the box was released, until the sweep restored the box and a second release freed it: the slot acquire did not give back what it took when it failed | PR 1187: a failed slot acquire gives back its slot or promise |
+| H11 had no reading but as root on the Mac | PR 1185: the doctor's line gives each held slot's load and the last sweeps |
+| The doctor gave a sweep pass's paths found once for each UID in it, and no sweeps while the Mac is closed or lent whole | in this commit: once a pass, with its UIDs, and in every state |
 
 ### What limits these checks
 
-- **A Tart VM stood in for the pool's Mac.** It has the same macOS,
-  Xcode and runtime, but not the pool's console user, Full Disk Access
-  for remote users, or its encoder. A whole box's release and reset could
-  not run there, as a person was signed in at its console. So the gentle
-  stop of a whole box user is checked only on the fakes.
-- **H1 and H11 wait for the pool's Mac.**
+- **H1's first frame in the panel was not timed.** The ready and
+  enrolment times are box_acquire's and BB's; the panel's first frame
+  needs the owner's browser, as unit 4 timed it. A slot's device answered
+  `box_status` at once.
+- **The 12 slots were idle.** They booted their devices and stayed on the
+  Home Screen; nothing streamed or built. 064's POOL measured twelve busy.
+- **The gentle stop of a whole box user** ran on two releases, neither
+  with a simulator of the box user's booted.
+- **One Mac.** The pool has one Mac that lends slots.
 
 ### Deviations from 064
 
