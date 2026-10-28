@@ -408,7 +408,9 @@ export class IosHosts implements SlotLender {
   }
 
   #leavingOf(surveyed: readonly Surveyed[]): Set<string> {
-    return new Set([...this.#deletions.keys(), ...surveyed.flatMap(({ owner, status }) => (status?.deletingSince != null ? [owner.vm] : []))]);
+    const deleting = surveyed.flatMap(({ owner, status }) => (status?.deletingSince != null ? [owner.vm] : []));
+    const failedAndStopped = surveyed.flatMap(({ owner, running }) => (owner.phase === "failed" && !running ? [owner.vm] : []));
+    return new Set([...this.#deletions.keys(), ...deleting, ...failedAndStopped]);
   }
 
   async #gone(mac: TartHost, leaving: ReadonlySet<string>, signal: AbortSignal): Promise<void> {
@@ -676,7 +678,7 @@ export class IosHosts implements SlotLender {
       }
       const words = error instanceof Error ? error.message : String(error);
       await this.#access.run(mac, hostPhaseScript(vm, this.#access.installId, "failed", words), { signal }).catch(() => undefined);
-      await this.#access.deleteVm(mac, vm, signal).catch((cause) => this.#access.logError(`delete shared iOS host ${vm}`, cause));
+      await this.#tracked(vm, this.#access.deleteVm(mac, vm, signal)).catch((cause) => this.#access.logError(`delete shared iOS host ${vm}`, cause));
       throw new Error(`The shared iOS host ${vm} on ${mac.name} did not start: ${words}`);
     } finally {
       clearInterval(beat);
@@ -709,15 +711,18 @@ export class IosHosts implements SlotLender {
     return true;
   }
 
-  async #deleteHost(mac: TartHost, vm: string, signal?: AbortSignal): Promise<void> {
-    const began = performance.now();
-    const deletion = this.#access.deleteVm(mac, vm, signal);
+  async #tracked(vm: string, deletion: Promise<void>): Promise<void> {
     this.#deletions.set(vm, deletion);
     try {
       await deletion;
     } finally {
-      this.#deletions.delete(vm);
+      if (this.#deletions.get(vm) === deletion) this.#deletions.delete(vm);
     }
+  }
+
+  async #deleteHost(mac: TartHost, vm: string, signal?: AbortSignal): Promise<void> {
+    const began = performance.now();
+    await this.#tracked(vm, this.#access.deleteVm(mac, vm, signal));
     this.#access.log(`Deleted shared iOS host ${vm} on ${mac.name}, as its last box went, in ${((performance.now() - began) / 1000).toFixed(1)} s.`);
   }
 

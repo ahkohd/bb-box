@@ -20,6 +20,10 @@
 //   reads, while ~/.fake-tart-list-fails exists; `tart get` of a VM whose
 //   config.json is gone fails so too, and of the VM ~/.fake-tart-get-fails
 //   names fails with what it holds after the name.
+// - `tart run` of a macOS VM fails as Virtualization's internal error does
+//   while ~/.fake-tart-run-fails holds a count above 0, taking one from it.
+// - `tart delete` waits while ~/.fake-tart-delete-waits exists, once as
+//   many deletes as it holds have gone through, taking one from it for each.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -111,6 +115,11 @@ function tart() {
       const others = names().filter((other) => running(other) && config(other).os !== "linux");
       const elsewhere = existsSync(join(home, ".fake-other-macos-vms")) ? Number(readFileSync(join(home, ".fake-other-macos-vms"), "utf8")) : 0;
       if (!linux && others.length + elsewhere >= limit) fail(`The number of VMs exceeds the system limit (other running VMs: ${others.join(", ") || "another app's"})`);
+      const failsLeft = join(home, ".fake-tart-run-fails");
+      if (!linux && existsSync(failsLeft) && Number(readFileSync(failsLeft, "utf8")) > 0) {
+        writeFileSync(failsLeft, String(Number(readFileSync(failsLeft, "utf8")) - 1));
+        fail('Error Domain=VZErrorDomain Code=1 "The virtual machine failed to start." UserInfo={NSLocalizedFailure=Internal Virtualization error., NSLocalizedFailureReason=The virtual machine failed to start.}');
+      }
       if (existsSync(saved) && readFileSync(saved, "utf8") === "corrupt") {
         console.log("restoring VM state from a snapshot...");
         fail('Error Domain=VZErrorDomain Code=12 "The virtual machine failed to restore with error \u201cinvalid argument\u201d."');
@@ -168,6 +177,17 @@ function tart() {
       const [name] = rest;
       if (!existsSync(dir(name))) fail(`the specified VM "${name}" does not exist`);
       if (running(name)) fail(`VM "${name}" is running`);
+      const waits = join(home, ".fake-tart-delete-waits");
+      const passing = existsSync(waits) ? Number(readFileSync(waits, "utf8") || 0) : 0;
+      if (passing > 0) writeFileSync(waits, String(passing - 1));
+      else if (existsSync(waits)) {
+        const check = setInterval(() => {
+          if (existsSync(waits)) return;
+          clearInterval(check);
+          rmSync(dir(name), { recursive: true, force: true });
+        }, 20);
+        return;
+      }
       return rmSync(dir(name), { recursive: true, force: true });
     }
     default:

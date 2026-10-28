@@ -475,3 +475,24 @@ test("with two hosts a Mac, a host on an older build stops lending once a host o
   assert.equal(full.tier, "ready", "the Mac runs two macOS VMs, so no host on the new build can start");
   await backend.release(one, releasing, signal());
 });
+
+test("a host whose VM fails to start fails its boxes, and while its VM is deleted a new host can start in its place, rather than the Mac seeming full (F-9, H8)", async () => {
+  const { backend, mac, hosts } = setup();
+  anotherMacosVm(mac);
+  writeFileSync(join(mac, ".fake-tart-run-fails"), "1");
+  const waits = join(mac, ".fake-tart-delete-waits");
+  writeFileSync(waits, "");
+  const first = identity();
+  const { guest } = await place(backend, first);
+  const vm = slotRefOf(guest)!.vm;
+  const acquired = backend.acquire(first, guest, hooks().hooks, signal()).catch((error: unknown) => error);
+  const deleting = () => readFileSync(join(mac, ".fake-tart-log"), "utf8").includes(JSON.stringify(["tart", "delete", vm]));
+  await until(() => /^host-state=failed$/m.test(readFileSync(join(mac, ".bb-box", "tart", "owners", vm), "utf8")) && deleting(), "the host fails and its VM is being deleted");
+  const meanwhile = await backend.slots!.offer("ios", null, signal());
+  assert.deepEqual(meanwhile, { tier: "new-host", where: "mac1", waitMs: 55_000, cost: "vm-slot" }, "the failed host's VM is leaving the Mac");
+  rmSync(waits);
+  const failed = await acquired;
+  assert.ok(failed instanceof Error);
+  assert.match(failed.message, /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not start: Tart could not start bb-box-host-[0-9a-f]+ on mac1: Error Domain=VZErrorDomain Code=1 /);
+  assert.deepEqual(hosts(), []);
+});
