@@ -336,10 +336,12 @@ its boxes and takes no new ones. The backend's own fields:
 | `linux-desktop-image` | empty | The image of `linux-arm64-desktop-cpu` boxes, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
 | `ios-image` | empty | The iOS image, such as `bb-box-ios`, which `prepare-ios-image.sh` builds on the macOS image. Empty, the default, turns it off. bb-box checks and refreshes it |
 | `ios-hosts-on` | off | Shared iOS hosts, [below](#shared-ios-hosts): an ios box asked for with `shared: true` takes a slot on a VM of the iOS image made as a host |
-| `ios-hosts-most`, `ios-hosts-ahead`, `ios-hosts-resetting-most` | 8, 1, 4 | A host's slots making, ready or held at most; ready slots it keeps while it holds a box; and released slots it sweeps in one pass |
-| `ios-hosts-cores`, `ios-hosts-memory-gib` | 8, 32 | Each host's VM's size, which its slots share |
+| `ios-hosts-most` | empty | A host's slots making, ready or held at most. Empty, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows, 12 on an M4 Max |
+| `ios-hosts-ahead`, `ios-hosts-resetting-most` | 1, 4 | Ready slots a host keeps while it holds a box, and released slots it sweeps in one pass |
+| `ios-hosts-cores`, `ios-hosts-memory-gib` | empty | Each host's VM's size, which its slots share. Empty, the Mac's performance cores, and 8 GiB for the host and 1.5 GiB for each slot, within the Mac's memory. On a 16-core, 128 GiB M4 Max: 12 cores, 9 slots and 22 GiB |
 | `ios-hosts-per-mac` | 1 | Hosts a Mac runs at most. Each is one of the Mac's two macOS VMs, and both share the Mac's video encoder |
 | `ios-hosts-disk-reserve-gib` | 10 | A host makes no new slot while its VM has less free disk than this |
+| A Mac's `ios-hosts-most`, `ios-hosts-cores`, `ios-hosts-memory-gib` | empty | The same sizes for one Mac's hosts, set on the Mac, over the backend's and the estimate. `bb box doctor` gives each Mac's sizes and where each came from |
 | `windows-image` | empty | The image in `~/.bb-box/qemu/images` of `windows-arm64-desktop` boxes: the name `prepare-windows-image.sh` was given with `--name`, or its default. Empty, the default, turns them off |
 | `tart-windows-enrol` | on | Windows boxes join BB as machines, as the Proxmox QEMU backend's do. Off, they are boxes only |
 | `video` | off | macOS desktops open as video, from bb-box-stream in the image (060), not VNC. Off by default: they open as VNC, which is already smooth on a Tart Mac, at 52 to 55 frames a second, and a person can choose video under Display. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31 |

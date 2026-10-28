@@ -764,7 +764,7 @@ box, and the slots' `closed` marker, under the slots' lock, for slots.
 
 | Setting | Default | What |
 | --- | --- | --- |
-| `ios-hosts-most` | 12 | slots making, ready or held on each Mac |
+| `ios-hosts-most` | empty | slots making, ready or held on each Mac. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows; 13 on an 18-core, 36 GiB M5 Max. `ios:<slots>` on a Mac's line, as in `macos,ios:10`, wins for that Mac, and `bb box doctor` says where each Mac's number came from |
 | `ios-hosts-ahead` | 1 | ready slots kept while the Mac is not lent whole |
 | `ios-hosts-resetting-most` | 4 | released slots swept in one pass |
 | `ios-hosts-disk-reserve-gib` | 40 | no new slot below this much free disk |

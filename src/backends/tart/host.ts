@@ -211,6 +211,7 @@ done
 for vm in $(ls "$d/owners"); do [ -f "$d/owners/$vm" ] || continue; printf '=%s\\n' "$vm"; cat "$d/owners/$vm"; done
 ${extra}echo @memory; sysctl -n hw.memsize
 echo @cpus; sysctl -n hw.ncpu
+echo @performance-cores; sysctl -n hw.perflevel0.physicalcpu 2>/dev/null
 [ -d "$home" ] || home=$HOME
 echo @disk; df -P -k "$home" | awk 'NR == 2 { m = $6; for (i = 7; i <= NF; i++) m = m " " $i; print $2, $4, m }'
 echo @arch; uname -m
@@ -253,6 +254,7 @@ export interface HostState {
   readonly memoryMiB: number;
   /** The Mac's cores, or 0 when it did not say. */
   readonly cpus: number;
+  readonly performanceCores: number | null;
   /** The free space where Tart keeps its VMs, and that volume's mount point. */
   readonly disk: { readonly totalMiB: number; readonly freeMiB: number; readonly volume: string };
   readonly arch: string;
@@ -335,6 +337,7 @@ export function parseState(text: string): HostState {
     owners,
     memoryMiB: Math.floor(Number(parts.get("memory")?.trim() || 0) / 1024 / 1024),
     cpus: Number(parts.get("cpus")?.trim()) || 0,
+    performanceCores: Number(parts.get("performance-cores")?.trim()) || null,
     disk: { totalMiB: Math.floor(Number(total) / 1024), freeMiB: Math.floor(Number(free) / 1024), volume: volume.join(" ") },
     arch: parts.get("arch")?.trim() ?? "",
     macos: parts.get("macos")?.trim() ?? "",

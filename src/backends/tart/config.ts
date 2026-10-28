@@ -12,6 +12,7 @@
 // Tart VM, or for Windows a directory of QEMU's.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
+import { MOST_SLOTS, type SlotsSizedBy } from "../../core/slot-sizing.ts";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { hostKeysFor } from "../ssh-pool/config.ts";
 import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
@@ -28,6 +29,7 @@ export interface TartHost {
   readonly user: string;
   readonly address: string;
   readonly port: number;
+  readonly iosHostsSizedBy?: SlotsSizedBy;
 }
 
 export interface TartKindConfig {
@@ -46,9 +48,10 @@ export interface IosHostsConfig {
   readonly memoryGiB: number;
   readonly perMac: number;
   readonly diskReserveGiB: number;
+  readonly sizedBy: SlotsSizedBy;
 }
 
-export const IOS_HOSTS_DEFAULTS: IosHostsConfig = { on: false, most: 8, ahead: 1, resettingMost: 4, cores: 8, memoryGiB: 32, perMac: 1, diskReserveGiB: 10 };
+export const IOS_HOSTS_DEFAULTS: IosHostsConfig = { on: false, most: 8, ahead: 1, resettingMost: 4, cores: 8, memoryGiB: 32, perMac: 1, diskReserveGiB: 10, sizedBy: {} };
 
 export interface TartConfig {
   readonly hosts: readonly TartHost[];
@@ -246,8 +249,8 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [TART_KEYS.iosHostsMost]: {
     type: "number",
     label: "Tart: slots per shared iOS host",
-    description: "The most slots a shared iOS host has making, ready or held at once.",
-    default: IOS_HOSTS_DEFAULTS.most,
+    description:
+      "The most slots a shared iOS host has making, ready or held at once. Unset, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins.",
   },
   [TART_KEYS.iosHostsAhead]: {
     type: "number",
@@ -264,14 +267,12 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [TART_KEYS.iosHostsCores]: {
     type: "number",
     label: "Tart: cores of a shared iOS host",
-    description: "The cores of each shared iOS host's VM, shared by its slots.",
-    default: IOS_HOSTS_DEFAULTS.cores,
+    description: "The cores of each shared iOS host's VM, shared by its slots. Unset, the Mac's performance cores. A Mac's own value wins.",
   },
   [TART_KEYS.iosHostsMemoryGiB]: {
     type: "number",
     label: "Tart: memory of a shared iOS host (GiB)",
-    description: "The memory of each shared iOS host's VM, shared by its slots.",
-    default: IOS_HOSTS_DEFAULTS.memoryGiB,
+    description: "The memory of each shared iOS host's VM, shared by its slots. Unset, 8 GiB for the host and 1.5 GiB for each slot, within the Mac's memory. A Mac's own value wins.",
   },
   [TART_KEYS.iosHostsPerMac]: {
     type: "number",
@@ -422,17 +423,46 @@ function checkIosHosts(values: Readonly<Record<string, unknown>>, problem: Probl
     if (!Number.isInteger(value) || value < least || value > most) problem(key, `Tart: ${words} must be a whole number from ${least} to ${most}.`);
     return value;
   };
-  const most = read(TART_KEYS.iosHostsMost, IOS_HOSTS_DEFAULTS.most, 1, 64, "the slots per shared iOS host");
+  const set = (key: string) => values[key] !== undefined && values[key] !== null && values[key] !== "";
+  const most = read(TART_KEYS.iosHostsMost, IOS_HOSTS_DEFAULTS.most, 1, MOST_SLOTS, "the slots per shared iOS host");
+  const cores = read(TART_KEYS.iosHostsCores, IOS_HOSTS_DEFAULTS.cores, 2, 64, "the cores of a shared iOS host");
+  const memoryGiB = read(TART_KEYS.iosHostsMemoryGiB, IOS_HOSTS_DEFAULTS.memoryGiB, 8, 512, "the memory of a shared iOS host");
   return {
     on: values[TART_KEYS.iosHostsOn] === true,
     most,
-    ahead: read(TART_KEYS.iosHostsAhead, IOS_HOSTS_DEFAULTS.ahead, 0, most, "the ready slots kept on a shared iOS host, at most its slots,"),
+    ahead: read(TART_KEYS.iosHostsAhead, IOS_HOSTS_DEFAULTS.ahead, 0, MOST_SLOTS, "the ready slots kept on a shared iOS host"),
     resettingMost: read(TART_KEYS.iosHostsResettingMost, IOS_HOSTS_DEFAULTS.resettingMost, 1, 64, "the slots a shared iOS host sweeps at once"),
-    cores: read(TART_KEYS.iosHostsCores, IOS_HOSTS_DEFAULTS.cores, 2, 64, "the cores of a shared iOS host"),
-    memoryGiB: read(TART_KEYS.iosHostsMemoryGiB, IOS_HOSTS_DEFAULTS.memoryGiB, 8, 512, "the memory of a shared iOS host"),
+    cores,
+    memoryGiB,
     perMac: read(TART_KEYS.iosHostsPerMac, IOS_HOSTS_DEFAULTS.perMac, 1, MACOS_VMS_PER_MAC, "the shared iOS hosts per Mac"),
     diskReserveGiB: read(TART_KEYS.iosHostsDiskReserveGiB, IOS_HOSTS_DEFAULTS.diskReserveGiB, 0, 1024, "the disk a shared iOS host keeps free"),
+    sizedBy: {
+      ...(set(TART_KEYS.iosHostsMost) ? { most } : {}),
+      ...(set(TART_KEYS.iosHostsCores) ? { cores } : {}),
+      ...(set(TART_KEYS.iosHostsMemoryGiB) ? { memoryGiB } : {}),
+    },
   };
+}
+
+const MAC_IOS_HOST_FIELDS = {
+  most: { field: "ios-hosts-most", least: 1, most: MOST_SLOTS, words: "the slots of a shared iOS host on it" },
+  cores: { field: "ios-hosts-cores", least: 2, most: 64, words: "the cores of a shared iOS host on it" },
+  memoryGiB: { field: "ios-hosts-memory-gib", least: 8, most: 512, words: "the memory of a shared iOS host on it, in GiB," },
+} as const;
+
+function macIosHostsSizedBy(name: string, fields: Readonly<Record<string, unknown>>, problem: (field: string, message: string) => void): SlotsSizedBy {
+  const sized: { most?: number; cores?: number; memoryGiB?: number } = {};
+  for (const [size, { field, least, most, words }] of Object.entries(MAC_IOS_HOST_FIELDS) as [keyof SlotsSizedBy, (typeof MAC_IOS_HOST_FIELDS)[keyof typeof MAC_IOS_HOST_FIELDS]][]) {
+    const value = fields[field];
+    if (value === undefined || value === null || value === "") continue;
+    const whole = typeof value === "number" ? value : Number(value);
+    if (!Number.isInteger(whole) || whole < least || whole > most) {
+      problem(field, `Mac ${name}: ${words} must be a whole number from ${least} to ${most}, or empty for bb-box's estimate.`);
+      continue;
+    }
+    sized[size] = whole;
+  }
+  return sized;
 }
 
 export const TART_PREFIX = "tart-";
@@ -490,6 +520,24 @@ export const TART_HOST_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "connection",
     default: "",
   },
+  [MAC_IOS_HOST_FIELDS.most.field]: {
+    type: "number",
+    label: "Slots per shared iOS host",
+    description: "The most slots a shared iOS host on this Mac has, over the backend's setting and bb-box's estimate for the Mac. Empty for those.",
+    group: "advanced",
+  },
+  [MAC_IOS_HOST_FIELDS.cores.field]: {
+    type: "number",
+    label: "Cores of a shared iOS host",
+    description: "The cores of a shared iOS host's VM on this Mac, over the backend's setting and the Mac's performance cores. Empty for those.",
+    group: "advanced",
+  },
+  [MAC_IOS_HOST_FIELDS.memoryGiB.field]: {
+    type: "number",
+    label: "Memory of a shared iOS host (GiB)",
+    description: "The memory of a shared iOS host's VM on this Mac, over the backend's setting and bb-box's estimate. Empty for those.",
+    group: "advanced",
+  },
 };
 
 /** Tart's part of bb-box's configuration (029), with each problem at its field. */
@@ -507,7 +555,8 @@ export function parseTartPart(part: BackendPart): ParsedBackend<TartConfig> {
     if (!match || !Number.isInteger(port) || port < 1 || port > 65535) at("address")(`Give Mac ${host.name}'s address, such as 192.0.2.20, with :port when SSH is not on 22.`);
     const keys = keyLines(String(host.fields["host-keys"] ?? ""), at("host-keys"));
     if (!keys.length) at("host-keys")(`Give Mac ${host.name}'s SSH host key, as ssh-keyscan -t ed25519 <address> prints it.`);
-    if (match) hosts.push({ name: host.name, user, address: match[1]!.replace(/^\[|\]$/g, ""), port });
+    const iosHostsSizedBy = macIosHostsSizedBy(host.name, host.fields, (field, message) => at(field)(message));
+    if (match) hosts.push({ name: host.name, user, address: match[1]!.replace(/^\[|\]$/g, ""), port, ...(Object.keys(iosHostsSizedBy).length ? { iosHostsSizedBy } : {}) });
     hostKeys.push(...keys.filter((key) => !hostKeys.includes(key)));
   });
   const values: Record<string, unknown> = {};

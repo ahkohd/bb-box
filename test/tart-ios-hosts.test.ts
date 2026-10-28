@@ -60,7 +60,7 @@ test("shared iOS hosts are off unless set on, and need the iOS image (064)", () 
   const off = new TartBackend(tartConfig({ "tart-ios-image": "bb-box-ios" }), testContext(), IOS_HOST_FAKES);
   assert.equal(off.slots?.lends("ios"), false);
   const on = tartConfig(IOS_HOST_SETTINGS);
-  assert.deepEqual(on.iosHosts, { on: true, most: 4, ahead: 0, resettingMost: 4, cores: 8, memoryGiB: 32, perMac: 1, diskReserveGiB: 10 });
+  assert.deepEqual(on.iosHosts, { on: true, most: 4, ahead: 0, resettingMost: 4, cores: 8, memoryGiB: 32, perMac: 1, diskReserveGiB: 10, sizedBy: { most: 4 } });
   assert.equal(new TartBackend(on, testContext(), IOS_HOST_FAKES).slots?.lends("macos"), true, "macos boxes asked for with shared take slots too (unit 8)");
   assert.equal(off.slots?.lends("macos"), false);
 });
@@ -279,7 +279,7 @@ test("the doctor bounds each shared host's check, and says what it waited on for
     assert.ok(Date.now() - began < 10_000, `${Date.now() - began} ms`);
     const check = doctor.checks.find((each) => each.id === "ios-hosts.mac1");
     assert.equal(check?.status, "warn");
-    assert.match(check?.detail ?? "", /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not answer within 1 s: bb-box waited on its helper's status over SSH at 192\.168\.64\.2, through mac1\.$/);
+    assert.match(check?.detail ?? "", /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not answer within 1 s: bb-box waited on its helper's status over SSH at 192\.168\.64\.2, through mac1\. A new host here has 4 slots \(the backend's setting\), 12 cores \(estimated: mac1's performance cores\), 14 GiB \(estimated: 8 GiB for the host and 1\.5 GiB for each of its 4 slots\)\.$/);
   } finally {
     rmSync(hold);
   }
@@ -518,4 +518,26 @@ test("a host whose fresh clone fails to start too fails its boxes with both fail
   assert.ok(failed instanceof Error);
   assert.match(failed.message, /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not start: Tart could not start bb-box-host-[0-9a-f]+ on mac1: Error Domain=VZErrorDomain Code=1 .* That was a fresh clone's start; the first clone's failed too: Tart could not start .*VZErrorDomain Code=1 /s);
   assert.deepEqual(hosts(), []);
+});
+
+test("a new shared host is sized for its Mac where nothing is set: on the fake 16-core, 128 GiB M4 Max, 12 cores, 9 slots and 22 GiB; the Mac's own sizes win, and the doctor says where each came from (F-9 item 7)", async () => {
+  const sizesOf = (mac: string, vm: string) => readFileSync(join(mac, ".bb-box", "tart", "owners", vm), "utf8").split("\n").filter((line) => /^(most|cores|memory-gib)=/.test(line)).sort();
+  const estimated = setup({ "tart-ios-hosts-most": undefined });
+  const first = identity();
+  const { guest } = await place(estimated.backend, first);
+  assert.deepEqual(sizesOf(estimated.mac, slotRefOf(guest)!.vm), ["cores=12", "memory-gib=22", "most=9"]);
+  const check = (await estimated.backend.doctor(signal())).checks.find((each) => each.id === "ios-hosts.mac1");
+  assert.match(check?.detail ?? "", / A new host here has 9 slots \(estimated: 9 for 12 cores at 1\.3 a busy device, 69 for the 112 GiB of mac1's memory a host may have, .*; the fewest\), 12 cores \(estimated: mac1's performance cores\), 22 GiB \(estimated: 8 GiB for the host and 1\.5 GiB for each of its 9 slots\)\.$/);
+  await estimated.backend.release(await estimated.backend.acquire(first, guest, hooks().hooks, signal()), releasing, signal());
+
+  const world = fakeIosHostMac();
+  const config = tartConfig({ ...IOS_HOST_SETTINGS, "tart-ios-hosts-most": undefined, "tart-ios-hosts-cores": 10 });
+  const own = new TartBackend({ ...config, hosts: config.hosts.map((host) => ({ ...host, iosHostsSizedBy: { most: 3, memoryGiB: 20 } })) }, testContext(new MemoryStorage()), IOS_HOST_FAKES);
+  made.push(own);
+  const second = identity();
+  const placed = await place(own, second);
+  assert.deepEqual(sizesOf(world.mac, slotRefOf(placed.guest)!.vm), ["cores=10", "memory-gib=20", "most=3"]);
+  const words = (await own.doctor(signal())).checks.find((each) => each.id === "ios-hosts.mac1")?.detail ?? "";
+  assert.match(words, / A new host here has 3 slots \(set for this Mac\), 10 cores \(the backend's setting\), 20 GiB \(set for this Mac\)\.$/);
+  await own.release(await own.acquire(second, placed.guest, hooks().hooks, signal()), releasing, signal());
 });

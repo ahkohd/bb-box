@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import type { DeviceOffer, IosModelName } from "../../core/device.ts";
+import { macSlotSizingWords, sizeMacSlots, type MacSlotSizing } from "../../core/slot-sizing.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import type { SshTransport } from "../../transports/ssh.ts";
 import type { RunResult, SshAccess } from "../../transports/types.ts";
@@ -36,6 +37,7 @@ export interface PoolMacView {
 export interface PoolSlotsAccess {
   readonly installId: string;
   settings(): PoolSlotsConfig;
+  chip?(machine: SshPoolMachine): string | null;
   machines(): readonly SshPoolMachine[];
   machine(name: string): SshPoolMachine | null;
   survey(signal?: AbortSignal): Promise<readonly PoolMacView[]>;
@@ -140,6 +142,7 @@ export class PoolSlots implements SlotLender {
   readonly #access: PoolSlotsAccess;
   readonly #acquiringBoxes = new Set<string>();
   readonly #appKeeping = new Set<string>();
+  readonly #macFacts = new Map<string, { readonly cores: number | null; readonly memoryMiB: number | null }>();
   readonly #appKept = new Map<string, string>();
   readonly #appTried = new Map<string, { readonly digest: string; readonly at: number }>();
   #serverAppRead: { readonly app: ServerApp | null; readonly at: number } | null = null;
@@ -188,7 +191,9 @@ export class PoolSlots implements SlotLender {
   }
 
   async #slotViews(signal?: AbortSignal): Promise<PoolMacView[]> {
-    return (await this.#access.survey(signal)).filter((view) => listsSlots(view.machine));
+    const views = (await this.#access.survey(signal)).filter((view) => listsSlots(view.machine));
+    for (const view of views) this.#remember(view);
+    return views;
   }
 
   async offer(kind: SlotKind, model: string | null, signal: AbortSignal): Promise<SlotTier> {
@@ -296,13 +301,30 @@ export class PoolSlots implements SlotLender {
     return this.#claim(machine, ready[0]!.id, box, status.most, signal);
   }
 
-  #openInput(): string {
+  #remember(view: PoolMacView): void {
+    if (view.status) this.#macFacts.set(view.machine.name, { cores: view.status.cores, memoryMiB: view.status.memoryMiB });
+  }
+
+  sizing(machine: SshPoolMachine): MacSlotSizing {
+    const facts = this.#macFacts.get(machine.name);
     const settings = this.#access.settings();
+    const mac = { name: machine.name, cores: facts?.cores ?? null, performanceCores: null, memoryGiB: facts?.memoryMiB ? Math.floor(facts.memoryMiB / 1024) : null, chip: this.#access.chip?.(machine) ?? null };
+    return sizeMacSlots(mac, machine.slotsMost, settings.mostSet, settings.most);
+  }
+
+  #slotSettings(machine: SshPoolMachine): Pick<PoolSlotsConfig, "most" | "ahead" | "resettingMost" | "diskReserveGiB"> {
+    const settings = this.#access.settings();
+    const most = this.sizing(machine).most.value;
+    return { most, ahead: Math.min(settings.ahead, most), resettingMost: settings.resettingMost, diskReserveGiB: settings.diskReserveGiB };
+  }
+
+  #openInput(machine: SshPoolMachine): string {
+    const settings = this.#slotSettings(machine);
     return `install=${this.#access.installId}\nmost=${settings.most}\nahead=${settings.ahead}\nresetting-most=${settings.resettingMost}\ndisk-reserve-gib=${settings.diskReserveGiB}\n`;
   }
 
   async #open(machine: SshPoolMachine, signal?: AbortSignal): Promise<RunResult> {
-    return this.#access.helper(machine, ["slot", "open"], this.#openInput(), QUICK_MS, signal);
+    return this.#access.helper(machine, ["slot", "open"], this.#openInput(machine), QUICK_MS, signal);
   }
 
   async #promise(name: string, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
@@ -483,14 +505,15 @@ export class PoolSlots implements SlotLender {
     if (result.exitCode !== DEVICE_HOST_EXITS.done) throw new Error(`The pool's Mac ${machine.name} could not start slot ${ref.slot}'s device server again: ${said(result)}`);
   }
 
-  #settingsDiffer(summary: SlotsSummary): boolean {
-    const settings = this.#access.settings();
+  #settingsDiffer(summary: SlotsSummary, machine: SshPoolMachine): boolean {
+    const settings = this.#slotSettings(machine);
     return summary.most !== settings.most || summary.ahead !== settings.ahead || summary.resettingMost !== settings.resettingMost || summary.diskReserveGiB !== settings.diskReserveGiB;
   }
 
   async maintain(views: readonly PoolMacView[], signal?: AbortSignal): Promise<void> {
     for (const view of views) {
       signal?.throwIfAborted();
+      this.#remember(view);
       const summary = slotsSetUp(view.status);
       if (!summary || view.unreachable || !view.status || view.status.marker !== "none") continue;
       const name = view.machine.name;
@@ -499,7 +522,7 @@ export class PoolSlots implements SlotLender {
           if (view.state === "out-of-service") continue;
           this.#keepAppAside(view.machine);
           const short = summary.ready + summary.making - summary.waiting < summary.ahead;
-          if (summary.closedSince === null && !this.#settingsDiffer(summary) && !short) continue;
+          if (summary.closedSince === null && !this.#settingsDiffer(summary, view.machine) && !short) continue;
           const opened = await this.#open(view.machine, signal);
           if (opened.exitCode !== DEVICE_HOST_EXITS.done && opened.exitCode !== DEVICE_HOST_EXITS.deleting) this.#access.log(`The pool's Mac ${name} did not open its iOS slots: ${said(opened)}`);
           else if (summary.closedSince !== null && opened.exitCode === DEVICE_HOST_EXITS.done) this.#access.log(`The pool's Mac ${name} lends iOS slots again, as it is not lent whole.`);
@@ -561,7 +584,9 @@ export class PoolSlots implements SlotLender {
     const name = view.machine.name;
     const { status } = view;
     if (!status) return null;
+    this.#remember(view);
     const summary = slotsSetUp(status);
+    const sized = ` It lends ${macSlotSizingWords(this.sizing(view.machine))}.`;
     const setup = `Copy the whole setup folder to ${name}, then run setup/ssh-pool/setup-mac.sh on it with sudo, with Xcode and its iOS platform installed. It installs idb_companion, the slimming list and seed, and the slots' helper.`;
     if ((status.helper ?? 0) < SLOTS_HELPER_VERSION) return { status: "warn", detail: `Its helper is version ${status.helper ?? "unknown"}; iOS slots need version ${SLOTS_HELPER_VERSION}, so the Mac lends none.`, fix: setup };
     if (!summary) {
@@ -572,9 +597,9 @@ export class PoolSlots implements SlotLender {
     const counts = `${summary.held} held, ${summary.ready} ready, ${summary.making} making, ${summary.sweeping} sweeping, of ${summary.most}`;
     const slots = await this.#status(view.machine, signal).catch(() => null);
     const swept = slots ? sweepWords(slots) : "";
-    if (status.marker === "owner") return { status: "ok", detail: `Lent whole to a box now, so it lends no iOS slot until that box is released. Its slots: ${runtime}.${swept}`, fix: null };
-    if (summary.closedSince !== null) return { status: "ok", detail: `Closed: it lends no iOS slot until bb-box opens it, at its next upkeep while it is not lent whole. Its slots: ${runtime}.${swept}`, fix: null };
-    return { status: "ok", detail: `Lends iOS slots, ${counts}: ${runtime}.${slotsBusy(summary) ? ` While any is held it is not lent whole.` : ""}${slots ? heldLoadWords(slots) : ""}${swept}`, fix: null };
+    if (status.marker === "owner") return { status: "ok", detail: `Lent whole to a box now, so it lends no iOS slot until that box is released. Its slots: ${runtime}.${sized}${swept}`, fix: null };
+    if (summary.closedSince !== null) return { status: "ok", detail: `Closed: it lends no iOS slot until bb-box opens it, at its next upkeep while it is not lent whole. Its slots: ${runtime}.${sized}${swept}`, fix: null };
+    return { status: "ok", detail: `Lends iOS slots, ${counts}: ${runtime}.${sized}${slotsBusy(summary) ? ` While any is held it is not lent whole.` : ""}${slots ? heldLoadWords(slots) : ""}${swept}`, fix: null };
   }
 }
 

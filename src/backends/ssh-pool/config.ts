@@ -21,6 +21,7 @@
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import { kindRequest } from "../kinds.ts";
+import { MOST_SLOTS } from "../../core/slot-sizing.ts";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
 
@@ -46,6 +47,7 @@ export interface PoolSlotsConfig {
   readonly ahead: number;
   readonly resettingMost: number;
   readonly diskReserveGiB: number;
+  readonly mostSet?: number;
 }
 
 export const POOL_SLOTS_DEFAULTS: PoolSlotsConfig = { most: 12, ahead: 1, resettingMost: 4, diskReserveGiB: 40 };
@@ -70,6 +72,7 @@ export interface SshPoolMachine {
   /** "machine" when the operator's reset-machine restores the whole machine. */
   readonly reset: "home" | "machine";
   readonly labels: readonly string[];
+  readonly slotsMost?: number;
 }
 
 export interface SshPoolConfig {
@@ -92,7 +95,7 @@ export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "SSH host pool: machines",
     description:
-      'One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". ios on a Mac lends iOS slots there, each a macOS user with its own device, for ios boxes asked for with shared: true. setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine.',
+      'One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". ios on a Mac lends iOS slots there, each a macOS user with its own device, for ios boxes asked for with shared: true; ios:<slots> sets how many, where bb-box would estimate them from the Mac. setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine.',
     experimental_multiline: true,
     default: "",
   },
@@ -113,8 +116,8 @@ export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [SSH_POOL_KEYS.iosHostsMost]: {
     type: "number",
     label: "SSH host pool: slots for ios boxes per Mac",
-    description: "The most iOS slots a Mac whose line lists ios has making, ready or held at once. It is lent whole only while it lends none.",
-    default: POOL_SLOTS_DEFAULTS.most,
+    description:
+      "The most iOS slots a Mac whose line lists ios has making, ready or held at once. It is lent whole only while it lends none. Unset, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins.",
   },
   [SSH_POOL_KEYS.iosHostsAhead]: {
     type: "number",
@@ -210,7 +213,15 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
   if (!kindList) return bad(`Give machine ${name} the kinds it serves.`);
   const kinds: SshPoolKind[] = [];
   let listsDocker = false;
-  for (const word of kindList.split(",")) {
+  let slotsMost: number | undefined;
+  for (const listed of kindList.split(",")) {
+    const slots = /^ios:(.*)$/.exec(listed);
+    if (slots) {
+      const most = Number(slots[1]);
+      if (!/^\d+$/.test(slots[1]!) || most < 1 || most > MOST_SLOTS) return bad(`Give machine ${name}'s iOS slots as ios:<slots>, a whole number from 1 to ${MOST_SLOTS}, or ios for bb-box's estimate.`);
+      slotsMost = most;
+    }
+    const word = slots ? "ios" : listed;
     const asked = kindRequest(word);
     const kind = SSH_POOL_KINDS.includes(asked.kind as SshPoolKind) ? (asked.kind as SshPoolKind) : null;
     if (!kind || asked.features.some((feature) => feature !== "docker")) {
@@ -251,7 +262,7 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
     );
     return null;
   }
-  return { name, admin, jump, kinds, os, docker: reset === "machine", reset, labels };
+  return { name, admin, jump, kinds, os, docker: reset === "machine", reset, labels, ...(slotsMost !== undefined ? { slotsMost } : {}) };
 }
 
 export const SSH_POOL_PREFIX = "ssh-pool-";
@@ -364,10 +375,12 @@ function checkSlots(values: Readonly<Record<string, unknown>>, problem: (key: st
     if (!Number.isInteger(value) || value < least || value > most) problem(key, `SSH host pool: ${words} must be a whole number from ${least} to ${most}.`);
     return value;
   };
-  const most = read(SSH_POOL_KEYS.iosHostsMost, POOL_SLOTS_DEFAULTS.most, 1, 64, "the iOS slots per Mac");
+  const most = read(SSH_POOL_KEYS.iosHostsMost, POOL_SLOTS_DEFAULTS.most, 1, MOST_SLOTS, "the iOS slots per Mac");
+  const mostSet = values[SSH_POOL_KEYS.iosHostsMost] !== undefined && values[SSH_POOL_KEYS.iosHostsMost] !== null && values[SSH_POOL_KEYS.iosHostsMost] !== "";
   return {
     most,
-    ahead: read(SSH_POOL_KEYS.iosHostsAhead, POOL_SLOTS_DEFAULTS.ahead, 0, most, "the ready iOS slots kept on a Mac, at most its slots,"),
+    ...(mostSet ? { mostSet: most } : {}),
+    ahead: read(SSH_POOL_KEYS.iosHostsAhead, POOL_SLOTS_DEFAULTS.ahead, 0, MOST_SLOTS, "the ready iOS slots kept on a Mac"),
     resettingMost: read(SSH_POOL_KEYS.iosHostsResettingMost, POOL_SLOTS_DEFAULTS.resettingMost, 1, 64, "the iOS slots a Mac sweeps at once"),
     diskReserveGiB: read(SSH_POOL_KEYS.iosHostsDiskReserveGiB, POOL_SLOTS_DEFAULTS.diskReserveGiB, 0, 4096, "the disk a Mac keeps free of iOS slots"),
   };

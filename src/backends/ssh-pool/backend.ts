@@ -447,6 +447,7 @@ export class SshPoolBackend implements Backend {
     return new PoolSlots({
       installId: this.#context.installId,
       settings: () => this.#config.slots,
+      chip: (machine) => this.#chipOf(machine),
       machines: () => this.#config.machines,
       machine: (name) => this.#machines.get(name) ?? null,
       survey: async (signal) => (await this.#survey(signal)).map(poolMacView),
@@ -516,9 +517,13 @@ export class SshPoolBackend implements Backend {
     const mac = poolSlotOf(guest)?.mac;
     const machine = mac ? this.#machines.get(mac) : undefined;
     if (!mac || !machine) return null;
-    const chip = this.#chips.get(mac);
-    if (chip === undefined) this.#chips.set(mac, this.#readChip(machine));
-    return { mac, chip: typeof chip === "string" && chip ? chip : null };
+    return { mac, chip: this.#chipOf(machine) };
+  }
+
+  #chipOf(machine: SshPoolMachine): string | null {
+    const chip = this.#chips.get(machine.name);
+    if (chip === undefined) this.#chips.set(machine.name, this.#readChip(machine));
+    return typeof chip === "string" && chip ? chip : null;
   }
 
   async #readChip(machine: SshPoolMachine): Promise<void> {
