@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, afterEach, test } from "node:test";
 import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
-import { baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
+import { RUN_LOCK_HOLDERS_PL, TART_LISTS_SH, baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, runVmElsewhere, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
@@ -1268,6 +1268,45 @@ test("prepare-ios-image.sh finds VMs by their folders, without tart list, so a V
   assert.match(missing.stderr, /there is no Tart VM bb-box-not-there/);
   rmSync(join(mac, ".fake-tart-list-fails"));
   assert.deepEqual(askedTartToReadDisks(tartCalls(mac)), []);
+});
+
+test("grant-tcc.sh reads a VM's state from its folder and Tart's run lock, as bb-box does, without tart list, so it opens no disk (F-12)", async () => {
+  const { mac } = setup();
+  const script = join(import.meta.dirname, "..", "setup", "tart", "grant-tcc.sh");
+  const text = readFileSync(script, "utf8");
+  assert.ok(text.includes(`run_lock_holders() { perl -e '${RUN_LOCK_HOLDERS_PL}' "$@"; }`), "it reads the run lock with bb-box's own perl");
+  assert.ok(text.includes(TART_LISTS_SH), "it lists a VM by its folder as bb-box does");
+  assert.doesNotMatch(text, /tart (list|get)/);
+  const grant = (vm: string) =>
+    new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawn("/bin/sh", [script, vm, join(mac, "Nothing.app")], { env: { HOME: mac, PATH: `${join(mac, ".nix-profile", "bin")}:/usr/bin:/bin` } });
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
+      child.on("close", (code) => resolve({ code, stderr }));
+    });
+  const folder = join(mac, ".tart", "vms", FAKE_IMAGE);
+  writeFileSync(join(mac, ".fake-tart-list-fails"), "");
+
+  const stopped = await grant(FAKE_IMAGE);
+  assert.equal(stopped.code, 1);
+  assert.match(stopped.stderr, /grant-tcc: \S*Nothing\.app is not an app\n$/, "a stopped VM gets past the state check");
+
+  writeFileSync(join(folder, "state.vzvmsave"), "");
+  assert.match((await grant(FAKE_IMAGE)).stderr, /grant-tcc: bb-box-macos must be stopped, not suspended\n$/);
+  rmSync(join(folder, "state.vzvmsave"));
+
+  await runVmElsewhere(folder);
+  assert.match((await grant(FAKE_IMAGE)).stderr, /grant-tcc: bb-box-macos must be stopped, not running\n$/);
+  rmSync(join(folder, "running"));
+  let afterRun = await grant(FAKE_IMAGE);
+  for (let tries = 0; /not running/.test(afterRun.stderr) && tries < 50; tries++) afterRun = await grant(FAKE_IMAGE);
+  assert.match(afterRun.stderr, /not an app/, "stopped again once the run lock goes");
+
+  mkdirSync(join(mac, ".tart", "vms", "half"));
+  writeFileSync(join(mac, ".tart", "vms", "half", "config.json"), "{}");
+  assert.match((await grant("half")).stderr, /grant-tcc: no Tart VM half\n$/, "a folder Tart does not list is no VM");
+  assert.match((await grant("bb-box-not-there")).stderr, /grant-tcc: no Tart VM bb-box-not-there\n$/);
+  assert.deepEqual(tartCalls(mac).filter(([tool]) => tool === "tart"), [], "it runs no tart command");
 });
 
 test("the iOS image: listed when set, built by prepare-ios-image.sh on the macOS image, replaced without touching that image, checked by bb-box-check-ios, and judged by the doctor (063, 3.2)", async () => {

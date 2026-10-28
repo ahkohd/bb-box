@@ -17,12 +17,19 @@ vm=$1 app=$2
 shift 2
 [ $# -gt 0 ] || set -- kTCCServiceAccessibility kTCCServiceScreenCapture
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:$PATH"
-disk="${TART_HOME:-$HOME/.tart}/vms/$vm/disk.img"
-[ -f "$disk" ] || die "no Tart VM $vm"
-case "$(tart list --source local | awk -v n="$vm" '$2 == n { print $NF }')" in
-  stopped) ;;
-  *) die "$vm must be stopped, not suspended or running" ;;
-esac
+command -v perl >/dev/null 2>&1 || die "perl is not on the PATH: it reads Tart's run lock. macOS has it in /usr/bin."
+run_lock_holders() { perl -e 'use Fcntl; my $darwin = $^O eq "darwin"; for my $f (@ARGV) { open(my $h, "<", $f) or next; my $l = $darwin ? pack("q q l s s", 0, 0, 0, F_RDLCK, 0) : pack("s s x4 q q l x4", F_RDLCK, 0, 0, 0, 0); fcntl($h, F_GETLK, $l) or next; my ($type, $pid) = $darwin ? (unpack("q q l s s", $l))[3, 2] : (unpack("s s x4 q q l x4", $l))[0, 4]; print "$pid $f\n" if $type != F_UNLCK }' "$@"; }
+tart_lists() {
+  [ -f "$1/config.json" ] && [ -f "$1/nvram.bin" ] || return 1
+  if [ -f "$1/disk.img" ]; then [ ! -f "$1/overlay.asif" ]; else [ -f "$1/manifest.json" ] && [ -f "$1/overlay.asif" ]; fi
+}
+folder="${TART_HOME:-$HOME/.tart}/vms/$vm"
+disk="$folder/disk.img"
+tart_lists "$folder" || die "no Tart VM $vm"
+[ -f "$disk" ] || die "$vm has no disk.img to write: its disk is an overlay"
+held=$(run_lock_holders "$folder/config.json") || die "could not read Tart's run lock on $vm"
+[ -z "$held" ] || die "$vm must be stopped, not running"
+[ ! -f "$folder/state.vzvmsave" ] || die "$vm must be stopped, not suspended"
 
 bundle=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist") || die "$app is not an app"
 requirement=$(codesign -d -r- "$app" 2>&1 | sed -n 's/^designated => //p')

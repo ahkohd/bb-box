@@ -36,17 +36,19 @@ export function vmName(boxId: string): string {
   return `${VM_PREFIX}${boxId}`;
 }
 
-const RUN_LOCK_HOLDERS_PL = String.raw`use Fcntl; my $darwin = $^O eq "darwin"; for my $f (@ARGV) { open(my $h, "<", $f) or next; my $l = $darwin ? pack("q q l s s", 0, 0, 0, F_RDLCK, 0) : pack("s s x4 q q l x4", F_RDLCK, 0, 0, 0, 0); fcntl($h, F_GETLK, $l) or next; my ($type, $pid) = $darwin ? (unpack("q q l s s", $l))[3, 2] : (unpack("s s x4 q q l x4", $l))[0, 4]; print "$pid $f\n" if $type != F_UNLCK }`;
+export const RUN_LOCK_HOLDERS_PL = String.raw`use Fcntl; my $darwin = $^O eq "darwin"; for my $f (@ARGV) { open(my $h, "<", $f) or next; my $l = $darwin ? pack("q q l s s", 0, 0, 0, F_RDLCK, 0) : pack("s s x4 q q l x4", F_RDLCK, 0, 0, 0, 0); fcntl($h, F_GETLK, $l) or next; my ($type, $pid) = $darwin ? (unpack("q q l s s", $l))[3, 2] : (unpack("s s x4 q q l x4", $l))[0, 4]; print "$pid $f\n" if $type != F_UNLCK }`;
+
+export const TART_LISTS_SH = String.raw`tart_lists() {
+  [ -f "$1/config.json" ] && [ -f "$1/nvram.bin" ] || return 1
+  if [ -f "$1/disk.img" ]; then [ ! -f "$1/overlay.asif" ]; else [ -f "$1/manifest.json" ] && [ -f "$1/overlay.asif" ]; fi
+}
+`;
 
 const VM_READ = String.raw`tart_vms=$HOME/.tart/vms; [ -z "$TART_HOME" ] || tart_vms=$TART_HOME/vms
 if stat --version >/dev/null 2>&1; then stat_style=gnu; else stat_style=bsd; fi
 stat_of() { if [ "$stat_style" = gnu ]; then stat -c "$1" "$3"; else stat -f "$2" "$3"; fi; }
 run_lock_holders() { perl -e '${RUN_LOCK_HOLDERS_PL}' "$@"; }
-tart_lists() {
-  [ -f "$1/config.json" ] && [ -f "$1/nvram.bin" ] || return 1
-  if [ -f "$1/disk.img" ]; then [ ! -f "$1/overlay.asif" ]; else [ -f "$1/manifest.json" ] && [ -f "$1/overlay.asif" ]; fi
-}
-state_of_folder() {
+${TART_LISTS_SH}state_of_folder() {
   tart_lists "$1" || return 0
   case "$2" in
     *" $1/config.json"*) _state=running ;;
