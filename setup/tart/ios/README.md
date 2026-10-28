@@ -18,7 +18,8 @@ macOS image, with:
   encoder fails or is not used ([065](../../../docs/decisions/065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md)):
   with Cisco's OpenH264, downloaded from Cisco, or with x264 built from its
   pinned source when you give `--with-x264`. bb-box ships no x264 binary
-- `bb-box-check-ios`, the image's check
+- `bb-box-check-ios`, the image's check, and `slot-clipboard`, which it
+  runs to set and read a slot's device's clipboard as the device server does
 - `device-host`, the helper that lends the VM's slots when it is a shared
   host ([064](../../../docs/decisions/064-ios-shared-hosts.md)), with two
   slots made ahead, `bbd-i1` and `bbd-i2`, as below
@@ -165,6 +166,7 @@ For a shared host it checks:
 | held ports free | anything listens at 3000, 4200, 5000, 5173, 8000, 8080, 8081 or 19000, on 127.0.0.1 or ::1: a dedicated box keeps them for its own servers |
 | carried slots | `bbd-i1` or `bbd-i2` is missing, not ready, its device not seeded, or booted |
 | slot uids | any file on the Data volume is owned by a UID from 80000 to 89999, or from 79990 to 79999 but the carried users' own |
+| slot clipboard | `bbd-i1`'s device, booted for the check, cannot have its clipboard set and read back intact through a launchd job in `bbd-i1`'s own session, with macOS's pasteboard server loaded there, as the device server sets it (F-17). The device is shut down again after |
 | disabled.plist kept | the image kept no runtime's `disabled.plist` |
 
 It builds a small app with a UI test, [`probe`](probe), for the last. Give

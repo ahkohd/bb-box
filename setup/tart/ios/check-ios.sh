@@ -269,6 +269,22 @@ carried_slots_ready() {
   echo "bbd-i1 and bbd-i2 ready, each with its own seeded device, shut down"
 }
 
+slot_clipboard="/usr/local/libexec/bb-box/slot-clipboard"
+
+carried_slot_clipboard_works() {
+  user=bbd-i1
+  udid=$(sudo -n "$helper" status 2>/dev/null | awk -F '\t' '$1 == "slot=i1" { print $12 }')
+  [ -n "$udid" ] || { echo "no carried slot i1"; return 1; }
+  as_slot() { (cd / && sudo -n launchctl asuser "$(id -u "$user")" sudo -n -H -u "$user" -- perl -e 'alarm shift; exec @ARGV' "$simctl_most_s" xcrun simctl "$@"); }
+  as_slot boot "$udid" >/dev/null 2>&1
+  as_slot bootstatus "$udid" -b >/dev/null 2>&1 || { as_slot shutdown "$udid" >/dev/null 2>&1; echo "carried slot i1's device $udid did not boot"; return 1; }
+  said=$(sudo -n "$slot_clipboard" "$user" "$udid" 2>&1)
+  worked=$?
+  as_slot shutdown "$udid" >/dev/null 2>&1 || { echo "carried slot i1's device did not shut down after the check"; return 1; }
+  printf '%s\n' "$said"
+  return "$worked"
+}
+
 held_ports="3000 4200 5000 5173 8000 8080 8081 19000"
 host_state=/var/db/bb-box/host
 
@@ -298,6 +314,7 @@ check "device-host daemons" daemons_written_not_loaded
 check "held ports free" held_ports_free
 check "carried slots" carried_slots_ready
 check "slot uids" slot_uids_only_carried
+check "slot clipboard" carried_slot_clipboard_works
 check "disabled.plist kept" sh -c 'ls /usr/local/share/bb-box/ios/*.disabled.plist'
 check "bb-box-h264" /usr/local/bin/bb-box-h264 --version
 check "idb_companion" /usr/local/bin/idb_companion --version

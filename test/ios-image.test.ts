@@ -10,6 +10,7 @@ import { HELD_PORTS } from "../src/backends/tart/device-host.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
 import { parseOfferedDevices } from "../src/core/device-parse.ts";
 import { IOS_COMPANION_PAIRINGS, IOS_CONTENT_SIZES } from "../src/core/device.ts";
+import { PASTEBOARD_SERVER, PASTEBOARD_SERVER_LABEL, PASTEBOARD_SERVICES, SESSION_JOB_LABEL, sessionJobPlist } from "../src/device/user-session.ts";
 
 const SETUP = join(import.meta.dirname, "..", "setup");
 const IOS = join(SETUP, "tart", "ios");
@@ -168,4 +169,28 @@ test("the image's check finds the held ports free and their daemon written but n
   assert.match(check, new RegExp(`^held_ports="${HELD_PORTS.join(" ")}"$`, "m"));
   assert.ok(check.includes('check "device-host daemons" daemons_written_not_loaded\ncheck "held ports free" held_ports_free\n'));
   assert.doesNotMatch(check, /421/, "nothing answers the held ports in the image");
+});
+
+test("a slot's clipboard: the image's check and the pool's setup run one script that sets and reads a device's clipboard as the device server does, in the user's own launchd session with its own pasteboard server (F-17)", () => {
+  const script = read("slot-clipboard.sh");
+  assert.equal(spawnSync("sh", ["-n", join(IOS, "slot-clipboard.sh")]).status, 0);
+  for (const name of [PASTEBOARD_SERVER_LABEL, SESSION_JOB_LABEL, PASTEBOARD_SERVER, ...PASTEBOARD_SERVICES]) assert.ok(script.includes(name), name);
+  assert.match(script, /domain=gui\/\$uid session=Aqua own_server=no/, "a user with a desktop session uses macOS's own pasteboard server");
+  assert.match(script, /domain=user\/\$uid session=Background own_server=yes/);
+  const wrapper = /<string>("\$0"[^<]*)<\/string>/.exec(sessionJobPlist({ label: "x", dir: "/d", session: "Background", program: "/p", args: [], env: {} }))![1]!;
+  assert.ok(script.includes(wrapper), "the job keeps its exit code as the device server's does");
+  assert.match(script, /as_user launchctl bootstrap "\$domain"/, "loaded as the user, as the device server does, not as root");
+  assert.match(script, /printf '' \| session_job pbcopy/, "the device's clipboard is left empty");
+
+  const check = read("check-ios.sh");
+  assert.ok(check.includes('check "slot uids" slot_uids_only_carried\ncheck "slot clipboard" carried_slot_clipboard_works\n'));
+  assert.match(check, /sudo -n "\$slot_clipboard" "\$user" "\$udid"/);
+  assert.match(check, /as_slot shutdown "\$udid"/, "the carried slot's device is shut down again, as the image keeps it");
+  assert.match(read("build-ios.sh"), /sudo install -m 0755 "\$here\/slot-clipboard\.sh" \/usr\/local\/libexec\/bb-box\/slot-clipboard/);
+
+  const pool = readFileSync(join(SETUP, "ssh-pool", "mac-ios.sh"), "utf8");
+  assert.match(pool, /for file in [^;]*slot-clipboard\.sh/);
+  assert.match(pool, /said=\$\(\/bin\/sh "\$ios\/slot-clipboard\.sh" "\$admin" "\$udid" 2>&1\)/);
+  assert.match(pool, /if \[ -z "\$\{HOST_SETTINGS:-\}" \]; then\n  step "checking that a slot's user/, "on the pool's kept Mac only, so a Namespace host starts no slower");
+  assert.match(pool, /echo "warning=A slot cannot set or read its device's clipboard/);
 });

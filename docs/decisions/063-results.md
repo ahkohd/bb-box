@@ -2888,3 +2888,94 @@ Findings:
   a Cmd+V's paste event also made the BB canvas plugin's editor call
   `navigator.clipboard.read()`, from its own document paste listener. It
   reads only at a paste, and sends nothing to a box.
+
+## F-17: a shared slot's clipboard
+
+Built on 28 October 2026. F-15's live check found that `xcrun simctl
+pbcopy` and `pbpaste` crash, with exit code 139, on every shared ios slot:
+from `box_run` and from the device server alike. So Paste from this
+computer, Copy to this computer and an agent's typing of text a US keyboard
+does not have all failed on a slot. Shared slots are the default, so this
+hit most ios boxes.
+
+### The cause
+
+simctl does not write to the device's pasteboard directly. It puts the text
+on a pasteboard of the Mac's own, named uniquely for the call, and
+CoreSimulator's SimPasteboardPlus syncs that to the device. The Mac's
+pasteboards are served by `pboard`, a LaunchAgent macOS loads only in a
+desktop (Aqua) session. A slot's user never signs in at the console
+([064](064-ios-shared-hosts.md)), so it has no Aqua session: `launchctl
+managername` says `Background` in `box_run`, and the device server is a
+LaunchDaemon in the system domain. Under lldb, on the pool's Mac (macOS
+27.0.1, Xcode 27.0):
+
+- "Connection to 'pboard' server had an error ... Connection init failed at
+  lookup with error 3 - No such process", then "Failed to set up
+  CFPasteboardRef 'CFPasteboardUnique-...'"
+- then `EXC_BAD_ACCESS` at address 0x8 in `__CFCheckCFInfoPACSignature`, on
+  CoreSimulator's queue `com.apple.CoreSimulator.NSPBObservation`: simctl
+  uses the pasteboard it failed to make
+
+The same exit code came on a Namespace Mac (Xcode 26.1.1). idb_companion
+has no pasteboard call, and CoreSimulator's own pasteboard classes manage a
+Mac pasteboard too, so every way to the device's clipboard needs `pboard`.
+A box with a desktop session has it, which is why unit 7.5's earlier read
+worked.
+
+### The fix
+
+- **The calls run in the user's own launchd session.** A slot's user may
+  load a LaunchAgent into its own `user/<uid>` domain without root, from
+  the device server's LaunchDaemon too. When the device server is not in an
+  Aqua session, it loads macOS's own `/usr/libexec/pboard` there, as
+  `app.bb-box.pboard`, for the background session, with the Mach services
+  `pboard`'s own plist gives. It then runs each `pbcopy` and `pbpaste` as a
+  short launchd job in that domain, with the text in a file and its exit
+  code kept, and boots the job out after
+  ([`user-session.ts`](../../src/device/user-session.ts)). A user with a
+  desktop session elsewhere has its jobs run there, with macOS's own
+  `pboard`. A server in a desktop session, as on a dedicated box, runs
+  simctl where it is, as before.
+- **The server loads `pboard` as the device boots,** so an agent's own
+  `xcrun simctl pbcopy booted` in `box_run` works on a slot as well.
+- **Only the environment simctl needs goes into a job's plist:** `HOME`,
+  `USER`, `LOGNAME`, `PATH`, `TMPDIR` and the locale. The device server's
+  own environment is never written.
+- **Jobs a stopped server left** are booted out and removed at the next
+  server's first job.
+- **No host step.** The device server is delivered as before, now version
+  30, so the pool's Mac, Tart hosts and Namespace hosts get the fix with
+  it. No helper changes.
+- **Checks.** `slot-clipboard.sh` sets and reads a device's clipboard the
+  same way, as a given user, and says where. The iOS image's check runs it
+  on carried slot `bbd-i1`'s device. The pool's `mac-ios.sh` runs it as the
+  admin user, which has no desktop session, on a device made for the check
+  and deleted after, and warns if it fails. It does not run on a Namespace
+  host's start, which boxes wait for.
+
+### Measured before the deploy
+
+The new server was put in a slot's own `~/.bb-box/device/server/29` and
+started again by launchd, so it ran as production runs it:
+
+| Slot | Before | After |
+| --- | --- | --- |
+| Pool's Mac, iOS 27.0, Xcode 27.0 | `pbcopy` and `pbpaste` exit 139; `computer_type` of `bbtest é✓` fails: "simctl could not set the device's clipboard" | `computer_type` of `bbtest ✓ 日本 é` arrives whole; the clipboard reads back what it held before; `box_run`'s own `pbcopy` and `pbpaste` work, UTF-8 intact |
+| Namespace Mac, iOS 26.2, Xcode 26.1.1 | exit 139 | `✓`, `日本`, `abc✓` and `a✓b日本c` arrive; `box_run`'s own calls work. See the follow-up below |
+
+A job in the slot's domain took 0.13 to 0.17 s for a `pbcopy` or `pbpaste`
+on the pool's Mac, by `perl`'s clock around the launchd job, against 0.08 s
+for a direct call where `pboard` runs. On the Namespace Mac a call in the
+slot's own session took 0.20 to 0.24 s.
+
+### Follow-up
+
+On the Namespace Mac, a paste right after a typed space is lost: `ab ✓`
+arrives as `ab`, and `bbtest ✓ 日本 é` lost both pastes in 3 of 4 tries,
+once pasting the clipboard's earlier text instead. Each paste alone, and a
+paste next to letters, arrives. A longer wait before the clipboard is put
+back, 500 ms instead of 100, did not change it. The same text arrived on
+the pool's Mac in 1 of 2 tries, the other losing its last 2 characters,
+typed as keys. This is the timing of keys and the paste key on the device,
+not the clipboard, and is left for its own fix.

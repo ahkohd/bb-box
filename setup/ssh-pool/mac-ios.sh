@@ -19,7 +19,7 @@ companion_root=/usr/local/lib
 
 [ "$(id -u)" = 0 ] || die "run it as root"
 id -u "$admin" >/dev/null 2>&1 || die "there is no user $admin"
-for file in device-host.sh device-host-ports.pl devices.tsv pins idb-companion-LICENSE; do
+for file in device-host.sh device-host-ports.pl slot-clipboard.sh devices.tsv pins idb-companion-LICENSE; do
   [ -f "$ios/$file" ] || die "found no $file in $ios: copy the whole setup folder to the Mac, not only setup/ssh-pool"
 done
 [ -f "$here/mac-home/.zshenv" ] || die "found no mac-home/.zshenv beside setup-mac.sh"
@@ -126,6 +126,23 @@ make_seed() {
   [ "$made" = yes ] || die "the seed for $list did not get all of its $(grep -c . "$ios/slim/$list.txt") labels off"
 }
 
+slot_clipboard_works() {
+  model=$(head -n 1 "$ROOT$share/ios/devices.tsv" | cut -f 1)
+  type=$(head -n 1 "$ROOT$share/ios/devices.tsv" | cut -f 2)
+  udid=$(simctl create "bb-box clipboard check" "$type" "$runtime" 2>/dev/null | tail -n 1)
+  case $udid in ????????-????-????-????-????????????) ;; *) echo "simctl could not make a $model as $admin to check it with"; return 1 ;; esac
+  worked=no
+  if boot_and_wait "$udid" >/dev/null 2>&1; then
+    said=$(/bin/sh "$ios/slot-clipboard.sh" "$admin" "$udid" 2>&1) && worked=yes
+  else
+    said="the $model made to check it with did not boot"
+  fi
+  simctl shutdown "$udid" >/dev/null 2>&1 || :
+  simctl delete "$udid" >/dev/null 2>&1 || :
+  printf '%s\n' "$said"
+  [ "$worked" = yes ]
+}
+
 sshd_refuses_slots() {
   command -v sshd >/dev/null 2>&1 || return 1
   settings=$(sshd -T 2>/dev/null) || return 1
@@ -196,6 +213,14 @@ if [ -n "${HOST_SETTINGS:-}" ]; then
 else
   step "writing device-host's daemons and setting it up as a kept host, closed until bb-box opens it"
   printf 'kept=yes\nmost=12\nahead=1\nresetting-most=4\ndisk-reserve-gib=40\n' | /bin/sh "$ROOT$helper" init >/dev/null
+fi
+if [ -z "${HOST_SETTINGS:-}" ]; then
+  step "checking that a slot's user, with no desktop session, can set and read its device's clipboard"
+  if said=$(slot_clipboard_works); then
+    step "$said"
+  else
+    echo "warning=A slot cannot set or read its device's clipboard, so pasting into an ios box and copying from it fail: $said"
+  fi
 fi
 echo "ios=$os $build $list companion=$idb_version"
 if sshd_refuses_slots; then

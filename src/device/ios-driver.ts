@@ -28,11 +28,12 @@ import { Companion, accessibilityTree, orientation, screenshot, setOrientation, 
 import { iosElementAt, readIosTree } from "./ios-tree.ts";
 import { IosSettingsKeeper } from "./ios-controls.ts";
 import { IosInput, PasteboardAccess, typesWithOption } from "./ios-input.ts";
+import { pasteboardInOwnSession } from "./user-session.ts";
 import { IosVideo, scaledBack } from "./ios-video.ts";
 import { EncodeMeter, SOFTWARE_ENCODER, hardwareFailed, simulatorStream, softwareEncoderAt, type IosEncoderMode, type IosEncoderWay } from "./simulator-video.ts";
 import type { StreamOutput } from "./idb.ts";
 import { inBox, type DevicePaths } from "./paths.ts";
-import { Simctl, type SimDevice } from "./simctl.ts";
+import { Simctl, runProgram, type SimDevice } from "./simctl.ts";
 
 export const SLIM_LISTS = "/usr/local/share/bb-box/ios";
 export const WATCH_MS = 5_000;
@@ -116,6 +117,7 @@ export function iosPaths(paths: DevicePaths) {
     companion: { socket: join(paths.dir, "idb.sock"), record: join(paths.dir, "companion.json"), log: join(paths.dir, "companion.log") },
     deviceHub: join(paths.dir, "device-hub.json"),
     settings: join(paths.dir, "ios-settings.json"),
+    session: join(paths.dir, "session"),
   };
 }
 
@@ -200,11 +202,11 @@ export class IosDriver implements DeviceDriver {
 
   constructor(options: IosDriverOptions) {
     this.#options = options;
-    this.#simctl = options.simctl ?? new Simctl();
+    const own = iosPaths(options.paths);
+    this.#simctl = options.simctl ?? new Simctl({ pasteboard: pasteboardInOwnSession({ run: runProgram, dir: own.session, log: options.log }) });
     this.#clock = options.clock ?? { now: () => Date.now(), monotonic: () => performance.now() };
     this.#processes = options.processes ?? ownProcesses;
     this.#processStart = options.processStart ?? ownProcessStart;
-    const own = iosPaths(options.paths);
     this.#deviceHubFile = own.deviceHub;
     this.#settings = new IosSettingsKeeper({ simctl: this.#simctl, file: own.settings, log: options.log, now: () => this.#clock.now() });
     this.#companion = new Companion({ program: options.companionProgram, paths: own.companion, log: options.log });
@@ -337,6 +339,7 @@ export class IosDriver implements DeviceDriver {
     else this.#video.start();
     await this.#settings.use(target.model, device.udid, signal).catch((error) => this.#log(`settings: ${words(error)}`));
     await this.#readSettings(signal).catch((error) => this.#log(`settings: not read: ${words(error)}`));
+    await this.#pasteboardReady();
     await this.#hidDaemonActive(target, device.udid, signal);
     return reattached ? "reattached" : "booted";
   }
@@ -669,6 +672,11 @@ export class IosDriver implements DeviceDriver {
   #booted(): string {
     if (this.#power.is !== "booted" || !this.#udid) throw new DriverError("not-booted", `The ${this.#target?.model ?? "device"} is not booted.`);
     return this.#udid;
+  }
+
+  async #pasteboardReady(): Promise<void> {
+    const problem = await this.#simctl.pasteboardReady().catch((error) => words(error));
+    if (problem) this.#log(`pasteboard: ${problem}`);
   }
 
   async setClipboard(text: string): Promise<void> {
