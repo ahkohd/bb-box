@@ -133,6 +133,7 @@ import {
   parseMacs,
   parseState,
   powerScript,
+  vmStateScript,
   startScript,
   script,
   sizeScript,
@@ -172,6 +173,7 @@ import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScri
 
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
+const VM_STOPPED_POLL_MS = 3_000;
 /**
  * How long no warm VM is filled after a box is ready, for its enrolment: a fill, a VM booting beside it, made BB's
  * installer in a claimed Mac take 21.9 s, where it takes 3.3 s alone. None is filled while an acquire runs either.
@@ -304,6 +306,7 @@ export interface TartBackendOptions {
   /** How long fills wait after a box is ready, instead of FILL_QUIET_MS: none, in tests. */
   readonly fillQuietMs?: number;
   readonly iosHostDoctorMs?: number;
+  readonly vmStoppedPollMs?: number;
 }
 
 interface SshKeys {
@@ -952,10 +955,35 @@ export class TartBackend implements Backend {
     if (size && !made) await this.#run(host, cloneScript(image, vm, size.cores, size.memoryMiB), { timeoutMs: 10 * 60_000, signal });
     this.#addresses.delete(vm);
     await this.#start(host, vm, "macos", deadline, signal, true, null);
-    const address = await this.#address(host, vm, deadline, signal);
-    await this.#waitReady(host, vm, this.#vm(await this.#mac(host), address, "macos"), "macos", deadline, signal);
-    await this.#identify(host, address, vm, "macos", signal);
-    return address;
+    return this.#unlessStoppedFirst(host, vm, signal, async (watched) => {
+      const address = await this.#address(host, vm, deadline, watched);
+      await this.#waitReady(host, vm, this.#vm(await this.#mac(host), address, "macos"), "macos", deadline, watched);
+      await this.#identify(host, address, vm, "macos", watched);
+      return address;
+    });
+  }
+
+  async #unlessStoppedFirst<T>(host: TartHost, vm: string, signal: AbortSignal | undefined, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const done = new AbortController();
+    const watched = signal ? AbortSignal.any([signal, done.signal]) : done.signal;
+    const stopped = this.#stoppedWords(host, vm, watched).then((words) => (words ? Promise.reject(new Error(words)) : new Promise<never>(() => {})));
+    try {
+      return await Promise.race([work(watched), stopped]);
+    } finally {
+      done.abort();
+    }
+  }
+
+  async #stoppedWords(host: TartHost, vm: string, signal: AbortSignal): Promise<string | null> {
+    const began = performance.now();
+    for (;;) {
+      if (!(await pause(this.#options.vmStoppedPollMs ?? VM_STOPPED_POLL_MS, signal).then(() => true, () => false))) return null;
+      const state = await this.#run(host, vmStateScript(vm), { timeoutMs: 30_000, signal }).then((result) => result.stdout.trim().split("\n").pop(), () => null);
+      if (signal.aborted || !state || state === "running") continue;
+      const words = state === "gone" ? `${vm} on ${host.name} went before it answered on SSH.` : `${vm} on ${host.name} stopped before it answered on SSH: Tart lists it ${state}.`;
+      this.#context.log?.(`${words} bb-box saw it ${((performance.now() - began) / 1000).toFixed(1)} s after the VM started, and stops waiting for it.`);
+      return words;
+    }
   }
 
   kinds(): BoxKind[] {

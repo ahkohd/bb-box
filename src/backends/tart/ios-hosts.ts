@@ -59,6 +59,7 @@ export interface HostOwner {
 }
 
 type StartOutcome = "done" | "elsewhere";
+type PreparedHost = { readonly command: SshTransport; readonly booted: number };
 
 export interface HostsAccess {
   readonly installId: string;
@@ -692,19 +693,7 @@ export class IosHosts implements SlotLender {
     beat.unref?.();
     try {
       await this.#gone(mac, leaving, signal);
-      const address = await this.#bootOnFreshCloneIfFirstFails(mac, vm, owner.settings, signal);
-      const booted = performance.now();
-      const command = await this.#access.vmCommand(mac, address);
-      await this.#installHelper(command, signal);
-      const init = await this.#helper(
-        command,
-        "init",
-        [],
-        `most=${owner.settings.most}\nahead=${owner.settings.ahead}\nresetting-most=${owner.settings.resettingMost}\ndisk-reserve-gib=${owner.settings.diskReserveGiB}\n`,
-        90_000,
-        signal,
-      );
-      if (init.exitCode !== DEVICE_HOST_EXITS.done) throw new Error(`Its helper's init failed: ${init.stderr.trim() || `exit code ${init.exitCode}`}`);
+      const { command, booted } = await this.#prepareOnFreshCloneIfFirstFails(mac, vm, owner.settings, signal);
       const promised = await this.#serial(async () => {
         const said = parseFields((await this.#access.run(mac, hostServingScript(vm, this.#access.installId), { signal })).stdout);
         const boxes = (said.promised ?? "").split(/\s+/).filter(Boolean);
@@ -733,9 +722,9 @@ export class IosHosts implements SlotLender {
     }
   }
 
-  async #bootOnFreshCloneIfFirstFails(mac: TartHost, vm: string, settings: IosHostsConfig, signal: AbortSignal): Promise<string> {
+  async #prepareOnFreshCloneIfFirstFails(mac: TartHost, vm: string, settings: IosHostsConfig, signal: AbortSignal): Promise<PreparedHost> {
     try {
-      return await this.#bootWhenRoom(mac, vm, settings, signal);
+      return await this.#prepare(mac, vm, settings, signal);
     } catch (first) {
       if (signal.aborted || (first instanceof BackendError && first.code === "no_capacity")) throw first;
       const firstWords = first instanceof Error ? first.message : String(first);
@@ -744,13 +733,41 @@ export class IosHosts implements SlotLender {
       const discarded = (await this.#access.run(mac, hostCloneDiscardScript(vm, this.#access.installId), { timeoutMs: 120_000, signal })).stdout.trim();
       if (discarded !== "discarded") throw new Error(`${firstWords} Its owner file went before bb-box could start a fresh clone.`);
       try {
-        return await this.#bootWhenRoom(mac, vm, settings, signal);
+        return await this.#prepare(mac, vm, settings, signal);
       } catch (second) {
         if (signal.aborted) throw second;
         const secondWords = second instanceof Error ? second.message : String(second);
         throw new Error(`${secondWords} That was a fresh clone's start; the first clone's failed too: ${firstWords}`);
       }
     }
+  }
+
+  async #prepare(mac: TartHost, vm: string, settings: IosHostsConfig, signal: AbortSignal): Promise<PreparedHost> {
+    const address = await this.#bootWhenRoom(mac, vm, settings, signal);
+    const booted = performance.now();
+    try {
+      const command = await this.#access.vmCommand(mac, address);
+      await this.#installHelper(command, signal);
+      const init = await this.#helper(
+        command,
+        "init",
+        [],
+        `most=${settings.most}\nahead=${settings.ahead}\nresetting-most=${settings.resettingMost}\ndisk-reserve-gib=${settings.diskReserveGiB}\n`,
+        90_000,
+        signal,
+      );
+      if (init.exitCode !== DEVICE_HOST_EXITS.done) throw new Error(`Its helper's init failed: ${init.stderr.trim() || `exit code ${init.exitCode}`}`);
+      return { command, booted };
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw await this.#stoppedWhileSetUp(mac, vm, error, signal);
+    }
+  }
+
+  async #stoppedWhileSetUp(mac: TartHost, vm: string, error: unknown, signal: AbortSignal): Promise<unknown> {
+    const states = await this.#readStates(signal).catch(() => null);
+    if (!states || this.#running(states.get(mac.name), vm)) return error;
+    return new Error(`Its VM stopped after it answered on SSH, before it served: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   async #bootWhenRoom(mac: TartHost, vm: string, settings: IosHostsConfig, signal: AbortSignal): Promise<string> {

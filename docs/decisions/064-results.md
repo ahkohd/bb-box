@@ -2404,3 +2404,85 @@ On production BB at main 3c33b9a, with the fixes above, on 28 October 2026.
   own** where it was asked, as with `on: "Namespace"`, rather than that it
   gets one.
 
+
+## F-9b: a shared host's failed start, seen live
+
+Run on 28 October 2026 through production BB on main cb5e915, on the Tart
+Mac, an M4 Max. Another thread's macOS box held the Mac's other VM slot
+throughout, so a host had one slot. To make a start fail, the lead ran a
+watcher on the Mac that stopped the first new host VM once, with
+`tart stop <vm> --timeout 0`. Each box was a shared ios box pinned to
+Tart, asked for without waiting. Times are UTC, from the Mac, bb-box's log
+and the doctor.
+
+### Run 1: the VM stopped 5 s after Tart listed it running
+
+| Time | What happened |
+| --- | --- |
+| 07:37:49 | A box asked for |
+| 07:38:00 | Host 1 starting |
+| 07:38:37 | Its VM running, after a 37 s clone |
+| 07:38:42 | Its VM stopped. The iOS image restores from a saved state, so SSH had answered already |
+| About 07:39:00 | Two more boxes asked for |
+| About 07:39:02 | Host 1 failed, its VM being deleted |
+| 07:39:12 | Host 2 starting, for the two later boxes: not refused, though host 1's VM was not yet gone (item 3) |
+| 07:39:20 | Host 1's VM deleted |
+| 07:39:25 | The first box failed: "The shared iOS host ... did not start: The box at 192.168.64.4 did not answer on SSH." No fresh clone |
+| 07:39:59 | Host 2 serving, 46.3 s after its start; the two boxes ready 65.2 and 64.8 s after they were asked for |
+
+### Run 2: the VM stopped as soon as Tart listed it running
+
+| Time | What happened |
+| --- | --- |
+| 07:42:51 | A box asked for |
+| 07:43:05 | The host starting |
+| 07:43:34 | Its first start failed by itself, before the watcher saw it: "VZErrorDomain Code=1 ... Internal Virtualization error", as in H8. The log: "did not start, so bb-box deletes its VM and starts a fresh clone of the iOS image, once" (item 4) |
+| 07:43:45 | The doctor: "starting, made 49 s ago, on a fresh clone as its first start failed (Tart could not start ...)" |
+| 07:43:50 to 07:44:05 | Two more boxes asked for; both joined the starting host, 3 boxes promised (item 4) |
+| 07:44:27 | The fresh clone running, and stopped at once |
+| 07:44:27 to 07:54:22 | Nothing noticed. The doctor still said "starting", its beat kept fresh |
+| 07:54:22 | All three boxes failed, with both causes: "got no address within 576 s: ... no IP address found, is your VM running? That was a fresh clone's start; the first clone's failed too: Tart could not start ... VZErrorDomain Code=1 ..." |
+| 07:54:58 | The doctor: no shared iOS host runs, the Mac runs 1 of 2 VMs |
+
+### What the runs show
+
+- **Item 3 works.** A failed host's VM leaves the Mac's room while it is
+  deleted: run 1's later boxes got a new host 8 s before the old VM was
+  gone, and were not told "Two macOS VMs already run".
+- **Item 4 works where it reaches.** A real Virtualization failure got a
+  fresh clone, boxes joined it while it started, and the doctor and the
+  boxes' words gave the first failure.
+- **Fault A: the retry ended at SSH.** A VM that stopped after it
+  answered on SSH, while bb-box installed and started its helper, failed
+  its boxes with no fresh clone, in words that did not say the VM stopped.
+- **Fault B: a stopped VM was waited for.** A VM that stopped before it
+  answered on SSH was noticed only at the start's 10-minute deadline, 9
+  min 55 s after the stop. Its boxes waited that long.
+
+### What changed
+
+| Fault | Fix |
+| --- | --- |
+| A | The fresh clone is tried for any failure before the host serves: the VM's start, its address and SSH, and now the helper's install and init too. Where the VM no longer runs after such a failure, the words say "Its VM stopped after it answered on SSH, before it served: ..." |
+| B | While a host's VM waits for its address and SSH, bb-box asks Tart every 3 s whether it still runs. A VM listed stopped, or gone, fails that attempt at once: "<vm> on <mac> stopped before it answered on SSH: Tart lists it stopped." The log says so when it is seen, with the time since the VM started. A `tart list` that fails is not taken as gone |
+
+On the fakes, both failed on main and pass with the fix: a helper init
+whose connection closes while the fake VM is stopped gets a fresh clone,
+a box joins it, and the doctor and log give the words; a fake `tart ip`
+held while the VM is stopped is noticed within a poll, and the fresh
+clone serves.
+On a Linux box, from a clean clone of the bundle on main cb5e915: tsc
+clean; the node suite 2,247 passed, 0 failed, 288 skipped, the docs test
+among them; vitest 224 passed.
+
+The fix is not yet seen live: that needs the lead's deploy, then run 1
+and run 2 again.
+
+### What limits these checks
+
+- **The stops were forced** with `tart stop --timeout 0`. Virtualization's
+  own failure came once, by itself, in run 2.
+- **Namespace was not provoked.** Its hosts have no retry on a fresh
+  instance and no limit of two VMs, so items 3 and 4 are Tart's only.
+  Making a Namespace start fail needs its API, which this check did not
+  use.

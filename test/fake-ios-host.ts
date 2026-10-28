@@ -31,6 +31,7 @@ function hostVmHome(home: string, device: FakeDeviceHost): void {
       "#!/bin/sh",
       '[ "$1" = -n ] && shift',
       `if [ "$1" = ${DEVICE_HOST_HELPER} ] && [ -f "$HOME/hold-$2" ]; then touch "$HOME/$2-held"; while [ -f "$HOME/hold-$2" ]; do sleep 0.05; done; fi`,
+      `if [ "$1" = ${DEVICE_HOST_HELPER} ] && [ -f "$HOME/lose-$2" ]; then rm -f "$HOME/lose-$2"; echo "Connection to the VM closed by remote host." >&2; exit 255; fi`,
       `if [ "$1" = ${DEVICE_HOST_HELPER} ]; then shift; echo "$*" >> "$HOME/helper.log"; exec env ${env} /bin/sh '${helper}' "$@"; fi`,
       'for last in "$@"; do :; done',
       `if [ "$last" = ${DEVICE_HOST_HELPER} ]; then cat > "$HOME/installed-helper"; exit 0; fi`,
