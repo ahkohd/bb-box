@@ -478,6 +478,25 @@ test("with two hosts a Mac, a host on an older build stops lending once a host o
   await backend.release(one, releasing, signal());
 });
 
+test("the box that started a shared host is served first, though the boxes that joined it reach its ready slots before it; a box that asks then comes after it (F-11)", async () => {
+  const { backend } = setup();
+  const boxes = [identity(), identity(), identity()];
+  const placed: Guest[] = [];
+  for (const box of boxes) placed.push((await place(backend, box)).guest);
+  const [first, ...joined] = boxes as [BoxIdentity, BoxIdentity, BoxIdentity];
+  const joiners = await Promise.all(joined.map((box, n) => backend.acquire(box, placed[n + 1]!, hooks().hooks, signal())));
+  const slotOf = (guest: Guest) => {
+    const slot = placementOf({ guest });
+    return slot.on === "slot" ? `${slot.carried ? "i" : ""}${slot.generation}` : "vm";
+  };
+  assert.deepEqual(joiners.map(slotOf), ["i2", "1"], "the joiners leave the first carried slot to the first box, and the last makes one");
+  const later = await backend.slots!.offer("ios", null, signal());
+  assert.notEqual(later.tier, "ready", "a box asking now does not take the first box's slot");
+  const one = await backend.acquire(first, placed[0]!, hooks().hooks, signal());
+  assert.equal(slotOf(one), "i1");
+  for (const slot of [one, ...joiners]) await backend.release(slot, releasing, signal());
+});
+
 test("a host whose VM fails to start starts once more on a fresh clone, still taking boxes meanwhile, and the doctor and log say why (F-9, H8)", async () => {
   const { backend, mac, clones, context, ssh } = setup();
   writeFileSync(join(mac, ".fake-tart-run-fails"), "2");

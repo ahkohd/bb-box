@@ -1,12 +1,12 @@
 import { performance } from "node:perf_hooks";
-import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
+import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, spareMaking, AskOrder, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import type { DeviceOffer, IosModelName } from "../../core/device.ts";
 import { macSlotSizingWords, sizeMacSlots, type MacSlotSizing } from "../../core/slot-sizing.ts";
 import type { DeviceRoom } from "../../core/mac-capabilities.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import type { SshTransport } from "../../transports/ssh.ts";
 import type { RunResult, SshAccess } from "../../transports/types.ts";
-import { DEVICE_HOST_EXITS, SLOT_INSTALLER_ENVIRONMENT, claimantInput, keepServerApp, keptAppWords, parseHostStatus, type HostSlotLine, type HostStatus, type ServerApp } from "../tart/device-host.ts";
+import { DEVICE_HOST_EXITS, SLOT_INSTALLER_ENVIRONMENT, claimantInput, keepServerApp, keptAppWords, parseHostStatus, type HostStatus, type ServerApp } from "../tart/device-host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxTransports, type DoctorCheck, type Guest, type HeldGuest, type PoolMember, type PowerState } from "../types.ts";
 import { SLOT_KIND, type PoolSlotsConfig, type SshPoolMachine } from "./config.ts";
 import { SLOTS_HELPER_VERSION, fields, slotsBusy, type MachineStatus, type SlotsSummary } from "./protocol.ts";
@@ -112,14 +112,6 @@ export function slotDeviceOffer(summary: SlotsSummary, xcode: string | null): De
   } as DeviceOffer;
 }
 
-function readyFor(slot: HostSlotLine, box: string | null, acquiring: ReadonlySet<string>): boolean {
-  return slot.is === "ready" && (slot.madeFor === null || slot.madeFor === box || !acquiring.has(slot.madeFor));
-}
-
-function spareMaking(slot: HostSlotLine, box: string | null): boolean {
-  return slot.is === "making" && (slot.madeFor === null || slot.madeFor === box);
-}
-
 function heldCount(status: HostStatus): number {
   return status.slots.filter((slot) => slot.is === "held").length;
 }
@@ -144,6 +136,7 @@ export class PoolSlots implements SlotLender {
   readonly on = "pool-mac" as const;
   readonly #access: PoolSlotsAccess;
   readonly #acquiringBoxes = new Set<string>();
+  readonly #order = new AskOrder();
   readonly #appKeeping = new Set<string>();
   readonly #macFacts = new Map<string, { readonly cores: number | null; readonly memoryMiB: number | null }>();
   readonly #appKept = new Map<string, string>();
@@ -244,7 +237,7 @@ export class PoolSlots implements SlotLender {
         continue;
       }
       if (heldCount(status)) held = true;
-      if (status.slots.some((slot) => readyFor(slot, null, this.#acquiringBoxes))) {
+      if (this.#order.slotForNewBox(name, status.slots, this.#acquiringBoxes)) {
         tiers.push({ tier: "ready", host: name, waitMs: CLAIM_WAIT_MS });
         continue;
       }
@@ -262,16 +255,23 @@ export class PoolSlots implements SlotLender {
 
   async take(choice: SlotTier, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
     return this.#serial(async () => {
-      switch (choice.tier) {
-        case "ready":
-          return this.#claimReady(choice.host, box, signal);
-        case "join":
-        case "make":
-          return this.#promise(choice.host, box, signal);
-        default:
-          return { lost: `The SSH host pool cannot take a ${choice.tier} answer.` };
-      }
+      const taken = await this.#take(choice, box, signal);
+      const ref = "lost" in taken ? null : poolSlotOf(taken);
+      if (ref && ref.slot === null) this.#order.asked(ref.mac, box.boxId);
+      return taken;
     });
+  }
+
+  async #take(choice: SlotTier, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
+    switch (choice.tier) {
+      case "ready":
+        return this.#claimReady(choice.host, box, signal);
+      case "join":
+      case "make":
+        return this.#promise(choice.host, box, signal);
+      default:
+        return { lost: `The SSH host pool cannot take a ${choice.tier} answer.` };
+    }
   }
 
   async #claimant(box: BoxIdentity): Promise<string> {
@@ -316,9 +316,9 @@ export class PoolSlots implements SlotLender {
     const machine = this.#access.machine(name);
     if (!machine) return { lost: `The pool's Mac ${name} is no longer in the SSH host pool's settings.` };
     const status = await this.#status(machine, signal);
-    const ready = status.slots.filter((slot) => readyFor(slot, null, this.#acquiringBoxes)).sort((a, b) => a.uid - b.uid);
-    if (!ready.length) return { lost: `The pool's Mac ${name} has no ready iOS slot now.` };
-    return this.#claim(machine, ready[0]!.id, box, status.most, signal);
+    const ready = this.#order.slotForNewBox(name, status.slots, this.#acquiringBoxes);
+    if (!ready) return { lost: `The pool's Mac ${name} has no ready iOS slot now that no box asked for earlier waits for.` };
+    return this.#claim(machine, ready.id, box, status.most, signal);
   }
 
   #remember(view: PoolMacView): void {
@@ -366,6 +366,7 @@ export class PoolSlots implements SlotLender {
     const ref = poolSlotOf(previous)!;
     const machine = this.#machineOf(ref.mac);
     this.#acquiringBoxes.add(box.boxId);
+    this.#order.asked(machine.name, box.boxId);
     let taken = previous;
     try {
       await hooks.starting();
@@ -379,6 +380,7 @@ export class PoolSlots implements SlotLender {
       };
       const claimed = ref.slot !== null && readPlacement(previous.data).ok;
       const guest = claimed ? previous : await timed("slot", () => this.#slotFor(machine, box, signal));
+      this.#order.served(box.boxId);
       taken = guest;
       await hooks.claim(guest);
       await timed("ssh", () => this.#waitAnswers(machine, slotUserOf(guest), signal));
@@ -387,6 +389,7 @@ export class PoolSlots implements SlotLender {
       if (!signal.aborted) await this.release(taken).catch((cause) => this.#access.logError(`release ${taken.ref} after a failed acquire`, cause));
       throw error;
     } finally {
+      this.#order.served(box.boxId);
       this.#acquiringBoxes.delete(box.boxId);
     }
   }
@@ -412,9 +415,10 @@ export class PoolSlots implements SlotLender {
       }
       if (status.closedSince !== null) throw new BackendError("no_capacity", `The pool's Mac ${machine.name} was lent whole before box ${box.name} got an iOS slot.`);
       if (Date.now() > deadline) throw new Error(`The pool's Mac ${machine.name} gave box ${box.name} no iOS slot within ${SLOT_READY_MS / 60_000} minutes.`);
-      const ready = status.slots.filter((slot) => readyFor(slot, box.boxId, this.#acquiringBoxes)).sort((a, b) => Number(b.madeFor === box.boxId) - Number(a.madeFor === box.boxId) || a.uid - b.uid);
-      if (ready.length) {
-        const claimed = await this.#claim(machine, ready[0]!.id, box, status.most, signal);
+      const ready = this.#order.slotFor(machine.name, box.boxId, status.slots, this.#acquiringBoxes);
+      if (ready) {
+        this.#order.claiming(box.boxId, ready.id);
+        const claimed = await this.#claim(machine, ready.id, box, status.most, signal).finally(() => this.#order.looking(box.boxId));
         if (!("lost" in claimed)) return claimed;
         continue;
       }
@@ -424,9 +428,14 @@ export class PoolSlots implements SlotLender {
       }
       if (!status.promises.some((promise) => promise.box === box.boxId)) {
         const again = await this.#access.helper(machine, ["slot", "promise"], claimant, QUICK_MS, signal);
+        if (again.exitCode === DEVICE_HOST_EXITS.full && this.#order.servesFirst(machine.name, box.boxId)) {
+          await this.#sleep(POLL_MS, signal);
+          continue;
+        }
         if (again.exitCode !== DEVICE_HOST_EXITS.done) throw new BackendError("no_capacity", `The pool's Mac ${machine.name} has no room for box ${box.name} now: ${said(again)}`);
       }
-      const made = await this.#access.helper(machine, ["slot", "make"], claimant, SLOT_READY_MS, signal);
+      this.#order.making(box.boxId);
+      const made = await this.#access.helper(machine, ["slot", "make"], claimant, SLOT_READY_MS, signal).finally(() => this.#order.looking(box.boxId));
       if (made.exitCode === DEVICE_HOST_EXITS.done) continue;
       if (made.exitCode === DEVICE_HOST_EXITS.full || made.exitCode === DEVICE_HOST_EXITS.lost) {
         await this.#sleep(POLL_MS * 2, signal);
@@ -438,6 +447,7 @@ export class PoolSlots implements SlotLender {
 
   async release(guest: Guest, signal?: AbortSignal): Promise<{ readonly last: boolean }> {
     const ref = poolSlotOf(guest)!;
+    this.#order.served(ref.box);
     const machine = this.#access.machine(ref.mac);
     if (!machine) return { last: false };
     const claimant = claimantInput({ install: this.#access.installId, box: ref.box });

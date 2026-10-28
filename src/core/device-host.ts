@@ -158,6 +158,88 @@ export function lostWords(kind: string, lost: readonly string[]): string {
   return `Every shared iOS host bb-box asked had its room taken first, ${TAKE_TRIES} times, so this ${kind} box has no slot: ${lost.join(" ")} Ask again.`;
 }
 
+export interface LendableSlot {
+  readonly id: string;
+  readonly is: string;
+  readonly madeFor: string | null;
+  readonly carried: boolean;
+  readonly uid: number;
+}
+
+export function readyFor(slot: LendableSlot, box: string | null, acquiring: ReadonlySet<string>): boolean {
+  return slot.is === "ready" && (slot.madeFor === null || slot.madeFor === box || !acquiring.has(slot.madeFor));
+}
+
+export function spareMaking(slot: LendableSlot, box: string | null): boolean {
+  return slot.is === "making" && (slot.madeFor === null || slot.madeFor === box);
+}
+
+type QueuedDoing = { readonly is: "looking" } | { readonly is: "making" } | { readonly is: "claiming"; readonly slot: string };
+
+interface Queued {
+  readonly host: string;
+  readonly asked: number;
+  doing: QueuedDoing;
+}
+
+export class AskOrder {
+  #asks = 0;
+  readonly #boxes = new Map<string, Queued>();
+
+  asked(host: string, box: string): void {
+    const known = this.#boxes.get(box);
+    if (known?.host === host) return;
+    this.#boxes.set(box, { host, asked: this.#asks++, doing: { is: "looking" } });
+  }
+
+  looking(box: string): void {
+    this.#doing(box, { is: "looking" });
+  }
+
+  making(box: string): void {
+    this.#doing(box, { is: "making" });
+  }
+
+  claiming(box: string, slot: string): void {
+    this.#doing(box, { is: "claiming", slot });
+  }
+
+  served(box: string): void {
+    this.#boxes.delete(box);
+  }
+
+  servesFirst(host: string, box: string): boolean {
+    const asked = this.#boxes.get(box)?.asked ?? Number.MAX_SAFE_INTEGER;
+    return [...this.#boxes.entries()].some(([other, each]) => other !== box && each.host === host && each.asked < asked);
+  }
+
+  waitingOn(host: string): number {
+    return [...this.#boxes.values()].filter((each) => each.host === host && each.doing.is === "looking").length;
+  }
+
+  slotFor<S extends LendableSlot>(host: string, box: string, slots: readonly S[], acquiring: ReadonlySet<string>): S | null {
+    const mine = slots.find((slot) => slot.is === "ready" && slot.madeFor === box);
+    if (mine) return mine;
+    const asked = this.#boxes.get(box)?.asked ?? Number.MAX_SAFE_INTEGER;
+    const ahead = [...this.#boxes.entries()].filter(([other, each]) => other !== box && each.host === host && each.asked < asked && each.doing.is === "looking").length;
+    return this.#free(host, box, slots, acquiring)[ahead] ?? null;
+  }
+
+  slotForNewBox<S extends LendableSlot>(host: string, slots: readonly S[], acquiring: ReadonlySet<string>): S | null {
+    return this.#free(host, null, slots, acquiring)[this.waitingOn(host)] ?? null;
+  }
+
+  #free<S extends LendableSlot>(host: string, box: string | null, slots: readonly S[], acquiring: ReadonlySet<string>): S[] {
+    const claimedByOthers = new Set([...this.#boxes.entries()].flatMap(([other, each]) => (other !== box && each.host === host && each.doing.is === "claiming" ? [each.doing.slot] : [])));
+    return slots.filter((slot) => readyFor(slot, null, acquiring) && !claimedByOthers.has(slot.id)).sort((a, b) => Number(b.carried) - Number(a.carried) || a.uid - b.uid);
+  }
+
+  #doing(box: string, doing: QueuedDoing): void {
+    const known = this.#boxes.get(box);
+    if (known) known.doing = doing;
+  }
+}
+
 export function isSlotKind(kind: string): kind is SlotKind {
   return (SLOT_KINDS as readonly string[]).includes(kind);
 }

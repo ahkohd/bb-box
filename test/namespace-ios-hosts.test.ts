@@ -231,6 +231,21 @@ test("the first ios box starts a Namespace host and the next joins it while it s
   assert.equal(await storage.get(HOST_RECORD_KEY), undefined);
 });
 
+test("the box that started a Namespace host is served first, though the boxes that joined it reach its ready slots before it (F-11)", async () => {
+  const { hosts, host } = harness();
+  host.most = 5;
+  const boxes = ["b1", "b2", "b3"].map(box);
+  const promised: Guest[] = [];
+  for (const each of boxes) promised.push((await hosts.take(await hosts.offer("ios", null, signal()), each, signal())) as Guest);
+  host.slots = [1, 2].map((n) => ({ id: String(n), is: "ready" as const, box: null, madeFor: null }));
+  host.generation = 2;
+  await serving(hosts);
+  const joiners = await Promise.all([1, 2].map((n) => hosts.acquire(boxes[n]!, promised[n]!, hooks, signal())));
+  assert.deepEqual(joiners.map((guest) => namespaceSlotOf(guest)?.slot), ["2", "3"], "the joiners leave the first ready slot to the first box, and the last makes one");
+  const first = await hosts.acquire(boxes[0]!, promised[0]!, hooks, signal());
+  assert.equal(namespaceSlotOf(first)?.slot, "1");
+});
+
 test("a host lends no new slot in the hour before its end, and a box asked for then waits with words (065, unit 7)", async () => {
   let now = 1_000_000;
   const { hosts, setClock } = harness({ now: () => now });

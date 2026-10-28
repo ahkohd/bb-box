@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
+import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, spareMaking, AskOrder, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import type { DeviceOffer, IosModelName } from "../../core/device.ts";
 import type { MacReport } from "../../core/mac-capabilities.ts";
 import { sizeMacSlots, macSlotSizingWords } from "../../core/slot-sizing.ts";
@@ -11,7 +11,7 @@ import { SlotUserTransport } from "../../transports/slot-user.ts";
 import type { SshTransport } from "../../transports/ssh.ts";
 import type { RunResult } from "../../transports/types.ts";
 import { setupDir } from "../setup-dir.ts";
-import { DEVICE_HOST_EXITS, claimantInput, helperCommand, parseHostStatus, slotDaemonKeptByHost, type HostSlotLine, type HostStatus, type SlotClaimant } from "../tart/device-host.ts";
+import { DEVICE_HOST_EXITS, claimantInput, helperCommand, parseHostStatus, slotDaemonKeptByHost, type HostStatus, type SlotClaimant } from "../tart/device-host.ts";
 import { BackendError, type AcquireHooks, type BackendStorage, type BoxIdentity, type BoxTransports, type DoctorCheck, type Guest, type HeldGuest, type PowerState } from "../types.ts";
 import type { Instance } from "./api.ts";
 import type { MacShape } from "./config.ts";
@@ -148,14 +148,6 @@ export function namespaceDeviceOffer(report: MacReport | null, setup = setupDir(
   };
 }
 
-function readyFor(slot: HostSlotLine, box: string | null, acquiring: ReadonlySet<string>): boolean {
-  return slot.is === "ready" && (slot.madeFor === null || slot.madeFor === box || !acquiring.has(slot.madeFor));
-}
-
-function spareMaking(slot: HostSlotLine, box: string | null): boolean {
-  return slot.is === "making" && (slot.madeFor === null || slot.madeFor === box);
-}
-
 function heldCount(status: HostStatus): number {
   return status.slots.filter((slot) => slot.is === "held").length;
 }
@@ -199,6 +191,7 @@ export class NamespaceHosts implements SlotLender {
   readonly #access: NamespaceHostsAccess;
   readonly #instance = randomBytes(4).toString("hex");
   readonly #acquiringBoxes = new Set<string>();
+  readonly #order = new AskOrder();
   readonly #stopping = new AbortController();
   #start: Promise<void> | null = null;
   #known: NamespaceHostRecord | null = null;
@@ -327,7 +320,7 @@ export class NamespaceHosts implements SlotLender {
         return { tier: "wait", words: words(error) };
       }
       if (status.deletingSince !== null) return { tier: "wait", words: "The Namespace host is being deleted." };
-      if (status.slots.some((slot) => readyFor(slot, null, this.#acquiringBoxes))) return { tier: "ready", host: record.tag, waitMs: CLAIM_WAIT_MS };
+      if (this.#order.slotForNewBox(record.tag, status.slots, this.#acquiringBoxes)) return { tier: "ready", host: record.tag, waitMs: CLAIM_WAIT_MS };
       if (status.slots.some((slot) => spareMaking(slot, null))) return { tier: "join", host: record.tag, waitMs: SLOT_MAKING_MS / 2 };
       if (status.counted + status.promises.length < status.most && (status.diskGiB === null || status.diskGiB >= status.diskReserveGiB)) return { tier: "make", host: record.tag, waitMs: SLOT_MAKING_MS };
       return { tier: "wait", words: `The Namespace host has all its ${status.most} slots making, ready, held or promised (${heldCount(status)} held). A slot is likely free when one of its boxes is released.` };
@@ -341,18 +334,25 @@ export class NamespaceHosts implements SlotLender {
 
   async take(choice: SlotTier, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
     return this.#serial(async () => {
-      switch (choice.tier) {
-        case "new-host":
-          return this.#newHost(box, signal);
-        case "join":
-        case "make":
-          return this.#promise(box, signal);
-        case "ready":
-          return this.#claimReady(box, signal);
-        default:
-          return { lost: `The Namespace backend cannot take a ${choice.tier} answer.` };
-      }
+      const taken = await this.#take(choice, box, signal);
+      const ref = "lost" in taken ? null : namespaceSlotOf(taken);
+      if (ref && ref.slot === null) this.#order.asked(ref.tag, box.boxId);
+      return taken;
     });
+  }
+
+  async #take(choice: SlotTier, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
+    switch (choice.tier) {
+      case "new-host":
+        return this.#newHost(box, signal);
+      case "join":
+      case "make":
+        return this.#promise(box, signal);
+      case "ready":
+        return this.#claimReady(box, signal);
+      default:
+        return { lost: `The Namespace backend cannot take a ${choice.tier} answer.` };
+    }
   }
 
   async #newHost(box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
@@ -409,9 +409,9 @@ export class NamespaceHosts implements SlotLender {
     const record = await this.record();
     if (!record || record.phase !== "serving" || !record.instance) return { lost: "The Namespace host is no longer serving." };
     const status = await this.#status(record.instance, signal);
-    const ready = status.slots.filter((slot) => readyFor(slot, null, this.#acquiringBoxes)).sort((a, b) => a.uid - b.uid);
-    if (!ready.length) return { lost: "The Namespace host has no ready slot now." };
-    return this.#claim(record, ready[0]!.id, box, status.most, signal);
+    const ready = this.#order.slotForNewBox(record.tag, status.slots, this.#acquiringBoxes);
+    if (!ready) return { lost: "The Namespace host has no ready slot now that no box asked for earlier waits for." };
+    return this.#claim(record, ready.id, box, status.most, signal);
   }
 
   async #claim(record: NamespaceHostRecord, slot: string, box: BoxIdentity, most: number, signal?: AbortSignal): Promise<Guest | { readonly lost: string }> {
@@ -529,6 +529,8 @@ export class NamespaceHosts implements SlotLender {
 
   async acquire(box: BoxIdentity, previous: Guest, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     this.#acquiringBoxes.add(box.boxId);
+    const ref = namespaceSlotOf(previous)!;
+    this.#order.asked(ref.tag, box.boxId);
     let taken = previous;
     try {
       await hooks.starting();
@@ -540,12 +542,12 @@ export class NamespaceHosts implements SlotLender {
           hooks.timing(step, Math.round(performance.now() - began));
         }
       };
-      const ref = namespaceSlotOf(previous)!;
       const claimed = readPlacement(previous.data).ok && ref.slot !== null;
       let guest = previous;
       if (!claimed) {
         const record = await timed("host", () => this.#serving(signal));
         guest = await timed("slot", () => this.#slotFor(record, box, signal));
+        this.#order.served(box.boxId);
         taken = guest;
         await hooks.claim(guest);
       }
@@ -556,6 +558,7 @@ export class NamespaceHosts implements SlotLender {
       if (!signal.aborted && !this.#stopping.signal.aborted) await this.release(taken).catch((cause) => this.#access.logError(`release ${taken.ref} after a failed acquire`, cause));
       throw error;
     } finally {
+      this.#order.served(box.boxId);
       this.#acquiringBoxes.delete(box.boxId);
     }
   }
@@ -582,9 +585,10 @@ export class NamespaceHosts implements SlotLender {
       }
       if (status.deletingSince !== null) throw new Error(`The Namespace host was being deleted before box ${box.name} got a slot.`);
       if (this.#access.now() > deadline) throw new Error(`The Namespace host gave box ${box.name} no slot within ${SLOT_READY_MS / 60_000} minutes.`);
-      const ready = status.slots.filter((slot) => readyFor(slot, box.boxId, this.#acquiringBoxes)).sort((a, b) => Number(b.madeFor === box.boxId) - Number(a.madeFor === box.boxId));
-      if (ready.length) {
-        const claimed = await this.#claim(record, ready[0]!.id, box, status.most, signal);
+      const ready = this.#order.slotFor(record.tag, box.boxId, status.slots, this.#acquiringBoxes);
+      if (ready) {
+        this.#order.claiming(box.boxId, ready.id);
+        const claimed = await this.#claim(record, ready.id, box, status.most, signal).finally(() => this.#order.looking(box.boxId));
         if (!("lost" in claimed)) return claimed;
         continue;
       }
@@ -594,9 +598,14 @@ export class NamespaceHosts implements SlotLender {
       }
       if (!status.promises.some((promise) => promise.box === box.boxId)) {
         const again = await this.#helper(instance, "promise", [], claimantInput(this.#claimantOf(box)), 90_000, signal);
+        if (again.exitCode === DEVICE_HOST_EXITS.full && this.#order.servesFirst(record.tag, box.boxId)) {
+          await this.#access.sleep(POLL_MS, signal);
+          continue;
+        }
         if (again.exitCode !== DEVICE_HOST_EXITS.done) throw new BackendError("no_capacity", `The Namespace host has no room for box ${box.name} now: ${again.stderr.trim()}`);
       }
-      const made = await this.#helper(instance, "make", [], claimantInput(this.#claimantOf(box)), SLOT_READY_MS, signal);
+      this.#order.making(box.boxId);
+      const made = await this.#helper(instance, "make", [], claimantInput(this.#claimantOf(box)), SLOT_READY_MS, signal).finally(() => this.#order.looking(box.boxId));
       if (made.exitCode === DEVICE_HOST_EXITS.done) continue;
       if (made.exitCode === DEVICE_HOST_EXITS.full || made.exitCode === DEVICE_HOST_EXITS.lost) {
         await this.#access.sleep(POLL_MS * 2, signal);
@@ -616,6 +625,7 @@ export class NamespaceHosts implements SlotLender {
 
   async release(guest: Guest, signal?: AbortSignal): Promise<{ readonly last: boolean }> {
     const ref = namespaceSlotOf(guest)!;
+    this.#order.served(ref.box);
     const record = await this.record();
     if (!record || record.tag !== ref.tag) return { last: false };
     if (record.phase === "starting" && !ref.slot) {

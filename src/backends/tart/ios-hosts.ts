@@ -3,7 +3,7 @@ import type { DeviceRoom } from "../../core/mac-capabilities.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
+import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, spareMaking, AskOrder, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import { hostSizingWords, sizeHost, type HostSizing } from "../../core/slot-sizing.ts";
 import { pause } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
@@ -12,7 +12,7 @@ import type { SshTransport } from "../../transports/ssh.ts";
 import { setupDir } from "../setup-dir.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxTransports, type DoctorCheck, type Guest, type HeldGuest, type PowerState, type StopReason } from "../types.ts";
 import type { IosHostsConfig, TartConfig, TartHost } from "./config.ts";
-import { DEVICE_HOST_EXITS, DEVICE_HOST_HELPER, claimantInput, helperCommand, keepServerApp, keptAppWords, parseHostStatus, slotDaemonKeptByHost, type HostSlotLine, type HostStatus, type ServerApp, type SlotClaimant } from "./device-host.ts";
+import { DEVICE_HOST_EXITS, DEVICE_HOST_HELPER, claimantInput, helperCommand, keepServerApp, keptAppWords, parseHostStatus, slotDaemonKeptByHost, type HostStatus, type ServerApp, type SlotClaimant } from "./device-host.ts";
 import { claimScript, ownerText, parseFields, script, type HostState } from "./host.ts";
 
 export const HOST_ROLE = "device-host";
@@ -286,14 +286,6 @@ interface Surveyed {
   readonly why: string | null;
 }
 
-function readyFor(slot: HostSlotLine, box: string | null, acquiring: ReadonlySet<string>): boolean {
-  return slot.is === "ready" && (slot.madeFor === null || slot.madeFor === box || !acquiring.has(slot.madeFor));
-}
-
-function spareMaking(slot: HostSlotLine, box: string | null): boolean {
-  return slot.is === "making" && (slot.madeFor === null || slot.madeFor === box);
-}
-
 function heldCount(status: HostStatus): number {
   return status.slots.filter((slot) => slot.is === "held").length;
 }
@@ -322,6 +314,7 @@ export class IosHosts implements SlotLender {
   #lastStates: { readonly at: number; readonly states: ReadonlyMap<string, HostState | Error> } | null = null;
   readonly #acquiring = new Map<string, number>();
   readonly #acquiringBoxes = new Set<string>();
+  readonly #order = new AskOrder();
   readonly #stopping = new AbortController();
   readonly #doctorHostMs: number;
   #lock: Promise<unknown> = Promise.resolve();
@@ -498,7 +491,7 @@ export class IosHosts implements SlotLender {
       if (!status || status.deletingSince !== null) continue;
       const draining = owner.build !== null && owner.build !== this.#currentBuild(states.get(owner.mac.name));
       if (draining && this.#newHostWhy(owner.mac, states, owners, leaving) === null) continue;
-      if (status.slots.some((slot) => readyFor(slot, null, this.#acquiringBoxes))) {
+      if (this.#order.slotForNewBox(owner.vm, status.slots, this.#acquiringBoxes)) {
         tiers.push({ tier: "ready", host: owner.vm, waitMs: CLAIM_WAIT_MS });
         continue;
       }
@@ -525,18 +518,25 @@ export class IosHosts implements SlotLender {
 
   async take(choice: SlotTier, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
     return this.#serial(async () => {
-      switch (choice.tier) {
-        case "ready":
-          return this.#claimReady(choice.host, box, signal);
-        case "join":
-        case "make":
-          return this.#promise(choice.host, box, signal);
-        case "new-host":
-          return this.#newHost(choice.where, box, signal);
-        default:
-          return { lost: `The Tart backend cannot take a ${choice.tier} answer.` };
-      }
+      const taken = await this.#take(choice, box, signal);
+      const ref = "lost" in taken ? null : slotRefOf(taken);
+      if (ref && ref.slot === null) this.#order.asked(ref.vm, box.boxId);
+      return taken;
     });
+  }
+
+  async #take(choice: SlotTier, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
+    switch (choice.tier) {
+      case "ready":
+        return this.#claimReady(choice.host, box, signal);
+      case "join":
+      case "make":
+        return this.#promise(choice.host, box, signal);
+      case "new-host":
+        return this.#newHost(choice.where, box, signal);
+      default:
+        return { lost: `The Tart backend cannot take a ${choice.tier} answer.` };
+    }
   }
 
   async #recentStates(signal?: AbortSignal): Promise<ReadonlyMap<string, HostState | Error>> {
@@ -589,9 +589,9 @@ export class IosHosts implements SlotLender {
     if (!address) return { lost: `The shared iOS host ${vm} has no address.` };
     const command = await this.#access.vmCommand(owner.mac, address);
     const status = await this.#status(command, signal);
-    const ready = status.slots.filter((slot) => readyFor(slot, null, this.#acquiringBoxes)).sort((a, b) => Number(b.carried) - Number(a.carried) || a.uid - b.uid);
-    if (!ready.length) return { lost: `The shared iOS host ${vm} has no ready slot now.` };
-    return this.#claim(owner.mac, vm, address, command, ready[0]!.id, box, status.most, signal);
+    const ready = this.#order.slotForNewBox(vm, status.slots, this.#acquiringBoxes);
+    if (!ready) return { lost: `The shared iOS host ${vm} has no ready slot now that no box asked for earlier waits for.` };
+    return this.#claim(owner.mac, vm, address, command, ready.id, box, status.most, signal);
   }
 
   async #promise(vm: string, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
@@ -844,6 +844,7 @@ export class IosHosts implements SlotLender {
     if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${previous.host ?? "unknown"}, which is not in bb-box's Tart settings.`);
     this.#acquiring.set(ref.vm, (this.#acquiring.get(ref.vm) ?? 0) + 1);
     this.#acquiringBoxes.add(box.boxId);
+    this.#order.asked(ref.vm, box.boxId);
     let taken = previous;
     try {
       await hooks.starting();
@@ -858,6 +859,7 @@ export class IosHosts implements SlotLender {
       const claimed = readPlacement(previous.data).ok && ref.slot !== null;
       const address = claimed && previous.address ? previous.address : await timed("host", () => this.#serving(mac, ref.vm, signal));
       let guest = claimed ? { ...previous, address } : await timed("slot", () => this.#slotFor(mac, ref.vm, address, box, signal));
+      this.#order.served(box.boxId);
       taken = guest;
       await hooks.claim(guest);
       const placement = readPlacement(guest.data);
@@ -871,6 +873,7 @@ export class IosHosts implements SlotLender {
       if (!signal.aborted && !this.#stopping.signal.aborted) await this.release(taken).catch((cause) => this.#access.logError(`release ${taken.ref} after a failed acquire`, cause));
       throw error;
     } finally {
+      this.#order.served(box.boxId);
       this.#acquiringBoxes.delete(box.boxId);
       const left = (this.#acquiring.get(ref.vm) ?? 1) - 1;
       if (left > 0) this.#acquiring.set(ref.vm, left);
@@ -892,9 +895,10 @@ export class IosHosts implements SlotLender {
       }
       if (status.deletingSince !== null) throw new Error(`The shared iOS host ${vm} was being deleted before box ${box.name} got a slot.`);
       if (Date.now() > deadline) throw new Error(`The shared iOS host ${vm} gave box ${box.name} no slot within ${SLOT_READY_MS / 60_000} minutes.`);
-      const ready = status.slots.filter((slot) => readyFor(slot, box.boxId, this.#acquiringBoxes)).sort((a, b) => Number(b.madeFor === box.boxId) - Number(a.madeFor === box.boxId));
-      if (ready.length) {
-        const claimed = await this.#claim(mac, vm, address, command, ready[0]!.id, box, status.most, signal);
+      const ready = this.#order.slotFor(vm, box.boxId, status.slots, this.#acquiringBoxes);
+      if (ready) {
+        this.#order.claiming(box.boxId, ready.id);
+        const claimed = await this.#claim(mac, vm, address, command, ready.id, box, status.most, signal).finally(() => this.#order.looking(box.boxId));
         if (!("lost" in claimed)) return claimed;
         continue;
       }
@@ -905,9 +909,14 @@ export class IosHosts implements SlotLender {
       }
       if (!promised) {
         const again = await this.#helper(command, "promise", [], claimantInput(this.#claimantOf(box)), 90_000, signal);
+        if (again.exitCode === DEVICE_HOST_EXITS.full && this.#order.servesFirst(vm, box.boxId)) {
+          await this.#sleep(POLL_MS, signal);
+          continue;
+        }
         if (again.exitCode !== DEVICE_HOST_EXITS.done) throw new BackendError("no_capacity", `The shared iOS host ${vm} has no room for box ${box.name} now: ${again.stderr.trim()}`);
       }
-      const made = await this.#helper(command, "make", [], claimantInput(this.#claimantOf(box)), SLOT_READY_MS, signal);
+      this.#order.making(box.boxId);
+      const made = await this.#helper(command, "make", [], claimantInput(this.#claimantOf(box)), SLOT_READY_MS, signal).finally(() => this.#order.looking(box.boxId));
       if (made.exitCode === DEVICE_HOST_EXITS.done) continue;
       if (made.exitCode === DEVICE_HOST_EXITS.full || made.exitCode === DEVICE_HOST_EXITS.lost) {
         await this.#sleep(POLL_MS * 2, signal);
@@ -933,6 +942,7 @@ export class IosHosts implements SlotLender {
     const mac = this.#access.mac(guest.host);
     if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${guest.host ?? "unknown"}, which is not in bb-box's Tart settings.`);
     const boxId = typeof guest.data?.box === "string" ? guest.data.box : "";
+    this.#order.served(boxId);
     const { owner, states } = await this.#ownerOf(ref.vm, signal);
     if (!owner) return { last: false, hostDeleted: false };
     if (owner.phase === "failed") return { last: true, hostDeleted: false };
