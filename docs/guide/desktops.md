@@ -150,8 +150,8 @@ A narrow bar beside the device holds the controls you use most when testing an a
 | **Back**, **Recent apps** | Android only: goes back, or shows the recent apps |
 | **Rotate left**, **Rotate right** | turns the device a quarter turn the way the arrow points |
 | **Fold** | foldables only: closed, half open or open |
-| **Dark appearance** | turns dark mode on or off. Its icon shows which is on: a moon for dark, a sun for light |
-| **Text size** | a slider of the platform's own steps, such as iOS's content sizes, with smaller, larger and **Default** |
+| **Dark appearance** | turns dark mode on or off. Its icon shows which is on: a moon for dark, a sun for light. On a shared ios box the device reboots to show the change, in about 7 to 10 seconds, and apps that were open close |
+| **Text size** | a slider of the platform's own steps, such as iOS's content sizes, with smaller, larger and **Default**. On a shared ios box the device reboots to show the change, as for **Dark appearance** |
 | **Copy screenshot** | copies the device's own pixels to your computer's clipboard as a PNG, or downloads it where your browser will not let bb-box copy a picture |
 | **More** | **Lock** or **Wake**; **Open link…**, which opens a web address in the device's browser or an app's own link, such as `myapp://settings`, in that app; **Location**, a few cities or your own latitude and longitude; **Clean status bar**, which shows 9:41, full signal and a full battery for screenshots, or on Android the battery as **Battery** set it; **Battery**; **Network** on Android: **Online**, **Offline** (airplane mode) or **Slow** (474 kbit/s each way, 100 ms later out); **Show frame** and **Pixel for pixel**; and **Reboot device**, which keeps apps and data |
 
@@ -160,6 +160,8 @@ Using a control takes control from the agent, as **Take control** does, and the 
 Controls the device shows for itself, such as Home or a turn, say nothing more. Those that change what you cannot see, such as the location or the battery, say what they did in a note. If the device refuses a control, as when another is still under way, the note says why.
 
 In a panel narrower than 480 pixels, or where the device's screen beside the bar would be narrower than 280 pixels and the row leaves it wider, the bar goes below the device as one row: **Home**, **Back** and **Recent apps** on Android, **Rotate left**, **Fold** on a foldable, and **More**, which holds the rest.
+
+On a shared ios box, iOS shows a change made in the device's own Settings app, such as Dark or Bold Text, only at the device's start: the setting takes, but the screen keeps the old look until **Reboot device**. A dedicated ios box shows such a change at once. The reason is in [063's results](../decisions/063-results.md#f-20-settings-taps-the-front-app-and-web-pages).
 
 The bar is one stop for the Tab key: the arrow keys move along it, and Enter or Space uses a control. Menus and the text size slider close with Escape. A screen reader hears each control's name and whether **Dark appearance** is on, and what changed on the device, such as 'Turned left. Dark appearance.'
 

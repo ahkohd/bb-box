@@ -271,10 +271,23 @@ host: use `box_run` for the host.
   `Settings`, or a URL. An app just started takes a few seconds before iOS
   shows its elements: the tool waits for them, about 4 to 6 s in all. On
   Android it takes 1 to 2.5 s.
-- Web pages: Safari shows only its toolbar in the tree, and Chrome on
-  Android shows a page's contents only some of the time; otherwise the tree
-  has a `web view` whose value says the page is not in it. Use
-  `computer_screenshot` for the page.
+- Web pages: iOS gives a page's elements only one point at a time, so in
+  Safari, or another app showing a web page, bb-box reads the page point by
+  point, in about 0.4 s, and lists its links, fields and text in a `web
+  view` before the app's own controls. An element smaller than the points'
+  spacing, 30 points down and a sixth of the screen across, may be
+  missing: use `computer_screenshot` to see the whole page. Chrome on
+  Android shows a page's contents only some of the time; otherwise the
+  tree has a `web view` whose value says the page is not in it.
+- An app just started, such as Safari for up to 9 s after its first
+  launch, can be in front before iOS shows any of its elements. Its line
+  says it is still starting: observe again in a few seconds.
+- A switch in a row, as in Settings, is listed at its knob, so a tap by
+  reference toggles it. A tap on the row's label does nothing on iOS.
+- On a shared ios box, iOS shows a change to a system setting made in
+  Settings, such as Dark or Bold Text, only at the device's start: the
+  setting changes, but the screen does not until `box_device` reboots the
+  device. A dedicated box shows such a change at once.
 - While an instrumentation test runs on an Android device, such as from
   `./gradlew connectedAndroidTest`, `computer_observe` and the actions that
   read the tree are refused in words: Android lets one client read the
@@ -304,6 +317,10 @@ the device.
 - `text_size` takes iOS's own content sizes, such as `accessibility-large`,
   or Android's font scales, such as 1.3, or `larger`, `smaller` and
   `default`, which is `large` on iOS and 1 on Android.
+- On a shared ios box, `appearance` and `text_size` reboot the device
+  after setting it, about 7 to 10 s, as iOS there shows such a change only
+  at the device's start. Apps that were open are closed: open yours again.
+  A dedicated box changes them at once.
 - `status_bar: "clean"` shows 9:41, full signal and a full battery, for
   screenshots. `battery` on iOS changes only the status bar's picture: an
   app that reads the battery sees the Mac's. `status_bar: "live"` clears
@@ -331,7 +348,8 @@ the device.
   `xcrun simctl privacy booted grant photos <bundle id>` to give an app the
   photo library, and `xcrun simctl push booted <bundle id> payload.json` to
   send it a push notification. An appearance or text size set this way
-  shows in the state as changed outside bb-box. On Android, `adb` in
+  shows in the state as changed outside bb-box, and on a shared box shows
+  on the screen only after a reboot. On Android, `adb` in
   `box_run` does the same, such as `adb shell pm grant <package>
   android.permission.CAMERA`.
 

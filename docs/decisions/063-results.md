@@ -3035,3 +3035,141 @@ Run by hand on a dedicated Tart box cloned from the iOS image, as
 - **Accessibility on a fresh Tart host slot.** On the first Tart host slot,
   every read of the screen timed out, "did not answer a frontmost request
   within 5.0s", until a `box_device` reboot.
+
+## F-20: Settings taps, the front app and web pages
+
+Built on 28 October 2026. QA on a shared ios slot (iPhone 18 Pro, iOS
+27.0, slim on) found three faults: taps on Dark and on the Bold Text switch
+in Settings > Appearance did nothing, though `computer_act` said each
+landed on the right control; twice the tools said "the Home Screen or a
+system screen in front" while Safari was in front; and Safari's page showed
+no elements.
+
+### Dark and Bold Text: iOS applies them only for uid 501
+
+The cause is neither slim nor a missing session service. The simulator
+applies a system setting that another process changed, as Settings and
+`simctl ui` do, at once only when the macOS user's uid is 501, iOS's own
+`mobile` uid. A slot's user never has uid 501.
+
+- **The setting is written.** A tap on Dark makes Settings write
+  `UserInterfaceStyleMode = 2` through cfprefsd, and SpringBoard gets
+  cfprefsd's change notice. On a slot it then never reads the domain
+  again, so its style arbiter never acts. On a dedicated box the same
+  notice makes SpringBoard read the domain, and the arbiter switches the
+  style within 3 ms. Later taps on Dark changed nothing at all, as the
+  setting already read dark.
+- **The uid, measured on one VM.** On a dedicated VM, with the same runtime,
+  a stock device (nothing slimmed) and both run from a background launchd
+  domain, `simctl ui appearance dark` turned Settings dark at once for the
+  admin user (uid 501). For a second user made for the check (uid 80100) it
+  stayed light, though simctl then read "dark". Text size behaved the same.
+  CoreSimulatorService runs in `user/<uid>` for both, and the user name
+  CoreFoundation sees is empty for both, so neither the session nor the
+  name is the difference. Setting `USER=mobile` in the device's launchd did
+  not help.
+- **Slim is ruled out.** On a dedicated box with slim on, Dark by reference
+  worked at once.
+- **A change is not lost.** It shows after a device reboot, 7.0 to 7.1 s,
+  or minutes later when SpringBoard reads the domain for another reason.
+- **A SpringBoard restart shows it too, in about 2 s plus SpringBoard's
+  start, but breaks reading the screen.** Every read then timed out, "did
+  not answer a frontmost request within 5.0s", and stayed so after a new
+  idb_companion and a restart of CoreSimulatorBridge, until a reboot. So
+  bb-box reboots instead.
+- **Bold Text by reference tapped the row's centre.** idb gives a switch in
+  a row as one element whose frame is the whole row, 16 to 386 points
+  across for Bold Text. A tap at its centre, 201 points, does nothing on
+  iOS; the knob, near 340 points, toggles it.
+
+What changes:
+
+- The device server knows whether its user's uid is 501. Where it is not,
+  bb-box's `appearance` and `text_size` controls set the value and then
+  reboot the device, so the read-back matches the screen. The server
+  treats them as a reboot: input under way stops, and the control gets the
+  reboot's 120 s deadline, on the plugin's and the panel's side too.
+  Measured on a slot with the server: appearance light, reboot included,
+  10.2 s, and Bold Text, set earlier by a tap, showed with it.
+- The device's state carries `changesShowAtStart` on such a device. The
+  control's answer and the panel's note say the device rebooted to show the
+  change and that open apps closed. After a tap in Settings that changes a
+  switch, or changes no element, as a tap on Dark there does,
+  `computer_act` says the change shows after `box_device` reboot, and that
+  a dedicated box shows it at once.
+- A switch in a row, wider than three times its height, is listed at its
+  knob: 63 points wide, ending 14 points in from the row's right. The tree
+  and a read at a point give the same frame, so a tap by reference lands on
+  the knob and its check still finds the switch. Live on a slot, Bold Text
+  by reference went from 0 to 1.
+- Device server version 31. The new state field is optional, so a plugin
+  reads an older server's state as before.
+
+### The front app misread: an app iOS names no one
+
+Opened cold by URL on a slot, Safari was in front for 8.5 s, from 1.7 s
+after `openurl` to 10.1 s, as an application element with an empty label
+and no children, read every 100 ms. bb-box took the root's label as the
+app's name, so it said "the Home Screen or a system screen".
+
+- An unnamed application element is named from its process: the program's
+  path, from `ps`, matched to the app whose folder holds it in `simctl
+  listapps` (77 ms, kept per process). SpringBoard is never named this way.
+- An application element with no children says it is still starting, with
+  a line to observe again in a few seconds. The tools treat it as not yet
+  drawn, so `computer_launch` waits for its elements, at most 5 s as
+  before, and its heading says "Safari (still starting) in front" if it is
+  still starting then. A URL open waits for a named app with elements,
+  rather than taking the Home Screen as drawn.
+- Live on a slot, with Safari cold: `computer_launch` of a URL said "Safari
+  in front" while Safari was starting, and `computer_observe` showed the
+  line "still starting: iOS shows none of its elements yet".
+
+### Web pages, read point by point
+
+iOS's nested tree stops at Safari's own controls, but a read at a point of
+the page names its element, from the page's own process: 150 points of a
+Wikipedia page in 282 to 342 ms gave 26 or 27 distinct links, buttons and
+texts.
+
+- Where a named app's own labelled elements leave the screen's middle
+  uncovered, bb-box reads that one point. The Home Screen is not read this
+  way, as its widgets are other processes' too. When the point's element
+  belongs to another process,
+  it reads the screen at 6 points across and every 30 points down, less the
+  points the app's own elements cover, 8 at once, and lists what the page's
+  process gives in a `web view`, before the app's own controls. The web
+  view scrolls; its elements do not each say so.
+- Cost: none where the app's elements cover the middle, as in Settings;
+  one point read, 5 to 17 ms, where the middle is the app's own; with a
+  page in Safari, a read of the screen took 397 to 639 ms in all, against
+  about 45 ms without the page.
+- The web view's value says the page was read point by point and that an
+  element smaller than the points' spacing may be missing, with
+  `computer_screenshot` for the whole page.
+- Live on a slot: example.com listed its texts and its link "Learn more";
+  a tap on the link by reference opened iana.org. At the screen's bottom
+  edge, under Safari's toolbar, the same tap did nothing until a scroll
+  brought the link up, as iOS keeps that edge for its own gestures.
+
+### Checks
+
+Unit tests: `readIosTree` names an unnamed front app, says one with no
+children is still starting, lists a page in a web view and reads no point
+where the app covers the middle; a row switch's frame is its knob; the
+driver reboots after appearance and text size for a uid other than 501 and
+not for 501; the answer's and the computer tools' words; the state's new
+field reads back.
+
+Still to check after the deploy, through production: Dark and Bold Text on
+a shared slot and on a dedicated box, by an agent's tap and by a person's
+in the panel, and the front app with Safari in front.
+
+### Follow-ups
+
+- A person's change in Settings on a shared slot still needs a reboot to
+  show. Making the device's processes see uid 501, by loading a small
+  library into each, might fix it at the root, but it changes what every
+  app sees, so it is left for a trial of its own.
+- The SpringBoard restart's lost screen reads look like the fresh Tart
+  slot's above: both end only at a reboot.
