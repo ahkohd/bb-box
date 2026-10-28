@@ -201,6 +201,7 @@ export interface DeviceShown {
   readonly model: string | null;
   readonly state: DeviceState | null;
   readonly stills: boolean;
+  readonly stillsWhileVideoIsSlow: boolean;
   readonly offered: readonly ModelName[];
   readonly bootedHere: readonly ModelName[] | null;
   readonly videoWords: string | null;
@@ -209,6 +210,9 @@ export interface DeviceShown {
 const NOT_MINE_WORDS = "This tab does not have control of the device, so the control was not sent.";
 
 export const STILLS_WORDS = "This browser cannot play the device's video, so it shows a picture a few times a second.";
+export const SLOW_VIDEO_STILLS_WORDS = "The device's video did not show within 3 s, so this shows a picture a few times a second and tries the video again shortly.";
+export const SLOW_VIDEO_RETRY_MS = 10_000;
+const SLOW_VIDEO_RETRY_MOST_MS = 60_000;
 export const DEVICE_HUB_WORDS = "Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Device view.";
 
 export class SelkiesSession implements Kept {
@@ -335,6 +339,9 @@ export class SelkiesSession implements Kept {
   #transfers = 0;
   #device: DeviceShown | null;
   #undecoded: ReturnType<typeof setTimeout> | undefined;
+  #videoDrawn = false;
+  #videoAgain: ReturnType<typeof setTimeout> | undefined;
+  #slowVideoStarts = 0;
   #stillDrawn = 0;
   readonly #echo: TouchEcho | null;
   readonly #deviceTyping: DeviceTyping | null;
@@ -350,7 +357,7 @@ export class SelkiesSession implements Kept {
 
   constructor(url: string, options: { readonly device?: { readonly model: string | null } } = {}) {
     this.#url = url;
-    this.#device = options.device ? { model: options.device.model, state: null, stills: !canShowVideo(), offered: [], bootedHere: null, videoWords: null } : null;
+    this.#device = options.device ? { model: options.device.model, state: null, stills: !canShowVideo(), stillsWhileVideoIsSlow: false, offered: [], bootedHere: null, videoWords: null } : null;
     this.#afterPaste.join(tabOf(url));
     this.#afterPaste.pressChord = (shifted) => this.#pressPaste(shifted);
     this.element.className = "absolute inset-0";
@@ -456,15 +463,39 @@ export class SelkiesSession implements Kept {
     return answer;
   }
 
-  #showStills(): void {
+  #showStills(becauseVideoIsSlow = false): void {
     const device = this.#device;
     clearTimeout(this.#undecoded);
     this.#undecoded = undefined;
     if (!device || device.stills) return;
-    this.#device = { ...device, stills: true };
+    this.#device = { ...device, stills: true, stillsWhileVideoIsSlow: becauseVideoIsSlow };
     closeDecoder(this.#decoder);
     this.#decoder = null;
     this.#send(stillsRequestText(true));
+    if (becauseVideoIsSlow) this.#tryVideoAgainLater();
+    for (const listener of this.#listeners) listener();
+  }
+
+  #tryVideoAgainLater(): void {
+    clearTimeout(this.#videoAgain);
+    const wait = Math.min(SLOW_VIDEO_RETRY_MOST_MS, SLOW_VIDEO_RETRY_MS * 2 ** this.#slowVideoStarts);
+    this.#slowVideoStarts += 1;
+    this.#videoAgain = setTimeout(() => {
+      this.#videoAgain = undefined;
+      if (this.#disposed || !this.#device?.stillsWhileVideoIsSlow) return;
+      this.#leaveSlowVideoStills();
+      if (!this.#socket || this.#socket.readyState !== WebSocket.OPEN) return;
+      this.#reset();
+      this.#send(stillsRequestText(false));
+    }, wait);
+  }
+
+  #leaveSlowVideoStills(): void {
+    const device = this.#device;
+    if (!device?.stillsWhileVideoIsSlow) return;
+    clearTimeout(this.#videoAgain);
+    this.#videoAgain = undefined;
+    this.#device = { ...device, stills: false, stillsWhileVideoIsSlow: false };
     for (const listener of this.#listeners) listener();
   }
 
@@ -564,6 +595,7 @@ export class SelkiesSession implements Kept {
     const socket = new WebSocket(this.#url);
     socket.binaryType = "arraybuffer";
     this.#socket = socket;
+    this.#leaveSlowVideoStills();
     this.#reset();
     this.#set({ state: "connecting" });
     socket.onopen = () => {
@@ -705,7 +737,7 @@ export class SelkiesSession implements Kept {
       this.#frameGenerations.set(id, frameGenerationOf(bytes));
       if (this.#frameGenerations.size > 256) this.#frameGenerations.delete(this.#frameGenerations.keys().next().value!);
     }
-    if (this.#device && !this.#everShown && this.#undecoded === undefined) this.#undecoded = setTimeout(() => this.#showStills(), DEVICE_FIRST_FRAME_MS);
+    if (this.#device && !this.#videoDrawn && this.#undecoded === undefined) this.#undecoded = setTimeout(() => this.#showStills(true), DEVICE_FIRST_FRAME_MS);
     this.#received = id;
     this.#undrawnSince ??= performance.now();
     this.#unansweredSince = null;
@@ -896,6 +928,8 @@ export class SelkiesSession implements Kept {
       if (this.#disposed) return;
       clearTimeout(this.#undecoded);
       this.#undecoded = undefined;
+      this.#videoDrawn = true;
+      this.#slowVideoStarts = 0;
       const generation = this.#frameGenerations.get(frame.timestamp) ?? null;
       this.#frameGenerations.delete(frame.timestamp);
       this.#paint(frame, frame.displayWidth, frame.displayHeight, generation);
@@ -1411,6 +1445,7 @@ export class SelkiesSession implements Kept {
     clearTimeout(this.#retry);
     clearTimeout(this.#firstFrame);
     clearTimeout(this.#undecoded);
+    clearTimeout(this.#videoAgain);
     clearTimeout(this.#settle);
     clearTimeout(this.#pasteWait);
     document.removeEventListener("paste", this.#onPasteEvent, true);

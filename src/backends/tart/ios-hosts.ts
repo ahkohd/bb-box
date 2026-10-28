@@ -53,6 +53,7 @@ export interface HostOwner {
   readonly handingOverSince: number | null;
   readonly startBy: string | null;
   readonly startBeat: number | null;
+  readonly firstStartFailure: string | null;
 }
 
 type StartOutcome = "done" | "elsewhere";
@@ -115,6 +116,7 @@ export function readHostOwner(vm: string, mac: TartHost, fields: Readonly<Record
     handingOverSince: fields["handing-over"] && /^\d+$/.test(fields["handing-over"]) ? Number(fields["handing-over"]) : null,
     startBy: fields["start-by"] || null,
     startBeat: fields["start-beat"] && /^\d+$/.test(fields["start-beat"]) ? Number(fields["start-beat"]) : null,
+    firstStartFailure: fields["first-start-failed"] || null,
     settings: {
       on: true,
       most: wholeOf(fields.most, defaults.most),
@@ -209,6 +211,28 @@ mine_host ${quote(installId)} || { echo gone; exit 0; }
 [ "$(value start-by)" = "$me" ] || { echo lost; exit 0; }
 grep -v -e '^start-by=' -e '^start-beat=' "$f" > "$f.new" && mv -f "$f.new" "$f"
 echo left
+`);
+}
+
+export function hostFirstStartFailedScript(vm: string, installId: string, words: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
+${OWNER_LOCK}
+mine_host ${quote(installId)} || { echo gone; exit 0; }
+rewrite first-start-failed ${quote(words.replace(/\s+/g, " "))}
+echo noted
+`);
+}
+
+export function hostCloneDiscardScript(vm: string, installId: string): string {
+  return script(String.raw`vm=${quote(vm)}; f="$d/owners/$vm"
+mine_host() { grep -qxF "install=$1" "$f" 2>/dev/null && grep -qx 'role=${HOST_ROLE}' "$f"; }
+mine_host ${quote(installId)} || { echo gone; exit 0; }
+if [ -n "$(state "$vm")" ]; then
+  tart stop "$vm" --timeout 0 >/dev/null 2>&1
+  settled "$vm" 300 || exit 1
+  tart delete "$vm" || exit 1
+fi
+echo discarded
 `);
 }
 
@@ -408,7 +432,9 @@ export class IosHosts implements SlotLender {
   }
 
   #leavingOf(surveyed: readonly Surveyed[]): Set<string> {
-    return new Set([...this.#deletions.keys(), ...surveyed.flatMap(({ owner, status }) => (status?.deletingSince != null ? [owner.vm] : []))]);
+    const deleting = surveyed.flatMap(({ owner, status }) => (status?.deletingSince != null ? [owner.vm] : []));
+    const failedAndStopped = surveyed.flatMap(({ owner, running }) => (owner.phase === "failed" && !running ? [owner.vm] : []));
+    return new Set([...this.#deletions.keys(), ...deleting, ...failedAndStopped]);
   }
 
   async #gone(mac: TartHost, leaving: ReadonlySet<string>, signal: AbortSignal): Promise<void> {
@@ -446,7 +472,7 @@ export class IosHosts implements SlotLender {
       }
       if (!status || status.deletingSince !== null) continue;
       const draining = owner.build !== null && owner.build !== this.#currentBuild(states.get(owner.mac.name));
-      if (draining && this.#newHostWhy(owner.mac, states, owners.filter((other) => other.vm !== owner.vm), leaving) === null) continue;
+      if (draining && this.#newHostWhy(owner.mac, states, owners, leaving) === null) continue;
       if (status.slots.some((slot) => readyFor(slot, null, this.#acquiringBoxes))) {
         tiers.push({ tier: "ready", host: owner.vm, waitMs: CLAIM_WAIT_MS });
         continue;
@@ -642,7 +668,7 @@ export class IosHosts implements SlotLender {
     beat.unref?.();
     try {
       await this.#gone(mac, leaving, signal);
-      const address = await this.#bootWhenRoom(mac, vm, owner.settings, signal);
+      const address = await this.#bootOnFreshCloneIfFirstFails(mac, vm, owner.settings, signal);
       const booted = performance.now();
       const command = await this.#access.vmCommand(mac, address);
       await this.#installHelper(command, signal);
@@ -676,10 +702,30 @@ export class IosHosts implements SlotLender {
       }
       const words = error instanceof Error ? error.message : String(error);
       await this.#access.run(mac, hostPhaseScript(vm, this.#access.installId, "failed", words), { signal }).catch(() => undefined);
-      await this.#access.deleteVm(mac, vm, signal).catch((cause) => this.#access.logError(`delete shared iOS host ${vm}`, cause));
+      await this.#tracked(vm, this.#access.deleteVm(mac, vm, signal)).catch((cause) => this.#access.logError(`delete shared iOS host ${vm}`, cause));
       throw new Error(`The shared iOS host ${vm} on ${mac.name} did not start: ${words}`);
     } finally {
       clearInterval(beat);
+    }
+  }
+
+  async #bootOnFreshCloneIfFirstFails(mac: TartHost, vm: string, settings: IosHostsConfig, signal: AbortSignal): Promise<string> {
+    try {
+      return await this.#bootWhenRoom(mac, vm, settings, signal);
+    } catch (first) {
+      if (signal.aborted || (first instanceof BackendError && first.code === "no_capacity")) throw first;
+      const firstWords = first instanceof Error ? first.message : String(first);
+      this.#access.log(`Shared iOS host ${vm} on ${mac.name} did not start, so bb-box deletes its VM and starts a fresh clone of the iOS image, once: ${firstWords}`);
+      await this.#access.run(mac, hostFirstStartFailedScript(vm, this.#access.installId, firstWords), { signal });
+      const discarded = (await this.#access.run(mac, hostCloneDiscardScript(vm, this.#access.installId), { timeoutMs: 120_000, signal })).stdout.trim();
+      if (discarded !== "discarded") throw new Error(`${firstWords} Its owner file went before bb-box could start a fresh clone.`);
+      try {
+        return await this.#bootWhenRoom(mac, vm, settings, signal);
+      } catch (second) {
+        if (signal.aborted) throw second;
+        const secondWords = second instanceof Error ? second.message : String(second);
+        throw new Error(`${secondWords} That was a fresh clone's start; the first clone's failed too: ${firstWords}`);
+      }
     }
   }
 
@@ -709,15 +755,18 @@ export class IosHosts implements SlotLender {
     return true;
   }
 
-  async #deleteHost(mac: TartHost, vm: string, signal?: AbortSignal): Promise<void> {
-    const began = performance.now();
-    const deletion = this.#access.deleteVm(mac, vm, signal);
+  async #tracked(vm: string, deletion: Promise<void>): Promise<void> {
     this.#deletions.set(vm, deletion);
     try {
       await deletion;
     } finally {
-      this.#deletions.delete(vm);
+      if (this.#deletions.get(vm) === deletion) this.#deletions.delete(vm);
     }
+  }
+
+  async #deleteHost(mac: TartHost, vm: string, signal?: AbortSignal): Promise<void> {
+    const began = performance.now();
+    await this.#tracked(vm, this.#access.deleteVm(mac, vm, signal));
     this.#access.log(`Deleted shared iOS host ${vm} on ${mac.name}, as its last box went, in ${((performance.now() - began) / 1000).toFixed(1)} s.`);
   }
 
@@ -1063,9 +1112,10 @@ export class IosHosts implements SlotLender {
   #startWords(owner: HostOwner): string {
     const now = Date.now();
     const made = owner.made ? `, made ${Math.round((now - owner.made) / 1000)} s ago` : "";
-    if (!owner.startBy || owner.startBeat === null) return `${made}, no bb-box instance starting it`;
+    const again = owner.firstStartFailure ? `, on a fresh clone as its first start failed (${owner.firstStartFailure})` : "";
+    if (!owner.startBy || owner.startBeat === null) return `${made}${again}, no bb-box instance starting it`;
     const by = owner.startBy === this.#instance ? "this bb-box instance" : `bb-box instance ${owner.startBy}`;
-    return `${made}, started by ${by}, last heard from ${Math.max(0, Math.round((now - owner.startBeat * 1000) / 1000))} s ago`;
+    return `${made}${again}, started by ${by}, last heard from ${Math.max(0, Math.round((now - owner.startBeat * 1000) / 1000))} s ago`;
   }
 
   dispose(): void {

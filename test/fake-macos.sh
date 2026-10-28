@@ -343,6 +343,7 @@ case $tool in
       deep=yes
       shift
     }
+    [ "$1" != -h ] || shift
     owner=$(uid_of "${1%%:*}")
     shift
     own "$owner" "$deep" "$@"

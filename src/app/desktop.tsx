@@ -50,7 +50,7 @@ import { SetupProgress } from "./first-run.tsx";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
 import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
 import { MachineRow } from "./settings-machines.tsx";
-import { DEVICE_HUB_WORDS, STILLS_WORDS, SelkiesSession, base64Bytes, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
+import { DEVICE_HUB_WORDS, SLOW_VIDEO_STILLS_WORDS, STILLS_WORDS, SelkiesSession, base64Bytes, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
 import { DEFAULT_DEVICE_VIEW, type DeviceLayout, type DeviceView } from "./device-stage.ts";
 import { DeviceControls, type AskKey, type DeviceAsk } from "./device-controls.ts";
 import { DevicePicker, DeviceToolbar, TOUCH_HINT_KEY, toolbarRoom, type AskedBy } from "./device-toolbar.tsx";
@@ -1786,7 +1786,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
       ) : null}
       {deviceShown && showing && device?.stills && connection.state === "connected" ? (
         <p role="status" className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
-          {STILLS_WORDS}
+          {device.stillsWhileVideoIsSlow ? SLOW_VIDEO_STILLS_WORDS : STILLS_WORDS}
         </p>
       ) : null}
       {deviceShown && showing && device?.videoWords && connection.state === "connected" ? (

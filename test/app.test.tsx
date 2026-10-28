@@ -20,7 +20,7 @@ import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
-import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, STALL_MS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, SLOW_VIDEO_RETRY_MS, SLOW_VIDEO_STILLS_WORDS, STALL_MS, STILLS_WORDS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, pasteShortcut, retryWait } from "../src/app/viewer.ts";
 import { checkWords, forgetResizesAsked } from "../src/app/resize.tsx";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
@@ -3487,6 +3487,43 @@ test("a device whose first frame does not decode within 3 s asks for stills inst
     expect(FakeSocket.made.filter((made) => made.url.includes("display=device"))).toHaveLength(1);
     expect(novnc.FakeRfb.made).toHaveLength(0);
   } finally {
+    undo();
+  }
+});
+
+test("a device whose first frame came too late for its stills tries its video again: the words say why, and video shows once a frame decodes (F-9, H8)", async () => {
+  const undo = withVideo();
+  vi.stubGlobal("createImageBitmap", async () => ({ width: 360, height: 800, close() {} }));
+  try {
+    window.sessionStorage.clear();
+    FakeDecoder.silent = true;
+    const { handlers } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
+    const device = deviceSocket();
+    act(() => device.open());
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_STATE ${JSON.stringify({ state: PIXEL_8_STATE })}` }));
+    vi.useFakeTimers();
+    act(() => void device.onmessage?.({ data: videoFrame(1, true, 360, 800) }));
+    await vi.advanceTimersByTimeAsync(3_050);
+    expect(device.sent).toContain('BB_DEVICE_STILLS {"on":true}');
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_STILL ${JSON.stringify({ png: "iVBORw0KGgo=", generation: 1 })}` }));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(slot.getByText(SLOW_VIDEO_STILLS_WORDS)).toBeTruthy();
+    expect(slot.queryByText(STILLS_WORDS)).toBeNull();
+
+    FakeDecoder.silent = false;
+    await act(async () => void (await vi.advanceTimersByTimeAsync(SLOW_VIDEO_RETRY_MS)));
+    expect(device.sent.at(-1)).toBe('BB_DEVICE_STILLS {"on":false}');
+    expect(slot.queryByText(SLOW_VIDEO_STILLS_WORDS)).toBeNull();
+    act(() => void device.onmessage?.({ data: videoFrame(2, true, 360, 800) }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    vi.useRealTimers();
+    expect(device.sent.filter((sent) => sent === 'BB_DEVICE_STILLS {"on":true}')).toHaveLength(1);
+    expect(FakeDecoder.made.at(-1)!.chunks.map((chunk) => chunk.timestamp)).toEqual([2]);
+    expect(FakeSocket.made.filter((made) => made.url.includes("display=device"))).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
     undo();
   }
 });

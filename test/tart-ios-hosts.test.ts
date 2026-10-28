@@ -435,3 +435,87 @@ test("a new shared host goes to the Mac whose video encoder streams least; a VM'
   assert.deepEqual(backend.encoderOf(taken), { mac: "mac1", chip: "Apple M4 Max" });
   assert.equal(backend.encoderOf({ ref: "elsewhere", host: "mac9", address: null, size: null, data: {} }), null);
 });
+
+function newIosBuild(mac: string): void {
+  writeFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-ios.json"), `${imageRecord("ios", { build: "build.20261028-002015-2222", base: "build.20261003-021500", devices: IOS_HOST_DEVICES, tools: { idb_companion: "1.7.7" } })}\n`);
+}
+
+function anotherMacosVm(mac: string, name = "bb-box-dedicated"): void {
+  const vm = join(mac, ".tart", "vms", name);
+  mkdirSync(vm, { recursive: true });
+  writeFileSync(join(vm, "config.json"), JSON.stringify({ os: "darwin", memorySize: 16 * 1024 ** 3, cpuCount: 6 }));
+  writeFileSync(join(vm, "running"), String(process.pid));
+}
+
+test("a host on an older build lends its ready slot while no host on the new build can start on its Mac, counting itself against the hosts each Mac may run, as a start does (F-9, H6)", async () => {
+  const { backend, mac, clones } = setup();
+  const first = identity();
+  const { guest } = await place(backend, first);
+  const one = await backend.acquire(first, guest, hooks().hooks, signal());
+  newIosBuild(mac);
+  const second = identity();
+  const { tier } = await place(backend, second);
+  assert.equal(tier.tier, "ready", "one host a Mac, so no host on the new build can start beside it");
+  assert.equal(clones().length, 1);
+  const doctor = (await backend.doctor(signal())).checks.find((check) => check.id === "ios-hosts.mac1");
+  assert.match(doctor?.detail ?? "", /older than the iOS image's, so it lends only while no host on the new build can start\./);
+  await backend.release(one, releasing, signal());
+});
+
+test("with two hosts a Mac, a host on an older build stops lending once a host on the new build can start, and lends again while the Mac's other VM slot is taken (F-9, H6)", async () => {
+  const { backend, mac } = setup({ "tart-ios-hosts-per-mac": 2 });
+  const first = identity();
+  const { guest } = await place(backend, first);
+  const one = await backend.acquire(first, guest, hooks().hooks, signal());
+  newIosBuild(mac);
+  const free = await backend.slots!.offer("ios", null, signal());
+  assert.deepEqual(free, { tier: "new-host", where: "mac1", waitMs: 55_000, cost: "vm-slot" });
+  anotherMacosVm(mac);
+  const full = await backend.slots!.offer("ios", null, signal());
+  assert.equal(full.tier, "ready", "the Mac runs two macOS VMs, so no host on the new build can start");
+  await backend.release(one, releasing, signal());
+});
+
+test("a host whose VM fails to start starts once more on a fresh clone, still taking boxes meanwhile, and the doctor and log say why (F-9, H8)", async () => {
+  const { backend, mac, clones, context, ssh } = setup();
+  writeFileSync(join(mac, ".fake-tart-run-fails"), "1");
+  const homes = ["192.168.64.2", "192.168.64.3"].map((address) => ssh.home(address));
+  for (const home of homes) writeFileSync(join(home, "hold-init"), "");
+  const first = identity();
+  const { guest } = await place(backend, first);
+  const vm = slotRefOf(guest)!.vm;
+  const acquired = backend.acquire(first, guest, hooks().hooks, signal());
+  await until(() => homes.some((home) => existsSync(join(home, "init-held"))), "the fresh clone's start reaches its helper's init");
+  const second = identity();
+  const { tier, guest: joined } = await place(backend, second);
+  assert.deepEqual(tier.tier === "join" && tier.host, vm, "the host is still starting, so a box joins it");
+  const doctor = (await backend.doctor(signal())).checks.find((check) => check.id === "ios-hosts.mac1");
+  assert.match(doctor?.detail ?? "", /starting, made \d+ s ago, on a fresh clone as its first start failed \(Tart could not start bb-box-host-[0-9a-f]+ on mac1: Error Domain=VZErrorDomain Code=1 /);
+  for (const home of homes) rmSync(join(home, "hold-init"));
+  const slots = await Promise.all([acquired, backend.acquire(second, joined, hooks().hooks, signal())]);
+  assert.ok(slots.every((slot) => placementOf({ guest: slot }).on === "slot" && slotRefOf(slot)!.vm === vm));
+  assert.equal(clones().length, 2, "a fresh clone of the iOS image");
+  assert.ok(context.logs.some((line) => line.startsWith(`Shared iOS host ${vm} on mac1 did not start, so bb-box deletes its VM and starts a fresh clone of the iOS image, once: Tart could not start`)), context.logs.join("\n"));
+  for (const slot of slots) await backend.release(slot, releasing, signal());
+});
+
+test("a host whose fresh clone fails to start too fails its boxes with both failures, and while its VM is deleted a new host can start in its place, rather than the Mac seeming full (F-9, H8)", async () => {
+  const { backend, mac, hosts } = setup();
+  anotherMacosVm(mac);
+  writeFileSync(join(mac, ".fake-tart-run-fails"), "2");
+  const waits = join(mac, ".fake-tart-delete-waits");
+  writeFileSync(waits, "1");
+  const first = identity();
+  const { guest } = await place(backend, first);
+  const vm = slotRefOf(guest)!.vm;
+  const acquired = backend.acquire(first, guest, hooks().hooks, signal()).catch((error: unknown) => error);
+  const deleting = () => readFileSync(join(mac, ".fake-tart-log"), "utf8").split(JSON.stringify(["tart", "delete", vm])).length === 3;
+  await until(() => /^host-state=failed$/m.test(readFileSync(join(mac, ".bb-box", "tart", "owners", vm), "utf8")) && deleting(), "the host fails and its VM is being deleted");
+  const meanwhile = await backend.slots!.offer("ios", null, signal());
+  assert.deepEqual(meanwhile, { tier: "new-host", where: "mac1", waitMs: 55_000, cost: "vm-slot" }, "the failed host's VM is leaving the Mac");
+  rmSync(waits);
+  const failed = await acquired;
+  assert.ok(failed instanceof Error);
+  assert.match(failed.message, /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not start: Tart could not start bb-box-host-[0-9a-f]+ on mac1: Error Domain=VZErrorDomain Code=1 .* That was a fresh clone's start; the first clone's failed too: Tart could not start .*VZErrorDomain Code=1 /s);
+  assert.deepEqual(hosts(), []);
+});
