@@ -1351,6 +1351,7 @@ export class Boxes {
   async spareChecks(): Promise<DoctorCheck[]> {
     const general = await this.#deps.general();
     const counts = await this.spareCounts();
+    const spares = (await this.list(SPARES)).filter((spare) => isActive(spare) && !spare.image);
     const offered = new Map<string, OfferedKind[]>();
     for (const offer of this.#deps.backends.kinds()) offered.set(offer.kind.id, [...(offered.get(offer.kind.id) ?? []), offer]);
     const checks: DoctorCheck[] = [];
@@ -1359,9 +1360,11 @@ export class Boxes {
       const device = offers.some((offer) => offer.kind.capabilities.device);
       if (!wanted && !device) continue;
       const memory = defaultSize(kindSizes(kind, general.sizes)).memoryMiB;
-      const waitsSaved = offers.some((offer) => offer.backend.keepsSession?.(kind));
+      const spareBackend = spares.find((spare) => spare.kind === kind)?.backend;
+      const where = offers.find((offer) => offer.backend.id === spareBackend)?.backend ?? offers[0]!.backend;
+      const waitsSaved = !!where.keepsSession?.(kind);
       const cost = waitsSaved
-        ? `A spare waits stopped with its session saved, which holds no memory and up to ${formatMiB(memory)} of disk for its saved memory, besides its own disk.`
+        ? `A spare waits stopped with its session saved: it holds no memory, and its saved memory takes disk, at most a little over its ${formatMiB(memory)} of memory, besides its own disk.`
         : `A spare waits running, with its ${formatMiB(memory)} of memory.`;
       const name = `Spare ${kind} boxes`;
       if (!wanted) {

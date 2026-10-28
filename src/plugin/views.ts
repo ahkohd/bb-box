@@ -439,6 +439,7 @@ const STEP_WORDS: Readonly<Record<string, string>> = {
   spare: "claiming a spare",
   spareResume: "resuming it",
   spareReconnect: "BB machine reconnecting",
+  spareSwitch: "switching its device",
   relabel: "naming it for its owner",
   clock: "setting the clock",
   "shared-host": "choosing a shared host",
