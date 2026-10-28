@@ -10,6 +10,7 @@ import type { BoxRecord } from "../core/boxes.ts";
 import type { DevicePlatform } from "../core/device.ts";
 import {
   GENERAL_DEFAULTS,
+  MONITOR_DEFAULTS,
   SCHEMA,
   backendPart,
   blocking,
@@ -103,6 +104,7 @@ export interface ConfigState {
   readonly revision: number;
   readonly defaults: {
     readonly general: typeof GENERAL_DEFAULTS;
+    readonly monitor: typeof MONITOR_DEFAULTS;
     readonly kinds: Readonly<Record<string, { enabled: true; presets: Record<Preset, BoxSize>; default: Preset; largest: BoxSize }>>;
   };
   readonly kinds: readonly KindInfoView[];
@@ -288,7 +290,7 @@ export class Configuration {
     return {
       document: this.exported(),
       revision: this.#document.revision,
-      defaults: { general: GENERAL_DEFAULTS, kinds: kindDefaults(drivers) },
+      defaults: { general: GENERAL_DEFAULTS, monitor: MONITOR_DEFAULTS, kinds: kindDefaults(drivers) },
       kinds: knownKinds(drivers).map((id) => ({
         id,
         ...kindInfo(id),

@@ -66,6 +66,10 @@ import { ReloadTimes } from "./reload-times.ts";
 import { registerTools } from "./tools.ts";
 import { DeviceServers, type DeviceServersDeps } from "./devices.ts";
 import { connectScript, deviceServerFiles } from "../core/device-delivery.ts";
+import { startMonitor, type Monitor, type MonitoredBox } from "./monitor.ts";
+import { inSlot, placementOf } from "../core/device-host.ts";
+import { monitorConfig } from "../core/document.ts";
+import { roomWords } from "../core/encoder-ledger.ts";
 import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile } from "./views.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
@@ -149,6 +153,8 @@ export interface BbBox {
   readonly deviceComputer: DeviceComputer;
   /** The configuration document (029). */
   readonly configuration: Configuration;
+  /** The Monitor (066): machine status in BB's sidebar footer, and background monitoring of BB's server. */
+  readonly monitor: Monitor;
   /** The Docker API relay to BB machines that are Docker hosts (042). */
   readonly relay: RelayHub;
   /** Streams box_copy's large files through the worker on the thread's machine (#492). */
@@ -552,6 +558,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   });
   // The files for every box (#455), once the boxes are there.
   let files: BoxFiles | null = null;
+  let monitorChanged = () => {};
   const configuration = await Configuration.load({
     kv,
     backends,
@@ -562,6 +569,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     changed: () => {
       notify(null);
       needsConfiguration();
+      monitorChanged();
       if (ledger.on !== ledgerWasOn) {
         ledgerWasOn = ledger.on;
         deviceServers?.ledgerSwitched();
@@ -979,6 +987,59 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
   });
 
+  let serverHostId: Promise<string | null> | null = null;
+  const monitoredBox = (box: BoxRecord): MonitoredBox => {
+    const placement = placementOf(box);
+    return {
+      id: box.id,
+      name: box.name,
+      ready: box.state === "ready",
+      hostId: box.enrol.state === "enrolled" ? box.enrol.hostId : null,
+      os: box.capabilities.os,
+      commands: box.capabilities.command !== null,
+      slot: placement.on === "slot" ? { host: placement.host } : null,
+    };
+  };
+  const monitor = startMonitor(bb, {
+    settings: () => monitorConfig(configuration.document),
+    hosts: async () =>
+      ((await bb.sdk.hosts.list({ type: "persistent" })) as readonly { id: string; name: string; status: string; machineProviderId: string | null }[]).map((machine) => ({
+        id: machine.id,
+        name: machine.name,
+        connected: machine.status === "connected",
+        machineProviderId: machine.machineProviderId,
+      })),
+    serverHostId: () => {
+      serverHostId ??= bb.sdk.system.config().then(
+        (config) => config.primaryHostId ?? null,
+        (error: unknown) => {
+          serverHostId = null;
+          throw error;
+        },
+      );
+      return serverHostId;
+    },
+    boxes: async () => (await boxes.all()).map(monitoredBox),
+    hostSnapshot: (hostId, input, timeoutMs) => host.call("monitor", input, { hostId, timeoutMs }),
+    runInBox: async (boxId, script, timeoutMs) => {
+      const box = (await boxes.all()).find((candidate) => candidate.id === boxId);
+      if (!box) throw new Error("That box is gone.");
+      const { result } = await boxes.reach(box.threadId, box.id, (transport) => transport.run(script, { timeoutMs, maxOutputBytes: 1024 * 1024 }));
+      return { exitCode: result.exitCode, stdout: result.stdout };
+    },
+    encoderRoom: async (boxId) => {
+      if (!ledger.on) return null;
+      const box = (await boxes.all()).find((candidate) => candidate.id === boxId);
+      const place = box && inSlot(box) ? boxes.encoderOf(box) : null;
+      if (!place) return null;
+      const used = ledger.load(place.mac);
+      const budget = ledger.budget(place.mac).budget;
+      return budget > 0 ? { usedPercent: Math.min(100, Math.max(0, (used / budget) * 100)), words: roomWords(used, budget) } : null;
+    },
+    log: { warn: (message) => bb.log.warn(message) },
+  });
+  monitorChanged = () => monitor.configure(monitorConfig(configuration.document));
+
   /** Each thread's machine, once it has an environment. */
   const threadHosts = new Map<string, string>();
   const buildScript =
@@ -1065,6 +1126,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   };
 
   const api: BbBox = {
+    monitor,
     boxes,
     backends,
     enrolment,
@@ -1350,6 +1412,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           report: { ok: true, summary: `Some presets of Linux kinds have less than ${LINUX_LEAST_MEMORY_GIB} GiB memory.`, checks: small, notes: [] },
         });
       }
+      sections.push({ title: "Monitor", report: { ok: true, summary: "Machine status in BB's sidebar footer, and background monitoring of BB's server.", checks: monitor.checks(), notes: [] } });
       const overlaps = overlapChecks(backends.on());
       if (overlaps.length) {
         sections.push({

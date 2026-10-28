@@ -4,6 +4,7 @@ import type { MachineAccessProblem, MachineSetup } from "./setup-offer.ts";
 import type { RunProgress } from "./images.ts";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { machineSchema, monitorStatusSchema, snapshotSchema } from "../monitor/snapshot.ts";
 import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, OfferRoom, ProviderProfile, SizeView } from "./views.ts";
@@ -281,6 +282,12 @@ export const contract = defineRpcContract({
    * has boxes. Answers with the configuration's answer and the list again.
    */
   "docker.host.set": { input: z.object({ hostId: z.string().min(1).max(64), enabled: z.boolean() }), output: z.custom<{ result: ApplyResult; hosts: DockerHostView[] }>() },
+  "monitor.state": { input: z.null(), output: z.object({ enabled: z.boolean(), backgroundMonitoring: z.boolean(), pressureNotifications: z.boolean() }) },
+  "monitor.server": { input: z.object({ force: z.boolean() }), output: snapshotSchema },
+  "monitor.machines": { input: z.null(), output: z.object({ machines: z.array(machineSchema) }) },
+  "monitor.machine": { input: z.object({ machineId: z.string().min(1), force: z.boolean() }), output: snapshotSchema },
+  "monitor.alerts": { input: z.null(), output: monitorStatusSchema },
 });
 
 export type Contract = typeof contract;
+export type { Machine, MonitorSnapshot } from "../monitor/snapshot.ts";

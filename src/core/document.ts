@@ -136,6 +136,17 @@ export interface GeneralSettings {
   readonly tailnet?: TailnetSetting;
 }
 
+export interface MonitorSettings {
+  /** Whether the Monitor runs: the machine status in BB's sidebar footer, its sampling, background monitoring and the Mac sensors helper. Off, none of them runs. On unless set off. */
+  readonly enabled?: boolean;
+  /** Seconds between readings while the machine status is open, 2 to 60. Background monitoring keeps its own 30 seconds. */
+  readonly refreshIntervalSeconds?: number;
+  /** Whether bb-box checks BB's server's CPU and memory every 30 seconds while nobody looks, and keeps diagnostic logs for bb box monitor logs. Off unless set. */
+  readonly backgroundMonitoring?: boolean;
+  /** Whether background monitoring shows a toast in BB when CPU or memory stays high, and when it recovers. On unless set off. */
+  readonly pressureNotifications?: boolean;
+}
+
 export interface ConfigDocument {
   /** The document's format: 1. */
   readonly schema: typeof SCHEMA;
@@ -149,6 +160,8 @@ export interface ConfigDocument {
   readonly general: GeneralSettings;
   /** Projects' images, by name (049). */
   readonly images?: Readonly<Record<string, ImageConfig>>;
+  /** The Monitor (066): machine status in BB's sidebar footer, and background monitoring of BB's server. */
+  readonly monitor?: MonitorSettings;
 }
 
 /** Secret values by backend ID and field. Never leaves bb-box. */
@@ -160,6 +173,21 @@ export interface Problem {
 }
 
 export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true, iosEncoder: "auto" } as const;
+
+export const MONITOR_DEFAULTS = { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true } as const;
+export const MONITOR_REFRESH_SECONDS = { least: 2, most: 60 } as const;
+
+export type MonitorConfig = { readonly [Key in keyof typeof MONITOR_DEFAULTS]: (typeof MONITOR_DEFAULTS)[Key] extends boolean ? boolean : number };
+
+export function monitorConfig(document: Pick<ConfigDocument, "monitor">): MonitorConfig {
+  const monitor = document.monitor ?? {};
+  return {
+    enabled: monitor.enabled ?? MONITOR_DEFAULTS.enabled,
+    refreshIntervalSeconds: monitor.refreshIntervalSeconds ?? MONITOR_DEFAULTS.refreshIntervalSeconds,
+    backgroundMonitoring: monitor.backgroundMonitoring ?? MONITOR_DEFAULTS.backgroundMonitoring,
+    pressureNotifications: monitor.pressureNotifications ?? MONITOR_DEFAULTS.pressureNotifications,
+  };
+}
 
 export const MAX_WARM = 20;
 export const MAX_SPARES = 10;
@@ -280,6 +308,26 @@ export type SecretChanges = Readonly<Record<string, Readonly<Record<string, stri
  * shape. Parts in the wrong shape are left out of the document, so the
  * problems block the write.
  */
+function readMonitor(input: unknown, problem: (path: string, message: string) => void): MonitorSettings | null {
+  if (input === undefined || input === null) return null;
+  if (!isRecord(input)) {
+    problem("monitor", "monitor must be an object with enabled, refreshIntervalSeconds, backgroundMonitoring and pressureNotifications.");
+    return null;
+  }
+  const monitor: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || value === null) continue;
+    if (key === "refreshIntervalSeconds") {
+      if (isWhole(value, MONITOR_REFRESH_SECONDS.least, MONITOR_REFRESH_SECONDS.most)) monitor[key] = value;
+      else problem("monitor.refreshIntervalSeconds", `Use a whole number of seconds from ${MONITOR_REFRESH_SECONDS.least} to ${MONITOR_REFRESH_SECONDS.most}.`);
+    } else if (key === "enabled" || key === "backgroundMonitoring" || key === "pressureNotifications") {
+      if (typeof value === "boolean") monitor[key] = value;
+      else problem(`monitor.${key}`, `${key} is true or false.`);
+    } else problem(`monitor.${key}`, `There is no monitor setting "${key}". There are enabled, refreshIntervalSeconds, backgroundMonitoring and pressureNotifications.`);
+  }
+  return Object.keys(monitor).length ? (monitor as MonitorSettings) : null;
+}
+
 export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]): { document: ConfigDocument; secrets: SecretChanges; problems: Problem[] } {
   const problems: Problem[] = [];
   const secrets: Record<string, Record<string, string | null>> = {};
@@ -288,8 +336,8 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
     problem("", "The configuration must be a JSON object with backends, kinds and general.");
     return { document: emptyDocument(), secrets, problems };
   }
-  const known = new Set(["schema", "revision", "backends", "kinds", "general", "images"]);
-  for (const key of Object.keys(input)) if (!known.has(key)) problem(key, `There is no "${key}" in the configuration. It has backends, kinds, general and images.`);
+  const known = new Set(["schema", "revision", "backends", "kinds", "general", "images", "monitor"]);
+  for (const key of Object.keys(input)) if (!known.has(key)) problem(key, `There is no "${key}" in the configuration. It has backends, kinds, general, images and monitor.`);
   if (input.schema !== undefined && input.schema !== SCHEMA) problem("schema", `This bb-box reads schema ${SCHEMA}, not ${String(input.schema)}.`);
   const revision = isWhole(input.revision, 0) ? input.revision : 0;
 
@@ -361,8 +409,9 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
       if (image) images[name] = image;
     }
   }
+  const monitor = readMonitor(input.monitor, problem);
   return {
-    document: { schema: SCHEMA, revision, backends, kinds, general: general as GeneralSettings, ...(Object.keys(images).length ? { images } : {}) },
+    document: { schema: SCHEMA, revision, backends, kinds, general: general as GeneralSettings, ...(Object.keys(images).length ? { images } : {}), ...(monitor ? { monitor } : {}) },
     secrets,
     problems,
   };

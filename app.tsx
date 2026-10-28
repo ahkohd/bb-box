@@ -1,5 +1,6 @@
 // bb-box's panels: a thread's boxes, each desktop box's viewer, each box's
-// terminal, the Boxes page, and the backends on the settings page. They read everything through
+// terminal, the Boxes page, the backends on the settings page, and the
+// Monitor's machine status in the sidebar footer. They read everything through
 // the RPC contract and refetch when the server says something changed.
 
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
@@ -9,6 +10,7 @@ import { BoxesPanel } from "./src/app/panel.tsx";
 import { NewBoxInputs } from "./src/app/new-box-inputs.tsx";
 import { SettingsSection } from "./src/app/settings.tsx";
 import { TERMINAL_ACTION, TerminalPanel } from "./src/app/terminal.tsx";
+import { registerMonitor } from "./src/app/monitor/status.tsx";
 
 export default definePluginApp((app) => {
   app.slots.threadPanelAction({
@@ -47,4 +49,5 @@ export default definePluginApp((app) => {
     machineProviderId: "bb-box-new",
     component: NewBoxInputs,
   });
+  registerMonitor(app);
 });

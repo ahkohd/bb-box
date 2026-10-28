@@ -15,6 +15,7 @@ bb-box does not redistribute the software it installs on hosts or puts in images
 | [noVNC](https://github.com/novnc/noVNC) 1.7.0, from npm (`@novnc/novnc`) | Mozilla Public License 2.0; the pako code it includes is under the MIT licence | The desktop viewer, unchanged. Its source and licence texts are in `node_modules/@novnc/novnc` after `npm install`. The video viewer is bb-box's own code, which uses noVNC's keyboard handling. |
 | [xterm.js](https://github.com/xtermjs/xterm.js) and its fit add-on (`@xterm/xterm`, `@xterm/addon-fit`) | MIT | The terminal. `src/app/xterm-css.ts` is a copy of xterm.js's stylesheet, with its notice. |
 | `zod`, `undici`, `@radix-ui/react-slot` | MIT | |
+| [Hugeicons](https://github.com/hugeicons/hugeicons-react)' free icons and React component (`@hugeicons/core-free-icons`, `@hugeicons/react`) | MIT | The Monitor's icons (066). |
 
 React, Radix's menus and dialogs, and the other packages BB shares with plugins come from BB at runtime. bb-box does not bundle them. The licence texts of everything bundled are in its package in `node_modules` after `npm install`.
 

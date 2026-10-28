@@ -13,6 +13,7 @@ import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, dockerText, kindResizeText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
 import { setupDocker } from "./setup-docker.ts";
+import { monitorCommands } from "./monitor-cli.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -605,6 +606,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             return out(copy ? movedText(copy) : "There is no copy of BB's settings: bb-box never moved any, or the copy was removed.");
           },
         }),
+        ...monitorCommands(bb, app.monitor),
         sweep: cliCommand({
           summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers.",
           options: jsonOption,

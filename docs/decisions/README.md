@@ -71,3 +71,4 @@ which records still stand as written. The current design as a whole is in
 | [063](063-device-boxes.md) | Device boxes: one iOS Simulator or Android emulator per box, in a frame in the panel, shared with the agent | Accepted; not built yet |
 | [064](064-ios-shared-hosts.md) | iOS shared hosts: ios boxes as macOS users with their own device, many to a Mac, on pool Macs, Tart VMs and Namespace Macs | Proposed; decision 14 superseded by 065 |
 | [065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md) | Macs say what they offer, measured, and iOS streams in software where a Mac has no encoder | Proposed |
+| [066](066-the-monitor-is-beacon-moved-into-bb-box.md) | The Monitor is Beacon moved into bb-box, and a container is judged by its own cgroup | Accepted |

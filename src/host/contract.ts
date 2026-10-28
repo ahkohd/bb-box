@@ -2,8 +2,13 @@
 
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { REFRESH_MS, snapshotSchema } from "../monitor/snapshot.ts";
 
 export const hostContract = defineRpcContract({
+  monitor: {
+    input: z.object({ refreshIntervalMs: z.number().int().min(REFRESH_MS.least).max(REFRESH_MS.most), force: z.boolean(), scope: z.enum(["machine", "user"]).optional() }).strict(),
+    output: snapshotSchema,
+  },
   /**
    * Keeps a process holding the variables BB gives this call, of which
    * `names` matter, for the env file's loader. Says whether it started a new

@@ -685,6 +685,15 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       dockerHosts = dockerHosts.map((host) => (host.hostId === hostId ? { ...host, backend: enabled ? { id: `docker:${host.name}`, enabled: true, boxes: 0 } : null } : host));
       return { result: { ok: true, state: configState(options.config ?? {}), problems: [] }, hosts: dockerHosts };
     },
+    "monitor.state": () => ({ enabled: false, backgroundMonitoring: false, pressureNotifications: true }),
+    "monitor.server": () => {
+      throw new Error("The Monitor is off.");
+    },
+    "monitor.machines": () => ({ machines: [] }),
+    "monitor.machine": () => {
+      throw new Error("The Monitor is off.");
+    },
+    "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
   };
   return { handlers, changes, asked, copyInBox, declineAutomatic };
 }
@@ -707,6 +716,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
     revision: document.revision,
     defaults: {
       general: { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true, iosEncoder: "auto" },
+      monitor: { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true },
       kinds: {
         linux: { enabled: true, presets: { small: size(2, 4), medium: size(4, 8), large: size(8, 16) }, default: "small", largest: size(16, 32, 256) },
         "linux-desktop": { enabled: true, presets: { small: size(4, 8), medium: size(8, 16), large: size(16, 32) }, default: "small", largest: size(32, 64, 256) },

@@ -35,6 +35,10 @@
 | [`bb box config check`](#bb-box-config-check) | Check a configuration file without saving it. --test also runs the doctor of each backend in it that is on, within 30 s each. |
 | [`bb box config apply`](#bb-box-config-apply) | Save a configuration file as bb-box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or --replace, saves over what is there, as when setting bb-box up again from an export. |
 | [`bb box config migrated`](#bb-box-config-migrated) | Show the copy of BB's settings bb-box kept when it moved them into its configuration. --remove removes it. |
+| [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
+| [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
+| [`bb box monitor logs`](#bb-box-monitor-logs) | Show background monitoring's diagnostic records, oldest first: the last 100, or --limit up to 500. --json gives JSON lines. |
+| [`bb box monitor test-alert`](#bb-box-monitor-test-alert) | Show a labelled preview of a pressure alert in every BB window that is open and visible. Needs background monitoring and its notifications on. |
 | [`bb box sweep`](#bb-box-sweep) | Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers. |
 
 ## bb box doctor
@@ -509,6 +513,55 @@ Options:
   --json      Print JSON.
   --remove    Remove the copy.
   --help, -h  Show this help and exit
+```
+
+## bb box monitor snapshot
+
+Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history.
+
+```text
+Usage:
+  bb box monitor snapshot [--json]
+
+Options:
+  --json      Print JSON.
+  --help, -h  Show this help and exit
+```
+
+## bb box monitor health
+
+Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says.
+
+```text
+Usage:
+  bb box monitor health [--json]
+
+Options:
+  --json      Print JSON.
+  --help, -h  Show this help and exit
+```
+
+## bb box monitor logs
+
+Show background monitoring's diagnostic records, oldest first: the last 100, or --limit up to 500. --json gives JSON lines.
+
+```text
+Usage:
+  bb box monitor logs [--json] [--limit <1-500>]
+
+Options:
+  --json           Print JSON.
+  --limit <1-500>  How many of the latest records, 1 to 500. 100 by default.
+  --help, -h       Show this help and exit
+```
+
+## bb box monitor test-alert
+
+Show a labelled preview of a pressure alert in every BB window that is open and visible. Needs background monitoring and its notifications on.
+
+```text
+Usage:
+  bb box monitor test-alert
 ```
 
 ## bb box sweep
