@@ -8,7 +8,7 @@ import { DeviceLink, DeviceLinkError, newRequestId, type DeviceRequestBody } fro
 import type { ByteChannel, RunResult } from "../transports/types.ts";
 import type { DoctorCheck } from "../backends/types.ts";
 import { inSlot, placementOf } from "../core/device-host.ts";
-import { type Decision, type EncoderLedgers, type EncoderPlace } from "../core/encoder-ledger.ts";
+import { NO_DECISION, type Decision, type EncoderLedgers, type EncoderPlace } from "../core/encoder-ledger.ts";
 
 export const IDLE_CLOSE_MS = 10 * 60_000;
 export const SLOT_STREAM_CAP: VideoStep = "two-thirds";
@@ -512,8 +512,8 @@ export class DeviceServers {
       await this.#capVideo(box, link, ledger.decision(box.id));
       return;
     }
-    if (!inSlot(box)) return;
-    await this.#capVideo(box, link, { cap: SLOT_STREAM_CAP, words: null });
+    if (inSlot(box)) await this.#capVideo(box, link, { cap: SLOT_STREAM_CAP, words: null });
+    else if (link.hello.version >= VIDEO_REPORTS_SINCE_VERSION) await this.#capVideo(box, link, NO_DECISION);
   }
 
   async #capVideo(box: BoxRecord, link: DeviceLink, decision: Decision): Promise<void> {

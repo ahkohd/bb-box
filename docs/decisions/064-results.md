@@ -1631,8 +1631,71 @@ slot.
 - **The Tart doctor still said** "Each slot's stream is at two thirds at
   most until the encoder's ledger comes." Fixed in the follow-up commit.
 
-H8 proper, 10 devices across a host and a dedicated box with a VM starting
-meanwhile, waits for the Mac's second VM slot.
+### H8: a host and a dedicated box on one Mac
+
+Through production BB on 28 October 2026, on main 6dc0f1b (F-8, device
+server version 26), with `tart-ios-hosts-most` set to 9 for the check. The
+Tart Mac, an M4 Max, with both its VM slots for this check: one ios box
+with `dedicated: true` (6 cores, 16 GiB) and 9 with `shared: true` on one
+host (8 cores, 32 GiB). The panels, the busy page and the counting are as
+above: 10 panels in one tab of the owner's Helium, each with Pixel for
+pixel, so each asked for full size; 5 devices on the Home Screen
+throughout.
+
+| Case | Ledger | Steps | Frames a second in each panel | The host's CPU |
+| --- | --- | --- | --- | --- |
+| The dedicated box and 4 slots busy | on | the dedicated box and one busy slot at full; the rest at two thirds | the dedicated box 55.4; the slots 27.6 to 28.4 | about 0 to 10% idle |
+| The dedicated box and 2 slots busy | on | the same | the dedicated box 57.5; the slots 48.4 and 49.1 | 35% idle |
+| The same, a person takes control of a busy slot at two thirds | on | that slot at full at once; the dedicated box, only watched, at two thirds, with the words | the dedicated box 57.7; the slots 50.2 and 50.6 | |
+| The same, still in control | off | every slot at two thirds, the person in control's too; the dedicated box stayed at two thirds with the words: a fault, below | the dedicated box 57.4; the slots 49.1 and 49.4 | |
+
+- **One ledger for the Mac.** Every lowered panel's words counted 9 other
+  devices, the dedicated box among them: "Shown at a lower resolution: this
+  Mac's video encoder is busy with 9 other devices (box nimble-birch, box
+  noble-hill, box proud-eagle, box quick-plover and 5 more)." The doctor:
+  "On this Mac: 3 of about 5 full-size streams' room in use. 10 streams;
+  an Apple M4 Max, about 320 full-size iPhone frames a second."
+- **Passive viewers stepped down first.** The person in control took a
+  full-size place at once from the dedicated box, which was only watched; a
+  busy slot already at full kept its place, as F-8 has it.
+- **55 frames a second or more:** the dedicated box at full size, 55.4 to
+  58.2, in every case. The slots, not: 48 to 52 with 2 busy and a third of
+  the host idle, the ceiling unit 4 and the one-host check measured, and 28
+  with 4 busy on a saturated host. The encoder was never the limit: the
+  ledger counted about 3 of 5 full-size streams' room.
+- **A VM starting.** The dedicated box was stopped and started again (17.4
+  to 17.6 s each time) three times while the 2 slots streamed. Each time
+  every slot's server took "A VM is starting on this Mac; video may slow for
+  about 30 s." and dropped it 30 s later (00:11:17 to 00:11:47, 00:13:37 to
+  00:14:07 UTC, and 00:08:05 at the first). Counted in 5 s windows in the panels, each of the 10 showed
+  the words from 00:13:42 to 00:14:07. The 2 busy slots ran at 47.8 to 54.0
+  frames a second through the start, against 51.2 to 53.0 before it; one
+  window after the warning ended, as the dedicated box's own stream
+  reopened, they fell to 38.6 and 39.4, then were back at 49.8 to 51.2. E1
+  measured 36 to 43 for 8 half-size streams while a VM started; here, with
+  2 busy streams, the start cost one 5 s window of about a quarter of their
+  frames.
+- **The first host failed to start.** Three slot boxes asked for at once
+  made a host whose VM did not start: "Tart could not start bb-box-host-...
+  on mac-1: Error Domain=VZErrorDomain Code=1 "The virtual machine
+  failed to start."", which failed its three boxes. Three asked for while it
+  started were refused, "Two macOS VMs already run", rather than joining it.
+  The next three made a host that started. Not seen before; the doctor
+  showed another install's VM on the Mac, stopped, which counts against its
+  room.
+- **The pool's Mac goes first.** Without `on`, the 9 slots went to the
+  pool's Mac, as 064's order says; they were acquired again with
+  `on: "Tart ..."` for the check.
+- **A panel fell back to stills** after the frame holding the box being
+  stopped reloaded: the page draws full-size screenshots about 5 times a
+  second while its server streams at a third. Rebuilding the panels brought
+  video back.
+
+### Faults H8 found, and their fixes
+
+| Found | Fix |
+| --- | --- |
+| The ledger switched off left a box in a VM of its own at its last ledger cap and words: off, the ledger's "no cap" is not sent, and the switch then capped only slot boxes | in the follow-up commit: off, a box that is not in a slot is sent no cap and no words, where its server is version 25 or later |
 
 ### Deviations from 064
 

@@ -267,6 +267,30 @@ describe("delivering the device server", { skip: process.platform === "win32" },
     record = box;
   });
 
+  test("switching the encoder ledger off clears the cap and words it gave a box in a VM of its own (064, unit 6's H8)", async () => {
+    const serverLog = () => readFileSync(join(home, ".bb-box/device/server.log"), "utf8").split("\n").filter(Boolean);
+    const before = serverLog().length;
+    let on = true;
+    const ledger = new EncoderLedgers({ on: () => on, controlled: () => false, send: () => {}, probe: async () => null, log: () => {}, logError: () => {} });
+    const servers = make("ledger-own-vm", 85, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION), () => false, { ledger });
+    assert.equal((await servers.ensure(box)).is, "connected");
+    const since = () => serverLog().slice(before);
+    const seen = async (text: string) => {
+      for (let tries = 0; !since().some((line) => line.endsWith(text)) && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 50));
+      return since().some((line) => line.endsWith(text));
+    };
+    const words = "Shown at a lower resolution: this Mac's video encoder is busy with 1 other device (box ios-2).";
+    servers.decided(box.id, { cap: "two-thirds", words });
+    assert.ok(await seen(`video: capped at two-thirds: ${words}`), since().join("\n"));
+    const lowered = since().length;
+    on = false;
+    servers.ledgerSwitched();
+    for (let tries = 0; !since().slice(lowered).some((line) => line.endsWith("video: capped at nothing")) && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(since().slice(lowered).some((line) => line.endsWith("video: capped at nothing")), "off, the box's cap and words are cleared");
+    await servers.dispose();
+    ledger.dispose();
+  });
+
   test("the doctor says the device's state as its server gives it now, and what is not known when the server does not answer or bb-box closed its connection (F-8)", async () => {
     const check = async (servers: DeviceServers) => (await servers.checks()).find((each) => each.id === "device.b-12")!;
     const servers = make("doctor", 90, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION), () => false, { deviceStateWaitMs: 1000 });
