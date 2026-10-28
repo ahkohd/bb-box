@@ -2848,3 +2848,43 @@ none, to a device or a desktop; Cmd+V and Paste each send it once, as one
 the limit sends nothing; the device server drops `cw` from either
 connection, and pastes a `paste` request whole with the clipboard put
 back.
+
+### F-15 in the panel
+
+On 28 October 2026, through the production panel after the deploy, in
+the owner's browser (Helium), in a tab of its own, freshly loaded. The
+tab's `navigator.clipboard` was replaced by stubs that count each read
+and return a test value set in the tab, and keep each write in the page,
+so no step read or wrote the computer's own clipboard. Each box's
+clipboard held a marker set in the box first: on the devices, typed into
+a field by the agent and copied there; on the desktop, by `xclip`. Cmd+V
+was a Cmd+V key event and a paste event carrying the test value,
+dispatched in the device or desktop view. The device's clipboard was
+read back by Copy to this computer, into the stub. Device server version
+29.
+
+| Check | android, Pixel 8 | linux-desktop-cpu | ios, iPhone 18 Pro, shared slot |
+| --- | --- | --- | --- |
+| Take control, then a focus of the window, 3 s | no read of this computer's clipboard; the device's still the marker | no read; the box's still the marker | no read |
+| Cmd+V with the test value | "Pasted"; the value in the field; the device's clipboard the marker again | "Pasted"; the value in the field and on the box's clipboard, as on any desktop | not run |
+| Paste from this computer | one read; "Pasted"; the value in the field; the clipboard the marker again | one read; "Pasted"; the value in the field | one read; refused: "simctl could not set the device's clipboard", shown as the problem line |
+| The words under Paste from this computer | the device's | the desktop's | the device's |
+
+Findings:
+
+- **Chrome on the Android device took no paste.** It took neither the
+  person's paste nor the agent's (Japanese text by computer_type) from
+  its first start, past the 4 that unit 5.1 found. A native field, the
+  Contacts editor's, took every paste, so the checks above ran there.
+- **`simctl pbcopy` and `pbpaste` crash on shared iOS slots.** On a slot
+  on the pool's Mac (Xcode 27.0, macOS 27.0.1) and one on a Namespace Mac
+  (Xcode 26.1.1), both exited with code 139 from `box_run` and from the
+  device server, so neither paste nor copy works on an ios box shared
+  today; unit 7.5's check, earlier the same day, read the pasteboard. A
+  dedicated ios VM could not be had: both of the Mac's VMs were in use.
+  So "a paste arrives on iOS" is not shown here; the iOS paste path did
+  reach the device server, which refused it in words.
+- **Another plugin reads the clipboard at a paste.** In the desktop view,
+  a Cmd+V's paste event also made the BB canvas plugin's editor call
+  `navigator.clipboard.read()`, from its own document paste listener. It
+  reads only at a paste, and sends nothing to a box.
