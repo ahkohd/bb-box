@@ -17,7 +17,7 @@ import type { FieldDescriptor } from "../src/backends/types.ts";
 import { CHECKS, type CheckInfo } from "../src/core/checks.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
 import { platformWord, screensOf, type DeviceModel, type Screen } from "../src/core/device.ts";
-import { GENERAL_DEFAULTS, MAX_SPARES, MAX_WARM } from "../src/core/document.ts";
+import { GENERAL_DEFAULTS, MAX_SPARES, MAX_WARM, MONITOR_DEFAULTS } from "../src/core/document.ts";
 import { PRESETS, describeSize, kindSizes } from "../src/core/sizes.ts";
 import plugin from "../server.ts";
 
@@ -201,6 +201,12 @@ function configurationPage(): string {
     "Projects' images, by name (049).",
     "",
     memberTable("ImageConfig"),
+    "",
+    "## monitor",
+    "",
+    "The Monitor (066): machine status in BB's sidebar footer for BB's server, your machines and every box, and background monitoring of BB's server.",
+    "",
+    memberTable("MonitorSettings", MONITOR_DEFAULTS),
     "",
     "## Each backend's fields",
     "",

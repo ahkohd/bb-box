@@ -18,6 +18,7 @@ import { GENERAL_DEFAULTS } from "../core/document.ts";
 import { withPurposes } from "../transports/spawns.ts";
 import { desktopDisplays } from "../backends/types.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
+import { monitorRpcHandlers } from "./monitor.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
 const PROFILES_KEPT = 5;
@@ -177,6 +178,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       }
     },
     ping: async () => null,
+    ...monitorRpcHandlers(app.monitor),
     async profile({ seconds, keep, allocations, snapshot, collect }) {
       const lines = await profileLoop(seconds, {
         fullCollection: collect === true,

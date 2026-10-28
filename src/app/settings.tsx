@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import type { BackendConfig, ConfigDocument, Problem } from "../core/document.ts";
 import type { ConfigState, Contract } from "../plugin/contract.ts";
 import { EmptyPanel, message, relativeTime, useLive } from "./common.tsx";
-import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, withGeneral, withKind } from "./config.ts";
+import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, withGeneral, withKind, withMonitor } from "./config.ts";
 import { BackendForm, BackendRow, backendId, type BackendRowModel } from "./settings-backends.tsx";
 import { Section } from "./settings-fields.tsx";
 import { KindForm, KindRow, kindRowModel } from "./settings-kinds.tsx";
@@ -57,6 +57,7 @@ export function SettingsSection() {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [boxesPerThread, setBoxesPerThread] = useState<string | null>(null);
+  const [refreshSeconds, setRefreshSeconds] = useState<string | null>(null);
   /** Rebuild now's card, under the nightly switch. */
   const [rebuilding, setRebuilding] = useState(false);
 
@@ -120,6 +121,9 @@ export function SettingsSection() {
       .map((driver) => ({ driver, config: null, ...lending(inheritSource(document, driver.fields, driver.type)), state: null, problems: [] })),
   ].filter((model) => model.driver);
   const general = { ...state.defaults.general, ...document.general };
+  const monitor = { ...state.defaults.monitor, ...document.monitor };
+  const setMonitor = (patch: Partial<typeof monitor>) =>
+    void applyNow("monitor", withMonitor(document, Object.fromEntries(Object.entries(patch).map(([key, value]) => [key, value === state.defaults.monitor[key as keyof typeof monitor] ? undefined : value]))));
   const kindsOn = state.kinds.filter((kind) => effectiveKind(state, kind.id).enabled);
 
   return (
@@ -258,6 +262,34 @@ export function SettingsSection() {
           />
         </GeneralRow>
         {rebuilding ? <RebuildNow /> : null}
+      </Section>
+      <Section title="Monitor" description="Machine status in BB's sidebar footer, for BB's server, your machines and every box.">
+        <GeneralRow label="Machine status" description="Off, nothing of the Monitor runs: no machine status, sampling, background monitoring or Mac sensors helper. The sidebar's entry comes or goes when BB next loads the page." problem={state.problems.find((problem) => problem.path === "monitor.enabled")?.message}>
+          <Switch aria-label="Machine status" checked={monitor.enabled} disabled={busy === "monitor"} onCheckedChange={(enabled) => setMonitor({ enabled })} />
+        </GeneralRow>
+        <GeneralRow label="Refresh interval" description="Seconds between readings while machine status is open, 2 to 60." problem={state.problems.find((problem) => problem.path === "monitor.refreshIntervalSeconds")?.message}>
+          <Input
+            className="h-8 w-20 text-xs"
+            inputMode="numeric"
+            aria-label="Refresh interval in seconds"
+            disabled={!monitor.enabled}
+            value={refreshSeconds ?? String(monitor.refreshIntervalSeconds)}
+            onChange={(event) => setRefreshSeconds(event.target.value)}
+            onBlur={() => {
+              if (refreshSeconds === null) return;
+              const seconds = Number(refreshSeconds.trim());
+              setRefreshSeconds(null);
+              if (!Number.isFinite(seconds) || seconds === monitor.refreshIntervalSeconds) return;
+              setMonitor({ refreshIntervalSeconds: seconds });
+            }}
+          />
+        </GeneralRow>
+        <GeneralRow label="Background monitoring" description="Checks BB's server's CPU and memory every 30 seconds while nobody looks, and keeps logs for bb box monitor logs.">
+          <Switch aria-label="Background monitoring" checked={monitor.backgroundMonitoring} disabled={busy === "monitor" || !monitor.enabled} onCheckedChange={(backgroundMonitoring) => setMonitor({ backgroundMonitoring })} />
+        </GeneralRow>
+        <GeneralRow label="Pressure notifications" description="With background monitoring on, a toast in BB when CPU or memory stays high for a minute, and when it recovers.">
+          <Switch aria-label="Pressure notifications" checked={monitor.pressureNotifications} disabled={busy === "monitor" || !monitor.enabled} onCheckedChange={(pressureNotifications) => setMonitor({ pressureNotifications })} />
+        </GeneralRow>
       </Section>
       <TailnetSection
         key={JSON.stringify(document.general.tailnet ?? null)}

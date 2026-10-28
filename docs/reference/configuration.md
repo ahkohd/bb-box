@@ -14,6 +14,7 @@ bb-box's configuration is one document (029): `bb box config show --json` prints
 | `kinds` | `Readonly<Record<string, KindConfig>>` |  | Each kind's entry, by its ID: only what differs from its defaults. |
 | `general` | `GeneralSettings` |  | Settings for every backend and kind. |
 | `images` | `Readonly<Record<string, ImageConfig>>` |  | Projects' images, by name (049). |
+| `monitor` | `MonitorSettings` |  | The Monitor (066): machine status in BB's sidebar footer, and background monitoring of BB's server. |
 
 ## general
 
@@ -77,6 +78,17 @@ Projects' images, by name (049).
 | `projects` | `readonly string[]` |  | The BB projects whose threads' boxes get it. |
 | `source` | `{ readonly script?: string; readonly check?: string }` |  | Where the files came from in the project's repository, such as .bb/box-setup.sh. |
 | `updated` | `string` |  | When it was set, as an ISO 8601 time. |
+
+## monitor
+
+The Monitor (066): machine status in BB's sidebar footer for BB's server, your machines and every box, and background monitoring of BB's server.
+
+| Key | Type | Default | What it is |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `true` | Whether the Monitor runs: the machine status in BB's sidebar footer, its sampling, background monitoring and the Mac sensors helper. Off, none of them runs. On unless set off. |
+| `refreshIntervalSeconds` | `number` | `5` | Seconds between readings while the machine status is open, 2 to 60. Background monitoring keeps its own 30 seconds. |
+| `backgroundMonitoring` | `boolean` | `false` | Whether bb-box checks BB's server's CPU and memory every 30 seconds while nobody looks, and keeps diagnostic logs for bb box monitor logs. Off unless set. |
+| `pressureNotifications` | `boolean` | `true` | Whether background monitoring shows a toast in BB when CPU or memory stays high, and when it recovers. On unless set off. |
 
 ## Each backend's fields
 

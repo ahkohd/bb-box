@@ -3175,7 +3175,7 @@ test("the panel lists, acquires, stops, starts and releases boxes over RPC", asy
   const backends = (await harness.behavior.callRpc("backends")) as { type: string; state: string }[];
   assert.deepEqual(backends.map((backend) => [backend.type, backend.state]), [["fake", "active"]]);
   const doctor = (await harness.behavior.callRpc("doctor")) as { ok: boolean; sections: { title: string }[] };
-  assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host"]]);
+  assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host", "Monitor"]]);
 });
 
 /** Everything the plugin sent a desktop viewer, joined. */

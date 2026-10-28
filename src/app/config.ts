@@ -145,6 +145,13 @@ export function withGeneral(document: ConfigDocument, patch: Partial<ConfigDocum
   return { ...document, general };
 }
 
+export function withMonitor(document: ConfigDocument, patch: Partial<NonNullable<ConfigDocument["monitor"]>>): ConfigDocument {
+  const monitor: Record<string, unknown> = { ...document.monitor, ...patch };
+  for (const key of Object.keys(monitor)) if (monitor[key] === undefined) delete monitor[key];
+  const { monitor: _previous, ...rest } = document;
+  return Object.keys(monitor).length ? { ...rest, monitor } : rest;
+}
+
 /** A backend's warm count for a kind, as the document has it. */
 export function warmOf(backend: BackendConfig | undefined, kind: string): number {
   return backend?.warm?.[kind] ?? 0;

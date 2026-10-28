@@ -41,6 +41,8 @@ export const CHECKS = {
     from: ["bb-box"],
     what: "A Mac's video encoder, shared by every iOS device bb-box streams on it (064): its budget, from the chip or a probe, how much of it the streams use, and which are shown at a lower resolution to keep within it.",
   },
+  monitor: { name: "Monitor", from: ["bb-box"], what: "The Monitor's settings (066): whether it is on, how often machine status reads while it is open, and whether background monitoring and its notifications are on." },
+  "monitor.background": { name: "Background monitoring", from: ["bb-box"], what: "While background monitoring is on: when it last wrote its minute's summary of BB's server's CPU and memory, and whether its last sample or write failed." },
   "spares.<kind>": {
     name: "Spare <kind> boxes",
     from: ["bb-box"],
