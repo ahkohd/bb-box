@@ -613,6 +613,12 @@ export function parseVnc(text: string): { port: number; password: string } | nul
   return { password: decodeURIComponent(match[1]!), port: Number(match[2]) };
 }
 
+export function vmStateScript(vm: string): string {
+  return script(String.raw`listed=$(tart list --source local) || exit 1
+printf '%s\n' "$listed" | awk -v n=${quote(vm)} '$2 == n { print $NF }' | grep . || echo gone
+`);
+}
+
 /** The VM's state as Tart lists it, or "gone" when it is not there or not this box's. */
 export function powerScript(vm: string, installId: string, boxId: string | null): string {
   return script(String.raw`vm=${quote(vm)}

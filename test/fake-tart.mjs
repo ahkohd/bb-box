@@ -26,6 +26,8 @@
 //   while ~/.fake-tart-run-fails holds a count above 0, taking one from it.
 // - `tart delete` waits while ~/.fake-tart-delete-waits exists, once as
 //   many deletes as it holds have gone through, taking one from it for each.
+// - `tart ip` writes the VM's name to ~/.fake-tart-ip-held and waits while
+//   ~/.fake-tart-ip-holds exists, as for a VM that has no lease yet.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -157,7 +159,15 @@ function tart() {
         writeFileSync(counter, String(next));
         writeFileSync(file, `192.168.64.${next}`);
       }
-      return console.log(readFileSync(file, "utf8"));
+      const holds = join(home, ".fake-tart-ip-holds");
+      if (!existsSync(holds)) return console.log(readFileSync(file, "utf8"));
+      writeFileSync(join(home, ".fake-tart-ip-held"), name);
+      const check = setInterval(() => {
+        if (existsSync(holds)) return;
+        clearInterval(check);
+        console.log(readFileSync(file, "utf8"));
+      }, 20);
+      return;
     }
     case "stop":
     case "suspend": {

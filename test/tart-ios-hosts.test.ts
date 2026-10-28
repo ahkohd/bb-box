@@ -500,6 +500,52 @@ test("a host whose VM fails to start starts once more on a fresh clone, still ta
   for (const slot of slots) await backend.release(slot, releasing, signal());
 });
 
+test("a host whose VM stops after it answered on SSH, before it served, starts once more on a fresh clone too, and its words say the VM stopped (F-9b)", async () => {
+  const { backend, mac, clones, context, ssh } = setup();
+  const [first, fresh] = ["192.168.64.2", "192.168.64.3"].map((address) => ssh.home(address)) as [string, string];
+  for (const home of [first, fresh]) writeFileSync(join(home, "hold-init"), "");
+  writeFileSync(join(first, "lose-init"), "");
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const vm = slotRefOf(guest)!.vm;
+  const acquired = backend.acquire(box, guest, hooks().hooks, signal());
+  await until(() => existsSync(join(first, "init-held")), "the first clone's start reaches its helper's init");
+  rmSync(join(mac, ".tart", "vms", vm, "running"));
+  rmSync(join(first, "hold-init"));
+  await until(() => existsSync(join(fresh, "init-held")), "the fresh clone's start reaches its helper's init");
+  const second = identity();
+  const { tier, guest: joined } = await place(backend, second);
+  assert.deepEqual(tier.tier === "join" && tier.host, vm, "the host is still starting, so a box joins it");
+  const doctor = (await backend.doctor(signal())).checks.find((check) => check.id === "ios-hosts.mac1");
+  assert.match(doctor?.detail ?? "", /starting, made \d+ s ago, on a fresh clone as its first start failed \(Its VM stopped after it answered on SSH, before it served: Its helper's init failed: Connection to the VM closed by remote host\.\)/);
+  rmSync(join(fresh, "hold-init"));
+  const slots = await Promise.all([acquired, backend.acquire(second, joined, hooks().hooks, signal())]);
+  assert.ok(slots.every((slot) => placementOf({ guest: slot }).on === "slot" && slotRefOf(slot)!.vm === vm));
+  assert.equal(clones().length, 2, "a fresh clone of the iOS image");
+  assert.ok(context.logs.some((line) => line.startsWith(`Shared iOS host ${vm} on mac1 did not start, so bb-box deletes its VM and starts a fresh clone of the iOS image, once: Its VM stopped after it answered on SSH`)), context.logs.join("\n"));
+  for (const slot of slots) await backend.release(slot, releasing, signal());
+});
+
+test("a host whose VM stops before it answers on SSH is noticed within a poll, not at the start's deadline, and starts once more on a fresh clone (F-9b)", async () => {
+  const { backend, mac, clones, context } = setup({}, { vmStoppedPollMs: 50 });
+  const holds = join(mac, ".fake-tart-ip-holds");
+  writeFileSync(holds, "");
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const vm = slotRefOf(guest)!.vm;
+  const acquired = backend.acquire(box, guest, hooks().hooks, signal());
+  await until(() => existsSync(join(mac, ".fake-tart-ip-held")), "the first clone's start waits for its address");
+  rmSync(join(mac, ".tart", "vms", vm, "running"));
+  const retried = `Shared iOS host ${vm} on mac1 did not start, so bb-box deletes its VM and starts a fresh clone of the iOS image, once: ${vm} on mac1 stopped before it answered on SSH: Tart lists it stopped.`;
+  await until(() => context.logs.includes(retried), "the stop is noticed and a fresh clone started");
+  assert.ok(context.logs.some((line) => new RegExp(`^${vm} on mac1 stopped before it answered on SSH: Tart lists it stopped\\. bb-box saw it \\d+\\.\\d s after the VM started, and stops waiting for it\\.$`).test(line)), context.logs.join("\n"));
+  rmSync(holds);
+  const slot = await acquired;
+  assert.equal(slotRefOf(slot)!.vm, vm);
+  assert.equal(clones().length, 2, "a fresh clone of the iOS image");
+  await backend.release(slot, releasing, signal());
+});
+
 test("a host whose fresh clone fails to start too fails its boxes with both failures, and while its VM is deleted a new host can start in its place, rather than the Mac seeming full (F-9, H8)", async () => {
   const { backend, mac, hosts } = setup();
   anotherMacosVm(mac);
