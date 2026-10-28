@@ -37,6 +37,7 @@ class StubHost {
   most = 4;
   generation = 0;
   setUp = false;
+  setUpFailures = 0;
 
   #field(stdin: unknown, key: string): string {
     return new RegExp(`^${key}=(.*)$`, "m").exec(String(stdin ?? ""))?.[1] ?? "";
@@ -61,6 +62,10 @@ class StubHost {
     const answer = (exitCode: number, stdout = "", stderr = ""): RunResult => ({ exitCode, stdout, stderr, timedOut: false }) as RunResult;
     if (script === UNPACK_SETUP) return answer(0);
     if (script.includes("mac-ios.sh")) {
+      if (this.setUpFailures > 0) {
+        this.setUpFailures--;
+        return answer(1, "", "mac-ios.sh: xcrun simctl runtime add failed");
+      }
       this.setUp = true;
       return answer(0, "ios=26.2 23C54 ios-26.2-23C54 companion=1.7.7\n");
     }
@@ -107,11 +112,12 @@ function instance(id: string, status = "running"): Instance {
   return { id, status, labels: {}, createdAt: 0, deadline: null, continent: null, shape: null } as unknown as Instance;
 }
 
-function harness(options: { report?: MacReport | null; room?: string | null; measured?: MacReport; now?: () => number } = {}) {
+function harness(options: { report?: MacReport | null; room?: string | null; measured?: MacReport; now?: () => number; access?: Partial<NamespaceHostsAccess> } = {}) {
   const host = new StubHost();
   const storage = new MemoryStorage();
   const destroyed: string[] = [];
   const logs: string[] = [];
+  const tags: string[] = [];
   let made = 0;
   let clock = options.now ?? (() => 1_000_000);
   const access: NamespaceHostsAccess = {
@@ -120,10 +126,10 @@ function harness(options: { report?: MacReport | null; room?: string | null; mea
     settings: () => ({ on: true, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 }),
     longestLifeMs: () => 4 * 3600_000,
     now: () => clock(),
-    sleep: async () => {},
+    sleep: () => new Promise((resolve) => setImmediate(resolve)),
     report: () => (options.report === undefined ? REPORT : options.report),
     room: async () => ({ shape: { cores: 6, memoryGB: 14 }, words: options.room ?? null }),
-    create: async () => instance(`ns-${++made}`),
+    create: async (tag) => (tags.push(tag), instance(`ns-${++made}`)),
     wait: async (id) => instance(id),
     describe: async (id) => (destroyed.includes(id) ? null : instance(id)),
     destroy: async (id) => void destroyed.push(id),
@@ -136,8 +142,8 @@ function harness(options: { report?: MacReport | null; room?: string | null; mea
     log: (line) => void logs.push(line),
     logError: (operation, error) => void logs.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
   };
-  const hosts = new NamespaceHosts(access);
-  return { hosts, host, storage, destroyed, logs, setClock: (next: () => number) => (clock = next) };
+  const hosts = new NamespaceHosts({ ...access, ...options.access }, { machinePollMs: 20 });
+  return { hosts, host, storage, destroyed, logs, tags, setClock: (next: () => number) => (clock = next) };
 }
 
 function box(id: string): BoxIdentity {
@@ -231,6 +237,124 @@ test("the first ios box starts a Namespace host and the next joins it while it s
   assert.equal(await storage.get(HOST_RECORD_KEY), undefined);
 });
 
+test("the box that started a Namespace host is served first, though the boxes that joined it reach its ready slots before it (F-11)", async () => {
+  const { hosts, host } = harness();
+  host.most = 5;
+  const boxes = ["b1", "b2", "b3"].map(box);
+  const promised: Guest[] = [];
+  for (const each of boxes) promised.push((await hosts.take(await hosts.offer("ios", null, signal()), each, signal())) as Guest);
+  host.slots = [1, 2].map((n) => ({ id: String(n), is: "ready" as const, box: null, madeFor: null }));
+  host.generation = 2;
+  await serving(hosts);
+  const joiners = await Promise.all([1, 2].map((n) => hosts.acquire(boxes[n]!, promised[n]!, hooks, signal())));
+  assert.deepEqual(joiners.map((guest) => namespaceSlotOf(guest)?.slot), ["2", "3"], "the joiners leave the first ready slot to the first box, and the last makes one");
+  const first = await hosts.acquire(boxes[0]!, promised[0]!, hooks, signal());
+  assert.equal(namespaceSlotOf(first)?.slot, "1");
+});
+
+function gate(): { readonly opened: Promise<void>; open(): void } {
+  let open = () => {};
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return { opened, open };
+}
+
+async function until(met: () => boolean | Promise<boolean>, words: string): Promise<void> {
+  for (let tries = 0; tries < 400; tries++) {
+    if (await met()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail(words);
+}
+
+test("a Namespace host whose first Mac fails to start starts once more on a fresh Namespace Mac, still taking boxes meanwhile, and the log and doctor say why (F-11)", async () => {
+  const held = gate();
+  let measures = 0;
+  const { hosts, host, destroyed, logs, tags } = harness({
+    access: {
+      measure: async () => {
+        if (++measures === 2) await held.opened;
+        return REPORT;
+      },
+    },
+  });
+  host.setUpFailures = 1;
+  const first = await hosts.take(await hosts.offer("ios", null, signal()), box("b1"), signal());
+  await until(() => measures === 2, "the fresh Mac's start reaches its measure");
+  assert.deepEqual(destroyed, ["ns-1"], "the first Mac is destroyed before the fresh one is made, as the workspace has one Mac");
+  const record = (await hosts.record())!;
+  assert.deepEqual([record.phase, record.instance, tags], ["starting", "ns-2", [record.tag, `${record.tag}-fresh`]]);
+  const joined = await hosts.offer("ios", null, signal());
+  assert.equal(joined.tier, "join", "the host is still starting, so a box joins it");
+  const second = await hosts.take(joined, box("b2"), signal());
+  assert.match((await hosts.doctor(signal())).detail, /^The Namespace host is starting, with 2 boxes promised, made \d+ s ago, on a fresh Namespace Mac as its first start failed \(its iOS slots were not set up: mac-ios\.sh: xcrun simctl runtime add failed\)\.$/);
+  assert.ok(logs.includes("The Namespace host's Mac ns-1 did not start, so bb-box destroys it and starts a fresh Namespace Mac, once: its iOS slots were not set up: mac-ios.sh: xcrun simctl runtime add failed"), logs.join("\n"));
+  held.open();
+  const slots = await Promise.all([hosts.acquire(box("b1"), first as Guest, hooks, signal()), hosts.acquire(box("b2"), second as Guest, hooks, signal())]);
+  assert.deepEqual(slots.map((slot) => namespaceSlotOf(slot)?.instance), ["ns-2", "ns-2"]);
+  for (const slot of slots) await hosts.release(slot);
+  assert.deepEqual(destroyed, ["ns-1", "ns-2"]);
+});
+
+test("a Namespace host whose fresh Mac fails too fails its boxes with both failures, and destroys both Macs (F-11)", async () => {
+  let measures = 0;
+  const { hosts, host, destroyed } = harness({ access: { measure: async () => (++measures === 2 ? Promise.reject(new Error("the probe did not answer")) : REPORT) } });
+  host.setUpFailures = 1;
+  const promised = await hosts.take(await hosts.offer("ios", null, signal()), box("b1"), signal());
+  await assert.rejects(
+    hosts.acquire(box("b1"), promised as Guest, hooks, signal()),
+    /^Error: The Namespace host failed: the probe did not answer That was a fresh Namespace Mac's start; the first one's failed too: its iOS slots were not set up: mac-ios\.sh: xcrun simctl runtime add failed$/,
+  );
+  assert.deepEqual(destroyed, ["ns-1", "ns-2"]);
+  assert.match((await hosts.doctor(signal())).detail, /^The Namespace host is failed: the probe did not answer That was a fresh Namespace Mac's start/);
+});
+
+test("a Namespace Mac that stops or goes before the host serves is noticed within a poll, not at the start's deadline, and a fresh Mac replaces it (F-11)", async () => {
+  const ended = new Set<string>();
+  const { hosts, destroyed, logs } = harness({
+    access: {
+      describe: async (id) => (ended.has(id) ? instance(id, "suspended") : instance(id)),
+      answers: async (id, _deadline, signal) => {
+        if (id !== "ns-1") return;
+        ended.add(id);
+        await new Promise((_, reject) => signal?.addEventListener("abort", () => reject(signal.reason), { once: true }));
+      },
+    },
+  });
+  const began = Date.now();
+  const promised = await hosts.take(await hosts.offer("ios", null, signal()), box("b1"), signal());
+  const slot = await hosts.acquire(box("b1"), promised as Guest, hooks, signal());
+  assert.ok(Date.now() - began < 5_000, "seen within a poll");
+  assert.equal(namespaceSlotOf(slot)?.instance, "ns-2");
+  assert.ok(logs.some((line) => /^Namespace's Mac ns-1 is suspended before the host served: Namespace lists it suspended\. bb-box saw it \d+\.\d s after the Mac ran, and stops waiting for it\.$/.test(line)), logs.join("\n"));
+  assert.ok(logs.some((line) => line.startsWith("The Namespace host's Mac ns-1 did not start, so bb-box destroys it and starts a fresh Namespace Mac, once: Namespace's Mac ns-1 is suspended before the host served")), logs.join("\n"));
+  assert.deepEqual(destroyed, ["ns-1"]);
+  await hosts.release(slot);
+});
+
+test("a Namespace Mac Namespace no longer lists, or that its API cannot describe, is told apart: gone fails the start's try, a failed read does not (F-11)", async () => {
+  let reads = 0;
+  const { hosts, logs } = harness({
+    access: {
+      describe: async (id) => {
+        reads++;
+        if (id === "ns-1" && reads > 3) return null;
+        if (reads <= 3) throw new Error("Namespace's API answered 503");
+        return instance(id);
+      },
+      answers: async (id, _deadline, signal) => {
+        if (id !== "ns-1") return;
+        await new Promise((_, reject) => signal?.addEventListener("abort", () => reject(signal.reason), { once: true }));
+      },
+    },
+  });
+  const promised = await hosts.take(await hosts.offer("ios", null, signal()), box("b1"), signal());
+  const slot = await hosts.acquire(box("b1"), promised as Guest, hooks, signal());
+  assert.equal(namespaceSlotOf(slot)?.instance, "ns-2");
+  assert.ok(reads > 3, "failed reads were not taken as gone");
+  assert.ok(logs.some((line) => line.startsWith("Namespace's Mac ns-1 is gone before the host served: Namespace no longer lists it.")), logs.join("\n"));
+  await hosts.release(slot);
+});
+
 test("a host lends no new slot in the hour before its end, and a box asked for then waits with words (065, unit 7)", async () => {
   let now = 1_000_000;
   const { hosts, setClock } = harness({ now: () => now });
@@ -248,8 +372,8 @@ test("a host whose Mac cannot run the iOS Simulator fails with words, its machin
   const measured = { ...REPORT, capabilities: { ...REPORT.capabilities, simulator: { is: "no" as const, why: "it has no Xcode" } } };
   const { hosts, destroyed } = harness({ measured });
   const promised = await hosts.take(await hosts.offer("ios", null, signal()), box("b1"), signal());
-  await assert.rejects(hosts.acquire(box("b1"), promised as Guest, hooks, signal()), /The Namespace host failed: its Mac cannot run the iOS Simulator: it has no Xcode/);
-  assert.deepEqual(destroyed, ["ns-1"]);
+  await assert.rejects(hosts.acquire(box("b1"), promised as Guest, hooks, signal()), /The Namespace host failed: its Mac cannot run the iOS Simulator: it has no Xcode That was a fresh Namespace Mac's start; the first one's failed too: its Mac cannot run the iOS Simulator: it has no Xcode/);
+  assert.deepEqual(destroyed, ["ns-1", "ns-2"]);
   const after = await hosts.offer("ios", null, signal());
   assert.match("words" in after ? after.words : "", /^The last Namespace host failed/);
   await hosts.maintain(signal());

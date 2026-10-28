@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEVICE_DISPLAY, type KindCapabilities } from "../src/backends/types.ts";
 import {
+  AskOrder,
   OWN_VM,
   parseDeviceHost,
   parseSlot,
@@ -108,4 +109,34 @@ test("the legal shapes of hosts and slots read back whole; the illegal ones that
   refused(parseSlot({ host: "h", carried: false, generation: 1, state: illegal.heldMacosWithADevice }), /^slot\.state has "device", which it does not take\./);
   refused(parseSlot({ host: "h", carried: false, generation: 1, state: illegal.heldForLinux }), /^slot\.state\.for must be "ios" or "macos", not "linux"\.$/);
   refused(parseSlot({ host: "h", carried: false, generation: 1, state: illegal.androidInASlot }), /^slot\.state\.device\.model must be "iPhone 18 Pro"/);
+});
+
+test("a host's ready slots go to its boxes in the order they asked: the k-th box still looking takes the k-th free slot, carried first; one making its own slot or claiming one holds no other back (F-11)", () => {
+  const slot = (id: string, is: string, madeFor: string | null = null) => ({ id, is, madeFor, carried: id.startsWith("i"), uid: id.startsWith("i") ? 79990 + Number(id.slice(1)) : 80000 + Number(id) });
+  const slots = [slot("1", "ready"), slot("i2", "ready"), slot("i1", "ready")];
+  const order = new AskOrder();
+  for (const box of ["first", "second", "third"]) order.asked("host-a", box);
+  order.asked("host-b", "elsewhere");
+  const none = new Set<string>();
+  assert.deepEqual(["first", "second", "third"].map((box) => order.slotFor("host-a", box, slots, none)?.id), ["i1", "i2", "1"]);
+  assert.equal(order.slotFor("host-a", "third", slots.slice(0, 2), none), null, "two free slots are the first two boxes'");
+  assert.equal(order.slotForNewBox("host-a", slots, none), null, "a box that asks now comes after all three");
+  assert.equal(order.slotForNewBox("host-b", slots, none)?.id, "i2", "another host's queue is its own");
+  assert.equal(order.servesFirst("host-a", "first"), false);
+  assert.equal(order.servesFirst("host-a", "third"), true);
+
+  order.making("first");
+  assert.equal(order.slotFor("host-a", "second", slots.slice(1), none)?.id, "i1", "the first box makes its own slot, so it holds none back");
+  order.looking("first");
+  order.claiming("first", "i1");
+  assert.equal(order.slotFor("host-a", "second", slots, none)?.id, "i2", "the slot the first box claims is not offered to the next");
+  order.served("first");
+  assert.equal(order.slotFor("host-a", "second", slots, none)?.id, "i1");
+  assert.equal(order.waitingOn("host-a"), 2);
+
+  const mine = [slot("i1", "ready"), slot("3", "ready", "third")];
+  assert.equal(order.slotFor("host-a", "third", mine, new Set(["third"]))?.id, "3", "a slot made for a box is its own, whatever its place");
+  assert.equal(order.slotFor("host-a", "second", mine, new Set(["third"]))?.id, "i1", "and no other box's while it is acquired");
+  order.asked("host-a", "second");
+  assert.equal(order.slotFor("host-a", "second", slots, none)?.id, "i1", "asking again keeps a box's place");
 });

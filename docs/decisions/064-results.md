@@ -2683,3 +2683,50 @@ no Tart command, so it cannot cause the race it looks for.
   open can fail a start.
 - `setup/tart/grant-tcc.sh`, run by hand on a stopped VM, still asks
   `tart list` for its state.
+
+## F-11: the first box served first, and a Namespace host tried again
+
+Built on 28 October 2026, from two follow-ups of F-9b.
+
+### What changed
+
+| Item | Found | Fix |
+| --- | --- | --- |
+| 1, the first box waited longest (F-9b reruns 2 and 3) | The box that started a host was ready in 168.6 s and 192.0 s, against 49 to 85 s for boxes that joined later. Every box waiting on a host claimed any free ready slot, so the joiners took the host's ready slots first, and the first box waited for a new slot to be made | Each lender, Tart, the pool and Namespace, queues the boxes waiting on a host in the order they asked. The k-th box still looking takes the k-th free ready slot, carried slots first. A box making its own slot, or claiming one, holds no other back, and a slot made for a box stays its own. A box asking now gets a ready slot only where more are free than boxes waiting. A box whose promise the host refuses as full while earlier boxes still hold theirs waits for them rather than failing |
+| 2, no retry on Namespace (F-9 item 4, F-9b) | A Namespace host whose start failed failed its boxes at once | As a Tart host does on a fresh clone: the failed Mac is destroyed, and the host starts once more on a fresh Namespace Mac, staying `starting` so boxes join it. The log: "The Namespace host's Mac <id> did not start, so bb-box destroys it and starts a fresh Namespace Mac, once: ...". The doctor, for a starting host: "on a fresh Namespace Mac as its first start failed (...)". If the fresh Mac fails too, the boxes' words give both: "... That was a fresh Namespace Mac's start; the first one's failed too: ...". A start that never got a Mac, as when Namespace had none, is not tried again |
+| 2, a stopped or gone Mac | Not noticed until a step's own deadline, as Tart's was before F-9b | While a host's Mac answers, is measured and is set up, bb-box asks Namespace every 10 s whether it still runs. A Mac Namespace lists as destroying, destroyed, suspending, suspended or in error, or no longer lists, fails that try at once: "Namespace's Mac <id> is suspended before the host served: Namespace lists it suspended." The log adds when it was seen. A read that fails is not taken as gone |
+
+Item 1 changes only where a host's slots go, not the host helper: a slot
+is still claimed through the helper, which refuses a second claim of the
+same slot.
+
+### How it was checked
+
+On the fakes, on a Linux box:
+
+- **Item 1.** On the Tart fake, three boxes on a new host, the two that
+  joined acquired before the first: they took `bbd-i2` and made slot 1,
+  and the first box got `bbd-i1`. A box asking meanwhile was not offered
+  the first box's ready slot. On the Namespace stub, the same with two
+  ready slots: the joiners took slot 2 and made slot 3, and the first box
+  got slot 1. Both tests fail on main, where the joiners take both ready
+  slots and the first box makes one. The queue itself has a test of its
+  own: places by ask, a box making or claiming, a slot made for a box,
+  hosts apart.
+- **Item 2.** On the Namespace stub: a first Mac whose setup fails gets a
+  fresh Mac, made with its own tag after the first is destroyed; a box
+  joins meanwhile, and the doctor and log give the words; both boxes get
+  slots on the fresh Mac. A fresh Mac failing too fails the box with
+  both failures, and both Macs are destroyed. A Mac listed suspended
+  while bb-box waits for it to answer is seen within a poll and a fresh
+  Mac serves. A Mac no longer listed is taken as gone; failed reads
+  before it are not.
+
+### What limits these checks
+
+- **Item 2 was not seen live.** A Namespace start can be made to fail
+  only through Namespace's API, such as destroying or suspending its Mac
+  as it starts, or with a bb-box changed to fail it. Neither was used.
+- **Item 1 orders boxes within one bb-box instance.** Boxes queued
+  before bb-box restarts are queued again as their acquires carry on, in
+  that order.
