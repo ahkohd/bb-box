@@ -65,6 +65,11 @@ beforeAll(async () => {
     readonly thresholds = [];
   } as unknown as typeof IntersectionObserver;
   window.matchMedia = ((query: string) => ({ matches: query.includes("reduce"), media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
   vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
   const app = await loadPluginApp(() => import("../app.tsx"));
   footer = app.experimentalSidebarFooterItems.find((item) => item.id === "status") as typeof footer;
@@ -75,11 +80,12 @@ afterEach(() => {
   localStorage.clear();
 });
 
-test("the footer keeps Beacon's entry: Machine status, with the server icon", async () => {
+test("the footer keeps Beacon's entry: Machine status, with the server icon under a name of bb-box's own", async () => {
   expect(footer?.label).toBe("Machine status");
-  expect(footer?.icon).toBe("Server");
+  expect(footer?.icon).toBe("bb-box-machine-status");
   const app = await loadPluginApp(() => import("../app.tsx"));
-  expect(app.icons.some((icon) => icon.name === "Server")).toBe(true);
+  expect(app.icons.map((icon) => icon.name)).toContain("bb-box-machine-status");
+  expect(app.icons.map((icon) => icon.name)).not.toContain("Server");
   expect(app.appOverlays.some((overlay) => overlay.id === "monitor")).toBe(true);
 });
 
@@ -106,17 +112,25 @@ test("a shared slot shows its host's load, the host it is on and the Mac's encod
   expect(screen.getByText("encoder 40%")).toBeTruthy();
 });
 
-test("long names and addresses truncate in the middle, keeping both ends", async () => {
-  localStorage.setItem("bb-box:monitor:machine", "host_long");
-  const tailscale = { dnsName: "a-shared-ios-box.example-net.ts.net", ipv4: "100.64.0.7", ipv6: "fd7a:115c:a1e0::403a:fd53", tags: [] };
-  renderSlot(footer!, { dismiss: vi.fn() }, { rpc: handlers({ host_long: snapshot({ tailscale }) }), pluginId: "bb-box" });
-  await screen.findByText("Tailscale");
-  expect(screen.getByText("name-1234")).toBeTruthy();
-  expect(screen.getByText("a-shared-ios-box-with-a-very-long-")).toBeTruthy();
-  expect(screen.getByText("et.ts.net")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Show IPv6" }));
-  expect(await screen.findByText("403a:fd53")).toBeTruthy();
-  expect(screen.getByText("fd7a:115c:a1e0::")).toBeTruthy();
+test("long names and addresses truncate in the middle, keeping both ends, with the ellipsis right against the kept end", async () => {
+  const widths = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const width = this.hasAttribute("data-middle-truncate") ? 120 : (this.textContent?.length ?? 0) * 8;
+    return { width, height: 16, x: 0, y: 0, top: 0, left: 0, right: width, bottom: 16, toJSON: () => ({}) } as DOMRect;
+  });
+  try {
+    localStorage.setItem("bb-box:monitor:machine", "host_long");
+    const tailscale = { dnsName: "a-shared-ios-box.example-net.ts.net", ipv4: "100.64.0.7", ipv6: "fd7a:115c:a1e0::403a:fd53", tags: [] };
+    renderSlot(footer!, { dismiss: vi.fn() }, { rpc: handlers({ host_long: snapshot({ tailscale }) }), pluginId: "bb-box" });
+    await screen.findByText("Tailscale");
+    expect(screen.getByText("a-sha…name-1234")).toBeTruthy();
+    expect(screen.getAllByText("a-shared-ios-box-with-a-very-long-name-1234").length).toBeGreaterThan(0);
+    expect(screen.getByText("a-sha…et.ts.net")).toBeTruthy();
+    expect(screen.getAllByText("100.64.0.7").length).toBe(2);
+    fireEvent.click(screen.getByRole("button", { name: "Show IPv6" }));
+    expect(await screen.findByText("fd7a:…403a:fd53")).toBeTruthy();
+  } finally {
+    widths.mockRestore();
+  }
 });
 
 test("with the Monitor off, BB's next load of bb-box's app has no machine status in the footer", async () => {

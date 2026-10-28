@@ -12,7 +12,7 @@ import { createTailscaleReader, parseTailscaleStatus } from "../src/monitor/tail
 import { pressureAlertCopy, TEST_ALERT_COPY } from "../src/monitor/alert-copy.ts";
 import { loadErrorCopy } from "../src/app/monitor/load-error-copy.ts";
 import { readPanelShape, rememberPanelShape } from "../src/app/monitor/panel-shape.ts";
-import { keptEnd, middleParts } from "../src/app/monitor/middle.ts";
+import { fitMiddle, keptEnd, middleParts } from "../src/app/monitor/middle.ts";
 
 const macIoreg = [
   '      "CurrentCapacity" = 23',
@@ -201,4 +201,19 @@ test("middle truncation keeps the last few characters, so an address keeps both 
   assert.deepEqual(middleParts(ipv6), { head: "fd7a:115c:a1e0::", tail: "403a:fd53" });
   assert.equal(keptEnd("bb"), 1);
   assert.equal(keptEnd(""), 0);
+});
+
+test("middle truncation keeps as much of the start as fits, with the ellipsis right against the kept end", () => {
+  const room = (characters: number) => (candidate: string) => candidate.length <= characters;
+  const ipv6 = "fd7a:115c:a1e0::403a:fd53";
+  assert.equal(fitMiddle(ipv6, room(40)), ipv6, "a value that fits is shown whole");
+  assert.equal(fitMiddle(ipv6, room(19)), "fd7a:115c…403a:fd53", "the owner's example");
+  assert.equal(fitMiddle(ipv6, room(15)), "fd7a:…403a:fd53");
+  assert.equal(fitMiddle(ipv6, room(3)), "…403a:fd53", "with no room for the start, the end stays");
+  let measured = 0;
+  fitMiddle("x".repeat(4096), (candidate) => {
+    measured++;
+    return candidate.length <= 100;
+  });
+  assert.ok(measured <= 14, `a long value is fitted in a few measurements, not one per character: ${measured}`);
 });

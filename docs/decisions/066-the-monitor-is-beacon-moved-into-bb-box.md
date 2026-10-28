@@ -33,7 +33,9 @@ BB machine. That has three gaps for bb-box's boxes:
    There is one host entry, not two.
 
 2. **The UI stays Beacon's.** The same footer entry ("Machine status", the
-   server icon), panel, switcher and sections, in the same words. The
+   server icon, registered as `bb-box-machine-status`, since BB's icon names
+   are shared by all plugins), panel, switcher and sections, in the same
+   words. The
    changes the move forces, and the owner's own:
    - Where a reading has no load average of its own (a container), the CPU
      section's pill shows the cgroup's CPU pressure ("pressure 0%") in its
@@ -42,7 +44,9 @@ BB machine. That has three gaps for bb-box's boxes:
      room, and its CPU pill says "host load".
    - Long values truncate in the middle, keeping both ends: Tailscale names,
      MagicDNS names, addresses and machine and box names (the owner's
-     review). The copy tooltip keeps the full value.
+     review). The value keeps the width Beacon's layout gives it, and shows
+     as much of its start as fits, an ellipsis, and its last 9 characters,
+     with no gap between them. The copy tooltip keeps the full value.
    - The machine switcher keeps Beacon's plain popover; bb-box's own popover
      becomes a drawer on a narrow screen.
    - The Tailscale copy buttons use the browser's clipboard, as bb-box's
