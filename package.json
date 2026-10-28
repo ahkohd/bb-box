@@ -78,5 +78,7 @@
     "typescript": "^5.8.0",
     "vaul": "^1.1.2",
     "vitest": "^5.0.3"
-  }
+  },
+  "license": "MIT",
+  "author": "Victor Aremu <me@victorare.mu>"
 }
