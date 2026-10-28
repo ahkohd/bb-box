@@ -6,11 +6,13 @@ export PATH
 PASTEBOARD_SERVER_LABEL=app.bb-box.pboard
 SESSION_JOB_LABEL=app.bb-box.session-job
 JOB_MOST_S=60
+SET_TRIES=12
+SET_GAP_S=${SLOT_CLIPBOARD_GAP_S:-5}
 
 [ $# -eq 2 ] || { echo "usage: slot-clipboard.sh <user> <booted device's udid>" >&2; exit 2; }
 [ "$(id -u)" = 0 ] || { echo "run it as root" >&2; exit 2; }
 user=$1 udid=$2
-uid=$(id -u "$user" 2>/dev/null) || { echo "there is no user $user"; exit 1; }
+uid=$(id -u "$user" 2>/dev/null) || { echo "there is no user $user" >&2; exit 1; }
 
 as_user() { (cd / && sudo -n -H -u "$user" -- "$@"); }
 
@@ -20,7 +22,7 @@ else
   domain=user/$uid session=Background own_server=yes
 fi
 
-dir=$(as_user mktemp -d /tmp/bb-box-clipboard.XXXXXX) || { echo "could not make a folder as $user"; exit 1; }
+dir=$(as_user mktemp -d /tmp/bb-box-clipboard.XXXXXX) || { echo "could not make a folder as $user" >&2; exit 1; }
 server_loaded_here=no
 
 finish() {
@@ -47,7 +49,7 @@ load_pasteboard_server() {
     printf '%s\n' '</dict>' '</plist>'
   } | as_user tee "$dir/$PASTEBOARD_SERVER_LABEL.plist" >/dev/null
   said=$(as_user launchctl bootstrap "$domain" "$dir/$PASTEBOARD_SERVER_LABEL.plist" 2>&1) || {
-    echo "launchd did not load macOS's pasteboard server in $domain: $said"
+    echo "launchd did not load macOS's pasteboard server in $domain: $said" >&2
     return 1
   }
   server_loaded_here=yes
@@ -55,7 +57,7 @@ load_pasteboard_server() {
 
 session_job() {
   op=$1
-  job=$(as_user mktemp -d "$dir/$SESSION_JOB_LABEL.check.XXXXXX") || { echo "could not make a folder for simctl $op as $user"; return 1; }
+  job=$(as_user mktemp -d "$dir/$SESSION_JOB_LABEL.check.XXXXXX") || { echo "could not make a folder for simctl $op as $user" >&2; return 1; }
   label=${job##*/}
   cat | as_user tee "$job/in" >/dev/null
   {
@@ -68,23 +70,30 @@ session_job() {
     printf '  <key>ProcessType</key><string>Interactive</string>\n  <key>RunAtLoad</key><true/>\n'
     printf '%s\n' '</dict>' '</plist>'
   } | as_user tee "$job/job.plist" >/dev/null
-  said=$(as_user launchctl bootstrap "$domain" "$job/job.plist" 2>&1) || { echo "launchd did not start simctl $op in $domain: $said"; return 1; }
+  said=$(as_user launchctl bootstrap "$domain" "$job/job.plist" 2>&1) || { echo "launchd did not start simctl $op in $domain: $said" >&2; return 1; }
   waited=0
   until [ -s "$job/exit" ] || [ "$waited" -ge $((JOB_MOST_S * 10)) ]; do sleep 0.1; waited=$((waited + 1)); done
   as_user launchctl bootout "$domain/$label" >/dev/null 2>&1
-  [ -s "$job/exit" ] || { echo "simctl $op did not end within $JOB_MOST_S s in $domain"; return 1; }
+  [ -s "$job/exit" ] || { echo "simctl $op did not end within $JOB_MOST_S s in $domain" >&2; return 1; }
   code=$(cat "$job/exit")
-  [ "$code" = 0 ] || { echo "simctl $op exited with $code in $domain: $(tail -n 2 "$job/err" | tr '\n' ' ')"; return 1; }
+  [ "$code" = 0 ] || { echo "simctl $op exited with $code in $domain: $(tail -n 2 "$job/err" | tr '\n' ' ')" >&2; return 1; }
   cat "$job/out"
 }
 
 started=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
 [ "$own_server" = no ] || load_pasteboard_server || exit 1
 sample=$(printf 'bb-box clipboard check \342\234\223 \303\251 \346\227\245\346\234\254')
-printf '%s' "$sample" | session_job pbcopy >/dev/null || { session_job pbcopy </dev/null >/dev/null; exit 1; }
+set_sample() { printf '%s' "$sample" | session_job pbcopy >/dev/null 2>"$dir/said"; }
+tries=1
+until set_sample; do
+  [ "$tries" -lt "$SET_TRIES" ] || { cat "$dir/said" >&2; exit 1; }
+  tries=$((tries + 1))
+  sleep "$SET_GAP_S"
+done
 read_back=$(session_job pbpaste </dev/null) || exit 1
 printf '' | session_job pbcopy >/dev/null
-[ "$read_back" = "$sample" ] || { echo "the device's clipboard read back $(printf '%s' "$read_back" | wc -c | tr -d ' ') bytes that differ from the $(printf '%s' "$sample" | wc -c | tr -d ' ') set"; exit 1; }
+[ "$read_back" = "$sample" ] || { echo >&2 "the device's clipboard read back $(printf '%s' "$read_back" | wc -c | tr -d ' ') bytes that differ from the $(printf '%s' "$sample" | wc -c | tr -d ' ') set"; exit 1; }
 seconds=$(perl -MTime::HiRes=time -e "printf '%.1f', time - $started")
 if [ "$own_server" = yes ]; then where="its own session, $domain, with macOS's pasteboard server loaded there"; else where="its desktop session, $domain"; fi
+[ "$tries" = 1 ] || where="$where, once the device's pasteboard answered, at try $tries of $SET_TRIES"
 echo "$user set and read its device's clipboard, UTF-8 intact, in $where, in $seconds s"

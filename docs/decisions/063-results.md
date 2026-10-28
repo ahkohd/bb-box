@@ -2969,13 +2969,69 @@ on the pool's Mac, by `perl`'s clock around the launchd job, against 0.08 s
 for a direct call where `pboard` runs. On the Namespace Mac a call in the
 slot's own session took 0.20 to 0.24 s.
 
-### Follow-up
+### Checked after the deploy
 
-On the Namespace Mac, a paste right after a typed space is lost: `ab ✓`
-arrives as `ab`, and `bbtest ✓ 日本 é` lost both pastes in 3 of 4 tries,
-once pasting the clipboard's earlier text instead. Each paste alone, and a
-paste next to letters, arrives. A longer wait before the clipboard is put
-back, 500 ms instead of 100, did not change it. The same text arrived on
-the pool's Mac in 1 of 2 tries, the other losing its last 2 characters,
-typed as keys. This is the timing of keys and the paste key on the device,
-not the clipboard, and is left for its own fix.
+On production BB at main dd05f65, device server version 30, on 28 October
+2026, with test values only:
+
+| Box | What was checked | Result |
+| --- | --- | --- |
+| Shared slot, pool's Mac, iOS 27.0 | the panel's Copy to this computer, with `bbtest device copy ✓ 日本` on the device's clipboard | "Copied 23 characters from the iPhone 18 Pro", and the text came whole |
+| | the panel's Paste from this computer, into Safari's address field | "Pasted"; the field read `bbtest panel paste ✓ é 日本`, and the device's clipboard held its own text again after |
+| | `computer_type` of `bbtest ✓ 日本 é` | arrived whole |
+| | `box_device` appearance dark; `box_run`'s own `pbcopy` and `pbpaste` | 0.3 s; both worked, UTF-8 intact |
+| Shared slot, Tart host, iOS 27.0 | `box_run`'s own `pbcopy` and `pbpaste` | worked from about 15 s after the device booted; before that, exit 60 (see below) |
+| | `computer_type` of `✓ 日本` | arrived whole |
+| Dedicated Tart box, iOS 27.0 | where the device server runs simctl | in its desktop session, as before: no `pasteboard:` line, no session folder, no pasteboard server of bb-box's own |
+
+The panel's tab replaced `navigator.clipboard`'s read and write with test
+stubs before the page loaded, so the panel's own code read a test string
+and wrote to the stub. The Mac's own clipboard was never read or written.
+That also means Cmd+V in the viewer could not be checked this way: a key
+sent through Chrome's DevTools Protocol does not run the browser's paste,
+so it went to the device as keys and pasted the device's own clipboard.
+The Paste menu and Cmd+V send the same `paste` request (F-15).
+
+Not checked after the deploy: a Namespace slot, whose code is the same as
+the one measured there before it.
+
+### The image's check line
+
+Run by hand on a dedicated Tart box cloned from the iOS image, as
+`bb-box-check-ios` will run it, on carried slot `bbd-i1`'s device:
+
+- **The device's pasteboard answers some seconds after it reports booted.**
+  Just after `simctl bootstatus -b`, `pbcopy` exits 60, "Operation timed
+  out", at once and 5 s later, and works 10 s later. So `slot-clipboard.sh`
+  now sets the clipboard up to 12 times, 5 s apart, and says on which try it
+  worked.
+- **Its words were lost.** A failure went to standard output, which the
+  first set sent to `/dev/null`. Each failure now goes to standard error,
+  which both callers keep.
+- With both fixes: "bbd-i1 set and read its device's clipboard, UTF-8
+  intact, in its own session, user/79991, with macOS's pasteboard server
+  loaded there, in 1.4 s", in 7 s with the boot. The device was shut down
+  after, the helper's status said the slot was ready and not booted, and
+  nothing was left loaded or on disk.
+
+### Follow-ups
+
+- **A paste in a device's first seconds fails.** The device's pasteboard
+  answers about 10 to 15 s after the device reports booted, on every kind
+  of box. Until then simctl exits 60. The device server could wait for it
+  as the check now does.
+- **A paste can put in the clipboard's earlier text, or nothing.** On every
+  kind of box, a dedicated one too, so it is not F-17's change: on a
+  dedicated Tart box, `a✓b日本c` arrived as `a ✓c` and `bbtest ✓ 日本 é` as
+  `bbtest é`; on a Namespace slot, `ab ✓` as `ab`; on a Tart host slot just
+  after a reboot, `bbtest ✓ 日本 é` as `bbtest bbtest tart host ✓ 日本`, the
+  text the clipboard held before. A paste alone, such as `✓ 日本`, arrived
+  each time. A 500 ms wait before the clipboard is put back, instead of
+  100 ms, did not change it on Namespace. The likeliest cause is that
+  simctl returns before the device has the new text, so the paste key reads
+  the old text, or the text being put back. The device server could read
+  the clipboard back until it holds the text before it presses the paste
+  key, and wait longer before putting it back.
+- **Accessibility on a fresh Tart host slot.** On the first Tart host slot,
+  every read of the screen timed out, "did not answer a frontmost request
+  within 5.0s", until a `box_device` reboot.

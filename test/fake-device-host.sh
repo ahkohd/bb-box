@@ -155,6 +155,14 @@ case $tool in
       pbcopy | pbpaste)
         [ "$(device_value "$2" state)" = Booted ] || { echo "Device must be booted to access its pasteboard." >&2; exit 1; }
         has_pasteboard_server || { echo "Connection to 'pboard' server had an error" >&2; exit 139; }
+        if [ -s "$F/flags/pasteboard-times-out" ]; then
+          left=$(cat "$F/flags/pasteboard-times-out")
+          if [ "$left" -gt 0 ]; then
+            echo $((left - 1)) >"$F/flags/pasteboard-times-out"
+            echo "The operation couldn't be completed. Operation timed out" >&2
+            exit 60
+          fi
+        fi
         if [ "$1" = pbcopy ]; then cat >"$sims/$2.pasteboard"; else cat "$sims/$2.pasteboard" 2>/dev/null; fi
         ;;
       spawn)

@@ -181,6 +181,8 @@ test("a slot's clipboard: the image's check and the pool's setup run one script 
   assert.ok(script.includes(wrapper), "the job keeps its exit code as the device server's does");
   assert.match(script, /as_user launchctl bootstrap "\$domain"/, "loaded as the user, as the device server does, not as root");
   assert.match(script, /printf '' \| session_job pbcopy/, "the device's clipboard is left empty");
+  assert.match(script, /^SET_TRIES=12$/m, "a just-booted device's pasteboard answers some seconds later");
+  assert.doesNotMatch(script.replace(/echo \$\? &gt;exit\.new/, ""), /echo "[^"]*"; (return|exit) 1/, "a failure's words go to standard error, as its callers keep it");
 
   const check = read("check-ios.sh");
   assert.ok(check.includes('check "slot uids" slot_uids_only_carried\ncheck "slot clipboard" carried_slot_clipboard_works\n'));

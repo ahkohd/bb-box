@@ -319,4 +319,13 @@ test("mac-ios.sh warns when a user with no desktop session cannot set and read a
   assert.match(run.stdout, /^bbbox-admin set and read its device's clipboard, UTF-8 intact, in its desktop session, gui\/499, in [\d.]+ s\n$/);
   assert.ok(!existsSync(join(desktop.state, "agents", "gui-499", "app.bb-box.pboard")), "no pasteboard server of its own beside macOS's");
   assert.equal(readFileSync(join(desktop.state, "sims", "bbbox-admin", `${udid}.pasteboard`), "utf8"), "", "the device's clipboard is left empty");
+
+  desktop.flag("pasteboard-times-out", true, "2\n");
+  const late = spawnSync("/bin/sh", [script, "bbbox-admin", udid], { encoding: "utf8", env: { ...desktop.env, SLOT_CLIPBOARD_GAP_S: "0" } });
+  assert.equal(late.status, 0, late.stdout + late.stderr);
+  assert.match(late.stdout, /in its desktop session, gui\/499, once the device's pasteboard answered, at try 3 of 12, in [\d.]+ s\n$/, "a device's pasteboard answers some seconds after it boots");
+  desktop.flag("pasteboard-times-out", true, "12\n");
+  const never = spawnSync("/bin/sh", [script, "bbbox-admin", udid], { encoding: "utf8", env: { ...desktop.env, SLOT_CLIPBOARD_GAP_S: "0" } });
+  assert.equal(never.status, 1);
+  assert.deepEqual([never.stdout, never.stderr], ["", "simctl pbcopy exited with 60 in gui/499: The operation couldn't be completed. Operation timed out \n"], "its words on standard error, which its callers keep");
 });
