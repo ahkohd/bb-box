@@ -137,6 +137,7 @@ import {
   startScript,
   TART_RUN_AGAIN_SECONDS,
   script,
+  sections,
   sizeScript,
   stateScript,
   stopScript,
@@ -476,20 +477,13 @@ export function decimalGB(gib: number): number {
   return Math.ceil((gib * 2 ** 30) / 1e9);
 }
 
-/** The size in `tart get --format json` after a line `@size`, its disk in whole GiB; null when it does not say. */
+/** The size sizeScript prints: the VM's config after a line `@config` and its disk in decimal GB after `@disk`, in whole GiB; null when it does not say. */
 export function parseTartSize(stdout: string): BoxSize | null {
-  const line = stdout.split("@size\n")[1]?.split("\n")[0];
-  if (!line) return null;
-  try {
-    const got = JSON.parse(line) as { CPU?: number; Memory?: number; Disk?: number };
-    if (!got.CPU || !got.Memory) return null;
-    return { cores: got.CPU, memoryMiB: got.Memory, diskGiB: got.Disk ? gibOfTartGB(got.Disk) : null };
-  } catch {
-    return null;
-  }
+  const disk = Number(sections(stdout).get("disk")?.trim());
+  return sizeOf(parseConfig(stdout), disk > 0 ? disk : null);
 }
 
-/** The size a VM's config gives it, with the disk `tart list` gives, as `tart get` does; with none, the image's, as null. */
+/** The size a VM's config gives it, with the disk Tart gives; with none, the image's, as null. */
 function sizeOf(config: VmConfig | null | undefined, diskGB: number | null = null): BoxSize | null {
   if (!config || !config.cpus || !config.memoryMiB) return null;
   return { cores: config.cpus, memoryMiB: config.memoryMiB, diskGiB: diskGB ? gibOfTartGB(diskGB) : null };
@@ -1881,7 +1875,7 @@ export class TartBackend implements Backend {
     return { host, from };
   }
 
-  /** A VM's size as `tart get` or its QEMU config gives it, its disk in GiB; null when neither says. */
+  /** A VM's size as its Tart or QEMU config gives it, its disk in GiB; null when neither says. */
   async #readSize(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<BoxSize | null> {
     if (this.#osOf(guest) === "windows") {
       const result = await this.#run(host, qemuSizeScript(guest.ref, this.#context.installId, this.#boxOf(guest), null), { timeoutMs: 30_000, signal });
@@ -2911,7 +2905,7 @@ export class TartBackend implements Backend {
     if (!windows) this.#context.encoder?.vmStarting(host.name, this.#chips.get(host.name) ?? null);
     const result = await ssh.run(await this.#mac(host), script, { timeoutMs: (seconds + 30) * 1000, signal, maxOutputBytes: 1 << 16 }, "macos");
     const ranAgain = /^ran-again: (.*)$/m.exec(result.stdout)?.[1];
-    if (ranAgain) this.#context.log?.(`Tart's run of ${vm} on ${host.name} failed at once, as when a tart list reads its disk at that moment, so bb-box ran it again ${TART_RUN_AGAIN_SECONDS} s later: ${ranAgain}`);
+    if (ranAgain) this.#context.log?.(`Tart's run of ${vm} on ${host.name} failed at once, as when another process has its disk open at that moment, so bb-box ran it again ${TART_RUN_AGAIN_SECONDS} s later: ${ranAgain}`);
     if (result.exitCode === 0) return;
     const said = result.stderr.trim();
     if (!windows && result.exitCode === 3 && /exceeds the system limit/i.test(said)) {

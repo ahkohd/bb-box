@@ -36,6 +36,45 @@ export function vmName(boxId: string): string {
   return `${VM_PREFIX}${boxId}`;
 }
 
+const RUN_LOCK_HOLDERS_PL = String.raw`use Fcntl; my $darwin = $^O eq "darwin"; for my $f (@ARGV) { open(my $h, "<", $f) or next; my $l = $darwin ? pack("q q l s s", 0, 0, 0, F_RDLCK, 0) : pack("s s x4 q q l x4", F_RDLCK, 0, 0, 0, 0); fcntl($h, F_GETLK, $l) or next; my ($type, $pid) = $darwin ? (unpack("q q l s s", $l))[3, 2] : (unpack("s s x4 q q l x4", $l))[0, 4]; print "$pid $f\n" if $type != F_UNLCK }`;
+
+const VM_READ = String.raw`tart_vms=$HOME/.tart/vms; [ -z "$TART_HOME" ] || tart_vms=$TART_HOME/vms
+if stat --version >/dev/null 2>&1; then stat_style=gnu; else stat_style=bsd; fi
+stat_of() { if [ "$stat_style" = gnu ]; then stat -c "$1" "$3"; else stat -f "$2" "$3"; fi; }
+run_lock_holders() { perl -e '${RUN_LOCK_HOLDERS_PL}' "$@"; }
+tart_lists() {
+  [ -f "$1/config.json" ] && [ -f "$1/nvram.bin" ] || return 1
+  if [ -f "$1/disk.img" ]; then [ ! -f "$1/overlay.asif" ]; else [ -f "$1/manifest.json" ] && [ -f "$1/overlay.asif" ]; fi
+}
+state_of_folder() {
+  tart_lists "$1" || return 0
+  case "$2" in
+    *" $1/config.json"*) _state=running ;;
+    *) if [ -f "$1/state.vzvmsave" ]; then _state=suspended; else _state=stopped; fi ;;
+  esac
+  ! tart_lists "$1" || echo "$_state"
+}
+state() {
+  _held=$(run_lock_holders "$tart_vms/$1/config.json") || return 1
+  state_of_folder "$tart_vms/$1" "$_held"
+}
+disk_id() { stat_of '%i.%W' '%i.%B' "$1/disk.img" 2>/dev/null; }
+disk_format() { sed -n 's/.*"diskFormat" *: *"\([^"]*\)".*/\1/p' "$1/config.json" 2>/dev/null | head -n 1; }
+disk_gb() {
+  [ -f "$1/disk.img" ] || return 0
+  if [ "$(disk_format "$1")" = asif ]; then
+    _id=$(disk_id "$1") && [ -n "$_id" ] && cat "$d/disks/$_id" 2>/dev/null
+  else
+    _bytes=$(stat_of %s %z "$1/disk.img" 2>/dev/null) && [ -n "$_bytes" ] && echo $((_bytes / 1000000000))
+  fi
+  return 0
+}
+disk_gb_tart_gives() { tart get "$1" --format json 2>/dev/null | sed -n 's/.*"Disk" *: *\([1-9][0-9]*\).*/\1/p' | head -n 1; }
+note_disk_gb() {
+  _id=$(disk_id "$1") && [ -n "$_id" ] && [ -n "$2" ] || return 0
+  mkdir -p "$d/disks" && printf '%s\n' "$2" > "$d/disks/$_id.new" && mv -f "$d/disks/$_id.new" "$d/disks/$_id"
+}`;
+
 /**
  * The start of every script: the PATH to find tart, no automatic pruning of
  * Tart's caches (a clone would otherwise delete the operator's other images
@@ -50,9 +89,7 @@ mine() {
   [ -f "$d/owners/$1" ] && grep -qxF "install=$2" "$d/owners/$1" || return 1
   if [ -n "$3" ]; then grep -qxF "box=$3" "$d/owners/$1"; else ! grep -q '^box=' "$d/owners/$1"; fi
 }
-state() {
-  tart list --source local | awk -v n="$1" '$2 == n { print $NF }'
-}
+${VM_READ}
 # The guest OS in VM $1's config: darwin or linux (040).
 os_of() {
   h=$HOME/.tart; [ -z "$TART_HOME" ] || h=$TART_HOME
@@ -178,33 +215,26 @@ done
  */
 export function stateScript(tart = true, extra = ""): string {
   const tartPart = `command -v tart >/dev/null 2>&1 || { echo "tart is not installed, or not on the PATH of $(id -un)'s SSH sessions." >&2; exit 3; }
+command -v perl >/dev/null 2>&1 || { echo "perl is not on the PATH of $(id -un)'s SSH sessions: bb-box reads Tart's run locks with it. macOS has it in /usr/bin." >&2; exit 3; }
 echo @version; tart --version
 home="\${TART_HOME:-$HOME/.tart}"
-listed_one_by_one() {
-  printf '['; sep=
-  for vm in $(ls "$home/vms" 2>/dev/null); do
-    if got=$(tart get "$vm" --format json 2>&1); then
-      printf '%s{"Name":"%s","Source":"local",%s' "$sep" "$vm" "$(printf '%s' "$got" | tr -d '\\n' | sed 's/^[[:space:]]*{//')"; sep=,
-    elif [ -f "$home/vms/$vm/config.json" ]; then
-      printf '%s\\n' "$got" >&2; return 1
-    fi
-  done
-  echo ']'
-}
-listed=$(tart list --source local --format json 2>/dev/null) || listed=$(listed_one_by_one) || exit 1
-echo @list; printf '%s\\n' "$listed"
+held=$(run_lock_holders "$tart_vms"/*/config.json) || exit 1
+echo @vms
+for vm in $(ls "$tart_vms" 2>/dev/null); do
+  now=$(state_of_folder "$tart_vms/$vm" "$held")
+  [ -z "$now" ] || printf '%s %s %s\\n' "$vm" "$now" "$(disk_gb "$tart_vms/$vm")"
+done
 echo @configs
 for vm in $(ls "$home/vms" 2>/dev/null); do
   [ -f "$home/vms/$vm/config.json" ] || continue
-  printf '=%s\\n' "$vm"; tr -d '\\n' < "$home/vms/$vm/config.json"; echo
+  printf '=%s\\n' "$vm"; tr -d '\\n' < "$home/vms/$vm/config.json" 2>/dev/null; echo
 done
 echo @records
 for f in "$d"/images/*.json; do [ -f "$f" ] || continue; n=\${f##*/}; printf '=%s\\n' "\${n%.json}"; tr -d '\\n' < "$f"; echo; done
 echo @builds
 for vm in $(ls "$home/vms" 2>/dev/null); do
   f="$home/vms/$vm/disk.img"
-  # macOS's stat takes -f for a format; GNU's, which answers --version, takes -c.
-  [ -f "$f" ] && printf '%s %s\\n' "$vm" "$(if stat --version >/dev/null 2>&1; then stat -c '%i.%Y' "$f"; else stat -f '%i.%m' "$f"; fi)"
+  [ -f "$f" ] && printf '%s %s\\n' "$vm" "$(stat_of '%i.%Y' '%i.%m' "$f")"
 done
 `;
   return script(`${VOLUME_CHECK}${tart ? tartPart : 'home="${TART_HOME:-$HOME/.tart}"\n'}echo @owners
@@ -226,7 +256,7 @@ export interface TartVm {
   /** "running", "suspended" or "stopped". */
   readonly state: string;
   readonly running: boolean;
-  /** Its disk in decimal GB, as `tart list` gives it; null when it does not. */
+  /** Its disk in decimal GB, as Tart gives it; null when bb-box has no note of an ASIF disk's. */
   readonly diskGB: number | null;
 }
 
@@ -300,18 +330,18 @@ export function parseConfig(text: string): VmConfig | null {
 
 export function parseState(text: string): HostState {
   const parts = sections(text);
-  const list = JSON.parse(parts.get("list")?.trim() || "[]") as { Name?: unknown; State?: unknown; Running?: unknown; Disk?: unknown }[];
-  const vms = list
-    .filter((vm) => typeof vm.Name === "string")
-    .map((vm) => ({
-      name: String(vm.Name),
-      state: typeof vm.State === "string" ? vm.State : vm.Running ? "running" : "stopped",
-      running: vm.Running === true,
-      diskGB: typeof vm.Disk === "number" && vm.Disk > 0 ? vm.Disk : null,
+  const vms = (parts.get("vms") ?? "")
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([name, state]) => name && state)
+    .map(([name, state, disk]) => ({
+      name: name!,
+      state: state!,
+      running: state === "running",
+      diskGB: Number(disk) > 0 ? Number(disk) : null,
     }));
   const configs = new Map<string, VmConfig>();
   for (const [name, json] of named(parts.get("configs") ?? "")) {
-    // A VM being written has no whole config yet; it is counted by `tart list` alone.
     const config = parseConfig(json);
     if (config) configs.set(name, config);
   }
@@ -491,13 +521,29 @@ rm -f "$home/vms/"${quote(vm)}"/state.vzvmsave"
 `);
 }
 
-/** Clones the image unless the VM is there, sizes it, and prints its config after a line `@config`. */
+/**
+ * Clones the image unless the VM is there, sizes it, and prints its config
+ * after a line `@config`. An ASIF clone's disk is noted as the image's,
+ * which `tart get` of the image gives once a build, as no VM runs on an
+ * image's disk. Notes older than a day of disks no VM has are removed.
+ */
 export function cloneScript(image: string, vm: string, cpus: number, memoryMiB: number): string {
-  return script(String.raw`vm=${quote(vm)}
-tart list --source local --quiet | grep -qxF "$vm" || tart clone ${quote(image)} "$vm" || exit 1
+  return script(String.raw`vm=${quote(vm)}; image=${quote(image)}
+tart_lists "$tart_vms/$vm" || tart clone "$image" "$vm" || exit 1
 tart set "$vm" --cpu ${cpus} --memory ${memoryMiB} || exit 1
-home=$HOME/.tart; [ -z "$TART_HOME" ] || home=$TART_HOME
-echo @config; tr -d '\n' < "$home/vms/$vm/config.json"; echo
+if [ "$(disk_format "$tart_vms/$vm")" = asif ] && [ -z "$(disk_gb "$tart_vms/$vm")" ]; then
+  gb=$(disk_gb "$tart_vms/$image")
+  if [ -z "$gb" ] && tart_lists "$tart_vms/$image"; then
+    gb=$(disk_gb_tart_gives "$image")
+    note_disk_gb "$tart_vms/$image" "$gb"
+  fi
+  note_disk_gb "$tart_vms/$vm" "$gb"
+fi
+if [ -d "$d/disks" ]; then
+  ids=$(for v in "$tart_vms"/*; do [ ! -f "$v/disk.img" ] || disk_id "$v"; done)
+  find "$d/disks" -type f -mtime +0 | while read -r n; do printf '%s\n' "$ids" | grep -qxF "$(basename "$n")" || rm -f "$n"; done
+fi
+echo @config; tr -d '\n' < "$tart_vms/$vm/config.json"; echo
 `);
 }
 
@@ -508,7 +554,7 @@ export const TART_RUN_AGAIN_SECONDS = 3;
  * until it has started. A macOS VM runs with Tart's VNC server and can be
  * suspended, and has started when the VNC server is up; a suspended one
  * resumes. A Linux VM runs with neither, since Tart cannot resume one (040),
- * and has started when Tart lists it running. Prints "running" or "started";
+ * and has started when its run holds Tart's run lock. Prints "running" or "started";
  * when Tart exits first, exits 3 with its output, such as the system's limit
  * on VMs. The last run's output and exit are kept. A macOS VM's VNC holder
  * starts with its run, so it makes the run's first and only connection to
@@ -529,7 +575,7 @@ keep "$out" "$x"
 # No clipboard shared with the Mac (#911): the Mac's is its owner's, and Universal Clipboard links it to their other Macs.
 if [ "$(os_of "$vm")" = linux ]; then
   set -- tart run --no-graphics --no-clipboard "$vm"
-  up() { [ "$(state "$vm")" = running ]; }
+  up() { [ -n "$(run_lock_holders "$tart_vms/$vm/config.json")" ]; }
 else
   set -- tart run --no-graphics --no-clipboard --vnc-experimental --suspendable "$vm"
   up() { grep -q 'VNC server is running' "$out"; }
@@ -624,8 +670,9 @@ export function parseVnc(text: string): { port: number; password: string } | nul
 }
 
 export function vmStateScript(vm: string): string {
-  return script(String.raw`listed=$(tart list --source local) || exit 1
-printf '%s\n' "$listed" | awk -v n=${quote(vm)} '$2 == n { print $NF }' | grep . || echo gone
+  return script(String.raw`now=$(state ${quote(vm)}) || exit 1
+[ -n "$now" ] || now=gone
+echo "$now"
 `);
 }
 
@@ -797,18 +844,22 @@ echo stopped
 /**
  * Sizes a stopped VM, when its owner file names this install and box
  * (061): `tart set` its CPUs, memory and, when `diskGB` is given, its disk,
- * which Tart sizes in decimal GB and only grows. Prints the VM's size as
- * `tart get` gives it after a line `@size`: the CPUs, memory in MiB and
- * disk in GB. With no change asked, it only prints the size. Prints "gone"
- * when the VM is another box's, and refuses a VM that runs.
+ * which Tart sizes in decimal GB and only grows. Prints the VM's config
+ * after a line `@config` and its disk in GB after a line `@disk`, as the
+ * Mac's state reads them; an ASIF disk Tart has just grown is noted as
+ * `tart get` gives it. With no change asked, it only prints the size.
+ * Prints "gone" when the VM is another box's, and refuses a VM that runs.
  */
 export function sizeScript(vm: string, installId: string, boxId: string | null, change: { cpus: number; memoryMiB: number; diskGB: number | null } | null): string {
   const set = change ? `tart set "$vm" --cpu ${change.cpus} --memory ${change.memoryMiB}${change.diskGB !== null ? ` --disk-size ${change.diskGB}` : ""} || exit 1` : ":";
+  const noteGrownDisk = change?.diskGB != null ? `[ "$(disk_format "$tart_vms/$vm")" != asif ] || note_disk_gb "$tart_vms/$vm" "$(disk_gb_tart_gives "$vm")"` : ":";
   return script(String.raw`vm=${quote(vm)}
 mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} || { echo gone; exit 0; }
 ${change ? `[ "$(state "$vm")" != running ] || { echo "$vm runs, so Tart cannot size it." >&2; exit 1; }` : ":"}
 ${set}
-echo @size; tart get "$vm" --format json | tr -d '\n'; echo
+${noteGrownDisk}
+echo @config; tr -d '\n' < "$tart_vms/$vm/config.json"; echo
+echo @disk; disk_gb "$tart_vms/$vm"
 `);
 }
 

@@ -58,7 +58,7 @@ template=$here/../proxmox-lxc/template
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:/run/current-system/sw/bin:$PATH" TART_NO_AUTO_PRUNE=1
 command -v tart >/dev/null || die "install Tart first: brew install openai/tools/tart"
 [ "$(uname -m)" = arm64 ] || die "Tart runs Linux VMs on Apple silicon only"
-exists() { tart list --source local --quiet | grep -qxF "$1"; }
+exists() { [ -f "${TART_HOME:-$HOME/.tart}/vms/$1/config.json" ]; }
 if exists "$name" && [ "$replace" = 0 ]; then die "$name exists; give --replace to build it again"; fi
 
 build="$name-build"
