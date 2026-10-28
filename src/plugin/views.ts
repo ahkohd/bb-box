@@ -208,7 +208,7 @@ function kindPlacement(kind: string, shared: SharedHostsByKind): KindPlacement |
   if (!isSlotKind(kind)) return null;
   const hosts = shared[kind] ?? SHARED_HOSTS_OFF;
   if (kind === "macos" && !hosts.on) return null;
-  return { kind, shared: hosts.on, why: hosts.on ? null : hosts.why, sizeNeedsDedicated: kind === "ios" && hosts.byDefault };
+  return { kind, shared: hosts.on, why: hosts.on ? null : hosts.why, sizeNeedsDedicated: kind === "ios" && hosts.on && hosts.byDefault };
 }
 
 export interface KindDevices {
@@ -468,6 +468,13 @@ export function placementText(kind: Pick<KindView, "placement">): string {
   }
   const why = kind.placement.why ?? "";
   const asking = kind.placement.sizeNeedsDedicated ? "dedicated: true asks for one, and a size needs it" : "dedicated: true asks for one";
+  if (kind.placement.shared && kind.placement.sizeNeedsDedicated) {
+    return (
+      " Shared by default: a macOS user on a Mac or VM shared with other ios boxes, ready in seconds, with its own device, files and keychain, but no sudo, and cores and processes shared;" +
+      " where no shared iOS host has room, a VM of its own. Servers on localhost are reachable from every box on the host: use your box's ports, from BB_PORT_BASE." +
+      " Ask for dedicated: true for a VM of its own, with sudo, brew install and its own cores, ports and desktop; a size needs it. Another device than the first, or slim: false, gets a VM of its own."
+    );
+  }
   if (kind.placement.shared) {
     return (
       ` Each box is a macOS VM of its own, with sudo, brew install and its own cores, ports and desktop, unless it asks for shared: true: then a macOS user on a Mac or VM shared with other ios boxes, ready in seconds,` +

@@ -283,8 +283,8 @@ desktop.
 #### iOS slots on a Mac
 
 A Mac whose line lists `ios` lends iOS slots
-([064](../../docs/decisions/064-ios-shared-hosts.md)): each `ios` box asked
-for with `shared: true` gets a macOS user of its own on the Mac, with its own
+([064](../../docs/decisions/064-ios-shared-hosts.md)): each shared `ios` box,
+shared by default or with `shared: true`, gets a macOS user of its own on the Mac, with its own
 booted device, files and keychain, ready in seconds. Slots use the Mac's
 cores and video encoder, not a VM's. A slot has no sudo, no Homebrew
 installs, no console and no app windows, and shares the Mac's loopback with
@@ -729,8 +729,8 @@ removes every grant. Each box user has a signing identity of its own,
 
 ### How an ios box gets a slot
 
-An ios box asked for with `shared: true` goes to a ready slot on a pool
-Mac first, before a shared Tart host
+An ios box, shared by default or asked for with `shared: true`, goes to a
+ready slot on a pool Mac first, before a shared Tart host
 ([064](../../docs/decisions/064-ios-shared-hosts.md#placing-a-box)). The
 claim gives the slot's user the box's key and loads its device server; the
 box is ready once SSH answers as that user. With no ready slot, the box is

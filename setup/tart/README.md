@@ -245,10 +245,15 @@ it has, and how it is checked and refreshed.
 
 #### Shared iOS hosts
 
-With `ios-hosts-on` set, an ios box asked for with `shared: true` is a macOS
-user with its own device on a VM of the iOS image shared with other ios
-boxes ([064](../../docs/decisions/064-ios-shared-hosts.md)). It is opt-in:
-an ios box asked for without it is a VM of its own, as before.
+With `ios-hosts-on` set, an ios box is a macOS user with its own device on
+a VM of the iOS image shared with other ios boxes
+([064](../../docs/decisions/064-ios-shared-hosts.md)). It is the default:
+an ios box asked for with no options takes a slot where a host has room or
+can start, and is a VM of its own otherwise. One asked for with
+`shared: true` takes a slot or is refused; one asked for with
+`dedicated: true`, a size, another device than the first or `slim: false`
+is a VM of its own. With `ios-hosts-on` off, every ios box is a VM of its
+own, as before.
 
 - **A host is made for a box.** When no host has room, bb-box clones the iOS
   image as `bb-box-host-<id>` at the hosts' size and starts it. Boxes asked
@@ -335,7 +340,7 @@ its boxes and takes no new ones. The backend's own fields:
 | `linux-image` | empty | The image of `linux-arm64` boxes, such as `bb-box-linux`. Empty, the default, turns them off |
 | `linux-desktop-image` | empty | The image of `linux-arm64-desktop-cpu` boxes, such as `bb-box-linux-desktop`. Empty, the default, turns them off |
 | `ios-image` | empty | The iOS image, such as `bb-box-ios`, which `prepare-ios-image.sh` builds on the macOS image. Empty, the default, turns it off. bb-box checks and refreshes it |
-| `ios-hosts-on` | off | Shared iOS hosts, [below](#shared-ios-hosts): an ios box asked for with `shared: true` takes a slot on a VM of the iOS image made as a host |
+| `ios-hosts-on` | off | Shared iOS hosts, [below](#shared-ios-hosts): an ios box takes a slot on a VM of the iOS image made as a host, by default |
 | `ios-hosts-most` | empty | A host's slots making, ready or held at most. Empty, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows, 12 on an M4 Max |
 | `ios-hosts-ahead`, `ios-hosts-resetting-most` | 1, 4 | Ready slots a host keeps while it holds a box, and released slots it sweeps in one pass |
 | `ios-hosts-cores`, `ios-hosts-memory-gib` | empty | Each host's VM's size, which its slots share. Empty, the Mac's performance cores, and 8 GiB for the host and 1.5 GiB for each slot, within the Mac's memory. On a 16-core, 128 GiB M4 Max: 12 cores, 9 slots and 22 GiB |
