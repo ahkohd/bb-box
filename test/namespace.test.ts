@@ -461,7 +461,7 @@ test("box_list's ios offer on Namespace says its slots are on a Mac made for the
   assert.match(varies?.detail ?? "", /^Namespace's Macs vary by machine: Apple M4 Pro \(Virtual\), iOS devices, video by a hardware H\.264 encoder on 1 of the 2 machines measured, by software \(OpenH264\) on the other\./);
 });
 
-test("a Namespace report from an older probe is measured again on a Mac bb-box starts for a few minutes, at most once a day, only while shared iOS hosts are on (065 C follow-up)", async () => {
+test("a Namespace report from an older probe that cannot make an offer is measured again on a Mac bb-box starts for a few minutes, logged, at most once a day, only while shared iOS hosts are on (065 C follow-up)", async () => {
   let now = Date.parse("2030-01-01T00:00:00Z");
   fakeSsh();
   const storage = new MemoryStorage();
@@ -469,7 +469,8 @@ test("a Namespace report from an older probe is measured again on a Mac bb-box s
   const older: MacReport = { ...withoutProbe, capabilities: { ...IOS_REPORT.capabilities, simulator: { is: "yes", what: { xcode: "26.1.1", runtimes: ["iOS 26.2"] } } } };
   await storage.set(reportKey(IOS_REPORT.chip!), older);
   const fake = new FakeNamespace({ now: () => now, lifeCapMs: 4 * 3600_000, maxCores: 64 });
-  const made = (iosHosts?: NamespaceConfig["iosHosts"]) => disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, testContext(storage, "inst1"), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":", now: () => now }));
+  const context = testContext(storage, "inst1");
+  const made = (iosHosts?: NamespaceConfig["iosHosts"]) => disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":", now: () => now }));
   const off = made({ on: false, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 });
   await new Promise((resolve) => setTimeout(resolve, 20));
   await off.maintain();
@@ -493,7 +494,23 @@ test("a Namespace report from an older probe is measured again on a Mac bb-box s
   for (let wait = 0; wait < 200 && measuring.status !== "DESTROYED"; wait++) await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(measuring.status, "DESTROYED", "it is destroyed once measured");
   assert.ok(backend.macCapabilities().some((report) => report.probe === PROBE_VERSION), "a report from the current probe is kept");
+  const logged = context.logs.join("\n");
+  assert.match(logged, /bb-box is starting a \d+x\d+ Namespace Mac to measure what Namespace's Macs offer iOS devices afresh, as its last report came from an older probe and cannot make an offer\. It is destroyed once measured, and by \d\d:\d\d UTC at the latest\./);
+  for (const step of ["made", "running", "answering SSH", "measured: an unknown chip", "destroyed"]) assert.match(logged, new RegExp(`made to measure afresh: ${step}`), step);
   now += MEASURE_AGAIN_AFTER_MS;
   await backend.maintain();
   assert.equal(creates(), 2, "a report from the current probe is not measured afresh");
+});
+
+test("a Namespace report from an older probe that can still make an offer is not measured afresh, so no ios box waits for the Mac", async () => {
+  fakeSsh();
+  const storage = new MemoryStorage();
+  const { probe: _, ...withoutProbe } = IOS_REPORT;
+  await storage.set(reportKey(IOS_REPORT.chip!), withoutProbe);
+  const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1"), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.slots.lends("ios"), true);
+  await backend.maintain();
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 0);
 });

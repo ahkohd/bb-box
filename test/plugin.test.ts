@@ -1769,16 +1769,16 @@ test("on a Mac that booted, BB's daemon loaded at login is unloaded and the boot
 });
 
 test("a box whose host keeps BB's daemon, as a slot on a shared iOS host, runs BB's installer with BB_INSTALL_SKIP_SERVICE=1 and then hands the daemon to its host, at every bootstrap (064)", async (t) => {
-  const { harness, app, world, tool } = await start({ "fake-enabled": true }, { daemonKeptByHost: true });
+  const { harness, app, world, tool } = await start({ "fake-enabled": true }, { daemonKeptByHost: true, appUrl: "https://bb.example.test" });
   t.after(() => harness.lifecycle.dispose());
-  world.installer = `printf 'skip-service=%s\\n' "\${BB_INSTALL_SKIP_SERVICE:-unset}" >> installer.log`;
+  world.installer = `printf 'skip-service=%s port=%s\\n' "\${BB_INSTALL_SKIP_SERVICE:-unset}" "$(cat "$HOME/.bb-machines/bb.example.test/host-daemon-port")" >> installer.log`;
 
   await tool("box_acquire", {});
   const box = await only(app);
   await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
   const takeOvers = () => world.backend!.calls.filter((call) => call.startsWith("take over "));
   assert.deepEqual(takeOvers(), [`take over ${box.guest!.ref}`]);
-  assert.match(text(await tool("box_run", { box: box.name, command: "cat installer.log" })), /^skip-service=1$/m);
+  assert.match(text(await tool("box_run", { box: box.name, command: "cat installer.log" })), /^skip-service=1 port=38900$/m, "BB's installer finds the slot's own daemon port, so slots enrolling at once never race for one");
 
   const hostId = `host-${box.id}`;
   world.hosts.set(hostId, { ...world.hosts.get(hostId)!, status: "disconnected" });

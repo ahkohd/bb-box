@@ -412,6 +412,7 @@ export interface BoxAccess {
 /** The transports that reach one box. */
 export interface DaemonKeptByHost {
   readonly installerEnvironment: Readonly<Record<string, string>>;
+  readonly daemonPort: number | null;
   takeOver(signal: AbortSignal): Promise<void>;
 }
 

@@ -41,6 +41,7 @@ import { ACCESS_CHECK_EXITS, accessCheck, accessSetup, accessSetupMs } from "../
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
 import type { BackendStorage, DaemonKeptByHost } from "../backends/types.ts";
+import { bbServerFolder } from "../backends/tart/device-host.ts";
 import { daemonStarting, endThreadProcesses, hideBbConsoles, runWindowsCommand, windowsFailure } from "./enrol-windows.ts";
 import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
@@ -89,6 +90,10 @@ for d in "$HOME"/.bb-machines/*/; do
   [ "$(cat "$d/host-artifact.sha256" 2>/dev/null)" = "$want" ] || rm -rf "$d/npm/lib/node_modules/bb-app"
 done
 `)}`;
+}
+
+export function keepDaemonPortScript(bbUrl: string, port: number): string {
+  return `/bin/sh -c ${quote(`umask 077 && d="$HOME/.bb-machines/"${quote(bbServerFolder(bbUrl))} && mkdir -p "$d" && printf '%s\\n' ${port} > "$d/host-daemon-port"`)}`;
 }
 
 /**
@@ -452,6 +457,7 @@ export class Enrolment {
           const bbUrl = box.capabilities.os === "windows" ? null : this.#deps.bbUrl?.();
           if (bbUrl) await transport.run(removeStaleApp(bbUrl), { timeoutMs: 30_000, signal }).catch((error) => this.#deps.logError("remove a stale BB app", error));
           if (box.capabilities.os !== "windows") await this.#setAside(box, transport, signal);
+          await this.#keepDaemonPort(box, reach, signal);
           await this.#deps.bootstrap({ key, executor: executor(transport, phases, reach.daemonKeptByHost?.installerEnvironment), report, signal });
           await reach.daemonKeptByHost?.takeOver(signal);
           phases?.mark("bootstrapped");
@@ -502,6 +508,14 @@ export class Enrolment {
    * from the login, and BB's `launchctl bootstrap` fails for it: bb-box
    * unloads it then and runs the bootstrap once more (#416).
    */
+  async #keepDaemonPort(box: BoxRecord, reach: Reach, signal: AbortSignal): Promise<void> {
+    const port = reach.daemonKeptByHost?.daemonPort ?? null;
+    const bbUrl = this.#deps.bbUrl?.() ?? null;
+    if (port === null || !bbUrl) return;
+    const kept = await reach.command.run(keepDaemonPortScript(bbUrl, port), { timeoutMs: 30_000, signal });
+    if (kept.exitCode !== 0) throw new Error(`Could not give BB's daemon in box ${box.name} its slot's port ${port}: ${kept.stderr.trim() || `exit code ${kept.exitCode}`}`);
+  }
+
   async #bootstrapAgain(box: BoxRecord, hostId: string, reach: Reach, request: Parameters<EnrolmentDeps["bootstrap"]>[0]): Promise<void> {
     const transport = reach.command;
     if (box.capabilities.os === "windows") {
@@ -532,6 +546,7 @@ export class Enrolment {
       if (result.exitCode !== 0) throw new Error(windowsFailure(`Starting BB's daemon in box ${box.name} again`, result));
       return;
     }
+    await this.#keepDaemonPort(box, reach, request.signal);
     try {
       await this.#deps.bootstrap(request);
     } catch (error) {

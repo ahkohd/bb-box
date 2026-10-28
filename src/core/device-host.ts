@@ -88,6 +88,9 @@ export interface SlotPorts {
 
 export const slotPorts = (place: number): SlotPorts => ({ base: PORT_BASE + PORTS_PER_SLOT * place, count: PORTS_PER_SLOT });
 
+export const SLOT_DAEMON_PORT_FIRST = 38900;
+export const slotDaemonPort = (place: number): number => SLOT_DAEMON_PORT_FIRST + place;
+
 export type SlotPlacement = SlotName & {
   readonly on: "slot";
   readonly host: string;
@@ -392,6 +395,11 @@ export function readPlacement(data: Guest["data"]): Parsed<Placement> {
       most,
     };
   });
+}
+
+export function slotDaemonPortOf(guest: Guest): number | null {
+  const placement = readPlacement(guest.data);
+  return placement.ok && placement.value.on === "slot" ? slotDaemonPort(placement.value.place) : null;
 }
 
 export function placementOf(box: { readonly guest: Guest | null }): Placement {

@@ -3372,7 +3372,7 @@ test("with shared the default, an ios box asked for with nothing else takes a sl
   assert.equal(dedicated.size?.cores, 8);
   const again = await ready(world.boxes, await acquire());
   assert.equal(placementOf(again).on, "slot", "the slot freed by the release");
-  assert.ok(logs.some((line) => /found no slot on a shared iOS host, so it gets a VM of its own: The shared host fake-host-1 has all its 2 slots held\./.test(line)), logs.join("\n"));
+  assert.ok(logs.some((line) => /found no slot on a shared iOS host, so bb-box looks for a VM of its own: The shared host fake-host-1 has all its 2 slots held\./.test(line)), logs.join("\n"));
 });
 
 test("with shared the default, an ios box that finds neither a slot nor a VM is refused with both reasons (064, unit 6)", async () => {

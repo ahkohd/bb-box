@@ -813,8 +813,9 @@ test("a slot's BB daemon is taken over by the host's helper, as root, for the bo
   const runs: { script: string; stdin: string }[] = [];
   let exitCode = 0;
   const transport = { run: async (script: string, options: RunOptions = {}) => (runs.push({ script, stdin: String(options.stdin) }), { exitCode, stdout: "", stderr: exitCode ? "Box box_a does not hold slot 3.\n" : "", timedOut: false, truncated: false, durationMs: 1 }) } as unknown as CommandTransport;
-  const kept = slotDaemonKeptByHost(transport, "3", { install: "inst_a", box: "box_a" });
+  const kept = slotDaemonKeptByHost(transport, "3", { install: "inst_a", box: "box_a" }, 38902);
   assert.deepEqual(kept.installerEnvironment, { BB_INSTALL_SKIP_SERVICE: "1" });
+  assert.equal(kept.daemonPort, 38902);
   await kept.takeOver(AbortSignal.timeout(1000));
   assert.deepEqual(runs, [{ script: "sudo -n /usr/local/libexec/bb-box/device-host daemon 3", stdin: "install=inst_a\nbox=box_a\n" }]);
   exitCode = DEVICE_HOST_EXITS.notOurs;

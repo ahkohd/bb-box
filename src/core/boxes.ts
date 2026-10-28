@@ -1054,7 +1054,12 @@ export class Boxes {
             ? await this.#placeInSlot(offered, "ios", askedDevice, identity).catch((error: unknown) => {
                 if (!(error instanceof BoxError) || error.code !== "no_capacity") throw error;
                 noSlotWords = error.message;
-                this.#deps.log?.(`Box ${name} found no slot on a shared iOS host, so it gets a VM of its own: ${error.message}`);
+                const ownVmOffered = offered.some(({ kind }) => kind.id === "ios" && !kind.slotsOnly);
+                this.#deps.log?.(
+                  ownVmOffered
+                    ? `Box ${name} found no slot on a shared iOS host, so bb-box looks for a VM of its own: ${error.message}`
+                    : `Box ${name} found no slot on a shared iOS host, and no VM of its own is offered where it was asked, so it is refused: ${error.message}`,
+                );
                 return null;
               })
             : null;
