@@ -365,6 +365,7 @@ export type ControlHolder = "agent" | "person";
 export type DeviceRequest =
   | { readonly id: string; readonly type: "touch"; readonly contacts: readonly TouchContact[]; readonly generation: number }
   | { readonly id: string; readonly type: "text"; readonly text: string }
+  | { readonly id: string; readonly type: "paste"; readonly text: string }
   | { readonly id: string; readonly type: "control"; readonly control: DeviceControl }
   | { readonly id: string; readonly type: "input"; readonly input: DeviceInput; readonly owner: number }
   | { readonly id: string; readonly type: "owner"; readonly generation: number; readonly holder: ControlHolder }
@@ -688,8 +689,9 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 2;
 export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
-export const DEVICE_SERVER_VERSION = 28;
+export const DEVICE_SERVER_VERSION = 29;
 export const CLIPBOARD_READ_SINCE_VERSION = 28;
+export const PASTE_REQUEST_SINCE_VERSION = 29;
 export const DEVICE_CLIPBOARD_MOST = 100_000;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 export const SETTINGS_ASKED_SINCE_VERSION = 24;

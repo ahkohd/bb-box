@@ -2804,3 +2804,47 @@ is the browser's.
   bb-box before the deploy.
 - **iOS's own copy** by Cmd+C of selected text in an app. The keyboard
   path was checked with text the host put on the pasteboard.
+
+## F-15: the viewer's clipboard goes only with a paste
+
+Built on 28 October 2026, from the owner's decision that day. Taking
+control of a device put this computer's clipboard on the device, so a
+test put a person's own clipboard on a test device. The same effect put
+it on every desktop at control and at each focus of the window. The
+owner decided that desktops follow the same rule.
+
+What changed:
+
+- **No push.** The panel no longer reads this computer's clipboard when
+  the tab takes control or gets the focus, for devices and for every
+  desktop: Selkies, noVNC, Tart and Windows.
+- **A paste reads it then.** Cmd+V or Ctrl+V in the viewer, and Paste
+  from this computer, read the clipboard at the paste. On a desktop they
+  work as before.
+- **A device pastes it whole and puts its clipboard back.** The viewer
+  sends a device one `paste` request, text only, new in device server
+  version 29. The server pastes it in batches of up to 2,000 characters,
+  each with the device's clipboard saved and put back, as for the agent
+  (E21), even when every letter has a key. Before, Cmd+V left the
+  person's text on the device's clipboard. A server older than 29 is sent
+  the text as `text` instead, which types it or pastes it, with the
+  clipboard put back too. An image is refused with words, and so is text
+  over 100,000 characters.
+- **The device server drops `cw`.** From version 29 it puts no viewer's
+  clipboard on the device, so a tab opened before this change cannot push
+  one. Such a tab's Cmd+V pastes the device's own clipboard until the tab
+  reloads. bb-box's paste for Tart's and Windows' desktops refuses the
+  automatic send such a tab makes.
+- **The menu says so.** Under Paste from this computer: "A paste from the
+  box's own menu, or a middle click, uses the box's own clipboard", or
+  "A paste from the device's own menu uses the device's own clipboard".
+- **The agent's path** (computer_type and box_device's text) never used
+  the viewer's clipboard, and is unchanged. Copy from a device (unit 7.5)
+  is unchanged.
+
+Tests: taking control and the window's focus read no clipboard and send
+none, to a device or a desktop; Cmd+V and Paste each send it once, as one
+`paste` request; a paste the device refuses shows its words; text over
+the limit sends nothing; the device server drops `cw` from either
+connection, and pastes a `paste` request whole with the clipboard put
+back.

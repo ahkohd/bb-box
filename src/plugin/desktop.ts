@@ -162,7 +162,8 @@ export interface Desktops {
   /**
    * Puts the viewer's text on the box's clipboard, where the desktop's server
    * moves none (#464). Only the viewer with control may; rejects with why
-   * the box did not take it, or, for an automatic send, resolves false.
+   * the box did not take it. An automatic send, from a tab opened before
+   * pastes alone carried the clipboard (F-15), is never taken: it resolves false.
    */
   paste(boxId: string, viewer: string, text: string, options?: { readonly automatic?: boolean }): Promise<boolean>;
   /** Whether the box's desktop is High resolution, or null where it cannot be. */
@@ -1123,8 +1124,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       return clipboards.get(boxId) ?? null;
     },
     async paste(boxId, viewer, text, options = {}) {
+      if (options.automatic) return false;
       if (!control.mayInput(boxId, viewer)) {
-        if (options.automatic) return false;
         throw new Error("Only the tab with control of the desktop can paste into it. Take control, then paste again.");
       }
       const box = await byCommands(boxId);

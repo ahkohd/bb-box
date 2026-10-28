@@ -233,7 +233,6 @@ export class DeviceServer {
       touch: (contacts) => this.#touch(contacts, "person"),
       typesAsKeys: (character) => this.#typesAsKeys(character),
       key: (key, down) => this.#key(key, down),
-      setClipboard: (text) => this.#options.driver.setClipboard(text),
       acting: () => this.#personActs(),
       log: (line) => this.#log(line),
     });
@@ -829,6 +828,12 @@ export class DeviceServer {
         this.#personActs();
         await this.#lanes.person.run((signal) => this.#committedText(request.text, signal));
         return { type: "done" };
+      case "paste":
+        this.#personOnly(connection);
+        this.#booted();
+        this.#personActs();
+        await this.#lanes.person.run((signal) => this.#pasteWhole(request.text, signal, "person"));
+        return { type: "done" };
       case "input":
         this.#leaseOnly(connection, "send the agent's input");
         if (this.#owner.holder === "person") throw new Refused("person-has-control", "A person has control of this box's device, so the agent's input was dropped.");
@@ -972,7 +977,11 @@ export class DeviceServer {
       await this.#typeKeys(text, signal);
       return;
     }
-    for (const part of splitByCharacters(text, TEXT_BATCH.most)) await this.#paste(part, signal, "person");
+    await this.#pasteWhole(text, signal, "person");
+  }
+
+  async #pasteWhole(text: string, signal: AbortSignal, source: InputSource): Promise<void> {
+    for (const part of splitByCharacters(text, TEXT_BATCH.most)) await this.#paste(part, signal, source);
   }
 
   async #typeKeys(text: string, signal: AbortSignal): Promise<void> {
@@ -990,7 +999,7 @@ export class DeviceServer {
   async #typeText(text: string, signal: AbortSignal, source: InputSource): Promise<void> {
     for (const run of textRuns(text, (character) => this.#typesAsKeys(character))) {
       if (run.keys) await this.#typeKeys(run.text, signal);
-      else for (const part of splitByCharacters(run.text, TEXT_BATCH.most)) await this.#paste(part, signal, source);
+      else await this.#pasteWhole(run.text, signal, source);
     }
   }
 

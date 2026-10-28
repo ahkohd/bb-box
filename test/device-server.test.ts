@@ -362,25 +362,21 @@ describe("the device server", () => {
     await viewer.close();
   });
 
-  test("takes the person's clipboard from the input connection, whole or in parts, and the test card shows it; a viewer's goes nowhere", async () => {
+  test("puts no viewer's clipboard on the device from either connection, whole or in parts; it goes only with a paste", async () => {
     const { open, driver } = await started();
     const text = (words: string) => Buffer.from(words, "utf8").toString("base64");
     const viewer = await open("viewer");
     await viewer.send(`cw,${text("from a viewer")}`);
     const input = await open("input");
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.equal(await driver.clipboard(), "");
     await input.send(`cw,${text("Hello device")}`);
-    for (let tries = 0; (await driver.clipboard()) !== "Hello device" && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.equal(await driver.clipboard(), "Hello device");
     const long = "é".repeat(9000);
     const bytes = Buffer.from(long, "utf8");
     await input.send(`cws,part1,${bytes.byteLength}`);
     await input.send(`cwd,part1,${bytes.subarray(0, 9000).toString("base64")}`);
     await input.send(`cwd,part1,${bytes.subarray(9000).toString("base64")}`);
     await input.send("cwe,part1");
-    for (let tries = 0; (await driver.clipboard()) !== long && tries < 100; tries++) await new Promise((resolve) => setTimeout(resolve, 10));
-    assert.equal(await driver.clipboard(), long);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(await driver.clipboard(), "");
     assert.equal(cardLine("Hello device", testVideoSize({ width: 1080, height: 2400 })), "HELLO DEVICE");
     await input.close();
     await viewer.close();

@@ -579,7 +579,7 @@ function base64(value: unknown, path: string): string {
 }
 
 function request(value: unknown, path: string): DeviceRequest {
-  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "launch", "settle", "at", "screenshot", "tree", "clipboard", "settings", "record", "cap", "result"]);
+  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "paste", "control", "input", "owner", "open", "launch", "settle", "at", "screenshot", "tree", "clipboard", "settings", "record", "cap", "result"]);
   const at = (key: string) => `${path}.${key}`;
   switch (type) {
     case "touch": {
@@ -589,6 +589,10 @@ function request(value: unknown, path: string): DeviceRequest {
     case "text": {
       const read = fields(value, path, ["id", "type", "text"]);
       return { id: requestId(read.id, at("id")), type, text: text(read.text, at("text")) };
+    }
+    case "paste": {
+      const read = fields(value, path, ["id", "type", "text"]);
+      return { id: requestId(read.id, at("id")), type, text: text(read.text, at("text"), DEVICE_CLIPBOARD_MOST) };
     }
     case "control": {
       const read = fields(value, path, ["id", "type", "control"]);

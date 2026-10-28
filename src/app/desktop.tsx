@@ -96,6 +96,13 @@ import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 export const DESKTOP_ACTION = "desktop";
 export const DESKTOP_PAGE = "desktop";
 
+export const DESKTOP_OWN_PASTE_WORDS = "A paste from the box's own menu, or a middle click, uses the box's own clipboard.";
+export const DEVICE_OWN_PASTE_WORDS = "A paste from the device's own menu uses the device's own clipboard.";
+
+export function ownPasteWords(deviceShown: boolean): string {
+  return deviceShown ? DEVICE_OWN_PASTE_WORDS : DESKTOP_OWN_PASTE_WORDS;
+}
+
 /** How often a tab with control asks for the box's clipboard. */
 const CLIPBOARD_POLL_MS = 500;
 const DEVICE_COPY_AFTER_CHORD_MS = 400;
@@ -474,7 +481,7 @@ export class DesktopSession implements Kept {
   /** A paste the box did not take, with why. */
   onPasteFailed?: (error: unknown) => void;
   /** Puts the viewer's text on the box's clipboard bb-box's own way, where the desktop's server moves none (#464); null leaves it to noVNC. */
-  putClipboard?: (text: string, automatic?: boolean) => Promise<unknown> | null;
+  putClipboard?: (text: string) => Promise<unknown> | null;
   /** Whether the box takes a viewer's clipboard at all; where not, a Cmd+V is left to noVNC as it was. */
   pasteAllowed?: () => boolean;
   onTypeText?: () => void;
@@ -675,15 +682,6 @@ export class DesktopSession implements Kept {
   setMacKeys(keys: MacKeys | null): void {
     this.#macKeys = keys;
     this.#apply();
-  }
-
-  /** Puts text on the box's clipboard, as a viewer's paste does. */
-  sendClipboard(text: string): Promise<boolean> {
-    if (this.connection.state !== "connected") return Promise.resolve(false);
-    const put = this.putClipboard?.(text, true);
-    if (put) return put.then((taken) => taken !== false, () => false);
-    this.#client?.clipboardPasteFrom(text);
-    return Promise.resolve(true);
   }
 
   /**
@@ -1285,8 +1283,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     // A desktop whose server moves no clipboard, as Tart's macOS VMs: bb-box puts the text there itself, as UTF-8 (#464).
     current.onTypeText = () => setTyping((now) => now ?? "");
     current.setTyping(typingNow.current);
-    current.putClipboard = (text, automatic) =>
-      ownShows === "desktop" && boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text, ...(automatic ? { automatic: true } : {}) }) : null;
+    current.putClipboard = (text) => (ownShows === "desktop" && boxNow.current?.display?.clipboard === "commands" ? rpc.call("desktopPaste", { threadId, box: boxId, viewer, text }) : null);
     current.pasteAllowed = () => !boxNow.current || noClipboardThroughServer(boxNow.current) === null;
     if (current instanceof SelkiesSession && current.device) {
       current.setDeviceView(deviceViewNow.current);
@@ -1398,28 +1395,14 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     if (state && box?.state !== "ready") dropKept(deviceKeyOf(shown));
   }, [state, showing, key]);
 
-  // The clipboard, both ways, while this tab has control: the browser's goes
-  // to the box when the tab gets the focus, and the box's comes back when it
+  // The box's clipboard comes back while this tab has control, when it
   // changes there, as a macOS desktop's input reports it (#406), or as bb-box
   // reads it in a desktop whose server moves none (#464).
   const connected = connection.state === "connected";
   useEffect(() => {
     if (!mine || !connected) return;
     let stopped = false;
-    let sent: string | null = null;
     let seen: number | null = null;
-    const toBox = () => {
-      navigator.clipboard?.readText?.().then(
-        (text) => {
-          if (stopped || !text || text === sent) return;
-          sent = text;
-          void session.current?.sendClipboard(text).then((taken) => {
-            if (!taken && sent === text) sent = null;
-          });
-        },
-        () => undefined,
-      );
-    };
     const fromBox = async () => {
       if (deviceShown || !document.hasFocus()) return;
       const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => undefined);
@@ -1433,17 +1416,13 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
       const first = seen === null;
       seen = latest.serial;
       if (first) return;
-      sent = latest.text;
       setBoxClipboard(latest.text);
       await navigator.clipboard?.writeText?.(latest.text).catch(() => undefined);
     };
-    toBox();
     void fromBox();
-    window.addEventListener("focus", toBox);
     const timer = setInterval(() => void fromBox(), CLIPBOARD_POLL_MS);
     return () => {
       stopped = true;
-      window.removeEventListener("focus", toBox);
       clearInterval(timer);
     };
   }, [mine, connected, rpc, threadId, boxId, viewer, deviceShown]);
@@ -1502,6 +1481,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     session.current?.paste(text);
   };
   const typeShortcut = typeTextShortcutLabel(macBrowser());
+  const ownPasteId = useId();
   const openTyping = () => {
     if (!mine) {
       flashFor("Take control first, then type text.");
@@ -1532,7 +1512,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
    */
   const pasteFromComputer = async () => {
     const video = session.current instanceof SelkiesSession ? session.current : null;
-    if (video && navigator.clipboard?.read) {
+    if (video && !video.device && navigator.clipboard?.read) {
       const image = await navigator.clipboard.read().then(
         async (items) => {
           for (const item of items) {
@@ -1784,10 +1764,13 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
                   <>
                     <DropdownMenuSeparator />
                     {/* Both wait for the connection; Paste for control too, so the item says there is one to take. */}
-                    <DropdownMenuItem disabled={!mine || connection.state !== "connected"} onSelect={() => void pasteFromComputer()}>
+                    <DropdownMenuItem disabled={!mine || connection.state !== "connected"} aria-describedby={ownPasteId} onSelect={() => void pasteFromComputer()}>
                       <PasteGlyph />
                       Paste from this computer
                     </DropdownMenuItem>
+                    <p id={ownPasteId} className="max-w-64 px-2 pb-1.5 text-xs text-muted-foreground">
+                      {ownPasteWords(deviceShown)}
+                    </p>
                     <DropdownMenuItem disabled={connection.state !== "connected"} onSelect={() => void copyToComputer()}>
                       <Icon name="Copy" aria-hidden />
                       Copy to this computer

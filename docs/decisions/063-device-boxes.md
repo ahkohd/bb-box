@@ -637,7 +637,7 @@ The Selkies subset, as bb-box-stream speaks it:
 | input | `m,<x>,<y>,<buttons>,0` | a person's mouse: button 1 down is a touch at that point, moves are its moves, up ends it. Button 3 is a long press. With Alt held, a drag is a pinch: two touches mirrored about the screen's centre, and Alt itself never reaches the device |
 | input | `m2,...` | the wheel and a trackpad's scroll: a swipe from the pointer of a twelfth of the screen per notch, notches within 100 ms joined into one swipe |
 | input | `kd,<keysym>`, `ku,<keysym>`, `kr` | physical keys down and up, and all keys up. A keysym with no US key joins the text batch |
-| input | `cw,<base64>` and the chunked forms | the person's clipboard, for the device's |
+| input | `cw,<base64>` and the chunked forms | taken by no device: since version 29 the server drops them, as a viewer's clipboard goes only with a paste (F-15) |
 | server | `MODE websockets` | as Selkies |
 | server | binary type 4 | an H.264 access unit, with its frame number, and since version 9 the low 16 bits of its geometry generation in the header's last two bytes, so the viewer holds a turned picture until the first frame of the new generation |
 | server | `clipboard,<base64>` | the device's clipboard, to the input connection only, which passes it to the viewer with control |
@@ -653,6 +653,7 @@ bb-box-stream's:
 | server | `BB_DEVICE_STILL {png, generation}` | a still of the screen, to a viewer that asked for stills instead of video |
 | input | `BB_DEVICE {id, type: "touch", contacts}` | a person's touches with more than one finger, from a touch screen |
 | input | `BB_DEVICE {id, type: "text", text}` | committed text from the person: an input method's composition, a phone's keyboard, or Type text |
+| input | `BB_DEVICE {id, type: "paste", text}` | the person's paste, since version 29: Cmd+V or Ctrl+V, or Paste from this computer, pasted whole with the device's clipboard put back (F-15) |
 | control, input | `BB_DEVICE {id, type: "control", control}` | a `DeviceControl` |
 | control | `BB_DEVICE {id, type: "input", input, owner}` | a `DeviceInput` from the agent, with the owner generation it was sent under |
 | control | `BB_DEVICE {id, type: "owner", generation, holder}` | control's owner changed: `agent` or `person` |
@@ -1023,10 +1024,13 @@ decision).
   the viewer suggests for long or non-English text. Its text goes as one
   paste.
 - **Cmd+V or Ctrl+V** in the viewer pastes this computer's clipboard into
-  the device, as on desktops. What the device copies comes back to the
-  viewer with control: gRPC's clipboard on Android, and `simctl pbpaste`
-  every 2 s while the tab has the focus on iOS, as Tart's desktops do
-  (#464). The server's own pastes are not echoed back.
+  the device, as on desktops. The viewer reads the clipboard at the paste,
+  never on taking control or the focus, and sends it as one `paste`
+  request, text only; the server pastes it as below and puts the device's
+  clipboard back (F-15, the owner's decision of 28 October 2026). What
+  the device copies comes back to the viewer with control: gRPC's
+  clipboard on Android, and `simctl pbpaste` every 2 s while the tab has
+  the focus on iOS, as Tart's desktops do (#464). The server's own pastes are not echoed back.
 - **Two fingers.** With a mouse, Alt and drag pinches. On a touch screen, two
   fingers on the device are two touches.
 

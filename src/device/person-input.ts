@@ -13,7 +13,6 @@ const PRIMARY = 1;
 const SECONDARY = 4;
 const WHEEL_DOWN = 8;
 const WHEEL_UP = 16;
-const CLIPBOARD_PARTS_MOST = 4096;
 
 export interface PersonInputTarget {
   readonly lane: InputLane;
@@ -22,7 +21,6 @@ export interface PersonInputTarget {
   touch(contacts: readonly TouchContact[]): Promise<void>;
   typesAsKeys(character: string): boolean;
   key(key: string, down: boolean): Promise<void>;
-  setClipboard(text: string): Promise<void>;
   acting(): void;
   log(line: string): void;
   readonly wait?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -68,7 +66,6 @@ export class PersonInput {
   #moveQueued = false;
   #nextMove: readonly TouchContact[] | null = null;
   readonly #held = new Set<string>();
-  readonly #clipboardParts = new Map<string, string[]>();
 
   constructor(target: PersonInputTarget) {
     this.#target = target;
@@ -290,25 +287,7 @@ export class PersonInput {
   }
 
   #clipboardMessage(fields: readonly string[]): void {
-    const [verb, id = "", data = ""] = fields;
-    const set = (text: string) =>
-      this.#target.lane
-        .run(() => this.#target.setClipboard(text))
-        .then(() => this.#target.log(`clipboard: the person's, ${[...text].length} characters, is the device's now`))
-        .catch((error) => this.#target.log(`clipboard: could not set the device's: ${words(error)}`));
-    if (verb === "cw") {
-      void set(Buffer.from(fields[1] ?? "", "base64").toString("utf8"));
-    } else if (verb === "cws") {
-      this.#clipboardParts.set(id, []);
-    } else if (verb === "cwd") {
-      const parts = this.#clipboardParts.get(id);
-      if (parts && parts.length < CLIPBOARD_PARTS_MOST) parts.push(Buffer.from(data, "base64").toString("latin1"));
-      else this.#clipboardParts.delete(id);
-    } else if (verb === "cwe") {
-      const parts = this.#clipboardParts.get(id);
-      this.#clipboardParts.delete(id);
-      if (parts) void set(Buffer.from(parts.join(""), "latin1").toString("utf8"));
-    }
+    if (fields[0] === "cw" || fields[0] === "cws") this.#target.log("clipboard: the viewer's clipboard was not put on the device; it goes only with a paste");
   }
 
   forget(): void {
