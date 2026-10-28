@@ -2657,17 +2657,49 @@ only this file, the docs test passed again.
 
 ### The live check
 
-To be run on the Tart Mac after the deploy: five shared host starts and
-two dedicated box starts, with a read-only watcher that polls lsof on each
-new clone's disk from its clone until its `tart run`, and that reports any
-"VZErrorDomain Code=1" in a run's output. Unlike F-9b's watchers, it runs
-no Tart command, so it cannot cause the race it looks for.
+Through production BB on 28 October 2026, after the lead deployed F-10
+(PR 1204, main a2c709d), on the Tart Mac. The lead ran a read-only watcher
+on the Mac from 09:54:04 UTC. It polled lsof on each new VM's disk from
+when its folder appeared until bb-box started its `tart run`, every 0.1 s
+or so, and watched the runs' output for "VZErrorDomain Code=1". Unlike
+F-9b's watchers, it runs no Tart command, so it cannot cause the race it
+looks for. Boxes were ios boxes pinned to Tart with `on`, asked for one at
+a time. Each shared box got a new host, as the doctor said no host ran
+before it. Times are UTC; ready times are box_acquire's own.
+
+| Asked for | Box | The new VM | Ready after | lsof polls before its run | Disk open then |
+| --- | --- | --- | --- | --- | --- |
+| 09:54 | shared | bb-box-host-c7c78006de | 19.7 s | 4 | nothing |
+| 09:55 | shared | bb-box-host-90c68d6931 | 16.6 s | 1 | nothing |
+| 09:56 | shared | bb-box-host-2a2825dc9e | 17.1 s | 0 | not seen |
+| 09:57 | shared | bb-box-host-54babf0874 | 17.2 s | 1 | nothing |
+| 09:58 | shared | bb-box-host-d220feeac8 | 17.0 s | 0 | not seen |
+| 09:59 | dedicated | bb-box-bx4bi54i2xsvgm | 18.3 s | 0 | not seen |
+| 10:00 | dedicated | bb-box-bxzj55yyjfp2rz | 18.3 s | 1 | nothing |
+
+- **No start failed.** bb-box's log since 09:54 has no "VZErrorDomain
+  Code=1" line and no "ran it again" line, and the watcher saw none in the
+  runs' output. Every first `tart run` started.
+- **Nothing had a new VM's disk open before its run,** in the 7 polls
+  that came in that window. In three starts the clone and the run came
+  within one of the watcher's rounds, so it polled none.
+- **The ASIF note works.** Each dedicated box gave its size with a 130 GiB
+  disk, from the note its clone took from the iOS image.
+- **Starts were quick.** A shared host took 14.9 to 17.3 s; a dedicated
+  box's clone 0.1 s and its start 0.4 to 0.5 s.
 
 ### What limits these checks
 
-- **No VM ran in these measurements.** The Namespace VM cannot run one.
-  The run lock was stood in for by a process taking the same fcntl lock,
-  and Tart agreed it ran. The live check covers real runs.
+- **No VM ran in the measurements on Namespace.** The run lock was stood
+  in for by a process taking the same fcntl lock, and Tart agreed it ran.
+  The live check covered real runs.
+- **The live window was short.** From a clone to its run took a second or
+  less, so the watcher polled each new disk 0 to 4 times, 7 polls in all.
+  The stronger evidence is that 7 of 7 first runs started. F-9b had the
+  error in 3 of 7 new hosts, but its watchers ran `tart list` every 0.3 s,
+  and 3 of 3 later starts without watchers ran too, so 7 starts cannot
+  show the rate fell. The watcher looked at each new VM's disk only, not
+  at other VMs' disks.
 - **Spotlight may still open a new disk.** It did once, briefly, outside
   bb-box. Whether its open takes a lock that blocks Virtualization was not
   measured.
