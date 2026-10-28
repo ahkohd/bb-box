@@ -41,9 +41,13 @@ Mac. A clone boots to SSH in about 10 s and to a logged-in desktop in about
 
 - A Mac with Apple silicon on macOS 14 or later. A VM's macOS must be no
   newer than the Mac's.
-- Tart 2.30.0, the version tested. bb-box reads `tart list` and the output of
-  `tart run`, so check a newer release with the conformance suite before
-  relying on it (see Update).
+- Tart 2.30.0, the version tested. bb-box reads the output of `tart run`,
+  and reads Tart's VM folders as Tart does: a VM runs while a process holds
+  Tart's lock on its config.json. It does not run `tart list` or `tart get`
+  to read a Mac's state, as Tart 2.40 sizes every ASIF disk with diskutil
+  then, and a VM that starts meanwhile cannot lock its disk. Check a newer
+  release with the conformance suite before relying on it (see Update).
+- perl, which macOS has in /usr/bin: bb-box reads Tart's lock with it.
 - Disk: the macOS base image with Xcode takes about 80 GiB, and the prepared
   image a few GiB more. A box adds what it writes: about 2.5 GiB after its
   first boot, and its memory while it is suspended. The VMs can be on

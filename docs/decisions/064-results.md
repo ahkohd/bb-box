@@ -2546,3 +2546,140 @@ F-10.
   instance and no limit of two VMs, so items 3 and 4 are Tart's only.
   Making a Namespace start fail needs its API, which this check did not
   use.
+
+## F-10: reading a Mac's state without sizing disks
+
+F-9b found the cause of "VZErrorDomain Code=1 ... Internal Virtualization
+error": Virtualization could not take the exclusive lock on a new VM's
+disk, errno 35, because a `tart list` or `tart get` had it open. bb-box ran
+`tart list` in every read of a Mac's state, in the start script just
+before `tart run`, ten times a second while a Linux VM started, and while
+a VM suspended or stopped. F-10 removes those reads. PR 1202's second run,
+3 s after that failure, stays as a safety net.
+
+### What Tart opens
+
+Measured on 28 October 2026 on a Namespace macOS 26.3.1 VM with Tart
+2.40.1, on VM folders made by hand: one with a 20 GB ASIF disk made by
+`diskutil image create`, one with a raw disk. Such a VM cannot run there,
+as the VM has no nested virtualization, so a running VM was stood in for
+by a process holding Tart's lock. lsof polled the ASIF disk in a loop
+while each command ran 10 times. A perl loop took and dropped an
+exclusive, non-blocking `flock` on the disk, as Virtualization's lock
+does, and counted the attempts that failed with errno 35.
+
+| Command | lsof polls with the disk open | Lock attempts failed with errno 35 |
+| --- | --- | --- |
+| `tart list --source local --format json` | 51 of 83: `diskutil`, `diskimagescontroller` | 61,806 of 165,213 |
+| `tart list --source local --quiet` | 50 of 84 | 62,708 of 161,175 |
+| `tart get <the ASIF VM>` | 50 of 83 | 70,762 of 156,408 |
+| `tart get <the raw VM>` | 0 of 20 | 0 of 312,186 |
+| Nothing running | none | 0 of 298,459 |
+
+`tart --version`, `clone`, `set` without `--disk-size`, `rename`, `ip`,
+`suspend`, `stop` and `delete` opened no ASIF disk. Tart's source agrees:
+`list` sizes every local VM's disk, `get` only its own VM's, and an ASIF
+disk's size comes from `diskutil image info`.
+
+Once, Spotlight's `mdworker` opened a fresh clone's disk just after a
+`tart set`. That is not Tart's and not bb-box's; see the follow-ups.
+
+### What changed
+
+- **The state is read from Tart's VM folders, as Tart reads it.** A VM is
+  listed when its folder has config.json, nvram.bin and a disk. It runs
+  while a process holds Tart's run lock, an fcntl write lock that `tart
+  run` takes on its config.json; a small perl program asks the kernel who
+  holds it (`F_GETLK`), as Tart does. It is suspended when it has
+  state.vzvmsave. With a process holding the lock, the read and `tart
+  list` both said running; macOS's lsof does not show such locks, so it
+  could not be used. The read opens config.json only, never a disk.
+- **One read for every script.** The state script, the start script's
+  check before `tart run`, a Linux VM's start (which now asks whether its
+  run holds the lock), the wait for a suspend or stop, and the scripts that
+  stop, size, capture, replace or delete a VM all use it. The prepare
+  scripts find a VM by its folder, which also ends F-4's retries of a
+  failing `tart list`.
+- **A disk's size without diskutil.** A raw disk's is its file's length.
+  An ASIF disk's is a note bb-box keeps in `~/.bb-box/tart/disks`, named
+  by the disk file's inode and birth time. A clone takes its image's
+  note, which `tart get` of the image gives once a build: no VM runs on an
+  image's disk. A resize that grows an ASIF disk notes what `tart get`
+  then gives, after Tart's own resize, with the VM stopped. A size read
+  takes the config and the note. Notes older than a day of disks no VM has
+  are removed at a clone. Before, a running ASIF VM often had no size, as
+  diskutil cannot read a disk Virtualization holds.
+- **Still Tart's own answer:** `tart --version`, `tart ip`, and `tart get`
+  of an image as above. None of these sizes a disk that may start.
+- **perl is needed.** macOS has it in /usr/bin. The state read fails with
+  words if it is not on the PATH, so a Mac without it counts as
+  unreachable rather than as one with no VMs.
+- The safety net's log now says "as when another process has its disk
+  open at that moment".
+
+On the same macOS VM, with the scripts as bb-box sends them:
+
+- 20 reads of the Mac's state and 20 of one VM's state: lsof saw no
+  process with the disk open in 129 polls, and 420,609 exclusive lock
+  attempts all worked. The lock test's own perl was the only opener seen.
+- 20 rounds of the state, VM state and size scripts on a fresh ASIF
+  clone: no process had its disk open in 94 polls. Five `tart list` runs
+  on it, as a control: `diskutil` in 28 of 72 polls and
+  `diskimagescontroller` in 20.
+- The clone script on the ASIF VM: `diskutil` opened no disk under the
+  VM folders but the image's, and the clone's note said 20 GB, as `tart
+  get` does.
+- A read of the Mac's state took 73 ms, against 0.45 s for one `tart
+  list` of two VMs. That VM is not the Tart Mac.
+
+### Checks
+
+The fake Tart now keeps a VM as Tart does: config.json, nvram.bin and a
+sparse raw disk.img, and its `tart run` holds a real fcntl lock on
+config.json through `test/fake-run-lock.pl`. New and changed tests:
+
+- the state is read with no `tart list` or `tart get`, by acquires,
+  starts, stops and releases too; folders half there are left out, and
+  both running VMs counted (F-2);
+- the state read never fails while a loop makes and deletes VM folders,
+  25 reads;
+- a VM is stopped before its lock is taken, running while held, stopped
+  once it goes, suspended with a saved state; a stale `running` file is
+  not a lock;
+- an ASIF clone's size comes from the note, with `tart get` of the image
+  once for two clones and never of a clone;
+- prepare-ios-image.sh finds the macOS image while `tart list` fails.
+
+On a Linux box, from a clean clone of the commit on main c0369a1: tsc
+clean; the node suite 2,251 passed, 0 failed, 288 skipped, the docs test
+among them; vitest 224 passed. Rebased on main 63232d6, which changed
+only this file, the docs test passed again.
+
+### The live check
+
+To be run on the Tart Mac after the deploy: five shared host starts and
+two dedicated box starts, with a read-only watcher that polls lsof on each
+new clone's disk from its clone until its `tart run`, and that reports any
+"VZErrorDomain Code=1" in a run's output. Unlike F-9b's watchers, it runs
+no Tart command, so it cannot cause the race it looks for.
+
+### What limits these checks
+
+- **No VM ran in these measurements.** The Namespace VM cannot run one.
+  The run lock was stood in for by a process taking the same fcntl lock,
+  and Tart agreed it ran. The live check covers real runs.
+- **Spotlight may still open a new disk.** It did once, briefly, outside
+  bb-box. Whether its open takes a lock that blocks Virtualization was not
+  measured.
+- **An ASIF disk Tart resizes outside bb-box keeps its old note,** as the
+  note follows the disk file, which a resize keeps.
+- **VMs cloned before this change have no note.** Their boxes keep the
+  size recorded at their acquire; only a restore after lost storage, or a
+  size read for a resize, sees no disk size for them.
+
+### Follow-ups
+
+- Keep Spotlight off Tart's VM folder, or measure whether `mdworker`'s
+  open can fail a start.
+- `setup/tart/grant-tcc.sh`, run by hand on a stopped VM, still asks
+  `tart list` for its state.

@@ -8,7 +8,7 @@ import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, ty
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
-import { FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, tartConfig } from "./fake-mac.ts";
+import { FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, runVmElsewhere, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
 import { FakeTart, Viewer } from "./fake-tart-vnc.ts";
 import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, tempDir, testContext } from "./helpers.ts";
@@ -129,13 +129,14 @@ test("the Mac's state fails when Tart's home or the QEMU folder links to a volum
   }
 });
 
-test("reads Tart's pretty-printed listing and its VNC URL", () => {
+test("reads the Mac's VMs, each with its state and its disk in GB where known, and its VNC URL", () => {
   const state = parseState(
     [
       "@version",
       "2.30.0",
-      "@list",
-      '[\n  {\n    "Accessed" : "1 minute ago",\n    "Name" : "bb-box-bx1",\n    "Running" : true,\n    "Source" : "local",\n    "State" : "running"\n  }\n]',
+      "@vms",
+      "bb-box-bx1 running ",
+      "bb-box-macos stopped 64",
       "@configs",
       "=bb-box-bx1",
       '{  "os" : "darwin",  "cpuCount" : 4,  "memorySize" : 8589934592}',
@@ -153,7 +154,10 @@ test("reads Tart's pretty-printed listing and its VNC URL", () => {
       "27.0",
     ].join("\n"),
   );
-  assert.deepEqual(state.vms, [{ name: "bb-box-bx1", state: "running", running: true, diskGB: null }]);
+  assert.deepEqual(state.vms, [
+    { name: "bb-box-bx1", state: "running", running: true, diskGB: null },
+    { name: "bb-box-macos", state: "stopped", running: false, diskGB: 64 },
+  ]);
   assert.deepEqual(state.configs.get("bb-box-bx1"), { os: "darwin", macAddress: null, memoryMiB: 8192, cpus: 4 });
   assert.deepEqual(state.owners.get("bb-box-bx1"), { install: "k3v9q2m7xa", box: "bx1" });
   assert.equal(state.memoryMiB, 131072);
@@ -485,29 +489,103 @@ test("Linux boxes take memory on a Mac but none of its two macOS VMs, and have n
   for (const guest of [first, second, third]) await backend.release(guest, releasing);
 });
 
-test("a VM deleted while Tart lists the Mac's VMs, which fails Tart 2.30.0's list, leaves the rest of the Mac's read: each VM is read on its own, and only one there that cannot be read fails it", async () => {
+function readMacState(mac: string) {
+  const result = spawnSync("/bin/sh", ["-c", stateScript(true)], { encoding: "utf8", env: { HOME: mac, PATH: `${join(mac, ".nix-profile", "bin")}:/usr/bin:/bin` } });
+  assert.equal(result.status, 0, result.stderr);
+  return parseState(result.stdout);
+}
+
+function readMacStateAsync(mac: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("/bin/sh", ["-c", stateScript(true)], { env: { HOME: mac, PATH: `${join(mac, ".nix-profile", "bin")}:/usr/bin:/bin` } });
+    let [stdout, stderr] = ["", ""];
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+const askedTartToReadDisks = (calls: readonly string[][]) => calls.filter((call) => call[0] === "tart" && (call[1] === "list" || call[1] === "get"));
+
+test("the Mac's state is read from Tart's VM folders, never with tart list or tart get, which open every ASIF disk (F-10): a VM half deleted is left out, and the running VMs are counted (F-2)", async () => {
   const { mac, backend } = setup();
   const first = await backend.acquire(identity(), null, hooks().hooks, signal());
   const second = await backend.acquire(identity("macos"), null, hooks().hooks, signal());
   const vms = join(mac, ".tart", "vms");
-  const going = join(vms, "bb-box-going");
-  mkdirSync(going);
+  const half = (name: string, files: readonly string[]) => {
+    mkdirSync(join(vms, name));
+    for (const file of files) writeFileSync(join(vms, name, file), file === "config.json" ? JSON.stringify({ os: "darwin", cpuCount: 4, memorySize: 8 * GiB }) : "");
+  };
+  half("bb-box-going", []);
+  half("bb-box-no-nvram", ["config.json", "disk.img"]);
+  half("bb-box-no-config", ["nvram.bin", "disk.img"]);
+  half("bb-box-no-disk", ["config.json", "nvram.bin"]);
   writeFileSync(join(mac, ".fake-tart-list-fails"), "");
+  writeFileSync(join(mac, ".fake-tart-get-fails"), `${second.ref} Error: the disk is unreadable`);
+  const before = tartCalls(mac).length;
 
   const capacity = await backend.capacity("macos", SMALL, []);
   assert.equal(capacity.ok, false);
-  assert.match(capacity.message!, /Two macOS VMs already run on mac1, Apple's limit/, "both running VMs are still counted");
-  const state = parseState(spawnSync("/bin/sh", ["-c", stateScript(true)], { encoding: "utf8", env: { HOME: mac, PATH: `${join(mac, ".nix-profile", "bin")}:/usr/bin:/bin` } }).stdout);
-  assert.deepEqual(state.vms.filter((vm) => vm.running).map((vm) => vm.name).sort(), [first.ref, second.ref].sort(), "the running VMs, read one by one");
-  assert.ok(state.vms.length > 2 && !state.vms.some((vm) => vm.name === "bb-box-going"), "the stopped image too, and not the VM that is going");
-
-  writeFileSync(join(mac, ".fake-tart-get-fails"), `${second.ref} Error: the disk is unreadable`);
-  const failed = await backend.capacity("macos", SMALL, []);
-  assert.match(failed.message!, /mac1 did not answer: .*Error: the disk is unreadable/, "a VM that is there but cannot be read fails the read, so the Mac is not taken for one with no VMs");
+  assert.match(capacity.message!, /Two macOS VMs already run on mac1, Apple's limit/, "both running VMs are counted");
+  const state = readMacState(mac);
+  assert.deepEqual(state.vms.map((vm) => [vm.name, vm.state, vm.diskGB]).sort(), [
+    [FAKE_IMAGE, "stopped", 64],
+    [first.ref, "running", 64],
+    [second.ref, "running", 64],
+  ].sort(), "the image and the two boxes, and none of the folders half there");
+  assert.deepEqual(askedTartToReadDisks(tartCalls(mac).slice(before)), []);
 
   rmSync(join(mac, ".fake-tart-get-fails"));
   rmSync(join(mac, ".fake-tart-list-fails"));
-  rmSync(going, { recursive: true });
+  await backend.release(first, releasing);
+  await backend.release(second, releasing);
+  assert.deepEqual(askedTartToReadDisks(tartCalls(mac)), [], "nor did an acquire, a start, a stop or a release");
+});
+
+test("VMs made and deleted while the Mac's state is read never fail the read (F-2)", async () => {
+  const { mac, backend } = setup();
+  const running = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const vms = join(mac, ".tart", "vms");
+  const churn = spawn("/bin/sh", ["-c", `cd '${vms}' && while :; do for n in 1 2 3; do mkdir -p bb-box-churn-$n && echo '{}' > bb-box-churn-$n/config.json && : > bb-box-churn-$n/nvram.bin && : > bb-box-churn-$n/disk.img; done; rm -rf bb-box-churn-*; done`], { stdio: "ignore" });
+  try {
+    for (let read = 0; read < 25; read++) {
+      const result = await readMacStateAsync(mac);
+      assert.equal(result.code, 0, result.stderr);
+      const state = parseState(result.stdout);
+      assert.deepEqual(state.vms.filter((vm) => vm.running).map((vm) => vm.name), [running.ref]);
+      assert.ok(state.vms.some((vm) => vm.name === FAKE_IMAGE));
+    }
+  } finally {
+    churn.kill();
+  }
+  await backend.release(running, releasing);
+});
+
+test("a VM runs while a process holds Tart's run lock on its config.json, and is stopped before the lock is taken and once it goes (F-10)", async () => {
+  const { mac } = setup();
+  const vm = join(mac, ".tart", "vms", FAKE_IMAGE);
+  const stateOfImage = () => readMacState(mac).vms.find((each) => each.name === FAKE_IMAGE)?.state;
+  writeFileSync(join(vm, "running"), "stale");
+  assert.equal(stateOfImage(), "stopped", "a file that says it runs is not Tart's lock");
+  await runVmElsewhere(vm);
+  assert.equal(stateOfImage(), "running");
+  rmSync(join(vm, "running"));
+  await until(() => stateOfImage() === "stopped");
+  writeFileSync(join(vm, "state.vzvmsave"), "");
+  assert.equal(stateOfImage(), "suspended");
+});
+
+test("an ASIF disk is sized from bb-box's note, which a clone takes from tart get of its image, once a build, never of a VM that may start (F-10)", async () => {
+  const { mac, backend } = setup();
+  const image = join(mac, ".tart", "vms", FAKE_IMAGE);
+  writeFileSync(join(image, "config.json"), JSON.stringify({ ...JSON.parse(readFileSync(join(image, "config.json"), "utf8")), diskFormat: "asif" }));
+  assert.equal(readMacState(mac).vms.find((vm) => vm.name === FAKE_IMAGE)?.diskGB, null, "no note yet, and diskutil is not asked");
+  const first = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const second = await backend.acquire(identity("macos"), null, hooks().hooks, signal());
+  assert.deepEqual(askedTartToReadDisks(tartCalls(mac)), [["tart", "get", FAKE_IMAGE, "--format", "json"]], "the image once, and neither clone");
+  const state = readMacState(mac);
+  assert.deepEqual([first.ref, second.ref, FAKE_IMAGE].map((name) => state.vms.find((vm) => vm.name === name)?.diskGB), [64, 64, 64]);
+  assert.deepEqual([first.size?.diskGiB, second.size?.diskGiB], [59, 59], "64 GB is 59 GiB");
   await backend.release(first, releasing);
   await backend.release(second, releasing);
 });
@@ -528,7 +606,7 @@ test("a Mac takes two macOS VMs; the third is refused with what to release", asy
   await backend.release(second, releasing);
 });
 
-test("a run that fails at once with Virtualization's internal error, as when a tart list has the VM's disk open, is run once more, and the log says so; failing again, the start fails with it (F-9b)", async () => {
+test("a run that fails at once with Virtualization's internal error, as when another process has the VM's disk open, is run once more, and the log says so; failing again, the start fails with it (F-9b)", async () => {
   const { mac, context, backend } = setup();
   const fails = join(mac, ".fake-tart-run-fails");
   writeFileSync(fails, "1");
@@ -536,7 +614,7 @@ test("a run that fails at once with Virtualization's internal error, as when a t
   const guest = await backend.acquire(box, null, hooks().hooks, signal());
   assert.equal(await backend.power(guest), "running");
   assert.ok(
-    context.logs.some((line) => line.startsWith(`Tart's run of ${guest.ref} on mac1 failed at once, as when a tart list reads its disk at that moment, so bb-box ran it again 3 s later: Error Domain=VZErrorDomain Code=1 `)),
+    context.logs.some((line) => line.startsWith(`Tart's run of ${guest.ref} on mac1 failed at once, as when another process has its disk open at that moment, so bb-box ran it again 3 s later: Error Domain=VZErrorDomain Code=1 `)),
     context.logs.join("\n"),
   );
   const runs = readFileSync(join(mac, ".fake-tart-log"), "utf8").split("\n").filter((line) => line.startsWith(JSON.stringify(["tart", "run"]).slice(0, -1)) && line.includes(guest.ref));
@@ -552,7 +630,7 @@ test("a VM the framework refuses to run, as when another app runs macOS VMs, is 
   // Two running Linux VMs, which neither capacity nor the framework counts against the two, but whose memory counts.
   for (const name of ["other-a", "other-b"]) {
     addImage(mac, name, "linux");
-    writeFileSync(join(mac, ".tart", "vms", name, "running"), String(process.pid));
+    await runVmElsewhere(join(mac, ".tart", "vms", name));
   }
   const room = (await backend.capacity("macos", SMALL, [])).hosts[0]!;
   assert.equal(room.limits.find((limit) => limit.resource === "guests")!.used, 0, "Linux VMs do not count against the two");
@@ -1171,32 +1249,25 @@ const IOS_DEVICE = (model: string, native: string) => ({
 });
 const IOS_DEVICES = [IOS_DEVICE("iPhone 18 Pro", "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro"), IOS_DEVICE("iPhone 17", "com.apple.CoreSimulator.SimDeviceType.iPhone-17")];
 
-test("prepare-ios-image.sh reads the VMs again while tart list fails, as when a VM is deleted as it reads, and never takes that for the macOS image missing (F-4)", async () => {
+test("prepare-ios-image.sh finds VMs by their folders, without tart list, so a VM deleted as it reads cannot fail it or pass for the macOS image missing (F-4, F-10)", async () => {
   const { mac } = setup();
   addImage(mac, "bb-box-ios");
   const script = join(import.meta.dirname, "..", "setup", "tart", "prepare-ios-image.sh");
-  const prepare = () =>
+  const prepare = (from: string) =>
     new Promise<{ code: number | null; stderr: string }>((resolve) => {
-      const child = spawn("/bin/sh", [script, "--from", FAKE_IMAGE, "--name", "bb-box-ios"], { env: { HOME: mac, PATH: `${join(mac, ".nix-profile", "bin")}:/usr/bin:/bin` } });
+      const child = spawn("/bin/sh", [script, "--from", from, "--name", "bb-box-ios"], { env: { HOME: mac, PATH: `${join(mac, ".nix-profile", "bin")}:/usr/bin:/bin` } });
       let stderr = "";
       child.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
       child.on("close", (code) => resolve({ code, stderr }));
     });
-  const listFails = join(mac, ".fake-tart-list-fails");
-  writeFileSync(listFails, "");
-  const passing = setTimeout(() => rmSync(listFails, { force: true }), 500);
-  const raced = await prepare();
-  clearTimeout(passing);
+  writeFileSync(join(mac, ".fake-tart-list-fails"), "");
+  const raced = await prepare(FAKE_IMAGE);
   assert.equal(raced.code, 1);
-  assert.match(raced.stderr, /tart list failed, as when a VM is deleted while it reads: trying again in 2 s: Error: The file “config\.json” couldn’t be opened/);
   assert.match(raced.stderr, /prepare-ios-image: bb-box-ios exists; give --replace to build it again\n$/, "it got past the macOS image's check");
-
-  writeFileSync(listFails, "");
-  const failing = await prepare();
-  rmSync(listFails, { force: true });
-  assert.equal(failing.code, 1);
-  assert.match(failing.stderr, /prepare-ios-image: tart list failed 5 times, 2 s apart, so whether a VM exists is not known: Error: The file “config\.json” couldn’t be opened/);
-  assert.doesNotMatch(failing.stderr, /there is no Tart VM/);
+  const missing = await prepare("bb-box-not-there");
+  assert.match(missing.stderr, /there is no Tart VM bb-box-not-there/);
+  rmSync(join(mac, ".fake-tart-list-fails"));
+  assert.deepEqual(askedTartToReadDisks(tartCalls(mac)), []);
 });
 
 test("the iOS image: listed when set, built by prepare-ios-image.sh on the macOS image, replaced without touching that image, checked by bb-box-check-ios, and judged by the doctor (063, 3.2)", async () => {

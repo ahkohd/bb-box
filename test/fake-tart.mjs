@@ -4,9 +4,12 @@
 // backend's host scripts on the test machine, in the host's fake home. VMs are
 // directories under $HOME/.tart/vms, as Tart keeps them:
 //
-// - `tart run` writes `running` with its PID, prints the VNC URL when given
-//   --vnc-experimental, and waits until `running` goes; `tart stop` removes
-//   it, and `tart suspend` also writes state.vzvmsave. A run of a macOS VM
+// - A VM has config.json, nvram.bin and a raw disk.img, a sparse file of the
+//   disk's size, 64 GB unless `tart set --disk-size` grew it.
+// - `tart run` writes `running` with its PID, takes Tart's run lock, an fcntl
+//   write lock on config.json, through fake-run-lock.pl, prints the VNC URL
+//   when given --vnc-experimental, and waits until `running` goes; `tart
+//   stop` removes it, and `tart suspend` also writes state.vzvmsave. A run of a macOS VM
 //   refuses when $FAKE_TART_LIMIT (2) macOS VMs run already, counting those
 //   another app runs (the number in ~/.fake-other-macos-vms), as the
 //   Virtualization framework does; Linux VMs do not count. A Linux VM refuses
@@ -28,7 +31,8 @@
 //   many deletes as it holds have gone through, taking one from it for each.
 // - `tart ip` writes the VM's name to ~/.fake-tart-ip-held and waits while
 //   ~/.fake-tart-ip-holds exists, as for a VM that has no lease yet.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [tool, ...args] = process.argv.slice(2);
@@ -56,6 +60,7 @@ const running = (name) => existsSync(join(dir(name), "running")) && alive(Number
 const stateOf = (name) => (running(name) ? "running" : existsSync(join(dir(name), "state.vzvmsave")) ? "suspended" : "stopped");
 const names = () => readdirSync(vms).filter((name) => existsSync(join(dir(name), "config.json")));
 const config = (name) => JSON.parse(readFileSync(join(dir(name), "config.json"), "utf8"));
+const diskOf = (name) => Math.floor(statSync(join(dir(name), "disk.img")).size / 1e9);
 const option = (flag) => (args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined);
 
 function tart() {
@@ -65,7 +70,6 @@ function tart() {
       return console.log("2.30.0");
     case "list": {
       if (existsSync(join(home, ".fake-tart-list-fails"))) fail(MISSING_CONFIG);
-      const diskOf = (name) => (existsSync(join(dir(name), "disk-gb")) ? Number(readFileSync(join(dir(name), "disk-gb"), "utf8")) : 64);
       const list = names().map((name) => ({ Source: "local", Name: name, Disk: diskOf(name), Size: 20, Accessed: "1 minute ago", Running: running(name), State: stateOf(name) }));
       if (rest.includes("--quiet")) return list.forEach((vm) => console.log(vm.Name));
       if (option("--format") === "json") return console.log(JSON.stringify(list, null, 2).replaceAll('": ', '" : '));
@@ -81,6 +85,9 @@ function tart() {
       const cloned = config(from);
       cloned.macAddress = Array.from({ length: 6 }, (_, i) => (i === 0 ? 0x02 : Math.floor(Math.random() * 256)).toString(16).padStart(2, "0")).join(":");
       writeFileSync(join(dir(to), "config.json"), JSON.stringify(cloned));
+      copyFileSync(join(dir(from), "nvram.bin"), join(dir(to), "nvram.bin"));
+      writeFileSync(join(dir(to), "disk.img"), "");
+      truncateSync(join(dir(to), "disk.img"), statSync(join(dir(from), "disk.img")).size);
       return;
     }
     case "set": {
@@ -89,11 +96,10 @@ function tart() {
       const value = config(name);
       if (option("--cpu")) value.cpuCount = Number(option("--cpu"));
       if (option("--memory")) value.memorySize = Number(option("--memory")) * 1024 * 1024;
-      // As Tart's: the disk, in decimal GB, only grows; a VM keeps it in disk.img's size, here a file of its own.
+      // As Tart's: the disk, in decimal GB, only grows.
       if (option("--disk-size")) {
-        const was = existsSync(join(dir(name), "disk-gb")) ? Number(readFileSync(join(dir(name), "disk-gb"), "utf8")) : 64;
-        if (Number(option("--disk-size")) < was) fail("the disk size can only be increased");
-        writeFileSync(join(dir(name), "disk-gb"), option("--disk-size"));
+        if (Number(option("--disk-size")) < diskOf(name)) fail("the disk size can only be increased");
+        truncateSync(join(dir(name), "disk.img"), Number(option("--disk-size")) * 1e9);
       }
       return writeFileSync(join(dir(name), "config.json"), JSON.stringify(value));
     }
@@ -104,9 +110,8 @@ function tart() {
       const [failing, ...why] = existsSync(join(home, ".fake-tart-get-fails")) ? readFileSync(join(home, ".fake-tart-get-fails"), "utf8").trim().split(" ") : [];
       if (failing === name) fail(why.join(" "));
       const value = config(name);
-      const disk = existsSync(join(dir(name), "disk-gb")) ? Number(readFileSync(join(dir(name), "disk-gb"), "utf8")) : 64;
       const running = existsSync(join(dir(name), "running"));
-      return console.log(JSON.stringify({ CPU: value.cpuCount, Memory: Math.round(value.memorySize / 1024 / 1024), Disk: disk, DiskFormat: "raw", OS: value.os, Running: running, State: running ? "running" : "stopped" }));
+      return console.log(JSON.stringify({ CPU: value.cpuCount, Memory: Math.round(value.memorySize / 1024 / 1024), Disk: diskOf(name), DiskFormat: "raw", OS: value.os, Running: running, State: running ? "running" : "stopped" }));
     }
     case "run": {
       const name = rest[rest.length - 1];
@@ -130,9 +135,13 @@ function tart() {
       }
       writeFileSync(join(dir(name), "running"), String(process.pid));
       rmSync(join(dir(name), "state.vzvmsave"), { force: true });
-      // A test that serves a fake VNC server names its port in ~/.fake-vnc-port.
-      const port = existsSync(join(home, ".fake-vnc-port")) ? Number(readFileSync(join(home, ".fake-vnc-port"), "utf8")) : 5900 + (names().indexOf(name) % 100);
-      if (rest.includes("--vnc-experimental")) console.log(`VNC server is running at vnc://:fake-pass-word-${port}@127.0.0.1:${port}`);
+      const lock = spawn("perl", [new URL("./fake-run-lock.pl", import.meta.url).pathname, join(dir(name), "config.json"), join(dir(name), "running"), String(process.pid)], { stdio: ["ignore", "pipe", "inherit"] });
+      lock.on("exit", (code) => code && fail(`fake-run-lock.pl exited ${code}`));
+      lock.stdout.once("data", () => {
+        // A test that serves a fake VNC server names its port in ~/.fake-vnc-port.
+        const port = existsSync(join(home, ".fake-vnc-port")) ? Number(readFileSync(join(home, ".fake-vnc-port"), "utf8")) : 5900 + (names().indexOf(name) % 100);
+        if (rest.includes("--vnc-experimental")) console.log(`VNC server is running at vnc://:fake-pass-word-${port}@127.0.0.1:${port}`);
+      });
       const stop = () => {
         rmSync(join(dir(name), "running"), { force: true });
         process.exit(0);

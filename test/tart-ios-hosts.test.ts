@@ -11,7 +11,7 @@ import { hostAppInstallScript } from "../src/backends/tart/device-host.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
 import type { AcquireHooks, BoxIdentity, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { placementOf, type SlotTier } from "../src/core/device-host.ts";
-import { FAKE_MAC, addImage, fakeIosProbe, fakeMacTools, imageRecord, tartConfig } from "./fake-mac.ts";
+import { FAKE_MAC, addImage, addVmFiles, fakeIosProbe, runVmElsewhere, fakeMacTools, imageRecord, tartConfig } from "./fake-mac.ts";
 import { IOS_HOST_DEVICES, IOS_HOST_FAKES, IOS_HOST_SETTINGS, IOS_IMAGE_BUILD, fakeIosHostMac } from "./fake-ios-host.ts";
 import { MemoryStorage, testContext } from "./helpers.ts";
 
@@ -441,11 +441,12 @@ function newIosBuild(mac: string): void {
   writeFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-ios.json"), `${imageRecord("ios", { build: "build.20261028-002015-2222", base: "build.20261003-021500", devices: IOS_HOST_DEVICES, tools: { idb_companion: "1.7.7" } })}\n`);
 }
 
-function anotherMacosVm(mac: string, name = "bb-box-dedicated"): void {
+async function anotherMacosVm(mac: string, name = "bb-box-dedicated"): Promise<void> {
   const vm = join(mac, ".tart", "vms", name);
   mkdirSync(vm, { recursive: true });
   writeFileSync(join(vm, "config.json"), JSON.stringify({ os: "darwin", memorySize: 16 * 1024 ** 3, cpuCount: 6 }));
-  writeFileSync(join(vm, "running"), String(process.pid));
+  addVmFiles(vm);
+  await runVmElsewhere(vm);
 }
 
 test("a host on an older build lends its ready slot while no host on the new build can start on its Mac, counting itself against the hosts each Mac may run, as a start does (F-9, H6)", async () => {
@@ -471,7 +472,7 @@ test("with two hosts a Mac, a host on an older build stops lending once a host o
   newIosBuild(mac);
   const free = await backend.slots!.offer("ios", null, signal());
   assert.deepEqual(free, { tier: "new-host", where: "mac1", waitMs: 55_000, cost: "vm-slot" });
-  anotherMacosVm(mac);
+  await anotherMacosVm(mac);
   const full = await backend.slots!.offer("ios", null, signal());
   assert.equal(full.tier, "ready", "the Mac runs two macOS VMs, so no host on the new build can start");
   await backend.release(one, releasing, signal());
@@ -548,7 +549,7 @@ test("a host whose VM stops before it answers on SSH is noticed within a poll, n
 
 test("a host whose fresh clone fails to start too fails its boxes with both failures, and while its VM is deleted a new host can start in its place, rather than the Mac seeming full (F-9, H8)", async () => {
   const { backend, mac, hosts } = setup();
-  anotherMacosVm(mac);
+  await anotherMacosVm(mac);
   writeFileSync(join(mac, ".fake-tart-run-fails"), "4");
   const waits = join(mac, ".fake-tart-delete-waits");
   writeFileSync(waits, "1");

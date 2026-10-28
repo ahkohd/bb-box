@@ -1,7 +1,8 @@
 // A fake Mac for the Tart backend's tests: the fake tart and system tools in a fake ssh host's home, and an image there.
 
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, mkdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseTartSettings, type TartConfig } from "../src/backends/tart/config.ts";
 
@@ -116,8 +117,30 @@ export function addWindowsImage(home: string, build = "1", name = FAKE_WINDOWS_I
 export function addImage(home: string, name = FAKE_IMAGE, os = "darwin"): void {
   mkdirSync(join(home, ".tart", "vms", name), { recursive: true });
   writeFileSync(join(home, ".tart", "vms", name, "config.json"), JSON.stringify({ os, cpuCount: 4, memorySize: 8 * GiB, macAddress: "02:00:00:00:00:01" }));
+  addVmFiles(join(home, ".tart", "vms", name));
   mkdirSync(join(home, ".bb-box", "tart", "images"), { recursive: true });
   writeFileSync(join(home, ".bb-box", "tart", "images", `${name}.json`), `${imageRecord(os === "darwin" ? "macos" : "linux-arm64")}\n`);
+}
+
+export const FAKE_VM_DISK_BYTES = 64e9;
+
+export function addVmFiles(vm: string, diskBytes = FAKE_VM_DISK_BYTES): void {
+  writeFileSync(join(vm, "nvram.bin"), "");
+  writeFileSync(join(vm, "disk.img"), "");
+  truncateSync(join(vm, "disk.img"), diskBytes);
+}
+
+export function runVmElsewhere(vm: string): Promise<void> {
+  writeFileSync(join(vm, "running"), String(process.pid));
+  const lock = spawn("perl", [new URL("./fake-run-lock.pl", import.meta.url).pathname, join(vm, "config.json"), join(vm, "running"), String(process.pid)], { stdio: ["ignore", "pipe", "inherit"] });
+  lock.unref();
+  return new Promise((resolve, reject) => {
+    lock.stdout.once("data", () => {
+      lock.stdout.destroy();
+      resolve();
+    });
+    lock.once("exit", (code) => reject(new Error(`fake-run-lock.pl exited ${code}`)));
+  });
 }
 
 export function tartConfig(values: Record<string, unknown> = {}): TartConfig {

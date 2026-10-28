@@ -25,22 +25,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/ios/pins"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:/run/current-system/sw/bin:$PATH" TART_NO_AUTO_PRUNE=1
 command -v tart >/dev/null || die "install Tart first: brew install openai/tools/tart"
-LIST_TRIES=5
-LIST_GAP_SECONDS=2
-local_vms() {
-  tries=1
-  until listed=$(tart list --source local --quiet 2>&1); do
-    [ "$tries" -lt "$LIST_TRIES" ] || die "tart list failed $LIST_TRIES times, $LIST_GAP_SECONDS s apart, so whether a VM exists is not known: $listed"
-    printf 'prepare-ios-image: tart list failed, as when a VM is deleted while it reads: trying again in %s s: %s\n' "$LIST_GAP_SECONDS" "$listed" >&2
-    sleep "$LIST_GAP_SECONDS"
-    tries=$((tries + 1))
-  done
-  printf '%s\n' "$listed"
-}
-exists() {
-  vms=$(local_vms) || exit 1
-  printf '%s\n' "$vms" | grep -qxF "$1"
-}
+exists() { [ -f "${TART_HOME:-$HOME/.tart}/vms/$1/config.json" ]; }
 exists "$from" || die "there is no Tart VM $from: build the macOS image first with prepare-image.sh"
 if exists "$name" && [ "$replace" = 0 ]; then die "$name exists; give --replace to build it again"; fi
 

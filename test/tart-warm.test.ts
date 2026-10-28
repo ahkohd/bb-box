@@ -9,7 +9,7 @@ import { afterEach, test } from "node:test";
 import { TartBackend } from "../src/backends/tart/backend.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
-import { FAKE_DISK_GIB, FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
+import { FAKE_DISK_GIB, FAKE_IMAGE, FAKE_MAC, addImage, addVmFiles, fakeMacTools, runVmElsewhere, tartConfig } from "./fake-mac.ts";
 import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const SMALL: BoxSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
@@ -28,8 +28,6 @@ function setup(warm: Record<string, number> = { macos: 1 }) {
   fakeMacTools(mac);
   addImage(mac);
   const vmsDir = join(mac, ".tart", "vms");
-  // The image's disk, whose file is its build.
-  writeFileSync(join(vmsDir, FAKE_IMAGE, "disk.img"), "image");
   const contexts: ReturnType<typeof testContext>[] = [];
   const make = (installId = "test", counts = warm, values: Record<string, unknown> = {}) => {
     const context = testContext(new MemoryStorage(), installId, { warm: counts });
@@ -360,6 +358,7 @@ test("a fill cut short by a restart is listed with no owner, so the sweep releas
   const vm = "bb-box-warm-0123456789ab";
   mkdirSync(join(vmsDir, vm), { recursive: true });
   writeFileSync(join(vmsDir, vm, "config.json"), JSON.stringify({ os: "darwin", cpuCount: 4, memorySize: 8 * 2 ** 30 }));
+  addVmFiles(join(vmsDir, vm));
   mkdirSync(owners, { recursive: true });
   writeFileSync(join(owners, vm), ownerText({ install: "test", state: "filling", image: FAKE_IMAGE, build: "1", tart: "2.30.0", macos: "27A1" }));
   const held = (await backend.held()).find((guest) => guest.ref === vm);
@@ -464,6 +463,7 @@ test("a VM that keeps no name is named only when the Mac's ARP table gives its M
   const intruder = join(vmsDir, "someone-else");
   mkdirSync(intruder);
   writeFileSync(join(intruder, "config.json"), JSON.stringify({ os: "darwin", cpuCount: 4, memorySize: 8 * 2 ** 30, macAddress: "0a:0b:0c:0d:0e:0f" }));
+  addVmFiles(intruder);
   writeFileSync(join(intruder, "lease"), guest.address!);
   utimesSync(join(intruder, "lease"), new Date(), new Date(Date.now() + 60_000));
   await assert.rejects(backend.start(guest), /keeps no name, and its MAC address is a:b:c:d:e:f, not bb-box-/);
@@ -478,7 +478,7 @@ test("a warm VM that someone ran is retired and replaced", async () => {
   await backend.maintain();
   const [warm] = warmVms();
   rmSync(join(vmsDir, warm!, "state.vzvmsave"));
-  writeFileSync(join(vmsDir, warm!, "running"), String(process.pid));
+  await runVmElsewhere(join(vmsDir, warm!));
   await backend.maintain();
   assert.ok(!existsSync(join(vmsDir, warm!)), "the warm VM that runs is retired");
   assert.equal(warmVms().length, 1, "and a new one is made");
