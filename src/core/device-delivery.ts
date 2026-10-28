@@ -48,6 +48,7 @@ export const DEVICE_SERVER_FILES = [
   "src/device/test-card.ts",
   "src/device/test-driver.ts",
   "src/device/tree-server.dex",
+  "src/device/user-session.ts",
   "src/device/video-wants.ts",
   "src/device/ws.ts",
 ] as const;

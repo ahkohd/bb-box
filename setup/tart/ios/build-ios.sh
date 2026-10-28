@@ -195,6 +195,7 @@ done <"$here/devices.tsv"
 step "installing bb-box-check-ios and its probe app"
 sudo install -d -m 0755 /usr/local/libexec/bb-box "$share/ios"
 sudo install -m 0755 "$here/check-ios.sh" /usr/local/bin/bb-box-check-ios
+sudo install -m 0755 "$here/slot-clipboard.sh" /usr/local/libexec/bb-box/slot-clipboard
 sudo install -m 0644 "$here/devices.tsv" "$share/ios/devices.tsv"
 sudo install -m 0644 "$list" "$share/ios/$list_name.txt"
 sudo rm -rf "$share/ios/probe"

@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { DriverError } from "./driver.ts";
+import type { PasteboardWay } from "./user-session.ts";
 
 export const XCRUN = "/usr/bin/xcrun";
 const COMMAND_MS = 120_000;
@@ -90,19 +91,21 @@ export class Simctl {
   readonly #xcrun: string;
   readonly #run: Runner;
   readonly #lines: LineSpawner;
+  readonly #pasteboard: PasteboardWay;
 
-  constructor(options: { readonly xcrun?: string; readonly run?: Runner; readonly lines?: LineSpawner } = {}) {
+  constructor(options: { readonly xcrun?: string; readonly run?: Runner; readonly lines?: LineSpawner; readonly pasteboard?: PasteboardWay } = {}) {
     this.#xcrun = options.xcrun ?? XCRUN;
     this.#run = options.run ?? runProgram;
     this.#lines = options.lines ?? spawnedLines;
+    this.#pasteboard = options.pasteboard ?? { run: this.#run, ready: async () => null };
   }
 
-  async #simctl(args: readonly string[], options: SimctlOptions = {}): Promise<Ran> {
-    return this.#run(this.#xcrun, ["simctl", ...args], { timeoutMs: options.timeoutMs ?? COMMAND_MS, ...options });
+  async #simctl(args: readonly string[], options: SimctlOptions = {}, run: Runner = this.#run): Promise<Ran> {
+    return run(this.#xcrun, ["simctl", ...args], { timeoutMs: options.timeoutMs ?? COMMAND_MS, ...options });
   }
 
-  async #must(what: string, args: readonly string[], options: SimctlOptions = {}): Promise<string> {
-    const ran = await this.#simctl(args, options);
+  async #must(what: string, args: readonly string[], options: SimctlOptions = {}, run: Runner = this.#run): Promise<string> {
+    const ran = await this.#simctl(args, options, run);
     if (ran.code !== 0) throw new DriverError("failed", `simctl could not ${what}: ${(ran.stderr || ran.stdout).trim().split("\n").slice(-2).join(" ") || `exit code ${ran.code}`}`);
     return ran.stdout;
   }
@@ -227,10 +230,14 @@ export class Simctl {
   }
 
   async setClipboard(udid: string, text: string): Promise<void> {
-    await this.#must("set the device's clipboard", ["pbcopy", udid], { input: text, env: UTF8, timeoutMs: 30_000 });
+    await this.#must("set the device's clipboard", ["pbcopy", udid], { input: text, env: UTF8, timeoutMs: 30_000 }, this.#pasteboard.run);
   }
 
   async clipboard(udid: string): Promise<string> {
-    return this.#must("read the device's clipboard", ["pbpaste", udid], { env: UTF8, timeoutMs: 30_000 });
+    return this.#must("read the device's clipboard", ["pbpaste", udid], { env: UTF8, timeoutMs: 30_000 }, this.#pasteboard.run);
+  }
+
+  pasteboardReady(): Promise<string | null> {
+    return this.#pasteboard.ready();
   }
 }

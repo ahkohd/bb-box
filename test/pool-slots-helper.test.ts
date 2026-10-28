@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -226,6 +226,7 @@ function iosSetup(host: FakeDeviceHost, options: { list?: boolean } = {}): strin
   mkdirSync(join(ios, "slim"), { recursive: true });
   copyFileSync(join(dir, "host", "device-host"), join(ios, "device-host.sh"));
   for (const file of ["device-host-ports.pl", "devices.tsv", "pins", "idb-companion-LICENSE"]) copyFileSync(join(IOS, file), join(ios, file));
+  writeFileSync(join(ios, "slot-clipboard.sh"), readFileSync(join(IOS, "slot-clipboard.sh"), "utf8").replace(/^PATH=.*$/m, `PATH=${host.env.FAKE_MAC_BIN}:/usr/bin:/bin`), { mode: 0o755 });
   if (options.list !== false) cpSync(join(IOS, "slim"), join(ios, "slim"), { recursive: true });
   const work = tempDir("idb");
   writeFileSync(join(work, "idb_companion"), "#!/bin/sh\n", { mode: 0o755 });
@@ -255,6 +256,8 @@ test("mac-ios.sh installs idb_companion from its pin, the slots' helper and home
   assert.match(host.file(`${HOST}/settings`)!, /^most=12\nahead=1\nresetting-most=4\ndisk-reserve-gib=40\n/);
 
   assert.ok(!result.stdout.includes("warning="), "no sshd on the fake Mac, so nothing to warn of");
+  assert.match(result.stderr, /mac-ios\.sh: bbbox-admin set and read its device's clipboard, UTF-8 intact, in its own session, user\/499, with macOS's pasteboard server loaded there, in [\d.]+ s\n/);
+  assert.deepEqual(readdirSync(join(host.state, "agents", "user-499")), [], "the pasteboard server and every job booted out after");
 
   const sshd = join(host.root, "../bin/sshd");
   writeFileSync(sshd, "#!/bin/sh\nprintf 'port 22\\nallowusers operator@192.0.2.9\\nallowusers bbbox-admin\\nallowusers bbx-*\\n'\n", { mode: 0o755 });
@@ -293,4 +296,27 @@ test("mac-ios.sh lends only the models the Mac's Xcode can make, and sets up a h
   assert.equal(host.file(`${HOST}/kept`), null, "not kept");
   assert.match(host.file(`${HOST}/settings`)!, /^most=4\nahead=1\nresetting-most=2\ndisk-reserve-gib=20\n/);
   assert.match(result.stderr, /found no setup\/android beside setup\/ssh-pool, so no bb-box-h264/);
+});
+
+test("mac-ios.sh warns when a user with no desktop session cannot set and read a device's clipboard, and slot-clipboard.sh uses a desktop session's own pasteboard server where there is one (F-17)", () => {
+  const host = fakeDeviceHost({ slim: false, template: false });
+  const pool = iosSetup(host);
+  host.flag("session-bootstrap-fails");
+  const result = spawnSync("/bin/sh", [join(pool, "mac-ios.sh"), pool, "bbbox-admin"], { encoding: "utf8", env: { ...host.env } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^warning=A slot cannot set or read its device's clipboard, so pasting into an ios box and copying from it fail: launchd did not load macOS's pasteboard server in user\/499: Bootstrap failed: 5: Input\/output error$/m);
+  assert.deepEqual(host.devices("bbbox-admin"), {}, "the device made for the check is deleted");
+
+  const desktop = fakeDeviceHost({ slim: false, template: false });
+  const script = join(iosSetup(desktop), "..", "tart", "ios", "slot-clipboard.sh");
+  const as = (args: readonly string[], input = "") => spawnSync(join(desktop.env.FAKE_MAC_BIN, "sudo"), ["-n", "-u", "bbbox-admin", "--", ...args], { input, encoding: "utf8", env: { ...desktop.env } });
+  const udid = as(["xcrun", "simctl", "create", "check", "com.apple.CoreSimulator.SimDeviceType.iPhone-17", RUNTIME]).stdout.trim();
+  assert.equal(as(["xcrun", "simctl", "boot", udid]).status, 0);
+  assert.equal(as(["xcrun", "simctl", "pbcopy", udid], "x").status, 139, "outside a session with a pasteboard server, simctl crashes, as on a Mac");
+  desktop.flag("gui-499");
+  const run = spawnSync("/bin/sh", [script, "bbbox-admin", udid], { encoding: "utf8", env: { ...desktop.env } });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /^bbbox-admin set and read its device's clipboard, UTF-8 intact, in its desktop session, gui\/499, in [\d.]+ s\n$/);
+  assert.ok(!existsSync(join(desktop.state, "agents", "gui-499", "app.bb-box.pboard")), "no pasteboard server of its own beside macOS's");
+  assert.equal(readFileSync(join(desktop.state, "sims", "bbbox-admin", `${udid}.pasteboard`), "utf8"), "", "the device's clipboard is left empty");
 });

@@ -125,7 +125,7 @@ export function fakeDeviceHost(options: { slim?: boolean; template?: boolean } =
       if (!existsSync(sims)) return {};
       return Object.fromEntries(
         readdirSync(sims)
-          .filter((name) => !name.startsWith(".") && !name.endsWith(".pid"))
+          .filter((name) => !name.startsWith(".") && !name.endsWith(".pid") && !name.endsWith(".pasteboard"))
           .map((udid) => [udid, Object.fromEntries(readFileSync(join(sims, udid), "utf8").trim().split("\n").map((line) => line.split("=", 2) as [string, string]))]),
       );
     },

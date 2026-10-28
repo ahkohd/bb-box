@@ -48,6 +48,22 @@ boot_device() {
   echo "launchd_sim $R/Users/$as/Library/Developer/CoreSimulator/Devices/$1/data/var/run/launchd_bootstrap.plist" >"$F/commands/$pid"
   echo "$pid" >"$sims/$1.pid"
 }
+agents_of() { echo "$F/agents/$(echo "$1" | tr / -)"; }
+plist_string() { sed -n "s|.*<key>$2</key><string>\([^<]*\)</string>.*|\1|p" "$1" | head -n 1; }
+unescaped() { sed 's/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g'; }
+# A job's ProgramArguments are /bin/sh -c <wrapper> /usr/bin/xcrun simctl <op> <udid>, as slot-clipboard.sh writes them.
+run_session_job() {
+  arguments=$(sed -n 's|.*<key>ProgramArguments</key><array>\(.*\)</array>.*|\1|p' "$2" | sed 's|^<string>||; s|</string>$||' | awk -v RS='</string><string>' '{ print }')
+  wrapper=$(printf '%s\n' "$arguments" | sed -n 3p | unescaped)
+  op=$(printf '%s\n' "$arguments" | sed -n 6p)
+  udid=$(printf '%s\n' "$arguments" | sed -n 7p)
+  (cd "$(plist_string "$2" WorkingDirectory)" && FAKE_AS=$as FAKE_DOMAIN=$1 /bin/sh -c "$wrapper" "$FAKE_MAC_BIN/xcrun" simctl "$op" "$udid")
+}
+has_pasteboard_server() {
+  [ -n "${FAKE_DOMAIN:-}" ] || return 1
+  case $FAKE_DOMAIN in gui/*) flag "${FAKE_DOMAIN%%/*}-${FAKE_DOMAIN#*/}" ;; *) [ -e "$(agents_of "$FAKE_DOMAIN")/app.bb-box.pboard" ] ;; esac
+}
+
 shutdown_device() {
   [ "$(device_value "$1" state)" = Booted ] || return 0
   set_device_value "$1" state Shutdown
@@ -101,7 +117,7 @@ case $tool in
         echo "-- iOS 27.0 --"
         for file in "$sims"/*; do
           [ -f "$file" ] || continue
-          case $file in *.pid) continue ;; esac
+          case $file in *.pid | *.pasteboard) continue ;; esac
           udid=${file##*/}
           echo "    $(device_value "$udid" name) ($udid) ($(device_value "$udid" state))"
         done
@@ -114,13 +130,13 @@ case $tool in
         if [ "$2" = all ]; then
           for file in "$sims"/*; do
             [ -f "$file" ] || continue
-            case $file in *.pid) continue ;; esac
+            case $file in *.pid | *.pasteboard) continue ;; esac
             shutdown_device "${file##*/}"
-            rm -f "$file"
+            rm -f "$file" "$file.pasteboard"
           done
         else
           shutdown_device "$2"
-          rm -f "$sims/$2"
+          rm -f "$sims/$2" "$sims/$2.pasteboard"
         fi
         ;;
       boot)
@@ -135,6 +151,12 @@ case $tool in
         boot_device "$2"
         ;;
       bootstatus) [ "$(device_value "$2" state)" = Booted ] ;;
+      # Outside a session with a pasteboard server, simctl's pasteboard calls crash, as on a Mac (F-17).
+      pbcopy | pbpaste)
+        [ "$(device_value "$2" state)" = Booted ] || { echo "Device must be booted to access its pasteboard." >&2; exit 1; }
+        has_pasteboard_server || { echo "Connection to 'pboard' server had an error" >&2; exit 139; }
+        if [ "$1" = pbcopy ]; then cat >"$sims/$2.pasteboard"; else cat "$sims/$2.pasteboard" 2>/dev/null; fi
+        ;;
       spawn)
         [ "$(device_value "$2" state)" = Booted ] || { echo "Device is not booted." >&2; exit 149; }
         [ "$3 $4" = "launchctl disable" ] || exit 1
@@ -150,7 +172,7 @@ case $tool in
         ;;
       shutdown)
         if [ "$2" = all ]; then
-          for file in "$sims"/*; do [ -f "$file" ] && case $file in *.pid) ;; *) shutdown_device "${file##*/}" ;; esac; done
+          for file in "$sims"/*; do [ -f "$file" ] && case $file in *.pid | *.pasteboard) ;; *) shutdown_device "${file##*/}" ;; esac; done
         else
           shutdown_device "$2"
         fi
@@ -163,6 +185,17 @@ case $tool in
     mkdir -p "$F/daemons"
     case ${1:-} in
       bootstrap)
+        case $2 in
+          user/* | gui/*)
+            flag "session-bootstrap-fails" && { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; }
+            label=$(plist_string "$3" Label)
+            mkdir -p "$(agents_of "$2")"
+            [ ! -e "$(agents_of "$2")/$label" ] || exit 5
+            cp "$3" "$(agents_of "$2")/$label"
+            ! grep -q '<key>RunAtLoad</key><true/>' "$3" || run_session_job "$2" "$3"
+            exit 0
+            ;;
+        esac
         [ "$2" = system ] || exec "$FAKE_MACOS_BIN/launchctl" "$@"
         label=$(basename "$3" .plist)
         flag "bootstrap-fails-$label" && exit 5
@@ -172,12 +205,15 @@ case $tool in
       bootout)
         case $2 in
           system/*) rm -f "$F/daemons/${2#system/}" ;;
+          user/*/* | gui/*/*) [ -e "$(agents_of "${2%/*}")/${2##*/}" ] || exit 3; rm -f "$(agents_of "${2%/*}")/${2##*/}" ;;
           *) exec "$FAKE_MACOS_BIN/launchctl" "$@" ;;
         esac
         ;;
       print)
         case $2 in
           system/app.bb-box.*) [ -e "$F/daemons/${2#system/}" ] ;;
+          user/*/* | gui/*/*) [ -e "$(agents_of "${2%/*}")/${2##*/}" ] ;;
+          gui/*) flag "gui-${2#gui/}" ;;
           *) exec "$FAKE_MACOS_BIN/launchctl" "$@" ;;
         esac
         ;;

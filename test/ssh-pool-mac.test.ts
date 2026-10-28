@@ -752,7 +752,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   // With the whole setup folder, but no slimming list for this Mac's iOS runtime.
   const ios = join(mac.root, "..", "tart", "ios");
   mkdirSync(join(ios, "slim"), { recursive: true });
-  for (const file of ["device-host.sh", "device-host-ports.pl", "devices.tsv", "pins", "idb-companion-LICENSE"]) writeFileSync(join(ios, file), readFileSync(fileURLToPath(new URL(`../setup/tart/ios/${file}`, import.meta.url))));
+  for (const file of ["device-host.sh", "device-host-ports.pl", "slot-clipboard.sh", "devices.tsv", "pins", "idb-companion-LICENSE"]) writeFileSync(join(ios, file), readFileSync(fileURLToPath(new URL(`../setup/tart/ios/${file}`, import.meta.url))));
   const idb = tempDir("idb");
   writeFileSync(join(idb, "idb_companion"), "#!/bin/sh\n", { mode: 0o755 });
   assert.equal(spawnSync("tar", ["-czf", join(mac.state, "flags", "idb-companion.macos-arm64.tar.gz"), "-C", idb, "idb_companion"]).status, 0);

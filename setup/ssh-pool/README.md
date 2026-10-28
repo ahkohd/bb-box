@@ -320,6 +320,11 @@ off its line to keep it for whole boxes.
   takes a few minutes the first time, and is kept after
 - sets the helper up as a kept host, never deleted, closed until bb-box
   opens it
+- checks that a user with no desktop session, as a slot's user is, can set
+  and read a device's clipboard as the device server does: on a device made
+  as `bbbox-admin` for the check and deleted after, through a launchd job in
+  the user's own session (F-17). If it cannot, it warns, as pasting into an
+  ios box and copying from it would fail
 
 It needs a slimming list for the Mac's iOS runtime, as the iOS image does
 ([Slimming](../tart/ios/README.md#slimming)). It prints the line with `ios`:
