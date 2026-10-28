@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import type { DeviceOffer, IosModelName } from "../../core/device.ts";
 import { macSlotSizingWords, sizeMacSlots, type MacSlotSizing } from "../../core/slot-sizing.ts";
+import type { DeviceRoom } from "../../core/mac-capabilities.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import type { SshTransport } from "../../transports/ssh.ts";
 import type { RunResult, SshAccess } from "../../transports/types.ts";
@@ -38,6 +39,7 @@ export interface PoolSlotsAccess {
   readonly installId: string;
   settings(): PoolSlotsConfig;
   chip?(machine: SshPoolMachine): string | null;
+  devices?(machine: SshPoolMachine, signal?: AbortSignal): Promise<DeviceRoom>;
   machines(): readonly SshPoolMachine[];
   machine(name: string): SshPoolMachine | null;
   survey(signal?: AbortSignal): Promise<readonly PoolMacView[]>;
@@ -190,6 +192,18 @@ export class PoolSlots implements SlotLender {
     return null;
   }
 
+  async #devicesOn(machine: SshPoolMachine, signal?: AbortSignal): Promise<string | null> {
+    if (!this.#access.devices) return null;
+    try {
+      const room = await this.#access.devices(machine, signal);
+      return room.is === "no" ? `The pool's Mac ${machine.name} lends no iOS slot: ${room.why}` : null;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      this.#access.logError(`measure what ${machine.name} offers`, error);
+      return null;
+    }
+  }
+
   async #slotViews(signal?: AbortSignal): Promise<PoolMacView[]> {
     const views = (await this.#access.survey(signal)).filter((view) => listsSlots(view.machine));
     for (const view of views) this.#remember(view);
@@ -205,6 +219,11 @@ export class PoolSlots implements SlotLender {
       const why = this.unlendable(view);
       if (why) {
         words.push(why);
+        continue;
+      }
+      const devices = await this.#devicesOn(view.machine, signal);
+      if (devices) {
+        words.push(devices);
         continue;
       }
       const summary = slotsSetUp(view.status)!;

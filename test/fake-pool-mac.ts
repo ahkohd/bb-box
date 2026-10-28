@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { SshPoolBackend, type SshPoolBackendOptions } from "../src/backends/ssh-pool/backend.ts";
 import { parseSshPoolSettings } from "../src/backends/ssh-pool/config.ts";
 import type { BackendStorage } from "../src/backends/types.ts";
+import { join } from "node:path";
 import { fakeDeviceHost, type FakeDeviceHost } from "./fake-device-host.ts";
+import { fakeIosProbe } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
 export const POOL_MAC = "192.0.2.30";
@@ -19,8 +21,9 @@ export interface FakePoolMac {
   backend(settings?: Record<string, unknown>, storage?: BackendStorage, options?: SshPoolBackendOptions): SshPoolBackend & { readonly context: ReturnType<typeof testContext> };
 }
 
-export function fakePoolMac(options: { kinds?: string } = {}): FakePoolMac {
+export function fakePoolMac(options: { kinds?: string; probe?: Parameters<typeof fakeIosProbe>[1] } = {}): FakePoolMac {
   const ssh = fakeSsh();
+  fakeIosProbe(join(ssh.home(POOL_MAC), "bin"), options.probe);
   const mac = fakeDeviceHost();
   mac.flag("screensharing");
   assert.equal(mac.machine(["init"]).status, 0);

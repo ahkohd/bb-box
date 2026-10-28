@@ -11,7 +11,7 @@ import { hostAppInstallScript } from "../src/backends/tart/device-host.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
 import type { AcquireHooks, BoxIdentity, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { placementOf, type SlotTier } from "../src/core/device-host.ts";
-import { FAKE_MAC, addImage, fakeMacTools, imageRecord, tartConfig } from "./fake-mac.ts";
+import { FAKE_MAC, addImage, fakeIosProbe, fakeMacTools, imageRecord, tartConfig } from "./fake-mac.ts";
 import { IOS_HOST_DEVICES, IOS_HOST_FAKES, IOS_HOST_SETTINGS, IOS_IMAGE_BUILD, fakeIosHostMac } from "./fake-ios-host.ts";
 import { MemoryStorage, testContext } from "./helpers.ts";
 
@@ -432,7 +432,7 @@ test("a new shared host goes to the Mac whose video encoder streams least; a VM'
   assert.ok(!("lost" in taken));
   await until(() => starting.length > 0, "the host's VM to start");
   assert.deepEqual(starting, ["mac1 Apple M4 Max"]);
-  assert.deepEqual(backend.encoderOf(taken), { mac: "mac1", chip: "Apple M4 Max" });
+  assert.deepEqual(backend.encoderOf(taken), { mac: "mac1", chip: "Apple M4 Max", hardware: null });
   assert.equal(backend.encoderOf({ ref: "elsewhere", host: "mac9", address: null, size: null, data: {} }), null);
 });
 
@@ -540,4 +540,22 @@ test("a new shared host is sized for its Mac where nothing is set: on the fake 1
   const words = (await own.doctor(signal())).checks.find((each) => each.id === "ios-hosts.mac1")?.detail ?? "";
   assert.match(words, / A new host here has 3 slots \(set for this Mac\), 10 cores \(the backend's setting\), 20 GiB \(set for this Mac\)\.$/);
   await own.release(await own.acquire(second, placed.guest, hooks().hooks, signal()), releasing, signal());
+});
+
+test("a Mac whose encoder is measured missing starts no shared host until its iOS image has bb-box-h264; the doctor and box_list say what each Mac offers (065)", async () => {
+  const world = setup();
+  fakeIosProbe(join(world.ssh.home(FAKE_MAC), ".nix-profile", "bin"), { hardware: "no" });
+  const refused = await world.backend.slots!.offer("ios", null, signal());
+  assert.equal(refused.tier, "wait", JSON.stringify(refused));
+  assert.match("words" in refused ? refused.words : "", /No shared iOS host can start on mac1: mac1 cannot stream a device's screen: VideoToolbox could not make a hardware session \(-12903\), and the iOS image's build \S+ has no bb-box-h264\./);
+  const [report] = world.backend.macCapabilities();
+  assert.equal(report?.capabilities.simulator.is, "yes", "the simulator is the iOS image's, not the Mac's");
+  const check = (await world.backend.doctor(signal())).checks.find((each) => each.id === "devices.mac1");
+  assert.equal(check?.status, "warn");
+  assert.match(check!.detail, /no device video: no hardware H\.264 encoder, and no software one/);
+
+  writeFileSync(join(world.ssh.home(FAKE_MAC), ".bb-box", "tart", "images", "bb-box-ios.json"), `${imageRecord("ios", { build: IOS_IMAGE_BUILD, base: "build.20261003-021500", devices: IOS_HOST_DEVICES, tools: { idb_companion: "1.7.7", "bb-box-h264": "openh264 2.6.0" } })}\n`);
+  const offered = await world.backend.slots!.offer("ios", null, signal());
+  assert.equal(offered.tier, "new-host", JSON.stringify(offered));
+  assert.equal(world.backend.macCapabilities()[0]?.capabilities.softwareEncoder.is, "yes");
 });

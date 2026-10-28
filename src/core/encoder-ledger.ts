@@ -205,7 +205,11 @@ export interface EncoderPlace {
   readonly mac: string;
   readonly label: string;
   readonly chip: string | null;
+  readonly hardware?: boolean | null;
 }
+
+export const NO_HARDWARE_WORDS = "It has no hardware H.264 encoder, so its devices stream in software, on its CPU.";
+export const NO_HARDWARE_ROOM_WORDS = "On this Mac: no hardware H.264 encoder, so this device streams in software, on its CPU.";
 
 export interface StreamReport {
   readonly pixels: VideoSize;
@@ -276,7 +280,7 @@ export class EncoderLedgers {
       ledger = { place, streams: new Map(), held: new Map(), busyBelowFullSince: new Map(), allotment: null, startingUntil: 0, startingTimer: null };
       this.#macs.set(place.mac, ledger);
     }
-    if (place.chip !== null || ledger.place.chip === null) ledger.place = place;
+    if (place.chip !== null || ledger.place.chip === null) ledger.place = { ...place, hardware: place.hardware ?? ledger.place.hardware ?? null };
     return ledger;
   }
 
@@ -339,6 +343,7 @@ export class EncoderLedgers {
   roomWords(boxId: string): string | null {
     const mac = this.#macOf.get(boxId);
     if (!mac || !this.on) return null;
+    if (this.#macs.get(mac)?.place.hardware === false) return NO_HARDWARE_ROOM_WORDS;
     return roomWords(this.load(mac), this.budget(mac).budget);
   }
 
@@ -349,7 +354,7 @@ export class EncoderLedgers {
   #update(mac: string): void {
     const ledger = this.#macs.get(mac);
     if (!ledger) return;
-    if (!this.on) {
+    if (!this.on || ledger.place.hardware === false) {
       ledger.allotment = null;
       ledger.held.clear();
       for (const box of ledger.streams.keys()) this.#send(box, NO_DECISION);
@@ -436,6 +441,7 @@ export class EncoderLedgers {
     const id = `encoder.${label}` as CheckId;
     const name = `Video encoder on ${label}`;
     if (!this.on) return { id, name, status: "skipped", detail: "The encoder ledger is off in bb-box's settings: shared ios boxes' streams are capped at two thirds, and nothing else is.", fix: null };
+    if (ledger.place.hardware === false) return { id, name, status: "ok", detail: `${NO_HARDWARE_WORDS} ${ledger.streams.size === 1 ? "1 stream" : `${ledger.streams.size} streams`}.`, fix: null };
     const { budget, from } = this.budget(mac);
     const why = chip !== null ? this.#unprobed.get(chip) : undefined;
     const source = from === "chip" ? `an ${chip}, about ${budget} full-size iPhone frames a second` : from === "probe" ? `an ${chip}, measured at ${Math.round(budget)} full-size iPhone frames a second` : `${chip ? `an ${chip}, which is not in bb-box's table` : "a chip bb-box has not read"}; bb-box assumes ${budget} full-size iPhone frames a second`;

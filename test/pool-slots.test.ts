@@ -139,3 +139,34 @@ describe("a pool Mac whose line does not list ios", { timeout: 120_000 }, () => 
     assert.match(pool.mac.file("/var/db/bb-box/host/closed") ?? "", /^since=/);
   });
 });
+
+describe("the SSH host pool's Mac lends iOS slots only where it can stream a device (065)", { timeout: 120_000 }, () => {
+  it("measures the Mac before it lends, says what it offers, and lends nothing where it has no encoder", async () => {
+    const streams = fakePoolMac();
+    const lending = streams.backend();
+    await lending.members(wait());
+    const offer = await lending.slots!.offer("ios", null, wait());
+    assert.equal(offer.tier, "make", JSON.stringify(offer));
+    const [measured] = lending.macCapabilities();
+    assert.equal(measured?.mac, "mac-1");
+    assert.equal(measured?.capabilities.hardwareEncoder.is, "yes");
+    const doctor = await lending.doctor(wait());
+    const check = doctor.checks.find((each) => each.id === "devices.mac-1");
+    assert.equal(check?.status, "ok", JSON.stringify(check));
+    assert.match(check!.detail, /^The iOS Simulator \(Xcode 27\.0, iOS 27\.0\); video by its hardware H\.264 encoder\. Measured on the Mac/);
+    assert.equal(lending.encoderOf({ ref: "x", host: null, address: null, size: null, data: { box: "b", slotMac: "mac-1" } })?.hardware, true);
+
+    const silent = fakePoolMac({ probe: { hardware: "no" } });
+    const refusing = silent.backend();
+    await refusing.members(wait());
+    const refused = await refusing.slots!.offer("ios", null, wait());
+    assert.equal(refused.tier, "wait");
+    assert.match(
+      "words" in refused ? refused.words : "",
+      /The pool's Mac mac-1 lends no iOS slot: It cannot stream a device's screen: VideoToolbox could not make a hardware session \(-12903\), and bb-box-h264 is not installed\./,
+    );
+    const warned = (await refusing.doctor(wait())).checks.find((each) => each.id === "devices.mac-1");
+    assert.equal(warned?.status, "warn");
+    assert.match(warned!.detail, /It lends no ios slot\.$/);
+  });
+});

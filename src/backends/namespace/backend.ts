@@ -24,6 +24,7 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
+import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, loadReports, reportKey, type MacReport } from "../../core/mac-capabilities.ts";
 import { NamespaceApi, NamespaceError, type Instance, type InstanceShape, type NamespaceFetch, type PlatformConcurrency } from "./api.ts";
 import type { MacShape, NamespaceConfig, NamespaceKind } from "./config.ts";
 import { LINUX_IMAGE_TARGETS, LinuxImages, type LinuxImageDeps } from "./linux-images.ts";
@@ -234,6 +235,8 @@ export class NamespaceBackend implements Backend {
   readonly #now: () => number;
   readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly #placing = new Set<string>();
+  readonly #probes: MacProbeCache;
+  readonly #byChip = new Map<string, MacReport>();
   #ssh: Promise<{ ssh: Ssh; publicKey: string }> | null = null;
   readonly linuxImages: LinuxImages;
   readonly #linux: NamespaceLinux;
@@ -271,6 +274,19 @@ export class NamespaceBackend implements Backend {
       ...(options.linuxImageScript ? { buildScript: options.linuxImageScript } : {}),
       ...(options.setupArchive ? { setupArchive: options.setupArchive } : {}),
     });
+    this.#probes = new MacProbeCache({
+      run: async (instance, script, signal) => {
+        const result = await new SshTransport((await this.#keys()).ssh, this.#access(instance), "macos").run(script, { timeoutMs: PROBE_TIMEOUT_MS, signal, maxOutputBytes: 64 * 1024 });
+        if (result.exitCode !== 0 && !result.stdout.trim()) throw new Error(`Namespace's Mac ${instance} did not answer bb-box's probe: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+        return result.stdout;
+      },
+      saved: (report) => this.#rememberChip(report, true),
+      logError: (operation, error) => context.logError(operation, error),
+      now: this.#now,
+    });
+    void loadReports(context.storage)
+      .then((reports) => reports.forEach((report) => this.#rememberChip(report, false)))
+      .catch((error) => context.logError("read what Namespace's Macs offered", error));
     this.#linux = new NamespaceLinux({
       context,
       images: this.linuxImages,
@@ -282,6 +298,23 @@ export class NamespaceBackend implements Backend {
       ...(options.dockerCli ? { dockerCli: options.dockerCli } : {}),
       ...(options.linuxPullScript ? { pullScript: options.linuxPullScript } : {}),
     });
+  }
+
+  #rememberChip(report: MacReport, keep: boolean): void {
+    const chip = report.chip ?? report.mac;
+    const known = this.#byChip.get(chip);
+    if (known && known.at > report.at) return;
+    const byChip = { ...report, mac: chip };
+    this.#byChip.set(chip, byChip);
+    if (keep) void this.#context.storage.set(reportKey(chip), byChip).catch((error) => this.#context.logError(`keep what Namespace's ${chip} Macs offer`, error));
+  }
+
+  macCapabilities(): readonly MacReport[] {
+    return [...this.#byChip.values()].sort((a, b) => b.at - a.at);
+  }
+
+  measureMac(instance: string, signal?: AbortSignal): Promise<MacReport> {
+    return this.#probes.measure(instance, signal);
   }
 
   kinds(): readonly BoxKind[] {
@@ -400,6 +433,7 @@ export class NamespaceBackend implements Backend {
       }
       const guest = claimed(ready);
       await hooks.claim(guest);
+      void this.#probes.measure(ready.id).catch((error) => this.#context.logError(`measure what Namespace's Mac ${ready.id} offers`, error));
       return guest;
     } catch (error) {
       const instance = made?.id ?? (await this.#find(box.boxId).catch(() => null))?.id;
@@ -536,6 +570,11 @@ export class NamespaceBackend implements Backend {
     });
     checks.push(await this.#limitsCheck(signal));
     checks.push(await this.#linuxImagesCheck(signal));
+    const macs = held.filter((instance) => instance.labels[LABELS.kind] !== undefined && !isLinuxKind(instance.labels[LABELS.kind] as NamespaceKind));
+    for (const instance of macs) await this.#probes.measure(instance.id, signal).catch((error) => this.#context.logError(`measure what Namespace's Mac ${instance.id} offers`, error));
+    const reports = this.macCapabilities();
+    if (!reports.length) checks.push({ id: "devices.namespace", name: "iOS devices on Namespace's Macs", status: "skipped", detail: "Not measured yet: bb-box measures each Namespace Mac it starts.", fix: null });
+    for (const report of reports) checks.push(capabilityCheck(`namespace.${report.mac}`, `Namespace's ${report.mac} Macs`, report, now));
     notes.push(`Each machine lives at most ${this.#config.longestLifeHours} hours, the plan's longest life, and its deadline is kept no more than an hour ahead, so a machine bb-box loses track of ends within the hour.`);
     const failing = checks.some((check) => check.status === "fail");
     return { ok: !failing, summary: failing ? "Namespace does not answer to the token." : `Namespace answers; ${held.length} machine${held.length === 1 ? "" : "s"}.`, checks, notes };

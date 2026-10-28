@@ -130,3 +130,41 @@ export function tartConfig(values: Record<string, unknown> = {}): TartConfig {
   assert.ok(parsed.enabled && parsed.ok, JSON.stringify(parsed));
   return parsed.config;
 }
+
+/**
+ * Gives a Mac what bb-box's capability probe (065) reads, in `bin`: Xcode
+ * through xcode-select and xcodebuild, its iOS runtimes through `xcrun
+ * simctl`, and a hardware check that `xcrun swiftc` builds, which says
+ * `hardware` (yes, or no as VideoToolbox's -12903). Each xcrun call is noted
+ * in the Mac's ~/.fake-xcrun-log. `software` puts a bb-box-h264 at that path.
+ */
+export function fakeIosProbe(bin: string, options: { readonly hardware?: "yes" | "no"; readonly xcode?: string | null; readonly runtimes?: readonly string[]; readonly software?: string } = {}): void {
+  mkdirSync(bin, { recursive: true });
+  const xcode = options.xcode === undefined ? "27.0" : options.xcode;
+  const tool = (name: string, body: string) => {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(bin, name), 0o755);
+  };
+  if (xcode !== null) {
+    const developer = join(bin, "..", "Xcode.app", "Contents", "Developer");
+    mkdirSync(developer, { recursive: true });
+    tool("xcode-select", `echo '${developer}'`);
+    tool("xcodebuild", `echo 'Xcode ${xcode}'; echo 'Build version 27A266a'`);
+  }
+  const hardware = options.hardware === "no" ? "echo hardware=no status=-12903" : "echo hardware=yes frames=12 seconds=0.05";
+  const runtimes = (options.runtimes ?? ["iOS 27.0"]).map((runtime) => `echo '${runtime} (${runtime.slice(4)} - 24A434) - com.apple.CoreSimulator.SimRuntime.${runtime.replace(/[ .]/g, "-")}'`).join("; ");
+  tool(
+    "xcrun",
+    `echo "$*" >> "$HOME/.fake-xcrun-log"
+case "$1" in
+  --find) echo /Applications/Xcode.app/Contents/Developer/usr/bin/swiftc ;;
+  simctl) echo '== Runtimes =='; ${runtimes || ":"} ;;
+  swiftc) while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done; printf '#!/bin/sh\\n%s\\n' '${hardware}' > "$out"; chmod +x "$out" ;;
+esac`,
+  );
+  if (options.software) {
+    mkdirSync(join(options.software, ".."), { recursive: true });
+    writeFileSync(options.software, "#!/bin/sh\necho 'x264 0.165, source b35605ace3ddf7c1a5d67a2eb553f034aef41d55'\n");
+    chmodSync(options.software, 0o755);
+  }
+}

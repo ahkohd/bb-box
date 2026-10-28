@@ -31,6 +31,11 @@ export const CHECKS = {
     what: "An ios box's macOS host has no Device Hub running (063): it takes the device's pasteboard, and quitting it shuts the device down, so the device server kills it within 5 s of its start. Says how often it has.",
   },
   "device.<box>": { name: "Device server of <box>", from: ["bb-box"], what: "A device box's server (063): the version it runs against the one this bb-box delivers, a delivery waiting for a person or a recording, a version marked bad after it did not answer, and a server its service manager gave up on." },
+  "devices.<mac>": {
+    name: "iOS devices on <mac>",
+    from: ["ssh-pool", "tart", "namespace"],
+    what: "What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot.",
+  },
   "encoder.<mac>": {
     name: "Video encoder on <mac>",
     from: ["bb-box"],

@@ -93,6 +93,7 @@ import {
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { PROBE_SECONDS, encoderProbeScript, parseEncoderProbe } from "../encoder-probe.ts";
+import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, deviceRoom, hardwareKnown, imageCapabilities, loadReports, reportKey, type DeviceRoom, type IosImageFacts, type MacReport } from "../../core/mac-capabilities.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
@@ -837,6 +838,8 @@ export class TartBackend implements Backend {
   /** The Macs whose build is ready, as their state last said. */
   readonly #qemuVideoReady = new Set<string>();
   readonly #chips = new Map<string, string>();
+  readonly #iosImages = new Map<string, IosImageFacts | null>();
+  readonly #probes: MacProbeCache;
 
   constructor(config: TartConfig, context: BackendContext, options: TartBackendOptions = {}) {
     this.id = context.id;
@@ -851,6 +854,47 @@ export class TartBackend implements Backend {
       hold: (member, box, signal) => this.#hold(member, box, signal),
     });
     this.slots = config.iosImage ? this.#iosHosts() : undefined;
+    this.#probes = new MacProbeCache({
+      run: async (mac, body, signal) => {
+        const host = this.#hostNamed(mac);
+        if (!host) throw new Error(`${mac} is not one of this Tart backend's Macs.`);
+        return (await this.#run(host, script(body), { timeoutMs: PROBE_TIMEOUT_MS, signal })).stdout;
+      },
+      saved: (report) => void this.#context.storage.set(reportKey(report.mac), report).catch((error) => this.#context.logError(`keep what ${report.mac} offers`, error)),
+      logError: (operation, error) => this.#context.logError(operation, error),
+    });
+    void loadReports(context.storage)
+      .then((reports) => reports.forEach((report) => this.#hostNamed(report.mac) && this.#probes.remember(report)))
+      .catch((error) => this.#context.logError("read what the Tart Macs offer", error));
+  }
+
+  #iosImageFacts(state: HostState): IosImageFacts | null {
+    const image = this.#config.iosImage;
+    const record = image ? state.records.get(image) : undefined;
+    if (!image || !record || !state.vms.some((vm) => vm.name === image)) return null;
+    const device = record.devices?.[0];
+    const runtime = device && "runtime" in device && device.runtime && "xcode" in device.runtime ? { os: device.runtime.os, xcode: device.runtime.xcode } : null;
+    return { build: record.build, runtime, softwareEncoder: record.encoders?.software ?? record.tools["bb-box-h264"] ?? null, hardwareEncoder: record.encoders?.hardware ?? null };
+  }
+
+  #iosReport(mac: string): MacReport | null {
+    if (!this.#iosImages.has(mac) && !this.#probes.report(mac)) return null;
+    return imageCapabilities(mac, this.#iosImages.get(mac) ?? null, this.#probes.report(mac), Date.now());
+  }
+
+  macCapabilities(): readonly MacReport[] {
+    if (!this.#config.iosImage) return [];
+    return this.#config.hosts.flatMap((host) => this.#iosReport(host.name) ?? []);
+  }
+
+  async #measureMacs(signal?: AbortSignal): Promise<void> {
+    if (!this.#config.iosImage) return;
+    await Promise.all(this.#on().map((host) => (this.#probes.report(host.name) ? undefined : this.#probes.measure(host.name, signal).catch((error) => this.#context.logError(`measure what ${host.name} offers`, error)))));
+  }
+
+  #devicesOn(host: TartHost): DeviceRoom {
+    const report = this.#iosReport(host.name);
+    return report ? deviceRoom(report.capabilities) : { is: "unknown", why: "not measured yet" };
   }
 
   #iosHosts(): IosHosts {
@@ -861,6 +905,8 @@ export class TartBackend implements Backend {
       mac: (name) => this.#hostNamed(name),
       states: (signal) => this.#states(signal),
       hostRoom: (host, state, settings, leaving) => this.#hostRoom(host, state as MacState | Error, settings, leaving),
+      devices: (host) => this.#devicesOn(host),
+      measure: (signal) => this.#measureMacs(signal),
       placement: (task) => this.#chain(task),
       encoderLoad: (host) => this.#context.encoder?.load(host.name) ?? 0,
       placing: (host, vm, memoryMiB) => {
@@ -1622,7 +1668,7 @@ export class TartBackend implements Backend {
 
   encoderOf(guest: Guest): MacEncoder | null {
     if (!guest.host || !this.#config.hosts.some((host) => host.name === guest.host)) return null;
-    return { mac: guest.host, chip: this.#chips.get(guest.host) ?? null };
+    return { mac: guest.host, chip: this.#chips.get(guest.host) ?? null, hardware: hardwareKnown(this.#iosReport(guest.host)) };
   }
 
   async probeEncoder(mac: string, signal?: AbortSignal): Promise<number | null> {
@@ -1958,6 +2004,7 @@ export class TartBackend implements Backend {
    * left when it could not reach the Mac to clean up.
    */
   async maintain(signal?: AbortSignal): Promise<void> {
+    if (this.#config.iosImage) for (const host of this.#on()) this.#probes.refresh(host.name);
     try {
       await this.#upkeep.run(signal ?? this.#stopping.signal);
       await this.slots?.maintain(signal ?? this.#stopping.signal).catch((error) => this.#context.logError("shared iOS hosts", error));
@@ -2552,6 +2599,10 @@ export class TartBackend implements Backend {
     if (this.slots) {
       const unread = (error: unknown): DoctorCheck[] => [{ id: "ios-hosts.all", name: "Shared iOS hosts", status: "warn", detail: `bb-box could not read its shared iOS hosts: ${message(error)}`, fix: null }];
       checks.push(...(await this.slots.doctor(states, signal).catch(unread)));
+      for (const host of this.#config.hosts) {
+        await this.#probes.measure(host.name, signal).catch(() => null);
+        checks.push(capabilityCheck(host.name, host.name, this.#iosReport(host.name)));
+      }
     }
     const ok = checks.every((check) => check.status !== "fail");
     const first = checks.find((check) => check.status === "fail");
@@ -2764,6 +2815,7 @@ export class TartBackend implements Backend {
     if (qemuVideo?.status === "missing") this.#buildVideo(host);
     const state = parseState(text);
     if (state.chip) this.#chips.set(host.name, state.chip);
+    if (this.#config.iosImage) this.#iosImages.set(host.name, this.#iosImageFacts(state));
     return { ...state, qemu: parseQemuState(text), qemuVideo };
   }
 
