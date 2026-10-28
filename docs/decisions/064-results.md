@@ -2238,3 +2238,70 @@ after, tsc is clean and the six files they touch pass, 64 of 64.
   a dedicated box's VM's; 8 otherwise.
 - **The image measures its hardware encoder with ffmpeg,** as the macOS
   image has it, rather than the probe's Swift check.
+
+## 065 C: Namespace hosts (064 unit 7)
+
+Built on 28 October 2026, as decided in
+[065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md).
+
+### What it adds
+
+- **`SlotLender` on the Namespace backend**
+  ([`ios-hosts.ts`](../../src/backends/namespace/ios-hosts.ts)). Namespace
+  offers `ios` as slots once it has measured a Mac that runs the iOS
+  Simulator, whose newest iOS runtime has a slimming list in bb-box. The
+  setting `ios-hosts-on`, on by default, turns it off. Its tier is the last
+  of 064's order, `new-host` at a Namespace Mac's cost.
+- **A host is a Namespace Mac made for an ios box,** at the largest shape
+  the workspace allows, labelled `bbbox-role=device-host`. Its record, with
+  the boxes promised while it starts, is in the backend's storage, as a
+  Namespace Mac has no owner file to keep it on. Its start: the Mac ready,
+  the tailnet joined, the Mac measured, then bb-box's setup unpacked and
+  `mac-ios.sh` run as root with the host's settings: idb_companion from
+  its pin, the slots' helper, the slimming list and its seed, and
+  `bb-box-h264`. Boxes asked for while it starts join it. It is deleted at
+  its last release, and lends no new slot in the hour before the plan's
+  longest life; each box on it says it ends when the host does.
+- **`mac-ios.sh`** keeps only the models the Mac's Xcode can make, so a
+  Mac with Xcode 26 lends the iPhone 17, and sets up a host deleted after
+  its last box when given its settings.
+- **A list for iOS 26.2 (23C54),** the newest runtime of Namespace's Macs:
+  the iOS 27.0 list's 112 labels, which M18 found all off on iOS 26.2, and
+  which the seed's check found all off again.
+- **A slot's commands run as its user through the Mac's own SSH and
+  `sudo`** ([`slot-user.ts`](../../src/transports/slot-user.ts)), as
+  Namespace's agent holds port 22 and Remote Login is off.
+- **The probe** also reports the newest iOS runtime and the device types
+  Xcode has, which the Namespace offer is made from.
+- **The doctor's `ios-hosts.namespace`:** the host's slots, its end and how
+  its video is encoded, or why none can start. The Namespace guide says a
+  host takes the workspace's one Mac, and `macos` boxes refused for it say
+  so.
+
+### Deviations from 064 and 065
+
+- **Not off by a hand switch, on by what was measured,** as 065 decided;
+  `ios-hosts-on` stays for an operator to turn it off.
+- **No `ssh <box name>` and no terminal** for a box on a Namespace host:
+  Namespace's Macs have no SSH server for other users. Commands, files,
+  BB's enrolment and the device server all go through the Mac's own user.
+- **Streams by hardware where the Mac has an encoder.** Namespace's Macs
+  measured on 28 October 2026, an M4 Pro VM and an M5 Max VM, both had
+  one; software, B's, is the fallback, or every stream with `iosEncoder`
+  set to `software`.
+- **No BB app kept for the slots,** as the Tart and pool hosts keep it:
+  each slot downloads BB's app as it enrols, about 3 s more.
+- **A host's size is the workspace's largest Mac,** 6 cores and 14 GiB
+  here, and its slots the sizing estimate for it, 4.
+
+### Checks, before the production check
+
+On a Linux box, from the branch on origin/main at de8fdef: tsc clean; the
+node suite 2,239 passed, 0 failed, 288 skipped, the docs and reference
+tests among them; vitest 224 passed. The lender is tested against a stub
+host that answers as the slot helper does: two boxes, one starting the
+host and one joining it, each a slot, the last release deleting the
+Mac; no new slot in the last hour; a Mac that cannot run the Simulator
+failing its host with words and the upkeep clearing it; no host while the
+workspace's Mac is taken. `mac-ios.sh`'s new parts ran for real on a
+Namespace Mac in B's check above.

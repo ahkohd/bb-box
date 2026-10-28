@@ -8,6 +8,7 @@ import { KEEP_AHEAD_MS, LABELS, MAC_CUA, NamespaceBackend, macShapeFor } from ".
 import { CUA_SHA256, CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { parseNamespacePart, type NamespaceConfig } from "../src/backends/namespace/config.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
+import { reportKey } from "../src/core/mac-capabilities.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
@@ -210,7 +211,7 @@ test("the settings need a token, a known region and sane limits, each problem at
   assert.equal(parsed.ok, false);
   assert.deepEqual(parsed.ok ? [] : parsed.problems.map((problem) => problem.path), ["token", "region", "macos-version", "machines", "longest-life-hours"]);
   const fine = parseNamespacePart({ id: "namespace", hosts: [], fields: { token: FAKE_NAMESPACE_TOKEN } });
-  assert.deepEqual(fine.ok ? fine.config : null, { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 3, largestMachine: null });
+  assert.deepEqual(fine.ok ? fine.config : null, { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 3, largestMachine: null, iosHosts: { on: true, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 } });
 });
 
 function fakeTailscaleTools() {
@@ -372,4 +373,40 @@ test("a macos-desktop box gets Cua Driver for computer use: the pinned release c
   assert.deepEqual(backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.computerUse, { driver: "cua", version: CUA_VERSION, socket: "/Users/runner/Library/Caches/cua-driver/cua-driver.sock" });
   assert.equal(backend.kinds().find((kind) => kind.id === "macos")!.capabilities.computerUse, null);
   assert.equal(backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays[0]!.clipboard, "commands", "Screen Sharing sends a viewer none of the box's clipboard, so bb-box moves it with pbcopy and pbpaste");
+});
+
+test("Namespace offers ios as slots on a shared host once it has measured a Mac that runs the iOS Simulator, and not while its setting is off (065, unit 7)", async () => {
+  const report = {
+    mac: "Apple M4 Pro (Virtual)",
+    chip: "Apple M4 Pro (Virtual)",
+    macos: "26.3.1",
+    at: 1,
+    where: "mac",
+    capabilities: {
+      simulator: { is: "yes", what: { xcode: "26.1.1", runtimes: ["iOS 26.2"], newest: { os: "26.2", build: "23C54" }, deviceTypes: ["com.apple.CoreSimulator.SimDeviceType.iPhone-17"] } },
+      hardwareEncoder: { is: "yes", what: { fullSizeFps: 141 } },
+      softwareEncoder: { is: "no", why: "bb-box-h264 is not installed" },
+    },
+  };
+  const made = async (iosHosts?: NamespaceConfig["iosHosts"]) => {
+    fakeSsh();
+    const storage = new MemoryStorage();
+    await storage.set(reportKey(report.chip), report);
+    const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
+    const backend = disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, testContext(storage, "inst1"), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return backend;
+  };
+  const backend = await made();
+  const ios = backend.kinds().find((kind) => kind.id === "ios");
+  assert.ok(ios?.slotsOnly);
+  assert.equal(ios.capabilities.command?.admin, false);
+  assert.deepEqual(ios.capabilities.device?.devices.map((device) => device.model), ["iPhone 17"]);
+  assert.equal(backend.slots.lends("ios"), true);
+  const capacity = await backend.capacity("ios", { cores: 6, memoryMiB: 14336, diskGiB: null }, []);
+  assert.equal(capacity.ok, false);
+  assert.match(capacity.message ?? "", /only as slots on a shared iOS host/);
+  assert.match(backend.macCapabilities()[0]?.chip ?? "", /M4 Pro/);
+  const off = await made({ on: false, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 });
+  assert.equal(off.kinds().some((kind) => kind.id === "ios"), false);
 });

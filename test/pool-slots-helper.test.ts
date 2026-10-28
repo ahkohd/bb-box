@@ -281,3 +281,16 @@ test("mac-ios.sh installs idb_companion from its pin, the slots' helper and home
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /bb-box has no slimming list for iOS 27\.0 \(24A434\), so it lends no iOS slot on this Mac/);
 });
+
+test("mac-ios.sh lends only the models the Mac's Xcode can make, and sets up a host bb-box deletes after its last box when given its settings (065, unit 7)", () => {
+  const host = fakeDeviceHost({ slim: false, template: false });
+  const pool = iosSetup(host);
+  host.flag("no-iphone-18-pro");
+  const result = spawnSync("/bin/sh", [join(pool, "mac-ios.sh"), pool, "bbbox-admin"], { encoding: "utf8", env: { ...host.env, HOST_SETTINGS: "most=4\nahead=1\nresetting-most=2\ndisk-reserve-gib=20" } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(host.file("/usr/local/share/bb-box/ios/devices.tsv")!.split("\n").filter(Boolean).map((line) => line.split("\t")[0]), ["iPhone 17", "iPad Pro 13-inch (M5)"]);
+  assert.match(result.stderr, /setting it up as a host bb-box deletes after its last box/);
+  assert.equal(host.file(`${HOST}/kept`), null, "not kept");
+  assert.match(host.file(`${HOST}/settings`)!, /^most=4\nahead=1\nresetting-most=2\ndisk-reserve-gib=20\n/);
+  assert.match(result.stderr, /found no setup\/android beside setup\/ssh-pool, so no bb-box-h264/);
+});

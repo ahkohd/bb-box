@@ -6,6 +6,14 @@ export type NamespaceKind = (typeof NAMESPACE_KINDS)[number];
 export const NAMESPACE_REGIONS = ["us", "eu"] as const;
 export type NamespaceRegion = (typeof NAMESPACE_REGIONS)[number];
 
+export interface NamespaceIosHosts {
+  readonly on: boolean;
+  readonly most: number | null;
+  readonly ahead: number;
+  readonly resettingMost: number;
+  readonly diskReserveGiB: number;
+}
+
 export interface NamespaceConfig {
   readonly token: string;
   readonly region: NamespaceRegion;
@@ -13,7 +21,10 @@ export interface NamespaceConfig {
   readonly machines: number;
   readonly longestLifeHours: number;
   readonly largestMachine: MacShape | null;
+  readonly iosHosts?: NamespaceIosHosts;
 }
+
+export const NAMESPACE_IOS_HOSTS_DEFAULTS: NamespaceIosHosts = { on: true, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 };
 
 export interface MacShape {
   readonly cores: number;
@@ -34,6 +45,11 @@ export const NAMESPACE_KEYS = {
   machines: "machines",
   longestLifeHours: "longest-life-hours",
   largestMachine: "largest-machine",
+  iosHostsOn: "ios-hosts-on",
+  iosHostsMost: "ios-hosts-most",
+  iosHostsAhead: "ios-hosts-ahead",
+  iosHostsResettingMost: "ios-hosts-resetting-most",
+  iosHostsDiskReserveGiB: "ios-hosts-disk-reserve-gib",
 } as const;
 
 export const NAMESPACE_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
@@ -77,6 +93,41 @@ export const NAMESPACE_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     label: "Largest machine",
     description: "The largest Mac bb-box asks for, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before bb-box asks Namespace, so another backend can take it. Empty: the largest the workspace allows, which bb-box reads from Namespace when the token may, or learns the first time Namespace refuses a Mac for its size.",
     group: "boxes",
+  },
+  [NAMESPACE_KEYS.iosHostsOn]: {
+    type: "boolean",
+    label: "Shared iOS hosts",
+    description:
+      "Whether Namespace lends ios boxes as macOS users on a shared host: a Namespace Mac made for an ios box that finds no slot on a pool Mac or a Tart host, and deleted when its last box goes. It lends once bb-box has measured that Namespace's Macs run the iOS Simulator. A host takes the workspace's one Mac, so no macos box starts on Namespace while it lives.",
+    group: "boxes",
+    default: NAMESPACE_IOS_HOSTS_DEFAULTS.on,
+  },
+  [NAMESPACE_KEYS.iosHostsMost]: {
+    type: "number",
+    label: "Slots a host lends at most",
+    description: "Empty: bb-box estimates it from the Mac's cores, memory and video encoder, as for a pool Mac.",
+    group: "advanced",
+  },
+  [NAMESPACE_KEYS.iosHostsAhead]: {
+    type: "number",
+    label: "Slots a host keeps ready",
+    description: "Ready slots a host keeps while it holds a box.",
+    group: "advanced",
+    default: NAMESPACE_IOS_HOSTS_DEFAULTS.ahead,
+  },
+  [NAMESPACE_KEYS.iosHostsResettingMost]: {
+    type: "number",
+    label: "Slots a host resets at once",
+    description: "Released slots a host sweeps at once, at most.",
+    group: "advanced",
+    default: NAMESPACE_IOS_HOSTS_DEFAULTS.resettingMost,
+  },
+  [NAMESPACE_KEYS.iosHostsDiskReserveGiB]: {
+    type: "number",
+    label: "Disk a host keeps free (GiB)",
+    description: "Below this much free disk, a host makes no new slot.",
+    group: "advanced",
+    default: NAMESPACE_IOS_HOSTS_DEFAULTS.diskReserveGiB,
   },
 };
 
@@ -125,6 +176,17 @@ export function parseNamespacePart(part: BackendPart): ParsedBackend<NamespaceCo
   const largestMachine = largestText ? parseMacShape(largestText) : null;
   if (largestText && !largestMachine) problem(NAMESPACE_KEYS.largestMachine, `Namespace: "${largestText}" is not a machine such as 6x14, cores x memory in GB.`);
 
+  const on = values[NAMESPACE_KEYS.iosHostsOn];
+  const mostText = values[NAMESPACE_KEYS.iosHostsMost];
+  const most = mostText === undefined || mostText === null || mostText === "" ? null : number(values, NAMESPACE_KEYS.iosHostsMost, NaN);
+  if (most !== null && !(Number.isInteger(most) && most >= 1 && most <= 64)) problem(NAMESPACE_KEYS.iosHostsMost, "Namespace: the slots a host lends at most must be a whole number from 1 to 64, or empty.");
+  const ahead = number(values, NAMESPACE_KEYS.iosHostsAhead, NAMESPACE_IOS_HOSTS_DEFAULTS.ahead);
+  const resettingMost = number(values, NAMESPACE_KEYS.iosHostsResettingMost, NAMESPACE_IOS_HOSTS_DEFAULTS.resettingMost);
+  const diskReserveGiB = number(values, NAMESPACE_KEYS.iosHostsDiskReserveGiB, NAMESPACE_IOS_HOSTS_DEFAULTS.diskReserveGiB);
+  for (const [key, value, least] of [[NAMESPACE_KEYS.iosHostsAhead, ahead, 0], [NAMESPACE_KEYS.iosHostsResettingMost, resettingMost, 1], [NAMESPACE_KEYS.iosHostsDiskReserveGiB, diskReserveGiB, 0]] as const)
+    if (!Number.isInteger(value) || value < least) problem(key, `Namespace: ${key} must be a whole number, at least ${least}.`);
+  const iosHosts: NamespaceIosHosts = { on: on === undefined || on === null ? NAMESPACE_IOS_HOSTS_DEFAULTS.on : on === true || on === "true", most, ahead, resettingMost, diskReserveGiB };
+
   if (problems.length || !isRegion(region)) return { ok: false, problems };
-  return { ok: true, config: { token, region, macosVersion, machines, longestLifeHours, largestMachine } };
+  return { ok: true, config: { token, region, macosVersion, machines, longestLifeHours, largestMachine, iosHosts } };
 }

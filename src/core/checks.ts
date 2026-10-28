@@ -118,8 +118,8 @@ export const CHECKS = {
   "sizes.<mac>": { name: "Room for each kind on <mac>", from: ["tart"], what: "The Mac holds a box of each kind at its default size." },
   "ios-hosts.<mac>": {
     name: "Shared iOS hosts on <mac>",
-    from: ["tart"],
-    what: "The shared iOS hosts on the Mac (064): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; or, with none, whether one can start.",
+    from: ["tart", "namespace"],
+    what: "The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start.",
   },
 
   // SSH host pool.
