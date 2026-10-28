@@ -132,7 +132,7 @@ When the device turns, the frame turns with it in a third of a second, its last 
 
 While the device starts, its screen is black, with its name and 'Booting'. A device that is asleep shows its last picture dimmed, with 'Asleep' and **Wake**, and one that failed shows why, with **Reboot device**. Either button takes control if you do not have it.
 
-Where your browser cannot play the device's video, as where it has no WebCodecs or the video does not start within 3 seconds, the device shows a picture of its screen a few times a second instead, over the same connection, and says so above it: 'This browser cannot play the device's video, so it shows a picture a few times a second.' It never shows the box's desktop in its place, so a click never lands on the wrong screen. While it waits for its first picture, it shows the device's name and 'Connecting', or 'Booting' while the device starts.
+Where your browser cannot play the device's video, as where it has no WebCodecs, the device shows a picture of its screen a few times a second instead, over the same connection, and says so above it: 'This browser cannot play the device's video, so it shows a picture a few times a second.' Where the video does not start within 3 seconds, as on a busy Mac, it shows pictures the same way, says 'The device's video did not show within 3 s, so this shows a picture a few times a second and tries the video again shortly.', and tries the video again after 10 seconds, then after longer waits up to a minute, until a frame shows. It never shows the box's desktop in its place, so a click never lands on the wrong screen. While it waits for its first picture, it shows the device's name and 'Connecting', or 'Booting' while the device starts.
 
 ### The device's controls
 
