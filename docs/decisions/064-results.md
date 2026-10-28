@@ -1781,3 +1781,179 @@ were the owner's Helium, driven by playwriter.
 - **Item 5 was not seen live.** It needs two instances of one install and a
   start waiting for room.
 - **Item 6's person in control** was not checked again live; unit 6 did.
+
+## F-9: faults from H6, H8 and F-8, and hosts sized from each Mac
+
+Built on 28 October 2026. The host's helper version 5; device server
+version 26, unchanged. Items 1 to 5 were deployed as PR 1193; item 7 came
+after, at the owner's request.
+
+### H6: the iOS image changed while shared boxes were held
+
+Run by the lead through production BB on 28 October 2026, on the Tart
+Mac, an M4 Max, with one shared host a Mac (`tart-ios-hosts-per-mac` 1,
+the default). Production moved to main f4fd561 during the run; the host
+and its boxes live on the Mac and carried on through bb-box's restart.
+
+| Step | What happened |
+| --- | --- |
+| 3 shared boxes on one host from the ios image of 27 October (build 20261027-064516) | slots 1 to 3 |
+| The ios image rebuilt, from main 6dc0f1b | build 20261028-002015-21e2, its 42 checks passed |
+| A dedicated ios box in the Mac's other VM slot, so no host can start; a 4th shared box | went to the old host, slot 4, in 5.2 s (choosing a shared host 4.9 s, ssh 0.3 s); BB enrolment 7.9 s. The doctor: "On build ..., older than the iOS image's, so it lends only while no host on the new build can start." |
+| The dedicated box released; a 5th shared box | refused: "No shared iOS host can start on <mac>: <mac> runs a shared iOS host already, as many as it may (1)." The fault, below |
+| The old host's 4 boxes released | the host deleted within a minute of its last release |
+| A shared box | a new host on the new build, ready in 51.1 s (choosing 8.1 s, host 37.4 s, slot 4.7 s, ssh 1.0 s); BB enrolment 13.2 s |
+
+- **The fault.** The old host refused its ready slot because a host on
+  the new build could start, by a test that left the old host out of the
+  Mac's count of hosts. A real start counts it. So with one host a Mac,
+  no shared box could be had on that Mac until every box on the old host
+  was released. Item 1 fixes it.
+- **BB's app was not kept.** The new host's slots downloaded BB's app:
+  `keep-app` refused every copy. Item 2 fixes it.
+
+### What changed
+
+| Item | Found | Fix |
+| --- | --- | --- |
+| 1, soft draining (H6) | A host on an older build asked whether a host on the new build could start with itself left out of its Mac's hosts | It asks as a start does: every host on the Mac against `per-mac`, and the Mac's VM room. It lends its ready slots until a host on the new build can start |
+| 2, `keep-app` on Tart hosts (F-8 item 4) | As root, `cp -c` clones each file with its owner kept, and makes the folders and links root's. The check that the copy has one owner refused every copy: "README.md is not owned by UID 0" | The copy is checked for files of root and of the host user, the app's owner, and nothing else; then all of it, links too, is made root's. The checks against absolute links, links out of the app, files others can write and anything not a file or folder are unchanged, on the host user's app and on the copy |
+| 3, refused while a host started (H8) | A failed host is not joined, and its start held a VM of the Mac's room until its VM was deleted, so boxes asked for meanwhile were told "Two macOS VMs already run" | A failed host's VM counts as leaving the Mac while it is deleted, and once it is stopped: a new host is offered there, and starts once the VM has gone |
+| 4, no retry (H8) | A host whose VM did not start ("VZErrorDomain Code=1, Internal Virtualization error") failed its boxes at once | Its VM is deleted and the iOS image cloned again, once, while the host stays starting, so its boxes keep their promises and new ones join it. The log says so; the owner file keeps the first failure, which the doctor gives for a starting host; if the fresh clone fails too, the boxes' words give both. A start that waits for room is not retried: it waits, as before |
+| 5, stills that stayed (H8) | A device panel whose first frame did not draw within 3 s showed stills for as long as the page lived, as for a browser that cannot decode at all | Stills chosen for a slow first frame say so, "The device's video did not show within 3 s, so this shows a picture a few times a second and tries the video again shortly.", and the panel asks for video again after 10 s, then after doubling waits up to a minute, until a frame draws; each new connection tries video first. A browser with no WebCodecs, or whose decoder refuses the stream, keeps its stills as before |
+| 7, sizes from each Mac (the owner) | Hosts were 8 cores, 32 GiB and 8 slots on every Mac, and the pool's Mac 12 slots, whatever the Mac | See [below](#item-7-what-each-mac-gets) |
+
+Item 5's cause is not proven. The panel could not be made to stay on
+stills live by stopping a box, reloading its page and starting it again,
+on a Mac with nothing else running: the video drew 1.3 s after the device
+server answered. H8 had ten full-size panels in one tab and a VM starting,
+and the reloaded panel's first frame came later than 3 s. Under such load
+it may come late again; the fix makes that brief rather than permanent.
+
+### How it was checked, before the live check
+
+On a Linux box, from a clean clone of the bundle on origin/main at f4fd561:
+
+| Check | Result |
+| --- | --- |
+| 1, on the fakes | one host a Mac: an old-build host lends its ready slot, and the doctor says why. Two a Mac: a new-build host is offered while the Mac has room, and the old host lends again once another macOS VM takes the room. On main the first refused |
+| 2, on the fakes | `keep-app` keeps the app, makes the copy root's with a `chown -R -h`, and the link stays a link. The fakes cannot give a file two real owners, so the ownership itself was checked on macOS, below |
+| 3, on the fakes | a host whose start failed, its VM held in deletion, a dedicated VM in the Mac's other slot: a new host is offered while the deletion runs. On main the Mac seemed full |
+| 4, on the fakes | a VM that fails once starts on a fresh clone, a box joins the host meanwhile, the doctor and log give the first failure, and both boxes get slots on the one host; failing twice, the boxes' words give both failures and the host is deleted. On main the boxes failed |
+| 5, in the app's tests | a first frame later than 3 s: stills with the new words; 10 s later video is asked for again, and a frame that decodes shows. On main the stills stayed |
+| The suite | tsc clean; the node suite 2,208 passed, 0 failed, 288 skipped, the docs test among them; vitest 223 passed |
+
+### Item 2, measured in a dedicated ios box
+
+In a dedicated ios box at 8 cores and 32 GiB, from the ios image of 28
+October (build 20261028-002015-21e2), as root.
+
+- **The fault, seen.** The image's helper (version 4) refused, as on the
+  Tart hosts: "README.md is not owned by UID 0". A copy made as root by
+  `cp -RPc` had 434 folders and 5 links of root and 6,091 files of the
+  image user.
+- **The fix.** This branch's helper (version 5) kept the app in 1.73 s;
+  the slots' home's copy was 435 folders, 6,092 files and 5 links, all
+  root's. It still refused an absolute link, a link out of the app and a
+  file others can write, each in the image user's app, and the check
+  refused a copy with a third user's file: "is not owned by UID 0 or 501".
+- **Enrolment,** as F-7 measured it: a fresh BB (`npx bb-app`, no
+  account) in the box at 127.0.0.1:4999, machine access direct; each
+  slot made by the helper and enrolled over SSH as its user under
+  `BB_INSTALL_SKIP_SERVICE=1`, with `bb machine create --provider manual`'s
+  command; times from each installer line's arrival.
+
+| | Slot | `make` (user step) | The installer | Of it, BB's app |
+| --- | --- | --- | --- | --- |
+| Without | `bbd-1` | 24.3 s (2.6 s) | 5.01 s | downloaded and installed, 3.10 s |
+| Without | `bbd-2` | 22.8 s (2.4 s) | 4.81 s | downloaded and installed, 2.76 s |
+| With, `keep-app` 2.12 s | `bbd-3` | 23.8 s (2.6 s) | 2.24 s | "The identical server host artifact is already installed", 0.05 s |
+| With | `bbd-4` | 24.1 s (2.7 s) | 2.31 s | the same, 0.05 s |
+
+The kept app saves 2.5 to 2.8 s of each slot's installer, as F-7's image
+copy did, and the user step is no longer.
+
+### The live check
+
+Through production BB on 28 October 2026, on the Tart Mac, the Mac's
+other VM slot free unless said, shared boxes pinned to Tart with `on`.
+
+Before the deploy, on main f4fd561:
+
+- **Item 3 and 4's fault, again.** Four shared boxes asked for at once
+  were promised to one starting host. Its VM failed, "VZErrorDomain
+  Code=1 ... The virtual machine failed to start.", and the four boxes
+  failed 66 s after they were asked for. A fifth box, asked for about 15 s
+  after them, found the host failed already and started a second host,
+  which served it 78.1 s after it was asked for. H8's three refusals came
+  in that window, with the Mac's other slot held by a dedicated box.
+
+After the lead deployed F-9 (PR 1193, main 7671c24, helper version 5):
+
+| Item | Check | Result |
+| --- | --- | --- |
+| 2 | A host's start, then the doctor | "Its slots get BB's app build 634c1bfd81d4 from the host." The two carried slots, claimed as the host started, enrolled in 18.1 and 8.5 s; three slots made after `keep-app` had run, in 4.9, 3.7 and 3.8 s |
+| 6 | One box's acquire made to fail after its promise was taken: from a slot box, the host's disk filled to 8.5 GiB free, so it made no slot ahead; the last ready slot taken; the disk let up to 10.5 GiB and a writer started that took it back under the host's 10 GiB reserve within seconds; then a shared box asked for | the offer found room, the box was promised, and the helper refused to make its slot. The acquire failed 5 min 20 s later: "The shared iOS host ... gave box ... no slot within 5 minutes." The disk freed, the host made a ready slot again; at the end every box was released and the host was gone 12 s after the last release returned, which a promise left behind would have stopped |
+| 5 | A slot box's panel in the owner's browser, with its decoder's output held back for the page's first 6 s, as a busy decoder would | the first frame decoded at 3.0 s, held; stills asked for at 6.0 s, with the new words under the toolbar; video asked for again at 16.0 s, and its first frame drawn 10 ms later; the words gone |
+| 1 | A host of 3 boxes on the current build, the ios image rebuilt by the lead from main 7671c24 (build 20261028-015327-ddc2), the build VM gone, so the Mac's other VM slot free; then a shared box | the doctor: "On build build.20261028-002015-21e2, older than the iOS image's, so it lends only while no host on the new build can start." The box took the old host's ready slot, slot 5, in 5.2 s (choosing a shared host 4.8 s, ssh 0.4 s). In H6 it was refused |
+| 1 | The old host's boxes released, then four shared boxes, three at once and one 10 s later | the old host deleted at its last release; a new host on the new build, the four promised to it while it started, ready in 25.2 to 112.8 s |
+
+### Item 7: what each Mac gets
+
+A shared host's sizes now come from its Mac, size by size: a Mac's own
+value first, then the backend's setting where set, then bb-box's
+estimate.
+
+- **The estimate.** Cores: a Tart Mac's performance cores
+  (`hw.perflevel0.physicalcpu`); a pool Mac's slots share all its cores.
+  Slots: the fewest of the cores over 1.3, a busy simulator measured in
+  unit 6; the memory over 1.5 GiB a device after 8 GiB for the host; and
+  what the Mac's video encoder allows, each slot counted as a stream at a
+  half, 0.33 of a full frame, at 60 frames a second, within the ledger's
+  three quarters of the budget: 12 for an M4 Max, 14 for an M5 Max.
+  Memory for a Tart host: 8 GiB and 1.5 GiB a slot, within the Mac's
+  memory less its reserve, shared by `per-mac` hosts.
+- **Overrides.** `tart-ios-hosts-most`, `-cores` and `-memory-gib` count
+  only where set, so they have no default now; each Tart Mac has the same
+  three fields of its own. The pool's `ssh-pool-ios-hosts-most` counts
+  only where set, and `ios:<slots>` on a Mac's line, as in `macos,ios:10`,
+  wins for that Mac.
+- **The doctor** gives each Mac's sizes and where each came from, as "A
+  new host here has 9 slots (estimated: 9 for 12 cores at 1.3 a busy
+  device, 69 for the 112 GiB of <mac>'s memory a host may have, ..., 12
+  for the video encoder (an Apple M4 Max, ...); the fewest), 12 cores
+  (estimated: <mac>'s performance cores), 22 GiB (estimated: 8 GiB for the
+  host and 1.5 GiB for each of its 9 slots)".
+
+| Mac | Cores, memory | A shared host or the Mac lends | Bound by | Before |
+| --- | --- | --- | --- | --- |
+| The Tart Mac, an M4 Max | 16 (12 performance), 128 GiB, 16 GiB kept free | hosts of 12 cores and 22 GiB, 9 slots each | the cores: the memory allows 69, the encoder 12 | 8 cores, 32 GiB, 8 slots |
+| The pool's Mac, an M5 Max | 18, 36 GiB | 13 slots | the cores: the memory allows 18, the encoder 14 | 12 slots |
+
+Neither Mac sets any of these sizes in production now, so both take the
+estimate once item 7 is deployed. On the fakes and in the suite, on a clean
+clone of item 7 on main 7671c24: tsc clean; the node suite 2,212 passed, 0
+failed, 288 skipped; vitest 223 passed. Item 7 is not checked live yet.
+
+### What limits these checks
+
+- **Items 3 and 4 were not provoked after the deploy.** The VM failure
+  came twice before it, each time on the first host started that session,
+  and not on the two host starts after it. They are
+  checked on the fakes, with a fake Tart that fails a start and holds a
+  deletion.
+- **Item 5's cause is not proven,** as above; the live check held the
+  decoder's output back in the page rather than load the Mac.
+- **Item 6 was provoked by a full disk,** which fails a slot's making; a
+  slot box cannot make another slot's SSH fail. The path that gives back a
+  claimed slot, not a promise, is checked on the fakes only.
+
+### Deviations from the brief
+
+- **Item 2 checks before it changes owners.** The brief said to make the
+  copy root's before the check. The check now allows root and the host
+  user, and refuses any other owner, then the copy is made root's: a check
+  after a `chown` could not see an owner that should not be there.
+- **Item 4 retries any failure of the VM's start,** a clone, the start, its
+  address or SSH, not only Virtualization's error; not a start that waits
+  for room.
