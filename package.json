@@ -17,6 +17,7 @@
         "docker": "./assets/docker.svg",
         "laptop": "./assets/laptop.svg",
         "monitor": "./assets/monitor.svg",
+        "phone": "./assets/phone.svg",
         "plug": "./assets/plug.svg",
         "proxmox": "./assets/proxmox.svg",
         "server": "./assets/server.svg",

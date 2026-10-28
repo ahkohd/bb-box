@@ -224,7 +224,7 @@ export const STILLS_WORDS = "This browser cannot play the device's video, so it 
 export const SLOW_VIDEO_STILLS_WORDS = "The device's video did not show within 3 s, so this shows a picture a few times a second and tries the video again shortly.";
 export const SLOW_VIDEO_RETRY_MS = 10_000;
 const SLOW_VIDEO_RETRY_MOST_MS = 60_000;
-export const DEVICE_HUB_WORDS = "Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Device view.";
+export const DEVICE_HUB_WORDS = "Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Simulator tab.";
 
 export class SelkiesSession implements Kept {
   readonly element = document.createElement("div");

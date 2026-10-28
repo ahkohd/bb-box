@@ -34,6 +34,7 @@ import { dropAllKept, HAND_BACK_MS, HIDDEN_MS } from "../src/app/kept.ts";
 import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf, timingWords } from "../src/app/status.ts";
 import { choices, NO_FILTERS, shown, splitGroups, stateGroup, tagCounts, tagsOf } from "../src/app/boxes-filter.ts";
+import { screensOf, screenTitle, screenWord } from "../src/app/screens.ts";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import type { BackendConfig } from "../src/core/document.ts";
@@ -814,12 +815,14 @@ async function openDisplay(trigger: HTMLElement) {
   });
 }
 
-test("the app registers the Boxes panel, a desktop tab, the Boxes page and the Backends settings section", () => {
+test("the app registers the Boxes panel, a desktop tab, a device tab with a phone for its icon, the Boxes page and the Backends settings section", () => {
   expect(app.threadPanelActions.map((action) => [action.id, action.title])).toEqual([
     ["boxes", "Box"],
     ["desktop", "Desktop"],
+    ["device", "Device"],
     ["terminal", "Terminal"],
   ]);
+  expect(app.threadPanelActions.find((action) => action.id === "device")!.icon).toBe("bb-box/phone");
   expect(app.navPanels.map((page) => [page.id, page.title, page.path])).toEqual([["boxes", "Boxes", "desktop"]]);
   expect(app.settingsSections.map((section) => section.id)).toEqual(["configuration"]);
   // BB resolves a plugin's icons by the names it declares: the Boxes page's is the cube, and every plugin icon used is declared.
@@ -921,7 +924,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(slot.queryByText("192.0.2.10")).toBeNull();
 
   fireEvent.click(slot.getByRole("button", { name: "Open desktop" }));
-  expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "bold-heron", params: { box: "box_2" } } }]);
+  await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "Desktop", params: { box: "box_2" } } }]));
 
   const menu = await openMenu(slot.getByRole("button", { name: "bold-heron actions" }));
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
@@ -940,8 +943,8 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
 });
 
 test("a device box's row names its device beside the OS, not its host's form, and its details have a Device line, for android and ios", async () => {
-  const android = box({ id: "box_a", name: "pixel-box", kind: "android", kindLabel: "Android emulator", form: "VM", desktop: false, display: null, device: { model: "Pixel 8", simulatorHost: false }, control: { owner: "agent", holder: null } });
-  const ios = box({ id: "box_i", name: "phone-box", kind: "ios", kindLabel: "iOS Simulator", os: "macos", arch: "arm64", form: "VM", desktop: true, device: { model: "iPhone 18 Pro", simulatorHost: true }, control: { owner: "agent", holder: null } });
+  const android = box({ id: "box_a", name: "pixel-box", kind: "android", kindLabel: "Android emulator", form: "VM", desktop: false, display: null, device: { platform: "android", model: "Pixel 8", simulatorHost: false }, control: { owner: "agent", holder: null } });
+  const ios = box({ id: "box_i", name: "phone-box", kind: "ios", kindLabel: "iOS Simulator", os: "macos", arch: "arm64", form: "VM", desktop: true, device: { platform: "ios", model: "iPhone 18 Pro", simulatorHost: true }, control: { owner: "agent", holder: null } });
   const plain = box({ id: "box_p", name: "plain-vm", form: "VM" });
   const slot = panel(server([android, ios, plain]).handlers);
 
@@ -2109,6 +2112,11 @@ function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") 
   return renderSlot(action!, { threadId: THREAD, params: { box: boxId } }, { rpc: handlers, pluginId: "bb-box" });
 }
 
+function deviceTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") {
+  const action = app.threadPanelActions.find((candidate) => candidate.id === "device");
+  return renderSlot(action!, { threadId: THREAD, params: { box: boxId } }, { rpc: handlers, pluginId: "bb-box" });
+}
+
 test("a desktop that cannot be resized says you have control, and noVNC does not resize it", async () => {
   const { handlers } = server([desktopBox({ kind: "windows-desktop", kindLabel: "Windows desktop", display: { protocol: "rfb", resizable: false, clipboard: null, refresh: null, quality: null, macKeys: null } })]);
   const slot = desktopTab(handlers);
@@ -3083,8 +3091,8 @@ test("on a device, an input method's committed text, an emoji and Type text each
   const undo = withVideo();
   try {
     window.sessionStorage.clear();
-    const { handlers } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
-    const slot = desktopTab(handlers);
+    const { handlers } = server([desktopBox({ device: { platform: "android", model: "Pixel 8", simulatorHost: false } })], { video: true });
+    const slot = deviceTab(handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
     const device = deviceSocket();
     act(() => device.open());
@@ -3180,8 +3188,8 @@ function sizedPanel(width: number, height: number) {
 }
 
 async function deviceShown(model: string, state: object, hello?: string, deviceClipboard?: string) {
-  const { handlers, changes } = server([desktopBox({ device: { model, simulatorHost: false } })], { video: true, ...(deviceClipboard !== undefined ? { deviceClipboard } : {}) });
-  const slot = desktopTab(handlers);
+  const { handlers, changes } = server([desktopBox({ device: { platform: model.startsWith("Pixel") ? "android" : "ios", model, simulatorHost: false } })], { video: true, ...(deviceClipboard !== undefined ? { deviceClipboard } : {}) });
+  const slot = deviceTab(handlers);
   await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
   const device = deviceSocket();
   act(() => device.open());
@@ -3465,11 +3473,12 @@ test("the toolbar moves by arrow keys as one tab stop, and the device's changes 
   }
 });
 
-test("a box with a device and a desktop opens on the device, and Device and Desktop switch between two kept sessions, each with its own socket, input and clipboard, with no hand-back (063)", async () => {
+test("a tab from before the device tab, for a box with a device and a desktop, opens on the screen last chosen, and its Desktop and Emulator buttons switch between two kept sessions, each with its own socket, input and clipboard, with no hand-back (063)", async () => {
   const undo = withVideo();
   try {
     window.sessionStorage.clear();
-    const { handlers, changes } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
+    window.sessionStorage.setItem("bb-box:display:box_2", "device");
+    const { handlers, changes } = server([desktopBox({ device: { platform: "android", model: "Pixel 8", simulatorHost: false } })], { video: true });
     const slot = desktopTab(handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
     expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(false);
@@ -3483,7 +3492,7 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     act(() => void device.onmessage?.({ data: "MODE websockets" }));
     act(() => void device.onmessage?.({ data: videoFrame(1, true, 360, 800) }));
     expect(await slot.findByText("The agent has control.")).toBeTruthy();
-    expect(slot.getByRole("button", { name: "Device" }).getAttribute("aria-pressed")).toBe("true");
+    expect(slot.queryByRole("button", { name: "Emulator" })).toBeNull();
     const actions = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
     expect(within(actions).queryByRole("menuitem", { name: "Display" })).toBeNull();
     fireEvent.keyDown(actions, { key: "Escape" });
@@ -3501,6 +3510,7 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     fireEvent.click(slot.getByRole("button", { name: "Desktop" }));
     vi.useRealTimers();
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    expect(slot.queryByRole("button", { name: "Desktop" })).toBeNull();
     const desktop = videoSocket();
     expect(window.sessionStorage.getItem("bb-box:display:box_2")).toBe("desktop");
     expect(device.readyState).toBe(1);
@@ -3520,7 +3530,7 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     expect(device.sent.filter((sent) => typeof sent === "string" && sent.startsWith("BB_DEVICE "))).toEqual([]);
 
     vi.useFakeTimers();
-    fireEvent.click(slot.getByRole("button", { name: "Device" }));
+    fireEvent.click(slot.getByRole("button", { name: "Emulator" }));
     await vi.advanceTimersByTimeAsync(HAND_BACK_MS + 50);
     vi.useRealTimers();
     expect(changes).toEqual(["takeControl box_2"]);
@@ -3540,8 +3550,8 @@ test("where the browser has no WebCodecs, the device shows stills over its own c
   window.sessionStorage.clear();
   vi.stubGlobal("createImageBitmap", async () => ({ width: 360, height: 800, close() {} }));
   try {
-    const { handlers } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
-    const slot = desktopTab(handlers);
+    const { handlers } = server([desktopBox({ device: { platform: "android", model: "Pixel 8", simulatorHost: false } })], { video: true });
+    const slot = deviceTab(handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
     const device = deviceSocket();
     act(() => device.open());
@@ -3566,8 +3576,8 @@ test("a device whose first frame does not decode within 3 s asks for stills inst
   try {
     window.sessionStorage.clear();
     FakeDecoder.silent = true;
-    const { handlers } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
-    desktopTab(handlers);
+    const { handlers } = server([desktopBox({ device: { platform: "android", model: "Pixel 8", simulatorHost: false } })], { video: true });
+    deviceTab(handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
     const device = deviceSocket();
     act(() => device.open());
@@ -3589,8 +3599,8 @@ test("a device whose first frame came too late for its stills tries its video ag
   try {
     window.sessionStorage.clear();
     FakeDecoder.silent = true;
-    const { handlers } = server([desktopBox({ device: { model: "Pixel 8", simulatorHost: false } })], { video: true });
-    const slot = desktopTab(handlers);
+    const { handlers } = server([desktopBox({ device: { platform: "android", model: "Pixel 8", simulatorHost: false } })], { video: true });
+    const slot = deviceTab(handlers);
     await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
     const device = deviceSocket();
     act(() => device.open());
@@ -4955,7 +4965,7 @@ test("the Desktop tab opened bare opens the thread's one desktop, lists several,
   expect(await many.findByText("bold-heron")).toBeTruthy();
   expect(many.getByText("wild-cove")).toBeTruthy();
   fireEvent.click(many.getAllByRole("button", { name: "Open" })[0]!);
-  expect(many.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "bold-heron", params: { box: "box_2" } } }]);
+  expect(many.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "Desktop · bold-heron", params: { box: "box_2" } } }]);
   cleanup();
 
   // No desktop: a button to the Box panel.
@@ -5759,7 +5769,7 @@ test("the bare Desktop and Terminal tabs count the box this thread runs on: alon
   expect(many.getByText("BB machine")).toBeTruthy();
   expect(many.getAllByRole("button", { name: "Open" })).toHaveLength(2);
   fireEvent.click(many.getAllByRole("button", { name: "Open" })[0]!);
-  expect(many.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "build-1", params: { box: "box_m1" } } }]);
+  expect(many.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "Desktop · build-1", params: { box: "box_m1" } } }]);
   cleanup();
   // The Terminal tab: alone, the machine's terminal opens straight away.
   const terminal = renderSlot(terminalAction!, { threadId: THREAD, params: null }, { rpc: server([box({ terminal: false })], { runsOn: { box: yours, owner: "yours", threadId: null } }).handlers, pluginId: "bb-box" });
@@ -6708,4 +6718,151 @@ test("with shared the default and a shared iOS host set up, Shared is chosen fir
   expect(screen.queryByRole("radiogroup", { name: "Size" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Create box" }));
   await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire ios shared"]));
+});
+
+const SHARED_IOS = box({ id: "box_si", name: "brisk-wren", kind: "ios", kindLabel: "iOS Simulator", os: "macos", arch: "arm64", form: null, backendLabel: "SSH host pool", provider: "SSH pool", desktop: false, display: null, device: { platform: "ios", model: "iPhone 18 Pro", simulatorHost: true }, control: { owner: "agent", holder: null } });
+const DEDICATED_IOS = box({ id: "box_di", name: "tall-ridge", kind: "ios", kindLabel: "iOS Simulator", os: "macos", arch: "arm64", form: "VM", backendLabel: "Tart on studio", provider: "Tart", desktop: true, display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" }, device: { platform: "ios", model: "iPhone 17", simulatorHost: true }, control: { owner: "agent", holder: null } });
+const ANDROID = box({ id: "box_an", name: "green-bay", kind: "android", kindLabel: "Android emulator", os: "linux", form: "VM", backendLabel: "Proxmox QEMU on pve", provider: "Proxmox", requires: ["kvm"], desktop: false, display: null, device: { platform: "android", model: "Pixel 8", simulatorHost: false }, control: { owner: "agent", holder: null } });
+const ANDROID_WITH_DESKTOP = desktopBox({ id: "box_ad", name: "wide-dune", kind: "android", kindLabel: "Android emulator", device: { platform: "android", model: "Pixel Fold", simulatorHost: false } });
+const MAC_DESKTOP = box({ id: "box_md", name: "pool-mac", kind: "macos-desktop", kindLabel: "macOS desktop", os: "macos", arch: "arm64", form: "VM", desktop: true, display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" }, control: { owner: "agent", holder: null } });
+const LINUX_DESKTOP = desktopBox();
+
+test("F-19: iOS and Android are systems in the Boxes page's filters, after Linux, macOS and Windows; a device box is its device's system, with counts, and the search finds it by its device", () => {
+  const rows = [box(), LINUX_DESKTOP, MAC_DESKTOP, SHARED_IOS, DEDICATED_IOS, ANDROID].map((one) => ({ box: one, words: [] }));
+  const names = (search: string, filters: typeof NO_FILTERS) => shown(rows, search, filters, { key: "name", ascending: true }).map((row) => row.box.name);
+  expect(rows.map((row) => `${row.box.name}: ${tagsOf(row.box).systems.join()}`)).toEqual(["calm-otter: Linux", "bold-heron: Linux", "pool-mac: macOS", "brisk-wren: iOS", "tall-ridge: iOS", "green-bay: Android"]);
+  expect(choices(rows.map((row) => row.box)).systems).toEqual(["Linux", "macOS", "iOS", "Android"]);
+  expect(tagCounts(rows, "", NO_FILTERS).systems).toEqual({ Linux: 2, macOS: 1, iOS: 2, Android: 1 });
+  expect(names("", { ...NO_FILTERS, systems: ["iOS"] })).toEqual(["brisk-wren", "tall-ridge"]);
+  expect(names("", { ...NO_FILTERS, systems: ["Android"] })).toEqual(["green-bay"]);
+  expect(names("", { ...NO_FILTERS, systems: ["iOS", "Android"] })).toEqual(["brisk-wren", "green-bay", "tall-ridge"]);
+  expect(names("", { ...NO_FILTERS, systems: ["macOS"] })).toEqual(["pool-mac"]);
+  expect(names("", { ...NO_FILTERS, systems: ["iOS"], has: ["Desktop"] })).toEqual(["tall-ridge"]);
+  expect(tagCounts(rows, "", { ...NO_FILTERS, has: ["Desktop"] }).systems).toEqual({ Linux: 1, macOS: 1, iOS: 1 });
+  expect(names("iphone 18", NO_FILTERS)).toEqual(["brisk-wren"]);
+  expect(names("pixel", NO_FILTERS)).toEqual(["green-bay"]);
+  expect(tagCounts(rows, "iphone", NO_FILTERS).systems).toEqual({ iOS: 2 });
+});
+
+test("F-19: on the Boxes page, the Filters menu offers iOS and Android under System, and ticking one lists only its device boxes", async () => {
+  const { handlers } = server([box(), MAC_DESKTOP, SHARED_IOS, DEDICATED_IOS, ANDROID]);
+  const list = boxesPage(handlers);
+  await list.findByText("brisk-wren");
+  const rowNames = () => list.getAllByRole("button", { name: /: details$/, hidden: true }).map((node) => node.getAttribute("aria-label")!.replace(/: details$/, ""));
+  const menu = await openMenu(list.getByRole("button", { name: "Filters" }));
+  expect(within(menu).getAllByRole("menuitemcheckbox").map((option) => option.textContent).slice(0, 4)).toEqual(["Linux", "macOS", "iOS", "Android"]);
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "iOS" }));
+  expect(rowNames()).toEqual(["brisk-wren", "tall-ridge"]);
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "iOS" }));
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Android" }));
+  expect(rowNames()).toEqual(["green-bay"]);
+  fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: "Android" }));
+  fireEvent.keyDown(menu, { key: "Escape" });
+  fireEvent.change(list.getByRole("textbox", { name: "Search boxes" }), { target: { value: "iPhone 17" } });
+  expect(rowNames()).toEqual(["tall-ridge"]);
+});
+
+test("F-19: a box's tabs say what they show: Simulator for an iOS device, Emulator for an Android one, Desktop for a desktop, a box with both has both, and the box's name follows only when another box's tab would say the same", () => {
+  const tabs = (one: BoxView) => screensOf(one).map((each) => screenWord(one, each));
+  expect(tabs(SHARED_IOS)).toEqual(["Simulator"]);
+  expect(tabs(DEDICATED_IOS)).toEqual(["Simulator", "Desktop"]);
+  expect(tabs(ANDROID)).toEqual(["Emulator"]);
+  expect(tabs(ANDROID_WITH_DESKTOP)).toEqual(["Emulator", "Desktop"]);
+  expect(tabs(MAC_DESKTOP)).toEqual(["Desktop"]);
+  expect(tabs(LINUX_DESKTOP)).toEqual(["Desktop"]);
+  expect(tabs(box())).toEqual([]);
+  expect(screenTitle(SHARED_IOS, "device", [SHARED_IOS, ANDROID, LINUX_DESKTOP])).toBe("Simulator");
+  expect(screenTitle(SHARED_IOS, "device", [SHARED_IOS, DEDICATED_IOS])).toBe("Simulator · brisk-wren");
+  expect(screenTitle(DEDICATED_IOS, "desktop", [DEDICATED_IOS, SHARED_IOS])).toBe("Desktop");
+  expect(screenTitle(DEDICATED_IOS, "desktop", [DEDICATED_IOS, LINUX_DESKTOP])).toBe("Desktop · tall-ridge");
+  expect(screenTitle(ANDROID, "device", [ANDROID, SHARED_IOS])).toBe("Emulator");
+});
+
+test("F-19: the panel's rows open each screen in a tab of its own, titled by what it shows: a dedicated iOS box's Simulator and Desktop, a shared one's Simulator, an Android box's Emulator, and a Linux desktop's Desktop", async () => {
+  const slot = panel(server([SHARED_IOS, DEDICATED_IOS, ANDROID, LINUX_DESKTOP]).handlers);
+  await slot.findByText("brisk-wren");
+  const opened = async (label: string, index = 0) => {
+    const before = slot.inspection.navigateCalls.length;
+    fireEvent.click(slot.getAllByRole("button", { name: label })[index]!);
+    await waitFor(() => expect(slot.inspection.navigateCalls.length).toBe(before + 1));
+    return slot.inspection.navigateCalls.at(-1);
+  };
+  expect(slot.getAllByRole("button", { name: "Open simulator" })).toHaveLength(2);
+  expect(slot.getAllByRole("button", { name: "Open desktop" })).toHaveLength(2);
+  expect(slot.getAllByRole("button", { name: "Open emulator" })).toHaveLength(1);
+  expect(await opened("Open simulator", 0)).toEqual({ method: "openThreadPanel", options: { actionId: "device", title: "Simulator · brisk-wren", params: { box: "box_si" } } });
+  expect(await opened("Open simulator", 1)).toEqual({ method: "openThreadPanel", options: { actionId: "device", title: "Simulator · tall-ridge", params: { box: "box_di" } } });
+  expect(await opened("Open desktop", 0)).toEqual({ method: "openThreadPanel", options: { actionId: "desktop", title: "Desktop · tall-ridge", params: { box: "box_di", shows: "desktop" } } });
+  expect(await opened("Open emulator")).toEqual({ method: "openThreadPanel", options: { actionId: "device", title: "Emulator", params: { box: "box_an" } } });
+  expect(await opened("Open desktop", 1)).toEqual({ method: "openThreadPanel", options: { actionId: "desktop", title: "Desktop · bold-heron", params: { box: "box_2" } } });
+  const menu = await openMenu(slot.getByRole("button", { name: "tall-ridge actions" }));
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent).slice(0, 2)).toEqual(["Open simulator", "Open desktop"]);
+});
+
+test("F-19: a dedicated iOS box's Simulator tab has a Desktop button that opens its Desktop tab, and that tab's Simulator button opens the Simulator tab; a shared box's and a Linux desktop's tabs have neither", async () => {
+  const handlers = server([DEDICATED_IOS, SHARED_IOS, LINUX_DESKTOP]).handlers;
+  const device = app.threadPanelActions.find((candidate) => candidate.id === "device")!;
+  const desktop = app.threadPanelActions.find((candidate) => candidate.id === "desktop")!;
+  const simulator = renderSlot(device, { threadId: THREAD, params: { box: "box_di" } }, { rpc: handlers, pluginId: "bb-box" });
+  fireEvent.click(await simulator.findByRole("button", { name: "Desktop" }));
+  await waitFor(() => expect(simulator.inspection.navigateCalls.at(-1)).toEqual({ method: "openThreadPanel", options: { actionId: "desktop", title: "Desktop · tall-ridge", params: { box: "box_di", shows: "desktop" } } }));
+  expect(simulator.queryByRole("button", { name: "Simulator" })).toBeNull();
+  cleanup();
+  const ownDesktop = renderSlot(desktop, { threadId: THREAD, params: { box: "box_di", shows: "desktop" } }, { rpc: handlers, pluginId: "bb-box" });
+  expect(await ownDesktop.findByText("Connecting to the desktop…")).toBeTruthy();
+  fireEvent.click(ownDesktop.getByRole("button", { name: "Simulator" }));
+  await waitFor(() => expect(ownDesktop.inspection.navigateCalls.at(-1)).toEqual({ method: "openThreadPanel", options: { actionId: "device", title: "Simulator · tall-ridge", params: { box: "box_di" } } }));
+  cleanup();
+  const shared = renderSlot(device, { threadId: THREAD, params: { box: "box_si" } }, { rpc: handlers, pluginId: "bb-box" });
+  await shared.findByText("brisk-wren");
+  expect(shared.queryByRole("button", { name: "Desktop" })).toBeNull();
+  cleanup();
+  const linux = renderSlot(desktop, { threadId: THREAD, params: { box: "box_2" } }, { rpc: handlers, pluginId: "bb-box" });
+  expect(await linux.findByText("Connecting to the desktop…")).toBeTruthy();
+  expect(linux.queryByRole("button", { name: /^(Simulator|Emulator)$/ })).toBeNull();
+});
+
+test("F-19: a bare Desktop tab whose one box is a shared iOS box shows its device and retitles itself Simulator; a bare Device tab with an Android box retitles itself Emulator; a bare Desktop tab with a dedicated iOS box shows its desktop and keeps its title", async () => {
+  const desktop = app.threadPanelActions.find((candidate) => candidate.id === "desktop")!;
+  const device = app.threadPanelActions.find((candidate) => candidate.id === "device")!;
+  const shared = renderSlot(desktop, { threadId: THREAD, params: null }, { rpc: server([box(), SHARED_IOS]).handlers, pluginId: "bb-box" });
+  await waitFor(() => expect(shared.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "desktop", title: "Simulator" } }]));
+  expect(await shared.findByText("brisk-wren")).toBeTruthy();
+  cleanup();
+  forgetLive();
+  const android = renderSlot(device, { threadId: THREAD, params: null }, { rpc: server([ANDROID, LINUX_DESKTOP]).handlers, pluginId: "bb-box" });
+  await waitFor(() => expect(android.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "device", title: "Emulator" } }]));
+  cleanup();
+  forgetLive();
+  const dedicated = renderSlot(desktop, { threadId: THREAD, params: null }, { rpc: server([DEDICATED_IOS]).handlers, pluginId: "bb-box" });
+  expect(await dedicated.findByText("Connecting to the desktop…")).toBeTruthy();
+  expect(dedicated.getByRole("button", { name: "Simulator" })).toBeTruthy();
+  expect(dedicated.inspection.navigateCalls).toEqual([]);
+  cleanup();
+  forgetLive();
+  const none = renderSlot(device, { threadId: THREAD, params: null }, { rpc: server([LINUX_DESKTOP]).handlers, pluginId: "bb-box" });
+  expect(await none.findByText("No device box")).toBeTruthy();
+  expect(none.inspection.navigateCalls).toEqual([]);
+});
+
+test("F-19: moving from a box's Desktop tab with control to its Simulator tab keeps control past the hidden tab's minute; closing that tab too hands it back", async () => {
+  const both = desktopBox({ kind: "ios", os: "macos", device: { platform: "ios", model: "iPhone 17", simulatorHost: true } });
+  const { handlers, changes } = server([both]);
+  const desktop = app.threadPanelActions.find((candidate) => candidate.id === "desktop")!;
+  const device = app.threadPanelActions.find((candidate) => candidate.id === "device")!;
+  const ownDesktop = renderSlot(desktop, { threadId: THREAD, params: { box: "box_2", shows: "desktop" } }, { rpc: handlers, pluginId: "bb-box" });
+  await ownDesktop.findByText("Connecting to the desktop…");
+  act(() => void novnc.FakeRfb.made[0]!.dispatchEvent(new Event("connect")));
+  fireEvent.click(ownDesktop.getByRole("button", { name: "Take control" }));
+  await ownDesktop.findByText("You have control.");
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  ownDesktop.unmount();
+  const simulator = renderSlot(device, { threadId: THREAD, params: { box: "box_2" } }, { rpc: handlers, pluginId: "bb-box" });
+  expect(await simulator.findByRole("button", { name: "Hand back to the agent" })).toBeTruthy();
+  await vi.advanceTimersByTimeAsync(HAND_BACK_MS + 50);
+  expect(changes).toEqual(["takeControl box_2"]);
+  simulator.unmount();
+  await vi.advanceTimersByTimeAsync(HAND_BACK_MS + 50);
+  vi.useRealTimers();
+  await waitFor(() => expect(changes).toEqual(["takeControl box_2", "handBack box_2"]));
 });

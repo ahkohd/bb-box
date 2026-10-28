@@ -55,7 +55,7 @@ export interface BoxView {
   readonly desktop: boolean;
   /** The desktop the viewer shows, when the box has one. */
   readonly display: { readonly protocol: DisplayProtocol; readonly resizable: boolean; readonly clipboard: "commands" | null; readonly refresh: "viewer" | null; readonly quality: number | null; readonly macKeys: "alt-command" | null } | null;
-  readonly device?: { readonly model: string | null; readonly simulatorHost: boolean } | null;
+  readonly device?: { readonly platform: DevicePlatform; readonly model: string | null; readonly simulatorHost: boolean } | null;
   /** Who controls the desktop's input, when the box has one. */
   readonly control: ControlView | null;
   readonly computerUse: boolean;
@@ -98,11 +98,15 @@ function sizeWords(box: BoxRecord): string | null {
   return size ? describeSize(size) : null;
 }
 
+function platformOfUnofferedDevice(os: string): DevicePlatform {
+  return os === "macos" ? "ios" : "android";
+}
+
 export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlView, resizing: Resizing | null = null): BoxView {
   const [display] = desktopDisplays(box.capabilities.displays);
   const offer = box.capabilities.device;
   const device = deviceDisplayOf(box.capabilities.displays)
-    ? { model: box.device?.model ?? box.askedDevice ?? offer?.devices[0].model ?? null, simulatorHost: offer?.platform === "ios" && !isTestOffer(offer) }
+    ? { platform: offer?.platform ?? platformOfUnofferedDevice(box.capabilities.os), model: box.device?.model ?? box.askedDevice ?? offer?.devices[0].model ?? null, simulatorHost: offer?.platform === "ios" && !isTestOffer(offer) }
     : null;
   return {
     id: box.id,
