@@ -19,8 +19,10 @@ then unit 6.4's, for the toolbar. Unit 4.1's, for the Android driver, are
 [after them](#unit-41-the-android-driver): the stream of each model,
 recovery, E3 and E23. Unit 7.1's, for the computer tools on an iOS device,
 are [after them](#unit-71-computer-use-on-an-ios-device). Unit 7.4's, for
-recording a device, are [at the end](#unit-74-recording-a-device): the
-clips, the server killed mid-recording, and E15.
+recording a device, are [after them](#unit-74-recording-a-device): the
+clips, the server killed mid-recording, and E15. Unit 7.5's, for spares
+and copying from a device, are [at the end](#unit-75-spares-and-copy-from-a-device):
+E16, E24, a suspend that did not restore, and the clipboard in the panel.
 
 ## How they were measured
 
@@ -2660,3 +2662,145 @@ ran except About, which the dump cannot read.
 - **Through the tools in a thread,** after the deploy.
 - **TalkBack.** The server connects UiAutomation as `uiautomator` does,
   which turns other accessibility services off while it is connected.
+
+## Unit 7.5: spares and copy from a device
+
+Spares of ios and android boxes are off unless an operator sets a count,
+as the owner decided on 28 October 2026. With a count, a device spare
+boots each of its kind's models once, goes back to the default, and stops
+to wait only once its device server says the device has booted. A claim
+resumes it and switches to the model asked for. The panel's Copy to this
+computer, and Cmd+C or Ctrl+C in the device view, put the device's
+clipboard on the viewer's, for the tab with control.
+
+### How it was measured
+
+On 28 October 2026, on the production BB, after the deploy of main
+38bd6bb (device server version 28). The lead set `kinds.android.spares`
+and `kinds.ios.spares` to 1 at 16:23:48 UTC, and android back to none at
+16:43:16. Each claim was a `box_acquire` from this thread: android at its
+default size, 8 cores and 16 GiB, on Proxmox QEMU; ios with
+`dedicated: true`, 6 cores and 16 GiB, on Tart. Each claimed box was
+released before the next claim, so each spare was a fresh one that had
+waited 1 to 4 minutes. Times are box_acquire's own: from the request to
+the box ready, then to the model asked for booted. Cold boxes and the
+android switches were timed with the code before the deploy, in an
+android box of this thread.
+
+### The doctor
+
+With counts of 0, the doctor's Spares section says, for each device kind,
+"Spares are off for android boxes: none is kept", and what a spare would
+cost. With the counts at 1 it said "bb-box keeps 1 spare android box: 1
+ready, 0 being made", and the same for ios.
+
+### Making a spare
+
+From the count set to the spare waiting stopped, as `bb box list --all`
+showed it, read every 10 s:
+
+| | android | ios |
+| --- | --- | --- |
+| The first spare | 2 min 16 s or less: a clone, the device's first boot, each model booted once, the hibernation | 2 min 52 s or less: the same, then the suspend |
+| A replacement, from the claim | 2 to 4 min | 2 to 4 min |
+
+### E16: ready times
+
+To the model asked for booted, five claims of each kind:
+
+| Path | android | ios |
+| --- | --- | --- |
+| A new box (cold) | 40.6 s: ready in 9.8 s, then 30.8 s, 25 s of it the device's first boot giving it its own Android ID | 26.8 s: ready in 19.0 s, then 7.8 s |
+| A spare, its default model | 23.2 s and 12.1 s (resume 22.8 s and 11.4 s) | 7.4 s and 7.6 s |
+| A spare, another model | Pixel Fold 30.1 s and 20.2 s, Pixel Tablet 26.9 s: the resume, then a switch of 8.8 to 10.5 s | iPhone 17 16.7 s and 18.6 s, iPad Pro 18.6 s: the resume, then 9.5 to 11.5 s |
+| Its BB machine connected again | 12.1 to 33.2 s | 8.5 to 11.2 s |
+
+Every ios claim restored from its suspend. A switch to a model not booted
+before in the box took 31.4 to 31.7 s on android, against 4.8 to 8.3 s
+(median 6.8 s, of 5) for one booted before. So a spare boots each model
+once before it waits: a claim of any model then switches as one booted
+before.
+
+An android spare's resume took 9.2 to 22.8 s, against 3.7 to 4.8 s for
+this thread's own box stopped and started straight away (5 times). The
+spare's state held 16.8 GiB (below), read from disk after it waited; how
+much of the difference is the page cache was not measured.
+
+### E24: a spare's disk
+
+Read by the lead on the hosts at about 16:30 UTC:
+
+| | android spare, 16 GiB memory | ios spare, 16 GiB memory |
+| --- | --- | --- |
+| Saved memory | a 32.49 GiB thin volume, 51.69% used: about 16.8 GiB | `state.vzvmsave`, 5.2 GiB |
+| Its own disk | 48 GiB thin, 50.12% used | 95.6 GB apparent, 85 GiB by du, an APFS clone of the image, most of it shared |
+
+The doctor says a spare's saved memory takes "at most a little over" the
+box's memory.
+
+### A suspend that did not restore
+
+A dedicated ios box suspended at 15:44:40 UTC did not restore at 16:24,
+39.5 minutes later. bb-box's log has `VZErrorDomain Code=12 "The virtual
+machine failed to restore with error "invalid argument"."`, the error E4
+met after 24 h, with no macOS or Tart update between. The VM booted
+afresh: the new start timing said "boot 16.7 s", and the device was back
+10.5 s after the box was ready, 27 s in all, about a new box's time.
+bb-box was redeployed at about 16:17, in between. E4's run of 62 minutes
+had restored.
+
+bb-box's log had, on that Mac, the deploy's start at 16:22:43, two VM
+starts at 16:23:44 and 16:24:01 (the first ios spare being made), then the
+failure at 16:24:08. bb-box starts every macOS VM with the same flags and
+changes no config of a VM that exists. Three controlled trials then
+restored, each a dedicated ios box with no other box of this thread's
+running:
+
+| Trial | Result |
+| --- | --- |
+| An ios spare suspended 49.6 minutes, with a warm VM cloned and started on the Mac 13 minutes before the claim; its config.json and nvram.bin checksums, sizes, times and MAC address the same before and after | restored: ready 9.0 s from the claim, no boot since its first |
+| A box suspended, bb-box reloaded with no code change 10 s later, the box started 5 minutes after with no other VM starting | restored: 9.4 s, no boot |
+| The same box suspended, then started at the same moment as a new box's `tart run`, which began 0.8 s after its acquire, during the 7.7 s restore | restored: 7.7 s, no boot |
+
+So neither a wait of this order, a reload, nor another VM's start beside
+the restore made it fail, and the cause is not known. A spare is kept no
+longer than Tart's `warm-max-hours`, 6 by default, as warm VMs are, and a
+claim of one that does not restore boots it afresh and says so: at 16:24
+that took 27 s to the device, a new box's time.
+
+### Copy from a device, in the panel
+
+In the owner's browser (Helium), through the production panel, on an
+ios box with the iPhone 17 and an android box with the Pixel Fold:
+
+| Check | Result |
+| --- | --- |
+| Copy to this computer without control, each platform | "Take control first, then copy: only the tab with control reads the device's clipboard." |
+| ios, Copy to this computer, the device's pasteboard set by `simctl pbcopy` | the 39 characters, "Copied 39 characters from the iPhone 17.", 504 ms from the click to the note |
+| ios, Cmd+C in the device view | "Copied 26 characters from the iPhone 17.", 564 ms from the key, 400 ms of it the wait for the device to copy |
+| android, text typed in the device's search field, Ctrl+A and Ctrl+C in the device view | Android copied it, and "Copied 34 characters from the Pixel Fold.", 439 ms from the key |
+| android, Copy to this computer | 318 ms. It held the text the iPhone's copy had put on the browser's clipboard, which taking control of the Pixel Fold had put on the device |
+
+Taking control puts the browser's clipboard on the device, as it did
+before this unit, so a device's clipboard read just after taking control
+is the browser's.
+
+### What limits these numbers
+
+- Five claims of each kind, each spare waiting 1 to 4 minutes, on one
+  Proxmox host and one Mac. A spare that waits for hours was not claimed.
+- A failed switch on claim was not seen live: a claim asks only for a
+  model the box offers, and each switched. The device-delivery test claims
+  a model the device refuses, and the box keeps its model with words.
+- No template or image was rebuilt, so a spare of an old build was not
+  replaced live. Tests cover Proxmox's build check, which is older, and
+  Tart's new one.
+- Times are box_acquire's, rounded to 0.1 s.
+
+### Not checked here
+
+- **The cause of the failed restore.** One difference from the trials was
+  not repeated: that box was suspended 54 s after its VM booted, by the
+  bb-box before the deploy.
+- **iOS's own copy** by Cmd+C of selected text in an app. The keyboard
+  path was checked with text the host put on the pasteboard.

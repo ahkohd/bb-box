@@ -428,11 +428,12 @@ export class DeviceServers {
     }
     this.#claimSwitches.set(box.id, { is: "switching", from: model, to: asked });
     this.#deps.log(`Box ${box.name}, a claimed spare, has the ${model}; switching it to the ${asked}, which its thread asked for.`);
+    const switchBegan = Date.now();
     const answer = await this.control(box, { action: "switch", device: asked }).catch(
       (error): DeviceAnswer => ({ id: "", ok: false, error: { code: "failed", words: error instanceof Error ? error.message : String(error) }, state: null }),
     );
     const outcome: ClaimSwitch = answer.ok
-      ? { is: "switched", from: model, to: asked, ms: Date.now() - began }
+      ? { is: "switched", from: model, to: asked, ms: Date.now() - switchBegan }
       : { is: "failed", from: answer.state?.model ?? model, to: asked, words: answer.error.words };
     this.#claimSwitches.set(box.id, outcome);
     if (outcome.is === "switched") {

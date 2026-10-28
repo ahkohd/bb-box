@@ -24,8 +24,8 @@ On Proxmox's VMs, android boxes among them, and Tart's macOS and Windows VMs, a 
 
 ios and android boxes keep no spares unless you set a number. Their spares are off by default because each one costs disk while it waits. Set **Spare boxes** on the kind's row to turn them on.
 
-- An android spare waits as a hibernated Proxmox VM with its device booted. It holds no memory, and its saved memory takes up to the box's memory in disk: 16 GiB at the default size.
-- An ios spare on Tart waits as a suspended macOS VM with its device booted. It takes none of the Mac's two VM slots. Its saved memory takes disk as well.
+- An android spare waits as a hibernated Proxmox VM with its device booted. It holds no memory. Its saved memory takes about as much disk as the box's memory: 16.8 GiB for a box of 16 GiB, measured.
+- An ios spare on Tart waits as a suspended macOS VM with its device booted. It takes none of the Mac's two VM slots. Its saved memory takes less disk than the box's memory: 5.2 GiB for a box of 16 GiB, measured.
 - A spare stops to wait only once its device has booted. A spare whose device does not boot within 10 minutes is released, and BB Box makes no other spare of that kind for 30 minutes.
 - A spare holds the kind's default device. A thread that asks for another device takes the spare and the device switches. If the switch fails, the box keeps the spare's device, and box_acquire says why.
 - A Tart spare is replaced once it has waited longer than **Tart: hours a macOS warm VM or spare is kept**, 6 by default, as a saved state that old may not restore. If a spare's saved state does not restore, its VM boots afresh from its disk and box_acquire says so.

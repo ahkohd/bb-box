@@ -3031,7 +3031,7 @@ test("a spare that waits stopped stays running until its device has booted, then
   assert.deepEqual(await world.boxes.list(SPARES), [], "no spare of the kind is made again at once");
   const [check] = (await world.boxes.spareChecks()).filter((each) => each.id === "spares.linux");
   assert.equal(check!.status, "warn");
-  assert.match(check!.detail, /^bb-box keeps 1 spare linux box: 0 ready, 0 being made\. A spare waits stopped with its session saved, which holds no memory and up to 4 GiB of disk for its saved memory, besides its own disk\. It has too few: its Pixel 8 did not boot: the emulator exited\.$/);
+  assert.match(check!.detail, /^bb-box keeps 1 spare linux box: 0 ready, 0 being made\. A spare waits stopped with its session saved: it holds no memory, and its saved memory takes disk, at most a little over its 4 GiB of memory, besides its own disk\. It has too few: its Pixel 8 did not boot: the emulator exited\.$/);
   assert.deepEqual(world.errors, []);
 });
 
@@ -3069,13 +3069,13 @@ test("the doctor says spares are off for a kind with a device, and what one cost
     id: "spares.linux",
     name: "Spare linux boxes",
     status: "ok",
-    detail: "Spares are off for linux boxes: none is kept. A spare waits stopped with its session saved, which holds no memory and up to 4 GiB of disk for its saved memory, besides its own disk.",
+    detail: "Spares are off for linux boxes: none is kept. A spare waits stopped with its session saved: it holds no memory, and its saved memory takes disk, at most a little over its 4 GiB of memory, besides its own disk.",
     fix: null,
   });
   world.testDevice = false;
   world.general = { ...world.general, spares: { linux: 2 } };
   const [kept] = await world.boxes.spareChecks();
-  assert.equal(kept!.detail, "bb-box keeps 2 spare linux boxes: 0 ready, 0 being made. A spare waits stopped with its session saved, which holds no memory and up to 4 GiB of disk for its saved memory, besides its own disk.");
+  assert.equal(kept!.detail, "bb-box keeps 2 spare linux boxes: 0 ready, 0 being made. A spare waits stopped with its session saved: it holds no memory, and its saved memory takes disk, at most a little over its 4 GiB of memory, besides its own disk.");
 });
 
 test("a claim of a spare tells the plugin once the box is the thread's, after a spare that waited stopped has started (063)", async () => {

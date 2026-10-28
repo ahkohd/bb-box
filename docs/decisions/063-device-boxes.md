@@ -15,7 +15,8 @@ and unit 7.4's of recording a device (E15), and units 5.1's and 6.2's of
 input and controls on Android (E8, E10, E11, E14, E21, E22, each read-back,
 and each device's own Android ID), and units 7.2's and 7.3's of computer use
 on Android (E12, and how the tree server gives way to instrumentation tests),
-are in [063 results](063-results.md). Built
+and unit 7.5's of spares and copying from a device (E16, E24, and a
+suspend that did not restore), are in [063 results](063-results.md). Built
 on the research in
 [iOS Simulator boxes](../research/ios-simulator-boxes.md) and
 [Android emulator boxes](../research/android-emulator-boxes.md). Extends
@@ -104,7 +105,7 @@ under [Experiments](#experiments)) that settles it in a named unit.
 | 13 | While a person holds control, the agent's device input is refused at once, and input already sent is stopped; reading, new installs and commands go on | 038 for desktops, and the notes' finding that adb input cannot be seen |
 | 14 | Text other than ASCII is pasted in batches, with the device's clipboard saved and put back, and iOS's Allow Paste answered by the server | both reviews; the notes' paste measurements |
 | 15 | `box_record` records the device server's own stream, framed, on a monotonic timeline, with captions in a band beside the device | both servers already encode the device's pixels; adb screenrecord stops at 3 minutes |
-| 16 | A spare waits as a suspended or hibernated VM with its device booted, one of each kind by default where a host has room for it | E3 and E4 check the device survives; E24 measures the disk |
+| 16 | A spare waits as a suspended or hibernated VM with its device booted. Spares are off by default: an operator sets a count (the owner, 28 October 2026) | E3 and E4 check the device survives; E24 measures the disk |
 
 ## The data shape
 
@@ -1237,20 +1238,29 @@ and 5-minute limit as on desktops (059):
   is a running box, and only Tart's warm VMs, which are not enrolled, wait
   suspended (032). Unit 7.5 changes the Tart backend so an enrolled spare
   can wait suspended, taking no VM slot.
-- **By default, one ios and one android spare,** each kept on the first
-  offer of its kind with room for it, and none where none has room. Room
-  means: the host's free disk stays above its `reserve-disk-gib` with the
-  spare's disk counted (E24 measures it: about 16 GiB of memory saved to
-  disk for an android spare, and the VM's memory for an ios one); and on a
-  Mac, a suspended VM's disk only, as it takes no slot. This is the kind's
-  `spares` setting (032), per kind, not per host; its default is 1 for
-  these two kinds, and an operator may set 0. The doctor says when a kind
-  wants a spare and no host has room.
+- **Off by default, an operator's choice.** The owner decided on 28
+  October 2026: "it should be an opt-in configuration and off default".
+  The kind's `spares` setting (032), per kind, not per host, is 0 for ios
+  and android as for every kind, so nothing is made until an operator
+  sets a count. A spare is then made where an acquire of its kind would
+  go, by the backend's usual room check; its saved memory, up to the
+  box's memory, is not counted ahead (unit 7.5's results). The doctor's
+  Spares section says, for each device kind, that spares are off, or how
+  many are kept and ready, what each costs while it waits, and why a kind
+  has too few.
 - **A claim** resumes the VM, checks the server's version, sets the
   device's clock, and, when the thread asked for another model, switches.
 - **A spare from an older image build** is retired at claim and a new one
-  made, as 049 retires stale builds. The Tart backend reads the spare's
-  image record to tell, as it cannot today.
+  made, as 049 retires stale builds. A Tart macOS box records its image's
+  build at its clone, and the backend compares it with the image's record
+  on its Mac.
+- **Before it waits,** a spare boots each of its kind's models once and
+  goes back to its default, so a claim of any model switches as one booted
+  before in the box (unit 7.5's results).
+- **An ios spare waits suspended no longer than Tart's `warm-max-hours`,**
+  6 by default, as a saved state that old may not restore (E4); an older
+  one is replaced. A spare whose saved state does not restore boots afresh,
+  and box_acquire says so.
 - **The default model** is the one a spare holds.
 
 Expected time to a booted device:
@@ -1481,8 +1491,7 @@ while the input waits, which desktops share
 - **No host desktop on android boxes in v1,** and on ios boxes the host's
   desktop is the person's only.
 - **Spares** wait suspended or hibernated with the device booted, not
-  running, so they hold no memory; one of each kind by default where a
-  host has room.
+  running, so they hold no memory; off by default, an operator's choice.
 
 ## Rejected
 
@@ -1551,7 +1560,8 @@ note above; the owner may still change any of them.
    defaults. The ios image grows by about 0.6 GB, the Android template by
    about 18 GB, about 4.5 GB a model.
 2. **Spares:** one ios and one android by default, kept only where a host
-   has room for them; none elsewhere.
+   has room for them; none elsewhere. The owner changed this on 28 October
+   2026: spares are off by default, an opt-in.
 3. **iOS network:** no control in v1.
 4. **The host's desktop:** the computer tools drive the device only. A
    person may open an ios box's host desktop, with the warning about
@@ -1583,6 +1593,8 @@ Given on 26 October 2026, to the questions the revision left open:
 3. **The lead's defaults stand:** the first 6 models, spares where a host
    has room, no iOS network control in v1, the computer tools drive the
    device only, and about 80 to 90 ms from tap to screen as the device bar.
+4. **Spares are an opt-in** (28 October 2026): "it should be an opt-in
+   configuration and off default". This replaces the spares default in 3.
 
 ## Review answers
 
@@ -1630,5 +1642,5 @@ agreed, the note changed.
 | A16 | The phase plan understates dependencies | Changed. Foundations split into 2.1 to 2.3; the codec proved in 2.2; the helper in 2.4 before its image in 3.1; images after 2.1; drivers' read-backs before the frame; doctor, settings, guides, the form, the CLI and conformance named in each unit's Also. Conformance runs the test device everywhere, and real device cases wherever an offer has one |
 | A17 | Recording needs an idle and failure contract | Changed. A monotonic timeline, a key frame with SPS and PPS per segment, still stretches held to the stop, gaps captioned, ffmpeg's filters checked on both OSes, and a live check of a still clip, no viewer and a server killed mid-recording. A server update waits for the recording |
 | A18 | Switch times understated; app data not explained | Changed. End-to-end switch times, 5.0 to 6.7 s on Android; apps per device, said in the picker; a failed switch restores the old model; E16 times to a drawn frame |
-| A19 | Storage and spares need admission rules | Changed. E24 measures disk, allocated and apparent, with builds and trials beside; a spare only where a host has room after its reserve; per kind, not per host. Declined in part: spares are on by default where there is room, as the lead decided, not opt-in |
+| A19 | Storage and spares need admission rules | Changed. E24 measures disk, allocated and apparent, with builds and trials beside; a spare only where a host has room after its reserve; per kind, not per host. Declined in part at first: spares were to be on by default where there is room. The owner made them an opt-in, off by default, on 28 October 2026 |
 | A20 | The toolbar needs a usability gate | Changed. Explicit narrow widths and a row of the most used; a check at 360 px, 480 px and 200% zoom, by keyboard, touch and screen reader; blocked controls explained without hover, and a click takes control; screenshot downloads where the clipboard is refused; Open link added to More; reboot and location say what they do |
