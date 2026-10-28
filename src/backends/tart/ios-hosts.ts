@@ -446,7 +446,7 @@ export class IosHosts implements SlotLender {
       }
       if (!status || status.deletingSince !== null) continue;
       const draining = owner.build !== null && owner.build !== this.#currentBuild(states.get(owner.mac.name));
-      if (draining && this.#newHostWhy(owner.mac, states, owners.filter((other) => other.vm !== owner.vm), leaving) === null) continue;
+      if (draining && this.#newHostWhy(owner.mac, states, owners, leaving) === null) continue;
       if (status.slots.some((slot) => readyFor(slot, null, this.#acquiringBoxes))) {
         tiers.push({ tier: "ready", host: owner.vm, waitMs: CLAIM_WAIT_MS });
         continue;

@@ -435,3 +435,43 @@ test("a new shared host goes to the Mac whose video encoder streams least; a VM'
   assert.deepEqual(backend.encoderOf(taken), { mac: "mac1", chip: "Apple M4 Max" });
   assert.equal(backend.encoderOf({ ref: "elsewhere", host: "mac9", address: null, size: null, data: {} }), null);
 });
+
+function newIosBuild(mac: string): void {
+  writeFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-ios.json"), `${imageRecord("ios", { build: "build.20261028-002015-2222", base: "build.20261003-021500", devices: IOS_HOST_DEVICES, tools: { idb_companion: "1.7.7" } })}\n`);
+}
+
+function anotherMacosVm(mac: string, name = "bb-box-dedicated"): void {
+  const vm = join(mac, ".tart", "vms", name);
+  mkdirSync(vm, { recursive: true });
+  writeFileSync(join(vm, "config.json"), JSON.stringify({ os: "darwin", memorySize: 16 * 1024 ** 3, cpuCount: 6 }));
+  writeFileSync(join(vm, "running"), String(process.pid));
+}
+
+test("a host on an older build lends its ready slot while no host on the new build can start on its Mac, counting itself against the hosts each Mac may run, as a start does (F-9, H6)", async () => {
+  const { backend, mac, clones } = setup();
+  const first = identity();
+  const { guest } = await place(backend, first);
+  const one = await backend.acquire(first, guest, hooks().hooks, signal());
+  newIosBuild(mac);
+  const second = identity();
+  const { tier } = await place(backend, second);
+  assert.equal(tier.tier, "ready", "one host a Mac, so no host on the new build can start beside it");
+  assert.equal(clones().length, 1);
+  const doctor = (await backend.doctor(signal())).checks.find((check) => check.id === "ios-hosts.mac1");
+  assert.match(doctor?.detail ?? "", /older than the iOS image's, so it lends only while no host on the new build can start\./);
+  await backend.release(one, releasing, signal());
+});
+
+test("with two hosts a Mac, a host on an older build stops lending once a host on the new build can start, and lends again while the Mac's other VM slot is taken (F-9, H6)", async () => {
+  const { backend, mac } = setup({ "tart-ios-hosts-per-mac": 2 });
+  const first = identity();
+  const { guest } = await place(backend, first);
+  const one = await backend.acquire(first, guest, hooks().hooks, signal());
+  newIosBuild(mac);
+  const free = await backend.slots!.offer("ios", null, signal());
+  assert.deepEqual(free, { tier: "new-host", where: "mac1", waitMs: 55_000, cost: "vm-slot" });
+  anotherMacosVm(mac);
+  const full = await backend.slots!.offer("ios", null, signal());
+  assert.equal(full.tier, "ready", "the Mac runs two macOS VMs, so no host on the new build can start");
+  await backend.release(one, releasing, signal());
+});
