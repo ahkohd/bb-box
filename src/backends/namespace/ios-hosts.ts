@@ -7,13 +7,14 @@ import type { DeviceOffer, IosModelName } from "../../core/device.ts";
 import type { MacReport } from "../../core/mac-capabilities.ts";
 import { sizeMacSlots, macSlotSizingWords } from "../../core/slot-sizing.ts";
 import { quote } from "../../transports/process.ts";
+import { pause } from "../../transports/ready.ts";
 import { SlotUserTransport } from "../../transports/slot-user.ts";
 import type { SshTransport } from "../../transports/ssh.ts";
 import type { RunResult } from "../../transports/types.ts";
 import { setupDir } from "../setup-dir.ts";
 import { DEVICE_HOST_EXITS, claimantInput, helperCommand, parseHostStatus, slotDaemonKeptByHost, type HostStatus, type SlotClaimant } from "../tart/device-host.ts";
 import { BackendError, type AcquireHooks, type BackendStorage, type BoxIdentity, type BoxTransports, type DoctorCheck, type Guest, type HeldGuest, type PowerState } from "../types.ts";
-import type { Instance } from "./api.ts";
+import type { Instance, InstanceStatus } from "./api.ts";
 import type { MacShape } from "./config.ts";
 
 export const NAMESPACE_HOST_ROLE = "device-host";
@@ -30,6 +31,8 @@ const SLOT_MAKING_MS = 45_000;
 const HOST_SETUP_MS = 25 * 60_000;
 const SETUP_FOLDER = "bb-box-setup";
 const HELPER_LONG_MS = 360_000;
+export const MACHINE_POLL_MS = 10_000;
+const ENDED_STATUSES: ReadonlySet<InstanceStatus> = new Set(["destroying", "destroyed", "suspending", "suspended", "error"]);
 
 export interface NamespaceIosHostsConfig {
   readonly on: boolean;
@@ -54,6 +57,14 @@ export interface NamespaceHostRecord {
   readonly startBy: string | null;
   readonly startBeat: number | null;
   readonly hardware: boolean | null;
+  readonly firstStartFailure?: string | null;
+}
+
+interface PreparedMac {
+  readonly instance: string;
+  readonly machineUp: number;
+  readonly hardware: boolean | null;
+  readonly setUpSaid: string;
 }
 
 export interface NamespaceHostsAccess {
@@ -198,9 +209,11 @@ export class NamespaceHosts implements SlotLender {
   #offered: { readonly report: MacReport | null; readonly offer: HostOffer } | null = null;
   #lock: Promise<unknown> = Promise.resolve();
   #recordLock: Promise<unknown> = Promise.resolve();
+  readonly #machinePollMs: number;
 
-  constructor(access: NamespaceHostsAccess) {
+  constructor(access: NamespaceHostsAccess, options: { readonly machinePollMs?: number } = {}) {
     this.#access = access;
+    this.#machinePollMs = options.machinePollMs ?? MACHINE_POLL_MS;
   }
 
   #serial<T>(task: () => Promise<T>): Promise<T> {
@@ -377,6 +390,7 @@ export class NamespaceHosts implements SlotLender {
       startBy: this.#instance,
       startBeat: now,
       hardware: null,
+      firstStartFailure: null,
     };
     await this.#save(record);
     this.#access.log(`Starting a Namespace host for box ${box.name}, a ${room.shape.cores}x${room.shape.memoryGB} Mac with ${sizing.words}.`);
@@ -437,32 +451,13 @@ export class NamespaceHosts implements SlotLender {
   async #startHost(given: MacShape | null): Promise<void> {
     const signal = this.#stopping.signal;
     const began = performance.now();
-    let record = await this.record();
+    const record = await this.record();
     if (!record || record.phase !== "starting") return;
-    record = (await this.#update((current) => ({ ...current, startBy: this.#instance, startBeat: this.#access.now() })))!;
+    await this.#update((current) => ({ ...current, startBy: this.#instance, startBeat: this.#access.now() }));
     const beat = setInterval(() => void this.#update((current) => (current.startBy === this.#instance ? { ...current, startBeat: this.#access.now() } : current)).catch(() => undefined), START_BEAT_MS);
     beat.unref?.();
-    let instance = record.instance;
     try {
-      if (!instance) {
-        const shape = given ?? (await this.#access.room(signal)).shape;
-        if (!shape) throw new Error("Namespace has no Mac for it now");
-        instance = (await this.#access.create(record.tag, shape, signal)).id;
-        record = (await this.#update((current) => ({ ...current, instance })))!;
-      }
-      const ready = await this.#access.wait(instance, signal);
-      if (ready.status !== "running") throw new Error(`Namespace's Mac ${instance} is ${ready.status}, not running`);
-      await this.#access.answers(instance, this.#access.now() + 5 * 60_000, signal);
-      await this.#access.joinTailnet?.(instance, signal);
-      const machineUp = performance.now();
-      const measured = await this.#access.measure(instance, signal);
-      if (measured.capabilities.simulator.is !== "yes") throw new Error(`its Mac cannot run the iOS Simulator: ${measured.capabilities.simulator.is === "no" ? measured.capabilities.simulator.why : "not known"}`);
-      const command = await this.#access.command(instance);
-      const unpacked = await command.run(UNPACK_SETUP, { stdin: await this.#access.setupArchive(), timeoutMs: 120_000, signal });
-      if (unpacked.exitCode !== 0) throw new Error(`bb-box's setup did not unpack on it: ${unpacked.stderr.trim() || `exit code ${unpacked.exitCode}`}`);
-      const setUp = await command.run(hostSetupScript(record), { timeoutMs: HOST_SETUP_MS, signal, maxOutputBytes: 1 << 20 });
-      if (setUp.exitCode !== 0) throw new Error(`its iOS slots were not set up: ${setUp.stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${setUp.exitCode}`}`);
-      const hardware = measured.capabilities.hardwareEncoder.is === "yes" ? true : measured.capabilities.hardwareEncoder.is === "no" ? false : null;
+      const { instance, machineUp, hardware, setUpSaid } = await this.#prepareOnFreshMacIfFirstFails(given, signal);
       const promised = await this.#serial(async () => {
         const handed: string[] = [];
         for (;;) {
@@ -470,7 +465,7 @@ export class NamespaceHosts implements SlotLender {
           const left = current.promised.filter((box) => !handed.includes(box));
           if (!left.length) break;
           for (const box of left) {
-            const result = await this.#helper(instance!, "promise", [], claimantInput({ install: this.#access.installId, box }), 90_000, signal);
+            const result = await this.#helper(instance, "promise", [], claimantInput({ install: this.#access.installId, box }), 90_000, signal);
             if (result.exitCode !== DEVICE_HOST_EXITS.done) this.#access.log(`The Namespace host did not take the promise for box ${box}: ${result.stderr.trim()}`);
             handed.push(box);
           }
@@ -479,16 +474,99 @@ export class NamespaceHosts implements SlotLender {
         return handed;
       });
       const total = (performance.now() - began) / 1000;
-      this.#access.log(`The Namespace host on ${instance} serves, ${total.toFixed(1)} s after its start (its Mac ${((machineUp - began) / 1000).toFixed(1)} s), for ${promised.length} boxes: ${setUp.stdout.trim().split("\n").pop() ?? ""}.`);
+      this.#access.log(`The Namespace host on ${instance} serves, ${total.toFixed(1)} s after its start (its Mac ${((machineUp - began) / 1000).toFixed(1)} s), for ${promised.length} boxes: ${setUpSaid}.`);
       if (!promised.length) await this.#vacate(signal);
     } catch (error) {
       if (signal.aborted) throw error;
       const why = words(error);
-      await this.#update((current) => ({ ...current, phase: "failed", failure: why, startBy: null, startBeat: null })).catch(() => undefined);
-      if (instance) await this.#access.destroy(instance, "bb-box: the Namespace host did not start").catch((cause) => this.#access.logError("destroy the Namespace host after its start failed", cause));
+      const failed = (await this.#update((current) => ({ ...current, phase: "failed", failure: why, startBy: null, startBeat: null })).catch(() => null)) ?? this.known();
+      if (failed?.instance) await this.#access.destroy(failed.instance, "bb-box: the Namespace host did not start").catch((cause) => this.#access.logError("destroy the Namespace host after its start failed", cause));
       throw new Error(`The Namespace host did not start: ${why}`);
     } finally {
       clearInterval(beat);
+    }
+  }
+
+  async #prepareOnFreshMacIfFirstFails(given: MacShape | null, signal: AbortSignal): Promise<PreparedMac> {
+    let shape = given;
+    const shapeOf = async () => (shape ??= (await this.#access.room(signal)).shape);
+    const record = (await this.record())!;
+    try {
+      return await this.#prepare(record, record.tag, shapeOf, signal);
+    } catch (first) {
+      const failed = await this.record();
+      if (signal.aborted || !failed?.instance || failed.firstStartFailure) throw first;
+      const firstWords = words(first);
+      this.#access.log(`The Namespace host's Mac ${failed.instance} did not start, so bb-box destroys it and starts a fresh Namespace Mac, once: ${firstWords}`);
+      await this.#access.leaveTailnet?.(failed.instance).catch((error) => this.#access.logError("take the Namespace host's first Mac off the tailnet", error));
+      await this.#access.destroy(failed.instance, "bb-box: the Namespace host's Mac did not start, so a fresh one replaces it", signal).catch((error: unknown) => {
+        throw new Error(`${firstWords} bb-box could not destroy its Mac to start a fresh one: ${words(error)}`);
+      });
+      const fresh = (await this.#update((current) => ({ ...current, instance: null, firstStartFailure: firstWords })))!;
+      try {
+        return await this.#prepare(fresh, `${fresh.tag}-fresh`, shapeOf, signal);
+      } catch (second) {
+        if (signal.aborted) throw second;
+        throw new Error(`${words(second)} That was a fresh Namespace Mac's start; the first one's failed too: ${firstWords}`);
+      }
+    }
+  }
+
+  async #prepare(record: NamespaceHostRecord, tag: string, shapeOf: () => Promise<MacShape | null>, signal: AbortSignal): Promise<PreparedMac> {
+    let instance = record.instance;
+    if (!instance) {
+      const shape = await shapeOf();
+      if (!shape) throw new Error("Namespace has no Mac for it now");
+      const made = (await this.#access.create(tag, shape, signal)).id;
+      instance = made;
+      await this.#update((current) => ({ ...current, instance: made }));
+    }
+    const ready = await this.#access.wait(instance, signal);
+    if (ready.status !== "running") throw new Error(`Namespace's Mac ${instance} is ${ready.status}, not running`);
+    const running = instance;
+    return this.#whileMacRuns(running, (watched) => this.#setUp(running, record, watched), signal);
+  }
+
+  async #setUp(instance: string, record: NamespaceHostRecord, signal: AbortSignal): Promise<PreparedMac> {
+    await this.#access.answers(instance, this.#access.now() + 5 * 60_000, signal);
+    await this.#access.joinTailnet?.(instance, signal);
+    const machineUp = performance.now();
+    const measured = await this.#access.measure(instance, signal);
+    if (measured.capabilities.simulator.is !== "yes") throw new Error(`its Mac cannot run the iOS Simulator: ${measured.capabilities.simulator.is === "no" ? measured.capabilities.simulator.why : "not known"}`);
+    const command = await this.#access.command(instance);
+    const unpacked = await command.run(UNPACK_SETUP, { stdin: await this.#access.setupArchive(), timeoutMs: 120_000, signal });
+    if (unpacked.exitCode !== 0) throw new Error(`bb-box's setup did not unpack on it: ${unpacked.stderr.trim() || `exit code ${unpacked.exitCode}`}`);
+    const setUp = await command.run(hostSetupScript(record), { timeoutMs: HOST_SETUP_MS, signal, maxOutputBytes: 1 << 20 });
+    if (setUp.exitCode !== 0) throw new Error(`its iOS slots were not set up: ${setUp.stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${setUp.exitCode}`}`);
+    const hardware = measured.capabilities.hardwareEncoder.is === "yes" ? true : measured.capabilities.hardwareEncoder.is === "no" ? false : null;
+    return { instance, machineUp, hardware, setUpSaid: setUp.stdout.trim().split("\n").pop() ?? "" };
+  }
+
+  async #whileMacRuns<T>(instance: string, task: (signal: AbortSignal) => Promise<T>, signal: AbortSignal): Promise<T> {
+    const watching = new AbortController();
+    const watched = AbortSignal.any([signal, watching.signal]);
+    const ran = performance.now();
+    let ended: Error | null = null;
+    const endedNow = new Promise<never>((_, reject) => watching.signal.addEventListener("abort", () => reject(ended), { once: true }));
+    endedNow.catch(() => undefined);
+    const watcher = (async () => {
+      while (!watched.aborted) {
+        await pause(this.#machinePollMs, watched).catch(() => undefined);
+        if (watched.aborted) return;
+        const now = await this.#access.describe(instance, watched).catch(() => undefined);
+        if (now === undefined || (now && !ENDED_STATUSES.has(now.status))) continue;
+        ended = new Error(`Namespace's Mac ${instance} ${now ? `is ${now.status}` : "is gone"} before the host served: Namespace ${now ? `lists it ${now.status}` : "no longer lists it"}.`);
+        this.#access.log(`${ended.message} bb-box saw it ${((performance.now() - ran) / 1000).toFixed(1)} s after the Mac ran, and stops waiting for it.`);
+        watching.abort(ended);
+      }
+    })();
+    try {
+      return await Promise.race([task(watched), endedNow]);
+    } catch (error) {
+      throw ended ?? error;
+    } finally {
+      watching.abort();
+      await watcher;
     }
   }
 
@@ -740,7 +818,10 @@ export class NamespaceHosts implements SlotLender {
       const os = "os" in device.runtime ? device.runtime.os : "";
       return { id, name, status: "ok", detail: `No Namespace host runs. One starts when an ios box finds no slot on a pool Mac or a Tart host: a ${device.model} on iOS ${os}, on the workspace's one Mac, which then holds no macos box. It lives until its last box goes, or an hour before the plan's longest life.`, fix: null };
     }
-    if (record.phase !== "serving" || !record.instance) return { id, name, status: record.phase === "failed" ? "warn" : "ok", detail: `The Namespace host is ${record.phase}${record.failure ? `: ${record.failure}` : ""}, with ${record.promised.length} boxes promised, made ${Math.round((this.#access.now() - record.made) / 1000)} s ago.`, fix: record.phase === "failed" ? "bb-box removes it at its next upkeep." : null };
+    if (record.phase !== "serving" || !record.instance) {
+      const again = record.phase === "starting" && record.firstStartFailure ? `, on a fresh Namespace Mac as its first start failed (${record.firstStartFailure})` : "";
+      return { id, name, status: record.phase === "failed" ? "warn" : "ok", detail: `The Namespace host is ${record.phase}${record.failure ? `: ${record.failure}` : ""}, with ${record.promised.length} boxes promised, made ${Math.round((this.#access.now() - record.made) / 1000)} s ago${again}.`, fix: record.phase === "failed" ? "bb-box removes it at its next upkeep." : null };
+    }
     const status = await this.#status(record.instance, signal).catch((error: unknown) => error as Error);
     if (status instanceof Error) return { id, name, status: "warn", detail: `The Namespace host on ${record.instance} did not answer: ${status.message}`, fix: "bb-box tries again at its next upkeep." };
     const count = (is: string) => status.slots.filter((slot) => slot.is === is).length;
