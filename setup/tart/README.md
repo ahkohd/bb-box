@@ -410,15 +410,15 @@ changes, as everything that uses them, Tart and QEMU too, follows the link:
 # Tart makes its control.sock sockets again, and ditto cannot copy them.
 find ~/.tart/vms -name control.sock -type s -delete
 mkdir -p /Volumes/<volume>/bb-box
-ditto ~/.tart /Volumes/<volume>/bb-box/tart
+ditto ~/.tart /Volumes/<volume>/bb-box/tart.noindex
 ditto ~/.bb-box/qemu /Volumes/<volume>/bb-box/qemu
 # ditto fills a Tart disk image's holes: a 6 GB Linux image takes 60 GB. dd keeps it sparse.
 for f in ~/.tart/vms/*/disk.img; do
-  t=/Volumes/<volume>/bb-box/tart/vms/${f#$HOME/.tart/vms/}
+  t=/Volumes/<volume>/bb-box/tart.noindex/vms/${f#$HOME/.tart/vms/}
   dd if="$f" of="$t" bs=1m conv=sparse && touch -r "$f" "$t"
 done
 # Compare each copy with its original (cmp) before you switch.
-mv ~/.tart ~/.tart.pre-move && ln -s /Volumes/<volume>/bb-box/tart ~/.tart
+mv ~/.tart ~/.tart.pre-move && ln -s /Volumes/<volume>/bb-box/tart.noindex ~/.tart
 mv ~/.bb-box/qemu ~/.bb-box/qemu.pre-move && ln -s /Volumes/<volume>/bb-box/qemu ~/.bb-box/qemu
 ```
 
@@ -434,8 +434,15 @@ mv ~/.bb-box/qemu ~/.bb-box/qemu.pre-move && ln -s /Volumes/<volume>/bb-box/qemu
   volume mounts after a restart, before boxes are needed.
 - **The way back:** remove the links and move the `.pre-move` folders back,
   or, once those are deleted, copy the folders back with `ditto`.
-- Spotlight indexes a new volume: `sudo mdutil -i off /Volumes/<volume>`
-  keeps it from indexing VM disks.
+- **Spotlight skips a folder whose name ends in `.noindex`**, as it skips
+  the hidden `~/.tart`. In a folder it indexes, it opens each new VM's disk
+  after Tart makes it. Measured on macOS 26, those opens take no lock, so
+  they cannot fail a start as `tart list`'s did (F-12), but they read every
+  new disk. A `.metadata_never_index` file in the folder does not stop it.
+  `bb box doctor` says when Spotlight indexes Tart's folder, with the
+  commands that keep it out and undo that. `sudo mdutil -i off
+  /Volumes/<volume>` works too, for a volume that holds nothing else
+  Spotlight should index.
 
 ## Update
 

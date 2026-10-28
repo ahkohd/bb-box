@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, test } from "node:test";
-import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
+import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, spotlightJudgement, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
-import { baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
+import { RUN_LOCK_HOLDERS_PL, TART_LISTS_SH, baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, runVmElsewhere, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
@@ -1011,6 +1011,62 @@ test("doctor says what is missing on the Mac", async () => {
   assert.equal(down.checks.find((check) => check.id === "image.mac1.macos")!.status, "skipped");
 });
 
+test("the doctor says when Spotlight indexes Tart's VMs, and its fix keeps Spotlight out and comes undone (F-12)", async () => {
+  const { mac, make } = setup();
+  const checks = async () => (await make().doctor()).checks;
+  const spotlight = async () => (await checks()).find((check) => check.id === "spotlight.mac1")!;
+  const image = async () => (await checks()).find((check) => check.id === "image.mac1.macos")!.detail;
+  const imageBefore = await image();
+  const hidden = await spotlight();
+  assert.deepEqual([hidden.name, hidden.status, hidden.fix], ["Spotlight on mac1", "ok", null]);
+  assert.match(hidden.detail, /^Spotlight does not index \S+\/\.tart\/vms, as a folder in its path is hidden\.$/);
+
+  mkdirSync(join(mac, "VMs"));
+  renameSync(join(mac, ".tart"), join(mac, "VMs", "tart"));
+  symlinkSync(join(mac, "VMs", "tart"), join(mac, ".tart"));
+  const indexed = await spotlight();
+  assert.equal(indexed.status, "warn");
+  assert.match(indexed.detail, /^Spotlight indexes \S+\/VMs\/tart\/vms, so it opens each new VM's disk after Tart makes it\. .*take no lock/);
+  assert.doesNotMatch(indexed.fix ?? "", /mdutil/, "the Mac's own volume is not turned off");
+  const [, fix, undo] = /link its old name to it: (.+?)\. To undo it, in the same way: (.+?)\.$/.exec(indexed.fix ?? "") ?? [];
+  assert.ok(fix && undo, indexed.fix ?? "no fix");
+  const run = (command: string) => assert.equal(spawnSync("/bin/sh", ["-c", command]).status, 0, command);
+
+  run(fix);
+  const kept = await spotlight();
+  assert.equal(kept.status, "ok");
+  assert.match(kept.detail, /^Spotlight does not index \S+\/VMs\/tart\.noindex\/vms, as a folder in its path ends in \.noindex\.$/);
+  assert.equal(await image(), imageBefore, "Tart's VMs are read through the link");
+
+  run(undo);
+  assert.equal((await spotlight()).status, "warn");
+  assert.equal(realpathSync(join(mac, ".tart")), realpathSync(join(mac, "VMs", "tart")));
+
+  writeFileSync(join(mac, ".fake-spotlight-excluded"), "");
+  assert.match((await spotlight()).detail, /^Spotlight lists none of Tart's VMs in \S+\/VMs\/tart\/vms, as when the folder is in its Search Privacy list, or it has not indexed the folder yet\.$/);
+  rmSync(join(mac, ".fake-spotlight-excluded"));
+  writeFileSync(join(mac, ".fake-spotlight-off"), "/");
+  const off = await spotlight();
+  assert.deepEqual([off.status, off.detail], ["ok", `Spotlight indexing is off on /, where Tart keeps its VMs in ${realpathSync(join(mac, "VMs", "tart", "vms"))}.`]);
+});
+
+test("Spotlight's fix for a TART_HOME that is not a link makes it one, and on a volume of Tart's own offers mdutil too (F-12)", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "bb-box-spotlight-")));
+  const home = join(dir, "Tart");
+  mkdirSync(join(home, "vms", "a"), { recursive: true });
+  writeFileSync(join(home, "vms", "a", "config.json"), "{}");
+  const judged = spotlightJudgement({ home, homeFolder: home, folder: join(home, "vms"), volume: "/Volumes/VMs", volumeIndexing: "enabled", listedVm: join(home, "vms", "a", "config.json") });
+  assert.equal(judged.status, "warn");
+  assert.match(judged.fix ?? "", / Or, if nothing else on \/Volumes\/VMs needs Spotlight, turn its indexing off: sudo mdutil -i off '\/Volumes\/VMs', undone with sudo mdutil -i on '\/Volumes\/VMs'\.$/);
+  const [, fix, undo] = /link its old name to it: (.+?)\. To undo it, in the same way: (.+?)\. Or, /.exec(judged.fix ?? "") ?? [];
+  assert.equal(spawnSync("/bin/sh", ["-c", fix!]).status, 0);
+  assert.equal(realpathSync(join(home, "vms", "a", "config.json")), join(`${home}.noindex`, "vms", "a", "config.json"));
+  assert.equal(spawnSync("/bin/sh", ["-c", undo!]).status, 0);
+  assert.equal(realpathSync(home), home);
+  assert.ok(existsSync(join(home, "vms", "a", "config.json")));
+  rmSync(dir, { recursive: true });
+});
+
 test("a box has the cores and memory it asks for, read from its config, and its disk from the start, as tart get gives it; capacity refuses what a Mac cannot give", async () => {
   const { backend } = setup();
   const medium: BoxSize = { cores: 6, memoryMiB: 16384, diskGiB: null };
@@ -1268,6 +1324,45 @@ test("prepare-ios-image.sh finds VMs by their folders, without tart list, so a V
   assert.match(missing.stderr, /there is no Tart VM bb-box-not-there/);
   rmSync(join(mac, ".fake-tart-list-fails"));
   assert.deepEqual(askedTartToReadDisks(tartCalls(mac)), []);
+});
+
+test("grant-tcc.sh reads a VM's state from its folder and Tart's run lock, as bb-box does, without tart list, so it opens no disk (F-12)", async () => {
+  const { mac } = setup();
+  const script = join(import.meta.dirname, "..", "setup", "tart", "grant-tcc.sh");
+  const text = readFileSync(script, "utf8");
+  assert.ok(text.includes(`run_lock_holders() { perl -e '${RUN_LOCK_HOLDERS_PL}' "$@"; }`), "it reads the run lock with bb-box's own perl");
+  assert.ok(text.includes(TART_LISTS_SH), "it lists a VM by its folder as bb-box does");
+  assert.doesNotMatch(text, /tart (list|get)/);
+  const grant = (vm: string) =>
+    new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawn("/bin/sh", [script, vm, join(mac, "Nothing.app")], { env: { HOME: mac, PATH: `${join(mac, ".nix-profile", "bin")}:/usr/bin:/bin` } });
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
+      child.on("close", (code) => resolve({ code, stderr }));
+    });
+  const folder = join(mac, ".tart", "vms", FAKE_IMAGE);
+  writeFileSync(join(mac, ".fake-tart-list-fails"), "");
+
+  const stopped = await grant(FAKE_IMAGE);
+  assert.equal(stopped.code, 1);
+  assert.match(stopped.stderr, /grant-tcc: \S*Nothing\.app is not an app\n$/, "a stopped VM gets past the state check");
+
+  writeFileSync(join(folder, "state.vzvmsave"), "");
+  assert.match((await grant(FAKE_IMAGE)).stderr, /grant-tcc: bb-box-macos must be stopped, not suspended\n$/);
+  rmSync(join(folder, "state.vzvmsave"));
+
+  await runVmElsewhere(folder);
+  assert.match((await grant(FAKE_IMAGE)).stderr, /grant-tcc: bb-box-macos must be stopped, not running\n$/);
+  rmSync(join(folder, "running"));
+  let afterRun = await grant(FAKE_IMAGE);
+  for (let tries = 0; /not running/.test(afterRun.stderr) && tries < 50; tries++) afterRun = await grant(FAKE_IMAGE);
+  assert.match(afterRun.stderr, /not an app/, "stopped again once the run lock goes");
+
+  mkdirSync(join(mac, ".tart", "vms", "half"));
+  writeFileSync(join(mac, ".tart", "vms", "half", "config.json"), "{}");
+  assert.match((await grant("half")).stderr, /grant-tcc: no Tart VM half\n$/, "a folder Tart does not list is no VM");
+  assert.match((await grant("bb-box-not-there")).stderr, /grant-tcc: no Tart VM bb-box-not-there\n$/);
+  assert.deepEqual(tartCalls(mac).filter(([tool]) => tool === "tart"), [], "it runs no tart command");
 });
 
 test("the iOS image: listed when set, built by prepare-ios-image.sh on the macOS image, replaced without touching that image, checked by bb-box-check-ios, and judged by the doctor (063, 3.2)", async () => {

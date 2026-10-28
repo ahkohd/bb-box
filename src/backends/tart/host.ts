@@ -36,17 +36,19 @@ export function vmName(boxId: string): string {
   return `${VM_PREFIX}${boxId}`;
 }
 
-const RUN_LOCK_HOLDERS_PL = String.raw`use Fcntl; my $darwin = $^O eq "darwin"; for my $f (@ARGV) { open(my $h, "<", $f) or next; my $l = $darwin ? pack("q q l s s", 0, 0, 0, F_RDLCK, 0) : pack("s s x4 q q l x4", F_RDLCK, 0, 0, 0, 0); fcntl($h, F_GETLK, $l) or next; my ($type, $pid) = $darwin ? (unpack("q q l s s", $l))[3, 2] : (unpack("s s x4 q q l x4", $l))[0, 4]; print "$pid $f\n" if $type != F_UNLCK }`;
+export const RUN_LOCK_HOLDERS_PL = String.raw`use Fcntl; my $darwin = $^O eq "darwin"; for my $f (@ARGV) { open(my $h, "<", $f) or next; my $l = $darwin ? pack("q q l s s", 0, 0, 0, F_RDLCK, 0) : pack("s s x4 q q l x4", F_RDLCK, 0, 0, 0, 0); fcntl($h, F_GETLK, $l) or next; my ($type, $pid) = $darwin ? (unpack("q q l s s", $l))[3, 2] : (unpack("s s x4 q q l x4", $l))[0, 4]; print "$pid $f\n" if $type != F_UNLCK }`;
+
+export const TART_LISTS_SH = String.raw`tart_lists() {
+  [ -f "$1/config.json" ] && [ -f "$1/nvram.bin" ] || return 1
+  if [ -f "$1/disk.img" ]; then [ ! -f "$1/overlay.asif" ]; else [ -f "$1/manifest.json" ] && [ -f "$1/overlay.asif" ]; fi
+}
+`;
 
 const VM_READ = String.raw`tart_vms=$HOME/.tart/vms; [ -z "$TART_HOME" ] || tart_vms=$TART_HOME/vms
 if stat --version >/dev/null 2>&1; then stat_style=gnu; else stat_style=bsd; fi
 stat_of() { if [ "$stat_style" = gnu ]; then stat -c "$1" "$3"; else stat -f "$2" "$3"; fi; }
 run_lock_holders() { perl -e '${RUN_LOCK_HOLDERS_PL}' "$@"; }
-tart_lists() {
-  [ -f "$1/config.json" ] && [ -f "$1/nvram.bin" ] || return 1
-  if [ -f "$1/disk.img" ]; then [ ! -f "$1/overlay.asif" ]; else [ -f "$1/manifest.json" ] && [ -f "$1/overlay.asif" ]; fi
-}
-state_of_folder() {
+${TART_LISTS_SH}state_of_folder() {
   tart_lists "$1" || return 0
   case "$2" in
     *" $1/config.json"*) _state=running ;;
@@ -674,6 +676,46 @@ export function vmStateScript(vm: string): string {
 [ -n "$now" ] || now=gone
 echo "$now"
 `);
+}
+
+export interface SpotlightView {
+  readonly home: string;
+  readonly homeFolder: string;
+  readonly folder: string;
+  readonly volume: string;
+  readonly volumeIndexing: "enabled" | "disabled" | null;
+  readonly listedVm: string | null;
+}
+
+export function spotlightScript(): string {
+  return script(String.raw`home="${"$"}{TART_HOME:-$HOME/.tart}"
+[ -d "$tart_vms" ] || exit 0
+echo @home; echo "$home"
+echo @home-folder; (cd "$home" && pwd -P)
+folder=$(cd "$tart_vms" && pwd -P) || exit 1
+echo @folder; echo "$folder"
+volume=$(df -P "$folder" | awk 'NR == 2 { m = $6; for (i = 7; i <= NF; i++) m = m " " $i; print m }')
+echo @volume; echo "$volume"
+command -v mdutil >/dev/null 2>&1 && command -v mdfind >/dev/null 2>&1 || exit 0
+echo @volume-indexing; mdutil -s "$volume" 2>/dev/null | tail -n 1
+echo @listed; mdfind -onlyin "$folder" -name config.json 2>/dev/null | head -n 1
+`);
+}
+
+export function parseSpotlight(text: string): SpotlightView | null {
+  const parts = sections(text);
+  const line = (name: string) => parts.get(name)?.trim() || null;
+  const folder = line("folder");
+  if (!folder || !parts.has("volume-indexing")) return null;
+  const indexing = line("volume-indexing") ?? "";
+  return {
+    home: line("home") ?? folder,
+    homeFolder: line("home-folder") ?? folder,
+    folder,
+    volume: line("volume") ?? "/",
+    volumeIndexing: /Indexing enabled/.test(indexing) ? "enabled" : /Indexing disabled/.test(indexing) ? "disabled" : null,
+    listedVm: line("listed"),
+  };
 }
 
 /** The VM's state as Tart lists it, or "gone" when it is not there or not this box's. */
