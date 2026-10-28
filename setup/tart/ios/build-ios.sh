@@ -132,6 +132,22 @@ pasteboard_cleared() { printf '' | xcrun simctl pbcopy "$1"; }
 
 step "installing idb_companion $IDB_VERSION"
 install_idb_companion
+
+h264="$here/../android/build-h264.sh"
+[ -f "$h264" ] || die "found no $h264: copy setup/android beside setup/tart"
+if [ "${H264_WITH_X264:-no}" = yes ]; then
+  step "building bb-box-h264, with x264 from its pinned source, for iOS video where the Mac has no hardware encoder"
+  sudo -n bash "$h264" /usr/local --with-x264 >&2 || die "bb-box-h264 did not build"
+else
+  step "building bb-box-h264, with Cisco's OpenH264, for iOS video where the Mac has no hardware encoder"
+  sudo -n bash "$h264" /usr/local >&2 || die "bb-box-h264 did not build"
+fi
+software_encoder=$(/usr/local/bin/bb-box-h264 --version 2>&1 | head -n 1)
+hardware_encoder=unknown
+if command -v ffmpeg >/dev/null 2>&1; then
+  if ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=1206x2622:rate=60 -frames:v 12 -c:v h264_videotoolbox -allow_sw 0 -f null - </dev/null >/dev/null 2>&1; then hardware_encoder=yes; else hardware_encoder=no; fi
+fi
+step "this VM's H.264 encoders: hardware $hardware_encoder, software $software_encoder"
 device_hub_off
 simulator_microphone_answered
 xcode_components_sheet_answered
@@ -193,3 +209,4 @@ rm -rf "$HOME/Library/Logs/CoreSimulator" "$HOME/Library/Developer/Xcode/Derived
 
 printf 'runtime=%s\t%s\t%s\t%s\t%s\n' "$os" "$build" "$xcode" "$IDB_VERSION" "$runtime"
 printf 'slim=%s\t%s\t%s\n' "$list_name" "$labels" "$list_sha256"
+printf 'encoders=%s\t%s\n' "$hardware_encoder" "$software_encoder"

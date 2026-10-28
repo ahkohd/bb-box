@@ -934,6 +934,7 @@ export interface MacEncoder {
   readonly mac: string;
   readonly chip: string | null;
   readonly hardware?: boolean | null;
+  readonly cores?: number | null;
 }
 
 export interface EncoderAccess {

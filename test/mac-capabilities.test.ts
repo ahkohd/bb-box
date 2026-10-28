@@ -122,7 +122,10 @@ test("the probe script measures a Mac with Xcode, and runs no xcrun on one witho
   const first = run(macProbeScript(software));
   assert.equal(first.status, 0, first.stderr);
   const read = parseMacProbe(first.stdout, "mac-1", 1, "mac");
-  assert.deepEqual(read.capabilities.simulator, { is: "yes", what: { xcode: "27.0", runtimes: ["iOS 27.0"] } });
+  assert.deepEqual(read.capabilities.simulator, {
+    is: "yes",
+    what: { xcode: "27.0", runtimes: ["iOS 27.0"], newest: { os: "27.0", build: "24A434" }, deviceTypes: ["com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", "com.apple.CoreSimulator.SimDeviceType.iPhone-17"] },
+  });
   assert.deepEqual(read.capabilities.hardwareEncoder, { is: "yes", what: { fullSizeFps: 240 } });
   assert.deepEqual(read.capabilities.softwareEncoder, { is: "yes", what: { encoder: "x264 0.165" } });
   const built = readFileSync(join(home, ".fake-xcrun-log"), "utf8").split("\n").filter((line) => line.startsWith("swiftc")).length;

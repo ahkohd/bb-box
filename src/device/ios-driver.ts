@@ -29,6 +29,8 @@ import { iosElementAt, readIosTree } from "./ios-tree.ts";
 import { IosSettingsKeeper } from "./ios-controls.ts";
 import { IosInput, PasteboardAccess, typesWithOption } from "./ios-input.ts";
 import { IosVideo, scaledBack } from "./ios-video.ts";
+import { EncodeMeter, SOFTWARE_ENCODER, hardwareFailed, simulatorStream, softwareEncoderAt, type IosEncoderMode, type IosEncoderWay } from "./simulator-video.ts";
+import type { StreamOutput } from "./idb.ts";
 import { inBox, type DevicePaths } from "./paths.ts";
 import { Simctl, type SimDevice } from "./simctl.ts";
 
@@ -82,6 +84,9 @@ export interface IosDriverOptions {
   readonly buttonSettleMs?: number;
   readonly processStart?: (pid: number) => Promise<ProcessStart | null>;
   readonly hidDaemonActiveWaitMs?: number;
+  readonly encoder?: IosEncoderMode;
+  readonly softwareEncoder?: string;
+  readonly developer?: string;
 }
 
 export interface ProcessStart {
@@ -189,6 +194,9 @@ export class IosDriver implements DeviceDriver {
   #awake = true;
   #leftoversChecked = false;
   readonly #settings: IosSettingsKeeper;
+  readonly #encodeMeter = new EncodeMeter();
+  #fellBack = false;
+  #softwareName: string | null = null;
 
   constructor(options: IosDriverOptions) {
     this.#options = options;
@@ -201,7 +209,8 @@ export class IosDriver implements DeviceDriver {
     this.#settings = new IosSettingsKeeper({ simctl: this.#simctl, file: own.settings, log: options.log, now: () => this.#clock.now() });
     this.#companion = new Companion({ program: options.companionProgram, paths: own.companion, log: options.log });
     this.#video = new IosVideo({
-      open: (stopped, signal, scale) => videoStream(this.#companion.client, stopped, signal, scale),
+      open: (stopped, signal, scale) => this.#openVideo(stopped, signal, scale),
+      encoding: () => this.#encoding(),
       recover: (error) => this.#recover(error),
       sized: (size) => this.#sized(size),
       fullSize: (frame, scale) => this.#fullSize(frame, scale),
@@ -218,6 +227,32 @@ export class IosDriver implements DeviceDriver {
 
   get udid(): string | null {
     return this.#udid;
+  }
+
+  #encoderWay(): IosEncoderWay {
+    return this.#options.encoder === "software" || this.#fellBack ? "software" : "hardware";
+  }
+
+  #encoding(): { readonly way: IosEncoderWay; readonly encoder: string | null; readonly cores: number | null } {
+    const way = this.#encoderWay();
+    return way === "software" ? { way, encoder: this.#softwareName, cores: this.#encodeMeter.cores() } : { way, encoder: null, cores: null };
+  }
+
+  async *#openVideo(stopped: Promise<void>, signal: AbortSignal, scale: number): AsyncIterable<StreamOutput> {
+    const helper = this.#options.softwareEncoder ?? SOFTWARE_ENCODER;
+    if (this.#encoderWay() === "software") {
+      if (!this.#udid) throw new DriverError("not-booted", "There is no device to stream.");
+      yield* simulatorStream({ helper, udid: this.#udid, developer: this.#options.developer, encoded: (unit) => this.#encodeMeter.add(unit.encodeMicros), described: (words) => (this.#softwareName = words) }, stopped, signal, scale);
+      return;
+    }
+    for await (const output of videoStream(this.#companion.client, stopped, signal, scale)) {
+      if (output.log && this.#options.encoder !== "hardware" && hardwareFailed(output.log) && (await softwareEncoderAt(helper))) {
+        this.#fellBack = true;
+        this.#log(`video: the Mac's hardware H.264 encoder failed (${output.log}); streaming in software with ${helper} from now`);
+        throw new Error(`the hardware H.264 encoder failed: ${output.log}`);
+      }
+      yield output;
+    }
   }
 
   onChange(listener: () => void): void {

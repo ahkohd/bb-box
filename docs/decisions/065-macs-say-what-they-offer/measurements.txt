@@ -25,3 +25,31 @@ Two busy devices, both by framebuffer, x264, 15 s:
  two-thirds 47.2/47.2, 0.27 each, 5.7 ms, 40-41 ms, 6.3 Mbit/s; 68-69% idle
  full       50.7/50.5, 0.45 each, 8.9 ms, 34-35 ms, 6.8 Mbit/s; 43-65% idle
 First frame from the reader's start: 123-145 ms. A still page still changes the surface's seed about 6 times a second.
+
+Tart box (dedicated ios, macOS 27.0, Apple M4 Max (Virtual), 6 cores), hardware not used: bb-box-h264 --simulator, one busy iPhone 18 Pro, 12 s:
+ x264      third 402x872 43.0 fps 0.14 cores enc 3.2 ms | half 43.6, 0.21, 4.45 | two-thirds 44.2, 0.28, 6.27 | full 45.6, 0.37, 8.2; first frame 82-90 ms
+ openh264  third 43.5, 0.16, 3.52 | half 43.7, 0.21, 4.46 | two-thirds 44.3, 0.29, 6.05 | full 46.7, 0.45, 8.18; first frame 89-101 ms
+ Xcode 27 keeps SimulatorKit in Contents/SharedFrameworks, not Contents/Developer/Library/PrivateFrameworks.
+
+B through a fresh BB's panel (npx bb-app 0.47.1, no account), bb-box from the B branch, an SSH host pool whose Mac is the Tart dedicated ios box (M4 Max VM, 6 cores),
+general.iosEncoder software; one slot box, its device busy (flip.html?busy); headless Chromium (Playwright) in the same VM; frames counted by wrapping drawImage;
+taps = click while in control, to first drawn frame whose probe pixel flips; 20 s a step, 15 taps:
+ third 600x700@1   402x872   44.6 fps, worst gap 88 ms, taps 64 / 89 ms (median / p95), encoder 0.11 cores, VM 69% idle
+ half  900x900@2   602x1310  44.7 fps, 94 ms, taps 66 / 78 ms, 0.17 cores, 62% idle
+ 2/3   900x1150@2  804x1748  46.4 fps, 114 ms, taps 68 / 82 ms, 0.27 cores, 54% idle
+ full  1100x1600@2 1206x2622 51.0 fps, 249 ms, taps 116 / 355 ms, 0.64 cores, 24% idle (earlier run: 48.7 fps, taps 73 / 88 ms, 0.43 cores)
+ ledger (doctor): "On this Mac: video encoded in software, about 0.2 of the 1.5 cores it may use. 1 stream in software."
+ rotate left/right in the panel: drawn correctly turned; frames stay the framebuffer's portrait size.
+ A on the fresh BB: "iOS devices on mac-1: The iOS Simulator (Xcode 27.0, iOS 27.0); video by its hardware H.264 encoder, software (x264 0.165) as the fallback. Measured on the Mac, an Apple M4 Max (Virtual)".
+
+B through a fresh BB's panel on a Namespace Mac, 28 Oct ~05:45 UTC: macOS 26.3.1, Apple M4 Pro (Virtual), 6 cores, 14 GiB, Xcode 26.1.1, iOS 26.2 (23C54).
+Pool Mac = the Namespace Mac itself, set up by setup-mac.sh (its sshd on 127.0.0.1:2222, as Namespace's agent holds port 22 and Remote Login is off) and this branch's mac-ios.sh:
+ the iOS 26.2 list (the 27.0 list's 112 labels) made a seed with every label off; devices.tsv filtered to the iPhone 17 (no iPhone 18 Pro in Xcode 26.1.1); bb-box-h264 built with OpenH264.
+ doctor: "iOS devices on mac-1: The iOS Simulator (Xcode 26.1.1, iOS 17.5 ... 26.2); video by its hardware H.264 encoder, software (openh264 2.6.0) as the fallback. Measured on the Mac, an Apple M4 Pro (Virtual)".
+ iosEncoder software; one slot box (iPhone 17), busy page; headless Chromium in the same VM; 20 s a step, 15 taps:
+ third 600x700@1   402x872   37.6 fps, worst gap 522 ms, taps 89 / 1501 ms (14 of 15 shown), encoder 0.10 cores, Mac 23% idle  [first run; again later: 45.3 fps, 117 ms, taps 78 / 94 ms]
+ half  900x900@2   602x1310  46.5 fps, 135 ms, taps 85 / 135 ms, 0.21 cores, 26% idle
+ 2/3   900x1150@2  804x1748  48.1 fps, 120 ms, taps 93 / 105 ms, 0.34 cores, 22% idle
+ full  1100x1600@2 1206x2622 46.9 fps, 127 ms, taps 103 / 121 ms, 0.69 cores, 13% idle
+ ledger: "On this Mac: video encoded in software, about 0.1 of the 1.5 cores it may use. 1 stream in software."
+ idb's hardware H.264 on this M4 Pro VM (M18's chip): 52.5 fps at a half, 58.5 at full, busy.

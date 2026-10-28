@@ -372,3 +372,12 @@ test("a device server that does not answer points to the check of the box's own 
   assert.equal(hostCheckWords(slotOn("pool-mac")), " The iOS slots check of its Mac says how the Mac's slots are.");
   assert.equal(hostCheckWords({ guest: null } as unknown as BoxRecord), "");
 });
+
+test("an ios box's server is told to encode in software where its Mac has no hardware encoder, or where the setting says so (065)", async () => {
+  const { iosEncoderChoice } = await import("../src/core/device-delivery.ts");
+  assert.equal(iosEncoderChoice("auto", true), "auto");
+  assert.equal(iosEncoderChoice("auto", null), "auto");
+  assert.equal(iosEncoderChoice("auto", false), "software");
+  assert.equal(iosEncoderChoice("hardware", false), "hardware");
+  assert.equal(iosEncoderChoice("software", true), "software");
+});

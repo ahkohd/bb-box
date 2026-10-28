@@ -2454,7 +2454,7 @@ export class Boxes {
     const backend = this.#deps.backends.get(box.backend);
     if (!box.guest || !backend?.encoderOf) return null;
     const place = backend.encoderOf(box.guest);
-    return place ? { mac: encoderKey(backend.id, place.mac), label: place.mac, chip: place.chip, hardware: place.hardware ?? null } : null;
+    return place ? { mac: encoderKey(backend.id, place.mac), label: place.mac, chip: place.chip, hardware: place.hardware ?? null, cores: place.cores ?? null } : null;
   }
 
   async probeEncoder(key: string, signal: AbortSignal): Promise<number | null> {

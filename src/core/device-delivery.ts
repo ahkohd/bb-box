@@ -44,6 +44,7 @@ export const DEVICE_SERVER_FILES = [
   "src/device/schemas.ts",
   "src/device/server.ts",
   "src/device/simctl.ts",
+  "src/device/simulator-video.ts",
   "src/device/test-card.ts",
   "src/device/test-driver.ts",
   "src/device/tree-server.dex",
@@ -75,8 +76,15 @@ export function deviceServerDigest(files: readonly ServerFile[]): string {
   return hash.digest("hex");
 }
 
+export type IosEncoderSetting = "auto" | "hardware" | "software";
+
 export interface DeviceChoices {
   readonly slim: boolean;
+  readonly iosEncoder?: IosEncoderSetting;
+}
+
+export function iosEncoderChoice(set: IosEncoderSetting, macHardware: boolean | null | undefined): IosEncoderSetting {
+  return set === "auto" && macHardware === false ? "software" : set;
 }
 
 export interface Delivery {

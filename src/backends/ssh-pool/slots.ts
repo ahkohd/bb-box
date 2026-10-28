@@ -40,6 +40,7 @@ export interface PoolSlotsAccess {
   settings(): PoolSlotsConfig;
   chip?(machine: SshPoolMachine): string | null;
   devices?(machine: SshPoolMachine, signal?: AbortSignal): Promise<DeviceRoom>;
+  hardware?(machine: SshPoolMachine): boolean | null;
   machines(): readonly SshPoolMachine[];
   machine(name: string): SshPoolMachine | null;
   survey(signal?: AbortSignal): Promise<readonly PoolMacView[]>;
@@ -327,7 +328,7 @@ export class PoolSlots implements SlotLender {
   sizing(machine: SshPoolMachine): MacSlotSizing {
     const facts = this.#macFacts.get(machine.name);
     const settings = this.#access.settings();
-    const mac = { name: machine.name, cores: facts?.cores ?? null, performanceCores: null, memoryGiB: facts?.memoryMiB ? Math.floor(facts.memoryMiB / 1024) : null, chip: this.#access.chip?.(machine) ?? null };
+    const mac = { name: machine.name, cores: facts?.cores ?? null, performanceCores: null, memoryGiB: facts?.memoryMiB ? Math.floor(facts.memoryMiB / 1024) : null, chip: this.#access.chip?.(machine) ?? null, hardware: this.#access.hardware?.(machine) ?? null };
     return sizeMacSlots(mac, machine.slotsMost, settings.mostSet, settings.most);
   }
 

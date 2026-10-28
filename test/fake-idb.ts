@@ -31,6 +31,7 @@ const { values } = parseArgs({ options: { udid: { type: "string" }, "grpc-domain
 const socket = String(values["grpc-domain-sock"]);
 const log = process.env.FAKE_IDB_LOG;
 const still = process.env.FAKE_IDB_STILL === "1";
+const noEncoder = process.env.FAKE_IDB_NO_ENCODER === "1";
 const note = (line: string) => log && appendFileSync(log, `${process.pid} ${line}\n`);
 
 let orientation = 1;
@@ -58,6 +59,10 @@ server.on("stream", (stream, headers) => {
         const scale = asked.start?.scale_factor ?? 1;
         note(`stream ${values.udid} scale ${Math.round(scale * 1000) / 1000}`);
         ok();
+        if (noEncoder) {
+          timer = setInterval(() => stream.write(Buffer.from(frame(encode(IDB_SCHEMA, "idb.VideoStreamResponse", { log_output: Buffer.from("VideoToolbox encode error: OSStatus -12915") })))), 30);
+          return;
+        }
         stream.write(payload(keyFrameAt(scale)));
         timer = setInterval(() => !still && stream.write(payload(DELTA_FRAME)), 30);
       } else if (messages >= 2) {

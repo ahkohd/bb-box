@@ -1,4 +1,4 @@
-import type { DeviceControl, DeviceElement, DeviceState, LaunchedApp, OfferedDevice, TouchContact, VideoStep } from "../core/device.ts";
+import type { DeviceControl, DeviceElement, DeviceState, LaunchedApp, OfferedDevice, TouchContact, VideoEncoding, VideoStep } from "../core/device.ts";
 
 export interface EncodedFrame {
   readonly data: Uint8Array;
@@ -14,6 +14,7 @@ export interface VideoSource {
   frames(signal: AbortSignal): AsyncIterable<EncodedFrame>;
   keyframe(): void;
   want?(step: VideoStep | null): void;
+  encoding?(): VideoEncoding | null;
 }
 
 export interface PinchGesture {

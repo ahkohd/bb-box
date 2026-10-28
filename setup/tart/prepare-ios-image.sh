@@ -1,11 +1,12 @@
 #!/bin/sh
 set -eu
 
-usage="./prepare-ios-image.sh [--from <macOS image>] [--name <vm>] [--replace] [--skip-check]"
+usage="./prepare-ios-image.sh [--from <macOS image>] [--name <vm>] [--replace] [--skip-check] [--with-x264]"
 from=bb-box-macos
 name=bb-box-ios
 replace=0
 skip_check=0
+with_x264=no
 die() { echo "prepare-ios-image: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case $1 in
@@ -13,13 +14,14 @@ while [ $# -gt 0 ]; do
     --name) name=$2; shift 2 ;;
     --replace) replace=1; shift ;;
     --skip-check) skip_check=1; shift ;;
+    --with-x264) with_x264=yes; shift ;;
     --key | --bb-url) shift 2 ;;
     *) die "unknown option $1: $usage" ;;
   esac
 done
 
 here=$(cd "$(dirname "$0")" && pwd)
-[ -f "$here/ios/build-ios.sh" ] && [ -f "$here/../ssh-pool/mac-home/.zshenv" ] || die "found no $here/ios/build-ios.sh or $here/../ssh-pool/mac-home/.zshenv: run this from a whole copy of setup/"
+[ -f "$here/ios/build-ios.sh" ] && [ -f "$here/../ssh-pool/mac-home/.zshenv" ] && [ -f "$here/../android/build-h264.sh" ] || die "found no $here/ios/build-ios.sh, $here/../ssh-pool/mac-home/.zshenv or $here/../android/build-h264.sh: run this from a whole copy of setup/"
 . "$here/ios/pins"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:/run/current-system/sw/bin:$PATH" TART_NO_AUTO_PRUNE=1
 command -v tart >/dev/null || die "install Tart first: brew install openai/tools/tart"
@@ -103,12 +105,12 @@ step "booting $build"
 boot
 desktop_ready
 guest_setup=/tmp/bb-box-ios-setup
-tar -C "$here" -czf - ios -C "$here/../ssh-pool" mac-home/.zshenv | tart exec -i "$build" /bin/sh -c "rm -rf $guest_setup && mkdir -p $guest_setup && tar -xzf - -C $guest_setup"
+tar -C "$here" -czf - ios -C "$here/../ssh-pool" mac-home/.zshenv -C "$here/.." android/build-h264.sh android/pins.json android/bb-box-h264 | tart exec -i "$build" /bin/sh -c "rm -rf $guest_setup && mkdir -p $guest_setup && tar -xzf - -C $guest_setup"
 tart exec "$build" test -s /usr/local/share/bb-box/image.json || die "$from has no image record: build it with prepare-image.sh"
 tart exec "$build" cp /usr/local/share/bb-box/image.json "$guest_setup/macos-image.json"
 
 step "adding idb_companion and the devices to $build"
-tart exec "$build" /usr/bin/env IDB_VERSION="$IDB_VERSION" IDB_URL="$IDB_URL" IDB_SHA256="$IDB_SHA256" /bin/sh "$guest_setup/ios/build-ios.sh" "$guest_setup/ios" \
+tart exec "$build" /usr/bin/env IDB_VERSION="$IDB_VERSION" IDB_URL="$IDB_URL" IDB_SHA256="$IDB_SHA256" H264_WITH_X264="$with_x264" /bin/sh "$guest_setup/ios/build-ios.sh" "$guest_setup/ios" \
   >"$work/build.txt" || die "adding the devices failed"
 cat "$work/build.txt"
 

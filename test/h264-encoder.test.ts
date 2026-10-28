@@ -305,3 +305,48 @@ for (const name of BUILT_ENCODERS) {
     assert.equal(empty.status, 0);
   });
 }
+
+test("the encode meter gives the cores a software stream's frames took over its window (065)", async () => {
+  const { EncodeMeter } = await import("../src/device/simulator-video.ts");
+  let now = 0;
+  const meter = new EncodeMeter(() => now, 10_000);
+  for (let frame = 0; frame < 500; frame++) {
+    meter.add(9_000);
+    now += 20;
+  }
+  assert.equal(meter.cores(), 0.45);
+  now += 20_000;
+  assert.equal(meter.cores(), 0);
+});
+
+test("a simulator stream yields bb-box-h264's frames until it is stopped, and says why the encoder stopped when it fails (065)", async () => {
+  const { simulatorStream } = await import("../src/device/simulator-video.ts");
+  const dir = mkdtempSync(join(tmpdir(), "simulator-stream-"));
+  try {
+    const helper = join(dir, "bb-box-h264");
+    writeFileSync(helper, `#!/bin/sh\nexec "${process.execPath}" "${join(here, "fake-simulator-h264.ts")}" "$@"\n`, { mode: 0o755 });
+    let stop!: () => void;
+    const stopped = new Promise<void>((resolve) => (stop = resolve));
+    const described: string[] = [];
+    const sizes: number[] = [];
+    for await (const output of simulatorStream({ helper, udid: "U-1", described: (words) => described.push(words) }, stopped, AbortSignal.timeout(10_000), 0.5)) {
+      if (output.data) sizes.push(output.data.byteLength);
+      if (sizes.length === 3) stop();
+    }
+    assert.ok(sizes.length >= 3);
+    assert.deepEqual(described, ["x264 0.165, source b35605ace3ddf7c1a5d67a2eb553f034aef41d55"]);
+    process.env.FAKE_H264_FAILS = "the device U-2 showed no screen within 30 s; is it booted?";
+    try {
+      await assert.rejects(
+        (async () => {
+          for await (const _ of simulatorStream({ helper, udid: "U-2" }, new Promise(() => {}), AbortSignal.timeout(10_000), 1)) void _;
+        })(),
+        /^Error: bb-box-h264 stopped: the device U-2 showed no screen within 30 s; is it booted\?$/,
+      );
+    } finally {
+      delete process.env.FAKE_H264_FAILS;
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

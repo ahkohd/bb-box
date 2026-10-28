@@ -158,7 +158,7 @@ export function fakeIosProbe(bin: string, options: { readonly hardware?: "yes" |
     `echo "$*" >> "$HOME/.fake-xcrun-log"
 case "$1" in
   --find) echo /Applications/Xcode.app/Contents/Developer/usr/bin/swiftc ;;
-  simctl) echo '== Runtimes =='; ${runtimes || ":"} ;;
+  simctl) if [ "$3" = devicetypes ]; then echo '== Device Types =='; echo 'iPhone 18 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro)'; echo 'iPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)'; else echo '== Runtimes =='; ${runtimes || ":"}; fi ;;
   swiftc) while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done; printf '#!/bin/sh\\n%s\\n' '${hardware}' > "$out"; chmod +x "$out" ;;
 esac`,
   );

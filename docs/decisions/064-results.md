@@ -2033,3 +2033,208 @@ failed, 288 skipped; vitest 223 passed. Item 7 is not checked live yet.
   address or SSH, not only Virtualization's error; not a start that waits
   for room.
 
+
+## 065 A: each Mac says what it offers iOS devices
+
+Built on 28 October 2026, as decided in
+[065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md);
+deployed as PR 1196, main 5bac6d0.
+
+### What it adds
+
+- **A probe on each Mac** measures whether it can run the iOS Simulator
+  (Xcode, and its available iOS runtimes) and which H.264 encoders it has:
+  a hardware one, by a VideoToolbox session that requires hardware and
+  encodes 12 full-size frames, built once a Mac from Swift and kept by its
+  hash; a software one, as `bb-box-h264 --version` names it. It runs no
+  `xcrun` on a Mac without developer tools.
+- **Where it measures:** the pool on each Mac at its survey and daily; Tart
+  on each Mac, with the iOS Simulator and the software encoder taken from
+  the iOS image's record; Namespace on each Mac it starts and in the
+  doctor, kept per chip, as its Macs come and go. Each report is kept in
+  the backend's storage.
+- **Shown:** box_list's `ios`, `macos` and `macos-desktop` offers say what
+  their Macs offer, without naming one; the doctor's `devices.<mac>`, iOS
+  devices on the Mac, says what, where and when it was measured.
+- **Used:** a Mac measured unable to run the Simulator or stream lends no
+  ios slot, in words; one the probe cannot tell about lends as before, and
+  the doctor warns. The ledger learns whether each Mac has a hardware
+  encoder.
+
+### Checks
+
+On a Linux box, from the commit on origin/main at 73903b1: tsc clean; the
+node suite 2,223 passed, 0 failed, 288 skipped, the docs and reference
+tests among them; vitest 224 passed.
+
+### The production check
+
+Through production BB on 28 October 2026, after the lead deployed PR 1196:
+
+| Provider | The doctor's check |
+| --- | --- |
+| Tart | "iOS devices on <mac>: The iOS Simulator (Xcode 27.0, iOS 27.0); video by its hardware H.264 encoder. Measured on the Mac, an Apple M4 Max, just now." |
+| The pool | the same for its Mac, an Apple M5 Max |
+| Namespace | another thread's `macos` box, started a minute before: "iOS devices on Namespace's Apple M4 Pro (Virtual) Macs: The iOS Simulator (Xcode 26.1.1, iOS 17.5, iOS 18.6, iOS 26.0, iOS 26.1, iOS 26.2); video by its hardware H.264 encoder." |
+
+box_list's offers of `macos`, `macos-desktop` and `ios` on all three end
+with "its Mac: iOS devices, video by its hardware H.264 encoder".
+
+- **Namespace's Macs have an encoder now.** M18's Mac, an M4 Pro VM, could
+  not make a hardware session (-12903). Today an M4 Pro VM and an M5 Max VM
+  both did; on the M5 Max one session gave 141 full-size frames a second,
+  and idb streamed two busy devices at 54 to 57 frames a second. Namespace
+  may still give a Mac without one, which the report would show.
+- **My own Namespace Mac could not be taken** for the check: the
+  workspace's one Mac was another thread's box.
+
+## 065 B: a software encoder for iOS streams
+
+Built on 28 October 2026, as decided in
+[065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md).
+Device server version 27.
+
+### What it adds
+
+- **`bb-box-h264 --simulator <udid>`** reads a booted device's screen
+  itself, as CoreSimulator gives it: a shared BGRA IOSurface, polled up to
+  60 times a second by its seed, scaled to the step by vImage, converted to
+  I420 and encoded, in one process, with no idb stream. `Z` on its input
+  changes the step; `K` asks for a key frame. It finds SimulatorKit where
+  Xcode 26 and Xcode 27 each keep it. `build-h264.sh` builds it on macOS on
+  arm64, as on Linux: OpenH264 from Cisco's binary, pinned, or x264 from
+  its pinned source when the operator asks for it. bb-box ships no x264
+  binary. Its input also takes I420 and BGRA frames with a row stride.
+- **The device server** streams a device by idb's H.264, from the Mac's
+  hardware encoder, unless its choices say `software`, or idb's stream
+  fails with a VideoToolbox error, when it changes to `bb-box-h264` for the
+  life of the server and logs why. Its video report to the lease holder
+  says how it encodes and, in software, the cores encoding took over the
+  last 10 s, from each frame's encode time.
+- **The setting `iosEncoder`,** general and advanced: `auto`, the default,
+  `hardware` or `software`. bb-box delivers it with each ios box's device
+  server, and `software` where its Mac was measured to have no hardware
+  encoder.
+- **The ledger** counts a stream in software against its Mac's CPU, not its
+  encoder: a quarter of the Mac's cores, priced by step from the
+  measurements below, with passive viewers lowered first, as for the
+  encoder, and words that say the CPU is busy. Slot sizing (F-9 item 7)
+  counts a software Mac's slots by the cores a stream at a half takes.
+- **The iOS image** builds `bb-box-h264` (`prepare-ios-image.sh
+  --with-x264` for x264), checks it streams each device's framebuffer, and
+  records the VM's encoders, which Tart takes for what each Mac offers.
+  The pool's `mac-ios.sh` builds it too.
+
+### How it was measured
+
+On a Namespace Mac (macOS 26.3.1, an Apple M5 Max VM, 6 cores, Xcode
+26.1.1, an iPhone 17 Pro on iOS 26.2) and in a dedicated ios box on the
+Tart Mac (an M4 Max VM, 6 cores, macOS 27.0, an iPhone 18 Pro), with
+[software.ts](../../scripts/measure/ios/software.ts): a busy page that
+changes every frame, frames counted as they leave the encoder. The raw
+numbers are in [065's measurements](065-macs-say-what-they-offer/measurements.txt).
+
+| Path | Step | Frames a second | Cores | Note |
+| --- | --- | --- | --- | --- |
+| idb's raw stream, through Node, x264 | a third | 57.2 | 0.61 | taps shown in 62 ms |
+| | a half | 58.1 | 1.39 | 75 ms |
+| | two thirds | 35.5 | 1.46 | 167 ms |
+| | full | 15.9 | 1.40 | 349 ms |
+| The framebuffer, two devices, Namespace | a third | 45.8, 46.0 | 0.10 each | |
+| | a half | 46.4, 46.3 | 0.17 each | |
+| | two thirds | 47.2, 47.2 | 0.27 each | |
+| | full | 50.7, 50.5 | 0.45 each | |
+| The framebuffer, one device, Tart | a third to full | 43.0 to 45.6 | 0.14 to 0.37 | first frame in 82 to 101 ms |
+
+idb's raw stream tops out near 200 MB a second, whatever the HTTP/2
+window or frame size, so it was not used.
+
+### Through BB's panel, on a Tart box with hardware not used
+
+A fresh BB, `npx bb-app` 0.47.1 with no account, ran in the dedicated ios
+box, with bb-box from this branch, `iosEncoder` set to `software`, and an
+SSH host pool whose one Mac was the box itself, set up by `setup-mac.sh`
+and `mac-ios.sh`. An ios box asked for with no options took a slot in
+1.2 s; bb-box delivered version 27 to it, with `"iosEncoder":"software"`,
+and it said hello in 0.7 s. Headless Chromium, in the same VM, opened the
+box's page in the fresh BB, took control, and clicked the busy page,
+which turns black or white at each touch; frames were counted by wrapping
+the canvas's `drawImage`, and each click timed to the first drawn frame
+whose pixel had flipped. 20 s and 15 clicks a step:
+
+| Step | Panel | Frame | Frames a second | Worst gap | Click to shown: median, p95 | The encoder's cores | The VM idle |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A third | 600x700 at 1x | 402x872 | 44.6 | 88 ms | 64, 89 ms | 0.11 | 69% |
+| A half | 900x900 at 2x | 602x1310 | 44.7 | 94 ms | 66, 78 ms | 0.17 | 62% |
+| Two thirds | 900x1150 at 2x | 804x1748 | 46.4 | 114 ms | 68, 82 ms | 0.27 | 54% |
+| Full | 1100x1600 at 2x | 1206x2622 | 51.0 | 249 ms | 116, 355 ms | 0.64 | 24% |
+
+An earlier full-size run gave 48.7 frames a second, clicks in 73 and 88 ms
+and 0.43 cores. At full size the browser, decoding and drawing in the same
+6-core VM, left a quarter of it idle, so that row is the browser's as much
+as the encoder's. Every click landed and showed.
+
+- **The ledger counted it as CPU.** The doctor: "Video encoder on mac-1:
+  ... On this Mac: video encoded in software, about 0.2 of the 1.5 cores it
+  may use. 1 stream in software."
+- **A turn of the device** from the panel's toolbar drew it turned and
+  back; frames stay the framebuffer's upright size, as idb's do.
+- **Phase A on the same BB:** "iOS devices on mac-1: The iOS Simulator
+  (Xcode 27.0, iOS 27.0); video by its hardware H.264 encoder, software
+  (x264 0.165) as the fallback. Measured on the Mac, an Apple M4 Max
+  (Virtual)."
+
+### Through BB's panel, on a Namespace Mac
+
+The same, on a Namespace Mac taken on 28 October 2026: macOS 26.3.1, an
+Apple M4 Pro VM (M18's chip), 6 cores and 14 GiB, Xcode 26.1.1 and iOS 26.2
+(23C54). Namespace's own agent holds port 22 and Remote Login is off, so the
+pool's sshd for this check listened on 127.0.0.1:2222. Its slots were set up
+with unit 7's `mac-ios.sh` (the next commit): an iPhone 17, as this Xcode
+has no iPhone 18 Pro, slimmed by a list for iOS 26.2, whose seed had every
+one of its 112 labels off. `bb-box-h264` was built with OpenH264.
+
+| Step | Frame | Frames a second | Worst gap | Click to shown: median, p95 | The encoder's cores | The Mac idle |
+| --- | --- | --- | --- | --- | --- | --- |
+| A third | 402x872 | 45.3 | 117 ms | 78, 94 ms | 0.10 | 23% |
+| A half | 602x1310 | 46.5 | 135 ms | 85, 135 ms | 0.21 | 26% |
+| Two thirds | 804x1748 | 48.1 | 120 ms | 93, 105 ms | 0.34 | 22% |
+| Full | 1206x2622 | 46.9 | 127 ms | 103, 121 ms | 0.69 | 13% |
+
+The first run at a third came while the panel warmed up, at 37.6 frames a
+second with one of 15 clicks not shown; the row is a second run. The
+browser, BB and the device shared the Mac's 6 cores. The doctor: "iOS
+devices on mac-1: The iOS Simulator (Xcode 26.1.1, iOS 17.5, iOS 18.6, iOS
+26.0, iOS 26.1, iOS 26.2); video by its hardware H.264 encoder, software
+(openh264 2.6.0) as the fallback. Measured on the Mac, an Apple M4 Pro
+(Virtual)", and the ledger "On this Mac: video encoded in software, about
+0.1 of the 1.5 cores it may use. 1 stream in software." idb's hardware
+stream on this Mac, which M18 found failing, gave a busy device 52.5 frames
+a second at a half and 58.5 at full.
+
+### Checks
+
+On a Linux box, from the branch on origin/main at 5bac6d0: tsc clean; the
+node suite 2,229 passed, 1 failed, 288 skipped; vitest 224 passed. The
+failure was an expectation this change moved, of a Tart encoder place's
+fields; with it fixed, and the probe's runtime and device types added
+after, tsc is clean and the six files they touch pass, 64 of 64.
+
+### What limits these checks
+
+- **On Namespace, through a pool, not a Namespace host.** A Namespace host
+  is unit 7's, which needs its deployment to check.
+- **The setup broke Homebrew's `node@24`** in the test box: `setup-mac.sh`
+  upgraded Homebrew's libraries, and the image's `node@24` lost one until
+  reinstalled. A test box's matter, not a pool Mac's, whose Node is
+  Homebrew's own.
+- **Mixed Macs:** a Tart slot's encoder place has no cores of its own, so
+  the ledger takes 8 for it, under a host's 12.
+
+### Deviations from 065
+
+- **The software budget is a quarter of the cores of the Mac or VM the
+  stream's encoder runs in,** where bb-box knows them: the pool's Mac's,
+  a dedicated box's VM's; 8 otherwise.
+- **The image measures its hardware encoder with ffmpeg,** as the macOS
+  image has it, rather than the probe's Swift check.

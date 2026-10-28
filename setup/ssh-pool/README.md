@@ -308,6 +308,12 @@ off its line to keep it for whole boxes.
 - installs the slots' helper, `device-host`, its held ports' program, the
   slots' home template (the pool's `.zshenv`) and the device list in
   `/usr/local/share/bb-box`
+- builds `bb-box-h264` in `/usr/local/bin`, from `setup/android` beside
+  `setup/ssh-pool`, which encodes a device's video in software should the
+  Mac's hardware encoder fail
+  ([065](../../docs/decisions/065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md)):
+  with Cisco's OpenH264, or with x264 built from its pinned source when run
+  with `H264_WITH_X264=yes`. bb-box ships no x264 binary
 - for the newest iOS runtime, installs bb-box's slimming list and makes its
   seed: a device made, booted and slimmed twice as `bbbox-admin`, whose
   store of disabled services must have every label of the list off. It

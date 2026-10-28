@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, SETTINGS_ASKED_SINCE_VERSION, VIDEO_REPORTS_SINCE_VERSION, deviceModel, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice, type VideoReport, type VideoStep } from "../core/device.ts";
-import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
+import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, SETTINGS_ASKED_SINCE_VERSION, VIDEO_REPORTS_SINCE_VERSION, deviceModel, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceOffer, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice, type VideoReport, type VideoStep } from "../core/device.ts";
+import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type DeviceChoices, iosEncoderChoice, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { lostWords } from "../core/device-control.ts";
 import { controlDeadlineMs } from "../core/device-settings.ts";
 import { DeviceLink, DeviceLinkError, newRequestId, type DeviceRequestBody } from "../core/device-link.ts";
@@ -45,6 +45,7 @@ export interface DeviceServersDeps {
   readonly files: () => Promise<readonly ServerFile[]>;
   readonly personHasControl: (boxId: string) => boolean;
   readonly ledger?: EncoderLedgers;
+  readonly iosEncoder?: () => "auto" | "hardware" | "software";
   readonly log: (line: string) => void;
   readonly logError: (operation: string, error: unknown) => void;
   readonly started?: number;
@@ -370,7 +371,7 @@ export class DeviceServers {
     if (!place) return;
     const model = deviceModel(this.#held.get(box.id)?.link?.state.model ?? box.device?.model ?? offer.devices[0].model);
     if (model.form === "foldable") return;
-    ledger.report(box, place, { pixels: model.screen.pixels, wants: video.wants, fps: video.fps });
+    ledger.report(box, place, { pixels: model.screen.pixels, wants: video.wants, fps: video.fps, ...(video.encoding ? { encoding: video.encoding } : {}) });
   }
 
   decided(boxId: string, decision: Decision): void {
@@ -543,13 +544,19 @@ export class DeviceServers {
     return this.#deps.boxes.runOwn(box, script, { stdin, timeoutMs: SCRIPT_TIMEOUT_MS });
   }
 
+  #choicesFor(box: BoxRecord, offer: DeviceOffer): DeviceChoices {
+    const slim = box.slim !== false;
+    if (offer.platform !== "ios") return { slim };
+    return { slim, iosEncoder: iosEncoderChoice(this.#deps.iosEncoder?.() ?? "auto", this.#deps.boxes.encoderOf?.(box)?.hardware) };
+  }
+
   async #deliver(box: BoxRecord, held: Held, running: number | null, why: string): Promise<DeviceServerView> {
     const files = await this.#deps.files();
     const offer = box.capabilities.device!;
     const began = Date.now();
     const link = held.link;
     held.link = null;
-    const result = await this.#run(box, deliveryScript(this.version), deliveryStdin({ version: this.version, files, offer, intent: this.#intentFor(box), choices: { slim: box.slim !== false } }));
+    const result = await this.#run(box, deliveryScript(this.version), deliveryStdin({ version: this.version, files, offer, intent: this.#intentFor(box), choices: this.#choicesFor(box, offer) }));
     if (result.exitCode === DELIVERY_EXITS.recording) {
       held.link = link;
       return this.#wait(box, held, running, "recording");

@@ -68,6 +68,7 @@ export interface HostsAccess {
   states(signal?: AbortSignal): Promise<ReadonlyMap<string, HostState | Error>>;
   hostRoom(mac: TartHost, state: HostState | Error, settings: IosHostsConfig, leaving: ReadonlySet<string>): string | null;
   devices?(mac: TartHost): DeviceRoom;
+  hardware?(mac: TartHost): boolean | null;
   measure?(signal?: AbortSignal): Promise<void>;
   placement<T>(task: () => Promise<T>): Promise<T>;
   encoderLoad?(mac: TartHost): number;
@@ -431,7 +432,7 @@ export class IosHosts implements SlotLender {
     const known = state && !(state instanceof Error) ? state : null;
     const memoryGiB = known && known.memoryMiB > 0 ? Math.floor(known.memoryMiB / 1024) : null;
     const memoryLeftGiB = known && memoryGiB !== null ? Math.floor((known.memoryMiB - this.#access.config().reserve.memoryMiB) / 1024 / settings.perMac) : null;
-    const facts = { name: mac.name, cores: known?.cpus || null, performanceCores: known?.performanceCores ?? null, memoryGiB, chip: known?.chip ?? null };
+    const facts = { name: mac.name, cores: known?.cpus || null, performanceCores: known?.performanceCores ?? null, memoryGiB, chip: known?.chip ?? null, hardware: this.#access.hardware?.(mac) ?? null };
     return sizeHost(facts, mac.iosHostsSizedBy ?? {}, settings.sizedBy, settings, memoryLeftGiB);
   }
 

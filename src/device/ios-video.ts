@@ -1,4 +1,4 @@
-import { VIDEO_STEP_SCALES, type VideoSize, type VideoStep } from "../core/device.ts";
+import { VIDEO_STEP_SCALES, type VideoEncoding, type VideoSize, type VideoStep } from "../core/device.ts";
 import { NAL_TYPES, hasPicture, isKeyFrame, nalUnits, spsPictureSize } from "./annexb.ts";
 import type { EncodedFrame, VideoSource } from "./driver.ts";
 import { FrameFanout } from "./frame-fanout.ts";
@@ -21,6 +21,7 @@ export interface IosVideoOptions {
   readonly recover: (error: unknown) => Promise<void>;
   readonly sized: (size: VideoSize) => number;
   readonly fullSize?: (frame: VideoSize, scale: number) => VideoSize;
+  readonly encoding?: () => VideoEncoding | null;
   readonly log: (line: string) => void;
   readonly monotonic?: () => number;
 }
@@ -86,6 +87,10 @@ export class IosVideo implements VideoSource {
 
   get size(): VideoSize | null {
     return this.#size;
+  }
+
+  encoding(): VideoEncoding | null {
+    return this.#options.encoding?.() ?? null;
   }
 
   get frameSize(): VideoSize | null {
