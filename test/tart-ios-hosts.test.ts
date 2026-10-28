@@ -479,7 +479,7 @@ test("with two hosts a Mac, a host on an older build stops lending once a host o
 
 test("a host whose VM fails to start starts once more on a fresh clone, still taking boxes meanwhile, and the doctor and log say why (F-9, H8)", async () => {
   const { backend, mac, clones, context, ssh } = setup();
-  writeFileSync(join(mac, ".fake-tart-run-fails"), "1");
+  writeFileSync(join(mac, ".fake-tart-run-fails"), "2");
   const homes = ["192.168.64.2", "192.168.64.3"].map((address) => ssh.home(address));
   for (const home of homes) writeFileSync(join(home, "hold-init"), "");
   const first = identity();
@@ -549,7 +549,7 @@ test("a host whose VM stops before it answers on SSH is noticed within a poll, n
 test("a host whose fresh clone fails to start too fails its boxes with both failures, and while its VM is deleted a new host can start in its place, rather than the Mac seeming full (F-9, H8)", async () => {
   const { backend, mac, hosts } = setup();
   anotherMacosVm(mac);
-  writeFileSync(join(mac, ".fake-tart-run-fails"), "2");
+  writeFileSync(join(mac, ".fake-tart-run-fails"), "4");
   const waits = join(mac, ".fake-tart-delete-waits");
   writeFileSync(waits, "1");
   const first = identity();

@@ -501,6 +501,8 @@ echo @config; tr -d '\n' < "$home/vms/$vm/config.json"; echo
 `);
 }
 
+export const TART_RUN_AGAIN_SECONDS = 3;
+
 /**
  * Starts the VM unless it runs, detached from the SSH session, and waits
  * until it has started. A macOS VM runs with Tart's VNC server and can be
@@ -535,11 +537,19 @@ else
   [ ! -f "$h/vms/$vm/state.vzvmsave" ] || cat "$h/vms/$vm/state.vzvmsave" > /dev/null 2>&1 || :
 fi
 detach "$out" "$x" "$@" || { echo "tart run did not start for $vm." >&2; exit 1; }
-i=0
+i=0; again=1
 while [ "$i" -lt ${waitSeconds * 10} ]; do
   if up; then started; exit 0; fi
   if ! kill -0 "$pid" 2>/dev/null; then
     up && { started; exit 0; }
+    if [ "$again" = 1 ] && grep -q 'VZErrorDomain Code=1 ' "$out"; then
+      again=0
+      echo "ran-again: $(grep -m 1 'VZErrorDomain Code=1 ' "$out")"
+      sleep ${TART_RUN_AGAIN_SECONDS}
+      keep "$out" "$x"
+      detach "$out" "$x" "$@" || { echo "tart run did not start for $vm." >&2; exit 1; }
+      continue
+    fi
     cat "$out" >&2; exit 3
   fi
   sleep 0.1; i=$((i + 1))
