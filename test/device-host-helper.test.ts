@@ -117,7 +117,7 @@ test("init keeps the settings the host was made with, and status gives them with
   const { values, slots } = host.status();
   assert.deepEqual(
     ["helper", "deleting", "most", "ahead", "generation", "cores", "memory", "disk", "memory_free", "runtime", "model", "counted", "sweeping"].map((key) => values.get(key)),
-    ["4", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
+    ["5", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
   );
   assert.deepEqual(slots, []);
   assert.deepEqual(host.run(["init"], "most=many\n").status, 0, "settings are written once");
@@ -172,6 +172,20 @@ test("keep-app copies the host's own BB app into the slots' home and every ready
   assert.equal(host.status().values.get("bb-app-kept"), "no");
   made(host);
   assert.ok(!existsSync(join(host.root, "Users/bbd-4/.bb-machines")), "a new slot downloads it");
+});
+
+test("keep-app takes a copy whose files keep the host user's UID and whose folders and links are root's, as a clone made as root is, then makes all of it root's, links too (F-9)", () => {
+  const host = quiet();
+  const digest = "c".repeat(64);
+  hostUsersApp(host, digest);
+  const kept = host.run(["keep-app"], KEEP(digest));
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.match(kept.stdout, /kept=yes\n$/);
+  const staging = host.lines("calls").find((call) => /^chown -R -h 0:0 \S*\/bb-app-staging\.\d+$/.test(call));
+  assert.ok(staging, host.lines("calls").filter((call) => call.startsWith("chown")).join("\n"));
+  const link = `${host.data}/usr/local/share/bb-box/slot-home/.bb-machines/bb.example.com/npm/bin/bb`;
+  assert.ok(host.lines("owners").some((line) => line.startsWith("0 ") && line.endsWith(`/bb-app-staging.${staging.split(".").pop()}/bb.example.com/npm/bin/bb`)), "the link itself is root's");
+  assert.equal(readlinkSync(link), "../lib/node_modules/bb-app/bin/bb.js");
 });
 
 test("keep-app copies no link that is absolute or leaves the app, nothing writable by others, and nothing from a slot's home (F-8)", () => {
@@ -768,7 +782,7 @@ test("init loads the held ports' daemon and the helper's, keeps them across the 
 test("the helper refuses to run as anyone but root, and its usage names its commands", () => {
   const host = fakeDeviceHost();
   assert.match(host.run(["bogus"]).stderr, /^usage: device-host status \| summary \| init \| install \| open \| close \| make \| carry \| promise \| unpromise \| vacate \| claim <slot> \| release <slot> \| restart <slot> \| reset \| daemon <slot> \| resume \| keep-app \| version\n$/);
-  assert.equal(host.run(["version"]).stdout, "4\n");
+  assert.equal(host.run(["version"]).stdout, "5\n");
   const text = readFileSync(new URL("../setup/tart/ios/device-host.sh", import.meta.url), "utf8");
   assert.match(text, /\[ "\$\(id -u\)" = 0 \] \|\| quit 2 "Run it as root, through sudo\."/);
   assert.doesNotMatch(text, /^\s*#(?!!)/m, "no comments: names carry intent");
@@ -788,7 +802,7 @@ test("bb-box reads the helper's status whole: settings, promises, every slot, a 
   assert.deepEqual(
     { ...status, boot: "", promises: status.promises.map((promise) => promise.box), claims: status.claims.map((claim) => [claim.slot, claim.box]), slots: status.slots.map((slot) => [slot.id, slot.is, slot.box, slot.portBase, slot.booted, slot.daemonsLoaded]), sweeps: status.sweeps.map((sweep) => [sweep.uid, sweep.uidsInPass]) },
     {
-      helper: 4, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60, bbApp: null, bbAppKept: false,
+      helper: 5, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60, bbApp: null, bbAppKept: false,
       runtime: RUNTIME, model: "iPhone 18 Pro", counted: 1, promises: ["box_p"], claims: [["1", "box_a"]], slots: [["1", "held", "box_a", 20000, true, true]], secondDevices: [], deviceWords: [], sweeping: 0, sweeps: [[80002, 1]],
     },
   );

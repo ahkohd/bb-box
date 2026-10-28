@@ -7,7 +7,7 @@ export PATH LC_ALL
 
 ROOT=
 
-VERSION=4
+VERSION=5
 HOST=$ROOT/var/db/bb-box/host
 SHARE=$ROOT/usr/local/share/bb-box
 IOS_SHARE=$SHARE/ios
@@ -833,13 +833,14 @@ make() {
 sound_app_tree() {
   perl -e '
     use strict; use File::Find; use File::Spec;
-    my ($top) = @ARGV; my $bad = "";
+    my ($top, $cloner) = @ARGV; my $bad = "";
     my @top = lstat $top or do { print "$top is missing\n"; exit 1 };
     my $uid = $top[4];
+    my $owners = defined $cloner ? "UID $uid or $cloner" : "UID $uid";
     find({ no_chdir => 1, wanted => sub {
       return if $bad;
       my @s = lstat $File::Find::name or do { $bad = "$File::Find::name went away"; return };
-      if ($s[4] != $uid) { $bad = "$File::Find::name is not owned by UID $uid, as the rest is"; return }
+      if ($s[4] != $uid && !(defined $cloner && $s[4] == $cloner)) { $bad = "$File::Find::name is not owned by $owners, as the rest is"; return }
       if (-l _) {
         my $to = readlink $File::Find::name;
         if (!defined $to || File::Spec->file_name_is_absolute($to)) { $bad = "$File::Find::name links to an absolute path"; return }
@@ -854,7 +855,7 @@ sound_app_tree() {
       if ($s[2] & 022) { $bad = "$File::Find::name is writable by its group or others"; return }
     } }, $top);
     if ($bad) { print "$bad\n"; exit 1 }
-  ' "$1"
+  ' "$@"
 }
 
 refresh_ready_homes() {
@@ -897,10 +898,10 @@ keep_app() {
       why="BB's app in $from could not be copied"
     elif [ -L "$staging/$server/host-artifact.sha256" ] || [ "$(cat "$staging/$server/host-artifact.sha256")" != "$digest" ]; then
       why="BB's app in $from is another build than $digest"
-    elif ! why=$(sound_app_tree "$staging/$server/npm"); then
+    elif ! why=$(sound_app_tree "$staging/$server/npm" "$owner"); then
       why="BB's app in $from changed as it was copied: $why"
     else
-      chown -R 0:0 "$staging" && chmod 600 "$staging/$server/host-artifact.sha256" && kept=yes why=''
+      chown -R -h 0:0 "$staging" && chmod 600 "$staging/$server/host-artifact.sha256" && kept=yes why=''
     fi
   fi
   rm -rf "$SLOT_HOME/.bb-machines"
