@@ -41,7 +41,7 @@ describe("the SSH host pool's Mac lends iOS slots (064 unit 5)", { timeout: 300_
     const guest = await backend.acquire(box, taken, hooks, wait());
     const placement = placementOf({ guest });
     assert.equal(placement.on, "slot");
-    assert.match(placementWords(placement), /^On a shared iOS host \(the pool's Mac\), slot 1 of 12\. Ports 20000 to 20099/);
+    assert.match(placementWords(placement), /^On a shared iOS host \(the pool's Mac\), slot 1 of 5\. Ports 20000 to 20099/);
     assert.equal(await backend.power(guest, wait()), "running");
     assert.equal(pool.mac.status().slots.find((slot) => slot.box === box.boxId)?.is, "held");
     const transports = await backend.transports(guest, "ios");
@@ -62,7 +62,8 @@ describe("the SSH host pool's Mac lends iOS slots (064 unit 5)", { timeout: 300_
     const doctor = await backend.doctor(wait());
     const slots = doctor.checks.find((check) => check.id === "machine.mac-1.slots");
     assert.equal(slots?.status, "ok");
-    assert.match(slots!.detail, /^Lends iOS slots, 1 held, 0 ready, 0 making, \d+ sweeping, of 12: iOS 27\.0 \(24A434\), the iPhone 18 Pro/);
+    assert.match(slots!.detail, /^Lends iOS slots, 1 held, 0 ready, 0 making, \d+ sweeping, of 5: iOS 27\.0 \(24A434\), the iPhone 18 Pro/);
+    assert.match(slots!.detail, / It lends 5 slots \(estimated: \d+ for \d+ cores at 1\.3 a busy device, 5 for \d+ GiB at 1\.5 GiB a device after 8 GiB for the Mac, \d+ for the video encoder \(.*\); the fewest\)\./);
     assert.match(slots!.detail, new RegExp(`Slot 1 \\(box ${box.boxId}\\): \\d+\\.\\d\\d cores, \\d+\\.\\d GiB`));
 
     await backend.release(guest, releaseHooks().hooks, wait());

@@ -14,8 +14,10 @@
 // - `tart ip` gives each VM an address of its own, 192.168.64.<n>.
 // - A saved state that holds "corrupt" fails to restore, as Tart reports it.
 // - `sw_vers -buildVersion` says 27A1, or what the Mac's ~/.fake-macos-build holds.
-// - `sysctl` says the Mac has 16 cores, 128 GiB and the Hypervisor framework,
-//   unless the Mac's ~/.fake-no-hvf exists, and started in November 2023.
+// - `sysctl` says the Mac has 16 cores, 12 of them performance cores unless
+//   ~/.fake-performance-cores says otherwise, 128 GiB and the Hypervisor
+//   framework, unless the Mac's ~/.fake-no-hvf exists, and started in
+//   November 2023.
 // - `tart list` fails as Tart 2.30.0's does when a VM is deleted while it
 //   reads, while ~/.fake-tart-list-fails exists; `tart get` of a VM whose
 //   config.json is gone fails so too, and of the VM ~/.fake-tart-get-fails
@@ -216,6 +218,7 @@ switch (tool) {
   case "sysctl":
     if (args.includes("kern.boottime")) console.log("{ sec = 1700000000, usec = 0 } Tue Nov 14 22:13:20 2023");
     else if (args.includes("machdep.cpu.brand_string")) console.log(existsSync(join(home, ".fake-chip")) ? readFileSync(join(home, ".fake-chip"), "utf8").trim() : "Apple M4 Max");
+    else if (args.includes("hw.perflevel0.physicalcpu")) console.log(existsSync(join(home, ".fake-performance-cores")) ? readFileSync(join(home, ".fake-performance-cores"), "utf8").trim() : "12");
     else console.log(args.includes("hw.ncpu") ? "16" : args.includes("kern.hv_support") ? (existsSync(join(home, ".fake-no-hvf")) ? "0" : "1") : String(128 * 1024 * 1024 * 1024));
     break;
   case "sw_vers":

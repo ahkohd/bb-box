@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
+import { hostSizingWords, sizeHost, type HostSizing } from "../../core/slot-sizing.ts";
 import { pause } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import type { RunResult, SshAccess } from "../../transports/types.ts";
@@ -126,6 +127,7 @@ export function readHostOwner(vm: string, mac: TartHost, fields: Readonly<Record
       memoryGiB: wholeOf(fields["memory-gib"], defaults.memoryGiB),
       perMac: defaults.perMac,
       diskReserveGiB: wholeOf(fields["disk-reserve-gib"], defaults.diskReserveGiB),
+      sizedBy: defaults.sizedBy,
     },
   };
 }
@@ -421,6 +423,21 @@ export class IosHosts implements SlotLender {
     return null;
   }
 
+  #hostSizing(mac: TartHost, state: HostState | Error | undefined): HostSizing {
+    const settings = this.#settings;
+    const known = state && !(state instanceof Error) ? state : null;
+    const memoryGiB = known && known.memoryMiB > 0 ? Math.floor(known.memoryMiB / 1024) : null;
+    const memoryLeftGiB = known && memoryGiB !== null ? Math.floor((known.memoryMiB - this.#access.config().reserve.memoryMiB) / 1024 / settings.perMac) : null;
+    const facts = { name: mac.name, cores: known?.cpus || null, performanceCores: known?.performanceCores ?? null, memoryGiB, chip: known?.chip ?? null };
+    return sizeHost(facts, mac.iosHostsSizedBy ?? {}, settings.sizedBy, settings, memoryLeftGiB);
+  }
+
+  #settingsFor(mac: TartHost, state: HostState | Error | undefined): IosHostsConfig {
+    const settings = this.#settings;
+    const sizing = this.#hostSizing(mac, state);
+    return { ...settings, most: sizing.most.value, cores: sizing.cores.value, memoryGiB: sizing.memoryGiB.value, ahead: Math.min(settings.ahead, sizing.most.value) };
+  }
+
   #newHostWhy(mac: TartHost, states: ReadonlyMap<string, HostState | Error>, owners: readonly HostOwner[], leaving: ReadonlySet<string> = new Set()): string | null {
     const state = states.get(mac.name);
     if (!state || state instanceof Error) return `${mac.name} did not answer${state ? `: ${state.message}` : ""}`;
@@ -428,7 +445,7 @@ export class IosHosts implements SlotLender {
     if (!image || !state.vms.some((vm) => vm.name === image)) return `${mac.name} has no iOS image ${image ?? ""}`;
     const here = owners.filter((owner) => owner.mac.name === mac.name && owner.phase !== "failed" && !leaving.has(owner.vm)).length;
     if (here >= this.#settings.perMac) return `${mac.name} runs ${here === 1 ? "a shared iOS host" : `${here} shared iOS hosts`} already, as many as it may (${this.#settings.perMac})`;
-    return this.#access.hostRoom(mac, state, this.#settings, leaving);
+    return this.#access.hostRoom(mac, state, this.#settingsFor(mac, state), leaving);
   }
 
   #leavingOf(surveyed: readonly Surveyed[]): Set<string> {
@@ -593,13 +610,13 @@ export class IosHosts implements SlotLender {
   async #newHost(macName: string, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
     const mac = this.#access.mac(macName);
     if (!mac) return { lost: `There is no Mac ${macName} in bb-box's Tart settings.` };
-    const settings = this.#settings;
     const image = this.#access.config().iosImage!;
     const asked = performance.now();
     return this.#access.placement(async (): Promise<SlotTaken> => {
       const queued = performance.now() - asked;
       if (queued >= CHAIN_WAIT_LOGGED_MS) this.#access.log(`A new shared iOS host for box ${box.name} waited ${(queued / 1000).toFixed(1)} s for the Tart backend's other placements.`);
       const states = await this.#readStates(signal);
+      const settings = this.#settingsFor(mac, states.get(mac.name));
       const leaving = this.#leavingOf(await this.#survey(states, signal));
       const why = this.#newHostWhy(mac, states, this.#owners(states), leaving);
       if (why) return { lost: `No shared iOS host can start on ${mac.name} now: ${why}.` };
@@ -623,7 +640,7 @@ export class IosHosts implements SlotLender {
       if (claimed !== "claimed") return { lost: `The name ${vm} was taken on ${mac.name}.` };
       const unplace = this.#access.placing(mac, vm, settings.memoryGiB * 1024);
       void this.#start(mac, vm, leaving).finally(unplace).catch(() => undefined);
-      this.#access.log(`Starting shared iOS host ${vm} on ${mac.name} for box ${box.name}.`);
+      this.#access.log(`Starting shared iOS host ${vm} on ${mac.name} for box ${box.name}: ${hostSizingWords(this.#hostSizing(mac, states.get(mac.name)))}.`);
       return this.#promiseGuest(mac, vm, box.boxId);
     });
   }
@@ -1083,13 +1100,14 @@ export class IosHosts implements SlotLender {
     const surveyed = await this.#survey(states, signal, this.#doctorHostMs);
     return this.#access.macs().map((mac): DoctorCheck => {
       const here = surveyed.filter((each) => each.owner.mac.name === mac.name);
+      const sized = ` A new host here has ${hostSizingWords(this.#hostSizing(mac, states.get(mac.name)))}.`;
       if (!here.length) {
         const why = this.#newHostWhy(mac, states, surveyed.map((each) => each.owner));
         return {
           id: `ios-hosts.${mac.name}`,
           name: `Shared iOS hosts on ${mac.name}`,
           status: why ? "warn" : "ok",
-          detail: why ? `No shared iOS host runs, and none can start now: ${why}.` : "No shared iOS host runs. One starts when an ios box asks for shared: true.",
+          detail: `${why ? `No shared iOS host runs, and none can start now: ${why}.` : "No shared iOS host runs. One starts when an ios box asks for shared: true."}${sized}`,
           fix: null,
         };
       }
@@ -1105,7 +1123,7 @@ export class IosHosts implements SlotLender {
         return `${owner.vm}: ${count("held")} held, ${count("ready")} ready, ${count("making")} making, ${status.sweeping} sweeping, of ${status.most}; ${status.diskGiB ?? "?"} GiB disk free (keeps ${status.diskReserveGiB}), ${status.memoryFreePercent ?? "?"}% memory free.${build} ${slotAppWords(status)}${load.length ? ` ${load.join("; ")}.` : ""}`;
       });
       const failing = here.some((each) => each.owner.phase === "failed" || each.why);
-      return { id: `ios-hosts.${mac.name}`, name: `Shared iOS hosts on ${mac.name}`, status: failing ? "warn" : "ok", detail: lines.join(" "), fix: null };
+      return { id: `ios-hosts.${mac.name}`, name: `Shared iOS hosts on ${mac.name}`, status: failing ? "warn" : "ok", detail: `${lines.join(" ")}${sized}`, fix: null };
     });
   }
 

@@ -974,7 +974,7 @@ test("a field a backend does not have names the backend, and the key it has now 
     problems.map((problem) => `${problem.path}: ${problem.message}`),
     [
       `backends.tart.tart-linux-image: Backend tart has no field "tart-linux-image". That was its name in BB's settings; here it is "linux-image".`,
-      `backends.tart.hosts.0.tart-user: Host mac1 of backend tart has no field "tart-user". The fields are address, user, host-keys.`,
+      `backends.tart.hosts.0.tart-user: Host mac1 of backend tart has no field "tart-user". The fields are address, user, host-keys, ios-hosts-most, ios-hosts-cores, ios-hosts-memory-gib.`,
       `backends.proxmox-lxc.proxmox-lxc-vmid-first: Backend proxmox-lxc has no field "proxmox-lxc-vmid-first". That was its name in BB's settings; here it is "vmid-first".`,
     ],
   );

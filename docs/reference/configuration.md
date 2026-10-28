@@ -163,10 +163,10 @@ Setup: [setup/ssh-pool/README.md](../../setup/ssh-pool/README.md).
 
 | Field | Label | Type | Group | Default | Description |
 | --- | --- | --- | --- | --- | --- |
-| `machines` | Machines | string | boxes |  | One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". ios on a Mac lends iOS slots there, each a macOS user with its own device, for ios boxes asked for with shared: true. setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. |
+| `machines` | Machines | string | boxes |  | One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". ios on a Mac lends iOS slots there, each a macOS user with its own device, for ios boxes asked for with shared: true; ios:<slots> sets how many, where bb-box would estimate them from the Mac. setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. |
 | `known-hosts` | Host keys | string | connection |  | known_hosts lines for every machine and jump host, as setup.sh and setup-mac.sh print them. bb-box connects only to a machine whose key is here. |
 | `ssh-private-key` | SSH private key | string, secret | credentials |  | An unencrypted OpenSSH private key that the machines' admin user accepts. Leave empty and bb-box makes one and shows its public key, which you then give setup.sh. |
-| `ios-hosts-most` | Slots for ios boxes per Mac | number | advanced | `12` | The most iOS slots a Mac whose line lists ios has making, ready or held at once. It is lent whole only while it lends none. |
+| `ios-hosts-most` | Slots for ios boxes per Mac | number | advanced |  | The most iOS slots a Mac whose line lists ios has making, ready or held at once. It is lent whole only while it lends none. Unset, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins. |
 | `ios-hosts-ahead` | Ready slots for ios boxes kept on a Mac | number | advanced | `1` | Slots a Mac whose line lists ios keeps ready while it is not lent whole, so the next ios box is ready in seconds. |
 | `ios-hosts-resetting-most` | Slots a Mac sweeps at once | number | advanced | `4` | The most released iOS slots whose files a Mac sweeps in one pass. |
 | `ios-hosts-disk-reserve-gib` | Disk a Mac keeps free of slots (GiB) | number | advanced | `40` | A Mac makes no new iOS slot while it has less free disk than this. |
@@ -194,11 +194,11 @@ Setup: [setup/tart/README.md](../../setup/tart/README.md).
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `16384` | A new box is refused if the Mac would have less memory than this left for its own use, after its running VMs. |
 | `reserve-disk-gib` | Disk kept free (GiB) | number | advanced | `50` | A new box is refused if the Mac's disk has less free space than this. |
 | `warm-max-hours` | Hours a macOS warm VM is kept | number | advanced | `6` | A suspended macOS warm VM saved longer ago than this is replaced by a fresh one, as an old saved state may not restore. |
-| `ios-hosts-most` | Slots per shared iOS host | number | advanced | `8` | The most slots a shared iOS host has making, ready or held at once. |
+| `ios-hosts-most` | Slots per shared iOS host | number | advanced |  | The most slots a shared iOS host has making, ready or held at once. Unset, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins. |
 | `ios-hosts-ahead` | Ready slots kept on a shared iOS host | number | advanced | `1` | Slots a shared iOS host keeps ready while it holds a box, so the next box is ready in seconds. |
 | `ios-hosts-resetting-most` | Slots a shared iOS host sweeps at once | number | advanced | `4` | The most released slots whose files a shared iOS host sweeps in one pass. |
-| `ios-hosts-cores` | Cores of a shared iOS host | number | advanced | `8` | The cores of each shared iOS host's VM, shared by its slots. |
-| `ios-hosts-memory-gib` | Memory of a shared iOS host (GiB) | number | advanced | `32` | The memory of each shared iOS host's VM, shared by its slots. |
+| `ios-hosts-cores` | Cores of a shared iOS host | number | advanced |  | The cores of each shared iOS host's VM, shared by its slots. Unset, the Mac's performance cores. A Mac's own value wins. |
+| `ios-hosts-memory-gib` | Memory of a shared iOS host (GiB) | number | advanced |  | The memory of each shared iOS host's VM, shared by its slots. Unset, 8 GiB for the host and 1.5 GiB for each slot, within the Mac's memory. A Mac's own value wins. |
 | `ios-hosts-per-mac` | Shared iOS hosts per Mac | number | advanced | `1` | The most shared iOS hosts a Mac runs. Each is one of the Mac's two macOS VMs, and both share the Mac's video encoder. |
 | `ios-hosts-disk-reserve-gib` | Disk a shared iOS host keeps free (GiB) | number | advanced | `10` | A shared iOS host makes no new slot while its VM has less free disk than this. |
 
@@ -209,6 +209,9 @@ Each host's fields:
 | `address` | Address | string | connection |  | The Mac's address, with :port when SSH is not on 22. For example 192.0.2.20. |
 | `user` | User | string | connection |  | The user bb-box logs in to the Mac as, which runs tart. |
 | `host-keys` | Host keys | string | connection |  | The Mac's SSH host keys as known_hosts lines. ssh-keyscan -t ed25519 <address> prints one. bb-box checks them on every connection. |
+| `ios-hosts-most` | Slots per shared iOS host | number | advanced |  | The most slots a shared iOS host on this Mac has, over the backend's setting and bb-box's estimate for the Mac. Empty for those. |
+| `ios-hosts-cores` | Cores of a shared iOS host | number | advanced |  | The cores of a shared iOS host's VM on this Mac, over the backend's setting and the Mac's performance cores. Empty for those. |
+| `ios-hosts-memory-gib` | Memory of a shared iOS host (GiB) | number | advanced |  | The memory of a shared iOS host's VM on this Mac, over the backend's setting and bb-box's estimate. Empty for those. |
 
 ### docker
 
