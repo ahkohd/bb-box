@@ -11,6 +11,7 @@ import {
   stillsAsked,
   viewAsked,
   listWords,
+  DEVICE_CLIPBOARD_MOST,
   supports,
   type AnswerResult,
   type DeviceAnswer,
@@ -805,6 +806,12 @@ export class DeviceServer {
       case "tree":
         this.#booted();
         return { type: "tree", elements: await this.#options.driver.tree(), generation: this.#state.geometry?.generation ?? 0 };
+      case "clipboard": {
+        this.#booted();
+        const text = await this.#options.driver.clipboard();
+        if (text.length > DEVICE_CLIPBOARD_MOST) throw new Refused("unsupported", `The ${this.#state.model}'s clipboard holds ${text.length} characters, more than the ${DEVICE_CLIPBOARD_MOST} bb-box copies from a device.`);
+        return { type: "clipboard", text };
+      }
       case "at": {
         this.#booted();
         const driver = this.#options.driver;

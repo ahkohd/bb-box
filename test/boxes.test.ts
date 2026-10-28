@@ -13,7 +13,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, ut
 import { userInfo } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, restartSeconds, withDeviceChecked, type BoxRecord, type BoxesDeps, type ThreadLiveness } from "../src/core/boxes.ts";
+import { BoxError, Boxes, OPERATOR, SPARES, extraFeatures, machineName, restartSeconds, withDeviceChecked, type BoxRecord, type BoxesDeps, type SpareSettling, type ThreadLiveness } from "../src/core/boxes.ts";
 import type { GeneralConfig } from "../src/core/config.ts";
 import { ACCESS_CHECK_EXITS, DESKTOP_EXITS, JOBS_DIR, MAC_CLIPBOARD, MAC_LAUNCHER, WINDOWS_CLIPBOARD, accessCheck, accessSetup, accessSetupMs, clipboardCommands, command, envScript, jobScript, newJobId } from "../src/core/in-box.ts";
 import { READER_SOURCE, READER_TYPE } from "../src/core/windows-access.ts";
@@ -31,7 +31,7 @@ const THREAD = "thr_one";
 
 const QUIET: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 
-function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random" | "tell" | "sharedIosByDefault"> = {}) {
+function setup(options: Omit<FakeBackendOptions, "root" | "storage"> = {}, deps: Pick<BoxesDeps, "access" | "spareThread" | "claimed" | "enrolWaitMs" | "log" | "machineOf" | "projectOf" | "recorded" | "reconnect" | "image" | "baked" | "imageReady" | "imageTools" | "reconnecting" | "imageSpares" | "random" | "tell" | "sharedIosByDefault" | "spareSettled" | "spareClaimed" | "now"> = {}) {
   const root = tempDir("boxes");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -2998,6 +2998,97 @@ test("the upkeep replaces a spare that waits stopped when its image has a newer 
   assert.deepEqual(states, [], "the old spare was not started to ask");
   assert.match(logs.join("\n"), /its linux image on .+ has a newer build/);
   assert.deepEqual(world.errors, []);
+});
+
+test("a spare that waits stopped stays running until its device has booted, then stops; one whose device does not boot goes, and its kind makes none for a while (063)", async () => {
+  const logs: string[] = [];
+  let settling: SpareSettling = { is: "settling" };
+  const asked: string[] = [];
+  const world = setup({ keepsSession: () => true }, { log: (line) => logs.push(line), spareSettled: async (box) => (asked.push(box.name), settling) });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  await until(async () => (await world.boxes.list(SPARES))[0]?.enrol.state === "enrolled");
+  await world.boxes.keepSpares();
+  const [spare] = await world.boxes.list(SPARES);
+  assert.equal(spare!.state, "ready", "its device is still booting");
+  assert.ok(asked.includes(spare!.name));
+
+  settling = { is: "settled" };
+  await world.boxes.keepSpares();
+  await until(async () => (await world.boxes.list(SPARES))[0]?.state === "stopped");
+  const [stopped] = await world.boxes.list(SPARES);
+  assert.equal(typeof stopped!.stoppedAt, "number");
+
+  await world.boxes.start(SPARES, stopped!.id);
+  settling = { is: "failed", words: "its Pixel 8 did not boot: the emulator exited" };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  await until(async () => (await world.boxes.list(SPARES)).every((each) => each.id !== stopped!.id));
+  assert.match(logs.join("\n"), /its Pixel 8 did not boot: the emulator exited/);
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  assert.deepEqual(await world.boxes.list(SPARES), [], "no spare of the kind is made again at once");
+  const [check] = (await world.boxes.spareChecks()).filter((each) => each.id === "spares.linux");
+  assert.equal(check!.status, "warn");
+  assert.match(check!.detail, /^bb-box keeps 1 spare linux box: 0 ready, 0 being made\. A spare waits stopped with its session saved, which holds no memory and up to 4 GiB of disk for its saved memory, besides its own disk\. It has too few: its Pixel 8 did not boot: the emulator exited\.$/);
+  assert.deepEqual(world.errors, []);
+});
+
+test("a spare that has waited stopped longer than its backend restores a saved session reliably is replaced, and one within it is kept (063)", async () => {
+  const logs: string[] = [];
+  let clock = 1_790_000_000_000;
+  const world = setup({ keepsSession: () => true }, { log: (line) => logs.push(line), now: () => clock });
+  Object.defineProperty(world.backend, "savedSessionRestoresWithinMs", { value: () => 6 * 3_600_000 });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  await until(async () => (await world.boxes.list(SPARES))[0]?.state === "stopped");
+  const [first] = await world.boxes.list(SPARES);
+  assert.equal(first!.stoppedAt, clock);
+
+  clock += 5 * 3_600_000;
+  await world.boxes.keepSpares();
+  assert.deepEqual((await world.boxes.list(SPARES)).map((spare) => spare.id), [first!.id], "5 hours is within 6");
+
+  clock += 2 * 3_600_000;
+  await world.boxes.keepSpares();
+  await until(async () => (await world.boxes.list(SPARES)).some((spare) => spare.id !== first!.id && spare.state === "stopped"));
+  assert.ok(!(await world.boxes.list(SPARES)).some((spare) => spare.id === first!.id));
+  assert.match(logs.join("\n"), /it has waited stopped for 7 hours, longer than .+ restores a saved linux VM reliably, 6 hours/);
+  assert.deepEqual(world.errors, []);
+});
+
+test("the doctor says spares are off for a kind with a device, and what one costs; a kind with none and no device says nothing (063)", async () => {
+  const world = setup({ keepsSession: (kind) => kind === "linux" });
+  assert.deepEqual(await world.boxes.spareChecks(), []);
+  world.testDevice = true;
+  const checks = await world.boxes.spareChecks();
+  const linux = checks.find((check) => check.id === "spares.linux");
+  assert.deepEqual(linux, {
+    id: "spares.linux",
+    name: "Spare linux boxes",
+    status: "ok",
+    detail: "Spares are off for linux boxes: none is kept. A spare waits stopped with its session saved, which holds no memory and up to 4 GiB of disk for its saved memory, besides its own disk.",
+    fix: null,
+  });
+  world.testDevice = false;
+  world.general = { ...world.general, spares: { linux: 2 } };
+  const [kept] = await world.boxes.spareChecks();
+  assert.equal(kept!.detail, "bb-box keeps 2 spare linux boxes: 0 ready, 0 being made. A spare waits stopped with its session saved, which holds no memory and up to 4 GiB of disk for its saved memory, besides its own disk.");
+});
+
+test("a claim of a spare tells the plugin once the box is the thread's, after a spare that waited stopped has started (063)", async () => {
+  const claimed: string[] = [];
+  const world = setup({ keepsSession: () => true }, { spareClaimed: (box) => claimed.push(`${box.threadId} ${box.state} ${box.askedDevice ?? "default"}`) });
+  world.general = { ...world.general, spares: { linux: 1 } };
+  await world.boxes.keepSpares();
+  await world.boxes.idle();
+  await until(async () => (await world.boxes.list(SPARES))[0]?.state === "stopped");
+  const box = await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
+  assert.notEqual(box.timings.spare, undefined);
+  await until(async () => claimed.length === 1);
+  assert.deepEqual(claimed, [`${THREAD} ready default`]);
 });
 
 test("each resize is logged with the box, from and to, how, who asked and how long it took, and each refusal and failure with why (061)", async () => {

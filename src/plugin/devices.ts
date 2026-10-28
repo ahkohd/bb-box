@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import type { BoxRecord } from "../core/boxes.ts";
-import { DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, SETTINGS_ASKED_SINCE_VERSION, VIDEO_REPORTS_SINCE_VERSION, deviceModel, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceOffer, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice, type VideoReport, type VideoStep } from "../core/device.ts";
+import type { BoxRecord, SpareSettling } from "../core/boxes.ts";
+import { CLIPBOARD_READ_SINCE_VERSION, DEVICE_SERVER_VERSION, PERSON_HAS_CONTROL_WORDS, listWords, SETTINGS_ASKED_SINCE_VERSION, VIDEO_REPORTS_SINCE_VERSION, deviceModel, isTestOffer, speaksProtocol, type BoxDevice, type ControlHolder, type DeviceAgentRequest, type DeviceAnswer, type DeviceControl, type DeviceOffer, type DeviceRead, type DeviceHello, type DeviceInput, type DeviceState, type Intent, type ModelName, type OfferedDevice, type VideoReport, type VideoStep } from "../core/device.ts";
 import { DELIVERY_EXITS, connectScript, deliveryScript, deviceHubScript, parseDeviceHub, type DeviceHubSeen, deliveryStdin, parseStatus, restartScript, rollbackScript, statusScript, type DeviceChoices, iosEncoderChoice, type ServerFile, type ServerStatus } from "../core/device-delivery.ts";
 import { lostWords } from "../core/device-control.ts";
 import { controlDeadlineMs } from "../core/device-settings.ts";
@@ -14,6 +14,7 @@ export const IDLE_CLOSE_MS = 10 * 60_000;
 export const SLOT_STREAM_CAP: VideoStep = "two-thirds";
 export const ASKED_HOST_WORDS = "The device server for this box has not started. bb-box has asked the host to start it again.";
 export const HELLO_TRIES = 2;
+export const DEVICE_COPY_NEEDS_CONTROL_WORDS = "Take control first, then copy: only the tab with control reads the device's clipboard.";
 const SCRIPT_TIMEOUT_MS = 60_000;
 const DEVICE_HUB_CHECK_MS = 15_000;
 export const FRESH_SETTINGS_WAIT_MS = 3_000;
@@ -22,6 +23,10 @@ const BAD_KEY = (boxId: string) => `device-bad:${boxId}`;
 const ANSWER_MARGIN_MS = 15_000;
 const RESULT_ASK_MS = 10_000;
 const RESULT_POLL_MS = 1_000;
+export const SPARE_SETTLE_WAIT_MS = 60_000;
+export const SPARE_BOOT_MOST_MS = 10 * 60_000;
+export const CLAIM_BOOT_WAIT_MS = 120_000;
+const DEVICE_POLL_MS = 250;
 
 export interface DeviceBoxes {
   find(boxId: string): Promise<BoxRecord | null>;
@@ -55,7 +60,15 @@ export interface DeviceServersDeps {
   readonly idleCloseMs?: number;
   readonly deviceHubWaitMs?: number;
   readonly deviceStateWaitMs?: number;
+  readonly spareSettleWaitMs?: number;
+  readonly spareBootMostMs?: number;
+  readonly claimBootWaitMs?: number;
 }
+
+export type ClaimSwitch =
+  | { readonly is: "switching"; readonly from: ModelName; readonly to: ModelName }
+  | { readonly is: "switched"; readonly from: ModelName; readonly to: ModelName; readonly ms: number }
+  | { readonly is: "failed"; readonly from: ModelName | null; readonly to: ModelName; readonly words: string };
 
 export type DeviceServerView =
   | { readonly is: "none" }
@@ -77,6 +90,10 @@ export function hostCheckWords(box: BoxRecord): string {
   const placement = placementOf(box);
   if (placement.on !== "slot") return "";
   return placement.hostOn === "tart" ? " The check of shared iOS hosts says whether its host's VM runs." : " The iOS slots check of its Mac says how the Mac's slots are.";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function utcWords(at: number): string {
@@ -107,6 +124,8 @@ function boxDevice(hello: DeviceHello, state: DeviceState): BoxDevice | null {
 export class DeviceServers {
   readonly #deps: DeviceServersDeps;
   readonly #held = new Map<string, Held>();
+  readonly #claimSwitches = new Map<string, ClaimSwitch>();
+  readonly #priming = new Map<string, Promise<void>>();
   readonly started: number;
   readonly instance: string;
   readonly version: number;
@@ -145,6 +164,10 @@ export class DeviceServers {
   }
 
   recorded(box: BoxRecord, deleted: boolean): void {
+    if (deleted) {
+      this.#claimSwitches.delete(box.id);
+      this.#priming.delete(box.id);
+    }
     if (deleted || box.state !== "ready") {
       void this.forget(box.id);
       return;
@@ -202,6 +225,16 @@ export class DeviceServers {
     if (owner.changed) await this.#tellOwner(box);
     this.#touch(box.id);
     return link.request({ type: "input", input, owner: owner.generation }, { timeoutMs: SCRIPT_TIMEOUT_MS });
+  }
+
+  async clipboard(box: BoxRecord): Promise<{ readonly text: string | null; readonly error: string | null }> {
+    const view = await this.ensure(box);
+    if (view.is === "connected" && view.version < CLIPBOARD_READ_SINCE_VERSION) {
+      return { text: null, error: `Box ${box.name}'s device server is version ${view.version}, which cannot read the device's clipboard. bb-box delivers version ${this.version} once no person has control and no recording runs.` };
+    }
+    const answer = await this.read(box, { type: "clipboard" });
+    if (!answer.ok) return { text: null, error: answer.error.words };
+    return answer.result.type === "clipboard" ? { text: answer.result.text, error: null } : { text: null, error: "The device server answered without the clipboard." };
   }
 
   screenshot(box: BoxRecord): Promise<DeviceAnswer> {
@@ -309,6 +342,104 @@ export class DeviceServers {
       .find(boxId)
       .then((box) => (box && wantsDevice(box) ? this.ensure(box) : null))
       .catch((error) => this.#deps.logError("deliver the device server", error));
+  }
+
+  async spareSettled(box: BoxRecord): Promise<SpareSettling> {
+    if (!wantsDevice(box)) return { is: "settled" };
+    const began = Date.now();
+    await this.ensure(box);
+    for (;;) {
+      const view = this.view(box.id);
+      if (view.is === "connected" && view.state.power.is === "booted") {
+        await this.#everyModelBootedOnce(box);
+        const after = this.view(box.id);
+        if (after.is === "connected" && after.state.power.is === "booted") return { is: "settled" };
+        continue;
+      }
+      if (view.is === "connected" && view.state.power.is === "failed") return { is: "failed", words: `its ${view.state.model} did not boot: ${view.state.power.error.words}` };
+      if (this.#disposed || Date.now() - began >= (this.#deps.spareSettleWaitMs ?? SPARE_SETTLE_WAIT_MS)) break;
+      await sleep(DEVICE_POLL_MS);
+      if (this.view(box.id).is !== "connected") await this.ensure(box);
+    }
+    const sinceReady = Date.now() - (box.readyAt ?? box.createdAt);
+    const most = this.#deps.spareBootMostMs ?? SPARE_BOOT_MOST_MS;
+    if (sinceReady < most) return { is: "settling" };
+    const view = this.view(box.id);
+    const why = view.is === "down" ? `: its device server is down: ${view.words}` : "";
+    return { is: "failed", words: `its device had not booted ${Math.round(sinceReady / 60_000)} minutes after the box was ready${why}` };
+  }
+
+  #everyModelBootedOnce(box: BoxRecord): Promise<void> {
+    let priming = this.#priming.get(box.id);
+    if (!priming) {
+      priming = this.#bootEachModelOnce(box).catch((error) => this.#deps.logError(`boot spare ${box.name}'s devices once each`, error));
+      this.#priming.set(box.id, priming);
+    }
+    return priming;
+  }
+
+  async #bootEachModelOnce(box: BoxRecord): Promise<void> {
+    const offer = box.capabilities.device;
+    const first = this.view(box.id);
+    if (!offer || first.is !== "connected") return;
+    const held = first.state.model;
+    const bootedHere = new Set<ModelName>([...(first.bootedHere ?? []), held]);
+    const stillSpare = async () => !this.#disposed && (await this.#deps.boxes.find(box.id))?.threadId === box.threadId;
+    const unbooted = (offer.devices as readonly OfferedDevice[]).map((device) => device.model).filter((model) => !bootedHere.has(model));
+    if (!unbooted.length) return;
+    const began = Date.now();
+    for (const model of [...unbooted, held]) {
+      if (!(await stillSpare())) return;
+      const answer = await this.control(box, { action: "switch", device: model });
+      if (!answer.ok) {
+        this.#deps.log(`Spare box ${box.name} did not boot the ${model} once ahead: ${answer.error.words}`);
+        if (model === held) return;
+      }
+    }
+    this.#deps.log(`Spare box ${box.name} booted the ${listWords(unbooted)} once each and is back on the ${held}, in ${Math.round((Date.now() - began) / 1000)} s, so a claim of any of its devices switches as one booted before.`);
+  }
+
+  claimSwitch(boxId: string): ClaimSwitch | null {
+    return this.#claimSwitches.get(boxId) ?? null;
+  }
+
+  async switchClaimed(box: BoxRecord): Promise<ClaimSwitch | null> {
+    const asked = box.askedDevice ?? box.capabilities.device?.devices[0].model;
+    if (!asked || !wantsDevice(box)) return null;
+    await this.#priming.get(box.id);
+    const began = Date.now();
+    const deadline = began + (this.#deps.claimBootWaitMs ?? CLAIM_BOOT_WAIT_MS);
+    let model: ModelName | null = null;
+    while (Date.now() < deadline && !this.#disposed) {
+      const view = this.view(box.id).is === "connected" ? this.view(box.id) : await this.ensure(box);
+      if (view.is === "connected" && view.state.power.is === "booted") {
+        model = view.state.model;
+        break;
+      }
+      if (view.is === "connected" && view.state.power.is === "failed") break;
+      await sleep(DEVICE_POLL_MS);
+    }
+    if (model === asked) return null;
+    if (model === null) {
+      const failed: ClaimSwitch = { is: "failed", from: null, to: asked, words: `the spare's device had not booted ${Math.round((Date.now() - began) / 1000)} s after the claim, so bb-box did not switch it` };
+      this.#claimSwitches.set(box.id, failed);
+      this.#deps.log(`Box ${box.name}, a claimed spare: ${failed.words}.`);
+      return failed;
+    }
+    this.#claimSwitches.set(box.id, { is: "switching", from: model, to: asked });
+    this.#deps.log(`Box ${box.name}, a claimed spare, has the ${model}; switching it to the ${asked}, which its thread asked for.`);
+    const answer = await this.control(box, { action: "switch", device: asked }).catch(
+      (error): DeviceAnswer => ({ id: "", ok: false, error: { code: "failed", words: error instanceof Error ? error.message : String(error) }, state: null }),
+    );
+    const outcome: ClaimSwitch = answer.ok
+      ? { is: "switched", from: model, to: asked, ms: Date.now() - began }
+      : { is: "failed", from: answer.state?.model ?? model, to: asked, words: answer.error.words };
+    this.#claimSwitches.set(box.id, outcome);
+    if (outcome.is === "switched") {
+      this.#deps.log(`Box ${box.name}, a claimed spare, switched from the ${model} to the ${asked} in ${outcome.ms} ms.`);
+      await this.#deps.boxes.update(box, ({ timings }) => ({ timings: { ...timings, spareSwitch: outcome.ms } })).catch((error) => this.#deps.logError("record a claimed spare's switch", error));
+    } else this.#deps.log(`Box ${box.name}, a claimed spare, did not switch from the ${model} to the ${asked}: ${outcome.words}`);
+    return outcome;
   }
 
   recordingEnded(boxId: string): void {

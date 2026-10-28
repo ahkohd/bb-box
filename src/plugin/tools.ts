@@ -20,7 +20,7 @@ import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import { ANDROID_ID_FIRST_BOOT_WORDS } from "../core/device-settings.ts";
-import { wantsDevice } from "./devices.ts";
+import { wantsDevice, type ClaimSwitch } from "./devices.ts";
 import { captionDeviceRecording, deviceClipWords, recordsDevice, startDeviceRecording, stopDeviceRecording, type DeviceRecordDeps } from "./record-device.ts";
 import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, deviceLines, devicesText, placementText, kindResizeText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
@@ -213,17 +213,38 @@ async function deviceBooted(app: BbBox, box: BoxRecord, signal: AbortSignal, aft
   const began = Date.now();
   const model = box.askedDevice ?? box.capabilities.device!.devices[0].model;
   let firstBootHere: boolean | null = null;
+  const claimed = box.timings.spare !== undefined;
   while (Date.now() - began < DEVICE_BOOT_WAIT_MS && !signal.aborted) {
     const view = app.devices.view(box.id);
+    const claimSwitch = claimed ? app.devices.claimSwitch(box.id) : null;
+    if (claimSwitch?.is === "failed") return `\n${claimSwitchFailedWords(claimSwitch)}`;
     if (view.is === "connected" && firstBootHere === null) firstBootHere = view.state.power.is !== "booted" && !(view.bootedHere ?? []).includes(view.state.model);
-    if (view.is === "connected" && view.state.power.is === "booted")
-      return `\nThe ${view.state.model} ${after} ${((Date.now() - began) / 1000).toFixed(1)} s after the box was ready${view.state.platform === "android" && firstBootHere ? `, ${ANDROID_ID_FIRST_BOOT_WORDS}` : ""}.`;
+    const awaitsSwitch = claimed && view.is === "connected" && view.state.model !== model;
+    if (view.is === "connected" && view.state.power.is === "booted" && !awaitsSwitch) {
+      const switched = claimSwitch?.is === "switched" ? `, switched from the spare's ${claimSwitch.from} in ${(claimSwitch.ms / 1000).toFixed(1)} s` : "";
+      return `\nThe ${view.state.model} ${after} ${((Date.now() - began) / 1000).toFixed(1)} s after the box was ready${switched}${view.state.platform === "android" && firstBootHere ? `, ${ANDROID_ID_FIRST_BOOT_WORDS}` : ""}.`;
+    }
     if (view.is === "connected" && view.state.power.is === "failed") return `\nThe ${view.state.model} did not boot: ${view.state.power.error.words}`;
     await new Promise((resolve) => setTimeout(resolve, DEVICE_POLL_MS));
   }
   const view = app.devices.view(box.id);
   if (view.is === "down") return `\nThe ${model} has not booted after ${DEVICE_BOOT_WAIT_MS / 1000} s: its device server is down: ${view.words}`;
   return `\nThe ${model} is still booting after ${DEVICE_BOOT_WAIT_MS / 1000} s. Call box_status to see when it has booted.`;
+}
+
+function sentence(text: string): string {
+  return /[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`;
+}
+
+function claimSwitchFailedWords(failed: Extract<ClaimSwitch, { readonly is: "failed" }>): string {
+  if (!failed.from) return `The box came from a spare, and its device did not switch to the ${failed.to}: ${sentence(failed.words)} Call box_status to see its device, and box_device with action switch to try again.`;
+  return `The box came from a spare with the ${failed.from}, which did not switch to the ${failed.to}: ${sentence(failed.words)} The box has the ${failed.from}; box_device with action switch tries again.`;
+}
+
+export function spareRestoreWords(box: BoxRecord): string {
+  const boot = box.timings["start.boot"];
+  if (box.timings.spare === undefined || boot === undefined) return "";
+  return `\nThe spare's saved state did not restore, so its VM booted afresh from its disk, in ${(boot / 1000).toFixed(1)} s, and its device booted again.`;
 }
 
 export function ownProcessHint(backend: string, program: string): string {
@@ -468,7 +489,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         // box_run would wait for enrolment anyway, so the result can say how it went.
         const enrolled = await boxes.enrolled(settled, signal);
         const booted = await deviceBooted(app, enrolled, signal);
-        return `${boxDetail(enrolled, app.control(enrolled))}${deviceText(app, enrolled)}${booted}${next(...using(enrolled))}`;
+        return `${boxDetail(enrolled, app.control(enrolled))}${deviceText(app, enrolled)}${spareRestoreWords(enrolled)}${booted}${next(...using(enrolled))}`;
       } catch (error) {
         return failure(error, "Acquiring a box");
       }

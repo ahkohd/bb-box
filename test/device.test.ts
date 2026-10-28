@@ -9,6 +9,7 @@ import { arrangementFor, barGroups, barHeight, changeWords, moreItems, overflowC
 import {
   ANDROID_FONT_SCALES,
   DEVICE_ACTIONS,
+  DEVICE_CLIPBOARD_MOST,
   linkFrom,
   urlProblem,
   IOS_CONTENT_SIZES,
@@ -380,6 +381,7 @@ describe("messages", () => {
     { id: "l1", type: "open", url: "myapp://settings?tab=2" },
     { id: "s1", type: "screenshot" },
     { id: "r1", type: "tree" },
+    { id: "p1", type: "clipboard" },
     { id: "rec", type: "record", to: "start" },
     { id: "c1", type: "result" },
   ];
@@ -407,6 +409,8 @@ describe("messages", () => {
       { verb: "BB_DEVICE_STILL", png: "iVBORw0KGgo=", generation: 2 },
       { verb: "BB_DEVICE_ANSWER", answer: { id: "s1", ok: true, ms: 22, state: iosState as DeviceState, result: { type: "screenshot", png: "iVBORw0KGgo=", generation: 3 } } },
       { verb: "BB_DEVICE_ANSWER", answer: { id: "c1", ok: true, ms: 300, state: iosState as DeviceState, result: { type: "done" } } },
+      { verb: "BB_DEVICE_ANSWER", answer: { id: "p1", ok: true, ms: 41, state: iosState as DeviceState, result: { type: "clipboard", text: "Привет, 日本語\n" } } },
+      { verb: "BB_DEVICE_ANSWER", answer: { id: "p2", ok: true, ms: 12, state: iosState as DeviceState, result: { type: "clipboard", text: "" } } },
       { verb: "BB_DEVICE_ANSWER", answer: { id: "c2", ok: false, error: { code: "outcome-unknown", words: "The connection ended while turning the device." }, state: phoneState as DeviceState } },
       { verb: "BB_DEVICE_ANSWER", answer: { id: "c3", ok: false, error: { code: "in-progress", words: "Still turning." }, state: null } },
     ];
@@ -433,6 +437,8 @@ describe("messages", () => {
     refusal(parseDeviceServerMessage(`BB_DEVICE_HELLO ${JSON.stringify({ ...hello, state: phoneState, bootedHere: ["iPhone 17"] })}`), /bootedHere\[0\]/);
     refusal(parseDeviceRequest('BB_DEVICE {"id":"a","type":"open","url":"example.com"}'), /url is not a link to open: A link starts with its scheme/);
     refusal(parseDeviceRequest('BB_DEVICE {"id":"a","type":"open","url":"https://example.com/two words"}'), /A link has no spaces/);
+    const long = { id: "p3", ok: true, ms: 1, state: iosState, result: { type: "clipboard", text: "x".repeat(DEVICE_CLIPBOARD_MOST + 1) } };
+    refusal(parseDeviceServerMessage(`BB_DEVICE_ANSWER ${JSON.stringify(long)}`), new RegExp(`result\\.text is longer than ${DEVICE_CLIPBOARD_MOST} characters`));
   });
 });
 

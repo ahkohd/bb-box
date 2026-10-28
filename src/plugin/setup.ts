@@ -730,6 +730,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return enrolment.claimed(box);
     },
     renameMachine: (box) => enrolment.rename(box),
+    spareSettled: async (box) => (deviceServers ? deviceServers.spareSettled(box) : { is: "settled" }),
+    spareClaimed: (box) => void deviceServers?.switchClaimed(box).catch((error) => logError(`switch claimed spare ${box.name}'s device`, error)),
     // A box on Docker on a BB machine whose relay is coming back, as after an update, is waited for (#415).
     reconnecting: (box) => {
       const host = configuration.document.backends.find((backend) => backend.id === box.backend)?.fields.host;
@@ -1311,6 +1313,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         sections.push({
           title: "Kinds",
           report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
+        });
+      }
+      const spareChecks = await boxes.spareChecks();
+      if (spareChecks.length) {
+        sections.push({
+          title: "Spares",
+          report: { ok: true, summary: "The spares each kind keeps, and what each costs while it waits.", checks: spareChecks, notes: [] },
         });
       }
       const imageChecks = [...(await imageJobs.checks(signal)), ...(await imageBakes.checks()), ...(await boxes.imageSpareChecks())];

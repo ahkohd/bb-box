@@ -520,3 +520,32 @@ test("two installs never share warm VMs", async () => {
   assert.ok(suspended(warm!));
   await other.release(guest, releasing);
 });
+
+test("a cloned macOS box records its image's build, which tells a spare of an old build, and a spare waits suspended no longer than tart-warm-max-hours (063, 7.5)", async () => {
+  const { make, mac } = setup({});
+  const backend = make("test", {}, { "tart-warm-max-hours": 4 });
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(guest.data?.build, "build.20261003-021500");
+  assert.equal(await backend.fromCurrentBuild(guest, "macos"), true);
+  writeFileSync(join(mac, ".bb-box", "tart", "images", `${FAKE_IMAGE}.json`), `${JSON.stringify({ contract: 1, image: "standard", kind: "macos", arch: "arm64", build: "build.20261101-021500", built: new Date().toISOString(), os: "fake OS", tools: {} })}\n`);
+  assert.equal(await backend.fromCurrentBuild(guest, "macos"), false);
+  assert.equal(await backend.fromCurrentBuild({ ...guest, data: { box: guest.data!.box! } }, "macos"), null, "a box made before builds were recorded cannot tell");
+  assert.equal(backend.savedSessionRestoresWithinMs("macos"), 4 * 3_600_000);
+  await backend.release(guest, releasing);
+});
+
+test("a start whose saved state does not restore boots afresh and says so in its timings; one that restores does not (063, 7.5)", async () => {
+  const { make, vmsDir } = setup({});
+  const backend = make("test", {});
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  await backend.stop(guest, signal());
+  const resumed: Record<string, number> = {};
+  await backend.start(guest, signal(), (step, ms) => (resumed[step] = ms));
+  assert.equal(resumed.boot, undefined);
+  await backend.stop(guest, signal());
+  writeFileSync(join(vmsDir, guest.ref, "state.vzvmsave"), "corrupt");
+  const booted: Record<string, number> = {};
+  await backend.start(guest, signal(), (step, ms) => (booted[step] = ms));
+  assert.equal(typeof booted.boot, "number");
+  await backend.release(guest, releasing);
+});

@@ -1,6 +1,7 @@
 import {
   ANDROID_FAILURE_CODES,
   ANDROID_FONT_SCALES,
+  DEVICE_CLIPBOARD_MOST,
   DEVICE_ERROR_CODES,
   DEVICE_PLATFORMS,
   DEVICE_REQUEST_VERB,
@@ -578,7 +579,7 @@ function base64(value: unknown, path: string): string {
 }
 
 function request(value: unknown, path: string): DeviceRequest {
-  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "launch", "settle", "at", "screenshot", "tree", "settings", "record", "cap", "result"]);
+  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["touch", "text", "control", "input", "owner", "open", "launch", "settle", "at", "screenshot", "tree", "clipboard", "settings", "record", "cap", "result"]);
   const at = (key: string) => `${path}.${key}`;
   switch (type) {
     case "touch": {
@@ -645,6 +646,7 @@ function request(value: unknown, path: string): DeviceRequest {
       return { id: requestId(read.id, at("id")), type, most, words: textOrNull(read.words, at("words")) };
     }
     case "tree":
+    case "clipboard":
     case "settings":
     case "result":
       return { id: requestId(fields(value, path, ["id", "type"]).id, at("id")), type };
@@ -657,7 +659,7 @@ function deviceError(value: unknown, path: string): DeviceError {
 }
 
 function answerResult(value: unknown, path: string): AnswerResult {
-  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["done", "screenshot", "tree", "at", "launched", "settled", "recording"]);
+  const type = oneOf((value as Fields | null)?.type, `${path}.type`, ["done", "screenshot", "tree", "clipboard", "at", "launched", "settled", "recording"]);
   switch (type) {
     case "done":
       fields(value, path, ["type"]);
@@ -684,6 +686,12 @@ function answerResult(value: unknown, path: string): AnswerResult {
     case "tree": {
       const read = fields(value, path, ["type", "elements", "generation"]);
       return { type, elements: elements(read.elements, `${path}.elements`), generation: whole(read.generation, `${path}.generation`) };
+    }
+    case "clipboard": {
+      const read = fields(value, path, ["type", "text"]);
+      if (typeof read.text !== "string") refuse(`${path}.text`, `must be text, not ${shown(read.text)}.`);
+      if (read.text.length > DEVICE_CLIPBOARD_MOST) refuse(`${path}.text`, `is longer than ${DEVICE_CLIPBOARD_MOST} characters.`);
+      return { type, text: read.text };
     }
     case "recording":
       return { type, recording: recordingSummary(fields(value, path, ["type", "recording"]).recording, `${path}.recording`) };

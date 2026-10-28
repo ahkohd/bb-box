@@ -55,7 +55,7 @@ export interface KindConfig {
   readonly default?: Preset;
   /** The most a custom size may ask for, as a size change. */
   readonly largest?: SizeChange;
-  /** Spare boxes to keep: ready, enrolled and owned by no thread (032). */
+  /** Spare boxes to keep: ready, enrolled and owned by no thread (032). None by default, ios and android included: a device spare waits with its device booted and its memory saved to disk (063). */
   readonly spares?: number;
 }
 

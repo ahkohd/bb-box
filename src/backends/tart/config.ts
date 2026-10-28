@@ -235,8 +235,8 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
   },
   [TART_KEYS.warmMaxHours]: {
     type: "number",
-    label: "Tart: hours a macOS warm VM is kept",
-    description: "A suspended macOS warm VM saved longer ago than this is replaced by a fresh one, as an old saved state may not restore.",
+    label: "Tart: hours a macOS warm VM or spare is kept",
+    description: "A suspended macOS warm VM, or a spare that waits suspended, saved longer ago than this is replaced by a fresh one, as an old saved state may not restore.",
     default: TART_DEFAULTS.warmMaxHours,
   },
   [TART_KEYS.iosHostsOn]: {

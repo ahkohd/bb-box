@@ -119,6 +119,7 @@ export const LOAD_ENVIRONMENT = "set -a; [ ! -r /etc/environment ] || . /etc/env
 
 /** A spare of an image's build that failed is not made again from that build for this long (#440). */
 const SPARE_RETRY_MS = 24 * 60 * 60_000;
+const SPARE_SETTLE_RETRY_MS = 30 * 60_000;
 const spareFailedKey = (name: string, backend: string, kind: string) => `spares/image-failed/${name}/${backend}/${kind}`;
 
 /** How long an image's script may run at start (049), and its check. */
@@ -181,7 +182,10 @@ export interface BoxRecord {
   readonly device?: BoxDevice | null;
   readonly askedDevice?: ModelName;
   readonly slim?: boolean;
+  readonly stoppedAt?: number | null;
 }
+
+export type SpareSettling = { readonly is: "settled" } | { readonly is: "settling" } | { readonly is: "failed"; readonly words: string };
 
 /** A resize of a box (061): what it asked for, and how it went. */
 export interface ResizeRecord {
@@ -414,6 +418,8 @@ export interface BoxesDeps {
   claimed?(box: BoxRecord): Promise<boolean>;
   /** Names the box's BB machine as `machineName` says, as after a spare stops to wait (#539). */
   renameMachine?(box: BoxRecord): Promise<void>;
+  spareSettled?(box: BoxRecord): Promise<SpareSettling>;
+  spareClaimed?(box: BoxRecord): void;
   /**
    * Which of BB's variables commands in a box enrolled as a BB machine take
    * from its daemon, so they have the thread's access. Null for none.
@@ -548,6 +554,13 @@ export function describeError(error: unknown, action: string): string {
   if (error instanceof BoxError || error instanceof BackendError || error instanceof TransportError) return error.message;
   const message = error instanceof Error ? error.message : String(error);
   return `${action} failed: ${message}`;
+}
+
+function hoursWords(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 120) return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hours`;
 }
 
 /** `text` ending with a full stop, so another sentence can follow it. */
@@ -713,6 +726,8 @@ export class Boxes {
   /** The run of keepSpares in progress, and whether a call asked for another after it. */
   #keeping: Promise<void> | null = null;
   #keepAgain = false;
+  readonly #spareShortfalls = new Map<string, string>();
+  readonly #spareSettleFailedAt = new Map<string, number>();
   /** The threads BB said had ended at the last sweep. */
   #ending = new Set<string>();
   #disposed = false;
@@ -1315,6 +1330,54 @@ export class Boxes {
     return spare.enrol.state === "enrolled" && !!this.#deps.backends.get(spare.backend)?.keepsSession?.(spare.kind);
   }
 
+  async #spareSettling(spare: BoxRecord): Promise<SpareSettling> {
+    if (!this.#deps.spareSettled) return { is: "settled" };
+    return this.#deps.spareSettled(spare).catch((error): SpareSettling => {
+      this.#deps.logError("spares", error);
+      return { is: "settling" };
+    });
+  }
+
+  #waitedPastRestore(spare: BoxRecord): string | null {
+    if (spare.state !== "stopped") return null;
+    const restoresWithinMs = this.#deps.backends.get(spare.backend)?.savedSessionRestoresWithinMs?.(spare.kind) ?? null;
+    if (restoresWithinMs === null) return null;
+    const since = spare.stoppedAt ?? spare.readyAt ?? spare.createdAt;
+    const waited = this.#now() - since;
+    if (waited <= restoresWithinMs) return null;
+    return `it has waited stopped for ${hoursWords(waited)}, longer than ${spare.backendLabel} restores a saved ${spare.kind} VM reliably, ${hoursWords(restoresWithinMs)}`;
+  }
+
+  async spareChecks(): Promise<DoctorCheck[]> {
+    const general = await this.#deps.general();
+    const counts = await this.spareCounts();
+    const offered = new Map<string, OfferedKind[]>();
+    for (const offer of this.#deps.backends.kinds()) offered.set(offer.kind.id, [...(offered.get(offer.kind.id) ?? []), offer]);
+    const checks: DoctorCheck[] = [];
+    for (const [kind, offers] of offered) {
+      const wanted = general.spares[kind] ?? 0;
+      const device = offers.some((offer) => offer.kind.capabilities.device);
+      if (!wanted && !device) continue;
+      const memory = defaultSize(kindSizes(kind, general.sizes)).memoryMiB;
+      const waitsSaved = offers.some((offer) => offer.backend.keepsSession?.(kind));
+      const cost = waitsSaved
+        ? `A spare waits stopped with its session saved, which holds no memory and up to ${formatMiB(memory)} of disk for its saved memory, besides its own disk.`
+        : `A spare waits running, with its ${formatMiB(memory)} of memory.`;
+      const name = `Spare ${kind} boxes`;
+      if (!wanted) {
+        checks.push({ id: `spares.${kind}`, name, status: "ok", detail: `Spares are off for ${kind} boxes: none is kept. ${cost}`, fix: null });
+        continue;
+      }
+      const now = counts[kind] ?? { ready: 0, making: 0 };
+      const keeps = `bb-box keeps ${wanted} spare ${kind} ${wanted === 1 ? "box" : "boxes"}: ${now.ready} ready, ${now.making} being made. ${cost}`;
+      const shortfall = this.#spareShortfalls.get(kind);
+      if (shortfall && now.ready + now.making < wanted) {
+        checks.push({ id: `spares.${kind}`, name, status: "warn", detail: `${keeps} It has too few: ${sentence(shortfall)}`, fix: `Free room where ${kind} boxes go, or set fewer spares in the ${kind} kind's settings.` });
+      } else checks.push({ id: `spares.${kind}`, name, status: "ok", detail: keeps, fix: null });
+    }
+    return checks;
+  }
+
   /**
    * After a claim: renames the box's BB machine, and makes another spare.
    * Its commands wait only when its machine must reconnect (#128).
@@ -1324,6 +1387,7 @@ export class Boxes {
     this.#renamed(box, from);
     // A claim of an image's spare is a use of its build (#440).
     if (box.image) this.#deps.imageReady?.(box);
+    this.#deps.spareClaimed?.(box);
     void this.keepSpares();
   }
 
@@ -1435,6 +1499,11 @@ export class Boxes {
       const resized = !sameSize(await this.#size(spare), defaultSize(kindSizes(spare.kind, general.sizes)));
       // A kind's spare from a build of its image that a refresh has replaced since (049): a claim would take the old build.
       const old = !image && !failed && !unwanted && !resized && (await this.#oldBuild(spare));
+      const waitedPastRestore = !failed && !unwanted && !resized && !old ? this.#waitedPastRestore(spare) : null;
+      if (waitedPastRestore) {
+        await this.#release(spare, waitedPastRestore);
+        continue;
+      }
       if (failed || unwanted || resized || old) {
         // A spare of a build that failed is not made again from it for a day: no loop of making and releasing.
         if (failed && image?.from) await this.#spareFailed(image.name, spare.backend, spare.kind, image.from);
@@ -1456,6 +1525,14 @@ export class Boxes {
       // A spare that can wait stopped does, so it holds no memory until a claim starts it (#539). Its BB machine's name then says
       // it is stopped, as BB shows the machine offline.
       if (spare.state === "ready" && this.#waitsStopped(spare) && !this.#work.has(spare.id)) {
+        const settling = await this.#spareSettling(spare);
+        if (settling.is === "failed") {
+          this.#spareSettleFailedAt.set(spare.kind, this.#now());
+          this.#spareShortfalls.set(spare.kind, settling.words);
+          await this.#release(spare, settling.words);
+          continue;
+        }
+        if (settling.is === "settling") continue;
         const stopped = await this.stop(SPARES, spare.id).catch((error) => {
           this.#deps.logError("stop a spare", error);
           return null;
@@ -1463,13 +1540,22 @@ export class Boxes {
         if (stopped?.state === "stopped") await this.#deps.renameMachine?.(stopped).catch((error) => this.#deps.logError("rename a spare's machine", error));
       }
     }
+    for (const kind of [...this.#spareShortfalls.keys()]) if (!general.spares[kind]) this.#spareShortfalls.delete(kind);
     for (const [kind, wanted] of Object.entries(general.spares)) {
-      for (let count = kept.get(kind) ?? 0; count < wanted && !this.#disposed; count++) {
+      const settleFailedAt = this.#spareSettleFailedAt.get(kind);
+      if (settleFailedAt !== undefined && this.#now() - settleFailedAt < SPARE_SETTLE_RETRY_MS) continue;
+      this.#spareSettleFailedAt.delete(kind);
+      let count = kept.get(kind) ?? 0;
+      if (count >= wanted) this.#spareShortfalls.delete(kind);
+      for (; count < wanted && !this.#disposed; count++) {
         try {
           await this.acquire({ threadId: SPARES, projectId: null, kind });
+          this.#spareShortfalls.delete(kind);
         } catch (error) {
-          if (error instanceof BoxError) this.#deps.log?.(`bb-box keeps ${count} of ${wanted} spare ${kind} boxes for now: ${error.message}`);
-          else this.#deps.logError("spares", error);
+          if (error instanceof BoxError) {
+            this.#deps.log?.(`bb-box keeps ${count} of ${wanted} spare ${kind} boxes for now: ${error.message}`);
+            this.#spareShortfalls.set(kind, error.message);
+          } else this.#deps.logError("spares", error);
           break;
         }
       }
@@ -2348,6 +2434,7 @@ export class Boxes {
       if (current.state === "releasing") return {};
       if (state === "stopping") return { state, error: null, unrequestedStop: null };
       if (moving) return { state, error: null };
+      if (state === "stopped") return { state, stoppedAt: this.#now() };
       if (!started) return { state };
       const kept = Object.entries(current.timings).filter(([step]) => !step.startsWith("start."));
       const guest = facts && current.guest ? { guest: { ...current.guest, facts } } : {};

@@ -332,10 +332,22 @@ timer: boxes do not expire.
   refresh (049) has replaced since, so a claim
   never takes an old build, and never waits on the backend for it. Proxmox
   LXC and QEMU compare the build recorded at the clone with the template's,
-  Docker the container's image ID with the tag's, and microsandbox the
-  image record a microVM took at creation with the image's. Tart and the
-  SSH host pool cannot tell (a Tart box records no build of its image, and
-  a pool machine has none), so their spares stay until they go otherwise.
+  Docker the container's image ID with the tag's, microsandbox the
+  image record a microVM took at creation with the image's, and Tart the
+  build of its image a cloned macOS VM recorded with the image's record on
+  its Mac. The SSH host pool cannot tell, as a pool machine has no build,
+  and nor can a Tart box made from a warm VM or before builds were
+  recorded, so those spares stay until they go otherwise.
+- **Spares of device boxes** (063, unit 7.5) are off by default: an
+  operator sets a count for ios or android. A device spare stops to wait
+  only once its device server says the device has booted, through the
+  plugin's `spareSettled`; one that has not booted 10 minutes after it was
+  ready is released, and the kind makes none for 30 minutes. A claim tells
+  the plugin through `spareClaimed`, which switches the device to the model
+  the thread asked for, with the server's own rollback. A spare that waits
+  stopped longer than its backend's `savedSessionRestoresWithinMs` is
+  released and replaced: Tart's is `warm-max-hours`, as a saved macOS VM
+  older than that may not restore (063 results, E4).
 - **Spares of projects' images.** Where a project's image is baked, on
   Proxmox LXC or Docker, bb-box also keeps one spare of the build for each
   kind, while the image is in use: a box started from the build, or the
