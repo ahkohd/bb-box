@@ -2517,7 +2517,23 @@ none of the fresh clones.
   first run fails so starts on the second; failing twice, its acquire
   fails with the error. On a clean clone of the bundle on main e19adcc:
   tsc clean; the node suite 2,248 passed, 0 failed, 288 skipped, the docs
-  test among them; vitest 224 passed. Fix C is not yet seen live.
+  test among them; vitest 224 passed.
+
+After the lead deployed fix C (PR 1202, main c0369a1), with every
+watcher on the Mac closed, three shared boxes were asked for minutes
+apart, each on a new host. Each first start ran: no run was needed twice,
+and the log had no Virtualization error.
+
+| Asked for | Host | Serving after its start | The box ready |
+| --- | --- | --- | --- |
+| 09:00:00 | bb-box-host-43f748007a | 27.5 s (its VM 25.7 s) | 38.8 s |
+| 09:05:01 | bb-box-host-1abdd1bff7 | 29.5 s (its VM 26.6 s) | 40.4 s |
+| 09:13:01 | bb-box-host-a557569170 | 29.6 s (its VM 26.9 s) | 41.6 s |
+
+The race did not come up without the watchers, whose `tart list` every
+0.3 s raised its odds: fix C is a safety net, seen on the fakes only.
+bb-box's own listings around a start are still there, to be removed in
+F-10.
 
 ### What limits these checks
 
