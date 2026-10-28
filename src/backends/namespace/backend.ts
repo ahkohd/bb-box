@@ -28,7 +28,7 @@ import {
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
-import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, eachKindOfMacWords, macsVary, measuredByOlderProbe, type MacReport } from "../../core/mac-capabilities.ts";
+import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, capabilityWords, eachKindOfMacWords, macsVary, measuredByOlderProbe, type MacReport } from "../../core/mac-capabilities.ts";
 import { NamespaceMacReports } from "./mac-reports.ts";
 import { NAMESPACE_HOST_ROLE, NamespaceHosts, namespaceSlotOf } from "./ios-hosts.ts";
 import { NAMESPACE_IOS_HOSTS_DEFAULTS } from "./config.ts";
@@ -55,6 +55,7 @@ export const MEASURE_ROLE = "measure";
 export const MEASURE_LIFE_MS = 20 * 60_000;
 export const MEASURE_AGAIN_AFTER_MS = 24 * 60 * 60_000;
 const MEASURE_TRIED = "measure-afresh-tried";
+const MEASURE_MARGIN_MS = 5 * 60_000;
 const READY_TIMEOUT_MS = 5 * 60_000;
 const SSH_POLL_MS = 2_000;
 const SSH_KEY = "ssh-key";
@@ -267,7 +268,7 @@ export class NamespaceBackend implements Backend {
   readonly #placing = new Set<string>();
   readonly #probes: MacProbeCache;
   readonly #reports: NamespaceMacReports;
-  #measuringAfresh: Promise<void> | null = null;
+  #measuringAfresh: { readonly until: number; readonly done: Promise<void> } | null = null;
   readonly slots: NamespaceHosts;
   #ssh: Promise<{ ssh: Ssh; publicKey: string }> | null = null;
   readonly linuxImages: LinuxImages;
@@ -405,7 +406,7 @@ export class NamespaceBackend implements Backend {
 
   async #measureAfreshIfDue(signal?: AbortSignal): Promise<void> {
     const latest = this.macCapabilities()[0];
-    if (!latest || !measuredByOlderProbe(latest) || !(this.#config.iosHosts ?? NAMESPACE_IOS_HOSTS_DEFAULTS).on || this.#measuringAfresh) return;
+    if (!latest || !measuredByOlderProbe(latest) || this.slots.offerable().ok || !(this.#config.iosHosts ?? NAMESPACE_IOS_HOSTS_DEFAULTS).on || this.#measuringAfresh) return;
     if (await this.slots.record()) return;
     const mac = (await this.#held(signal)).find((instance) => instance.status === "running" && !isLinuxKind(instance.labels[LABELS.kind] ?? ""));
     if (mac) return void (await this.#probes.measure(mac.id, signal));
@@ -414,30 +415,48 @@ export class NamespaceBackend implements Backend {
     const room = await this.#hostRoom(signal);
     if (room.words) return;
     await this.#context.storage.set(MEASURE_TRIED, this.#now());
-    this.#measuringAfresh = this.#measureOnAMacOfItsOwn(room.shape ?? HOST_SHAPE)
+    const until = this.#now() + MEASURE_LIFE_MS;
+    this.#measuringAfresh = { until, done: this.#measureOnAMacOfItsOwn(room.shape ?? HOST_SHAPE, until)
       .catch((error) => this.#context.logError("measure a Namespace Mac afresh", error))
-      .finally(() => (this.#measuringAfresh = null));
+      .finally(() => (this.#measuringAfresh = null)) };
   }
 
-  async #measureOnAMacOfItsOwn(shape: MacShape): Promise<void> {
+  async #measureOnAMacOfItsOwn(shape: MacShape, until: number): Promise<void> {
+    const started = this.#now();
+    const within = AbortSignal.timeout(MEASURE_LIFE_MS - MEASURE_MARGIN_MS);
     const { publicKey } = await this.#keys();
-    const made = await this.#api.create({
-      shape: { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } },
-      labels: { [LABELS.install]: this.#context.installId, [LABELS.role]: MEASURE_ROLE, [LABELS.created]: String(this.#now()) },
-      deadline: this.#now() + MEASURE_LIFE_MS,
-      purpose: "bb-box measures what Namespace's Macs offer iOS devices",
-      uniqueTag: `bbbox-${this.#context.installId}-measure-${this.#now()}`.replace(/[^A-Za-z0-9-]+/g, "-"),
-      sshPublicKeys: [publicKey],
-    });
+    this.#context.log?.(`bb-box is starting a ${shape.cores}x${shape.memoryGB} Namespace Mac to measure what Namespace's Macs offer iOS devices afresh, as its last report came from an older probe and cannot make an offer. It is destroyed once measured, and by ${clock(until)} at the latest.`);
+    const made = await this.#api.create(
+      {
+        shape: { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } },
+        labels: { [LABELS.install]: this.#context.installId, [LABELS.role]: MEASURE_ROLE, [LABELS.created]: String(this.#now()) },
+        deadline: until,
+        purpose: "bb-box measures what Namespace's Macs offer iOS devices",
+        uniqueTag: `bbbox-${this.#context.installId}-measure-${this.#now()}`.replace(/[^A-Za-z0-9-]+/g, "-"),
+        sshPublicKeys: [publicKey],
+      },
+      within,
+    );
+    const step = (what: string) => this.#context.log?.(`bb-box's Namespace Mac ${made.id}, made to measure afresh: ${what}, ${Math.round((this.#now() - started) / 1000)} s after it was asked for.`);
+    step("made");
     try {
-      const ready = await this.#api.wait(made.id);
+      const ready = await this.#api.wait(made.id, within);
       if (ready.status !== "running") throw new Error(`Namespace's machine ${ready.id} is ${ready.status}, not running.`);
-      await this.#answers(ready.id, this.#now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS));
-      const report = await this.#probes.measure(ready.id);
-      this.#context.log?.(`bb-box measured a Namespace Mac afresh, as its last report came from an older probe: an ${report.chip ?? "unknown chip"}.`);
+      step("running");
+      await this.#answers(ready.id, Math.min(until - MEASURE_MARGIN_MS, this.#now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS)), within);
+      step("answering SSH");
+      const report = await this.#probes.measure(ready.id, within);
+      step(`measured: an ${report.chip ?? "unknown chip"}, ${capabilityWords(report.capabilities)}`);
     } finally {
-      await this.#api.destroy(made.id, "bb-box: measured what it offers").catch((error) => this.#context.logError(`destroy Namespace machine ${made.id} after measuring it`, error));
+      await this.#api
+        .destroy(made.id, "bb-box: measured what it offers")
+        .then(() => step("destroyed"))
+        .catch((error) => this.#context.logError(`destroy Namespace machine ${made.id}, made to measure afresh`, error));
     }
+  }
+
+  measuringAfreshUntil(): number | null {
+    return this.#measuringAfresh?.until ?? null;
   }
 
   measureMac(instance: string, signal?: AbortSignal): Promise<MacReport> {
@@ -509,7 +528,12 @@ export class NamespaceBackend implements Backend {
     const largest = isLinuxKind(kind) ? null : await this.#largestMachine(concurrency);
     const shape = isLinuxKind(kind) ? linuxShapeFor(size) : macShapeFor(size, largest);
     if (!shape) return { ok: false, message: this.#tooBig(size, largest), warm: null, hosts: [{ host, ok: false, limits: [] }] };
-    const hostWords = this.slots.known()?.instance ? " A shared iOS host for ios boxes holds Namespace's Mac now, until its last box goes." : "";
+    const measuring = this.measuringAfreshUntil();
+    const hostWords = this.slots.known()?.instance
+      ? " A shared iOS host for ios boxes holds Namespace's Mac now, until its last box goes."
+      : measuring !== null
+        ? ` bb-box is measuring what Namespace's Macs offer on one now, until ${clock(measuring)} at the latest.`
+        : "";
     const fullFor = concurrency ? workspaceFullFor(shape, concurrency) : null;
     if (fullFor) return { ok: false, message: `${fullFor}${hostWords}`, warm: null, hosts: [{ host, ok: false, limits: [{ resource: "cpu", used: concurrency!.usedCores, total: concurrency!.maxCores, reserve: 0, unit: "count" }] }] };
     let held: Instance[];

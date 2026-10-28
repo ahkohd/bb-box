@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
+import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import type { DeviceOffer, IosModelName } from "../../core/device.ts";
 import { macSlotSizingWords, sizeMacSlots, type MacSlotSizing } from "../../core/slot-sizing.ts";
 import type { DeviceRoom } from "../../core/mac-capabilities.ts";
@@ -509,6 +509,7 @@ export class PoolSlots implements SlotLender {
       access: { ssh: this.#access.access(machine, user), dockerHost: null },
       daemonKeptByHost: {
         installerEnvironment: SLOT_INSTALLER_ENVIRONMENT,
+        daemonPort: slotDaemonPortOf(guest),
         takeOver: async (signal) => {
           const result = await this.#access.helper(machine, ["slot", "daemon", slot], claimant, QUICK_MS, signal);
           if (result.exitCode !== DEVICE_HOST_EXITS.done) throw new Error(`The pool's Mac ${machine.name} could not take over BB's daemon for slot ${slot}: ${said(result)}`);

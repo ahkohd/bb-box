@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
+import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import type { DeviceOffer, IosModelName } from "../../core/device.ts";
 import type { MacReport } from "../../core/mac-capabilities.ts";
 import { sizeMacSlots, macSlotSizingWords } from "../../core/slot-sizing.ts";
@@ -671,7 +671,7 @@ export class NamespaceHosts implements SlotLender {
     const ref = namespaceSlotOf(guest)!;
     const command = await this.#slotTransport(guest);
     const host = await this.#access.command(ref.instance!);
-    return { command, displays: [], access: null, ...(ref.slot ? { daemonKeptByHost: slotDaemonKeptByHost(host, ref.slot, this.#claimantOf({ boxId: ref.box })) } : {}) };
+    return { command, displays: [], access: null, ...(ref.slot ? { daemonKeptByHost: slotDaemonKeptByHost(host, ref.slot, this.#claimantOf({ boxId: ref.box }), slotDaemonPortOf(guest)) } : {}) };
   }
 
   async restartDeviceServer(guest: Guest, signal?: AbortSignal): Promise<void> {

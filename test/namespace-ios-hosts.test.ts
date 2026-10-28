@@ -217,9 +217,10 @@ test("the first ios box starts a Namespace host and the next joins it while it s
   const transports = await hosts.transports(guest1);
   assert.ok(transports.command instanceof SlotUserTransport);
   assert.equal(transports.access, null);
-  assert.ok(transports.daemonKeptByHost);
+  assert.equal(transports.daemonKeptByHost?.daemonPort, 38900);
   const guest2 = await hosts.acquire(box("b2"), promise2 as Guest, hooks, signal());
   assert.equal(namespaceSlotOf(guest2)?.slot, "2");
+  assert.equal((await hosts.transports(guest2)).daemonKeptByHost?.daemonPort, 38901, "two slots enrolling at once never pick the same port for BB's daemon");
   assert.deepEqual((await hosts.held(signal())).map((each) => [each.owner?.boxId, namespaceSlotOf(each)?.slot]).sort(), [["b1", "1"], ["b2", "2"]]);
   assert.equal((await hosts.doctor(signal())).status, "ok");
   assert.match((await hosts.doctor(signal())).detail, /2 held, 0 ready, 0 making, 0 sweeping, of 4; ends at \d\d:\d\d UTC; video by software, as its Mac has no hardware H\.264 encoder\./);

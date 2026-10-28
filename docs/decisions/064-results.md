@@ -2352,7 +2352,9 @@ left at `auto`.
   so a pool Mac or a Tart host is measured again. For Namespace, which
   has no Mac to measure until one starts, bb-box measures a Mac it has, or
   starts one for a few minutes, with a 20-minute deadline, at most once a
-  day, while shared iOS hosts are on.
+  day, while shared iOS hosts are on, and only when the report cannot make
+  an offer, so no `ios` box can be waiting for that Mac. The whole measure
+  ends 5 minutes inside the deadline, and its steps are logged.
 - **Namespace's Macs can vary by machine.** Namespace counts, for each
   kind of Mac, the machines that had a hardware encoder and those that did
   not. Where they differ, within a kind or between kinds, `box_list` and
@@ -2362,4 +2364,43 @@ left at `auto`.
   device.
 - **`box_list` says how Namespace lends `ios`:** slots on a Mac made for
   the first box, in about 5 minutes, and deleted after its last.
+
+### The second production check
+
+On production BB at main 3c33b9a, with the fixes above, on 28 October 2026.
+
+- **The workspace's Mac was taken for 20 minutes** from the moment hosts
+  came on, by the first re-measure Mac: the report kept came from the
+  older probe, so it started one, though that report could still make an
+  offer. Nothing was logged, and two `ios` boxes asked for then were
+  refused. The Mac ended at its deadline. bb-box now measures afresh only
+  when the report cannot make an offer, bounds the measure inside the
+  deadline, and logs each step.
+- **Two `ios` boxes, asked for together, joined one new host:** ready
+  263 s after the ask, the host 196 s, each slot 66 to 67 s. The host's
+  Mac, an M4 Pro VM, had no hardware encoder, so its devices streamed in
+  software, by OpenH264.
+- **The first box enrolled in BB in 13.3 s,** so a slot's commands in its
+  user's launchd session fixed the earlier failure.
+- **The second failed:** its daemon exited with `Host daemon local API
+  port 38888 is already in use`. BB's installer gives a daemon the first
+  free port from 38888, and both slots' installers ran in the same second.
+  The same could happen on a pool Mac or a Tart host.
+- **One stream through the panel,** in a browser, 420x900, a busy page on
+  the device, 25 s, 10 taps: 29.2 fps at half size (602x1310), taps
+  median 209 ms, p95 1,095 ms, 7 of 10 shown, longest gap 527 ms. The
+  encoder took about a quarter of a core, on a Mac 9% idle: each device's
+  Safari, `appprotectiond` and `cfprefsd` took most of it.
+- **Released at once;** the host was gone within 20 s.
+
+### After the second production check
+
+- **Each slot's BB daemon has its own port,** 38900 and up, by the slot's
+  place on its host, on every lender: bb-box writes it to BB's
+  `host-daemon-port` before BB's installer runs, as the installer keeps a
+  stored port that is free and takes no port from the environment. The
+  host's helper starts the slot's daemon on the same port.
+- **The log says when a box that found no slot can have no VM of its
+  own** where it was asked, as with `on: "Namespace"`, rather than that it
+  gets one.
 

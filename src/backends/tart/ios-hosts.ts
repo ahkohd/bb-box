@@ -3,7 +3,7 @@ import type { DeviceRoom } from "../../core/mac-capabilities.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { placementData, readPlacement, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
+import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
 import { hostSizingWords, sizeHost, type HostSizing } from "../../core/slot-sizing.ts";
 import { pause } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
@@ -999,7 +999,7 @@ export class IosHosts implements SlotLender {
       command,
       displays: [],
       access: { ssh: access, dockerHost: null },
-      ...(ref.slot ? { daemonKeptByHost: slotDaemonKeptByHost(host, ref.slot, this.#claimantOf({ boxId: box })) } : {}),
+      ...(ref.slot ? { daemonKeptByHost: slotDaemonKeptByHost(host, ref.slot, this.#claimantOf({ boxId: box }), slotDaemonPortOf(guest)) } : {}),
     };
   }
 

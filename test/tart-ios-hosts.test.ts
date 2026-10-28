@@ -176,6 +176,7 @@ test("a slot box's transports reach it as its slot's user, with the host keeping
   assert.equal(transports.access?.ssh?.user, "bbd-i1");
   assert.deepEqual(transports.displays, []);
   assert.deepEqual(transports.daemonKeptByHost?.installerEnvironment, { BB_INSTALL_SKIP_SERVICE: "1" });
+  assert.equal(transports.daemonKeptByHost?.daemonPort, 38900, "each slot's BB daemon has its own port, from its place on the host");
   await backend.restartDeviceServer(slot, signal());
   assert.match(readFileSync(join(ssh.home("192.168.64.2"), "helper.log"), "utf8"), /^restart i1$/m);
   await assert.rejects(backend.stop(slot, signal()), /cannot be stopped on its own/);

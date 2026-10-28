@@ -48,6 +48,7 @@ describe("the SSH host pool's Mac lends iOS slots (064 unit 5)", { timeout: 300_
     assert.equal(transports.access?.ssh?.user, "bbd-1");
     assert.equal(transports.displays.length, 0);
     assert.deepEqual(transports.daemonKeptByHost?.installerEnvironment, { BB_INSTALL_SKIP_SERVICE: "1" });
+    assert.equal(transports.daemonKeptByHost?.daemonPort, 38900, "each slot's BB daemon has its own port, from its place on the Mac");
 
     const whole = await backend.capacity("macos-desktop", sizeOf("macos-desktop"), [], wait());
     assert.equal(whole.ok, false);

@@ -264,9 +264,10 @@ export function claimantInput(claimant: SlotClaimant): string {
   return `install=${claimant.install}\nbox=${claimant.box}\n`;
 }
 
-export function slotDaemonKeptByHost(host: CommandTransport, slot: string, claimant: SlotClaimant): DaemonKeptByHost {
+export function slotDaemonKeptByHost(host: CommandTransport, slot: string, claimant: SlotClaimant, daemonPort: number | null): DaemonKeptByHost {
   return {
     installerEnvironment: SLOT_INSTALLER_ENVIRONMENT,
+    daemonPort,
     async takeOver(signal) {
       const result = await host.run(helperCommand("daemon", slot), { stdin: claimantInput(claimant), timeoutMs: 60_000, signal });
       if (result.exitCode !== DEVICE_HOST_EXITS.done) {

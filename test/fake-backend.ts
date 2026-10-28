@@ -591,7 +591,7 @@ export class FakeBackend implements Backend {
     );
     const power = this.faults.silent === guest.ref ? async (): Promise<PowerState> => "unknown" : () => this.power(guest);
     const daemonKeptByHost = this.#options.daemonKeptByHost
-      ? { installerEnvironment: { BB_INSTALL_SKIP_SERVICE: "1" }, takeOver: async () => void this.calls.push(`take over ${guest.ref}`) }
+      ? { installerEnvironment: { BB_INSTALL_SKIP_SERVICE: "1" }, daemonPort: 38900, takeOver: async () => void this.calls.push(`take over ${guest.ref}`) }
       : undefined;
     return { command: new FakeTransport(this.#home(guest.ref), power, this.#commands(guest.ref).signal, this.#options.shell), displays, access: null, ...(daemonKeptByHost ? { daemonKeptByHost } : {}) };
   }
