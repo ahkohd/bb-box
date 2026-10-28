@@ -600,7 +600,9 @@ route and carries messages, not bytes:
   `CGEventPost`, keys by their position on a US keyboard
   ([047](decisions/047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md#the-viewers-input)).
 - **The clipboard.** Cmd+V, or Ctrl+V off a Mac, sends the browser's
-  pasted text as ClientCutText and presses the box's paste chord; what the
+  pasted text as ClientCutText and presses the box's paste chord. The
+  viewer sends this computer's clipboard only with a paste, never on
+  taking control or the focus (F-15). What the
   box copies comes back as ServerCutText, to the viewer with control only.
   TigerVNC and wayvnc move it both ways. For a display with `clipboard:
   "commands"`, Tart's macOS desktop and both Windows desktops, bb-box moves

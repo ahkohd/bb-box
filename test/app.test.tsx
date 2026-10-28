@@ -18,9 +18,10 @@ import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-off
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
-import { DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
-import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, SLOW_VIDEO_RETRY_MS, SLOW_VIDEO_STILLS_WORDS, STALL_MS, STILLS_WORDS, SelkiesSession, decodesMacroblocks, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
+import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, SLOW_VIDEO_RETRY_MS, SLOW_VIDEO_STILLS_WORDS, STALL_MS, STILLS_WORDS, SelkiesSession, decodesMacroblocks, devicePasteTooLongWords, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
+import { DEVICE_CLIPBOARD_MOST, PASTE_REQUEST_SINCE_VERSION } from "../src/core/device.ts";
 import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, pasteShortcut, retryWait } from "../src/app/viewer.ts";
 import { checkWords, forgetResizesAsked } from "../src/app/resize.tsx";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
@@ -526,8 +527,6 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
   /** A box's clipboard where bb-box moves it with commands (#464): as the viewer pasted, or as the box copied. */
   let boxClipboard: { text: string; serial: number } | null = null;
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
-  let declining = 0;
-  const declineAutomatic = (count: number) => (declining = count);
   const handlers: PluginRpcTestHandlers<Contract> = {
     state: ({ threadId }): PanelState => ({ boxes: threadId === THREAD ? boxes : [], kinds: options.kinds ?? KINDS, backends: BACKENDS, desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, runsOn: options.runsOn ?? null, imageOffer: options.imageOffer ?? false, images: options.images ?? [], desktopOnDemand: options.desktopOnDemand ?? null, desktopProblem: options.desktopProblem ?? null, access: options.access ?? null }),
     desktop: ({ box: ref }): DesktopState => ({ box: find(ref) ?? machines.find((entry) => entry.box.id === ref)?.box ?? (options.runsOn?.box.id === ref ? options.runsOn.box : null), desktopPath: DESKTOP_PATH, terminalPath: TERMINAL_PATH, video: options.video ?? false, videoByDefault: options.videoByDefault ?? options.video ?? false, sharp: options.sharp ?? null, switching: options.switching?.on ?? false }),
@@ -568,12 +567,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       changes.push("deviceScreenshot");
       return { png: "iVBORw0KGgo=", model: "Pixel 8", error: null };
     },
-    desktopPaste: ({ box: ref, viewer, text, automatic }) => {
-      if (automatic && declining > 0) {
-        declining--;
-        changes.push(`desktopPaste declined ${ref} ${viewer} ${text}`);
-        return false;
-      }
+    desktopPaste: ({ box: ref, viewer, text }) => {
       changes.push(`desktopPaste ${ref} ${viewer} ${text}`);
       boxClipboard = { text, serial: boxClipboard?.serial ?? 1 };
       return null;
@@ -695,7 +689,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
     },
     "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
   };
-  return { handlers, changes, asked, copyInBox, declineAutomatic };
+  return { handlers, changes, asked, copyInBox };
 }
 
 let applied: ConfigDocument | null = null;
@@ -2599,8 +2593,9 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
     act(() => void client.dispatchEvent(new Event("connect")));
     fireEvent.click(slot.getByRole("button", { name: "Take control" }));
     await slot.findByText(/You have control/);
-    // Taking control sends this computer's clipboard to the box, by RPC and not as noVNC's Latin-1 cut text.
-    await waitFor(() => expect(changes).toContain(`desktopPaste box_8 ${viewer} héllo, wörld ✓ 日本`));
+    act(() => void window.dispatchEvent(new Event("focus")));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(changes.filter((change) => change.startsWith("desktopPaste"))).toEqual([]);
 
     // Tart's VNC server takes Alt as Command and Meta as Option: Cmd goes as Alt, Option as Meta, and the paste chord is Alt+V.
     client._handleKeyEvent(0xffe9, "MetaLeft", true, null, null);
@@ -2619,7 +2614,7 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
     await waitFor(() => expect(client.keys).toHaveLength(4));
     expect(client.keys.map((key) => `${key.code}:${key.down ? "down" : "up"}`)).toEqual(["AltLeft:down", "KeyV:down", "KeyV:up", "AltLeft:up"]);
     expect(await slot.findByText("Pasted")).toBeTruthy();
-    expect(changes.filter((change) => change.startsWith("desktopPaste"))).toHaveLength(2);
+    expect(changes.filter((change) => change.startsWith("desktopPaste"))).toEqual([`desktopPaste box_8 ${viewer} héllo, wörld ✓ 日本`]);
 
     // Cmd+V on the desktop: the browser's paste event's text goes the same way.
     keyOnCanvas(slot, { key: "v", metaKey: true });
@@ -2637,26 +2632,27 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
   }
 });
 
-test("the tab's automatic send of this computer's clipboard, which a box that does not yet know the tab has control declines, goes again at the tab's next focus", async () => {
-  fakeClipboard(() => Promise.resolve("from this computer ✓"));
-  const { handlers, changes, declineAutomatic } = server([desktopBox({ id: "box_10", name: "mac-10", os: "macos", nature: "virtual", kind: "macos-desktop", kindLabel: "macOS desktop", display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" } })]);
-  declineAutomatic(1);
-  const slot = desktopTab(handlers, "box_10");
+test("a desktop gets this computer's clipboard only with a paste, not on taking control or the focus, and the menu says a paste from the box's own menu uses the box's clipboard (F-15)", async () => {
+  const readText = vi.fn(() => Promise.resolve("a test value"));
+  fakeClipboard(readText);
+  const { handlers, changes } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
   const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
-  const viewer = new URL(novnc.FakeRfb.made[0]!.url).searchParams.get("viewer");
   act(() => void client.dispatchEvent(new Event("connect")));
   fireEvent.click(slot.getByRole("button", { name: "Take control" }));
   await slot.findByText(/You have control/);
-  await waitFor(() => expect(changes).toContain(`desktopPaste declined box_10 ${viewer} from this computer ✓`));
-  expect(changes).not.toContain(`desktopPaste box_10 ${viewer} from this computer ✓`);
-  expect(slot.queryByRole("alert")).toBeNull();
-  act(() => void window.dispatchEvent(new Event("focus")));
-  await waitFor(() => expect(changes).toContain(`desktopPaste box_10 ${viewer} from this computer ✓`));
-  const sends = changes.filter((change) => change.endsWith(`${viewer} from this computer ✓`)).length;
   act(() => void window.dispatchEvent(new Event("focus")));
   await new Promise((resolve) => setTimeout(resolve, 100));
-  expect(changes.filter((change) => change.endsWith(`${viewer} from this computer ✓`))).toHaveLength(sends);
+  expect(readText).not.toHaveBeenCalled();
+  expect(client.pasted).toEqual([]);
+  const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+  const paste = within(menu).getByRole("menuitem", { name: "Paste from this computer" });
+  expect(document.getElementById(paste.getAttribute("aria-describedby")!)?.textContent).toBe(DESKTOP_OWN_PASTE_WORDS);
+  fireEvent.click(paste);
+  await waitFor(() => expect(client.pasted).toEqual(["a test value"]));
+  expect(readText).toHaveBeenCalledTimes(1);
+  expect(changes.filter((change) => change.startsWith("desktopPaste"))).toEqual([]);
 });
 
 test("a Mac's first copy reaches this computer when its clipboard was empty as the tab took control, within a poll", async () => {
@@ -3204,6 +3200,53 @@ async function deviceShown(model: string, state: object, hello?: string, deviceC
   return { slot, device, changes, requests, answer };
 }
 
+test("a device gets this computer's clipboard only with a paste: taking control and the focus send none, Cmd+V and Paste send it once as one paste, and a refused paste sends nothing (F-15)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  try {
+    window.sessionStorage.clear();
+    const readText = vi.fn(() => Promise.resolve("a test value"));
+    fakeClipboard(readText);
+    const { slot, device, requests, answer } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello().replace('"version":10', `"version":${PASTE_REQUEST_SINCE_VERSION}`));
+    const clipboardSent = () => device.sent.filter((sent) => typeof sent === "string" && /^c[wb]/.test(sent));
+    const pastes = () => requests().filter((request) => request.type === "paste" || request.type === "text") as { id: string; type: string; text?: string }[];
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    act(() => void window.dispatchEvent(new Event("focus")));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(readText).not.toHaveBeenCalled();
+    expect(clipboardSent()).toEqual([]);
+    expect(pastes()).toEqual([]);
+
+    const keys = slot.getByLabelText("Keyboard input for the device");
+    fireEvent.keyDown(keys, { key: "v", code: "KeyV", ctrlKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("pasted by keys")));
+    await waitFor(() => expect(pastes()).toHaveLength(1));
+    expect(pastes()[0]).toMatchObject({ type: "paste", text: "pasted by keys" });
+    answer(pastes()[0]!.id);
+    expect(await slot.findByText("Pasted")).toBeTruthy();
+
+    const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+    const paste = within(menu).getByRole("menuitem", { name: "Paste from this computer" });
+    expect(document.getElementById(paste.getAttribute("aria-describedby")!)?.textContent).toBe(DEVICE_OWN_PASTE_WORDS);
+    fireEvent.click(paste);
+    await waitFor(() => expect(pastes()).toHaveLength(2));
+    expect(readText).toHaveBeenCalledTimes(1);
+    expect(pastes()[1]).toMatchObject({ type: "paste", text: "a test value" });
+    answer(pastes()[1]!.id, false, "The device is busy.");
+    expect(await slot.findByText("The device is busy.")).toBeTruthy();
+
+    fireEvent.keyDown(keys, { key: "v", code: "KeyV", ctrlKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("x".repeat(DEVICE_CLIPBOARD_MOST + 1))));
+    expect(await slot.findByText(devicePasteTooLongWords(DEVICE_CLIPBOARD_MOST + 1))).toBeTruthy();
+    expect(pastes()).toHaveLength(2);
+    expect(clipboardSent()).toEqual([]);
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
 function barButtons(slot: ReturnType<typeof desktopTab>): string[] {
   return within(slot.getByRole("toolbar")).getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? "");
 }
@@ -3449,7 +3492,6 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     fakeClipboard(readText);
     fireEvent.click(slot.getByRole("button", { name: "Take control" }));
     await slot.findByText(/You have control/);
-    await waitFor(() => expect(device.sent).toContain(`cw,${btoa("for the device")}`));
     const keys = slot.getByLabelText("Keyboard input for the device");
     fireEvent.keyDown(keys, { key: "a", code: "KeyA" });
     fireEvent.keyUp(keys, { key: "a", code: "KeyA" });
@@ -3465,16 +3507,17 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     expect(device.sent.at(-1)).toBe("STOP_VIDEO");
     act(() => desktop.open());
     act(() => void desktop.onmessage?.({ data: videoFrame(1, true) }));
-    await waitFor(() => expect(desktop.sent).toContain(`cw,${btoa("for the device")}`));
-    readText.mockImplementation(() => Promise.resolve("for the desktop"));
     act(() => void window.dispatchEvent(new Event("focus")));
-    await waitFor(() => expect(desktop.sent).toContain(`cw,${btoa("for the desktop")}`));
-    expect(device.sent).not.toContain(`cw,${btoa("for the desktop")}`);
     const desktopCanvas = slot.getByTestId("desktop-screen").querySelector("canvas")!;
     const keysBefore = device.sent.filter((sent) => sent === "kd,98").length;
     fireEvent.keyDown(desktopCanvas, { key: "b", code: "KeyB" });
     expect(desktop.sent).toContain("kd,98");
     expect(device.sent.filter((sent) => sent === "kd,98").length).toBe(keysBefore);
+    expect(desktop.sent.some((sent) => typeof sent === "string" && sent.startsWith("cw"))).toBe(false);
+    fireEvent.keyDown(desktopCanvas, { key: "v", code: "KeyV", ctrlKey: true });
+    act(() => void document.dispatchEvent(pasteEvent("for the desktop")));
+    await waitFor(() => expect(desktop.sent).toContain(`cw,${btoa("for the desktop")}`));
+    expect(device.sent.filter((sent) => typeof sent === "string" && sent.startsWith("BB_DEVICE "))).toEqual([]);
 
     vi.useFakeTimers();
     fireEvent.click(slot.getByRole("button", { name: "Device" }));
@@ -3484,7 +3527,8 @@ test("a box with a device and a desktop opens on the device, and Device and Desk
     expect(FakeSocket.made.filter((made) => made.url.includes("display=device"))).toHaveLength(1);
     const back = device.sent.slice(device.sent.lastIndexOf("STOP_VIDEO") + 1);
     expect(back.filter((sent) => sent === "START_VIDEO" || sent === "REQUEST_KEYFRAME")).toEqual(["START_VIDEO", "REQUEST_KEYFRAME"]);
-    await waitFor(() => expect(device.sent.at(-1)).toBe(`cw,${btoa("for the desktop")}`));
+    expect(device.sent.some((sent) => typeof sent === "string" && sent.startsWith("cw"))).toBe(false);
+    expect(readText).not.toHaveBeenCalled();
     expect(desktop.readyState).toBe(1);
     expect(desktop.sent.at(-1)).toBe("STOP_VIDEO");
   } finally {

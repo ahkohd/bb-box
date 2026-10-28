@@ -172,9 +172,7 @@ describe("the person's input, from the input connection", () => {
   test("keys go by W3C name, text a US keyboard lacks goes as one paste with the clipboard put back, and kr lets go", async () => {
     const { open, driver, clear } = await started();
     const input = await open("input");
-    const text = (words: string) => Buffer.from(words, "utf8").toString("base64");
-    await input.send(`cw,${text("the person's copy")}`);
-    await until("the clipboard", async () => (await driver.clipboard()) === "the person's copy");
+    await driver.setClipboard("the person's copy");
     clear();
     for (const message of [...key(0x48), ...key(0x1000000 + 0x65e5), ...key(0x1000000 + 0x672c), ...key(0x21)]) await input.send(message);
     await until("the last key", () => driver.record.keys.length >= 4);
@@ -201,6 +199,24 @@ describe("the person's input, from the input connection", () => {
     const plain = await input.request({ type: "text", text: "ok" });
     assert.equal(plain.ok, true);
     assert.deepEqual(driver.record.keys.map((each) => each.key), ["o", "o", "k", "k"]);
+    await input.close();
+  });
+
+  test("a person's paste goes as one paste, even when every letter has a key, with the device's clipboard put back; the agent's connection is refused", async () => {
+    const { open, driver } = await started();
+    await driver.setClipboard("the device's own");
+    const input = await open("input");
+    const pasted = await input.request({ type: "paste", text: "a test value" });
+    assert.equal(pasted.ok, true);
+    assert.deepEqual(driver.record.pastes, ["a test value"]);
+    assert.deepEqual(driver.record.keys, []);
+    assert.equal(await driver.clipboard(), "the device's own");
+    const control = await open("control");
+    const refused = await control.request({ type: "paste", text: "from the agent's connection" });
+    assert.equal(!refused.ok && refused.error.code, "bad-value");
+    assert.deepEqual(driver.record.pastes, ["a test value"]);
+    assert.equal(await driver.clipboard(), "the device's own");
+    await control.close();
     await input.close();
   });
 

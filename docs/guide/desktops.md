@@ -47,7 +47,7 @@ To write in another language with an input method, such as Japanese or Chinese, 
 
 Copying and pasting between your computer and the box works while you have control. After you paste, or select Copy to this computer, a BB notification says 'Pasted' or 'Copied' for a few seconds. Notes like these come as notifications, not in the toolbar, and you can close one early.
 
-To paste text from your computer into the box, click where it should go and press Cmd+V on a Mac, or Ctrl+V elsewhere, into a macOS box too. In a Linux or Windows box, Ctrl+Shift+V (Cmd+Shift+V on a Mac) pastes your text too, as a terminal expects. In a macOS box, Cmd+Shift+V goes to the box as you typed it, to paste and match style. You can also select **Paste from this computer** in the toolbar's menu. Keys you type straight after a paste wait for it, so they land after the pasted text, in the order you typed them. If your browser does not let BB Box read your clipboard, a field opens: paste your text there and select **Paste into the box**.
+To paste text from your computer into the box, click where it should go and press Cmd+V on a Mac, or Ctrl+V elsewhere, into a macOS box too. In a Linux or Windows box, Ctrl+Shift+V (Cmd+Shift+V on a Mac) pastes your text too, as a terminal expects. In a macOS box, Cmd+Shift+V goes to the box as you typed it, to paste and match style. You can also select **Paste from this computer** in the toolbar's menu. BB Box reads your clipboard only when you paste, not when you take control, so a paste from the box's own menu, or a middle click, uses the box's own clipboard. Keys you type straight after a paste wait for it, so they land after the pasted text, in the order you typed them. If your browser does not let BB Box read your clipboard, a field opens: paste your text there and select **Paste into the box**.
 
 When you copy text in the box, it comes to your computer's clipboard. You can also select **Copy to this computer** in the menu. If your browser does not let BB Box write to your clipboard, a field shows the text so you can copy it yourself.
 
@@ -182,7 +182,7 @@ With control, the device takes your pointer, keys and text:
 | Cmd+V (Ctrl+V off a Mac) | your computer's clipboard, pasted into the device |
 | **Type text** | the whole text: as keys when every letter has a key, otherwise as one paste |
 
-When bb-box pastes for you or the agent, it puts the device's own clipboard back afterwards. Your Cmd+V leaves your text on the device's clipboard, as on a desktop.
+When bb-box pastes for you or the agent, it puts the device's own clipboard back afterwards, your Cmd+V and **Paste from this computer** too. BB Box reads your clipboard only when you paste, as text, never when you take control, so a paste from the device's own menu uses the device's own clipboard.
 
 On iOS, each paste shows 'pasted from CoreSimulatorBridge' at the top of the screen for about 2.5 seconds, and the device takes no keys while it shows, so bb-box holds your keys until it goes. Touches are not held. iOS also adds a space before pasted text that follows a word or a punctuation mark directly, as it does on a phone; type long or mixed text with **Type text**, which pastes it in one piece.
 

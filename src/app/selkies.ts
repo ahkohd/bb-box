@@ -19,7 +19,7 @@ import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from 
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
-import { DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, frameGenerationOf, stillsRequestText, viewRequestText, type DeviceAnswer, type DeviceControl, type DeviceRequest, type DeviceState, type ModelName, type TouchContact } from "../core/device.ts";
+import { DEVICE_CLIPBOARD_MOST, DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, PASTE_REQUEST_SINCE_VERSION, frameGenerationOf, stillsRequestText, viewRequestText, type DeviceAnswer, type DeviceControl, type DeviceRequest, type DeviceState, type ModelName, type TouchContact } from "../core/device.ts";
 import { personLostWords } from "../core/device-control.ts";
 import { CONTROL_DEADLINES_MS, controlDeadlineMs } from "../core/device-settings.ts";
 import { DeviceAnswers, viewerRequestId } from "./device-answers.ts";
@@ -208,6 +208,17 @@ export interface DeviceShown {
 }
 
 const NOT_MINE_WORDS = "This tab does not have control of the device, so the control was not sent.";
+const DEVICE_PASTE_MS_PER_THOUSAND_CHARACTERS = 2_500;
+export const DEVICE_TEXT_ONLY_WORDS = "A device takes text only from this computer's clipboard, so the image was not pasted.";
+
+export function devicePasteTooLongWords(characters: number): string {
+  return `The text is ${characters} characters, more than the ${DEVICE_CLIPBOARD_MOST} bb-box pastes into a device.`;
+}
+
+function devicePasteLostWords(why: "ended" | "late"): string {
+  const lead = why === "ended" ? "The connection to the device ended while pasting" : "No answer came while pasting";
+  return `${lead}, so bb-box cannot tell whether the text arrived. Look at the device before pasting again.`;
+}
 
 export const STILLS_WORDS = "This browser cannot play the device's video, so it shows a picture a few times a second.";
 export const SLOW_VIDEO_STILLS_WORDS = "The device's video did not show within 3 s, so this shows a picture a few times a second and tries the video again shortly.";
@@ -259,7 +270,7 @@ export class SelkiesSession implements Kept {
   /** A paste: the text or image pasted, or null when the browser's clipboard had none and the box pasted its own. */
   onPaste?: (pasted: string | Blob | null) => void;
   onPasteFailed?: (error: unknown) => void;
-  putClipboard?: (text: string, automatic?: boolean) => Promise<unknown> | null;
+  putClipboard?: (text: string) => Promise<unknown> | null;
   onTypeText?: () => void;
   pasteAllowed?: () => boolean;
   readonly #url: string;
@@ -349,6 +360,7 @@ export class SelkiesSession implements Kept {
   #deviceRequests = 0;
   readonly #stage: DeviceStage | null;
   #framesCarryGeneration = false;
+  #deviceTakesPaste = false;
   readonly #frameGenerations = new Map<number, number>();
   readonly #answers = new DeviceAnswers();
   #drawnSent: string | null = null;
@@ -873,7 +885,10 @@ export class SelkiesSession implements Kept {
       this.#device = { ...this.#device, offered: hello.devices.map((device) => device.model), bootedHere: hello.bootedHere ? [...hello.bootedHere] : null };
     }
     const state = message.verb === "BB_DEVICE_HELLO" ? message.hello.state : message.verb === "BB_DEVICE_STATE" ? message.state : null;
-    if (message.verb === "BB_DEVICE_HELLO") this.#framesCarryGeneration = message.hello.version >= FRAME_GENERATIONS_SINCE_VERSION;
+    if (message.verb === "BB_DEVICE_HELLO") {
+      this.#framesCarryGeneration = message.hello.version >= FRAME_GENERATIONS_SINCE_VERSION;
+      this.#deviceTakesPaste = message.hello.version >= PASTE_REQUEST_SINCE_VERSION;
+    }
     if (!state) return;
     const bootedHere = this.#device.bootedHere;
     const nowBooted = state.power.is === "booted" && bootedHere && !bootedHere.includes(state.model) ? [...bootedHere, state.model] : bootedHere;
@@ -1259,18 +1274,13 @@ export class SelkiesSession implements Kept {
     });
   }
 
-  /** Puts text on the box's clipboard, as a viewer's paste does. */
-  sendClipboard(text: string): Promise<boolean> {
-    if (this.connection.state !== "connected") return Promise.resolve(false);
-    const put = this.putClipboard?.(text, true);
-    if (put) return put.then((taken) => taken !== false, () => false);
-    this.#putOnBox("text/plain", new TextEncoder().encode(text));
-    return Promise.resolve(true);
-  }
-
-  /** Puts text on the box's clipboard, then presses the box's own paste chord where the cursor is, and says so. */
+  /** Puts text on the box's clipboard, then presses the box's own paste chord where the cursor is, and says so. A device pastes it and puts its own clipboard back. */
   paste(text: string, shifted = false): void {
     if (this.connection.state !== "connected") return;
+    if (this.#device) {
+      void this.#pasteOnDevice(text);
+      return;
+    }
     this.#afterPaste.hold();
     const put = this.putClipboard?.(text);
     if (!put) {
@@ -1297,6 +1307,25 @@ export class SelkiesSession implements Kept {
     );
   }
 
+  async #pasteOnDevice(text: string): Promise<void> {
+    const characters = text.length;
+    if (characters > DEVICE_CLIPBOARD_MOST) {
+      this.#keysFollowDeviceInput();
+      this.onPasteFailed?.(new Error(devicePasteTooLongWords(characters)));
+      return;
+    }
+    const deadlineMs = CONTROL_DEADLINES_MS.control + Math.ceil(characters / 1000) * DEVICE_PASTE_MS_PER_THOUSAND_CHARACTERS;
+    const answered = this.#askDevice({ type: this.#deviceTakesPaste ? "paste" : "text", text }, deadlineMs, devicePasteLostWords);
+    this.#keysFollowDeviceInput();
+    const answer = await answered;
+    if (answer.ok) this.onPaste?.(text);
+    else this.onPasteFailed?.(new Error(answer.error.words));
+  }
+
+  #keysFollowDeviceInput(): void {
+    if (!this.#pasteDue()) this.#afterPaste.release();
+  }
+
   /** Whether a paste's chord, or the text it waits for, is still to go. */
   #pasteDue(): boolean {
     return this.#chords.size > 0 || this.#putting > 0;
@@ -1305,6 +1334,11 @@ export class SelkiesSession implements Kept {
   /** Puts an image on the box's clipboard, then presses the box's paste chord, and says so (#609). */
   async pasteImage(image: Blob): Promise<void> {
     if (this.connection.state !== "connected") return;
+    if (this.#device) {
+      this.#keysFollowDeviceInput();
+      this.onPasteFailed?.(new Error(DEVICE_TEXT_ONLY_WORDS));
+      return;
+    }
     if (image.size > CLIPBOARD_MAX_BYTES) {
       this.onPasteFailed?.(new Error(`The image is ${Math.ceil(image.size / 1024 / 1024)} MiB, more than the ${CLIPBOARD_MAX_BYTES / 1024 / 1024} MiB the desktop takes.`));
       return;
@@ -1365,7 +1399,7 @@ export class SelkiesSession implements Kept {
     const shifted = this.#pasteArmed === "shifted";
     this.#pasteArmed = null;
     clearTimeout(this.#pasteWait);
-    const image = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
+    const image = this.#device ? undefined : Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
     const text = event.clipboardData?.getData("text/plain") ?? "";
     event.preventDefault();
     if (image) {
