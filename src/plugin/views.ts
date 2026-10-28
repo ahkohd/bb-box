@@ -20,6 +20,9 @@ import type { DisplayProtocol } from "../transports/types.ts";
 import { actionsOf, deviceModel, isTestOffer, platformWord, type DevicePlatform, type DeviceState, type Runtime } from "../core/device.ts";
 import { deviceStateWords } from "../core/device-settings.ts";
 import { inSlot, isSlotKind, placementOf, placementWords, rootRefusalWords, SHARED_HOSTS_OFF, SHARED_MACOS_DESKTOP_WORDS, SHARED_MACOS_WORDS, type SharedHosts, type SlotKind } from "../core/device-host.ts";
+import { offeredWords } from "../core/mac-capabilities.ts";
+
+const DEVICE_HOST_KINDS: ReadonlySet<string> = new Set(["ios", "macos", "macos-desktop"]);
 
 export interface BoxView {
   readonly id: string;
@@ -237,6 +240,7 @@ export interface OfferView {
   readonly free: number | null;
   /** What the backend's boxes of this kind are, where it says more than its form, as a pool's physical machines; absent otherwise. */
   readonly note?: string;
+  readonly devices?: string;
   /** What a box of this offer can resize, and how (061); absent when nothing. */
   readonly resizing?: Resizing;
   /** The box user can become root, or Administrator, on this backend. */
@@ -312,6 +316,7 @@ export function kindViews(
       ...(backend.keepsSession?.(kind.id) ? { spareStarts: true } : {}),
       free: backend.free?.(kind.id) ?? null,
       ...(backend.offerNote?.(kind.id) ? { note: backend.offerNote(kind.id)! } : {}),
+      ...(DEVICE_HOST_KINDS.has(kind.id) && offeredWords(backend.macCapabilities?.() ?? []) ? { devices: offeredWords(backend.macCapabilities!())! } : {}),
       ...(backend.resizing?.(kind.id) ? { resizing: backend.resizing(kind.id)! } : {}),
       admin,
       resizable: desktopDisplays(kind.capabilities.displays)[0]?.resizable ?? null,

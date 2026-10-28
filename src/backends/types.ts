@@ -19,6 +19,7 @@ import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 import type { Arch, CommandTransport, Display, DisplayProtocol, GuestOs, SshAccess } from "../transports/types.ts";
 import type { DeviceOffer } from "../core/device.ts";
 import type { SlotLender } from "../core/device-host.ts";
+import type { MacReport } from "../core/mac-capabilities.ts";
 import type { ImageFacts, ImageRecord } from "./images.ts";
 
 export type { Arch, GuestOs } from "../transports/types.ts";
@@ -626,6 +627,7 @@ export interface Backend {
   held(signal?: AbortSignal): Promise<HeldGuest[]>;
 
   readonly slots?: SlotLender;
+  macCapabilities?(): readonly MacReport[];
   restartDeviceServer?(guest: Guest, signal?: AbortSignal): Promise<void>;
   encoderOf?(guest: Guest): MacEncoder | null;
   probeEncoder?(mac: string, signal?: AbortSignal): Promise<number | null>;
@@ -931,6 +933,7 @@ export interface BackendContext {
 export interface MacEncoder {
   readonly mac: string;
   readonly chip: string | null;
+  readonly hardware?: boolean | null;
 }
 
 export interface EncoderAccess {

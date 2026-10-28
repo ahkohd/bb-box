@@ -26,6 +26,58 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `tailnet.client` | OAuth client | Tailscale signs in the OAuth client in the General settings, with which bb-box makes a single-use key for each machine it makes. |
 | `tailnet.devices` | Devices | This install's devices on the tailnet, which bb-box removes when their machine went without logging out, and how many other devices carry the same tags, unnamed: bb-box leaves those alone. |
 
+## SSH host pool
+
+| ID | Name | What it checks |
+| --- | --- | --- |
+| `devices.<mac>` | iOS devices on <mac> | What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot. |
+| `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
+| `machines` | Machines | At least one machine is listed. |
+| `docker` | Docker | Whether the pool's Linux machines lend Docker to their boxes. |
+| `xcode` | Xcode | Whether the pool's Macs have Xcode. |
+| `machine.<machine>.ssh` | <machine>: SSH | The machine answers over SSH with its pinned host key. |
+| `machine.<machine>.sizes` | <machine>: room for each kind | The machine holds a box of each of its kinds at the default size. |
+| `machine.<machine>.helper` | <machine>: helper | bb-box's helper is installed on the machine, at this bb-box's version. |
+| `machine.<machine>.arch` | <machine>: architecture | The machine's architecture is the one its kinds need. |
+| `machine.<machine>.tools` | <machine>: tools | The tools its kinds need are on the machine. |
+| `machine.<machine>.docker` | <machine>: Docker | Docker runs on the machine, for its boxes. |
+| `machine.<machine>.state` | <machine>: state | Whether the machine is free, lent, being reset or out of service. |
+| `machine.<machine>.filevault` | <machine>: FileVault | On a Mac, FileVault is off, so it signs a box user in after a restart. |
+| `machine.<machine>.signin` | <machine>: sign-in | On a Mac, the next box user is signed in at the console. |
+| `machine.<machine>.fulldisk` | <machine>: Full Disk Access | On a Mac, the helper has Full Disk Access, which a reset needs. |
+| `machine.<machine>.sip` | <machine>: System Integrity Protection | On a Mac, whether System Integrity Protection is on, and so whether bb-box can grant box users' programs macOS permissions (058). |
+| `machine.<machine>.slots` | <machine>: iOS slots | On a Mac whose line lists ios (064): that its iOS slots are set up, whether it lends slots or is lent whole, its slots held, ready, making and sweeping, the iOS runtime and seed they are made with, each held slot's load, and what its last sweeps found and left. |
+| `machine.<machine>.homes` | <machine>: people's homes | On a Mac, box users cannot enter any person's home, such as an administrator's with BB's or an agent CLI's credentials. |
+| `machine.<machine>.xcode` | <machine>: Xcode | On a Mac, Xcode and its iOS runtime. |
+| `machine.<machine>.screensharing` | <machine>: Screen Sharing | On a Mac with desktops, Screen Sharing is on. |
+| `machine.<machine>.grants` | <machine>: Cua Driver's grants | On a Mac with desktops, Cua Driver has Accessibility and Screen Recording. |
+| `machine.<machine>.input` | <machine>: viewer's input | On a Mac with desktops, a viewer's keys and clicks reach the desktop. |
+
+## Tart
+
+| ID | Name | What it checks |
+| --- | --- | --- |
+| `devices.<mac>` | iOS devices on <mac> | What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot. |
+| `tart.ssh-key` | SSH key | bb-box's SSH key for the Macs reads, and its public key to install. |
+| `tart.hosts` | Macs | At least one Mac is set up. |
+| `host.<mac>` | Mac <mac> | The Mac answers over SSH, is Apple silicon, and has Tart. |
+| `image.<mac>.<kind>` | <kind> image on <mac> | The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together. |
+| `qemu.<mac>` | QEMU on <mac> | QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac. |
+| `qemu-video.<mac>` | Windows video on <mac> | bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865). |
+| `capacity.<mac>` | Room on <mac> | Room on the Mac for a macOS box at its default size. |
+| `sizes.<mac>` | Room for each kind on <mac> | The Mac holds a box of each kind at its default size. |
+| `ios-hosts.<mac>` | Shared iOS hosts on <mac> | The shared iOS hosts on the Mac (064): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; or, with none, whether one can start. |
+
+## Namespace
+
+| ID | Name | What it checks |
+| --- | --- | --- |
+| `devices.<mac>` | iOS devices on <mac> | What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot. |
+| `namespace.token` | API token | Namespace's API answers to the token in BB Box's settings. |
+| `namespace.machines` | Machines | The Namespace machines bb-box has, each with its age and when it ends, and any no box claims. |
+| `namespace.limits` | Workspace limits | The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which bb-box refuses a Mac up front; a warning when the token may not read them. |
+| `namespace.images` | Linux images | bb-box's Linux images in the workspace's registry: when each was built, whether a new one is due, and whether one is being built. |
+
 ## Proxmox LXC
 
 | ID | Name | What it checks |
@@ -59,32 +111,6 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.android-kvm` | KVM for Android | Where Android templates are listed, the host allows nested virtualization, as the linux-kvm setting says: the Android emulator needs KVM. |
 | `proxmox.android-disk` | Disk for Android | The storage of each Android template has room beyond the reserve for a refresh's build and trial boxes and an Android box in use. |
 | `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
-
-## SSH host pool
-
-| ID | Name | What it checks |
-| --- | --- | --- |
-| `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
-| `machines` | Machines | At least one machine is listed. |
-| `docker` | Docker | Whether the pool's Linux machines lend Docker to their boxes. |
-| `xcode` | Xcode | Whether the pool's Macs have Xcode. |
-| `machine.<machine>.ssh` | <machine>: SSH | The machine answers over SSH with its pinned host key. |
-| `machine.<machine>.sizes` | <machine>: room for each kind | The machine holds a box of each of its kinds at the default size. |
-| `machine.<machine>.helper` | <machine>: helper | bb-box's helper is installed on the machine, at this bb-box's version. |
-| `machine.<machine>.arch` | <machine>: architecture | The machine's architecture is the one its kinds need. |
-| `machine.<machine>.tools` | <machine>: tools | The tools its kinds need are on the machine. |
-| `machine.<machine>.docker` | <machine>: Docker | Docker runs on the machine, for its boxes. |
-| `machine.<machine>.state` | <machine>: state | Whether the machine is free, lent, being reset or out of service. |
-| `machine.<machine>.filevault` | <machine>: FileVault | On a Mac, FileVault is off, so it signs a box user in after a restart. |
-| `machine.<machine>.signin` | <machine>: sign-in | On a Mac, the next box user is signed in at the console. |
-| `machine.<machine>.fulldisk` | <machine>: Full Disk Access | On a Mac, the helper has Full Disk Access, which a reset needs. |
-| `machine.<machine>.sip` | <machine>: System Integrity Protection | On a Mac, whether System Integrity Protection is on, and so whether bb-box can grant box users' programs macOS permissions (058). |
-| `machine.<machine>.slots` | <machine>: iOS slots | On a Mac whose line lists ios (064): that its iOS slots are set up, whether it lends slots or is lent whole, its slots held, ready, making and sweeping, the iOS runtime and seed they are made with, each held slot's load, and what its last sweeps found and left. |
-| `machine.<machine>.homes` | <machine>: people's homes | On a Mac, box users cannot enter any person's home, such as an administrator's with BB's or an agent CLI's credentials. |
-| `machine.<machine>.xcode` | <machine>: Xcode | On a Mac, Xcode and its iOS runtime. |
-| `machine.<machine>.screensharing` | <machine>: Screen Sharing | On a Mac with desktops, Screen Sharing is on. |
-| `machine.<machine>.grants` | <machine>: Cua Driver's grants | On a Mac with desktops, Cua Driver has Accessibility and Screen Recording. |
-| `machine.<machine>.input` | <machine>: viewer's input | On a Mac with desktops, a viewer's keys and clicks reach the desktop. |
 
 ## Docker
 
@@ -132,26 +158,3 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `microsandbox.overcommit` | Memory overcommit | Above 1, whether it applies on the host: a Mac keeps the memory a box has used, so bb-box counts each box there at its full size. |
 | `microsandbox.capacity` | Room on <host> | Room on the host for a box at its default size. |
 | `microsandbox.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
-
-## Namespace
-
-| ID | Name | What it checks |
-| --- | --- | --- |
-| `namespace.token` | API token | Namespace's API answers to the token in BB Box's settings. |
-| `namespace.machines` | Machines | The Namespace machines bb-box has, each with its age and when it ends, and any no box claims. |
-| `namespace.limits` | Workspace limits | The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which bb-box refuses a Mac up front; a warning when the token may not read them. |
-| `namespace.images` | Linux images | bb-box's Linux images in the workspace's registry: when each was built, whether a new one is due, and whether one is being built. |
-
-## Tart
-
-| ID | Name | What it checks |
-| --- | --- | --- |
-| `tart.ssh-key` | SSH key | bb-box's SSH key for the Macs reads, and its public key to install. |
-| `tart.hosts` | Macs | At least one Mac is set up. |
-| `host.<mac>` | Mac <mac> | The Mac answers over SSH, is Apple silicon, and has Tart. |
-| `image.<mac>.<kind>` | <kind> image on <mac> | The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together. |
-| `qemu.<mac>` | QEMU on <mac> | QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac. |
-| `qemu-video.<mac>` | Windows video on <mac> | bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865). |
-| `capacity.<mac>` | Room on <mac> | Room on the Mac for a macOS box at its default size. |
-| `sizes.<mac>` | Room for each kind on <mac> | The Mac holds a box of each kind at its default size. |
-| `ios-hosts.<mac>` | Shared iOS hosts on <mac> | The shared iOS hosts on the Mac (064): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; or, with none, whether one can start. |

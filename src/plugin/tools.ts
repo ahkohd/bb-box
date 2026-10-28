@@ -235,7 +235,7 @@ export function offersText(kind: KindView): string {
   const differ = new Set(kind.offers.map((offer) => offer.form)).size > 1;
   return kind.offers
     .map((offer) => {
-      const what = offer.note ?? (differ && offer.form ? FORM_PLURAL[offer.form] : null);
+      const what = [offer.note ?? (differ && offer.form ? FORM_PLURAL[offer.form] : null), offer.devices ?? null].filter((part): part is string => part !== null).join("; ");
       return what ? `${offer.name} (${what})` : offer.name;
     })
     .join(", ");

@@ -1,0 +1,27 @@
+Namespace Mac, 28 October 2026, 02:58-03:40 UTC: macOS 26.3.1, Apple M5 Max (Virtual), 6 cores (6 performance), 14 GiB.
+Xcode 26.1.1; iOS 26.2 runtime; iPhone 17 Pro (1206x2622); idb_companion 1.7.7; bb-box-h264 built here in 6 s
+(x264 0.165 b35605a from source, OpenH264 2.6.0 Cisco mac-arm64). Busy = flip.html?busy in Safari.
+
+VideoToolbox (vtprobe.swift): a session requiring hardware opened. One session: 141 fps at 1206x2622, 398 at 604x1312.
+idb H.264 stream, two busy devices: 57.2 and 53.8 fps at a half; 56.7 and 57.1 at full. (M18, an M4 Pro VM: none.)
+
+idb raw stream formats at a half: 0 h264 ok; 1 rbga 603x1311 BGRA rows of 2432 bytes; 2 mjpeg ~25 KB; 4 is H.264 again, not I420.
+
+idb rbga -> Node -> bb-box-h264 x264 (one busy device):
+ third     402x874   57.2 fps  enc 1.28 ms  companion 0.25 helper 0.09 node 0.27 cores  taps 62 ms median (8)
+ half      602x1310  58.1 fps  enc 3.06 ms  companion 0.58 helper 0.21 node 0.60       taps 75 ms
+ two-thirds 804x1748 35.5 fps  enc 5.13 ms  companion 0.57 helper 0.23 node 0.66       taps 167 ms
+ full      1206x2622 15.9 fps  enc 10.9 ms  companion 0.54 helper 0.22 node 0.64       taps 349 ms
+ OpenH264: third 57.3 fps 54 ms; two-thirds 27.5 fps 227 ms; full 12.6 fps 449 ms (enc 35.6 ms).
+ No encode, full: 11.4-18 fps whatever the HTTP/2 window (1, 4, 32 MiB) or frame size (1, 16 MiB); no thread saturated.
+idb rbga, two busy devices, x264: third 56.7/56.3 fps, taps 56/52 ms; half 50.1/50.4, 137 ms; two-thirds 28.5/28.5, 209 ms; ~1.2 cores a device at a half.
+
+Framebuffer IOSurface read by bb-box-h264 --simulator (one busy device, 12 s):
+ x264      third 46.0 fps 0.10 cores enc 1.99 ms | half 49.2, 0.22, 4.02 | two-thirds 50.6, 0.32, 5.85 | full 53.2, 0.56, 11.19
+ openh264  third 48.1, 0.14, 2.73 | half 48.5, 0.22, 4.56 | two-thirds 50.6, 0.37, 7.22 | full 49.4, 0.63, 10.97
+Two busy devices, both by framebuffer, x264, 15 s:
+ third      45.8/46.0 fps, 0.10 cores each, enc 2.0 ms, worst gap 29-31 ms, 3.1 Mbit/s; Mac 47-50% idle
+ half       46.4/46.3, 0.17 each, 3.5 ms, 33-38 ms, 5.3 Mbit/s; 48-49% idle
+ two-thirds 47.2/47.2, 0.27 each, 5.7 ms, 40-41 ms, 6.3 Mbit/s; 68-69% idle
+ full       50.7/50.5, 0.45 each, 8.9 ms, 34-35 ms, 6.8 Mbit/s; 43-65% idle
+First frame from the reader's start: 123-145 ms. A still page still changes the surface's seed about 6 times a second.

@@ -48,9 +48,16 @@ export interface ImageRecord {
   readonly layer: { readonly sha256: string; readonly seconds: number } | null;
   readonly sizeGiB: number | null;
   readonly devices: OfferedDevices | null;
+  readonly encoders?: { readonly hardware: boolean | null; readonly software: string | null } | null;
 }
 
 const text = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
+
+function encodersOf(value: unknown): { readonly hardware: boolean | null; readonly software: string | null } | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const encoders = value as Record<string, unknown>;
+  return { hardware: typeof encoders.hardware === "boolean" ? encoders.hardware : null, software: text(encoders.software) };
+}
 
 /** A record from its JSON, or null when it is not one. */
 export function parseImageRecord(value: unknown): ImageRecord | null {
@@ -84,6 +91,7 @@ export function parseImageRecord(value: unknown): ImageRecord | null {
         : null,
     sizeGiB: typeof record.sizeGiB === "number" ? record.sizeGiB : null,
     devices: devices && devices.value,
+    ...(encodersOf(record.encoders) ? { encoders: encodersOf(record.encoders) } : {}),
   };
 }
 

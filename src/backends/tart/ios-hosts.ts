@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { DeviceRoom } from "../../core/mac-capabilities.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -66,6 +67,8 @@ export interface HostsAccess {
   mac(name: string | null): TartHost | null;
   states(signal?: AbortSignal): Promise<ReadonlyMap<string, HostState | Error>>;
   hostRoom(mac: TartHost, state: HostState | Error, settings: IosHostsConfig, leaving: ReadonlySet<string>): string | null;
+  devices?(mac: TartHost): DeviceRoom;
+  measure?(signal?: AbortSignal): Promise<void>;
   placement<T>(task: () => Promise<T>): Promise<T>;
   encoderLoad?(mac: TartHost): number;
   placing(mac: TartHost, vm: string, memoryMiB: number): () => void;
@@ -443,6 +446,8 @@ export class IosHosts implements SlotLender {
     if (!state || state instanceof Error) return `${mac.name} did not answer${state ? `: ${state.message}` : ""}`;
     const image = this.#access.config().iosImage;
     if (!image || !state.vms.some((vm) => vm.name === image)) return `${mac.name} has no iOS image ${image ?? ""}`;
+    const devices = this.#access.devices?.(mac);
+    if (devices?.is === "no") return devices.why.replace(/^It /, `${mac.name} `).replace(/\.$/, "");
     const here = owners.filter((owner) => owner.mac.name === mac.name && owner.phase !== "failed" && !leaving.has(owner.vm)).length;
     if (here >= this.#settings.perMac) return `${mac.name} runs ${here === 1 ? "a shared iOS host" : `${here} shared iOS hosts`} already, as many as it may (${this.#settings.perMac})`;
     return this.#access.hostRoom(mac, state, this.#settingsFor(mac, state), leaving);
@@ -466,6 +471,7 @@ export class IosHosts implements SlotLender {
 
   async offer(kind: SlotKind, model: string | null, signal: AbortSignal): Promise<SlotTier> {
     if (!this.lends(kind)) return { tier: "wait", words: "Shared iOS hosts are off in bb-box's Tart settings." };
+    await this.#access.measure?.(signal);
     const states = await this.#readStates(signal);
     const slotModel = this.#slotModel(states);
     if (model && slotModel && model !== slotModel) return { tier: "wait", words: slotModelRefusal(slotModel, model) };

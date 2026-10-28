@@ -61,6 +61,7 @@ import {
 import type { DeviceOffer } from "../../core/device.ts";
 import { sizesCheck } from "../fit.ts";
 import { PROBE_SECONDS, encoderProbeScript, parseEncoderProbe } from "../encoder-probe.ts";
+import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, deviceRoom, hardwareKnown, loadReports, reportKey, type DeviceRoom, type MacReport } from "../../core/mac-capabilities.ts";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
@@ -427,6 +428,7 @@ export class SshPoolBackend implements Backend {
   #queue: Promise<unknown> = Promise.resolve();
   readonly slots: PoolSlots;
   #slotDevice: DeviceOffer | null = null;
+  readonly #probes: MacProbeCache;
 
   constructor(config: SshPoolConfig, context: BackendContext, options: SshPoolBackendOptions = {}) {
     this.id = context.id;
@@ -440,7 +442,36 @@ export class SshPoolBackend implements Backend {
     this.#docker = linux.length > 0 && linux.every((machine) => machine.docker);
     const systems = new Set(config.machines.map((machine) => machine.os));
     this.hostOs = systems.size > 1 ? null : systems.has("macos") ? "macos" : "linux";
+    this.#probes = new MacProbeCache({
+      run: (mac, script, signal) => this.#probeRun(mac, script, signal),
+      saved: (report) => void this.#context.storage.set(reportKey(report.mac), report).catch((error) => this.#context.logError(`keep what ${report.mac} offers`, error)),
+      logError: (operation, error) => this.#context.logError(operation, error),
+    });
+    void loadReports(context.storage)
+      .then((reports) => reports.forEach((report) => this.#machines.has(report.mac) && this.#probes.remember(report)))
+      .catch((error) => this.#context.logError("read what the pool's Macs offer", error));
     this.slots = this.#poolSlots();
+  }
+
+  async #probeRun(mac: string, script: string, signal?: AbortSignal): Promise<string> {
+    const machine = this.#machines.get(mac);
+    if (!machine) throw new Error(`${mac} is not in the SSH host pool's settings.`);
+    const { ssh } = await this.#keys();
+    const result = await ssh.run(this.#access(machine, machine.admin.user), script, { timeoutMs: PROBE_TIMEOUT_MS, signal, maxOutputBytes: 64 * 1024 });
+    if (result.exitCode !== 0 && !result.stdout.trim()) throw new Error(`${mac} did not answer bb-box's probe: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+    return result.stdout;
+  }
+
+  #devicesOn(machine: SshPoolMachine, signal?: AbortSignal): Promise<DeviceRoom> {
+    return this.#probes.known(machine.name, signal).then((report) => deviceRoom(report.capabilities));
+  }
+
+  #measuredMacs(): readonly SshPoolMachine[] {
+    return this.#config.machines.filter((machine) => machine.os === "macos" && (listsSlots(machine) || machine.kinds.some((kind) => kind === "macos" || kind === "macos-desktop")));
+  }
+
+  macCapabilities(): readonly MacReport[] {
+    return this.#measuredMacs().flatMap((machine) => this.#probes.report(machine.name) ?? []);
   }
 
   #poolSlots(): PoolSlots {
@@ -448,6 +479,7 @@ export class SshPoolBackend implements Backend {
       installId: this.#context.installId,
       settings: () => this.#config.slots,
       chip: (machine) => this.#chipOf(machine),
+      devices: (machine, signal) => this.#devicesOn(machine, signal),
       machines: () => this.#config.machines,
       machine: (name) => this.#machines.get(name) ?? null,
       survey: async (signal) => (await this.#survey(signal)).map(poolMacView),
@@ -517,7 +549,7 @@ export class SshPoolBackend implements Backend {
     const mac = poolSlotOf(guest)?.mac;
     const machine = mac ? this.#machines.get(mac) : undefined;
     if (!mac || !machine) return null;
-    return { mac, chip: this.#chipOf(machine) };
+    return { mac, chip: this.#chipOf(machine), hardware: hardwareKnown(this.#probes.report(mac)) };
   }
 
   #chipOf(machine: SshPoolMachine): string | null {
@@ -554,6 +586,7 @@ export class SshPoolBackend implements Backend {
 
   async maintain(signal?: AbortSignal): Promise<void> {
     if (!this.#config.machines.some((machine) => machine.os === "macos")) return;
+    for (const machine of this.#measuredMacs()) this.#probes.refresh(machine.name);
     await this.slots.maintain((await this.#survey(signal)).map(poolMacView), signal);
   }
 
@@ -1264,6 +1297,12 @@ export class SshPoolBackend implements Backend {
         "On a Mac, a release removes the box's user, its processes and every file it owns on the Data volume, then signs the next box's user in. It keeps macOS, apps, Homebrew and Cua Driver's grants. " +
           "What a standard user can change for the whole Mac, such as Wi-Fi networks joined, may carry over to the next box. A box can read what any user on the Mac can, so lend Macs set aside for boxes.",
       );
+    }
+
+    for (const machine of this.#measuredMacs()) {
+      const reachable = views.some((view) => view.machine === machine && !view.probe.unreachable);
+      const report = reachable ? await this.#probes.measure(machine.name, signal).catch(() => this.#probes.report(machine.name)) : this.#probes.report(machine.name);
+      checks.push(capabilityCheck(machine.name, machine.name, report));
     }
 
     const ok = checks.every((check) => check.status !== "fail");
