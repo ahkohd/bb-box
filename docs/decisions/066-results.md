@@ -42,10 +42,40 @@ apart from the box's own BB daemon, and bb-box installed from this branch:
   none; `test-alert` refused while background monitoring is off; the doctor
   showed the Monitor check.
 
+## In production
+
+On 28 October 2026, after the Monitor was deployed (main 6b97557), in BB's
+panel through the owner's browser. The switcher listed BB's server, the
+operator's six machines and every box, spares included, grouped as Beacon
+groups them. A box of each kind was made for the check:
+
+| Machine | How it is read | What it showed |
+| --- | --- | --- |
+| BB's server, a Proxmox LXC container of 2 cores | in bb-box's server process | Healthy; CPU 10%, "pressure 6%" in place of load. Beacon showed it Critical, from load 7.73 |
+| The operator's Mac | bb-box's host entry | Healthy; CPU 15% at 50°C, GPU 12% at 48°C and 0.1 W, from the sensors helper |
+| A Proxmox LXC box of 2 cores | bb-box's host entry in the box | Healthy; CPU 0%, "pressure 0%", 560 MB of 4 GB |
+| A Proxmox QEMU VM box of 2 cores | bb-box's host entry in the box | Healthy; its own load, 0.01 |
+| A shared ios slot on the pool's Mac | bb-box's host entry in the slot, as the slot's user | Healthy; "on" its host, "encoder 0%" with no stream open, "host load 1.06"; only the slot user's processes, its Simulator's among them |
+| A dedicated ios box, a Tart VM | bb-box's host entry in the box | Healthy; its own load, and no sensors, as a VM has no SMC |
+
+- The sensors helper was written to `~/Library/Caches/bb-box` on the Mac, as
+  `bb-box-sensors-` and the first 16 characters of its SHA-256, the folder
+  and file mode 0700 and owned by the user, and one helper ran.
+- When background monitoring was turned on, it wrote its first summary at
+  once, with memory from the server's cgroup and no load (`load1` null). The
+  doctor's two Monitor checks were ok. After `bb box monitor test-alert`, the
+  open BB window showed "Test notification", there when looked for a few
+  seconds later, and its "Open Status" button opened machine status.
+  Background monitoring was then turned off again.
+- Both plugins registered an icon named "Server", and BB kept bb-box's, so
+  Beacon's footer entry did not show while both were installed. bb-box's icon
+  now has a name of its own.
+
 ## Removing the standalone Beacon plugin
 
-Once bb-box with the Monitor is deployed, both footer entries show. To keep
-only bb-box's:
+On this server it was removed after the check above, as `machine-status`,
+with its helper folder on the Macs. Elsewhere, once bb-box with the Monitor
+is deployed, both footer entries show. To keep only bb-box's:
 
 1. Note Beacon's settings: `bb plugin config machine-status` (the plugin's ID
    on this server; elsewhere it may be `beacon`).
@@ -58,3 +88,5 @@ only bb-box's:
 4. `bb plugin uninstall machine-status`. This removes Beacon's settings and
    its logs; bb-box keeps its own.
 5. Reload BB's page so the footer has only bb-box's entry.
+6. On each Mac it read, remove Beacon's helper folder,
+   `~/Library/Caches/bb-plugin-beacon`.

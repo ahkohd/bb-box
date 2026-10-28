@@ -646,15 +646,17 @@ function MonitorOverlay() {
   return <PressureNotifications active={state !== null && state.enabled && state.backgroundMonitoring && state.pressureNotifications} />;
 }
 
+export const MACHINE_STATUS_ICON = "bb-box-machine-status";
+
 export function registerMonitor(app: PluginAppBuilder): void {
-  app.experimental_icons.register({ name: "Server", component: ServerMark });
+  app.experimental_icons.register({ name: MACHINE_STATUS_ICON, component: ServerMark });
   app.slots.experimental_appOverlay({ id: "monitor", component: MonitorOverlay });
   if (!rememberedMonitorOn()) return;
   bindStatusOpener(app.experimental_sidebarFooter.register({
     kind: "disclosure",
     id: "status",
     label: "Machine status",
-    icon: "Server",
+    icon: MACHINE_STATUS_ICON,
     component: StatusDisclosure,
   }).open);
 }
