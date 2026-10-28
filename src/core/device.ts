@@ -371,6 +371,7 @@ export type DeviceRequest =
   | { readonly id: string; readonly type: "open"; readonly url: string }
   | { readonly id: string; readonly type: "screenshot"; readonly longestEdge?: number }
   | { readonly id: string; readonly type: "tree" }
+  | { readonly id: string; readonly type: "clipboard" }
   | { readonly id: string; readonly type: "settings" }
   | { readonly id: string; readonly type: "at"; readonly x: number; readonly y: number }
   | { readonly id: string; readonly type: "launch"; readonly app: string }
@@ -383,7 +384,7 @@ export type DeviceRequest =
 
 export type DeviceRequestType = DeviceRequest["type"];
 
-export type DeviceRead = { readonly type: "tree" } | { readonly type: "at"; readonly x: number; readonly y: number } | { readonly type: "screenshot"; readonly longestEdge?: number } | { readonly type: "settle"; readonly quietMs: number; readonly mostMs: number; readonly fromNow: boolean };
+export type DeviceRead = { readonly type: "tree" } | { readonly type: "clipboard" } | { readonly type: "at"; readonly x: number; readonly y: number } | { readonly type: "screenshot"; readonly longestEdge?: number } | { readonly type: "settle"; readonly quietMs: number; readonly mostMs: number; readonly fromNow: boolean };
 export type DeviceAgentRequest = { readonly type: "open"; readonly url: string } | { readonly type: "launch"; readonly app: string };
 
 export type DeviceHello = {
@@ -407,6 +408,7 @@ export type AnswerResult =
   | { readonly type: "done" }
   | { readonly type: "screenshot"; readonly png: string; readonly generation: number; readonly source?: VideoSize }
   | { readonly type: "tree"; readonly elements: readonly DeviceElement[]; readonly generation: number }
+  | { readonly type: "clipboard"; readonly text: string }
   | { readonly type: "at"; readonly element: DeviceElement | null; readonly generation: number }
   | { readonly type: "launched"; readonly app: LaunchedApp }
   | { readonly type: "settled"; readonly frames: number; readonly quiet: boolean }
@@ -686,7 +688,9 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 2;
 export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
-export const DEVICE_SERVER_VERSION = 27;
+export const DEVICE_SERVER_VERSION = 28;
+export const CLIPBOARD_READ_SINCE_VERSION = 28;
+export const DEVICE_CLIPBOARD_MOST = 100_000;
 export const FRAME_GENERATIONS_SINCE_VERSION = 9;
 export const SETTINGS_ASKED_SINCE_VERSION = 24;
 export const VIDEO_REPORTS_SINCE_VERSION = 25;

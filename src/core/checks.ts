@@ -41,6 +41,11 @@ export const CHECKS = {
     from: ["bb-box"],
     what: "A Mac's video encoder, shared by every iOS device bb-box streams on it (064): its budget, from the chip or a probe, how much of it the streams use, and which are shown at a lower resolution to keep within it.",
   },
+  "spares.<kind>": {
+    name: "Spare <kind> boxes",
+    from: ["bb-box"],
+    what: "A kind's spares (032, 063): how many bb-box keeps, how many are ready or being made, and what each costs while it waits. For ios and android it says when spares are off, as they are by default. It warns when the kind has fewer than its count and why.",
+  },
   "spares.image.<image>.<backend>.<kind>": { name: "Spare of <image> for <kind> on <backend>", from: ["bb-box"], what: "A project image's spare whose build failed to start a box, so bb-box makes none of that build for a day. Its boxes start from the build meanwhile." },
 
   // Proxmox LXC and Proxmox QEMU.

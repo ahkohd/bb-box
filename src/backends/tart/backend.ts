@@ -1381,7 +1381,7 @@ export class TartBackend implements Backend {
       const { host, vm } = placement;
       // A Linux box says so, for its SSH user; a macOS box's data is as it was.
       const data: Readonly<Record<string, string>> = os === "linux" ? { box: box.boxId, os } : { box: box.boxId };
-      const guest = (address: string | null, size: BoxSize | null = null): Guest => ({ ref: vm, host: host.name, address, size, data });
+      const guest = (address: string | null, size: BoxSize | null = null, build: string | null = null): Guest => ({ ref: vm, host: host.name, address, size, data: build ? { ...data, build } : data });
       let owned = placement.how === "resume";
       try {
         let address: string;
@@ -1440,9 +1440,10 @@ export class TartBackend implements Backend {
         if (os === "macos" && (placement.how === "warm" || placement.how === "resume")) await step("clock", () => this.#clock(host, address, signal));
         const now = await this.#state(host, signal);
         const size = sizeOf(now.configs.get(vm), now.vms.find((candidate) => candidate.name === vm)?.diskGB ?? null);
+        const build = placement.how === "clone" && os === "macos" ? (now.records.get(image)?.build ?? null) : null;
         // Claimed again, so the box's record has the address and size as it becomes ready.
-        await hooks.claim(guest(address, size));
-        return guest(address, size);
+        await hooks.claim(guest(address, size, build));
+        return guest(address, size, build);
       } catch (error) {
         if (owned) await this.#delete(host, vm, os, box.boxId).catch((cause) => this.#context.logError("release after a failed acquire", cause));
         const retry = placement.how !== "clone" && attempt === 0 && !signal.aborted && Date.now() < deadline;
@@ -1767,24 +1768,30 @@ export class TartBackend implements Backend {
     return end ? endReason(end, windows ? "QEMU" : "tart run") : null;
   }
 
-  async start(guest: Guest, signal?: AbortSignal): Promise<void> {
+  async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void> {
     if (slotRefOf(guest)) return this.#slots(guest).start(guest, signal);
     const host = this.#hostOf(guest);
     const os = this.#osOf(guest);
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? (os === "windows" ? WINDOWS_READY_TIMEOUT_MS : READY_TIMEOUT_MS));
     if ((await this.power(guest, signal)) === null) throw this.#gone(guest);
     this.#addresses.delete(guest.ref);
-    await this.#start(host, guest.ref, os, deadline, signal, true, this.#boxOf(guest));
+    const began = Date.now();
+    const restored = await this.#start(host, guest.ref, os, deadline, signal, true, this.#boxOf(guest));
+    const bootedAfresh = () => {
+      if (!restored) timing?.("boot", Date.now() - began);
+    };
     if (os === "windows") {
       // A restore leaves Windows' clock at the time it stopped (046).
       const { ssh } = await this.#keys();
       const access = this.#windows(await this.#mac(host), (await this.#ports(host, guest, signal)).ssh);
       await this.#waitReady(host, guest.ref, access, os, deadline, signal);
       await setClock(new SshTransport(ssh, access, os), signal);
+      bootedAfresh();
       return;
     }
     const address = await this.#address(host, guest.ref, deadline, signal);
     await this.#waitReady(host, guest.ref, this.#vm(await this.#mac(host), address, os), os, deadline, signal);
+    bootedAfresh();
     await this.#identify(host, address, guest.ref, os, signal);
     if (os === "linux") await this.#linuxDesktop(host, guest.ref, address, signal);
     // A macOS VM resumes from its suspend with the time it stopped at.
@@ -1952,6 +1959,21 @@ export class TartBackend implements Backend {
   keepsSession(kind: string): boolean {
     const os = this.kinds().find((candidate) => candidate.id === kind)?.capabilities.os;
     return os === "macos" || os === "windows";
+  }
+
+  savedSessionRestoresWithinMs(kind: string): number | null {
+    return this.kinds().find((candidate) => candidate.id === kind)?.capabilities.os === "macos" ? this.#config.warmMaxHours * 3_600_000 : null;
+  }
+
+  async fromCurrentBuild(guest: Guest, kind: string, signal?: AbortSignal): Promise<boolean | null> {
+    if (slotRefOf(guest) || guestOsOf(kind) !== "macos") return null;
+    const recorded = guest.data?.build;
+    if (typeof recorded !== "string") return null;
+    const image = imageOfKind(this.#config, kind);
+    const host = this.#hostNamed(guest.host);
+    if (!image || !host) return false;
+    const current = (await this.#state(host, signal)).records.get(image)?.build;
+    return current ? current === recorded : null;
   }
 
   async stop(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -2927,9 +2949,10 @@ export class TartBackend implements Backend {
    * an update of macOS, Tart or QEMU, boots afresh from its disk when
    * `discard` is true; a warm VM gives way to a clone instead.
    */
-  async #start(host: TartHost, vm: string, os: GuestOs, deadline: number, signal?: AbortSignal, discard = true, box: string | null = null): Promise<void> {
+  async #start(host: TartHost, vm: string, os: GuestOs, deadline: number, signal?: AbortSignal, discard = true, box: string | null = null): Promise<boolean> {
     try {
       await this.#launch(host, vm, os, deadline, signal);
+      return true;
     } catch (error) {
       if (!discard || !failedRestore(error)) throw error;
       this.#context.logError(
@@ -2941,6 +2964,7 @@ export class TartBackend implements Backend {
       );
       await this.#run(host, os === "windows" ? qemuDiscardScript(vm) : discardStateScript(vm), { timeoutMs: 30_000, signal });
       await this.#launch(host, vm, os, deadline, signal);
+      return false;
     }
   }
 

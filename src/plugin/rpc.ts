@@ -17,6 +17,7 @@ import { profileLoop, type CpuProfile, type HeapProfile } from "./profile.ts";
 import { GENERAL_DEFAULTS } from "../core/document.ts";
 import { withPurposes } from "../transports/spawns.ts";
 import { desktopDisplays } from "../backends/types.ts";
+import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
 const PROFILES_KEPT = 5;
@@ -195,6 +196,11 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     async desktopClipboard({ threadId, box: ref, viewer }) {
       const box = await desktopBox(threadId, ref);
       return app.desktops.clipboard(box.id, viewer);
+    },
+    async deviceClipboard({ threadId, box: ref, viewer }) {
+      const box = await desktopBox(threadId, ref);
+      if (!app.desktops.control.mayInput(box.id, viewer)) return { text: null, error: DEVICE_COPY_NEEDS_CONTROL_WORDS };
+      return app.devices.clipboard(box);
     },
     async deviceScreenshot({ threadId, box: ref }) {
       const box = await desktopBox(threadId, ref);

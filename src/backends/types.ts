@@ -602,6 +602,7 @@ export interface Backend {
    * a kind waits stopped (#539).
    */
   keepsSession?(kind: string): boolean;
+  savedSessionRestoresWithinMs?(kind: string): number | null;
   /**
    * Why the guest stopped, when bb-box finds it stopped without having
    * stopped it (#406), such as its VM process's exit status and crash

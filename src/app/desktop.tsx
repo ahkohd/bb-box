@@ -98,6 +98,7 @@ export const DESKTOP_PAGE = "desktop";
 
 /** How often a tab with control asks for the box's clipboard. */
 const CLIPBOARD_POLL_MS = 500;
+const DEVICE_COPY_AFTER_CHORD_MS = 400;
 /** How long a clipboard note, such as "Copied" or "Pasted", shows in the toolbar at least. */
 const FLASH_MS = 3_000;
 /**
@@ -1447,6 +1448,22 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     };
   }, [mine, connected, rpc, threadId, boxId, viewer, deviceShown]);
 
+  const copyFromDeviceNow = useRef<() => Promise<void>>(async () => undefined);
+  useEffect(() => {
+    if (!deviceShown || !mine || !connected) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const copiedOnDevice = (event: KeyboardEvent) => {
+      if (!isCopyChord(event) || !target.current?.contains(document.activeElement)) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => void copyFromDeviceNow.current(), DEVICE_COPY_AFTER_CHORD_MS);
+    };
+    window.addEventListener("keydown", copiedOnDevice, true);
+    return () => {
+      window.removeEventListener("keydown", copiedOnDevice, true);
+      clearTimeout(timer);
+    };
+  }, [deviceShown, mine, connected]);
+
   const act = async (task: () => Promise<BoxResult>) => {
     setActing(true);
     try {
@@ -1544,8 +1561,32 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     }
     pasteText(text);
   };
+  const copyFromDevice = async () => {
+    const model = modelNamed(device?.state?.model ?? device?.model ?? box?.device?.model ?? "")?.name ?? "device";
+    const read = await rpc.call("deviceClipboard", { threadId, box: boxId, viewer }).catch((caught: unknown) => ({ text: null, error: message(caught) }));
+    if (read.text === null) {
+      flashFor(read.error ?? `The ${model}'s clipboard could not be read.`);
+      return;
+    }
+    if (!read.text) {
+      flashFor(`The ${model}'s clipboard has no text.`);
+      return;
+    }
+    setBoxClipboard(read.text);
+    try {
+      await navigator.clipboard.writeText(read.text);
+      flashFor(copiedFromDeviceWords([...read.text].length, model));
+    } catch {
+      setCopyField(read.text);
+    }
+  };
+  copyFromDeviceNow.current = copyFromDevice;
   /** The menu's Copy: the box's clipboard as last seen, or fetched now where its input reports it, written to this computer's on the click. */
   const copyToComputer = async () => {
+    if (deviceShown) {
+      await copyFromDevice();
+      return;
+    }
     let copied = boxClipboard;
     if (copied === null && !deviceShown) {
       const latest = await rpc.call("desktopClipboard", { threadId, box: boxId, viewer }).catch(() => null);
@@ -1979,6 +2020,14 @@ function noClipboardThroughServer(box: BoxView): string | null {
 }
 
 /** Why nothing has come from the box's clipboard: its desktop's server may not send it, or sends it only to the viewer with control. */
+export function copiedFromDeviceWords(characters: number, model: string): string {
+  return `Copied ${characters} ${characters === 1 ? "character" : "characters"} from the ${model}.`;
+}
+
+export function isCopyChord(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">): boolean {
+  return event.metaKey !== event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "c";
+}
+
 function nothingFromBox(box: BoxView, mine: boolean): string {
   const windows = noClipboardThroughServer(box);
   if (windows) return windows;

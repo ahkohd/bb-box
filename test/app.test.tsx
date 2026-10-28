@@ -504,7 +504,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult } = {}) {
+function server(initial: BoxView[], options: { rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -558,6 +558,12 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
     takeControl: ({ box: ref, viewer }) => change("takeControl", ref, (found) => ({ ...found, control: { owner: "human", holder: viewer } })),
     handBack: ({ box: ref }) => change("handBack", ref, (found) => ({ ...found, control: { owner: "agent", holder: null } })),
     desktopClipboard: () => boxClipboard,
+    deviceClipboard: ({ box: ref, viewer }) => {
+      changes.push("deviceClipboard");
+      const control = find(ref)?.control;
+      if (control?.owner !== "human" || control.holder !== viewer) return { text: null, error: "Take control first, then copy: only the tab with control reads the device's clipboard." };
+      return { text: options.deviceClipboard ?? "", error: null };
+    },
     deviceScreenshot: () => {
       changes.push("deviceScreenshot");
       return { png: "iVBORw0KGgo=", model: "Pixel 8", error: null };
@@ -3167,8 +3173,8 @@ function sizedPanel(width: number, height: number) {
   };
 }
 
-async function deviceShown(model: string, state: object, hello?: string) {
-  const { handlers, changes } = server([desktopBox({ device: { model, simulatorHost: false } })], { video: true });
+async function deviceShown(model: string, state: object, hello?: string, deviceClipboard?: string) {
+  const { handlers, changes } = server([desktopBox({ device: { model, simulatorHost: false } })], { video: true, ...(deviceClipboard !== undefined ? { deviceClipboard } : {}) });
   const slot = desktopTab(handlers);
   await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("display=device"))).toBe(true));
   const device = deviceSocket();
@@ -3344,6 +3350,38 @@ test("Screenshot asks bb-box for the device's own pixels without taking control,
     await waitFor(() => expect(toasts()).toEqual(["Copied the iPhone 18 Pro's screen."]));
     expect(changes).toEqual(["deviceScreenshot"]);
     expect(write).toHaveBeenCalledTimes(1);
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
+test("Copy to this computer reads the device's clipboard for the tab with control, says how much it copied, and Cmd+C in the device copies it too (063)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  const { writeText } = fakeClipboard(() => Promise.resolve(""));
+  try {
+    window.sessionStorage.clear();
+    const { slot, changes } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello(), "Hello from the device");
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Copy to this computer" }));
+    await waitFor(() => expect(toasts()).toEqual(["Take control first, then copy: only the tab with control reads the device's clipboard."]));
+    expect(writeText).not.toHaveBeenCalled();
+
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Copy to this computer" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Hello from the device"));
+    await waitFor(() => expect(toasts()).toContain("Copied 21 characters from the iPhone 18 Pro."));
+
+    const keyboard = slot.getByRole("textbox", { name: "Keyboard input for the device", hidden: true });
+    keyboard.focus();
+    fireEvent.keyDown(keyboard, { key: "c", metaKey: true });
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    expect(changes.filter((change) => change === "deviceClipboard")).toHaveLength(3);
+
+    fireEvent.keyDown(keyboard, { key: "c", metaKey: true, shiftKey: true });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(writeText).toHaveBeenCalledTimes(2);
   } finally {
     unsize();
     undo();

@@ -291,6 +291,42 @@ describe("delivering the device server", { skip: process.platform === "win32" },
     ledger.dispose();
   });
 
+  test("a spare is settled once its device has booted; a claim switches it once to the model its thread asked for, and a switch the device refuses keeps the model it has, in words (063, 7.5)", async () => {
+    logs.length = 0;
+    const servers = make("spare", 95, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION));
+    assert.deepEqual(await servers.spareSettled(box), { is: "settled" });
+    const from = servers.view(box.id).is === "connected" ? (servers.view(box.id) as { state: { model: string } }).state.model : null;
+    assert.equal(from, "Pixel Tablet");
+
+    const claimed = { ...box, askedDevice: "Pixel 8", timings: { spare: 40 } } as BoxRecord;
+    record = claimed;
+    const switched = await servers.switchClaimed(claimed);
+    assert.equal(switched?.is, "switched");
+    assert.equal(switched?.is === "switched" && switched.from, "Pixel Tablet");
+    assert.equal(servers.claimSwitch(box.id)?.is, "switched");
+    const now = servers.view(box.id);
+    assert.equal(now.is === "connected" && now.state.model, "Pixel 8");
+    assert.equal(typeof record.timings.spareSwitch, "number");
+    assert.equal(await servers.switchClaimed({ ...claimed, timings: record.timings }), null, "a box with the model asked for is not switched");
+
+    const unknown = { ...claimed, askedDevice: "Pixel Fold" } as BoxRecord;
+    const failed = await servers.switchClaimed(unknown);
+    assert.equal(failed?.is, "failed");
+    assert.equal(failed?.is === "failed" && failed.from, "Pixel 8");
+    const kept = servers.view(box.id);
+    assert.equal(kept.is === "connected" && kept.state.model, "Pixel 8", "the device keeps the model it had");
+    assert.ok(logs.some((line) => line.startsWith("spare: Box b-12, a claimed spare, did not switch from the Pixel 8 to the Pixel Fold: ")), logs.join("\n"));
+    record = box;
+    assert.ok((await servers.control(box, { action: "switch", device: "Pixel Tablet" })).ok);
+    await servers.dispose();
+  });
+
+  test("the device's clipboard is read through its server, as text (063)", async () => {
+    const servers = make("clipboard", 97, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION));
+    assert.deepEqual(await servers.clipboard(box), { text: "", error: null });
+    await servers.dispose();
+  });
+
   test("the doctor says the device's state as its server gives it now, and what is not known when the server does not answer or bb-box closed its connection (F-8)", async () => {
     const check = async (servers: DeviceServers) => (await servers.checks()).find((each) => each.id === "device.b-12")!;
     const servers = make("doctor", 90, DEVICE_SERVER_VERSION, serverRoot(DEVICE_SERVER_VERSION), () => false, { deviceStateWaitMs: 1000 });

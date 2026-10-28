@@ -40,7 +40,7 @@ Each kind's entry, by its ID. A kind with no entry has its defaults, in the [kin
 | `presets` | `Partial<Readonly<Record<Preset, SizeChange>>>` |  | Changes to the small, medium and large sizes: cores, memoryGiB and diskGiB, each optional. |
 | `default` | `Preset` |  | The preset a box gets when it asks for no size. |
 | `largest` | `SizeChange` |  | The most a custom size may ask for, as a size change. |
-| `spares` | `number` |  | Spare boxes to keep: ready, enrolled and owned by no thread (032). |
+| `spares` | `number` |  | Spare boxes to keep: ready, enrolled and owned by no thread (032). None by default, ios and android included: a device spare waits with its device booted and its memory saved to disk (063). |
 
 ## backends
 
@@ -194,7 +194,7 @@ Setup: [setup/tart/README.md](../../setup/tart/README.md).
 | `vms-per-host` | VMs per Mac | number | advanced | `2` | The most macOS VMs that run on each Mac at once, counting every VM Tart runs there, not only bb-box's. At most 2, which Apple's licence and the Virtualization framework allow. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `16384` | A new box is refused if the Mac would have less memory than this left for its own use, after its running VMs. |
 | `reserve-disk-gib` | Disk kept free (GiB) | number | advanced | `50` | A new box is refused if the Mac's disk has less free space than this. |
-| `warm-max-hours` | Hours a macOS warm VM is kept | number | advanced | `6` | A suspended macOS warm VM saved longer ago than this is replaced by a fresh one, as an old saved state may not restore. |
+| `warm-max-hours` | Hours a macOS warm VM or spare is kept | number | advanced | `6` | A suspended macOS warm VM, or a spare that waits suspended, saved longer ago than this is replaced by a fresh one, as an old saved state may not restore. |
 | `ios-hosts-most` | Slots per shared iOS host | number | advanced |  | The most slots a shared iOS host has making, ready or held at once. Unset, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins. |
 | `ios-hosts-ahead` | Ready slots kept on a shared iOS host | number | advanced | `1` | Slots a shared iOS host keeps ready while it holds a box, so the next box is ready in seconds. |
 | `ios-hosts-resetting-most` | Slots a shared iOS host sweeps at once | number | advanced | `4` | The most released slots whose files a shared iOS host sweeps in one pass. |
