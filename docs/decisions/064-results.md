@@ -2422,7 +2422,7 @@ and the doctor.
 | 07:37:49 | A box asked for |
 | 07:38:00 | Host 1 starting |
 | 07:38:37 | Its VM running, after a 37 s clone |
-| 07:38:42 | Its VM stopped. The iOS image restores from a saved state, so SSH had answered already |
+| 07:38:42 | Its VM stopped. bb-box had reached it over SSH already: the failure below came while it installed or started its helper, after the part the retry covered |
 | About 07:39:00 | Two more boxes asked for |
 | About 07:39:02 | Host 1 failed, its VM being deleted |
 | 07:39:12 | Host 2 starting, for the two later boxes: not refused, though host 1's VM was not yet gone (item 3) |
@@ -2475,13 +2475,57 @@ On a Linux box, from a clean clone of the bundle on main cb5e915: tsc
 clean; the node suite 2,247 passed, 0 failed, 288 skipped, the docs test
 among them; vitest 224 passed.
 
-The fix is not yet seen live: that needs the lead's deploy, then run 1
-and run 2 again.
+### After the deploy
+
+The lead deployed the two fixes as PR 1201, main e19adcc, and ran the
+watcher three more times. From rerun 2, it spared a host's fresh clone, so
+a retry could serve.
+
+| Rerun | The stop | What happened |
+| --- | --- | --- |
+| 1 | 5 s after the VM ran | The first start failed by itself with Virtualization's error at 08:09:35, and the two later boxes joined the starting host. The fresh clone ran at 08:10:30 and was stopped at 08:10:35. The log at 08:10:43: "... stopped before it answered on SSH: Tart lists it stopped. bb-box saw it 16.7 s after the VM started, and stops waiting for it." All three boxes failed at 08:11:07 with both causes, 2 min 10 s after the first was asked for; in run 2 this took 11 min 31 s (fix B) |
+| 2 | As soon as the VM ran | The first start failed by itself again, the watcher spared the fresh clone, and it served. The three boxes were ready in 168.6 s, and 49.4 and 72.3 s for the two that joined (item 4) |
+| 3 | 2 s after the VM's SSH port opened | The first start ran, and was stopped at 08:29:41. At 08:30:21 the log: "did not start, so bb-box deletes its VM and starts a fresh clone of the iOS image, once: Its VM stopped after it answered on SSH, before it served: The box at 192.168.64.7 did not answer on SSH." The fresh clone served at 08:31:10, for 3 boxes, ready in 192.0, 85.1 and 65.9 s (fix A) |
+
+Every host's VM was gone after its boxes were released, by the doctor
+and on the Mac.
+
+### Why first starts failed
+
+A new host's first start failed by itself with "VZErrorDomain Code=1 ...
+Internal Virtualization error" in 3 of the 7 hosts started today, and in
+none of the fresh clones.
+
+- **The disk was locked.** Virtualization's log at a failure: "Cannot
+  acquire exclusive lock, errno 35" on the new VM's disk image, then the
+  disk device failed to start.
+- **By Tart's own listing.** Watched with `lsof` on the Mac, a `diskutil`
+  and `diskimagescontroller` opened a new host's disk image a second before
+  its `tart run`, and every half minute after. Tart 2.40.1's `tart list`
+  sizes every ASIF disk image with `diskutil image info`, even with
+  `--quiet`, and so does `tart get`. bb-box lists VMs often: its reads of
+  the Mac's state, and the start script's own check just before `tart
+  run`. A run that starts while a listing has its disk open fails.
+- **Not only hosts.** bb-box's log has the same error since 26 October on
+  dedicated boxes as they were acquired, on warm VMs as they resumed, and
+  on a resize and restarts.
+- **Fix C.** The start script, which starts and resumes every Tart macOS
+  and Linux VM, runs `tart run` once more, 3 s later, when it fails at
+  once with that error. The log says so: "Tart's run of <vm> on <mac>
+  failed at once, as when a tart list reads its disk at that moment, so
+  bb-box ran it again 3 s later: ...". On the fakes, a macOS box whose
+  first run fails so starts on the second; failing twice, its acquire
+  fails with the error. On a clean clone of the bundle on main e19adcc:
+  tsc clean; the node suite 2,248 passed, 0 failed, 288 skipped, the docs
+  test among them; vitest 224 passed. Fix C is not yet seen live.
 
 ### What limits these checks
 
 - **The stops were forced** with `tart stop --timeout 0`. Virtualization's
-  own failure came once, by itself, in run 2.
+  own failure came by itself, in run 2 and reruns 1 and 2.
+- **The lock's holder at a failing start was not caught.** The cause rests
+  on Virtualization's log, the holders seen at a start that worked, and
+  Tart's source.
 - **Namespace was not provoked.** Its hosts have no retry on a fresh
   instance and no limit of two VMs, so items 3 and 4 are Tart's only.
   Making a Namespace start fail needs its API, which this check did not

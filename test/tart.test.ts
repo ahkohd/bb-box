@@ -528,6 +528,25 @@ test("a Mac takes two macOS VMs; the third is refused with what to release", asy
   await backend.release(second, releasing);
 });
 
+test("a run that fails at once with Virtualization's internal error, as when a tart list has the VM's disk open, is run once more, and the log says so; failing again, the start fails with it (F-9b)", async () => {
+  const { mac, context, backend } = setup();
+  const fails = join(mac, ".fake-tart-run-fails");
+  writeFileSync(fails, "1");
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.equal(await backend.power(guest), "running");
+  assert.ok(
+    context.logs.some((line) => line.startsWith(`Tart's run of ${guest.ref} on mac1 failed at once, as when a tart list reads its disk at that moment, so bb-box ran it again 3 s later: Error Domain=VZErrorDomain Code=1 `)),
+    context.logs.join("\n"),
+  );
+  const runs = readFileSync(join(mac, ".fake-tart-log"), "utf8").split("\n").filter((line) => line.startsWith(JSON.stringify(["tart", "run"]).slice(0, -1)) && line.includes(guest.ref));
+  assert.equal(runs.length, 2);
+  await backend.release(guest, releasing);
+
+  writeFileSync(fails, "2");
+  await assert.rejects(backend.acquire(identity(), null, hooks().hooks, signal()), /Tart could not start bb-box-\S+ on mac1: Error Domain=VZErrorDomain Code=1 /);
+});
+
 test("a VM the framework refuses to run, as when another app runs macOS VMs, is no_capacity and leaves nothing", async () => {
   const { mac, owners, backend } = setup({ "tart-vms-per-host": 2 });
   // Two running Linux VMs, which neither capacity nor the framework counts against the two, but whose memory counts.

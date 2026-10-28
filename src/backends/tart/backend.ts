@@ -135,6 +135,7 @@ import {
   powerScript,
   vmStateScript,
   startScript,
+  TART_RUN_AGAIN_SECONDS,
   script,
   sizeScript,
   stateScript,
@@ -2909,6 +2910,8 @@ export class TartBackend implements Backend {
     const script = windows ? qemuStartScript(vm, seconds) : startScript(vm, seconds);
     if (!windows) this.#context.encoder?.vmStarting(host.name, this.#chips.get(host.name) ?? null);
     const result = await ssh.run(await this.#mac(host), script, { timeoutMs: (seconds + 30) * 1000, signal, maxOutputBytes: 1 << 16 }, "macos");
+    const ranAgain = /^ran-again: (.*)$/m.exec(result.stdout)?.[1];
+    if (ranAgain) this.#context.log?.(`Tart's run of ${vm} on ${host.name} failed at once, as when a tart list reads its disk at that moment, so bb-box ran it again ${TART_RUN_AGAIN_SECONDS} s later: ${ranAgain}`);
     if (result.exitCode === 0) return;
     const said = result.stderr.trim();
     if (!windows && result.exitCode === 3 && /exceeds the system limit/i.test(said)) {
