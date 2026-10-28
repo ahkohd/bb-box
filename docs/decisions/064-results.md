@@ -2285,10 +2285,11 @@ Built on 28 October 2026, as decided in
 - **No `ssh <box name>` and no terminal** for a box on a Namespace host:
   Namespace's Macs have no SSH server for other users. Commands, files,
   BB's enrolment and the device server all go through the Mac's own user.
-- **Streams by hardware where the Mac has an encoder.** Namespace's Macs
-  measured on 28 October 2026, an M4 Pro VM and an M5 Max VM, both had
-  one; software, B's, is the fallback, or every stream with `iosEncoder`
-  set to `software`.
+- **Streams by hardware where the Mac has an encoder.** Of Namespace's
+  Macs measured on 28 October 2026, an M5 Max VM and two of three M4 Pro
+  VMs had one; the third M4 Pro VM had none (-12903). Each host measures
+  its own Mac, and streams in software, by B's encoder, where it has none,
+  or for every stream with `iosEncoder` set to `software`.
 - **No BB app kept for the slots,** as the Tart and pool hosts keep it:
   each slot downloads BB's app as it enrols, about 3 s more.
 - **A host's size is the workspace's largest Mac,** 6 cores and 14 GiB
@@ -2305,3 +2306,60 @@ Mac; no new slot in the last hour; a Mac that cannot run the Simulator
 failing its host with words and the upkeep clearing it; no host while the
 workspace's Mac is taken. `mac-ios.sh`'s new parts ran for real on a
 Namespace Mac in B's check above.
+
+### The production check
+
+On production BB at main 09102e6, on 28 October 2026, with `iosEncoder`
+left at `auto`.
+
+- **Namespace did not offer `ios` at first.** Its saved report came from
+  A's probe, which did not ask for the newest iOS runtime. A `macos` box
+  on Namespace, started and released, measured a Mac again: an M4 Pro VM
+  with no hardware encoder. Namespace then offered `ios`.
+- **Two `ios` boxes asked for with `on: "Namespace"`:** both ready 271 and
+  274 s after the ask: the host 178 s, then each slot 90 to 94 s. Each was
+  an iPhone 17 on iOS 26.2 (23C54), with Xcode 26.1.1. The host's Mac, a
+  6-core 14 GiB M4 Pro VM, had a hardware encoder, so both streamed by it.
+  `box_status` said each ends at the host's end; the doctor said 2 held, 1
+  making, video by the Mac's hardware encoder.
+- **BB's enrolment failed on both:** BB's installer could not start its
+  daemon: `nohup: can't detach from console`. The fix is below.
+- **Both panels, in one browser tab,** each 420x900, for 25 s with 10 taps
+  each, at half size (604x1312), a busy page on each device:
+
+  | Run | Frame rate (fps) | Tap to change, median (ms) | p95 (ms) | Longest gap (ms) |
+  | --- | --- | --- | --- | --- |
+  | 1 | 51.8 and 46.8 | 213 and 213 | 1,988 and 262 | 608 and 476 |
+  | 2 | 51.7 and 53.6 | 214 and 205 | 2,010 and 718 | 4,982 and 3,665 |
+
+  In run 2, 9 of the second box's 10 taps showed.
+- **The host's CPU,** by `top` in a slot: 5 to 9% idle of its 6 cores in
+  run 1, 21% later. The busiest were each device's Safari, about 66%,
+  `appprotectiond`, about 63%, and `cfprefsd`, about 48%, while the slot
+  kept ready was still being made. The slow taps are a full 6-core Mac,
+  not the stream.
+- **Released at once:** the host was deleted 10 s after the last release.
+
+### After the production check
+
+- **A slot's commands run in its user's launchd session**
+  ([`slot-user.ts`](../../src/transports/slot-user.ts)): `sudo launchctl
+  asuser <uid>` before `sudo -u`. On a Namespace Mac, `nohup` exits 127
+  both as the Mac's own user and as a slot's user under `sudo`, and 0 under
+  `launchctl asuser`, so BB's installer, which starts a slot's daemon with
+  `nohup`, works.
+- **A report says which probe made it.** One from an older probe is stale,
+  so a pool Mac or a Tart host is measured again. For Namespace, which
+  has no Mac to measure until one starts, bb-box measures a Mac it has, or
+  starts one for a few minutes, with a 20-minute deadline, at most once a
+  day, while shared iOS hosts are on.
+- **Namespace's Macs can vary by machine.** Namespace counts, for each
+  kind of Mac, the machines that had a hardware encoder and those that did
+  not. Where they differ, within a kind or between kinds, `box_list` and
+  the doctor say its Macs vary by machine, and what each kind had. As each
+  host builds `bb-box-h264` as it starts, a Mac without a hardware encoder
+  streams in software there, and is no longer shown as offering no
+  device.
+- **`box_list` says how Namespace lends `ios`:** slots on a Mac made for
+  the first box, in about 5 minutes, and deleted after its last.
+

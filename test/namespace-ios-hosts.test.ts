@@ -64,7 +64,7 @@ class StubHost {
       this.setUp = true;
       return answer(0, "ios=26.2 23C54 ios-26.2-23C54 companion=1.7.7\n");
     }
-    if (script.startsWith("sudo -n -H -u ")) return answer(0);
+    if (script.startsWith("sudo -n launchctl asuser ")) return answer(0);
     const verb = /device-host (\w[\w-]*)(?: (\S+))?/.exec(script);
     if (!verb) return answer(1, "", `the stub has no answer to ${script}`);
     const box = this.#field(options.stdin, "box");
@@ -177,13 +177,13 @@ test("a host's setup unpacks bb-box's setup and runs mac-ios.sh as root with the
   assert.match(UNPACK_SETUP, /tar -xzf - -C "\$HOME\/bb-box-setup"/);
 });
 
-test("a slot's commands run as its user through the host's own SSH and sudo, as Namespace's Macs have no sshd for other users", async () => {
-  assert.equal(asSlotUser("bbd-3", "echo hi"), "sudo -n -H -u 'bbd-3' -- /bin/zsh -c 'cd ~ 2>/dev/null || exit 1\necho hi'");
+test("a slot's commands run as its user, in its launchd session, through the host's own SSH and sudo, as Namespace's Macs have no sshd for other users", async () => {
+  assert.equal(asSlotUser("bbd-3", "echo hi"), "sudo -n launchctl asuser \"$(id -u 'bbd-3')\" /usr/bin/sudo -n -H -u 'bbd-3' -- /bin/zsh -c 'cd ~ 2>/dev/null || exit 1\necho hi'");
   const ran: { script: string; stdin: unknown }[] = [];
   const host = { run: async (script: string, options: RunOptions = {}) => (ran.push({ script, stdin: options.stdin }), { exitCode: 0, stdout: "x\nbb-box-read:aGVsbG8=\n", stderr: "", timedOut: false }) };
   const slot = new SlotUserTransport(host as never, "bbd-3");
   await slot.writeFile("notes/a.txt", new TextEncoder().encode("hello"), { mode: "600" });
-  assert.match(ran[0]!.script, /^sudo -n -H -u 'bbd-3' -- \/bin\/zsh -c /);
+  assert.match(ran[0]!.script, /^sudo -n launchctl asuser "\$\(id -u 'bbd-3'\)" \/usr\/bin\/sudo -n -H -u 'bbd-3' -- \/bin\/zsh -c /);
   assert.match(ran[0]!.script, /cat > "\$p" && chmod '\\''600'\\'' "\$p"/);
   assert.equal(new TextDecoder().decode(await slot.readFile("notes/a.txt", { maxBytes: 100 })), "hello");
   assert.equal(await slot.probe(), true);

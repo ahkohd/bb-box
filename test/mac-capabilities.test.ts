@@ -10,8 +10,11 @@ import {
   capabilityWords,
   deviceRoom,
   imageCapabilities,
+  PROBE_VERSION,
   loadReports,
   macProbeScript,
+  measuredByOlderProbe,
+  reportFromJson,
   offeredWords,
   parseMacProbe,
   reportKey,
@@ -172,4 +175,36 @@ test("the cache measures a Mac once at a time, keeps the newest, and is read bac
   const restored = await loadReports(storage);
   assert.deepEqual(restored.map((each) => each.mac), ["mac-1"]);
   assert.equal(restored[0]!.capabilities.hardwareEncoder.is, "yes");
+});
+
+test("a report says which probe made it, and one from an older probe is stale, so bb-box measures the Mac again", async () => {
+  const fresh = parseMacProbe(BOTH, "mac-1", 1_000, "mac");
+  assert.equal(fresh.probe, PROBE_VERSION);
+  assert.equal(measuredByOlderProbe(fresh), false);
+  const older = reportFromJson({ ...fresh, probe: undefined })!;
+  assert.equal(measuredByOlderProbe(older), true);
+  assert.equal(reportFromJson(fresh)?.probe, PROBE_VERSION);
+  let runs = 0;
+  const cache = new MacProbeCache({ run: async () => (runs++, BOTH), now: () => 2_000 });
+  cache.remember(older);
+  assert.equal(cache.stale("mac-1"), true);
+  cache.remember(fresh);
+  assert.equal(cache.stale("mac-1"), false);
+  assert.equal(runs, 0);
+});
+
+test("where a provider's Macs of one kind differ machine by machine, box_list and the doctor say they vary and what each kind had", () => {
+  const kind = (chip: string, capabilities: Partial<MacCapabilities>, withHardwareEncoder: number, withoutHardwareEncoder: number): MacReport => ({ ...report(capabilities, chip), chip, machines: { withHardwareEncoder, withoutHardwareEncoder } });
+  const m4 = kind("Apple M4 Pro (Virtual)", { simulator: SIMULATOR, hardwareEncoder: NO_HARDWARE, softwareEncoder: SOFTWARE }, 1, 1);
+  const m5 = kind("Apple M5 Max (Virtual)", { simulator: SIMULATOR, hardwareEncoder: HARDWARE, softwareEncoder: SOFTWARE }, 1, 0);
+  assert.equal(offeredWords([m5]), "its Macs (Apple M5 Max (Virtual)): iOS devices, video by its hardware H.264 encoder, software (x264 0.165) as the fallback");
+  assert.equal(
+    offeredWords([m4, m5]),
+    "its Macs vary by machine: Apple M4 Pro (Virtual), iOS devices, video by a hardware H.264 encoder on 1 of the 2 machines measured, by software (x264 0.165) on the other; Apple M5 Max (Virtual), iOS devices, video by its hardware H.264 encoder, software (x264 0.165) as the fallback",
+  );
+  const softwareOnly = kind("Apple M4 Pro (Virtual)", { simulator: SIMULATOR, hardwareEncoder: NO_HARDWARE, softwareEncoder: SOFTWARE }, 0, 2);
+  assert.match(offeredWords([softwareOnly, m5])!, /^its Macs vary by machine: Apple M4 Pro \(Virtual\), iOS devices, video by software \(x264 0.165\), as it has no hardware H\.264 encoder; Apple M5 Max/);
+  const check = capabilityCheck("namespace.m4", "Namespace's Apple M4 Pro (Virtual) Macs", m4, 2_000);
+  assert.equal(check.status, "ok");
+  assert.match(check.detail, /Its machines vary: video by a hardware H\.264 encoder on 1 of the 2 machines measured, by software \(x264 0.165\) on the other\./);
 });
