@@ -2754,11 +2754,38 @@ On the fakes, on a Linux box:
   Mac serves. A Mac no longer listed is taken as gone; failed reads
   before it are not.
 
+### The live check
+
+On production BB at main 0c2bdfd, on 28 October 2026, on the Tart Mac,
+an M4 Max, with nothing else on it. Three shared ios boxes pinned to
+Tart, asked for without waiting, about 5 s apart. Times are UTC, from
+bb-box's records of each box.
+
+| Box | Asked for | Ready | Ready after its ask | Its timings | Slot |
+| --- | --- | --- | --- | --- | --- |
+| First | 10:07:09.4 | 10:07:27.3 | 17.9 s | choosing 0.5 s, host 15.3 s, slot 1.5 s, ssh 0.6 s | `bbd-i1`, place 1 |
+| Second | 10:07:15.7 | 10:07:26.9 | 11.1 s | choosing 0.3 s, host 9.1 s, slot 1.3 s, ssh 0.4 s | `bbd-i2`, place 2 |
+| Third | 10:07:20.5 | 10:08:17.1 | 56.6 s | choosing 0.5 s, host 4.1 s, slot 51.6 s, ssh 0.3 s | slot 2, made for it |
+
+- **The slots went in the order asked.** The first box got the host's
+  first carried slot, the second the other, and the third made one. In
+  F-9b's reruns 2 and 3, the first box made one, and was ready last.
+- **The first two were ready together.** Both waited on the host's start,
+  which ended for each at 10:07:25.2, and claimed their slots at once,
+  as the queue lets the k-th box take the k-th free slot without waiting
+  for the boxes before it. The second's claim and SSH took 0.4 s less,
+  so it was ready 0.4 s before the first. The first was not ready first
+  by the clock: no box waits on another's claim.
+- **Released at once.** The doctor listed no host on the Mac at
+  10:09:18, within a minute of the releases.
+
 ### What limits these checks
 
 - **Item 2 was not seen live.** A Namespace start can be made to fail
   only through Namespace's API, such as destroying or suspending its Mac
   as it starts, or with a bb-box changed to fail it. Neither was used.
+- **Item 1 was seen once live,** with three boxes. Its timings on
+  other runs will vary with the Mac's load.
 - **Item 1 orders boxes within one bb-box instance.** Boxes queued
   before bb-box restarts are queued again as their acquires carry on, in
   that order.
