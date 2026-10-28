@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { dirname } from "node:path";
 import { startMacInput } from "../../core/mac-input.ts";
 import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
 import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
@@ -7,6 +9,8 @@ import { KeyFile, Ssh, SshTransport, generateKeyPair } from "../../transports/ss
 import type { SshAccess } from "../../transports/types.ts";
 import {
   BackendError,
+  DEVICE_DISPLAY,
+  type MacEncoder,
   type AcquireHooks,
   type Backend,
   type BackendContext,
@@ -25,6 +29,9 @@ import {
   type ReleaseHooks,
 } from "../types.ts";
 import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, loadReports, reportKey, type MacReport } from "../../core/mac-capabilities.ts";
+import { NAMESPACE_HOST_ROLE, NamespaceHosts, namespaceSlotOf } from "./ios-hosts.ts";
+import { NAMESPACE_IOS_HOSTS_DEFAULTS } from "./config.ts";
+import { setupDir } from "../setup-dir.ts";
 import { NamespaceApi, NamespaceError, type Instance, type InstanceShape, type NamespaceFetch, type PlatformConcurrency } from "./api.ts";
 import type { MacShape, NamespaceConfig, NamespaceKind } from "./config.ts";
 import { LINUX_IMAGE_TARGETS, LinuxImages, type LinuxImageDeps } from "./linux-images.ts";
@@ -170,6 +177,23 @@ const MAC_TAILSCALE = [
 const MIB_PER_GB = 1024;
 
 const SSH_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: true, inDesktopSession: false, streaming: true };
+const SLOT_COMMAND: CommandCapability = { transport: "ssh", shell: "sh", admin: false, inDesktopSession: false, streaming: true };
+const HOST_SHAPE: MacShape = { cores: 6, memoryGB: 14 };
+const HOST_READY_TIMEOUT_MS = 20 * 60_000;
+const HOST_TAILNET_NAME = "ios-host";
+const HOST_SETUP_PATHS = ["setup/ssh-pool/mac-ios.sh", "setup/ssh-pool/mac-home/.zshenv", "setup/tart/ios", "setup/android/build-h264.sh", "setup/android/pins.json", "setup/android/bb-box-h264"];
+
+export function hostSetupArchive(setup = setupDir()): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("tar", ["-czf", "-", "-C", dirname(setup.replace(/\/+$/, "")), ...HOST_SETUP_PATHS], { stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+    child.on("error", reject);
+    child.on("close", (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`tar could not pack the shared iOS host's setup: ${stderr.trim() || `exit ${code}`}`))));
+  });
+}
 
 export const MACOS_SHAPES: readonly { readonly cores: number; readonly memoryGB: number }[] = [
   { cores: 4, memoryGB: 7 },
@@ -205,6 +229,7 @@ export interface NamespaceBackendOptions {
   readonly cuaScript?: string;
   readonly linuxImageScript?: LinuxImageDeps["buildScript"];
   readonly setupArchive?: () => Promise<Buffer>;
+  readonly hostSetupArchive?: () => Promise<Buffer>;
   readonly dockerOptions?: DockerBackendOptions;
   readonly dockerCli?: (instance: string) => DockerCli;
   readonly linuxPullScript?: (ref: string, local: string) => string;
@@ -237,6 +262,7 @@ export class NamespaceBackend implements Backend {
   readonly #placing = new Set<string>();
   readonly #probes: MacProbeCache;
   readonly #byChip = new Map<string, MacReport>();
+  readonly slots: NamespaceHosts;
   #ssh: Promise<{ ssh: Ssh; publicKey: string }> | null = null;
   readonly linuxImages: LinuxImages;
   readonly #linux: NamespaceLinux;
@@ -287,6 +313,7 @@ export class NamespaceBackend implements Backend {
     void loadReports(context.storage)
       .then((reports) => reports.forEach((report) => this.#rememberChip(report, false)))
       .catch((error) => context.logError("read what Namespace's Macs offered", error));
+    this.slots = this.#namespaceHosts();
     this.#linux = new NamespaceLinux({
       context,
       images: this.linuxImages,
@@ -300,12 +327,72 @@ export class NamespaceBackend implements Backend {
     });
   }
 
+  #namespaceHosts(): NamespaceHosts {
+    return new NamespaceHosts({
+      installId: this.#context.installId,
+      storage: this.#context.storage,
+      settings: () => this.#config.iosHosts ?? NAMESPACE_IOS_HOSTS_DEFAULTS,
+      longestLifeMs: () => this.#config.longestLifeHours * 3600_000,
+      now: () => this.#now(),
+      sleep: (ms, signal) => this.#sleep(ms, signal),
+      report: () => this.macCapabilities()[0] ?? null,
+      room: (signal) => this.#hostRoom(signal),
+      create: async (tag, shape, signal) => {
+        const { publicKey } = await this.#keys();
+        return this.#api.create(
+          {
+            shape: { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } },
+            labels: { [LABELS.install]: this.#context.installId, [LABELS.role]: NAMESPACE_HOST_ROLE, [LABELS.created]: String(this.#now()) },
+            deadline: this.#now() + KEEP_AHEAD_MS,
+            purpose: "bb-box shared iOS host",
+            uniqueTag: tag,
+            sshPublicKeys: [publicKey],
+          },
+          signal,
+        );
+      },
+      wait: (instance, signal) => this.#api.wait(instance, signal),
+      describe: (instance, signal) =>
+        this.#api.describe(instance, signal).catch((error: unknown) => {
+          if (error instanceof NamespaceError && error.kind === "gone") return null;
+          throw error;
+        }),
+      destroy: (instance, why, signal) => this.#api.destroy(instance, why, signal),
+      extend: async (instance, aheadMs, signal) => void (await this.#api.extend(instance, aheadMs, signal)),
+      answers: (instance, deadline, signal) => this.#answers(instance, deadline, signal),
+      command: async (instance) => new SshTransport((await this.#keys()).ssh, this.#access(instance), "macos"),
+      measure: (instance, signal) => this.#probes.measure(instance, signal),
+      joinTailnet: async (instance, signal) => {
+        const tailnet = this.#context.tailnet?.() ?? null;
+        if (tailnet) await this.#joinAs(instance, HOST_TAILNET_NAME, tailnet, false, signal);
+      },
+      leaveTailnet: (instance) => (this.#context.tailnet?.() ? this.#leaveTailnetAs(instance, HOST_TAILNET_NAME) : Promise.resolve()),
+      setupArchive: () => this.#options.hostSetupArchive?.() ?? hostSetupArchive(),
+      publicKey: async () => (await this.#keys()).publicKey,
+      log: (message) => this.#context.log?.(message),
+      logError: (operation, error) => this.#context.logError(operation, error),
+    });
+  }
+
+  async #hostRoom(signal?: AbortSignal): Promise<{ readonly shape: MacShape | null; readonly words: string | null }> {
+    const { concurrency } = await this.#workspaceLimits(signal);
+    const largest = await this.#largestMachine(concurrency);
+    const shape = largest ?? HOST_SHAPE;
+    const fullFor = concurrency ? workspaceFullFor(shape, concurrency) : null;
+    if (fullFor) return { shape, words: fullFor };
+    const held = await this.#held(signal);
+    if (held.length + this.#placing.size >= this.#config.machines) return { shape, words: `Namespace has ${held.length} of the ${this.#config.machines} machines bb-box may have at once.` };
+    return { shape, words: null };
+  }
+
   #rememberChip(report: MacReport, keep: boolean): void {
     const chip = report.chip ?? report.mac;
     const known = this.#byChip.get(chip);
     if (known && known.at > report.at) return;
     const byChip = { ...report, mac: chip };
+    const lent = this.slots?.lends("ios") ?? false;
     this.#byChip.set(chip, byChip);
+    if (this.slots && this.slots.lends("ios") !== lent) this.#context.kindsChanged?.();
     if (keep) void this.#context.storage.set(reportKey(chip), byChip).catch((error) => this.#context.logError(`keep what Namespace's ${chip} Macs offer`, error));
   }
 
@@ -347,10 +434,30 @@ export class NamespaceBackend implements Backend {
         readyTimeoutMs,
       },
       ...this.#linux.kinds(this.#options.readyTimeoutMs ?? LINUX_READY_TIMEOUT_MS),
+      ...this.#iosKind(),
+    ];
+  }
+
+  #iosKind(): BoxKind[] {
+    if (!this.slots.lends("ios")) return [];
+    const offered = this.slots.offerable();
+    if (!offered.ok) return [];
+    return [
+      {
+        id: "ios",
+        label: "iOS Simulator",
+        description:
+          "An iOS Simulator device, in a macOS user of its own on a Namespace Mac shared with other ios boxes, for installing, running and testing iOS apps, with its screen shown in the panel. The Mac is made for the first such box and lives until its last goes, at most the workspace plan's longest life less an hour. Commands run on the Mac as that user, with Xcode; simctl takes booted as the device. No sudo, Homebrew installs or app windows.",
+        requires: [],
+        slotsOnly: true,
+        capabilities: { os: "macos", arch: "arm64", gpu: false, features: [], command: SLOT_COMMAND, displays: [DEVICE_DISPLAY], computerUse: null, enrol: true, device: offered.device },
+        readyTimeoutMs: this.#options.readyTimeoutMs ?? HOST_READY_TIMEOUT_MS,
+      },
     ];
   }
 
   async capacity(kind: string, size: BoxSize, pending: readonly { readonly kind: string; readonly size: BoxSize }[], signal?: AbortSignal): Promise<Capacity> {
+    if (kind === "ios") return { ok: false, message: "Namespace lends ios boxes only as slots on a shared iOS host, each a macOS user with its own device.", warm: null, hosts: [{ host: "Namespace", ok: false, limits: [] }] };
     this.#kind(kind);
     const host = "Namespace";
     if (isLinuxKind(kind) && !linuxShapeFor(size)) return { ok: false, message: linuxTooBig(size), warm: null, hosts: [{ host, ok: false, limits: [] }] };
@@ -358,8 +465,9 @@ export class NamespaceBackend implements Backend {
     const largest = isLinuxKind(kind) ? null : await this.#largestMachine(concurrency);
     const shape = isLinuxKind(kind) ? linuxShapeFor(size) : macShapeFor(size, largest);
     if (!shape) return { ok: false, message: this.#tooBig(size, largest), warm: null, hosts: [{ host, ok: false, limits: [] }] };
+    const hostWords = this.slots.known()?.instance ? " A shared iOS host for ios boxes holds Namespace's Mac now, until its last box goes." : "";
     const fullFor = concurrency ? workspaceFullFor(shape, concurrency) : null;
-    if (fullFor) return { ok: false, message: fullFor, warm: null, hosts: [{ host, ok: false, limits: [{ resource: "cpu", used: concurrency!.usedCores, total: concurrency!.maxCores, reserve: 0, unit: "count" }] }] };
+    if (fullFor) return { ok: false, message: `${fullFor}${hostWords}`, warm: null, hosts: [{ host, ok: false, limits: [{ resource: "cpu", used: concurrency!.usedCores, total: concurrency!.maxCores, reserve: 0, unit: "count" }] }] };
     let held: Instance[];
     try {
       held = await this.#api.list({ [LABELS.install]: null }, signal);
@@ -379,6 +487,7 @@ export class NamespaceBackend implements Backend {
   }
 
   async acquire(box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    if (previous && namespaceSlotOf(previous)) return this.slots.acquire(box, previous, hooks, signal);
     const kind = this.#kind(box.kind);
     const linux = isLinuxKind(kind) ? kind : null;
     const largest = linux ? null : await this.#largestMachine((await this.#workspaceLimits(signal)).concurrency);
@@ -452,6 +561,11 @@ export class NamespaceBackend implements Backend {
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
+    if (namespaceSlotOf(guest)) {
+      await this.slots.release(guest, signal);
+      hooks.timing("release", Math.round(performance.now() - started));
+      return;
+    }
     const instance = await this.#mine(guest, signal);
     if (instance) {
       if (instance.status === "running" && this.#context.tailnet?.()) await this.#leave(instance.id, signal);
@@ -463,6 +577,7 @@ export class NamespaceBackend implements Backend {
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
+    if (namespaceSlotOf(guest)) return this.slots.power(guest, signal);
     const described = await this.#mine(guest, signal);
     if (!described || described.status === "destroyed" || described.status === "destroying") return null;
     if (described.status === "running") return "running";
@@ -471,7 +586,8 @@ export class NamespaceBackend implements Backend {
   }
 
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {
-    return (await this.#held(signal)).map((instance) => {
+    const slots = await this.slots.held(signal);
+    return [...slots, ...(await this.#held(signal)).map((instance): HeldGuest => {
       const boxId = instance.labels[LABELS.box] ?? null;
       const created = Number(instance.labels[LABELS.created]);
       const owner =
@@ -486,7 +602,19 @@ export class NamespaceBackend implements Backend {
           : null;
       const shape = instance.shape ? { cores: instance.shape.cores, memoryGB: Math.round(instance.shape.memoryMiB / MIB_PER_GB) } : null;
       return { ...this.#guest(this.#refOf(instance), boxId, instance, shape, isLinuxKind(instance.labels[LABELS.kind] ?? "")), owner, power: instance.status === "running" ? "running" : instance.status === "suspended" ? "stopped" : "unknown" };
-    });
+    })];
+  }
+
+  async restartDeviceServer(guest: Guest, signal?: AbortSignal): Promise<void> {
+    if (namespaceSlotOf(guest)) await this.slots.restartDeviceServer(guest, signal);
+  }
+
+  encoderOf(guest: Guest): MacEncoder | null {
+    const ref = namespaceSlotOf(guest);
+    if (!ref?.instance) return null;
+    const record = this.slots.known();
+    const report = this.macCapabilities()[0] ?? null;
+    return { mac: ref.instance, chip: report?.chip ?? null, hardware: record?.hardware ?? null, cores: this.#config.largestMachine?.cores ?? HOST_SHAPE.cores };
   }
 
   async maintain(signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void> {
@@ -495,6 +623,7 @@ export class NamespaceBackend implements Backend {
     for (const { target, why } of await this.linuxImages.due(signal).catch(() => [])) {
       void this.linuxImages.build(target, why).catch((error) => this.#context.logError(`build Namespace's ${target} image`, error));
     }
+    await this.slots.maintain(signal);
     const held = await this.#held(signal);
     await this.#removeStaleDevices(held, signal).catch((error) => this.#context.logError("remove Namespace machines' leftover tailnet devices", error));
     for (const instance of held) {
@@ -508,6 +637,7 @@ export class NamespaceBackend implements Backend {
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
+    if (namespaceSlotOf(guest)) return this.slots.transports(guest);
     const instance = typeof guest.data?.instance === "string" ? guest.data.instance : null;
     if (!instance) throw new BackendError("gone", `Box ${guest.ref} has no Namespace machine.`);
     if (isLinuxKind(kind)) return (await this.#linux.part(instance)).transports(guest, kind);
@@ -572,6 +702,7 @@ export class NamespaceBackend implements Backend {
     checks.push(await this.#linuxImagesCheck(signal));
     const macs = held.filter((instance) => instance.labels[LABELS.kind] !== undefined && !isLinuxKind(instance.labels[LABELS.kind] as NamespaceKind));
     for (const instance of macs) await this.#probes.measure(instance.id, signal).catch((error) => this.#context.logError(`measure what Namespace's Mac ${instance.id} offers`, error));
+    checks.push(await this.slots.doctor(signal));
     const reports = this.macCapabilities();
     if (!reports.length) checks.push({ id: "devices.namespace", name: "iOS devices on Namespace's Macs", status: "skipped", detail: "Not measured yet: bb-box measures each Namespace Mac it starts.", fix: null });
     for (const report of reports) checks.push(capabilityCheck(`namespace.${report.mac}`, `Namespace's ${report.mac} Macs`, report, now));
@@ -808,6 +939,7 @@ export class NamespaceBackend implements Backend {
   }
 
   async dispose(): Promise<void> {
+    this.slots.dispose();
     this.linuxImages.dispose();
     await (await this.#ssh?.catch(() => null))?.ssh.dispose();
     await this.#keyFile.dispose();

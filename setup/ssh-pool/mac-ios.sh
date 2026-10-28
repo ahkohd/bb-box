@@ -91,10 +91,19 @@ apply_list() {
   done <"$2"
 }
 
+models_xcode_has() {
+  types=$(env HOME=/var/root xcrun simctl list devicetypes 2>/dev/null)
+  while IFS= read -r line; do
+    type=$(printf '%s\n' "$line" | cut -f 2)
+    [ -n "$type" ] || continue
+    printf '%s\n' "$types" | grep -qF "($type)" && printf '%s\n' "$line"
+  done <"$ios/devices.tsv"
+}
+
 make_seed() {
   runtime=$1 list=$2 seed=$3
-  model=$(head -n 1 "$ios/devices.tsv" | cut -f 1)
-  type=$(head -n 1 "$ios/devices.tsv" | cut -f 2)
+  model=$(head -n 1 "$ROOT$share/ios/devices.tsv" | cut -f 1)
+  type=$(head -n 1 "$ROOT$share/ios/devices.tsv" | cut -f 2)
   sorted=$(mktemp)
   grep . "$ios/slim/$list.txt" | sort -u >"$sorted"
   step "making the seed for $list: the $model, made as $admin and slimmed twice, which takes a few minutes"
@@ -157,7 +166,6 @@ mkdir -p "$ROOT$libexec" "$ROOT$share/ios" "$ROOT$share/slot-home"
 install -m 0755 "$ios/device-host.sh" "$ROOT$helper"
 install -m 0644 "$ios/device-host-ports.pl" "$ROOT$libexec/device-host-ports"
 install -m 0644 "$here/mac-home/.zshenv" "$ROOT$share/slot-home/.zshenv"
-install -m 0644 "$ios/devices.tsv" "$ROOT$share/ios/devices.tsv"
 
 set -- $(newest_ios_runtime)
 [ $# -eq 3 ] || die "Xcode has no iOS Simulator runtime: run xcodebuild -downloadPlatform iOS, then run setup-mac.sh again"
@@ -165,6 +173,10 @@ runtime=$1 os=$2 build=$3
 list=ios-$os-$build
 [ -s "$ios/slim/$list.txt" ] || die "bb-box has no slimming list for iOS $os ($build), so it lends no iOS slot on this Mac: make one as docs/research/ios-simulator-slimming.md says, as setup/tart/ios/slim/$list.txt"
 install -m 0644 "$ios/slim/$list.txt" "$ROOT$share/ios/$list.txt"
+models_xcode_has >"$ROOT$share/ios/devices.tsv.new"
+[ -s "$ROOT$share/ios/devices.tsv.new" ] || die "this Mac's Xcode can make none of bb-box's devices in $ios/devices.tsv"
+chmod 0644 "$ROOT$share/ios/devices.tsv.new"
+mv -f "$ROOT$share/ios/devices.tsv.new" "$ROOT$share/ios/devices.tsv"
 seed=$ROOT$share/ios/$list.disabled.plist
 sorted=$(mktemp)
 grep . "$ios/slim/$list.txt" | sort -u >"$sorted"
@@ -177,9 +189,14 @@ rm -f "$sorted"
 printf '%s\t%s\t%s\t%s\n' "$runtime" "$os" "$build" "$list" >"$ROOT$share/ios/runtimes.tsv"
 chmod -R a+rX "$ROOT$share/ios" "$ROOT$share/slot-home"
 
-step "writing device-host's daemons and setting it up as a kept host, closed until bb-box opens it"
 /bin/sh "$ROOT$helper" install </dev/null >/dev/null
-printf 'kept=yes\nmost=12\nahead=1\nresetting-most=4\ndisk-reserve-gib=40\n' | /bin/sh "$ROOT$helper" init >/dev/null
+if [ -n "${HOST_SETTINGS:-}" ]; then
+  step "writing device-host's daemons and setting it up as a host bb-box deletes after its last box"
+  printf '%s\n' "$HOST_SETTINGS" | /bin/sh "$ROOT$helper" init >/dev/null
+else
+  step "writing device-host's daemons and setting it up as a kept host, closed until bb-box opens it"
+  printf 'kept=yes\nmost=12\nahead=1\nresetting-most=4\ndisk-reserve-gib=40\n' | /bin/sh "$ROOT$helper" init >/dev/null
+fi
 echo "ios=$os $build $list companion=$idb_version"
 if sshd_refuses_slots; then
   echo "warning=sshd lets only some users log in, with AllowUsers or AllowGroups, and no slot user, bbd-*, so no ios box can reach its slot. Add bbd-* beside bbx-* to AllowUsers in /etc/ssh/sshd_config or /etc/ssh/sshd_config.d; new connections read it."

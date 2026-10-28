@@ -85,6 +85,13 @@ case $tool in
     fi
     case ${1:-} in
       list)
+        if [ "${2:-}" = devicetypes ]; then
+          echo "== Device Types =="
+          flag no-iphone-18-pro || echo 'iPhone 18 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro)'
+          echo 'iPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)'
+          echo 'iPad Pro 13-inch (M5) (com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB)'
+          exit 0
+        fi
         if [ "${2:-}" = runtimes ]; then
           flag no-ios-runtime || echo 'iOS 27.0 (27.0 - 24A434) - com.apple.CoreSimulator.SimRuntime.iOS-27-0'
           echo 'watchOS 27.0 (27.0 - 24R345) - com.apple.CoreSimulator.SimRuntime.watchOS-27-0'

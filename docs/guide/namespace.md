@@ -119,6 +119,20 @@ When the box is released, BB Box takes it off the tailnet and destroys the Mac. 
 
 A Mac cannot outlive your plan's limit. BB Box keeps each Mac's end an hour ahead while its box is held, up to that limit, so a Mac that BB Box loses track of ends within the hour.
 
+## iOS boxes on a shared Namespace host
+
+Namespace can also lend `ios` boxes, as a pool Mac or a Tart host does ([064](../decisions/064-ios-shared-hosts.md), [065](../decisions/065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md)): each box a macOS user of its own, with its own iOS Simulator device, on a Namespace Mac it shares with other `ios` boxes. Namespace is the last choice for them, after a pool Mac and a Tart host, as its Macs cost by the minute and live at most your plan's limit.
+
+- **It is on by what BB Box measures.** BB Box measures each Namespace Mac it starts, for any box: whether it runs the iOS Simulator, and whether it has a hardware H.264 encoder. Once it has seen one that runs the Simulator, with a slimming list in BB Box for its newest iOS runtime, Namespace offers `ios`. **Shared iOS hosts**, on by default, turns it off.
+- **A host takes the workspace's Mac.** On a plan that allows one Mac at a time, no `macos` or `macos-desktop` box starts on Namespace while a host lives, and no host starts while such a box does. Each says why.
+- **It lives until its last box goes,** at most an hour before your plan's limit. In that last hour it lends no new slot, and every box on it ends with it: box_status says when.
+- **The first box waits for the host to be made:** the Mac, then idb_companion from its pin, BB Box's slimming list and a device made from it, and `bb-box-h264`, a few minutes in all. Boxes asked for meanwhile join it. A later box gets a ready slot in seconds.
+- **Its device is the first of BB Box's models the Mac's Xcode has,** on its newest iOS runtime: on Xcode 26.1.1, the iPhone 17 on iOS 26.2.
+- **Video** comes from the Mac's hardware H.264 encoder where it has one, as the Macs measured in October 2026 had, and from `bb-box-h264`, in software, where it does not.
+- **A slot's commands run as its user** through Namespace's gateway and `sudo`, as Namespace's Macs run no SSH server of their own for other users. So such a box has no `ssh <box name>`, and no terminal in the panel.
+
+`bb box doctor` has a check, **Shared iOS hosts on Namespace**, that says whether a host runs, its slots, when it ends and how its video is encoded.
+
 ## What a Linux box is like
 
 A Linux box is BB Box's own Linux image, with Ubuntu, as on any Docker host, in a container on a Linux machine of its own. You use it as `box`, who can use `sudo`, and it has Docker of its own. Desktops have the same apps as on other backends.

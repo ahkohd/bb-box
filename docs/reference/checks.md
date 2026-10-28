@@ -66,7 +66,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `qemu-video.<mac>` | Windows video on <mac> | bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865). |
 | `capacity.<mac>` | Room on <mac> | Room on the Mac for a macOS box at its default size. |
 | `sizes.<mac>` | Room for each kind on <mac> | The Mac holds a box of each kind at its default size. |
-| `ios-hosts.<mac>` | Shared iOS hosts on <mac> | The shared iOS hosts on the Mac (064): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; or, with none, whether one can start. |
+| `ios-hosts.<mac>` | Shared iOS hosts on <mac> | The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start. |
 
 ## Namespace
 
@@ -77,6 +77,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `namespace.machines` | Machines | The Namespace machines bb-box has, each with its age and when it ends, and any no box claims. |
 | `namespace.limits` | Workspace limits | The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which bb-box refuses a Mac up front; a warning when the token may not read them. |
 | `namespace.images` | Linux images | bb-box's Linux images in the workspace's registry: when each was built, whether a new one is due, and whether one is being built. |
+| `ios-hosts.<mac>` | Shared iOS hosts on <mac> | The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start. |
 
 ## Proxmox LXC
 
