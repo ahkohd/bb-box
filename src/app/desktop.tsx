@@ -37,7 +37,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, MachinesState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BOXES_ACTION, EmptyPanel, forThread, hasViewer, IconButton, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, ReleasedNotice, osName, deviceModelOf, hostFormBadges, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, hasViewer, IconButton, rememberedLive, isArm64Badge, KindBadges, lacksDocker, message, Notice, OPERATOR, ReleasedNotice, osName, deviceModelOf, hostFormBadges, RowTitle, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { POINTER_NONE } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
@@ -89,11 +89,15 @@ import {
   type Connection,
   type MacKeys,
 } from "./viewer.ts";
-import { BoxGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph, HighResolutionGlyph, KeyboardGlyph, MonitorGlyph, PasteGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { otherScreen, screenTitle, screensOf, screenWord, type Screen } from "./screens.ts";
 import { choices, filtering, NO_FILTERS, runsWayland, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
 import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
 
 export const DESKTOP_ACTION = "desktop";
+export const DEVICE_ACTION = "device";
+const ACTION_TITLES: Readonly<Record<ScreenAction, string>> = { desktop: "Desktop", device: "Device" };
+type ScreenAction = typeof DESKTOP_ACTION | typeof DEVICE_ACTION;
 export const DESKTOP_PAGE = "desktop";
 
 export const DESKTOP_OWN_PASTE_WORDS = "A paste from the box's own menu, or a middle click, uses the box's own clipboard.";
@@ -151,7 +155,7 @@ const lastStream = new Map<string, Stream>();
 /** Each tab's desktop whose video gave way to VNC, by box and viewer. */
 const failedVideo = new Set<string>();
 
-type Shows = "desktop" | "device";
+type Shows = Screen;
 
 export function displayChoiceKey(boxId: string): string {
   return `bb-box:display:${boxId}`;
@@ -362,9 +366,12 @@ export function pageUrl(pluginId: string, threadId: string, boxId: string): stri
   return new URL(pageHref(pluginId, threadId, boxId), window.location.origin).href;
 }
 
-/** The params of a box's desktop tab. */
-export function desktopParams(boxId: string): { box: string } {
-  return { box: boxId };
+export function screenParams(box: Pick<BoxView, "id" | "device">, screen: Screen): { box: string; shows?: "desktop" } {
+  return screen === "desktop" && box.device ? { box: box.id, shows: "desktop" } : { box: box.id };
+}
+
+function actionOf(screen: Screen): ScreenAction {
+  return screen === "device" ? DEVICE_ACTION : DESKTOP_ACTION;
 }
 
 function socketUrl(path: string, boxId: string, viewer: string): string {
@@ -400,6 +407,10 @@ function tabViewerId(boxId: string): string {
     // As above.
   }
   return id;
+}
+
+function showsTheBoxElsewhere(viewer: string): boolean {
+  return mounted.has(viewer);
 }
 
 function useViewerId(boxId: string): string | null {
@@ -1022,6 +1033,22 @@ function TypeTextField({
   );
 }
 
+function ScreenGlyph({ screen, className }: { screen: Screen; className?: string }) {
+  return screen === "device" ? <PhoneGlyph className={className} /> : <MonitorGlyph className={className} />;
+}
+
+function OtherScreenButton({ box, shows, onClick }: { box: BoxView; shows: Screen; onClick: (other: Screen) => void }) {
+  const other = otherScreen(box, shows);
+  if (!other) return null;
+  const word = screenWord(box, other);
+  return (
+    <Button type="button" variant="outline" size="sm" className="h-7 gap-1.5" onClick={() => onClick(other)}>
+      <ScreenGlyph screen={other} className="size-3.5" />
+      {word}
+    </Button>
+  );
+}
+
 /** The toolbar's words for who has control. `taken` says the agent took it back from this tab (038). */
 function controlText(box: BoxView, mine: boolean, taken: boolean, tookByControl: boolean): string {
   switch (box.control?.owner) {
@@ -1047,14 +1074,14 @@ function pageIsInsecure(): boolean {
   return typeof isSecureContext !== "undefined" && !isSecureContext;
 }
 
-type DesktopViewerProps = { threadId: string; boxId: string; newTab: boolean; onBack?: BackTo };
+type DesktopViewerProps = { threadId: string; boxId: string; newTab: boolean; onBack?: BackTo; screen?: Screen | null; openScreen?: (box: BoxView, screen: Screen) => void };
 
 export function DesktopViewer(props: DesktopViewerProps) {
   const viewer = useViewerId(props.boxId);
   return viewer === null ? null : <DesktopViewerAs {...props} viewer={viewer} />;
 }
 
-function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopViewerProps & { viewer: string }) {
+function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openScreen, viewer }: DesktopViewerProps & { viewer: string }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
@@ -1067,7 +1094,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   const released = state !== null && !box;
   const path = state?.desktopPath ?? null;
   const shown = `${boxId}:${viewer}`;
-  const [shows, setShows] = useState<Shows>(() => lastDisplay.get(shown) ?? storedDisplay(boxId) ?? "desktop");
+  const [shows, setShows] = useState<Shows>(() => screen ?? lastDisplay.get(shown) ?? storedDisplay(boxId) ?? "desktop");
   const chooseDisplay = (next: Shows) => {
     lastDisplay.set(shown, next);
     setShows(next);
@@ -1075,10 +1102,10 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   const hasDevice = !!box?.device;
   const hasDesktop = !!box?.display;
   useEffect(() => {
-    if (!box) return;
+    if (!box || screen) return;
     if (!hasDevice) chooseDisplay("desktop");
     else if (!hasDesktop) chooseDisplay("device");
-    else chooseDisplay(lastDisplay.get(shown) ?? storedDisplay(boxId) ?? "device");
+    else chooseDisplay(lastDisplay.get(shown) ?? storedDisplay(boxId) ?? "desktop");
   }, [box !== null, hasDevice, hasDesktop]);
   const deviceShown = shows === "device";
   const showsNow = useRef(shows);
@@ -1323,6 +1350,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
         mineNow.current && showsNow.current === ownShows
           ? {
               handBack: async () => {
+                if (showsTheBoxElsewhere(viewer)) return;
                 const latest = await rpc.call("desktop", { threadId, box: boxId });
                 if (latest.box?.control?.owner === "human" && latest.box.control.holder === viewer) await rpc.call("handBack", { threadId, box: boxId });
               },
@@ -1647,6 +1675,12 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
   } else if (box && !box.display && !box.device) {
     tone = "off";
     words = "No desktop";
+  } else if (box && screen === "device" && !hasDevice) {
+    tone = "off";
+    words = "No device";
+  } else if (box && screen === "desktop" && !hasDesktop) {
+    tone = "off";
+    words = "No desktop";
   } else if (box && box.state !== "ready") {
     tone = box.state === "stopped" ? "off" : box.state === "failed" || box.state === "gone" ? "bad" : "busy";
     words = statusOf(box, Date.now()).items[0]?.text ?? box.state;
@@ -1664,7 +1698,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
         {onBack ? <BackControl back={onBack} /> : null}
-        <MonitorGlyph className="text-muted-foreground" />
+        <ScreenGlyph screen={shows} className="text-muted-foreground" />
         <span className="font-medium text-foreground">{box?.name ?? lastName.current ?? "Desktop"}</span>
         {deviceShown && showing && deviceModelNow && device ? (
           <DevicePicker model={deviceModelNow.name} offered={device.offered} bootedHere={device.bootedHere} state={device.state} compact={compact} takesFrom={takesFrom} onSwitch={switchDevice} />
@@ -1673,25 +1707,16 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, viewer }: DesktopVie
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>
         </span>
-        {hasDevice && hasDesktop ? (
-          <span role="group" aria-label="Show" className="inline-flex items-center rounded-md border border-border p-0.5">
-            {(["device", "desktop"] as const).map((each) => (
-              <Button
-                key={each}
-                type="button"
-                variant={shows === each ? "secondary" : "ghost"}
-                size="sm"
-                className="h-6 px-2 text-xs"
-                aria-pressed={shows === each}
-                onClick={() => {
-                  storeDisplay(boxId, each);
-                  chooseDisplay(each);
-                }}
-              >
-                {each === "device" ? "Device" : "Desktop"}
-              </Button>
-            ))}
-          </span>
+        {box && hasDevice && hasDesktop ? (
+          <OtherScreenButton
+            box={box}
+            shows={shows}
+            onClick={(other) => {
+              if (screen && openScreen) return openScreen(box, other);
+              storeDisplay(boxId, other);
+              chooseDisplay(other);
+            }}
+          />
         ) : null}
         <span className="ml-auto flex items-center gap-1.5">
           {showing && !mine ? (
@@ -2018,24 +2043,39 @@ function nothingFromBox(box: BoxView, mine: boolean): string {
   return "Nothing has come from the box's clipboard yet. Copy something in the box first.";
 }
 
-function parseParams(params: unknown): string | null {
-  const box = (params as { box?: unknown } | null)?.box;
-  return typeof box === "string" && box.length > 0 ? box : null;
+function parseParams(params: unknown): { box: string; shows: "desktop" | null } | null {
+  const { box, shows } = (params as { box?: unknown; shows?: unknown } | null) ?? {};
+  return typeof box === "string" && box.length > 0 ? { box, shows: shows === "desktop" ? "desktop" : null } : null;
 }
 
-/** Opens a box's desktop tab in the thread's panel. There is one tab per box. */
-export function useOpenDesktop(): (box: BoxView) => void {
+function screenNeighbours(state: PanelState | null | undefined): BoxView[] {
+  return state ? [...(state.runsOn ? [state.runsOn.box] : []), ...state.boxes].filter(hasViewer) : [];
+}
+
+export function useOpenScreen(threadId: string): (box: BoxView, screen: Screen) => void {
   const navigate = useBbNavigate();
-  return (box) => {
-    navigate.openThreadPanel({ actionId: DESKTOP_ACTION, title: box.name, params: desktopParams(box.id) });
+  const rpc = useRpc<Contract>();
+  return (box, screen) => {
+    const open = (neighbours: readonly BoxView[]) => void navigate.openThreadPanel({ actionId: actionOf(screen), title: screenTitle(box, screen, neighbours), params: screenParams(box, screen) });
+    const known = rememberedLive<PanelState>(threadId);
+    if (known) return open(screenNeighbours(known));
+    void rpc.call("state", { threadId }).then(screenNeighbours, () => []).then(open);
   };
 }
 
 /** The thread panel tab for one box's desktop. Opened bare from its launcher row, it opens the thread's desktop, picks among several, or offers the Box panel. */
 export function DesktopPanel({ threadId, params }: { threadId: string; params: unknown }) {
-  const boxId = parseParams(params);
-  if (boxId) return <DesktopViewer key={boxId} threadId={threadId} boxId={boxId} newTab />;
-  return <DesktopChooser threadId={threadId} />;
+  const opened = parseParams(params);
+  const openScreen = useOpenScreen(threadId);
+  if (opened) return <DesktopViewer key={opened.box} threadId={threadId} boxId={opened.box} newTab screen={opened.shows} openScreen={openScreen} />;
+  return <ScreenChooser threadId={threadId} action={DESKTOP_ACTION} />;
+}
+
+export function DevicePanel({ threadId, params }: { threadId: string; params: unknown }) {
+  const opened = parseParams(params);
+  const openScreen = useOpenScreen(threadId);
+  if (opened) return <DesktopViewer key={opened.box} threadId={threadId} boxId={opened.box} newTab screen="device" openScreen={openScreen} />;
+  return <ScreenChooser threadId={threadId} action={DEVICE_ACTION} />;
 }
 
 /** A box as a row: its glyph, name, kind, state (and who has control, for a desktop), with its actions. */
@@ -2056,42 +2096,47 @@ export function BoxLine({ box, meta, machine = false, actions }: { box: BoxView;
 }
 
 /**
- * The bare Desktop launcher tab, made a real shortcut (Task A): one desktop opens
- * straight away, several offer a chooser, and none sends you to the Box panel. The
- * SDK 0.5.29 has no way to hide the launcher row (see docs/bb-requests.md #14), so
- * the shortcut lives here rather than in the action's run().
+ * The bare Desktop or Device launcher tab, made a real shortcut (Task A): one box
+ * opens straight away, several offer a chooser, and none sends you to the Box panel.
+ * The SDK 0.5.29 has no way to hide the launcher row (see docs/bb-requests.md #14),
+ * so the shortcut lives here rather than in the action's run().
  */
-function DesktopChooser({ threadId }: { threadId: string }) {
+function ScreenChooser({ threadId, action }: { threadId: string; action: ScreenAction }) {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
-  const open = useOpenDesktop();
+  const openScreen = useOpenScreen(threadId);
   const { value: state, error } = useLive<PanelState>(threadId, () => rpc.call("state", { threadId }), forThread(threadId));
   // The box this thread runs on counts too (the operator, 4 October 2026): listed first, and alone it opens straight away.
   const runsOn = state?.runsOn && hasViewer(state.runsOn.box) ? state.runsOn.box : null;
-  const desktops = [...(runsOn ? [runsOn] : []), ...(state?.boxes.filter(hasViewer) ?? [])];
-  useNow(desktops.some((box) => box.state === "acquiring" || box.state === "starting"), 1000);
-  if (desktops.length === 1) return <DesktopViewer key={desktops[0]!.id} threadId={threadId} boxId={desktops[0]!.id} newTab />;
+  const offered = screenNeighbours(state).filter((box) => action === DESKTOP_ACTION || box.device);
+  const screenHere = (box: BoxView): Screen => (action === DEVICE_ACTION || !box.desktop ? "device" : "desktop");
+  const only = offered.length === 1 ? offered[0]! : null;
+  const title = !state ? null : only ? screenWord(only, screenHere(only)) : ACTION_TITLES[action];
+  useRetitleBareTabByWhatItShows(action, title);
+  useNow(offered.some((box) => box.state === "acquiring" || box.state === "starting"), 1000);
+  if (only) return <DesktopViewer key={only.id} threadId={threadId} boxId={only.id} newTab screen={screenHere(only)} openScreen={openScreen} />;
+  const noun = action === DEVICE_ACTION ? "device" : "desktop";
   return (
     <div className="p-4">
       {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-      {state && !desktops.length ? (
-        <EmptyPanel title="No desktop box">
-          <p className="mt-1">This thread has no desktop box.</p>
+      {state && !offered.length ? (
+        <EmptyPanel title={`No ${noun} box`}>
+          <p className="mt-1">This thread has no {noun} box.</p>
           <Button type="button" variant="outline" size="sm" className="mt-3 h-7" onClick={() => navigate.openThreadPanel({ actionId: BOXES_ACTION, title: "Box" })}>
             Open the Box panel
           </Button>
         </EmptyPanel>
       ) : null}
-      {desktops.length ? (
+      {offered.length ? (
         <div className="rounded-lg border border-border bg-card px-4 py-1">
           <div className="divide-y divide-border">
-            {desktops.map((box) => (
+            {offered.map((box) => (
               <BoxLine
                 key={box.id}
                 box={box}
                 machine={box.id === runsOn?.id}
                 actions={
-                  <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => open(box)}>
+                  <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => openScreen(box, screenHere(box))}>
                     Open
                   </Button>
                 }
@@ -2102,6 +2147,16 @@ function DesktopChooser({ threadId }: { threadId: string }) {
       ) : null}
     </div>
   );
+}
+
+function useRetitleBareTabByWhatItShows(action: ScreenAction, title: string | null): void {
+  const navigate = useBbNavigate();
+  const given = useRef<string>(ACTION_TITLES[action]);
+  useEffect(() => {
+    if (title === null || title === given.current) return;
+    given.current = title;
+    navigate.openThreadPanel({ actionId: action, title });
+  }, [action, title]);
 }
 
 /** The Boxes page: every box across threads and your machines, or one box's desktop or terminal at <threadId>/<boxId>. */
@@ -2121,6 +2176,10 @@ export function BoxesPage({ subPath }: { subPath: string }) {
   const back: BackTo = fromSettings ? { label: "Back to settings", href: SETTINGS_PATH } : { label: "Back to boxes", go: () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: "" }) };
   if (threadId && boxId && parts.length === 1 && parts[0] === "terminal") {
     return <BoxTerminal key={`${threadId}/${boxId}/terminal`} threadId={threadId} boxId={boxId} onBack={back} />;
+  }
+  if (threadId && boxId && parts.length === 1 && parts[0] === "device") {
+    const openScreen = (box: BoxView, screen: Screen) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id, screen, fromSettings ? "settings" : undefined), replace: true });
+    return <DesktopViewer key={`${threadId}/${boxId}/device`} threadId={threadId} boxId={boxId} newTab={false} onBack={back} screen="device" openScreen={openScreen} />;
   }
   if (threadId && boxId && !parts.length) {
     return <DesktopViewer key={`${threadId}/${boxId}`} threadId={threadId} boxId={boxId} newTab={false} onBack={back} />;
@@ -2156,9 +2215,9 @@ export function useThreadTitles(threadIds: readonly string[]): Record<string, st
 }
 
 /** Where the Boxes page shows one box's desktop, or its terminal; from settings, the back arrow returns there. */
-export function desktopSubPath(threadId: string, boxId: string, view: "desktop" | "terminal" = "desktop", from?: "settings"): string {
+export function desktopSubPath(threadId: string, boxId: string, view: Screen | "terminal" = "desktop", from?: "settings"): string {
   const base = `${encodeURIComponent(threadId)}/${encodeURIComponent(boxId)}`;
-  return [base, ...(view === "terminal" ? ["terminal"] : []), ...(from === "settings" ? ["from-settings"] : [])].join("/");
+  return [base, ...(view === "desktop" ? [] : [view]), ...(from === "settings" ? ["from-settings"] : [])].join("/");
 }
 
 /** The page's tabs: your machines, and the threads' boxes by thread. */
@@ -2336,7 +2395,7 @@ function BoxList() {
                           act={actOn(threadId)}
                           now={now}
                           opens={{
-                            desktop: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id) }),
+                            screen: (target, screen) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, screen) }),
                             terminal: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, "terminal") }),
                           }}
                           meta={[hasViewer(box) && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}

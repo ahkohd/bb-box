@@ -91,9 +91,9 @@ The page opens on the tab you chose last. The first time, it opens on Machines i
 
 ![The Boxes page's Threads tab, with 3 threads](../design/mockups/built/boxes-page-threads-light.png)
 
-Under the tabs, a search field finds boxes by name, kind, provider or thread title. Beside it:
+Under the tabs, a search field finds boxes by name, kind, provider, device, such as iPhone 18 Pro, or thread title. Beside it:
 
-- **Filters** keeps the boxes whose system, tags, provider and state you tick. Tags say what a box is, such as Desktop, GPU or Container. Each filter offers only what the tab lists.
+- **Filters** keeps the boxes whose system, tags, provider and state you tick. A box with a device has its device's system, iOS or Android, so it is not under macOS or Linux. Tags say what a box is, such as Desktop, GPU or Container. Each filter offers only what the tab lists.
 - **Sort** orders the boxes by name or by when they were made. Select the same choice again to reverse the order.
 
 On Threads, each thread's card comes where its first box falls in that order.

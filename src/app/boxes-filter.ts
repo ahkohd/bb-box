@@ -1,3 +1,4 @@
+import { platformWord } from "../core/device.ts";
 import type { BoxView } from "../plugin/views.ts";
 
 export type StateGroup = "Ready" | "Starting" | "Stopped" | "Failed";
@@ -28,7 +29,7 @@ export const TAG_LIST_GROUPS: readonly TagGroup[] = ["forms", "has"];
 export const TAG_GROUP_LABELS: Readonly<Record<TagGroup, string>> = { systems: "System", forms: "Form", has: "Has", providers: "Provider", states: "State" };
 
 const TAG_ORDER: Readonly<Partial<Record<TagGroup, readonly string[]>>> = {
-  systems: ["Linux", "macOS", "Windows"],
+  systems: ["Linux", "macOS", "Windows", "iOS", "Android"],
   forms: ["VM", "Container", "microVM", "Physical"],
   has: ["Desktop", "Wayland", "GPU", "KVM", "arm64"],
   states: STATE_GROUPS,
@@ -43,6 +44,10 @@ export function filtering(filters: Filters): boolean {
 }
 
 const SYSTEM_NAMES: Readonly<Record<string, string>> = { linux: "Linux", macos: "macOS", windows: "Windows" };
+
+function systemTag(box: BoxView): string {
+  return box.device ? platformWord(box.device.platform) : (SYSTEM_NAMES[box.os] ?? box.os);
+}
 
 function formTag(box: BoxView): string | null {
   switch (box.form) {
@@ -65,7 +70,7 @@ export function tagsOf(box: BoxView): Readonly<Record<TagGroup, readonly string[
   const features = [...box.requires, ...box.extras];
   const has = [box.desktop && "Desktop", runsWayland(box) && "Wayland", box.gpu && "GPU", features.includes("kvm") && "KVM", box.arch === "arm64" && "arm64"].filter((tag): tag is string => !!tag);
   return {
-    systems: [SYSTEM_NAMES[box.os] ?? box.os],
+    systems: [systemTag(box)],
     forms: form ? [form] : [],
     has,
     providers: [box.provider ?? box.backendLabel],
@@ -102,7 +107,7 @@ function matchesGroup(tags: Readonly<Record<TagGroup, readonly string[]>>, filte
 }
 
 function matchesSearch({ box, words }: Listed, terms: readonly string[]): boolean {
-  const text = [box.name, box.kindLabel, box.backendLabel, ...words].join(" ").toLowerCase();
+  const text = [box.name, box.kindLabel, box.backendLabel, box.device?.model ?? "", ...words].join(" ").toLowerCase();
   return terms.every((term) => text.includes(term));
 }
 

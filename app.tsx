@@ -1,11 +1,11 @@
-// bb-box's panels: a thread's boxes, each desktop box's viewer, each box's
-// terminal, the Boxes page, the backends on the settings page, and the
+// bb-box's panels: a thread's boxes, each box's desktop and device viewers,
+// each box's terminal, the Boxes page, the backends on the settings page, and the
 // Monitor's machine status in the sidebar footer. They read everything through
 // the RPC contract and refetch when the server says something changed.
 
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { BOXES_ACTION } from "./src/app/common.tsx";
-import { DESKTOP_ACTION, DESKTOP_PAGE, DesktopPanel, BoxesPage } from "./src/app/desktop.tsx";
+import { DESKTOP_ACTION, DESKTOP_PAGE, DesktopPanel, BoxesPage, DEVICE_ACTION, DevicePanel } from "./src/app/desktop.tsx";
 import { BoxesPanel } from "./src/app/panel.tsx";
 import { NewBoxInputs } from "./src/app/new-box-inputs.tsx";
 import { SettingsSection } from "./src/app/settings.tsx";
@@ -22,6 +22,13 @@ export default definePluginApp((app) => {
     id: DESKTOP_ACTION,
     title: "Desktop",
     component: DesktopPanel,
+    layout: "flush",
+  });
+  app.slots.threadPanelAction({
+    id: DEVICE_ACTION,
+    title: "Device",
+    icon: "bb-box/phone",
+    component: DevicePanel,
     layout: "flush",
   });
   app.slots.threadPanelAction({

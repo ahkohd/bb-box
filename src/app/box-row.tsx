@@ -21,11 +21,12 @@ import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { deviceModelOf, hasViewer, hostFormBadges, IconButton, isArm64Badge, KindBadges, lacksDocker, osName, relativeTime, RowTitle, SETTINGS_PATH, StatusLine } from "./common.tsx";
 import { runsWayland } from "./boxes-filter.ts";
-import { pageUrl, useOpenDesktop } from "./desktop.tsx";
+import { pageUrl, useOpenScreen } from "./desktop.tsx";
 import { JoinHelp } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
-import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { BoxGlyph, MonitorGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { screensOf, screenWord, type Screen } from "./screens.ts";
 import { canResize, ResizeDialog, useResizeNote } from "./resize.tsx";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh";
@@ -58,6 +59,14 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function openWords(box: BoxView, screen: Screen): string {
+  return `Open ${screenWord(box, screen).toLowerCase()}`;
+}
+
+function screenGlyph(screen: Screen): ReactNode {
+  return screen === "device" ? <PhoneGlyph /> : <MonitorGlyph />;
+}
+
 /** The box a thread runs on, when it is not the thread's own (036): yours, or another thread's. */
 export interface Held {
   readonly owner: "yours" | "thread";
@@ -87,7 +96,7 @@ export function BoxRow({
   /** Set for the box this thread runs on (036): a "BB machine" badge among the others, no Release, Stop or Start, and a line saying where those are. */
   held?: Held | null;
   /** Where the desktop and terminal open, when not in this thread's panel tabs: the Boxes page opens them on the page. */
-  opens?: { readonly desktop: (box: BoxView) => void; readonly terminal: (box: BoxView) => void };
+  opens?: { readonly screen: (box: BoxView, screen: Screen) => void; readonly terminal: (box: BoxView) => void };
   /** Last words on the status line, such as the Boxes page's who has control and thread title. */
   meta?: readonly (string | null)[];
   /** A quick action before the menu, such as the Boxes page's Open thread. */
@@ -97,9 +106,9 @@ export function BoxRow({
 }) {
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
-  const openInPanel = useOpenDesktop();
+  const openInPanel = useOpenScreen(threadId);
   const terminalInPanel = useOpenTerminal();
-  const openDesktop = opens?.desktop ?? openInPanel;
+  const openScreen = opens?.screen ?? openInPanel;
   const openTerminal = opens?.terminal ?? terminalInPanel;
   const [busy, setBusy] = useState<BoxAction | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -213,7 +222,7 @@ export function BoxRow({
         ) : null}
       </div>
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
-        {hasViewer(box) && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={() => openDesktop(box)} /> : null}
+        {ready ? screensOf(box).map((screen) => <IconButton key={screen} label={openWords(box, screen)} icon={screenGlyph(screen)} onClick={() => openScreen(box, screen)} />) : null}
         {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => openTerminal(box)} /> : null}
         {!held && box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} /> : null}
         {!held && box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} /> : null}
@@ -227,10 +236,12 @@ export function BoxRow({
           <DropdownMenuContent align="end" className="w-max min-w-40 max-w-72" mobileTitle={box.name}>
             {hasViewer(box) && ready ? (
               <>
-                <DropdownMenuItem onSelect={() => openDesktop(box)}>
-                  <MonitorGlyph />
-                  Open desktop
-                </DropdownMenuItem>
+                {screensOf(box).map((screen) => (
+                  <DropdownMenuItem key={screen} onSelect={() => openScreen(box, screen)}>
+                    {screenGlyph(screen)}
+                    {openWords(box, screen)}
+                  </DropdownMenuItem>
+                ))}
                 <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, threadId, box.id))}>
                   <Icon name="ExternalLink" aria-hidden />
                   Open in browser
