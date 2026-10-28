@@ -135,7 +135,7 @@ export function namespaceDeviceOffer(report: MacReport | null, setup = setupDir(
   const simulator = report.capabilities.simulator;
   if (simulator.is !== "yes") return { ok: false, why: `Namespace's last Mac measured, an ${report.chip ?? "unknown chip"}, cannot run the iOS Simulator: ${simulator.is === "no" ? simulator.why : "not known"}` };
   const newest = simulator.what.newest;
-  if (!newest) return { ok: false, why: "Namespace's last Mac measured did not say its newest iOS runtime" };
+  if (!newest) return { ok: false, why: "Namespace's last Mac was measured by an older bb-box, which did not ask its newest iOS runtime; bb-box starts a Namespace Mac for a few minutes to measure it again" };
   const slim = slimList(newest.os, newest.build, setup);
   if (!slim) return { ok: false, why: `bb-box has no slimming list for iOS ${newest.os} (${newest.build}), the newest runtime of Namespace's Macs: make one as docs/research/ios-simulator-slimming.md says, as setup/tart/ios/slim/ios-${newest.os}-${newest.build}.txt` };
   const types = new Set(simulator.what.deviceTypes ?? []);
@@ -248,6 +248,12 @@ export class NamespaceHosts implements SlotLender {
     const report = this.#access.report();
     if (this.#offered?.report !== report) this.#offered = { report, offer: namespaceDeviceOffer(report) };
     return this.#offered.offer;
+  }
+
+  offerNote(): string {
+    const most = this.#access.settings().most;
+    const slots = most ? `up to ${most} slots on it` : "as many slots as its cores, memory and video encoder allow";
+    return `iOS slots on a Namespace Mac made for the first ios box, in about 5 minutes, and deleted after its last; ${slots}; each slot a macOS user with its own device, files and keychain; no root; the slot's user and every file it owns removed after release`;
   }
 
   lends(kind: SlotKind): boolean {

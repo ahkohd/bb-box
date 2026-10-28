@@ -4,7 +4,8 @@ import type { ByteChannel, CommandTransport, RunOptions, RunResult, StreamOption
 const READ_MARK = "bb-box-read:";
 
 export function asSlotUser(user: string, script: string): string {
-  return `sudo -n -H -u ${quote(user)} -- /bin/zsh -c ${quote(`cd ~ 2>/dev/null || exit 1\n${script}`)}`;
+  const inUsersLaunchdSession = `sudo -n launchctl asuser "$(id -u ${quote(user)})"`;
+  return `${inUsersLaunchdSession} /usr/bin/sudo -n -H -u ${quote(user)} -- /bin/zsh -c ${quote(`cd ~ 2>/dev/null || exit 1\n${script}`)}`;
 }
 
 function inHome(path: string): string {

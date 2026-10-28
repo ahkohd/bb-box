@@ -4,11 +4,12 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { KEEP_AHEAD_MS, LABELS, MAC_CUA, NamespaceBackend, macShapeFor } from "../src/backends/namespace/backend.ts";
+import { KEEP_AHEAD_MS, LABELS, MAC_CUA, MEASURE_AGAIN_AFTER_MS, MEASURE_LIFE_MS, MEASURE_ROLE, NamespaceBackend, macShapeFor } from "../src/backends/namespace/backend.ts";
+import { MACHINES_KEPT_PER_CHIP, NamespaceMacReports } from "../src/backends/namespace/mac-reports.ts";
 import { CUA_SHA256, CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { parseNamespacePart, type NamespaceConfig } from "../src/backends/namespace/config.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
-import { reportKey } from "../src/core/mac-capabilities.ts";
+import { PROBE_VERSION, reportKey, type MacReport } from "../src/core/mac-capabilities.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
@@ -409,4 +410,90 @@ test("Namespace offers ios as slots on a shared host once it has measured a Mac 
   assert.match(backend.macCapabilities()[0]?.chip ?? "", /M4 Pro/);
   const off = await made({ on: false, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 });
   assert.equal(off.kinds().some((kind) => kind.id === "ios"), false);
+});
+
+const IOS_REPORT: MacReport = {
+  mac: "Apple M4 Pro (Virtual)",
+  chip: "Apple M4 Pro (Virtual)",
+  macos: "26.3.1",
+  at: 1,
+  where: "mac",
+  capabilities: {
+    simulator: { is: "yes", what: { xcode: "26.1.1", runtimes: ["iOS 26.2"], newest: { os: "26.2", build: "23C54" }, deviceTypes: ["com.apple.CoreSimulator.SimDeviceType.iPhone-17"] } },
+    hardwareEncoder: { is: "yes", what: { fullSizeFps: 141 } },
+    softwareEncoder: { is: "no", why: "bb-box-h264 is not installed" },
+  },
+  probe: PROBE_VERSION,
+};
+
+test("Namespace counts which of its Macs of a kind had a hardware encoder, once each, and says each host builds the software one (065 C follow-up)", async () => {
+  const storage = new MemoryStorage();
+  const reports = new NamespaceMacReports(storage, () => {});
+  const noHardware: MacReport = { ...IOS_REPORT, at: 2, capabilities: { ...IOS_REPORT.capabilities, hardwareEncoder: { is: "no", why: "VideoToolbox could not make a hardware session (-12903)" } } };
+  reports.remember({ ...IOS_REPORT, mac: "instance-a" }, "instance-a");
+  reports.remember({ ...IOS_REPORT, mac: "instance-a" }, "instance-a");
+  assert.deepEqual(reports.all()[0]?.machines, { withHardwareEncoder: 1, withoutHardwareEncoder: 0 });
+  assert.equal(reports.all()[0]?.capabilities.softwareEncoder.is, "yes", "each host builds bb-box-h264 as it starts");
+  reports.remember({ ...noHardware, mac: "instance-b" }, "instance-b");
+  const [kind] = reports.all();
+  assert.deepEqual(kind?.machines, { withHardwareEncoder: 1, withoutHardwareEncoder: 1 });
+  assert.equal(kind?.capabilities.hardwareEncoder.is, "no", "the latest machine's measure is the kind's");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const again = new NamespaceMacReports(storage, () => {});
+  for (const report of await again.load()) again.remember(report, null);
+  assert.deepEqual(again.all()[0]?.machines, { withHardwareEncoder: 1, withoutHardwareEncoder: 1 });
+  for (let n = 0; n < MACHINES_KEPT_PER_CHIP + 5; n++) again.remember({ ...IOS_REPORT, at: 10 + n, mac: `more-${n}` }, `more-${n}`);
+  assert.deepEqual(again.all()[0]?.machines, { withHardwareEncoder: MACHINES_KEPT_PER_CHIP, withoutHardwareEncoder: 0 }, "it keeps the latest machines of each kind");
+});
+
+test("box_list's ios offer on Namespace says its slots are on a Mac made for them, and the doctor says when Namespace's Macs vary by machine", async () => {
+  fakeSsh();
+  const storage = new MemoryStorage();
+  await storage.set(reportKey(IOS_REPORT.chip!), IOS_REPORT);
+  await storage.set("mac-machines/Apple M4 Pro (Virtual)", { "instance-a": true, "instance-b": false });
+  const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1"), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.match(backend.offerNote("ios") ?? "", /^iOS slots on a Namespace Mac made for the first ios box, in about 5 minutes, and deleted after its last; as many slots as its cores, memory and video encoder allow; each slot a macOS user/);
+  assert.equal(backend.offerNote("macos"), null);
+  const report = await backend.doctor();
+  const varies = report.checks.find((check) => check.id === "devices.namespace");
+  assert.match(varies?.detail ?? "", /^Namespace's Macs vary by machine: Apple M4 Pro \(Virtual\), iOS devices, video by a hardware H\.264 encoder on 1 of the 2 machines measured, by software \(OpenH264\) on the other\./);
+});
+
+test("a Namespace report from an older probe is measured again on a Mac bb-box starts for a few minutes, at most once a day, only while shared iOS hosts are on (065 C follow-up)", async () => {
+  let now = Date.parse("2030-01-01T00:00:00Z");
+  fakeSsh();
+  const storage = new MemoryStorage();
+  const { probe: _, ...withoutProbe } = IOS_REPORT;
+  const older: MacReport = { ...withoutProbe, capabilities: { ...IOS_REPORT.capabilities, simulator: { is: "yes", what: { xcode: "26.1.1", runtimes: ["iOS 26.2"] } } } };
+  await storage.set(reportKey(IOS_REPORT.chip!), older);
+  const fake = new FakeNamespace({ now: () => now, lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const made = (iosHosts?: NamespaceConfig["iosHosts"]) => disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, testContext(storage, "inst1"), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":", now: () => now }));
+  const off = made({ on: false, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await off.maintain();
+  assert.equal(fake.instances.size, 0, "no Mac is started while shared iOS hosts are off");
+  const backend = made();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.slots.lends("ios"), false);
+  fake.failNext("CreateInstance", "internal", "no Mac now");
+  await backend.maintain();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const creates = () => fake.calls.filter((call) => call.method === "CreateInstance").length;
+  assert.equal(creates(), 1);
+  now += 60 * 60_000;
+  await backend.maintain();
+  assert.equal(creates(), 1, "not again within the day");
+  now += MEASURE_AGAIN_AFTER_MS;
+  await backend.maintain();
+  const measuring = [...fake.instances.values()].find((instance) => instance.labels[LABELS.role] === MEASURE_ROLE);
+  assert.ok(measuring, "a Mac is started to measure");
+  assert.equal(measuring.deadline, now + MEASURE_LIFE_MS, "Namespace ends it itself should bb-box lose it");
+  for (let wait = 0; wait < 200 && measuring.status !== "DESTROYED"; wait++) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(measuring.status, "DESTROYED", "it is destroyed once measured");
+  assert.ok(backend.macCapabilities().some((report) => report.probe === PROBE_VERSION), "a report from the current probe is kept");
+  now += MEASURE_AGAIN_AFTER_MS;
+  await backend.maintain();
+  assert.equal(creates(), 2, "a report from the current probe is not measured afresh");
 });

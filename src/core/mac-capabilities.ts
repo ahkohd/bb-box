@@ -27,6 +27,11 @@ export interface MacCapabilities {
 
 export type MeasuredWhere = "mac" | "image" | "host";
 
+export interface MachinesMeasured {
+  readonly withHardwareEncoder: number;
+  readonly withoutHardwareEncoder: number;
+}
+
 export interface MacReport {
   readonly mac: string;
   readonly chip: string | null;
@@ -34,6 +39,8 @@ export interface MacReport {
   readonly at: number;
   readonly where: MeasuredWhere;
   readonly capabilities: MacCapabilities;
+  readonly probe?: number;
+  readonly machines?: MachinesMeasured;
 }
 
 export type StreamWay = "hardware" | "software";
@@ -50,6 +57,11 @@ export const SOFTWARE_ENCODER_PATH = "/usr/local/bin/bb-box-h264";
 export const PROBE_FRAMES = 12;
 export const CAPABILITIES_STALE_MS = 24 * 60 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
+export const PROBE_VERSION = 2;
+
+export function measuredByOlderProbe(report: MacReport): boolean {
+  return (report.probe ?? 1) < PROBE_VERSION;
+}
 
 const HARDWARE_CHECK_SWIFT = String.raw`import CoreMedia
 import CoreVideo
@@ -191,7 +203,7 @@ export function parseMacProbe(stdout: string, mac: string, at: number, where: Me
     if (said.startsWith("yes")) softwareEncoder = { is: "yes", what: { encoder: said.replace(/^yes encoder=/, "").replace(/, source [0-9a-f]+/, "") } };
     else softwareEncoder = { is: "no", why: said.replace(/^no why=/, "") };
   }
-  return { mac, chip: value("chip") || null, macos: value("macos") || null, at, where, capabilities: { simulator, hardwareEncoder, softwareEncoder } };
+  return { mac, chip: value("chip") || null, macos: value("macos") || null, at, where, capabilities: { simulator, hardwareEncoder, softwareEncoder }, probe: PROBE_VERSION };
 }
 
 export function streamWay(capabilities: MacCapabilities): StreamWay | null {
@@ -230,8 +242,49 @@ export function capabilityWords(capabilities: MacCapabilities): string {
   return `${runs}; ${videoWords(capabilities)}`;
 }
 
+export function variesWithinKind(report: MacReport): boolean {
+  return !!report.machines && report.machines.withHardwareEncoder > 0 && report.machines.withoutHardwareEncoder > 0;
+}
+
+function softwareFallbackWords(capabilities: MacCapabilities): string {
+  const { softwareEncoder } = capabilities;
+  return softwareEncoder.is === "yes" ? `by software (${softwareEncoder.what.encoder.split(",")[0]})` : "no device video";
+}
+
+export function variedEncoderWords(report: MacReport): string | null {
+  if (!variesWithinKind(report)) return null;
+  const { withHardwareEncoder, withoutHardwareEncoder } = report.machines!;
+  const others = withoutHardwareEncoder === 1 ? "the other" : "the others";
+  return `video by a hardware H.264 encoder on ${withHardwareEncoder} of the ${withHardwareEncoder + withoutHardwareEncoder} machines measured, ${softwareFallbackWords(report.capabilities)} on ${others}`;
+}
+
+function kindOfMacWords(report: MacReport): string {
+  const room = deviceRoom(report.capabilities);
+  if (room.is === "no") return "no iOS devices";
+  if (room.is === "unknown") return "iOS devices not measured yet";
+  return `iOS devices, ${variedEncoderWords(report) ?? videoWords(report.capabilities)}`;
+}
+
+export function macsVary(reports: readonly MacReport[]): boolean {
+  return reports.some(variesWithinKind) || new Set(reports.map(kindOfMacWords)).size > 1;
+}
+
+function kindNameOf(report: MacReport): string {
+  return report.chip ?? report.mac;
+}
+
+export function eachKindOfMacWords(reports: readonly MacReport[]): string {
+  return reports.map((report) => `${kindNameOf(report)}, ${kindOfMacWords(report)}`).join("; ");
+}
+
+function kindsOfMacWords(reports: readonly MacReport[]): string {
+  if (!macsVary(reports)) return `its Macs (${reports.map(kindNameOf).join(", ")}): ${kindOfMacWords(reports[0]!)}`;
+  return `its Macs vary by machine: ${eachKindOfMacWords(reports)}`;
+}
+
 export function offeredWords(reports: readonly MacReport[]): string | null {
   if (!reports.length) return null;
+  if (reports.some((report) => report.machines)) return kindsOfMacWords(reports);
   const groups = new Map<string, number>();
   for (const report of reports) {
     const room = deviceRoom(report.capabilities);
@@ -269,7 +322,9 @@ export function capabilityCheck(id: string, label: string, report: MacReport | n
   if (!report) return { id: checkId, name, status: "skipped", detail: "Not measured yet. bb-box measures it the next time it reaches the Mac.", fix: null };
   const room = deviceRoom(report.capabilities);
   const chip = report.chip ? `, an ${report.chip}` : "";
-  const detail = `${capitalised(capabilityWords(report.capabilities))}. Measured ${WHERE_WORDS[report.where]}${chip}, ${measuredAgo(report.at, now)}.`;
+  const varied = variedEncoderWords(report);
+  const variedWords = varied ? ` Its machines vary: ${varied}.` : "";
+  const detail = `${capitalised(capabilityWords(report.capabilities))}. Measured ${WHERE_WORDS[report.where]}${chip}, ${measuredAgo(report.at, now)}.${variedWords}`;
   if (room.is === "yes") return { id: checkId, name, status: "ok", detail, fix: null };
   if (room.is === "unknown") return { id: checkId, name, status: "warn", detail: `${detail} ${room.why} It lends ios slots meanwhile.`, fix: unknownFix(report.capabilities) };
   return { id: checkId, name, status: "warn", detail: `${detail} ${room.why} It lends no ios slot.`, fix: noRoomFix(report.capabilities) };
@@ -303,7 +358,15 @@ export function reportFromJson(value: unknown): MacReport | null {
     at: report.at,
     where: report.where === "image" || report.where === "host" ? report.where : "mac",
     capabilities: report.capabilities,
+    ...(typeof report.probe === "number" ? { probe: report.probe } : {}),
+    ...(machinesFromJson(report.machines) ? { machines: machinesFromJson(report.machines)! } : {}),
   };
+}
+
+function machinesFromJson(value: unknown): MachinesMeasured | null {
+  if (!value || typeof value !== "object") return null;
+  const { withHardwareEncoder, withoutHardwareEncoder } = value as Partial<MachinesMeasured>;
+  return typeof withHardwareEncoder === "number" && typeof withoutHardwareEncoder === "number" ? { withHardwareEncoder, withoutHardwareEncoder } : null;
 }
 
 export const CAPABILITIES_KEY_PREFIX = "mac-capabilities/";
@@ -404,7 +467,7 @@ export class MacProbeCache implements MacProbes {
 
   stale(mac: string): boolean {
     const known = this.#reports.get(mac);
-    return !known || this.#now() - known.at > (this.#options.staleMs ?? CAPABILITIES_STALE_MS);
+    return !known || measuredByOlderProbe(known) || this.#now() - known.at > (this.#options.staleMs ?? CAPABILITIES_STALE_MS);
   }
 
   refresh(mac: string): void {
