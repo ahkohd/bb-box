@@ -14,7 +14,11 @@
 #include "encoder.h"
 
 #ifndef BB_H264_OPENH264_LIBRARY
+#ifdef __APPLE__
+#define BB_H264_OPENH264_LIBRARY "libopenh264.8.dylib"
+#else
 #define BB_H264_OPENH264_LIBRARY "libopenh264.so.8"
+#endif
 #endif
 
 enum { LARGEST_SIDE = 4096, HEADER_SIZE = 17, KEY_FLAG = 1, LONGEST_PATH = 4096 };
@@ -64,8 +68,9 @@ static const Encoder *const ENCODERS[] = {
 };
 
 static const Encoder *encoder;
-static Picture picture;
-static int encoder_open, have_picture;
+YuvPicture picture;
+int have_picture;
+static int encoder_open;
 
 static void rgb_to_i420(const uint8_t *rgb) {
   int width = picture.width, height = picture.height, stride = width * 3, half = width / 2;
@@ -86,7 +91,26 @@ static void rgb_to_i420(const uint8_t *rgb) {
   }
 }
 
-static int64_t monotonic_us(void) {
+void bgra_to_i420(const uint8_t *bgra, size_t stride) {
+  int width = picture.width, height = picture.height, half = width / 2;
+  for (int j = 0; j < height; j += 2) {
+    const uint8_t *top = bgra + (size_t)j * stride, *bottom = top + stride;
+    uint8_t *y_top = picture.y + (size_t)j * width, *y_bottom = y_top + width;
+    uint8_t *u = picture.u + (size_t)(j / 2) * half, *v = picture.v + (size_t)(j / 2) * half;
+    for (int i = 0; i < width; i += 2) {
+      const uint8_t *a = top + i * 4, *b = a + 4, *c = bottom + i * 4, *d = c + 4;
+      y_top[i] = (uint8_t)(((66 * a[2] + 129 * a[1] + 25 * a[0] + 128) >> 8) + 16);
+      y_top[i + 1] = (uint8_t)(((66 * b[2] + 129 * b[1] + 25 * b[0] + 128) >> 8) + 16);
+      y_bottom[i] = (uint8_t)(((66 * c[2] + 129 * c[1] + 25 * c[0] + 128) >> 8) + 16);
+      y_bottom[i + 1] = (uint8_t)(((66 * d[2] + 129 * d[1] + 25 * d[0] + 128) >> 8) + 16);
+      int r = a[2] + b[2] + c[2] + d[2], g = a[1] + b[1] + c[1] + d[1], bl = a[0] + b[0] + c[0] + d[0];
+      u[i / 2] = (uint8_t)((-38 * r - 74 * g + 112 * bl + (128 << 10) + 512) >> 10);
+      v[i / 2] = (uint8_t)((112 * r - 94 * g - 18 * bl + (128 << 10) + 512) >> 10);
+    }
+  }
+}
+
+int64_t monotonic_us(void) {
   struct timespec now;
   clock_gettime(CLOCK_MONOTONIC, &now);
   return (int64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
@@ -98,7 +122,7 @@ static void check_size(uint32_t width, uint32_t height) {
   if (width % 2 || height % 2) refuse("a frame of %ux%u has an odd side, and H.264's 4:2:0 needs even ones", width, height);
 }
 
-static void fit_picture(int width, int height) {
+void fit_picture(int width, int height) {
   if (encoder_open && picture.width == width && picture.height == height) return;
   if (encoder_open) encoder->close();
   free(picture.y);
@@ -147,7 +171,7 @@ static void answer_nothing(void) {
 
 static int64_t last_pts = -1;
 
-static void encode_picture(int key, int64_t started_us) {
+void encode_picture(int key, int64_t started_us) {
   int64_t pts = started_us / 1000;
   if (pts <= last_pts) pts = last_pts + 1;
   last_pts = pts;
@@ -156,7 +180,7 @@ static void encode_picture(int key, int64_t started_us) {
   answer(started_us);
 }
 
-static int read_all(void *into, size_t size) {
+int read_all(void *into, size_t size) {
   uint8_t *at = into;
   while (size) {
     ssize_t got = read(0, at, size);
@@ -168,7 +192,7 @@ static int read_all(void *into, size_t size) {
   return 0;
 }
 
-static uint32_t read_u32(void) {
+uint32_t read_u32(void) {
   uint8_t bytes[4];
   if (read_all(bytes, 4) != 0) refuse("the input ended inside a command");
   return bytes[0] | (uint32_t)bytes[1] << 8 | (uint32_t)bytes[2] << 16 | (uint32_t)bytes[3] << 24;
@@ -208,7 +232,8 @@ static const uint8_t *shared_frame(size_t size) {
 }
 
 static void usage(void) {
-  fputs("usage: bb-box-h264 [--encoder x264|openh264] [--openh264 library] [--bitrate kbit/s] [--fps n] [--threads n] [--version]\n",
+  fputs("usage: bb-box-h264 [--encoder x264|openh264] [--openh264 library] [--bitrate kbit/s] [--fps n] [--threads n] [--version]\n"
+        "       bb-box-h264 --simulator udid [--developer dir] [--scale thousandths] [encoder options]\n",
         stderr);
   exit(2);
 }
@@ -222,6 +247,8 @@ static int whole(const char *text, int least, int most) {
 
 int main(int argc, char **argv) {
   int show_version = 0;
+  const char *simulator = NULL, *developer = NULL;
+  int scale_thousandths = 1000;
   encoder = ENCODERS[0];
   for (int a = 1; a < argc; a++) {
     const char *option = argv[a], *value = a + 1 < argc ? argv[a + 1] : NULL;
@@ -237,6 +264,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(option, "--bitrate")) settings.bitrate_kbps = whole(value, 100, 200000);
     else if (!strcmp(option, "--fps")) settings.fps = whole(value, 1, 240);
     else if (!strcmp(option, "--threads")) settings.threads = whole(value, 1, 16);
+    else if (!strcmp(option, "--simulator")) simulator = value;
+    else if (!strcmp(option, "--developer")) developer = value;
+    else if (!strcmp(option, "--scale")) scale_thousandths = whole(value, 100, 1000);
     else usage();
   }
   char words[128];
@@ -247,8 +277,15 @@ int main(int argc, char **argv) {
   }
   fprintf(stderr, "bb-box-h264: %s, %d kbit/s, %d thread%s\n", words, settings.bitrate_kbps, settings.threads,
           settings.threads == 1 ? "" : "s");
-  uint8_t *rgb = NULL;
-  size_t rgb_capacity = 0;
+  if (simulator) {
+#ifdef __APPLE__
+    return follow_simulator(simulator, developer, scale_thousandths);
+#else
+    refuse("--simulator follows an iOS Simulator's screen, which only macOS has");
+#endif
+  }
+  uint8_t *received = NULL;
+  size_t received_capacity = 0;
   int key_pending = 0;
   for (;;) {
     uint8_t command;
@@ -266,32 +303,37 @@ int main(int argc, char **argv) {
       open_shared();
       continue;
     }
-    if (command != 'F' && command != 'S') refuse("unknown command byte 0x%02x", command);
+    if (command != 'F' && command != 'S' && command != 'I' && command != 'B') refuse("unknown command byte 0x%02x", command);
     uint32_t width = read_u32(), height = read_u32();
     check_size(width, height);
-    size_t size = (size_t)width * height * 3;
+    size_t stride = command == 'B' ? read_u32() : 0;
+    if (command == 'B' && (stride < (size_t)width * 4 || stride > (size_t)LARGEST_SIDE * 8))
+      refuse("a %ux%u BGRA frame cannot have rows of %zu bytes", width, height, stride);
+    size_t size = command == 'I' ? (size_t)width * height * 3 / 2 : command == 'B' ? stride * height : (size_t)width * height * 3;
     const uint8_t *frame;
-    if (command == 'F') {
-      if (size > rgb_capacity) {
-        free(rgb);
-        rgb = malloc(size);
-        if (!rgb) refuse("out of memory for a %ux%u frame", width, height);
-        rgb_capacity = size;
-      }
-      if (read_all(rgb, size) != 0) refuse("the input ended inside a %ux%u frame", width, height);
-      frame = rgb;
-    } else {
+    if (command == 'S') {
       frame = shared_frame(size);
+    } else {
+      if (size > received_capacity) {
+        free(received);
+        received = malloc(size);
+        if (!received) refuse("out of memory for a %ux%u frame", width, height);
+        received_capacity = size;
+      }
+      if (read_all(received, size) != 0) refuse("the input ended inside a %ux%u frame", width, height);
+      frame = received;
     }
     int64_t started = monotonic_us();
     fit_picture((int)width, (int)height);
-    rgb_to_i420(frame);
+    if (command == 'I') memcpy(picture.y, frame, size);
+    else if (command == 'B') bgra_to_i420(frame, stride);
+    else rgb_to_i420(frame);
     have_picture = 1;
     encode_picture(key_pending, started);
     key_pending = 0;
   }
   if (encoder_open) encoder->close();
-  free(rgb);
+  free(received);
   free(picture.y);
   free(unit);
   return 0;

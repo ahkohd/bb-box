@@ -7,7 +7,7 @@ def fields(line, key):
 
 
 def ios_record(base, build_lines, build_id, built, pins, size_gib):
-    runtime = slim = None
+    runtime = slim = encoders = None
     devices = []
     for line in build_lines:
         if line.startswith("runtime="):
@@ -16,6 +16,9 @@ def ios_record(base, build_lines, build_id, built, pins, size_gib):
         elif line.startswith("slim="):
             name, labels, sha256 = fields(line, "slim")
             slim = {"list": name, "labels": int(labels), "sha256": sha256}
+        elif line.startswith("encoders="):
+            hardware, software = fields(line, "encoders")[:2]
+            encoders = {"hardware": {"yes": True, "no": False}.get(hardware), "software": software or None}
         elif line.startswith("device="):
             model, native = fields(line, "device")[:2]
             devices.append({"model": model, "native": native})
@@ -23,6 +26,8 @@ def ios_record(base, build_lines, build_id, built, pins, size_gib):
         sys.exit("record-ios: the build printed no runtime or no devices")
     tools = dict(base.get("tools", {}))
     tools["idb_companion"] = runtime["companion"]
+    if encoders and encoders["software"]:
+        tools["bb-box-h264"] = encoders["software"]
     return {
         "contract": base["contract"],
         "image": "standard",
@@ -40,6 +45,7 @@ def ios_record(base, build_lines, build_id, built, pins, size_gib):
         "layer": None,
         "sizeGiB": size_gib,
         "devices": [{**device, "runtime": runtime, **({"slim": slim} if slim else {})} for device in devices],
+        **({"encoders": encoders} if encoders else {}),
     }
 
 

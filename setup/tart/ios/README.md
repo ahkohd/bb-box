@@ -13,6 +13,11 @@ macOS image, with:
   as below
 - each device's keyboard defaults: no autocorrect, smart punctuation,
   predictions or slide to type, and the keyboard's first-use sheet answered
+- `bb-box-h264`, built in the image from [`setup/android`](../../android/build-h264.sh),
+  which encodes a device's video in software where the Mac's hardware
+  encoder fails or is not used ([065](../../../docs/decisions/065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md)):
+  with Cisco's OpenH264, downloaded from Cisco, or with x264 built from its
+  pinned source when you give `--with-x264`. bb-box ships no x264 binary
 - `bb-box-check-ios`, the image's check
 - `device-host`, the helper that lends the VM's slots when it is a shared
   host ([064](../../../docs/decisions/064-ios-shared-hosts.md)), with two
@@ -49,7 +54,11 @@ cd setup/tart
 It clones `bb-box-macos` to `bb-box-ios-build`, boots it, and runs
 [`build-ios.sh`](build-ios.sh) in it. That:
 
-1. installs idb_companion and its notice;
+1. installs idb_companion and its notice, and builds `bb-box-h264`; it
+   records which H.264 encoders the VM has: hardware, as ffmpeg's
+   `h264_videotoolbox` with software not allowed finds it, and software, as
+   `bb-box-h264` names it. The image's record keeps both, and bb-box takes
+   them for what each Mac offers;
 2. removes the simulator devices Xcode made, so the only devices are
    bb-box's, named as its models;
 3. for each model: makes its device, boots it the first time (21 to 28 s),
@@ -130,14 +139,15 @@ measured again in this image.
 
 `bb-box-check-ios` runs at build, and in a refresh's trial box. Each line
 says `ok` or `FAIL`, and it exits 1 if any fails. For the image it checks
-idb_companion runs, its notice is there, and Device Hub is not running. For
-each device it checks:
+idb_companion and `bb-box-h264` run, idb_companion's notice is there, and
+Device Hub is not running. For each device it checks:
 
 | Check | Fails when | Why |
 | --- | --- | --- |
 | boots | `simctl bootstatus` does not return within 60 s | a device can draw its Home Screen and never report booted, as without `nanoregistryd` |
 | slim | not every label of the list is disabled | |
 | keyboard | a keyboard default is not off | typed text must arrive as typed |
+| software video | `bb-box-h264 --simulator` sends no frame of the booted device's framebuffer in 2 s | where the Mac's encoder is not used, the device streams in software |
 | pixels | a screenshot's size is not the model table's | the frame is drawn from the table |
 | appearance | dark or light, once set, does not read back, or the first is not set again | box_device sets it and reads it back |
 | text size | any of the 12 text sizes, once set, does not read back, or the first is not set again | box_device sets it and reads it back |

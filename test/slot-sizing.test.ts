@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseSshPoolSettings } from "../src/backends/ssh-pool/config.ts";
 import { parseTartPart } from "../src/backends/tart/config.ts";
-import { hostSizingWords, macSlotSizingWords, sizeHost, sizeMacSlots, slotsTheEncoderAllows } from "../src/core/slot-sizing.ts";
+import { hostSizingWords, macSlotSizingWords, sizeHost, sizeMacSlots, slotsTheCpuAllows, slotsTheEncoderAllows } from "../src/core/slot-sizing.ts";
 
 const M4_MAX = { name: "mac-1", cores: 16, performanceCores: 12, memoryGiB: 128, chip: "Apple M4 Max" };
 const POOL_MAC = { name: "pool-mac", cores: 18, performanceCores: null, memoryGiB: 36, chip: "Apple M5 Max" };
@@ -65,4 +65,14 @@ test("a Tart Mac takes its own slots, cores and memory for shared hosts, a backe
   const wrong = pool("mac-1 bbbox-admin@192.0.2.30 macos,ios:many");
   assert.ok(wrong.enabled && !wrong.ok);
   assert.match(JSON.stringify(wrong.problems), /Give machine mac-1's iOS slots as ios:<slots>, a whole number from 1 to 64, or ios for bb-box's estimate\./);
+});
+
+test("a Mac with no hardware encoder is sized by the cores its software video takes (065)", () => {
+  assert.equal(slotsTheCpuAllows(6), 7);
+  assert.equal(slotsTheCpuAllows(1), 1);
+  const sized = sizeMacSlots({ name: "ns", cores: 6, performanceCores: null, memoryGiB: 14, chip: "Apple M4 Pro (Virtual)", hardware: false }, undefined, undefined, 3);
+  assert.equal(sized.most.value, 4);
+  assert.match(sized.most.from, /7 for video in software, as it has no hardware H\.264 encoder \(each slot a stream at a half at 60 a second, about 0\.21 of a core, within a quarter of its 6 cores\)/);
+  const withEncoder = sizeMacSlots({ name: "ns", cores: 6, performanceCores: null, memoryGiB: 14, chip: "Apple M5 Max", hardware: true }, undefined, undefined, 3);
+  assert.match(withEncoder.most.from, /for the video encoder \(an Apple M5 Max/);
 });

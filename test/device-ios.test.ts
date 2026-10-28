@@ -10,6 +10,7 @@ import { hasPicture, isKeyFrame, nalUnits, spsPictureSize, startsWithStartCode }
 import type { EncodedFrame } from "../src/device/driver.ts";
 import { FrameFanout } from "../src/device/frame-fanout.ts";
 import { streamsEncodingIn, type StreamOutput } from "../src/device/idb.ts";
+import type { IosEncoderMode } from "../src/device/simulator-video.ts";
 import { HID_DAEMON, HID_DAEMON_ACTIVE, IosDriver, SPRINGBOARD, contentOrientation, parseProcessStart, type AppInfo, type ProcessStart } from "../src/device/ios-driver.ts";
 import { overridesListed, statusBarOverride } from "../src/device/ios-controls.ts";
 import { INERT_KEY_USAGE, PasteboardAccess, hidKey, runningApps } from "../src/device/ios-input.ts";
@@ -459,7 +460,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     return { home, paths, lists, program, log, target };
   }
 
-  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null>; orientationEveryMs?: number; hidDaemonActiveWaitMs?: number } = {}) {
+  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null>; orientationEveryMs?: number; hidDaemonActiveWaitMs?: number; encoder?: IosEncoderMode; softwareEncoder?: string } = {}) {
     simulator.idbLog = setup.log;
     const logs: string[] = [];
     const driver = new IosDriver({
@@ -479,6 +480,8 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
       access: options.access,
       appInfo: options.appInfo,
       buttonSettleMs: 20,
+      ...(options.encoder ? { encoder: options.encoder } : {}),
+      ...(options.softwareEncoder ? { softwareEncoder: options.softwareEncoder } : {}),
     });
     started.push(driver);
     return { driver, logs };
@@ -981,6 +984,80 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     assert.deepEqual(hidKey("ArrowUp"), { usage: 82, shift: false });
     assert.deepEqual(hidKey("Meta"), { usage: 227, shift: false });
     assert.equal(hidKey("é"), null);
+  });
+
+  function fakeSoftwareEncoder(home: string): { readonly helper: string; readonly log: string } {
+    const helper = join(home, "bb-box-h264");
+    const fake = fileURLToPath(new URL("./fake-simulator-h264.ts", import.meta.url));
+    writeFileSync(helper, `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`);
+    chmodSync(helper, 0o755);
+    const log = join(home, "h264-calls.log");
+    process.env.FAKE_H264_LOG = log;
+    return { helper, log };
+  }
+
+  test("streams in software from the device's framebuffer when asked to, at the viewer's step, and reports the cores it takes (065)", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    const encoder = fakeSoftwareEncoder(setup.home);
+    const { driver } = driverOf(setup, simulator, { encoder: "software", softwareEncoder: encoder.helper });
+    await driver.attach(setup.target, AbortSignal.timeout(20_000));
+    const frames: EncodedFrame[] = [];
+    const stop = new AbortController();
+    void (async () => {
+      for await (const frame of driver.video().frames(stop.signal)) frames.push(frame);
+    })();
+    driver.video().want?.("full");
+    await until("software frames at full size", () => frames.some((frame) => frame.key && frame.width === 1206 && frame.height === 2622) && frames.length > 3);
+    driver.video().want?.("half");
+    await until("software frames at a half", () => frames.some((frame) => frame.width === 604 && frame.height === 1312));
+    assert.deepEqual((await driver.readBack()).geometry?.video, { width: 1206, height: 2622 }, "the device's geometry stays in its own pixels");
+    const calls = readFileSync(encoder.log, "utf8");
+    assert.match(calls, new RegExp(`simulator ${UDID} scale 1000`));
+    assert.match(calls, new RegExp(`simulator ${UDID} scale 500`));
+    assert.ok(!readFileSync(setup.log, "utf8").includes("stream "), "idb's stream is never opened");
+    const encoding = driver.video().encoding?.();
+    assert.equal(encoding?.way, "software");
+    assert.equal(encoding?.encoder, "x264 0.165, source b35605ace3ddf7c1a5d67a2eb553f034aef41d55");
+    assert.equal(typeof encoding?.cores, "number", JSON.stringify(encoding));
+    stop.abort();
+  });
+
+  test("falls back to software when the Mac's hardware encoder fails, as on a Mac with none, and stays hardware-only when told to (065)", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    const encoder = fakeSoftwareEncoder(setup.home);
+    process.env.FAKE_IDB_NO_ENCODER = "1";
+    try {
+      const { driver, logs } = driverOf(setup, simulator, { softwareEncoder: encoder.helper });
+      await driver.attach(setup.target, AbortSignal.timeout(20_000));
+      assert.equal(driver.video().encoding?.()?.way, "hardware");
+      const frames: EncodedFrame[] = [];
+      const stop = new AbortController();
+      void (async () => {
+        for await (const frame of driver.video().frames(stop.signal)) frames.push(frame);
+      })();
+      driver.video().want?.("two-thirds");
+      await until("software frames after the fallback", () => frames.some((frame) => frame.key && frame.width === 804 && frame.height === 1748));
+      assert.ok(logs.some((line) => /hardware H\.264 encoder failed \(VideoToolbox encode error: OSStatus -12915\); streaming in software/.test(line)), logs.join("\n"));
+      assert.equal(driver.video().encoding?.()?.way, "software");
+      stop.abort();
+
+      const strict = driverOf(setUp(), new FakeSimulator(), { encoder: "hardware", softwareEncoder: encoder.helper });
+      await strict.driver.attach(setup.target, AbortSignal.timeout(20_000));
+      const none: EncodedFrame[] = [];
+      const halt = new AbortController();
+      void (async () => {
+        for await (const frame of strict.driver.video().frames(halt.signal)) none.push(frame);
+      })();
+      strict.driver.video().want?.("half");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      assert.equal(none.length, 0);
+      assert.equal(strict.driver.video().encoding?.()?.way, "hardware");
+      halt.abort();
+    } finally {
+      delete process.env.FAKE_IDB_NO_ENCODER;
+    }
   });
 });
 

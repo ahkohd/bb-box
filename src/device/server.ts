@@ -254,7 +254,8 @@ export class DeviceServer {
   }
 
   get videoReport(): VideoReport {
-    return { step: this.#video.applied, wants: this.#video.reported, cap: this.#video.cap, fps: this.#fps(), words: this.#capWords };
+    const encoding = this.#options.driver.video().encoding?.() ?? null;
+    return { step: this.#video.applied, wants: this.#video.reported, cap: this.#video.cap, fps: this.#fps(), words: this.#capWords, ...(encoding ? { encoding } : {}) };
   }
 
   #dropOldFrames(now: number): void {

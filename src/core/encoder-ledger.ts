@@ -1,6 +1,6 @@
 import type { DoctorCheck } from "../backends/types.ts";
 import type { CheckId } from "./checks.ts";
-import { VIDEO_STEPS, VIDEO_STEP_SCALES, largerStep, smallerStep, type VideoSize, type VideoStep, type VideoWant, type WantFor } from "./device.ts";
+import { VIDEO_STEPS, VIDEO_STEP_SCALES, largerStep, smallerStep, type VideoEncoding, type VideoSize, type VideoStep, type VideoWant, type WantFor } from "./device.ts";
 
 export type { VideoWant, WantFor };
 export type RoomFor = "control" | WantFor;
@@ -122,8 +122,47 @@ function fullPlaceClaim(each: Working, heldFull: ReadonlySet<string>, busyWaitin
   return busyWaiting.has(each.stream.box) ? 1 : 0;
 }
 
-export function allot(streams: readonly LedgerStream[], budget: number, heldFull: ReadonlySet<string> = new Set(), busyWaiting: ReadonlySet<string> = new Set()): Allotment {
-  const cap = budget * CAP_SHARE;
+export interface Pricing {
+  readonly cap: number;
+  readonly fullMost: number;
+  rate(stream: Pick<LedgerStream, "pixels" | "fps">, step: VideoStep): number;
+}
+
+export function hardwarePricing(budget: number): Pricing {
+  return { cap: budget * CAP_SHARE, fullMost: FULL_MOST, rate: streamRate };
+}
+
+export const SOFTWARE_SHARE = 0.25;
+export const UNKNOWN_CORES = 8;
+
+const SOFTWARE_FRAME_MS: readonly { readonly pixels: number; readonly ms: number }[] = [
+  { pixels: 402 * 872, ms: 2.0 },
+  { pixels: 602 * 1310, ms: 3.5 },
+  { pixels: 804 * 1748, ms: 5.7 },
+  { pixels: 1206 * 2622, ms: 8.9 },
+];
+
+export function softwareFrameMs(pixels: number): number {
+  const first = SOFTWARE_FRAME_MS[0]!;
+  if (pixels <= first.pixels) return (first.ms * pixels) / first.pixels;
+  for (let at = 1; at < SOFTWARE_FRAME_MS.length; at++) {
+    const low = SOFTWARE_FRAME_MS[at - 1]!;
+    const high = SOFTWARE_FRAME_MS[at]!;
+    if (pixels <= high.pixels || at === SOFTWARE_FRAME_MS.length - 1) return low.ms + ((pixels - low.pixels) * (high.ms - low.ms)) / (high.pixels - low.pixels);
+  }
+  return first.ms;
+}
+
+export function softwareCores(stream: Pick<LedgerStream, "pixels" | "fps">, step: VideoStep): number {
+  return (Math.max(stream.fps, FPS_FLOOR) * softwareFrameMs(stepPixels(stream.pixels, step))) / 1000;
+}
+
+export function softwarePricing(cores: number | null): Pricing {
+  return { cap: (cores ?? UNKNOWN_CORES) * SOFTWARE_SHARE, fullMost: Number.POSITIVE_INFINITY, rate: softwareCores };
+}
+
+export function allot(streams: readonly LedgerStream[], budget: number, heldFull: ReadonlySet<string> = new Set(), busyWaiting: ReadonlySet<string> = new Set(), pricing: Pricing = hardwarePricing(budget)): Allotment {
+  const cap = pricing.cap;
   const working: Working[] = [];
   for (const stream of streams) {
     const wanted = wantedStep(stream.wants);
@@ -133,10 +172,10 @@ export function allot(streams: readonly LedgerStream[], budget: number, heldFull
   const wantFull = working.filter((each) => each.wanted === "full");
   wantFull.sort((a, b) => rank(a.room) - rank(b.room) || fullPlaceClaim(b, heldFull, busyWaiting) - fullPlaceClaim(a, heldFull, busyWaiting) || a.stream.box.localeCompare(b.stream.box));
   wantFull.forEach((each, at) => {
-    if (at >= FULL_MOST) each.step = "two-thirds";
+    if (at >= pricing.fullMost) each.step = "two-thirds";
     else if (each.room === "control") each.kept = true;
   });
-  const rateOf = (each: Working) => streamRate(each.stream, each.step);
+  const rateOf = (each: Working) => pricing.rate(each.stream, each.step);
   let used = working.reduce((sum, each) => sum + rateOf(each), 0);
   while (used > cap) {
     const lowerable = working.filter((each) => !each.kept && VIDEO_STEPS.indexOf(each.step) > VIDEO_STEPS.indexOf(each.floor));
@@ -206,15 +245,28 @@ export interface EncoderPlace {
   readonly label: string;
   readonly chip: string | null;
   readonly hardware?: boolean | null;
+  readonly cores?: number | null;
 }
 
 export const NO_HARDWARE_WORDS = "It has no hardware H.264 encoder, so its devices stream in software, on its CPU.";
-export const NO_HARDWARE_ROOM_WORDS = "On this Mac: no hardware H.264 encoder, so this device streams in software, on its CPU.";
+export const CPU_FULL_WORDS = "This Mac's CPU is full with video, so frames come more slowly.";
+
+export function loweredOnCpuWords(others: readonly string[]): string {
+  if (!others.length) return "Shown at a lower resolution: this Mac encodes video on its CPU, which is busy.";
+  const devices = others.length === 1 ? "1 other device" : `${others.length} other devices`;
+  return `Shown at a lower resolution: this Mac encodes video on its CPU, busy with ${devices} (${namedBoxes(others)}).`;
+}
+
+export function cpuRoomWords(usedCores: number, capCores: number, noHardware: boolean): string {
+  const why = noHardware ? "no hardware H.264 encoder, so video is encoded in software" : "video encoded in software";
+  return `On this Mac: ${why}, about ${usedCores.toFixed(1)} of the ${capCores.toFixed(1)} cores it may use.`;
+}
 
 export interface StreamReport {
   readonly pixels: VideoSize;
   readonly wants: readonly VideoWant[];
   readonly fps: number;
+  readonly encoding?: VideoEncoding;
 }
 
 export interface Decision {
@@ -246,6 +298,7 @@ interface MacLedger {
   readonly held: Map<string, Held>;
   readonly busyBelowFullSince: Map<string, number>;
   allotment: Allotment | null;
+  cpuAllotment: Allotment | null;
   startingUntil: number;
   startingTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -277,10 +330,10 @@ export class EncoderLedgers {
   #ledger(place: EncoderPlace): MacLedger {
     let ledger = this.#macs.get(place.mac);
     if (!ledger) {
-      ledger = { place, streams: new Map(), held: new Map(), busyBelowFullSince: new Map(), allotment: null, startingUntil: 0, startingTimer: null };
+      ledger = { place, streams: new Map(), held: new Map(), busyBelowFullSince: new Map(), allotment: null, cpuAllotment: null, startingUntil: 0, startingTimer: null };
       this.#macs.set(place.mac, ledger);
     }
-    if (place.chip !== null || ledger.place.chip === null) ledger.place = { ...place, hardware: place.hardware ?? ledger.place.hardware ?? null };
+    if (place.chip !== null || ledger.place.chip === null) ledger.place = { ...place, hardware: place.hardware ?? ledger.place.hardware ?? null, cores: place.cores ?? ledger.place.cores ?? null };
     return ledger;
   }
 
@@ -343,7 +396,9 @@ export class EncoderLedgers {
   roomWords(boxId: string): string | null {
     const mac = this.#macOf.get(boxId);
     if (!mac || !this.on) return null;
-    if (this.#macs.get(mac)?.place.hardware === false) return NO_HARDWARE_ROOM_WORDS;
+    const ledger = this.#macs.get(mac);
+    const watched = ledger?.streams.get(boxId);
+    if (ledger && watched && this.#inSoftware(ledger, watched)) return cpuRoomWords(ledger.cpuAllotment?.used ?? 0, softwarePricing(ledger.place.cores ?? null).cap, ledger.place.hardware === false);
     return roomWords(this.load(mac), this.budget(mac).budget);
   }
 
@@ -354,8 +409,9 @@ export class EncoderLedgers {
   #update(mac: string): void {
     const ledger = this.#macs.get(mac);
     if (!ledger) return;
-    if (!this.on || ledger.place.hardware === false) {
+    if (!this.on) {
       ledger.allotment = null;
+      ledger.cpuAllotment = null;
       ledger.held.clear();
       for (const box of ledger.streams.keys()) this.#send(box, NO_DECISION);
       return;
@@ -363,15 +419,19 @@ export class EncoderLedgers {
     const { budget } = this.budget(mac);
     const now = this.#now();
     const streams: LedgerStream[] = [...ledger.streams.values()].map((each) => ({ box: each.box, name: each.name, pixels: each.report.pixels, wants: each.report.wants, fps: each.report.fps, controlled: this.#deps.controlled(each.box) }));
+    const onCpu = new Set([...ledger.streams.values()].filter((each) => this.#inSoftware(ledger, each)).map((each) => each.box));
     const heldFull = new Set([...ledger.held].filter(([, held]) => held.step === "full").map(([box]) => box));
     const busyWaiting = this.#busyWaitingForFull(ledger, streams, heldFull, now);
-    const allotment = allot(streams, budget, heldFull, busyWaiting);
-    ledger.allotment = allotment;
-    for (const box of [...ledger.held.keys()]) if (!allotment.streams.has(box)) ledger.held.delete(box);
+    const hardware = allot(streams.filter((stream) => !onCpu.has(stream.box)), budget, heldFull, busyWaiting);
+    const software = allot(streams.filter((stream) => onCpu.has(stream.box)), 0, heldFull, busyWaiting, softwarePricing(ledger.place.cores ?? null));
+    ledger.allotment = hardware;
+    ledger.cpuAllotment = software;
+    for (const box of [...ledger.held.keys()]) if (!hardware.streams.has(box) && !software.streams.has(box)) ledger.held.delete(box);
     const starting = now < ledger.startingUntil;
-    const watching = streams.filter((stream) => allotment.streams.has(stream.box));
     for (const stream of streams) {
-      const fresh = allotment.streams.get(stream.box);
+      const inSoftware = onCpu.has(stream.box);
+      const group = inSoftware ? software : hardware;
+      const fresh = group.streams.get(stream.box);
       if (!fresh) {
         this.#send(stream.box, starting ? { cap: null, words: VM_STARTING_WORDS } : NO_DECISION);
         continue;
@@ -381,11 +441,15 @@ export class EncoderLedgers {
       const held = heldAfter(previous && waitedSince !== undefined ? { ...previous, risingSince: Math.min(previous.risingSince ?? now, waitedSince) } : previous, fresh, now);
       ledger.held.set(stream.box, held);
       const isLowered = lowered(held);
-      const others = watching.filter((other) => other.box !== stream.box).map((other) => other.name).sort();
-      const words = [isLowered ? loweredWords(others) : null, allotment.beyond ? ENCODER_FULL_WORDS : null, starting ? VM_STARTING_WORDS : null].filter((each): each is string => each !== null);
+      const others = streams.filter((other) => other.box !== stream.box && group.streams.has(other.box)).map((other) => other.name).sort();
+      const words = [isLowered ? (inSoftware ? loweredOnCpuWords(others) : loweredWords(others)) : null, group.beyond ? (inSoftware ? CPU_FULL_WORDS : ENCODER_FULL_WORDS) : null, starting ? VM_STARTING_WORDS : null].filter((each): each is string => each !== null);
       this.#send(stream.box, { cap: isLowered ? held.step : null, words: words.length ? words.join(" ") : null });
     }
-    if (!watching.length) this.#probeIfUnknown(ledger);
+    if (!hardware.streams.size && !software.streams.size) this.#probeIfUnknown(ledger);
+  }
+
+  #inSoftware(ledger: MacLedger, stream: Watched): boolean {
+    return ledger.place.hardware === false || stream.report.encoding?.way === "software";
   }
 
   #busyWaitingForFull(ledger: MacLedger, streams: readonly LedgerStream[], heldFull: ReadonlySet<string>, now: number): ReadonlySet<string> {
@@ -441,17 +505,29 @@ export class EncoderLedgers {
     const id = `encoder.${label}` as CheckId;
     const name = `Video encoder on ${label}`;
     if (!this.on) return { id, name, status: "skipped", detail: "The encoder ledger is off in bb-box's settings: shared ios boxes' streams are capped at two thirds, and nothing else is.", fix: null };
-    if (ledger.place.hardware === false) return { id, name, status: "ok", detail: `${NO_HARDWARE_WORDS} ${ledger.streams.size === 1 ? "1 stream" : `${ledger.streams.size} streams`}.`, fix: null };
+    const lowered = [...ledger.held].filter(([, held]) => VIDEO_STEPS.indexOf(held.step) < VIDEO_STEPS.indexOf(held.wanted)).map(([box]) => ledger.streams.get(box)?.name ?? box).sort();
+    const loweredText = lowered.length ? ` Shown at a lower resolution: ${namedBoxes(lowered)}.` : "";
+    const cpu = ledger.cpuAllotment;
+    const cpuCap = softwarePricing(ledger.place.cores ?? null).cap;
+    const cpuStreams = cpu?.streams.size ?? 0;
+    const cpuText = `${cpuRoomWords(cpu?.used ?? 0, cpuCap, ledger.place.hardware === false)} ${cpuStreams === 1 ? "1 stream" : `${cpuStreams} streams`} in software.${cpu?.beyond ? ` ${CPU_FULL_WORDS}` : ""}`;
+    const cpuFix = "Fewer devices watched at once, or a Mac with a hardware H.264 encoder or more cores, gives each stream more room.";
+    if (ledger.place.hardware === false) return { id, name, status: cpu?.beyond ? "warn" : "ok", detail: `${NO_HARDWARE_WORDS} ${cpuText}${loweredText}`, fix: cpu?.beyond ? cpuFix : null };
     const { budget, from } = this.budget(mac);
     const why = chip !== null ? this.#unprobed.get(chip) : undefined;
     const source = from === "chip" ? `an ${chip}, about ${budget} full-size iPhone frames a second` : from === "probe" ? `an ${chip}, measured at ${Math.round(budget)} full-size iPhone frames a second` : `${chip ? `an ${chip}, which is not in bb-box's table` : "a chip bb-box has not read"}; bb-box assumes ${budget} full-size iPhone frames a second`;
     const allotment = ledger.allotment;
-    const lowered = [...ledger.held].filter(([, held]) => VIDEO_STEPS.indexOf(held.step) < VIDEO_STEPS.indexOf(held.wanted)).map(([box]) => ledger.streams.get(box)?.name ?? box).sort();
     const streams = allotment?.streams.size ?? 0;
-    const loweredText = lowered.length ? ` Shown at a lower resolution: ${namedBoxes(lowered)}.` : "";
-    const detail = `${roomWords(allotment?.used ?? 0, budget)} ${streams === 1 ? "1 stream" : `${streams} streams`}; ${source}.${loweredText}${allotment?.beyond ? ` ${ENCODER_FULL_WORDS}` : ""}${why ? ` ${why}.` : ""}`;
+    const detail = `${roomWords(allotment?.used ?? 0, budget)} ${streams === 1 ? "1 stream" : `${streams} streams`}; ${source}.${loweredText}${allotment?.beyond ? ` ${ENCODER_FULL_WORDS}` : ""}${cpuStreams ? ` ${cpuText}` : ""}${why ? ` ${why}.` : ""}`;
     const warn = from === "assumed" && chip !== null;
-    return { id, name, status: allotment?.beyond || warn ? "warn" : "ok", detail, fix: warn ? `bb-box measures it with ffmpeg's h264_videotoolbox when nothing streams on ${label}. Install ffmpeg there, or add the chip to CHIP_BUDGETS in src/core/encoder-ledger.ts.` : null };
+    const beyond = allotment?.beyond || cpu?.beyond;
+    return {
+      id,
+      name,
+      status: beyond || warn ? "warn" : "ok",
+      detail,
+      fix: warn ? `bb-box measures it with ffmpeg's h264_videotoolbox when nothing streams on ${label}. Install ffmpeg there, or add the chip to CHIP_BUDGETS in src/core/encoder-ledger.ts.` : beyond ? cpuFix : null,
+    };
   }
 
   dispose(): void {

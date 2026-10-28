@@ -480,6 +480,7 @@ export class SshPoolBackend implements Backend {
       settings: () => this.#config.slots,
       chip: (machine) => this.#chipOf(machine),
       devices: (machine, signal) => this.#devicesOn(machine, signal),
+      hardware: (machine) => hardwareKnown(this.#probes.report(machine.name)),
       machines: () => this.#config.machines,
       machine: (name) => this.#machines.get(name) ?? null,
       survey: async (signal) => (await this.#survey(signal)).map(poolMacView),
@@ -549,7 +550,8 @@ export class SshPoolBackend implements Backend {
     const mac = poolSlotOf(guest)?.mac;
     const machine = mac ? this.#machines.get(mac) : undefined;
     if (!mac || !machine) return null;
-    return { mac, chip: this.#chipOf(machine), hardware: hardwareKnown(this.#probes.report(mac)) };
+    const cores = this.#surveyed?.find((view) => view.machine === machine)?.probe.status?.cores ?? null;
+    return { mac, chip: this.#chipOf(machine), hardware: hardwareKnown(this.#probes.report(mac)), cores };
   }
 
   #chipOf(machine: SshPoolMachine): string | null {

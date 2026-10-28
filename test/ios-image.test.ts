@@ -79,6 +79,7 @@ test("the record the build writes is the macOS image's, with kind ios, the macOS
       ...devices.map(([model, native]) => `device=${model}\t${native}\tUDID\t27.6\t89.5\t112`),
       "runtime=27.0\t24A434\t27.0\t1.7.7\tcom.apple.CoreSimulator.SimRuntime.iOS-27-0",
       `slim=ios-27.0-24A434\t112\t${sha}`,
+      "encoders=no\topenh264 2.6.0",
       "",
     ].join("\n"),
   );
@@ -92,6 +93,8 @@ test("the record the build writes is the macOS image's, with kind ios, the macOS
     devices.map(([model]) => [model, "1.7.7", { list: "ios-27.0-24A434", labels: 112, sha256: sha }]),
   );
   assert.equal(judgeImage(record, { os: "ios", pins: "pins", bbApp: "app", macosBuild: base.build, now: Date.parse("2026-10-27T00:00:00Z") }, "rebuild").status, "ok");
+  assert.deepEqual(record.encoders, { hardware: false, software: "openh264 2.6.0" }, "the build's VM measured its encoders (065)");
+  assert.equal(record.tools["bb-box-h264"], "openh264 2.6.0");
 });
 
 test("an iOS device's slimming list is read where records are read, and refused on Android devices or when malformed", () => {

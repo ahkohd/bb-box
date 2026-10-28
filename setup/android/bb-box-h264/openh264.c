@@ -72,7 +72,7 @@ static int openh264_open(int width, int height) {
   return 0;
 }
 
-static int openh264_encode(const Picture *picture, int key, int64_t pts) {
+static int openh264_encode(const YuvPicture *picture, int key, int64_t pts) {
   ISVCEncoder *encoder = openh264.encoder;
   SSourcePicture source;
   memset(&source, 0, sizeof source);

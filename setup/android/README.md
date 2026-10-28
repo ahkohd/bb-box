@@ -70,7 +70,11 @@ its gRPC refuses no token and a wrong one, and its ports are closed. Then it
 hibernates and resumes the clone.
 
 `bb-box-h264` uses Cisco's OpenH264 binary, downloaded from Cisco. To use
-x264, built from source in the template, add `--with-x264`. x264 takes about
+x264, built from source in the template, add `--with-x264`. The same
+`build-h264.sh` builds it on macOS on arm64, for iOS devices on a Mac
+without a hardware encoder: there `bb-box-h264 --simulator <udid>` reads a
+booted device's screen itself
+([065](../../docs/decisions/065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md)). x264 takes about
 two thirds of OpenH264's time a frame, for a better picture
 ([063 results](../../docs/decisions/063-results.md#e7-x264-against-openh264)).
 A refresh keeps the encoder the template has.

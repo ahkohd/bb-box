@@ -823,6 +823,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     files: () => deviceServerFiles(options.deviceServerRoot ?? join(setupDir(), "..")),
     personHasControl: (boxId) => desktops?.control.view(boxId).owner === "human",
     ledger,
+    iosEncoder: () => configuration.document.general.iosEncoder ?? GENERAL_DEFAULTS.iosEncoder,
     log: (line) => bb.log.info(line),
     logError,
     ...options.devices,

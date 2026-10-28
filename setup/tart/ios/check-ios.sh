@@ -81,6 +81,18 @@ keyboard_defaults_hold() {
   echo "autocorrect, smart punctuation, predictions and slide to type off"
 }
 
+software_stream() {
+  udid=$1
+  out=$(mktemp -d)
+  (sleep 2) | /usr/local/bin/bb-box-h264 --simulator "$udid" --scale 333 >"$out/units" 2>"$out/said"
+  status=$?
+  bytes=$(wc -c <"$out/units" | tr -d ' ')
+  said=$(grep -v 'kbit/s' "$out/said" | tail -n 1)
+  rm -rf "$out"
+  [ "$status" = 0 ] && [ "$bytes" -gt 17 ] || { echo "bb-box-h264 sent ${bytes:-0} bytes of the device's screen${said:+: $said}"; return 1; }
+  echo "bb-box-h264 encoded $bytes bytes of its framebuffer in 2 s"
+}
+
 pixels_match() {
   udid=$1 width=$2 height=$3
   shot=$(mktemp -d)/screen.png
@@ -287,6 +299,7 @@ check "held ports free" held_ports_free
 check "carried slots" carried_slots_ready
 check "slot uids" slot_uids_only_carried
 check "disabled.plist kept" sh -c 'ls /usr/local/share/bb-box/ios/*.disabled.plist'
+check "bb-box-h264" /usr/local/bin/bb-box-h264 --version
 check "idb_companion" /usr/local/bin/idb_companion --version
 check "idb_companion's notice" sh -c 'ls /usr/local/share/bb-box/notices/idb_companion-*-LICENSE'
 check "device hub not running" sh -c '! pgrep -x DeviceHub >/dev/null || { echo "Device Hub runs"; exit 1; }; echo "Device Hub is not running"'
@@ -311,6 +324,7 @@ while IFS="$tab" read -r model type width height; do
   check "$model needed services" needed_services_enabled "$udid"
   check "$model keyboard" keyboard_defaults_hold "$udid"
   check "$model pixels" pixels_match "$udid" "$width" "$height"
+  check "$model software video" software_stream "$udid"
   check "$model appearance" ui_sets_and_reads_back "$udid" appearance "dark light"
   check "$model text size" ui_sets_and_reads_back "$udid" content_size "$content_sizes"
   check "$model status bar" status_bar_reads_back "$udid"

@@ -906,6 +906,7 @@ export class TartBackend implements Backend {
       states: (signal) => this.#states(signal),
       hostRoom: (host, state, settings, leaving) => this.#hostRoom(host, state as MacState | Error, settings, leaving),
       devices: (host) => this.#devicesOn(host),
+      hardware: (host) => hardwareKnown(this.#iosReport(host.name)),
       measure: (signal) => this.#measureMacs(signal),
       placement: (task) => this.#chain(task),
       encoderLoad: (host) => this.#context.encoder?.load(host.name) ?? 0,
@@ -1668,7 +1669,7 @@ export class TartBackend implements Backend {
 
   encoderOf(guest: Guest): MacEncoder | null {
     if (!guest.host || !this.#config.hosts.some((host) => host.name === guest.host)) return null;
-    return { mac: guest.host, chip: this.#chips.get(guest.host) ?? null, hardware: hardwareKnown(this.#iosReport(guest.host)) };
+    return { mac: guest.host, chip: this.#chips.get(guest.host) ?? null, hardware: hardwareKnown(this.#iosReport(guest.host)), cores: guest.size?.cores ?? null };
   }
 
   async probeEncoder(mac: string, signal?: AbortSignal): Promise<number | null> {

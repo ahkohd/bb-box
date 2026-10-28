@@ -66,6 +66,7 @@ import {
   type Runtime,
   type TableModel,
   type TouchContact,
+  type VideoEncoding,
   type VideoReport,
   type VideoWant,
 } from "./device.ts";
@@ -727,20 +728,31 @@ function hello(value: unknown, path: string): DeviceHello {
 const SERVER_VERBS: readonly DeviceServerVerb[] = ["BB_DEVICE_HELLO", "BB_DEVICE_STATE", "BB_DEVICE_TOUCH", "BB_DEVICE_STILL", "BB_DEVICE_ANSWER", "BB_DEVICE_VIDEO"];
 const VIDEO_WANTS_MOST = 64;
 const VIDEO_FPS_MOST = 1_000;
+const VIDEO_CORES_MOST = 64;
 
 function videoWant(value: unknown, path: string): VideoWant {
   const read = fields(value, path, ["for", "step"]);
   return { for: oneOf(read.for, `${path}.for`, ["viewer", "recording", "wait"]), step: oneOf(read.step, `${path}.step`, VIDEO_STEPS) };
 }
 
+function videoEncoding(value: unknown, path: string): VideoEncoding {
+  const read = fields(value, path, ["way", "encoder", "cores"]);
+  return {
+    way: oneOf(read.way, `${path}.way`, ["hardware", "software"]),
+    encoder: textOrNull(read.encoder, `${path}.encoder`),
+    cores: read.cores === null ? null : number(read.cores, `${path}.cores`, 0, VIDEO_CORES_MOST),
+  };
+}
+
 function videoReport(value: unknown, path: string): VideoReport {
-  const read = fields(value, path, ["step", "wants", "cap", "fps", "words"]);
+  const read = fields(value, path, ["step", "wants", "cap", "fps", "words", "encoding"]);
   return {
     step: read.step === null ? null : oneOf(read.step, `${path}.step`, VIDEO_STEPS),
     wants: list(read.wants, `${path}.wants`, videoWant, VIDEO_WANTS_MOST),
     cap: read.cap === null ? null : oneOf(read.cap, `${path}.cap`, VIDEO_STEPS),
     fps: number(read.fps, `${path}.fps`, 0, VIDEO_FPS_MOST),
     words: textOrNull(read.words, `${path}.words`),
+    ...(read.encoding === undefined ? {} : { encoding: videoEncoding(read.encoding, `${path}.encoding`) }),
   };
 }
 

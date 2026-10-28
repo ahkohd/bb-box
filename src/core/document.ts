@@ -122,6 +122,13 @@ export interface GeneralSettings {
    */
   readonly encoderLedger?: boolean;
   /**
+   * Advanced: how an ios box's device server encodes the device's video (065). auto uses the Mac's hardware H.264
+   * encoder where it has one, and bb-box-h264 in software where it has none or its encoder fails; hardware never uses
+   * software; software always does, as to test it on a Mac that has an encoder. A box takes it when its device server
+   * is delivered. auto unless set.
+   */
+  readonly iosEncoder?: "auto" | "hardware" | "software";
+  /**
    * How bb-box joins machines it makes to the operator's tailnet: off, where BB is reached without one, or through a
    * Tailscale OAuth client, from which it makes a single-use key for each machine. The client's ID and secret are
    * general secrets.
@@ -152,7 +159,7 @@ export interface Problem {
   readonly message: string;
 }
 
-export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true } as const;
+export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true, iosEncoder: "auto" } as const;
 
 export const MAX_WARM = 20;
 export const MAX_SPARES = 10;
@@ -288,7 +295,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
 
   const general: Record<string, unknown> = {};
   if (input.general !== undefined) {
-    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger and tailnet.");
+    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger, iosEncoder and tailnet.");
     else {
       for (const [key, value] of Object.entries(input.general)) {
         if (value === undefined || value === null) continue;
@@ -316,12 +323,15 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "encoderLedger") {
           if (typeof value === "boolean") general[key] = value;
           else problem("general.encoderLedger", "encoderLedger is true or false.");
+        } else if (key === "iosEncoder") {
+          if (value === "auto" || value === "hardware" || value === "software") general[key] = value;
+          else problem("general.iosEncoder", "iosEncoder is auto, hardware or software.");
         } else if (key === "tailnet") {
           const changes: Record<string, string | null> = {};
           const tailnet = readTailnet(value, problem, changes);
           if (tailnet) general[key] = tailnet;
           if (Object.keys(changes).length) secrets[GENERAL_SECRETS] = { ...secrets[GENERAL_SECRETS], ...changes };
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger and tailnet.`);
+        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger, iosEncoder and tailnet.`);
       }
     }
   }

@@ -7,6 +7,12 @@
       "sha256": "27ab53323c110b76214c1c72222f459d17febbcd1e252136cadc292b0308d75b"
     },
     {
+      "name": "openh264-mac-arm64",
+      "version": "2.6.0",
+      "url": "https://ciscobinary.openh264.org/libopenh264-2.6.0-mac-arm64.dylib.bz2",
+      "sha256": "6db362ee5abdab572311aeadb96d3f44b0617d9a4a4b9f4db4cb5ac4d968da71"
+    },
+    {
       "name": "openh264-header",
       "version": "2.6.0",
       "url": "https://raw.githubusercontent.com/cisco/openh264/v2.6.0/codec/api/wels/codec_api.h",

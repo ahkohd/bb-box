@@ -1,5 +1,5 @@
 import { deviceModels } from "./device.ts";
-import { CAP_SHARE, FULL_STREAM_FPS, UNMEASURED_BUDGET, budgetForChip, frameCost, stepPixels } from "./encoder-ledger.ts";
+import { CAP_SHARE, FULL_STREAM_FPS, SOFTWARE_SHARE, UNMEASURED_BUDGET, budgetForChip, frameCost, softwareCores, stepPixels } from "./encoder-ledger.ts";
 
 export const BUSY_SIMULATOR_CORES = 1.3;
 export const SLOT_MEMORY_GIB = 1.5;
@@ -19,6 +19,7 @@ export interface MacForSlots {
   readonly performanceCores: number | null;
   readonly memoryGiB: number | null;
   readonly chip: string | null;
+  readonly hardware?: boolean | null;
 }
 
 export interface Sized {
@@ -45,10 +46,25 @@ export interface SizingDefaults {
 const MAC_OVERRIDE = "set for this Mac";
 const BACKEND_SETTING = "the backend's setting";
 
-function streamPerSlot(): number {
+function slotScreen(): { readonly width: number; readonly height: number } {
   const model = deviceModels("ios")[0]!;
-  const pixels = model.form === "foldable" ? model.outer.pixels : model.screen.pixels;
-  return FULL_STREAM_FPS * frameCost(stepPixels(pixels, SLOT_STREAM_STEP));
+  return model.form === "foldable" ? model.outer.pixels : model.screen.pixels;
+}
+
+function streamPerSlot(): number {
+  return FULL_STREAM_FPS * frameCost(stepPixels(slotScreen(), SLOT_STREAM_STEP));
+}
+
+export function slotsTheCpuAllows(cores: number): number {
+  return Math.max(1, Math.floor((cores * SOFTWARE_SHARE) / softwareCores({ pixels: slotScreen(), fps: FULL_STREAM_FPS }, SLOT_STREAM_STEP)));
+}
+
+function videoCandidate(mac: MacForSlots, cores: number | null): { readonly slots: number; readonly why: string } {
+  if (mac.hardware === false && cores) {
+    const each = softwareCores({ pixels: slotScreen(), fps: FULL_STREAM_FPS }, SLOT_STREAM_STEP);
+    return { slots: slotsTheCpuAllows(cores), why: `video in software, as it has no hardware H.264 encoder (each slot a stream at a half at ${FULL_STREAM_FPS} a second, about ${each.toFixed(2)} of a core, within a quarter of its ${cores} cores)` };
+  }
+  return { slots: slotsTheEncoderAllows(mac.chip).slots, why: encoderWhy(mac.chip) };
 }
 
 export function slotsTheEncoderAllows(chip: string | null): { readonly slots: number; readonly budget: number; readonly measured: boolean } {
@@ -100,7 +116,7 @@ export function sizeHost(mac: MacForSlots, macSet: SlotsSizedBy, backendSet: Slo
         : memoryLeftGiB !== null
           ? [{ slots: slotsTheMemoryAllows(memoryLeftGiB), why: `the ${memoryLeftGiB} GiB of ${mac.name}'s memory a host may have, at ${SLOT_MEMORY_GIB} GiB a device after ${HOST_OWN_MEMORY_GIB} GiB for the host` }]
           : []),
-      { slots: slotsTheEncoderAllows(mac.chip).slots, why: encoderWhy(mac.chip) },
+      videoCandidate(mac, cores.value),
     ]);
   const wanted = memoryForSlots(most.value);
   const memoryGiB =
@@ -119,7 +135,7 @@ export function sizeMacSlots(mac: MacForSlots, macSet: number | undefined, backe
     most: fewest([
       ...(mac.cores ? [{ slots: slotsTheCoresAllow(mac.cores), why: `${mac.cores} cores at ${BUSY_SIMULATOR_CORES} a busy device` }] : []),
       ...(mac.memoryGiB ? [{ slots: slotsTheMemoryAllows(mac.memoryGiB), why: `${mac.memoryGiB} GiB at ${SLOT_MEMORY_GIB} GiB a device after ${HOST_OWN_MEMORY_GIB} GiB for the Mac` }] : []),
-      { slots: slotsTheEncoderAllows(mac.chip).slots, why: encoderWhy(mac.chip) },
+      videoCandidate(mac, mac.cores),
     ]),
   };
 }

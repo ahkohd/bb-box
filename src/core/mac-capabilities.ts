@@ -7,6 +7,8 @@ export type Measured<T> = { readonly is: "yes"; readonly what: T } | { readonly 
 export interface SimulatorOffer {
   readonly xcode: string;
   readonly runtimes: readonly string[];
+  readonly newest?: { readonly os: string; readonly build: string };
+  readonly deviceTypes?: readonly string[];
 }
 
 export interface HardwareEncoderOffer {
@@ -108,6 +110,8 @@ echo "xcode=$xcode"
 if [ -n "$xcode" ]; then
   runtimes=$(xcrun simctl list runtimes available 2>/dev/null | sed -n 's/^\\(iOS [0-9.]*\\) .*/\\1/p' | tr '\\n' ',' | sed 's/,$//')
   echo "runtimes=$runtimes"
+  echo "newest-ios=$(xcrun simctl list runtimes available 2>/dev/null | sed -n 's/^iOS \\([0-9.]*\\) ([0-9.]* - \\([0-9A-Za-z]*\\)).*/\\1 \\2/p' | tail -n 1)"
+  echo "device-types=$(xcrun simctl list devicetypes 2>/dev/null | sed -n 's/.*(\\(com\\.apple\\.CoreSimulator\\.SimDeviceType\\.[^)]*\\))$/\\1/p' | tr '\\n' ',' | sed 's/,$//')"
 fi
 check=${check}
 if [ ! -x "$check" ]; then
@@ -143,6 +147,16 @@ const VIDEO_TOOLBOX_WORDS: Readonly<Record<string, string>> = {
   "-12915": "VideoToolbox's encoder is not available here (-12915)",
 };
 
+function newestOf(text: string | null): { readonly newest?: { readonly os: string; readonly build: string } } {
+  const [os, build] = (text ?? "").trim().split(/\s+/);
+  return os && build ? { newest: { os, build } } : {};
+}
+
+function deviceTypesOf(text: string | null): { readonly deviceTypes?: readonly string[] } {
+  const types = (text ?? "").split(",").map((each) => each.trim()).filter(Boolean);
+  return types.length ? { deviceTypes: types } : {};
+}
+
 export function parseMacProbe(stdout: string, mac: string, at: number, where: MeasuredWhere): MacReport {
   const lines = stdout.split("\n").map((line) => line.trim());
   const value = (key: string) => lines.find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? null;
@@ -154,7 +168,7 @@ export function parseMacProbe(stdout: string, mac: string, at: number, where: Me
       : !xcode
         ? { is: "no", why: "it has no Xcode" }
         : runtimes.length
-          ? { is: "yes", what: { xcode, runtimes } }
+          ? { is: "yes", what: { xcode, runtimes, ...newestOf(value("newest-ios")), ...deviceTypesOf(value("device-types")) } }
           : { is: "no", why: `Xcode ${xcode} has no iOS runtime` };
   const hardwareLine = lines.find((line) => line.startsWith("hardware="));
   let hardwareEncoder: Measured<HardwareEncoderOffer> = { is: "unknown", why: "the probe did not say" };

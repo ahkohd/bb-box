@@ -136,6 +136,22 @@ sshd_refuses_slots() {
 
 install_companion
 
+install_software_encoder() {
+  h264=$here/../android/build-h264.sh
+  if [ ! -f "$h264" ]; then
+    step "found no setup/android beside setup/ssh-pool, so no bb-box-h264: iOS video here needs the Mac's hardware encoder"
+    return 0
+  fi
+  if [ "${H264_WITH_X264:-no}" = yes ]; then
+    step "building bb-box-h264, with x264 from its pinned source, for iOS video should the Mac's hardware encoder fail"
+    bash "$h264" "$ROOT/usr/local" --with-x264 >&2 || die "bb-box-h264 did not build"
+  else
+    step "building bb-box-h264, with Cisco's OpenH264, for iOS video should the Mac's hardware encoder fail"
+    bash "$h264" "$ROOT/usr/local" >&2 || die "bb-box-h264 did not build"
+  fi
+}
+install_software_encoder
+
 step "installing device-host, its held ports' program and the slots' home"
 mkdir -p "$ROOT$libexec" "$ROOT$share/ios" "$ROOT$share/slot-home"
 install -m 0755 "$ios/device-host.sh" "$ROOT$helper"

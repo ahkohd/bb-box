@@ -38,7 +38,7 @@ static int x264_open(int width, int height) {
   return x264 ? 0 : -1;
 }
 
-static int x264_encode(const Picture *picture, int key, int64_t pts) {
+static int x264_encode(const YuvPicture *picture, int key, int64_t pts) {
   (void)pts;
   x264_picture_t in, out;
   x264_picture_init(&in);

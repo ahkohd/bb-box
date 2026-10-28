@@ -5,6 +5,7 @@ import {
   CHIP_BUDGETS,
   ENCODER_FULL_WORDS,
   EncoderLedgers,
+  FPS_FLOOR,
   NO_DECISION,
   RISE_AFTER_MS,
   UNMEASURED_BUDGET,
@@ -15,6 +16,8 @@ import {
   heldAfter,
   loweredWords,
   roomWords,
+  softwareCores,
+  softwareFrameMs,
   stepPixels,
   streamRate,
   type Decision,
@@ -259,4 +262,33 @@ test("the doctor names each Mac's room and the boxes shown lower", () => {
   assert.equal(check!.id, "encoder.mac-1");
   assert.equal(check!.status, "ok");
   assert.match(check!.detail, /^On this Mac: 4 of about 5 full-size streams' room in use\. 10 streams; an Apple M4 Max, about 320 full-size iPhone frames a second\. Shown at a lower resolution: /);
+});
+
+test("a Mac with no hardware encoder keeps its software streams within a quarter of its cores, the passive viewers lowered first, with words about its CPU (065)", () => {
+  assert.equal(softwareFrameMs(402 * 872), 2.0);
+  assert.equal(softwareFrameMs(1206 * 2622), 8.9);
+  assert.ok(Math.abs(softwareCores({ pixels: IPHONE, fps: 60 }, "half") - 0.21) < 0.01);
+  assert.ok(Math.abs(softwareCores({ pixels: IPHONE, fps: 0 }, "full") - (FPS_FLOOR * 8.9) / 1000) < 1e-9, "a still stream counts the floor");
+  let controlled = "ns-0";
+  const { ledger, sent } = ledgers({ controlled: (box) => box === controlled });
+  const place = { mac: "namespace\u0000mac-1", label: "mac-1", chip: "Apple M4 Pro (Virtual)", hardware: false, cores: 6 };
+  const software = { way: "software", encoder: "x264 0.165", cores: 0.5 } as const;
+  for (let at = 0; at < 4; at++) ledger.report({ id: `ns-${at}`, name: `ns-${at}` }, place, { pixels: IPHONE, wants: [viewer("full")], fps: 60, encoding: software });
+  assert.equal(sent.get("ns-0")?.cap ?? null, null, "the person in control keeps full size");
+  const lowered = ["ns-1", "ns-2", "ns-3"].filter((box) => sent.get(box)?.cap);
+  assert.ok(lowered.length >= 2, JSON.stringify([...sent]));
+  assert.match(sent.get(lowered[0]!)!.words!, /^Shown at a lower resolution: this Mac encodes video on its CPU, busy with 3 other devices \(box ns-0/);
+  assert.match(ledger.roomWords("ns-1")!, /^On this Mac: no hardware H\.264 encoder, so video is encoded in software, about 1\.\d of the 1\.5 cores it may use\.$/);
+  const check = ledger.checks()[0]!;
+  assert.match(check.detail, /^It has no hardware H\.264 encoder, so its devices stream in software, on its CPU\. On this Mac: no hardware/);
+  assert.match(check.detail, /4 streams in software/);
+  controlled = "ns-1";
+  ledger.controlChanged("ns-1");
+  assert.equal(sent.get("ns-1")?.cap ?? null, null, "control moves the full-size place");
+
+  const mixed = ledgers();
+  mixed.ledger.report({ id: "hw-0", name: "hw-0" }, MAC, { pixels: IPHONE, wants: [viewer("full")], fps: 60 });
+  mixed.ledger.report({ id: "sw-0", name: "sw-0" }, MAC, { pixels: IPHONE, wants: [viewer("full")], fps: 60, encoding: software });
+  assert.match(mixed.ledger.roomWords("sw-0")!, /^On this Mac: video encoded in software, about 0\.5 of the 2\.0 cores it may use\.$/, "a Mac whose cores are not known is taken to have 8");
+  assert.match(mixed.ledger.roomWords("hw-0")!, /^On this Mac: 1 of about 5 full-size streams' room in use\.$/, "a stream in software takes none of the hardware encoder's room");
 });

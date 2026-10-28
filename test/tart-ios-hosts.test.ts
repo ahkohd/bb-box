@@ -432,7 +432,7 @@ test("a new shared host goes to the Mac whose video encoder streams least; a VM'
   assert.ok(!("lost" in taken));
   await until(() => starting.length > 0, "the host's VM to start");
   assert.deepEqual(starting, ["mac1 Apple M4 Max"]);
-  assert.deepEqual(backend.encoderOf(taken), { mac: "mac1", chip: "Apple M4 Max", hardware: null });
+  assert.deepEqual(backend.encoderOf(taken), { mac: "mac1", chip: "Apple M4 Max", hardware: null, cores: null });
   assert.equal(backend.encoderOf({ ref: "elsewhere", host: "mac9", address: null, size: null, data: {} }), null);
 });
 
