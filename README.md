@@ -73,3 +73,7 @@ Some things wait on features BB does not have yet, listed in [what bb-box asks o
 - [Research notes](docs/research)
 - [Design specs](docs/design)
 - [What bb-box asks of BB](docs/bb-requests.md)
+
+## Licence
+
+bb-box is under the [MIT licence](LICENSE). The software it bundles, and the software it installs on hosts and in images, keeps its own licence: see [Third-party software](THIRD-PARTY.md).
