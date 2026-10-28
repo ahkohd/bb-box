@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stand-ins for a Mac's `tart`, `arp`, `sysctl`, `sw_vers` and `uname`
+// Stand-ins for a Mac's `tart`, `arp`, `sysctl`, `sw_vers`, `uname`, `mdutil` and `mdfind`
 // in tests, chosen by the first argument. With the fake ssh they run the Tart
 // backend's host scripts on the test machine, in the host's fake home. VMs are
 // directories under $HOME/.tart/vms, as Tart keeps them:
@@ -31,6 +31,9 @@
 //   many deletes as it holds have gone through, taking one from it for each.
 // - `tart ip` writes the VM's name to ~/.fake-tart-ip-held and waits while
 //   ~/.fake-tart-ip-holds exists, as for a VM that has no lease yet.
+// - Spotlight indexes every volume, but not one ~/.fake-spotlight-off names,
+//   and `mdfind -onlyin` finds files by name there, none while
+//   ~/.fake-spotlight-excluded exists.
 import { spawn } from "node:child_process";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -243,6 +246,19 @@ switch (tool) {
   case "sw_vers":
     console.log(args.includes("-buildVersion") ? (existsSync(join(home, ".fake-macos-build")) ? readFileSync(join(home, ".fake-macos-build"), "utf8").trim() : "27A1") : "27.0");
     break;
+  case "mdutil": {
+    const volume = args.at(-1);
+    const off = existsSync(join(home, ".fake-spotlight-off")) && readFileSync(join(home, ".fake-spotlight-off"), "utf8").trim() === volume;
+    console.log(`${volume}:\n\tIndexing ${off ? "disabled." : "enabled. "}`);
+    break;
+  }
+  case "mdfind": {
+    if (existsSync(join(home, ".fake-spotlight-excluded"))) break;
+    const under = args[args.indexOf("-onlyin") + 1];
+    const name = args[args.indexOf("-name") + 1];
+    for (const entry of readdirSync(under, { recursive: true })) if (String(entry).split("/").at(-1) === name) console.log(join(under, String(entry)));
+    break;
+  }
   case "uname":
     console.log(args.includes("-m") ? "arm64" : "Darwin");
     break;

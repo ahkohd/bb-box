@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, afterEach, test } from "node:test";
-import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, type TartBackendOptions } from "../src/backends/tart/backend.ts";
+import { TartBackend, hostnameOf, macClockScript, nameScript, powerOffScript, spotlightJudgement, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { parseHosts, parseTartSettings } from "../src/backends/tart/config.ts";
 import { RUN_LOCK_HOLDERS_PL, TART_LISTS_SH, baseScript, crashSummary, endReason, ownerText, parseEnded, parseState, parseVnc, pruneBaseScript, startScript, stateScript, type RunEnd } from "../src/backends/tart/host.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
@@ -1009,6 +1009,62 @@ test("doctor says what is missing on the Mac", async () => {
   const down = await make().doctor();
   assert.equal(down.checks.find((check) => check.id === "host.mac1")!.status, "fail");
   assert.equal(down.checks.find((check) => check.id === "image.mac1.macos")!.status, "skipped");
+});
+
+test("the doctor says when Spotlight indexes Tart's VMs, and its fix keeps Spotlight out and comes undone (F-12)", async () => {
+  const { mac, make } = setup();
+  const checks = async () => (await make().doctor()).checks;
+  const spotlight = async () => (await checks()).find((check) => check.id === "spotlight.mac1")!;
+  const image = async () => (await checks()).find((check) => check.id === "image.mac1.macos")!.detail;
+  const imageBefore = await image();
+  const hidden = await spotlight();
+  assert.deepEqual([hidden.name, hidden.status, hidden.fix], ["Spotlight on mac1", "ok", null]);
+  assert.match(hidden.detail, /^Spotlight does not index \S+\/\.tart\/vms, as a folder in its path is hidden\.$/);
+
+  mkdirSync(join(mac, "VMs"));
+  renameSync(join(mac, ".tart"), join(mac, "VMs", "tart"));
+  symlinkSync(join(mac, "VMs", "tart"), join(mac, ".tart"));
+  const indexed = await spotlight();
+  assert.equal(indexed.status, "warn");
+  assert.match(indexed.detail, /^Spotlight indexes \S+\/VMs\/tart\/vms, so it opens each new VM's disk after Tart makes it\. .*take no lock/);
+  assert.doesNotMatch(indexed.fix ?? "", /mdutil/, "the Mac's own volume is not turned off");
+  const [, fix, undo] = /link its old name to it: (.+?)\. To undo it, in the same way: (.+?)\.$/.exec(indexed.fix ?? "") ?? [];
+  assert.ok(fix && undo, indexed.fix ?? "no fix");
+  const run = (command: string) => assert.equal(spawnSync("/bin/sh", ["-c", command]).status, 0, command);
+
+  run(fix);
+  const kept = await spotlight();
+  assert.equal(kept.status, "ok");
+  assert.match(kept.detail, /^Spotlight does not index \S+\/VMs\/tart\.noindex\/vms, as a folder in its path ends in \.noindex\.$/);
+  assert.equal(await image(), imageBefore, "Tart's VMs are read through the link");
+
+  run(undo);
+  assert.equal((await spotlight()).status, "warn");
+  assert.equal(realpathSync(join(mac, ".tart")), realpathSync(join(mac, "VMs", "tart")));
+
+  writeFileSync(join(mac, ".fake-spotlight-excluded"), "");
+  assert.match((await spotlight()).detail, /^Spotlight lists none of Tart's VMs in \S+\/VMs\/tart\/vms, as when the folder is in its Search Privacy list, or it has not indexed the folder yet\.$/);
+  rmSync(join(mac, ".fake-spotlight-excluded"));
+  writeFileSync(join(mac, ".fake-spotlight-off"), "/");
+  const off = await spotlight();
+  assert.deepEqual([off.status, off.detail], ["ok", `Spotlight indexing is off on /, where Tart keeps its VMs in ${realpathSync(join(mac, "VMs", "tart", "vms"))}.`]);
+});
+
+test("Spotlight's fix for a TART_HOME that is not a link makes it one, and on a volume of Tart's own offers mdutil too (F-12)", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "bb-box-spotlight-")));
+  const home = join(dir, "Tart");
+  mkdirSync(join(home, "vms", "a"), { recursive: true });
+  writeFileSync(join(home, "vms", "a", "config.json"), "{}");
+  const judged = spotlightJudgement({ home, homeFolder: home, folder: join(home, "vms"), volume: "/Volumes/VMs", volumeIndexing: "enabled", listedVm: join(home, "vms", "a", "config.json") });
+  assert.equal(judged.status, "warn");
+  assert.match(judged.fix ?? "", / Or, if nothing else on \/Volumes\/VMs needs Spotlight, turn its indexing off: sudo mdutil -i off '\/Volumes\/VMs', undone with sudo mdutil -i on '\/Volumes\/VMs'\.$/);
+  const [, fix, undo] = /link its old name to it: (.+?)\. To undo it, in the same way: (.+?)\. Or, /.exec(judged.fix ?? "") ?? [];
+  assert.equal(spawnSync("/bin/sh", ["-c", fix!]).status, 0);
+  assert.equal(realpathSync(join(home, "vms", "a", "config.json")), join(`${home}.noindex`, "vms", "a", "config.json"));
+  assert.equal(spawnSync("/bin/sh", ["-c", undo!]).status, 0);
+  assert.equal(realpathSync(home), home);
+  assert.ok(existsSync(join(home, "vms", "a", "config.json")));
+  rmSync(dir, { recursive: true });
 });
 
 test("a box has the cores and memory it asks for, read from its config, and its disk from the start, as tart get gives it; capacity refuses what a Mac cannot give", async () => {

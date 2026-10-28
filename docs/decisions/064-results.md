@@ -2789,3 +2789,110 @@ bb-box's records of each box.
 - **Item 1 orders boxes within one bb-box instance.** Boxes queued
   before bb-box restarts are queued again as their acquires carry on, in
   that order.
+
+## F-12: Spotlight and Tart's VM folder, and grant-tcc.sh without tart list
+
+Built on 28 October 2026, from F-10's two follow-ups.
+
+### What Spotlight does to a new VM's disk
+
+Measured on 28 October 2026 on a Namespace macOS 26.3.1 VM with Tart
+2.40.1, on Linux VM folders made by hand with 20 GB ASIF disks, as in
+F-10. `sudo fs_usage` logged every call on the VM folders while Tart
+cloned and set VMs. A perl loop took and dropped exclusive, non-blocking
+`flock` and `fcntl` write locks on every new disk, and counted the
+attempts that failed.
+
+- **Spotlight opens each new disk in a folder it indexes.** `mds` and
+  `mdworker_shared` each opened the disk for reading, 14 opens in 10
+  clones, within a second of each clone.
+- **Those opens take no lock.** In that window, 6,322,454 lock attempts
+  all worked. 3,164 `mdimport` runs on one disk, each opened by `mds` and
+  `mdworker_shared`, against 2,595,153 attempts: none failed. As a
+  control, 5 `tart list` runs on one of the disks failed 20,610 of
+  475,868 attempts, with errno 35. So a Spotlight open cannot fail a
+  `tart run` as `tart list`'s `diskutil` did.
+
+Which folders Spotlight indexes. Each clone draws about two opens where it
+indexes, one by `mds` and one by `mdworker_shared`:
+
+| Where Tart's VMs are | Clones | Spotlight opens of their disks | mdfind lists the VMs |
+| --- | --- | --- | --- |
+| `~/.tart`, the default | 5 | 0 | no |
+| `~/.tart` linked to a visible folder | 3 | 8 | yes |
+| `~/.tart` linked to a folder named `tart.noindex` | 3 | 0 | no |
+| A visible folder | 5 | 10 | yes |
+| The same, with `.metadata_never_index` in it, or in its `vms` | 5 each | 10 each | yes |
+| A volume of its own, indexing on | 3 | 6 | yes |
+| The same, with `.metadata_never_index` at its root | 3 | 6 | yes |
+| The same, after `sudo mdutil -i off` | 3 | 0 | no |
+
+Spotlight skips hidden folders and folders whose name ends in
+`.noindex`. A `.metadata_never_index` file does not stop it on macOS 26.
+Tart 2.40.1 refuses a `vms` folder that is itself a link ("The file vms
+couldn't be opened"), so only TART_HOME's own folder can be moved.
+
+### What changed
+
+- **The doctor has a check per Mac, "Spotlight on <mac>".** bb-box asks
+  the Mac where Tart's VMs really are, past any link, whether Spotlight
+  indexes that volume (`mdutil -s`), and whether it lists a VM there
+  (`mdfind -onlyin`). It is ok when a folder in the path is hidden or ends
+  in `.noindex`, when the volume's indexing is off, or when Spotlight
+  lists no VM. It warns when Spotlight lists one, with the commands: with
+  bb-box's backend for the Mac off and no VM running, move TART_HOME's
+  folder to `<folder>.noindex` and link its old name to it, and how to
+  undo that. On a volume under /Volumes it also offers `sudo mdutil -i
+  off` for a volume that holds nothing else to index. bb-box changes
+  nothing on the Mac itself.
+- **The setup guide** moves Tart's folder to `tart.noindex` when it goes
+  to another volume, and says what Spotlight does.
+- **`grant-tcc.sh` reads a VM's state as bb-box does:** the folder as
+  Tart lists it, Tart's run lock with bb-box's perl reader, and
+  state.vzvmsave for suspended. It runs no `tart` command.
+
+### Checks
+
+- On the fake Mac: the doctor is ok for the hidden `~/.tart`. It warns
+  for `~/.tart` linked to a visible folder. The fix it gives, run as
+  given, makes the check ok, and Tart's VMs are still read. The undo it
+  gives brings the warning back. It also says ok with indexing off, and
+  when Spotlight lists none. The fix for a TART_HOME that is not a link,
+  and the `mdutil` offer for a volume of its own, run and come undone in
+  a test folder.
+- `grant-tcc.sh` holds bb-box's own perl reader and folder test, verbatim.
+  It gets past the state check for a stopped VM, and refuses a suspended
+  one and one whose run lock is held. A folder Tart would not list is no
+  VM. It runs no `tart`, while `tart list` fails.
+- On the Namespace Mac, with bb-box's Spotlight script as bb-box sends
+  it: the default `~/.tart` reads as hidden. `~/.tart` linked to `~/VMs/tart`
+  reads as listed, and the doctor's judgement of that output warns. Its
+  fix, run verbatim, gave 0 Spotlight opens of 3 new disks, and Tart
+  listed every VM. Its undo gave 6 opens again.
+- On the same Mac, `grant-tcc.sh` agreed with `tart list` for a stopped,
+  a suspended and a locked VM, and ran no `tart` itself.
+
+On a Linux box, from the tree of the second commit on main 79f0811: tsc
+clean; the node suite 2,260 passed, 0 failed, 288 skipped, the docs test
+among them once the tree was a git repository, as its link test lists
+files with git; vitest 224 passed. The grant-tcc.sh test fails on main's
+script.
+
+### What limits these checks
+
+- **No VM ran.** As in F-10, the Mac had no nested virtualization, so a
+  VM's lock was stood in for by the perl loop's own locks. That
+  Virtualization takes such a lock is F-9b's and F-10's finding.
+- **mdfind lags.** Right after the undo, `mdfind` listed no VM while
+  Spotlight already opened new disks, so the check said ok for some
+  seconds. 20 s later it listed one.
+- **Search Privacy was not tried.** Adding the folder in System Settings
+  needs the desktop. The check would then say ok, as Spotlight lists no
+  VM there.
+- **`grant-tcc.sh` was not run to a grant.** That needs a macOS image's
+  disk. Only its state check changed.
+
+### Follow-ups
+
+- Whether bb-box should move TART_HOME's folder itself, when no VM
+  runs. It does not, as the folder is the operator's.

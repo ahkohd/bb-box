@@ -14,7 +14,7 @@ export const FAKE_WINDOWS_IMAGE = "bb-box-windows";
 export const FAKE_DISK_GIB = { size: 1024, free: 500 };
 
 /**
- * Puts the fake tart, arp, sysctl, sw_vers, uname and df in a fake Mac's
+ * Puts the fake tart, arp, sysctl, sw_vers, uname, mdutil, mdfind and df in a fake Mac's
  * ~/.nix-profile/bin, where the host scripts look for tart before the PATH.
  * Not on the test's own PATH: on a Mac whose /bin/sh is zsh, /etc/zshenv may
  * reset it.
@@ -23,7 +23,7 @@ export function fakeMacTools(home: string): void {
   const bin = join(home, ".nix-profile", "bin");
   mkdirSync(bin, { recursive: true });
   const script = new URL("./fake-tart.mjs", import.meta.url).pathname;
-  for (const tool of ["tart", "arp", "sysctl", "sw_vers", "uname"]) {
+  for (const tool of ["tart", "arp", "sysctl", "sw_vers", "uname", "mdutil", "mdfind"]) {
     writeFileSync(join(bin, tool), `#!/bin/sh\nexec '${process.execPath}' '${script}' ${tool} "$@"\n`);
     chmodSync(join(bin, tool), 0o755);
   }

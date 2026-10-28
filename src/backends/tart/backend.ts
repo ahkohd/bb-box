@@ -131,6 +131,7 @@ import {
   parseEnded,
   parseFields,
   parseMacs,
+  parseSpotlight,
   parseState,
   powerScript,
   vmStateScript,
@@ -139,6 +140,7 @@ import {
   script,
   sections,
   sizeScript,
+  spotlightScript,
   stateScript,
   stopScript,
   vmName,
@@ -146,6 +148,7 @@ import {
   VM_PREFIX,
   type HostState,
   type VmConfig,
+  type SpotlightView,
 } from "./host.ts";
 import { VNC_BRIDGE_PY } from "./vnc-holder.ts";
 import {
@@ -438,6 +441,32 @@ function message(error: unknown): string {
 /** Whether Tart keeps its VMs on a volume other than the Mac's own disk, through a link (#632). */
 function otherVolume(disk: HostState["disk"]): boolean {
   return disk.volume.startsWith("/Volumes/");
+}
+
+const SPOTLIGHT_SKIPS_A_FOLDER = [
+  { skips: (part: string) => part.startsWith("."), why: "is hidden" },
+  { skips: (part: string) => part.endsWith(".noindex"), why: "ends in .noindex" },
+];
+
+export function spotlightJudgement(view: SpotlightView): { status: DoctorCheck["status"]; detail: string; fix: string | null } {
+  const parts = view.folder.split("/").filter(Boolean);
+  const skipped = SPOTLIGHT_SKIPS_A_FOLDER.find((rule) => parts.some(rule.skips));
+  if (skipped) return { status: "ok", detail: `Spotlight does not index ${view.folder}, as a folder in its path ${skipped.why}.`, fix: null };
+  if (view.volumeIndexing === "disabled") return { status: "ok", detail: `Spotlight indexing is off on ${view.volume}, where Tart keeps its VMs in ${view.folder}.`, fix: null };
+  if (!view.listedVm) return { status: "ok", detail: `Spotlight lists none of Tart's VMs in ${view.folder}, as when the folder is in its Search Privacy list, or it has not indexed the folder yet.`, fix: null };
+  const moved = `${view.homeFolder}.noindex`;
+  const undo =
+    view.home === view.homeFolder
+      ? `rm ${quote(view.home)} && mv ${quote(moved)} ${quote(view.home)}`
+      : `mv ${quote(moved)} ${quote(view.homeFolder)} && ln -sfn ${quote(view.homeFolder)} ${quote(view.home)}`;
+  const ownVolume = view.volume.startsWith("/Volumes/")
+    ? ` Or, if nothing else on ${view.volume} needs Spotlight, turn its indexing off: sudo mdutil -i off ${quote(view.volume)}, undone with sudo mdutil -i on ${quote(view.volume)}.`
+    : "";
+  return {
+    status: "warn",
+    detail: `Spotlight indexes ${view.folder}, so it opens each new VM's disk after Tart makes it. Measured on macOS 26 (F-12), those opens take no lock, so they cannot fail a start as tart list's did, but they read every new disk.`,
+    fix: `With bb-box's backend for the Mac turned off and no VM running, as the host user, move Tart's folder to a name Spotlight skips and link its old name to it: mv ${quote(view.homeFolder)} ${quote(moved)} && ln -sfn ${quote(moved)} ${quote(view.home)}. To undo it, in the same way: ${undo}.${ownVolume}`,
+  };
 }
 
 /** The free space where Tart keeps its VMs, naming the volume when it is not the Mac's own disk. */
@@ -2559,6 +2588,7 @@ export class TartBackend implements Backend {
       } else {
         push(id, name, "ok", `macOS ${state.macos} on Apple silicon${tart ? `, Tart ${state.version}` : ""}.`);
       }
+      if (tart) await this.#doctorSpotlight(host, push, signal);
       if (windowsImage) this.#doctorQemu(host, state.qemu, windowsImage, push, judge);
       if (windowsImage && state.qemuVideo) this.#doctorQemuVideo(host, state.qemuVideo, push);
       for (const kind of images) {
@@ -2695,6 +2725,23 @@ export class TartBackend implements Backend {
     } else {
       const judged = judge("windows-arm64-desktop", image, qemu.image.record, host.name);
       push(imageId, imageName, judged.status, `${image}, build ${qemu.image.build}. ${judged.detail}`, judged.fix);
+    }
+  }
+
+  async #doctorSpotlight(
+    host: TartHost,
+    push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const id = `spotlight.${host.name}` as const;
+    const name = `Spotlight on ${host.name}`;
+    try {
+      const view = parseSpotlight((await this.#run(host, spotlightScript(), { timeoutMs: 30_000, signal })).stdout);
+      if (!view) return;
+      const judged = spotlightJudgement(view);
+      push(id, name, judged.status, judged.detail, judged.fix);
+    } catch (error) {
+      push(id, name, "warn", `bb-box could not ask Spotlight on ${host.name} about Tart's VMs: ${message(error)}`, null);
     }
   }
 

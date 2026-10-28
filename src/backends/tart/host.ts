@@ -678,6 +678,46 @@ echo "$now"
 `);
 }
 
+export interface SpotlightView {
+  readonly home: string;
+  readonly homeFolder: string;
+  readonly folder: string;
+  readonly volume: string;
+  readonly volumeIndexing: "enabled" | "disabled" | null;
+  readonly listedVm: string | null;
+}
+
+export function spotlightScript(): string {
+  return script(String.raw`home="${"$"}{TART_HOME:-$HOME/.tart}"
+[ -d "$tart_vms" ] || exit 0
+echo @home; echo "$home"
+echo @home-folder; (cd "$home" && pwd -P)
+folder=$(cd "$tart_vms" && pwd -P) || exit 1
+echo @folder; echo "$folder"
+volume=$(df -P "$folder" | awk 'NR == 2 { m = $6; for (i = 7; i <= NF; i++) m = m " " $i; print m }')
+echo @volume; echo "$volume"
+command -v mdutil >/dev/null 2>&1 && command -v mdfind >/dev/null 2>&1 || exit 0
+echo @volume-indexing; mdutil -s "$volume" 2>/dev/null | tail -n 1
+echo @listed; mdfind -onlyin "$folder" -name config.json 2>/dev/null | head -n 1
+`);
+}
+
+export function parseSpotlight(text: string): SpotlightView | null {
+  const parts = sections(text);
+  const line = (name: string) => parts.get(name)?.trim() || null;
+  const folder = line("folder");
+  if (!folder || !parts.has("volume-indexing")) return null;
+  const indexing = line("volume-indexing") ?? "";
+  return {
+    home: line("home") ?? folder,
+    homeFolder: line("home-folder") ?? folder,
+    folder,
+    volume: line("volume") ?? "/",
+    volumeIndexing: /Indexing enabled/.test(indexing) ? "enabled" : /Indexing disabled/.test(indexing) ? "disabled" : null,
+    listedVm: line("listed"),
+  };
+}
+
 /** The VM's state as Tart lists it, or "gone" when it is not there or not this box's. */
 export function powerScript(vm: string, installId: string, boxId: string | null): string {
   return script(String.raw`vm=${quote(vm)}

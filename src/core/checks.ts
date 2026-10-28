@@ -112,6 +112,7 @@ export const CHECKS = {
     from: ["tart"],
     what: "The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together.",
   },
+  "spotlight.<mac>": { name: "Spotlight on <mac>", from: ["tart"], what: "Whether Spotlight indexes the folder of Tart's VMs, so it opens each new VM's disk, and how to keep it out (F-12)." },
   "qemu.<mac>": { name: "QEMU on <mac>", from: ["tart"], what: "QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac." },
   "qemu-video.<mac>": { name: "Windows video on <mac>", from: ["tart"], what: "bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865)." },
   "capacity.<mac>": { name: "Room on <mac>", from: ["tart"], what: "Room on the Mac for a macOS box at its default size." },
