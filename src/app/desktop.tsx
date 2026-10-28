@@ -55,9 +55,9 @@ import { DEFAULT_DEVICE_VIEW, type DeviceLayout, type DeviceView } from "./devic
 import { DeviceControls, type AskKey, type DeviceAsk } from "./device-controls.ts";
 import { DevicePicker, DeviceToolbar, TOUCH_HINT_KEY, toolbarRoom, type AskedBy } from "./device-toolbar.tsx";
 import { usePointerCoarse } from "@/components/ui/hooks/use-pointer-coarse";
-import { afterWords, doneWords } from "../core/device-control.ts";
+import { SHOWN_AT_START_WORDS, afterWords, doneWords } from "../core/device-control.ts";
 import { changeWords, placeAt } from "../core/device-toolbar.ts";
-import { locationWords } from "../core/device-settings.ts";
+import { locationWords, rebootsToShow } from "../core/device-settings.ts";
 import { modelNamed, type DeviceAction, type DeviceAnswer, type DeviceState, type ModelName } from "../core/device.ts";
 import {
   KeysAfterPaste,
@@ -1626,8 +1626,12 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
       return;
     }
     const control = ask.control;
-    if (SHOWN_ON_SCREEN.has(control.action)) return;
     const took = `${(answer.ms / 1000).toFixed(1)} s`;
+    if (rebootsToShow(control, answer.state)) {
+      flashFor(`${doneWords(control, model.name, model.platform)} in ${took}.`, `${SHOWN_AT_START_WORDS}.`, 8_000);
+      return;
+    }
+    if (SHOWN_ON_SCREEN.has(control.action)) return;
     if (control.action === "switch") {
       flashFor(`Switched to the ${control.device} in ${took}.`, `Apps are per device. Install your app again on the ${control.device} if it needs it.`, 8_000);
       return;

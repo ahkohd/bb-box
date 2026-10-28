@@ -33,7 +33,7 @@ import { IosVideo, scaledBack } from "./ios-video.ts";
 import { EncodeMeter, SOFTWARE_ENCODER, hardwareFailed, simulatorStream, softwareEncoderAt, type IosEncoderMode, type IosEncoderWay } from "./simulator-video.ts";
 import type { StreamOutput } from "./idb.ts";
 import { inBox, type DevicePaths } from "./paths.ts";
-import { Simctl, runProgram, type SimDevice } from "./simctl.ts";
+import { Simctl, appOfProgram, runProgram, type SimDevice } from "./simctl.ts";
 
 export const SLIM_LISTS = "/usr/local/share/bb-box/ios";
 export const WATCH_MS = 5_000;
@@ -55,6 +55,13 @@ export const SPRINGBOARD = "com.apple.SpringBoard";
 export const HID_DAEMON_ACTIVE = "dtuhidd state changed to active";
 export const HID_DAEMON_ACTIVE_WAIT_MS = 15_000;
 const LOCK_STATE = "com.apple.springboard.lockstate";
+const APP_NAMES_MOST = 64;
+export const IOS_MOBILE_UID = 501;
+const SHOWN_AT_START: ReadonlySet<DeviceControl["action"]> = new Set(["appearance", "text_size"]);
+
+export function changesShowAtStart(uid: number): boolean {
+  return uid !== IOS_MOBILE_UID;
+}
 const PLUTIL = "/usr/bin/plutil";
 const SLIM_PASSES = 2;
 
@@ -85,6 +92,7 @@ export interface IosDriverOptions {
   readonly buttonSettleMs?: number;
   readonly processStart?: (pid: number) => Promise<ProcessStart | null>;
   readonly hidDaemonActiveWaitMs?: number;
+  readonly uid?: number;
   readonly encoder?: IosEncoderMode;
   readonly softwareEncoder?: string;
   readonly developer?: string;
@@ -179,6 +187,8 @@ export class IosDriver implements DeviceDriver {
   readonly #deviceHubFile: string;
   #target: OfferedDeviceOf<"ios"> | null = null;
   #udid: string | null = null;
+  readonly #appNames = new Map<string, string | null>();
+  readonly #changesShowAtStart: boolean;
   #power: Power<"ios"> = { is: "stopped" };
   #generation = 0;
   #physical: Orientation = "upright";
@@ -208,7 +218,8 @@ export class IosDriver implements DeviceDriver {
     this.#processes = options.processes ?? ownProcesses;
     this.#processStart = options.processStart ?? ownProcessStart;
     this.#deviceHubFile = own.deviceHub;
-    this.#settings = new IosSettingsKeeper({ simctl: this.#simctl, file: own.settings, log: options.log, now: () => this.#clock.now() });
+    this.#changesShowAtStart = changesShowAtStart(options.uid ?? process.getuid?.() ?? IOS_MOBILE_UID);
+    this.#settings = new IosSettingsKeeper({ simctl: this.#simctl, file: own.settings, log: options.log, now: () => this.#clock.now(), changesShowAtStart: this.#changesShowAtStart });
     this.#companion = new Companion({ program: options.companionProgram, paths: own.companion, log: options.log });
     this.#video = new IosVideo({
       open: (stopped, signal, scale) => this.#openVideo(stopped, signal, scale),
@@ -755,10 +766,12 @@ export class IosDriver implements DeviceDriver {
       }
       case "appearance":
         await this.#settings.setAppearance(control.to, signal);
+        await this.#rebootToShow(control, signal);
         break;
       case "text_size":
         if (typeof control.to === "number") throw new DriverError("bad-value", "iOS takes a content size, not a font scale.");
         await this.#settings.setTextSize(control.to, signal);
+        await this.#rebootToShow(control, signal);
         break;
       case "location":
         await this.#settings.setLocation(control.to, signal);
@@ -775,6 +788,16 @@ export class IosDriver implements DeviceDriver {
       default:
         throw new DriverError("unsupported", `iOS has no ${control.action.replace("_", " ")} control.`);
     }
+  }
+
+  rebootsFor(control: DeviceControl): boolean {
+    return this.#changesShowAtStart && SHOWN_AT_START.has(control.action);
+  }
+
+  async #rebootToShow(control: DeviceControl, signal: AbortSignal): Promise<void> {
+    if (!this.rebootsFor(control)) return;
+    this.#log(`settings: this device shows a change to ${control.action.replace("_", " ")} only at its start, as its user's uid is not ${IOS_MOBILE_UID}, so bb-box reboots it`);
+    await this.#reboot(signal);
   }
 
   async openUrl(url: string, signal: AbortSignal): Promise<void> {
@@ -861,12 +884,25 @@ export class IosDriver implements DeviceDriver {
     const size = this.#video.size ?? screensOf(this.#model())[0].pixels;
     const began = this.#clock.monotonic();
     const read = await readIosTree(
-      { tree: () => accessibilityTree(client), at: (point) => accessibilityTree(client, undefined, point), processName },
+      { tree: () => accessibilityTree(client), at: (point) => accessibilityTree(client, undefined, point), processName, appName: (pid) => this.#appNamed(pid) },
       { width: size.width / scale, height: size.height / scale },
       scale,
     );
     if (read.byPoints) this.#log(`tree: iOS named no app in front, so the screen was read point by point in ${Math.round(this.#clock.monotonic() - began)} ms: ${read.elements[0]?.children.length ?? 0} elements`);
+    if (read.pageByPoints) this.#log(`tree: ${read.elements[0]?.label || "the app in front"} shows a page of another process, read point by point; the read took ${Math.round(this.#clock.monotonic() - began)} ms`);
     return read.elements;
+  }
+
+  async #appNamed(pid: number): Promise<string | null> {
+    const udid = this.#booted();
+    const key = `${udid}:${pid}`;
+    if (this.#appNames.has(key)) return this.#appNames.get(key)!;
+    const program = await processName(pid);
+    const found = program ? appOfProgram(program, await this.#simctl.apps(udid)) : null;
+    const app = found && found.id.toLowerCase() !== SPRINGBOARD.toLowerCase() ? found : null;
+    if (this.#appNames.size >= APP_NAMES_MOST) this.#appNames.clear();
+    this.#appNames.set(key, app?.name ?? null);
+    return app?.name ?? null;
   }
 
   async elementAt(point: { readonly x: number; readonly y: number }): Promise<DeviceElement | null> {

@@ -42,6 +42,7 @@ export interface DeviceDriver {
   setClipboard(text: string): Promise<void>;
   clipboard(): Promise<string>;
   control(control: DeviceControl, signal: AbortSignal, context: ControlContext): Promise<void>;
+  rebootsFor?(control: DeviceControl): boolean;
   readSettings?(signal: AbortSignal): Promise<void>;
   openUrl?(url: string, signal: AbortSignal): Promise<void>;
   launchApp?(app: string, signal: AbortSignal): Promise<LaunchedApp>;

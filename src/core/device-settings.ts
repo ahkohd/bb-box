@@ -51,8 +51,17 @@ export function nextFontScale(current: AndroidFontScale, step: "larger" | "small
 
 export const CONTROL_DEADLINES_MS = { control: 10_000, switch: 120_000, reboot: 120_000, install: 300_000 } as const;
 
-export function controlDeadlineMs(control: DeviceControl, deadlines: { readonly [Kind in keyof typeof CONTROL_DEADLINES_MS]: number } = CONTROL_DEADLINES_MS): number {
-  return control.action === "switch" ? deadlines.switch : control.action === "reboot" ? deadlines.reboot : control.action === "install" ? deadlines.install : deadlines.control;
+export function changesShowAtStart(state: DeviceState | null): boolean {
+  return state?.platform === "ios" && state.settings.changesShowAtStart === true;
+}
+
+export function rebootsToShow(control: DeviceControl, state: DeviceState | null): boolean {
+  return (control.action === "appearance" || control.action === "text_size") && changesShowAtStart(state);
+}
+
+export function controlDeadlineMs(control: DeviceControl, deadlines: { readonly [Kind in keyof typeof CONTROL_DEADLINES_MS]: number } = CONTROL_DEADLINES_MS, state: DeviceState | null = null): number {
+  if (control.action === "reboot" || rebootsToShow(control, state)) return deadlines.reboot;
+  return control.action === "switch" ? deadlines.switch : control.action === "install" ? deadlines.install : deadlines.control;
 }
 
 export const CLEAN_STATUS_BAR_BATTERY: Battery = { level: 100, charging: false };

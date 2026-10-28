@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { parseImageRecord } from "../src/backends/images.ts";
 import { DEVICE_MODELS } from "../src/core/device-models.ts";
-import { answerText, controlFromParameters, lostWords, type DeviceControlParameters } from "../src/core/device-control.ts";
+import { SHOWN_AT_START_WORDS, answerText, controlFromParameters, lostWords, type DeviceControlParameters } from "../src/core/device-control.ts";
 import { controlDeadlineMs, deviceStateWords, nextContentSize, nextFontScale, notANetworkPreset, turnedFrom } from "../src/core/device-settings.ts";
 import { frameShape, placement } from "../src/core/device-frame.ts";
 import { arrangementFor, barGroups, barHeight, changeWords, moreItems, overflowControls, rowControls, textSizeSteps } from "../src/core/device-toolbar.ts";
@@ -405,6 +405,7 @@ describe("messages", () => {
         hello: { protocol: 1, version: 10, platform: "ios", devices: [{ model: "iPhone 18 Pro", native: "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", runtime: IOS_RUNTIME }], state: iosState as DeviceState & { platform: "ios" }, lease: false, bootedHere: ["iPhone 18 Pro"] },
       },
       { verb: "BB_DEVICE_STATE", state: foldState as DeviceState },
+      { verb: "BB_DEVICE_STATE", state: { ...iosState, settings: { ...(iosState as DeviceState & { platform: "ios" }).settings, changesShowAtStart: true } } as DeviceState },
       { verb: "BB_DEVICE_TOUCH", contacts: [{ id: 0, x: 5, y: 6 }], by: "agent", generation: 2 },
       { verb: "BB_DEVICE_STILL", png: "iVBORw0KGgo=", generation: 2 },
       { verb: "BB_DEVICE_ANSWER", answer: { id: "s1", ok: true, ms: 22, state: iosState as DeviceState, result: { type: "screenshot", png: "iVBORw0KGgo=", generation: 3 } } },
@@ -547,6 +548,12 @@ describe("box_device's parameters, refusals and words (063, 6.3)", () => {
     assert.equal(lostWords("rotate", state), "The connection to the box ended while turning the device, so bb-box cannot tell whether it turned. It is now booted, turned left, 2622x1206, dark, text size large. Read box_status before trying again.");
     assert.equal(controlDeadlineMs({ action: "install", paths: ["a.app"] }), 300_000);
     assert.equal(controlDeadlineMs({ action: "home" }), 10_000);
+    const shared = { ...state, settings: { ...state.settings, changesShowAtStart: true } } as DeviceState;
+    const rebooted = (control: DeviceControl) => answerText(control, phone, { id: "a", ok: true, ms: 7100, state: shared, result: { type: "done" } });
+    assert.equal(rebooted({ action: "appearance", to: "dark" }), `Set the iPhone 18 Pro to dark in 7.1 s. ${SHOWN_AT_START_WORDS}. Now: booted, turned left, 2622x1206, dark, text size large.`);
+    assert.ok(rebooted({ action: "text_size", to: "larger" }).includes(SHOWN_AT_START_WORDS));
+    assert.ok(!rebooted({ action: "home" }).includes(SHOWN_AT_START_WORDS));
+    assert.ok(!done({ action: "appearance", to: "dark" }).includes(SHOWN_AT_START_WORDS), "a device that shows it at once does not reboot");
   });
 
   test("answers on Android in Android's words: a clean status bar with the battery set, the emulator's own location and battery, and the network presets", () => {

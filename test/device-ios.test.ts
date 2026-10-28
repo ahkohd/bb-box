@@ -11,13 +11,13 @@ import type { EncodedFrame } from "../src/device/driver.ts";
 import { FrameFanout } from "../src/device/frame-fanout.ts";
 import { streamsEncodingIn, type StreamOutput } from "../src/device/idb.ts";
 import type { IosEncoderMode } from "../src/device/simulator-video.ts";
-import { HID_DAEMON, HID_DAEMON_ACTIVE, IosDriver, SPRINGBOARD, contentOrientation, parseProcessStart, type AppInfo, type ProcessStart } from "../src/device/ios-driver.ts";
+import { HID_DAEMON, HID_DAEMON_ACTIVE, IOS_MOBILE_UID, IosDriver, SPRINGBOARD, changesShowAtStart, contentOrientation, parseProcessStart, type AppInfo, type ProcessStart } from "../src/device/ios-driver.ts";
 import { overridesListed, statusBarOverride } from "../src/device/ios-controls.ts";
 import { INERT_KEY_USAGE, PasteboardAccess, hidKey, runningApps } from "../src/device/ios-input.ts";
 import { IosVideo, scaledBack } from "../src/device/ios-video.ts";
 import { evenScaled, spsOfSize } from "./sps.ts";
 import { devicePaths } from "../src/device/paths.ts";
-import { Simctl, disabledLabels, runningServicePid, type LineSpawner, type Ran, type Runner } from "../src/device/simctl.ts";
+import { Simctl, appOfProgram, disabledLabels, installedApps, runningServicePid, type LineSpawner, type Ran, type Runner } from "../src/device/simctl.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { testDeviceOffer } from "../src/core/device.ts";
 import { wantsDevice } from "../src/plugin/devices.ts";
@@ -460,7 +460,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     return { home, paths, lists, program, log, target };
   }
 
-  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null>; orientationEveryMs?: number; hidDaemonActiveWaitMs?: number; encoder?: IosEncoderMode; softwareEncoder?: string } = {}) {
+  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null>; orientationEveryMs?: number; hidDaemonActiveWaitMs?: number; encoder?: IosEncoderMode; softwareEncoder?: string; uid?: number } = {}) {
     simulator.idbLog = setup.log;
     const logs: string[] = [];
     const driver = new IosDriver({
@@ -480,6 +480,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
       access: options.access,
       appInfo: options.appInfo,
       buttonSettleMs: 20,
+      uid: options.uid ?? IOS_MOBILE_UID,
       ...(options.encoder ? { encoder: options.encoder } : {}),
       ...(options.softwareEncoder ? { softwareEncoder: options.softwareEncoder } : {}),
     });
@@ -968,6 +969,52 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     assert.ok(kept.platform === "ios" && kept.settings.location.set?.latitude === 51.5, "the location bb-box set is kept across a restart");
     assert.ok(simulator.calls.includes(`location ${UDID} set 51.5,-0.12`), "and set again on the device");
     again.driver.close();
+  });
+
+  test("reboots the device after appearance or text size where its user's uid is not iOS's 501, as iOS shows such a change there only at its start (F-20)", async () => {
+    assert.equal(changesShowAtStart(IOS_MOBILE_UID), false);
+    assert.equal(changesShowAtStart(80065), true);
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    const { driver, logs } = driverOf(setup, simulator, { uid: 80065 });
+    await driver.attach(setup.target, AbortSignal.timeout(20_000));
+    const agent = { personHasControl: false };
+    const shutdowns = () => simulator.calls.filter((call) => call === `shutdown ${UDID}`).length;
+    assert.equal(driver.rebootsFor({ action: "appearance", to: "dark" }), true);
+    assert.equal(driver.rebootsFor({ action: "text_size", to: "larger" }), true);
+    assert.equal(driver.rebootsFor({ action: "status_bar", to: "clean" }), false);
+    const state = await driver.readBack();
+    assert.ok(state.platform === "ios" && state.settings.changesShowAtStart === true, "the state says so, for the answer's words");
+    const before = shutdowns();
+    await driver.control({ action: "appearance", to: "dark" }, AbortSignal.timeout(20_000), agent);
+    assert.equal(simulator.appearance, "dark");
+    assert.equal(shutdowns(), before + 1, "rebooted to show it");
+    assert.ok(logs.some((line) => line.includes("shows a change to appearance only at its start")));
+    await driver.control({ action: "status_bar", to: "clean" }, AbortSignal.timeout(20_000), agent);
+    assert.equal(shutdowns(), before + 1, "a status bar change shows at once");
+    driver.close();
+
+    const second = setUp();
+    const dedicated = driverOf(second, new FakeSimulator());
+    await dedicated.driver.attach(second.target, AbortSignal.timeout(20_000));
+    assert.equal(dedicated.driver.rebootsFor({ action: "appearance", to: "dark" }), false);
+    const own = await dedicated.driver.readBack();
+    assert.ok(own.platform === "ios" && own.settings.changesShowAtStart === undefined);
+    dedicated.driver.close();
+  });
+
+  test("finds the app a process runs from its program's path, as the front app's name when iOS gives none (F-20)", () => {
+    const root = "/Library/Developer/CoreSimulator/Volumes/iOS_24A434/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot";
+    const apps = installedApps({
+      "com.apple.mobilesafari": { CFBundleDisplayName: "Safari", CFBundleName: "MobileSafari", ApplicationType: "System", Path: `${root}/Applications/MobileSafari.app` },
+      "com.apple.Preferences": { CFBundleDisplayName: "Settings", ApplicationType: "System", Path: `${root}/Applications/Preferences.app/` },
+      "dev.example.probe": { CFBundleName: "Probe", ApplicationType: "User" },
+    });
+    assert.equal(apps.find((app) => app.id === "com.apple.Preferences")?.path, `${root}/Applications/Preferences.app`);
+    assert.equal(appOfProgram(`${root}/Applications/MobileSafari.app/MobileSafari`, apps)?.name, "Safari");
+    assert.equal(appOfProgram(`${root}/Applications/Preferences.app/Preferences`, apps)?.id, "com.apple.Preferences");
+    assert.equal(appOfProgram(`${root}/Applications/MobileSafari.appx/MobileSafari`, apps), null);
+    assert.equal(appOfProgram(`${root}/System/Library/CoreServices/SpringBoard.app/SpringBoard`, apps), null);
   });
 
   test("reads simctl's list of status bar overrides", () => {

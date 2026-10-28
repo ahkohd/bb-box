@@ -29,14 +29,19 @@ export interface InstalledApp {
   readonly id: string;
   readonly name: string;
   readonly system: boolean;
+  readonly path: string | null;
 }
 
 export function installedApps(listed: unknown): readonly InstalledApp[] {
   if (typeof listed !== "object" || listed === null) return [];
   return Object.entries(listed as Record<string, Record<string, unknown>>).map(([id, info]) => {
     const name = [info?.CFBundleDisplayName, info?.CFBundleName].find((each): each is string => typeof each === "string" && each.trim() !== "");
-    return { id, name: name?.trim() ?? id, system: info?.ApplicationType === "System" };
+    return { id, name: name?.trim() ?? id, system: info?.ApplicationType === "System", path: typeof info?.Path === "string" && info.Path ? info.Path.replace(/\/+$/, "") : null };
   });
+}
+
+export function appOfProgram(program: string, apps: readonly InstalledApp[]): InstalledApp | null {
+  return apps.find((app) => app.path !== null && program.startsWith(`${app.path}/`)) ?? null;
 }
 
 export type Runner = (program: string, args: readonly string[], options: { readonly timeoutMs: number; readonly input?: string; readonly env?: Readonly<Record<string, string>>; readonly signal?: AbortSignal }) => Promise<Ran>;

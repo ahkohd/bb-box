@@ -48,6 +48,7 @@ export interface IosSettingsOptions {
   readonly file: string;
   readonly log: (line: string) => void;
   readonly now: () => number;
+  readonly changesShowAtStart?: boolean;
 }
 
 export class IosSettingsKeeper {
@@ -110,7 +111,8 @@ export class IosSettingsKeeper {
 
   settings(): IosSettings {
     const own = this.#own();
-    return { appearance: this.#appearance, textSize: this.#textSize, location: own.location, statusBar: own.statusBar };
+    const atStart = this.#options.changesShowAtStart ? { changesShowAtStart: true } : {};
+    return { appearance: this.#appearance, textSize: this.#textSize, location: own.location, statusBar: own.statusBar, ...atStart };
   }
 
   async read(signal: AbortSignal): Promise<void> {
