@@ -275,7 +275,9 @@ qm start "$check_vm"
 wait_for "a clone answers SSH" 300 1 ssh_box exit || die "a clone of the template did not answer SSH at $BBBOX_BUILD_ADDRESS"
 log "a clone answered SSH $((($(date +%s%N) - start) / 1000000)) ms after qm start"
 checked=0
-root_gib=$(ssh_box 'df -BG --output=size / | tail -1' </dev/null | tr -dc 0-9)
+root_size() { ssh_box 'df -BG --output=size / | tail -1' </dev/null | tr -dc 0-9; }
+root_grew() { root_gib=$(root_size); [ "${root_gib:-0}" -gt "$disk" ]; }
+wait_for "a clone's root to grow over its disk" 120 2 root_grew || :
 log "a clone's root is ${root_gib:-?} GiB on a $((disk + 4)) GiB disk"
 [ "${root_gib:-0}" -gt "$disk" ] || { log "the clone's root did not grow over its disk"; checked=1; }
 ssh_box "bash -lc $check" </dev/null | tee "$stage/check.txt" || checked=1
