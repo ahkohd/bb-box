@@ -1,0 +1,12 @@
+{
+  "extends": "../../../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../../../..",
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@get-bb/plugin-sdk/app": ["docs/decisions/069-boxes-page/prototype/src/sdk-stand-in.tsx"],
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

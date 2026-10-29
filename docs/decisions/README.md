@@ -74,3 +74,4 @@ which records still stand as written. The current design as a whole is in
 | [066](066-the-monitor-is-beacon-moved-into-bb-box.md) | The Monitor is Beacon moved into bb-box, and a container is judged by its own cgroup | Accepted |
 | [067](067-settings-page.md) | The settings page is an overview, with a page one step in for each backend, kind and option | Accepted; being built |
 | [068](068-boat-backend.md) | A boat.dev box is a sandbox forked from a template sandbox, held on a renewed auto-stop and deleted on release | Proposed; being built |
+| [069](069-boxes-page.md) | A box has a page of its own, and the Boxes page says how each box is now | Proposed, after two reviews and re-reviews; its open questions are with the owner |
