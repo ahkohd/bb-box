@@ -37,7 +37,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { BoxResult, BoxEntry, Contract, DesktopState, MachineEntry, MachinesState, PanelState } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BOXES_ACTION, BoxBadges, EmptyPanel, forThread, hasViewer, IconButton, rememberedLive, message, Notice, OPERATOR, ReleasedNotice, deviceModelOf, RowTitle, systemName, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
+import { BOXES_ACTION, EmptyPanel, forThread, hasViewer, IconButton, rememberedLive, message, Notice, OPERATOR, ReleasedNotice, deviceModelOf, RowTitle, boxTitleBadges, systemName, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { POINTER_NONE } from "../core/pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
@@ -2091,7 +2091,7 @@ export function BoxLine({ box, meta, machine = false, actions }: { box: BoxView;
     <div className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 py-3">
       <span className="flex size-6 items-center justify-center text-muted-foreground"><BoxGlyph /></span>
       <div className="min-w-0">
-        <RowTitle name={box.name} os={systemName(box)} device={deviceModelOf(box)} badges={<BoxBadges box={box} machine={machine} />} />
+        <RowTitle name={box.name} os={systemName(box)} device={deviceModelOf(box)} badges={boxTitleBadges(box, machine)} />
         {/* Who has control comes straight after the state, so a narrow chooser keeps it. */}
         <StatusLine tone={status.tone} items={[status.items[0], control, ...status.items.slice(1), meta]} />
       </div>

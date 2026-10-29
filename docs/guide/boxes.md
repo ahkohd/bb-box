@@ -26,6 +26,8 @@ A row starts with the box's name and its system, such as Linux. A box with a dev
 - Shared: it shares a Mac or VM with other boxes, as a macOS user of its own
 - BB machine: it is the machine this thread runs on
 
+Where the line is short of room, the name stays whole. The device's model is cut, then dropped, then badges go, Desktop and the rest before Simulator, Emulator, Shared and what kind of computer it is. On a narrow screen, such as a phone's, a row has one button beside its menu, which has the rest.
+
 The line under the name says how the box is doing:
 
 | What it says | What it means |
