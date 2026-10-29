@@ -163,3 +163,13 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `microsandbox.overcommit` | Memory overcommit | Above 1, whether it applies on the host: a Mac keeps the memory a box has used, so bb-box counts each box there at its full size. |
 | `microsandbox.capacity` | Room on <host> | Room on the host for a box at its default size. |
 | `microsandbox.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
+
+## boat.dev
+
+| ID | Name | What it checks |
+| --- | --- | --- |
+| `boat.api` | boat.dev API | boat's API answers to the API key in BB Box's settings, and on which plan. |
+| `boat.limits` | Plan limits | What the boat plan allows now: sandboxes at once, starts left in each window, the sizes and their prices, and the trial's compute hours left. |
+| `boat.bb` | Reaching BB | Whether boat's sandboxes can reach BB's server, through the tailnet or a URL on the internet, so boat boxes become BB machines. It warns when BB's URL is on a private network and the tailnet is off. |
+| `boat.templates` | Templates | The stopped template sandbox each kind's boxes fork: when it was built, whether a new one is due, and whether one is being built. |
+| `boat.sandboxes` | Sandboxes | The boat sandboxes bb-box holds for its boxes, each with its state, size, price an hour and age, and any no box claims. |

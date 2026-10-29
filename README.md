@@ -55,6 +55,7 @@ Boxes join BB by reaching BB's server. If BB is signed in to your bb account, bb
 | [SSH host pool](setup/ssh-pool/README.md) | Linux; macOS, with or without a desktop | machines over SSH, physical or a VPS |
 | [Hetzner Cloud](docs/guide/hetzner.md) | Linux; Linux desktop on the CPU; Wayland desktop on the CPU; Linux on arm64, with or without a desktop | containers on x86 or Arm Docker hosts bb-box rents in your Hetzner Cloud project as boxes need them, and deletes when idle |
 | [Namespace](docs/guide/namespace.md) | macOS, with or without a desktop; Linux, with KVM; Linux desktop on the CPU; Wayland desktop on the CPU | a Namespace machine for each box, a Mac or a Linux machine, rented by the minute in your Namespace workspace, within its plan's limits |
+| [boat.dev](docs/guide/boat.md) | Linux, with KVM | a boat.dev sandbox for each box, a Linux VM forked from bb-box's template in seconds and billed by the second |
 
 Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md).
 

@@ -109,6 +109,11 @@ export const CHECKS = {
   "namespace.machines": { name: "Machines", from: ["namespace"], what: "The Namespace machines bb-box has, each with its age and when it ends, and any no box claims." },
   "namespace.limits": { name: "Workspace limits", from: ["namespace"], what: "The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which bb-box refuses a Mac up front; a warning when the token may not read them." },
   "namespace.images": { name: "Linux images", from: ["namespace"], what: "bb-box's Linux images in the workspace's registry: when each was built, whether a new one is due, and whether one is being built." },
+  "boat.api": { name: "boat.dev API", from: ["boat"], what: "boat's API answers to the API key in BB Box's settings, and on which plan." },
+  "boat.limits": { name: "Plan limits", from: ["boat"], what: "What the boat plan allows now: sandboxes at once, starts left in each window, the sizes and their prices, and the trial's compute hours left." },
+  "boat.bb": { name: "Reaching BB", from: ["boat"], what: "Whether boat's sandboxes can reach BB's server, through the tailnet or a URL on the internet, so boat boxes become BB machines. It warns when BB's URL is on a private network and the tailnet is off." },
+  "boat.templates": { name: "Templates", from: ["boat"], what: "The stopped template sandbox each kind's boxes fork: when it was built, whether a new one is due, and whether one is being built." },
+  "boat.sandboxes": { name: "Sandboxes", from: ["boat"], what: "The boat sandboxes bb-box holds for its boxes, each with its state, size, price an hour and age, and any no box claims." },
 
   // Tart.
   "tart.ssh-key": { name: "SSH key", from: ["tart"], what: "bb-box's SSH key for the Macs reads, and its public key to install." },

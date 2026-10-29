@@ -49,6 +49,7 @@ A backend's page has its switch, its health with its last check, and its setting
 - [Tart](../../setup/tart/README.md)
 - [Hetzner Cloud](hetzner.md), for Docker hosts rented by the hour
 - [Namespace](namespace.md), for Macs and Linux machines rented by the minute
+- [boat.dev](boat.md), for Linux VMs rented by the second
 
 Every setting is also in the [configuration reference](../reference/configuration.md).
 

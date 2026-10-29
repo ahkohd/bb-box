@@ -6,7 +6,7 @@ The kinds of box bb-box knows, the backends that can offer each, and each kind's
 
 | Kind | What it is | OS | Architecture | Desktop | GPU | Device | Backends |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `linux` | A Linux box for builds, backend services and the agent's own work. | linux | x86_64 | no | no | no | Proxmox LXC, Proxmox QEMU, SSH host pool, Docker, microsandbox, Hetzner Cloud, Namespace |
+| `linux` | A Linux box for builds, backend services and the agent's own work. | linux | x86_64 | no | no | no | Proxmox LXC, Proxmox QEMU, SSH host pool, Docker, microsandbox, Hetzner Cloud, Namespace, boat.dev |
 | `linux-desktop` | A Linux desktop on a GPU, for computer use, browsers and app development. | linux | x86_64 | yes | yes | no | Proxmox LXC, Docker |
 | `linux-desktop-cpu` | A Linux desktop drawn by the CPU, for computer use and browsers. | linux | x86_64 | yes | no | no | Proxmox LXC, Proxmox QEMU, Docker, microsandbox, Hetzner Cloud, Namespace |
 | `linux-desktop-wayland-cpu` | A Linux desktop on Wayland (Sway), drawn by the CPU, for computer use, browsers and apps built for Wayland. X11-only apps do not run there. | linux | x86_64 | yes, Wayland | no | no | Proxmox LXC, Docker, Hetzner Cloud, Namespace |
