@@ -130,6 +130,7 @@ export const machineSchema = z.object({
   connected: z.boolean(),
   isServer: z.boolean(),
   isBox: z.boolean(),
+  boxId: z.string().nullable(),
 });
 
 export type Machine = z.infer<typeof machineSchema>;

@@ -25,8 +25,9 @@ import { DESKTOP_PAGE, MACHINES_TAB, pageUrl, useOpenScreen } from "./desktop.ts
 import { JoinHelp } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
-import { BoxGlyph, MonitorGlyph, PhoneGlyph, TerminalGlyph } from "./glyphs.tsx";
-import { screensOf, screenWord, type Screen } from "./screens.ts";
+import { BoxGlyph, TerminalGlyph } from "./glyphs.tsx";
+import { screensOf } from "./screens.ts";
+import { openActions, openableNow, openWords, screenGlyph, type BoxOpens } from "./box-opens.tsx";
 import { canResize, ResizeDialog, useResizeNote } from "./resize.tsx";
 
 export type BoxAction = "release" | "stop" | "start" | "refresh";
@@ -59,14 +60,6 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function openWords(box: BoxView, screen: Screen): string {
-  return `Open ${screenWord(box, screen).toLowerCase()}`;
-}
-
-function screenGlyph(screen: Screen): ReactNode {
-  return screen === "device" ? <PhoneGlyph /> : <MonitorGlyph />;
-}
-
 /** The box a thread runs on, when it is not the thread's own (036): yours, or another thread's. */
 export interface Held {
   readonly owner: "yours" | "thread";
@@ -96,7 +89,7 @@ export function BoxRow({
   /** Set for the box this thread runs on (036): a "BB machine" badge among the others, no Release, Stop or Start, and a line saying where those are. */
   held?: Held | null;
   /** Where the desktop and terminal open, when not in this thread's panel tabs: the Boxes page opens them on the page. */
-  opens?: { readonly screen: (box: BoxView, screen: Screen) => void; readonly terminal: (box: BoxView) => void };
+  opens?: BoxOpens;
   /** Last words on the status line, such as the Boxes page's who has control and thread title. */
   meta?: readonly (string | null)[];
   /** A quick action before the menu, such as the Boxes page's Open thread. */
@@ -143,8 +136,7 @@ export function BoxRow({
   const showsError = box.error !== null;
   const compact = useIsCompactViewport();
   const quickActions = [
-    ...(ready ? screensOf(box).map((screen) => <IconButton key={screen} label={openWords(box, screen)} icon={screenGlyph(screen)} onClick={() => openScreen(box, screen)} />) : []),
-    ...(canOpenTerminal(box) ? [<IconButton key="terminal" label="Open terminal" icon={<TerminalGlyph />} onClick={() => openTerminal(box)} />] : []),
+    ...openableNow(openActions(box, { screen: openScreen, terminal: openTerminal })).map((action) => <IconButton key={action.key} label={action.words} icon={action.glyph()} onClick={action.open} />),
     ...(!held && box.canStopStart && box.state === "stopped" ? [<IconButton key="start" label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} />] : []),
     ...(!held && box.canStopStart && ready ? [<IconButton key="stop" label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} />] : []),
   ];

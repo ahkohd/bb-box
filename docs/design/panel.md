@@ -734,6 +734,39 @@ browser" passes `openUrl` the full URL.
 Empty: "No boxes" — "No thread has a box, and you have no machines. Add
 one with the plus, or from a thread's Box panel."
 
+## The Monitor's Open menu
+
+The Monitor's machine status (066) jumps to a box's views (the owner, 29
+October 2026: "if you already know the device name, to jump to see what is
+on view"). When it shows a box, its header has one small icon button
+between the machine's name and Reload, named "Open", with "Open a view of"
+and the box's name in its tooltip. It opens a menu of the box's views, each
+with the Boxes row's icon and words: "Open simulator" or "Open emulator",
+"Open desktop", "Open terminal". BB's server and BB machines that are not
+boxes have no button, so their header is unchanged. The owner chose one
+button over a button for each view: in BB's sidebar, 253 px wide, the
+header had 23 px to spare, and three buttons left the name about 19 px. The
+machine picker lists names only, as before; a button on each row was
+noise.
+
+Each item opens what the Boxes page's row opens, through the same code:
+`openActions` (`src/app/box-opens.tsx`) gives the views a box has, and
+`opensOnBoxesPage` (`src/app/desktop.tsx`) opens the view at
+`<thread>/<box>`, `<thread>/<box>/device` or `<thread>/<box>/terminal`, as
+the Boxes page's rows do. The Box panel's row takes its quick actions from
+`openActions` too. The Monitor learns which box a machine is from the
+machine list's `boxId`, and the box itself from the Boxes page's list,
+`allBoxes`.
+
+A box that is not ready keeps its items, disabled, each with the reason
+under its words, as in "brisk-wren is stopped". The Box panel's row hides
+its buttons instead, as before. The menu is the Monitor's own, styled as
+its picker's popover (`src/app/monitor/menu.tsx`), not BB's, which becomes
+a drawer on a narrow screen. Enter, Space or Down opens it, the arrows
+move, Escape closes it and focus returns to Open. The menu keeps Escape to
+itself: BB's sidebar footer closes the whole Monitor on Escape, which the
+picker still lets through.
+
 ## Copy
 
 | Where | Text |

@@ -48,6 +48,7 @@ import { REPOSITORY_URL } from "./settings-backends.tsx";
 import { NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
 import { SetupProgress } from "./first-run.tsx";
 import { BoxRow, type BoxAction } from "./box-row.tsx";
+import type { BoxOpens } from "./box-opens.tsx";
 import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
 import { MachineRow } from "./settings-machines.tsx";
 import { DEVICE_HUB_WORDS, SLOW_VIDEO_STILLS_WORDS, STILLS_WORDS, SelkiesSession, base64Bytes, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
@@ -2231,6 +2232,13 @@ export function desktopSubPath(threadId: string, boxId: string, view: Screen | "
   return [base, ...(view === "desktop" ? [] : [view]), ...(from === "settings" ? ["from-settings"] : [])].join("/");
 }
 
+export function opensOnBoxesPage(navigate: ReturnType<typeof useBbNavigate>, threadId: string): BoxOpens {
+  return {
+    screen: (box, screen) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id, screen) }),
+    terminal: (box) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id, "terminal") }),
+  };
+}
+
 /** The page's tabs: your machines, and the threads' boxes by thread. */
 type BoxesTab = "machines" | "threads";
 
@@ -2408,10 +2416,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
                           onToggle={() => setOpen((current) => (current === box.id ? null : box.id))}
                           act={actOn(threadId)}
                           now={now}
-                          opens={{
-                            screen: (target, screen) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, screen) }),
-                            terminal: (target) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, target.id, "terminal") }),
-                          }}
+                          opens={opensOnBoxesPage(navigate, threadId)}
                           meta={[hasViewer(box) && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
                           threading={false}
                         />

@@ -4,7 +4,10 @@ import type { Contract, Machine, MonitorSnapshot } from "../../plugin/contract.t
 import { STALL_LIMITS } from "../../monitor/health.ts";
 import { SERVER_MACHINE, useMonitorSnapshot } from "./use-snapshot.ts";
 import { useRevealOnLoad } from "./use-reveal-on-load.ts";
-import { useMachines } from "./use-machines.ts";
+import { machineKey, useMachines } from "./use-machines.ts";
+import { useScreensOf, type BoxScreens } from "./box-screens.tsx";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "./menu.tsx";
+import { cn } from "@/lib/utils";
 import { PressureNotifications, bindStatusOpener } from "./pressure-notifications.tsx";
 import { MachinePicker, selectedMachine } from "./machine-picker.tsx";
 import { loadErrorCopy } from "./load-error-copy.ts";
@@ -93,6 +96,33 @@ function HeaderButton({ label, tooltip, onClick, disabled, busy, children }: { l
       </TooltipTrigger>
       <TooltipContent side="top">{tooltip}</TooltipContent>
     </Tooltip>
+  );
+}
+
+function HeaderScreenMenu({ screens }: { screens: BoxScreens | null }) {
+  if (!screens) return null;
+  return (
+    <Menu>
+      <Tooltip delayDuration={350} disableHoverableContent>
+        <TooltipTrigger asChild>
+          <MenuTrigger className={cn(HEADER_BUTTON_CLASS, "data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-foreground")} aria-label="Open">
+            <Icon name="ArrowUpRight" className="size-3.5" aria-hidden />
+          </MenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top">{`Open a view of ${screens.boxName}`}</TooltipContent>
+      </Tooltip>
+      <MenuContent side="bottom">
+        {screens.actions.map((action) => (
+          <MenuItem key={action.key} disabled={action.closedBecause !== null} onSelect={action.open}>
+            <span className={cn("flex h-4 shrink-0 items-center text-muted-foreground", action.closedBecause && "opacity-50")}>{action.glyph("size-3.5")}</span>
+            <span className="min-w-0">
+              <span className={cn("block", action.closedBecause && "text-muted-foreground")}>{action.words}</span>
+              {action.closedBecause ? <span className="block text-muted-foreground">{action.closedBecause}</span> : null}
+            </span>
+          </MenuItem>
+        ))}
+      </MenuContent>
+    </Menu>
   );
 }
 
@@ -533,11 +563,12 @@ function StatusPopover({ snapshot, isServer, expected, waitingFor }: { snapshot:
   );
 }
 
-function MachineHeader({ machines, selected, onSelect, onOpen, actions }: { machines: Machine[] | null; selected: string; onSelect: (machineId: string) => void; onOpen: () => void; actions: ReactNode }) {
+function MachineHeader({ machines, selected, onSelect, onOpen, screens, actions }: { machines: Machine[] | null; selected: string; onSelect: (machineId: string) => void; onOpen: () => void; screens: BoxScreens | null; actions: ReactNode }) {
   return (
     <div data-bb-box-monitor-header className="sticky top-0 z-10 bg-sidebar">
       <div className="flex h-9 min-w-0 items-center gap-1 bg-sidebar-accent/50 px-1.5">
         <MachinePicker machines={machines} selected={selected} onSelect={onSelect} onOpen={onOpen} />
+        <HeaderScreenMenu screens={screens} />
         <span className="flex-1" />
         {actions}
       </div>
@@ -590,6 +621,7 @@ function ServerMark({ className }: { className?: string }) {
 
 function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps) {
   const { machines, selected, setSelected, refresh: refreshMachines } = useMachines();
+  const screensOf = useScreensOf();
   const { container, active, snapshot, error, reload, reloading } = useMonitorSnapshot(selected);
   const machineName = selectedMachine(machines, selected).name;
   const errorMessage = error ? loadErrorCopy(error, machineName) : "";
@@ -612,6 +644,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
         selected={selected}
         onSelect={setSelected}
         onOpen={() => void refreshMachines()}
+        screens={screensOf(machines?.find((machine) => machineKey(machine) === selected))}
         actions={<>
           <ReloadButton onReload={reload} reloading={reloading} loading={!snapshot && !error} updatedAt={snapshot?.timestamp ?? null} />
           <SettingsButton />
