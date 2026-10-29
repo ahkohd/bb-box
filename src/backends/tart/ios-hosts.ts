@@ -1173,6 +1173,13 @@ export class IosHosts implements SlotLender {
   dispose(): void {
     this.#stopping.abort(new Error("bb-box stopped."));
   }
+
+  async startsLeft(mostMs: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<void>((resolve) => (timer = setTimeout(resolve, mostMs)));
+    await Promise.race([Promise.allSettled([...this.#starts.values()]), waited]);
+    clearTimeout(timer);
+  }
 }
 
 export function slotAppWords(status: Pick<HostStatus, "bbApp" | "bbAppKept">): string {

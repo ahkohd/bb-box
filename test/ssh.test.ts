@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { readFileScript, readFileSummedScript, scriptText, splitSummedRead, writeFileScript, writeFileSummedScript } from "../src/transports/powershell.ts";
@@ -583,6 +584,42 @@ test("generateKeyPair makes an ed25519 key", async () => {
   const pair = await generateKeyPair();
   assert.match(pair.privateKey, /^-----BEGIN OPENSSH PRIVATE KEY-----\n/);
   assert.match(pair.publicKey, /^ssh-ed25519 \S+ bb-box$/);
+});
+
+test("a disposed Ssh opens no shared connection, so no socket comes into its folder after it closes its own (F-14)", async () => {
+  const { ssh, log, dir } = fakeSsh({ share: true });
+  const box = at("192.0.2.20");
+  await ssh.run(box, "true");
+  await ssh.dispose();
+  const masters = () => log().filter((entry) => entry.control === "master").length;
+  assert.equal(masters(), 1);
+  assert.equal((await ssh.run(box, "echo late")).stdout, "late\n", "a late command dials alone");
+  assert.equal(masters(), 1);
+  assert.deepEqual(readdirSync(join(dir, "shared")), []);
+});
+
+test("the key file's dispose removes the shared connections' folder while sockets still come into it (F-14)", async () => {
+  for (let round = 0; round < 3; round++) {
+    const keys = new KeyFile();
+    const share = await keys.shareDir();
+    for (let i = 0; i < 200; i++) writeFileSync(join(share, `old-${i}`), "");
+    const writer = spawn("/bin/sh", ["-c", 'i=0; while [ $i -lt 3000 ]; do : >"$1/new-$i" 2>/dev/null || exit 0; i=$((i + 1)); done', "sh", share], { stdio: "ignore" });
+    const writing = new Promise((resolve) => writer.on("exit", resolve));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await keys.dispose();
+    await writing;
+    if (existsSync(share)) await rm(share, { recursive: true, force: true });
+  }
+});
+
+test("a disposed key file makes no folder again, so a backend's late task cannot open a connection into the one being removed (F-14)", async () => {
+  const keys = new KeyFile();
+  const share = await keys.shareDir();
+  await keys.dispose();
+  assert.equal(existsSync(share), false);
+  await assert.rejects(keys.shareDir(), /bb-box is stopping, so it opens no new SSH connection/);
+  await assert.rejects(keys.path("key"), SshError);
+  await assert.rejects(keys.knownHosts(["192.0.2.5 ssh-ed25519 AAAA"]), SshError);
 });
 
 test("quote survives single quotes", () => {
