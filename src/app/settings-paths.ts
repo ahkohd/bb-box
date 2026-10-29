@@ -1,5 +1,5 @@
 import { pathProblem, type BoxFileSetting } from "../core/box-files.ts";
-import type { BackendConfig, ConfigDocument, HostConfig, ImageBake, Problem } from "../core/document.ts";
+import type { BackendConfig, ConfigDocument, HostConfig, ImageBake, ImageConfig, Problem } from "../core/document.ts";
 import { withImage } from "../core/project-images.ts";
 import type { TailnetSetting } from "../core/tailnet-settings.ts";
 import type { FieldValue } from "../backends/types.ts";
@@ -177,20 +177,40 @@ export function imageBakePath(name: string): Path {
   return `images/${name}/bake`;
 }
 
-type ImageAt = { readonly at: "image"; readonly name: string } | { readonly at: "bake"; readonly name: string };
+export function imageDefinitionPath(name: string): Path {
+  return `images/${name}/definition`;
+}
 
-function imageAt(path: Path): ImageAt | null {
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, each: unknown) => (each && typeof each === "object" && !Array.isArray(each) ? Object.fromEntries(Object.entries(each).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : each));
+}
+
+export type ImageAt = { readonly at: "image"; readonly name: string } | { readonly at: "bake"; readonly name: string } | { readonly at: "definition"; readonly name: string };
+
+export function imageAt(path: Path): ImageAt | null {
   const [section, name, ...rest] = path.split("/");
   if (section !== "images" || !name) return null;
   if (!rest.length) return { at: "image", name };
   if (rest.length === 1 && rest[0] === "bake") return { at: "bake", name };
+  if (rest.length === 1 && rest[0] === "definition") return { at: "definition", name };
   return null;
 }
 
 function storedAtImage(document: ConfigDocument, at: ImageAt): Stored {
   const image = document.images?.[at.name];
   if (!image) return { kind: "gone" };
+  if (at.at === "definition") return { kind: "value", value: canonicalJson(image) };
   return at.at === "image" ? { kind: "value", value: true } : { kind: "value", value: image.bake ?? "auto" };
+}
+
+function definedImage(value: PlainValue): ImageConfig | null {
+  if (typeof value !== "string") return null;
+  try {
+    const image = JSON.parse(value) as ImageConfig | null;
+    return image && typeof image === "object" ? image : null;
+  } catch {
+    return null;
+  }
 }
 
 function withImageEdits(state: ConfigState, input: ConfigDocument, edits: readonly PathEdit[]): Built {
@@ -198,6 +218,13 @@ function withImageEdits(state: ConfigState, input: ConfigDocument, edits: readon
   let needed = false;
   for (const edit of edits) {
     const at = imageAt(edit.path);
+    if (at?.at === "definition" && edit.value.kind === "plain") {
+      const image = definedImage(edit.value.value);
+      if (!image) continue;
+      document = withImage(document, at.name, image);
+      if (isChange(state, edit)) needed = true;
+      continue;
+    }
     const image = at ? document.images?.[at.name] : undefined;
     if (!at || !image) continue;
     if (at.at === "image" && edit.value.kind === "removed") {
@@ -210,6 +237,28 @@ function withImageEdits(state: ConfigState, input: ConfigDocument, edits: readon
     }
   }
   return { document, sentAs: {}, needed };
+}
+
+export const BACKEND_ORDER_PATH: Path = "order/backends";
+
+export function orderValue(ids: readonly string[]): string {
+  return ids.join(" ");
+}
+
+function storedOrder(document: ConfigDocument): Stored {
+  return { kind: "value", value: orderValue(document.backends.map((backend) => backend.id)) };
+}
+
+function withOrderEdit(state: ConfigState, input: ConfigDocument, edits: readonly PathEdit[]): Built {
+  const edit = edits.find((each) => each.path === BACKEND_ORDER_PATH);
+  if (edit?.value.kind !== "plain" || typeof edit.value.value !== "string") return { document: input, sentAs: {}, needed: false };
+  const order = edit.value.value.split(" ").filter(Boolean);
+  const rank = (id: string) => {
+    const at = order.indexOf(id);
+    return at < 0 ? order.length : at;
+  };
+  const backends = input.backends.map((backend, index) => ({ backend, index })).sort((a, b) => rank(a.backend.id) - rank(b.backend.id) || a.index - b.index).map((each) => each.backend);
+  return { document: { ...input, backends }, sentAs: {}, needed: isChange(state, edit) };
 }
 
 export const SIZE_PARTS = ["cores", "memoryGiB", "diskGiB"] as const;
@@ -529,6 +578,7 @@ export function storedAt(state: ConfigState, path: Path, value?: EditValue): Sto
   if (at) return storedAtBackend(state, at, path);
   const image = imageAt(path);
   if (image) return storedAtImage(state.document, image);
+  if (path === BACKEND_ORDER_PATH) return storedOrder(state.document);
   const kind = kindAt(path);
   if (kind) return storedAtKind(state, kind);
   if (isFilePath(path)) {
@@ -774,7 +824,8 @@ export function candidateOf(state: ConfigState, edits: readonly PathEdit[]): Can
   const files = withFiles(backends.document, edits);
   const tailnet = withTailnet(state, files.document, edits);
   const images = withImageEdits(state, tailnet.document, edits);
-  return { document: images.document, conflicts, needed: needed || kinds.needed || backends.needed || files.needed || tailnet.needed || images.needed, sentAs: { ...backends.sentAs, ...files.sentAs } };
+  const order = withOrderEdit(state, images.document, edits);
+  return { document: order.document, conflicts, needed: needed || kinds.needed || backends.needed || files.needed || tailnet.needed || images.needed || order.needed, sentAs: { ...backends.sentAs, ...files.sentAs } };
 }
 
 function hostProblemPath(id: string, index: string, rest: string | undefined, sentAs: Readonly<Record<string, Path>>): Path {
@@ -955,9 +1006,18 @@ function backendLabelOf(path: Path, value: EditValue | undefined, state: ConfigS
   return null;
 }
 
+function imageLabelOf(path: Path): string | null {
+  const at = imageAt(path);
+  if (!at) return null;
+  return at.at === "bake" ? `When ${at.name} is built ahead` : `The image ${at.name}`;
+}
+
 export function labelOf(path: Path, value?: EditValue, state?: ConfigState): string {
   const setting = SETTING_LABELS[path];
   if (setting) return setting;
+  if (path === BACKEND_ORDER_PATH) return "The order new boxes try the backends in";
+  const image = imageLabelOf(path);
+  if (image) return image;
   if (value?.kind === "new-file") return `the content of ~/${value.path.trim() || "the new file"}`;
   const file = fileOfPath(path);
   if (file !== null) return `the content of ~/${file}`;

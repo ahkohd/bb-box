@@ -191,6 +191,19 @@ function newerWords(count: number): string {
   return count === 1 ? " Your newer change is not saved yet." : ` Your ${count} newer changes are not saved yet.`;
 }
 
+export interface SaveWords {
+  readonly save: string;
+  readonly again: string;
+  readonly saving: string;
+  readonly rebasing: string;
+  readonly looking: string;
+  readonly unconfirmed: string;
+  readonly discard: string;
+  pending(draft: Draft): string;
+  conflicts(count: number): string;
+  outcome(outcome: Outcome, draft: Draft): string;
+}
+
 function outcomeWords(outcome: Outcome, draft: Draft): string {
   switch (outcome.kind) {
     case "saved": {
@@ -225,27 +238,40 @@ function conflictWords(count: number): string {
   return `${count === 1 ? "A setting you changed was" : `${count} settings you changed were`} changed elsewhere too. Choose for each, then save.`;
 }
 
+export const SAVE_WORDS: SaveWords = {
+  save: "Save",
+  again: "Save again",
+  saving: "Saving…",
+  rebasing: "Someone saved first. Checking your changes against theirs…",
+  looking: "Save not confirmed: BB Box did not reply. Looking for this save's receipt…",
+  unconfirmed: "Save not confirmed: BB Box has no receipt for it yet. Your changes are still here. Saving again resends the same request, which BB Box applies at most once.",
+  discard: DISCARD_WORDS,
+  pending: (draft) => `${changesWords(draft.changes)} to ${draft.what} not saved`,
+  conflicts: conflictWords,
+  outcome: outcomeWords,
+};
+
 type BarTone = "quiet" | "busy" | "warn" | "bad" | "done";
 
-export function barOf(draft: Draft, savedShown: boolean): { readonly words: string; readonly tone: BarTone; readonly retry: boolean; readonly show: boolean } | null {
+export function barOf(draft: Draft, savedShown: boolean, words: SaveWords = SAVE_WORDS): { readonly words: string; readonly tone: BarTone; readonly retry: boolean; readonly show: boolean } | null {
   const { entry } = draft;
   const operation = entry.operation;
-  if (operation?.phase.at === "sending") return { words: operation.phase.rebased ? "Someone saved first. Checking your changes against theirs…" : "Saving…", tone: "busy", retry: false, show: false };
-  if (operation?.phase.at === "looking") return { words: "Save not confirmed: BB Box did not reply. Looking for this save's receipt…", tone: "busy", retry: false, show: false };
-  if (operation?.phase.at === "unconfirmed") return { words: "Save not confirmed: BB Box has no receipt for it yet. Your changes are still here. Saving again resends the same request, which BB Box applies at most once.", tone: "warn", retry: true, show: false };
-  if (draft.conflicts.length) return { words: conflictWords(draft.conflicts.length), tone: "warn", retry: false, show: true };
+  if (operation?.phase.at === "sending") return { words: operation.phase.rebased ? words.rebasing : words.saving, tone: "busy", retry: false, show: false };
+  if (operation?.phase.at === "looking") return { words: words.looking, tone: "busy", retry: false, show: false };
+  if (operation?.phase.at === "unconfirmed") return { words: words.unconfirmed, tone: "warn", retry: true, show: false };
+  if (draft.conflicts.length) return { words: words.conflicts(draft.conflicts.length), tone: "warn", retry: false, show: true };
   const outcome = entry.outcome;
   if (outcome && (outcome.kind === "saved" || outcome.kind === "already")) {
-    if (savedShown || draft.changes) return { words: outcomeWords(outcome, draft), tone: "done", retry: false, show: false };
+    if (savedShown || draft.changes) return { words: words.outcome(outcome, draft), tone: "done", retry: false, show: false };
   } else if (outcome) {
     const bad = outcome.kind === "problems" || outcome.kind === "refused" || outcome.kind === "exhausted";
-    return { words: outcomeWords(outcome, draft), tone: bad ? "bad" : "warn", retry: bad, show: outcome.kind === "problems" };
+    return { words: words.outcome(outcome, draft), tone: bad ? "bad" : "warn", retry: bad, show: outcome.kind === "problems" };
   }
-  if (draft.changes) return { words: `${changesWords(draft.changes)} to ${draft.what} not saved`, tone: "quiet", retry: false, show: false };
+  if (draft.changes) return { words: words.pending(draft), tone: "quiet", retry: false, show: false };
   return null;
 }
 
-export function SaveBar({ draft, primary = "Save", inline = false, unplaced = [], actions }: { draft: Draft; primary?: string; inline?: boolean; unplaced?: readonly string[]; actions?: ReactNode }) {
+export function SaveBar({ draft, primary, inline = false, unplaced = [], actions, words = SAVE_WORDS, ready = true }: { draft: Draft; primary?: string; inline?: boolean; unplaced?: readonly string[]; actions?: ReactNode; words?: SaveWords; ready?: boolean }) {
   const registry = useRegistry();
   const outcome = draft.entry.outcome;
   const shownAt = draft.entry.outcomeShownAt;
@@ -264,20 +290,20 @@ export function SaveBar({ draft, primary = "Save", inline = false, unplaced = []
   const [focusWithin, setFocusWithin] = useState(false);
   const status = useRef<HTMLSpanElement>(null);
   const savedShown = savedOutcome && (shownAt === null || Date.now() - shownAt < SAVED_BAR_MS || focusWithin);
-  const bar = barOf(draft, savedShown);
+  const bar = barOf(draft, savedShown, words);
   const busy = bar?.tone === "busy";
   const showButtons = bar !== null && (bar.tone !== "done" || draft.changes > 0);
   useLayoutEffect(() => {
     if (focusWithin && !showButtons && document.activeElement === document.body) status.current?.focus();
   }, [focusWithin, showButtons]);
   if (!bar) return null;
-  const canSave = !busy && !draft.conflicts.length && (draft.changes > 0 || bar.retry);
+  const canSave = !busy && !draft.conflicts.length && (bar.retry || (draft.changes > 0 && ready));
   const keepsFocus = (enabled: boolean) => !enabled && !busy;
   return (
     <div className={inline ? "flex" : "pointer-events-none sticky bottom-3 z-20 mt-6 flex justify-center"}>
       <div
         role="region"
-        aria-label={`Save ${draft.what}`}
+        aria-label={`${words.save} ${draft.what}`}
         onFocus={() => setFocusWithin(true)}
         onBlur={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusWithin(false);
@@ -305,7 +331,7 @@ export function SaveBar({ draft, primary = "Save", inline = false, unplaced = []
               className="h-7"
               disabled={keepsFocus(draft.changes > 0 || draft.entry.operation !== null)}
               aria-disabled={busy || undefined}
-              aria-description={DISCARD_WORDS}
+              aria-description={words.discard}
               onClick={() => {
                 if (!busy) draft.discard();
               }}
@@ -322,7 +348,7 @@ export function SaveBar({ draft, primary = "Save", inline = false, unplaced = []
                 if (canSave) draft.save();
               }}
             >
-              {bar.retry ? "Save again" : primary}
+              {bar.retry ? words.again : (primary ?? words.save)}
             </Button>
           </span>
         ) : null}
@@ -371,15 +397,19 @@ export function ConflictNote({ conflict, onTheirs, onMine, shown = (value) => (v
   );
 }
 
-export function RestoredNote({ draft }: { draft: Draft }) {
+export function RestoredNote({ draft, words }: { draft: Draft; words?: ReactNode }) {
   const restored = draft.entry.restored;
   if (!restored) return null;
   return (
     <div role="status" className="flex flex-wrap items-start gap-3 rounded-lg border border-border bg-surface-raised px-4 py-3 text-xs leading-snug">
       <Icon name="Info" className="mt-px size-4 shrink-0 text-muted-foreground" aria-hidden />
       <span className="min-w-0 flex-1 basis-56 text-foreground">
-        Your unsaved changes to {draft.what} are back{restored.count ? `: ${changesWords(restored.count)}` : ""}.
-        {restored.lost.length ? <span className="text-muted-foreground"> For safety {restored.lost.map((path) => labelOf(path, draft.entry.edits.get(path)?.value, draft.latest)).join(" and ")} you pasted was not kept; paste it again.</span> : null}
+        {words ?? (
+          <>
+            Your unsaved changes to {draft.what} are back{restored.count ? `: ${changesWords(restored.count)}` : ""}.
+            {restored.lost.length ? <span className="text-muted-foreground"> For safety {restored.lost.map((path) => labelOf(path, draft.entry.edits.get(path)?.value, draft.latest)).join(" and ")} you pasted was not kept; paste it again.</span> : null}
+          </>
+        )}
       </span>
       <span className="flex gap-1.5">
         <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.dismissRestored}>

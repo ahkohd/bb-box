@@ -139,7 +139,9 @@ They take these options:
 
 The exit code is 0 when it saved, 1 when nothing was saved, and 2 when it
 saved but the backend's checks failed. `bb box config show` prints the whole
-configuration, without secrets.
+configuration, without secrets. A person can do the same on the settings
+page's Configuration page: Export downloads that file, and Import checks one
+and lists what it changes, before and after, before Apply.
 
 ## Secrets
 

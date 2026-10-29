@@ -367,7 +367,7 @@ overview, dimmed, until the person leaves BB Box's settings.
 | Devices | Streaming: iOS video encoding, a menu, and "Share each Mac's encoder fairly", a switch, both at once. Set on other pages: each backend's shared iOS hosts, and each device kind's spares with "None, as by default" and why they are off by default, each opening its page. For testing: the test device, a switch |
 | Network | The tailnet as one form on the engine: whether machines join (two radio choices), tags (empty for `tag:bb-box`), and the OAuth client ID and secret, Set or Replace, with their versions. Saved together with one Save, or Enter; a refusal keeps every change, with the reason under the field it names. Choosing No hides the rest, drops their edits and says "Saving No deletes the saved OAuth client ID and secret" |
 | Monitor | Machine status (a switch, also on its overview row), Refresh every … s, background monitoring and pressure notifications. After machine status changes: "The sidebar's machine status changes when BB next loads", with Reload BB now |
-| Configuration | The revision and what happens when two people save; the `bb box config` commands |
+| Configuration | See [The Configuration page](#the-configuration-page) |
 | Add a backend | Docker on your BB machines first: each machine that can host boxes with Docker's facts and Add; each whose Docker cannot, with why, the lines that fix it and Check again; each added, "Added: open it"; each offline; and one line for those with no Docker. Then every driver, grouped by where boxes run (on BB's server or a machine you have, on a Proxmox VE host, on your Macs, in the cloud), each with the kinds it makes and what setting it up needs, the driver's `setup.needs`. One already added says "Added: open it"; a type that allows several says how many are added and Add another |
 | Set up a backend | Four numbered steps: 1, Prepare: the guide and what it needs, and its scripts in the order it runs them; 2, Connect: connection, credentials and Macs; 3, Choose what it makes: the kinds it can make and the Offer boxes left unticked; 4, Check it: all its checks against the form as it will be saved, up to 30 s, with nothing saved, the result cleared by any later edit. The bar offers Discard and go back, Save, keep it off, and Save and turn on; Enter saves nothing, as whether to turn it on is the person's choice. Saved on with a field missing is refused with the fields marked and nothing stored; saved off, it is stored and Not finished |
 
@@ -399,6 +399,35 @@ overview, dimmed, until the person leaves BB Box's settings.
 - Removing a project's image, from the page or with `bb box config apply`,
   deletes its builds, as `bb box image remove` does: bb-box settles every
   project image that changed with each change of the configuration.
+
+## The Configuration page
+
+- **Revision**: the configuration's revision and what happens when two
+  people save.
+- **Export**: Copy as JSON and Download, the file `bb box config show
+  --json` prints, with no secret in it. Under it, each secret that must be
+  given again to set BB Box up from it, by where it lives.
+- **Import**: a form on the engine, part `option/configuration`. The text
+  is pasted or opened from a file, and kept in memory only, valid or not
+  (067 R1). Check parses it in the page, then `config.check` with `read`
+  answers with the file as bb-box reads it, with no secret value in it.
+  The page turns each difference from the configuration into an edit of
+  the engine, at the same paths as the other pages, so the change list
+  says each change with its place, before and after; a secret or file
+  content says only that it is replaced. Only those edits, without
+  secrets, go into session storage. A change made elsewhere to a setting
+  the import changes is a conflict on its row, with both choices; one to
+  another setting stays. Apply is a save of the part: on a moved revision
+  it applies the checked changes on the newer configuration, never the
+  whole file over it. Text typed after Check clears the list; text typed
+  while it applies stays, "Applied. Your newer text is not applied yet"
+  (067 R4). A file that adds a file for every box without its content, or
+  has a backend type this BB Box lacks, cannot be applied and says why.
+- **Settings moved from BB**: while bb-box keeps the copy of BB's earlier
+  settings, Remove copy… asks first, then `config.migrated.remove`; the
+  page says it is removed only once BB Box answers, or once the
+  configuration, read again, shows it gone.
+- **From a terminal**: the `bb box config` commands.
 
 ## Keyboard and screen readers
 
@@ -434,7 +463,8 @@ on the Boxes page, under Machines".
 | 7: first run, Add backend and setting up a backend on the engine | Built |
 | 8: Images, with every rebuild's run state, projects' images, and failed rebuilds in Status | Built |
 | 9: Devices and Network on the engine | Built |
-| 10 and 11: Configuration, Find | To come, as 067 lists them |
+| 10: Configuration: export, import with its change list, the copy's removal | Built |
+| 11: Find | To come, as 067 lists it |
 
 The code: `src/app/settings.tsx` (the view: hash, focus and scroll),
 `settings-route.ts` (views, hashes and `openSettingsView`),
@@ -448,7 +478,9 @@ and `rebuild-now.tsx` (the Images page),
 runs, and the kind switch with the default kind's rule),
 `settings-machine-docker.ts` and `settings-docker-hosts.tsx` (Docker on
 your BB machines),
-`settings-tailnet.tsx` (Network), `settings-setup.tsx` (Add backend and
+`settings-tailnet.tsx` (Network), `settings-configuration.tsx` and
+`settings-import.ts` (Configuration, and an import's change list),
+`settings-setup.tsx` (Add backend and
 setting up a backend), `settings-first-run.tsx` (first run on the
 overview), `settings-context.tsx`, `settings-overview.tsx`,
 `settings-pages.tsx` and `settings-parts.tsx`. `first-run.tsx` keeps the

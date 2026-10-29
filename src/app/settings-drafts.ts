@@ -43,8 +43,10 @@ export function backendPart(id: string): string {
   return `backend/${id}`;
 }
 
+const SETUP_PREFIX = "setup/";
+
 export function setupPart(type: string): string {
-  return `setup/${type}`;
+  return `${SETUP_PREFIX}${type}`;
 }
 
 export interface Submission {
@@ -557,6 +559,17 @@ export class DraftRegistry {
     });
   }
 
+  replace(part: string, keep: (path: Path) => boolean, values: readonly (readonly [Path, EditValue])[]): void {
+    const latest = this.#latest;
+    if (!latest) return;
+    this.#update(part, (entry) => {
+      const edits = new Map([...entry.edits].filter(([path]) => keep(path)));
+      for (const [path, value] of values) edits.set(path, { value, base: storedAt(latest, path, value) });
+      const outcome = entry.outcome && (entry.outcome.kind === "saved" || entry.outcome.kind === "already") ? entry.outcome : null;
+      return { ...entry, edits, problems: [], outcome, restored: null };
+    });
+  }
+
   forgetUnder(part: string, path: Path): void {
     this.#update(part, (entry) => {
       const under = (each: Path) => each === path || each.startsWith(`${path}/`);
@@ -686,7 +699,7 @@ export class DraftRegistry {
             ? { kind: "saved", revision, lostReply: finish.lostReply, rebased: finish.rebased, changedElsewhere: done.changedElsewhere, newer: done.newer }
             : { kind: "already", revision, newer: done.newer };
         const created = createdBackend(operation.submission);
-        const landed = created && part !== backendPart(created.id) ? backendPart(created.id) : null;
+        const landed = created && part.startsWith(SETUP_PREFIX) ? backendPart(created.id) : null;
         if (landed && created) {
           const there = this.part(landed);
           this.#landings.set(part, created.id);
