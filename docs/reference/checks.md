@@ -10,22 +10,22 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | --- | --- | --- |
 | `doctor` | Checks | A backend's checks did not finish within their time limit. |
 | `config.<path>` | Settings | A part of bb-box's configuration that needs fixing, by its path, such as general.defaultKind. |
-| `offers.<kind>` | Offers of <kind> | Where several backends offer a kind: they agree on what the kind promises, and each has the features it requires. |
-| `overlap.<backend>.<backend>` | <backend> and <backend> | Two backends whose boxes could take the same guest IDs or addresses. |
-| `warm.<kinds>` | Warm pool of <kinds> | A warm pool that has fewer ready boxes than its count asks for, and no room for another. |
+| `offers.<kind>` | Offers of &lt;kind> | Where several backends offer a kind: they agree on what the kind promises, and each has the features it requires. |
+| `overlap.<backend>.<backend>` | &lt;backend> and &lt;backend> | Two backends whose boxes could take the same guest IDs or addresses. |
+| `warm.<kinds>` | Warm pool of &lt;kinds> | A warm pool that has fewer ready boxes than its count asks for, and no room for another. |
 | `sizes.<kind>.<preset>` | Box sizes | A Linux preset with less than 2 GiB memory, so its boxes can run out of memory as they become BB machines. |
 | `box-files` | Files for every box | The files bb-box writes into each box as it joins BB, and whether the last write worked. |
 | `images.nightly` | Nightly rebuilds | When bb box images refresh last ended. It warns when no run ended for 8 days. |
 | `images.bb-update` | Refresh after a BB update | After a BB update, which Linux images have another build of BB's app than BB's server gives, and when their refresh starts. Only while Rebuild each night is on. |
-| `images.<backend>/<ref>` | Rebuild of <backend>/<ref> | A standard image whose last rebuild failed, or waits for room. |
-| `images.bake.<image>.<backend>.<kind>` | Build of <image> for <kind> on <backend> | A project image whose last build failed. Its boxes run its script as they start meanwhile. |
-| `device-hub.<box>` | Device Hub in <box> | An ios box's macOS host has no Device Hub running (063): it takes the device's pasteboard, and quitting it shuts the device down, so the device server kills it within 5 s of its start. Says how often it has. |
-| `device.<box>` | Device server of <box> | A device box's server (063): the version it runs against the one this bb-box delivers, a delivery waiting for a person or a recording, a version marked bad after it did not answer, and a server its service manager gave up on. |
-| `encoder.<mac>` | Video encoder on <mac> | A Mac's video encoder, shared by every iOS device bb-box streams on it (064): its budget, from the chip or a probe, how much of it the streams use, and which are shown at a lower resolution to keep within it. |
+| `images.<backend>/<ref>` | Rebuild of &lt;backend>/&lt;ref> | A standard image whose last rebuild failed, or waits for room. |
+| `images.bake.<image>.<backend>.<kind>` | Build of &lt;image> for &lt;kind> on &lt;backend> | A project image whose last build failed. Its boxes run its script as they start meanwhile. |
+| `device-hub.<box>` | Device Hub in &lt;box> | An ios box's macOS host has no Device Hub running (063): it takes the device's pasteboard, and quitting it shuts the device down, so the device server kills it within 5 s of its start. Says how often it has. |
+| `device.<box>` | Device server of &lt;box> | A device box's server (063): the version it runs against the one this bb-box delivers, a delivery waiting for a person or a recording, a version marked bad after it did not answer, and a server its service manager gave up on. |
+| `encoder.<mac>` | Video encoder on &lt;mac> | A Mac's video encoder, shared by every iOS device bb-box streams on it (064): its budget, from the chip or a probe, how much of it the streams use, and which are shown at a lower resolution to keep within it. |
 | `monitor` | Monitor | The Monitor's settings (066): whether it is on, how often machine status reads while it is open, and whether background monitoring and its notifications are on. |
 | `monitor.background` | Background monitoring | While background monitoring is on: when it last wrote its minute's summary of BB's server's CPU and memory, and whether its last sample or write failed. |
-| `spares.<kind>` | Spare <kind> boxes | A kind's spares (032, 063): how many bb-box keeps, how many are ready or being made, and what each costs while it waits. For ios and android it says when spares are off, as they are by default. It warns when the kind has fewer than its count and why. |
-| `spares.image.<image>.<backend>.<kind>` | Spare of <image> for <kind> on <backend> | A project image's spare whose build failed to start a box, so bb-box makes none of that build for a day. Its boxes start from the build meanwhile. |
+| `spares.<kind>` | Spare &lt;kind> boxes | A kind's spares (032, 063): how many bb-box keeps, how many are ready or being made, and what each costs while it waits. For ios and android it says when spares are off, as they are by default. It warns when the kind has fewer than its count and why. |
+| `spares.image.<image>.<backend>.<kind>` | Spare of &lt;image> for &lt;kind> on &lt;backend> | A project image's spare whose build failed to start a box, so bb-box makes none of that build for a day. Its boxes start from the build meanwhile. |
 | `tailnet.client` | OAuth client | Tailscale signs in the OAuth client in the General settings, with which bb-box makes a single-use key for each machine it makes. |
 | `tailnet.devices` | Devices | This install's devices on the tailnet, which bb-box removes when their machine went without logging out, and how many other devices carry the same tags, unnamed: bb-box leaves those alone. |
 
@@ -33,55 +33,55 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 
 | ID | Name | What it checks |
 | --- | --- | --- |
-| `devices.<mac>` | iOS devices on <mac> | What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot. |
+| `devices.<mac>` | iOS devices on &lt;mac> | What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot. |
 | `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
 | `machines` | Machines | At least one machine is listed. |
 | `docker` | Docker | Whether the pool's Linux machines lend Docker to their boxes. |
 | `xcode` | Xcode | Whether the pool's Macs have Xcode. |
-| `machine.<machine>.ssh` | <machine>: SSH | The machine answers over SSH with its pinned host key. |
-| `machine.<machine>.sizes` | <machine>: room for each kind | The machine holds a box of each of its kinds at the default size. |
-| `machine.<machine>.helper` | <machine>: helper | bb-box's helper is installed on the machine, at this bb-box's version. |
-| `machine.<machine>.arch` | <machine>: architecture | The machine's architecture is the one its kinds need. |
-| `machine.<machine>.tools` | <machine>: tools | The tools its kinds need are on the machine. |
-| `machine.<machine>.docker` | <machine>: Docker | Docker runs on the machine, for its boxes. |
-| `machine.<machine>.state` | <machine>: state | Whether the machine is free, lent, being reset or out of service. |
-| `machine.<machine>.filevault` | <machine>: FileVault | On a Mac, FileVault is off, so it signs a box user in after a restart. |
-| `machine.<machine>.signin` | <machine>: sign-in | On a Mac, the next box user is signed in at the console. |
-| `machine.<machine>.fulldisk` | <machine>: Full Disk Access | On a Mac, the helper has Full Disk Access, which a reset needs. |
-| `machine.<machine>.sip` | <machine>: System Integrity Protection | On a Mac, whether System Integrity Protection is on, and so whether bb-box can grant box users' programs macOS permissions (058). |
-| `machine.<machine>.slots` | <machine>: iOS slots | On a Mac whose line lists ios (064): that its iOS slots are set up, whether it lends slots or is lent whole, its slots held, ready, making and sweeping, the iOS runtime and seed they are made with, each held slot's load, and what its last sweeps found and left. |
-| `machine.<machine>.homes` | <machine>: people's homes | On a Mac, box users cannot enter any person's home, such as an administrator's with BB's or an agent CLI's credentials. |
-| `machine.<machine>.xcode` | <machine>: Xcode | On a Mac, Xcode and its iOS runtime. |
-| `machine.<machine>.screensharing` | <machine>: Screen Sharing | On a Mac with desktops, Screen Sharing is on. |
-| `machine.<machine>.grants` | <machine>: Cua Driver's grants | On a Mac with desktops, Cua Driver has Accessibility and Screen Recording. |
-| `machine.<machine>.input` | <machine>: viewer's input | On a Mac with desktops, a viewer's keys and clicks reach the desktop. |
+| `machine.<machine>.ssh` | &lt;machine>: SSH | The machine answers over SSH with its pinned host key. |
+| `machine.<machine>.sizes` | &lt;machine>: room for each kind | The machine holds a box of each of its kinds at the default size. |
+| `machine.<machine>.helper` | &lt;machine>: helper | bb-box's helper is installed on the machine, at this bb-box's version. |
+| `machine.<machine>.arch` | &lt;machine>: architecture | The machine's architecture is the one its kinds need. |
+| `machine.<machine>.tools` | &lt;machine>: tools | The tools its kinds need are on the machine. |
+| `machine.<machine>.docker` | &lt;machine>: Docker | Docker runs on the machine, for its boxes. |
+| `machine.<machine>.state` | &lt;machine>: state | Whether the machine is free, lent, being reset or out of service. |
+| `machine.<machine>.filevault` | &lt;machine>: FileVault | On a Mac, FileVault is off, so it signs a box user in after a restart. |
+| `machine.<machine>.signin` | &lt;machine>: sign-in | On a Mac, the next box user is signed in at the console. |
+| `machine.<machine>.fulldisk` | &lt;machine>: Full Disk Access | On a Mac, the helper has Full Disk Access, which a reset needs. |
+| `machine.<machine>.sip` | &lt;machine>: System Integrity Protection | On a Mac, whether System Integrity Protection is on, and so whether bb-box can grant box users' programs macOS permissions (058). |
+| `machine.<machine>.slots` | &lt;machine>: iOS slots | On a Mac whose line lists ios (064): that its iOS slots are set up, whether it lends slots or is lent whole, its slots held, ready, making and sweeping, the iOS runtime and seed they are made with, each held slot's load, and what its last sweeps found and left. |
+| `machine.<machine>.homes` | &lt;machine>: people's homes | On a Mac, box users cannot enter any person's home, such as an administrator's with BB's or an agent CLI's credentials. |
+| `machine.<machine>.xcode` | &lt;machine>: Xcode | On a Mac, Xcode and its iOS runtime. |
+| `machine.<machine>.screensharing` | &lt;machine>: Screen Sharing | On a Mac with desktops, Screen Sharing is on. |
+| `machine.<machine>.grants` | &lt;machine>: Cua Driver's grants | On a Mac with desktops, Cua Driver has Accessibility and Screen Recording. |
+| `machine.<machine>.input` | &lt;machine>: viewer's input | On a Mac with desktops, a viewer's keys and clicks reach the desktop. |
 
 ## Tart
 
 | ID | Name | What it checks |
 | --- | --- | --- |
-| `devices.<mac>` | iOS devices on <mac> | What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot. |
+| `devices.<mac>` | iOS devices on &lt;mac> | What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot. |
 | `tart.ssh-key` | SSH key | bb-box's SSH key for the Macs reads, and its public key to install. |
 | `tart.hosts` | Macs | At least one Mac is set up. |
-| `host.<mac>` | Mac <mac> | The Mac answers over SSH, is Apple silicon, and has Tart. |
-| `image.<mac>.<kind>` | <kind> image on <mac> | The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together. |
-| `spotlight.<mac>` | Spotlight on <mac> | Whether Spotlight indexes the folder of Tart's VMs, so it opens each new VM's disk, and how to keep it out (F-12). |
-| `qemu.<mac>` | QEMU on <mac> | QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac. |
-| `qemu-video.<mac>` | Windows video on <mac> | bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865). |
-| `capacity.<mac>` | Room on <mac> | Room on the Mac for a macOS box at its default size. |
-| `sizes.<mac>` | Room for each kind on <mac> | The Mac holds a box of each kind at its default size. |
-| `ios-hosts.<mac>` | Shared iOS hosts on <mac> | The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start. |
+| `host.<mac>` | Mac &lt;mac> | The Mac answers over SSH, is Apple silicon, and has Tart. |
+| `image.<mac>.<kind>` | &lt;kind> image on &lt;mac> | The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together. |
+| `spotlight.<mac>` | Spotlight on &lt;mac> | Whether Spotlight indexes the folder of Tart's VMs, so it opens each new VM's disk, and how to keep it out (F-12). |
+| `qemu.<mac>` | QEMU on &lt;mac> | QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac. |
+| `qemu-video.<mac>` | Windows video on &lt;mac> | bb-box's build of bb-box-stream on the Mac, which gives Windows boxes video from QEMU's VNC server (#865). |
+| `capacity.<mac>` | Room on &lt;mac> | Room on the Mac for a macOS box at its default size. |
+| `sizes.<mac>` | Room for each kind on &lt;mac> | The Mac holds a box of each kind at its default size. |
+| `ios-hosts.<mac>` | Shared iOS hosts on &lt;mac> | The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start. |
 
 ## Namespace
 
 | ID | Name | What it checks |
 | --- | --- | --- |
-| `devices.<mac>` | iOS devices on <mac> | What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot. |
+| `devices.<mac>` | iOS devices on &lt;mac> | What a Mac offers iOS devices, as bb-box last measured it there (065): the iOS Simulator, and a hardware or software H.264 encoder for their video. A Mac that cannot run the Simulator or stream lends no ios slot. |
 | `namespace.token` | API token | Namespace's API answers to the token in BB Box's settings. |
 | `namespace.machines` | Machines | The Namespace machines bb-box has, each with its age and when it ends, and any no box claims. |
 | `namespace.limits` | Workspace limits | The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which bb-box refuses a Mac up front; a warning when the token may not read them. |
 | `namespace.images` | Linux images | bb-box's Linux images in the workspace's registry: when each was built, whether a new one is due, and whether one is being built. |
-| `ios-hosts.<mac>` | Shared iOS hosts on <mac> | The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start. |
+| `ios-hosts.<mac>` | Shared iOS hosts on &lt;mac> | The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start. |
 
 ## Proxmox LXC
 
@@ -94,10 +94,10 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.bridge` | Network bridge | The bridge exists on the node. |
 | `proxmox.vmids` | VMID range | The VMID range is free of guests bb-box did not make. |
 | `proxmox.sizes` | Room for each kind | The node holds a box of each kind at its default size. |
-| `template.<vmid>` | <flavour> template <vmid> | A template is there, is a template, and has what its kind needs. |
-| `template.<vmid>.image` | Image of <flavour> template <vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
+| `template.<vmid>` | &lt;flavour> template &lt;vmid> | A template is there, is a template, and has what its kind needs. |
+| `template.<vmid>.image` | Image of &lt;flavour> template &lt;vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
 | `proxmox.gpu-report` | Host's GPU report | The host's report of each GPU's memory, which bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU. |
-| `gpu.<gpu>` | GPU <gpu> | A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs. |
+| `gpu.<gpu>` | GPU &lt;gpu> | A GPU's free memory, as bb-box last read it in a GPU desktop, against what a GPU desktop needs. |
 | `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
 
 ## Proxmox QEMU
@@ -111,8 +111,8 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.bridge` | Network bridge | The bridge exists on the node. |
 | `proxmox.vmids` | VMID range | The VMID range is free of guests bb-box did not make. |
 | `proxmox.sizes` | Room for each kind | The node holds a box of each kind at its default size. |
-| `template.<vmid>` | <flavour> template <vmid> | A template is there, is a template, and has what its kind needs. |
-| `template.<vmid>.image` | Image of <flavour> template <vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
+| `template.<vmid>` | &lt;flavour> template &lt;vmid> | A template is there, is a template, and has what its kind needs. |
+| `template.<vmid>.image` | Image of &lt;flavour> template &lt;vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
 | `proxmox.android-kvm` | KVM for Android | Where Android templates are listed, the host allows nested virtualization, as the linux-kvm setting says: the Android emulator needs KVM. |
 | `proxmox.android-disk` | Disk for Android | The storage of each Android template has room beyond the reserve for a refresh's build and trial boxes and an Android box in use. |
 | `ssh.key` | SSH key | bb-box's SSH key reads, and, where bb-box made it, its public key to install. |
@@ -128,12 +128,12 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `docker.cpuset` | Cores a box sees | Docker can pin each box to as many CPUs as it has cores, so nproc in a box says its cores. |
 | `docker.apparmor` | Programs in boxes under the host's AppArmor | A setgid program in a box, as sudo runs, works under the Docker host's AppArmor profiles, which on a host that is itself a container cannot name a box's files. |
 | `docker.lxcfs` | Memory and CPUs a box sees | The host runs LXCFS, so free, /proc/meminfo and /proc/cpuinfo in a box say its own memory and CPUs, and no running box's LXCFS files have broken. |
-| `docker.network` | Network <network> | bb-box's network for its boxes, made by bb-box. |
+| `docker.network` | Network &lt;network> | bb-box's network for its boxes, made by bb-box. |
 | `docker.privileged` | Docker in boxes | Whether boxes are privileged, so they can run Docker inside. |
 | `docker.gpus` | GPUs | The NVIDIA GPUs Docker lists as CDI devices, for GPU desktops. |
-| `docker.capacity` | Room on <host> | Room on the host for a Linux box at its default size. |
+| `docker.capacity` | Room on &lt;host> | Room on the host for a Linux box at its default size. |
 | `docker.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
-| `image.<image>` | Image <image> | An image a kind runs is on the host, built by bb-box's build script, and not too old. |
+| `image.<image>` | Image &lt;image> | An image a kind runs is on the host, built by bb-box's build script, and not too old. |
 
 ## Hetzner Cloud
 
@@ -142,26 +142,26 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `hetzner.api` | Hetzner Cloud API | The API answers and the token reads the project. |
 | `hetzner.reach` | Reaching hosts | How bb-box reaches a host's Docker: over the tailnet, or over the internet from the addresses in SSH from. |
 | `hetzner.unclaimed` | Servers no host claims | Servers with this install's label that are not hosts bb-box knows. The sweep adopts a host's server, as after lost storage, and deletes any other 10 minutes after it was made. |
-| `hetzner.type` | Server type <type> | The hosts' server type is sold at the location, with its size and price. |
+| `hetzner.type` | Server type &lt;type> | The hosts' server type is sold at the location, with its size and price. |
 | `hetzner.image` | Host image | The snapshot new hosts start from, with Docker, Tailscale and the box images in it: its age, the snapshots kept and their cost, and the last build. |
-| `hetzner.arm-type` | Server type <type> | The Arm hosts' server type, for linux-arm64 boxes, is an Arm type sold at the location, with its size and price. |
+| `hetzner.arm-type` | Server type &lt;type> | The Arm hosts' server type, for linux-arm64 boxes, is an Arm type sold at the location, with its size and price. |
 | `hetzner.arm-image` | Arm host image | The snapshot new Arm hosts start from: its age, the snapshots kept and their cost, and the last build. |
 | `hetzner.hosts` | Hosts | Each host bb-box made: its state, age, boxes and cost this month. |
 | `hetzner.spend` | This month's spend | What the hosts cost this month before VAT, against the monthly limit. |
-| `hetzner.host.<host>` | Docker on <host> | A host's Docker, as the Docker backend's checks find it. |
+| `hetzner.host.<host>` | Docker on &lt;host> | A host's Docker, as the Docker backend's checks find it. |
 
 ## microsandbox
 
 | ID | Name | What it checks |
 | --- | --- | --- |
-| `image.<image>` | Image <image> | An image a kind runs is on the host, built by bb-box's build script, and not too old. |
-| `microsandbox.host` | Host <host> | The host answers, runs Linux on x86_64, and its cores, memory and free disk. |
+| `image.<image>` | Image &lt;image> | An image a kind runs is on the host, built by bb-box's build script, and not too old. |
+| `microsandbox.host` | Host &lt;host> | The host answers, runs Linux on x86_64, and its cores, memory and free disk. |
 | `microsandbox.msb` | msb | bb-box's msb is installed on the host at the release this bb-box pins. |
 | `microsandbox.kvm` | KVM | The host has /dev/kvm, and BB's user may use it. |
 | `microsandbox.disks` | Docker disks | The host has mkfs.ext4, with which bb-box makes each box's Docker disk quickly. |
 | `microsandbox.lxc` | LXC | The host is an LXC container, where msb's snapshots and flat roots fail. |
 | `microsandbox.overcommit` | Memory overcommit | Above 1, whether it applies on the host: a Mac keeps the memory a box has used, so bb-box counts each box there at its full size. |
-| `microsandbox.capacity` | Room on <host> | Room on the host for a box at its default size. |
+| `microsandbox.capacity` | Room on &lt;host> | Room on the host for a box at its default size. |
 | `microsandbox.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
 
 ## boat.dev
