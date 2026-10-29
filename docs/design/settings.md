@@ -447,7 +447,8 @@ image and each file for every box.
   columns, cores, memory and disk, and Find opens the cell the words name.
 - Words such as turn, on and off do not have to match when other words do;
   they put switches first.
-- Results show where each setting is and its value: what is stored, Set or
+- Results show where each setting is, each backend named with its host
+  as the overview names it ("Docker on pc-1 › Advanced"), and its value: what is stored, Set or
   Not set for a secret, and for an empty field what it takes ("Empty:
   4096 MiB, the default", "Empty: 10 cores, bb-box's estimate").
 - The first 40 are listed, with the count announced. Arrow keys move but

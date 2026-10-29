@@ -1,6 +1,6 @@
 # 067: The settings page is an overview, with a page one step in for each backend, kind and option
 
-Status: accepted, 29 October 2026, after three rounds of independent review (see [What changed after the reviews](#what-changed-after-the-reviews), [after the second reviews](#what-changed-after-the-second-reviews) and [after the third review](#what-changed-after-the-third-review)). The owner accepted each default in [Open questions for the owner](#open-questions-for-the-owner). Being built in the units of [How it is built](#12-how-it-is-built).
+Status: accepted, 29 October 2026, after three rounds of independent review (see [What changed after the reviews](#what-changed-after-the-reviews), [after the second reviews](#what-changed-after-the-second-reviews) and [after the third review](#what-changed-after-the-third-review)). The owner accepted each default in [Open questions for the owner](#open-questions-for-the-owner). Built: all 11 units of [How it is built](#12-how-it-is-built) are live, 29 October 2026; what each did is in [067-results.md](067-results.md).
 
 The prototype is [067-settings-page/prototype.html](067-settings-page/prototype.html):
 one file, opened in any browser, made from bb-box's own components. Its
