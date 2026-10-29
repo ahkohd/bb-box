@@ -257,7 +257,7 @@ export class BoatBackend implements Backend {
     const account = (await this.#api.list({}, signal)).filter((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state));
     const mine = account.filter((sandbox) => sandbox.labels[LABELS.install] === this.#context.installId).length + pending.length;
     const running = account.length + pending.length;
-    const needed = (await this.templates.record(boatKind)) || this.templates.building(boatKind) ? 1 : 2;
+    const needed = (await this.templates.record(boatKind)) || this.templates.building(boatKind) || (await this.templates.adoptable(boatKind, signal).catch(() => null)) ? 1 : 2;
     const plan = limits.tier === "trial" ? "boat's free trial" : "boat's plan";
     if (limits.activeSandboxes && running + needed > limits.activeSandboxes) {
       const others = running - mine;
