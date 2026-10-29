@@ -2194,6 +2194,7 @@ export function BoxesPage({ subPath }: { subPath: string }) {
   if (threadId && boxId && !parts.length) {
     return <DesktopViewer key={`${threadId}/${boxId}`} threadId={threadId} boxId={boxId} newTab={false} onBack={back} />;
   }
+  if (threadId === MACHINES_TAB && !boxId) return <BoxList key={MACHINES_TAB} opening={MACHINES_TAB} />;
   return <BoxList />;
 }
 
@@ -2233,7 +2234,9 @@ export function desktopSubPath(threadId: string, boxId: string, view: Screen | "
 /** The page's tabs: your machines, and the threads' boxes by thread. */
 type BoxesTab = "machines" | "threads";
 
-function BoxList() {
+export const MACHINES_TAB = "machines";
+
+function BoxList({ opening }: { opening?: BoxesTab }) {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
   const pluginId = experimental_usePluginId();
@@ -2253,6 +2256,7 @@ function BoxList() {
   // The tab chosen last, kept in the browser, so the way back from a box's desktop lands on the tab it left.
   const tabKey = `${pluginId}:boxes-tab`;
   const [chosenTab, setChosenTab] = useState<BoxesTab | null>(() => {
+    if (opening) return opening;
     try {
       const kept = window.localStorage.getItem(tabKey);
       return kept === "machines" || kept === "threads" ? kept : null;

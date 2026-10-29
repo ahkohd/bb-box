@@ -462,8 +462,8 @@ heading and no card of its own (the operator, the same day: "This thread
 runs on it" read oddly above an empty state saying the thread had no
 boxes). The row offers
 no Release, Stop, Start or "New thread on this box": a line under its
-status says where those are, "Remove or stop it in BB Box's settings." (a
-link to the settings' Machines), or names the thread that holds it, "Held by
+status says where those are, "Remove or stop it on the Boxes page, under
+Machines." (a link to that tab), or names the thread that holds it, "Held by
 <title>", which opens that thread. Open desktop, Open terminal, Copy
 address and Check now stay. The bare Desktop and Terminal tabs count it
 too: it is listed first, and when it is the only desktop, or the only box

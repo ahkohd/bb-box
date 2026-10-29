@@ -63,7 +63,7 @@ Without control, your own pointer shows over the desktop. With control, the poin
 
 ## Video
 
-A Linux desktop can also show as video, which follows a dragged window far more closely than the usual stream (VNC), and stays smooth on a slow connection where VNC falls to a few frames a second. It is on unless **Linux desktops as video** is off in [settings](settings.md#general), and works for Linux desktops drawn by the CPU, X11 and Wayland, and, by choice, on a GPU desktop.
+A Linux desktop can also show as video, which follows a dragged window far more closely than the usual stream (VNC), and stays smooth on a slow connection where VNC falls to a few frames a second. It is on unless **Linux desktops as video** is off on the Boxes page of [settings](settings.md#boxes), and works for Linux desktops drawn by the CPU, X11 and Wayland, and, by choice, on a GPU desktop.
 
 Such a desktop opens as video, on arm64 under microsandbox too. To see it over VNC instead, select **Show as VNC** under **Display** in the toolbar's menu; it is ticked while the desktop shows over VNC. Your choice lasts for that box in that tab; select it again to go back to video. A Linux desktop on a Tart Mac opens over VNC instead, with **Show as VNC** ticked; select it to see the desktop as video.
 

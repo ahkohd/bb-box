@@ -947,7 +947,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.background.schedule(NIGHTLY_SCHEDULE, NIGHTLY_CRON, () => {
     if (!(configuration.document.general.nightlyImages ?? GENERAL_DEFAULTS.nightlyImages)) return;
     if (imageJobs.running()) return;
-    bb.log.info("Rebuilding the standard images that are due, as General's Rebuild images each night is on.");
+    bb.log.info("Rebuilding the standard images that are due, as Rebuild each night is on.");
     void forPurpose("nightly images", () => imageJobs.refreshAll({ limitMs: NIGHTLY_HOURS * 60 * 60_000 })).catch((error) => logError("nightly images", error));
   });
 

@@ -31,7 +31,7 @@ It asks you to confirm; an agent or a script adds `--yes`. BB fetches and builds
 
 Boxes join BB by reaching BB's server, through bb connect when BB is signed in to your bb account, or otherwise at an address you give under Machine access: see the [quick start](../README.md#quick-start).
 
-For Docker on the machine that runs BB, the Box panel can do the rest: select **Use Docker on this machine**. From a terminal, or for an agent, `bb box setup docker` does the same and waits for the build. Otherwise, follow your backend's guide. It says what to prepare, such as an image or a template, and what to enter on BB Box's settings page: in BB, open Settings, Plugins, BB Box. For each backend, select **Set up**, enter the values, select **Check**, then **Save and turn on**. The [user guide's settings page](../docs/guide/settings.md) explains the page.
+For Docker on the machine that runs BB, the Box panel can do the rest: select **Use Docker on this machine**. From a terminal, or for an agent, `bb box setup docker` does the same and waits for the build. Otherwise, follow your backend's guide. It says what to prepare, such as an image or a template, and what to enter on BB Box's settings page: in BB, open Settings, Plugins, BB Box. For each backend, select **Add backend** and the backend, enter the values, select **Check**, then **Save and turn on**. The [user guide's settings page](../docs/guide/settings.md) explains the page.
 
 From a terminal:
 
@@ -42,7 +42,7 @@ Each thread then has a Box panel, and agents have the `box_` tools.
 
 ## Rebuild images each night
 
-bb-box rebuilds its standard Linux, macOS and Windows images itself, so new boxes have current agent tools, gh and Chrome, and Windows boxes have Windows' updates. Turn on **Rebuild images each night** under General in BB Box's settings: bb-box then starts a run at 03:00 on BB's server, on a schedule of its own, while it is loaded. Setting up Docker from the Box panel, or with `bb box setup docker`, turns it on.
+bb-box rebuilds its standard Linux, macOS and Windows images itself, so new boxes have current agent tools, gh and Chrome, and Windows boxes have Windows' updates. Turn on **Rebuild each night** on the Images page of BB Box's settings: bb-box then starts a run at 03:00 on BB's server, on a schedule of its own, while it is loaded. Setting up Docker from the Box panel, or with `bb box setup docker`, turns it on.
 
 A run starts no image after 4 hours, and goes on in the background. To see what the last run did, run `bb box images list`. `bb box doctor` warns when no run has finished for 8 days. What is rebuilt and when is in the [user guide's images page](../docs/guide/images.md), and every `bb box images` command is in the [command-line reference](../docs/reference/cli.md).
 

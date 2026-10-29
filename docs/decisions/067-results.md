@@ -3,6 +3,180 @@
 What was built and checked for each unit of
 [067](067-settings-page.md). Each unit keeps to its own section.
 
+## Unit 1: views, the overview and its switches
+
+Built on 29 October 2026. The page is now an overview with a page one step
+in for each backend, kind and option, chosen by the URL's hash. Each part's
+page holds today's form for that part, unchanged, so no setting is lost
+before later units replace them. [The design note](../design/settings.md)
+is rewritten to it.
+
+### What changed
+
+- `SettingsSection` is the view: it reads the hash, keeps a history entry
+  for each view with the row it was opened from and the scroll, moves focus
+  to a page's heading on opening it and back to the row on return, and
+  slides a page 12 px over 220 ms for pointer navigation only.
+- The overview: first run or the setup job's progress, as before; Status,
+  with its honest line, Check all and the callout; Backends; Kinds in three
+  groups, with folded kinds; Options. Machines left the page: Your machines
+  opens the Boxes page on its Machines tab, through its new sub-path
+  `machines`.
+- Pages: a backend (header, switch, health, today's setup form; for Docker
+  on a BB machine, today's Docker on BB machines list), a kind (header,
+  Make default, switch, today's editor), Boxes, Images, Devices, Network,
+  Monitor, Configuration, Add a backend, and setting up a backend, which is
+  replaced in history by the backend's page once saved.
+- One at-once write path for every switch and the default kind's menu. It
+  sends the latest document with one change and its revision; says Saved
+  only once BB Box confirms; on a newer revision takes the document the
+  refusal carries and tries again, at most 3 times, or says it was already
+  so; says why when refused; and after a lost reply reads the configuration
+  again and says what is stored, never calling it saved.
+- `SettingsLink` and `openSettingsView` for links into the page from other
+  parts of bb-box. The Monitor panel's header has one, a settings button to
+  `#option/monitor`.
+- A thread's own machine in the Box panel, and the agent tools' refusals,
+  now say "Remove or stop it on the Boxes page, under Machines".
+- The user guide, the setup guides and three server messages use the new
+  names: Boxes join BB as machines, Rebuild each night, Network, Add backend.
+
+Files: new `src/app/settings-route.ts`, `settings-nav.ts`,
+`settings-link.tsx`, `settings-status.ts`, `settings-instant.ts`,
+`settings-context.tsx`, `settings-overview.tsx`, `settings-pages.tsx`,
+`settings-parts.tsx` and `test/settings-view.test.tsx`. Shared files
+touched: `src/app/settings.tsx`, `settings-machines.tsx` (its section went;
+`MachineRow` stays), `desktop.tsx` (the `machines` sub-path), `box-row.tsx`,
+`monitor/status.tsx` (the settings button), `src/plugin/tools.ts`,
+`src/plugin/images.ts`, `src/plugin/setup.ts`, `src/core/checks.ts`,
+`test/app.test.tsx`, `test/plugin.test.ts`, `test/image-jobs.test.ts`, and
+docs.
+
+### Checked
+
+On a Linux box, rebased onto unit 2's server part: `tsc` clean; the node
+suite 2,733 tests, 2,445 passed, 288 skipped, 0 failed; vitest 4 files
+passed; the docs test 5 passed.
+
+The live check ran on a separate BB in a second Linux box: BB 0.48.0 from
+a fresh `npx bb-app` with no account and its own data folder, bb-box
+installed from this branch with `bb plugin install` of its path, Docker on
+the box set up with Use Docker on this machine (its Linux image built), and
+a Proxmox LXC backend saved off part way, so Not finished. A script drove
+headless Chromium at 1440 by 1000. Each row is what the page showed after
+the step; "focus" is the element focused.
+
+| Step | Result |
+| --- | --- |
+| Open `#backend/proxmox-lxc` directly | Its page, heading Proxmox LXC |
+| Open `#option/monitor` directly | The Monitor page |
+| Select the Configuration row with the pointer | `#option/configuration`; focus on its heading; scroll 0 |
+| Browser back | The overview, in the same document; focus on the Configuration row; scroll back to 199 px |
+| Forward, then reload | The Configuration page each time |
+| BB Box settings in the top row | The overview by history back; focus on the row |
+| Devices, then Android emulator from it | `#kind/android`; the top row says "Back to Devices · BB Box settings › Android emulator" |
+| Back to Devices | `#option/devices`; focus on the Android emulator row |
+| BB's sidebar: General, then browser back | `/settings`, then `#option/devices` again |
+| The Monitor panel's settings button, from BB's home page | `#option/monitor`, the Monitor page |
+| `#kind/no-such-kind`, `#backend/removed-backend`, `#setup/nothing` | "This kind is not here", "This backend is not here", "This kind of backend is not here", each with Go to BB Box settings, which opens the overview |
+| Monitor's switch off, then on | Saved each time; stored `monitor.enabled` false, then the default; "The sidebar's machine status changes when BB next loads", with Reload BB now |
+| Proxmox LXC's switch on, while not finished | Put back off: "Proxmox LXC was not changed: Set the Proxmox API URL. Set the Proxmox API token ID. Set the Proxmox API token secret."; no Saved; stored off |
+| Monitor's switch during a write storm: a second tab writing the configuration as fast as it could, about 60 saves a second | The first tries were saved after retries. In each of 3 runs, the third or fourth try was refused 3 times in a row and put back: "The Monitor was not changed: the configuration changed 3 times while saving. It is on; try again." |
+
+| A lost reply: BB restarted with `BB_BOX_LIVE_CHECKS=1`, `bb box config drop-replies`, then Monitor's switch off | Stored off at revision 3353; the switch stayed off and said "Not confirmed: BB Box did not reply (BB Box saved this and dropped its reply, as a live check asked). The Monitor is off now, at revision 3353."; no Saved |
+| After Check all, the Docker backend's most boxes changed with `config.apply` | Its row and Status said "Not checked since it changed"; after Check all again, Ready |
+
+The steps were run again on the commit rebased onto unit 2's server part,
+with the same results.
+
+The lost reply was checked once unit 2's server part, merged while this
+unit was built, gave BB Box a switch that drops a reply after storing.
+
+The keyboard-only pass, on the same BB:
+
+- Tab from the overview's heading reaches 18 stops in order: Check all,
+  Open in the callout, Add backend, each backend row and its switch, Change
+  the default, the kind row, the folded kinds, each option row, the
+  Monitor's switch, Configuration and Your machines. Each showed a focus
+  ring. The default kind's switch is disabled, so it is skipped.
+- Enter on the Monitor row opened its page with focus on its heading;
+  Shift+Tab reached BB Box settings, and Enter returned to the overview
+  with focus on the Monitor row.
+- Space on the Monitor's switch saved it off; Space again saved it on.
+  The first run of this pass found that a switch lost focus while it saved,
+  as it was disabled; it now stays focusable and ignores presses until the
+  save ends.
+- No animation ran after keyboard navigation (`document.getAnimations()`
+  was empty).
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark, of the overview, a backend's page,
+a backend not finished, a kind, the Boxes and Monitor options, Add a
+backend and the Boxes page's Machines tab: 48 in all, in the thread's
+storage. A selection is in
+[067-settings-page/unit-1](067-settings-page/unit-1/), with the box's own
+name replaced by bb-1:
+[overview](067-settings-page/unit-1/overview-1440-light.png),
+[dark](067-settings-page/unit-1/overview-1440-dark.png),
+[760](067-settings-page/unit-1/overview-760-dark.png),
+[390](067-settings-page/unit-1/overview-390-light.png),
+[a backend](067-settings-page/unit-1/backend-1440-light.png),
+[not finished at 390](067-settings-page/unit-1/unfinished-390-dark.png),
+[a kind](067-settings-page/unit-1/kind-760-light.png),
+[Monitor at 390](067-settings-page/unit-1/monitor-390-dark.png),
+[Add a backend](067-settings-page/unit-1/add-1440-dark.png),
+[the Boxes page](067-settings-page/unit-1/boxes-page-1440-dark.png),
+[refused](067-settings-page/unit-1/live-23-refused.png),
+[refused 3 times](067-settings-page/unit-1/live-24-raced.png),
+[not here](067-settings-page/unit-1/live-17-kind-not-here.png),
+[the Monitor panel's button](067-settings-page/unit-1/keys-00-monitor-panel.png),
+[focus ring](067-settings-page/unit-1/keys-01-focus-ring.png).
+
+### Every setting is still reachable
+
+| Setting | Where |
+| --- | --- |
+| First run and the image build | The overview, as before |
+| Your machines | The Boxes page's Machines tab, from Options |
+| A backend on or off | Its overview row and its page |
+| A backend's fields, Macs or hosts, Check, the guide | Its page, today's form |
+| Setting up a new backend | Add backend, then the backend |
+| Docker on BB machines | Add backend, and a BB machine's Docker page |
+| A kind on or off | Its overview row and its page |
+| A kind's sizes, default size, largest, warm counts, spares | Its page, today's editor |
+| Default kind | Options, Boxes; and Make default on a kind's page |
+| Boxes per thread, joining BB, video, files for every box | Options, Boxes |
+| Rebuild each night, Rebuild now | Options, Images |
+| Tailnet | Options, Network |
+| The Monitor's four settings | Options, Monitor; machine status also on its row |
+| iOS video encoding, sharing the encoder, the test device | Options, Devices shows them; set with `bb box config`, as before 067 |
+| A backend's label, removing a backend, projects' images, export, import, the copy of BB's earlier settings | `bb box config` and `bb box image`, as before 067; Configuration lists the commands |
+
+### Deviations from 067
+
+- No Find yet: it is unit 11. The overview has no top row, and inner
+  pages' top rows have no Find field.
+- "Not checked since it changed" uses the check revisions of unit 2's
+  server part, merged while this unit was built. A check from before that
+  part has no revision, and is taken as current.
+- Status does not list failed image rebuilds or failing Docker machines in
+  use: `images.list` has no run state yet (unit 8) and Docker machines
+  join Backends in unit 5. Kinds that "backends that are on cannot make
+  now" are those whose only backends that are on have settings with a
+  problem.
+- The saving rule's words say "Fields wait for their Save, or save when you
+  leave them", since Boxes per thread and Refresh every still save on
+  leaving the field until unit 2.
+- In BB 0.48.0 the Monitor panel is not on screen while BB's settings
+  show: BB's settings replace the sidebar, footer included. So the panel's
+  link was driven from BB's home page, and the in-place path, a link while
+  settings show another view, is checked by vitest with
+  `openSettingsView` on a kind's page.
+- Leaving by BB's sidebar and coming back with back restores the view but
+  not focus on its heading: BB's back is not a view change the page makes.
+- Saved shows and goes without a fade.
+
 ## Unit 2: the server part
 
 Built on 29 October 2026. The changes 067 lists under "Changes on the
@@ -113,6 +287,8 @@ Today's form for Tart, with the new group folded and open:
 - The page's engine, which sends operation IDs and reads receipts and
   versions: unit 2's next part.
 - A real Mac's Tart backend, for the `ios-hosts` group on a page: unit 3.
+
+||||||| parent of 2ff5e515 (feat(settings): 067 unit 1, the settings page as an overview with a page for each part)
 
 ## Unit 4: the drivers' help text
 

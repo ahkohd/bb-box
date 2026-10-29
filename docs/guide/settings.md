@@ -1,36 +1,45 @@
 # Settings
 
-BB Box's settings page is where you set up the places boxes come from. You also choose which kinds of box are on offer and how big they are, and manage your machines.
+BB Box's settings page is where you see whether everything works, set up the places boxes come from, and choose which kinds of box are on offer and how big they are.
 
-To open it, select the gear on the Boxes page, or open BB Box in BB's settings.
+To open it, select the gear on the Boxes page, or open BB Box in BB's settings. The gear on the Monitor's machine status opens its own settings.
 
 ![BB Box's settings page](../design/mockups/built/settings-light.png)
 
-The page has 7 parts, in this order: Machines, Backends, Docker on BB machines, Kinds, General, Tailnet, and Files for every box. A switch saves at once. A form you open, such as a backend's setup, saves when you select **Save**.
+The page is an overview. Each backend, each kind and each group of options has a page one step in: select its row to open it. Each page has its own address, so the browser's back and forward buttons, reload and links all work. At the top of each page, **BB Box settings** goes back to the overview.
+
+A switch saves at once, and says **Saved** once BB Box has saved it. If BB Box refuses the change, or someone else's changes keep getting in first, the switch goes back and says why under its row. A form, such as a backend's settings, saves when you select **Save**.
 
 When no backend is on yet, the page starts with the same offer as the Box panel: where one of your BB machines has Docker, **Use Docker on this machine** turns it on and builds the Linux image. See [the Box panel](boxes.md).
 
-## Machines
+## Status
 
-Machines lists your own boxes, kept as BB machines. See [your machines](boxes.md#your-machines).
+The first line says how many backends are on and ready, how many are off, how many kinds are on offer, and how long ago the backends were checked. A backend is ready only if it passed a check within the hour; an older pass reads 'passed their last check'. **Check all** checks every backend that is on.
+
+When something needs you, a box under the line lists each thing with how to fix it, and **Open** goes to its page. It lists backends that fail their checks or need settings, warm boxes short for want of room, the default kind turned off, and kinds whose backends cannot make them now.
 
 ## Backends
 
-A backend is a place boxes come from, such as Proxmox, a pool of your own machines, Docker or Tart on a Mac. Each backend is a row. Its switch turns it on or off. A backend that is off makes no new boxes, but boxes it already made keep working.
+A backend is a place boxes come from, such as Proxmox, a pool of your own machines, Docker or Tart on a Mac. Each backend you have is a row. Its switch turns it on or off. A backend that is off makes no new boxes, but boxes it already made keep working.
 
 The row says how the backend is:
 
 | What it says | What it means |
 | --- | --- |
-| Not set up | it has no settings yet |
 | Off | it is set up but turned off |
-| Needs setting up | a setting is missing or wrong, and the row names it |
-| Needs attention | a health check failed |
-| Ready | it works, and the row says how many kinds it offers and when it was last checked |
+| Not finished | it was saved off with a setting missing or wrong, and the row names it |
+| Not checked yet | it is on, and has no check on record |
+| Not checked since it changed | its settings changed after its last check |
+| Last check passed | it passed its last check, over an hour ago, and the row says when |
+| Ready | it passed a check within the hour |
+| Needs attention | a check gave a warning |
+| Not working | a check failed, or a setting is wrong |
 
-### Setting up a backend
+Docker on one of your BB machines shows as a Docker row with a **BB machine** chip.
 
-Select **Set up** on the row. Its settings open below it. Each backend needs different settings, which its setup guide explains:
+### A backend's page
+
+A backend's page has its switch, its health with its last check, and its settings. Each backend needs different settings, which its setup guide explains:
 
 - [Proxmox LXC](../../setup/proxmox-lxc/README.md)
 - [Proxmox QEMU](../../setup/proxmox-qemu/README.md)
@@ -49,23 +58,21 @@ A backend with several hosts lists them under Hosts. A new box goes to the first
 
 Select **Check** to run the backend's health checks with the settings in the form, without saving them. Each check says what is wrong and how to fix it.
 
-Select **Save**, or **Save and turn on** for a backend that is off. If the backend cannot work with these settings, BB Box says what to fix and keeps it off.
+Select **Save**. Changes reach new boxes; boxes already made keep theirs.
 
-## Docker on BB machines
+### Adding a backend
 
-Docker on BB machines lists your own BB machines that run Docker, such as a PC with WSL. BB Box can make boxes there.
+Select **Add backend**. The page lists every kind of backend. Select one to set it up, then **Save and turn on**. If the backend cannot work with these settings, BB Box says what to fix and keeps it off. **Save** keeps it off, so you can finish later. Once it is saved, its own page opens.
 
-A box on such a machine is a container with full access to the machine. So BB Box uses none of these machines until you turn it on. The row says whether the machine hosts boxes, could host them, is offline in BB, or has no Docker.
-
-A server you rent from a cloud provider can be one of these machines: see [a cloud server as a Docker host](cloud-docker-host.md).
+The same page lists **Docker on BB machines**: your own BB machines that run Docker, such as a PC with WSL. BB Box can make boxes there. A box on such a machine is a container with full access to the machine, so BB Box uses none of these machines until you turn it on. The row says whether the machine hosts boxes, could host them, is offline in BB, or has no Docker. A server you rent from a cloud provider can be one of these machines: see [a cloud server as a Docker host](cloud-docker-host.md).
 
 ## Kinds
 
-A kind is a type of box, such as a Linux desktop. A kind is offered when it is on and a backend that is on has it.
+A kind is a type of box, such as a Linux desktop. A kind is offered when it is on and a backend that is on makes it.
 
-Each kind is a row with a switch. The row says which backends offer it, or 'Not offered: no backend has it'. It also lists the kind's sizes, and how many warm and spare boxes it keeps.
+Each kind is a row with a switch, in three groups: Linux; macOS and iOS; Windows and Android. The row gives the kind's default size, how many backends make it, and how many warm and spare boxes it keeps. Kinds that are off, and kinds no backend you have makes, are folded into one line at the end. The default kind's switch stays on: choose another default first.
 
-Select a kind's row to change it:
+Select a kind's row to open its page, where you can make it the default and change it:
 
 - Presets: the cores, memory and disk of Small, Medium and Large. An empty disk keeps the size the image comes with.
 - Default preset: the size a box gets when no one says.
@@ -75,30 +82,50 @@ Select a kind's row to change it:
 
 The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md).
 
-## General
+## Options
+
+### Boxes
 
 - Default kind: the kind a thread gets when it does not say.
-- Boxes per thread: the most boxes a thread can have at once. 0 means no limit.
-- Enrol boxes as BB machines: when on, each box joins BB as a machine, so the thread's commands and terminals can use it, with the thread's access.
-- Rebuild images each night: at 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates. After a BB update, it also refreshes the Linux images with BB's old app within the hour. **Rebuild now**, beside it, lists the images that are due and why, and starts the same rebuild at once, one image at a time, showing how far each is. It does not start while a rebuild goes on, and says so. See [images](images.md#standard-images-stay-up-to-date). Setting up Docker from the Box panel, or with `bb box setup docker`, turns it on; otherwise it is off unless you turn it on.
+- Boxes per thread: the most boxes a thread can have at once. 0 means no limit. It saves when you leave the field.
+- Boxes join BB as machines: when on, each box joins BB as a machine, so the thread's commands and terminals can use it, with the thread's access.
 - Linux desktops as video: a Linux desktop drawn by the CPU, X11 or Wayland, shows as video, with **Show as VNC** under **Display** in the viewer's menu to go back. See [video](desktops.md#video). On unless you turn it off.
+- Files for every box: files you choose, put into the home folder of every Linux and macOS box. See [files for every box](files.md#files-for-every-box).
 
-## Tailnet
+### Images
 
-Tailnet is for machines BB Box rents and makes, such as Namespace Macs, when BB's server is on a Tailscale tailnet. Each such machine must join the tailnet to reach BB.
+- Rebuild each night: at 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates. After a BB update, it also refreshes the Linux images with BB's old app within the hour. Setting up Docker from the Box panel, or with `bb box setup docker`, turns it on; otherwise it is off unless you turn it on.
+- Rebuild now: lists the images that are due and why, and starts the same rebuild at once, one image at a time, showing how far each is. It does not start while a rebuild goes on, and says so. See [images](images.md#standard-images-stay-up-to-date).
+- Projects' images: the images projects set with `bb box image set`.
+
+### Devices
+
+How iOS devices' video is encoded, whether each Mac's encoder is shared fairly, and the test device. The page shows them; change them with `bb box config show --json` and `bb box config apply`. It also links to each device kind's spares.
+
+### Network
+
+Network is for machines BB Box rents and makes, such as Namespace Macs, when BB's server is on a Tailscale tailnet. Each such machine must join the tailnet to reach BB.
 
 - **No: BB is reached without one**: machines join no tailnet. Choose this when BB is reached through bb connect or a public address.
 - **Yes, with a Tailscale OAuth client**: BB Box makes a single-use, pre-approved key for each machine with the OAuth client, and the machine leaves the tailnet when its box goes. Give the client's ID and secret, and the tags machines join with, `tag:bb-box` unless you change it. The client needs the `auth_keys` scope with those tags, and `devices:core` so BB Box can remove machines that went without leaving.
 
-The client's ID and secret are kept secret: the page shows only whether each is set. Select **Save** to save the Tailnet part. See [joining cloud machines to your tailnet](tailnet.md) for making the client.
+The client's ID and secret are kept secret: the page shows only whether each is set. Select **Save** to save them together. See [joining cloud machines to your tailnet](tailnet.md) for making the client.
 
-## Files for every box
+### Monitor
 
-Files for every box puts files you choose into the home folder of every Linux and macOS box. See [files for every box](files.md#files-for-every-box).
+The Monitor's machine status in BB's sidebar, how often it refreshes, background monitoring and pressure notifications. Machine status also has its switch on the overview's row. When you turn it on or off, the sidebar changes when BB next loads: select **Reload BB now**.
+
+### Configuration
+
+The configuration's revision, and the `bb box config` commands that show and change it from a terminal.
+
+### Your machines
+
+Your machines are on the Boxes page, under Machines. This row opens that tab. See [your machines](boxes.md#your-machines).
 
 ## When someone else saves first
 
-If someone saves the settings while you are changing them, BB Box reloads the page and asks you to make your change again. A form you have open keeps what you typed.
+If someone saves the settings while you are changing a form, BB Box reloads the page and asks you to make your change again. The form keeps what you typed. A switch tries again by itself, up to 3 times.
 
 ## From the command line
 
