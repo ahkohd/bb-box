@@ -10,6 +10,7 @@ import { RUN_LOCK_HOLDERS_PL, TART_LISTS_SH, baseScript, crashSummary, endReason
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_IMAGE, FAKE_MAC, addImage, fakeMacTools, fakeXcode, imageRecord, runVmElsewhere, tartConfig } from "./fake-mac.ts";
 import { VNC_BRIDGE_PY } from "../src/backends/tart/vnc-holder.ts";
+import { layeredStorage } from "../src/backends/index.ts";
 import { FakeTart, Viewer } from "./fake-tart-vnc.ts";
 import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, tempDir, testContext } from "./helpers.ts";
 
@@ -1521,4 +1522,15 @@ test("what a Mac's empty shared iOS host sizes take is bb-box's estimate from th
   tart.hostEstimates();
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(told, 1, "a Mac already read is not read again for this");
+});
+
+test("a check's doctor run as the backend first connects shows the SSH key the backend keeps, not a key of its own", async () => {
+  const { backend, context, make } = setup();
+  const check = make({ ...testContext(layeredStorage(context.storage)) });
+  const [live, checked] = await Promise.all([backend.doctor(), check.doctor()]);
+  const keyIn = (report: { readonly notes: readonly string[] }) => report.notes.find((note) => note.includes("must accept this SSH key"))?.split(": ").at(-1);
+  const kept = await context.storage.get<{ readonly publicKey: string }>("ssh-key");
+  assert.ok(kept, "the backend keeps a key");
+  assert.equal(keyIn(checked), kept.publicKey);
+  assert.equal(keyIn(live), kept.publicKey);
 });

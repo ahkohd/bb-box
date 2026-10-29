@@ -94,7 +94,7 @@ import { judgeImage, recordFromJson, recordInDescription, type PinSet } from "..
 import { CURSOR_HELPER, GPU_VIDEO_MARKER, ImageFile, SELKIES_DISPLAY, followPointer, SelkiesPresence, WAYLAND_SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
-import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
+import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type BoxPointer, type Display, type DisplaySize, type SshAccess } from "../../transports/types.ts";
 import {
   FLAVOUR_KINDS,
@@ -107,6 +107,7 @@ import {
   type LxcTemplate,
 } from "./config.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
+import { storedKeyPair } from "../ssh-key.ts";
 
 const WARM = "warm";
 const FILLING = "filling";
@@ -2369,11 +2370,7 @@ export class ProxmoxLxcBackend implements Backend {
         let publicText: string | null = null;
         const generated = !privateKey;
         if (!privateKey) {
-          let stored = await this.#context.storage.get<{ privateKey: string; publicKey: string }>(SSH_KEY);
-          if (!stored) {
-            stored = await generateKeyPair();
-            await this.#context.storage.set(SSH_KEY, stored);
-          }
+          const stored = await storedKeyPair(this.#context.storage, SSH_KEY);
           privateKey = stored.privateKey;
           publicText = stored.publicKey;
         }

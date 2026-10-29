@@ -5,7 +5,7 @@ import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../co
 import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { CUA_SHA256, CUA_VERSION } from "../tart/backend.ts";
 import { qemuVideoSource } from "../tart/qemu-video.ts";
-import { KeyFile, Ssh, SshTransport, generateKeyPair } from "../../transports/ssh.ts";
+import { KeyFile, Ssh, SshTransport } from "../../transports/ssh.ts";
 import type { SshAccess } from "../../transports/types.ts";
 import {
   BackendError,
@@ -39,6 +39,7 @@ import { LINUX_IMAGE_TARGETS, LinuxImages, type LinuxImageDeps } from "./linux-i
 import { NamespaceLinux, isLinuxKind, linuxShapeFor } from "./linux.ts";
 import type { DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
+import { storedKeyPair } from "../ssh-key.ts";
 
 export const LABELS = {
   install: "bbbox-install",
@@ -1018,11 +1019,7 @@ export class NamespaceBackend implements Backend {
   #keys(): Promise<{ ssh: Ssh; publicKey: string }> {
     if (!this.#ssh) {
       const pending = (async () => {
-        let stored = await this.#context.storage.get<{ privateKey: string; publicKey: string }>(SSH_KEY);
-        if (!stored) {
-          stored = await generateKeyPair();
-          await this.#context.storage.set(SSH_KEY, stored);
-        }
+        const stored = await storedKeyPair(this.#context.storage, SSH_KEY);
         const keyPath = await this.#keyFile.path(stored.privateKey);
         const shareDir = await this.#keyFile.shareDir();
         return { ssh: new Ssh({ keyPath, binary: this.#options.sshBinary, shareDir }), publicKey: stored.publicKey };

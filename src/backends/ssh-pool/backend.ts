@@ -64,7 +64,7 @@ import { PROBE_SECONDS, encoderProbeScript, parseEncoderProbe } from "../encoder
 import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, deviceRoom, hardwareKnown, loadReports, reportKey, type DeviceRoom, type MacReport } from "../../core/mac-capabilities.ts";
 import { quote } from "../../transports/process.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
-import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
+import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
 import type { Arch, Display, DisplayInput, DisplayInputEvents, DisplayOpened, RunResult, SshAccess } from "../../transports/types.ts";
 import { startMacInput } from "../../core/mac-input.ts";
 import { MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
@@ -72,6 +72,7 @@ import { CUA_VERSION } from "../tart/backend.ts";
 import { EXAMPLE, SLOT_KIND, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
 import { PoolSlots, lendingSlots, lendingWords, listsSlots, poolSlotOf, slotDeviceOffer, slotsSetUp, type PoolMacView } from "./slots.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, parseDisplay, parseGrant, parseGranted, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
+import { storedKeyPair } from "../ssh-key.ts";
 
 const SSH_KEY = "ssh-key";
 const RECORD = "machine/";
@@ -1693,11 +1694,7 @@ export class SshPoolBackend implements Backend {
         let publicText: string | null = null;
         const generated = !privateKey;
         if (!privateKey) {
-          let stored = await this.#context.storage.get<{ privateKey: string; publicKey: string }>(SSH_KEY);
-          if (!stored) {
-            stored = await generateKeyPair();
-            await this.#context.storage.set(SSH_KEY, stored);
-          }
+          const stored = await storedKeyPair(this.#context.storage, SSH_KEY);
           privateKey = stored.privateKey;
           publicText = stored.publicKey;
         }
