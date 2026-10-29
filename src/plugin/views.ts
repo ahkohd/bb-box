@@ -34,6 +34,7 @@ export interface BoxView {
   readonly nature: "virtual" | "real";
   /** What the box is, as a badge: an LXC or Docker container, a VM or a physical machine. Null when its backend's driver is gone. */
   readonly form: BoxForm | null;
+  readonly shared: boolean;
   readonly role: "box" | "machine";
   /** In words: what the box has, or else what it was asked to be. Null when neither is known. */
   readonly size: string | null;
@@ -117,6 +118,7 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     provider: providerFamily(box.backend),
     nature: box.nature,
     form: inSlot(box) ? null : boxForm(box.backend),
+    shared: inSlot(box),
     role: box.role,
     size: sizeWords(box),
     state: box.state,

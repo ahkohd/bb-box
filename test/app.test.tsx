@@ -18,7 +18,7 @@ import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-off
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
-import { DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { BoxLine, DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, SLOW_VIDEO_RETRY_MS, SLOW_VIDEO_STILLS_WORDS, STALL_MS, STILLS_WORDS, SelkiesSession, decodesMacroblocks, devicePasteTooLongWords, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { DEVICE_CLIPBOARD_MOST, PASTE_REQUEST_SINCE_VERSION } from "../src/core/device.ts";
@@ -345,6 +345,7 @@ function box(overrides: Partial<BoxView> = {}): BoxView {
     backendLabel: "Fake host",
     nature: "virtual",
     form: "LXC",
+    shared: false,
     role: "box",
     state: "ready",
     error: null,
@@ -942,7 +943,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: new URL("/plugins/bb-box/desktop/thr_panel/box_2", window.location.origin).href });
 });
 
-test("a device box's row names its device beside the OS, not its host's form, and its details have a Device line, for android and ios", async () => {
+test("a device box's row names its device beside its system, then its form as a desktop's row does (F-22), and its details have a Device line, for android and ios", async () => {
   const android = box({ id: "box_a", name: "pixel-box", kind: "android", kindLabel: "Android emulator", form: "VM", desktop: false, display: null, device: { platform: "android", model: "Pixel 8", simulatorHost: false }, control: { owner: "agent", holder: null } });
   const ios = box({ id: "box_i", name: "phone-box", kind: "ios", kindLabel: "iOS Simulator", os: "macos", arch: "arm64", form: "VM", desktop: true, device: { platform: "ios", model: "iPhone 18 Pro", simulatorHost: true }, control: { owner: "agent", holder: null } });
   const plain = box({ id: "box_p", name: "plain-vm", form: "VM" });
@@ -951,7 +952,7 @@ test("a device box's row names its device beside the OS, not its host's form, an
   expect(await slot.findByText("pixel-box")).toBeTruthy();
   expect(slot.getByText("Pixel 8")).toBeTruthy();
   expect(slot.getByText("iPhone 18 Pro")).toBeTruthy();
-  expect(slot.getAllByText("VM")).toHaveLength(1);
+  expect(slot.getAllByText("VM")).toHaveLength(3);
 
   fireEvent.click(slot.getByRole("button", { name: "pixel-box: details" }));
   expect(slot.getByText("Device")).toBeTruthy();
@@ -6720,7 +6721,7 @@ test("with shared the default and a shared iOS host set up, Shared is chosen fir
   await waitFor(() => expect(changes.filter((change) => change.startsWith("acquire"))).toEqual(["acquire ios shared"]));
 });
 
-const SHARED_IOS = box({ id: "box_si", name: "brisk-wren", kind: "ios", kindLabel: "iOS Simulator", os: "macos", arch: "arm64", form: null, backendLabel: "SSH host pool", provider: "SSH pool", desktop: false, display: null, device: { platform: "ios", model: "iPhone 18 Pro", simulatorHost: true }, control: { owner: "agent", holder: null } });
+const SHARED_IOS = box({ id: "box_si", name: "brisk-wren", kind: "ios", kindLabel: "iOS Simulator", os: "macos", arch: "arm64", form: null, shared: true, backendLabel: "SSH host pool", provider: "SSH pool", desktop: false, display: null, device: { platform: "ios", model: "iPhone 18 Pro", simulatorHost: true }, control: { owner: "agent", holder: null } });
 const DEDICATED_IOS = box({ id: "box_di", name: "tall-ridge", kind: "ios", kindLabel: "iOS Simulator", os: "macos", arch: "arm64", form: "VM", backendLabel: "Tart on studio", provider: "Tart", desktop: true, display: { protocol: "rfb", resizable: false, clipboard: "commands", refresh: null, quality: null, macKeys: "alt-command" }, device: { platform: "ios", model: "iPhone 17", simulatorHost: true }, control: { owner: "agent", holder: null } });
 const ANDROID = box({ id: "box_an", name: "green-bay", kind: "android", kindLabel: "Android emulator", os: "linux", form: "VM", backendLabel: "Proxmox QEMU on pve", provider: "Proxmox", requires: ["kvm"], desktop: false, display: null, device: { platform: "android", model: "Pixel 8", simulatorHost: false }, control: { owner: "agent", holder: null } });
 const ANDROID_WITH_DESKTOP = desktopBox({ id: "box_ad", name: "wide-dune", kind: "android", kindLabel: "Android emulator", device: { platform: "android", model: "Pixel Fold", simulatorHost: false } });
@@ -6865,4 +6866,37 @@ test("F-19: moving from a box's Desktop tab with control to its Simulator tab ke
   await vi.advanceTimersByTimeAsync(HAND_BACK_MS + 50);
   vi.useRealTimers();
   await waitFor(() => expect(changes).toEqual(["takeControl box_2", "handBack box_2"]));
+});
+
+function rowTitle(details: HTMLElement): { system: string[]; badges: string[] } {
+  const title = details.querySelector("[data-row-badges]")!.parentElement!;
+  const system = Array.from(title.children).slice(1).filter((part) => !part.hasAttribute("data-row-badges")).map((part) => part.textContent ?? "");
+  const badges = Array.from(title.querySelectorAll("[data-row-badges] > span > span")).map((badge) => badge.textContent ?? "");
+  return { system, badges };
+}
+
+const F22_ROWS: readonly [BoxView, { system: string[]; badges: string[] }][] = [
+  [SHARED_IOS, { system: ["iOS", "iPhone 18 Pro"], badges: ["Simulator", "Shared"] }],
+  [DEDICATED_IOS, { system: ["iOS", "iPhone 17"], badges: ["Simulator", "Desktop", "VM"] }],
+  [ANDROID, { system: ["Android", "Pixel 8"], badges: ["Emulator", "VM"] }],
+  [MAC_DESKTOP, { system: ["macOS"], badges: ["Desktop", "VM"] }],
+  [box(), { system: ["Linux"], badges: ["LXC"] }],
+];
+
+test("F-22: a device box's row reads as a desktop's does: its device's system, its model, then Simulator or Emulator where Desktop goes and Shared or VM where VM goes, and a dedicated ios box keeps its Desktop badge", async () => {
+  const slot = panel(server(F22_ROWS.map(([one]) => one)).handlers);
+  await slot.findByText("brisk-wren");
+  for (const [one, expected] of F22_ROWS) expect([one.name, rowTitle(slot.getByRole("button", { name: `${one.name}: details` }))]).toEqual([one.name, expected]);
+});
+
+test("F-22: the Boxes page's rows and the bare tabs' choosers badge a device box as the Box panel does", async () => {
+  const list = boxesPage(server(F22_ROWS.map(([one]) => one)).handlers);
+  await list.findByText("brisk-wren");
+  for (const [one, expected] of F22_ROWS) expect([one.name, rowTitle(list.getByRole("button", { name: `${one.name}: details`, hidden: true }))]).toEqual([one.name, expected]);
+  cleanup();
+  for (const [one, expected] of F22_ROWS) {
+    const line = render(<BoxLine box={one} />);
+    expect([one.name, rowTitle(line.container as HTMLElement)]).toEqual([one.name, expected]);
+    line.unmount();
+  }
 });
