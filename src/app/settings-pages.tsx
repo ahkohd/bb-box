@@ -10,7 +10,7 @@ import { message, relativeTime } from "./common.tsx";
 import { effectiveKind, inheritSource, sourceName, withBackend } from "./config.ts";
 import { BackendForm, type BackendRowModel } from "./settings-backends.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
-import { DockerHostsSection } from "./settings-docker-hosts.tsx";
+import { MachineOffersGroup, useMachineHosts } from "./settings-docker-hosts.tsx";
 import { ImagesPage } from "./settings-images.tsx";
 import { DraftNumberRow, unplacedProblems } from "./settings-draft-fields.tsx";
 import { BOXES_PART, MONITOR_PART } from "./settings-drafts.ts";
@@ -56,10 +56,12 @@ function useBackendForm() {
 
 export function AddBackendPage() {
   const { state, nav } = useSettings();
+  const machines = useMachineHosts();
   const added = (driver: DriverView) => state.document.backends.find((backend) => backend.type === driver.type && !isMachineDocker(backend));
   return (
     <div className="space-y-6">
       <PageHeader title="Add a backend" description="Where boxes can run. Each says what it makes; setting one up opens its guide and form." />
+      <MachineOffersGroup machines={machines} />
       <Group title="Backends">
         <Card>
           <Rows>
@@ -89,7 +91,6 @@ export function AddBackendPage() {
           </Rows>
         </Card>
       </Group>
-      <DockerHostsSection />
     </div>
   );
 }

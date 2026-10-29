@@ -35,6 +35,8 @@ import {
 import { backendPart } from "./settings-backend-fields.tsx";
 import { failedImagesWords, imageStatusItems, useImagesProgress } from "./settings-images.tsx";
 import { DEFAULT_STAYS_ON, KindSwitch, keptInPlace, kindPart, useKindSwitch } from "./settings-kinds.tsx";
+import { MachineBuildLine, MachinesLine, useMachineHosts, type Machines } from "./settings-docker-hosts.tsx";
+import { machineIdOf, machineOf } from "./settings-machine-docker.ts";
 
 let monitorChangedThisLoad = false;
 
@@ -48,35 +50,37 @@ export function monitorChanged(): boolean {
 
 export function Overview() {
   const { state } = useSettings();
+  const machines = useMachineHosts();
   return (
     <div className="space-y-7">
       <h2 tabIndex={-1} data-page-heading className="sr-only">
         BB Box settings
       </h2>
       {state.document.backends.some((backend) => backend.enabled) ? <SetupProgress empty={false} /> : <FirstRun fallback={null} others={false} />}
-      {state.document.backends.length ? <Status /> : null}
-      <Backends />
+      {state.document.backends.length ? <Status machines={machines} /> : null}
+      <Backends machines={machines} />
       <Kinds />
       <Options />
     </div>
   );
 }
 
-function Status() {
+function Status({ machines }: { machines: Machines }) {
   const { state, nav, refresh } = useSettings();
   const rpc = useRpc<Contract>();
   const [checking, setChecking] = useState(0);
   const [checkNote, setCheckNote] = useState<string | null>(null);
   const now = Date.now();
-  const line = statusLine(state, now, checking);
+  const line = statusLine(state, now, checking, machines.hosts);
   const images = useImagesProgress();
-  const items = [...statusItems(state, now), ...imageStatusItems(state, images, now)];
+  const items = [...statusItems(state, now, machines.hosts), ...imageStatusItems(state, images, now)];
   const checkAll = async () => {
     const on = state.document.backends.filter((backend) => backend.enabled);
     setChecking(on.length);
     setCheckNote(null);
     try {
-      const results = await Promise.allSettled(on.map((backend) => rpc.call("config.check", { draft: state.document, test: backend.id })));
+      const inUse = on.map(machineIdOf).filter((hostId): hostId is string => hostId !== null);
+      const [results] = await Promise.all([Promise.allSettled(on.map((backend) => rpc.call("config.check", { draft: state.document, test: backend.id }))), inUse.length ? machines.recheck(inUse) : null]);
       const failed = results.filter((result) => result.status === "rejected").length;
       if (failed) setCheckNote(`${plural(failed, "check")} could not run. Try again.`);
       await refresh();
@@ -127,10 +131,10 @@ function Status() {
   );
 }
 
-function BackendRow({ config, showAge }: { config: BackendConfig; showAge: boolean }) {
+function BackendRow({ config, showAge, machines }: { config: BackendConfig; showAge: boolean; machines: Machines }) {
   const { state, nav, instant, writes } = useSettings();
   const now = Date.now();
-  const health = backendHealth(state, config, now);
+  const health = backendHealth(state, config, now, machines.hosts);
   const label = backendLabel(state, config);
   const chip = hostChip(config, label, state.backends.find((candidate) => candidate.id === config.id)?.hosts);
   const key = switchKey.backend(config.id);
@@ -157,6 +161,7 @@ function BackendRow({ config, showAge }: { config: BackendConfig; showAge: boole
             </span>
           </span>
           <StateLine id={stateId} className="pointer-events-none mt-0.5" tone={health.tone} words={health.words} items={backendLine(state, config, health, now, showAge)} />
+          {config.enabled ? <MachineBuildLine host={machineOf(machines.hosts, config)} className="pointer-events-none mt-0.5" /> : null}
         </span>
         <span className="pointer-events-none self-center">
           <SavedTick show={instant.isSaved(key)} />
@@ -181,10 +186,10 @@ function BackendRow({ config, showAge }: { config: BackendConfig; showAge: boole
   );
 }
 
-function Backends() {
+function Backends({ machines }: { machines: Machines }) {
   const { state, nav } = useSettings();
   const now = Date.now();
-  const healths = state.document.backends.filter((backend) => backend.enabled).map((backend) => backendHealth(state, backend, now));
+  const healths = state.document.backends.filter((backend) => backend.enabled).map((backend) => backendHealth(state, backend, now, machines.hosts));
   const showAge = !sameCheckAge(healths);
   const addBackend = (
     <Button type="button" variant="outline" size="sm" className="h-7" data-row-key="add-backend" onClick={() => nav.go({ page: "add" }, "add-backend")}>
@@ -198,13 +203,14 @@ function Backends() {
         <Card>
           <Rows>
             {state.document.backends.map((config) => (
-              <BackendRow key={config.id} config={config} showAge={showAge} />
+              <BackendRow key={config.id} config={config} showAge={showAge} machines={machines} />
             ))}
           </Rows>
         </Card>
       ) : (
         <p className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-subtle-foreground">No backend yet. Add backend lists every kind of place boxes can run, and Docker on your BB machines.</p>
       )}
+      <MachinesLine machines={machines} />
     </Group>
   );
 }

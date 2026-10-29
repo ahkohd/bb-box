@@ -17,6 +17,7 @@ import type { BackendStorage, GuestOs } from "../backends/types.ts";
 import { kindOn, type BackendConfig, type ConfigDocument } from "../core/document.ts";
 import type { DockerInfo } from "../backends/docker/cli.ts";
 import type { ImageBuild } from "./docker-images.ts";
+import type { DockerFix } from "./setup-offer.ts";
 
 /** BB's machines as the settings list reads them. */
 export interface MachineRecord {
@@ -44,6 +45,7 @@ export interface DockerHostView {
   readonly backend: { readonly id: string; readonly enabled: boolean; readonly boxes: number } | null;
   /** Its last image build, or the one running (src/plugin/docker-images.ts). */
   readonly images: ImageBuild | null;
+  readonly fix?: DockerFix | null;
 }
 
 /**
@@ -103,6 +105,7 @@ export interface DockerHostsDeps {
   boxes(): Promise<ReadonlyMap<string, number>>;
   /** The machine's last image build, or the one running. */
   images?(hostId: string): ImageBuild | null;
+  fix?(host: DockerHostView): DockerFix | null;
   readonly timeoutMs?: number;
   /** How long Docker's facts on a machine are kept, so the page does not open every relay each time. */
   readonly freshMs?: number;
@@ -135,7 +138,7 @@ export class DockerHosts {
         const connected = offline === null;
         const backend = backendOn(document, machine.id);
         const checked = connected ? await this.#check(machine.id) : { docker: null, problem: `The machine ${offline}`, absent: false };
-        return {
+        const view: DockerHostView = {
           hostId: machine.id,
           name: machine.name,
           connected,
@@ -145,6 +148,7 @@ export class DockerHosts {
           backend: backend ? { id: backend.id, enabled: backend.enabled, boxes: boxes.get(backend.id) ?? 0 } : null,
           images: this.#deps.images?.(machine.id) ?? null,
         };
+        return { ...view, fix: this.#deps.fix?.(view) ?? null };
       }),
     );
   }

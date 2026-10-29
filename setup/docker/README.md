@@ -231,7 +231,7 @@ in, use [Docker in WSL](../docker-wsl/README.md) instead.
 6. Add Ubuntu to BB as a machine, as that user. If BB's app was there before
    step 4, restart the user's services so it has the group:
    `sudo systemctl restart user@$(id -u <user>).service`.
-7. In BB Box's settings, select **Add backend**, and turn the machine on under Docker on BB machines.
+7. In BB Box's settings, select **Add backend**, and select **Add** beside the machine under **Docker on your BB machines**.
 
 Then:
 

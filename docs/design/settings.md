@@ -27,7 +27,8 @@ come back to the browser: the page shows whether each is set.
 | `config.get` | the document, each secret as set or not, each part's problems, a revision, and each backend's live state and last check |
 | `config.check(draft, { test? })` | problems keyed by field path, without saving; with `test`, a backend's doctor against the draft, within 30 s. A check of the stored backend is kept as its last check |
 | `config.apply(draft, revision, operation?, submission?)` | one checked write; refused when the revision moved on or a field is wrong. With an operation ID, applied at most once: its receipt is listed by `config.get` |
-| `docker.host.set(hostId, enabled, operation?)` | Docker on one of your BB machines on or off, with its images, and its receipt with an operation ID |
+| `docker.hosts({ recheck? })` | each of your BB machines that could host boxes, with Docker as it answers, its image build and the fix for what stands in its way; `recheck` asks one machine again rather than taking what it said in the last minute |
+| `docker.host.set(hostId, enabled, operation?)` | Docker on one of your BB machines added or turned on, with its images, and its receipt with an operation ID |
 | `images.list` | the standard images bb-box rebuilds, each with its build and age, why it is due, and what its last rebuild did |
 | `images.progress` | the rebuild going on, or the last one, image by image; and every failed rebuild: each standard image whose last rebuild failed, on a backend that is on, and each project image's failed build |
 | `images.refresh` | starts a rebuild of what is due, as the night does; one going on is not doubled |
@@ -95,7 +96,11 @@ In order:
    server), or how many machines an SSH host pool lists; else the name in a
    second backend's ID. While its page has a draft the row says "Unsaved
    changes", and "Saving…" while a save of it is out. Add backend is beside
-   the title.
+   the title. A BB machine's Docker in use takes its state from the
+   machine as well as its checks: "Offline in BB", or "Cannot host boxes"
+   with why and its fix, and its image build on a second line. Under the
+   list, one line names the machines whose Docker could host boxes, and
+   those whose Docker cannot, with a link to Add backend.
 4. **Kinds**: one row each, in one list with no group headings, Linux kinds
    first, then macOS and iOS, then Windows and Android, with the kind's full name, a Default chip, its default
    size, how many backends make it, warm and spare counts, and the
@@ -219,8 +224,10 @@ first and says what follows.
 - When BB Box does not reply and has no receipt: "Not confirmed: BB Box did
   not reply (…), and has no receipt for this change. Fake host is on now,
   at revision 215." A receipt found later says so.
-- Docker on one of your BB machines switches through `docker.host.set`,
-  with its operation ID, which builds its images.
+- Docker on one of your BB machines turns on through `docker.host.set`,
+  with its operation ID, which checks its Docker answers and builds its
+  images. It turns off like any backend, and stays a row; Remove
+  backend… in its menu removes it.
 
 Each other part's page holds today's form for it, as it was before 067,
 until a later unit replaces it: setting up a backend, with Save, Save and
@@ -323,7 +330,7 @@ overview, dimmed, until the person leaves BB Box's settings.
 
 | Page | Holds |
 | --- | --- |
-| A backend | See [A backend's page](#a-backends-page). For Docker on a BB machine, the Docker on BB machines list follows the cards |
+| A backend | See [A backend's page](#a-backends-page). For Docker on a BB machine, a BB machine card follows Health: the machine, Docker's state and facts, its image build, and where it cannot host boxes, why, the lines that fix it and Check again |
 | A kind | See [A kind's page](#a-kinds-page) |
 | Boxes | Default kind (a menu that acts at once); boxes per thread; boxes join BB as machines and Linux desktops as video (switches); Files for every box |
 | Images | See [The Images page](#the-images-page) |
@@ -331,7 +338,7 @@ overview, dimmed, until the person leaves BB Box's settings.
 | Network | The tailnet as one form on the engine: whether machines join (two radio choices), tags (empty for `tag:bb-box`), and the OAuth client ID and secret, Set or Replace, with their versions. Saved together with one Save, or Enter; a refusal keeps every change, with the reason under the field it names. Choosing No hides the rest, drops their edits and says "Saving No deletes the saved OAuth client ID and secret" |
 | Monitor | Machine status (a switch, also on its overview row), Refresh every … s, background monitoring and pressure notifications. After machine status changes: "The sidebar's machine status changes when BB next loads", with Reload BB now |
 | Configuration | The revision and what happens when two people save; the `bb box config` commands |
-| Add a backend | Every driver, each with what it is; one already added says "Added: open it". Then Docker on BB machines, every machine with Docker's state and its switch |
+| Add a backend | Docker on your BB machines first: each machine that can host boxes with Docker's facts and Add; each whose Docker cannot, with why, the lines that fix it and Check again; each added, "Added: open it"; each offline; and one line for those with no Docker. Then every driver, each with what it is; one already added says "Added: open it" |
 | Set up a backend | The driver's guide and setup form, with Save and turn on |
 
 ## The Images page
@@ -392,7 +399,7 @@ on the Boxes page, under Machines".
 | 2: the editing engine on Boxes and Monitor, and every switch on it | Built |
 | 3: each backend's page on the engine, with health, In use, cards, Macs and the menu | Built |
 | 4: the drivers' help text | Built |
-| 5: Docker on BB machines as backends | To come, as 067 lists it |
+| 5: Docker on BB machines as backends, rows and pages, and in Add backend | Built |
 | 6: each kind's page on the engine, the default kind's rule everywhere, kinds kept in place | Built |
 | 7: first run | To come, as 067 lists it |
 | 8: Images, with every rebuild's run state, projects' images, and failed rebuilds in Status | Built |
@@ -409,9 +416,10 @@ and `settings-backend-fields.tsx` (a backend's page), `settings-images.tsx`
 and `rebuild-now.tsx` (the Images page),
 `settings-kind-page.tsx` and `settings-kinds.tsx` (a kind's page, where it
 runs, and the kind switch with the default kind's rule),
+`settings-machine-docker.ts` and `settings-docker-hosts.tsx` (Docker on
+your BB machines),
 `settings-tailnet.tsx` (Network), `settings-context.tsx`,
 `settings-overview.tsx`, `settings-pages.tsx` and `settings-parts.tsx`.
 Today's forms stay in
-`settings-backends.tsx`, `settings-fields.tsx`,
-`settings-files.tsx`, `settings-docker-hosts.tsx`
-and `first-run.tsx`, with the helpers in `config.ts`.
+`settings-backends.tsx`, `settings-fields.tsx`, `settings-files.tsx` and
+`first-run.tsx`, with the helpers in `config.ts`.

@@ -39,6 +39,28 @@ export interface MachineSetup {
   readonly boxFollows?: boolean;
 }
 
+export interface DockerFix {
+  readonly problem: string;
+  readonly command: string | null;
+  readonly restart: string | null;
+}
+
+export function dockerFix(host: Pick<DockerHostView, "name" | "connected" | "docker" | "absent" | "backend">, known: SetupFacts | null, here: boolean): DockerFix | null {
+  if (!host.connected) return null;
+  const where = here ? "this machine" : host.name;
+  if (host.docker) {
+    if (host.backend?.enabled || known?.freeGb === null || known?.freeGb === undefined || known.freeGb >= LINUX_BUILD_GB) return null;
+    return { problem: `The Linux image needs about ${LINUX_BUILD_GB} GB free to build, and ${where} has ${known.freeGb} GB. Free some, for example with docker builder prune, then check again.`, command: null, restart: null };
+  }
+  if (host.absent || known?.inSocketGroup !== false) return null;
+  const group = known.socketGroup ?? "docker";
+  return {
+    problem: `Docker is on ${where}, but BB's user, ${known.user}, cannot use it. Add ${known.user} to the ${group} group, then restart BB's daemon there.`,
+    command: `sudo usermod -aG ${group} ${known.user}`,
+    restart: known.restart,
+  };
+}
+
 const ORDER: Record<MachineSetup["state"], number> = { on: 0, ready: 1, fix: 2, none: 3, offline: 4 };
 
 /** Each BB machine's setup, the server's first, then those that can be set up now. */
@@ -66,24 +88,10 @@ export function machineSetups(
       };
       if (!host.connected) return { ...base, state: "offline", problem: host.problem };
       if (host.backend?.enabled) return { ...base, state: "on" };
-      if (host.docker) {
-        if (known?.freeGb !== null && known?.freeGb !== undefined && known.freeGb < LINUX_BUILD_GB) {
-          return { ...base, state: "fix", problem: `The Linux image needs about ${LINUX_BUILD_GB} GB free to build, and ${base.here ? "this machine" : host.name} has ${known.freeGb} GB. Free some, for example with docker builder prune, then check again.` };
-        }
-        return { ...base, state: "ready" };
-      }
+      const fix = dockerFix(host, known, base.here);
+      if (host.docker) return fix ? { ...base, state: "fix", problem: fix.problem } : { ...base, state: "ready" };
       if (host.absent) return { ...base, state: "none" };
-      // Docker is there, but refused BB's daemon: its user is not in the socket's group, or joined it after the daemon started.
-      if (known && known.inSocketGroup === false) {
-        const group = known.socketGroup ?? "docker";
-        return {
-          ...base,
-          state: "fix",
-          problem: `Docker is on ${base.here ? "this machine" : host.name}, but BB's user, ${known.user}, cannot use it. Add ${known.user} to the ${group} group, then restart BB's daemon there.`,
-          fix: `sudo usermod -aG ${group} ${known.user}`,
-          restart: known.restart,
-        };
-      }
+      if (fix) return { ...base, state: "fix", problem: fix.problem, fix: fix.command, restart: fix.restart };
       return { ...base, state: "fix", problem: host.problem };
     })
     .sort((a, b) => Number(b.here) - Number(a.here) || ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name));

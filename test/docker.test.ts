@@ -1190,7 +1190,7 @@ test("on a BB machine, the doctor's fix for a missing image is bb-box's own buil
   const report = await backend.doctor(signal());
   const image = report.checks.find((check) => check.id === "image.bbbox/linux:1");
   assert.equal(image?.status, "fail");
-  assert.equal(image?.fix, "Run bb box docker-build devpc, or turn devpc off and on under Docker on BB machines in bb-box's settings, to build it there.", "named as BB names it, which the command takes");
+  assert.equal(image?.fix, "Run bb box docker-build devpc, or turn Docker on devpc off and on in bb-box's settings, to build it there.", "named as BB names it, which the command takes");
 });
 
 test("on a BB machine, a command or a capacity check stops waiting when its signal aborts, though BB never answers, so a stopping plugin's sweep ends", async () => {

@@ -1711,3 +1711,212 @@ and from the live checks:
   the iOS Simulator's page should list Namespace beside Tart and the SSH
   host pool, saying "Makes it now" while its shared iOS hosts lend.
 - Find (unit 11) does not index a kind's settings yet.
+
+## Unit 5: Docker on BB machines as backends
+
+Built on 29 October 2026, on units 1 to 4, 6, 8 and 9. Each BB machine's Docker
+in use is a backend row and page like the others, its Docker that cannot
+host boxes says so with its fix, and Add backend offers your BB machines
+first. Today's "Docker on BB machines" list is gone from the backend's
+page and from Add backend.
+
+### What changed
+
+- **A row like the others.** A BB machine's Docker in use is a Docker row
+  with a "BB machine" chip. Its state comes from the machine as well as its
+  checks: "Offline in BB", or "Cannot host boxes" with why, such as
+  "Docker is on lab, but BB's user, box, cannot use it", and its image
+  build on a second line: "Building linux, desktop and desktop-wayland
+  images · Image 1 of 3, step 4 of 4". Status says "Docker on lab is
+  offline in BB", or "1 offline in BB" among several, for an offline
+  machine, and "not working" for one that cannot host boxes, and the
+  callout lists it with its fix: "On lab, run sudo usermod -aG docker
+  box, then restart BB there. Then check again." A failed image build is
+  listed too. Check all also asks each machine's Docker again.
+- **One line under Backends** names the machines whose Docker could host
+  boxes and those whose Docker cannot: "bb-1 has Docker and could host
+  boxes. Docker on lab cannot host boxes now. See them under Add backend".
+- **Its page** has a BB machine card after Health: the machine, Docker's
+  state, version, cores and memory, its image build, and where it cannot
+  host boxes, why, the lines that fix it, each with its own Copy, the
+  restart words from first run, and Check again. Check again there runs
+  the backend's checks as well, so one press clears both cards. The
+  driver's Host field stays hidden, as in unit 3.
+- **Add backend** starts with Docker on your BB machines: each machine
+  that can host boxes, with Docker's facts and Add; each whose Docker
+  cannot, with why, its fix and Check again; each added, "Added: open
+  it"; each offline; and one line for the machines with no Docker, "No
+  Docker on plain and quiet." Then every driver, as before. Add moves
+  focus to the machine's new row.
+- **On and off.** Add, and turning a machine's Docker on, go through
+  `docker.host.set` with its operation ID, as before: it checks Docker
+  answers and builds the images the machine lacks. Turning it off is a
+  switch like any backend's, through `config.apply`, and keeps the backend
+  off, so it stays a row and a page. Remove backend… in its menu removes
+  it.
+- **The server.** `docker.hosts` takes `recheck`, which asks one machine's
+  Docker again rather than taking what it said in the last minute. Each
+  machine carries `fix`, what stands in the way of its Docker that bb-box
+  knows how to fix, from what its host entry last said: BB's user outside
+  the socket's group, wherever Docker refuses it, in use or not; or too
+  little disk for the Linux image before it is used. First-run setup uses
+  the same `dockerFix`, so its words are unchanged.
+- **Words.** The CLI's `docker-build`, a Docker image's fix line, the user
+  guide, the Docker and cloud host guides and the design note say Add
+  backend and the backend's menu instead of "Docker on BB machines".
+
+Kept from today's code: `hostState`, `buildWords` and `dockerFacts`, moved
+to `settings-machine-docker.ts`, and the permission, restart and disk
+guidance of first run, word for word.
+
+New: `src/app/settings-machine-docker.ts`, and
+`067-settings-page/unit-5/live-check.mjs` and `screens-and-keys.mjs`.
+Rewritten: `src/app/settings-docker-hosts.tsx`. Changed: `settings-overview.tsx`,
+`settings-backend-page.tsx`, `settings-pages.tsx` (Add backend only),
+`settings-status.ts`, `settings-context.tsx` (a machine's switch off),
+`first-run.tsx` (`CopyLine` exported, with a name of its own),
+`src/plugin/docker-hosts.ts`, `setup-offer.ts`, `setup.ts`, `contract.ts`,
+`rpc.ts`, `cli.ts`, `src/backends/docker/backend.ts`, the tests, the
+guides, `docs/reference/cli.md` and `docs/design/settings.md`. Shared with
+unit 6's area: `settings-pages.tsx`, `settings-overview.tsx`,
+`settings-status.ts` and `docs/design/settings.md`, each in a few lines.
+
+### Tests
+
+`test/app.test.tsx` replaces the old list's test with four: Add backend
+with every kind of machine, Check again's recheck, Add and focus; the
+overview's rows, build line, Cannot host boxes in Status with its fix, and
+the machines line; the page's card, its fix lines and Copy names, one
+Check again for both cards, off through `config.apply` keeping the
+backend, and on through `docker.host.set`; and Status saying "offline in
+BB" for one machine and among several. `test/docker-hosts.test.ts`
+has one for `fix`; `test/setup-offer.test.ts` one for `dockerFix` in use
+and before use.
+
+On a Linux box, 8 cores, on the commit delivered:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,827 tests: 2,539 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 55 s |
+| vitest | 296 pass, in 4 files |
+| `test/docs.test.ts`, `test/site.test.ts` and `scripts/reference.ts --check` | pass; the reference changes only in `docker-build`'s words |
+
+The commit delivered differs from the one tested only in this section and
+a screenshot. A run before it had one failure outside settings, an iOS
+driver test with a fake `idb_companion` that waits on timing; it passed
+alone 3 of 3 times, and the full suite then passed as above.
+
+### Live check on a separate BB
+
+A fresh `npx bb-app` (0.48.0) with no account, its own data folder and
+port, in a Linux box, started with `env -i`, `HOME`, `PATH` and
+`BB_BOX_LIVE_CHECKS=1` only, with bb-box installed from this branch by `bb
+plugin install` of its path. Machine access set to direct, with the box's
+address. A second Linux box with Docker joined that BB as a machine named
+lab, through Manual machine setup's enrollment command, with its daemon
+run by hand so it could be restarted with or without the docker group
+(`gpasswd -d box docker` and `usermod -aG docker box`, then the daemon
+restarted through `sudo -u box`, which reads the groups again). The BB
+box's own Docker shows as bb-1, a machine that could host boxes. The
+script, [`live-check.mjs`](067-settings-page/unit-5/live-check.mjs),
+drives headless Chromium at 1440 by 1000, one phase at a time. The series
+ran once in full on the branch, and again after rebasing on main, with
+the same results. On the commit delivered, rebased on unit 6, a new BB and
+a new lab ran it again: Add, the images built, Check all to Ready, broken,
+fixed with one Check again, and offline.
+
+| Step | What the page said, and what BB Box stored |
+| --- | --- |
+| Used: Add backend, Add Docker on lab | Both machines "Can host boxes · Docker 29.1.3 · 4 cores · 8 GiB memory". After Add: lab's row "Hosts boxes · Docker on lab · Added: open it", focus on it; stored `docker:lab` on, host `bb:` and lab's ID |
+| Used: the overview while it builds | "Docker on lab · BB machine · Not checked yet", and "Building linux, desktop and desktop-wayland images · Image 1 of 3, step 4 of 4". Reinstalling the plugin mid-build, for a fix, stopped that build; `bb box docker-build lab` then built the three images in 1,046 s, and the row showed its steps the same way |
+| Used: built, Check all | Row "Ready · 3 kinds", Status "Docker on lab is ready". A box made on lab with `bb box acquire linux --on "Docker on lab"` in 0.9 s; the row then said "1 box" and the card "Hosts boxes, 1 box on it" |
+| Broken: lab's user out of the docker group, its daemon restarted, Check all | Row "Cannot host boxes · Docker is on lab, but BB's user, box, cannot use it. Add box to the docker group, then restart BB's daemon there."; Status "Docker on lab is not working"; the callout with "Fix: On lab, run sudo usermod -aG docker box, then restart BB there. Then check again." The card: "Cannot host boxes, 1 box on it", the line `sudo usermod -aG docker box` to copy, the restart words, Check again; Health "Cannot host boxes" with the failed check |
+| Fixed: back in the group, its daemon restarted, Check again in the card | One press: the card "Hosts boxes, 1 box on it", Health "Ready", the row "Ready · 1 box · 3 kinds" |
+| Turned off, with its box | Row "Off · 1 box · takes no new boxes", the card "Off: takes no new boxes, 1 box on it", Health "Off"; stored off |
+| On again from the page | `docker.host.set` with an operation ID; "Hosts boxes"; stored on |
+| Turned off, with no box | Row "Off · takes no new boxes", the page as before; stored off, and still there. Before this unit, off with no box removed it |
+| Remove backend… from its menu | The overview; no backend stored; Add backend offers lab again, "Can host boxes" |
+| Broken while not in use | Add backend: lab "Cannot host boxes", why, the line to copy and Check again; the overview's line "Docker on lab cannot host boxes now." |
+| Offline: lab's daemon stopped | Row "Offline in BB · The machine is offline in BB.", amber; Status "Docker on lab is offline in BB", with "Fix: Start lab, or BB on it, then check again."; the card "Offline in BB" |
+
+### Keyboard only
+
+On the same BB, by keys alone
+([`screens-and-keys.mjs`](067-settings-page/unit-5/screens-and-keys.mjs)),
+while lab built and again while it was broken:
+
+- From the overview's heading Tab went: Check all, Open Docker on lab in
+  the callout (when broken), Add backend, the Docker on lab row, its
+  switch, See them under Add backend, Change the default, then the kinds.
+  Every stop had a focus ring.
+- Enter on the row opened its page with focus on its heading. Tab went:
+  the switch, More for Docker on lab, Check again, the other checks, then
+  in the BB machine card the line's Copy and Check Docker on lab again,
+  then the kinds it makes and the fields.
+- Enter on Check Docker on lab again checked it and kept focus on it.
+- BB Box settings by Enter returned focus to the Docker on lab row.
+- Enter on See them under Add backend opened Add backend with focus on
+  its heading; Tab went to Add Docker on bb-1, then lab's row, then the
+  drivers. Back returned focus to the link.
+- Enter on Add moved focus to the machine's new row.
+- No animation ran, but for BB's busy dot spinning beside a running
+  build (`document.getAnimations()`).
+- The first pass found every Copy named "Copy"; each now says what it
+  copies, such as "Copy the command: sudo usermod -aG docker box".
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark, of the overview, the page and Add
+backend, in each state: building, with a box, broken, fixed, off with a
+box, off, and broken while not in use. 133 in the thread's storage. A
+selection, with the BB box's machine named bb-1 and the second box lab:
+
+[building, the overview](067-settings-page/unit-5/used-overview-1440-light.png),
+[the page](067-settings-page/unit-5/used-page-1440-dark.png),
+[Add backend at 390](067-settings-page/unit-5/used-add-390-light.png),
+[with a box](067-settings-page/unit-5/usedbox-overview-760-dark.png),
+[broken at 390](067-settings-page/unit-5/broken-overview-390-dark.png),
+[its page](067-settings-page/unit-5/broken-page-1440-light.png),
+[at 760](067-settings-page/unit-5/broken-page-760-dark.png),
+[fixed](067-settings-page/unit-5/fixed-page-1440-light.png),
+[the overview fixed](067-settings-page/unit-5/fixed-overview-760-light.png),
+[off](067-settings-page/unit-5/off-overview-1440-dark.png),
+[off at 390](067-settings-page/unit-5/off-page-390-light.png),
+[off with a box](067-settings-page/unit-5/offbox-page-760-light.png),
+[removed](067-settings-page/unit-5/removed-add-1440-light.png),
+[broken while not in use](067-settings-page/unit-5/cannot-add-760-dark.png),
+[offline](067-settings-page/unit-5/offline-overview-1440-light.png),
+[at 390](067-settings-page/unit-5/cannot-add-390-light.png).
+
+### Deviations from 067
+
+- Turning a BB machine's Docker off keeps its backend, off, as for any
+  backend; before, off with no box removed it. So "turned off" stays a row
+  and a page, and Remove backend… removes it. `docker.host.set` with
+  `enabled: false` still removes it, for agents and the CLI.
+- `docker.hosts` gained `recheck`, and each machine `fix`, two small server
+  changes 067 does not list.
+- The BB machine card's Check again also runs the backend's checks on its
+  page. Under Add backend, where there is no backend yet, it asks Docker
+  again only.
+- A machine whose Docker answers but whose disk is too small for the Linux
+  image is offered with Add and the disk's words in amber, not as Cannot
+  host boxes: its Docker works, and it is the build that would fail.
+- A failed image build on a BB machine in use is a Status item with its
+  fix, "Run bb box docker-build lab, or turn Docker on lab off and on.",
+  beside unit 8's failed rebuilds of the standard images.
+- Health's words no longer shrink beside a long summary, so "Cannot host
+  boxes" stays on one line (a class in unit 3's card).
+- The live check's lab daemon ran by hand, not as a service, so bb-box
+  could not tell how it restarts and said "restart BB there" in words. As
+  a systemd user service it gives the `systemctl` line, as first run does.
+
+### Not done here
+
+- A look in production in the owner's browser, after the lead deploys.
+- Seen in the live check, from before this unit: a restart of bb-box
+  during a machine's image build ends the build, and afterwards the row
+  says nothing of it, as the build's state is kept in memory. The images
+  are built again by `bb box docker-build`, or by turning the machine's
+  Docker off and on.

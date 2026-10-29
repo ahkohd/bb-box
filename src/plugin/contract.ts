@@ -286,8 +286,8 @@ export const contract = defineRpcContract({
     output: z.custom<ApplyResult>(),
   },
   "config.migrated.remove": { input: z.null(), output: z.custom<{ readonly removed: boolean; readonly state: ConfigState }>() },
-  /** BB machines that can host Docker boxes, with Docker as it answers through bb-box's relay (042). */
-  "docker.hosts": { input: z.null(), output: z.custom<{ hosts: DockerHostView[] }>() },
+  /** BB machines that can host Docker boxes, with Docker as it answers through bb-box's relay (042). `recheck` asks that machine's Docker again rather than taking what it said in the last minute. */
+  "docker.hosts": { input: z.object({ recheck: z.string().min(1).max(64).optional() }).nullish(), output: z.custom<{ hosts: DockerHostView[] }>() },
   /** What each BB machine offers first-run setup, the server's first, and what stands in the way of boxes joining BB, if anything. */
   "setup.offer": { input: z.null(), output: z.custom<{ machines: MachineSetup[]; access: MachineAccessProblem | null }>() },
   "setup.desktop": { input: thread.extend({ hostId: z.string().min(1), kind: z.enum(["linux-desktop-cpu", "linux-desktop-wayland-cpu"]).optional(), size: size.optional(), name: z.string().min(1).optional() }), output: z.custom<{ result: ApplyResult }>() },

@@ -95,9 +95,9 @@ In the Hetzner Console, make a Cloud Firewall with no inbound rules, and apply i
 
 ## Turn it on in BB Box
 
-1. In BB Box's settings, select **Add backend**, and find the server under **Docker on BB machines**. Its row shows Docker's version, cores and memory.
-2. Turn it on. BB Box adds a Docker backend for it and builds its images there. This takes about 15 minutes. The row shows the build until it ends.
-3. On a server with 8 GB of memory, such as a CPX32, open the new backend's setup under **Backends** and set **Memory kept free (MiB)** to 1024. With the default of 4096 it has no room for a box.
+1. In BB Box's settings, select **Add backend**, and find the server under **Docker on your BB machines**. Its row shows Docker's version, cores and memory.
+2. Select **Add**. BB Box adds a Docker backend for it and builds its images there. This takes about 15 minutes. The backend's row under **Backends** shows the build until it ends.
+3. On a server with 8 GB of memory, such as a CPX32, open the new backend's page under **Backends** and set **Memory kept free (MiB)** to 1024. With the default of 4096 it has no room for a box.
 
 Boxes on the server are privileged containers by default, so each has Docker of its own (**Docker in boxes**). A box with Docker can take over the server: use it only for work you would run on the server yourself.
 
@@ -112,7 +112,7 @@ The doctor checks the new backend and its images. Then make a box on it from the
 ## Remove it
 
 1. Release the boxes on it.
-2. Turn it off under **Docker on BB machines**.
+2. Open its backend under **Backends**, and choose **Remove backend…** from its menu.
 3. Remove it in BB, under Settings, then Machines.
 4. Remove it from the tailnet.
 5. Delete the server in the Hetzner Console. Until you do, Hetzner keeps billing for it.

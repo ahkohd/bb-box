@@ -224,7 +224,7 @@ export function JoinHelp({ words }: { words: string | null }) {
   );
 }
 
-function CopyLine({ line }: { line: string }) {
+export function CopyLine({ line, label = "Copy" }: { line: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="mt-3 flex items-center gap-2 rounded-md border border-border bg-muted/40 py-1.5 pl-3 pr-1.5">
@@ -234,7 +234,7 @@ function CopyLine({ line }: { line: string }) {
         variant="ghost"
         size="icon"
         className="size-7 p-0 text-muted-foreground hover:text-foreground"
-        aria-label={copied ? "Copied" : "Copy"}
+        aria-label={copied ? "Copied" : label}
         onClick={() => {
           void navigator.clipboard?.writeText(line);
           setCopied(true);
