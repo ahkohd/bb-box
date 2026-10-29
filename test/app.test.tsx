@@ -38,6 +38,7 @@ import { screensOf, screenTitle, screenWord } from "../src/app/screens.ts";
 import { terminalTitle } from "../src/app/terminal.tsx";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
+import { openSettingsView } from "../src/app/settings-route.ts";
 import type { BackendConfig } from "../src/core/document.ts";
 import type { FieldView } from "../src/plugin/configuration.ts";
 import packageJson from "../package.json";
@@ -1818,73 +1819,134 @@ test("the panel refetches on its thread's change signals and after a reconnect",
   await waitFor(() => expect(stateCalls(slot)).toBe(4));
 });
 
-function settings(handlers: PluginRpcTestHandlers<Contract>) {
+function settings(handlers: PluginRpcTestHandlers<Contract>, hash = "") {
+  window.history.replaceState(null, "", `/settings/plugins/bb-box${hash}`);
   const [section] = app.settingsSections;
   return renderSlot(section!, {}, { rpc: handlers, pluginId: "bb-box" });
 }
 
-test("the settings page lists each backend's state, the kinds and the general settings", async () => {
+test("the settings overview shows an honest status, each backend with its state and switch, the kinds in groups, and the options", async () => {
   const slot = settings(server([]).handlers);
-  expect(await slot.findByText("Fake host")).toBeTruthy();
-  expect(slot.getByText("Needs setting up")).toBeTruthy();
-  expect(slot.getByText("Set the API token.")).toBeTruthy();
-  expect(slot.getByText("2 boxes")).toBeTruthy();
-  expect(slot.getByText("Other pool")).toBeTruthy();
-  expect(slot.getByText("Not set up")).toBeTruthy();
-  expect(slot.getByText("Your own machines over SSH.")).toBeTruthy();
-  expect((slot.getByRole("switch", { name: "Fake host on" }) as HTMLButtonElement).getAttribute("aria-checked")).toBe("true");
-  expect((slot.getByRole("switch", { name: "Other pool on" }) as HTMLButtonElement).getAttribute("aria-checked")).toBe("false");
+  expect(await slot.findByText("Fake host is not working")).toBeTruthy();
+  const things = within(slot.getByRole("region", { name: "Things that need you" }));
+  expect(things.getByText("3 things need you")).toBeTruthy();
+  expect(things.getByText("Fake host")).toBeTruthy();
+  expect(things.getByText("Not offered now: Linux")).toBeTruthy();
+  expect(things.getByRole("button", { name: "Open Fake host" })).toBeTruthy();
+  const backend = slot.getByRole("switch", { name: "Fake host: takes new boxes" });
+  expect(backend.getAttribute("aria-checked")).toBe("true");
+  expect(document.getElementById(backend.getAttribute("aria-describedby")!)!.textContent).toContain("Set the API token.");
+  expect(slot.queryByText("Other pool")).toBeNull();
+  expect(slot.getByRole("button", { name: "Add backend" })).toBeTruthy();
 
-  // Kinds are named by their OS; the badges say the rest.
-  expect(slot.getAllByText("Linux")).toHaveLength(3);
-  expect(slot.getByText("Desktop")).toBeTruthy();
-  expect(slot.getByText("GPU")).toBeTruthy();
-  expect(slot.getAllByText("LXC")).toHaveLength(2);
-  expect(slot.queryByText("Physical")).toBeNull();
-  expect(slot.getAllByText("From Fake host")).toHaveLength(2);
-  expect(slot.getByText("1 warm on Fake host")).toBeTruthy();
-  expect(slot.getByText("Small 2 cores · 4 GiB · base disk (default) · Medium 4 cores · 8 GiB · base disk · Large 8 cores · 16 GiB · base disk · up to 16 cores · 32 GiB · 256 GiB")).toBeTruthy();
+  expect(slot.getByText("What a thread can ask for. Linux is the default.")).toBeTruthy();
+  const linux = slot.getByRole("switch", { name: "Linux: offered to threads" });
+  expect([linux.getAttribute("aria-checked"), (linux as HTMLButtonElement).disabled]).toEqual(["true", true]);
+  expect(slot.getByRole("switch", { name: "Linux desktop: offered to threads" }).getAttribute("aria-checked")).toBe("true");
+  expect(slot.getAllByText("Not offered now: its backends cannot make it")).toHaveLength(2);
 
-  expect(slot.getByRole("combobox", { name: "Default kind" }).textContent).toBe("Linux");
-  expect((slot.getByRole("textbox", { name: "Boxes per thread" }) as HTMLInputElement).value).toBe("0");
-  expect(slot.getByRole("switch", { name: "Enrol boxes as BB machines" }).getAttribute("aria-checked")).toBe("true");
-  expect(slot.queryByText(/moved its settings/)).toBeNull();
+  expect(slot.getByRole("button", { name: /^Boxes/ }).textContent).toContain("Linux by default · no limit per thread · 0 files");
+  expect(slot.getByRole("button", { name: /^Configuration/ }).textContent).toContain("Revision 3");
+  expect(slot.getByRole("switch", { name: "Monitor: machine status in BB's sidebar" }).getAttribute("aria-checked")).toBe("true");
+  fireEvent.click(slot.getByRole("button", { name: /^Your machines/ }));
+  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "machines" } });
 });
 
-test("a backend's switch saves the document with the switch changed, and a problem shows", async () => {
+test("status says a check's age, never ready for a pass over an hour old, and Check all runs every backend that is on", async () => {
+  const document: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: true, fields: { token: { set: true } } }], kinds: {}, general: {} };
+  const old = { report: { ok: true, summary: "Fake host 1.0", checks: [], notes: [] }, at: Date.now() - 6 * 3_600_000, revision: null };
+  const state = configState({ document });
+  const { handlers, changes } = server([], { config: { document, backends: state.backends.map((backend) => ({ ...backend, doctor: old })) } });
+  const slot = settings(handlers);
+  expect(await slot.findByText("Fake host passed its last check")).toBeTruthy();
+  expect(slot.getByText(/checked 6 hours ago/)).toBeTruthy();
+  const checkAll = slot.getByRole("button", { name: "Check all" });
+  fireEvent.click(checkAll);
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("check fake "))).toHaveLength(1));
+});
+
+test("a switch saves at once and says Saved; a refusal, three refusals in a row and a lost reply put it back and say why", async () => {
   const { handlers, changes } = server([]);
   const slot = settings(handlers);
-  fireEvent.click(await slot.findByRole("switch", { name: "Fake host on" }));
+  fireEvent.click(await slot.findByRole("switch", { name: "Linux desktop: offered to threads" }));
   await waitFor(() => expect(changes).toHaveLength(1));
-  const [method, revision, draft] = [changes[0]!.split(" ")[0], changes[0]!.split(" ")[1], JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")))];
-  expect([method, revision]).toEqual(["apply", "3"]);
-  expect(draft.backends[0]).toEqual({ id: "fake", type: "fake", enabled: false, fields: { url: "https://192.0.2.10:8006", token: { set: false }, key: { set: true } }, warm: { linux: 1 } });
-  expect(await slot.findByText("Off")).toBeTruthy();
+  expect(changes[0]!.startsWith("apply 3 ")).toBe(true);
+  expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).kinds["linux-desktop"]).toEqual({ enabled: false });
+  expect(await slot.findByText("Saved")).toBeTruthy();
+  await waitFor(() => expect((slot.getByRole("switch", { name: "Fake host: takes new boxes" }) as HTMLButtonElement).disabled).toBe(false));
+  expect(slot.getByRole("switch", { name: "Linux desktop: offered to threads" }).getAttribute("aria-checked")).toBe("false");
+  fireEvent.click(slot.getByRole("switch", { name: "Fake host: takes new boxes" }));
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).backends[0].enabled).toBe(false);
+  cleanup();
+  applied = null;
 
-  // A driver that is not set up opens its setup instead of switching on.
-  fireEvent.click(slot.getByRole("switch", { name: "Other pool on" }));
-  expect(await slot.findByRole("heading", { name: "Hosts" }).catch(() => slot.findByText("Hosts"))).toBeTruthy();
-  expect(changes).toHaveLength(1);
+  const refused = settings(server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake.token", message: "Set the API token." }] } }).handlers);
+  fireEvent.click(await refused.findByRole("switch", { name: "Fake host: takes new boxes" }));
+  expect(await refused.findByText("Fake host was not changed: Set the API token.")).toBeTruthy();
+  expect(refused.getByRole("switch", { name: "Fake host: takes new boxes" }).getAttribute("aria-checked")).toBe("true");
+  expect(refused.queryByText("Saved")).toBeNull();
+  cleanup();
+
+  const raced = server([], { applyWith: { ok: false, reason: "revision", state: configState({}) } });
+  const racing = settings(raced.handlers);
+  fireEvent.click(await racing.findByRole("switch", { name: "Fake host: takes new boxes" }));
+  expect(await racing.findByText("Fake host was not changed: the configuration changed 3 times while saving. It is on; try again.")).toBeTruthy();
+  expect(raced.changes).toHaveLength(3);
+  expect(racing.queryByText("Saved")).toBeNull();
+  cleanup();
+
+  const lost = server([]);
+  const silent = settings({ ...lost.handlers, "config.apply": () => { throw new Error("The connection closed."); } });
+  fireEvent.click(await silent.findByRole("switch", { name: "Fake host: takes new boxes" }));
+  expect(await silent.findByText("Not confirmed: BB Box did not reply (The connection closed). Fake host is on now, at revision 3.")).toBeTruthy();
+  expect(silent.queryByText("Saved")).toBeNull();
 });
 
-test("a backend's setup shows its fields by group with problems, saves the whole document, and checks a draft", async () => {
+test("each row opens its part's page by the hash with focus on its heading, back returns focus to the row, and a link to a part that is not here says so", async () => {
+  const slot = settings(server([]).handlers);
+  fireEvent.click(await slot.findByRole("button", { name: /^Fake host/ }));
+  expect(window.location.hash).toBe("#backend/fake");
+  const heading = await slot.findByRole("heading", { name: "Fake host" });
+  await waitFor(() => expect(document.activeElement).toBe(heading));
+  expect(slot.getByRole("navigation", { name: "Where you are" }).textContent).toContain("BB Box settings›Fake host");
+  expect(slot.getByRole("link", { name: "Fake host setup guide" })).toBeTruthy();
+  act(() => window.history.back());
+  await waitFor(() => expect(window.location.hash).toBe(""));
+  await waitFor(() => expect((document.activeElement as HTMLElement | null)?.getAttribute("data-row-key")).toBe("backend-fake"));
+
+  fireEvent.click(slot.getByRole("button", { name: /^Linux desktop/ }));
+  expect(window.location.hash).toBe("#kind/linux-desktop");
+  expect(await slot.findByRole("heading", { name: /^Linux desktop/ })).toBeTruthy();
+  act(() => openSettingsView({ page: "option", id: "monitor" }));
+  expect(await slot.findByRole("heading", { name: "Monitor" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Back to Linux desktop" })).toBeTruthy();
+  cleanup();
+
+  for (const [hash, words] of [["#kind/no-such-kind", "This kind is not here"], ["#backend/gone", "This backend is not here"], ["#option/nothing", "This page is not here"], ["#setup/nothing", "This kind of backend is not here"]] as const) {
+    const missing = settings(server([]).handlers, hash);
+    expect(await missing.findByRole("heading", { name: words })).toBeTruthy();
+    fireEvent.click(missing.getByRole("button", { name: "Go to BB Box settings" }));
+    expect(await missing.findByRole("heading", { name: "BB Box settings" })).toBeTruthy();
+    cleanup();
+  }
+});
+
+test("a backend's page holds today's setup form: its fields by group with problems, a check of the draft, and Save of the whole document", async () => {
   const { handlers, changes } = server([], {
     checkWith: { problems: [], doctor: { ok: true, summary: "Fake host 1.0", checks: [{ id: "proxmox.api", name: "API", status: "ok", detail: "Answers.", fix: null }], notes: ["Install this key: ssh-ed25519 AAAA"] } },
   });
-  const slot = settings(handlers);
-  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
-  const guideLink = slot.getByRole("link", { name: "Fake host setup guide" });
+  const slot = settings(handlers, "#backend/fake");
+  const guideLink = await slot.findByRole("link", { name: "Fake host setup guide" });
   expect(guideLink.getAttribute("href")).toBe("https://github.com/moonstead/bb-box/blob/main/setup/fake/README.md");
   expect(guideLink.closest("p")!.textContent).toBe("Follow the Fake host setup guide; it gives the values for this form. Its script: one.sh.");
   expect(slot.getByText("Connection")).toBeTruthy();
   expect(slot.getByText("Credentials")).toBeTruthy();
-  expect(slot.getByText("Boxes")).toBeTruthy();
   const url = slot.getByLabelText(/API URL/) as HTMLInputElement;
   expect(url.value).toBe("https://192.0.2.10:8006");
   expect((slot.getByLabelText(/Templates/) as HTMLInputElement).placeholder).toBe("9100");
   expect(slot.getAllByText("secret")).toHaveLength(2);
   expect(slot.getByText("not set")).toBeTruthy();
-  expect(slot.getByText("set")).toBeTruthy();
   expect(slot.getAllByRole("alert").map((alert) => alert.textContent)).toContain("Set the API token.");
   expect(slot.queryByLabelText(/Memory kept free/)).toBeNull();
   fireEvent.click(slot.getByRole("button", { name: "Advanced" }));
@@ -1897,7 +1959,6 @@ test("a backend's setup shows its fields by group with problems, saves the whole
 
   fireEvent.click(slot.getByRole("button", { name: "Check" }));
   expect(await slot.findByText("Answers.")).toBeTruthy();
-  expect(slot.getByText("Install this key: ssh-ed25519 AAAA")).toBeTruthy();
   expect(slot.getByText(/checked just now, against the form/)).toBeTruthy();
   const check = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
   expect(changes[0]!.startsWith("check fake ")).toBe(true);
@@ -1908,7 +1969,6 @@ test("a backend's setup shows its fields by group with problems, saves the whole
   expect(changes[1]!.startsWith("apply 3 ")).toBe(true);
   const saved = JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{")));
   expect(saved.backends[0]).toEqual({ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: "s3cret", key: null, reserve: 2048 }, warm: { linux: 1 } });
-  await waitFor(() => expect(slot.queryByRole("button", { name: "Save" })).toBeNull());
 });
 
 test("an empty field another backend fills says where its value comes from, until its set is filled here", async () => {
@@ -1927,117 +1987,104 @@ test("an empty field another backend fills says where its value comes from, unti
     hostFields: [],
     setup: { guide: "setup/win/README.md", scripts: [] },
   };
-  const slot = settings(server([], { config: { drivers: [...configState({}).drivers, windows] } }).handlers);
-  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake Windows" }));
-  const url = slot.getByLabelText(/API URL/) as HTMLInputElement;
+  const slot = settings(server([], { config: { drivers: [...configState({}).drivers, windows] } }).handlers, "#setup/win");
+  const url = (await slot.findByLabelText(/API URL/)) as HTMLInputElement;
   expect(url.value).toBe("");
   expect(url.placeholder).toBe("https://192.0.2.10:8006");
-  // The fake host has a URL and a key, but no token.
   expect(slot.getAllByText("from Fake host")).toHaveLength(2);
   expect(slot.getAllByText("not set")).toHaveLength(1);
-
-  // A URL set here takes its set with it: the key is this backend's now.
   fireEvent.change(url, { target: { value: "https://192.0.2.20:8006" } });
   expect(slot.queryByText("from Fake host")).toBeNull();
   expect(slot.getAllByText("not set")).toHaveLength(2);
 });
 
-test("a refused save shows each problem at its field, and a stale revision reloads", async () => {
+test("a refused save shows each problem at its field, and a form saved on a stale revision reloads and says so", async () => {
   const { handlers } = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake.url", message: "Use an https URL." }, { path: "backends.fake", message: "bb-box runs one Fake host backend for now." }] } });
-  const slot = settings(handlers);
-  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
-  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  const slot = settings(handlers, "#backend/fake");
+  fireEvent.click(await slot.findByRole("button", { name: "Save" }));
   expect(await slot.findByText("Use an https URL.")).toBeTruthy();
   expect(slot.getByText("bb-box runs one Fake host backend for now.")).toBeTruthy();
   cleanup();
 
-  const stale = settings(server([], { applyWith: { ok: false, reason: "revision", state: configState({}) } }).handlers);
-  fireEvent.click(await stale.findByRole("switch", { name: "Fake host on" }));
-  expect(await stale.findByText(/Someone saved the configuration first/)).toBeTruthy();
+  const stale = settings(server([], { applyWith: { ok: false, reason: "revision", state: configState({}) } }).handlers, "#backend/fake");
+  fireEvent.click(await stale.findByRole("button", { name: "Save" }));
+  expect((await stale.findAllByText(/Someone saved the configuration first/)).length).toBeGreaterThan(0);
 });
 
 test("a backend that is off saves part way, and the form says what is still missing", async () => {
   const { handlers } = server([], { savedWith: [{ path: "backends.fake.url", message: "Set the API URL." }] });
-  const slot = settings(handlers);
-  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
-  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  const slot = settings(handlers, "#backend/fake");
+  fireEvent.click(await slot.findByRole("button", { name: "Save" }));
   expect(await slot.findByText("Saved. It stays off until these are fixed.")).toBeTruthy();
   expect(slot.getByText("Set the API URL.")).toBeTruthy();
-  expect(slot.getByRole("button", { name: "Save" })).toBeTruthy();
 });
 
-test("a backend that is off offers Save and turn on, which Enter and the button save on in one go, and a refusal saves nothing", async () => {
+test("Add backend lists every driver; setting one up offers Save and turn on, which Enter saves on in one go, lands on its page, and a refusal saves nothing", async () => {
   const { handlers, changes } = server([]);
-  const slot = settings(handlers);
-  fireEvent.click(await slot.findByRole("button", { name: "Set up Fake host" }));
-  expect(slot.queryByRole("button", { name: "Save and turn on" })).toBeNull();
-  fireEvent.click(slot.getByRole("button", { name: "Set up Other pool" }));
-  // Enter in a field submits the form, which does what the main button does (#193).
+  const slot = settings(handlers, "#add");
+  expect(await slot.findByRole("heading", { name: "Add a backend" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: /^Fake host.*Added: open it/ })).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: /^Other pool/ }));
+  expect(window.location.hash).toBe("#setup/other");
   fireEvent.submit((await slot.findByRole("button", { name: "Save and turn on" })).closest("form")!);
   await waitFor(() => expect(changes).toHaveLength(1));
   const saved = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
   expect(saved.backends.find((backend: { id: string }) => backend.id === "other")).toMatchObject({ id: "other", type: "other", enabled: true });
-  await waitFor(() => expect(slot.queryByRole("button", { name: "Save and turn on" })).toBeNull());
+  await waitFor(() => expect(window.location.hash).toBe("#backend/other"));
+  expect(await slot.findByRole("heading", { name: "Fake host" })).toBeTruthy();
   cleanup();
   applied = null;
 
-  const refused = settings(server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.other.machines", message: "Add a machine." }] } }).handlers);
-  fireEvent.click(await refused.findByRole("button", { name: "Set up Other pool" }));
-  fireEvent.click(refused.getByRole("button", { name: "Save and turn on" }));
+  const refused = settings(server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.other.machines", message: "Add a machine." }] } }).handlers, "#setup/other");
+  fireEvent.click(await refused.findByRole("button", { name: "Save and turn on" }));
   expect(await refused.findByText("Add a machine.")).toBeTruthy();
   expect(refused.getByText("Not saved: it cannot be on with these. Save keeps it off while you fix them.")).toBeTruthy();
-  expect(refused.getByRole("button", { name: "Save and turn on" })).toBeTruthy();
 });
 
-test("a kind's editor saves its presets, default, largest size, warm counts and spares as changes from the shipped sizes", async () => {
+test("a kind's page holds today's editor, which saves its presets, default, largest size, warm counts and spares as changes from the shipped sizes", async () => {
   const { handlers, changes } = server([]);
-  const slot = settings(handlers);
-  const edits = await slot.findAllByRole("button", { name: "Edit" });
-  fireEvent.click(edits[0]!);
+  const slot = settings(handlers, "#kind/linux");
+  expect(await slot.findByRole("heading", { name: /^Linux/ })).toBeTruthy();
+  expect(slot.getByText("The default kind stays on. Choose another default on the Boxes page to turn it off.")).toBeTruthy();
   expect((slot.getByRole("textbox", { name: "Small cores" }) as HTMLInputElement).value).toBe("2");
   expect((slot.getByRole("textbox", { name: "Largest disk" }) as HTMLInputElement).value).toBe("256");
   fireEvent.change(slot.getByRole("textbox", { name: "Large cores" }), { target: { value: "12" } });
   fireEvent.change(slot.getByRole("textbox", { name: "Large memory" }), { target: { value: "24" } });
   fireEvent.click(slot.getByRole("radio", { name: "Medium is the default" }));
   fireEvent.change(slot.getByRole("textbox", { name: "Warm Linux boxes on Fake host" }), { target: { value: "2" } });
-  expect((slot.getByRole("textbox", { name: "Spare Linux boxes" }) as HTMLInputElement).value).toBe("0");
   fireEvent.change(slot.getByRole("textbox", { name: "Spare Linux boxes" }), { target: { value: "1" } });
   fireEvent.click(slot.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(changes).toHaveLength(1));
   const saved = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
   expect(saved.kinds).toEqual({ linux: { spares: 1, presets: { large: { cores: 12, memoryMiB: 24576, diskGiB: null } }, default: "medium" } });
   expect(saved.backends[0].warm).toEqual({ linux: 2 });
-
-  fireEvent.click(slot.getByRole("switch", { name: "Linux desktop on" }));
-  await waitFor(() => expect(changes).toHaveLength(2));
-  expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).kinds["linux-desktop"]).toEqual({ enabled: false });
 });
 
 test("a kind's warm pool short of room shows a note under that backend's warm count, and none when it has room", async () => {
   const short = { kinds: ["linux"], count: 1, have: 0, reason: "pve has no memory left." };
   const withShort = configState({}).backends.map((backend) => (backend.id === "fake" ? { ...backend, warmShort: [short] } : backend));
-  const slot = settings(server([], { config: { backends: withShort } }).handlers);
-  fireEvent.click((await slot.findAllByRole("button", { name: "Edit" }))[0]!);
-  expect(slot.getByText("Has 0 of 1 ready: no room. pve has no memory left.")).toBeTruthy();
-
-  const ok = settings(server([]).handlers);
-  fireEvent.click((await ok.findAllByRole("button", { name: "Edit" }))[0]!);
+  const slot = settings(server([], { config: { backends: withShort } }).handlers, "#kind/linux");
+  expect(await slot.findByText("Has 0 of 1 ready: no room. pve has no memory left.")).toBeTruthy();
+  cleanup();
+  const ok = settings(server([]).handlers, "#kind/linux");
+  await ok.findByRole("textbox", { name: "Small cores" });
   expect(ok.queryByText(/no room/)).toBeNull();
 });
 
-test("the general settings save at once, leaving out a value at its default", async () => {
+test("the Boxes and Images options save a field when it is left and a switch at once, leaving out a value at its default", async () => {
   const { handlers, changes } = server([]);
-  const slot = settings(handlers);
+  const slot = settings(handlers, "#option/boxes");
   const limit = await slot.findByRole("textbox", { name: "Boxes per thread" });
   fireEvent.change(limit, { target: { value: "3" } });
   fireEvent.blur(limit);
   await waitFor(() => expect(changes).toHaveLength(1));
   expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3 });
-  fireEvent.click(slot.getByRole("switch", { name: "Enrol boxes as BB machines" }));
+  fireEvent.click(slot.getByRole("switch", { name: "Boxes join BB as machines" }));
   await waitFor(() => expect(changes).toHaveLength(2));
   expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3, enrol: false });
-  // The nightly rebuilds are off unless set; on saves true, and off again leaves the value out.
-  const nightly = slot.getByRole("switch", { name: "Rebuild images each night" });
+  cleanup();
+  const images = settings(handlers, "#option/images");
+  const nightly = await images.findByRole("switch", { name: "Rebuild each night" });
   expect(nightly.getAttribute("aria-checked")).toBe("false");
   fireEvent.click(nightly);
   await waitFor(() => expect(changes).toHaveLength(3));
@@ -2050,8 +2097,7 @@ test("Rebuild now lists the due images and why, starts the night's refresh, and 
     { name: "docker/desktop", kind: "linux-desktop-cpu", built: "build.2026-10-10, 1 day old", due: null, last: "Last rebuilt 2026-10-10" },
   ];
   const { handlers, changes } = server([], { rebuildable: images, refusal: "A rebuild has gone on since 02:00 UTC, one image at a time. Start another once it ends." });
-  const slot = settings(handlers);
-  fireEvent.click(await slot.findByRole("button", { name: "Rebuild now" }));
+  const slot = settings(handlers, "#option/images");
   expect(await slot.findByText("1 of 2 images are due. A rebuild takes them one at a time, as the night does.")).toBeTruthy();
   expect(slot.getByText("Due, as it is 10 days old, past its 7-day interval")).toBeTruthy();
   expect(slot.queryByText("docker/desktop")).toBeNull();
@@ -2071,8 +2117,7 @@ test("while a rebuild runs, Rebuild now shows it image by image, with the step o
       { name: "pve/9100", kind: "linux", state: "next", detail: "it fails the doctor" },
     ],
   };
-  const slot = settings(server([], { progress }).handlers);
-  fireEvent.click(await slot.findByRole("button", { name: "Rebuild now" }));
+  const slot = settings(server([], { progress }).handlers, "#option/images");
   expect(await slot.findByText("Rebuilding images")).toBeTruthy();
   expect(slot.getByText("2 of 3 · docker/desktop")).toBeTruthy();
   expect(slot.getByText("Started 2 min ago. One image at a time; it goes on if you leave this page.")).toBeTruthy();
@@ -2086,7 +2131,7 @@ test("files for every box show each path and whether it is set, never a content,
   // As saved: config.get gives the document last applied.
   applied = { schema: 1, revision: 3, backends: [], kinds: {}, general: { files: [{ path: ".pi/agent/models.json", content: { set: true } }] } };
   const { handlers, changes } = server([]);
-  const slot = settings(handlers);
+  const slot = settings(handlers, "#option/boxes");
   expect(await slot.findByText(".pi/agent/models.json")).toBeTruthy();
   expect(slot.getByText("Set")).toBeTruthy();
   const sent = (at: number) => JSON.parse(changes[at]!.slice(changes[at]!.indexOf("{"))).general.files;
@@ -5233,71 +5278,24 @@ function machine(overrides: Partial<BoxView> = {}, threads: ThreadOnBox[] = [{ i
   return { box: desktopBox({ id: "box_m1", name: "build-1", ...overrides }), threads };
 }
 
-test("the settings page lists your machines with their threads and actions, and offers Add machine", async () => {
-  const { handlers, changes } = server([], { machines: [machine(), machine({ id: "box_m2", name: "scratch", desktop: false, display: null, gpu: false, state: "stopped" }, [])] });
-  const slot = settings(handlers);
-  expect(await slot.findByText("build-1")).toBeTruthy();
-  expect(slot.getByText("Machines")).toBeTruthy();
-  const chips = within(slot.getByRole("list", { name: "Threads on this box" }));
-  expect(chips.getAllByRole("button").map((chip) => [chip.textContent, chip.getAttribute("title"), !!within(chip).queryByLabelText("Working")])).toEqual([
-    ["Fix the login form", "Fix the login form", true],
-    ["Docs pass", "Docs pass", false],
-    ["+1 more", null, false],
-  ]);
-  fireEvent.click(chips.getByRole("button", { name: /Docs pass/ }));
-  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_b" });
-  expect(slot.getByText("scratch")).toBeTruthy();
-  // Said once for the section, not under each machine.
-  // No line inside the list about the new-thread picker (the operator, 4 October 2026).
-  expect(slot.queryByText(/pick it in BB's new-thread picker/)).toBeNull();
-  expect(slot.getByRole("button", { name: "Open desktop" })).toBeTruthy();
-  expect(slot.getByRole("button", { name: "Open terminal" })).toBeTruthy();
-  expect(slot.getByRole("button", { name: "Stop" })).toBeTruthy();
-  expect(slot.getByRole("button", { name: "Start" })).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: "Open desktop" }));
-  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "operator/box_m1/from-settings" } });
-  fireEvent.click(slot.getByRole("button", { name: "Open terminal" }));
-  expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "operator/box_m1/terminal/from-settings" } });
-
-  // Stopping a machine a thread works on asks first, then sends force.
-  fireEvent.click(slot.getByRole("button", { name: "Stop" }));
-  expect(await screen.findByText("Stop build-1 anyway?")).toBeTruthy();
-  expect(screen.getByText("A thread is working on it, and would lose its machine.")).toBeTruthy();
-  expect(within(screen.getByRole("alertdialog")).getByRole("button", { name: /Fix the login form/ })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Stop anyway" }));
-  await waitFor(() => expect(changes).toEqual(["machines.stop (forced) box_m1"]));
-
-  // Removing asks, and again when a thread works on it.
-  const menu = await openMenu(slot.getByRole("button", { name: "scratch actions" }));
-  fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove…" }));
-  expect(await screen.findByText("Remove scratch?")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Remove" }));
-  await waitFor(() => expect(changes).toEqual(["machines.stop (forced) box_m1", "machines.remove box_m2"]));
-  await waitFor(() => expect(slot.queryByText("scratch")).toBeNull());
-});
-
-test("Add machine takes a kind, a size and a name it checks as you type, and the empty state says what a machine is", async () => {
-  const { handlers, changes } = server([]);
-  const slot = settings(handlers);
-  expect(await slot.findByText(/Add a box as a BB machine of your own/)).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: "Add machine" }));
+test("the Boxes page opens on its Machines tab from settings, and New box takes a kind, a size and a name it checks as you type", async () => {
+  const { handlers, changes } = server([box()]);
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "machines" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
+  expect(await list.findByText(/You have no machines\. New box adds one/)).toBeTruthy();
+  expect(list.getByRole("tab", { name: /^Machines/ }).getAttribute("aria-selected")).toBe("true");
+  fireEvent.click(list.getByRole("button", { name: "New box" }));
   expect(await screen.findByText("Of the kinds whose boxes join BB.")).toBeTruthy();
   const name = screen.getByRole("textbox", { name: "Name" });
   expect(name.getAttribute("placeholder")).toBe("Optional: bb-box picks a name like calm-tundra");
-  expect(name.getAttribute("aria-describedby")).toBe("new-machine-name-hint");
-  expect(screen.getByText("Optional. If left empty, bb-box picks a name.")).toBeTruthy();
   fireEvent.change(name, { target: { value: "Build 1" } });
   expect(screen.getByText("Lowercase letters, digits and hyphens, starting with a letter, up to 32 characters.")).toBeTruthy();
   expect(submitButton().disabled).toBe(true);
   fireEvent.change(name, { target: { value: "build-" } });
   expect(screen.getByText("A name cannot end with a hyphen.")).toBeTruthy();
   fireEvent.change(name, { target: { value: "build-1" } });
-  expect(screen.queryByRole("alert")).toBeNull();
-  expect(submitButton().textContent).toBe("Add machine");
   fireEvent.click(submitButton());
   await waitFor(() => expect(changes).toEqual(["machines.add linux build-1"]));
-  expect(await slot.findByText("build-1")).toBeTruthy();
-  expect(slot.getByText("Starting")).toBeTruthy();
 });
 
 test("the Boxes page's New box adds one of your machines with settings' Add machine form, and the new machine shows under Machines", async () => {
@@ -5324,12 +5322,11 @@ test("the Boxes page's New box adds one of your machines with settings' Add mach
   expect(list.getByRole("tab", { name: "Machines 2" }).getAttribute("aria-selected")).toBe("true");
 });
 
-test("the Boxes page's New box and settings' Add machine offer a desktop whose image is not built yet, as the Box panel does, and build it for a machine with its name", async () => {
+test("the Boxes page's New box offers a desktop whose image is not built yet, as the Box panel does, and builds it for a machine with its name", async () => {
   const desktop: KindView = { ...KINDS[1]!, id: "linux-desktop-cpu", gpu: false, windowing: "x11" };
   const onDemand = { hostId: "host_bb", name: "devpc", kinds: [{ kind: desktop, took: null }] };
   for (const [where, open, submit] of [
     ["the Boxes page", (handlers: PluginRpcTestHandlers<Contract>) => boxesPage(handlers).findByRole("button", { name: "New box" }), "Build and create"],
-    ["settings", (handlers: PluginRpcTestHandlers<Contract>) => settings(handlers).findByRole("button", { name: "Add machine" }), "Build and add"],
   ] as const) {
     const { handlers, changes } = server([], { kinds: [KINDS[0]!], desktopOnDemand: onDemand });
     fireEvent.click(await open(handlers));
@@ -5402,10 +5399,10 @@ test("on the Boxes page, a box another thread is working on is released only aft
   expect(list.inspection.rpcCalls.filter((call) => call.method === "release").at(-1)?.input).toEqual({ threadId: THREAD, box: "box_1", force: true });
 });
 
-test("settings' Machines resize one of your machines through machines.resize (061)", async () => {
+test("the Boxes page's Machines resize one of your machines through machines.resize (061)", async () => {
   const resize = fakeResizer({ cores: 2, memoryGiB: 4, diskGiB: 20 }, { ways: { cores: "live", memory: "live", disk: "live" }, machine: "BB's daemon on machine build-1 is restarting, so BB counts its 4 processors." });
   const { handlers, changes } = server([], { machines: [machine({ sizeNow: size(2, 4, 20), resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } }, [])], resize });
-  const slot = settings(handlers);
+  const slot = boxesPage(handlers);
   const menu = await openMenu(await slot.findByRole("button", { name: "build-1 actions" }));
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Resize…" }));
   const dialog = await screen.findByRole("alertdialog");
@@ -5760,8 +5757,8 @@ test("the panel lists the box this thread runs on first in the one list with a B
   expect(slot.queryByText("This thread runs on it")).toBeNull();
   expect(slot.getByText("BB machine")).toBeTruthy();
   expect(slot.queryByText("Yours")).toBeNull();
-  expect(slot.getByText(/Remove or stop it in/)).toBeTruthy();
-  expect(slot.getByRole("link", { name: "BB Box's settings" }).getAttribute("href")).toBe("/settings/plugins/bb-box");
+  expect(slot.getByText(/Remove or stop it on the/)).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Boxes page, under Machines" })).toBeTruthy();
   expect(slot.queryByText(/^\d+ box(es)?$/)).toBeNull();
   const rows = slot.getAllByRole("button", { name: /: details$/ }).map((node) => node.getAttribute("aria-label"));
   expect(rows).toEqual(["build-1: details", "calm-otter: details"]);
@@ -6084,9 +6081,8 @@ test("ready now follows the box: a spare of the chosen image, at the default siz
   await waitFor(() => expect(rows()).toEqual(["pveContainer · usually ~2.2 s"]));
   cleanup();
   // A machine claims none, though the kind has one ready.
-  const settingsSlot = settings(server([], { kinds: [{ ...linux!, offers: [{ ...offer, ready: 1 }] }] }).handlers);
-  await settingsSlot.findByText(/Add a box as a BB machine of your own/);
-  fireEvent.click(settingsSlot.getByRole("button", { name: "Add machine" }));
+  const machinesPage = boxesPage(server([], { kinds: [{ ...linux!, offers: [{ ...offer, ready: 1 }] }] }).handlers);
+  fireEvent.click(await machinesPage.findByRole("button", { name: "New box" }));
   await screen.findByRole("radiogroup", { name: "Provider" });
   expect(rows()).toEqual(["pveContainer · usually ~2.2 s"]);
 });
@@ -6222,7 +6218,7 @@ test("Docker on BB machines lists each machine with Docker's facts, and its swit
       machine("host_f", "broken", { backend: { id: "docker:broken", enabled: true, boxes: 0 }, images: { state: "failed", targets: ["linux"], detail: "build.sh exited with 1: ERROR: failed to solve", startedAt: 0, endedAt: 1 } }),
     ],
   });
-  const slot = settings(handlers);
+  const slot = settings(handlers, "#add");
   expect(await slot.findByText("Docker on BB machines")).toBeTruthy();
   const row = (name: string) => slot.getByText(name).closest("[data-resource-row]") as HTMLElement;
   expect(within(row("devpc")).getByText("Can host boxes")).toBeTruthy();
@@ -6577,7 +6573,7 @@ test("over video, Ctrl+Shift+V from Linux pastes this computer's text into a Win
 
 test("the tailnet saves its mode, tags and OAuth client as secrets; a set secret shows only as set and is kept until replaced; off saves none", async () => {
   const fresh = server([]);
-  const slot = settings(fresh.handlers);
+  const slot = settings(fresh.handlers, "#option/network");
   await slot.findByRole("combobox", { name: "Tailnet" });
   await choose("Tailnet", "Yes, with a Tailscale OAuth client");
   fireEvent.change(slot.getByLabelText("Tags"), { target: { value: "tag:bb-box, tag:bb-box-mac" } });
@@ -6596,7 +6592,7 @@ test("the tailnet saves its mode, tags and OAuth client as secrets; a set secret
 
   const document = { ...configState({}).document, general: { tailnet: { mode: "oauth" as const, clientId: { set: true }, clientSecret: { set: true } } } };
   const stored = server([], { config: configState({ document }) });
-  const again = settings(stored.handlers);
+  const again = settings(stored.handlers, "#option/network");
   await again.findByRole("combobox", { name: "Tailnet" });
   expect(again.getAllByText("Set")).toHaveLength(2);
   expect(again.queryByDisplayValue(/tskey/)).toBeNull();

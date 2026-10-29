@@ -302,8 +302,8 @@ export function gpuRoomText(kind: KindView, kinds: readonly KindView[], now = Da
 /** Why the box this thread runs on, but does not own, is not released or stopped from here (036). */
 function runsOnRefusal(box: BoxRecord, action: "release" | "stop"): BoxError {
   // A spare a thread started on becomes your machine at the next spare upkeep (036).
-  if (box.threadId === SPARES) return new BoxError("not_owner", `Box ${box.name} is a spare, which becomes your machine, and this thread runs on it. Remove or stop it in BB Box's settings once it is yours.`);
-  if (box.threadId === OPERATOR) return new BoxError("not_owner", `Box ${box.name} is your machine, which this thread runs on. Remove or stop it in BB Box's settings.`);
+  if (box.threadId === SPARES) return new BoxError("not_owner", `Box ${box.name} is a spare, which becomes your machine, and this thread runs on it. Remove or stop it on the Boxes page, under Machines, once it is yours.`);
+  if (box.threadId === OPERATOR) return new BoxError("not_owner", `Box ${box.name} is your machine, which this thread runs on. Remove or stop it on the Boxes page, under Machines.`);
   return new BoxError("not_owner", `Box ${box.name} is thread ${box.threadId}'s, and this thread runs on it. ${action === "release" ? "Release" : "Stop"} it from that thread.`);
 }
 

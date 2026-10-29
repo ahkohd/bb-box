@@ -1,9 +1,3 @@
-// "Machines" on the settings page (036): boxes you own, kept as BB
-// machines. One row per machine with its state, badges and the threads on
-// it; Open desktop, Terminal, Stop or Start, and Remove, which ask before
-// taking a machine from a thread that is working on it (034); and "Add
-// machine", the New box popover with a name.
-
 import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -26,42 +20,6 @@ import { ThreadChips } from "./thread-chips.tsx";
 
 function isMoving(box: BoxView): boolean {
   return box.state === "acquiring" || box.state === "starting" || box.state === "stopping" || box.state === "releasing";
-}
-
-export function MachinesSection() {
-  const rpc = useRpc<Contract>();
-  const { value: state, error, refresh } = useLive<MachinesState>("machines", () => rpc.call("machines.list"), forThread(OPERATOR));
-  const machines = state?.machines ?? [];
-  const kinds = state?.kinds ?? [];
-  const now = useNow(machines.some((entry) => isMoving(entry.box)));
-  // Start, Stop and Remove with their warnings, shared with the Boxes page's Machines.
-  const { act, busy, problem, setProblem, askRemove, dialogs } = useMachineActions(refresh);
-  const onDemand = useDesktopOnDemand(state?.desktopOnDemand, OPERATOR, refresh);
-  useDesktopProblemShownOnce(state?.desktopProblem, setProblem);
-  const add = async (kind: string, size?: SizeRequest, name?: string, on?: string | string[]): Promise<string | null> => {
-    let refused: string | null;
-    try {
-      refused = (await rpc.call("machines.add", { kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) })).error;
-    } catch (caught) {
-      refused = message(caught);
-    }
-    await refresh();
-    return refused;
-  };
-
-  return (
-    <Section title="Machines" description="Boxes of your own, kept as BB machines." action={<NewBox kinds={kinds} make={add} onDemand={onDemand} access={state?.access ?? null} machine profile={(backend) => rpc.call("provider", { backend })} rooms={(kind, size) => rpc.call("rooms", { kind, ...(size ? { size } : {}) })} />} plain={!machines.length}>
-      {error ? <EmptyPanel role="alert">{error}</EmptyPanel> : null}
-      <ProblemLine problem={problem} onDismiss={() => setProblem(null)} className="py-2" />
-      {state && !machines.length ? (
-        <EmptyPanel>Add a box as a BB machine of your own. It shows in BB's machine list and new-thread picker, and stays until you remove it here.</EmptyPanel>
-      ) : null}
-      {machines.map((entry) => (
-        <MachineRow key={entry.box.id} entry={entry} now={now} busy={busy} onStop={() => void act("stop", entry.box)} onStart={() => void act("start", entry.box)} onRemove={() => askRemove(entry.box)} />
-      ))}
-      {dialogs}
-    </Section>
-  );
 }
 
 /**

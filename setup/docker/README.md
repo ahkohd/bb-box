@@ -69,7 +69,7 @@ Before you rely on it:
 - **Enrolment.** A box joins BB by reaching BB's server URL from inside its
   container. If BB listens only on the Docker host's localhost, a box cannot
   reach it. Make BB listen on an address the containers reach, or turn off
-  **Enrol boxes as BB machines** in BB Box's settings: commands, copies,
+  **Boxes join BB as machines** on the Boxes page of BB Box's settings: commands, copies,
   desktops and computer use work without it.
 
 ## What a box sees
@@ -231,7 +231,7 @@ in, use [Docker in WSL](../docker-wsl/README.md) instead.
 6. Add Ubuntu to BB as a machine, as that user. If BB's app was there before
    step 4, restart the user's services so it has the group:
    `sudo systemctl restart user@$(id -u <user>).service`.
-7. In BB Box's settings, turn the machine on under Docker on BB machines.
+7. In BB Box's settings, select **Add backend**, and turn the machine on under Docker on BB machines.
 
 Then:
 

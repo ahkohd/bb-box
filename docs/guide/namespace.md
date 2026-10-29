@@ -78,7 +78,7 @@ If BB's server is in Europe and you want the Macs near it, ask Namespace's suppo
 
 ### 4. Add the backend to BB Box
 
-1. In BB Box's settings, find **Namespace** under **Backends** and select **Set up**.
+1. In BB Box's settings, select **Add backend**, then **Namespace**.
 2. Paste the token from step 2 into **API token**.
 3. Set **API region** to `eu` if BB's server is in Europe, or leave it as `us`. It only says which of Namespace's API addresses BB Box calls.
 4. Set **Longest life (hours)** to your plan's limit: 3 on Developer, 5 on Team.

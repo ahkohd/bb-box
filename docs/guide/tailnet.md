@@ -68,7 +68,7 @@ Tailscale shows the client's ID and its secret. Keep the page open: the secret i
 
 ## 3. Enter it in BB Box
 
-In BB, open BB Box's settings, and find the **Tailnet** part.
+In BB, open BB Box's settings, and under **Options** select **Network**.
 
 1. For **Join machines to the tailnet**, choose **Yes, with a Tailscale OAuth client**.
 2. Leave **Tags** as `tag:bb-box`, unless you chose another tag in step 1.
@@ -117,7 +117,7 @@ To revoke a client, go to **Settings**, then **Trust credentials**, in Tailscale
 
 ## When BB is not on a tailnet
 
-If your BB server is reached through bb connect, or at a public address, machines do not need to join a tailnet. In the **Tailnet** part of BB Box's settings, choose **No: BB is reached without one**, and select **Save**.
+If your BB server is reached through bb connect, or at a public address, machines do not need to join a tailnet. On the **Network** page of BB Box's settings, choose **No: BB is reached without one**, and select **Save**.
 
 ## Next
 

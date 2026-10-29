@@ -70,7 +70,7 @@ Release asks you first. If another thread is working on the box, it asks again, 
 
 ### The machine a thread runs on
 
-A thread can run on a box rather than on your computer. That box is the first row, with a BB machine badge. Its row has no Release, Stop or Start. Instead, a line says where those are: in BB Box's settings for one of your machines, or in the thread that holds the box.
+A thread can run on a box rather than on your computer. That box is the first row, with a BB machine badge. Its row has no Release, Stop or Start. Instead, a line says where those are: on the Boxes page, under Machines, for one of your machines, or in the thread that holds the box.
 
 ### When a box does not join BB
 

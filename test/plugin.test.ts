@@ -2421,7 +2421,7 @@ test("a thread that runs on one of your machines sees it in box_list, uses it wi
   for (const name of ["box_release", "box_stop"]) {
     const refused = await tool(name, { box: "build-1" });
     assert.ok(isError(refused), name);
-    assert.match(text(refused), /^Box build-1 is your machine, which this thread runs on\. Remove or stop it in BB Box's settings\.\n\nNext: Keep using it with box_run/);
+    assert.match(text(refused), /^Box build-1 is your machine, which this thread runs on\. Remove or stop it on the Boxes page, under Machines\.\n\nNext: Keep using it with box_run/);
   }
   assert.equal((await app.boxes.find(machine.id))?.state, "ready");
 });

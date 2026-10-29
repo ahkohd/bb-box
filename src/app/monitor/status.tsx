@@ -8,6 +8,7 @@ import { useMachines } from "./use-machines.ts";
 import { PressureNotifications, bindStatusOpener } from "./pressure-notifications.tsx";
 import { MachinePicker, selectedMachine } from "./machine-picker.tsx";
 import { loadErrorCopy } from "./load-error-copy.ts";
+import { SettingsLink } from "../settings-link.tsx";
 import { LoadingTailscaleRows, TailscaleRows, tailscaleRowCount } from "./tailscale-section.tsx";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Alert02Icon, ArrowDataTransferVerticalIcon, BatteryChargingIcon, BatteryFullIcon, Clock01Icon, CloudOffIcon, CpuIcon, GpuIcon, HardDriveIcon, RamMemoryIcon, ServerIcon } from "@hugeicons/core-free-icons";
@@ -110,6 +111,21 @@ function ReloadButton({ onReload, reloading, loading, updatedAt }: { onReload: (
         aria-hidden
       />
     </HeaderButton>
+  );
+}
+
+function SettingsButton() {
+  return (
+    <Tooltip delayDuration={350} disableHoverableContent>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <SettingsLink view={{ page: "option", id: "monitor" }} className={HEADER_BUTTON_CLASS} label="Machine status settings">
+            <Icon name="Settings" className="size-3.5" aria-hidden />
+          </SettingsLink>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top">Settings</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -598,6 +614,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
         onOpen={() => void refreshMachines()}
         actions={<>
           <ReloadButton onReload={reload} reloading={reloading} loading={!snapshot && !error} updatedAt={snapshot?.timestamp ?? null} />
+          <SettingsButton />
           <CollapseButton onCollapse={dismiss} />
         </>}
       />

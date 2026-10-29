@@ -61,7 +61,7 @@ In Hetzner's Console, open **Usage** and, in the project's row, set its **E-Mail
 
 ### 4. Add the backend to BB Box
 
-1. In BB Box's settings, find **Hetzner Cloud** under **Backends** and select **Set up**.
+1. In BB Box's settings, select **Add backend**, then **Hetzner Cloud**.
 2. Paste the token from step 2 into **API token**.
 3. Set **Location** to the one nearest BB's server: `nbg1` (Nuremberg), `fsn1` (Falkenstein) or `hel1` (Helsinki) for one in western Europe. A desktop's stream crosses between the host and BB's server.
 4. Leave **Server type** as `cpx42`, or choose a larger CPX type from the table above. Hetzner's CX types cost about half as much, but on 22 October none were available in Germany or Finland.

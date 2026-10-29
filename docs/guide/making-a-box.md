@@ -31,7 +31,7 @@ Choose x86_64, for 64-bit Intel and AMD processors, or arm64, for 64-bit ARM pro
 
 Choose Server, which you reach through a terminal, or Desktop, which also has a screen you can see and that agents can use.
 
-Where Docker was set up from the Box panel, its desktop images are not built until you first ask for a desktop. The X11 and the Wayland desktop are both offered, under Display, and each image is built when that desktop is first asked for. Desktop then says how long it takes, for example 'Builds first, usually 4 to 10 min', or the machine's own last time once it has built one, and the button says **Build and create**: it builds the image, the panel shows how far it is, and the box is made once it is built. The Boxes page's **New box** and **Add machine** in BB Box's settings offer the same for a machine of your own: the button there says **Build and create** or **Build and add**, the page shows the build, and the machine is made with the name you gave once the image is built.
+Where Docker was set up from the Box panel, its desktop images are not built until you first ask for a desktop. The X11 and the Wayland desktop are both offered, under Display, and each image is built when that desktop is first asked for. Desktop then says how long it takes, for example 'Builds first, usually 4 to 10 min', or the machine's own last time once it has built one, and the button says **Build and create**: it builds the image, the panel shows how far it is, and the box is made once it is built. The Boxes page's **New box** offers the same for a machine of your own: the button there says **Build and create**, the page shows the build, and the machine is made with the name you gave once the image is built.
 
 For a Linux desktop, you may also see Display, with X11 and Wayland. It shows only where both are on offer. X11 is chosen at first. Apps built only for X11 do not run on a Wayland desktop.
 
@@ -79,7 +79,7 @@ Name shows only when you add one of your machines. See [your machines](boxes.md#
 
 ### Making it
 
-Select **Create box**, or **Add machine** in settings. The box shows in the list at once, starting, and is usually ready in seconds. If no provider has room, the form stays open and says why.
+Select **Create box**. The box shows in the list at once, starting, and is usually ready in seconds. If no provider has room, the form stays open and says why.
 
 Where boxes cannot join BB yet, the form says so above the button, 'Boxes will not join BB yet.', with what to do and a link to [when a box does not join BB](boxes.md#when-a-box-does-not-join-bb). You can still make the box.
 

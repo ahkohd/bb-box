@@ -515,13 +515,13 @@ export class ImageJobs {
       days !== null && days <= NIGHTLY_WARN_DAYS
         ? { id: "images.nightly", name: "Nightly rebuilds", status: "ok", detail: `The last run ended ${days < 1 ? "today" : `${Math.floor(days)} days ago`}${last!.ok ? "" : ", with a failure"}.`, fix: null }
         : days === null && nightlyOn
-          ? { id: "images.nightly", name: "Nightly rebuilds", status: "ok", detail: "Rebuild images each night is on, and no run has ended yet: the first is tonight.", fix: null }
+          ? { id: "images.nightly", name: "Nightly rebuilds", status: "ok", detail: "Rebuild each night is on, and no run has ended yet: the first is tonight.", fix: null }
           : {
             id: "images.nightly",
             name: "Nightly rebuilds",
             status: "warn",
             detail: days === null ? "No run of bb box images refresh has ended yet, so images are rebuilt only by hand." : `No run of bb box images refresh has ended for ${Math.floor(days)} days.`,
-            fix: `Turn on Rebuild images each night under General in BB Box's settings, or have a BB script automation run it each night: ${AUTOMATION}`,
+            fix: `Turn on Rebuild each night on the Images page of BB Box's settings, or have a BB script automation run it each night: ${AUTOMATION}`,
           },
     );
     const soon = await this.dueSoon(signal).catch(() => null);

@@ -1,7 +1,7 @@
 // One box in the Box panel: its name, kind and status line, its details
 // when open, its quick actions and its menu, and the release confirmation.
 
-import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc, UrlLink } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useState, type MouseEvent, type ReactNode } from "react";
 import {
   AlertDialog,
@@ -20,8 +20,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { deviceModelOf, hasViewer, IconButton, osName, relativeTime, RowTitle, boxTitleBadges, SETTINGS_PATH, StatusLine, systemName } from "./common.tsx";
-import { pageUrl, useOpenScreen } from "./desktop.tsx";
+import { deviceModelOf, hasViewer, IconButton, osName, relativeTime, RowTitle, boxTitleBadges, StatusLine, systemName } from "./common.tsx";
+import { DESKTOP_PAGE, MACHINES_TAB, pageUrl, useOpenScreen } from "./desktop.tsx";
 import { JoinHelp } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
 import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
@@ -185,10 +185,10 @@ export function BoxRow({
           <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
             {held.owner === "yours" ? (
               <>
-                Remove or stop it in{" "}
-                <UrlLink href={SETTINGS_PATH} className="text-foreground underline-offset-2 hover:underline">
-                  BB Box's settings
-                </UrlLink>
+                Remove or stop it on the{" "}
+                <button type="button" className="text-foreground underline-offset-2 hover:underline" onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: MACHINES_TAB })}>
+                  Boxes page, under Machines
+                </button>
                 .
               </>
             ) : (

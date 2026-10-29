@@ -95,7 +95,7 @@ In the Hetzner Console, make a Cloud Firewall with no inbound rules, and apply i
 
 ## Turn it on in BB Box
 
-1. In BB Box's settings, find the server under **Docker on BB machines**. Its row shows Docker's version, cores and memory.
+1. In BB Box's settings, select **Add backend**, and find the server under **Docker on BB machines**. Its row shows Docker's version, cores and memory.
 2. Turn it on. BB Box adds a Docker backend for it and builds its images there. This takes about 15 minutes. The row shows the build until it ends.
 3. On a server with 8 GB of memory, such as a CPX32, open the new backend's setup under **Backends** and set **Memory kept free (MiB)** to 1024. With the default of 4096 it has no room for a box.
 
