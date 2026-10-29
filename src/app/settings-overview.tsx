@@ -326,7 +326,7 @@ function Options() {
       <Card>
         <Rows>
           {rows.map((row) => (
-            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} value={row.value} onClick={() => go(row.id)} />
+            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} value={row.value} onClick={() => go(row.id)} switchColumn />
           ))}
           <div>
             <NavRow
@@ -334,29 +334,32 @@ function Options() {
               valueId="settings-option-monitor"
               icon={<OptionIcon icon={Activity01Icon} />}
               title="Monitor"
-              value={monitorOn ? `Machine status in the sidebar · every ${monitor.refreshIntervalSeconds} s` : "Off"}
-              onClick={() => go("monitor")}
-              trailing={
-                <>
+              value={
+                <span className="inline-flex items-center gap-1.5">
+                  {monitorOn ? `In the sidebar · every ${monitor.refreshIntervalSeconds} s` : "Off"}
                   <SavedTick show={instant.saved === monitorKey} />
-                  <Switch
-                    aria-label="Monitor: machine status in BB's sidebar"
-                    aria-describedby="settings-option-monitor"
-                    checked={monitorOn}
-                    aria-disabled={instant.pending !== null || undefined}
-                    onCheckedChange={(enabled) =>
-                      void instant.run(writes.monitor("enabled", enabled, "The Monitor")).then((outcome) => {
-                        if (outcome?.kind === "saved") noteMonitorChanged();
-                      })
-                    }
-                  />
-                </>
+                </span>
+              }
+              onClick={() => go("monitor")}
+              switchColumn
+              trailing={
+                <Switch
+                  aria-label="Monitor: machine status in BB's sidebar"
+                  aria-describedby="settings-option-monitor"
+                  checked={monitorOn}
+                  aria-disabled={instant.pending !== null || undefined}
+                  onCheckedChange={(enabled) =>
+                    void instant.run(writes.monitor("enabled", enabled, "The Monitor")).then((outcome) => {
+                      if (outcome?.kind === "saved") noteMonitorChanged();
+                    })
+                  }
+                />
               }
             />
             <RowNote note={instant.note(monitorKey)} className="px-4 pb-2" />
           </div>
-          <NavRow rowKey="option-configuration" valueId="settings-option-configuration" icon={<OptionIcon icon={Settings01Icon} />} title="Configuration" value={`Revision ${state.revision}`} onClick={() => go("configuration")} />
-          <NavRow rowKey="machines" valueId="settings-option-machines" icon={<OptionIcon icon={ComputerIcon} />} title="Your machines" value="On the Boxes page, Machines tab" outward onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: MACHINES_TAB })} />
+          <NavRow rowKey="option-configuration" valueId="settings-option-configuration" icon={<OptionIcon icon={Settings01Icon} />} title="Configuration" value={`Revision ${state.revision}`} onClick={() => go("configuration")} switchColumn />
+          <NavRow rowKey="machines" valueId="settings-option-machines" icon={<OptionIcon icon={ComputerIcon} />} title="Your machines" value="On the Boxes page, Machines tab" outward onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: MACHINES_TAB })} switchColumn />
         </Rows>
       </Card>
       {monitorChanged() ? <ReloadNote /> : null}
