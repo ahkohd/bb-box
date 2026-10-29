@@ -80,12 +80,15 @@ In order:
 2. **Status**: one line that is never more certain than the checks, and a
    callout of everything that needs the person, each with its fix and Open.
 3. **Backends**: one row each, with its icon, name, a host chip, a "BB
-   machine" chip for Docker on one of your BB machines, one state line, and
-   the "takes new boxes" switch. The host chip comes from the backend's
-   fields: the Proxmox node (or its API URL's host), Tart's Mac or how many
-   Macs, the Docker or microsandbox host ("this machine" for BB's server),
-   or how many machines an SSH host pool lists; else the name in a second
-   backend's ID. While its page has a draft the row says "Unsaved
+   machine" chip for Docker or microsandbox on one of your BB machines, one
+   state line, and the "takes new boxes" switch. The host chip is the host
+   the built backend names, as the Box panel and `box_list` do: a BB
+   machine by its name, a Docker daemon by its own name, the Proxmox node,
+   Tart's Mac or how many Macs. A backend not built, as one not finished, takes it from
+   its fields: the Proxmox node (or its API URL's host), Tart's Mac or how
+   many Macs, the Docker or microsandbox host ("this machine" for BB's
+   server), or how many machines an SSH host pool lists; else the name in a
+   second backend's ID. While its page has a draft the row says "Unsaved
    changes", and "Saving…" while a save of it is out. Add backend is beside
    the title.
 4. **Kinds**: one row each, in one list with no group headings, Linux kinds
@@ -113,7 +116,7 @@ its page; the switch acts on its own.
 | Not checked since it changed: its settings changed after the revision its last check tested | "Not checked since it changed" | counted, and Check all becomes the main button |
 | Last check passed, over an hour ago | "Last check passed · 6 hours ago" | "passed their last check", with the range of ages |
 | Ready: passed within the hour | "Ready" | "All 3 backends ready" |
-| Needs attention: a warning | amber, with the warning | listed with its fix |
+| Passed with warnings: no check failed, some warned | "Last check passed, 4 warnings" or "Ready, 4 warnings", in a pass's tone; the page lists the warnings first | counted as passed, not listed |
 | Not working: a failure, or settings with a problem | red, with the failure | listed with its fix |
 
 When every check has the same age, rows drop it and Status gives it. Check
@@ -121,7 +124,10 @@ all runs each backend that is on, side by side, up to 30 s each, and
 becomes the main button when any check is over an hour old, missing, or
 older than the backend's last change.
 
-The callout lists backends that fail or need attention, backends saved but
+Most warnings are notes, so a pass with warnings never says "Needs
+attention", and never hides them either.
+
+The callout lists backends that fail, backends saved but
 not finished, warm pools short for want of room, the default kind turned
 off, and kinds that backends that are on cannot make now.
 

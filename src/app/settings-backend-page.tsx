@@ -22,7 +22,7 @@ import { drafts } from "./settings-drafts.ts";
 import { Card, Group, NotHere, PageHeader, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendAt, candidateOf, hostPath, type Path, type PathEdit } from "./settings-paths.ts";
 import { RestoredNote, SAVING_RULE, SaveBar, useDraft, type Draft } from "./settings-saving.tsx";
-import { backendHealth, backendLabel, hostChip, isMachineDocker, kindName, plural, type BackendHealth } from "./settings-status.ts";
+import { backendHealth, backendLabel, hostChip, isMachineDocker, kindName, onBbMachine, plural, warningsIn, withWarnings, type BackendHealth } from "./settings-status.ts";
 
 const CHECK_LOOK: Record<DoctorCheck["status"], { icon: string; className: string; label: string }> = {
   ok: { icon: "CircleCheck", className: "text-success", label: "Passed" },
@@ -70,10 +70,10 @@ function NoteBlock({ text }: { text: string }) {
   );
 }
 
-function reportTone(report: DoctorReport): { readonly tone: Tone; readonly words: string } {
-  if (report.checks.some((check) => check.status === "fail")) return { tone: "bad", words: "Not working" };
-  if (report.checks.some((check) => check.status === "warn") || !report.ok) return { tone: "warn", words: "Needs attention" };
-  return { tone: "ok", words: "Ready" };
+function draftLook(report: DoctorReport): { readonly tone: Tone; readonly words: string } {
+  const warnings = warningsIn(report);
+  if (report.checks.some((check) => check.status === "fail") || (!report.ok && !warnings)) return { tone: "bad", words: "Not working with your changes" };
+  return { tone: "ok", words: withWarnings("Your changes pass its checks", warnings) };
 }
 
 function passedWords(report: DoctorReport): string {
@@ -115,11 +115,11 @@ function HealthCard({ form, check, running, onCheck, id }: { form: BackendForm; 
   const ofDraft = check?.againstDraft && binding === "current" ? check : null;
   const cleared = check?.againstDraft && draft.changes > 0 && binding !== "current" ? clearedWords(binding) : null;
   const report = ofDraft ? (ofDraft.result?.doctor ?? null) : (live?.doctor?.report ?? null);
-  const draftTone = ofDraft?.result?.doctor ? reportTone(ofDraft.result.doctor) : null;
+  const draftTone = ofDraft?.result?.doctor ? draftLook(ofDraft.result.doctor) : null;
   const look: { readonly tone: Tone; readonly words: string } = running
     ? { tone: "busy", words: "Checking…" }
     : draftTone
-      ? { tone: draftTone.tone, words: draftTone.tone === "ok" ? "Your changes pass its checks" : draftTone.tone === "bad" ? "Not working with your changes" : "Needs attention with your changes" }
+      ? draftTone
       : ofDraft
         ? { tone: "warn", words: "Could not check your changes" }
         : { tone: health.tone, words: health.words };
@@ -132,7 +132,7 @@ function HealthCard({ form, check, running, onCheck, id }: { form: BackendForm; 
   const problems = showChecks ? report!.checks.filter((each) => each.status === "fail" || each.status === "warn") : [];
   const rest = showChecks ? report!.checks.filter((each) => each.status !== "fail" && each.status !== "warn") : [];
   const formProblems = ofDraft?.result && !ofDraft.result.doctor ? ofDraft.result.problems : [];
-  const fixLine = !ofDraft && !running && health.fix && (health.status === "failing" || health.status === "attention") && !problems.length ? health.fix : null;
+  const fixLine = !ofDraft && !running && health.fix && (health.status === "failing") && !problems.length ? health.fix : null;
   const label = running ? "Checking…" : draft.changes ? "Check with my changes" : report ? "Check again" : "Check";
   return (
     <Card className={cn(look.tone === "bad" && "border-surface-destructive-border", look.tone === "warn" && "border-surface-warning-border")}>
@@ -147,7 +147,7 @@ function HealthCard({ form, check, running, onCheck, id }: { form: BackendForm; 
           {cleared && !running ? <p className="mt-0.5 pl-3 text-xs leading-snug text-warning-text">{cleared}</p> : null}
           {ofDraft?.failure && !running ? <p className="mt-0.5 pl-3 text-xs leading-snug text-destructive-text">The check could not run: {ofDraft.failure}</p> : null}
           {!ofDraft && check?.failure && !running && !draft.changes ? <p className="mt-0.5 pl-3 text-xs leading-snug text-destructive-text">The check could not run: {check.failure}</p> : null}
-          {health.detail && !ofDraft && !running && (health.status === "failing" || health.status === "attention") && !problems.length ? <p className="mt-0.5 pl-3 text-xs leading-snug text-foreground">{health.detail}</p> : null}
+          {health.detail && !ofDraft && !running && (health.status === "failing") && !problems.length ? <p className="mt-0.5 pl-3 text-xs leading-snug text-foreground">{health.detail}</p> : null}
           {fixLine ? (
             <p className="mt-0.5 pl-3 text-xs leading-snug text-foreground">
               <span className="text-subtle-foreground">Fix: </span>
@@ -415,11 +415,11 @@ function BackendEditor({ config }: { config: BackendConfig }) {
   const [removing, setRemoving] = useState(false);
   const [removingHost, setRemovingHost] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const chip = hostChip(config, label);
+  const live = state.backends.find((candidate) => candidate.id === config.id);
+  const chip = hostChip(config, label, live?.hosts);
   const machine = isMachineDocker(config);
   const key = switchKey.backend(config.id);
   const pending = instant.pendingValue<boolean>(key);
-  const live = state.backends.find((candidate) => candidate.id === config.id);
   const boxes = live?.boxes ?? 0;
   const healthId = `settings-backend-health-${config.id.replace(/[^a-z0-9]/gi, "-")}`;
   if (!driver) {
@@ -465,7 +465,7 @@ function BackendEditor({ config }: { config: BackendConfig }) {
         chips={
           <>
             {chip ? <Badge>{chip}</Badge> : null}
-            {machine ? <Badge>BB machine</Badge> : null}
+            {onBbMachine(config) ? <Badge>BB machine</Badge> : null}
           </>
         }
         description={

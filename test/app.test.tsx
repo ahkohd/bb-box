@@ -12,7 +12,7 @@ import type { ImageOptionView } from "../src/plugin/views.ts";
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { ConfigDocument, Problem, SaveReceipt } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
-import type { GpuRoom } from "../src/backends/types.ts";
+import type { DoctorReport, GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
 import type { ImagesStatus } from "../src/plugin/contract.ts";
@@ -41,7 +41,7 @@ import { FieldControl } from "../src/app/settings-fields.tsx";
 import { openSettingsView } from "../src/app/settings-route.ts";
 import { forgetDrafts } from "../src/app/settings-drafts.ts";
 import { forgetFormChecks } from "../src/app/settings-checks.ts";
-import { hostChip } from "../src/app/settings-status.ts";
+import { hostChip, onBbMachine } from "../src/app/settings-status.ts";
 import type { BackendConfig } from "../src/core/document.ts";
 import type { FieldView } from "../src/plugin/configuration.ts";
 import packageJson from "../package.json";
@@ -2225,6 +2225,13 @@ test("the overview's backend row says Saving while a save is out and Unsaved cha
   expect(hostChip(backend("tart", {}, [{ name: "mac-1", enabled: true, fields: {} }, { name: "mac-2", enabled: true, fields: {} }]), "Tart")).toBe("2 Macs");
   expect(hostChip(backend("docker", { host: "ssh://admin@docker-1.example" }), "Docker")).toBe("docker-1.example");
   expect(hostChip(backend("docker", {}), "Docker")).toBe("this machine");
+  expect(hostChip(backend("docker", {}), "Docker", ["docker-1"])).toBe("docker-1");
+  expect(hostChip(backend("microsandbox", { host: "bb:host_abc" }), "microsandbox")).toBeNull();
+  expect(hostChip(backend("microsandbox", { host: "bb:host_abc" }), "microsandbox", ["build-1"])).toBe("build-1");
+  expect(hostChip(backend("tart", {}, [{ name: "mac-1", enabled: true, fields: {} }, { name: "mac-2", enabled: true, fields: {} }]), "Tart", ["mac-1", "mac-2"])).toBe("2 Macs");
+  expect(onBbMachine(backend("microsandbox", { host: "bb:host_abc" }))).toBe(true);
+  expect(onBbMachine(backend("docker", { host: "bb:host_abc" }))).toBe(true);
+  expect(onBbMachine(backend("docker", { host: "ssh://admin@docker-1.example" }))).toBe(false);
   expect(hostChip({ ...backend("docker", { host: "bb:host_abc" }), id: "docker:bb-1" }, "Docker on bb-1")).toBeNull();
   expect(hostChip(backend("microsandbox", { host: "ssh://msb-1:2222" }), "microsandbox")).toBe("msb-1");
   expect(hostChip(backend("ssh-pool", { machines: "a admin@192.0.2.1\n# b\nc admin@192.0.2.3" }), "SSH host pool")).toBe("2 machines");
@@ -7439,4 +7446,44 @@ test("F-22d: at 360 px an android row whose name leaves no room for Emulator bes
     expect(shownTitle(slot.getByRole("button", { name: "vivid-badger: details" }))).toEqual({ name: "vivid-badger", parts: ["Emulator", "VM"], cut: null });
     expect(shownTitle(slot.getByRole("button", { name: "calm-otter: details" }))).toEqual({ name: "calm-otter", parts: ["Linux", "LXC"], cut: null });
   });
+});
+
+function checkedFake(checks: DoctorReport["checks"], options: { hosts?: string[] } = {}) {
+  const document: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: { set: true }, key: { set: true } } }], kinds: {}, general: {} };
+  const report: DoctorReport = { ok: checks.every((check) => check.status !== "fail"), summary: "Fake host 1.0 on pve-1", checks, notes: [] };
+  const backends = configState({ document }).backends.map((backend) => ({ ...backend, boxes: 0, doctor: { report, at: Date.now() - 2 * 60 * 60_000, revision: 3 }, hosts: options.hosts ?? [] }));
+  applied = document;
+  return server([], { config: { backends, problems: [] } });
+}
+
+const PASSED: DoctorReport["checks"][number] = { id: "proxmox.api", name: "Proxmox API", status: "ok", detail: "Answers.", fix: null };
+const SWAP: DoctorReport["checks"][number] = { id: "proxmox.memory", name: "Node memory", status: "warn", detail: "Swap is on.", fix: "Turn swap off." };
+const BRIDGE: DoctorReport["checks"][number] = { id: "proxmox.bridge", name: "Network bridge", status: "warn", detail: "vmbr1 is down.", fix: null };
+
+test("a check that passed with warnings says so on its row and its page, in a pass's tone, and is not something that needs you", async () => {
+  const { handlers } = checkedFake([PASSED, SWAP, BRIDGE], { hosts: ["pve-1"] });
+  const slot = settings(handlers);
+  const row = await slot.findByRole("button", { name: "Fake host" });
+  const state = document.getElementById(row.getAttribute("aria-describedby")!.split(" ").at(-1)!)!;
+  expect(state.textContent).toContain("Last check passed, 2 warnings");
+  expect(state.querySelector(".text-warning-text, .text-destructive-text")).toBeNull();
+  expect(slot.getByText("pve-1")).toBeTruthy();
+  expect(slot.queryByRole("region", { name: "Things that need you" })).toBeNull();
+  expect(slot.queryByText(/Needs attention/)).toBeNull();
+  fireEvent.click(row);
+  expect(await slot.findByText("Last check passed, 2 warnings")).toBeTruthy();
+  expect(slot.getByText("Swap is on.")).toBeTruthy();
+  expect(slot.getByText("vmbr1 is down.")).toBeTruthy();
+  expect(slot.getByRole("heading", { name: /^Fake host/ }).textContent).toContain("pve-1");
+  expect(slot.queryByText(/Needs attention/)).toBeNull();
+});
+
+test("a check with a failure says Not working on its row and its page, in the failing tone, and is listed as needing you", async () => {
+  const { handlers } = checkedFake([PASSED, SWAP, { id: "proxmox.node", name: "Node", status: "fail", detail: "pve-1 is offline.", fix: "Start pve-1." }]);
+  const slot = settings(handlers);
+  const row = await slot.findByRole("button", { name: "Fake host" });
+  const state = document.getElementById(row.getAttribute("aria-describedby")!.split(" ").at(-1)!)!;
+  expect(state.textContent).toContain("Not working");
+  expect(state.querySelector(".text-destructive-text")).toBeTruthy();
+  expect(within(slot.getByRole("region", { name: "Things that need you" })).getByText("pve-1 is offline.")).toBeTruthy();
 });
