@@ -104,7 +104,7 @@ function HeaderScreenMenu({ screens }: { screens: BoxScreens | null }) {
     <Menu>
       <Tooltip delayDuration={350} disableHoverableContent>
         <TooltipTrigger asChild>
-          <MenuTrigger className={cn(HEADER_BUTTON_CLASS, "data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-foreground")} aria-label="Open">
+          <MenuTrigger className={cn(HEADER_BUTTON_CLASS, "-ml-1 shrink-0 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-foreground")} aria-label="Open">
             <Icon name="ArrowUpRight" className="size-3.5" aria-hidden />
           </MenuTrigger>
         </TooltipTrigger>
@@ -551,8 +551,10 @@ function MachineHeader({ machines, selected, onSelect, onOpen, screens, actions 
   return (
     <div data-bb-box-monitor-header className="sticky top-0 z-10 bg-sidebar">
       <div className="flex h-9 min-w-0 items-center gap-1 bg-sidebar-accent/50 px-1.5">
-        <MachinePicker machines={machines} selected={selected} onSelect={onSelect} onOpen={onOpen} />
-        <HeaderScreenMenu screens={screens} />
+        <span className="flex min-w-0 items-center">
+          <MachinePicker machines={machines} selected={selected} onSelect={onSelect} onOpen={onOpen} />
+          <HeaderScreenMenu screens={screens} />
+        </span>
         <span className="flex-1" />
         {actions}
       </div>

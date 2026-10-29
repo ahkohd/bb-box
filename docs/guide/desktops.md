@@ -42,7 +42,7 @@ Accented letters and other characters reach the box as your keyboard types them,
 
 An accent typed with a dead key, such as Option+E then E on a Mac, or ' then E on a US International keyboard, makes é on the desktop only from a browser on Windows. From a browser on a Mac (Chrome or Safari) or on Linux (Chrome or Firefox), the dead key is dropped and the plain letter arrives. To type these accents there, use **Type text**, below, or a keyboard layout with the accented letter on its own key.
 
-To write in another language with an input method, such as Japanese or Chinese, or to add emoji, select **Type text** in the toolbar, or press Ctrl+Cmd+Space on a Mac, Ctrl+Alt+Space elsewhere. A field opens over the desktop. Type there with your input method, press Ctrl+Cmd+Space again on a Mac for the emoji picker, or paste. Enter sends the text to the box where the cursor is, and the field stays open for more. Shift+Enter starts a new line, and Esc closes the field. Long text goes as a paste. Typing straight onto the desktop works as before.
+To write in another language with an input method, such as Japanese or Chinese, or to add emoji, take control, then select **Type text** in the toolbar (it shows only while you have control), or press Ctrl+Cmd+Space on a Mac, Ctrl+Alt+Space elsewhere. A field opens over the desktop. Type there with your input method, press Ctrl+Cmd+Space again on a Mac for the emoji picker, or paste. Enter sends the text to the box where the cursor is, and the field stays open for more. Shift+Enter starts a new line, and Esc closes the field. Long text goes as a paste. Typing straight onto the desktop works as before.
 
 ## Copying and pasting
 

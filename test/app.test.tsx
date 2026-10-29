@@ -2658,14 +2658,14 @@ test("a character above U+FFFF, as an emoji from the keyboard or the emoji picke
   }
 });
 
-test("Type text opens a field over the desktop for input methods and emoji: Enter types its text into the box and keeps it open, Shift+Enter a new line, Esc closes, and long text goes as a paste", async () => {
+test("Type text shows only while you have control, and opens a field over the desktop for input methods and emoji: Enter types its text into the box and keeps it open, Shift+Enter a new line, Esc closes, and long text goes as a paste", async () => {
   const { handlers } = server([desktopBox({ id: "box_t", name: "type-1", os: "linux" })]);
   const slot = desktopTab(handlers, "box_t");
   await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
   const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
   act(() => void client.dispatchEvent(new Event("connect")));
-  fireEvent.click(await slot.findByRole("button", { name: "Type text: take control first" }));
-  expect(slot.queryByRole("textbox", { name: "Text to type" })).toBeNull();
+  await slot.findByRole("button", { name: "Take control" });
+  expect(slot.queryByRole("button", { name: /^Type text/ })).toBeNull();
   fireEvent.click(slot.getByRole("button", { name: "Take control" }));
   await slot.findByText(/You have control/);
   const letGo = client.keysLetGo;
@@ -2732,7 +2732,7 @@ test("Type text opens a field over the desktop for input methods and emoji: Ente
   expect(keyOnCanvas(slot, { key: "Dead", code: "BracketLeft" }).reached).toHaveBeenCalledTimes(1);
 
   fireEvent.click(slot.getByRole("button", { name: "Hand back to the agent" }));
-  await slot.findByRole("button", { name: "Type text: take control first" });
+  await waitFor(() => expect(slot.queryByRole("button", { name: /^Type text/ })).toBeNull());
 });
 
 test("on a Mac, Ctrl+Cmd+Space with the desktop focused opens Type text rather than going to the box, and the field says to press it again for emoji", async () => {

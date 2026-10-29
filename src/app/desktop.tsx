@@ -943,8 +943,8 @@ function HighResolutionItem({ checked, disabled, words, onChange }: { checked: b
   );
 }
 
-function TypeTextButton({ mine, shortcut, compact, onClick }: { mine: boolean; shortcut: string; compact: boolean; onClick: () => void }) {
-  const words = mine ? `Type text: input methods, emoji and other languages (${shortcut})` : "Take control first to type text";
+function TypeTextButton({ shortcut, compact, onClick }: { shortcut: string; compact: boolean; onClick: () => void }) {
+  const words = `Type text: input methods, emoji and other languages (${shortcut})`;
   return (
     <TooltipProvider delayDuration={250}>
       <Tooltip>
@@ -953,9 +953,8 @@ function TypeTextButton({ mine, shortcut, compact, onClick }: { mine: boolean; s
             type="button"
             variant="ghost"
             size="sm"
-            className={cn("h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground", !mine && "opacity-60")}
-            aria-label={mine ? `Type text (${shortcut})` : "Type text: take control first"}
-            aria-disabled={!mine}
+            className="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+            aria-label={`Type text (${shortcut})`}
             onClick={onClick}
           >
             <KeyboardGlyph />
@@ -1737,8 +1736,8 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
               Hand back to the agent
             </Button>
           ) : null}
-          {showing && connection.state === "connected" ? (
-            <TypeTextButton mine={mine} shortcut={typeShortcut} compact={compact} onClick={openTyping} />
+          {showing && mine && connection.state === "connected" ? (
+            <TypeTextButton shortcut={typeShortcut} compact={compact} onClick={openTyping} />
           ) : null}
           {showing && connection.state === "disconnected" ? (
             <Button type="button" variant="outline" size="sm" className="h-7" onClick={reconnect}>
