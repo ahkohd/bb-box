@@ -156,18 +156,22 @@ function BackendRow({ config, showAge }: { config: BackendConfig; showAge: boole
             </span>
             {chip ? <Badge>{chip}</Badge> : null}
             {isMachineDocker(config) ? <Badge>BB machine</Badge> : null}
-            <RowControl>
-              <Switch
-                aria-label={`${label}: takes new boxes`}
-                aria-describedby={stateId}
-                checked={pending ?? config.enabled}
-                aria-disabled={instant.pending !== null || undefined}
-                onCheckedChange={(on) => void instant.run(writes.backendOn(state, config, on, label))}
-              />
-              <SavedTick show={instant.isSaved(key)} />
-            </RowControl>
           </span>
           <StateLine id={stateId} className="pointer-events-none mt-0.5" tone={health.tone} words={health.words} items={backendLine(state, config, health, now, showAge)} />
+        </span>
+        <span className="pointer-events-none self-center">
+          <SavedTick show={instant.isSaved(key)} />
+        </span>
+        <span className="self-center">
+          <RowControl>
+            <Switch
+              aria-label={`${label}: takes new boxes`}
+              aria-describedby={stateId}
+              checked={pending ?? config.enabled}
+              aria-disabled={instant.pending !== null || undefined}
+              onCheckedChange={(on) => void instant.run(writes.backendOn(state, config, on, label))}
+            />
+          </RowControl>
         </span>
         <span className="pointer-events-none self-center">
           <Chevron />
@@ -231,27 +235,29 @@ function KindRow({ info }: { info: KindInfoView }) {
             </span>
             {twinBadge ? <Badge>{twinBadge}</Badge> : null}
             {isDefault ? <Badge>Default</Badge> : null}
-            <RowControl>
-              {isDefault && enabled ? <span id={defaultId} className="sr-only">The default kind stays on. Choose another default on the Boxes page to turn it off.</span> : null}
-              <Switch
-                aria-label={`${name}: offered to threads`}
-                aria-describedby={isDefault && enabled ? `${summaryId} ${defaultId}` : summaryId}
-                title={isDefault && enabled ? "The default kind stays on. Choose another default on the Boxes page to turn it off." : undefined}
-                checked={enabled}
-                disabled={isDefault && enabled}
-                aria-disabled={instant.pending !== null || undefined}
-                onCheckedChange={(on) => {
-                  keptHere.add(info.id);
-                  void instant.run(writes.kindOn(state, info.id, on, name));
-                }}
-              />
-              <SavedTick show={instant.isSaved(key)} />
-            </RowControl>
           </span>
           <span id={summaryId} className={cn("pointer-events-none min-w-0 flex-1 truncate text-xs sm:text-right", availability === "lost" ? "text-warning-text" : "text-muted-foreground")}>
             {kindSummary(state, info)}
           </span>
         </span>
+        <span className="pointer-events-none">
+          <SavedTick show={instant.isSaved(key)} />
+        </span>
+        {isDefault && enabled ? <span id={defaultId} className="sr-only">The default kind stays on. Choose another default on the Boxes page to turn it off.</span> : null}
+        <RowControl>
+          <Switch
+            aria-label={`${name}: offered to threads`}
+            aria-describedby={isDefault && enabled ? `${summaryId} ${defaultId}` : summaryId}
+            title={isDefault && enabled ? "The default kind stays on. Choose another default on the Boxes page to turn it off." : undefined}
+            checked={enabled}
+            disabled={isDefault && enabled}
+            aria-disabled={instant.pending !== null || undefined}
+            onCheckedChange={(on) => {
+              keptHere.add(info.id);
+              void instant.run(writes.kindOn(state, info.id, on, name));
+            }}
+          />
+        </RowControl>
         <span className="pointer-events-none">
           <Chevron />
         </span>
@@ -337,7 +343,7 @@ function Options() {
       <Card>
         <Rows>
           {rows.map((row) => (
-            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} chips={unsavedChip(row.id)} value={row.value} onClick={() => go(row.id)} />
+            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} chips={unsavedChip(row.id)} value={row.value} onClick={() => go(row.id)} switchColumn />
           ))}
           <div>
             <NavRow
@@ -348,27 +354,25 @@ function Options() {
               chips={unsavedChip("monitor")}
               value={monitorOn ? `In the sidebar · every ${monitor.refreshIntervalSeconds} s` : "Off"}
               onClick={() => go("monitor")}
+              saved={<SavedTick show={instant.isSaved(monitorKey)} />}
               control={
-                <>
-                  <Switch
-                    aria-label="Monitor: machine status in BB's sidebar"
-                    aria-describedby="settings-option-monitor"
-                    checked={monitorOn}
-                    aria-disabled={instant.pending !== null || undefined}
-                    onCheckedChange={(enabled) =>
-                      void instant.run(writes.monitor(state, "enabled", enabled, "The Monitor")).then((outcome) => {
-                        if (outcome?.kind === "saved") noteMonitorChanged();
-                      })
-                    }
-                  />
-                  <SavedTick show={instant.isSaved(monitorKey)} />
-                </>
+                <Switch
+                  aria-label="Monitor: machine status in BB's sidebar"
+                  aria-describedby="settings-option-monitor"
+                  checked={monitorOn}
+                  aria-disabled={instant.pending !== null || undefined}
+                  onCheckedChange={(enabled) =>
+                    void instant.run(writes.monitor(state, "enabled", enabled, "The Monitor")).then((outcome) => {
+                      if (outcome?.kind === "saved") noteMonitorChanged();
+                    })
+                  }
+                />
               }
             />
             <RowNote note={instant.note(monitorKey)} className="px-4 pb-2" />
           </div>
-          <NavRow rowKey="option-configuration" valueId="settings-option-configuration" icon={<OptionIcon icon={Settings01Icon} />} title="Configuration" value={`Revision ${state.revision}`} onClick={() => go("configuration")} />
-          <NavRow rowKey="machines" valueId="settings-option-machines" icon={<OptionIcon icon={ComputerIcon} />} title="Your machines" value="On the Boxes page, Machines tab" outward onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: MACHINES_TAB })} />
+          <NavRow rowKey="option-configuration" valueId="settings-option-configuration" icon={<OptionIcon icon={Settings01Icon} />} title="Configuration" value={`Revision ${state.revision}`} onClick={() => go("configuration")} switchColumn />
+          <NavRow rowKey="machines" valueId="settings-option-machines" icon={<OptionIcon icon={ComputerIcon} />} title="Your machines" value="On the Boxes page, Machines tab" outward onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: MACHINES_TAB })} switchColumn />
         </Rows>
       </Card>
       {monitorChanged() ? <ReloadNote /> : null}
