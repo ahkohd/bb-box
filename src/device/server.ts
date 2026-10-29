@@ -1006,9 +1006,17 @@ export class DeviceServer {
   async #paste(text: string, signal: AbortSignal, source: InputSource): Promise<void> {
     const driver = this.#options.driver;
     const saved = await driver.clipboard().catch(() => null);
-    await driver.setClipboard(text);
-    if (signal.aborted) {
+    const putBackQuietly = async () => {
       if (saved !== null) await driver.setClipboard(saved).catch(() => undefined);
+    };
+    try {
+      await driver.setClipboard(text);
+    } catch (error) {
+      await putBackQuietly();
+      throw error;
+    }
+    if (signal.aborted) {
+      await putBackQuietly();
       this.#log(`${source}: a paste of ${[...text].length} characters was abandoned before its paste key, and the clipboard put back`);
       throw signal.reason;
     }

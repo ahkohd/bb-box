@@ -11,13 +11,14 @@ import type { EncodedFrame } from "../src/device/driver.ts";
 import { FrameFanout } from "../src/device/frame-fanout.ts";
 import { streamsEncodingIn, type StreamOutput } from "../src/device/idb.ts";
 import type { IosEncoderMode } from "../src/device/simulator-video.ts";
-import { HID_DAEMON, HID_DAEMON_ACTIVE, IOS_MOBILE_UID, IosDriver, SPRINGBOARD, changesShowAtStart, contentOrientation, parseProcessStart, type AppInfo, type ProcessStart } from "../src/device/ios-driver.ts";
+import { HID_DAEMON, HID_DAEMON_ACTIVE, IOS_MOBILE_UID, IosDriver, SPRINGBOARD, changesShowAtStart, contentOrientation, parseProcessStart, type AppInfo, type IosDriverOptions, type ProcessStart } from "../src/device/ios-driver.ts";
 import { overridesListed, statusBarOverride } from "../src/device/ios-controls.ts";
-import { INERT_KEY_USAGE, PasteboardAccess, hidKey, runningApps } from "../src/device/ios-input.ts";
+import { HID_USAGES, INERT_KEY_USAGE, PasteboardAccess, hidKey, runningApps } from "../src/device/ios-input.ts";
+import { PASTE_LOG_PREDICATE, PASTE_NOTICE_SCENE } from "../src/device/ios-paste-watch.ts";
 import { IosVideo, scaledBack } from "../src/device/ios-video.ts";
 import { evenScaled, spsOfSize } from "./sps.ts";
 import { devicePaths } from "../src/device/paths.ts";
-import { Simctl, appOfProgram, disabledLabels, installedApps, runningServicePid, type LineSpawner, type Ran, type Runner } from "../src/device/simctl.ts";
+import { PASTEBOARD_NOT_ANSWERING_EXIT, Simctl, appOfProgram, disabledLabels, installedApps, runningServicePid, type LineSpawner, type Ran, type Runner } from "../src/device/simctl.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { testDeviceOffer } from "../src/core/device.ts";
 import { wantsDevice } from "../src/plugin/devices.ts";
@@ -305,6 +306,13 @@ class FakeSimulator {
   idbLog: string | null = null;
   bootFailures = 0;
   bootstatusTimeouts = 0;
+  clipboard = "";
+  clipboardBefore = "";
+  clipboardLagsReads = 0;
+  clipboardLagLeft = 0;
+  pasteboardSilentCalls = 0;
+  pasteReader: string | null = "dev.example.probe";
+  pasteNoticeMs = 50;
   get state(): string {
     return this.#state;
   }
@@ -339,10 +347,25 @@ class FakeSimulator {
       return !!match && event?.press?.action?.key?.keycode === INERT_KEY_USAGE && event.press.direction === 1 && (starts.get(Number(match[1])) ?? 0) >= this.bootedAt;
     });
   }
+  #pasteKeyAfter(after: number): boolean {
+    const lines = this.idbLog && existsSync(this.idbLog) ? readFileSync(this.idbLog, "utf8").split("\n").slice(after) : [];
+    return lines.some((line) => line.includes(" hid ") && line.includes(`"keycode":${HID_USAGES.KeyV}}`) && !line.includes('"direction":1'));
+  }
   readonly lines: LineSpawner = async function* (this: FakeSimulator, _program: string, args: readonly string[], signal: AbortSignal) {
     if (!args.includes("stream")) return;
     const from = this.idbLog && existsSync(this.idbLog) ? readFileSync(this.idbLog, "utf8").split("\n").length - 1 : 0;
     yield `Filtering the log data using "${args.at(-1)}"`;
+    if (args.at(-1) === PASTE_LOG_PREDICATE) {
+      while (!signal.aborted && !this.#pasteKeyAfter(from)) await wait(5);
+      if (!signal.aborted && this.pasteReader !== null) {
+        yield `2026-10-28 23:28:20.848 Df pasted[11053:c089] [com.apple.Pasteboard:Pasteboard] Bundle ID ${this.pasteReader} from team None is requesting item 0 from pasteboard named com.apple.UIKit.pboard.general`;
+        yield `2026-10-28 23:33:58.967 Df SpringBoard[13837:ee6e] [com.apple.SpringBoard:KeyboardFocus] deferFromSBWindowScene: adding rule for <token: com.apple.BannerKit:${PASTE_NOTICE_SCENE}.druid.1>`;
+        await wait(this.pasteNoticeMs);
+        yield `2026-10-28 23:34:01.522 Df SpringBoard[13837:ee6e] [com.apple.SpringBoard:KeyboardFocus] deferFromSBWindowScene: invalidate for <token: com.apple.BannerKit:${PASTE_NOTICE_SCENE}.druid.1>`;
+      }
+      while (!signal.aborted) await wait(5);
+      return;
+    }
     while (!signal.aborted) {
       if (this.#inertKeyFromALiveCompanion(from)) {
         await new Promise<void>((resolve) => {
@@ -362,11 +385,26 @@ class FakeSimulator {
     const presses = this.idbLog && existsSync(this.idbLog) ? [...readFileSync(this.idbLog, "utf8").matchAll(/"button":\{"button":(\d)\}\}(?!,"direction":1)/g)].map((match) => Number(match[1])) : [];
     return presses.at(-1) === 2 ? 1 : 0;
   }
-  readonly runner: Runner = async (_program, args) => {
+  readonly runner: Runner = async (_program, args, options) => {
     const [, verb, ...rest] = args;
     const ok = (stdout = ""): Ran => ({ code: 0, stdout, stderr: "" });
     this.calls.push([verb, ...rest].join(" "));
+    if ((verb === "pbcopy" || verb === "pbpaste") && this.pasteboardSilentCalls > 0) {
+      this.pasteboardSilentCalls--;
+      return { code: PASTEBOARD_NOT_ANSWERING_EXIT, stdout: "", stderr: "The operation couldn’t be completed. Operation timed out" };
+    }
     switch (verb) {
+      case "pbcopy":
+        this.clipboardBefore = this.clipboard;
+        this.clipboard = options.input ?? "";
+        this.clipboardLagLeft = this.clipboardLagsReads;
+        return ok();
+      case "pbpaste":
+        if (this.clipboardLagLeft > 0) {
+          this.clipboardLagLeft--;
+          return ok(this.clipboardBefore);
+        }
+        return ok(this.clipboard);
       case "list":
         return ok(JSON.stringify({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{ udid: UDID, name: "iPhone 18 Pro", deviceTypeIdentifier: "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", state: this.state, isAvailable: true }] } }));
       case "boot":
@@ -460,7 +498,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     return { home, paths, lists, program, log, target };
   }
 
-  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null>; orientationEveryMs?: number; hidDaemonActiveWaitMs?: number; encoder?: IosEncoderMode; softwareEncoder?: string; uid?: number } = {}) {
+  function driverOf(setup: ReturnType<typeof setUp>, simulator: FakeSimulator, options: { slim?: boolean; hubs?: () => number[]; wallAhead?: () => number; access?: PasteboardAccess; appInfo?: (app: string) => Promise<AppInfo | null>; orientationEveryMs?: number; hidDaemonActiveWaitMs?: number; encoder?: IosEncoderMode; softwareEncoder?: string; uid?: number; more?: Partial<IosDriverOptions> } = {}) {
     simulator.idbLog = setup.log;
     const logs: string[] = [];
     const driver = new IosDriver({
@@ -483,6 +521,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
       uid: options.uid ?? IOS_MOBILE_UID,
       ...(options.encoder ? { encoder: options.encoder } : {}),
       ...(options.softwareEncoder ? { softwareEncoder: options.softwareEncoder } : {}),
+      ...options.more,
     });
     started.push(driver);
     return { driver, logs };
@@ -1105,6 +1144,77 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     } finally {
       delete process.env.FAKE_IDB_NO_ENCODER;
     }
+  });
+
+  test("sets the clipboard only once the device reads the text back, and says so when it never does (F-21)", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    for (const label of LIST) simulator.disabled.add(label);
+    const { driver } = driverOf(setup, simulator, { more: { clipboardHoldsWait: { mostMs: 200, everyMs: 10 } } });
+    await driver.attach(setup.target, AbortSignal.timeout(20_000));
+    simulator.clipboard = "the device's own";
+    simulator.clipboardLagsReads = 3;
+    simulator.calls.length = 0;
+    await driver.setClipboard("bbtest ✓ 日本");
+    assert.deepEqual(simulator.calls.map((call) => call.split(" ")[0]).filter((verb) => verb!.startsWith("pb")), ["pbcopy", "pbpaste", "pbpaste", "pbpaste", "pbpaste"], "read back until the device holds it");
+    assert.equal(await driver.clipboard(), "bbtest ✓ 日本");
+    simulator.clipboardLagsReads = Number.POSITIVE_INFINITY;
+    await assert.rejects(driver.setClipboard("never held"), /The iPhone 18 Pro's clipboard still held other text 0\.\d s and \d+ reads after simctl set it\./);
+    driver.close();
+  });
+
+  test("a paste returns once the app has read the clipboard, and the next keys wait until iOS's paste notice has gone (F-21)", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    for (const label of LIST) simulator.disabled.add(label);
+    simulator.pasteNoticeMs = 400;
+    const { driver, logs } = driverOf(setup, simulator, { more: { pasteWatchMs: { read: 1_000, noticeAfterRead: 500, noticeShown: 3_000, noticeSettled: 20 } } });
+    await driver.attach(setup.target, AbortSignal.timeout(20_000));
+    await driver.prepareInput();
+    const keyAt = () =>
+      readFileSync(setup.log, "utf8")
+        .split("\n")
+        .filter((line) => line.includes(" hid ") && line.includes(`"keycode":${HID_USAGES.KeyA}}`)).length;
+    const began = performance.now();
+    await driver.paste();
+    const pasted = performance.now() - began;
+    assert.ok(pasted < 1_000, `the paste returned at the app's read, in ${Math.round(pasted)} ms`);
+    await driver.key("a", true);
+    await driver.key("a", false);
+    const keyed = performance.now() - began;
+    await until("the key", () => keyAt() >= 2);
+    assert.ok(keyed >= 400 && keyed < 2_000, `the key waited for the notice to go, not iOS's 2.6 s: ${Math.round(keyed)} ms`);
+    assert.ok(!logs.some((line) => /could not be watched|no app read/.test(line)), logs.join("\n"));
+    simulator.pasteReader = null;
+    await driver.paste();
+    assert.ok(logs.includes("paste: no app read the clipboard within 1 s of the paste key, so it is put back now"), logs.join("\n"));
+    driver.close();
+  });
+
+  test("says its device booted only once the device's accessibility and pasteboard answer, as on a host just made; says so, and goes on, if they never do (F-21)", async () => {
+    const setup = setUp();
+    const simulator = new FakeSimulator();
+    for (const label of LIST) simulator.disabled.add(label);
+    simulator.pasteboardSilentCalls = 4;
+    process.env.FAKE_IDB_AX_UNANSWERED = "3";
+    try {
+      const { driver, logs } = driverOf(setup, simulator, { more: { servicesAnswerWait: { mostMs: 5_000, everyMs: 20, readMs: 2_000, worthSayingMs: 0 } } });
+      assert.equal(await driver.attach(setup.target, AbortSignal.timeout(20_000)), "booted");
+      assert.equal(readFileSync(setup.log, "utf8").split("\n").filter((line) => line.endsWith("accessibility unanswered")).length, 3);
+      assert.equal(simulator.pasteboardSilentCalls, 0);
+      assert.ok(logs.some((line) => /^device: the iPhone 18 Pro's accessibility and pasteboard took \d+\.\d s more to answer after it booted$/.test(line)), logs.join("\n"));
+      driver.close();
+    } finally {
+      delete process.env.FAKE_IDB_AX_UNANSWERED;
+    }
+    const silent = new FakeSimulator();
+    for (const label of LIST) silent.disabled.add(label);
+    silent.pasteboardSilentCalls = Number.POSITIVE_INFINITY;
+    const quiet = setUp();
+    const { driver, logs } = driverOf(quiet, silent, { more: { servicesAnswerWait: { mostMs: 100, everyMs: 20, readMs: 2_000, worthSayingMs: 0 } } });
+    assert.equal(await driver.attach(quiet.target, AbortSignal.timeout(20_000)), "booted");
+    assert.ok(logs.some((line) => /^device: the iPhone 18 Pro's pasteboard did not answer in 0\.\d s more after it booted, so reads of its screen or its clipboard may fail until it does$/.test(line)), logs.join("\n"));
+    driver.close();
   });
 });
 

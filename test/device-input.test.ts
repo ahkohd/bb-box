@@ -5,6 +5,7 @@ import { after, describe, test } from "node:test";
 import { DEVICE_SERVER_VERSION, testDeviceOffer, type OfferedDevices, type TouchContact } from "../src/core/device.ts";
 import { DeviceLink, type DeviceRole } from "../src/core/device-link.ts";
 import { parseDeviceServerMessage } from "../src/core/device-parse.ts";
+import { DriverError } from "../src/device/driver.ts";
 import { InputLane, splitByCharacters } from "../src/device/input-lane.ts";
 import { keysymMeaning, typedOnUsKeyboard, usKey } from "../src/device/keys.ts";
 import { devicePaths } from "../src/device/paths.ts";
@@ -217,6 +218,23 @@ describe("the person's input, from the input connection", () => {
     assert.deepEqual(driver.record.pastes, ["a test value"]);
     assert.equal(await driver.clipboard(), "the device's own");
     await control.close();
+    await input.close();
+  });
+
+  test("a paste whose text the device never holds is refused in words, presses no paste key, and puts the clipboard back (F-21)", async () => {
+    const driver = new TestDriver("ios");
+    const { open } = await started(driver);
+    await driver.setClipboard("the device's own");
+    const setClipboard = driver.setClipboard.bind(driver);
+    driver.setClipboard = async (text) => {
+      await setClipboard(text);
+      if (text !== "the device's own") throw new DriverError("failed", "The iPhone 18 Pro's clipboard still held other text 5.0 s and 99 reads after simctl set it.");
+    };
+    const input = await open("input");
+    const refused = await input.request({ type: "paste", text: "a test value ✓" });
+    assert.equal(!refused.ok && refused.error.words, "The iPhone 18 Pro's clipboard still held other text 5.0 s and 99 reads after simctl set it.");
+    assert.deepEqual(driver.record.pastes, []);
+    assert.equal(await driver.clipboard(), "the device's own");
     await input.close();
   });
 

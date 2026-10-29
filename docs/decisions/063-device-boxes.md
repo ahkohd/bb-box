@@ -1044,9 +1044,9 @@ Text with no US key, from the agent or the person, is pasted:
 2. **The clipboard is saved and put back.** The server reads the device's
    clipboard, sets its own text, sends the paste key, waits until the
    paste has landed, and puts the saved clipboard back. How long to wait
-   is measured in E21; until then, 500 ms. While it does, the clipboard
-   sync to the viewer is paused, so the person's computer never receives
-   the server's text.
+   is measured in E21, and on iOS watched (step 5). While it does, the
+   clipboard sync to the viewer is paused, so the person's computer never
+   receives the server's text.
 3. **iOS's Allow Paste is answered by the server.** The first paste into an
    app shows the alert, with Allow Paste as a button in the tree. After its
    own paste, the server looks for that alert for 1 s, and taps Allow Paste
@@ -1056,6 +1056,16 @@ Text with no US key, from the agent or the person, is pasted:
    keys while its notice shows, so the server holds none; it puts the
    clipboard back 300 ms after the paste key, as Chrome on the device read
    the clipboard up to 150 ms after it (E21).
+5. **iOS's paste waits on the device** (F-21). A set of the clipboard
+   returns only once `simctl pbpaste` reads the new text back. While a
+   just-booted device's pasteboard does not answer, simctl's exit 60, each
+   call is tried again every second for up to 30 s. From just before the
+   paste key the server watches the device's log: the clipboard goes back
+   once the app's read is logged, or 5 s after the key if none is. The
+   next keys wait until iOS's paste notice gives the keyboard back, at
+   most 6 s; where the log cannot be watched, 1.5 s and 2.6 s instead. A
+   device is said to be booted only once its accessibility and pasteboard
+   answer, for at most 45 s more.
 
 ## Agent tools
 

@@ -25,9 +25,10 @@ import { parseDeviceState } from "../core/device-parse.ts";
 import { clockwiseTurnedPixels, pngPixels, rgbaPng } from "../core/png.ts";
 import { DriverError, type ControlContext, type DeviceDriver, type PinchGesture, type VideoSource } from "./driver.ts";
 import { Companion, accessibilityTree, orientation, screenshot, setOrientation, videoStream } from "./idb.ts";
-import { iosElementAt, readIosTree } from "./ios-tree.ts";
+import { accessibilityUnanswered, iosElementAt, readIosTree } from "./ios-tree.ts";
 import { IosSettingsKeeper } from "./ios-controls.ts";
 import { IosInput, PasteboardAccess, typesWithOption } from "./ios-input.ts";
+import { PASTE_LOG_PREDICATE, PASTE_WATCH_MS, PasteWatch, type PasteWatchTimings } from "./ios-paste-watch.ts";
 import { pasteboardInOwnSession } from "./user-session.ts";
 import { IosVideo, scaledBack } from "./ios-video.ts";
 import { EncodeMeter, SOFTWARE_ENCODER, hardwareFailed, simulatorStream, softwareEncoderAt, type IosEncoderMode, type IosEncoderWay } from "./simulator-video.ts";
@@ -54,6 +55,10 @@ export const FULL_SIZE_SLACK = 0.02;
 export const SPRINGBOARD = "com.apple.SpringBoard";
 export const HID_DAEMON_ACTIVE = "dtuhidd state changed to active";
 export const HID_DAEMON_ACTIVE_WAIT_MS = 15_000;
+export const IOS_PASTE_LANDS_MS = 250;
+export const PASTE_UNWATCHED_LANDS_MS = 1_500;
+export const CLIPBOARD_HOLDS_WAIT = { mostMs: 5_000, everyMs: 50 } as const;
+export const SERVICES_ANSWER_WAIT = { mostMs: 45_000, everyMs: 1_000, readMs: 15_000, worthSayingMs: 1_000 } as const;
 const LOCK_STATE = "com.apple.springboard.lockstate";
 const APP_NAMES_MOST = 64;
 export const IOS_MOBILE_UID = 501;
@@ -96,6 +101,9 @@ export interface IosDriverOptions {
   readonly encoder?: IosEncoderMode;
   readonly softwareEncoder?: string;
   readonly developer?: string;
+  readonly clipboardHoldsWait?: { readonly mostMs: number; readonly everyMs: number };
+  readonly pasteWatchMs?: Partial<PasteWatchTimings>;
+  readonly servicesAnswerWait?: { readonly [Key in keyof typeof SERVICES_ANSWER_WAIT]: number };
 }
 
 export interface ProcessStart {
@@ -175,6 +183,7 @@ function words(error: unknown): string {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class IosDriver implements DeviceDriver {
+  readonly pasteLandsMs = IOS_PASTE_LANDS_MS;
   readonly #options: IosDriverOptions;
   readonly #simctl: Simctl;
   readonly #clock: IosDriverClock;
@@ -352,7 +361,29 @@ export class IosDriver implements DeviceDriver {
     await this.#readSettings(signal).catch((error) => this.#log(`settings: not read: ${words(error)}`));
     await this.#pasteboardReady();
     await this.#hidDaemonActive(target, device.udid, signal);
+    await this.#servicesAnswer(target, device.udid, signal);
     return reattached ? "reattached" : "booted";
+  }
+
+  async #servicesAnswer(target: OfferedDeviceOf<"ios">, udid: string, signal: AbortSignal): Promise<void> {
+    const timing = this.#options.servicesAnswerWait ?? SERVICES_ANSWER_WAIT;
+    const began = this.#clock.monotonic();
+    const answersBy = async (answers: () => Promise<boolean>): Promise<boolean> => {
+      for (;;) {
+        if (await answers()) return true;
+        signal.throwIfAborted();
+        if (this.#clock.monotonic() - began + timing.everyMs > timing.mostMs) return false;
+        await wait(timing.everyMs);
+      }
+    };
+    const [accessibility, pasteboard] = await Promise.all([
+      answersBy(() => accessibilityTree(this.#companion.client, AbortSignal.any([signal, AbortSignal.timeout(timing.readMs)])).then(() => true, (error) => !accessibilityUnanswered(error))),
+      answersBy(() => this.#simctl.pasteboardAnswers(udid).catch(() => true)),
+    ]);
+    const seconds = ((this.#clock.monotonic() - began) / 1000).toFixed(1);
+    const silent = [accessibility ? null : "accessibility", pasteboard ? null : "pasteboard"].filter((each): each is string => each !== null);
+    if (silent.length) this.#log(`device: the ${target.model}'s ${silent.join(" and ")} did not answer in ${seconds} s more after it booted, so reads of its screen or its clipboard may fail until it does`);
+    else if (this.#clock.monotonic() - began >= timing.worthSayingMs) this.#log(`device: the ${target.model}'s accessibility and pasteboard took ${seconds} s more to answer after it booted`);
   }
 
   async #companionPredatesBoot(target: OfferedDeviceOf<"ios">, udid: string): Promise<boolean> {
@@ -672,8 +703,33 @@ export class IosDriver implements DeviceDriver {
   }
 
   async paste(): Promise<void> {
-    this.#booted();
-    await this.#input.paste();
+    const udid = this.#booted();
+    const watch = new PasteWatch((signal) => this.#simctl.pasteLog(udid, PASTE_LOG_PREDICATE, signal), { ms: this.#options.pasteWatchMs });
+    try {
+      await Promise.all([watch.listening(), this.#input.readyToPaste()]);
+      watch.pressed();
+      await this.#input.pressPaste();
+      const read = await watch.read();
+      if (!read.watched) {
+        watch.close();
+        this.#log(`paste: the device's log could not be watched for the app's read of the clipboard, so it is put back after ${PASTE_UNWATCHED_LANDS_MS / 1000} s`);
+        await wait(PASTE_UNWATCHED_LANDS_MS);
+        return;
+      }
+      if (!read.reader) this.#log(`paste: no app read the clipboard within ${(this.#options.pasteWatchMs?.read ?? PASTE_WATCH_MS.read) / 1000} s of the paste key, so it is put back now`);
+      this.#input.holdKeysUntilTheNoticeGoes(
+        watch
+          .noticeGone()
+          .then((outcome) => {
+            if (outcome === "still shown") this.#log("paste: iOS's paste notice still showed when the wait for it ended, so the next keys may be lost");
+            return outcome === "gone";
+          })
+          .finally(() => watch.close()),
+      );
+    } catch (error) {
+      watch.close();
+      throw error;
+    }
   }
 
   async prepareInput(): Promise<void> {
@@ -691,7 +747,20 @@ export class IosDriver implements DeviceDriver {
   }
 
   async setClipboard(text: string): Promise<void> {
-    await this.#simctl.setClipboard(this.#booted(), text);
+    const udid = this.#booted();
+    await this.#simctl.setClipboard(udid, text);
+    await this.#untilTheDeviceHolds(udid, text);
+  }
+
+  async #untilTheDeviceHolds(udid: string, text: string): Promise<void> {
+    const holds = this.#options.clipboardHoldsWait ?? CLIPBOARD_HOLDS_WAIT;
+    const began = this.#clock.monotonic();
+    for (let reads = 1; ; reads++) {
+      if ((await this.#simctl.clipboard(udid)) === text) return;
+      const waited = this.#clock.monotonic() - began;
+      if (waited + holds.everyMs > holds.mostMs) throw new DriverError("failed", `The ${this.#target?.model ?? "device"}'s clipboard still held other text ${(waited / 1000).toFixed(1)} s and ${reads} reads after simctl set it.`);
+      await wait(holds.everyMs);
+    }
   }
 
   async clipboard(): Promise<string> {

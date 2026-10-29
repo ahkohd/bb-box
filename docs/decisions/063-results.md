@@ -3219,3 +3219,129 @@ production panel in the owner's browser (Helium), in a tab of its own, at
 Before the deploy, on a fresh BB in a box with bb-box from the branch and
 the test device on: a bare Desktop tab whose one box had only the test
 device renamed itself Emulator, and BB kept that title for the tab.
+
+## F-21: an iOS paste that arrived wrong or late, and a new host's first reads
+
+Built on 28 and 29 October 2026, from F-17's three follow-ups. Device
+server version 32.
+
+### The causes
+
+**The earlier text was pasted because it was put back too soon.** simctl
+does not return early: on a dedicated Tart box, 8 `pbcopy` calls each
+returned 10 to 11 ms after the device's log said "Successfully finished
+writing new snapshot to pasteboard". The app reads the pasteboard when it
+handles Cmd+V, and after a boot the device handles the key late. Caught in
+the device's log on a dedicated Tart box, 6 s after a reboot, as the
+agent's `computer_type` put `bbtest ✓ 日本 é` into the probe app's field:
+
+| Time | What |
+| --- | --- |
+| 19.759 | the device holds `✓ 日本` |
+| 20.100 | the earlier text is back on the device, put back by the server 100 ms after the paste key |
+| 20.572 to 20.605 | the keyboard, shown for the first time since the boot, reads the pasteboard 6 times |
+| 20.848 | the app reads the pasteboard, and pastes `bbtest earlier clipboard` |
+
+On a device that had settled, the app read 0 to 52 ms after the key, so
+the 100 ms that E21 measured was enough there.
+
+**The keys after a paste were lost behind iOS's notice.** '<app> pasted
+from CoreSimulatorBridge' takes the keyboard while it shows: SpringBoard
+logs `deferFromSBWindowScene: adding rule` for it, and `invalidate` when
+it goes. It shows for about 2.55 s from about 50 ms after the app's read,
+so the server's hold on keys, 2.6 s from the paste key (E21), was enough.
+After a boot, the first notice came 450 ms after the read and went 3.1 s
+after the key. The keys typed at 2.6 s were lost: `bbtest ✓ 日本 é` lost
+` é` on the first paste after each of 3 reboots and server restarts. Each
+paste shows two notices, one for each of the app's two reads, the second
+at once after the first.
+
+Safari's address field, where F-17's check typed, lost text the same way
+after a boot, and took the same text whole once the device had settled.
+
+**A just-booted device's pasteboard does not answer.** On a Tart host made
+for the box, `simctl pbcopy` exited 60, "Operation timed out", from 7 to
+12 s after the server said the device had booted, and worked from 13 s,
+15.6 s after simctl's own boot. On a host some minutes old, and on a
+dedicated box, it worked at once after a reboot.
+
+**Reads failed because the device was not ready.** On a Tart host made for
+the box, the first `computer_observe`, about 10 s after the boot, failed
+with "did not answer a frontmost request within 5.0s". idb_companion's log
+showed the rest of the device still starting: its HID transport was
+negotiated 20 s after the boot, and accessibility first answered at 25 s.
+The server had said the device booted at 4 s. A read at 25 s worked, and
+so did every read after it. Of 3 new hosts, 1 failed this way, and 2 read
+little or none of the Home Screen, point by point. Reads that failed until a
+reboot, as in F-17's check, were not seen.
+
+### The fix
+
+- **A set returns only once the device holds the text.** The server reads
+  the clipboard back every 50 ms, for at most 5 s. If the device never
+  holds it, the paste is refused in words, no paste key goes, and the
+  clipboard is put back.
+- **A pasteboard that does not answer is waited for.** On simctl's exit
+  60, `pbcopy` and `pbpaste` are tried again every second for up to 30 s,
+  then refused in words.
+- **The clipboard goes back after the app's read.** From just before the
+  paste key, the server streams the device's log, filtered to the
+  pasteboard's "is requesting item" and SpringBoard's keyboard lines
+  ([`ios-paste-watch.ts`](../../src/device/ios-paste-watch.ts)). It puts
+  the clipboard back 250 ms after an app's read, or 5 s after the key if
+  no app reads. The keyboard's reads and simctl's own do not count. Where
+  the log cannot be watched, it waits 1.5 s.
+- **Keys wait for the notice to give the keyboard back,** with 100 ms
+  free of any notice, for at most 6 s. If no notice shows within 1.5 s of
+  the read, or the log cannot be watched, the 2.6 s hold applies as
+  before.
+- **The device is said to be booted only once it answers.** After a boot,
+  the server reads the screen and the pasteboard every second until both
+  answer, for at most 45 s, and logs how long it waited, or which did not
+  answer. "No frontmost application" counts as an answer.
+- **A log stream is stopped with SIGINT,** then SIGKILL if simctl has not
+  ended 2 s later. With SIGKILL alone, 3 of 4 paste watches left the
+  device's own `log stream` running under the device's launchd; with
+  SIGINT, none of 6 did. The HID daemon's watch at boot ends the same way.
+
+### Measured before the deploy
+
+The change, with lab-only log lines, was put in the box's own
+`~/.bb-box/device/server` and started again by launchd, so it ran as
+production runs it. The agent's path was `computer_type` through
+production BB. Runs of 20 went through the device server's own socket, as
+the person's input connection does: keys as `kd` and `ku` messages and
+pastes as `paste` requests, as `computer_type` splits them, each field read
+back by the server's `tree` and the clipboard by its `clipboard` request.
+The clipboard held a test value first; test values only.
+
+| Check | Version 30 | This change |
+| --- | --- | --- |
+| Dedicated Tart box: `computer_type` of `bbtest ✓ 日本 é` into the probe app, 6 to 30 s after a reboot | `bbtest bbtest earlier clipboard`, 2 of 2 | whole, 1 of 1; the app read 47 ms after the key; the notice went 3.1 s after it |
+| Dedicated Tart box: 20 mixed texts in a row | | 20 of 20 whole, the clipboard put back each time |
+| Shared slot on a Tart host: the same 20 into Safari's address field, the first 40 s after the device started again | | 20 of 20 whole, the clipboard put back each time |
+| Shared slot: `computer_type` of `bbtest agent ✓ 日本 é naïve` into Safari | | whole, the clipboard put back |
+| Shared slot: a reboot on a host a minute old | | the server waited 4.7 s more for accessibility and the pasteboard to answer; the next `computer_observe` read the whole Home Screen in 48 ms |
+| A set and its read-back | | 0.24 to 0.36 s on the slot, 0.25 to 0.34 s on the dedicated box |
+| The panel's `paste` request, from the request to its answer | 0.6 s | 1.2 to 1.6 s |
+
+The 20 texts were, in turn: `bbtest ✓ 日本 é`, `a✓b日本c`, `ab ✓`, `✓ 日本`,
+`Grüße, 世界 — ok`, `naïve café ✓`, `日本語のテキスト` and `x→y ∑ 🙂 z`. In 6 of
+each 20, iOS added its smart-paste space (E21): `a ✓b 日本c` and
+`x →y ∑ 🙂 z`. Text with line feeds, CRLF and a decomposed é read back
+byte for byte, so the read-back's comparison is exact.
+
+A paste costs about 0.6 s more: 0.3 s for the log to listen, while the
+apps are let paste, about 0.3 s for each read-back, and the 250 ms after
+the read. On a host made for the box, the boot is said about 15 to 25 s
+later, the time in which reads and pastes failed before.
+
+### Not checked here
+
+- **A host's first boot with this change.** A new host gets the deployed
+  server, so this is for after the deploy. Here the boot wait ran on a
+  reboot a minute after its host was made.
+- **A Namespace slot and the pool's Mac,** whose clipboard goes the same
+  way as a Tart slot's, through the user's own launchd session.
+- **Android** is unchanged: its clipboard goes back 300 ms after the paste
+  key (E21).

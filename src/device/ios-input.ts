@@ -310,6 +310,7 @@ export class IosInput {
   readonly #modifiers = new Set<string>();
   readonly #implicitShift = new Set<string>();
   #noticeUntil = 0;
+  #noticeSeenGone: Promise<boolean> | null = null;
 
   constructor(options: IosInputOptions) {
     this.#options = options;
@@ -408,7 +409,15 @@ export class IosInput {
     });
   }
 
+  holdKeysUntilTheNoticeGoes(seenGone: Promise<boolean>): void {
+    this.#noticeSeenGone = seenGone;
+  }
+
   async #afterNotice(): Promise<void> {
+    const seenGone = this.#noticeSeenGone;
+    const gone = seenGone ? await seenGone : false;
+    if (this.#noticeSeenGone === seenGone) this.#noticeSeenGone = null;
+    if (gone) return;
     const left = this.#noticeUntil - this.#now();
     if (left > 0) await wait(left);
   }
@@ -461,9 +470,12 @@ export class IosInput {
     }
   }
 
-  async paste(): Promise<void> {
+  async readyToPaste(): Promise<void> {
     await this.#afterNotice();
     await this.#allowPaste();
+  }
+
+  async pressPaste(): Promise<void> {
     const meta = HID_USAGES.MetaLeft!;
     const v = HID_USAGES.KeyV!;
     const held = this.#modifiers.has("Meta");
