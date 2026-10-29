@@ -64,6 +64,7 @@ export interface MachineTrouble {
   readonly words: string;
   readonly detail: string;
   readonly fix: string | null;
+  readonly offline?: boolean;
 }
 
 export function machineTrouble(config: BackendConfig, hosts: MachineHosts): MachineTrouble | null {
@@ -71,7 +72,7 @@ export function machineTrouble(config: BackendConfig, hosts: MachineHosts): Mach
   if (!hostId || !hosts) return null;
   const host = hosts.find((candidate) => candidate.hostId === hostId);
   if (!host) return { status: "failing", tone: "bad", words: "Cannot host boxes", detail: "BB has no such persistent machine now.", fix: "Add the machine to BB again, or remove this backend." };
-  if (!host.connected) return { status: "failing", tone: "warn", words: "Offline in BB", detail: host.problem ?? "The machine is offline in BB.", fix: `Start ${host.name}, or BB on it, then check again.` };
+  if (!host.connected) return { status: "failing", tone: "warn", words: "Offline in BB", detail: host.problem ?? "The machine is offline in BB.", fix: `Start ${host.name}, or BB on it, then check again.`, offline: true };
   if (host.docker) return null;
   if (host.absent) return { status: "failing", tone: "bad", words: "Cannot host boxes", detail: `${host.name} has no Docker now.`, fix: "Install Docker Engine there, then check again." };
   const detail = host.problem ?? "Docker there does not answer.";

@@ -1687,8 +1687,10 @@ page and from Add backend.
   checks: "Offline in BB", or "Cannot host boxes" with why, such as
   "Docker is on lab, but BB's user, box, cannot use it", and its image
   build on a second line: "Building linux, desktop and desktop-wayland
-  images · Image 1 of 3, step 4 of 4". Status counts it as not working and
-  the callout lists it with its fix: "On lab, run sudo usermod -aG docker
+  images · Image 1 of 3, step 4 of 4". Status says "Docker on lab is
+  offline in BB", or "1 offline in BB" among several, for an offline
+  machine, and "not working" for one that cannot host boxes, and the
+  callout lists it with its fix: "On lab, run sudo usermod -aG docker
   box, then restart BB there. Then check again." A failed image build is
   listed too. Check all also asks each machine's Docker again.
 - **One line under Backends** names the machines whose Docker could host
@@ -1741,12 +1743,13 @@ unit 6's area: `settings-pages.tsx`, `settings-overview.tsx`,
 
 ### Tests
 
-`test/app.test.tsx` replaces the old list's test with three: Add backend
+`test/app.test.tsx` replaces the old list's test with four: Add backend
 with every kind of machine, Check again's recheck, Add and focus; the
 overview's rows, build line, Cannot host boxes in Status with its fix, and
 the machines line; the page's card, its fix lines and Copy names, one
 Check again for both cards, off through `config.apply` keeping the
-backend, and on through `docker.host.set`. `test/docker-hosts.test.ts`
+backend, and on through `docker.host.set`; and Status saying "offline in
+BB" for one machine and among several. `test/docker-hosts.test.ts`
 has one for `fix`; `test/setup-offer.test.ts` one for `dockerFix` in use
 and before use.
 
@@ -1755,14 +1758,14 @@ On a Linux box, 8 cores, on the commit delivered:
 | Check | Result |
 | --- | --- |
 | `tsc` | passes |
-| Node suite | 2,796 tests: 2,508 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 55 s |
-| vitest | 289 pass, in 4 files |
+| Node suite | 2,827 tests: 2,539 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 55 s |
+| vitest | 296 pass, in 4 files |
 | `test/docs.test.ts`, `test/site.test.ts` and `scripts/reference.ts --check` | pass; the reference changes only in `docker-build`'s words |
 
 The commit delivered differs from the one tested only in this section and
-the live script's words. A run on the rebase before had one failure
-outside settings, a Namespace probe test that waits on timing; it passed
-alone 3 of 3 times, and the full suite passed after it.
+a screenshot. A run before it had one failure outside settings, an iOS
+driver test with a fake `idb_companion` that waits on timing; it passed
+alone 3 of 3 times, and the full suite then passed as above.
 
 ### Live check on a separate BB
 
@@ -1779,8 +1782,9 @@ box's own Docker shows as bb-1, a machine that could host boxes. The
 script, [`live-check.mjs`](067-settings-page/unit-5/live-check.mjs),
 drives headless Chromium at 1440 by 1000, one phase at a time. The series
 ran once in full on the branch, and again after rebasing on main, with
-the same results. Offline ran on the next rebase, and broken, fixed, off
-and on ran again on the commit delivered, after the last rebase.
+the same results. On the commit delivered, rebased on unit 6, a new BB and
+a new lab ran it again: Add, the images built, Check all to Ready, broken,
+fixed with one Check again, and offline.
 
 | Step | What the page said, and what BB Box stored |
 | --- | --- |
@@ -1794,7 +1798,7 @@ and on ran again on the commit delivered, after the last rebase.
 | Turned off, with no box | Row "Off · takes no new boxes", the page as before; stored off, and still there. Before this unit, off with no box removed it |
 | Remove backend… from its menu | The overview; no backend stored; Add backend offers lab again, "Can host boxes" |
 | Broken while not in use | Add backend: lab "Cannot host boxes", why, the line to copy and Check again; the overview's line "Docker on lab cannot host boxes now." |
-| Offline: lab's daemon stopped | Row "Offline in BB · The machine is offline in BB.", amber; Status "Docker on lab is not working", with "Fix: Start lab, or BB on it, then check again."; the card "Offline in BB" |
+| Offline: lab's daemon stopped | Row "Offline in BB · The machine is offline in BB.", amber; Status "Docker on lab is offline in BB", with "Fix: Start lab, or BB on it, then check again."; the card "Offline in BB" |
 
 ### Keyboard only
 

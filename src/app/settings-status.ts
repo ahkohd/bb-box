@@ -19,6 +19,7 @@ export interface BackendHealth {
   readonly fix: string | null;
   readonly checkedAt: number | null;
   readonly warnings: number;
+  readonly offline?: boolean;
 }
 
 export function plural(count: number, one: string, many = `${one}s`): string {
@@ -174,6 +175,7 @@ export function statusLine(state: ConfigState, now: number, checking: number, ma
   const never = healths.filter((health) => health.status === "never").length;
   const changed = healths.filter((health) => health.status === "changed").length;
   const troubled = healths.filter((health) => health.status === "failing").length;
+  const offline = healths.filter((health) => health.offline).length;
   const passed = fresh + stale;
   const words = stale ? "passed their last check" : "ready";
   const headline =
@@ -184,7 +186,7 @@ export function statusLine(state: ConfigState, now: number, checking: number, ma
         : on.length === 1 && changed === 1
           ? `${backendLabel(state, on[0]!)} is not checked since it changed`
         : on.length === 1
-          ? `${backendLabel(state, on[0]!)} is not working`
+          ? `${backendLabel(state, on[0]!)} ${offline ? "is offline in BB" : "is not working"}`
           : passed === on.length
         ? `All ${plural(on.length, "backend")} ${words}`
         : `${passed} of ${plural(on.length, "backend")} ${words}`;
@@ -193,6 +195,7 @@ export function statusLine(state: ConfigState, now: number, checking: number, ma
   const details = [
     ...(never && on.length > 1 ? [`${never} not checked yet`] : []),
     ...(changed && on.length > 1 ? [`${changed} not checked since ${changed === 1 ? "it" : "they"} changed`] : []),
+    ...(offline && on.length > 1 ? [`${offline} offline in BB`] : []),
     ...(off ? [`${off} off`] : []),
     `${plural(offered, "kind")} on offer`,
     ...(age ? [age] : []),

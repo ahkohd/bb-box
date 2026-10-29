@@ -6884,6 +6884,18 @@ test("a BB machine's Docker in use is a backend row like the others: its build o
   expect(await slot.findByRole("heading", { name: "Add a backend" })).toBeTruthy();
 });
 
+test("Status says a BB machine's Docker is offline in BB, not that it is not working", async () => {
+  const offline: Partial<DockerHostView> = { connected: false, docker: null, problem: "The machine is offline in BB.", backend: { id: "docker:attic", enabled: true, boxes: 0 } };
+  const alone = settings(machinesServer([dockerMachine("host_a", "attic", offline)], [machineBackend("host_a", "attic")]).handlers);
+  expect(await alone.findByText("Docker on attic is offline in BB")).toBeTruthy();
+  expect(alone.queryByText(/is not working/)).toBeNull();
+  cleanup();
+  const hosts = [dockerMachine("host_a", "attic", offline), dockerMachine("host_b", "devpc", { backend: { id: "docker:devpc", enabled: true, boxes: 0 } })];
+  const two = settings(machinesServer(hosts, [machineBackend("host_a", "attic"), machineBackend("host_b", "devpc")]).handlers);
+  const status = (await two.findByText(/of 2 backends/)).closest("p") as HTMLElement;
+  await waitFor(() => expect(status.textContent).toContain(" · 1 offline in BB"));
+});
+
 test("a BB machine's Docker page: the machine, Docker's facts and its fix, off keeps the backend and on goes through docker.host.set", async () => {
   const hosts = [dockerMachine("host_n", "lab", { ...NO_GROUP, backend: { id: "docker:lab", enabled: true, boxes: 0 } })];
   const { handlers, changes, operations } = machinesServer(hosts, [machineBackend("host_n", "lab")]);
