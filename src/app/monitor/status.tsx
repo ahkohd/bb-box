@@ -99,6 +99,10 @@ function HeaderButton({ label, tooltip, onClick, disabled, busy, children }: { l
   );
 }
 
+function openTooltip(boxName: string, listsThreads: boolean): string {
+  return listsThreads ? `Views and threads of ${boxName}` : `Open a view of ${boxName}`;
+}
+
 function HeaderScreenMenu({ screens }: { screens: BoxScreens | null }) {
   if (!screens) return null;
   return <ThreadsOnBox box={screens}>{(threads) => <ScreenMenu screens={screens} threads={threads} />}</ThreadsOnBox>;
@@ -113,7 +117,7 @@ function ScreenMenu({ screens, threads }: { screens: BoxScreens; threads: readon
             <Icon name="ArrowUpRight" className="size-3.5" aria-hidden />
           </MenuTrigger>
         </TooltipTrigger>
-        <TooltipContent side="top">{`Open a view of ${screens.boxName}`}</TooltipContent>
+        <TooltipContent side="top">{openTooltip(screens.boxName, threads.length > 0)}</TooltipContent>
       </Tooltip>
       <MenuContent side="bottom" className="max-w-64">
         {screens.actions.map((action) => (

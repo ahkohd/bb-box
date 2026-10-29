@@ -359,7 +359,7 @@ test("a box with a desktop and an Emulator offers both, then its terminal", asyn
   expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("thr_both/bx_both/device"));
 });
 
-test("the Open button's tooltip names the box", async () => {
+test("the Open button's tooltip names the box, as a view of it when its menu lists no threads", async () => {
   openMonitor("box:bx_both");
   fireEvent.pointerMove(await openButton());
   await waitFor(() => expect(screen.queryAllByRole("tooltip", { hidden: true }).some((tooltip) => tooltip.textContent === "Open a view of brisk-wren")).toBe(true));
@@ -515,6 +515,12 @@ test("more than 5 threads: the first 5, then N more on the Boxes page, which ope
   expect(threadLabels(heldMenu).at(0)).toBe("Builds the release, idle");
   fireEvent.click(within(heldMenu).getByRole("menuitem", { name: "2 more on the Boxes page" }));
   expect(held.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("threads"));
+});
+
+test("when the menu lists threads, the Open button's tooltip says views and threads of the box", async () => {
+  openMonitor("host_lxc", [HOLDER, ON_GLAD_CORAL]);
+  fireEvent.pointerMove(await openButton());
+  await waitFor(() => expect(screen.queryAllByRole("tooltip", { hidden: true }).some((tooltip) => tooltip.textContent === "Views and threads of glad-coral")).toBe(true));
 });
 
 test("a box with no threads has no divider and no Threads section", async () => {
