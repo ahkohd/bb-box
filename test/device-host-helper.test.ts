@@ -46,6 +46,16 @@ const SLOT_KEYBOARD_DEFAULTS = [
   "com.apple.Preferences DidShowContinuousPathIntroduction -bool YES",
 ];
 
+function keyboardDefaultsInFiles(host: FakeDeviceHost, user: string, udid: string): string[] {
+  const preferences = join(host.root, "Users", user, "Library/Developer/CoreSimulator/Devices", udid, "data/Library/Preferences");
+  if (!existsSync(preferences)) return [];
+  const written: string[] = [];
+  for (const file of readdirSync(preferences).sort()) {
+    for (const [, key, value] of readFileSync(join(preferences, file), "utf8").matchAll(/<key>(\w+)<\/key><bool>(\w+)<\/bool>/g)) written.push(`${file.replace(/\.plist$/, "")} ${key} -bool ${value}`);
+  }
+  return written.sort();
+}
+
 function keyboardDefaultsWritten(host: FakeDeviceHost, user: string, udid: string): string[] {
   const written = join(host.state, "sims", user, `.${udid}.defaults`);
   return existsSync(written) ? readFileSync(written, "utf8").trim().split("\n") : [];
@@ -132,7 +142,7 @@ test("init keeps the settings the host was made with, and status gives them with
   const { values, slots } = host.status();
   assert.deepEqual(
     ["helper", "deleting", "most", "ahead", "generation", "cores", "memory", "disk", "memory_free", "runtime", "model", "counted", "sweeping"].map((key) => values.get(key)),
-    ["6", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
+    ["7", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
   );
   assert.deepEqual(slots, []);
   assert.deepEqual(host.run(["init"], "most=many\n").status, 0, "settings are written once");
@@ -366,7 +376,7 @@ test("a slot's first boot writes the image's keyboard defaults on its device, sl
   assert.deepEqual(keyboardDefaultsWritten(host, "bbd-1", udid), SLOT_KEYBOARD_DEFAULTS, "a later boot does not write them again");
 });
 
-test("a carried slot made before F-23 gets the keyboard defaults at its warm-up (F-23)", async () => {
+test("a carried slot made before F-23 gets the keyboard defaults at its claim, in its shut-down device's files, or at its warm-up (F-23)", async () => {
   const host = fakeDeviceHost();
   assert.equal(host.run(["carry"]).status, 0);
   for (const id of ["i1", "i2"] as const) {
@@ -375,7 +385,12 @@ test("a carried slot made before F-23 gets the keyboard defaults at its warm-up 
     rmSync(join(host.root, HOST, "slots", id, "keyboard-defaults"));
     rmSync(join(host.state, "sims", `bbd-${id}`, `.${udid}.defaults`));
   }
+  const first = host.slot("i1")!;
+  assert.equal(first.booted, false, "a carried slot's device is shut down until a box or a warm-up boots it");
   assert.equal(host.run(["claim", "i1"], CLAIM()).status, 0);
+  assert.deepEqual(keyboardDefaultsInFiles(host, "bbd-i1", first.udid), [...SLOT_KEYBOARD_DEFAULTS].sort(), "written in the device's own files, before its device server boots it");
+  assert.deepEqual(keyboardDefaultsWritten(host, "bbd-i1", first.udid), [], "not through the device, which is not booted");
+  assert.ok(host.file(`${HOST}/slots/i1/keyboard-defaults`) !== null);
   await host.until("bbd-i2 warmed", () => host.slot("i2")?.loaded === true && host.slot("i2")?.booted === true);
   assert.deepEqual(keyboardDefaultsWritten(host, "bbd-i2", host.slot("i2")!.udid), SLOT_KEYBOARD_DEFAULTS);
   assert.ok(host.file(`${HOST}/slots/i2/keyboard-defaults`) !== null);
@@ -822,7 +837,7 @@ test("init loads the held ports' daemon and the helper's, keeps them across the 
 test("the helper refuses to run as anyone but root, and its usage names its commands", () => {
   const host = fakeDeviceHost();
   assert.match(host.run(["bogus"]).stderr, /^usage: device-host status \| summary \| init \| install \| open \| close \| make \| carry \| promise \| unpromise \| vacate \| claim <slot> \| release <slot> \| restart <slot> \| reset \| daemon <slot> \| resume \| keep-app \| version\n$/);
-  assert.equal(host.run(["version"]).stdout, "6\n");
+  assert.equal(host.run(["version"]).stdout, "7\n");
   const text = readFileSync(new URL("../setup/tart/ios/device-host.sh", import.meta.url), "utf8");
   assert.match(text, /\[ "\$\(id -u\)" = 0 \] \|\| quit 2 "Run it as root, through sudo\."/);
   assert.doesNotMatch(text, /^\s*#(?!!)/m, "no comments: names carry intent");
@@ -842,7 +857,7 @@ test("bb-box reads the helper's status whole: settings, promises, every slot, a 
   assert.deepEqual(
     { ...status, boot: "", promises: status.promises.map((promise) => promise.box), claims: status.claims.map((claim) => [claim.slot, claim.box]), slots: status.slots.map((slot) => [slot.id, slot.is, slot.box, slot.portBase, slot.booted, slot.daemonsLoaded]), sweeps: status.sweeps.map((sweep) => [sweep.uid, sweep.uidsInPass]) },
     {
-      helper: 6, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60, bbApp: null, bbAppKept: false,
+      helper: 7, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60, bbApp: null, bbAppKept: false,
       runtime: RUNTIME, model: "iPhone 18 Pro", counted: 1, promises: ["box_p"], claims: [["1", "box_a"]], slots: [["1", "held", "box_a", 20000, true, true]], secondDevices: [], deviceWords: [], sweeping: 0, sweeps: [[80002, 1]],
     },
   );
