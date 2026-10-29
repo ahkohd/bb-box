@@ -17,7 +17,7 @@ import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
-import { fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
+import { boxTitleBadges, fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { BoxLine, DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, SLOW_VIDEO_RETRY_MS, SLOW_VIDEO_STILLS_WORDS, STALL_MS, STILLS_WORDS, SelkiesSession, decodesMacroblocks, devicePasteTooLongWords, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
@@ -7028,6 +7028,36 @@ test("F-22b: at 360 px a dedicated ios row shows its name, iOS and Simulator, it
       expect(actions("calm-otter")).toEqual(["Open terminal", "calm-otter actions"]);
       fireEvent.click(slot.getByRole("button", { name: "tall-ridge actions" }));
       expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual(expect.arrayContaining(["Open simulator", "Open desktop", "Open terminal", "Stop"]));
+    });
+  } finally {
+    window.matchMedia = wide;
+  }
+});
+
+test("F-22c: a row's badges rank its device's word first, then Shared, then its form, then Desktop, then the rest", () => {
+  const ranks = (one: BoxView, machine = false) => boxTitleBadges(one, machine).map((badge) => `${badge.label} ${badge.rank}`);
+  expect(ranks(SHARED_IOS)).toEqual(["Simulator 0", "Shared 1"]);
+  expect(ranks(DEDICATED_IOS)).toEqual(["Simulator 0", "Desktop 3", "VM 2"]);
+  expect(ranks(ANDROID)).toEqual(["Emulator 0", "VM 2"]);
+  expect(ranks(LINUX_DESKTOP, true)).toEqual(["Desktop 3", "GPU 4", "LXC 2", "BB machine 2"]);
+});
+
+test("F-22c: at 360 px an android row shows Emulator before VM, and a shared ios row Simulator, then Shared, before anything else", async () => {
+  const compact = (query: string) => ({ matches: query === "(max-width: 767px)", media: query, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false });
+  const wide = window.matchMedia;
+  window.matchMedia = compact as unknown as typeof window.matchMedia;
+  try {
+    await withRowLayout(188, async () => {
+      const slot = panel(server([ANDROID, SHARED_IOS]).handlers);
+      await slot.findByText("green-bay");
+      expect(shownTitle(slot.getByRole("button", { name: "green-bay: details" }))).toEqual({ name: "green-bay", parts: ["Android", "Emulator"], cut: null });
+      expect(shownTitle(slot.getByRole("button", { name: "brisk-wren: details" }))).toEqual({ name: "brisk-wren", parts: ["iOS", "Simulator"], cut: null });
+    });
+    await withRowLayout(250, async () => {
+      const slot = panel(server([ANDROID, SHARED_IOS]).handlers);
+      await slot.findByText("green-bay");
+      expect(shownTitle(slot.getByRole("button", { name: "green-bay: details" }))).toEqual({ name: "green-bay", parts: ["Android", "Pixel 8", "Emulator", "VM"], cut: "33px" });
+      expect(shownTitle(slot.getByRole("button", { name: "brisk-wren: details" }))).toEqual({ name: "brisk-wren", parts: ["iOS", "Simulator", "Shared"], cut: null });
     });
   } finally {
     window.matchMedia = wide;
