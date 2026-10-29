@@ -115,26 +115,26 @@ export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
   },
   [SSH_POOL_KEYS.iosHostsMost]: {
     type: "number",
-    label: "SSH host pool: slots for iOS boxes per Mac",
+    label: "SSH host pool: slots per shared iOS host",
     description:
-      "The most iOS slots each Mac has at once, making, ready or held. This counts only Macs whose line lists ios, and a Mac is lent whole only while it lends no slot. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins.",
+      "The most slots each shared iOS host has at once, making, ready or held. Here a shared iOS host is a Mac whose line lists ios, and it is lent whole only while it lends no slot. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins.",
   },
   [SSH_POOL_KEYS.iosHostsAhead]: {
     type: "number",
-    label: "SSH host pool: ready slots for iOS boxes kept on a Mac",
-    description: "Slots each Mac keeps ready, so the next iOS box is ready in seconds. This counts only Macs whose line lists ios, while they are not lent whole.",
+    label: "SSH host pool: ready slots kept on a shared iOS host",
+    description: "Slots a shared iOS host keeps ready, so the next iOS box is ready in seconds. Here a shared iOS host is a Mac whose line lists ios, while it is not lent whole.",
     default: POOL_SLOTS_DEFAULTS.ahead,
   },
   [SSH_POOL_KEYS.iosHostsResettingMost]: {
     type: "number",
-    label: "SSH host pool: slots a Mac resets at once",
-    description: "The most released iOS slots a Mac resets in one pass, sweeping their files.",
+    label: "SSH host pool: slots a shared iOS host resets at once",
+    description: "The most released slots a shared iOS host resets in one pass, sweeping their files.",
     default: POOL_SLOTS_DEFAULTS.resettingMost,
   },
   [SSH_POOL_KEYS.iosHostsDiskReserveGiB]: {
     type: "number",
-    label: "SSH host pool: disk a Mac keeps free (GiB)",
-    description: "A Mac makes no new iOS slot while it has less free disk than this.",
+    label: "SSH host pool: disk a shared iOS host keeps free (GiB)",
+    description: "A shared iOS host makes no new slot while it has less free disk than this.",
     default: POOL_SLOTS_DEFAULTS.diskReserveGiB,
   },
 };
@@ -375,13 +375,13 @@ function checkSlots(values: Readonly<Record<string, unknown>>, problem: (key: st
     if (!Number.isInteger(value) || value < least || value > most) problem(key, `SSH host pool: ${words} must be a whole number from ${least} to ${most}.`);
     return value;
   };
-  const most = read(SSH_POOL_KEYS.iosHostsMost, POOL_SLOTS_DEFAULTS.most, 1, MOST_SLOTS, "the iOS slots per Mac");
+  const most = read(SSH_POOL_KEYS.iosHostsMost, POOL_SLOTS_DEFAULTS.most, 1, MOST_SLOTS, "the slots per shared iOS host");
   const mostSet = values[SSH_POOL_KEYS.iosHostsMost] !== undefined && values[SSH_POOL_KEYS.iosHostsMost] !== null && values[SSH_POOL_KEYS.iosHostsMost] !== "";
   return {
     most,
     ...(mostSet ? { mostSet: most } : {}),
-    ahead: read(SSH_POOL_KEYS.iosHostsAhead, POOL_SLOTS_DEFAULTS.ahead, 0, MOST_SLOTS, "the ready iOS slots kept on a Mac"),
-    resettingMost: read(SSH_POOL_KEYS.iosHostsResettingMost, POOL_SLOTS_DEFAULTS.resettingMost, 1, 64, "the iOS slots a Mac sweeps at once"),
-    diskReserveGiB: read(SSH_POOL_KEYS.iosHostsDiskReserveGiB, POOL_SLOTS_DEFAULTS.diskReserveGiB, 0, 4096, "the disk a Mac keeps free of iOS slots"),
+    ahead: read(SSH_POOL_KEYS.iosHostsAhead, POOL_SLOTS_DEFAULTS.ahead, 0, MOST_SLOTS, "the ready slots kept on a shared iOS host"),
+    resettingMost: read(SSH_POOL_KEYS.iosHostsResettingMost, POOL_SLOTS_DEFAULTS.resettingMost, 1, 64, "the slots a shared iOS host resets at once"),
+    diskReserveGiB: read(SSH_POOL_KEYS.iosHostsDiskReserveGiB, POOL_SLOTS_DEFAULTS.diskReserveGiB, 0, 4096, "the disk a shared iOS host keeps free"),
   };
 }

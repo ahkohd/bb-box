@@ -9,7 +9,6 @@ import type { BackendConfig } from "../core/document.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { KindInfoView } from "../plugin/configuration.ts";
 import { Badge, StatusDot } from "./common.tsx";
-import { effectiveKind } from "./config.ts";
 import { DESKTOP_PAGE, MACHINES_TAB } from "./desktop.tsx";
 import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
@@ -35,13 +34,9 @@ import {
 } from "./settings-status.ts";
 import { backendPart } from "./settings-backend-fields.tsx";
 import { failedImagesWords, imageStatusItems, useImagesProgress } from "./settings-images.tsx";
+import { DEFAULT_STAYS_ON, KindSwitch, keptInPlace, kindPart, useKindSwitch } from "./settings-kinds.tsx";
 
-const keptHere = new Set<string>();
 let monitorChangedThisLoad = false;
-
-export function forgetKindsKeptHere(): void {
-  keptHere.clear();
-}
 
 export function noteMonitorChanged(): void {
   monitorChangedThisLoad = true;
@@ -215,58 +210,47 @@ function Backends() {
 }
 
 function KindRow({ info }: { info: KindInfoView }) {
-  const { state, nav, instant, writes } = useSettings();
-  const key = switchKey.kind(info.id);
-  const pending = instant.pendingValue<boolean>(key);
-  const enabled = pending ?? effectiveKind(state, info.id).enabled;
-  const general = { ...state.defaults.general, ...state.document.general };
-  const isDefault = general.defaultKind === info.id;
-  const name = kindName(state.kinds, info);
+  const { state, nav, instant } = useSettings();
+  const kind = useKindSwitch(info);
+  const draftChip = useDraftChip();
   const availability = kindAvailability(state, info.id);
   const summaryId = `settings-kind-summary-${info.id}`;
   const defaultId = `settings-kind-default-${info.id}`;
   const rowKey = `kind-${info.id}`;
-  const note = instant.note(key);
-  const twinBadge = name !== info.label ? (info.gpu ? "GPU" : "CPU") : null;
+  const twinBadge = kind.name !== info.label ? (info.gpu ? "GPU" : "CPU") : null;
   return (
-    <div className={cn("transition-colors duration-150 hover:bg-state-hover", !enabled && "opacity-70")}>
+    <div className={cn("transition-colors duration-150 hover:bg-state-hover", !kind.enabled && "opacity-70")}>
       <div className="relative flex items-center gap-3 px-4 py-2.5">
-        <RowButton rowKey={rowKey} label={name} describedBy={summaryId} onClick={() => nav.go({ page: "kind", id: info.id }, rowKey)} />
+        <RowButton rowKey={rowKey} label={kind.name} describedBy={summaryId} onClick={() => nav.go({ page: "kind", id: info.id }, rowKey)} />
         <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
           <span className="flex shrink-0 flex-wrap items-center gap-1.5 text-sm text-foreground">
             <span className="pointer-events-none" aria-hidden>
               {info.label}
             </span>
             {twinBadge ? <Badge>{twinBadge}</Badge> : null}
-            {isDefault ? <Badge>Default</Badge> : null}
+            {kind.isDefault ? <Badge>Default</Badge> : null}
+            {draftChip([kindPart(info.id)])}
           </span>
           <span id={summaryId} className={cn("pointer-events-none min-w-0 flex-1 truncate text-xs sm:text-right", availability === "lost" ? "text-warning-text" : "text-muted-foreground")}>
             {kindSummary(state, info)}
           </span>
         </span>
         <span className="pointer-events-none">
-          <SavedTick show={instant.isSaved(key)} />
+          <SavedTick show={instant.isSaved(kind.key)} />
         </span>
-        {isDefault && enabled ? <span id={defaultId} className="sr-only">The default kind stays on. Choose another default on the Boxes page to turn it off.</span> : null}
+        {kind.locked ? (
+          <span id={defaultId} className="sr-only">
+            {DEFAULT_STAYS_ON}
+          </span>
+        ) : null}
         <RowControl>
-          <Switch
-            aria-label={`${name}: offered to threads`}
-            aria-describedby={isDefault && enabled ? `${summaryId} ${defaultId}` : summaryId}
-            title={isDefault && enabled ? "The default kind stays on. Choose another default on the Boxes page to turn it off." : undefined}
-            checked={enabled}
-            disabled={isDefault && enabled}
-            aria-disabled={instant.pending !== null || undefined}
-            onCheckedChange={(on) => {
-              keptHere.add(info.id);
-              void instant.run(writes.kindOn(state, info.id, on, name));
-            }}
-          />
+          <KindSwitch info={info} describedBy={kind.locked ? `${summaryId} ${defaultId}` : summaryId} />
         </RowControl>
         <span className="pointer-events-none">
           <Chevron />
         </span>
       </div>
-      <RowNote note={note} className="px-4 pb-2" />
+      <RowNote note={instant.note(kind.key)} className="px-4 pb-2" />
     </div>
   );
 }
@@ -275,13 +259,13 @@ function Kinds() {
   const { state, nav } = useSettings();
   const [showFolded, setShowFolded] = useState(false);
   const general = { ...state.defaults.general, ...state.document.general };
-  const shown = (info: KindInfoView) => keptHere.has(info.id) || kindAvailability(state, info.id) === "offered" || kindAvailability(state, info.id) === "lost";
+  const shown = (info: KindInfoView) => keptInPlace(info.id) || kindAvailability(state, info.id) === "offered" || kindAvailability(state, info.id) === "lost";
   const folded = state.kinds.filter((info) => !shown(info));
   const off = folded.filter((info) => kindAvailability(state, info.id) === "off").length;
   const none = folded.length - off;
   const defaultInfo = state.kinds.find((kind) => kind.id === general.defaultKind);
   const changeDefault = (
-    <button type="button" data-row-key="change-default" className="cursor-pointer rounded-sm text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => nav.go({ page: "option", id: "boxes" }, "change-default")}>
+    <button type="button" data-row-key="change-default" className="cursor-pointer rounded-sm text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => nav.go({ page: "option", id: "boxes" }, "change-default", "general/defaultKind")}>
       Change the default
     </button>
   );

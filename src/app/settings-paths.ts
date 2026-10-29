@@ -3,8 +3,9 @@ import type { BackendConfig, ConfigDocument, HostConfig, ImageBake, Problem } fr
 import { withImage } from "../core/project-images.ts";
 import type { TailnetSetting } from "../core/tailnet-settings.ts";
 import type { FieldValue } from "../backends/types.ts";
+import type { Preset } from "../core/sizes.ts";
 import type { ConfigState, FieldView } from "../plugin/configuration.ts";
-import { effectiveKind, isSecretField, isSecretState, kindChanges, withBackend, withGeneral, withKind, withMonitor, withoutBackend } from "./config.ts";
+import { effectiveKind, isSecretField, isSecretState, kindChanges, mib, PRESET_LABELS, PRESET_NAMES, withBackend, withGeneral, withKind, withMonitor, withoutBackend, type KindSizes } from "./config.ts";
 
 export type Path = string;
 export type PlainValue = string | number | boolean | null;
@@ -122,6 +123,7 @@ export type BackendAt =
   | { readonly at: "enabled"; readonly id: string }
   | { readonly at: "label"; readonly id: string }
   | { readonly at: "field"; readonly id: string; readonly key: string }
+  | { readonly at: "warm"; readonly id: string; readonly kind: string }
   | { readonly at: "host"; readonly id: string; readonly host: string }
   | { readonly at: "host-name"; readonly id: string; readonly host: string }
   | { readonly at: "host-enabled"; readonly id: string; readonly host: string }
@@ -134,6 +136,7 @@ export function backendAt(path: Path): BackendAt | null {
   if (rest.length === 1 && rest[0] === "enabled") return { at: "enabled", id };
   if (rest.length === 1 && rest[0] === "label") return { at: "label", id };
   if (rest.length === 2 && rest[0] === "fields" && rest[1]) return { at: "field", id, key: rest[1] };
+  if (rest.length === 2 && rest[0] === "warm" && rest[1]) return { at: "warm", id, kind: rest[1] };
   if (rest[0] !== "hosts" || !rest[1]) return null;
   const host = rest[1];
   const tail = rest.slice(2);
@@ -185,6 +188,163 @@ function withImageEdits(state: ConfigState, input: ConfigDocument, edits: readon
     }
   }
   return { document, sentAs: {}, needed };
+}
+
+export const SIZE_PARTS = ["cores", "memoryGiB", "diskGiB"] as const;
+export type SizePart = (typeof SIZE_PARTS)[number];
+export type SizeName = Preset | "largest";
+
+export type KindAt =
+  | { readonly at: "enabled"; readonly id: string }
+  | { readonly at: "size"; readonly id: string; readonly size: SizeName; readonly part: SizePart }
+  | { readonly at: "size-row"; readonly id: string; readonly size: SizeName }
+  | { readonly at: "default"; readonly id: string }
+  | { readonly at: "spares"; readonly id: string };
+
+export function warmPath(backendId: string, kind: string): Path {
+  return `backends/${backendId}/warm/${kind}`;
+}
+
+export function kindPath(id: string, setting: "enabled" | "default" | "spares"): Path {
+  return `kinds/${id}/${setting}`;
+}
+
+export function sizeRowPath(id: string, size: SizeName): Path {
+  return size === "largest" ? `kinds/${id}/largest` : `kinds/${id}/presets/${size}`;
+}
+
+export function sizePath(id: string, size: SizeName, part: SizePart): Path {
+  return `${sizeRowPath(id, size)}/${part}`;
+}
+
+function isSizePart(part: string | undefined): part is SizePart {
+  return (SIZE_PARTS as readonly (string | undefined)[]).includes(part);
+}
+
+function isPreset(name: string | undefined): name is Preset {
+  return (PRESET_NAMES as readonly (string | undefined)[]).includes(name);
+}
+
+export function kindAt(path: Path): KindAt | null {
+  const [section, id, ...rest] = path.split("/");
+  if (section !== "kinds" || !id) return null;
+  if (rest.length === 1 && (rest[0] === "enabled" || rest[0] === "default" || rest[0] === "spares")) return { at: rest[0], id };
+  const size: SizeName | null = rest[0] === "largest" ? "largest" : rest[0] === "presets" && isPreset(rest[1]) ? rest[1] : null;
+  if (!size) return null;
+  const tail = size === "largest" ? rest.slice(1) : rest.slice(2);
+  if (!tail.length) return { at: "size-row", id, size };
+  if (tail.length === 1 && isSizePart(tail[0])) return { at: "size", id, size, part: tail[0] };
+  return null;
+}
+
+function sizeOf(sizes: KindSizes, size: SizeName) {
+  return size === "largest" ? sizes.largest : sizes.presets[size];
+}
+
+function storedSizePart(sizes: KindSizes, size: SizeName, part: SizePart): PlainValue {
+  const box = sizeOf(sizes, size);
+  if (part === "cores") return box.cores;
+  if (part === "memoryGiB") return box.memoryMiB / 1024;
+  return box.diskGiB;
+}
+
+function storedAtKind(state: ConfigState, at: KindAt): Stored {
+  const sizes = effectiveKind(state, at.id);
+  switch (at.at) {
+    case "enabled":
+      return { kind: "value", value: sizes.enabled };
+    case "default":
+      return { kind: "value", value: sizes.default };
+    case "spares":
+      return { kind: "value", value: sizes.spares };
+    case "size":
+      return { kind: "value", value: storedSizePart(sizes, at.size, at.part) };
+    case "size-row":
+      return { kind: "value", value: null };
+  }
+}
+
+function countValue(value: PlainValue, empty: PlainValue): PlainValue {
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  if (text === "") return empty;
+  const number = Number(text);
+  return Number.isFinite(number) ? number : value;
+}
+
+function kindValue(at: KindAt, value: PlainValue): PlainValue {
+  if (at.at === "spares") return countValue(value, 0);
+  if (at.at === "size") return countValue(value, at.part === "diskGiB" ? null : "");
+  return value;
+}
+
+function withSizePart(sizes: KindSizes, size: SizeName, part: SizePart, value: number | null): KindSizes {
+  const box = sizeOf(sizes, size);
+  const next = part === "cores" ? { ...box, cores: value ?? box.cores } : part === "memoryGiB" ? { ...box, memoryMiB: value === null ? box.memoryMiB : mib(value) } : { ...box, diskGiB: value };
+  return size === "largest" ? { ...sizes, largest: next } : { ...sizes, presets: { ...sizes.presets, [size]: next } };
+}
+
+function withKindEdit(sizes: KindSizes, at: KindAt, value: PlainValue): KindSizes {
+  switch (at.at) {
+    case "enabled":
+      return typeof value === "boolean" ? { ...sizes, enabled: value } : sizes;
+    case "default":
+      return isPreset(typeof value === "string" ? value : undefined) ? { ...sizes, default: value as Preset } : sizes;
+    case "spares":
+      return typeof value === "number" ? { ...sizes, spares: value } : sizes;
+    case "size":
+      return typeof value === "number" || (value === null && at.part === "diskGiB") ? withSizePart(sizes, at.size, at.part, value) : sizes;
+    case "size-row":
+      return sizes;
+  }
+}
+
+function withKindEdits(state: ConfigState, input: ConfigDocument, edits: readonly PathEdit[]): Built {
+  const byKind = new Map<string, PathEdit[]>();
+  for (const edit of edits) {
+    const at = kindAt(edit.path);
+    if (at && edit.value.kind === "plain") byKind.set(at.id, [...(byKind.get(at.id) ?? []), edit]);
+  }
+  let document = input;
+  let needed = false;
+  for (const [id, list] of byKind) {
+    const current = { ...state, document };
+    let sizes = effectiveKind(current, id);
+    for (const edit of list) {
+      if (edit.value.kind !== "plain") continue;
+      if (isChange(state, edit)) needed = true;
+      sizes = withKindEdit(sizes, kindAt(edit.path)!, documentValue(state, edit.path, edit.value.value));
+    }
+    document = withKind(document, id, kindChanges(current, id, sizes));
+  }
+  return { document, sentAs: {}, needed };
+}
+
+const SIZE_PART_WORDS: Readonly<Record<SizePart, string>> = { cores: "cores", memoryGiB: "memory", diskGiB: "disk" };
+
+export function sizeName(size: SizeName): string {
+  return size === "largest" ? "Largest" : PRESET_LABELS[size];
+}
+
+function kindEditProblems(edits: readonly PathEdit[]): DraftProblem[] {
+  const problems: DraftProblem[] = [];
+  const whole = (value: PlainValue, least: number) => typeof value === "number" && Number.isInteger(value) && value >= least;
+  for (const edit of edits) {
+    if (edit.value.kind !== "plain") continue;
+    const at = kindAt(edit.path);
+    const warm = backendAt(edit.path)?.at === "warm";
+    if (!at && !warm) continue;
+    const value = warm ? countValue(edit.value.value, 0) : at ? kindValue(at, edit.value.value) : null;
+    if (warm && !whole(value, 0)) problems.push({ path: edit.path, message: "Give the warm boxes as a whole number, 0 for none." });
+    else if (at?.at === "spares" && !whole(value, 0)) problems.push({ path: edit.path, message: "Give the spare boxes as a whole number, 0 for none." });
+    else if (at?.at === "size") {
+      if (at.part === "cores" && !whole(value, 1)) problems.push({ path: edit.path, message: "Give the cores as a whole number, at least 1." });
+      else if (at.part === "memoryGiB" && !(typeof value === "number" && value > 0 && Number.isInteger(value * 1024))) problems.push({ path: edit.path, message: "Give the memory in GiB, such as 4 or 0.5." });
+      else if (at.part === "diskGiB" && value === null && at.size === "largest") problems.push({ path: edit.path, message: "Give the disk in GiB." });
+      else if (at.part === "diskGiB" && value !== null && !whole(value, 1)) problems.push({ path: edit.path, message: `Give the disk as a whole number of GiB${at.size === "largest" ? "" : ", or leave it empty for the image's own"}.` });
+    }
+  }
+  return problems;
 }
 
 export function isNewHost(host: string): boolean {
@@ -276,6 +436,9 @@ export function documentValue(state: ConfigState, path: Path, value: PlainValue)
   if (tailnetKey) return tailnetValue(tailnetKey, value);
   const at = backendAt(path);
   if (at?.at === "field" || at?.at === "host-field") return fieldValue(fieldAt(state, path), value);
+  if (at?.at === "warm") return countValue(value, 0);
+  const kind = kindAt(path);
+  if (kind) return kindValue(kind, value);
   if (at?.at === "label") return typeof value === "string" ? value.trim() || null : value;
   const setting = settingOf(path);
   if (!setting) return value;
@@ -303,6 +466,8 @@ function storedAtBackend(state: ConfigState, at: BackendAt, path: Path): Stored 
       return { kind: "value", value: backend.enabled };
     case "label":
       return { kind: "value", value: backend.label ?? null };
+    case "warm":
+      return { kind: "value", value: backend.warm?.[at.kind] ?? 0 };
     case "field": {
       const field = fieldAt(state, path);
       const raw = backend.fields[at.key];
@@ -342,8 +507,8 @@ export function storedAt(state: ConfigState, path: Path, value?: EditValue): Sto
   if (at) return storedAtBackend(state, at, path);
   const image = imageAt(path);
   if (image) return storedAtImage(state.document, image);
-  const [section, id, key] = path.split("/");
-  if (section === "kinds" && id && key === "enabled") return { kind: "value", value: effectiveKind(state, id).enabled };
+  const kind = kindAt(path);
+  if (kind) return storedAtKind(state, kind);
   if (isFilePath(path)) {
     const file = value?.kind === "new-file" ? value.path.trim() : fileOfPath(path);
     return { kind: "version", version: file ? fileVersion(state.document, file) : null };
@@ -463,6 +628,7 @@ function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: read
     const fields: DraftFields = { ...backend.fields };
     let label = backend.label;
     let enabled = backend.enabled;
+    const warm: Record<string, number> = { ...backend.warm };
     let hosts: HostDraft[] = (backend.hosts ?? []).map((host) => ({ host, from: hostPath(id, host.name) }));
     const newHosts: PathEdit[] = [];
     const editHost = (name: string, change: (host: HostConfig) => HostConfig) => {
@@ -476,6 +642,10 @@ function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: read
         if (at.at === "enabled" && typeof value === "boolean") enabled = value;
         else if (at.at === "label") label = typeof value === "string" ? value : undefined;
         else if (at.at === "field") setField(fields, at.key, value);
+        else if (at.at === "warm" && typeof value === "number") {
+          if (value) warm[at.kind] = value;
+          else delete warm[at.kind];
+        }
         else if (at.at === "host-enabled" && typeof value === "boolean") editHost(at.host, (host) => ({ ...host, enabled: value }));
         else if (at.at === "host-field" && !isNewHost(at.host)) {
           editHost(at.host, (host) => {
@@ -511,12 +681,13 @@ function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: read
     hosts.forEach((each, index) => {
       sentAs[`backends.${id}.hosts.${index}`] = each.from;
     });
-    const { label: _label, hosts: _hosts, ...rest } = backend;
+    const { label: _label, hosts: _hosts, warm: _warm, ...rest } = backend;
     document = withBackend(document, {
       ...rest,
       ...(label ? { label } : {}),
       enabled,
       fields,
+      ...(Object.keys(warm).length ? { warm } : {}),
       ...(hosts.length || backend.hosts ? { hosts: hosts.map((each) => each.host) } : {}),
     });
   }
@@ -566,21 +737,16 @@ export function candidateOf(state: ConfigState, edits: readonly PathEdit[]): Can
   for (const edit of edits) {
     if (edit.value.kind !== "plain") continue;
     const setting = settingOf(edit.path);
-    const [section, id, key] = edit.path.split("/");
-    if (setting) {
-      if (isChange(state, edit)) needed = true;
-      document = writeSetting(state, document, setting.section, setting.key, documentValue(state, edit.path, edit.value.value));
-    } else if (section === "kinds" && id && key === "enabled" && typeof edit.value.value === "boolean") {
-      if (isChange(state, edit)) needed = true;
-      const current = { ...state, document };
-      document = withKind(document, id, kindChanges(current, id, { ...effectiveKind(current, id), enabled: edit.value.value }));
-    }
+    if (!setting) continue;
+    if (isChange(state, edit)) needed = true;
+    document = writeSetting(state, document, setting.section, setting.key, documentValue(state, edit.path, edit.value.value));
   }
-  const backends = withBackendEdits(state, document, edits);
+  const kinds = withKindEdits(state, document, edits);
+  const backends = withBackendEdits(state, kinds.document, edits);
   const files = withFiles(backends.document, edits);
   const tailnet = withTailnet(state, files.document, edits);
   const images = withImageEdits(state, tailnet.document, edits);
-  return { document: images.document, conflicts, needed: needed || backends.needed || files.needed || tailnet.needed || images.needed, sentAs: { ...backends.sentAs, ...files.sentAs } };
+  return { document: images.document, conflicts, needed: needed || kinds.needed || backends.needed || files.needed || tailnet.needed || images.needed, sentAs: { ...backends.sentAs, ...files.sentAs } };
 }
 
 function hostProblemPath(id: string, index: string, rest: string | undefined, sentAs: Readonly<Record<string, Path>>): Path {
@@ -604,6 +770,12 @@ export function problemPath(serverPath: string, sentAs: Readonly<Record<string, 
   if (setting) return `${setting[1]}/${setting[2]}`;
   const kind = /^kinds\.([^.]+)$/.exec(serverPath);
   if (kind) return `kinds/${kind[1]}/enabled`;
+  const size = /^kinds\.([^.]+)\.(presets\.[a-z]+|largest)(?:\.(cores|memoryMiB|diskGiB))?$/.exec(serverPath);
+  if (size) return `kinds/${size[1]}/${size[2]!.replace(".", "/")}${size[3] ? `/${size[3] === "memoryMiB" ? "memoryGiB" : size[3]}` : ""}`;
+  const kindSetting = /^kinds\.([^.]+)\.(default|spares|presets)$/.exec(serverPath);
+  if (kindSetting) return `kinds/${kindSetting[1]}/${kindSetting[2]}`;
+  const warm = /^backends\.([^.]+)\.warm(?:\.([^.]+))?$/.exec(serverPath);
+  if (warm) return warm[2] ? warmPath(warm[1]!, warm[2]) : `backends/${warm[1]}/warm`;
   const host = /^backends\.([^.]+)\.hosts\.(\d+)(?:\.(.+))?$/.exec(serverPath);
   if (host) return hostProblemPath(host[1]!, host[2]!, host[3], sentAs);
   const hosts = /^backends\.([^.]+)\.hosts$/.exec(serverPath);
@@ -667,7 +839,7 @@ function secretEditProblems(state: ConfigState, edits: readonly PathEdit[]): Dra
 }
 
 export function editProblems(state: ConfigState, edits: readonly PathEdit[]): DraftProblem[] {
-  return [...fileEditProblems(edits), ...secretEditProblems(state, edits), ...hostEditProblems(state, edits)];
+  return [...fileEditProblems(edits), ...secretEditProblems(state, edits), ...hostEditProblems(state, edits), ...kindEditProblems(edits)];
 }
 
 export function fileEditProblems(edits: readonly PathEdit[]): DraftProblem[] {
@@ -711,10 +883,30 @@ const SETTING_LABELS: Readonly<Record<string, string>> = {
   "monitor/pressureNotifications": "Pressure notifications",
 };
 
+function kindLabelOf(path: Path): string | null {
+  const at = kindAt(path);
+  if (!at) return null;
+  switch (at.at) {
+    case "enabled":
+      return "Offered to threads";
+    case "default":
+      return "Default size";
+    case "spares":
+      return "Spare boxes";
+    case "size":
+      return `${sizeName(at.size)} ${SIZE_PART_WORDS[at.part]}`;
+    case "size-row":
+      return sizeName(at.size);
+  }
+}
+
 function backendLabelOf(path: Path, value: EditValue | undefined, state: ConfigState | undefined): string | null {
   const at = backendAt(path);
   if (!at) return null;
   if (at.at === "label") return "Name";
+  if (at.at === "warm") {
+    return `Warm boxes on ${state?.backends.find((each) => each.id === at.id)?.label ?? (state && backendIn(state.document, at.id)?.label) ?? at.id}`;
+  }
   if (at.at === "field" || at.at === "host-field") {
     const label = (state && fieldAt(state, path)?.label) ?? at.key;
     const field = state ? fieldAt(state, path) : null;
@@ -731,5 +923,5 @@ export function labelOf(path: Path, value?: EditValue, state?: ConfigState): str
   if (value?.kind === "new-file") return `the content of ~/${value.path.trim() || "the new file"}`;
   const file = fileOfPath(path);
   if (file !== null) return `the content of ~/${file}`;
-  return backendLabelOf(path, value, state) ?? path;
+  return backendLabelOf(path, value, state) ?? kindLabelOf(path) ?? path;
 }

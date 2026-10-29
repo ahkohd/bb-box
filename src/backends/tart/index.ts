@@ -9,6 +9,7 @@ export const tartDriver: BackendDriver<TartConfig> = {
   nature: "virtual",
   form: "VM",
   kinds: [...TART_KINDS, IOS_IMAGE_KIND],
+  warmKinds: ["macos", "macos-desktop", "windows-arm64-desktop"],
   fields: TART_FIELDS,
   offWhenEmpty: ["macos-image", "macos-desktop-image", "linux-image", "linux-desktop-image", "windows-image", "ios-image"],
   hostFields: TART_HOST_FIELDS,

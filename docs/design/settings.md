@@ -274,12 +274,56 @@ revision reloads and says so.
   removal until Save.
 - **The bar** has Check beside Discard and Save. Save stays on the page.
 
+## A kind's page
+
+- **Header**: the kind's full name, its badges, "Default kind" when it is
+  the default, its description, "Saved changes reach new boxes; boxes
+  already made keep their size" and the saving rule. Then the Saved tick,
+  Make default (a standalone action, at once, shown while the kind is on
+  and not the default) and "Offered to threads" with its switch.
+- **The default kind's rule**, the same on the overview's row and here: its
+  switch stays on and cannot be turned off, but keeps focus and says why,
+  "The default kind stays on. Choose another default to turn it off." The
+  page shows that line with Choose another default, which opens Boxes with
+  focus on the Default kind menu; the overview's Change the default does
+  the same. A default kind that is off (an agent can do it) is a problem
+  on the page and in Status, and its switch turns it on.
+- **Sizes**: Small, Medium, Large and Largest by cores, memory in GiB and
+  disk in GiB, with the default chosen by a radio in its own column. An
+  empty disk keeps the image's own; Largest needs one. Below 640 px each
+  size is a block with its three fields labelled and Default beside its
+  name. A problem sits under its size, named, such as "Small: give the
+  cores as a whole number, at least 1."
+- **Where it runs**: each backend that makes the kind, in the document's
+  order, which is the order a new box tries them. A backend is listed when
+  its driver declares the kind or when it makes it now: Namespace makes iOS
+  boxes only through its shared iOS hosts, so it is listed for the iOS
+  Simulator while it lends them. Each row has its name (a link to its page),
+  its form, whether it makes the kind now, is off, is set up not to make
+  it, or cannot make it now (with why), its warm count and any shortfall.
+  A warm count is offered only where the backend keeps warm boxes of the
+  kind, as its driver's `warmKinds` says; elsewhere the row says "No warm
+  boxes of this kind: it makes each box when a thread asks", or for iOS
+  "No warm boxes: its shared iOS hosts keep slots ready instead", with a
+  link to that card on the backend's page. A count stored where it does
+  nothing stays editable and says so, so it can be set to 0.
+- **Spare boxes**: Spares to keep, with how many are ready or being made.
+  On device kinds it says spares are off by default and why.
+- **One form** on the engine: the part `kind/<id>` writes
+  `kinds/<id>/presets/<size>/<cores|memoryGiB|diskGiB>`,
+  `kinds/<id>/largest/…`, `kinds/<id>/default`, `kinds/<id>/spares` and
+  `backends/<backend>/warm/<kind>`, saved as changes from the shipped
+  sizes. Memory is typed in GiB and stored in MiB. Enter saves.
+
+A kind switched off on its page or the overview stays in its place on the
+overview, dimmed, until the person leaves BB Box's settings.
+
 ## Each page
 
 | Page | Holds |
 | --- | --- |
 | A backend | See [A backend's page](#a-backends-page). For Docker on a BB machine, the Docker on BB machines list follows the cards |
-| A kind | Header with its full name, badges, description, Make default, and the "offered to threads" switch; the default kind's switch is disabled, with why. Then its editor: sizes, the default size, largest size, warm boxes per backend and spares |
+| A kind | See [A kind's page](#a-kinds-page) |
 | Boxes | Default kind (a menu that acts at once); boxes per thread; boxes join BB as machines and Linux desktops as video (switches); Files for every box |
 | Images | See [The Images page](#the-images-page) |
 | Devices | Streaming: iOS video encoding, a menu, and "Share each Mac's encoder fairly", a switch, both at once. Set on other pages: each backend's shared iOS hosts, and each device kind's spares with "None, as by default" and why they are off by default, each opening its page. For testing: the test device, a switch |
@@ -345,7 +389,9 @@ on the Boxes page, under Machines".
 | 2: the editing engine on Boxes and Monitor, and every switch on it | Built |
 | 3: each backend's page on the engine, with health, In use, cards, Macs and the menu | Built |
 | 4: the drivers' help text | Built |
-| 5 to 7: Docker on BB machines as backends, kind pages, first run | To come, as 067 lists them |
+| 5: Docker on BB machines as backends | To come, as 067 lists it |
+| 6: each kind's page on the engine, the default kind's rule everywhere, kinds kept in place | Built |
+| 7: first run | To come, as 067 lists it |
 | 8: Images, with every rebuild's run state, projects' images, and failed rebuilds in Status | Built |
 | 9: Devices and Network on the engine | Built |
 | 10 and 11: Configuration, Find | To come, as 067 lists them |
@@ -358,9 +404,11 @@ The code: `src/app/settings.tsx` (the view: hash, focus and scroll),
 `settings-checks.ts` (checks bound to a form), `settings-backend-page.tsx`
 and `settings-backend-fields.tsx` (a backend's page), `settings-images.tsx`
 and `rebuild-now.tsx` (the Images page),
+`settings-kind-page.tsx` and `settings-kinds.tsx` (a kind's page, where it
+runs, and the kind switch with the default kind's rule),
 `settings-tailnet.tsx` (Network), `settings-context.tsx`,
 `settings-overview.tsx`, `settings-pages.tsx` and `settings-parts.tsx`.
 Today's forms stay in
-`settings-backends.tsx`, `settings-kinds.tsx`, `settings-fields.tsx`,
+`settings-backends.tsx`, `settings-fields.tsx`,
 `settings-files.tsx`, `settings-docker-hosts.tsx`
 and `first-run.tsx`, with the helpers in `config.ts`.

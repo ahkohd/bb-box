@@ -335,7 +335,8 @@ function groupSummary(form: BackendForm, fields: readonly FieldView[]): string {
 }
 
 export function FieldCards({ form, groups, forced }: { form: BackendForm; groups: readonly { readonly id: FieldGroup; readonly fields: readonly FieldView[] }[]; forced: (path: Path) => boolean }) {
-  const [unfolded, setUnfolded] = useState<ReadonlySet<FieldGroup>>(() => new Set());
+  const { nav } = useSettings();
+  const [unfolded, setUnfolded] = useState<ReadonlySet<FieldGroup>>(() => new Set(groups.filter((group) => group.fields.some((field) => backendFieldPath(form.config.id, field.key) === nav.arrival?.focus)).map((group) => group.id)));
   return (
     <>
       {groups.map((group) => {

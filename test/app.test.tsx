@@ -757,6 +757,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
         description: "Boxes on a fake host.",
         nature: "virtual",
         kinds: ["linux", "linux-desktop"],
+        warmKinds: ["linux"],
         fields: [
           { key: "url", type: "string", label: "API URL", description: "For example https://192.0.2.10:8006.", group: "connection", default: "" },
           { key: "token", type: "string", label: "API token", secret: true, group: "credentials" },
@@ -773,6 +774,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
         description: "Your own machines over SSH.",
         nature: "real",
         kinds: ["linux"],
+        warmKinds: [],
         fields: [{ key: "machines", type: "string", label: "Machines", group: "boxes", experimental_multiline: true, default: "" }],
         hostFields: [
           { key: "address", type: "string", label: "Address", group: "connection", default: "" },
@@ -1871,7 +1873,7 @@ test("the settings overview shows an honest status, each backend with its state 
 
   expect(slot.getByText("What a thread can ask for. Linux is the default.")).toBeTruthy();
   const linux = slot.getByRole("switch", { name: "Linux: offered to threads" });
-  expect([linux.getAttribute("aria-checked"), (linux as HTMLButtonElement).disabled]).toEqual(["true", true]);
+  expect([linux.getAttribute("aria-checked"), linux.getAttribute("aria-disabled")]).toEqual(["true", "true"]);
   expect(slot.getByRole("switch", { name: "Linux desktop: offered to threads" }).getAttribute("aria-checked")).toBe("true");
   expect(slot.getAllByText("Not offered now: its backends cannot make it")).toHaveLength(2);
 
@@ -2035,6 +2037,7 @@ test("an empty field another backend fills says where its value comes from, unti
     description: "Windows boxes on the fake host.",
     nature: "virtual",
     kinds: ["linux"],
+    warmKinds: [],
     fields: [
       { key: "url", type: "string", label: "API URL", group: "connection", default: "", inherits: inherits(["url", "key"]) },
       { key: "token", type: "string", label: "API token", secret: true, group: "credentials", inherits: inherits(["token"]) },
@@ -2084,6 +2087,7 @@ function tartPage(options: { estimates?: Record<string, Record<string, number>>;
     description: "macOS VMs on your Macs.",
     nature: "virtual",
     kinds: ["linux"],
+    warmKinds: [],
     fields: [
       { key: "ios-hosts-on", type: "boolean", label: "Shared iOS hosts", group: "ios-hosts", default: false },
       { key: "ios-hosts-cores", type: "number", label: "Cores of a shared iOS host", description: "The cores of a shared iOS host's VM. Empty takes each Mac's performance cores.", group: "ios-hosts" },
@@ -2264,23 +2268,83 @@ test("Add backend lists every driver; setting one up offers Save and turn on, wh
   expect(refused.getByText("Not saved: it cannot be on with these. Save keeps it off while you fix them.")).toBeTruthy();
 });
 
-test("a kind's page holds today's editor, which saves its presets, default, largest size, warm counts and spares as changes from the shipped sizes", async () => {
-  const { handlers, changes } = server([]);
+test("a kind's page saves its sizes, default size, largest size, warm counts and spares together, as changes from the shipped sizes, and Enter saves", async () => {
+  const { handlers, changes, operations } = server([]);
   const slot = settings(handlers, "#kind/linux");
   expect(await slot.findByRole("heading", { name: /^Linux/ })).toBeTruthy();
-  expect(slot.getByText("The default kind stays on. Choose another default on the Boxes page to turn it off.")).toBeTruthy();
-  expect((slot.getByRole("textbox", { name: "Small cores" }) as HTMLInputElement).value).toBe("2");
-  expect((slot.getByRole("textbox", { name: "Largest disk" }) as HTMLInputElement).value).toBe("256");
-  fireEvent.change(slot.getByRole("textbox", { name: "Large cores" }), { target: { value: "12" } });
-  fireEvent.change(slot.getByRole("textbox", { name: "Large memory" }), { target: { value: "24" } });
-  fireEvent.click(slot.getByRole("radio", { name: "Medium is the default" }));
-  fireEvent.change(slot.getByRole("textbox", { name: "Warm Linux boxes on Fake host" }), { target: { value: "2" } });
-  fireEvent.change(slot.getByRole("textbox", { name: "Spare Linux boxes" }), { target: { value: "1" } });
-  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  expect((slot.getByRole("textbox", { name: "Small size: cores" }) as HTMLInputElement).value).toBe("2");
+  expect((slot.getByRole("textbox", { name: "Small size: memory, in GiB" }) as HTMLInputElement).value).toBe("4");
+  expect((slot.getByRole("textbox", { name: "Small size: disk, in GiB" }) as HTMLInputElement).placeholder).toBe("Image's own");
+  expect((slot.getByRole("textbox", { name: "Largest size: disk, in GiB" }) as HTMLInputElement).value).toBe("256");
+  expect((slot.getByRole("radio", { name: "Small is the default size" }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.change(slot.getByRole("textbox", { name: "Large size: cores" }), { target: { value: "12" } });
+  fireEvent.change(slot.getByRole("textbox", { name: "Large size: memory, in GiB" }), { target: { value: "24" } });
+  fireEvent.click(slot.getByRole("radio", { name: "Medium is the default size" }));
+  fireEvent.change(slot.getByRole("textbox", { name: "Warm boxes on Fake host" }), { target: { value: "2" } });
+  fireEvent.change(slot.getByRole("textbox", { name: "Spares to keep" }), { target: { value: "1" } });
+  expect(changes).toHaveLength(0);
+  expect(slot.getByRole("region", { name: "Save Linux" }).textContent).toContain("5 changes to Linux not saved");
+  fireEvent.keyDown(slot.getByRole("textbox", { name: "Spares to keep" }), { key: "Enter" });
   await waitFor(() => expect(changes).toHaveLength(1));
   const saved = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
   expect(saved.kinds).toEqual({ linux: { spares: 1, presets: { large: { cores: 12, memoryMiB: 24576, diskGiB: null } }, default: "medium" } });
   expect(saved.backends[0].warm).toEqual({ linux: 2 });
+  expect(operations).toHaveLength(1);
+  expect(await slot.findByText("Saved.")).toBeTruthy();
+  expect(window.location.hash).toBe("#kind/linux");
+});
+
+test("a kind's sizes are checked before Save, and a refusal sits under its size, named, with Show", async () => {
+  const { handlers, changes } = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "kinds.linux.presets.medium", message: "The medium linux preset, 40 cores, is above the largest size." }, { path: "backends.fake.warm.linux", message: "Keep 0 to 20 warm linux boxes." }] } });
+  const slot = settings(handlers, "#kind/linux");
+  fireEvent.change(await slot.findByRole("textbox", { name: "Small size: cores" }), { target: { value: "two" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  expect(await slot.findByText("Small: give the cores as a whole number, at least 1.")).toBeTruthy();
+  expect(slot.getByRole("textbox", { name: "Small size: cores" }).getAttribute("aria-invalid")).toBe("true");
+  expect(changes).toHaveLength(0);
+  fireEvent.change(slot.getByRole("textbox", { name: "Small size: cores" }), { target: { value: "2" } });
+  fireEvent.change(slot.getByRole("textbox", { name: "Medium size: cores" }), { target: { value: "40" } });
+  fireEvent.change(slot.getByRole("textbox", { name: "Warm boxes on Fake host" }), { target: { value: "30" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  expect(await slot.findByText("Medium: the medium linux preset, 40 cores, is above the largest size.")).toBeTruthy();
+  expect(slot.getByText("Keep 0 to 20 warm linux boxes.")).toBeTruthy();
+  expect(slot.getByText(/^Not saved: fix the 2 fields marked/)).toBeTruthy();
+  const medium = slot.getByRole("textbox", { name: "Medium size: cores" });
+  expect(medium.getAttribute("aria-invalid")).toBe("true");
+  expect(document.getElementById(medium.getAttribute("aria-describedby")!)!.textContent).toContain("Medium:");
+});
+
+test("Where it runs lists every backend that makes the kind, declared or live, with a warm count only where it keeps warm boxes", async () => {
+  const document: ConfigDocument = {
+    schema: 1,
+    revision: 3,
+    backends: [
+      { id: "fake", type: "fake", enabled: true, fields: { token: { set: true } }, warm: { linux: 1 } },
+      { id: "other", type: "other", enabled: true, fields: {}, warm: { linux: 2 } },
+      { id: "spare", type: "other", enabled: false, fields: {} },
+    ],
+    kinds: {},
+    general: {},
+  };
+  applied = document;
+  const base = configState({ document });
+  const backends = base.backends.map((backend) => ({ ...backend, label: backend.id === "fake" ? "Fake host" : backend.id === "other" ? "Other pool" : "Spare pool", kinds: backend.id === "other" ? ["linux", "linux-desktop"] : backend.kinds }));
+  const slot = settings(server([], { config: { backends } }).handlers, "#kind/linux-desktop");
+  const where = within((await slot.findByRole("heading", { name: "Where it runs" })).closest("section")!);
+  expect(where.getByRole("button", { name: "Fake host" })).toBeTruthy();
+  expect(where.getByRole("button", { name: "Other pool" })).toBeTruthy();
+  expect(where.queryByRole("button", { name: "Spare pool" })).toBeNull();
+  expect(where.queryAllByRole("textbox")).toHaveLength(0);
+  expect(where.getAllByText("No warm boxes of this kind: it makes each box when a thread asks.")).toHaveLength(2);
+  cleanup();
+
+  const linux = settings(server([], { config: { backends } }).handlers, "#kind/linux");
+  const runs = within((await linux.findByRole("heading", { name: "Where it runs" })).closest("section")!);
+  expect((runs.getByRole("textbox", { name: "Warm boxes on Fake host" }) as HTMLInputElement).value).toBe("1");
+  expect((runs.getByRole("textbox", { name: "Warm boxes on Other pool" }) as HTMLInputElement).value).toBe("2");
+  expect(runs.getByText(/This count does nothing here: set it to 0\./)).toBeTruthy();
+  expect(runs.getByText("Off")).toBeTruthy();
+  expect(runs.getAllByText("Makes it now")).toHaveLength(2);
 });
 
 test("a kind's warm pool short of room shows a note under that backend's warm count, and none when it has room", async () => {
@@ -2290,8 +2354,69 @@ test("a kind's warm pool short of room shows a note under that backend's warm co
   expect(await slot.findByText("Has 0 of 1 ready: no room. pve has no memory left.")).toBeTruthy();
   cleanup();
   const ok = settings(server([]).handlers, "#kind/linux");
-  await ok.findByRole("textbox", { name: "Small cores" });
+  await ok.findByRole("textbox", { name: "Small size: cores" });
   expect(ok.queryByText(/no room/)).toBeNull();
+});
+
+test("the default kind's switch stays on, on the overview and its page, says why and links to the choice, which opens with the menu focused", async () => {
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers, "#kind/linux");
+  const own = await slot.findByRole("switch", { name: "Linux: offered to threads" });
+  expect(own.getAttribute("aria-disabled")).toBe("true");
+  expect(own.getAttribute("aria-checked")).toBe("true");
+  expect(document.getElementById(own.getAttribute("aria-describedby")!)!.textContent).toBe("The default kind stays on. Choose another default to turn it off.");
+  fireEvent.click(own);
+  expect(own.getAttribute("aria-checked")).toBe("true");
+  expect(slot.queryByRole("button", { name: "Make default" })).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Choose another default" }));
+  expect(window.location.hash).toBe("#option/boxes");
+  await waitFor(() => expect(document.activeElement).toBe(slot.getByRole("combobox", { name: "Default kind" })));
+  fireEvent.click(slot.getByRole("button", { name: "BB Box settings" }));
+  const row = await slot.findByRole("switch", { name: "Linux: offered to threads" });
+  expect(row.getAttribute("aria-disabled")).toBe("true");
+  expect(row.getAttribute("aria-describedby")!.split(" ").map((id) => document.getElementById(id)!.textContent).join(" ")).toContain("The default kind stays on. Choose another default to turn it off.");
+  fireEvent.click(row);
+  expect(changes).toHaveLength(0);
+});
+
+test("Make default acts at once and moves focus to the kind's switch, which then stays on", async () => {
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers, "#kind/linux-desktop");
+  fireEvent.click(await slot.findByRole("button", { name: "Make default" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).general).toEqual({ defaultKind: "linux-desktop" });
+  const own = slot.getByRole("switch", { name: "Linux desktop: offered to threads" });
+  await waitFor(() => expect(document.activeElement).toBe(own));
+  expect(own.getAttribute("aria-disabled")).toBe("true");
+  expect(slot.getByText("Default kind")).toBeTruthy();
+});
+
+test("a default kind that is off says so on its page, and its switch turns it on", async () => {
+  const document: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: true, fields: { token: { set: true } } }], kinds: { linux: { enabled: false } }, general: {} };
+  applied = document;
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers, "#kind/linux");
+  expect(await slot.findByText(/^This is the default kind, but it is off, so a thread that names no kind gets no box\./)).toBeTruthy();
+  const own = slot.getByRole("switch", { name: "Linux: offered to threads" });
+  expect(own.getAttribute("aria-disabled")).toBeNull();
+  fireEvent.click(own);
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).kinds).toEqual({});
+});
+
+test("a kind turned off on its page or the overview stays in its place, dimmed, until the person leaves the settings", async () => {
+  const { handlers } = server([]);
+  const slot = settings(handlers, "#kind/linux-desktop");
+  fireEvent.click(await slot.findByRole("switch", { name: "Linux desktop: offered to threads" }));
+  expect(await slot.findByText("Off: no new boxes")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "BB Box settings" }));
+  const row = await slot.findByRole("button", { name: "Linux desktop" });
+  expect(row.getAttribute("aria-describedby") && document.getElementById(row.getAttribute("aria-describedby")!)!.textContent).toBe("Off: no new boxes");
+  expect(slot.queryByText(/1 kind off/)).toBeNull();
+  cleanup();
+  const again = settings(handlers, "");
+  expect(await again.findByText("1 kind off")).toBeTruthy();
+  expect(again.queryByRole("button", { name: "Linux desktop" })).toBeNull();
 });
 
 test("the Boxes and Images options: a field waits for Save, which Enter gives, and a switch saves at once, leaving out a value at its default", async () => {

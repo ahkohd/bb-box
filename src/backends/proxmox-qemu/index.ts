@@ -10,6 +10,7 @@ export const proxmoxQemuDriver: BackendDriver<QemuConfig> = {
   nature: "virtual",
   form: "VM",
   kinds: QEMU_KINDS,
+  warmKinds: ["windows-desktop"],
   fields: QEMU_FIELDS,
   offWhenEmpty: ["windows-templates", "linux-templates", "linux-desktop-templates", "android-templates"],
   inherits: QEMU_INHERITS,

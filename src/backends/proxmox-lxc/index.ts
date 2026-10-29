@@ -10,6 +10,7 @@ export const proxmoxLxcDriver: BackendDriver<LxcConfig> = {
   nature: "virtual",
   form: "LXC",
   kinds: LXC_FLAVOURS.flatMap((flavour) => FLAVOUR_KINDS[flavour]),
+  warmKinds: LXC_FLAVOURS.flatMap((flavour) => FLAVOUR_KINDS[flavour]),
   fields: LXC_FIELDS,
   offWhenEmpty: ["linux-templates", "desktop-templates", "desktop-cpu-templates", "desktop-wayland-cpu-templates"],
   setup: {

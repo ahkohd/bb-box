@@ -6,9 +6,8 @@ import { Switch } from "@/components/ui/switch";
 import type { BackendConfig } from "../core/document.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { DriverView } from "../plugin/configuration.ts";
-import { Badge, KindBadges, isArm64Badge, lacksDocker, message, relativeTime } from "./common.tsx";
-import { runsWayland } from "./boxes-filter.ts";
-import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, withKind } from "./config.ts";
+import { message, relativeTime } from "./common.tsx";
+import { effectiveKind, inheritSource, sourceName, withBackend } from "./config.ts";
 import { BackendForm, type BackendRowModel } from "./settings-backends.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { DockerHostsSection } from "./settings-docker-hosts.tsx";
@@ -18,7 +17,7 @@ import { BOXES_PART, MONITOR_PART } from "./settings-drafts.ts";
 import { BoxFilesSection } from "./settings-files.tsx";
 import { RestoredNote, SAVING_RULE, SaveBar, useDraft } from "./settings-saving.tsx";
 import { BackendPage } from "./settings-backend-page.tsx";
-import { KindForm, kindRowModel } from "./settings-kinds.tsx";
+import { KindPage } from "./settings-kind-page.tsx";
 import { iosEncoderWords, monitorChanged, noteMonitorChanged, ReloadNote } from "./settings-overview.tsx";
 import { Card, Chevron, FOCUS_RING, Group, NavRow, NotHere, PageHeader, ProviderGlyph, RowNote, Rows, SavedTick, SettingRow } from "./settings-parts.tsx";
 import { isOptionPage, type SettingsView } from "./settings-route.ts";
@@ -136,74 +135,6 @@ export function SetupPage({ type }: { type: string }) {
   );
 }
 
-export function KindPage({ id }: { id: string }) {
-  const { state, nav, instant, writes, apply } = useSettings();
-  const info = state.kinds.find((kind) => kind.id === id);
-  if (!info) return <NotHere what="kind" />;
-  const name = kindName(state.kinds, info);
-  const sizes = effectiveKind(state, id);
-  const model = kindRowModel(state, info, sizes);
-  const general = { ...state.defaults.general, ...state.document.general };
-  const isDefault = general.defaultKind === id;
-  const key = switchKey.kind(id);
-  const defaultKey = switchKey.general("defaultKind");
-  const pending = instant.pendingValue<boolean>(key);
-  const enabled = pending ?? sizes.enabled;
-  const forms = [...new Set(model.backends.filter((backend) => backend.offers).map((backend) => backend.form).filter((form): form is NonNullable<typeof form> => form !== null))];
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title={name}
-        chips={
-          <>
-            <KindBadges desktop={info.desktop} wayland={runsWayland({ desktop: info.desktop, kind: info.id })} gpu={info.gpu} noDocker={lacksDocker(info)} arm64={isArm64Badge(info.os, info.arch)} forms={forms} />
-            {isDefault ? <Badge>Default</Badge> : null}
-          </>
-        }
-        description={info.description}
-        aside={
-          <>
-            {!isDefault ? (
-              <Button type="button" variant="outline" size="sm" className="h-7" disabled={!enabled} aria-disabled={instant.pending !== null || undefined} onClick={() => void instant.run(writes.general(state, "defaultKind", id, "The default kind", (value) => kindName(state.kinds, state.kinds.find((kind) => kind.id === value) ?? info)))}>
-                Make default
-              </Button>
-            ) : null}
-            <label className="flex items-center gap-2 text-xs text-foreground">
-              <SavedTick show={instant.isSaved(key) || instant.isSaved(defaultKey)} />
-              Offered to threads
-              <Switch aria-label={`${name}: offered to threads`} checked={enabled} disabled={isDefault && enabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={(on) => void instant.run(writes.kindOn(state, id, on, name))} />
-            </label>
-          </>
-        }
-      >
-        {isDefault && enabled ? <p className="text-xs text-subtle-foreground">The default kind stays on. Choose another default on the Boxes page to turn it off.</p> : null}
-        <RowNote note={instant.note(key) ?? instant.note(defaultKey)} />
-      </PageHeader>
-      <Group title="Sizes, warm boxes and spares" description="Today's editor for this kind, saved with its Save.">
-        <Card className="px-4 pb-4 pt-1 [&>form]:mt-0 [&>form]:border-t-0">
-          <KindForm
-            key={`${id}-${state.revision}`}
-            model={model}
-            onSave={(edit) => {
-              let draft = withKind(state.document, id, kindChanges(state, id, edit.sizes));
-              for (const [backendId, count] of Object.entries(edit.warm)) {
-                const backend = draft.backends.find((candidate) => candidate.id === backendId);
-                if (!backend) continue;
-                const warm = { ...backend.warm };
-                if (count > 0) warm[id] = count;
-                else delete warm[id];
-                draft = withBackend(draft, { ...backend, ...(Object.keys(warm).length ? { warm } : { warm: undefined }) });
-              }
-              return apply(draft);
-            }}
-            onClose={nav.back}
-          />
-        </Card>
-      </Group>
-    </div>
-  );
-}
-
 function AtOnceSwitch({ label, description, settingKey, value, disabled, onChange }: { label: string; description?: ReactNode; settingKey: string; value: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
   const { instant } = useSettings();
   const pending = instant.pendingValue<boolean>(settingKey);
@@ -240,7 +171,7 @@ function BoxesOptions() {
             <SettingRow label="Default kind" description="What a thread gets when it does not say." problem={problem("general.defaultKind")}>
               <SavedTick show={instant.isSaved(defaultKey)} />
               <Select value={pendingDefault ?? general.defaultKind} onValueChange={(kind) => void instant.run(writes.general(state, "defaultKind", kind, "The default kind", nameOf))}>
-                <SelectTrigger className="h-8 w-56 text-xs" aria-label="Default kind">
+                <SelectTrigger className="h-8 w-56 text-xs" aria-label="Default kind" data-draft-path="general/defaultKind">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

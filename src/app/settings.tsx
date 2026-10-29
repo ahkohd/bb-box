@@ -7,7 +7,8 @@ import { SettingsContext, settingsWrites, type Saved, type SettingsContextValue 
 import { drafts, type SaveTransport } from "./settings-drafts.ts";
 import { newestState, useInstant, useRegistry } from "./settings-saving.tsx";
 import { scrollParent, useSettingsNav, type Arrival } from "./settings-nav.ts";
-import { forgetKindsKeptHere, Overview } from "./settings-overview.tsx";
+import { forgetKindsKeptInPlace } from "./settings-kinds.tsx";
+import { Overview } from "./settings-overview.tsx";
 import { TopRow, viewPage } from "./settings-pages.tsx";
 import { hashOf } from "./settings-route.ts";
 
@@ -27,6 +28,14 @@ function useArrival(arrival: Arrival | null, root: RefObject<HTMLDivElement | nu
       if (arrival.row && !row && tries.current++ < RESTORE_TRIES) return;
       scroller?.scrollTo({ top: arrival.scroll });
       row?.focus({ preventScroll: true });
+    } else if (arrival.focus) {
+      const target = page.current?.querySelector<HTMLElement>(`[data-draft-path="${CSS.escape(arrival.focus)}"]`);
+      if (!target && tries.current++ < RESTORE_TRIES) return;
+      scroller?.scrollTo({ top: 0 });
+      if (target) {
+        target.scrollIntoView?.({ block: "center" });
+        target.focus({ preventScroll: true });
+      } else page.current?.querySelector<HTMLElement>("[data-page-heading]")?.focus({ preventScroll: true });
     } else {
       scroller?.scrollTo({ top: 0 });
       page.current?.querySelector<HTMLElement>("[data-page-heading]")?.focus({ preventScroll: true });
@@ -54,7 +63,7 @@ export function SettingsSection() {
   useLayoutEffect(() => {
     if (state) drafts().observe(state);
   }, [state]);
-  useEffect(() => () => forgetKindsKeptHere(), []);
+  useEffect(() => () => forgetKindsKeptInPlace(), []);
   useEffect(() => setNotice(null), [nav.view]);
   useArrival(nav.arrival, root, page, state !== null);
 

@@ -10,6 +10,7 @@ import { parseImageRecord, recordInDescription } from "../src/backends/images.ts
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { quote } from "../src/transports/process.ts";
+import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, lxcWarm, tempDir, testContext } from "./helpers.ts";
 
@@ -2029,4 +2030,16 @@ test("a spare keeps a low CPU weight until a box takes it, and held() says so, f
   vm.config.cpuunits = "10";
   await backend.settle!(spare, signal());
   assert.equal(vm.config.cpuunits, "10", "without the tag, a weight of 10 is someone's own");
+});
+
+function recordingWarm<T extends { warm(kind: string): number }>(context: T): { context: T; asked: Set<string> } {
+  const asked = new Set<string>();
+  return { context: { ...context, warm: (kind: string) => (asked.add(kind), 0) }, asked };
+}
+
+test("maintain reads the warm counts of the kinds the driver says it keeps warm, and no others", async () => {
+  const { context, make } = setup({ "proxmox-lxc-linux-templates": "9000", "proxmox-lxc-desktop-cpu-templates": "9002", "proxmox-lxc-desktop-wayland-cpu-templates": "9003" });
+  const recorded = recordingWarm(context);
+  await make(recorded.context).maintain();
+  assert.deepEqual([...recorded.asked].sort(), [...proxmoxLxcDriver.warmKinds!].sort());
 });
