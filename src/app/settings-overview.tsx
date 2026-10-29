@@ -14,7 +14,7 @@ import { DESKTOP_PAGE, MACHINES_TAB } from "./desktop.tsx";
 import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
-import { Card, Chevron, FOCUS_RING, Group, NavRow, ProviderGlyph, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
+import { Card, Chevron, FOCUS_RING, Group, NavRow, ProviderGlyph, RowButton, RowControl, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
 import {
   backendHealth,
   backendLabel,
@@ -144,29 +144,32 @@ function BackendRow({ config, showAge }: { config: BackendConfig; showAge: boole
   const note = instant.note(key);
   return (
     <div className="transition-colors duration-150 hover:bg-state-hover">
-      <div className="flex items-center gap-3 pr-4">
-        <button type="button" data-row-key={rowKey} onClick={() => nav.go({ page: "backend", id: config.id }, rowKey)} aria-describedby={stateId} className={cn("flex min-w-0 flex-1 cursor-pointer items-start gap-3 py-3 pl-4 text-left", FOCUS_RING)}>
-          <ProviderGlyph type={config.type} className="mt-0.5" />
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
-              <span className="min-w-0 truncate">{label}</span>
-              {chip ? <Badge>{chip}</Badge> : null}
-              {isMachineDocker(config) ? <Badge>BB machine</Badge> : null}
+      <div className="relative flex items-start gap-3 px-4 py-3">
+        <RowButton rowKey={rowKey} label={label} describedBy={stateId} onClick={() => nav.go({ page: "backend", id: config.id }, rowKey)} />
+        <ProviderGlyph type={config.type} className="pointer-events-none mt-0.5" />
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
+            <span className="pointer-events-none min-w-0 truncate" aria-hidden>
+              {label}
             </span>
-            <StateLine id={stateId} className="mt-0.5" tone={health.tone} words={health.words} items={backendLine(state, config, health, now, showAge)} />
+            {chip ? <Badge>{chip}</Badge> : null}
+            {isMachineDocker(config) ? <Badge>BB machine</Badge> : null}
+            <RowControl>
+              <Switch
+                aria-label={`${label}: takes new boxes`}
+                aria-describedby={stateId}
+                checked={pending ?? config.enabled}
+                aria-disabled={instant.pending !== null || undefined}
+                onCheckedChange={(on) => void instant.run(writes.backendOn(config, on, label))}
+              />
+              <SavedTick show={instant.saved === key} />
+            </RowControl>
           </span>
-          <span className="self-center">
-            <Chevron />
-          </span>
-        </button>
-        <SavedTick show={instant.saved === key} />
-        <Switch
-          aria-label={`${label}: takes new boxes`}
-          aria-describedby={stateId}
-          checked={pending ?? config.enabled}
-          aria-disabled={instant.pending !== null || undefined}
-          onCheckedChange={(on) => void instant.run(writes.backendOn(config, on, label))}
-        />
+          <StateLine id={stateId} className="pointer-events-none mt-0.5" tone={health.tone} words={health.words} items={backendLine(state, config, health, now, showAge)} />
+        </span>
+        <span className="pointer-events-none self-center">
+          <Chevron />
+        </span>
       </div>
       <RowNote note={note} className="pb-3 pl-11 pr-4" />
     </div>
@@ -217,34 +220,39 @@ function KindRow({ info }: { info: KindInfoView }) {
   const twinBadge = name !== info.label ? (info.gpu ? "GPU" : "CPU") : null;
   return (
     <div className={cn("transition-colors duration-150 hover:bg-state-hover", !enabled && "opacity-70")}>
-      <div className="flex items-center gap-3 pr-4">
-        <button type="button" data-row-key={rowKey} onClick={() => nav.go({ page: "kind", id: info.id }, rowKey)} aria-label={name} aria-describedby={summaryId} className={cn("flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 pl-4 text-left", FOCUS_RING)}>
-          <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
-            <span className="flex shrink-0 flex-wrap items-center gap-1.5 text-sm text-foreground">
+      <div className="relative flex items-center gap-3 px-4 py-2.5">
+        <RowButton rowKey={rowKey} label={name} describedBy={summaryId} onClick={() => nav.go({ page: "kind", id: info.id }, rowKey)} />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+          <span className="flex shrink-0 flex-wrap items-center gap-1.5 text-sm text-foreground">
+            <span className="pointer-events-none" aria-hidden>
               {info.label}
-              {twinBadge ? <Badge>{twinBadge}</Badge> : null}
-              {isDefault ? <Badge>Default</Badge> : null}
             </span>
-            <span id={summaryId} className={cn("min-w-0 flex-1 truncate text-xs sm:text-right", availability === "lost" ? "text-warning-text" : "text-muted-foreground")}>
-              {kindSummary(state, info)}
-            </span>
+            {twinBadge ? <Badge>{twinBadge}</Badge> : null}
+            {isDefault ? <Badge>Default</Badge> : null}
+            <RowControl>
+              {isDefault && enabled ? <span id={defaultId} className="sr-only">The default kind stays on. Choose another default on the Boxes page to turn it off.</span> : null}
+              <Switch
+                aria-label={`${name}: offered to threads`}
+                aria-describedby={isDefault && enabled ? `${summaryId} ${defaultId}` : summaryId}
+                title={isDefault && enabled ? "The default kind stays on. Choose another default on the Boxes page to turn it off." : undefined}
+                checked={enabled}
+                disabled={isDefault && enabled}
+                aria-disabled={instant.pending !== null || undefined}
+                onCheckedChange={(on) => {
+                  keptHere.add(info.id);
+                  void instant.run(writes.kindOn(info.id, on, name));
+                }}
+              />
+              <SavedTick show={instant.saved === key} />
+            </RowControl>
           </span>
+          <span id={summaryId} className={cn("pointer-events-none min-w-0 flex-1 truncate text-xs sm:text-right", availability === "lost" ? "text-warning-text" : "text-muted-foreground")}>
+            {kindSummary(state, info)}
+          </span>
+        </span>
+        <span className="pointer-events-none">
           <Chevron />
-        </button>
-        <SavedTick show={instant.saved === key} />
-        {isDefault && enabled ? <span id={defaultId} className="sr-only">The default kind stays on. Choose another default on the Boxes page to turn it off.</span> : null}
-        <Switch
-          aria-label={`${name}: offered to threads`}
-          aria-describedby={isDefault && enabled ? `${summaryId} ${defaultId}` : summaryId}
-          title={isDefault && enabled ? "The default kind stays on. Choose another default on the Boxes page to turn it off." : undefined}
-          checked={enabled}
-          disabled={isDefault && enabled}
-          aria-disabled={instant.pending !== null || undefined}
-          onCheckedChange={(on) => {
-            keptHere.add(info.id);
-            void instant.run(writes.kindOn(info.id, on, name));
-          }}
-        />
+        </span>
       </div>
       <RowNote note={note} className="px-4 pb-2" />
     </div>
@@ -326,7 +334,7 @@ function Options() {
       <Card>
         <Rows>
           {rows.map((row) => (
-            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} value={row.value} onClick={() => go(row.id)} switchColumn />
+            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} value={row.value} onClick={() => go(row.id)} />
           ))}
           <div>
             <NavRow
@@ -334,32 +342,29 @@ function Options() {
               valueId="settings-option-monitor"
               icon={<OptionIcon icon={Activity01Icon} />}
               title="Monitor"
-              value={
-                <span className="inline-flex items-center gap-1.5">
-                  {monitorOn ? `In the sidebar · every ${monitor.refreshIntervalSeconds} s` : "Off"}
-                  <SavedTick show={instant.saved === monitorKey} />
-                </span>
-              }
+              value={monitorOn ? `In the sidebar · every ${monitor.refreshIntervalSeconds} s` : "Off"}
               onClick={() => go("monitor")}
-              switchColumn
-              trailing={
-                <Switch
-                  aria-label="Monitor: machine status in BB's sidebar"
-                  aria-describedby="settings-option-monitor"
-                  checked={monitorOn}
-                  aria-disabled={instant.pending !== null || undefined}
-                  onCheckedChange={(enabled) =>
-                    void instant.run(writes.monitor("enabled", enabled, "The Monitor")).then((outcome) => {
-                      if (outcome?.kind === "saved") noteMonitorChanged();
-                    })
-                  }
-                />
+              control={
+                <>
+                  <Switch
+                    aria-label="Monitor: machine status in BB's sidebar"
+                    aria-describedby="settings-option-monitor"
+                    checked={monitorOn}
+                    aria-disabled={instant.pending !== null || undefined}
+                    onCheckedChange={(enabled) =>
+                      void instant.run(writes.monitor("enabled", enabled, "The Monitor")).then((outcome) => {
+                        if (outcome?.kind === "saved") noteMonitorChanged();
+                      })
+                    }
+                  />
+                  <SavedTick show={instant.saved === monitorKey} />
+                </>
               }
             />
             <RowNote note={instant.note(monitorKey)} className="px-4 pb-2" />
           </div>
-          <NavRow rowKey="option-configuration" valueId="settings-option-configuration" icon={<OptionIcon icon={Settings01Icon} />} title="Configuration" value={`Revision ${state.revision}`} onClick={() => go("configuration")} switchColumn />
-          <NavRow rowKey="machines" valueId="settings-option-machines" icon={<OptionIcon icon={ComputerIcon} />} title="Your machines" value="On the Boxes page, Machines tab" outward onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: MACHINES_TAB })} switchColumn />
+          <NavRow rowKey="option-configuration" valueId="settings-option-configuration" icon={<OptionIcon icon={Settings01Icon} />} title="Configuration" value={`Revision ${state.revision}`} onClick={() => go("configuration")} />
+          <NavRow rowKey="machines" valueId="settings-option-machines" icon={<OptionIcon icon={ComputerIcon} />} title="Your machines" value="On the Boxes page, Machines tab" outward onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: MACHINES_TAB })} />
         </Rows>
       </Card>
       {monitorChanged() ? <ReloadNote /> : null}

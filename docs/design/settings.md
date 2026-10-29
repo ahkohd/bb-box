@@ -92,6 +92,10 @@ In order:
    on the row), Configuration, and Your machines, which opens the Boxes
    page on its Machines tab.
 
+On every row a switch sits right after the row's name and chips, and the
+chevron is always the last thing on the row. The whole row opens its page;
+the switch acts on its own.
+
 ### Status words
 
 | State | Backend row | Status |

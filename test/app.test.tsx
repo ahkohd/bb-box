@@ -1845,8 +1845,8 @@ test("the settings overview shows an honest status, each backend with its state 
   expect(slot.getByRole("switch", { name: "Linux desktop: offered to threads" }).getAttribute("aria-checked")).toBe("true");
   expect(slot.getAllByText("Not offered now: its backends cannot make it")).toHaveLength(2);
 
-  expect(slot.getByRole("button", { name: /^Boxes/ }).textContent).toContain("Linux by default · no limit per thread · 0 files");
-  expect(slot.getByRole("button", { name: /^Configuration/ }).textContent).toContain("Revision 3");
+  expect(slot.getByRole("button", { name: "Boxes", description: "Linux by default · no limit per thread · 0 files" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Configuration", description: "Revision 3" })).toBeTruthy();
   expect(slot.getByRole("switch", { name: "Monitor: machine status in BB's sidebar" }).getAttribute("aria-checked")).toBe("true");
   fireEvent.click(slot.getByRole("button", { name: /^Your machines/ }));
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "machines" } });
