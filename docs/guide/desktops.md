@@ -190,7 +190,7 @@ When bb-box pastes for you or the agent, it puts the device's own clipboard back
 
 On iOS, each paste shows 'pasted from CoreSimulatorBridge' at the top of the screen for about 2.5 seconds, and the device takes no keys while it shows, so bb-box holds your keys until it goes. Touches are not held. iOS also adds a space before pasted text that follows a word or a punctuation mark directly, as it does on a phone; type long or mixed text with **Type text**, which pastes it in one piece.
 
-On Android a paste adds no space and holds no keys. Android may say for a moment that an app pasted from the clipboard. Chrome on the device took only 4 pastes from outside each time it started, then no more, by the Paste key or Ctrl+V alike; an app's own text field took every paste.
+On Android a paste adds no space and holds no keys. Android may say for a moment that an app pasted from the clipboard. bb-box pastes into the focused text field through Android's accessibility paste, which Chrome's pages take, and presses the Paste key only where no text field has the focus. A page sees a Shift key pressed and let go just before each paste: bb-box sends it to know that the keys typed before the paste have landed. Ctrl+V or the Paste key sent as keys, such as an agent's `computer_type` of `ctrl+v`, pastes nothing in Chrome on the device: send the text itself instead.
 
 While someone watches without control, each touch, the agent's or the person's with control, shows as a circle where it lands.
 

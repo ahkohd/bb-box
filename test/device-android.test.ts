@@ -9,6 +9,7 @@ import type { DeviceState, OfferedDeviceOf } from "../src/core/device.ts";
 import { AndroidDriver, foldScreenOf, identityFile, largestFrameBytes, shellQuoted, skinRotation } from "../src/device/android-driver.ts";
 import { ADD_EMULATOR_WIFI, AndroidSettingsKeeper, RESTART_WIFI, WIFI_NETWORKS, WIFI_WRITTEN, networkScript, parseDefaultNetwork, parseReading, readScript } from "../src/device/android-controls.ts";
 import { panelPoint, touchPanel } from "../src/device/android-input.ts";
+import type { TreeChannel } from "../src/device/android-tree-source.ts";
 import { apkPackage } from "../src/device/apk.ts";
 import { EMULATOR_OWN_LOCATION } from "../src/core/device-settings.ts";
 import { AndroidVideo } from "../src/device/android-video.ts";
@@ -339,7 +340,25 @@ after(() => {
   for (const server of servers) server.close();
 });
 
-async function rig(options: { readonly watchMs?: number; readonly adbKey?: string; readonly onlyDump?: boolean } = {}) {
+function pasteAnsweringTreeServer(pasted: boolean): { readonly channel: TreeChannel; readonly asked: string[] } {
+  const asked: string[] = [];
+  let answer: (line: string) => void = () => undefined;
+  const channel: TreeChannel = {
+    send: (line) => {
+      asked.push(line);
+      queueMicrotask(() => answer(JSON.stringify({ ok: true, pasted, field: pasted ? "android.widget.EditText" : null, ms: 40 })));
+    },
+    onLine: (listener) => {
+      answer = listener;
+      queueMicrotask(() => listener('{"ok":true,"hello":2}'));
+    },
+    onExit: () => undefined,
+    close: () => undefined,
+  };
+  return { channel, asked };
+}
+
+async function rig(options: { readonly watchMs?: number; readonly adbKey?: string; readonly onlyDump?: boolean; readonly treeServer?: TreeChannel } = {}) {
   const grpc = new FakeEmulatorGrpc();
   servers.push(grpc);
   const port = await grpc.listen();
@@ -362,7 +381,7 @@ async function rig(options: { readonly watchMs?: number; readonly adbKey?: strin
     watchMs: options.watchMs ?? 50,
     clockTickMs: 60_000,
     home: dir,
-    tree: { onlyDump: options.onlyDump ?? true },
+    tree: options.treeServer ? { spawnServer: () => options.treeServer! } : { onlyDump: options.onlyDump ?? true },
   });
   drivers.push(driver);
   const frames: { key: boolean; width: number; height: number; generation: number }[] = [];
@@ -569,6 +588,19 @@ describe("the Android driver", () => {
     const keys = grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.sendKey).map((each) => `${each.request.key}${each.request.eventType === 1 ? " up" : " down"}`);
     assert.deepEqual(keys, ["Shift down", "a down", "a up", "Shift up", "Enter down", "Enter up", "Paste down", "Paste up"]);
     assert.equal(driver.pasteLandsMs, 300);
+  });
+
+  test("a paste goes as Android's accessibility paste on the focused text field, and as the Paste key only where no field took it (F-18)", async () => {
+    for (const pasted of [true, false]) {
+      const server = pasteAnsweringTreeServer(pasted);
+      const { grpc, driver } = await rig({ treeServer: server.channel });
+      await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
+      await driver.setClipboard("日本語 🙂");
+      await driver.paste();
+      const keys = grpc.asked.filter((each) => each.path === GRPC_METHODS.emulator.sendKey).map((each) => `${each.request.key}${each.request.eventType === 1 ? " up" : " down"}`);
+      assert.deepEqual(server.asked, ["paste"]);
+      assert.deepEqual(keys, pasted ? [] : ["Paste down", "Paste up"], pasted ? "the field took it" : "no focused field took it");
+    }
   });
 
   test("Home, Back and Recents are the emulator's keys; lock and wake wait until Android reads them; each setting is set and read back", async () => {

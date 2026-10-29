@@ -3574,3 +3574,77 @@ device's first keyboard opens. The pool's Mac gets it when `setup-mac.sh`
 runs again. The image needs no rebuild: its carried slots get the defaults
 at their next warm-up. The next image build writes them as it makes the
 carried slots, and its `slot keyboard` line checks them there.
+
+## F-18: Chrome on an Android device takes a paste
+
+Built on 29 October 2026, from F-15's finding that Chrome on the Android
+device took no paste at all from its first start, where unit 5.1 had
+found 4.
+
+### The cause
+
+Chrome's pages paste nothing for the Paste key or Ctrl+V. Checked on an
+android box's Pixel 8 (Android 15, API 35, Chrome 124.0.6367.219), on a
+test page that logs each paste event's text:
+
+- `computer_type` of `ab ✓ 日本`, and of `✓1` to `✓5`: each paste event
+  carried no text, and nothing was pasted. Android logged no "Chrome
+  pasted from your clipboard", so Chrome did not read the clipboard at
+  all.
+- The text copied in Chrome itself, by Ctrl+A and Ctrl+C, then Ctrl+V:
+  nothing pasted, and the selection was replaced by nothing.
+- Chrome's own Paste menu, by a long press on the field: pasted the
+  copied text at once, and so did Android's accessibility paste on the
+  field (`ACTION_PASTE`), with the clipboard set by the emulator. Each
+  logged "Chrome pasted from your clipboard".
+
+So Chrome's key path uses a clipboard it does not read again, whoever
+set the clipboard; its menu and accessibility paths read it. The clipboard
+being put back 300 ms after the key (E21) is not the cause: Chrome never
+asked. Why Chrome's key path holds a stale clipboard on the emulator is
+not known.
+
+### The fix
+
+- **A paste goes as Android's accessibility paste.** The device server's
+  Android driver asks bb-box's tree server, which holds UiAutomation, to
+  paste. It finds the focused text field, in the input focus first and in
+  the active window otherwise, and performs `ACTION_PASTE` on it. Where no
+  text field has the focus, or the tree server cannot run, as during an
+  instrumentation test, the Paste key goes as before, and the server's log
+  says why.
+- **Keys typed before the paste land first.** An accessibility paste goes
+  straight to the app, so it overtook keys still on their way: `a✓b日本c`
+  arrived as `a✓日本bc`, and with a 150 ms wait for quiet first, `naïve`
+  still arrived as `ïnave`. The tree server now injects a Shift press and
+  release through UiAutomation, and waits for Android to finish them,
+  which is after the keys before them; then 100 ms of quiet, at most
+  1.5 s. A page sees that Shift key.
+- **Reads after a paste stay fresh.** After an accessibility paste, the
+  tree server's own reads of Chrome's page stopped changing until it let
+  UiAutomation go, 30 s later. It clears its node cache after each paste.
+- The tree server is version 2, the device server version 33.
+- `computer_type`'s description says that ctrl+v pastes nothing in Chrome
+  on Android, and to send the text instead.
+
+### Checked before the deploy
+
+The new tree server and driver were put in the android box's own device
+server folder, and the server started again by systemd, so it ran as
+production runs it. Each check was the agent's `computer_type` through
+production BB, into the test page in Chrome, started afresh first, and
+test values only:
+
+| Check | Version 32 | This change |
+| --- | --- | --- |
+| A text with a paste into the page, Chrome just started | `ab ✓ 日本` arrived as `ab `, and `✓1` to `✓5` as their digits only | `bbtest ✓ 日本 é` whole |
+| 13 mixed texts in 3 calls, 18 pastes among keys: `naïve`, `naïve café ✓`, `a✓b日本c`, `Grüße, 世界 — ok`, `x→y ∑ 🙂 z`, `ab ✓`, `q✓w✓e✓r`, `bbtest ✓ 日本 é`, `né`, `ña`, `üb`, `日本語のテキスト`, `z✓` | | 13 of 13 whole and in order |
+| `bbtest ✓ 日本 é` into Chrome's address bar, a native field | | whole |
+
+`computer_type`'s read of the field after each call gave the field's
+text.
+
+Not checked here: the panel's Paste and Cmd+V on an android box, which go
+through the same paste as the agent's text; an app's own text field other
+than Chrome's address bar; and how much longer a paste takes, which is at
+least the 100 ms of quiet.
