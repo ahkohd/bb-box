@@ -7,7 +7,7 @@ export PATH LC_ALL
 
 ROOT=
 
-VERSION=5
+VERSION=6
 HOST=$ROOT/var/db/bb-box/host
 SHARE=$ROOT/usr/local/share/bb-box
 IOS_SHARE=$SHARE/ios
@@ -44,6 +44,10 @@ WATCH_EVERY_S=5
 STEP_TRIES=2
 CLAIM_WARM_WAIT_S=300
 SWEEPS_KEPT=20
+KEYBOARD_DEFAULTS="com.apple.keyboard.preferences:KeyboardAutocorrection:NO com.apple.keyboard.preferences:KeyboardPeriodShortcut:NO
+com.apple.keyboard.preferences:SmartTyping:NO com.apple.keyboard.predictive:KeyboardPrediction:NO
+com.apple.keyboard.predictive:KeyboardInlineCompletion:NO com.apple.keyboard.ContinuousPath:KeyboardContinuousPathEnabled:NO
+com.apple.Preferences:DidShowContinuousPathIntroduction:YES"
 DAEMON_PATH=/opt/homebrew/opt/node@24/bin:/opt/homebrew/opt/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 EXIT_LOST=3
 EXIT_NOT_OURS=4
@@ -374,9 +378,28 @@ boot_device() {
   simctl "$user" bootstatus "$udid" -b >/dev/null 2>&1 || { echo "$user's device $udid did not finish booting." >&2; return 1; }
 }
 
+write_keyboard_defaults() {
+  id=$1
+  marker=$(slot_dir "$id")/keyboard-defaults
+  [ ! -e "$marker" ] || return 0
+  user=$(slot_user "$id") udid=$(device_udid "$id")
+  for setting in $KEYBOARD_DEFAULTS; do
+    default_domain=${setting%%:*} default_pair=${setting#*:}
+    default_key=${default_pair%%:*} default_value=${default_pair#*:}
+    tries=0
+    until simctl "$user" spawn "$udid" defaults write "$default_domain" "$default_key" -bool "$default_value" >/dev/null 2>&1; do
+      tries=$((tries + 1))
+      [ "$tries" -lt 5 ] || { echo "simctl could not write the keyboard default $default_key on $user's device $udid." >&2; return 1; }
+      sleep 2
+    done
+  done
+  : >"$marker"
+}
+
 first_boot() {
   id=$1
   boot_device "$id" || return 1
+  write_keyboard_defaults "$id" || return 1
   if [ "$(field "$(slot_dir "$id")/make" mode)" = carry ]; then
     simctl "$(slot_user "$id")" shutdown "$(device_udid "$id")" >/dev/null 2>&1 || { echo "simctl did not shut down $(slot_user "$id")'s device." >&2; return 1; }
   fi
@@ -1081,6 +1104,7 @@ warm() {
   take_lock 8 "$dir/lock" 0 || exit 0
   [ "$(state "$id" is)" = ready ] && [ ! -e "$dir/loaded" ] || exit 0
   boot_device "$id" || fail "Could not boot slot $id's device."
+  write_keyboard_defaults "$id" || :
   load_slot_daemons "$id" || fail "Could not load slot $id's daemons."
   echo "warmed=$id"
 }

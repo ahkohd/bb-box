@@ -3532,3 +3532,45 @@ minutes for the start's last sign of life, and F-7's test failed.
 The whole file did not fail before the change on this box either, in 30
 runs and in 562 runs of the failing test alone but for the one above, so
 the new test is what shows the race.
+
+## F-23: the keyboard's first-use tip on a slot's device
+
+Built on 29 October 2026, from F-21's follow-up. On a new shared slot's
+device, the first keyboard showed iOS's tip "Speed up your typing by
+sliding your finger across the letters", with a Continue button, and keys
+typed before a paste went to it.
+
+The image's own devices never had it: `build-ios.sh` writes each device's
+keyboard defaults, and `DidShowContinuousPathIntroduction` among them, and
+`bb-box-check-ios` checks them. A slot's device is made fresh by
+`device-host`, in the slot's own user, so it had none of them: the tip,
+and autocorrect, smart punctuation and predictions on too.
+
+- **A slot's first boot writes them.** `device-host` writes the image
+  devices' seven keyboard defaults with `simctl spawn ... defaults write`,
+  as the slot's user, while the device is booted for the first time, and
+  keeps a `keyboard-defaults` file in the slot's folder once all are
+  written. A write is tried 5 times, 2 s apart; if one still fails, the
+  slot is not made, as for any first-boot failure. This covers slots on
+  Tart hosts, Namespace hosts and the pool's Mac, which all make devices
+  through `device-host`. `mac-ios.sh` needs no change: its own devices are
+  the seed's and the clipboard check's, made and deleted there.
+- **A carried slot made before this gets them at its warm-up,** which
+  boots its device before a claim. A write that fails there is left for
+  the next warm-up, and the claim goes on.
+- **The image's check covers a carried slot's device.** The new line
+  `slot keyboard` boots `bbd-i1`'s device, reads its keyboard defaults as
+  `bbd-i1` with the image devices' own check, and shuts it down again.
+- `device-host` is version 6.
+
+Tests: a slot's first boot writes the seven defaults on its device, once;
+a carried slot without them gets them at its warm-up; the image's check
+runs the new line as the slot's user.
+
+Not checked here: a live slot. Tart and Namespace hosts get the new
+`device-host` as each host starts, so the check is a new shared slot after
+the deploy: `computer_type` into Safari's address field right after the
+device's first keyboard opens. The pool's Mac gets it when `setup-mac.sh`
+runs again. The image needs no rebuild: its carried slots get the defaults
+at their next warm-up. The next image build writes them as it makes the
+carried slots, and its `slot keyboard` line checks them there.

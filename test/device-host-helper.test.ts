@@ -36,6 +36,21 @@ function made(host: FakeDeviceHost, input = "install=inst_a\n"): Map<string, str
   return new Map(result.stdout.trim().split("\n").map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
 }
 
+const SLOT_KEYBOARD_DEFAULTS = [
+  "com.apple.keyboard.preferences KeyboardAutocorrection -bool NO",
+  "com.apple.keyboard.preferences KeyboardPeriodShortcut -bool NO",
+  "com.apple.keyboard.preferences SmartTyping -bool NO",
+  "com.apple.keyboard.predictive KeyboardPrediction -bool NO",
+  "com.apple.keyboard.predictive KeyboardInlineCompletion -bool NO",
+  "com.apple.keyboard.ContinuousPath KeyboardContinuousPathEnabled -bool NO",
+  "com.apple.Preferences DidShowContinuousPathIntroduction -bool YES",
+];
+
+function keyboardDefaultsWritten(host: FakeDeviceHost, user: string, udid: string): string[] {
+  const written = join(host.state, "sims", user, `.${udid}.defaults`);
+  return existsSync(written) ? readFileSync(written, "utf8").trim().split("\n") : [];
+}
+
 function answer(stdout: string): Map<string, string> {
   return new Map(stdout.trim().split("\n").map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]));
 }
@@ -117,7 +132,7 @@ test("init keeps the settings the host was made with, and status gives them with
   const { values, slots } = host.status();
   assert.deepEqual(
     ["helper", "deleting", "most", "ahead", "generation", "cores", "memory", "disk", "memory_free", "runtime", "model", "counted", "sweeping"].map((key) => values.get(key)),
-    ["5", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
+    ["6", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
   );
   assert.deepEqual(slots, []);
   assert.deepEqual(host.run(["init"], "most=many\n").status, 0, "settings are written once");
@@ -339,6 +354,31 @@ test("a make cut short carries on from its recorded step, and a step that fails 
   assert.deepEqual(twice.daemons(), []);
   await swept(twice);
   assert.deepEqual(twice.status().slots, [], "removed once swept");
+});
+
+test("a slot's first boot writes the image's keyboard defaults on its device, slide to type's tip seen among them, once (F-23)", () => {
+  const host = fakeDeviceHost();
+  const slot = made(host);
+  const udid = slot.get("udid")!;
+  assert.deepEqual(keyboardDefaultsWritten(host, "bbd-1", udid), SLOT_KEYBOARD_DEFAULTS);
+  assert.ok(host.file(`${HOST}/slots/1/keyboard-defaults`) !== null, "the slot keeps that they are written");
+  assert.equal(internal(host, ["write_keyboard_defaults", "1"]).status, 0);
+  assert.deepEqual(keyboardDefaultsWritten(host, "bbd-1", udid), SLOT_KEYBOARD_DEFAULTS, "a later boot does not write them again");
+});
+
+test("a carried slot made before F-23 gets the keyboard defaults at its warm-up (F-23)", async () => {
+  const host = fakeDeviceHost();
+  assert.equal(host.run(["carry"]).status, 0);
+  for (const id of ["i1", "i2"] as const) {
+    const udid = host.slot(id)!.udid;
+    assert.deepEqual(keyboardDefaultsWritten(host, `bbd-${id}`, udid), SLOT_KEYBOARD_DEFAULTS, `carried slot ${id}`);
+    rmSync(join(host.root, HOST, "slots", id, "keyboard-defaults"));
+    rmSync(join(host.state, "sims", `bbd-${id}`, `.${udid}.defaults`));
+  }
+  assert.equal(host.run(["claim", "i1"], CLAIM()).status, 0);
+  await host.until("bbd-i2 warmed", () => host.slot("i2")?.loaded === true && host.slot("i2")?.booted === true);
+  assert.deepEqual(keyboardDefaultsWritten(host, "bbd-i2", host.slot("i2")!.udid), SLOT_KEYBOARD_DEFAULTS);
+  assert.ok(host.file(`${HOST}/slots/i2/keyboard-defaults`) !== null);
 });
 
 test("carry makes the image's two slots, each seeded and first booted, then shut down, with daemons written but not loaded", () => {
@@ -782,7 +822,7 @@ test("init loads the held ports' daemon and the helper's, keeps them across the 
 test("the helper refuses to run as anyone but root, and its usage names its commands", () => {
   const host = fakeDeviceHost();
   assert.match(host.run(["bogus"]).stderr, /^usage: device-host status \| summary \| init \| install \| open \| close \| make \| carry \| promise \| unpromise \| vacate \| claim <slot> \| release <slot> \| restart <slot> \| reset \| daemon <slot> \| resume \| keep-app \| version\n$/);
-  assert.equal(host.run(["version"]).stdout, "5\n");
+  assert.equal(host.run(["version"]).stdout, "6\n");
   const text = readFileSync(new URL("../setup/tart/ios/device-host.sh", import.meta.url), "utf8");
   assert.match(text, /\[ "\$\(id -u\)" = 0 \] \|\| quit 2 "Run it as root, through sudo\."/);
   assert.doesNotMatch(text, /^\s*#(?!!)/m, "no comments: names carry intent");
@@ -802,7 +842,7 @@ test("bb-box reads the helper's status whole: settings, promises, every slot, a 
   assert.deepEqual(
     { ...status, boot: "", promises: status.promises.map((promise) => promise.box), claims: status.claims.map((claim) => [claim.slot, claim.box]), slots: status.slots.map((slot) => [slot.id, slot.is, slot.box, slot.portBase, slot.booted, slot.daemonsLoaded]), sweeps: status.sweeps.map((sweep) => [sweep.uid, sweep.uidsInPass]) },
     {
-      helper: 5, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60, bbApp: null, bbAppKept: false,
+      helper: 6, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60, bbApp: null, bbAppKept: false,
       runtime: RUNTIME, model: "iPhone 18 Pro", counted: 1, promises: ["box_p"], claims: [["1", "box_a"]], slots: [["1", "held", "box_a", 20000, true, true]], secondDevices: [], deviceWords: [], sweeping: 0, sweeps: [[80002, 1]],
     },
   );

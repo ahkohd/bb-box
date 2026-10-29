@@ -185,7 +185,8 @@ test("a slot's clipboard: the image's check and the pool's setup run one script 
   assert.doesNotMatch(script.replace(/echo \$\? &gt;exit\.new/, ""), /echo "[^"]*"; (return|exit) 1/, "a failure's words go to standard error, as its callers keep it");
 
   const check = read("check-ios.sh");
-  assert.ok(check.includes('check "slot uids" slot_uids_only_carried\ncheck "slot clipboard" carried_slot_clipboard_works\n'));
+  assert.ok(check.includes('check "slot uids" slot_uids_only_carried\ncheck "slot clipboard" carried_slot_clipboard_works\ncheck "slot keyboard" carried_slot_keyboard_holds\n'));
+  assert.match(check, /said=\$\(keyboard_defaults_hold "\$udid" as_slot\)/, "a carried slot's device is read as its own user, with the image devices' check (F-23)");
   assert.match(check, /sudo -n "\$slot_clipboard" "\$user" "\$udid"/);
   assert.match(check, /as_slot shutdown "\$udid"/, "the carried slot's device is shut down again, as the image keeps it");
   assert.match(read("build-ios.sh"), /sudo install -m 0755 "\$here\/slot-clipboard\.sh" \/usr\/local\/libexec\/bb-box\/slot-clipboard/);
