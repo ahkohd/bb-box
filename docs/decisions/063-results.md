@@ -3173,3 +3173,49 @@ in the panel, and the front app with Safari in front.
   app sees, so it is left for a trial of its own.
 - The SpringBoard restart's lost screen reads look like the fresh Tart
   slot's above: both end only at a reboot.
+
+## F-19: device boxes in the Boxes filter, and Simulator and Emulator tabs
+
+Built on 28 October 2026, from the owner's annotated screenshots that day.
+The Boxes page's filters had no way to find a device box, and a device
+showed in a panel tab named Desktop.
+
+What changed:
+
+- **iOS and Android are systems.** The filters offer them under System,
+  after Linux, macOS and Windows. A box with a device has its device's
+  system, not its host's, so a shared ios box is iOS rather than macOS.
+  They are systems, not a Device group of models, because the New box form
+  offers them as systems, and a box's model changes when its device
+  switches. The search matches a box's device, such as iPhone 18 Pro.
+- **A device has a tab of its own.** A new panel action, Device, with a
+  phone for its icon, shows a box's device in a tab titled Simulator for
+  an ios device or Emulator for an android one. A box with a device and a
+  desktop, such as a dedicated ios box, has two tabs, its device's and
+  Desktop, each with a button that opens the other. A tab's title says
+  which box only when another of the thread's boxes would have a tab of
+  the same name, as in 'Simulator · box-2'.
+- **A bare Desktop tab retitles itself.** Opened from the launcher, a
+  Desktop tab whose one box has only a device shows the device and
+  renames itself Simulator or Emulator. BB titles a tab only as it opens,
+  and opening one again with the same params retitles it.
+- **Control stays across a box's two tabs.** Going from a box's Desktop
+  tab to its Simulator tab keeps control past the hidden tab's minute.
+
+### F-19 in the panel
+
+On 28 October 2026, after the deploy (main 3ad3e01), through the
+production panel in the owner's browser (Helium), in a tab of its own, at
+1,440 and 360 px wide:
+
+| Check | Result |
+| --- | --- |
+| A shared ios box's row and tab | "Open simulator" on the row opened a tab titled Simulator, with the phone icon in BB's tab strip beside the Box tab's cube, and no Desktop button |
+| An android box's row and tab | "Open emulator" opened a tab titled Emulator, with the phone icon |
+| The Boxes page's filters, the list searched to this thread's boxes | System offered Linux, macOS, iOS and Android; ticking iOS listed only the ios box, ticking Android only the android box, with the other systems greyed |
+| A dedicated ios box, a Tart VM, beside the shared one | its row had "Open simulator" and "Open desktop"; its tabs were titled "Simulator · " and the box's name, as the shared box's tab also said Simulator, and Desktop, as no other box had one. The Simulator tab's Desktop button opened the Desktop tab, with the cube icon and a Simulator button, and the Device Hub words naming the Simulator tab; that button went back to the Simulator tab |
+| At 360 px | the filters' sheet offered iOS and Android, and ticking iOS listed only the ios box; each tab showed its title and phone icon alone in the strip, with Previous and Next to the others, and the dedicated box's two tabs kept their buttons. "Simulator · " and a box's name is cut short there |
+
+Before the deploy, on a fresh BB in a box with bb-box from the branch and
+the test device on: a bare Desktop tab whose one box had only the test
+device renamed itself Emulator, and BB kept that title for the tab.
