@@ -1,11 +1,11 @@
 # 069: A box has a page of its own, and the Boxes page says how each box is now
 
-Status: proposed, 29 October 2026; revised the same day after two
+Status: accepted, 29 October 2026, with the owner's answer to each open question (each default); revised the same day after two
 independent reviews (see [What changed after the reviews](#what-changed-after-the-reviews)),
 and settled after their re-reviews, each remaining point as a rule owned by
 one build unit (see [Gated in unit N](#gated-in-unit-n) and [What changed
 after the re-reviews](#what-changed-after-the-re-reviews)).
-For the owner's review. Nothing is built yet.
+Being built in the units of [How it is built](#14-how-it-is-built).
 
 The prototype is [069-boxes-page/prototype.html](069-boxes-page/prototype.html):
 one file, opened in any browser, made from bb-box's own components with a
@@ -870,6 +870,8 @@ pool Mac someone else holds.
 | G20 offline-actions | 1c | With its backend not in settings or its host not answering, a box's Stop, Start, Resize and New thread on this box are disabled with the reason (section 7) | maple-row's and fern-hollow's menus and page offer none of them, and each says why |
 
 ## Open questions for the owner
+
+The owner answered all four on 29 October 2026, each with its default.
 
 1. Box history, read once a minute and kept 7 days, is on by default, as
    long as unit 3 meets its budget. This reverses 066's opt-in background
