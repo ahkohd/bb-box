@@ -56,7 +56,7 @@ The key is kept as a secret. BB Box's settings show only that it is set.
 
 ### 3. Turn on the kinds
 
-Under **Kinds**, turn on **Linux** and **Linux desktop**, if you want them from boat.dev.
+Under **Kinds**, turn on **Linux** and **Linux desktop**, if you want them from boat.dev, and **Android emulator** for [Android boxes](#android-boxes).
 
 ## Check it works
 
@@ -82,6 +82,18 @@ A box can run VMs and emulators of its own, as boat.dev's machines have KVM. As 
 Stopping a box stops its sandbox: its processes end, its disk is kept, and it costs nothing. Starting it again takes a second or two, on a new machine, whose address can differ.
 
 boat.dev stops a sandbox by itself at its auto-stop. BB Box sets each box's auto-stop to **Auto-stop (minutes)**, 30 by default, and sets it again every few minutes while it holds the box. So a box runs while BB Box holds it, and if BB Box stops for good, its boxes stop within that time and cost nothing more. When BB Box comes back, it finds them stopped, and says why.
+
+## Android boxes
+
+boat.dev's machines have KVM, so they can run the Android emulator. An Android box on boat.dev is the same as on Proxmox QEMU: a phone, foldable or tablet, booted from its snapshot, with its screen in the Box panel.
+
+1. Read the Android SDK's licence: Google's terms for the SDK, the emulator and the system image, as `setup/android/pins.json` pins them. `setup/android/accept-sdk-licence.sh` shows them, without accepting anything unless you say so.
+2. In BB Box's settings, under **boat.dev**, turn on **Android SDK licence**. That is your acceptance. While it is off, boat.dev offers no Android boxes, and `box_list` and the doctor say why.
+3. Turn on the **Android emulator** kind.
+
+BB Box then builds boat.dev's Android template at its next upkeep, about 30 minutes, as no box can ask for a kind that is not offered yet. Android boxes come once it is ready.
+
+The Android kind's own sizes start at 8 cores and 16 GB, boat.dev's `large`, which the free trial does not allow. On the trial, ask for 4 cores and 8 GiB, boat.dev's `default`. The doctor's **Android** check says the largest size your plan allows.
 
 ## Check that nothing is left running
 
