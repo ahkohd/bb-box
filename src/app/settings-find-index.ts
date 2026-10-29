@@ -7,7 +7,7 @@ import { BAKE_WORDS } from "./settings-images.tsx";
 import { runsOn } from "./settings-kinds.tsx";
 import { backendEnabledPath, backendFieldPath, backendLabelPath, filePath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, imageBakePath, kindPath, sizeName, sizePath, tailnetPath, TAILNET_SECRET_LABELS, warmPath, type Path, type SizeName, type SizePart } from "./settings-paths.ts";
 import type { SettingsView } from "./settings-route.ts";
-import { backendLabel, isMachineDocker, kindName, plural } from "./settings-status.ts";
+import { backendLabel, hostChip, isMachineDocker, kindName, plural } from "./settings-status.ts";
 
 export const FIND_SHOWN = 40;
 
@@ -106,9 +106,15 @@ function hostFieldValue(state: ConfigState, config: BackendConfig, driver: Drive
   return null;
 }
 
+function backendTitle(state: ConfigState, config: BackendConfig): string {
+  const label = backendLabel(state, config);
+  const chip = hostChip(config, label, state.backends.find((each) => each.id === config.id)?.hosts);
+  return chip ? `${label} on ${chip}` : label;
+}
+
 function backendEntries(state: ConfigState, config: BackendConfig): FindEntry[] {
   const driver = state.drivers.find((each) => each.type === config.type);
-  const label = backendLabel(state, config);
+  const label = backendTitle(state, config);
   const view: SettingsView = { page: "backend", id: config.id };
   const page = entry({ key: `backend ${config.id}`, label, where: "Backends", value: onOff(config.enabled), opens: { view, path: null }, words: `backend ${driver ? `${driver.label} ${driver.description}` : config.type}` });
   if (!driver) return [page];
@@ -175,7 +181,7 @@ function kindEntries(state: ConfigState): FindEntry[] {
       const path = warmPath(row.config.id, info.id);
       const count = row.config.warm?.[info.id] ?? 0;
       if (!row.keepsWarm && count <= 0) continue;
-      entries.push(entry({ key: path, label: `Warm boxes on ${row.label}`, where: `Kinds › ${name} › Where it runs`, value: String(count), opens: { view, path }, words: `${words} ready waiting pool` }));
+      entries.push(entry({ key: path, label: `Warm boxes on ${backendTitle(state, row.config)}`, where: `Kinds › ${name} › Where it runs`, value: String(count), opens: { view, path }, words: `${words} ready waiting pool` }));
     }
     entries.push(entry({ key: kindPath(info.id, "spares"), label: "Spares to keep", where: `Kinds › ${name} › Spare boxes`, value: String(sizes.spares), opens: { view, path: kindPath(info.id, "spares") }, labels: ["Spare boxes"], words: `${words} made ahead` }));
   }

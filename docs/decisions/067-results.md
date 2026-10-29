@@ -2601,6 +2601,25 @@ secrets to give again; the ring now takes the whole Export block.
   kept query's results, so the next result is one arrow away.
 - Your machines is in the index and opens the Boxes page's Machines tab.
 
-### Not done here
+### Production look
 
-- A look in production in the owner's browser, after the lead deploys.
+On 29 October 2026, in the owner's browser, looking only: the settings
+revision was 134 before and after. Find was on the overview at full
+width. "ram" listed 62 matches, the first 40 of them, with memory labels
+only, and ArrowDown stopped on the 40th. "mac cores" opened Tart's page
+with its Mac open and that Mac's own cores field focused, ringed and on
+screen. On Tart's page, a field in Advanced opened in place. "linux
+desktop gpu medium memory" opened the kind's Medium memory cell, "export"
+the Configuration page's Export, and "turn off monitor" focused Machine
+status's switch. "zebra quartz" said no setting matches. Back put focus
+on Find with the query in it.
+
+It found one fault: production has two Docker backends, and Find named
+both "Docker › Advanced", and their warm boxes "Warm boxes on Docker",
+where the overview tells them apart by their host. Find now names each
+backend as the overview does, "Docker on pc-1 › Advanced" and "Warm
+boxes on Docker on pc-1", with a test of two backends of one type. On
+a fresh BB in a box, the live check gained a second Docker backend, off,
+on another host: "docker memory kept free" listed "Docker on bb-1 ›
+Advanced" and "Docker on 192.0.2.30 › Advanced", and every check passed
+3 runs in a row, 27 of 27.

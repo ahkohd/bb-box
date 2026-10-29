@@ -8278,9 +8278,30 @@ test("Find's index holds every field of every backend, each Mac's own fields, ea
   expect(entries.find((entry) => entry.label === "Tags")).toMatchObject({ value: "Used with Yes", opens: { path: "general/tailnet/mode" } });
 
   const tart = settingsIndex(stateOf(tartPage().handlers));
-  expect(foundBy(tart, "backends/tart/hosts/mac-1/fields/ios-hosts-cores")).toMatchObject({ label: "Cores of a shared iOS host on mac-1", where: "Tart › Macs › mac-1", value: "Empty: 10 cores, bb-box's estimate" });
+  expect(foundBy(tart, "backends/tart/hosts/mac-1/fields/ios-hosts-cores")).toMatchObject({ label: "Cores of a shared iOS host on mac-1", where: "Tart on mac-1 › Macs › mac-1", value: "Empty: 10 cores, bb-box's estimate" });
   expect(foundBy(tart, "backends/tart/hosts/mac-1/fields/address")?.value).toBe("192.0.2.20");
-  expect(foundBy(tart, "backends/tart/hosts/mac-1/enabled")).toMatchObject({ label: "mac-1", where: "Tart › Macs", value: "On" });
+  expect(foundBy(tart, "backends/tart/hosts/mac-1/enabled")).toMatchObject({ label: "mac-1", where: "Tart on mac-1 › Macs", value: "On" });
+});
+
+test("Find names each backend with its host as the overview does, so two of one type are told apart, warm boxes included (067 unit 11)", () => {
+  const document: ConfigDocument = {
+    schema: 1,
+    revision: 3,
+    backends: [
+      { id: "fake:pc-1", type: "fake", enabled: true, fields: { token: { set: true } }, warm: { linux: 1 } },
+      { id: "fake:pc-2", type: "fake", enabled: true, fields: { token: { set: true } }, warm: { linux: 2 } },
+    ],
+    kinds: {},
+    general: {},
+  };
+  const entries = settingsIndex(configState({ document }));
+  expect(foundBy(entries, "backends/fake:pc-1/fields/reserve")?.where).toBe("Fake host on pc-1 › Advanced");
+  expect(foundBy(entries, "backends/fake:pc-2/fields/reserve")?.where).toBe("Fake host on pc-2 › Advanced");
+  expect(entries.find((entry) => entry.key === "backend fake:pc-2")?.label).toBe("Fake host on pc-2");
+  expect(foundBy(entries, "backends/fake:pc-1/warm/linux")).toMatchObject({ label: "Warm boxes on Fake host on pc-1", value: "1" });
+  expect(foundBy(entries, "backends/fake:pc-2/warm/linux")).toMatchObject({ label: "Warm boxes on Fake host on pc-2", value: "2" });
+  expect(labelsFor(entries, "reserve pc-2")).toEqual(["Memory kept free (MiB) | Fake host on pc-2 › Advanced"]);
+  expect(foundBy(settingsIndex(stateOf(tartPage().handlers)), "backends/tart/fields/ios-hosts-cores")?.where).toBe("Tart on mac-1 › Shared iOS hosts");
 });
 
 test("Find matches each word against a setting's label, place, help or key, with synonyms against labels only, and says when nothing matches (067 unit 11)", () => {
@@ -8302,7 +8323,7 @@ test("Find matches each word against a setting's label, place, help or key, with
   expect(pathFor(small, "linux small disk")).toBe("kinds/linux/presets/small/diskGiB");
   expect(pathFor(small, "linux small")).toBe("kinds/linux/presets/small/cores");
   const tart = settingsIndex(stateOf(tartPage().handlers));
-  expect(labelsFor(tart, "mac-1 cpu")[0]).toBe("Cores of a shared iOS host on mac-1 | Tart › Macs › mac-1");
+  expect(labelsFor(tart, "mac-1 cpu")[0]).toBe("Cores of a shared iOS host on mac-1 | Tart on mac-1 › Macs › mac-1");
 });
 
 test("Find from the overview opens a folded field on its backend's page, on screen, focused and highlighted, and the query stays when the person comes back (067 unit 11)", async () => {

@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 
@@ -40,6 +41,7 @@ async function reset(run) {
     general: {},
     backends: [
       { id: "docker", type: "docker", enabled: true, fields: {} },
+      { id: "docker:2", type: "docker", enabled: false, fields: { host: "ssh://box@192.0.2.30" } },
       { id: "proxmox-lxc", type: "proxmox-lxc", enabled: false, fields: { url: "https://192.0.2.10:8006", node: "pve-1", "token-id": "bb-box@pve!made-up", "token-secret": `made-up-secret-${run}` } },
       { id: "tart", type: "tart", enabled: false, fields: {}, hosts: [{ name: "mac-1", enabled: true, fields: { address: "192.0.2.20", user: "admin" } }] },
     ],
@@ -185,6 +187,18 @@ const checks = {
     const importSeen = await onScreen(page, "import/open");
     await page.context().close();
     return { export: { ...exported, top: exportSeen.top }, import: { ...imported, top: importSeen.top } };
+  },
+
+  async "two backends of one type, named by their hosts"({ run }) {
+    const page = await tab();
+    await open(page, "");
+    await typeQuery(page, "docker memory kept free");
+    const options = await optionsShown(page);
+    const wheres = options.map((text) => text.replace(/^Memory kept free \(MiB\)/, "").replace(/Empty:.*$/, ""));
+    expect(wheres.includes(`Docker on ${hostname()} › Advanced`) && wheres.includes("Docker on 192.0.2.30 › Advanced"), `each Docker is named by its host: ${wheres.join(" / ")}`);
+    await snap(page, run, "live-two-dockers");
+    await page.context().close();
+    return { wheres };
   },
 
   async "no match"({ run }) {
