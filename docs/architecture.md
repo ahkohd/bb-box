@@ -432,6 +432,19 @@ Nothing expires, so no box may be forgotten.
   `stopped()` says. When the guest did not choose it, as when its VM
   crashed, bb-box starts the box again, unless it did so less than 10
   minutes before (#406).
+- **A release is done only when the backend confirms it** (069). The box
+  log records "release asked" before the backend is called and "released"
+  after it confirms; the record goes only then. A release that fails keeps
+  the record, with the backend's words, and the sweep tries again. After a
+  restart in between, the sweep first asks for the guest's power, and a
+  guest that is gone finishes the release with no second call.
+- **A box whose backend is no longer in the settings** can be forgotten
+  (`bb box forget`): bb-box removes its record and deletes nothing.
+- **A box that does not answer** a command, a Live reading or a view is
+  checked again by itself after 1 minute, 5 minutes, then every 15 minutes,
+  through BB's connection state for a BB machine and otherwise one command
+  with a 10 s timeout. The check never calls a backend's API; Check now
+  reads the box's power, at most once a minute (069).
 - **A box that rebooted** starts its services again, and the sweep
   bootstraps its BB machine again when BB shows it disconnected.
 - **If BB's server is down**, boxes keep running and nothing is released.
@@ -797,6 +810,8 @@ field by field in the [configuration reference](reference/configuration.md).
 | Work in a box | the box's disk | the thread | deleted on release, or the home recreated on a real machine; not backed up |
 | Standard images and builds of projects' images | the provider | the operator, and bb-box for rebuilds | rebuilt each night, or by the setup scripts |
 | Who holds each desktop's input | plugin memory, and plugin storage while a person holds it | core | after a restart, the agent's unless the holder's viewer connects within 60 s |
+| The box log: each box's starts, stops, resizes and releases, who asked, and what bb-box saw after a failure (069) | `box-log.db` beside the plugin's `data.db`, attached to its handle, capped at 8 MB; inside `data.db` under a row cap where the handle refuses to attach it | core | a box's last 7 days and its latest event of each kind; a released or forgotten box's for 24 hours |
+| Box history (069, unit 3) | `box-history.db`, attached the same way, capped at 64 MB | core | |
 
 ## Backends
 

@@ -8,6 +8,7 @@ import { performance } from "node:perf_hooks";
 import { writeHeapSnapshot } from "node:v8";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, SPARES, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
+import { BY_PERSON } from "../core/box-log.ts";
 import { ControlError } from "../core/control.ts";
 import { contract, type BoxResult, type ResizeResult, type ThreadOnBox } from "./contract.ts";
 import { sizeView } from "./views.ts";
@@ -105,6 +106,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
         check: options.check === true,
         restart: options.restart === true,
         by: "the panel",
+        who: BY_PERSON,
         beforeRestart: async (found) => {
           if (options.force) return;
           const threads = (await app.threadsOn(found)).filter((thread) => thread.running);
@@ -147,13 +149,18 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       return { boxes: list.map(app.view), kinds, backends: app.backendViews(), desktopPath: app.desktops.path, terminalPath: app.terminals.path, runsOn, imageOffer, images, desktopOnDemand, desktopProblem: app.desktopProblem(threadId), access };
     },
     acquire: ({ threadId, kind, size, on, image, device, dedicated, shared }) =>
-      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}), ...(image ? { image } : {}), ...(device ? { device } : {}), ...(dedicated ? { dedicated } : {}), ...(shared ? { shared } : {}) })),
+      change("Acquiring a box", async () => boxes.acquire({ threadId, projectId: await app.projectOf(threadId), kind, size, ...(on ? { on } : {}), ...(image ? { image } : {}), ...(device ? { device } : {}), ...(dedicated ? { dedicated } : {}), ...(shared ? { shared } : {}), who: BY_PERSON })),
     images: async ({ threadId, projectId }) => app.imageOptions(projectId ?? (threadId ? await app.projectOf(threadId).catch(() => null) : null)),
-    release: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Releasing the box", () => boxes.release(threadId, box, "released in BB Box's panel"))),
-    stop: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Stopping the box", () => boxes.stop(threadId, box))),
-    start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box)),
+    release: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Releasing the box", () => boxes.release(threadId, box, "released in BB Box's panel", BY_PERSON))),
+    stop: ({ threadId, box, force }) => guarded(threadId, box, force, () => change("Stopping the box", () => boxes.stop(threadId, box, undefined, BY_PERSON))),
+    start: ({ threadId, box }) => change("Starting the box", () => boxes.start(threadId, box, undefined, BY_PERSON)),
     resize: ({ threadId, box, ...options }) => resize(threadId, box, options),
-    refresh: ({ threadId, box }) => change("Checking the box", () => boxes.refresh(threadId, box)),
+    refresh: ({ threadId, box }) => change("Checking the box", () => app.checkNow(threadId, box)),
+    forget: ({ threadId, box }) =>
+      change("Forgetting the box", async () => {
+        await app.forget(threadId, box, BY_PERSON);
+        return null;
+      }),
     async desktop({ threadId, box: ref }) {
       // A released box shows as gone, not as an error.
       const box = await app.resolve(threadId, ref).then(
@@ -240,10 +247,10 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       return { machines, kinds: kinds.filter((kind) => kind.enrol), desktopOnDemand, desktopProblem: app.desktopProblem(OPERATOR), access };
     },
     "machines.add": ({ kind, size, name, on }) =>
-      change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}) })),
-    "machines.remove": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Removing the machine", () => boxes.release(OPERATOR, box, "removed in BB Box's settings"))),
-    "machines.stop": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Stopping the machine", () => boxes.stop(OPERATOR, box))),
-    "machines.start": ({ box }) => change("Starting the machine", () => boxes.start(OPERATOR, box)),
+      change("Adding the machine", () => boxes.acquire({ threadId: OPERATOR, projectId: null, kind, ...(size ? { size } : {}), ...(name ? { name } : {}), ...(on ? { on } : {}), who: BY_PERSON })),
+    "machines.remove": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Removing the machine", () => boxes.release(OPERATOR, box, "removed in BB Box's settings", BY_PERSON))),
+    "machines.stop": ({ box, force }) => guarded(OPERATOR, box, force, () => change("Stopping the machine", () => boxes.stop(OPERATOR, box, undefined, BY_PERSON))),
+    "machines.start": ({ box }) => change("Starting the machine", () => boxes.start(OPERATOR, box, undefined, BY_PERSON)),
     "machines.resize": ({ box, ...options }) => resize(OPERATOR, box, options),
     async thread({ threadId, box, prompt }) {
       try {

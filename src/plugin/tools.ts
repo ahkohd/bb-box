@@ -1,6 +1,7 @@
 // The agent tools. Each result ends with "Next:" hints, and each refusal
 // says what to do instead, so an agent never has to guess.
 
+import { byAgent } from "../core/box-log.ts";
 import { inSlot, noDesktopRefusal, SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { toolsForPurposes } from "./purposes.ts";
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
@@ -470,6 +471,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           ...(slim !== undefined ? { slim } : {}),
           ...(dedicated !== undefined ? { dedicated } : {}),
           ...(shared !== undefined ? { shared } : {}),
+          who: byAgent(thread(threadId)),
         });
         if (wait === false) {
           const asked = boxSize(box);
@@ -930,7 +932,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const { box: found, runsOn } = await app.resolve(id, ref, signal);
         if (runsOn) throw runsOnRefusal(found, "stop");
         const idle = await app.checkInUse(found, "Stopping");
-        const box = await boxes.stop(id, found.id, signal);
+        const box = await boxes.stop(id, found.id, signal, byAgent(id));
         return `Box ${box.name} is stopped.${idleWords(idle, true)}${next(`Call box_start with box "${box.name}" when you need it again, or box_release if you do not.`)}`;
       } catch (error) {
         return failure(error, "Stopping the box");
@@ -947,7 +949,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       try {
         // Its BB machine reconnects after the start; box_run would wait for that anyway.
         const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
-        const box = await boxes.enrolled(await boxes.start(owner, found.id, signal), signal);
+        const box = await boxes.enrolled(await boxes.start(owner, found.id, signal, byAgent(thread(threadId))), signal);
         const back = await deviceBooted(app, box, signal, "came back");
         return `${boxDetail(box, app.control(box))}${deviceText(app, box)}${back}${next(...using(box))}`;
       } catch (error) {
@@ -978,6 +980,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           check: check === true,
           signal,
           by: "the tool",
+          who: byAgent(thread(threadId)),
           beforeRestart: async (box) => {
             // A thread can run on a box of its own too, as one started on a new box (033).
             if (runsOn || (await app.runsOn(thread(threadId), signal))?.id === box.id) throw runsOnRestartRefusal(box);
@@ -1026,7 +1029,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const { box, runsOn } = await app.resolve(id, ref);
         if (runsOn) throw runsOnRefusal(box, "release");
         const idle = await app.checkInUse(box, "Releasing");
-        const left = await boxes.release(id, box.id, "its thread released it with box_release");
+        const left = await boxes.release(id, box.id, "its thread released it with box_release", byAgent(id));
         if (left) {
           return `Box ${box.name} is still being released: ${left.error ?? "the backend has not finished"}. bb-box keeps trying in the background.${next("Carry on; nothing else is needed.")}`;
         }

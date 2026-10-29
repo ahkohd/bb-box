@@ -82,6 +82,10 @@ Boxes still work without joining BB, but the thread's commands and terminals can
 
 If BB Box cannot do what you asked, it says why in a red line under the plus. For example, it cannot stop a box whose host does not answer. The line stays until you select **Dismiss** or do something else.
 
+BB Box keeps a log of each box: who started, stopped, resized and released it, and when, whether you did it here, an agent did with its box tools, a `bb box` command did, BB Box did itself, as for a spare, or something outside BB Box did, as when a container is stopped on its host. When one of these fails, the log keeps the backend's words and what BB Box then saw of the box, such as that it is still running. A release that fails keeps the box until a release is confirmed. The log keeps a box's last 7 days, and a released box for 24 hours.
+
+When a box stops answering, BB Box checks it again by itself after 1 minute, after 5, then every 15 minutes, until it answers. If you remove a backend from BB Box's settings while it still has boxes, `bb box forget <box>` removes BB Box's record of one of them. It deletes nothing: if the box still runs on that backend, it keeps running.
+
 ## The Boxes page
 
 Select **Boxes** in BB's sidebar. The page has 2 tabs, each with a count:

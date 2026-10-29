@@ -83,6 +83,8 @@ import {
   type SlotKind,
 } from "./device-host.ts";
 import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSizes, sameSize, type SizeRequest } from "./sizes.ts";
+import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
+import { POWER_CHECK_GAP_MS } from "./reach.ts";
 
 export type BoxState =
   /** Recorded; the backend is making or claiming the guest. */
@@ -438,8 +440,36 @@ export interface BoxesDeps {
   /** How long a command waits for its box to finish enrolling, or reconnecting after a start. */
   readonly enrolWaitMs?: number;
   readonly sharedIosByDefault?: boolean;
+  readonly events?: BoxLog;
+  readonly reach?: BoxReach;
   now?(): number;
   random?(bytes: number): Uint8Array;
+}
+
+export interface BoxReach {
+  failed(box: BoxRecord, error: string): void;
+  answered(box: BoxRecord): void;
+  notAnswering(boxId: string): boolean;
+  forget(boxId: string): void;
+}
+
+function changedParts(from: BoxSize, to: BoxSize | null): SizePart[] {
+  if (!to) return [];
+  const parts: SizePart[] = [];
+  if (from.cores !== to.cores) parts.push("cores");
+  if (from.memoryMiB !== to.memoryMiB) parts.push("memory");
+  if (from.diskGiB !== null && to.diskGiB !== null && from.diskGiB !== to.diskGiB) parts.push("disk");
+  return parts;
+}
+
+export function forgetRefusal(box: Pick<BoxRecord, "name" | "backendLabel">): BoxError {
+  return new BoxError("unsupported", `Box ${box.name}'s backend, ${box.backendLabel}, is in bb-box's settings, so release the box instead: forgetting it would leave its guest running with nothing to release it.`);
+}
+
+function observedState(power: PowerState | null | undefined): Observation["state"] {
+  if (power === undefined || power === "unknown") return "unknown";
+  if (power === null) return "gone";
+  return power;
 }
 
 export type BoxErrorCode =
@@ -730,6 +760,7 @@ export class Boxes {
   readonly #spareSettleFailedAt = new Map<string, number>();
   /** The threads BB said had ended at the last sweep. */
   #ending = new Set<string>();
+  readonly #powerCheckedAt = new Map<string, number>();
   #disposed = false;
 
   constructor(deps: BoxesDeps) {
@@ -782,8 +813,35 @@ export class Boxes {
   async #forget(box: BoxRecord): Promise<void> {
     await this.#deps.kv.delete(recordKey(box.threadId, box.id));
     await this.#deps.kv.delete(indexKey(box.id));
+    this.#deps.reach?.forget(box.id);
+    this.#powerCheckedAt.delete(box.id);
     this.#deps.recorded?.(box, true);
     this.#deps.notify(box.threadId);
+  }
+
+  #event(box: Pick<BoxRecord, "id" | "threadId" | "name">, kind: BoxEventKind, who: Actor, more: Partial<Pick<BoxEvent, "words" | "observed" | "parts" | "backend" | "state" | "at">> = {}): void {
+    try {
+      this.#deps.events?.record({ box: box.id, thread: box.threadId, name: box.name, kind, by: who, ...more, at: more.at ?? this.#now() });
+    } catch (error) {
+      this.#deps.logError("box log", error);
+    }
+  }
+
+  #openStop(box: BoxRecord): BoxEvent | null {
+    const events = this.#deps.events;
+    if (!events) return null;
+    const latest = new Map<BoxEventKind, BoxEvent>();
+    for (const kind of ["stop-asked", "stop-failed", "stopped", "stopped-unasked", "start-asked", "started"] as const) {
+      const event = events.latest(box.id, [kind]);
+      if (event) latest.set(kind, event);
+    }
+    return openStop(latest, this.#now());
+  }
+
+  async #observedAfterFailure(box: BoxRecord, signal: AbortSignal | undefined, moving: boolean): Promise<Observation> {
+    let seen: PowerState | null | undefined;
+    await this.#observe(box, { signal, moving, seen: (power) => (seen = power) }).catch(() => null);
+    return { state: observedState(seen), at: this.#now(), from: box.backendLabel };
   }
 
   /** Applies a change to the stored record. Null when the box is gone. */
@@ -974,8 +1032,10 @@ export class Boxes {
     slim?: boolean;
     dedicated?: boolean;
     shared?: boolean;
+    who?: Actor;
   }): Promise<BoxRecord> {
     const requested = this.#now();
+    const who = input.who ?? UNKNOWN_ACTOR;
     const { kind: wanted, features } = kindRequest(input.kind);
     const offersOf = () => this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
     const withheld = offersOf().length ? [] : ((await this.#deps.backends.withheld?.(wanted)) ?? []);
@@ -1122,13 +1182,15 @@ export class Boxes {
               : {}),
         };
         await this.#deps.kv.set(indexKey(box.id), box.threadId);
-        return { box: await this.#write(box), claimed: null };
+        const written = await this.#write(box);
+        this.#event(written, "made", who, { at: createdAt });
+        return { box: written, claimed: null };
       }),
     );
     if (claimed !== null && box.state === "stopped") {
       // A spare that waited stopped (#539): it starts first, as a hibernated VM cannot be relabelled, and the start reconnects its machine.
       void this.#chain(box.id, async () => {
-        const started = await this.#start(box);
+        const started = await this.#start(box, undefined, false, who);
         // The claim's time counts the resume, which its last start's times also show.
         const timed = await this.update(started, ({ timings }) => {
           const { spare = 0, total: _, spareResume: __, ...rest } = timings;
@@ -1162,7 +1224,7 @@ export class Boxes {
    * names of its boxes. The box's timings are the claim's, from `requested`.
    */
   async #claim(
-    input: { threadId: string; projectId: string | null; name?: string; askedDevice: ModelName | null; slim: boolean | null },
+    input: { threadId: string; projectId: string | null; name?: string; askedDevice: ModelName | null; slim: boolean | null; who?: Actor },
     offered: OfferedKind[],
     features: readonly string[],
     size: BoxSize,
@@ -1215,6 +1277,8 @@ export class Boxes {
           };
           await this.#deps.kv.set(indexKey(box.id), box.threadId);
           await this.#write(box);
+          this.#event(box, "made", input.who ?? UNKNOWN_ACTOR, { words: `Claimed from bb-box's spare boxes, as ${spare.name}.` });
+          if (box.state === "ready") this.#event(box, "ready", UNKNOWN_ACTOR);
           await this.#deps.kv.delete(recordKey(SPARES, box.id));
           this.#deps.notify(SPARES);
           return { box, from: spare.name };
@@ -1536,7 +1600,7 @@ export class Boxes {
           continue;
         }
         if (settling.is === "settling") continue;
-        const stopped = await this.stop(SPARES, spare.id).catch((error) => {
+        const stopped = await this.stop(SPARES, spare.id, undefined, byBbBox("a spare waits stopped until a thread claims it")).catch((error) => {
           this.#deps.logError("stop a spare", error);
           return null;
         });
@@ -1552,7 +1616,7 @@ export class Boxes {
       if (count >= wanted) this.#spareShortfalls.delete(kind);
       for (; count < wanted && !this.#disposed; count++) {
         try {
-          await this.acquire({ threadId: SPARES, projectId: null, kind });
+          await this.acquire({ threadId: SPARES, projectId: null, kind, who: byBbBox(`bb-box keeps ${wanted} spare ${kind} ${wanted === 1 ? "box" : "boxes"}`) });
           this.#spareShortfalls.delete(kind);
         } catch (error) {
           if (error instanceof BoxError) {
@@ -1568,7 +1632,7 @@ export class Boxes {
       const failed = await this.#deps.kv.get<{ ref: string; at: number }>(spareFailedKey(want.name, want.backend, want.kind));
       if (failed && failed.ref === want.ref && this.#now() - failed.at < SPARE_RETRY_MS) continue;
       try {
-        const made = await this.acquire({ threadId: SPARES, projectId: null, kind: want.kind, image: want.name, on: want.backend });
+        const made = await this.acquire({ threadId: SPARES, projectId: null, kind: want.kind, image: want.name, on: want.backend, who: byBbBox(`bb-box keeps a spare of image ${want.name}`) });
         // The build changed as it was made: it would run the script at start, so it goes, and waits a day.
         if (made.image?.state !== "baked" || made.image.from !== want.ref) {
           await this.#spareFailed(want.name, want.backend, want.kind, want.ref);
@@ -1641,7 +1705,7 @@ export class Boxes {
     this.#deps.log?.(`Spare box ${box.name} is now yours: thread ${threadId} started on it from BB's picker.`);
     this.#deps.notify(SPARES);
     if (box.state === "stopped" && this.#waitsStopped(box)) {
-      void this.#chain(box.id, () => this.#start(box)).then(
+      void this.#chain(box.id, () => this.#start(box, undefined, false, byBbBox("a thread started on its BB machine from BB's picker"))).then(
         (started) => this.#renamed(started, from),
         (error) => this.#deps.logError("start a spare that is yours", error),
       );
@@ -1932,7 +1996,10 @@ export class Boxes {
         ? placed(current, guest)
         : { ...placed(current, guest), state: "ready", readyAt: now, error: null, timings: { ...timings, total: now - current.createdAt }, waitingOn: null },
     );
-    if (next?.state === "ready") void this.#recordReady(next).catch((error) => this.#deps.logError("ready history", error));
+    if (next?.state === "ready") {
+      this.#event(next, "ready", UNKNOWN_ACTOR, { at: now });
+      void this.#recordReady(next).catch((error) => this.#deps.logError("ready history", error));
+    }
     // A spare's own start is not a use of its image: a claim is (#440).
     if (next?.state === "ready" && next.image && next.threadId !== SPARES) this.#deps.imageReady?.(next);
     if (!next) {
@@ -2044,28 +2111,40 @@ export class Boxes {
    * sweep then tries again. A spare released this way is replaced then, not
    * at the next sweep (#129). `why` says who asked, for the log.
    */
-  async release(threadId: string, ref: string, why: string): Promise<BoxRecord | null> {
+  async release(threadId: string, ref: string, why: string, who?: Actor): Promise<BoxRecord | null> {
     const box = await this.get(threadId, ref);
-    const left = await this.#release(box, why);
+    const left = await this.#release(box, why, who);
     if (box.threadId === SPARES) void this.keepSpares();
     return left;
   }
 
   /** Every release starts here, and logs why: who asked, or what bb-box needed. */
-  async #release(box: BoxRecord, why: string): Promise<BoxRecord | null> {
+  async #release(box: BoxRecord, why: string, who: Actor = byBbBox(why)): Promise<BoxRecord | null> {
     const marked = await this.update(box, (current) => ({
       state: "releasing",
       releaseRequestedAt: current.releaseRequestedAt ?? this.#now(),
     }));
     if (!marked) return null;
     this.#deps.log?.(`Releasing ${describeBox(box)}: ${why}.`);
+    this.#event(marked, "release-asked", who, { backend: marked.backendLabel, state: box.state });
     this.#acquiring.get(box.id)?.abort(new BoxError("released", `Box ${box.name} was released.`));
-    return this.#chain(box.id, () => this.#finishRelease(marked));
+    return this.#chain(box.id, () => this.#finishRelease(marked, who));
   }
 
-  async #finishRelease(initial: BoxRecord): Promise<BoxRecord | null> {
+  #failedAgain(box: BoxRecord, operation: readonly BoxEventKind[], words: string): boolean {
+    const last = this.#deps.events?.latest(box.id, operation);
+    return last?.kind === operation[2] && last.words === utf8Prefix(words, EVENT_WORDS_BYTES);
+  }
+
+  async #finishRelease(initial: BoxRecord, asked?: Actor, options: { readonly observeFirst?: boolean } = {}): Promise<BoxRecord | null> {
     const box = await this.#read(initial.threadId, initial.id);
     if (!box) return null;
+    const who = asked ?? this.#deps.events?.latest(box.id, ["release-asked"])?.by ?? UNKNOWN_ACTOR;
+    const kinds = ["release-asked", "released", "release-failed"] as const;
+    const failed = (words: string, observed: Observation | null) => {
+      if (!this.#failedAgain(box, kinds, words)) this.#event(box, "release-failed", who, { words, observed, backend: box.backendLabel });
+    };
+    const backend = box.guest ? this.#deps.backends.get(box.backend) : null;
     // A thread's own box (role "machine") has a BB machine that BB owns and removes itself; deleting it
     // from here would wait on BB's removal, which waits on this release.
     if (box.enrol.hostId && this.#deps.unenrol && box.role !== "machine") {
@@ -2076,9 +2155,22 @@ export class Boxes {
         this.#deps.logError("unenrol", error);
       }
     }
+    if (options.observeFirst && box.guest && backend) {
+      const power = await this.#stamped(box)
+        .then((stamped) => backend.power(stamped.guest!))
+        .catch(() => undefined);
+      if (power === null) {
+        this.#deps.log?.(`${describeBox(box)}: its guest is gone, so its release, which a restart of bb-box interrupted, is done.`);
+        this.#event(box, "released", who, { backend: box.backendLabel, words: "bb-box found its guest gone after a restart." });
+        await this.#forget(box);
+        return null;
+      }
+    }
     if (box.guest) {
-      const backend = this.#deps.backends.get(box.backend);
-      if (!backend) return this.update(box, () => ({ error: this.#backendOff(box) }));
+      if (!backend) {
+        failed(this.#backendOff(box), null);
+        return this.update(box, () => ({ error: this.#backendOff(box) }));
+      }
       const timings: Record<string, number> = {};
       const hooks: ReleaseHooks = {
         resetting: async () => {
@@ -2093,14 +2185,30 @@ export class Boxes {
         await backend.release(guest!, hooks);
       } catch (error) {
         this.#deps.logError("release", error);
+        const power = await backend.power(box.guest).catch(() => undefined);
+        failed(describeError(error, "Releasing the box"), { state: observedState(power), at: this.#now(), from: box.backendLabel });
         return this.update(box, (current) => ({
           error: `${sentence(describeError(error, "Releasing the box"))} bb-box tries again in a few minutes.`,
           timings: { ...current.timings, ...timings },
         }));
       }
     }
+    this.#event(box, "released", who, { backend: box.backendLabel });
     await this.#forget(box);
     return null;
+  }
+
+  async forget(threadId: string, ref: string, who: Actor = UNKNOWN_ACTOR): Promise<void> {
+    const box = await this.get(threadId, ref);
+    if (this.#deps.backends.get(box.backend)) throw forgetRefusal(box);
+    await this.#chain(box.id, async () => {
+      const current = await this.#read(box.threadId, box.id);
+      if (!current) return;
+      this.#acquiring.get(current.id)?.abort(new BoxError("released", `Box ${current.name} was forgotten.`));
+      this.#event(current, "forgotten", who, { backend: current.backendLabel, state: current.state });
+      await this.#forget(current);
+      this.#deps.log?.(`Forgot ${describeBox(current)}: bb-box removed its record. Nothing was deleted: its guest on ${current.backendLabel}, if it still runs, keeps running.`);
+    });
   }
 
   /**
@@ -2163,7 +2271,7 @@ export class Boxes {
   }
 
   /** Stops a box to free memory while keeping its disk. */
-  async stop(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord> {
+  async stop(threadId: string, ref: string, signal?: AbortSignal, who: Actor = UNKNOWN_ACTOR): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
     return this.#chain(box.id, async () => {
       const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, signal);
@@ -2171,13 +2279,18 @@ export class Boxes {
       if (current.state === "stopped") return current;
       this.#require(current, "ready");
       this.#require((await this.#move(current, "stopping")) ?? { ...current, state: "releasing" }, "stopping");
+      this.#event(current, "stop-asked", who);
       try {
         await stop(current.guest!, signal);
       } catch (error) {
-        await this.#observe(current, { signal, moving: true }).catch(() => null);
+        const observation = await this.#observedAfterFailure(current, signal, true);
+        this.#event(current, "stop-failed", who, { words: describeError(error, "Stopping the box"), observed: observation });
+        if (observation.state === "stopped") this.#event(current, "stopped", who, { at: observation.at, words: "bb-box found it stopped after its stop failed." });
         throw error;
       }
-      return (await this.#move(current, "stopped")) ?? current;
+      const stopped = (await this.#move(current, "stopped")) ?? current;
+      this.#event(current, "stopped", who);
+      return stopped;
     });
   }
 
@@ -2185,18 +2298,19 @@ export class Boxes {
    * Starts a stopped box, waits until its command transport answers, and
    * reconnects its BB machine, or enrols it when the sweep restored it.
    */
-  async start(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord> {
+  async start(threadId: string, ref: string, signal?: AbortSignal, who: Actor = UNKNOWN_ACTOR): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
-    return this.#chain(box.id, () => this.#start(box, signal));
+    return this.#chain(box.id, () => this.#start(box, signal, false, who));
   }
 
   /** start(), in the box's chain. */
-  async #start(box: BoxRecord, signal?: AbortSignal, hostRestart = false): Promise<BoxRecord> {
+  async #start(box: BoxRecord, signal?: AbortSignal, hostRestart = false, who: Actor = UNKNOWN_ACTOR): Promise<BoxRecord> {
     const current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, signal);
     const { start } = this.#stopStart(current, hostRestart);
     if (current.state === "ready") return current;
     this.#require(current, "stopped");
     this.#require((await this.#move(current, "starting")) ?? { ...current, state: "releasing" }, "starting");
+    this.#event(current, "start-asked", who);
     const timings: Record<string, number> = {};
     const began = this.#now();
     let facts: readonly GuestFact[] | undefined;
@@ -2205,11 +2319,13 @@ export class Boxes {
         timings[`start.${step}`] = ms;
       }))?.facts;
     } catch (error) {
-      await this.#observe(current, { signal, moving: true }).catch(() => null);
+      const observation = await this.#observedAfterFailure(current, signal, true);
+      this.#event(current, "start-failed", who, { words: describeError(error, "Starting the box"), observed: observation });
       throw error;
     }
     timings["start.total"] = this.#now() - began;
     const started = (await this.#move(current, "ready", timings, facts)) ?? current;
+    this.#event(current, "started", who);
     if (started.state === "ready" && started.restoredAt) {
       await this.#enrol(started, { restored: true }).catch((error) => this.#deps.logError("enrol", error));
       return (await this.#read(started.threadId, started.id)) ?? started;
@@ -2240,6 +2356,7 @@ export class Boxes {
       readonly beforeRestart?: (box: BoxRecord) => Promise<void>;
       /** Who asked, for the log: "the tool", "the CLI" or "the panel". */
       readonly by?: string;
+      readonly who?: Actor;
       readonly signal?: AbortSignal;
     } = {},
   ): Promise<ResizeAnswer> {
@@ -2267,7 +2384,7 @@ export class Boxes {
   async #resize(
     box: BoxRecord,
     request: SizeRequest,
-    options: { readonly restart?: boolean; readonly check?: boolean; readonly beforeRestart?: (box: BoxRecord) => Promise<void>; readonly signal?: AbortSignal },
+    options: { readonly restart?: boolean; readonly check?: boolean; readonly beforeRestart?: (box: BoxRecord) => Promise<void>; readonly who?: Actor; readonly signal?: AbortSignal },
   ): Promise<ResizeAnswer> {
     if (!ownedByThread(box.threadId) && box.threadId !== OPERATOR) throw new BoxError("unsupported", `Box ${box.name} is a spare, which takes its size when it is claimed.`);
     if (inSlot(box)) throw new BoxError("unsupported", options.restart ? restartRefusal(box.kind) : resizeRefusal(box.kind));
@@ -2314,8 +2431,11 @@ export class Boxes {
       // A restart takes the box down: box_run waits while it starts again, as after a start.
       const running = current.state === "ready";
       await this.update(current, () => ({ resize: record, ...(restart && running ? { state: "starting" as const } : {}) }));
+      const who = options.who ?? UNKNOWN_ACTOR;
+      this.#event(current, "resize-asked", who, { words: `From ${describeSize(from)} to ${describeSize(to)}${restart ? ", with a restart" : ""}.` });
       try {
         const guest = await backend.resize!(current.guest!, current.kind, to, { restart }, options.signal);
+        this.#event(current, "resized", who, { parts: changedParts(from, guest.size ?? to), words: `From ${describeSize(from)} to ${describeSize(guest.size ?? to)}.` });
         const done = await this.update(current, (latest) => ({
           guest: { ...guest, facts: guest.facts ?? latest.guest?.facts },
           size: to,
@@ -2329,13 +2449,26 @@ export class Boxes {
         return { box: done ?? current, from, to, plan, changed: true };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const now = await this.#sizeNow(backend, current.guest!, options.signal);
         await this.update(current, (latest) => ({
           resize: { ...record, state: "failed", ms: this.#now() - began, error: message },
           ...(restart && running && latest.state === "starting" ? { state: "ready" as const } : {}),
+          ...(now && latest.guest ? { guest: { ...latest.guest, size: now } } : {}),
         }));
-        if (restart) await this.#observe(current, { signal: options.signal }).catch(() => null);
+        const observed = restart ? await this.#observedAfterFailure(current, options.signal, false) : null;
+        const parts = changedParts(from, now);
+        const sizeWords = now ? (parts.length ? ` Its ${partWords(parts)} changed: it has ${describeSize(now)} now.` : " Nothing changed.") : " bb-box could not read its size after.";
+        this.#event(current, "resize-failed", who, { words: `${sentence(describeError(error, "Resizing the box"))}${sizeWords}`, parts, observed });
         throw error;
       }
+    }
+  }
+
+  async #sizeNow(backend: Backend, guest: Guest, signal?: AbortSignal): Promise<BoxSize | null> {
+    try {
+      return (await backend.held(signal)).find((held) => held.ref === guest.ref)?.size ?? null;
+    } catch {
+      return null;
     }
   }
 
@@ -2394,7 +2527,7 @@ export class Boxes {
    * crashed, unless bb-box started it again after the stop before less than
    * RESTART_GAP_MS before.
    */
-  async #stoppedUnrequested(box: BoxRecord, signal?: AbortSignal): Promise<BoxRecord> {
+  async #stoppedUnrequested(box: BoxRecord, signal?: AbortSignal, asked: BoxEvent | null = null): Promise<BoxRecord> {
     const backend = this.#deps.backends.get(box.backend);
     let why: StopReason | null = null;
     try {
@@ -2402,14 +2535,20 @@ export class Boxes {
     } catch (error) {
       this.#deps.logError("stopped", error);
     }
+    if (asked && !why?.crashed) {
+      this.#event(box, "stopped", asked.by, { words: "bb-box confirmed the stop after its request had failed." });
+      return box;
+    }
     const now = this.#now();
     const last = box.unrequestedStop?.restart?.at;
     const restart = !!why?.crashed && !!backend?.start && (last === undefined || now - last >= RESTART_GAP_MS);
     const stop: UnrequestedStop = { at: why?.at ?? now, reason: why?.reason ?? null, crashed: why?.crashed ?? false, restart: restart ? { at: now, error: null } : null };
     const updated = (await this.update(box, (current) => (current.state === "stopped" ? { unrequestedStop: stop } : {}))) ?? box;
     this.#deps.log?.(`${describeBox(box)}: ${stopWords(updated)}`);
+    this.#event(updated, "stopped-unasked", BY_OUTSIDE, { at: stop.at, words: stop.reason });
     if (restart && updated.unrequestedStop === stop) {
-      void this.#chain(box.id, () => this.#start(updated, undefined, inSlot(updated))).catch(async (error) => {
+      const restarter = byBbBox("its VM crashed, and bb-box starts such a box again");
+      void this.#chain(box.id, () => this.#start(updated, undefined, inSlot(updated), restarter)).catch(async (error) => {
         this.#deps.logError("restart", error);
         const message = describeError(error, "The start");
         await this.update(box, (current) => {
@@ -2469,6 +2608,11 @@ export class Boxes {
   async refresh(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord> {
     const box = await this.get(threadId, ref);
     if (this.#work.has(box.id)) return box;
+    if (this.#deps.reach?.notAnswering(box.id)) {
+      const last = this.#powerCheckedAt.get(box.id);
+      if (last !== undefined && this.#now() - last < POWER_CHECK_GAP_MS) return box;
+      this.#powerCheckedAt.set(box.id, this.#now());
+    }
     return (await this.#observe(box, { signal })) ?? box;
   }
 
@@ -2478,12 +2622,16 @@ export class Boxes {
    */
   async #observe(
     box: BoxRecord,
-    options: { signal?: AbortSignal; power?: PowerState | null; moving?: boolean } = {},
+    options: { signal?: AbortSignal; power?: PowerState | null; moving?: boolean; seen?: (power: PowerState | null) => void } = {},
   ): Promise<BoxRecord | null> {
     if (!box.guest) return box;
     const backend = this.#deps.backends.get(box.backend);
     if (!backend) return box;
-    const read = async () => backend.power((await this.#stamped(box, options.signal)).guest!, options.signal);
+    const read = async () => {
+      const power = await backend.power((await this.#stamped(box, options.signal)).guest!, options.signal);
+      options.seen?.(power);
+      return power;
+    };
     let power = options.power !== undefined ? options.power : await read();
     // A listing's power can be older than the box, which may have started or
     // stopped since, and a provider's listing can lag (Proxmox's by about
@@ -2493,13 +2641,20 @@ export class Boxes {
       if (current && Object.keys(observed(current, power, options.moving)).length) power = await read();
     }
     let unrequested = false;
+    let startedOutside = false;
     const updated = await this.update(box, (current) => {
       const change = observed(current, power, options.moving);
       // A ready box stops through stop(), which moves it to stopping first: one that did not was not asked (#406).
       unrequested = current.state === "ready" && change.state === "stopped";
+      startedOutside = current.state === "stopped" && change.state === "ready";
       return change;
     });
-    return unrequested && updated ? this.#stoppedUnrequested(updated, options.signal) : updated;
+    if (startedOutside && updated) {
+      this.#event(updated, "start-asked", BY_OUTSIDE);
+      this.#event(updated, "started", BY_OUTSIDE);
+    }
+    if (!unrequested || !updated) return updated;
+    return this.#stoppedUnrequested(updated, options.signal, this.#openStop(updated));
   }
 
   /**
@@ -2573,16 +2728,22 @@ export class Boxes {
   /** Turns an unreachable box into a message that says why, after checking its power. */
   async #reach<T>(box: BoxRecord, task: (transport: CommandTransport) => Promise<T>, signal?: AbortSignal): Promise<T> {
     const transport = await this.#command(box);
+    let result: T;
     try {
-      return await task(transport);
+      result = await task(transport);
     } catch (error) {
       if (!(error instanceof TransportError) || error.code !== "unreachable") throw error;
       const reconnecting = this.#deps.reconnecting?.(box) ?? null;
       if (reconnecting) throw new BoxError("reconnecting", `Box ${box.name} does not answer yet: ${reconnecting}`);
+      const reach = this.#deps.reach;
+      if (reach?.notAnswering(box.id)) throw new BoxError("unreachable", `Box ${box.name} does not answer. ${error.message}`);
       const current = await this.#observe(box, { signal }).catch(() => null);
       if (current && current.state !== "ready") this.#require(current, "ready");
+      reach?.failed(current ?? box, error.message);
       throw new BoxError("unreachable", `Box ${box.name} is running but does not answer. ${error.message}`);
     }
+    this.#deps.reach?.answered(box);
+    return result;
   }
 
   /**
@@ -2846,7 +3007,7 @@ export class Boxes {
         if (box.state === "releasing") {
           resumed++;
           this.#deps.log?.(`Releasing ${describeBox(box)} again: its release had not finished.`);
-          await this.#chain(box.id, () => this.#finishRelease(box));
+          await this.#chain(box.id, () => this.#finishRelease(box, undefined, { observeFirst: true }));
           continue;
         }
         const { state, said } = await verdict(box.threadId);

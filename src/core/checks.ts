@@ -21,6 +21,8 @@ export const CHECKS = {
   "warm.<kinds>": { name: "Warm pool of <kinds>", from: ["bb-box"], what: "A warm pool that has fewer ready boxes than its count asks for, and no room for another." },
   "sizes.<kind>.<preset>": { name: "Box sizes", from: ["bb-box"], what: "A Linux preset with less than 2 GiB memory, so its boxes can run out of memory as they become BB machines." },
   "box-files": { name: "Files for every box", from: ["bb-box"], what: "The files bb-box writes into each box as it joins BB, and whether the last write worked." },
+  "box-history": { name: "Box history's file", from: ["bb-box"], what: "Where bb-box will keep each box's readings over time (069): box-history.db beside its database, attached with its own cap, or its database itself where BB's handle refused to attach the file." },
+  "box-log": { name: "Box log", from: ["bb-box"], what: "Where bb-box keeps who stopped, started, resized and released each box (069): box-log.db beside its database, or its database itself where BB's handle refused to attach the file; and whether its writes failed." },
   "images.nightly": { name: "Nightly rebuilds", from: ["bb-box"], what: "When bb box images refresh last ended. It warns when no run ended for 8 days." },
   "images.bb-update": { name: "Refresh after a BB update", from: ["bb-box"], what: "After a BB update, which Linux images have another build of BB's app than BB's server gives, and when their refresh starts. Only while Rebuild each night is on." },
   "images.<backend>/<ref>": { name: "Rebuild of <backend>/<ref>", from: ["bb-box"], what: "A standard image whose last rebuild failed, or waits for room." },

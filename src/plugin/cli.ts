@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, describeError, isAcquiring, type BoxRecord } from "../core/boxes.ts";
+import { BY_COMMAND } from "../core/box-log.ts";
 import type { DoctorReport } from "../backends/types.ts";
 import { withoutSecretVersions, type ImageBake, type Problem } from "../core/document.ts";
 import { LIVE_CHECKS_VARIABLE, type ReplyDrops } from "./live-checks.ts";
@@ -48,6 +49,7 @@ function providersOf(text: string): string | string[] {
   return names.length === 1 ? names[0]! : names;
 }
 const boxPositional = [{ name: "box", description: "The box's name or ID.", required: true }] as const;
+const machineOption = { machine: { type: "boolean", description: "The box is one of your machines, from bb box machines, not a thread's." } } as const;
 
 function out(text: string): PluginCliResult {
   return { exitCode: 0, stdout: `${text}\n` };
@@ -152,6 +154,7 @@ async function resizeBox(
     restart: options.restart === true,
     check: options.check === true,
     by: "the CLI",
+    who: BY_COMMAND,
     beforeRestart: async (box) => {
       await app.checkRestart(box, options.force === true);
     },
@@ -227,7 +230,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const threadId = threadOf(options.thread, ctx);
               const projectId = ctx.projectId ?? (await app.projectOf(threadId));
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
-              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}), ...(options.image ? { image: String(options.image) } : {}), ...(options.device !== undefined ? { device: String(options.device) } : {}), ...(options["no-slim"] ? { slim: false } : {}), ...(options.dedicated ? { dedicated: true } : {}), ...(options.shared ? { shared: true } : {}) });
+              let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}), ...(options.image ? { image: String(options.image) } : {}), ...(options.device !== undefined ? { device: String(options.device) } : {}), ...(options["no-slim"] ? { slim: false } : {}), ...(options.dedicated ? { dedicated: true } : {}), ...(options.shared ? { shared: true } : {}), who: BY_COMMAND });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
               const follow = `bb box status ${box.name}${options.thread ? ` --thread ${threadId}` : ""}`;
@@ -299,7 +302,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ positionals, options }) =>
             guard("Adding the machine", async () => {
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
-              let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}), ...(options.on ? { on: providersOf(options.on) } : {}) });
+              let box = await boxes.acquire({ threadId: OPERATOR, projectId: null, kind: positionals.kind, size, ...(options.name ? { name: options.name } : {}), ...(options.on ? { on: providersOf(options.on) } : {}), who: BY_COMMAND });
               if (!options["no-wait"]) box = await boxes.enrolled((await boxes.settled(box)) ?? box);
               if (options.json) return json(app.view(box));
               return { exitCode: box.state === "failed" ? 1 : 0, stdout: `${boxDetail(box, app.control(box))}\n${options["no-wait"] ? "" : starting(box, boxes.stopping, "bb box machines")}` };
@@ -320,7 +323,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             guard("Removing the machine", async () => {
               const box = await boxes.get(OPERATOR, positionals.machine);
               const idle = options.force ? await app.threadsOn(box) : await app.checkInUse(box, "Releasing");
-              const left = await boxes.release(OPERATOR, box.id, "removed with bb box machines remove");
+              const left = await boxes.release(OPERATOR, box.id, "removed with bb box machines remove", BY_COMMAND);
               if (left) return { exitCode: 1, stderr: `Machine ${left.name} is still being removed: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
               return out(`Removed machine ${box.name}.${idleWords(idle, false)}`);
             }),
@@ -344,9 +347,45 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const threadId = threadOf(options.thread, ctx);
               const box = await boxes.get(threadId, positionals.box);
               const idle = options.force ? await app.threadsOn(box) : await app.checkInUse(box, "Releasing");
-              const left = await boxes.release(threadId, positionals.box, "released with bb box release");
+              const left = await boxes.release(threadId, positionals.box, "released with bb box release", BY_COMMAND);
               if (left) return { exitCode: 1, stderr: `Box ${left.name} is still being released: ${left.error ?? "the backend has not finished"}. The sweep keeps trying.\n` };
               return out(`Released box ${positionals.box}.${idleWords(idle, false)}`);
+            }),
+        }),
+        stop: cliCommand({
+          summary: "Stop a thread's box, or with --machine one of your machines, keeping its disk. A box a thread is working on is refused unless --force.",
+          positionals: boxPositional,
+          options: { ...threadOption, ...machineOption, force: { type: "boolean", description: "Stop it even while threads are working on it, which ends their work." } },
+          run: ({ positionals, options }, ctx) =>
+            guard("Stopping the box", async () => {
+              const owner = options.machine ? OPERATOR : threadOf(options.thread, ctx);
+              const found = await boxes.get(owner, positionals.box);
+              const idle = options.force ? await app.threadsOn(found) : await app.checkInUse(found, "Stopping");
+              const box = await boxes.stop(owner, found.id, ctx.signal, BY_COMMAND);
+              return out(`Box ${box.name} is stopped.${idleWords(idle, true)}`);
+            }),
+        }),
+        start: cliCommand({
+          summary: "Start a thread's stopped box, or with --machine one of your machines, and wait until it answers.",
+          positionals: boxPositional,
+          options: { ...threadOption, ...machineOption, ...jsonOption },
+          run: ({ positionals, options }, ctx) =>
+            guard("Starting the box", async () => {
+              const owner = options.machine ? OPERATOR : threadOf(options.thread, ctx);
+              const box = await boxes.enrolled(await boxes.start(owner, positionals.box, ctx.signal, BY_COMMAND), ctx.signal);
+              return options.json ? json(app.view(box)) : out(boxDetail(box, app.control(box)));
+            }),
+        }),
+        forget: cliCommand({
+          summary: "Forget a box whose backend is no longer in bb-box's settings: bb-box removes its record and deletes nothing, so a guest that still runs keeps running.",
+          positionals: boxPositional,
+          options: { ...threadOption, ...machineOption },
+          run: ({ positionals, options }, ctx) =>
+            guard("Forgetting the box", async () => {
+              const owner = options.machine ? OPERATOR : threadOf(options.thread, ctx);
+              const box = await boxes.get(owner, positionals.box);
+              await app.forget(owner, box.id, BY_COMMAND);
+              return out(`Forgot box ${box.name}: bb-box removed its record. Nothing was deleted on ${box.backendLabel}: if the box still runs there, it keeps running.`);
             }),
         }),
         "image set": cliCommand({
