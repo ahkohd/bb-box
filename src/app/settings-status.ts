@@ -1,3 +1,4 @@
+import type { DoctorReport } from "../backends/types.ts";
 import type { BackendConfig } from "../core/document.ts";
 import type { BackendState, ConfigState, KindInfoView } from "../plugin/configuration.ts";
 import { relativeTime, type Tone } from "./common.tsx";
@@ -7,7 +8,7 @@ import type { SettingsView } from "./settings-route.ts";
 export const FRESH_CHECK_MS = 60 * 60_000;
 const SAME_AGE_MS = 5 * 60_000;
 
-export type BackendStatus = "off" | "unfinished" | "never" | "changed" | "stale" | "ready" | "attention" | "failing";
+export type BackendStatus = "off" | "unfinished" | "never" | "changed" | "stale" | "ready" | "failing";
 
 export interface BackendHealth {
   readonly status: BackendStatus;
@@ -16,10 +17,23 @@ export interface BackendHealth {
   readonly detail: string | null;
   readonly fix: string | null;
   readonly checkedAt: number | null;
+  readonly warnings: number;
 }
 
 export function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`;
+}
+
+export function onBbMachine(config: BackendConfig): boolean {
+  return (config.type === "docker" || config.type === "microsandbox") && typeof config.fields.host === "string" && config.fields.host.startsWith("bb:");
+}
+
+export function warningsIn(report: DoctorReport): number {
+  return report.checks.filter((check) => check.status === "warn").length;
+}
+
+export function withWarnings(words: string, warnings: number): string {
+  return warnings ? `${words}, ${plural(warnings, "warning")}` : words;
 }
 
 export function isMachineDocker(config: BackendConfig): boolean {
@@ -75,9 +89,14 @@ function hostOfFields(config: BackendConfig): string | null {
   }
 }
 
-export function hostChip(config: BackendConfig, label: string): string | null {
+function hostsWords(config: BackendConfig, hosts: readonly string[]): string | null {
+  if (hosts.length === 1) return hosts[0]!;
+  return hosts.length > 1 ? plural(hosts.length, config.type === "tart" ? "Mac" : "host") : null;
+}
+
+export function hostChip(config: BackendConfig, label: string, hosts: readonly string[] = []): string | null {
   const named = config.id.includes(":") ? config.id.slice(config.id.indexOf(":") + 1) : null;
-  const host = hostOfFields(config) ?? named;
+  const host = hostsWords(config, hosts) ?? hostOfFields(config) ?? named;
   return host && !label.toLowerCase().includes(host.toLowerCase()) ? host : null;
 }
 
@@ -91,27 +110,25 @@ export function backendHealth(state: ConfigState, config: BackendConfig, now: nu
   const stored = problemsUnder(state.problems, `backends.${config.id}`);
   const doctor = live?.doctor ?? null;
   const checkedAt = doctor?.at ?? null;
+  const quiet = { checkedAt, warnings: 0 };
   if (!config.enabled) {
     const missing = live?.problems[0]?.message ?? stored[0]?.message ?? null;
-    if (missing) return { status: "unfinished", tone: "warn", words: "Not finished", detail: missing, fix: "Finish its settings, then turn it on.", checkedAt };
-    return { status: "off", tone: "off", words: "Off", detail: "takes no new boxes", fix: null, checkedAt };
+    if (missing) return { status: "unfinished", tone: "warn", words: "Not finished", detail: missing, fix: "Finish its settings, then turn it on.", ...quiet };
+    return { status: "off", tone: "off", words: "Off", detail: "takes no new boxes", fix: null, ...quiet };
   }
   if (live?.state === "misconfigured") {
     const first = live.problems[0]?.message ?? stored[0]?.message ?? "Its settings have a problem.";
-    return { status: "failing", tone: "bad", words: "Not working", detail: first, fix: "Open it and fix its settings.", checkedAt };
+    return { status: "failing", tone: "bad", words: "Not working", detail: first, fix: "Open it and fix its settings.", ...quiet };
   }
-  if (doctor && !doctor.report.ok) {
-    const failed = doctor.report.checks.find((check) => check.status === "fail");
-    const warned = doctor.report.checks.find((check) => check.status === "warn");
-    const check = failed ?? warned;
-    const detail = check ? check.detail || check.name : doctor.report.summary;
-    const fix = check?.fix ?? null;
-    return failed ? { status: "failing", tone: "bad", words: "Not working", detail, fix, checkedAt } : { status: "attention", tone: "warn", words: "Needs attention", detail, fix, checkedAt };
+  if (!doctor) return { status: "never", tone: "off", words: "Not checked yet", detail: null, fix: null, ...quiet };
+  const failed = doctor.report.checks.find((check) => check.status === "fail");
+  const warnings = warningsIn(doctor.report);
+  if (failed || (!doctor.report.ok && !warnings)) {
+    return { status: "failing", tone: "bad", words: "Not working", detail: failed ? failed.detail || failed.name : doctor.report.summary, fix: failed?.fix ?? null, ...quiet };
   }
-  if (!doctor) return { status: "never", tone: "off", words: "Not checked yet", detail: null, fix: null, checkedAt };
-  if (live && doctor.revision !== null && doctor.revision < live.changed) return { status: "changed", tone: "off", words: "Not checked since it changed", detail: null, fix: null, checkedAt };
-  if (now - doctor.at > FRESH_CHECK_MS) return { status: "stale", tone: "ok", words: "Last check passed", detail: null, fix: null, checkedAt };
-  return { status: "ready", tone: "ok", words: "Ready", detail: null, fix: null, checkedAt };
+  if (live && doctor.revision !== null && doctor.revision < live.changed) return { status: "changed", tone: "off", words: "Not checked since it changed", detail: null, fix: null, ...quiet };
+  if (now - doctor.at > FRESH_CHECK_MS) return { status: "stale", tone: "ok", words: withWarnings("Last check passed", warnings), detail: null, fix: null, checkedAt, warnings };
+  return { status: "ready", tone: "ok", words: withWarnings("Ready", warnings), detail: null, fix: null, checkedAt, warnings };
 }
 
 export function backendLine(state: ConfigState, config: BackendConfig, health: BackendHealth, now: number, showAge: boolean): string[] {
@@ -120,7 +137,7 @@ export function backendLine(state: ConfigState, config: BackendConfig, health: B
   const kinds = live?.kinds.length ?? 0;
   const age = showAge && health.checkedAt !== null && (health.status === "stale" || health.status === "ready") ? [relativeTime(health.checkedAt, now)] : [];
   if (health.status === "off" || health.status === "unfinished") return [...(boxes ? [plural(boxes, "box", "boxes")] : []), ...(health.detail ? [health.detail] : [])];
-  if (health.status === "failing" || health.status === "attention") return health.detail ? [health.detail] : [];
+  if (health.status === "failing") return health.detail ? [health.detail] : [];
   return [...age, ...(boxes ? [plural(boxes, "box", "boxes")] : []), ...(health.status === "never" || health.status === "changed" ? [] : [plural(kinds, "kind")])];
 }
 
@@ -153,7 +170,7 @@ export function statusLine(state: ConfigState, now: number, checking: number): S
   const stale = healths.filter((health) => health.status === "stale").length;
   const never = healths.filter((health) => health.status === "never").length;
   const changed = healths.filter((health) => health.status === "changed").length;
-  const troubled = healths.filter((health) => health.status === "failing" || health.status === "attention").length;
+  const troubled = healths.filter((health) => health.status === "failing").length;
   const passed = fresh + stale;
   const words = stale ? "passed their last check" : "ready";
   const headline =
@@ -164,7 +181,7 @@ export function statusLine(state: ConfigState, now: number, checking: number): S
         : on.length === 1 && changed === 1
           ? `${backendLabel(state, on[0]!)} is not checked since it changed`
         : on.length === 1
-          ? `${backendLabel(state, on[0]!)} ${healths[0]!.status === "attention" ? "needs attention" : "is not working"}`
+          ? `${backendLabel(state, on[0]!)} is not working`
           : passed === on.length
         ? `All ${plural(on.length, "backend")} ${words}`
         : `${passed} of ${plural(on.length, "backend")} ${words}`;
@@ -245,7 +262,7 @@ export function statusItems(state: ConfigState, now: number): StatusItem[] {
     const health = backendHealth(state, backend, now);
     const label = backendLabel(state, backend);
     const open: SettingsView = { page: "backend", id: backend.id };
-    if (health.status === "failing" || health.status === "attention") items.push({ key: `backend-${backend.id}`, tone: health.tone, title: label, detail: health.detail ?? "", fix: health.fix, open });
+    if (health.status === "failing") items.push({ key: `backend-${backend.id}`, tone: health.tone, title: label, detail: health.detail ?? "", fix: health.fix, open });
     if (health.status === "unfinished") items.push({ key: `unfinished-${backend.id}`, tone: "warn", title: `${label} is not finished`, detail: health.detail ?? "", fix: health.fix, open });
     for (const short of state.backends.find((live) => live.id === backend.id)?.warmShort ?? []) {
       const kinds = short.kinds.map((kind) => state.kinds.find((info) => info.id === kind)).filter((info): info is KindInfoView => !!info);

@@ -413,6 +413,10 @@ export class Backends {
     return short;
   }
 
+  hosts(id: string): readonly string[] {
+    return this.#entries.get(id)?.backend.hosts ?? [];
+  }
+
   hostEstimates(id: string): Readonly<Record<string, Readonly<Record<string, number>>>> {
     return this.#entries.get(id)?.backend.hostEstimates?.() ?? {};
   }

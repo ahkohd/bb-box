@@ -113,6 +113,7 @@ export interface BackendState {
   readonly warmShort: readonly WarmShortfall[];
   readonly changed: number;
   readonly hostEstimates?: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  readonly hosts?: readonly string[];
 }
 
 export interface ConfigState {
@@ -385,6 +386,7 @@ export class Configuration {
           warmShort: this.#deps.backends.warmShort(backend.id),
           changed: ledger.backends[backend.id]?.changed ?? this.#document.revision,
           ...(backend.hosts?.length ? { hostEstimates: this.#deps.backends.hostEstimates(backend.id) } : {}),
+          hosts: this.#deps.backends.hosts(backend.id),
         };
       }),
       problems: checkDocument(this.#document, this.#secrets, drivers, inUse),
