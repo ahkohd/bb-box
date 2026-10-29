@@ -17,6 +17,7 @@ export const LEFT_BUILD_GRACE_MS = 10 * 60_000;
 export const BUILD_TTL_SECONDS = 2 * 3600;
 export const TEMPLATE_INPUTS = ["proxmox-lxc/template", "proxmox-lxc/host/common.sh", "android", "boat"] as const;
 const BUILD_DIR = "/var/tmp/bb-box-build";
+export const OUT_OF_BOATS_HOME = "cd /";
 const DESKTOP_UP = 'pgrep -x xfwm4 >/dev/null && test -S "$HOME/.cache/cua-driver/cua-driver.sock"';
 export const CUA_READY = [
   "for round in 1 2 3 4 5 6; do",
@@ -132,6 +133,7 @@ export function buildWaitWords(kind: BoatKind, lastBuildMs: number | null): stri
 
 export function customizeScript(kind: BoatKind): string {
   return [
+    OUT_OF_BOATS_HOME,
     `d=${BUILD_DIR}`,
     'rm -f "$d/exit"',
     `setsid nohup sh -c 'bash "$1/boat/template.sh" customize ${TEMPLATE_STEP[kind]} > "$1/log" 2>&1; echo $? > "$1/exit"' sh "$d" </dev/null >/dev/null 2>&1 &`,
@@ -321,7 +323,7 @@ export class BoatTemplates {
       if (licence) await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/android-sdk-license >/dev/null`, { stdin: `${licence}\n`, timeoutMs: 30_000 }), "write the Android SDK licence's acceptance");
       await this.#must(asUser.run(`sudo -n sh -c ${quote(customizeScript(kind))}`, { timeoutMs: 30_000 }), "start the guest scripts");
       await this.#follow(made.id, kind);
-      const finalized = await (await this.#deps.reach(made.id, "user")).run(`sudo -n bash ${BUILD_DIR}/boat/template.sh finalize ${TEMPLATE_STEP[kind]}`, { timeoutMs: 20 * 60_000 });
+      const finalized = await (await this.#deps.reach(made.id, "user")).run(`${OUT_OF_BOATS_HOME} && sudo -n bash ${BUILD_DIR}/boat/template.sh finalize ${TEMPLATE_STEP[kind]}`, { timeoutMs: 20 * 60_000 });
       if (finalized.exitCode !== 0) throw new Error(`boat's ${kind} template did not finalize: ${finalized.stderr.trim().slice(-400) || `exit ${finalized.exitCode}`}`);
       const devices = TEMPLATE_STEP[kind] === "android" ? await this.#devices(made.id) : null;
       await this.#stop(made.id);

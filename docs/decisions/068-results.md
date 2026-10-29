@@ -302,3 +302,34 @@ its snapshot; an Android box forks the template and shows its device, not
 a desktop. The live build, the emulator's boot, the device's stream in the
 panel and its input are proved once the field is on in production, as the
 trial's starts allow.
+
+### The first build in production
+
+With the licence on in production (main `eee94661`), the upkeep built the
+Android template at the `default` size. It failed 7 minutes in, at the
+first device's first boot: the emulator's QEMU exited with code 1 within
+2 s, saying only "QEMU main loop exits abnormally with code 1".
+
+The same build in a fresh sandbox of our own failed the same way, on the
+same CPU (AMD Ryzen 9 9950X, 4 cores) with KVM usable. bb-box's Android
+scripts run by hand in a box forked from the Linux template made all three
+devices: cold boots of 36 to 64 s and boots from their snapshots of 6 to
+9 s. Started by hand in the failed sandbox, the emulator booted too, with
+every flag `bb-box-emulator` gives it, until it was started from boat's
+home directory, `/home/user`, mode 750, which the box user cannot enter:
+then it failed as the build did, every time. boat runs the build's commands
+over SSH as its own user, from that home, and `prepare-avds` kept it as its
+working directory as it became the box user.
+
+So the build's guest scripts and its finalize now start from `/`. In the
+failed sandbox, the Android step run again from `/` made all three devices:
+
+| Device | Cold boot | Snapshot saved in | Boot from the snapshot |
+| --- | --- | --- | --- |
+| Pixel 8 | 40.3 s | 8.1 s | 8.7 s |
+| Pixel Fold | 54.1 s | 9.9 s | 7.0 s |
+| Pixel Tablet | 67.3 s | 17.2 s | 8.5 s |
+
+against 16.9 to 17.5 s cold and 2.1 to 3.3 s from the snapshot for the
+Proxmox QEMU template's build on 8 cores (063). The Android step took
+309 s, and the build's guest scripts before it 6.5 minutes.

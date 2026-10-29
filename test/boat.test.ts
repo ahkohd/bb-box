@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { BoatApi, limitsFrom, reachFrom, sandboxFrom } from "../src/backends/boat/api.ts";
 import { BOAT_KEYS, parseBoatPart } from "../src/backends/boat/config.ts";
 import { BoatBackend, LABELS, knownHostsLine, ownKeyScript, powerOf, sandboxName, sizeFor } from "../src/backends/boat/backend.ts";
-import { BoatTemplates, TEMPLATE_ROLE, buildWaitWords, failedChecks, type Reached, type TemplateRecord } from "../src/backends/boat/templates.ts";
+import { BoatTemplates, OUT_OF_BOATS_HOME, TEMPLATE_ROLE, buildWaitWords, failedChecks, type Reached, type TemplateRecord } from "../src/backends/boat/templates.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { bbReach, isPrivateAddress } from "../src/backends/boat/reach-bb.ts";
 import { FAKE_BOAT_KEY, FakeBoat } from "./fake-boat.ts";
@@ -276,6 +276,8 @@ test("with no template, the first box waits for its build and says so; the build
   const check = scripts.findIndex((each) => each.script.startsWith("bb-box-check-headless"));
   const finalize = scripts.findIndex((each) => each.user === "user" && each.script.includes("template.sh finalize linux"));
   assert.ok(customize >= 0 && customize < finalize && finalize < check, "customize, finalize, then the check");
+  assert.match(scripts[customize]!.script, /^sudo -n sh -c 'cd \/\n/, "the guest scripts start from /, as the box user cannot enter boat's home, where the emulator then fails to start");
+  assert.ok(scripts[finalize]!.script.startsWith(`${OUT_OF_BOATS_HOME} && `), "and so does the finalize");
   assert.notEqual(scripts[check]!.sandbox, record.sandbox, "the check runs in a fork of the template, as a box is");
   assert.equal(fake.sandboxes.get(scripts[check]!.sandbox)?.state, "deleted", "the trial fork goes");
   assert.equal(scripts.find((each) => each.script.startsWith("bb-box-check"))?.user, "box", "the check runs as the box user");
