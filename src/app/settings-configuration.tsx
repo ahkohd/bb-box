@@ -15,9 +15,10 @@ import { ConflictNote, RestoredNote, SaveBar, focusAfterRender, useDraft, useReg
 
 const COPIED_SHOWN_MS = 1600;
 const EDITOR = "import/editor";
-const OPEN_IMPORT = "import/open";
+export const OPEN_IMPORT = "import/open";
 const COPY_NOTE = "configuration/copy-note";
-const COPY_BUTTON = "configuration/copy";
+export const COPY_BUTTON = "configuration/copy";
+export const EXPORT_BUTTON = "configuration/export";
 const IMPORT_RESULT = "import/result";
 
 type CheckOutcome =
@@ -398,7 +399,7 @@ function ExportRow() {
     setTimeout(() => URL.revokeObjectURL(url), 0);
   };
   return (
-    <div>
+    <div data-setting-row={EXPORT_BUTTON}>
       <SettingRow
         label="Export"
         description={
@@ -415,6 +416,7 @@ function ExportRow() {
           variant="outline"
           size="sm"
           className="h-7"
+          data-draft-path={EXPORT_BUTTON}
           onClick={() => {
             if (!navigator.clipboard) return setCopied("failed");
             navigator.clipboard.writeText(text).then(
@@ -481,6 +483,7 @@ function MovedCopyRow() {
     <>
       {copy ? (
         <SettingRow
+          path={COPY_BUTTON}
           label="Settings moved from BB"
           description={`BB Box kept a copy of BB's own settings for it when it moved them into this configuration, ${relativeTime(copy.at, Date.now())}, so a value that moved wrongly can be compared. It holds no secret. bb box config migrated shows it.`}
         >
@@ -561,7 +564,7 @@ export function ConfigurationOptions() {
             {null}
           </SettingRow>
           <ExportRow />
-          <SettingRow label="Import" description="Apply a JSON file to this configuration. BB Box checks it and lists what it changes, before and after, before anything is applied.">
+          <SettingRow path={OPEN_IMPORT} label="Import" description="Apply a JSON file to this configuration. BB Box checks it and lists what it changes, before and after, before anything is applied.">
             <Button
               type="button"
               variant="outline"

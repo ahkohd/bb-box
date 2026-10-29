@@ -124,7 +124,7 @@ function SizeRow({ draft, id, size, problemAt }: { draft: Draft; id: string; siz
   const preset = size === "largest" ? null : size;
   const changed = cells.some((path) => draft.changed(path)) || (preset !== null && draft.changed(defaultPath) && draft.current(defaultPath) === preset);
   return (
-    <div className="py-2" data-setting-row={row}>
+    <div className="-mx-2 px-2 py-2" data-setting-row={row}>
       <div className="grid grid-cols-3 items-end gap-2 sm:grid-cols-[6rem_repeat(3,minmax(0,1fr))_4rem] sm:items-center">
         <span className="col-span-2 row-start-1 flex flex-wrap items-center gap-1.5 sm:col-span-1">
           <span className="text-sm text-foreground">{name}</span>

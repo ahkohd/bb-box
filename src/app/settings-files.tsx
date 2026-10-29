@@ -15,7 +15,7 @@ import { filePath, newFilePath, storedAt, type Path } from "./settings-paths.ts"
 import { ChangedChip, ConflictNote, RestoredNote, SaveBar, focusAfterRender, useDraft, type Draft } from "./settings-saving.tsx";
 
 const CONTENT_PLACEHOLDER = "Paste the file's text. It is never shown again.";
-const ADD_FILE = "files/add";
+export const ADD_FILE = "files/add";
 
 function newFileId(): string {
   return operationId().slice(-8);
@@ -218,7 +218,7 @@ export function BoxFilesSection() {
               const path = filePath(file.path);
               const set = isSecretState(file.content) && file.content.set;
               return (
-                <div key={file.path} data-setting={path} className="py-2.5 first:pt-0 last:pb-0">
+                <div key={file.path} data-setting={path} data-setting-row={path} className="py-2.5 first:pt-0 last:pb-0">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <code className="min-w-0 flex-1 truncate text-xs text-foreground">~/{file.path}</code>
                     <ChangedChip show={draft.edit(path) !== null} />

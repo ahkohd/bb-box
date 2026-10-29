@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { currentHash, entryOf, hashOf, OPEN_SETTINGS_VIEW_EVENT, OVERVIEW, sameView, viewFromHash, withEntry, type SettingsView } from "./settings-route.ts";
 
 export interface Arrival {
-  readonly kind: "open" | "return" | "replace";
+  readonly kind: "open" | "return" | "replace" | "found";
   readonly row: string | null;
   readonly scroll: number;
   readonly focus?: string;
+  readonly inPlace?: boolean;
   readonly serial: number;
 }
 
@@ -14,6 +15,7 @@ export interface SettingsNav {
   readonly cameFrom: SettingsView | null;
   readonly arrival: Arrival | null;
   go(view: SettingsView, row?: string, focus?: string): void;
+  find(view: SettingsView, row: string, focus: string | null): void;
   back(): void;
   toOverview(): void;
   replace(view: SettingsView): void;
@@ -70,18 +72,34 @@ export function useSettingsNav(scroller: () => HTMLElement | null): SettingsNav 
     };
   }, [arrive]);
 
-  const go = useCallback(
-    (next: SettingsView, row?: string, focus?: string) => {
+  const push = useCallback(
+    (next: SettingsView, row: string | undefined, arrival: Omit<Arrival, "serial">) => {
       const here = viewRef.current;
-      if (sameView(next, here)) return;
       const entry = entryOf(window.history.state) ?? { depth: 0, from: null };
       window.history.replaceState(withEntry({ ...entry, scroll: scroller()?.scrollTop ?? 0, ...(row ? { row } : {}) }), "", window.location.href);
       window.history.pushState(withEntry({ depth: entry.depth + 1, from: hashOf(here) }), "", urlFor(next));
       setCameFrom(here);
       setView(next);
-      arrive({ kind: "open", row: null, scroll: 0, ...(focus ? { focus } : {}) });
+      arrive(arrival);
     },
     [arrive, scroller],
+  );
+
+  const go = useCallback(
+    (next: SettingsView, row?: string, focus?: string) => {
+      if (sameView(next, viewRef.current)) return;
+      push(next, row, { kind: "open", row: null, scroll: 0, ...(focus ? { focus } : {}) });
+    },
+    [push],
+  );
+
+  const find = useCallback(
+    (next: SettingsView, row: string, focus: string | null) => {
+      const arrival = { kind: "found" as const, row: null, scroll: 0, ...(focus ? { focus } : {}) };
+      if (sameView(next, viewRef.current)) arrive({ ...arrival, inPlace: true });
+      else push(next, row, arrival);
+    },
+    [arrive, push],
   );
 
   const back = useCallback(() => {
@@ -112,7 +130,7 @@ export function useSettingsNav(scroller: () => HTMLElement | null): SettingsNav 
     [arrive],
   );
 
-  return useMemo(() => ({ view, cameFrom, arrival, go, back, toOverview, replace }), [view, cameFrom, arrival, go, back, toOverview, replace]);
+  return useMemo(() => ({ view, cameFrom, arrival, go, find, back, toOverview, replace }), [view, cameFrom, arrival, go, find, back, toOverview, replace]);
 }
 
 export function scrollParent(element: HTMLElement | null): HTMLElement | null {

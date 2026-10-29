@@ -69,7 +69,8 @@ its view in the URL's hash (unit 0 of 067 showed BB keeps it):
 
 Every inner view starts with one row: where you are ("BB Box settings ›
 Proxmox LXC", the first part going to the overview), and, when the person
-came from another inner view, "Back to …".
+came from another inner view, "Back to …", with Find a setting at its
+right. The overview has Find alone, at full width.
 
 Opening a view moves focus to its heading. Going back puts focus on the row
 the person opened and the scroll where it was. Pages change in place,
@@ -429,6 +430,39 @@ overview, dimmed, until the person leaves BB Box's settings.
   configuration, read again, shows it gone.
 - **From a terminal**: the `bb box config` commands.
 
+## Find a setting
+
+Find is a field in the top row of every view. Its index is built from the
+configuration as `config.get` gives it, not kept by hand: every field of
+every backend from its driver's descriptors, each Mac's or host's own
+fields, each backend's switch and name, each kind's switch, sizes, largest
+size, default size, warm count on each backend that keeps warm boxes for
+it, and spares, and every setting of the option pages, with each project's
+image and each file for every box.
+
+- Each word of the query must match the setting's label, where it is, its
+  help, its key or its value. Synonyms, such as RAM for memory and CPU for
+  cores, are matched against labels only, so "RAM" finds memory settings
+  and not every help text that says memory. A size's labels are its
+  columns, cores, memory and disk, and Find opens the cell the words name.
+- Words such as turn, on and off do not have to match when other words do;
+  they put switches first.
+- Results show where each setting is and its value: what is stored, Set or
+  Not set for a secret, and for an empty field what it takes ("Empty:
+  4096 MiB, the default", "Empty: 10 cores, bb-box's estimate").
+- The first 40 are listed, with the count announced. Arrow keys move but
+  never past the first or last result shown; Enter opens; Escape clears.
+  The list does not animate. Find leaves the browser's own Find alone.
+- Opening a result goes to the setting's page, or stays on the page when
+  it is already there. Once the page has settled, it unfolds the card or
+  opens the Mac that holds the setting, scrolls it to the middle of the
+  screen, focuses it, and rings its row for 1.4 s; with reduced motion
+  the ring goes without fading. A setting that is hidden for now, such as
+  the tailnet's tags while machines do not join it, opens the choice that
+  shows it.
+- The query is kept in memory while BB is open: back to the page before,
+  by the top row or the browser, puts focus on Find with the query in it.
+
 ## Keyboard and screen readers
 
 - Every row, link and button has a visible focus ring.
@@ -464,7 +498,7 @@ on the Boxes page, under Machines".
 | 8: Images, with every rebuild's run state, projects' images, and failed rebuilds in Status | Built |
 | 9: Devices and Network on the engine | Built |
 | 10: Configuration: export, import with its change list, the copy's removal | Built |
-| 11: Find | To come, as 067 lists it |
+| 11: Find a setting, on every view | Built |
 
 The code: `src/app/settings.tsx` (the view: hash, focus and scroll),
 `settings-route.ts` (views, hashes and `openSettingsView`),
@@ -483,7 +517,9 @@ your BB machines),
 `settings-setup.tsx` (Add backend and
 setting up a backend), `settings-first-run.tsx` (first run on the
 overview), `settings-context.tsx`, `settings-overview.tsx`,
-`settings-pages.tsx` and `settings-parts.tsx`. `first-run.tsx` keeps the
+`settings-pages.tsx` and `settings-parts.tsx`. `settings-find-index.ts`
+builds Find's index and searches it, `settings-find.tsx` is its field, and
+`settings-reveal.ts` shows the setting it opens. `first-run.tsx` keeps the
 Box panel's first run and the guidance both share, `settings-files.tsx`
 files for every box, and `settings-fields.tsx` the section and field
 parts from before 067, with the helpers in `config.ts`.

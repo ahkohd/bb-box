@@ -21,7 +21,7 @@ import { MachineCard, useMachineHosts, type Machines } from "./settings-docker-h
 import { machineIdOf } from "./settings-machine-docker.ts";
 import { drafts } from "./settings-drafts.ts";
 import { Card, Group, NotHere, PageHeader, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
-import { backendAt, candidateOf, hostPath, type Path, type PathEdit } from "./settings-paths.ts";
+import { backendAt, backendEnabledPath, backendLabelPath, candidateOf, hostPath, type Path, type PathEdit } from "./settings-paths.ts";
 import { RestoredNote, SAVING_RULE, SaveBar, useDraft, type Draft } from "./settings-saving.tsx";
 import { backendHealth, backendLabel, hostChip, isMachineDocker, kindName, onBbMachine, plural, warningsIn, withWarnings, type BackendHealth } from "./settings-status.ts";
 
@@ -485,12 +485,12 @@ function BackendEditor({ config }: { config: BackendConfig }) {
             <label className="flex items-center gap-3 text-xs text-foreground">
               Takes new boxes
               <RowControl>
-                <Switch aria-label={`${label}: takes new boxes`} aria-describedby={healthId} checked={pending ?? config.enabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={(on) => void instant.run(writes.backendOn(draft.latest, config, on, label))} />
+                <Switch data-draft-path={backendEnabledPath(config.id)} aria-label={`${label}: takes new boxes`} aria-describedby={healthId} checked={pending ?? config.enabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={(on) => void instant.run(writes.backendOn(draft.latest, config, on, label))} />
               </RowControl>
             </label>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label={`More for ${label}`} data-backend-menu={config.id}>
+                <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label={`More for ${label}`} data-backend-menu={config.id} data-draft-path={backendLabelPath(config.id)}>
                   <Icon name="MoreHorizontal" className="size-4" aria-hidden />
                 </Button>
               </DropdownMenuTrigger>

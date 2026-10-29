@@ -1,5 +1,5 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,7 @@ import { switchKey, useSettings } from "./settings-context.tsx";
 import { describedBy, SecretControl } from "./settings-draft-fields.tsx";
 import { backendPart, operationId } from "./settings-drafts.ts";
 import { Card, FOCUS_RING, Group, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
-import { backendFieldPath, hostFieldPath, hostNoun, hostPath, newHostPath, plain, storedProblemPath, type Path, type PlainValue } from "./settings-paths.ts";
+import { backendFieldPath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, newHostPath, plain, storedProblemPath, type Path, type PlainValue } from "./settings-paths.ts";
 import { ChangedChip, ConflictNote, focusAfterRender, saveOnEnter, type Draft } from "./settings-saving.tsx";
 import { plural } from "./settings-status.ts";
 
@@ -334,7 +334,13 @@ function groupSummary(form: BackendForm, fields: readonly FieldView[]): string {
 
 export function FieldCards({ form, groups, forced }: { form: BackendForm; groups: readonly { readonly id: FieldGroup; readonly fields: readonly FieldView[] }[]; forced: (path: Path) => boolean }) {
   const { nav } = useSettings();
-  const [unfolded, setUnfolded] = useState<ReadonlySet<FieldGroup>>(() => new Set(groups.filter((group) => group.fields.some((field) => backendFieldPath(form.config.id, field.key) === nav.arrival?.focus)).map((group) => group.id)));
+  const holding = (focus: Path | undefined) => groups.filter((group) => group.fields.some((field) => backendFieldPath(form.config.id, field.key) === focus)).map((group) => group.id);
+  const [unfolded, setUnfolded] = useState<ReadonlySet<FieldGroup>>(() => new Set(holding(nav.arrival?.focus)));
+  const found = nav.arrival?.kind === "found" ? nav.arrival : null;
+  useEffect(() => {
+    const opened = holding(found?.focus);
+    if (opened.length) setUnfolded((current) => new Set([...current, ...opened]));
+  }, [found?.serial]);
   return (
     <>
       {groups.map((group) => {
@@ -482,8 +488,14 @@ function HostDetails({ form, host, noun }: { form: BackendForm; host: HostRow; n
 
 export function HostsSection({ form, forced, onRemove, settingUp = false }: { form: BackendForm; forced: (path: Path) => boolean; onRemove: (name: string) => void; settingUp?: boolean }) {
   const { draft, config, driver } = form;
-  const { state, instant, writes } = useSettings();
-  const [open, setOpen] = useState<ReadonlySet<Path>>(() => new Set());
+  const { state, nav, instant, writes } = useSettings();
+  const hostOf = (focus: Path | undefined) => (form.config.hosts ?? []).map((host) => hostPath(config.id, host.name)).filter((path) => focus?.startsWith(`${path}/fields/`));
+  const [open, setOpen] = useState<ReadonlySet<Path>>(() => new Set(hostOf(nav.arrival?.focus)));
+  const found = nav.arrival?.kind === "found" ? nav.arrival : null;
+  useEffect(() => {
+    const opened = hostOf(found?.focus);
+    if (opened.length) setOpen((current) => new Set([...current, ...opened]));
+  }, [found?.serial]);
   const noun = hostNoun(config.type);
   const nouns = noun === "Mac" ? "Macs" : "Hosts";
   if (!driver.hostFields.length) return null;
@@ -565,6 +577,7 @@ export function HostsSection({ form, forced, onRemove, settingUp = false }: { fo
                     {host.saved ? (
                       <RowControl>
                         <Switch
+                          data-draft-path={hostEnabledPath(host.path)}
                           aria-label={`${noun} ${host.name}: takes new boxes`}
                           checked={pending ?? host.enabled}
                           disabled={removed}

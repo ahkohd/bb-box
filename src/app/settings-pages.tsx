@@ -21,17 +21,20 @@ import { KindPage } from "./settings-kind-page.tsx";
 import { iosEncoderWords, monitorChanged, noteMonitorChanged, ReloadNote } from "./settings-overview.tsx";
 import { Card, Chevron, FOCUS_RING, Group, NavRow, NotHere, PageHeader, ProviderGlyph, RowNote, Rows, SavedTick, SettingRow } from "./settings-parts.tsx";
 import { isOptionPage, type SettingsView } from "./settings-route.ts";
+import { sharedIosFieldOf } from "./settings-kinds.tsx";
+import { backendFieldPath } from "./settings-paths.ts";
 import { backendLabel, isMachineDocker, kindName, plural } from "./settings-status.ts";
 import { NetworkOptions } from "./settings-tailnet.tsx";
+import { FindSettings } from "./settings-find.tsx";
 
-function AtOnceSwitch({ label, description, settingKey, value, disabled, onChange }: { label: string; description?: ReactNode; settingKey: string; value: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
+function AtOnceSwitch({ label, description, settingKey, path, value, disabled, onChange }: { label: string; description?: ReactNode; settingKey: string; path: string; value: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
   const { instant } = useSettings();
   const pending = instant.pendingValue<boolean>(settingKey);
   return (
     <div>
-      <SettingRow label={label} description={description}>
+      <SettingRow label={label} description={description} path={path}>
         <SavedTick show={instant.isSaved(settingKey)} />
-        <Switch aria-label={label} checked={pending ?? value} disabled={disabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={onChange} />
+        <Switch data-draft-path={path} aria-label={label} checked={pending ?? value} disabled={disabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={onChange} />
       </SettingRow>
       <RowNote note={instant.note(settingKey)} className="px-4 pb-3" />
     </div>
@@ -57,7 +60,7 @@ function BoxesOptions() {
       <Card>
         <Rows>
           <div>
-            <SettingRow label="Default kind" description="What a thread gets when it does not say." problem={problem("general.defaultKind")}>
+            <SettingRow label="Default kind" description="What a thread gets when it does not say." problem={problem("general.defaultKind")} path="general/defaultKind">
               <SavedTick show={instant.isSaved(defaultKey)} />
               <Select value={pendingDefault ?? general.defaultKind} onValueChange={(kind) => void instant.run(writes.general(state, "defaultKind", kind, "The default kind", nameOf))}>
                 <SelectTrigger className="h-8 w-56 text-xs" aria-label="Default kind" data-draft-path="general/defaultKind">
@@ -75,11 +78,12 @@ function BoxesOptions() {
             <RowNote note={instant.note(defaultKey)} className="px-4 pb-3" />
           </div>
           <DraftNumberRow draft={draft} path="general/boxesPerThread" label="Boxes per thread" description="The most boxes one thread may hold at once. 0 means no limit." />
-          <AtOnceSwitch label="Boxes join BB as machines" description="Threads and terminals can then use a box, with the thread's credentials." settingKey={switchKey.general("enrol")} value={general.enrol} onChange={(on) => void instant.run(writes.general(state, "enrol", on, "Boxes join BB as machines"))} />
+          <AtOnceSwitch label="Boxes join BB as machines" description="Threads and terminals can then use a box, with the thread's credentials." settingKey={switchKey.general("enrol")} path="general/enrol" value={general.enrol} onChange={(on) => void instant.run(writes.general(state, "enrol", on, "Boxes join BB as machines"))} />
           <AtOnceSwitch
             label="Linux desktops as video"
             description="X11 desktops drawn by the CPU show as video: drags follow closely, and it stays smooth on a slow connection. Every viewer can go back with Show as VNC in its menu."
             settingKey={switchKey.general("video")}
+            path="general/video"
             value={general.video}
             onChange={(on) => void instant.run(writes.general(state, "video", on, "Linux desktops as video"))}
           />
@@ -101,6 +105,7 @@ function ImagesOptions() {
           label="Rebuild each night"
           description="At 03:00 on BB's server, BB Box rebuilds the standard images that are due, and replaces each only when its trial box passes. After a BB update, it refreshes the Linux images within the hour."
           settingKey={switchKey.general("nightlyImages")}
+          path="general/nightlyImages"
           value={general.nightlyImages}
           onChange={(on) => void instant.run(writes.general(state, "nightlyImages", on, "Rebuild each night"))}
         />
@@ -131,10 +136,10 @@ function DevicesOptions() {
         <Card>
           <Rows>
             <div>
-              <SettingRow label="iOS video encoding" description="Automatic uses a Mac's hardware encoder, and software where it has none or its encoder fails. A box takes a change when its device server is next delivered." problem={state.problems.find((problem) => problem.path === "general.iosEncoder")?.message ?? null}>
+              <SettingRow label="iOS video encoding" description="Automatic uses a Mac's hardware encoder, and software where it has none or its encoder fails. A box takes a change when its device server is next delivered." problem={state.problems.find((problem) => problem.path === "general.iosEncoder")?.message ?? null} path="general/iosEncoder">
                 <SavedTick show={instant.isSaved(encoderKey)} />
                 <Select value={instant.pendingValue<string>(encoderKey) ?? general.iosEncoder} onValueChange={(choice) => void instant.run(writes.general(state, "iosEncoder", choice, "iOS video encoding", (value) => iosEncoderWords(String(value))))}>
-                  <SelectTrigger className="h-8 w-full text-xs sm:w-44" aria-label="iOS video encoding">
+                  <SelectTrigger className="h-8 w-full text-xs sm:w-44" aria-label="iOS video encoding" data-draft-path="general/iosEncoder">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -152,6 +157,7 @@ function DevicesOptions() {
               label="Share each Mac's encoder fairly"
               description="The person in control of a device streams at full size first; recordings, other viewers and agents share what is left, at a lower size. Off, every shared iOS stream is capped at two thirds."
               settingKey={switchKey.general("encoderLedger")}
+              path="general/encoderLedger"
               value={general.encoderLedger}
               onChange={(on) => void instant.run(writes.general(state, "encoderLedger", on, "Sharing each Mac's encoder"))}
             />
@@ -170,7 +176,10 @@ function DevicesOptions() {
                   icon={<ProviderGlyph type={config.type} />}
                   title={`Shared iOS hosts on ${backendLabel(state, config)}`}
                   value="On its page"
-                  onClick={() => nav.go({ page: "backend", id: config.id }, `devices-hosts-${config.id}`)}
+                  onClick={() => {
+                    const field = sharedIosFieldOf(state.drivers.find((driver) => driver.type === config.type));
+                    nav.go({ page: "backend", id: config.id }, `devices-hosts-${config.id}`, field ? backendFieldPath(config.id, field) : undefined);
+                  }}
                 />
               ))}
               {deviceKinds.map((kind) => {
@@ -197,6 +206,7 @@ function DevicesOptions() {
             label="Test device"
             description="Linux and macOS boxes offer a test card in place of a phone, to check the device path without a simulator or emulator."
             settingKey={switchKey.general("testDevice")}
+            path="general/testDevice"
             value={general.testDevice}
             onChange={(on) => void instant.run(writes.general(state, "testDevice", on, "The test device"))}
           />
@@ -221,6 +231,7 @@ function MonitorOptions() {
             label="Machine status"
             description="Machine status in BB's sidebar footer, for BB's server, your machines and every box. Off, nothing of the Monitor runs: no machine status, sampling, background monitoring or Mac sensors helper."
             settingKey={enabledKey}
+            path="monitor/enabled"
             value={monitor.enabled}
             onChange={(enabled) =>
               void instant.run(writes.monitor(state, "enabled", enabled, "Machine status")).then((outcome) => {
@@ -229,8 +240,8 @@ function MonitorOptions() {
             }
           />
           <DraftNumberRow draft={draft} path="monitor/refreshIntervalSeconds" label="Refresh every" unit="s" unitWord="seconds" description="Seconds between readings while machine status is open, 2 to 60." disabled={!on} />
-          <AtOnceSwitch label="Background monitoring" description="Checks BB's server's CPU and memory every 30 seconds while nobody looks, and keeps logs for bb box monitor logs." settingKey={switchKey.monitor("backgroundMonitoring")} value={monitor.backgroundMonitoring} disabled={!on} onChange={(value) => void instant.run(writes.monitor(state, "backgroundMonitoring", value, "Background monitoring"))} />
-          <AtOnceSwitch label="Pressure notifications" description="With background monitoring on, a toast in BB when CPU or memory stays high for a minute, and when it recovers." settingKey={switchKey.monitor("pressureNotifications")} value={monitor.pressureNotifications} disabled={!on} onChange={(value) => void instant.run(writes.monitor(state, "pressureNotifications", value, "Pressure notifications"))} />
+          <AtOnceSwitch label="Background monitoring" description="Checks BB's server's CPU and memory every 30 seconds while nobody looks, and keeps logs for bb box monitor logs." settingKey={switchKey.monitor("backgroundMonitoring")} path="monitor/backgroundMonitoring" value={monitor.backgroundMonitoring} disabled={!on} onChange={(value) => void instant.run(writes.monitor(state, "backgroundMonitoring", value, "Background monitoring"))} />
+          <AtOnceSwitch label="Pressure notifications" description="With background monitoring on, a toast in BB when CPU or memory stays high for a minute, and when it recovers." settingKey={switchKey.monitor("pressureNotifications")} path="monitor/pressureNotifications" value={monitor.pressureNotifications} disabled={!on} onChange={(value) => void instant.run(writes.monitor(state, "pressureNotifications", value, "Pressure notifications"))} />
         </Rows>
       </Card>
       {monitorChanged() ? <ReloadNote /> : null}
@@ -312,31 +323,34 @@ export function viewPage(view: SettingsView): ReactNode {
 export function TopRow() {
   const { state, nav } = useSettings();
   const { view, cameFrom } = nav;
-  if (view.page === "overview") return null;
+  if (view.page === "overview") return <FindSettings wide />;
   const back = cameFrom && cameFrom.page !== "overview" ? cameFrom : null;
   return (
-    <nav aria-label="Where you are" className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
-      {back ? (
-        <>
-          <button type="button" onClick={nav.back} className={`-ml-1 inline-flex cursor-pointer items-center gap-0.5 rounded-sm px-1 text-muted-foreground hover:text-foreground ${FOCUS_RING}`}>
-            <Icon name="ChevronLeft" className="size-3.5" aria-hidden />
-            Back to {viewTitle(state, back)}
-          </button>
-          <span className="text-subtle-foreground" aria-hidden>
-            ·
-          </span>
-        </>
-      ) : null}
-      <button type="button" onClick={nav.toOverview} className={`inline-flex cursor-pointer items-center gap-0.5 rounded-sm text-muted-foreground hover:text-foreground ${back ? "" : "-ml-1 px-1"} ${FOCUS_RING}`}>
-        {back ? null : <Icon name="ChevronLeft" className="size-3.5" aria-hidden />}
-        BB Box settings
-      </button>
-      <span className="text-subtle-foreground" aria-hidden>
-        ›
-      </span>
-      <span aria-current="page" className="min-w-0 truncate text-foreground">
-        {viewTitle(state, view)}
-      </span>
-    </nav>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <nav aria-label="Where you are" className="flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+        {back ? (
+          <>
+            <button type="button" onClick={nav.back} className={`-ml-1 inline-flex cursor-pointer items-center gap-0.5 rounded-sm px-1 text-muted-foreground hover:text-foreground ${FOCUS_RING}`}>
+              <Icon name="ChevronLeft" className="size-3.5" aria-hidden />
+              Back to {viewTitle(state, back)}
+            </button>
+            <span className="text-subtle-foreground" aria-hidden>
+              ·
+            </span>
+          </>
+        ) : null}
+        <button type="button" onClick={nav.toOverview} className={`inline-flex cursor-pointer items-center gap-0.5 rounded-sm text-muted-foreground hover:text-foreground ${back ? "" : "-ml-1 px-1"} ${FOCUS_RING}`}>
+          {back ? null : <Icon name="ChevronLeft" className="size-3.5" aria-hidden />}
+          BB Box settings
+        </button>
+        <span className="text-subtle-foreground" aria-hidden>
+          ›
+        </span>
+        <span aria-current="page" className="min-w-0 truncate text-foreground">
+          {viewTitle(state, view)}
+        </span>
+      </nav>
+      <FindSettings />
+    </div>
   );
 }
