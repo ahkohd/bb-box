@@ -214,6 +214,7 @@ export function StatusLine({ tone, items }: { tone: Tone; items: readonly (LineI
 export interface TitleBadge {
   readonly label: string;
   readonly rank: number;
+  readonly outranksSystem?: boolean;
 }
 
 export interface TitleWidths {
@@ -221,7 +222,7 @@ export interface TitleWidths {
   readonly name: number;
   readonly system: number;
   readonly model: number;
-  readonly badges: readonly { readonly width: number; readonly rank: number }[];
+  readonly badges: readonly { readonly width: number; readonly rank: number; readonly outranksSystem?: boolean }[];
 }
 
 export interface TitleFit {
@@ -236,11 +237,12 @@ export const TITLE_GAP_PX = 8;
 export const BADGE_GAP_PX = 4;
 export const MODEL_LEAST_PX = 32;
 
-export function fitTitle({ room, name, system, model, badges }: TitleWidths): TitleFit {
+function placeParts({ room, name, system, model, badges }: TitleWidths, showsSystem: boolean): TitleFit {
   const noBadges = badges.map(() => false);
   if (name >= room) return { nameRoom: room, showsSystem: false, modelRoom: null, showsModel: false, showsBadge: noBadges };
-  if (name + TITLE_GAP_PX + system > room) return { nameRoom: null, showsSystem: false, modelRoom: null, showsModel: false, showsBadge: noBadges };
-  let left = room - name - TITLE_GAP_PX - system;
+  const systemCost = showsSystem ? TITLE_GAP_PX + system : 0;
+  if (name + systemCost > room) return { nameRoom: null, showsSystem: false, modelRoom: null, showsModel: false, showsBadge: noBadges };
+  let left = room - name - systemCost;
   const showsBadge = [...noBadges];
   const byRank = badges.map((_, index) => index).sort((a, b) => badges[a]!.rank - badges[b]!.rank || a - b);
   for (const index of byRank) {
@@ -250,9 +252,17 @@ export function fitTitle({ room, name, system, model, badges }: TitleWidths): Ti
     left -= cost;
   }
   const modelLeft = left - TITLE_GAP_PX;
-  if (model > 0 && model <= modelLeft) return { nameRoom: null, showsSystem: true, modelRoom: null, showsModel: true, showsBadge };
-  if (model > 0 && modelLeft >= MODEL_LEAST_PX) return { nameRoom: null, showsSystem: true, modelRoom: modelLeft, showsModel: true, showsBadge };
-  return { nameRoom: null, showsSystem: true, modelRoom: null, showsModel: false, showsBadge };
+  if (model > 0 && model <= modelLeft) return { nameRoom: null, showsSystem, modelRoom: null, showsModel: true, showsBadge };
+  if (model > 0 && modelLeft >= MODEL_LEAST_PX) return { nameRoom: null, showsSystem, modelRoom: modelLeft, showsModel: true, showsBadge };
+  return { nameRoom: null, showsSystem, modelRoom: null, showsModel: false, showsBadge };
+}
+
+export function fitTitle(widths: TitleWidths): TitleFit {
+  const withSystem = placeParts(widths, true);
+  const missesWhatOutranksSystem = (fit: TitleFit) => widths.badges.some((badge, index) => badge.outranksSystem && !fit.showsBadge[index]);
+  if (!missesWhatOutranksSystem(withSystem)) return withSystem;
+  const withoutSystem = placeParts(widths, false);
+  return missesWhatOutranksSystem(withoutSystem) ? withSystem : withoutSystem;
 }
 
 const OUT_OF_FLOW = "invisible absolute";
@@ -268,7 +278,7 @@ function measuredTitle(title: HTMLElement, badges: readonly TitleBadge[]): Title
     name: part("name")?.firstElementChild?.scrollWidth ?? 0,
     system: widthOf(part("system")),
     model: part("model")?.scrollWidth ?? 0,
-    badges: Array.from(title.querySelectorAll("[data-badge-rank]")).map((badge, index) => ({ width: widthOf(badge), rank: badges[index]?.rank ?? 0 })),
+    badges: Array.from(title.querySelectorAll("[data-badge-rank]")).map((badge, index) => ({ width: widthOf(badge), rank: badges[index]?.rank ?? 0, outranksSystem: badges[index]?.outranksSystem })),
   };
 }
 
@@ -518,7 +528,7 @@ export const BADGE_RANKS = { device: 0, shared: 1, form: 2, desktop: 3, more: 4 
 export function boxTitleBadges(box: BoxView, machine = false): readonly TitleBadge[] {
   const badge = (label: string | false | null, rank: number) => (label ? [{ label, rank }] : []);
   return [
-    ...badge(box.device ? screenWord(box, "device") : null, BADGE_RANKS.device),
+    ...(box.device ? [{ label: screenWord(box, "device"), rank: BADGE_RANKS.device, outranksSystem: true }] : []),
     ...badge(box.desktop && "Desktop", BADGE_RANKS.desktop),
     ...badge(runsWayland(box) && "Wayland", BADGE_RANKS.more),
     ...badge(box.gpu && "GPU", BADGE_RANKS.more),
