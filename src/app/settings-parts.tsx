@@ -157,9 +157,9 @@ export function NavRow({ icon, title, chips, value, tone, onClick, outward = fal
   );
 }
 
-export function SettingRow({ label, description, problem, children, htmlFor }: { label: string; description?: ReactNode; problem?: string | null; children: ReactNode; htmlFor?: string }) {
+export function SettingRow({ label, description, problem, children, htmlFor, path }: { label: string; description?: ReactNode; problem?: string | null; children: ReactNode; htmlFor?: string; path?: string }) {
   return (
-    <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-5">
+    <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-5" data-setting-row={path}>
       <div className="min-w-0 flex-1">
         <label htmlFor={htmlFor} className="text-sm text-foreground">
           {label}

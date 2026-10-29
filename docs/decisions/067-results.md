@@ -2437,3 +2437,170 @@ in Export's description wraps in the middle, as "bb box config" and
 - `bb box config check` does not print the change list the page shows; it
   could, from the same `read`.
 - Find (unit 11) does not index the Configuration page's rows.
+
+## Unit 11: Find a setting
+
+Built on 29 October 2026. Find is a field in the top row of every view:
+alone at full width on the overview, and at the right of "where you are"
+on every inner page. It searches every setting the units built, and
+opening a result shows the setting on screen, focused and ringed.
+
+### What changed
+
+- `settings-find-index.ts` builds the index from `config.get`, not by
+  hand: every field of every backend from its driver's descriptors, each
+  Mac's or host's own fields and switch, each backend's switch and name,
+  each kind's switch, its four sizes, default size, warm count on each
+  backend that keeps warm boxes for it, and spares, and every setting of
+  Boxes, Images, Devices, Network, Monitor and unit 10's Configuration
+  (Export, Import and the copy of BB's earlier settings), with each file
+  for every box and each project's image. Each result says where it is and its
+  value: what is stored, Set or Not set for a secret, and for an empty
+  field what it takes, such as "Empty: 4096 MiB, the default" or "Empty:
+  10 cores, bb-box's estimate".
+- Each word of the query must match a label, the place, help, key or
+  value. Synonyms are added beside a word and matched against labels
+  only: "ram" finds Memory kept free and the kinds' sizes, whose labels
+  are their columns Cores, Memory and Disk, but not Background monitoring,
+  whose help says memory. "turn", "on" and "off" need not match when other
+  words do, and put switches first. A size opens at the cell the words
+  name: "linux desktop gpu medium ram" focuses the Medium size's memory.
+- `settings-find.tsx`, the field: a combobox with a listbox of the first
+  40, "79 matches, the first 40 listed; add a word to narrow them", the
+  count in a polite live region, arrow keys that stop at the first and
+  last result shown, Enter to open, Escape to clear, and no animation. The
+  query is kept in module memory, so it is there on return; back puts
+  focus on Find. It leaves the browser's own Find alone.
+- `settings-reveal.ts` and the nav's `find`: a result on another page
+  pushes the view as any row does; one on the same page reveals in place.
+  The reveal waits for the setting to appear and to hold still for three
+  looks 40 ms apart, as the Images page and Macs load late; then it
+  scrolls it to the middle, focuses it, or the first control in its row
+  when the field is disabled, and rings the row for 1.4 s (with reduced
+  motion the ring goes at the end without fading). Folded cards and Macs
+  open for it, on mount and in place. A setting hidden for now, the
+  tailnet's tags and OAuth client while machines do not join it, opens
+  the choice that shows them.
+- Targets: switches, the backend menu (for its name), the iOS video menu
+  and each project image's menu now carry `data-draft-path`, and
+  `SettingRow` and the Mac's switch carry their row, so every result has
+  something to focus and ring.
+- Devices' rows to a backend's shared iOS hosts now open that card, the
+  unit 9 deviation that waited for this unit.
+
+Files: new `src/app/settings-find-index.ts`, `settings-find.tsx` and
+`settings-reveal.ts`; changed `settings.tsx`, `settings-nav.ts`,
+`settings-pages.tsx` (the top row, the switches' targets, Devices' rows),
+`settings-backend-fields.tsx`, `settings-backend-page.tsx`,
+`settings-kind-page.tsx`, `settings-kinds.tsx`, `settings-images.tsx`,
+`settings-files.tsx`, `settings-configuration.tsx`, `settings-parts.tsx`, `settings-paths.ts`,
+`test/app.test.tsx` and `docs/design/settings.md`.
+
+### Tests
+
+`test/app.test.tsx` has seven more, the last covering unit 10's page too: the index holds every field with its
+value, a Mac's own fields and estimate, sizes, warm counts only where
+kept, and every option; the matching, synonyms against labels only,
+several words, no match and a size's cell; from the overview to a folded
+Advanced field and back with the query kept; on the page itself, a folded
+card and a Mac's field; a kind's size and options from another option
+page; arrow keys at both ends of 40 results and of a few; and a guard
+that every control on Boxes, Images, Devices, Network and Monitor is in
+the index, and every option the index opens is on its page.
+
+On a Linux box, 8 cores, on the commit delivered:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,841 tests: 2,553 pass, 0 fail, 288 skipped (the live suites, as on main), 3 min 49 s |
+| vitest | 313 pass, in 4 files |
+| `test/docs.test.ts`, `test/site.test.ts` and `scripts/reference.ts --check` | pass |
+
+The run before, on the same code but for Export's ring, had one failure
+outside the settings: the conformance suite's test device server came
+back 2,004 ms after being killed, against a limit of 2,000 ms. It passed
+on the run above.
+
+### Live check on a separate BB
+
+A fresh BB in a Linux box named bb-1: `npx bb-app` 0.48.0 with no account,
+its own data folder and port, started with `env -i` and only `HOME`,
+`PATH` and `BB_BOX_LIVE_CHECKS=1`, and bb-box installed from this branch
+with `bb plugin install` of its path.
+[`live-check.mjs`](067-settings-page/unit-11/live-check.mjs) drives
+headless Chromium at 1440 by 1000, by keys for everything after the first
+click on Find, and before each run sets the configuration over BB's HTTP
+API: Docker on this machine on, Proxmox LXC off with a made-up token, and
+Tart off with a Mac, mac-1. "On screen" means the focused element is the
+setting, its row is ringed, and it is inside the viewport. Every check
+passed 3 runs in a row, 21 of 21, before unit 10 landed; then, rebased on
+unit 10 with its Configuration page indexed, on another fresh BB, 24 of
+24.
+
+| Check | What the page did | Runs |
+| --- | --- | --- |
+| Every field: "proxmox token secret" from the overview | 1 result, "API token secret · Proxmox LXC › Credentials · Set"; Enter opened `#backend/proxmox-lxc` with its Replace button focused, ringed, 495 px down | 3 of 3 |
+| A folded field: "proxmox desktops per gpu" from the overview | "Desktops per GPU · Proxmox LXC › Advanced · Empty: 0, the default" first; Advanced opened and the field focused and ringed on screen | 3 of 3 |
+| A Mac's own field: "mac-1 cores" from the overview | 1 result, "Cores of a shared iOS host on mac-1 · Tart › Macs › mac-1"; `#backend/tart` with mac-1 open and the field focused and ringed, 713 px down | 3 of 3 |
+| A kind's size, by several words: "linux desktop gpu medium ram" | 1 result, "Medium size · Kinds › Linux desktop (GPU) › Sizes · 8 cores · 16 GiB · the image's disk"; `#kind/linux-desktop` with the Medium memory cell focused | 3 of 3 |
+| Unit 10's page: "export json" from a kind's page, then "import file" on the page itself | "Export · Options › Configuration" alone; `#option/configuration` with Copy as JSON focused and the Export block ringed, 512 px down. Then Import… focused in place | 3 of 3 |
+| Several words: "turn off monitor" | "Machine status · Options › Monitor · On" first of 5; its switch focused | 3 of 3 |
+| No match: "zebra quartz" | "No setting matches “zebra quartz”. Try a word from its label, such as memory, template or spares.", "No setting matches" announced, no list; ArrowDown and Enter opened nothing; Escape cleared the field | 3 of 3 |
+| From the target's own page: Desktops per GPU on Proxmox LXC's page, folded | The page stayed; the card opened and the field was focused and ringed. Then on Tart's page, "mac-1 address": the page stayed, mac-1 opened, Address focused | 3 of 3 |
+| Arrow keys at the end: "linux", 79 matches | 40 listed; 50 ArrowDowns stopped on the 40th, selected and scrolled into the list's view; 50 ArrowUps stopped on the first. "mac-1", 7 results: 12 ArrowDowns stopped on the 7th | 3 of 3 |
+| Keyboard only, and the query kept | 48 Tabs from the page's top reached Find (BB's sidebar comes first); "templates proxmox", ArrowDown, Enter opened GPU desktop templates, focused; 26 Shift+Tabs reached BB Box settings, and Enter returned to the overview with focus on Find and "templates proxmox" in it. Forward, then the browser's back, kept it too | 3 of 3 |
+
+### Keyboard only
+
+From the live check's keyboard run, and the screenshot pass:
+
+- Find has BB's input focus ring, as the Boxes page's search does.
+- Typing lists results at once; the active result is highlighted and is
+  the field's `aria-activedescendant`, so a screen reader reads it.
+- Enter opens; on arrival focus is on the setting itself, so typing
+  changes it at once. Shift+Tab walks back up the page to the top row.
+- Pages changed in place with no slide; `document.getAnimations()` was
+  empty after the return. The one motion is the found ring's fade.
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark: the overview's results, a kind
+page's results in the top row, no match, a Mac's field found and a size
+found; and each live check's own. 39 in the thread's storage. A selection:
+
+[overview](067-settings-page/unit-11/overview-results-1440-light.png),
+[overview at 390](067-settings-page/unit-11/overview-results-390-dark.png),
+[in the top row](067-settings-page/unit-11/kind-results-760-light.png),
+[top row at 390](067-settings-page/unit-11/kind-results-390-dark.png),
+[a Mac's field found](067-settings-page/unit-11/found-mac-field-1440-dark.png),
+[at 390](067-settings-page/unit-11/found-mac-field-390-light.png),
+[a size found](067-settings-page/unit-11/found-kind-size-760-light.png),
+[no match](067-settings-page/unit-11/no-match-390-light.png),
+[on the same page](067-settings-page/unit-11/live-same-page.png),
+[a secret found](067-settings-page/unit-11/live-secret.png),
+[Export found](067-settings-page/unit-11/live-export.png),
+[the end of the list](067-settings-page/unit-11/live-arrow-end.png),
+[the query kept](067-settings-page/unit-11/live-query-kept.png).
+
+The first set found the ring hugging a size row's text, as that row has
+no padding of its own; the row now has 8 px each side and the ring
+rounded corners. The second found Export's ring leaving out its list of
+secrets to give again; the ring now takes the whole Export block.
+
+### Deviations from 067
+
+- The query is kept in memory, not in session storage: it survives
+  leaving by BB's sidebar and coming back, but not a reload.
+- The option pages' settings are listed in the index by hand, as the
+  pages write their rows by hand; a test checks the two agree, both
+  ways, so a new row on a page without a place in Find fails.
+- Results are the stored values. A field with an unsaved change shows
+  what is saved; the page shows the change.
+- Find's list opens again when focus returns to it after back, with the
+  kept query's results, so the next result is one arrow away.
+- Your machines is in the index and opens the Boxes page's Machines tab.
+
+### Not done here
+
+- A look in production in the owner's browser, after the lead deploys.

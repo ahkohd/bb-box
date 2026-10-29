@@ -7,6 +7,7 @@ import type { ConfigState, DriverView, KindInfoView } from "../plugin/configurat
 import type { Tone } from "./common.tsx";
 import { effectiveKind } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
+import { kindPath } from "./settings-paths.ts";
 import { backendHealth, backendLabel, hostChip, kindName, onBbMachine } from "./settings-status.ts";
 
 export function kindPart(id: string): string {
@@ -49,6 +50,7 @@ export const KindSwitch = forwardRef<HTMLButtonElement, { info: KindInfoView; de
   return (
     <Switch
       ref={ref}
+      data-draft-path={kindPath(info.id, "enabled")}
       aria-label={`${kind.name}: offered to threads`}
       aria-describedby={describedBy}
       aria-disabled={kind.locked || instant.pending !== null || undefined}
@@ -90,7 +92,7 @@ function makesIt(state: ConfigState, config: BackendConfig, kind: string): { rea
   return { makes: "cannot", problem: health.detail ?? health.words };
 }
 
-function sharedIosFieldOf(driver: DriverView | undefined): string | null {
+export function sharedIosFieldOf(driver: DriverView | undefined): string | null {
   const fields = driver?.fields.filter((field) => field.group === "ios-hosts") ?? [];
   return (fields.find((field) => field.key.endsWith("ios-hosts-ahead")) ?? fields[0])?.key ?? null;
 }

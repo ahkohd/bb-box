@@ -7,6 +7,7 @@ import { SettingsContext, settingsWrites, type Saved, type SettingsContextValue 
 import { drafts, type SaveTransport } from "./settings-drafts.ts";
 import { newestState, useInstant, useRegistry } from "./settings-saving.tsx";
 import { scrollParent, useSettingsNav, type Arrival } from "./settings-nav.ts";
+import { revealWhenSettled } from "./settings-reveal.ts";
 import { forgetKindsKeptInPlace } from "./settings-kinds.tsx";
 import { Overview } from "./settings-overview.tsx";
 import { TopRow, viewPage } from "./settings-pages.tsx";
@@ -20,10 +21,22 @@ const RESTORE_TRIES = 40;
 function useArrival(arrival: Arrival | null, root: RefObject<HTMLDivElement | null>, page: RefObject<HTMLDivElement | null>, ready: boolean): void {
   const handled = useRef(0);
   const tries = useRef(0);
+  const revealing = useRef<(() => void) | null>(null);
+  useEffect(() => () => revealing.current?.(), []);
   useLayoutEffect(() => {
     if (!arrival || !ready || handled.current === arrival.serial) return;
     const scroller = scrollParent(root.current);
-    if (arrival.kind === "return") {
+    revealing.current?.();
+    revealing.current = null;
+    const toHeading = () => {
+      scroller?.scrollTo({ top: 0 });
+      page.current?.querySelector<HTMLElement>("[data-page-heading]")?.focus({ preventScroll: true });
+    };
+    if (arrival.kind === "found") {
+      if (!arrival.inPlace) scroller?.scrollTo({ top: 0 });
+      if (arrival.focus) revealing.current = revealWhenSettled(() => page.current, arrival.focus, toHeading);
+      else toHeading();
+    } else if (arrival.kind === "return") {
       const row = arrival.row ? root.current?.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(arrival.row)}"]`) : null;
       if (arrival.row && !row && tries.current++ < RESTORE_TRIES) return;
       scroller?.scrollTo({ top: arrival.scroll });

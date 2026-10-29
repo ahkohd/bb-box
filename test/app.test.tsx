@@ -41,6 +41,8 @@ import { FieldControl } from "../src/app/settings-fields.tsx";
 import { openSettingsView } from "../src/app/settings-route.ts";
 import { forgetDrafts } from "../src/app/settings-drafts.ts";
 import { forgetConfigurationPage } from "../src/app/settings-configuration.tsx";
+import { forgetFindQuery } from "../src/app/settings-find.tsx";
+import { FIND_SHOWN, pathFor, searchSettings, settingsIndex, type FindEntry } from "../src/app/settings-find-index.ts";
 import { forgetFormChecks } from "../src/app/settings-checks.ts";
 import { hostChip, onBbMachine } from "../src/app/settings-status.ts";
 import type { BackendConfig } from "../src/core/document.ts";
@@ -1934,6 +1936,7 @@ function settings(handlers: PluginRpcTestHandlers<Contract>, hash = "", { keepDr
     forgetDrafts();
     forgetFormChecks();
     forgetConfigurationPage();
+    forgetFindQuery();
     window.sessionStorage.clear();
   }
   window.history.replaceState(null, "", `/settings/plugins/bb-box${hash}`);
@@ -8215,4 +8218,194 @@ test("the copy of BB's earlier settings is removed only after Remove copy is con
   expect(removed).toBe(true);
   await waitFor(() => expect(slot.queryByText("Settings moved from BB")).toBeNull());
   await waitFor(() => expect(document.activeElement?.textContent).toBe("Removed the copy of BB's earlier settings."));
+});
+
+function stateOf(handlers: PluginRpcTestHandlers<Contract>): ConfigState {
+  return (handlers["config.get"] as () => ConfigState)();
+}
+
+function foundBy(entries: readonly FindEntry[], path: string): FindEntry | undefined {
+  return entries.find((entry) => "view" in entry.opens && entry.opens.path === path);
+}
+
+function labelsFor(entries: readonly FindEntry[], query: string): string[] {
+  return searchSettings(entries, query).map((entry) => `${entry.label} | ${entry.where}`);
+}
+
+const findField = (slot: ReturnType<typeof settings>) => slot.getByRole("combobox", { name: "Find a setting" }) as HTMLInputElement;
+
+async function findAndOpen(slot: ReturnType<typeof settings>, query: string, label: string | RegExp) {
+  const field = findField(slot);
+  field.focus();
+  fireEvent.change(field, { target: { value: query } });
+  const list = await slot.findByRole("listbox", { name: "Settings that match" });
+  const options = within(list).getAllByRole("option");
+  const at = options.findIndex((option) => (typeof label === "string" ? option.textContent?.startsWith(label) : label.test(option.textContent ?? "")));
+  expect(at, `no result ${String(label)} for "${query}" among ${options.map((option) => option.textContent).join(" / ")}`).toBeGreaterThanOrEqual(0);
+  for (let step = 0; step < at; step += 1) fireEvent.keyDown(field, { key: "ArrowDown" });
+  expect(field.getAttribute("aria-activedescendant")).toBe(options[at]!.id);
+  fireEvent.keyDown(field, { key: "Enter" });
+}
+
+async function foundSetting(path: string) {
+  return waitFor(
+    () => {
+      const active = document.activeElement as HTMLElement | null;
+      expect(active?.getAttribute("data-draft-path")).toBe(path);
+      expect(active?.closest("[data-found]")).toBeTruthy();
+      return active!;
+    },
+    { timeout: 3000 },
+  );
+}
+
+test("Find's index holds every field of every backend, each Mac's own fields, each kind's sizes, default size, warm counts where kept and spares, and every option, each with its value (067 unit 11)", () => {
+  const entries = settingsIndex(stateOf(server([]).handlers));
+  const at = (path: string) => foundBy(entries, path);
+  expect(["url", "token", "key", "templates", "reserve"].map((key) => at(`backends/fake/fields/${key}`)?.value)).toEqual(["https://192.0.2.10:8006", "Not set", "Set", "Empty: 9100, the default", "Empty: 4096 MiB, the default"]);
+  expect(at("backends/fake/fields/reserve")).toMatchObject({ label: "Memory kept free (MiB)", where: "Fake host › Advanced", opens: { view: { page: "backend", id: "fake" } } });
+  expect(at("backends/fake/enabled")).toMatchObject({ label: "Takes new boxes", value: "On", turns: true });
+  expect(at("kinds/linux/presets/small/cores")).toMatchObject({ label: "Small size", where: "Kinds › Linux › Sizes", value: "2 cores · 4 GiB · the image's disk · the default" });
+  expect(at("kinds/linux/largest/cores")).toMatchObject({ label: "Largest size", value: "16 cores · 32 GiB · 256 GiB disk" });
+  expect(at("kinds/linux/default")).toMatchObject({ label: "Default size", value: "Small" });
+  expect(at("backends/fake/warm/linux")).toMatchObject({ label: "Warm boxes on Fake host", where: "Kinds › Linux › Where it runs", value: "1" });
+  expect(at("backends/fake/warm/linux-desktop")).toBeUndefined();
+  expect(at("kinds/linux-desktop/spares")).toMatchObject({ label: "Spares to keep", value: "0" });
+  for (const path of ["general/defaultKind", "general/boxesPerThread", "general/enrol", "general/video", "files/add", "general/nightlyImages", "general/iosEncoder", "general/encoderLedger", "general/testDevice", "general/tailnet/mode", "monitor/enabled", "monitor/refreshIntervalSeconds", "monitor/backgroundMonitoring", "monitor/pressureNotifications"]) {
+    expect(at(path), path).toBeTruthy();
+  }
+  expect(at("general/defaultKind")?.value).toBe("Linux");
+  expect(entries.find((entry) => entry.label === "Tags")).toMatchObject({ value: "Used with Yes", opens: { path: "general/tailnet/mode" } });
+
+  const tart = settingsIndex(stateOf(tartPage().handlers));
+  expect(foundBy(tart, "backends/tart/hosts/mac-1/fields/ios-hosts-cores")).toMatchObject({ label: "Cores of a shared iOS host on mac-1", where: "Tart › Macs › mac-1", value: "Empty: 10 cores, bb-box's estimate" });
+  expect(foundBy(tart, "backends/tart/hosts/mac-1/fields/address")?.value).toBe("192.0.2.20");
+  expect(foundBy(tart, "backends/tart/hosts/mac-1/enabled")).toMatchObject({ label: "mac-1", where: "Tart › Macs", value: "On" });
+});
+
+test("Find matches each word against a setting's label, place, help or key, with synonyms against labels only, and says when nothing matches (067 unit 11)", () => {
+  const entries = settingsIndex(stateOf(server([]).handlers));
+  expect(labelsFor(entries, "ram")).toContain("Memory kept free (MiB) | Fake host › Advanced");
+  expect(labelsFor(entries, "ram")).toContain("Small size | Kinds › Linux › Sizes");
+  expect(labelsFor(entries, "memory")).toContain("Background monitoring | Options › Monitor");
+  expect(labelsFor(entries, "ram")).not.toContain("Background monitoring | Options › Monitor");
+  expect(labelsFor(entries, "reserve")[0]).toBe("Memory kept free (MiB) | Fake host › Advanced");
+  expect(labelsFor(entries, "linux desktop ram").slice(0, 4)).toEqual(["Small size | Kinds › Linux desktop › Sizes", "Medium size | Kinds › Linux desktop › Sizes", "Large size | Kinds › Linux desktop › Sizes", "Largest size | Kinds › Linux desktop › Sizes"]);
+  expect(labelsFor(entries, "templates fake")[0]).toBe("Templates | Fake host › Boxes");
+  expect(labelsFor(entries, "turn off monitor")[0]).toBe("Machine status | Options › Monitor");
+  expect(labelsFor(entries, "tailscale tags")).toEqual(["Tags | Options › Network"]);
+  expect(labelsFor(entries, "192.0.2.10")).toEqual(["API URL | Fake host › Connection"]);
+  expect(searchSettings(entries, "zebra memory")).toEqual([]);
+  expect(searchSettings(entries, "  the  ")).toEqual([]);
+  const small = searchSettings(entries, "linux small memory")[0]!;
+  expect(pathFor(small, "linux small memory")).toBe("kinds/linux/presets/small/memoryGiB");
+  expect(pathFor(small, "linux small disk")).toBe("kinds/linux/presets/small/diskGiB");
+  expect(pathFor(small, "linux small")).toBe("kinds/linux/presets/small/cores");
+  const tart = settingsIndex(stateOf(tartPage().handlers));
+  expect(labelsFor(tart, "mac-1 cpu")[0]).toBe("Cores of a shared iOS host on mac-1 | Tart › Macs › mac-1");
+});
+
+test("Find from the overview opens a folded field on its backend's page, on screen, focused and highlighted, and the query stays when the person comes back (067 unit 11)", async () => {
+  const slot = settings(server([]).handlers);
+  await slot.findByText("Fake host is not working");
+  const field = findField(slot);
+  field.focus();
+  fireEvent.change(field, { target: { value: "reserve" } });
+  const list = await slot.findByRole("listbox", { name: "Settings that match" });
+  expect(within(list).getAllByRole("option")[0]!.textContent).toBe("Memory kept free (MiB)Fake host › AdvancedEmpty: 4096 MiB, the default");
+  expect(slot.getByText("1 setting matches")).toBeTruthy();
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(window.location.hash).toBe("#backend/fake");
+  const found = await foundSetting("backends/fake/fields/reserve");
+  expect((found as HTMLInputElement).placeholder).toBe("4096");
+  expect(slot.queryByRole("listbox")).toBeNull();
+  expect(findField(slot).value).toBe("reserve");
+  fireEvent.click(slot.getByRole("button", { name: "BB Box settings" }));
+  await waitFor(() => expect(window.location.hash).toBe(""));
+  await waitFor(() => expect(document.activeElement).toBe(findField(slot)));
+  expect(findField(slot).value).toBe("reserve");
+});
+
+test("Find on the target's own page opens a folded card in place and focuses the setting, and a Mac's own field opens its Mac (067 unit 11)", async () => {
+  const slot = settings(server([]).handlers, "#backend/fake");
+  await slot.findByRole("heading", { name: /^Fake host/ });
+  expect(slot.queryByRole("textbox", { name: "Memory kept free (MiB)" })).toBeNull();
+  await findAndOpen(slot, "memory kept free", "Memory kept free (MiB)");
+  expect(window.location.hash).toBe("#backend/fake");
+  await foundSetting("backends/fake/fields/reserve");
+  expect(slot.getByRole("button", { name: "Hide Advanced" })).toBeTruthy();
+  cleanup();
+
+  const tart = settings(tartPage().handlers);
+  await tart.findByRole("button", { name: "Tart" });
+  await findAndOpen(tart, "mac-1 cores", "Cores of a shared iOS host on mac-1");
+  expect(window.location.hash).toBe("#backend/tart");
+  await foundSetting("backends/tart/hosts/mac-1/fields/ios-hosts-cores");
+  await findAndOpen(tart, "mac-1 address", "Address on mac-1");
+  await foundSetting("backends/tart/hosts/mac-1/fields/address");
+});
+
+test("Find opens a kind's size at the part the words name, and options from any page (067 unit 11)", async () => {
+  const slot = settings(server([]).handlers, "#option/monitor");
+  await slot.findByRole("heading", { name: "Monitor" });
+  await findAndOpen(slot, "linux desktop medium ram", /^Medium sizeKinds › Linux desktop › Sizes/);
+  expect(window.location.hash).toBe("#kind/linux-desktop");
+  await foundSetting("kinds/linux-desktop/presets/medium/memoryGiB");
+  await findAndOpen(slot, "warm linux", "Warm boxes on Fake host");
+  expect(window.location.hash).toBe("#kind/linux");
+  await foundSetting("backends/fake/warm/linux");
+  await findAndOpen(slot, "boxes per thread", "Boxes per thread");
+  expect(window.location.hash).toBe("#option/boxes");
+  await foundSetting("general/boxesPerThread");
+  await findAndOpen(slot, "turn off monitor", "Machine status");
+  await foundSetting("monitor/enabled");
+  expect(document.activeElement?.getAttribute("role")).toBe("switch");
+});
+
+test("Find's arrow keys stay within the results shown, Escape clears, and no match says so (067 unit 11)", async () => {
+  const slot = settings(server([]).handlers);
+  await slot.findByText("Fake host is not working");
+  const field = findField(slot);
+  field.focus();
+  fireEvent.change(field, { target: { value: "linux desktop size" } });
+  const options = within(await slot.findByRole("listbox", { name: "Settings that match" })).getAllByRole("option");
+  for (let step = 0; step < options.length + 3; step += 1) fireEvent.keyDown(field, { key: "ArrowDown" });
+  expect(field.getAttribute("aria-activedescendant")).toBe(options.at(-1)!.id);
+  expect(options.at(-1)!.getAttribute("aria-selected")).toBe("true");
+  for (let step = 0; step < options.length + 3; step += 1) fireEvent.keyDown(field, { key: "ArrowUp" });
+  expect(field.getAttribute("aria-activedescendant")).toBe(options[0]!.id);
+
+  fireEvent.change(field, { target: { value: "e" } });
+  const many = within(slot.getByRole("listbox", { name: "Settings that match" })).getAllByRole("option");
+  expect(many).toHaveLength(FIND_SHOWN);
+  expect(slot.getByText(/settings match; the first 40 are listed$/)).toBeTruthy();
+  for (let step = 0; step < FIND_SHOWN + 5; step += 1) fireEvent.keyDown(field, { key: "ArrowDown" });
+  expect(field.getAttribute("aria-activedescendant")).toBe(many.at(-1)!.id);
+
+  fireEvent.change(field, { target: { value: "zebra memory" } });
+  expect(slot.queryByRole("listbox")).toBeNull();
+  expect(slot.getByText("No setting matches “zebra memory”. Try a word from its label, such as memory, template or spares.")).toBeTruthy();
+  expect(slot.getByText("No setting matches")).toBeTruthy();
+  fireEvent.keyDown(field, { key: "ArrowDown" });
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(window.location.hash).toBe("");
+  fireEvent.keyDown(field, { key: "Escape" });
+  expect(field.value).toBe("");
+});
+
+test("every setting with a control on an option page is in Find's index, and every option Find opens is on its page (067 unit 11)", async () => {
+  const document_: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: { set: true }, key: { set: true } } }], kinds: {}, general: { tailnet: { mode: "oauth", tags: ["tag:bb-box"], clientId: { set: true }, clientSecret: { set: true } }, files: [{ path: ".npmrc", content: { set: true } }] }, images: { "web-app": { kinds: ["linux"], projects: ["proj_1"], script: "true", bake: "auto" } } };
+  applied = document_;
+  const { handlers } = server([]);
+  const entries = settingsIndex(stateOf(handlers));
+  for (const page of ["boxes", "images", "devices", "network", "monitor", "configuration"]) {
+    const slot = settings(handlers, `#option/${page}`);
+    await slot.findByRole("heading", { name: new RegExp(`^${page}$`, "i") });
+    await waitFor(() => expect(document.querySelector("[data-settings-view]")).toBeTruthy());
+    const onPage = new Set(Array.from(document.querySelectorAll("[data-settings-view] [data-draft-path]"), (element) => element.getAttribute("data-draft-path")!));
+    const indexed = new Set(entries.flatMap((entry) => ("view" in entry.opens && entry.opens.view.page === "option" && entry.opens.view.id === page && entry.opens.path ? [entry.opens.path] : [])));
+    expect([...onPage].filter((path) => !indexed.has(path)), page).toEqual([]);
+    expect([...indexed].filter((path) => !onPage.has(path)), page).toEqual([]);
+    cleanup();
+  }
 });

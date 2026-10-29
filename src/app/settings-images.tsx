@@ -13,13 +13,13 @@ import { Badge, message, relativeTime, useLive, type Tone } from "./common.tsx";
 import { RebuildNow, RUN_TONE, isRunning, stateWords, type RunImage } from "./rebuild-now.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { Card, FOCUS_RING, Group, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
-import type { PlainValue } from "./settings-paths.ts";
+import { imageBakePath, type PlainValue } from "./settings-paths.ts";
 import { backendLabel, hostChip, kindName, plural, type StatusItem } from "./settings-status.ts";
 
 type StandardImage = ImagesStatus["images"][number];
 type ImagesProgress = Pick<ImagesStatus, "progress" | "running" | "failures">;
 
-const BAKE_WORDS: Readonly<Record<ImageBake, string>> = {
+export const BAKE_WORDS: Readonly<Record<ImageBake, string>> = {
   auto: "Built when used often",
   always: "Always built ahead",
   never: "Run at each box's start",
@@ -266,7 +266,7 @@ function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove }
   const kinds = image.kinds.map((kind) => kindWords(state, kind) ?? kind);
   const line = loaded ? buildsWords(state, image, view) : { tone: "off" as const, words: READING_BUILDS };
   return (
-    <div data-project-image={name}>
+    <div data-project-image={name} data-setting-row={imageBakePath(name)}>
       <div className="relative flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 transition-colors duration-150 hover:bg-state-hover">
         <button type="button" data-row-key={`image-${name}`} aria-label={name} aria-describedby={`${id}-projects ${id}-line`} aria-expanded={open} aria-controls={open ? `${id}-details` : undefined} onClick={onToggle} className={cn("absolute inset-0 cursor-pointer", FOCUS_RING)} />
         <span className="pointer-events-none min-w-0 flex-1 basis-48">
@@ -286,7 +286,7 @@ function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove }
         </span>
         <span className="relative z-10 shrink-0">
           <Select value={bake} onValueChange={(next) => void instant.run(writes.imageBake(state, name, next as ImageBake, bakeWords))}>
-            <SelectTrigger className="h-7 w-48 text-xs" aria-label={`When ${name} is built ahead`} aria-disabled={instant.pending !== null || undefined}>
+            <SelectTrigger className="h-7 w-48 text-xs" data-draft-path={imageBakePath(name)} aria-label={`When ${name} is built ahead`} aria-disabled={instant.pending !== null || undefined}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

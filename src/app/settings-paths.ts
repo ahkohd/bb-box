@@ -104,6 +104,18 @@ export function hostFieldPath(host: Path, key: string): Path {
   return `${host}/fields/${key}`;
 }
 
+export function backendLabelPath(id: string): Path {
+  return `backends/${id}/label`;
+}
+
+export function backendEnabledPath(id: string): Path {
+  return `backends/${id}/enabled`;
+}
+
+export function hostEnabledPath(host: Path): Path {
+  return `${host}/enabled`;
+}
+
 export type TailnetKey = "mode" | "tags" | "clientId" | "clientSecret";
 
 const TAILNET = "general/tailnet/";
