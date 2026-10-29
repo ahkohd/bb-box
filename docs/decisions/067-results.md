@@ -3,6 +3,117 @@
 What was built and checked for each unit of
 [067](067-settings-page.md). Each unit keeps to its own section.
 
+## Unit 2: the server part
+
+Built on 29 October 2026. The changes 067 lists under "Changes on the
+server", for unit 2's editing engine to build on. Nothing on the page
+changes but what keeps today's form working.
+
+### What changed
+
+| Change | How |
+| --- | --- |
+| Operation receipts | `config.apply` takes `operation`, an ID the page makes, and `submission`, the edits it froze. An ID is applied at most once: sent again with the same submission, the answer is the first save's receipt, `replayed: true`, and nothing is saved, whatever revision it names. Sent with another submission, it is refused as a problem at the path `operation`. Without a submission, the draft is the submission. A save without an ID, as today's page and `bb box config apply` make, works as before and has no receipt |
+| The same write | A new storage key, `config/saved`, holds the document with its receipts, each secret's version and each backend's last change, in one value: BB's plugin storage writes one key at a time, with no transaction. `config/document` is still written after it, as a copy an earlier bb-box reads. A start takes whichever of the two is newer |
+| Receipts kept | Those of the last 24 hours, and at least the last 100. `config.get` lists them as `{ operation, revision, at }`; the hash of the submission stays in bb-box |
+| Secret versions | Each secret in `config.get` and in `config.apply`'s answer reads `{ set, version }`: the revision that last set or cleared it. Backends' secrets, files' contents and the tailnet's credentials all have one. A draft may send them back. `bb box config show --json` and `apply --json` leave them out |
+| Never reused | Each save compares a SHA-256 of each secret's value with the one it stored. A secret changed outside bb-box's saves, as by a write cut short or an earlier bb-box, gets a new revision at the next start, so no version repeats. A first start after this release takes the current revision as every version, without a new revision |
+| Check revisions | A backend's state has `changed`, the revision its configuration last changed at, from a SHA-256 of what its driver reads, inherited values and Macs' switches included. Each doctor run has `revision`, the revision it tested; runs from before have `null` |
+| Setup done | `config.get` has `setupDone`, `{ at, revision }`, recorded once, the first time a backend that is on makes a kind, or bb-box finds it has made a box before |
+| Explicit empty | A driver lists the fields where empty turns its boxes off (`offWhenEmpty`): 24 image and template fields across Docker, microsandbox, Hetzner Cloud, Proxmox LXC, Proxmox QEMU and Tart. `draftFields` keeps such a field empty where the stored document has it, so a field saved or cleared to off stays off. A field never set still takes its default, as before |
+| `ios-hosts` | The shared iOS host fields of Tart (8, and each Mac's 3), the SSH host pool (4) and Namespace (5) are a group of their own. Today's form shows it as "Shared iOS hosts", folded like Advanced |
+| `config.migrated.remove` | Removes the copy of BB's settings, as `bb box config migrated --remove` does, and answers `{ removed, state }` |
+| The reply-drop switch | Only with `BB_BOX_LIVE_CHECKS=1` in BB's server's environment does `bb box config drop-replies [--count n] [--off]` exist. It makes the next saves from the settings page that store something answer with an error after storing |
+
+The reference names the secret's version and the receipt
+([configuration reference](../reference/configuration.md)).
+
+### Tests
+
+`test/saves.test.ts`, 20 tests, among them: the receipt and document in
+one value, and a failed write that stores neither; the same operation sent
+twice at once, applied once; a replay on a newer revision; the same ID with
+another submission refused; 105 receipts kept within 24 hours and 100
+after; a secret replaced, cleared and set back to its first value, four
+versions; versions for files and the tailnet; a secret changed outside a
+save, given a new revision at the next start; a document an earlier
+bb-box wrote; `changed` and the doctor's revision through `config.check`
+and `bb box doctor`; setup done kept with every backend off and across a
+start; the reply-drop switch, and that without the variable it does not
+exist and replies are answered.
+
+On a Linux box, 8 cores, after the rebase onto unit 4 (`2f7f7c22`):
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,733 tests: 2,445 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 4 min 4 s |
+| vitest | 256 pass |
+| `test/docs.test.ts` and `scripts/reference.ts --check` | pass |
+
+Two earlier runs, before the rebase, each had one test fail that waits a
+fixed 20 ms or so for background work: Namespace's older probe, then Tart's
+Windows video. Each passed alone, 5 of 5 and 3 of 3 times, and neither
+touches the configuration.
+
+### Live check on a separate BB
+
+A fresh `npx bb-app` (0.48.0) with no account, its own data folder and
+port, in a Linux box, started with `BB_BOX_LIVE_CHECKS=1`, and bb-box
+installed from the branch's path. The RPCs were called over BB's HTTP API,
+as the page calls them. Values were made up. The same script gave the same
+answers before and after the rebase onto unit 4.
+
+| Step | Result |
+| --- | --- |
+| Apply with operation `live-op-1`: a Hetzner Cloud backend, off, with a token; a file for every box; the tailnet with its credentials | Saved at revision 2 in 17 ms, receipt `{ live-op-1, 2 }`; `config.get` listed it; the token, the file's content and the client secret each `{ set: true, version: 2 }`; no value in the answer |
+| `live-op-1` again, naming revision 1 | `replayed: true`, the same receipt, still revision 2 |
+| `live-op-1` with another submission | Refused at `operation`: "Operation live-op-1 was saved at revision 2 with other changes, so these were not saved. A new save needs a new operation ID." Still revision 2 |
+| `live-op-twice` sent twice at once | Both answered with the receipt for revision 3, one `replayed`; revision 2 to 3 |
+| Token and file replaced, token cleared, token set back to its first value | Versions 4, 5 (`set: false`) and 6; the client secret kept 2 |
+| `bb box config drop-replies`, then a save | HTTP 500, "BB Box saved this and dropped its reply, as a live check asked."; `config.get` then showed revision 7, the change, and the receipt for revision 7 |
+| The dropped operation sent again | `replayed: true`, the receipt for revision 7 |
+| The next save | Answered at once, receipt for revision 8 |
+| A save without an operation ID | Saved at revision 9, no receipt |
+| `config.migrated.remove` | `removed: false` on a BB that never moved settings |
+| BB's storage | One row, `config/saved`, 1,845 bytes: the document at revision 9 and the 7 receipts |
+| Today's settings page, in headless Chromium: Boxes per thread set to 6, saved as the field lost focus | Saved at revision 10, without a receipt, as before |
+| BB stopped and started | Revision 10, 7 receipts and every version as before |
+
+`bb box config show/check/apply` for a person: two more fresh BBs, one
+with bb-box from main (`2f7f7c22`), one from the branch, both without
+the variable. The same 15 commands on each (show, show --json, check,
+check --json, check with problems, apply, apply with problems, apply
+--json, a stale apply, apply --replace, migrated, migrated --remove)
+gave byte-identical output and exit codes. No made-up value was in any
+output, and `drop-replies` was not a command.
+
+Today's form for Tart, with the new group folded and open:
+
+![Shared iOS hosts, folded beside Advanced](067-results/unit-2/shared-ios-hosts-folded.png)
+
+![Shared iOS hosts open, with its fields](067-results/unit-2/shared-ios-hosts-open.png)
+
+### Deviations from 067
+
+- The same write is a new key, `config/saved`, not `config/document`. An
+  earlier bb-box reading a document with receipts in it would list them in
+  every export and refuse every save, so a rollback would break.
+  `config/document` is kept as a copy.
+- At most 500 receipts are kept, within 24 hours, so the stored value
+  stays well under BB's 256 KB for one value.
+- The same ID with another submission is refused as a problem at the path
+  `operation`, so every caller of `config.apply` keeps working.
+- A dropped reply is an error answer after the save, not silence: a
+  plugin's RPC cannot leave BB's request open. The page sees a failed call,
+  as for a reply lost on the way.
+
+### Not done here
+
+- The page's engine, which sends operation IDs and reads receipts and
+  versions: unit 2's next part.
+- A real Mac's Tart backend, for the `ios-hosts` group on a page: unit 3.
+
 ## Unit 4: the drivers' help text
 
 Built on 29 October 2026, for the owner's approval. Words only: no
