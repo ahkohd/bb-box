@@ -16,8 +16,8 @@ The kinds of box bb-box knows, the backends that can offer each, and each kind's
 | `macos-desktop` | A macOS desktop for computer use and app development. | macos | arm64 | yes | no | no | SSH host pool, Tart, Namespace |
 | `windows-desktop` | A Windows desktop for computer use, browsers and Windows apps. | windows | x86_64 | yes | no | no | Proxmox QEMU |
 | `windows-arm64-desktop` | A Windows desktop on arm64, for computer use, browsers and Windows apps. x64 apps run under Windows' emulation, more slowly; x64 drivers do not. | windows | arm64 | yes | no | no | Tart |
-| `ios` | An iOS Simulator device, an iPhone or iPad, on a macOS VM, or in a slot on a shared Mac or VM: for installing, running and testing iOS apps, shared with a person in the panel. | macos | arm64 | no | no | iOS | SSH host pool, Tart |
-| `android` | An Android emulator device, a phone, foldable or tablet, on a Linux VM: for installing, running and testing Android apps, shared with a person in the panel. | linux | x86_64 | no | no | Android | Proxmox QEMU |
+| `ios` | An iPhone or iPad in the iOS Simulator, for installing, running and testing iOS apps. It runs on a macOS VM, or in a slot on a shared Mac or VM, and is shared with a person in the panel. | macos | arm64 | no | no | iOS | SSH host pool, Tart |
+| `android` | A phone, foldable or tablet in the Android emulator, for installing, running and testing Android apps. It runs on a Linux VM, and is shared with a person in the panel. | linux | x86_64 | no | no | Android | Proxmox QEMU |
 
 ## Devices
 

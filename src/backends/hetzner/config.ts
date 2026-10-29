@@ -31,14 +31,14 @@ export const HETZNER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [HETZNER_KEYS.token]: {
     type: "string",
     label: "API token",
-    description: "A Read & Write API token of the Hetzner Cloud project bb-box makes its hosts in, from the project's Security page. The project should hold nothing else.",
+    description: "The API token of the Hetzner Cloud project bb-box makes its hosts in. Make a Read & Write token on the project's Security page. The project should hold nothing else.",
     secret: true,
     group: "credentials",
   },
   [HETZNER_KEYS.location]: {
     type: "string",
     label: "Location",
-    description: "Where hosts are made, such as nbg1 (Nuremberg), fsn1 (Falkenstein) or hel1 (Helsinki): near BB's server, as a desktop's stream crosses between them.",
+    description: "The Hetzner location hosts are made in, such as nbg1 (Nuremberg), fsn1 (Falkenstein) or hel1 (Helsinki). Choose one near BB's server, as a desktop's stream crosses between them.",
     group: "connection",
     default: HETZNER_DEFAULTS.location,
   },
@@ -52,7 +52,7 @@ export const HETZNER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [HETZNER_KEYS.armServerType]: {
     type: "string",
     label: "Arm server type",
-    description: "The type of the hosts for linux-arm64 boxes, an Ampere type such as cax31 (8 cores, 16 GB, 160 GB disk). Empty offers no arm64 boxes. Arm hosts have their own host image.",
+    description: "The type of the hosts for Linux boxes on arm64, an Ampere type such as cax31 (8 cores, 16 GB, 160 GB disk). Empty offers no arm64 boxes. Arm hosts have their own host image.",
     group: "boxes",
     default: "",
   },
@@ -66,32 +66,33 @@ export const HETZNER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [HETZNER_KEYS.idleMinutes]: {
     type: "number",
     label: "Idle minutes",
-    description: "A host with no box for this long is deleted. Hetzner bills by the started hour, so a shorter time saves little and makes acquires wait for a new host more often.",
+    description: "How long a host with no box waits before it is deleted. Hetzner bills by the started hour, so a shorter time saves little and makes new boxes wait for a new host more often.",
     group: "boxes",
     default: HETZNER_DEFAULTS.idleMinutes,
   },
   [HETZNER_KEYS.monthlyLimit]: {
     type: "number",
     label: "Monthly limit (EUR)",
-    description: "bb-box makes no host when this calendar month's spend so far, and an hour more of every host with the new one, would pass this many euros before VAT. A busy host keeps running until it is idle. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too.",
+    description: "The most bb-box may spend on Hetzner in a calendar month, in euros before VAT. It makes no host when this month's spend so far, and an hour more of every host with the new one, would pass it. A busy host keeps running until it is idle. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too.",
     group: "boxes",
     default: HETZNER_DEFAULTS.monthlyLimitEurosBeforeVat,
   },
   [HETZNER_KEYS.hostImage]: {
     type: "string",
     label: "Host image",
-    description: "What hosts start from. An image name, such as ubuntu-26.04, is the base of the host image bb-box builds as a snapshot, with Docker, Tailscale and the box images in it, and rebuilds weekly or when its scripts change, keeping two; until the first is built, hosts start from the image itself. A snapshot's ID makes hosts start from that snapshot, and bb-box builds none.",
+    description: "What hosts start from: an image name or a snapshot's ID. An image name, such as ubuntu-26.04, is the base of the host image bb-box builds as a snapshot, with Docker, Tailscale and the box images in it. bb-box rebuilds it weekly or when its scripts change, keeping two; until the first is built, hosts start from the image itself. A snapshot's ID makes hosts start from that snapshot, and bb-box builds none.",
     group: "advanced",
     default: HETZNER_DEFAULTS.hostImage,
   },
   [HETZNER_KEYS.sshFrom]: {
     type: "string",
     label: "SSH from",
-    description: "Only with the tailnet off: the addresses, as CIDRs separated by commas, that may reach a host's SSH over the internet, such as BB's server's public address. With the tailnet on, a host's SSH is reached on the tailnet alone.",
+    description: "The addresses that may reach a host's SSH over the internet, used only with the tailnet off. Give CIDRs separated by commas, such as BB's server's public address. With the tailnet on, a host's SSH is reached on the tailnet alone.",
     group: "advanced",
     default: "",
   },
   ...Object.fromEntries(DOCKER_FIELDS_ON_A_CLOUD_HOST.map((key) => [key, DOCKER_FIELDS[key]!])),
+  [DOCKER_KEYS.desktopImage]: { ...DOCKER_FIELDS[DOCKER_KEYS.desktopImage]!, description: "The image Linux desktops run, drawn by the CPU. setup/docker/build.sh builds it. Empty turns them off." },
 };
 
 const LOCATION = /^[a-z]{3}\d$/;

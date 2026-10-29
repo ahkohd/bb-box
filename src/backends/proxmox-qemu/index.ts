@@ -6,7 +6,7 @@ export const proxmoxQemuDriver: BackendDriver<QemuConfig> = {
   type: "proxmox-qemu",
   label: "Proxmox QEMU",
   family: "Proxmox",
-  description: "Windows desktops as VMs on a Proxmox VE host.",
+  description: "Windows desktops, Linux boxes and Android emulators, as VMs on a Proxmox VE host.",
   nature: "virtual",
   form: "VM",
   kinds: QEMU_KINDS,

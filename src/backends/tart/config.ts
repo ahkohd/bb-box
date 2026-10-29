@@ -152,7 +152,7 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "Tart: SSH private key",
     description:
-      "The unencrypted OpenSSH private key that each Mac's user and each image's VM user accept. Leave empty and bb-box makes one and shows its public key.",
+      "The SSH key bb-box logs in to each Mac and each VM with. Paste an unencrypted OpenSSH private key that each Mac's user and each image's VM user accept. Leave it empty and bb-box makes one and shows its public key.",
     secret: true,
   },
   [TART_KEYS.vmUser]: {
@@ -164,93 +164,93 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [TART_KEYS.macosImage]: {
     type: "string",
     label: "Tart: macos image",
-    description: "The Tart VM on each Mac that macos boxes, with no desktop shown, are cloned from. Empty turns them off.",
+    description: "The Tart VM on each Mac that macOS boxes, with no desktop shown, are cloned from. Empty turns them off.",
     default: TART_DEFAULTS.image,
   },
   [TART_KEYS.desktopImage]: {
     type: "string",
     label: "Tart: macos-desktop image",
-    description: "The Tart VM on each Mac that macos-desktop boxes are cloned from. Empty turns them off.",
+    description: "The Tart VM on each Mac that macOS desktops are cloned from. Empty turns them off.",
     default: TART_DEFAULTS.image,
   },
   [TART_KEYS.linuxImage]: {
     type: "string",
     label: "Tart: Linux image",
     description:
-      "The Tart VM on each Mac that linux-arm64 boxes are cloned from, as setup/tart/prepare-linux-image.sh builds it (bb-box-linux). Empty turns them off.",
+      "The Tart VM on each Mac that Linux boxes on arm64 are cloned from. setup/tart/prepare-linux-image.sh builds it, as bb-box-linux. Empty turns them off.",
     default: "",
   },
   [TART_KEYS.linuxDesktopImage]: {
     type: "string",
     label: "Tart: Linux desktop image",
     description:
-      "The Tart VM on each Mac that linux-arm64-desktop-cpu boxes are cloned from, as setup/tart/prepare-linux-image.sh --desktop builds it (bb-box-linux-desktop). Empty turns them off.",
+      "The Tart VM on each Mac that Linux desktops on arm64 are cloned from. setup/tart/prepare-linux-image.sh --desktop builds it, as bb-box-linux-desktop. Empty turns them off.",
     default: "",
   },
   [TART_KEYS.windowsImage]: {
     type: "string",
     label: "Tart: Windows image",
     description:
-      "The Windows image on each Mac, in ~/.bb-box/qemu/images, that windows-arm64-desktop boxes are made from, run by QEMU. Empty turns them off.",
+      "The image on each Mac that Windows desktops on arm64 are made from, run by QEMU. It is in ~/.bb-box/qemu/images. Empty turns them off.",
     default: "",
   },
   [TART_KEYS.iosImage]: {
     type: "string",
     label: "Tart: iOS image",
     description:
-      "The Tart VM on each Mac that ios boxes are cloned from, as setup/tart/prepare-ios-image.sh builds it on the macOS image (bb-box-ios): idb_companion and a booted-once, slimmed iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5). bb-box checks and refreshes it with the macOS image. Empty, the default, turns it off. ios boxes are not offered yet.",
+      "The Tart VM on each Mac that iOS Simulator boxes are cloned from. setup/tart/prepare-ios-image.sh builds it on the macOS image, as bb-box-ios, with idb_companion and a booted-once, slimmed iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5). bb-box checks and refreshes it with the macOS image. Empty turns iOS boxes off.",
     default: "",
   },
   [TART_KEYS.windowsEnrol]: {
     type: "boolean",
     label: "Tart: Windows boxes as BB machines",
-    description: "Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only.",
+    description: "Windows boxes join BB as machines, so threads and terminals can use them. Linux and macOS boxes always do. Off, Windows boxes are boxes only.",
     default: true,
   },
   [TART_KEYS.video]: {
     type: "boolean",
     label: "Tart: Video by default for macOS desktops",
     description:
-      "macOS desktops open as video, from bb-box-stream in the image, not VNC. Off by default: they open as VNC, which is already smooth on a Tart Mac, at 52 to 55 frames a second, and a person can choose video under Display. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31.",
+      "Opens macOS desktops as video, from bb-box-stream in the image, instead of VNC. Off, they open as VNC, which is already smooth on a Tart Mac at 52 to 55 frames a second, and a person can choose video under Display. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31.",
     default: false,
   },
   [TART_KEYS.vmsPerHost]: {
     type: "number",
     label: "Tart: VMs per Mac",
     description:
-      "The most macOS VMs that run on each Mac at once, counting every VM Tart runs there, not only bb-box's. At most 2, which Apple's licence and the Virtualization framework allow.",
+      "The most macOS VMs each Mac runs at once, counting every Tart VM there, not only bb-box's. At most 2, which Apple's licence and the Virtualization framework allow.",
     default: MACOS_VMS_PER_MAC,
   },
   [TART_KEYS.reserveMemoryMiB]: {
     type: "number",
     label: "Tart: memory kept free (MiB)",
-    description: "A new box is refused if the Mac would have less memory than this left for its own use, after its running VMs.",
+    description: "Memory each Mac keeps for its own use. A new box is refused if the Mac would have less than this left, after its running VMs.",
     default: TART_DEFAULTS.reserveMemoryMiB,
   },
   [TART_KEYS.reserveDiskGiB]: {
     type: "number",
     label: "Tart: disk kept free (GiB)",
-    description: "A new box is refused if the Mac's disk has less free space than this.",
+    description: "Disk each Mac keeps free. A new box is refused if the Mac's disk has less free space than this.",
     default: TART_DEFAULTS.reserveDiskGiB,
   },
   [TART_KEYS.warmMaxHours]: {
     type: "number",
     label: "Tart: hours a macOS warm VM or spare is kept",
-    description: "A suspended macOS warm VM, or a spare that waits suspended, saved longer ago than this is replaced by a fresh one, as an old saved state may not restore.",
+    description: "How long a suspended macOS warm VM or spare is kept before a fresh one replaces it. An old saved state may not restore.",
     default: TART_DEFAULTS.warmMaxHours,
   },
   [TART_KEYS.iosHostsOn]: {
     type: "boolean",
     label: "Tart: shared iOS hosts",
     description:
-      "ios boxes asked for with shared: true take a slot, a macOS user with its own device, on a VM of the iOS image made as a shared host: made when a box needs one, deleted when its last box is released. Off by default.",
+      "Lends iOS boxes as slots on shared hosts, which are VMs of the iOS image. Each slot is a macOS user with its own device, for an iOS box asked for with shared: true. A host is made when a box needs one, and deleted when its last box is released.",
     default: IOS_HOSTS_DEFAULTS.on,
   },
   [TART_KEYS.iosHostsMost]: {
     type: "number",
     label: "Tart: slots per shared iOS host",
     description:
-      "The most slots a shared iOS host has making, ready or held at once. Unset, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins.",
+      "The most slots each shared iOS host has at once, making, ready or held. Empty, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins.",
   },
   [TART_KEYS.iosHostsAhead]: {
     type: "number",
@@ -260,19 +260,19 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
   },
   [TART_KEYS.iosHostsResettingMost]: {
     type: "number",
-    label: "Tart: slots a shared iOS host sweeps at once",
-    description: "The most released slots whose files a shared iOS host sweeps in one pass.",
+    label: "Tart: slots a shared iOS host resets at once",
+    description: "The most released slots a shared iOS host resets in one pass, sweeping their files.",
     default: IOS_HOSTS_DEFAULTS.resettingMost,
   },
   [TART_KEYS.iosHostsCores]: {
     type: "number",
     label: "Tart: cores of a shared iOS host",
-    description: "The cores of each shared iOS host's VM, shared by its slots. Unset, the Mac's performance cores. A Mac's own value wins.",
+    description: "The cores of each shared iOS host's VM, shared by its slots. Empty uses the Mac's performance cores. A Mac's own value wins.",
   },
   [TART_KEYS.iosHostsMemoryGiB]: {
     type: "number",
     label: "Tart: memory of a shared iOS host (GiB)",
-    description: "The memory of each shared iOS host's VM, shared by its slots. Unset, 8 GiB for the host and 1.5 GiB for each slot, within the Mac's memory. A Mac's own value wins.",
+    description: "The memory of each shared iOS host's VM, shared by its slots. Empty uses 8 GiB for the host and 1.5 GiB for each slot, within the Mac's memory. A Mac's own value wins.",
   },
   [TART_KEYS.iosHostsPerMac]: {
     type: "number",
@@ -523,19 +523,19 @@ export const TART_HOST_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [MAC_IOS_HOST_FIELDS.most.field]: {
     type: "number",
     label: "Slots per shared iOS host",
-    description: "The most slots a shared iOS host on this Mac has, over the backend's setting and bb-box's estimate for the Mac. Empty for those.",
+    description: "The most slots a shared iOS host on this Mac has, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate for the Mac.",
     group: "advanced",
   },
   [MAC_IOS_HOST_FIELDS.cores.field]: {
     type: "number",
     label: "Cores of a shared iOS host",
-    description: "The cores of a shared iOS host's VM on this Mac, over the backend's setting and the Mac's performance cores. Empty for those.",
+    description: "The cores of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else the Mac's performance cores.",
     group: "advanced",
   },
   [MAC_IOS_HOST_FIELDS.memoryGiB.field]: {
     type: "number",
     label: "Memory of a shared iOS host (GiB)",
-    description: "The memory of a shared iOS host's VM on this Mac, over the backend's setting and bb-box's estimate. Empty for those.",
+    description: "The memory of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate.",
     group: "advanced",
   },
 };
