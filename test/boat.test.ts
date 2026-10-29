@@ -313,6 +313,10 @@ test("on the trial's 2 sandboxes at once, a box whose template must be built fir
   const refused = await none.backend.capacity("linux", SMALL, []);
   assert.equal(refused.ok, false);
   assert.match(refused.message!, /boat's free trial allows 2 sandboxes at once, and 1 is running or starting, 1 of them not bb-box's. This box's template must be built first, in a sandbox of its own: building boat's Linux template first/);
+  const adoptable = setup({ templates: false });
+  adoptable.fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, state: "archived" });
+  adoptable.fake.add({ labels: { other: "x" } });
+  assert.equal((await adoptable.backend.capacity("linux", SMALL, [])).ok, true, "a template another install built counts as built");
   const built = setup();
   built.fake.add({ labels: { other: "x" } });
   built.fake.add({ labels: { other: "y" } });
