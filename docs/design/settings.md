@@ -66,9 +66,8 @@ Proxmox LXC", the first part going to the overview), and, when the person
 came from another inner view, "Back to …".
 
 Opening a view moves focus to its heading. Going back puts focus on the row
-the person opened and the scroll where it was. Pointer navigation slides
-the page in 12 px over 220 ms; keyboard navigation and reduced motion move
-nothing. After a new backend is saved, its setup view is replaced in
+the person opened and the scroll where it was. Pages change in place,
+with no slide. After a new backend is saved, its setup view is replaced in
 history by the backend's page, so back never returns to an empty setup
 form.
 
