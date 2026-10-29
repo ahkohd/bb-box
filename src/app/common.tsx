@@ -9,6 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { BoxView } from "../plugin/views.ts";
+import { platformWord } from "../core/device.ts";
+import { runsWayland } from "./boxes-filter.ts";
+import { screenWord } from "./screens.ts";
 
 export function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -339,12 +342,16 @@ export function osName(os: string): string {
   return os === "macos" ? "macOS" : os === "windows" ? "Windows" : os === "linux" ? "Linux" : os;
 }
 
+export function systemName(box: Pick<BoxView, "os" | "device">): string {
+  return box.device ? platformWord(box.device.platform) : osName(box.os);
+}
+
 export function deviceModelOf(box: Pick<BoxView, "device">): string | null {
   return box.device?.model ?? null;
 }
 
-export function hostFormBadges(box: Pick<BoxView, "form" | "device">): readonly BoxForm[] {
-  return box.form && !box.device ? [box.form] : [];
+export function hostFormBadges(box: Pick<BoxView, "form" | "shared">): readonly BoxForm[] {
+  return box.form && !box.shared ? [box.form] : [];
 }
 
 /** An arm64 kind or box has a badge, except on macOS, which is always arm64 (040). */
@@ -369,16 +376,19 @@ export function lacksDocker({ os, docker }: { readonly os: string; readonly dock
  * squeeze it.
  */
 export function KindBadges({
+  deviceWord = null,
   desktop = false,
   wayland = false,
   gpu,
   noDocker = false,
   arm64 = false,
   forms,
+  shared = false,
   ready = false,
   machine = false,
   className,
 }: {
+  deviceWord?: string | null;
   desktop?: boolean;
   wayland?: boolean;
   gpu: boolean;
@@ -387,15 +397,17 @@ export function KindBadges({
   /** The kind is arm64 (040); a badge tells two Linux kinds apart. */
   arm64?: boolean;
   forms: readonly BoxForm[];
+  shared?: boolean;
   /** A spare is ready (032). */
   ready?: boolean;
   /** The BB machine this thread runs on (036), in the Box panel and the bare Desktop and Terminal choosers. One of the group, so its gap is the others' (the operator, 4 October 2026). */
   machine?: boolean;
   className?: string;
 }) {
-  if (!desktop && !gpu && !noDocker && !arm64 && !forms.length && !ready && !machine) return null;
+  if (!deviceWord && !desktop && !gpu && !noDocker && !arm64 && !forms.length && !shared && !ready && !machine) return null;
   return (
     <span className={cn("inline-flex shrink-0 items-center gap-1", className)}>
+      {deviceWord ? <Badge>{deviceWord}</Badge> : null}
       {desktop ? <Badge>Desktop</Badge> : null}
       {wayland ? <Badge>Wayland</Badge> : null}
       {gpu ? <Badge>GPU</Badge> : null}
@@ -404,9 +416,26 @@ export function KindBadges({
       {forms.map((form) => (
         <Badge key={form}>{formBadge(form)}</Badge>
       ))}
+      {shared ? <Badge>Shared</Badge> : null}
       {ready ? <Badge>Ready now</Badge> : null}
       {machine ? <Badge>BB machine</Badge> : null}
     </span>
+  );
+}
+
+export function BoxBadges({ box, machine = false }: { box: BoxView; machine?: boolean }) {
+  return (
+    <KindBadges
+      deviceWord={box.device ? screenWord(box, "device") : null}
+      desktop={box.desktop}
+      wayland={runsWayland(box)}
+      gpu={box.gpu}
+      noDocker={lacksDocker(box)}
+      arm64={isArm64Badge(box.os, box.arch)}
+      forms={hostFormBadges(box)}
+      shared={box.shared}
+      machine={machine}
+    />
   );
 }
 

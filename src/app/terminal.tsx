@@ -17,6 +17,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { cn } from "@/lib/utils";
 import type { Contract, DesktopState, PanelState } from "../plugin/contract.ts";
 import { terminalPath } from "../plugin/terminal-route.ts";
@@ -58,13 +59,18 @@ export function terminalParams(boxId: string): { box: string } {
   return { box: boxId };
 }
 
+export function terminalTitle(box: Pick<BoxView, "name">, compactViewport = false): string {
+  return compactViewport ? box.name : `Terminal: ${box.name}`;
+}
+
 /** Opens a box's terminal tab in the thread's panel. */
 export function useOpenTerminal(): (box: BoxView) => void {
   const navigate = useBbNavigate();
+  const compactViewport = useIsCompactViewport();
   return (box) => {
     navigate.openThreadPanel({
       actionId: TERMINAL_ACTION,
-      title: `Terminal: ${box.name}`,
+      title: terminalTitle(box, compactViewport),
       params: terminalParams(box.id),
     });
   };

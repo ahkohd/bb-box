@@ -14,14 +14,16 @@ When no backend is set up, the panel looks for Docker on your BB machines, the o
 
 ### What a row tells you
 
-A row starts with the box's name and its system, such as Linux. Badges then say what the box is:
+A row starts with the box's name and its system, such as Linux. A box with a device has its device's system, iOS or Android, then the device's model, such as iPhone 18 Pro. Badges then say what the box is:
 
+- Simulator or Emulator: it has an iOS Simulator or an Android emulator device
 - Desktop: it has a screen you can see and use
 - Wayland: its desktop runs on Wayland rather than X11, so apps built only for X11 do not run there
 - GPU: its desktop is drawn by a graphics card
 - No Docker: it is a Linux box without Docker
 - arm64: it runs on an ARM processor, which some programs do not support
 - Container, LXC, VM or Physical: what kind of computer it is
+- Shared: it shares a Mac or VM with other boxes, as a macOS user of its own
 - BB machine: it is the machine this thread runs on
 
 The line under the name says how the box is doing:
