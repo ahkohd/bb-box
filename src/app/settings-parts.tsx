@@ -116,7 +116,7 @@ export function RowNote({ note, className }: { note: string | null; className?: 
   );
 }
 
-export function NavRow({ icon, title, value, tone, onClick, outward = false, rowKey, trailing, valueId }: { icon: ReactNode; title: string; value?: ReactNode; tone?: Tone; onClick: () => void; outward?: boolean; rowKey: string; trailing?: ReactNode; valueId?: string }) {
+export function NavRow({ icon, title, value, tone, onClick, outward = false, rowKey, trailing, valueId, switchColumn = false }: { icon: ReactNode; title: string; value?: ReactNode; tone?: Tone; onClick: () => void; outward?: boolean; rowKey: string; trailing?: ReactNode; valueId?: string; switchColumn?: boolean }) {
   return (
     <div className="flex items-center gap-3 pr-4 transition-colors duration-150 hover:bg-state-hover">
       <button type="button" data-row-key={rowKey} onClick={onClick} aria-describedby={value ? valueId : undefined} className={cn("flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-x-3 gap-y-0.5 py-2.5 pl-4 text-left", FOCUS_RING)}>
@@ -130,7 +130,7 @@ export function NavRow({ icon, title, value, tone, onClick, outward = false, row
         ) : null}
         <Chevron outward={outward} />
       </button>
-      {trailing}
+      {switchColumn ? <span className="flex w-7 shrink-0 justify-end">{trailing}</span> : trailing}
     </div>
   );
 }
