@@ -125,7 +125,7 @@ export function RowControl({ children }: { children: ReactNode }) {
   return <span className="relative z-10 flex w-7 shrink-0 items-center justify-end">{children}</span>;
 }
 
-export function NavRow({ icon, title, chips, value, tone, onClick, outward = false, rowKey, control, saved, switchColumn = false, valueId }: { icon: ReactNode; title: string; chips?: ReactNode; value?: ReactNode; tone?: Tone; onClick: () => void; outward?: boolean; rowKey: string; control?: ReactNode; saved?: ReactNode; switchColumn?: boolean; valueId?: string }) {
+export function NavRow({ icon, title, chips, value, tone, onClick, outward = false, rowKey, control, saved, valueId }: { icon: ReactNode; title: string; chips?: ReactNode; value?: ReactNode; tone?: Tone; onClick: () => void; outward?: boolean; rowKey: string; control?: ReactNode; saved?: ReactNode; valueId?: string }) {
   const chipsId = useId();
   return (
     <div className="relative flex flex-wrap items-center gap-x-3 gap-y-0.5 px-4 py-2.5 transition-colors duration-150 hover:bg-state-hover">
@@ -147,7 +147,7 @@ export function NavRow({ icon, title, chips, value, tone, onClick, outward = fal
         </span>
       ) : null}
       {saved ? <span className="pointer-events-none">{saved}</span> : null}
-      {control || switchColumn ? <RowControl>{control}</RowControl> : null}
+      {control ? <RowControl>{control}</RowControl> : null}
       <span className="pointer-events-none">
         <Chevron outward={outward} />
       </span>

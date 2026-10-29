@@ -343,7 +343,7 @@ function Options() {
       <Card>
         <Rows>
           {rows.map((row) => (
-            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} chips={unsavedChip(row.id)} value={row.value} onClick={() => go(row.id)} switchColumn />
+            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} chips={unsavedChip(row.id)} value={row.value} onClick={() => go(row.id)} />
           ))}
           <div>
             <NavRow
@@ -371,8 +371,8 @@ function Options() {
             />
             <RowNote note={instant.note(monitorKey)} className="px-4 pb-2" />
           </div>
-          <NavRow rowKey="option-configuration" valueId="settings-option-configuration" icon={<OptionIcon icon={Settings01Icon} />} title="Configuration" value={`Revision ${state.revision}`} onClick={() => go("configuration")} switchColumn />
-          <NavRow rowKey="machines" valueId="settings-option-machines" icon={<OptionIcon icon={ComputerIcon} />} title="Your machines" value="On the Boxes page, Machines tab" outward onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: MACHINES_TAB })} switchColumn />
+          <NavRow rowKey="option-configuration" valueId="settings-option-configuration" icon={<OptionIcon icon={Settings01Icon} />} title="Configuration" value={`Revision ${state.revision}`} onClick={() => go("configuration")} />
+          <NavRow rowKey="machines" valueId="settings-option-machines" icon={<OptionIcon icon={ComputerIcon} />} title="Your machines" value="On the Boxes page, Machines tab" outward onClick={() => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: MACHINES_TAB })} />
         </Rows>
       </Card>
       {monitorChanged() ? <ReloadNote /> : null}
