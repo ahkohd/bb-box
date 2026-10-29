@@ -39,7 +39,7 @@ import { accessSetup } from "../../core/in-box.ts";
 import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { EXIT, grantInput, parseGrant, parseGranted } from "../ssh-pool/protocol.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
-import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
+import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
 import {
   MIN_DESKTOP,
   TransportError,
@@ -175,6 +175,7 @@ import {
   type QemuVm,
 } from "./qemu.ts";
 import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScript, qemuVideoSource, qemuVideoSourcePath, qemuVideoStateBody, type QemuVideo } from "./qemu-video.ts";
+import { storedKeyPair } from "../ssh-key.ts";
 
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
@@ -3547,11 +3548,7 @@ export class TartBackend implements Backend {
         let publicText: string | null = null;
         const generated = !privateKey;
         if (!privateKey) {
-          let stored = await this.#context.storage.get<{ privateKey: string; publicKey: string }>(SSH_KEY);
-          if (!stored) {
-            stored = await generateKeyPair();
-            await this.#context.storage.set(SSH_KEY, stored);
-          }
+          const stored = await storedKeyPair(this.#context.storage, SSH_KEY);
           privateKey = stored.privateKey;
           publicText = stored.publicKey;
         }

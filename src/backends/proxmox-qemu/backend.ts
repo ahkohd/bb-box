@@ -89,12 +89,13 @@ import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, recordInDescriptio
 import { displayReason } from "../proxmox-lxc/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
-import { KeyFile, Ssh, SshTransport, generateKeyPair, publicKey } from "../../transports/ssh.ts";
+import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
 import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
 import { openRoute } from "../../transports/route.ts";
 import type { QemuConfig } from "./config.ts";
+import { storedKeyPair } from "../ssh-key.ts";
 
 const MiB = 2 ** 20;
 const GiB = 2 ** 30;
@@ -1708,11 +1709,7 @@ export class ProxmoxQemuBackend implements Backend {
         let publicText: string | null = null;
         const generated = !privateKey;
         if (!privateKey) {
-          let stored = await this.#context.storage.get<{ privateKey: string; publicKey: string }>(SSH_KEY);
-          if (!stored) {
-            stored = await generateKeyPair();
-            await this.#context.storage.set(SSH_KEY, stored);
-          }
+          const stored = await storedKeyPair(this.#context.storage, SSH_KEY);
           privateKey = stored.privateKey;
           publicText = stored.publicKey;
         }

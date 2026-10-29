@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
 import { CUA_DRIVER } from "../docker/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
-import { KeyFile, Ssh, SshTransport, generateKeyPair } from "../../transports/ssh.ts";
+import { KeyFile, Ssh, SshTransport } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type SshAccess } from "../../transports/types.ts";
 import {
   BackendError,
@@ -29,6 +29,7 @@ import { BoatApi, BoatError, SIZE_SHAPES, perWindow, isRunning, isStarting, isSt
 import { BOAT_KINDS, type BoatConfig, type BoatKind } from "./config.ts";
 import { BoatTemplates, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
 import { CANNOT_ENROL_FIX, bbReach, cannotEnrolWords, type BbReach } from "./reach-bb.ts";
+import { storedKeyPair } from "../ssh-key.ts";
 
 export const LABELS = {
   install: "bbbox-install",
@@ -789,11 +790,7 @@ export class BoatBackend implements Backend {
   #keys(): Promise<{ ssh: Ssh; publicKey: string }> {
     if (!this.#ssh) {
       const pending = (async () => {
-        let stored = await this.#context.storage.get<{ privateKey: string; publicKey: string }>(SSH_KEY);
-        if (!stored) {
-          stored = await generateKeyPair();
-          await this.#context.storage.set(SSH_KEY, stored);
-        }
+        const stored = await storedKeyPair(this.#context.storage, SSH_KEY);
         const keyPath = await this.#keyFile.path(stored.privateKey);
         const shareDir = await this.#keyFile.shareDir();
         return { ssh: new Ssh({ keyPath, binary: this.#options.sshBinary, shareDir, knownHostsPath: await this.#knownHosts() }), publicKey: stored.publicKey };

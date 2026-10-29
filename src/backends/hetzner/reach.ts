@@ -4,12 +4,13 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
 import { makeTempFolderSync, shortTempBase } from "../../core/temp-folders.ts";
-import { KeyFile, generateKeyPair } from "../../transports/ssh.ts";
+import { KeyFile } from "../../transports/ssh.ts";
 import { timedSpawn } from "../../transports/spawns.ts";
 import { DockerCli } from "../docker/cli.ts";
 import type { BackendStorage } from "../types.ts";
 import { HetznerError, type FirewallRule, type Hetzner, type Labels } from "./api.ts";
 import type { HostRecord } from "./hosts.ts";
+import { storedKeyPair } from "../ssh-key.ts";
 
 export const TAILSCALE_DIRECT_PORT = "41641";
 const SSH_KEY = "ssh-key";
@@ -105,11 +106,7 @@ export class HostReach {
 
   async keys(): Promise<{ privateKey: string; publicKey: string; keyPath: string }> {
     this.#keys ??= (async () => {
-      let stored = await this.#options.storage.get<{ privateKey: string; publicKey: string }>(SSH_KEY);
-      if (!stored) {
-        stored = await generateKeyPair();
-        await this.#options.storage.set(SSH_KEY, stored);
-      }
+      const stored = await storedKeyPair(this.#options.storage, SSH_KEY);
       return { ...stored, keyPath: await this.#keyFile.path(stored.privateKey) };
     })();
     this.#keys.catch(() => (this.#keys = null));

@@ -10,6 +10,7 @@ import { test } from "node:test";
 import type { BbPluginApi, PluginSettingValue } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { DRIVERS, layeredStorage } from "../src/backends/index.ts";
+import { storedKeyPair } from "../src/backends/ssh-key.ts";
 import { parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { sshPoolDriver } from "../src/backends/ssh-pool/index.ts";
@@ -663,6 +664,15 @@ test("a checked backend's storage is the backend's own for a new key, and a laye
   assert.equal(await storage.get("record"), "live", "the live record is untouched");
   assert.equal(await layer.get("record"), undefined);
   assert.deepEqual(await layer.list(), ["ssh-key"]);
+});
+
+test("a backend and a check of it that need an SSH key at the same moment get one key, the one the backend keeps", async () => {
+  const storage = new MemoryStorage();
+  const [live, checked] = await Promise.all([storedKeyPair(storage, "ssh-key"), storedKeyPair(layeredStorage(storage), "ssh-key")]);
+  assert.equal(checked.publicKey, live.publicKey);
+  assert.deepEqual(await storage.get("ssh-key"), live);
+  await storage.set("ssh-key", { privateKey: "made earlier", publicKey: "ssh-ed25519 MADE bb-box" });
+  assert.equal((await storedKeyPair(layeredStorage(storage), "ssh-key")).publicKey, "ssh-ed25519 MADE bb-box", "a key the backend has is never replaced");
 });
 
 test("a doctor that takes too long is cut off at its time limit", async () => {
