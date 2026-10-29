@@ -1027,3 +1027,195 @@ and from the live checks:
 - Unit 4's second open question, unifying the Shared iOS hosts labels
   across Tart, the SSH host pool and Namespace, waits for the owner.
 - A look in production in the owner's browser, after the lead deploys.
+
+## Unit 9: Devices and Network on the engine
+
+Built on 29 October 2026, on units 1 to 4. Devices is now a page of
+settings that act at once, each an operation with its receipt. Network is
+the tailnet as one form on the draft registry: the choice, the tags and
+the OAuth client are saved together, and a refusal keeps every change.
+The old tailnet form is gone.
+
+### What changed
+
+- **Devices**: Streaming holds iOS video encoding, a menu (Automatic,
+  Hardware only, Software only), and "Share each Mac's encoder fairly", a
+  switch. Set on other pages holds a row for each backend with shared iOS
+  hosts, opening its page, and a row for each device kind's spares, "None,
+  as by default" or "2 spares", opening the kind's page, under "Spares of
+  device boxes are off unless you set a number: each waits with its device
+  booted and its memory saved to disk, which takes up to as much disk as
+  the box's memory." For testing holds the test device, a switch. Each
+  writes through the shared write path: Saved only on BB Box's
+  confirmation, put back with the reason on a refusal or a conflict. The
+  page no longer sends people to `bb box config apply`.
+- **Network**: "Join machines to the tailnet" is two radio choices. Yes
+  shows Tags, empty for `tag:bb-box` ("Empty: tag:bb-box, the default"),
+  and the OAuth client ID and secret, each Set or Not set with Set or
+  Replace, as a backend's secrets are. All four are paths in one part,
+  `option/network`: `general/tailnet/mode`, `/tags`, `/clientId` and
+  `/clientSecret`. The secrets' bases are their versions, so one replaced
+  in another tab is a conflict that names the revision. They are kept in
+  memory only, and after a reload the page asks for them again. Save, or
+  Enter in any field, sends one operation; the server's refusal, such as
+  "Set the Tailscale OAuth client's secret, as the guide shows.", sits
+  under the field it names, which gets focus, and nothing is stored.
+  Choosing No hides the rest, drops their edits, and says "Saving No
+  deletes the saved OAuth client ID and secret.", as BB Box does. The
+  overview marks Network "Unsaved changes" or "Saving…".
+- **The engine** gained the tailnet's paths: stored values and versions,
+  the candidate (the stored secrets kept as `{ set, version }` unless
+  replaced), problems at `general.tailnet.*` resolved to their fields,
+  labels for "Since then, changed elsewhere", and "paste it again" for
+  secrets lost in a reload.
+- **Shared parts**: a backend's secret control moved into
+  `SecretControl` (`settings-draft-fields.tsx`), which the tailnet uses
+  too. `DraftRow` takes chips, a problem, a wide control and words for a
+  conflict's value. After Enter saves a pasted secret, focus goes to its
+  Replace button rather than to the page; this holds for a backend's
+  secrets as well. A switch row's Saved tick now sits before its switch,
+  as on a backend's page, so the switch is last.
+- `DEFAULT_TAILNET_TAGS` moved to `src/core/tailnet-settings.ts`, and
+  `tailnet.ts` exports it from there, so the page reads it without
+  bundling the Tailscale client. The first install on the separate BB
+  found this: the frontend build failed on `node:` modules.
+
+New: `067-settings-page/unit-9/live-check.mjs` and `screens-and-keys.mjs`.
+Changed: `settings-tailnet.tsx` (now the Network page), `settings-pages.tsx`
+(Devices, and Network's place), `settings-paths.ts`,
+`settings-draft-fields.tsx`, `settings-backend-fields.tsx`,
+`settings-drafts.ts` (`NETWORK_PART`), `settings-context.tsx` (three more
+settings that act at once), `settings-overview.tsx`,
+`src/core/tailnet-settings.ts`, `src/core/tailnet.ts`,
+`docs/design/settings.md`, `docs/guide/settings.md`,
+`docs/guide/tailnet.md` and the tests. Of these, files units 5, 6 and 8
+may also touch: `settings-pages.tsx` (only `DevicesOptions`,
+`AtOnceSwitch`'s two lines, an import and `OptionPage`'s rule line),
+`settings-paths.ts`, `settings-draft-fields.tsx`,
+`settings-backend-fields.tsx` (only `SecretFieldRow`),
+`settings-context.tsx`, `settings-overview.tsx` (`OPTION_PARTS`), the As
+built table in `docs/design/settings.md`, and `test/app.test.tsx`.
+
+### Tests
+
+`test/settings-drafts.test.ts` has three more, on the real
+`Configuration`: the tailnet refused part way (mode, tags and ID sent
+without the secret: refused at the secret, nothing stored, every edit
+kept), then saved in one operation, then tags emptied with the secrets
+kept, then No deleting both; a tailnet secret replaced in two tabs, with
+Keep mine; and the memory-only rule with "paste it again" after a reload.
+`test/app.test.tsx` replaces the old tailnet test with four: the form
+saved together with one operation, a set secret kept until replaced, and
+No with its warning; refused part way, with the reason tied to its field
+and focused; a secret's conflict naming the revision; and Devices, each
+setting with its receipt, and the spares rows opening their kind.
+
+On a Linux box, 8 cores, on the commit delivered:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,783 tests: 2,495 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 41 s |
+| vitest | 283 pass, in 4 files |
+| `test/docs.test.ts` and `scripts/reference.ts --check` | pass; the reference is unchanged |
+
+The node suite ran on the code before the last change, the two lines that
+move a switch row's Saved tick; `tsc`, vitest and the docs test passed
+again on the commit delivered.
+
+### Live check on a separate BB
+
+A fresh `npx bb-app` 0.48.0 with no account, its own data folder and
+port, in a Linux box, started with `env -i`, `HOME`, `PATH` and
+`BB_BOX_LIVE_CHECKS=1` only, with bb-box installed from this branch by `bb
+plugin install` of its path. No backend is set up. The tailnet's
+credentials are made up: BB Box stores them but never uses them here, as
+nothing makes a cloud machine. The script,
+[`live-check.mjs`](067-settings-page/unit-9/live-check.mjs), drives
+headless Chromium at 1440 by 1000. Another tab is a second browser
+context; a change made elsewhere is a save through BB's HTTP API, as an
+agent's `bb box config apply` makes. Secrets are read back from BB's
+storage to compare them. Every check passed 3 runs in a row, 15 of 15, in
+2 series on the commit delivered. The first single run found
+two faults in the script (a tag that matched its own search for pasted
+text, and counting rows while a menu's overlay hid the page) and one in
+the page, the bundling fault above.
+
+| Check | What the page said, and what BB Box stored | Runs |
+| --- | --- | --- |
+| The tailnet's choice and credentials saved together, refused part way: Yes, tags "tag:bb-box, tag:ci-check" and a made-up client ID, Save | "3 changes to the tailnet not saved", then "Not saved: fix the field marked. Your changes are still here." with "Set the Tailscale OAuth client's secret, as the guide shows." under OAuth client secret, which had focus. Nothing stored: the same revision, no tailnet, no ID. The ID, the choice and the tags stayed, through leaving by BB's sidebar and coming back. With a made-up secret and Enter: "Saved.", one revision more, the choice, both tags and both credentials stored by that one save; two operations, only the second with a receipt; no pasted credential in browser storage or in the page; both rows said Set | 3 of 3 |
+| No deletes the saved credentials, and says so first | "Saving No deletes the saved OAuth client ID and secret." before Save, with nothing deleted yet; then "Saved.", and the choice and both credentials gone | 3 of 3 |
+| A tailnet secret replaced in two tabs | B saved first; A at once: "Replaced elsewhere while you edited, at revision 153. Saving yours replaces that one.", the bar "A setting you changed was changed elsewhere too. Choose for each, then save.", and Save disabled. Keep mine and Save stored A's secret, with the ID kept. Again with Keep the saved one: A's typed secret went and B's stayed stored. No secret in either page | 3 of 3 |
+| A reload with a tailnet draft | "Your unsaved changes to the tailnet are back: 2 changes. For safety the OAuth client secret you pasted was not kept; paste it again.", Yes chosen again, the secret in no browser storage | 3 of 3 |
+| The device settings saved, and conflicting with a change made elsewhere | Encoder sharing off and the test device on, each "Saved" once with its receipt. The test device turned off elsewhere: its switch followed. With the page's reads held, iOS video encoding set to hardware elsewhere, then Software only chosen here: "iOS video encoding was not changed: it was changed elsewhere while you chose. It is hardware only now.", the menu back on Hardware only, hardware stored. Chosen again: software stored, "Saved". Both spares rows said "None, as by default", and the Android one opened `#kind/android` | 3 of 3 |
+
+### Keyboard only
+
+On the same BB, by keys alone
+([`screens-and-keys.mjs`](067-settings-page/unit-9/screens-and-keys.mjs)):
+
+- From the overview Tab reached the Devices row; Enter opened it with
+  focus on its heading. Tab went: iOS video encoding, Share each Mac's
+  encoder fairly, Spare Android emulator boxes, Spare iOS Simulator boxes,
+  Test device. Every stop had a focus ring.
+- Enter on iOS video encoding opened its menu on Automatic; ArrowDown and
+  Enter stored hardware, and focus went back to the menu's button. Space
+  on Test device stored it on. Enter on Spare iOS Simulator boxes opened
+  `#kind/ios` with focus on its heading; back put focus on that row.
+- On Network, Tab from the heading reached the radio choice; ArrowDown
+  chose Yes. Tab then went: Tags, Set the OAuth client ID, Set the OAuth
+  client secret. Enter on Set put focus in the ID's input; typing and Enter
+  saved, was refused part way, and focus went to Set the OAuth client
+  secret; Enter, typing and Enter saved both, and focus went to Replace
+  the OAuth client secret.
+- No animation ran (`document.getAnimations()` was empty).
+- The first pass found focus falling to the page after Enter saved a
+  pasted secret; it was fixed and the pass run again.
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark: Devices; Network off, with a
+draft, refused part way, with a secret's conflict, and with No about to
+delete the client; the overview with Unsaved changes on Network. 45 in
+the thread's storage, and the live checks' own. A selection:
+
+[Devices](067-settings-page/unit-9/devices-1440-dark.png),
+[Devices at 390](067-settings-page/unit-9/devices-390-light.png),
+[and its end](067-settings-page/unit-9/devices-end-390-light.png),
+[a tailnet draft](067-settings-page/unit-9/network-draft-1440-light.png),
+[refused part way](067-settings-page/unit-9/network-refused-1440-dark.png),
+[refused at 390](067-settings-page/unit-9/network-refused-390-dark.png),
+[a secret's conflict at 390](067-settings-page/unit-9/network-secret-conflict-390-dark.png),
+[No deletes the client](067-settings-page/unit-9/network-no-deletes-760-light.png),
+[Unsaved changes on the overview](067-settings-page/unit-9/overview-unsaved-760-dark.png),
+and from the live checks:
+[refused part way](067-settings-page/unit-9/live-tailnet-refused.png),
+[saved](067-settings-page/unit-9/live-tailnet-saved.png),
+[two tabs](067-settings-page/unit-9/live-tailnet-secret-conflict.png),
+[a device setting's conflict](067-settings-page/unit-9/live-devices-conflict.png).
+
+### Deviations from 067
+
+- Devices has no saving rule under its header: everything on it acts at
+  once, and 067 shows the rule only on pages with a form. Network shows
+  it.
+- Tags take the unit 3 rule for a blank field: empty means `tag:bb-box`,
+  said under the field, where the old form filled the field with it. The
+  tailnet guide says to leave it empty.
+- The tailnet's secrets have Set and Replace but no Clear: with Yes, BB
+  Box refuses a missing one, and No deletes both.
+- Choosing No drops the edits to the tags and the secrets, as they are
+  hidden and No deletes them. Choosing Yes again starts them afresh.
+- The rows to the shared iOS hosts open the backend's page with its
+  Shared iOS hosts card folded, as Find (unit 11) has the reveal 067
+  describes for a found setting.
+- The spares rows link to the kind's page from before unit 6, where the
+  spares are in today's kind editor.
+- A switch row's Saved tick moved before its switch, on Boxes, Images and
+  Monitor too, under the owner's rule that a switch is last.
+
+### Not done here
+
+- A look in production in the owner's browser, after the lead deploys.
+- The Network page does not run the tailnet's doctor check; `bb box
+  doctor` does, under Tailnet.

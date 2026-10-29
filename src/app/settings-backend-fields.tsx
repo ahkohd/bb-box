@@ -12,7 +12,7 @@ import type { ConfigState, DriverView, FieldView } from "../plugin/configuration
 import { Badge } from "./common.tsx";
 import { GROUPS, inheritSource, inheritedValues, isSecretField, isSecretState, sourceName, type FieldGroup, type FormValue } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
-import { describedBy } from "./settings-draft-fields.tsx";
+import { describedBy, SecretControl } from "./settings-draft-fields.tsx";
 import { operationId } from "./settings-drafts.ts";
 import { Card, FOCUS_RING, Group, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendFieldPath, hostFieldPath, hostNoun, hostPath, newHostPath, plain, storedProblemPath, type Path, type PlainValue } from "./settings-paths.ts";
@@ -290,80 +290,22 @@ function SecretFieldRow({ form, field, path }: { form: BackendForm; field: Field
   const stored = config.fields[field.key];
   const set = isSecretState(stored) && stored.set;
   const inherited = effectiveOf(form, field);
-  const label = field.label;
-  const named = `the ${label}`;
-  const describe = describedBy(ids.help, problem && ids.problem, conflict && ids.conflict);
   const chips = inherited && !set && !edit ? <Badge>{inherited.from}</Badge> : <Badge tone={!set && problem ? "warn" : "muted"}>{set ? "Set" : "Not set"}</Badge>;
-  const typing = edit?.kind === "secret" || replacing;
-  let control: ReactNode;
-  if (edit?.kind === "removed") {
-    control = (
-      <span className="flex flex-wrap items-center gap-1.5 text-xs text-warning-text sm:justify-end">
-        Cleared when you save.
-        <Button type="button" variant="ghost" size="sm" className="h-7" data-draft-path={path} aria-describedby={describe} onClick={() => draft.forget(path)}>
-          Keep it
-        </Button>
-      </span>
-    );
-  } else if (typing) {
-    const text = edit?.kind === "secret" ? (edit.text ?? "") : "";
-    control = (
-      <span className="flex w-full items-center gap-1.5">
-        <Input
-          id={ids.control}
-          type="password"
-          data-draft-path={path}
-          aria-label={set ? `New ${label}` : label}
-          aria-describedby={describe}
-          aria-invalid={problem ? true : undefined}
-          className={cn("h-8 w-full text-xs", edit && "border-warning/60")}
-          autoComplete="new-password"
-          placeholder={set ? "Paste the new value" : "Paste the value"}
-          value={text}
-          autoFocus={replacing && !edit}
-          onChange={(event) => {
-            const typed = event.target.value;
-            setReplacing(typed === "");
-            if (typed === "") draft.forget(path);
-            else draft.set(path, { kind: "secret", text: typed });
-          }}
-          onKeyDown={saveOnEnter(draft)}
-        />
-        {conflict ? null : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 shrink-0"
-            aria-label={set ? `Keep the saved ${label}` : `Don't set ${named}`}
-            onClick={() => {
-              setReplacing(false);
-              draft.forget(path);
-              focusAfterRender(path);
-            }}
-          >
-            {set ? "Keep the saved one" : "Cancel"}
-          </Button>
-        )}
-      </span>
-    );
-  } else {
-    control = (
-      <span className="flex flex-wrap items-center gap-1.5 sm:justify-end">
-        <Button id={ids.control} type="button" variant="outline" size="sm" className="h-7" data-draft-path={path} aria-label={`${set ? "Replace" : "Set"} ${named}`} aria-describedby={describe} onClick={() => setReplacing(true)}>
-          {set ? "Replace" : "Set"}
-        </Button>
-        {set ? (
-          <Button type="button" variant="ghost" size="sm" className="h-7" aria-label={`Clear ${named}`} onClick={() => draft.set(path, { kind: "removed" })}>
-            Clear
-          </Button>
-        ) : null}
-      </span>
-    );
-  }
   return (
-    <FieldShell draft={draft} path={path} ids={ids} label={label} help={field.description ?? ""} chips={chips} problem={problem} onTheirs={() => setReplacing(false)}>
-      {control}
+    <FieldShell draft={draft} path={path} ids={ids} label={field.label} help={field.description ?? ""} chips={chips} problem={problem} onTheirs={() => setReplacing(false)}>
+      <SecretControl
+        draft={draft}
+        path={path}
+        label={field.label}
+        set={set}
+        controlId={ids.control}
+        describedBy={describedBy(ids.help, problem && ids.problem, conflict && ids.conflict)}
+        invalid={problem !== null}
+        conflicted={conflict !== null}
+        clearable
+        replacing={replacing}
+        onReplacing={setReplacing}
+      />
     </FieldShell>
   );
 }

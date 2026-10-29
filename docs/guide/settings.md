@@ -101,16 +101,21 @@ The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md
 
 ### Devices
 
-How iOS devices' video is encoded, whether each Mac's encoder is shared fairly, and the test device. The page shows them; change them with `bb box config show --json` and `bb box config apply`. It also links to each device kind's spares.
+Each setting here acts at once.
+
+- **iOS video encoding**: Automatic uses a Mac's hardware encoder, and software where it has none or its encoder fails. Hardware only and Software only are for testing one of them. A box takes a change when its device server is next delivered.
+- **Share each Mac's encoder fairly**: the person in control of a device streams at full size first; recordings, other viewers and agents share what is left, at a lower size. Off, every shared iOS stream is capped at two thirds.
+- **Set on other pages**: each backend's shared iOS hosts, and each device kind's spares. Spares of device boxes are off unless you set a number on the kind's page, as each waits with its device booted and its memory saved to disk. See [spares](spares.md#spares-of-device-boxes).
+- **Test device**: Linux and macOS boxes offer a test card in place of a phone, to check the device path without a simulator or emulator.
 
 ### Network
 
 Network is for machines BB Box rents and makes, such as Namespace Macs, when BB's server is on a Tailscale tailnet. Each such machine must join the tailnet to reach BB.
 
 - **No: BB is reached without one**: machines join no tailnet. Choose this when BB is reached through bb connect or a public address.
-- **Yes, with a Tailscale OAuth client**: BB Box makes a single-use, pre-approved key for each machine with the OAuth client, and the machine leaves the tailnet when its box goes. Give the client's ID and secret, and the tags machines join with, `tag:bb-box` unless you change it. The client needs the `auth_keys` scope with those tags, and `devices:core` so BB Box can remove machines that went without leaving.
+- **Yes, with a Tailscale OAuth client**: BB Box makes a single-use, pre-approved key for each machine with the OAuth client, and the machine leaves the tailnet when its box goes. Give the client's ID and secret, and the tags machines join with. Leave **Tags** empty for `tag:bb-box`. The client needs the `auth_keys` scope with those tags, and `devices:core` so BB Box can remove machines that went without leaving.
 
-The client's ID and secret are kept secret: the page shows only whether each is set. Select **Save** to save them together. See [joining cloud machines to your tailnet](tailnet.md) for making the client.
+The client's ID and secret are kept secret: the page shows only whether each is set, with **Set** or **Replace**. The choice, the tags and the client are saved together, with **Save** or Enter. If BB Box refuses the save, for example because the secret is missing, nothing is saved: your changes stay, and the reason is under the field it names. Choosing **No** and saving deletes the saved client. See [joining cloud machines to your tailnet](tailnet.md) for making the client.
 
 ### Monitor
 

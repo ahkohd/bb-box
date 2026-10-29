@@ -1,8 +1,9 @@
 import { quote } from "../transports/process.ts";
 import { freshFetch } from "./fresh-fetch.ts";
+import { DEFAULT_TAILNET_TAGS } from "./tailnet-settings.ts";
 
 export const TAILSCALE_API = "https://api.tailscale.com";
-export const DEFAULT_TAILNET_TAGS: readonly string[] = ["tag:bb-box"];
+export { DEFAULT_TAILNET_TAGS };
 export const KEY_LIFETIME_SECONDS = 600;
 const TOKEN_EARLY_RENEWAL_MS = 60_000;
 const ATTEMPT_TIMEOUT_MS = 15_000;

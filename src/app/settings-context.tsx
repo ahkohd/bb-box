@@ -31,7 +31,7 @@ export function useSettings(): SettingsContextValue {
   return value;
 }
 
-export type GeneralAtOnce = "enrol" | "video" | "nightlyImages" | "defaultKind";
+export type GeneralAtOnce = "enrol" | "video" | "nightlyImages" | "defaultKind" | "iosEncoder" | "encoderLedger" | "testDevice";
 export type MonitorAtOnce = "enabled" | "backgroundMonitoring" | "pressureNotifications";
 
 export interface SettingsWrites {

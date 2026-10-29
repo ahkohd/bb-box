@@ -3,12 +3,12 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { BackendConfig, ConfigDocument } from "../core/document.ts";
+import type { BackendConfig } from "../core/document.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { DriverView } from "../plugin/configuration.ts";
 import { Badge, KindBadges, isArm64Badge, lacksDocker, message, relativeTime } from "./common.tsx";
 import { runsWayland } from "./boxes-filter.ts";
-import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, withGeneral, withKind } from "./config.ts";
+import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, withKind } from "./config.ts";
 import { RebuildNow } from "./rebuild-now.tsx";
 import { BackendForm, type BackendRowModel } from "./settings-backends.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
@@ -20,10 +20,10 @@ import { RestoredNote, SAVING_RULE, SaveBar, useDraft } from "./settings-saving.
 import { BackendPage } from "./settings-backend-page.tsx";
 import { KindForm, kindRowModel } from "./settings-kinds.tsx";
 import { iosEncoderWords, monitorChanged, noteMonitorChanged, ReloadNote } from "./settings-overview.tsx";
-import { Card, Chevron, FOCUS_RING, Group, NotHere, PageHeader, ProviderGlyph, RowNote, Rows, SavedTick, SettingRow } from "./settings-parts.tsx";
+import { Card, Chevron, FOCUS_RING, Group, NavRow, NotHere, PageHeader, ProviderGlyph, RowNote, Rows, SavedTick, SettingRow } from "./settings-parts.tsx";
 import { isOptionPage, type SettingsView } from "./settings-route.ts";
 import { backendLabel, isMachineDocker, kindName, plural } from "./settings-status.ts";
-import { TailnetSection } from "./settings-tailnet.tsx";
+import { NetworkOptions } from "./settings-tailnet.tsx";
 
 
 
@@ -210,8 +210,8 @@ function AtOnceSwitch({ label, description, settingKey, value, disabled, onChang
   return (
     <div>
       <SettingRow label={label} description={description}>
-        <Switch aria-label={label} checked={pending ?? value} disabled={disabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={onChange} />
         <SavedTick show={instant.isSaved(settingKey)} />
+        <Switch aria-label={label} checked={pending ?? value} disabled={disabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={onChange} />
       </SettingRow>
       <RowNote note={instant.note(settingKey)} className="px-4 pb-3" />
     </div>
@@ -308,55 +308,100 @@ function ImagesOptions() {
   );
 }
 
+const IOS_ENCODER_CHOICES: readonly (readonly ["auto" | "hardware" | "software", string])[] = [
+  ["auto", "Automatic"],
+  ["hardware", "Hardware only"],
+  ["software", "Software only"],
+];
+
+function hasSharedIosHosts(state: ReturnType<typeof useSettings>["state"], config: BackendConfig): boolean {
+  return state.drivers.some((driver) => driver.type === config.type && driver.fields.some((field) => field.group === "ios-hosts"));
+}
+
 function DevicesOptions() {
-  const { state, nav } = useSettings();
+  const { state, nav, instant, writes } = useSettings();
   const general = { ...state.defaults.general, ...state.document.general };
+  const encoderKey = switchKey.general("iosEncoder");
+  const sharing = state.document.backends.filter((config) => !isMachineDocker(config) && hasSharedIosHosts(state, config));
   const deviceKinds = state.kinds.filter((kind) => kind.device);
-  const rows: [string, string, string][] = [
-    ["iOS video encoding", iosEncoderWords(general.iosEncoder), "general.iosEncoder"],
-    ["Share each Mac's encoder fairly", general.encoderLedger ? "On" : "Off", "general.encoderLedger"],
-    ["Test device", general.testDevice ? "On" : "Off", "general.testDevice"],
-  ];
   return (
     <div className="space-y-6">
-      <Card>
-        <Rows>
-          {rows.map(([label, value, path]) => (
-            <SettingRow key={path} label={label} description={<code className="font-mono text-2xs">{path}</code>}>
-              <span className="text-sm text-muted-foreground">{value}</span>
-            </SettingRow>
-          ))}
-        </Rows>
-      </Card>
-      <p className="px-1 text-xs leading-snug text-subtle-foreground">These are not set on this page yet. Change them in the file bb box config show --json prints, then save it with bb box config apply.</p>
-      {deviceKinds.length ? (
-        <Group title="Spare devices" description="Each device kind's spares are on its own page.">
+      <Group title="Streaming">
+        <Card>
+          <Rows>
+            <div>
+              <SettingRow label="iOS video encoding" description="Automatic uses a Mac's hardware encoder, and software where it has none or its encoder fails. A box takes a change when its device server is next delivered." problem={state.problems.find((problem) => problem.path === "general.iosEncoder")?.message ?? null}>
+                <SavedTick show={instant.isSaved(encoderKey)} />
+                <Select value={instant.pendingValue<string>(encoderKey) ?? general.iosEncoder} onValueChange={(choice) => void instant.run(writes.general(state, "iosEncoder", choice, "iOS video encoding", (value) => iosEncoderWords(String(value))))}>
+                  <SelectTrigger className="h-8 w-full text-xs sm:w-44" aria-label="iOS video encoding">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {IOS_ENCODER_CHOICES.map(([choice, words]) => (
+                      <SelectItem key={choice} value={choice} className="text-xs">
+                        {words}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </SettingRow>
+              <RowNote note={instant.note(encoderKey)} className="px-4 pb-3" />
+            </div>
+            <AtOnceSwitch
+              label="Share each Mac's encoder fairly"
+              description="The person in control of a device streams at full size first; recordings, other viewers and agents share what is left, at a lower size. Off, every shared iOS stream is capped at two thirds."
+              settingKey={switchKey.general("encoderLedger")}
+              value={general.encoderLedger}
+              onChange={(on) => void instant.run(writes.general(state, "encoderLedger", on, "Sharing each Mac's encoder"))}
+            />
+          </Rows>
+        </Card>
+      </Group>
+      {sharing.length || deviceKinds.length ? (
+        <Group title="Set on other pages" description="Spares of device boxes are off unless you set a number: each waits with its device booted and its memory saved to disk, which takes up to as much disk as the box's memory.">
           <Card>
             <Rows>
-              {deviceKinds.map((kind) => (
-                <button key={kind.id} type="button" data-row-key={`devices-${kind.id}`} onClick={() => nav.go({ page: "kind", id: kind.id }, `devices-${kind.id}`)} className={`flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-state-hover ${FOCUS_RING}`}>
-                  <span className="flex-1">{kindName(state.kinds, kind)}</span>
-                  <span className="text-xs text-muted-foreground">{plural(effectiveKind(state, kind.id).spares, "spare")}</span>
-                  <Chevron />
-                </button>
+              {sharing.map((config) => (
+                <NavRow
+                  key={config.id}
+                  rowKey={`devices-hosts-${config.id}`}
+                  valueId={`settings-devices-hosts-${config.id}`}
+                  icon={<ProviderGlyph type={config.type} />}
+                  title={`Shared iOS hosts on ${backendLabel(state, config)}`}
+                  value="On its page"
+                  onClick={() => nav.go({ page: "backend", id: config.id }, `devices-hosts-${config.id}`)}
+                />
               ))}
+              {deviceKinds.map((kind) => {
+                const spares = effectiveKind(state, kind.id).spares;
+                return (
+                  <NavRow
+                    key={kind.id}
+                    rowKey={`devices-${kind.id}`}
+                    valueId={`settings-devices-${kind.id}`}
+                    icon={<Icon name="bb-box/phone" className="size-4" aria-hidden />}
+                    title={`Spare ${kindName(state.kinds, kind)} boxes`}
+                    value={spares ? plural(spares, "spare") : "None, as by default"}
+                    onClick={() => nav.go({ page: "kind", id: kind.id }, `devices-${kind.id}`)}
+                  />
+                );
+              })}
             </Rows>
           </Card>
         </Group>
       ) : null}
+      <Group title="For testing">
+        <Card>
+          <AtOnceSwitch
+            label="Test device"
+            description="Linux and macOS boxes offer a test card in place of a phone, to check the device path without a simulator or emulator."
+            settingKey={switchKey.general("testDevice")}
+            value={general.testDevice}
+            onChange={(on) => void instant.run(writes.general(state, "testDevice", on, "The test device"))}
+          />
+        </Card>
+      </Group>
     </div>
-  );
-}
-
-function NetworkOptions() {
-  const { state, apply } = useSettings();
-  return (
-    <TailnetSection
-      key={JSON.stringify(state.document.general.tailnet ?? null)}
-      tailnet={state.document.general.tailnet}
-      problems={state.problems.filter((problem) => problem.path.startsWith("general.tailnet"))}
-      save={async (tailnet) => (await apply(withGeneral(state.document, { tailnet: tailnet as ConfigDocument["general"]["tailnet"] }))).saved}
-    />
   );
 }
 
@@ -435,7 +480,7 @@ export function OptionPage({ id }: { id: string }) {
   if (!isOptionPage(id)) return <NotHere what="page" />;
   return (
     <div className="space-y-6">
-      <PageHeader title={optionTitle(id)} description={<><p>{OPTION_DESCRIPTIONS[id]}</p>{id === "boxes" || id === "images" || id === "monitor" ? <p className="mt-1">{SAVING_RULE}</p> : null}</>} />
+      <PageHeader title={optionTitle(id)} description={<><p>{OPTION_DESCRIPTIONS[id]}</p>{id === "boxes" || id === "images" || id === "network" || id === "monitor" ? <p className="mt-1">{SAVING_RULE}</p> : null}</>} />
       {id === "boxes" ? <BoxesOptions /> : null}
       {id === "images" ? <ImagesOptions /> : null}
       {id === "devices" ? <DevicesOptions /> : null}
