@@ -6936,3 +6936,14 @@ test("F-22: at 360 px the panel's rows open tabs titled by the box's name where 
     window.matchMedia = wide;
   }
 });
+
+test("F-22: each panel tab has an icon of its own: a monitor for Desktop, a phone for Device, a terminal for Terminal, each a name bb-box declares, and the Box tab keeps BB's default", () => {
+  expect(app.threadPanelActions.map((action) => [action.id, action.icon ?? null])).toEqual([
+    ["boxes", null],
+    ["desktop", "bb-box/monitor"],
+    ["device", "bb-box/phone"],
+    ["terminal", "bb-box/terminal"],
+  ]);
+  const declared = (packageJson as { bb: { branding: { experimental_icons: Record<string, string> } } }).bb.branding.experimental_icons;
+  expect([declared.monitor, declared.phone, declared.terminal]).toEqual(["./assets/monitor.svg", "./assets/phone.svg", "./assets/terminal.svg"]);
+});

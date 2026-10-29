@@ -6,7 +6,7 @@ A desktop box has a screen you can watch while an agent works, and use yourself 
 
 You can open a box's desktop from:
 
-- the Box panel: select **Open desktop** on the box's row, which opens a Desktop tab in the thread's right panel. When the thread has another box with a desktop, the tab's name says which box, as in 'Desktop · box-2'. On a narrow screen, such as a phone's, that tab is named for the box alone, as in 'box-2'
+- the Box panel: select **Open desktop** on the box's row, which opens a Desktop tab, with a monitor for its icon, in the thread's right panel. When the thread has another box with a desktop, the tab's name says which box, as in 'Desktop · box-2'. On a narrow screen, such as a phone's, that tab is named for the box alone, as in 'box-2', and its icon says it is a desktop
 - the thread's Desktop tab: it opens the thread's desktop straight away, lists them when there are several, or offers the Box panel when there is none
 - a browser tab of its own: select **Open in browser** in the box's menu
 - the Boxes page: the desktop shows on the page, with a back arrow to the list

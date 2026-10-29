@@ -21,6 +21,7 @@ export default definePluginApp((app) => {
   app.slots.threadPanelAction({
     id: DESKTOP_ACTION,
     title: "Desktop",
+    icon: "bb-box/monitor",
     component: DesktopPanel,
     layout: "flush",
   });
@@ -34,6 +35,7 @@ export default definePluginApp((app) => {
   app.slots.threadPanelAction({
     id: TERMINAL_ACTION,
     title: "Terminal",
+    icon: "bb-box/terminal",
     component: TerminalPanel,
     layout: "flush",
   });
