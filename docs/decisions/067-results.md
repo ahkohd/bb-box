@@ -2408,16 +2408,32 @@ and from the live checks:
   "while you edited", as on every page.
 - Nothing fades or moves, under the owner's rule of no page motion.
 
-### Open questions
+### The lead's answer
 
-- Should an import applied on a moved revision instead save the whole
-  file over the change made elsewhere, after saying so? The page keeps
-  the change, as section 4 does; the CLI's `apply --replace` does the
-  other.
+- An import applied on a moved revision keeps the change made elsewhere,
+  as now and as section 4 says for every save. `bb box config apply
+  --replace` stays the way to save a whole file over the configuration.
+
+### Production look
+
+After the deploy of PR 1280 (main `66682093`), in the owner's browser
+(Helium, a tab of my own through playwriter, closed after, its session
+deleted), at 1440 by 1000, looking only: nothing on the page was pressed,
+and the settings stayed at revision 134. The Configuration page said
+"Revision 134" with the saving words; Export with Copy as JSON and
+Download, and "To set BB Box up from it, give these 7 secrets again",
+each by its backend or Network, with no value; Import with Import…; the
+row "Settings moved from BB", "29 days ago", with Remove copy…; and the
+`bb box config` commands. The overview's Configuration row said
+"Revision 134", with no Unsaved changes, and session storage held no
+draft of bb-box's after the page was opened. The page's console had no
+error from bb-box.
+
+One thing for later: at 1440 px the command `bb box config show --json`
+in Export's description wraps in the middle, as "bb box config" and
+"show --json" on two lines.
 
 ### Not done here
-
-- A look in production in the owner's browser, after the lead deploys.
 - `bb box config check` does not print the change list the page shows; it
   could, from the same `read`.
 - Find (unit 11) does not index the Configuration page's rows.
