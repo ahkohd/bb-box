@@ -2613,9 +2613,9 @@ test("projects' images: each with its projects, kinds and builds, its script and
   withProjectImages();
   const { handlers, changes, operations } = server([], { images: PROJECT_VIEWS });
   const slot = settings(handlers, "#option/images");
-  const rust = await slot.findByRole("button", { name: "rust-tools" });
-  expect(document.getElementById(rust.getAttribute("aria-describedby")!.split(" ")[0]!)!.textContent).toBe("For Example");
   expect(await slot.findByText("Its build for Linux desktop on Fake host failed")).toBeTruthy();
+  const rust = slot.getByRole("button", { name: "rust-tools" });
+  expect(document.getElementById(rust.getAttribute("aria-describedby")!.split(" ")[0]!)!.textContent).toBe("For Example");
   expect(slot.getByText("Its script runs as each box starts")).toBeTruthy();
   expect(slot.getByText("Linux and Linux desktop")).toBeTruthy();
   expect(rust.getAttribute("aria-expanded")).toBe("false");
@@ -2639,11 +2639,28 @@ test("projects' images: each with its projects, kinds and builds, its script and
   expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).images["go-tools"]).toEqual({ kinds: ["linux"], script: "apt-get install -y golang\n", projects: ["proj_2"] });
 });
 
+test("until the projects' images' builds and project names arrive, a row says it is reading them, never a project's ID or Not built yet", async () => {
+  withProjectImages();
+  const { handlers } = server([], { images: PROJECT_VIEWS });
+  const slot = settings({ ...handlers, images: () => new Promise<ImageOptionView[]>(() => {}) }, "#option/images");
+  const rust = await slot.findByRole("button", { name: "rust-tools" });
+  expect(document.getElementById(rust.getAttribute("aria-describedby")!.split(" ")[0]!)!.textContent).toBe("");
+  expect(slot.getAllByText("Reading its builds…")).toHaveLength(2);
+  expect(slot.queryByText("proj_1")).toBeNull();
+  expect(slot.queryByText(/^Not built yet/)).toBeNull();
+  cleanup();
+  withProjectImages();
+  const failing = settings({ ...handlers, images: () => Promise.reject(new Error("BB did not answer.")) }, "#option/images");
+  expect(await failing.findByText("proj_1")).toBeTruthy();
+  expect(failing.queryByText("Reading its builds…")).toBeNull();
+});
+
 test("removing a project's image asks first and says what follows; a refusal says why on the page, and a confirmed removal sends the configuration without it", async () => {
   withProjectImages();
   const refusing = server([], { images: PROJECT_VIEWS, applyWith: { ok: false, reason: "problems", problems: [{ path: "images", message: "The configuration is locked for a test." }] } });
   const slot = settings(refusing.handlers, "#option/images");
-  fireEvent.click(await slot.findByRole("button", { name: "rust-tools" }));
+  await slot.findByText("Its build for Linux desktop on Fake host failed");
+  fireEvent.click(slot.getByRole("button", { name: "rust-tools" }));
   fireEvent.click(slot.getByRole("button", { name: "Remove rust-tools…" }));
   const dialog = await screen.findByRole("alertdialog", { name: "Remove the image rust-tools?" });
   expect(dialog.textContent).toContain("New Linux and Linux desktop boxes in Example start from the standard images again, without its script. Its builds are deleted.");
@@ -2659,7 +2676,8 @@ test("removing a project's image asks first and says what follows; a refusal say
   withProjectImages();
   const { handlers, changes } = server([], { images: PROJECT_VIEWS });
   const page = settings(handlers, "#option/images");
-  fireEvent.click(await page.findByRole("button", { name: "rust-tools" }));
+  await page.findByText("Its build for Linux desktop on Fake host failed");
+  fireEvent.click(page.getByRole("button", { name: "rust-tools" }));
   fireEvent.click(page.getByRole("button", { name: "Remove rust-tools…" }));
   fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove image" }));
   await waitFor(() => expect(changes).toHaveLength(1));

@@ -253,16 +253,18 @@ function rowId(name: string): string {
   return `settings-image-${name}`;
 }
 
-function ProjectImageRow({ name, image, view, open, onToggle, onRemove }: { name: string; image: ImageConfig; view: ImageOptionView | null; open: boolean; onToggle: () => void; onRemove: () => void }) {
+const READING_BUILDS = "Reading its builds…";
+
+function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove }: { name: string; image: ImageConfig; view: ImageOptionView | null; loaded: boolean; open: boolean; onToggle: () => void; onRemove: () => void }) {
   const { state, instant, writes } = useSettings();
   const now = Date.now();
   const id = rowId(name);
   const bakeKey = switchKey.imageBake(name);
   const pendingBake = instant.pendingValue<ImageBake>(bakeKey);
   const bake = pendingBake ?? image.bake ?? "auto";
-  const projects = view?.projects ?? image.projects.map((project) => ({ id: project, name: project }));
+  const projects = loaded ? (view?.projects ?? image.projects.map((project) => ({ id: project, name: project }))) : [];
   const kinds = image.kinds.map((kind) => kindWords(state, kind) ?? kind);
-  const line = buildsWords(state, image, view);
+  const line = loaded ? buildsWords(state, image, view) : { tone: "off" as const, words: READING_BUILDS };
   return (
     <div data-project-image={name}>
       <div className="relative flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 transition-colors duration-150 hover:bg-state-hover">
@@ -271,7 +273,7 @@ function ProjectImageRow({ name, image, view, open, onToggle, onRemove }: { name
           <span className="flex flex-wrap items-center gap-1.5 text-sm text-foreground">
             <span aria-hidden>{name}</span>
             <span id={`${id}-projects`} className="flex flex-wrap items-center gap-1.5">
-              <span className="sr-only">For </span>
+              {projects.length ? <span className="sr-only">For </span> : null}
               {projects.map((project) => (
                 <Badge key={project.id}>{project.name}</Badge>
               ))}
@@ -301,7 +303,7 @@ function ProjectImageRow({ name, image, view, open, onToggle, onRemove }: { name
         </span>
       </div>
       <RowNote note={instant.note(bakeKey) ?? instant.note(switchKey.removeImage(name))} className="px-4 pb-2" />
-      {open ? <ProjectImageDetails id={`${id}-details`} name={name} image={image} view={view} now={now} onRemove={onRemove} /> : null}
+      {open ? <ProjectImageDetails id={`${id}-details`} name={name} image={image} view={view} loaded={loaded} now={now} onRemove={onRemove} /> : null}
     </div>
   );
 }
@@ -324,7 +326,7 @@ function sourceWords(image: ImageConfig, now: number): string {
   return Number.isFinite(updated) ? `${from}, set ${relativeTime(updated, now)}.` : `${from}.`;
 }
 
-function ProjectImageDetails({ id, name, image, view, now, onRemove }: { id: string; name: string; image: ImageConfig; view: ImageOptionView | null; now: number; onRemove: () => void }) {
+function ProjectImageDetails({ id, name, image, view, loaded, now, onRemove }: { id: string; name: string; image: ImageConfig; view: ImageOptionView | null; loaded: boolean; now: number; onRemove: () => void }) {
   const { state, instant } = useSettings();
   const builds = view?.builds ?? [];
   const failed = view?.failed ?? [];
@@ -345,7 +347,7 @@ function ProjectImageDetails({ id, name, image, view, now, onRemove }: { id: str
           ))}
         </ul>
       ) : (
-        <p className="text-xs leading-snug text-subtle-foreground">No build of it yet, so its boxes run its script as they start.</p>
+        <p className="text-xs leading-snug text-subtle-foreground">{loaded ? "No build of it yet, so its boxes run its script as they start." : READING_BUILDS}</p>
       )}
       <Script label="Script, run as root" named={`Script of ${name}, run as root`} text={image.script} />
       {image.check ? <Script label="Check, run as the box user; the image fails when it fails" named={`Check of ${name}, run as the box user`} text={image.check} /> : <p className="text-xs text-subtle-foreground">No check: the image passes when its script does.</p>}
@@ -375,7 +377,8 @@ function inWords(names: readonly string[]): string {
 function RemoveImageDialog({ name, image, view, onCancel, onConfirm }: { name: string | null; image: ImageConfig | null; view: ImageOptionView | null; onCancel: () => void; onConfirm: (name: string) => void }) {
   const { state } = useSettings();
   const [shown, setShown] = useState<{ name: string; image: ImageConfig; projects: readonly string[] } | null>(null);
-  if (name !== null && image && shown?.name !== name) setShown({ name, image, projects: image.projects.map((id) => view?.projects.find((project) => project.id === id)?.name ?? id) });
+  const projectNames = image ? image.projects.map((id) => view?.projects.find((project) => project.id === id)?.name ?? id) : [];
+  if (name !== null && image && (shown?.name !== name || shown.projects.join("\n") !== projectNames.join("\n"))) setShown({ name, image, projects: projectNames });
   const kinds = shown ? inWords(shown.image.kinds.map((kind) => kindWords(state, kind) ?? kind)) : "";
   const projects = shown ? inWords(shown.projects) : "";
   return (
@@ -413,7 +416,8 @@ function RemoveImageDialog({ name, image, view, onCancel, onConfirm }: { name: s
 function ProjectImages() {
   const { state, instant, writes } = useSettings();
   const rpc = useRpc<Contract>();
-  const { value: views } = useLive<ImageOptionView[]>("project-images", () => rpc.call("images", {}), () => true);
+  const { value: views, error: viewsProblem } = useLive<ImageOptionView[]>("project-images", () => rpc.call("images", {}), () => true);
+  const loaded = views !== null || viewsProblem !== null;
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
   const [removing, setRemoving] = useState<string | null>(null);
   const [removedNote, setRemovedNote] = useState<string | null>(null);
@@ -443,7 +447,7 @@ function ProjectImages() {
         <Card>
           <Rows>
             {names.map((name) => (
-              <ProjectImageRow key={name} name={name} image={images[name]!} view={views?.find((view) => view.name === name) ?? null} open={open.has(name)} onToggle={() => toggle(name)} onRemove={() => setRemoving(name)} />
+              <ProjectImageRow key={name} name={name} image={images[name]!} view={views?.find((view) => view.name === name) ?? null} loaded={loaded} open={open.has(name)} onToggle={() => toggle(name)} onRemove={() => setRemoving(name)} />
             ))}
           </Rows>
         </Card>
