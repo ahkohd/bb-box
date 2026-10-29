@@ -72,4 +72,4 @@ which records still stand as written. The current design as a whole is in
 | [064](064-ios-shared-hosts.md) | iOS shared hosts: ios boxes as macOS users with their own device, many to a Mac, on pool Macs, Tart VMs and Namespace Macs | Proposed; decision 14 superseded by 065 |
 | [065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md) | Macs say what they offer, measured, and iOS streams in software where a Mac has no encoder | Proposed |
 | [066](066-the-monitor-is-beacon-moved-into-bb-box.md) | The Monitor is Beacon moved into bb-box, and a container is judged by its own cgroup | Accepted |
-| [067](067-settings-page.md) | The settings page is an overview, with a page one step in for each backend, kind and option | Proposed, revised after two reviews; a prototype, nothing built |
+| [067](067-settings-page.md) | The settings page is an overview, with a page one step in for each backend, kind and option | Proposed, revised after three rounds of review; a prototype, nothing built |

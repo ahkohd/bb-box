@@ -1,6 +1,6 @@
 # 067: The settings page is an overview, with a page one step in for each backend, kind and option
 
-Status: proposed, 29 October 2026, revised the same day after two independent reviews (see [What changed after the reviews](#what-changed-after-the-reviews)). For the owner's review. Nothing is built.
+Status: proposed, 29 October 2026, revised the same day after three rounds of independent review (see [What changed after the reviews](#what-changed-after-the-reviews), [after the second reviews](#what-changed-after-the-second-reviews) and [after the third review](#what-changed-after-the-third-review)). For the owner's review. Nothing is built.
 
 The prototype is [067-settings-page/prototype.html](067-settings-page/prototype.html):
 one file, opened in any browser, made from bb-box's own components. Its
@@ -359,9 +359,22 @@ back a value it read before someone else changed it.
   with Save again. ([refused](067-settings-page/new/09-refused.png))
 - No success without proof. Each write carries an operation ID that the
   page makes. `config.apply` records the ID with the revision it produced,
-  replies with it, and keeps the last 100 receipts in `config.get`. A
+  replies with it, and lists its receipts in `config.get`. A
   write sent again with the same ID is never applied twice: the server
-  returns the first receipt.
+  returns the first receipt. The receipt is stored in the same write as
+  the document, and holds a hash of the submission; the same ID sent with
+  a different submission is refused, never confirmed. Receipts are kept
+  for 24 hours and at least the last 100. A pending operation older than
+  that is never sent again: its edits become an ordinary draft, checked
+  against the stored values.
+- An operation freezes what it submits. Save takes a copy of the part's
+  edits at that moment, the submission, and binds the operation ID to it.
+  Every retry rebases that frozen submission on a freshly loaded
+  document, never on what the editor holds now. Typing after Save is a
+  separate draft: it is not sent by this operation, and it needs its own
+  Save, which is a new operation with a new ID. After an unknown outcome,
+  Save again resends the frozen submission with its first ID, and newer
+  typing waits for the next Save.
 - An unknown outcome is called neither a failure nor a success.
   `config.apply` stores the document before it replies, so a lost reply
   may hide a save. The bar says "Save not confirmed: BB Box did not reply.
@@ -380,6 +393,8 @@ back a value it read before someone else changed it.
 - "Saved" belongs to what was sent. Each edit sent is cleared only if it
   is still what was sent; typing during a save stays a change, for
   secrets and files too: "Saved. Your newer change is not saved yet."
+  The comparison is made against the draft registry's current edits (see
+  section 5), never against a copy held by the page that pressed Save.
   ([newer secret typing](067-settings-page/new/r3-2-newer-secret.png))
 - Check and Save build the same candidate: the latest configuration with
   every edit applied, a Mac's fields and the presence of a new secret
@@ -390,6 +405,26 @@ back a value it read before someone else changed it.
 - New things have stable draft identities until saved, never their
   names: a new Mac is `backends/tart/hosts/@new-k3x9`, a new file
   `files/@new-p2m4`. Typing a new Mac's name only changes a field.
+- A provisional identity becomes the saved one when its save is
+  confirmed. The submission records which name or path each provisional
+  identity was sent as. On the receipt, the registry maps
+  `hosts/@new-k3x9` to `hosts/review-mac` at the receipt's revision, and
+  moves any edits kept from newer typing to the saved identity, with that
+  revision's stored values as their base. A second Save then updates the
+  Mac it created, through the same conflict checks as any saved item,
+  and never creates another.
+- Names and paths cannot collide. A new Mac named like one already on
+  the backend is refused at its field: "mac-1 is already a Mac on Tart".
+  A new file given the path of an existing file becomes a replacement of
+  that file, with its content version as the base, so a change made
+  elsewhere is a conflict like any other: "~/.cfg/a.json is already a
+  file here. Saving replaces it". An empty path is refused at its field.
+  The server's own checks stay, and refuse the same things.
+- A problem the server reports names the path it was sent as, such as
+  `backends/tart/hosts/review-mac/fields/ios-hosts-cores`. The page
+  resolves it through the same map to the draft identity, so Show opens
+  the new Mac, scrolls to its field and focuses it, and the error sits
+  under that field.
 
 ### 5. Drafts survive everything
 
@@ -415,9 +450,33 @@ A draft lives outside the page's components, so it outlives them.
   fields, a file being added or replaced, and an import being checked. A
   file's path is kept in session storage and its content in memory only;
   after a reload the page says "the content of ~/.cfg/a.json you pasted
-  was not kept; paste it again". An import's text has no secret in it and
-  is kept like any field. A draft is cleared only by a confirmed save or
+  was not kept; paste it again". A draft is cleared only by a confirmed save or
   by Discard. A refused file save keeps the editor open with its text.
+- An import's raw text may hold secrets: a pasted configuration can carry
+  tokens, keys and file contents, and text that does not parse cannot be
+  checked for them. So the raw text is kept in memory only, like a
+  secret, and never goes into browser storage, valid or not. After a
+  reload the page says "The configuration you pasted was not kept, as it
+  may hold secrets; paste it again". Only a form that has passed the
+  schema check, with every secret and file content taken out, may be
+  kept, and only to say what the import would have changed.
+- The registry owns pending operations as well as edits. Each part's
+  entry holds its edits and, while a save is out, that save's operation
+  ID and frozen submission. The completion runs in the registry, not in
+  the page that pressed Save, so it still applies if the person left and
+  came back, and the page they return to shows the save's state from the
+  registry: "Saving…", "Save not confirmed" or the result. The completion
+  compares the submission with the registry's edits as they are then,
+  and clears only the edits confirmed saved. Every editor works this way,
+  a file and an import included: an import applied while its text was
+  edited again keeps the newer text, "Applied. Your newer text is not
+  applied yet".
+- On a reload, the pending operation's ID and the non-secret part of its
+  submission are kept with the draft, so the page looks for the receipt
+  and says either "Saved at revision 215" or "Save not confirmed". If the
+  submission held a secret or file content, it cannot be sent again as
+  it was; the page asks for it again and the next Save is a new
+  operation.
   ([file kept](067-settings-page/new/13-file-kept.png),
   [import back after a reload](067-settings-page/new/r3-6-import-restored.png))
 
@@ -568,15 +627,20 @@ revision; the helpers in `src/app/config.ts`; `FieldControl`'s parts;
 New in the app: `SettingsView` (hash routes, the top row, focus and scroll
 restore), `Overview`, `BackendPage`, `KindPage`, the option pages,
 `AddBackend`, `SetupBackend`, `FindSettings` with its index; and the
-editing engine: `useDraft` (paths, merge, conflicts, secret versions,
-checked retries, lost-reply reconcile, submitted versions, draft storage),
-`useInstant`, `SaveBar`, `ConflictNote` and `RestoredNote`.
+editing engine: the draft registry, which owns each part's edits and its
+pending operation with the frozen submission, the map from provisional
+to saved identities, and draft storage with its rule that secrets, file
+contents and raw import text stay in memory; `useDraft` over it (paths,
+merge, conflicts, secret versions, checked retries, lost-reply
+reconcile); `useInstant`, `SaveBar`, `ConflictNote` and `RestoredNote`.
 
 Changes on the server, all small:
 
 - Operation receipts: `config.apply` takes an operation ID, applies it at
-  most once, returns it with the revision, and `config.get` lists the
-  last 100 receipts.
+  most once, stores the receipt in the same write as the document with a
+  hash of the submission, refuses the same ID with a different
+  submission, returns it with the revision, and `config.get` lists the
+  receipts of the last 24 hours, at least the last 100.
 - A "setup done" marker, set the first time a backend that is on makes a
   kind, so first run never returns to an established install.
 - Each secret in `config.get` carries an opaque change version, the
@@ -604,16 +668,34 @@ edit anything.
 | --- | --- | --- |
 | 0 | The hash test | Done, above |
 | 1 | `SettingsView`, the overview's rows, switches and honest Status, Options rows with the Monitor switch, Machines as a link to the Boxes page's Machines tab, the hash and focus rules; each part's page opens today's form for it, unchanged | Deep links, back, forward, reload, leaving by BB's sidebar; a link from the Monitor panel while settings show another view; a link to a kind or backend that does not exist; switches refused, saved and refused three times; keyboard to every row |
-| 2 | The editing engine on the two simplest pages, Boxes and Monitor, and the shared write path for every switch, menu and removal: drafts, merge, conflicts, checked retries, receipts, submitted versions, draft storage; the server's secret versions, operation receipts and the test switch | An agent's `bb box config apply` while a draft is open; two tabs saving the same field and different fields; a lost reply after a store, with a secret replaced in another tab before the page looks; a request that never arrives, then Save again applied once; three refusals in a row for a form and for a switch; typing during a save, a secret and a file included; a reload with a draft |
-| 3 | The backend's page on the engine: health card with check revisions, facts, field cards, help one step in, effective values, explicit off, Macs with their own sizes, the menu and confirmed removal; `ios-hosts` group | A Docker backend edited, refused and saved; a secret replaced in two tabs; a Tart backend with a real Mac's own sizes on a Mac box, a Mac added by name, and Check with a Mac's change; a check cleared by a later edit; remove refused with boxes and confirmed without |
+| 2 | The editing engine on the two simplest pages, Boxes and Monitor, and the shared write path for every switch, menu and removal: the draft registry with pending operations, frozen submissions, provisional identities, merge, conflicts, checked retries, receipts, draft storage and its memory-only rule; the server's secret versions, operation receipts and the test switch | An agent's `bb box config apply` while a draft is open; two tabs saving the same field and different fields; a lost reply after a store, with a secret replaced in another tab before the page looks; a request that never arrives, then Save again applied once; the same request sent twice at once, applied once; a late reply after leaving the page; a receipt aged out, said as not confirmed; three refusals in a row for a form and for a switch; typing during a save, a file included; a reload with a draft; gates G1 to G5 below |
+| 3 | The backend's page on the engine: health card with check revisions, facts, field cards, help one step in, effective values, explicit off, Macs with their own sizes, the menu and confirmed removal; `ios-hosts` group | A Docker backend edited, refused and saved; a secret replaced in two tabs; a Tart backend with a real Mac's own sizes on a Mac box, a Mac added by name, and Check with a Mac's change; a check cleared by a later edit; remove refused with boxes and confirmed without; gates G1 with a secret, G6 and G7 below |
 | 4 | The drivers' help text, trimmed for the owner's approval | The pages read in full |
 | 5 | Docker on BB machines folded into Backends and Add backend, with "Cannot host boxes" | A second BB machine in a box with Docker, used, broken (no docker group), fixed, turned off |
 | 6 | The kind's page, the default-kind rule everywhere, kinds staying in place | A kind edit racing a warm-count edit in another tab; the default kind's switch on both surfaces |
 | 7 | First run, Add backend and setting up a backend | A fresh BB with Docker missing, without access, with too little disk, and ready; a Linux-only Docker setup with no warning about desktops; a backend saved on in one go with its secret; a backend saved off, resumed and turned on; every backend turned off afterwards, without first run returning |
 | 8 | Images, with every run state and projects' images | A run with a waiting and a failing image; a project's image removed |
 | 9 | Devices and Network | The tailnet's choice and credentials saved together and refused part way |
-| 10 | Configuration: export, import with its change list, `config.migrated.remove` | Export, change, import against a moved revision |
+| 10 | Configuration: export, import with its change list, `config.migrated.remove` | Export, change, import against a moved revision; gates G8 and G9 below |
 | 11 | Find | Searches across every field, a Mac's own field, a kind's size, several words, no match, from the overview and from the target's own page, with the setting on screen each time; arrow keys at the end of the list; keyboard only |
+
+Named gates. These are the third review's reproductions of the saving
+engine's edge cases. The prototype fails them (see [The
+prototype](#the-prototype)); each unit passes its gates on a separate BB
+before it lands, and before any later unit moves another page onto the
+engine.
+
+| Gate | Unit | Steps | Passes when |
+| --- | --- | --- | --- |
+| G1 retry-submitted-version | 2, and 3 with a secret | Set a field to A and Save; make an independent write so the save retries; type B while it retries; let the retry finish. Repeat with a file's content in unit 2 and a secret in unit 3 | A is stored; B is not; B shows as an unsaved change; the bar names only what changed elsewhere |
+| G2 new-file-overwrites-existing | 2 | Add a file with the path of an existing file; change that file's content elsewhere; Save files | A conflict on the file, with both choices; nothing is replaced until one is chosen |
+| G3 new-file-followup-conflict | 2 | Add a new file and Save; type newer content while it saves; change the file elsewhere; Save again | The second Save meets a conflict on the saved file; no edit keeps an `@new-` identity after its save is confirmed |
+| G4 save-leave-return-edit | 2 | On Monitor set refresh to 12 and Save with a lost reply; leave through BB's sidebar; come back and type 15 before the save finishes; leave and come back again | 12 is stored once; 15 is still shown and still an unsaved change; the page shows the first save's state |
+| G5 file-save-across-remount | 2 | Replace a file's content and Save; leave and come back while it saves; type newer content | The editor stays open with the newer content, marked unsaved |
+| G6 new-mac-two-saves | 3 | Add a Mac named review-mac and Save; set its cores to 8 while it saves; Save again | One review-mac with 8 cores; the second Save updated it |
+| G7 new-mac-invalid-reveal | 3 | Add a Mac with 1 core and Save; then a Mac named like an existing one | The first is refused with the error under the new Mac's cores field, and Show opens that Mac and focuses the field; the second is refused at its name field |
+| G8 import-newer-typing | 10 | Check an import that sets refresh to 15; Apply; change the text to 20 before it completes | 15 is stored; the editor stays open with 20, "Applied. Your newer text is not applied yet" |
+| G9 import-secret-storage | 10 | Paste an import holding a made-up token, a private key, a file's content, and, separately, text that is not valid JSON; reload without Check or Apply | None of the pasted text is in session or local storage; the page asks for the text again |
 
 `docs/design/settings.md` is rewritten to this design in unit 1, and the
 reference and the skill name any new words.
@@ -773,6 +855,14 @@ Worth trying:
 10. On any inner page, choose "Machine status: its settings" in BB's
     sidebar: the stand-in for the Monitor panel's link.
 
+The prototype has done its job and will not change again. It does not
+have the four rules the third review asked for (see [What changed after
+the third review](#what-changed-after-the-third-review)): it keeps raw
+import text in session storage, a retry reads the live editor, a
+provisional identity is never mapped to the saved one, and a pending
+save belongs to the page that pressed Save. Where the prototype and this
+note differ, the build follows the note, and gates G1 to G9 prove it.
+
 To rebuild it, on a box: `npm ci` at the repository's root, then `npm ci`
 and `npm run build` in `docs/decisions/067-settings-page/prototype`, which
 writes `prototype.html` beside the folder. The prototype's own packages are
@@ -838,3 +928,19 @@ pass.
 | Astra N7: an invalid route blanked the page | Unknown kinds and setup types show "This kind is not here" with a way to the overview | 10 smaller: invalid route |
 | Opus N5: first-run titles, a double full stop, ages on every row, Find's breadth, the health line at 390 px | Titled for the problem; one full stop; rows drop the age when Status gives it; synonyms narrowed; the host on its own line on narrow screens | 10 smaller: titles, full stops; 7 Find |
 | Astra: a cleared secret reused the version "none" | A clear gets the revision that made it, like a set, never reused (section 12) | Covered by 1a and 5, which compare versions |
+
+## What changed after the third review
+
+Astra's third review found the design ready to build after four changes,
+all in the saving engine's edge cases, and all 13 checks passing. Opus's
+second review had already said build after small changes. The design is
+settled, so these are changes to this note only: the prototype stays as it
+was, and each rule is gated in the units that build it.
+
+| Finding | Change | Test |
+| --- | --- | --- |
+| R1: an import's raw text, which may hold secrets, was kept in session storage | Raw import text is memory only, valid or not, with a note after a reload; only a schema-checked form with secrets and file contents taken out may be kept (section 5) | Gated in unit 10: G9; the storage rule in unit 2 |
+| R2: a retry sent typing made after Save | An operation freezes its submission; retries rebase that submission on a fresh document; the operation ID is bound to it, and the server refuses the ID with another submission; newer typing is a separate draft (sections 4, 12) | Gated in unit 2: G1, and in unit 3 with a secret |
+| R3: a new Mac or file kept its provisional identity after saving, so a second save duplicated it or skipped conflicts; a new Mac's error could not be reached | A provisional identity maps to the saved one and its revision on confirmation, and retained edits move to it; name and path collisions are refused or enter the existing file's conflict flow; server problems resolve through the same map (section 4) | Gated in unit 2: G2, G3; in unit 3: G6, G7 |
+| R4: a save finishing after the person left and came back erased their newer edits; an applied import erased newer text | The registry owns pending operations as well as edits; completion compares with the registry's current edits and clears only what was confirmed, for every editor, import included (section 5) | Gated in unit 2: G4, G5; in unit 10: G8 |
+| Astra: test receipt storage, duplicate requests, late replies and receipt expiry on a real BB | The receipt is stored in the same write as the document; receipts kept for 24 hours and at least the last 100; an expired pending save becomes an ordinary draft (sections 4, 12) | Unit 2's live check |
