@@ -71,7 +71,7 @@ Then make a box from the Box panel, or ask an agent to. The first box of each ki
 ## What a box is like
 
 A box is a virtual machine of its own: Ubuntu 24.04, with its own kernel, systemd, Docker and KVM, and BB Box's tools, as on its other backends. You use it as `box`, who can use `sudo`. A desktop box has the same desktop and apps as a Linux desktop on BB Box's other backends, drawn by the CPU, with computer use, and you watch and use it in the Box panel. 
-Once its template is built, a Linux box is ready in 9 to 25 seconds, and a desktop in 25 to 63: BB Box copies the template, the copy starts, and boat.dev brings in the template's system files and starts Docker, and for a desktop its desktop and Cua Driver. On a busy boat.dev machine a desktop has taken over 6 minutes.
+Once its template is built, a Linux box is ready in 9 to 25 seconds, and a desktop in about 1 to 2 minutes: BB Box copies the template, the copy starts, and boat.dev brings in the template's system files and starts Docker, and for a desktop its desktop. A desktop then waits until boat.dev has brought in all of the template's files, about a minute after it starts, before BB Box checks Cua Driver, which stops answering if it is used before then. On a busy boat.dev machine a desktop has taken over 6 minutes.
 
 BB Box reaches each box over SSH, with a key of its own and the host key boat.dev gives, which BB Box checks. A box gets no secret from your boat.dev account.
 

@@ -19,6 +19,7 @@ export interface FakeSandbox {
   forkedFrom: string | null;
   idempotencyKey: string | null;
   files: Record<string, string>;
+  restoringReads: number;
 }
 
 export interface FakeCall {
@@ -46,6 +47,7 @@ export class FakeBoat {
   sizes: Record<string, boolean> = { small: true, default: true, large: false, xlarge: false };
   startsLeftThisMinute = 5;
   hostKeysChangeOnResume = true;
+  startsRestoreForReads = 0;
   #next = 0;
   readonly #now: () => number;
 
@@ -79,6 +81,7 @@ export class FakeBoat {
       forkedFrom: null,
       idempotencyKey: null,
       files: {},
+      restoringReads: 0,
       ...partial,
     };
     this.sandboxes.set(id, sandbox);
@@ -105,7 +108,7 @@ export class FakeBoat {
       archiveAfter: iso(sandbox.archiveAfter),
       ttlSeconds: sandbox.ttlSeconds,
       dataExpiredAt: null,
-      hydrated: true,
+      hydrated: sandbox.restoringReads === 0,
       desktopAvailable: true,
       snapshotAvailable: true,
     };
@@ -169,6 +172,7 @@ export class FakeBoat {
       case "GET /sandboxes/:id": {
         const view = this.#view(id);
         if (id.state === "provisioning") id.state = "ready";
+        else if (id.restoringReads > 0) id.restoringReads--;
         return reply(200, { type: "sandbox.info", sandbox: view });
       }
       case "PATCH /sandboxes/:id":
@@ -185,7 +189,7 @@ export class FakeBoat {
       case "POST /sandboxes/:id/fork": {
         const repeat = [...this.sandboxes.values()].find((each) => each.idempotencyKey !== null && each.idempotencyKey === headers["idempotency-key"]);
         if (repeat) return reply(202, { type: "sandbox.forking", sandbox: this.#view(repeat) });
-        const made = this.add({ labels: (body.labels as Record<string, string>) ?? {}, name: `${id.name} fork`, type: String(body.type ?? id.type), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", forkedFrom: id.id, idempotencyKey: headers["idempotency-key"] ?? null });
+        const made = this.add({ labels: (body.labels as Record<string, string>) ?? {}, name: `${id.name} fork`, type: String(body.type ?? id.type), ttlSeconds: ttl(body.ttlSeconds), state: "provisioning", forkedFrom: id.id, idempotencyKey: headers["idempotency-key"] ?? null, restoringReads: this.startsRestoreForReads });
         made.archiveAfter = made.ttlSeconds === null ? null : this.#now() + made.ttlSeconds * 1000;
         return reply(202, { type: "sandbox.forking", sandbox: this.#view(made) });
       }
@@ -195,6 +199,7 @@ export class FakeBoat {
         return reply(202, { type: "sandbox.stopping", status: "archiving" });
       case "POST /sandboxes/:id/resume":
         id.state = "ready";
+        id.restoringReads = this.startsRestoreForReads;
         id.stoppedAt = null;
         if ("ttlSeconds" in body) id.ttlSeconds = ttl(body.ttlSeconds);
         id.archiveAfter = id.ttlSeconds === null ? null : this.#now() + id.ttlSeconds * 1000;
