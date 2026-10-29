@@ -68,7 +68,7 @@ Each backend's entry, in the order acquire tries them. Its ID is its type, or `<
 
 | Key | Type | Default | What it is |
 | --- | --- | --- | --- |
-| `id` | `string` |  | The type, or "<type>:<name>" for another backend of the type. |
+| `id` | `string` |  | The type, or "&lt;type>:&lt;name>" for another backend of the type. |
 | `type` | `string` |  | The driver. |
 | `label` | `string` |  | Display name. The driver's label when left out. |
 | `enabled` | `boolean` |  | Off, the backend takes no new boxes; its boxes keep working. |
@@ -196,10 +196,10 @@ Setup: [setup/ssh-pool/README.md](../../setup/ssh-pool/README.md).
 
 | Field | Label | Type | Group | Default | Description |
 | --- | --- | --- | --- | --- | --- |
-| `machines` | Machines | string | boxes |  | Your machines, one line each, with the kinds of box each serves. A line is a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>, such as "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. The kind ios on a Mac lends iOS slots there, each a macOS user with its own device, for iOS boxes asked for with shared: true; ios:<slots> sets how many, where bb-box would estimate them from the Mac. |
+| `machines` | Machines | string | boxes |  | Your machines, one line each, with the kinds of box each serves. A line is a name, [user@]host[:port], its kinds, and optionally via=&lt;jump host>, reset=machine and labels=&lt;words>, such as "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. The kind ios on a Mac lends iOS slots there, each a macOS user with its own device, for iOS boxes asked for with shared: true; ios:&lt;slots> sets how many, where bb-box would estimate them from the Mac. |
 | `known-hosts` | Host keys | string | connection |  | The SSH host keys of every machine and jump host. bb-box connects only to a machine whose key is here. Paste the known_hosts lines setup.sh and setup-mac.sh print. |
 | `ssh-private-key` | SSH private key | string, secret | credentials |  | The SSH key bb-box logs in to the machines with. Paste an unencrypted OpenSSH private key that their admin user accepts. Leave it empty and bb-box makes one and shows its public key, which you then give setup.sh. |
-| `ios-hosts-most` | Slots for iOS boxes per Mac | number | ios-hosts |  | The most iOS slots each Mac has at once, making, ready or held. This counts only Macs whose line lists ios, and a Mac is lent whole only while it lends no slot. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins. |
+| `ios-hosts-most` | Slots for iOS boxes per Mac | number | ios-hosts |  | The most iOS slots each Mac has at once, making, ready or held. This counts only Macs whose line lists ios, and a Mac is lent whole only while it lends no slot. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:&lt;slots> on a Mac's line wins. |
 | `ios-hosts-ahead` | Ready slots for iOS boxes kept on a Mac | number | ios-hosts | `1` | Slots each Mac keeps ready, so the next iOS box is ready in seconds. This counts only Macs whose line lists ios, while they are not lent whole. |
 | `ios-hosts-resetting-most` | Slots a Mac resets at once | number | ios-hosts | `4` | The most released iOS slots a Mac resets in one pass, sweeping their files. |
 | `ios-hosts-disk-reserve-gib` | Disk a Mac keeps free (GiB) | number | ios-hosts | `40` | A Mac makes no new iOS slot while it has less free disk than this. |
@@ -241,7 +241,7 @@ Each host's fields:
 | --- | --- | --- | --- | --- | --- |
 | `address` | Address | string | connection |  | The Mac's address, with :port when SSH is not on 22. For example 192.0.2.20. |
 | `user` | User | string | connection |  | The user bb-box logs in to the Mac as, which runs tart. |
-| `host-keys` | Host keys | string | connection |  | The Mac's SSH host keys as known_hosts lines. ssh-keyscan -t ed25519 <address> prints one. bb-box checks them on every connection. |
+| `host-keys` | Host keys | string | connection |  | The Mac's SSH host keys as known_hosts lines. ssh-keyscan -t ed25519 &lt;address> prints one. bb-box checks them on every connection. |
 | `ios-hosts-most` | Slots per shared iOS host | number | ios-hosts |  | The most slots a shared iOS host on this Mac has, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate for the Mac. |
 | `ios-hosts-cores` | Cores of a shared iOS host | number | ios-hosts |  | The cores of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else the Mac's performance cores. |
 | `ios-hosts-memory-gib` | Memory of a shared iOS host (GiB) | number | ios-hosts |  | The memory of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate. |
@@ -254,7 +254,7 @@ Setup: [setup/docker/README.md](../../setup/docker/README.md).
 
 | Field | Label | Type | Group | Default | Description |
 | --- | --- | --- | --- | --- | --- |
-| `host` | Host | string | connection |  | The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket. |
+| `host` | Host | string | connection |  | The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, or bb:&lt;machine ID> for a BB machine, which bb-box reaches through BB. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket. |
 | `linux-image` | Linux image | string | boxes | `bbbox/linux:1` | The image Linux boxes run. setup/docker/build.sh builds it. Empty turns them off. |
 | `desktop-image` | Desktop image | string | boxes | `bbbox/linux-desktop:1` | The image Linux desktops run: those drawn by the CPU, and those on a GPU when GPU desktops are on. setup/docker/build.sh builds it. Empty turns them off. |
 | `wayland-desktop-image` | Wayland desktop image | string | boxes | `bbbox/linux-desktop-wayland:1` | The image Linux desktops on Wayland run: Sway, drawn by the CPU. setup/docker/build.sh builds it. Empty turns them off. |
@@ -273,7 +273,7 @@ Setup: [setup/microsandbox/README.md](../../setup/microsandbox/README.md).
 
 | Field | Label | Type | Group | Default | Description |
 | --- | --- | --- | --- | --- | --- |
-| `host` | Host | string | connection |  | The host that runs the boxes: a Linux host with KVM, or a Mac. Give ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there. |
+| `host` | Host | string | connection |  | The host that runs the boxes: a Linux host with KVM, or a Mac. Give ssh://user@host, or bb:&lt;machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there. |
 | `linux-image` | Linux image | string | boxes | `bbbox/linux:1` | The image Linux boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off. |
 | `desktop-image` | Desktop image | string | boxes | `bbbox/linux-desktop:1` | The image Linux desktops run, drawn by the CPU. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off. |
 | `linux-arm64-image` | Linux image (arm64) | string | boxes | `bbbox/linux:1-arm64` | The image Linux boxes on arm64 run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off. |

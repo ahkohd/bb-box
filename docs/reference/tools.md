@@ -185,7 +185,7 @@ Run a shell script in a box, as its user, and wait for it. You get the exit code
 | `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
 | `command` | string | yes | A shell script, run by the box user's shell (bash on Linux, PowerShell 7 on Windows). |
 | `cwd` | string | no | Directory to run in. Defaults to the box user's home. |
-| `timeout_seconds` | integer | no | Seconds before the command, and everything it started, is stopped. Defaults to 600. box_run returns when the script's shell exits, or after 270 s, as BB ends a tool call at about five minutes: a command still running then goes on as a job for box_job, except a Windows one in the desktop session, which is stopped then. Start a server in the background with its output redirected, so it keeps working after that: nohup <cmd> >server.log 2>&1 &, or on Windows Start-Detached { <cmd> } server.log |
+| `timeout_seconds` | integer | no | Seconds before the command, and everything it started, is stopped. Defaults to 600. box_run returns when the script's shell exits, or after 270 s, as BB ends a tool call at about five minutes: a command still running then goes on as a job for box_job, except a Windows one in the desktop session, which is stopped then. Start a server in the background with its output redirected, so it keeps working after that: nohup &lt;cmd> >server.log 2>&1 &, or on Windows Start-Detached { &lt;cmd> } server.log |
 | `stdin` | string | no | Text to send to the command's standard input. |
 | `desktop` | boolean | no | Run in the box's desktop session so it can open windows. Desktop boxes only. |
 
@@ -221,7 +221,7 @@ Start a child thread on a box, as a BB machine, in this thread's project, with t
 | --- | --- | --- | --- |
 | `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
 | `prompt` | string | yes | The child thread's first message: the task it should do on the box. |
-| `title` | string | no | A title for the child thread. Defaults to "On box <name>". |
+| `title` | string | no | A title for the child thread. Defaults to "On box &lt;name>". |
 
 ## computer_act
 

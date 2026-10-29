@@ -1,0 +1,68 @@
+---
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import demo from "../../../docs/media/demo.webp";
+import { getEntry } from "astro:content";
+import { pageUrl } from "../repo.ts";
+import { listUnder } from "../rendered.ts";
+
+const base = import.meta.env.BASE_URL;
+const introduction = await getEntry("docs", "start");
+const reasons = listUnder(introduction?.rendered?.html ?? "", "why-bb-box");
+---
+
+<StarlightPage
+  frontmatter={{
+    title: "bb-box",
+    description: "Computers for BB threads: Linux, macOS or Windows boxes for you and the thread's agent.",
+    template: "splash",
+    hero: {
+      title: "bb-box",
+      tagline: "Computers for BB threads. Each thread gets boxes of its own: Linux, macOS or Windows, virtual or physical, with or without a desktop.",
+      actions: [
+        { text: "Make your first box", link: pageUrl(base, "start/quick-start"), icon: "right-arrow" },
+        { text: "Choose a backend", link: `${pageUrl(base, "setup")}#choose-a-backend`, variant: "minimal" },
+      ],
+    },
+  }}
+>
+  <img
+    class="demo"
+    src={demo.src}
+    width={demo.width}
+    height={demo.height}
+    alt="A person makes a desktop box in a BB thread, the agent opens Chrome in it, then the person makes a server box and runs a command in its terminal"
+  />
+
+  <h2>Why bb-box</h2>
+  <CardGrid>
+    {reasons.map((reason) => (
+      <Card title={reason.title}>
+        <Fragment set:html={reason.html} />
+      </Card>
+    ))}
+  </CardGrid>
+
+  <p class="note">bb-box assumes one trusted user. It is not a sandbox for code you do not trust.</p>
+
+  <h2>Find your way</h2>
+  <CardGrid>
+    <LinkCard title="Quick start" description="Install the plugin, set up Docker and make a box." href={pageUrl(base, "start/quick-start")} />
+    <LinkCard title="User guide" description="The Box panel, desktops, the terminal, images, files and settings." href={pageUrl(base, "guide")} />
+    <LinkCard title="Backends" description="Docker, Proxmox, Tart, SSH host pools and cloud machines." href={pageUrl(base, "setup")} />
+    <LinkCard title="Reference" description="Every agent tool, bb box command, setting, kind and check." href={pageUrl(base, "reference")} />
+  </CardGrid>
+</StarlightPage>
+
+<style>
+  .demo {
+    width: 100%;
+    height: auto;
+    border-radius: 0.5rem;
+    border: 1px solid var(--sl-color-gray-5);
+  }
+  .note {
+    color: var(--sl-color-gray-2);
+    font-style: italic;
+  }
+</style>

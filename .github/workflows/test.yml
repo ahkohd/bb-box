@@ -28,3 +28,18 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  site:
+    runs-on: [self-hosted, linux, X64]
+    container:
+      image: node:26-bookworm
+      options: --init --memory=4g --cpus=4
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check-links

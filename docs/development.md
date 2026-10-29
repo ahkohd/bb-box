@@ -189,6 +189,67 @@ Against real hosts:
   SSH_POOL_RIG=/tmp/bbbox-rig node --test --test-concurrency=1 test/ssh-pool-live.ts
   ```
 
+## The documentation site
+
+[site/](../site) builds a documentation website with
+[Starlight](https://starlight.astro.build) from the Markdown in this
+repository: the README, the user guide, the setup guides, the reference,
+the skill, the architecture, this page and the decision records. It reads
+them where they are, so a page added to or changed in `docs/guide`,
+`docs/reference` or `setup` reaches the site with no change to `site/`.
+Each section of the sidebar follows the order of the links in its index:
+`docs/guide/README.md`, `docs/reference/README.md`, and the backend tables
+in `setup/README.md` and the README. A page no index links comes last in
+its section. A link to another file in the repository, such as a source
+file, leads to it on GitHub. The site has its own `package.json`, so the
+plugin's install and build do not change.
+
+To run it on your computer, with Node 22.18 or later:
+
+```sh
+cd site
+npm install
+npm run dev
+```
+
+Then open `http://localhost:4321`. A page changes as you save its
+Markdown.
+
+- `npm run build` writes the site, with its search index, to `site/dist`.
+- `npm run check-links` checks every link and asset in `site/dist`, and
+  fails on one that leads nowhere.
+- `npm run preview` serves the build, which search needs.
+
+GitHub builds the site and checks its links on each pull request.
+`test/site.test.ts`, part of `npm test`, checks without a build that every
+guide, setup and reference page is on the site and in its sidebar, and
+that every link on it leads to a page or a file.
+
+### Publishing the site
+
+The site is not published. It is static files in `site/dist`, so any
+static host can serve it. Three settings, read when it builds, say where:
+
+| Variable | Says | Default |
+| --- | --- | --- |
+| `SITE_URL` | the site's full address, for its sitemap and canonical links | none |
+| `SITE_BASE` | the path the site is served under | `/` |
+| `SITE_REPOSITORY_REF` | the branch that links to files in the repository use | `main` |
+
+Two hosts suit it:
+
+- **GitHub Pages**: a workflow that runs `npm ci` and `npm run build` in
+  `site/`, with `SITE_URL` set to the Pages address and `SITE_BASE` to
+  `/bb-box/` for a project site, uploads `site/dist` with
+  `actions/upload-pages-artifact`, and publishes it with
+  `actions/deploy-pages`. In the repository's settings, under Pages, the
+  source is then GitHub Actions. Pages for a private repository needs a
+  paid GitHub plan.
+- **Cloudflare Pages**: connect the repository, with `site` as the root
+  directory, `npm run build` as the build command and `dist` as the output
+  directory. Set `NODE_VERSION` to 22.18 or later, and `SITE_URL` to the
+  site's address.
+
 ## Recording the demo
 
 [Recording the demo](demo.md) says how to record the README's demo video and the guide's screenshots again, with the scripts in [scripts/demo](../scripts/demo).
