@@ -11,6 +11,7 @@ export const proxmoxLxcDriver: BackendDriver<LxcConfig> = {
   form: "LXC",
   kinds: LXC_FLAVOURS.flatMap((flavour) => FLAVOUR_KINDS[flavour]),
   fields: LXC_FIELDS,
+  offWhenEmpty: ["linux-templates", "desktop-templates", "desktop-cpu-templates", "desktop-wayland-cpu-templates"],
   setup: {
     guide: "setup/proxmox-lxc/README.md",
     scripts: [

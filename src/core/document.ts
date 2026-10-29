@@ -9,7 +9,7 @@
 
 import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
 import { isSecret, type BackendDriver, type BackendPart, type BoxSize, type FieldDescriptor, type FieldValue } from "../backends/types.ts";
-import { exportedTailnet, keptTailnetSecrets, readTailnet, tailnetProblems, type TailnetSetting } from "./tailnet-settings.ts";
+import { TAILNET_CLIENT_ID, TAILNET_CLIENT_SECRET, exportedTailnet, keptTailnetSecrets, readTailnet, tailnetProblems, type TailnetSetting } from "./tailnet-settings.ts";
 import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathProblem, type BoxFileSetting } from "./box-files.ts";
 import { PRESETS, belowLeast, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
 
@@ -17,7 +17,25 @@ export const SCHEMA = 1;
 
 /** How a secret shows outside bb-box. In a draft, { set: true } keeps it. */
 export interface SecretState {
+  /** Whether it has a value. In a draft, true keeps it and false clears it. */
   readonly set: boolean;
+  /**
+   * As the settings page reads the configuration, from config.get and config.apply: the revision that last set or
+   * cleared it, so the page can tell that it changed while a person edited. A secret never has the same version twice,
+   * and the version says nothing of its value. bb box config show leaves it out; a draft may send it back, and it is
+   * ignored.
+   */
+  readonly version?: number;
+}
+
+/** A save the settings page made with an operation ID, as config.get lists it. */
+export interface SaveReceipt {
+  /** The ID the page gave the save. config.apply applies an ID at most once and refuses it with another submission. */
+  readonly operation: string;
+  /** The revision the save made. */
+  readonly revision: number;
+  /** When it was saved, in milliseconds since 1970. Receipts are kept for 24 hours, and at least the last 100. */
+  readonly at: number;
 }
 
 export interface HostConfig {
@@ -297,7 +315,7 @@ function isWhole(value: unknown, least: number, most = Number.MAX_SAFE_INTEGER):
 }
 
 function isSecretState(value: unknown): value is SecretState {
-  return isRecord(value) && typeof value.set === "boolean" && Object.keys(value).length === 1;
+  return isRecord(value) && typeof value.set === "boolean" && Object.keys(value).every((key) => key === "set" || (key === "version" && typeof value.version === "number"));
 }
 
 /** What a draft does to the stored secrets: a string replaces one, null clears it. Left out keeps it. */
@@ -780,25 +798,50 @@ export function backendPart(backend: BackendConfig, driver: BackendDriver<any>, 
   };
 }
 
-/** The document as it leaves bb-box: each secret field as whether it is set. */
-export function exported(document: ConfigDocument, secrets: Secrets, drivers: readonly BackendDriver<any>[]): ConfigDocument {
-  const files = document.general.files?.map((file) => ({ path: file.path, content: { set: secrets[GENERAL_SECRETS]?.[contentKey(file.path)] !== undefined } }));
+/** The document as it leaves bb-box: each secret field as whether it is set, and with `versionOf`, its version. */
+export function exported(document: ConfigDocument, secrets: Secrets, drivers: readonly BackendDriver<any>[], versionOf?: (owner: string, key: string) => number): ConfigDocument {
+  const state = (owner: string, key: string, set: boolean): SecretState => (versionOf ? { set, version: versionOf(owner, key) } : { set });
+  const files = document.general.files?.map((file) => ({ path: file.path, content: state(GENERAL_SECRETS, contentKey(file.path), secrets[GENERAL_SECRETS]?.[contentKey(file.path)] !== undefined) }));
+  const tailnet = document.general.tailnet && exportedTailnet(document.general.tailnet, secrets[GENERAL_SECRETS] ?? {});
   return {
     ...document,
     general: {
       ...document.general,
       ...(files ? { files } : {}),
-      ...(document.general.tailnet ? { tailnet: exportedTailnet(document.general.tailnet, secrets[GENERAL_SECRETS] ?? {}) } : {}),
+      ...(tailnet
+        ? {
+            tailnet: {
+              ...tailnet,
+              ...(tailnet.clientId ? { clientId: state(GENERAL_SECRETS, TAILNET_CLIENT_ID, tailnet.clientId.set) } : {}),
+              ...(tailnet.clientSecret ? { clientSecret: state(GENERAL_SECRETS, TAILNET_CLIENT_SECRET, tailnet.clientSecret.set) } : {}),
+            },
+          }
+        : {}),
     },
     backends: document.backends.map((backend) => {
       const driver = drivers.find((candidate) => candidate.type === backend.type);
       const fields: Record<string, FieldValue | SecretState> = {};
       for (const [key, value] of Object.entries(backend.fields)) if (!isSecretState(value)) fields[key] = value;
       for (const [key, descriptor] of Object.entries(driver?.fields ?? {})) {
-        if (isSecret(descriptor)) fields[key] = { set: secrets[backend.id]?.[key] !== undefined };
+        if (isSecret(descriptor)) fields[key] = state(backend.id, key, secrets[backend.id]?.[key] !== undefined);
       }
       return { ...backend, fields };
     }),
+  };
+}
+
+/** An exported document as a person reads it: each secret as whether it is set, without its version. */
+export function withoutSecretVersions(document: ConfigDocument): ConfigDocument {
+  const bare = <T,>(value: T): T => (isSecretState(value) ? ({ set: value.set } as T) : value);
+  const tailnet = document.general.tailnet;
+  return {
+    ...document,
+    general: {
+      ...document.general,
+      ...(document.general.files ? { files: document.general.files.map((file) => (file.content === undefined ? file : { ...file, content: bare(file.content) })) } : {}),
+      ...(tailnet ? { tailnet: { ...tailnet, ...(tailnet.clientId ? { clientId: bare(tailnet.clientId) } : {}), ...(tailnet.clientSecret ? { clientSecret: bare(tailnet.clientSecret) } : {}) } } : {}),
+    },
+    backends: document.backends.map((backend) => ({ ...backend, fields: Object.fromEntries(Object.entries(backend.fields).map(([key, value]) => [key, bare(value)])) })),
   };
 }
 

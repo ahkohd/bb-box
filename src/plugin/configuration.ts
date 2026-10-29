@@ -28,12 +28,15 @@ import {
   type GeneralConfig,
   type InUse,
   type Problem,
+  type SaveReceipt,
   type Secrets,
 } from "../core/document.ts";
 import { COPY_KEY, DOCUMENT_KEY, SECRETS_KEY, type MovedCopy } from "../core/move.ts";
+import { EMPTY_LEDGER, SAVED_KEY, keptReceipts, receiptView, secretVersion, stampedLedger, stampsMoved, submissionDigest, type SaveLedger, type SavedRecord, type StoredReceipt } from "../core/saves.ts";
 import type { Preset } from "../core/sizes.ts";
 
 const DOCTOR_PREFIX = "config/doctor/";
+const SETUP_DONE_KEY = "config/setup-done";
 /** The longest a check of a draft may run its backend's doctor. */
 export const TEST_TIMEOUT_MS = 30_000;
 
@@ -41,6 +44,7 @@ export type FieldView = FieldDescriptor & {
   readonly key: string;
   /** The backend type whose value the field takes while it and the rest of its set are empty, and that type's label. */
   readonly inherits?: { readonly from: string; readonly label: string; readonly set: readonly string[] };
+  readonly offWhenEmpty?: true;
 };
 
 export interface DriverView {
@@ -78,6 +82,17 @@ export interface KindInfoView {
 export interface DoctorRun {
   readonly report: DoctorReport;
   readonly at: number;
+  readonly revision: number | null;
+}
+
+export interface SetupDone {
+  readonly at: number;
+  readonly revision: number;
+}
+
+export interface ApplyOperation {
+  readonly id: string;
+  readonly submission?: unknown;
 }
 
 export interface BackendState {
@@ -96,6 +111,7 @@ export interface BackendState {
   readonly doctor: DoctorRun | null;
   /** Its warm pools that are short for want of room now, and why (#356). */
   readonly warmShort: readonly WarmShortfall[];
+  readonly changed: number;
 }
 
 export interface ConfigState {
@@ -114,6 +130,8 @@ export interface ConfigState {
   readonly problems: readonly Problem[];
   /** The copy of BB's settings the move kept, while it is kept. */
   readonly migrated: { readonly at: number; readonly version: string } | null;
+  readonly receipts: readonly SaveReceipt[];
+  readonly setupDone: SetupDone | null;
 }
 
 export interface CheckResult {
@@ -124,7 +142,7 @@ export interface CheckResult {
 
 export type ApplyResult =
   /** `problems` are those saved anyway, in a backend that is off and has no boxes, for the page to show. */
-  | { readonly ok: true; readonly state: ConfigState; readonly problems: readonly Problem[] }
+  | { readonly ok: true; readonly state: ConfigState; readonly problems: readonly Problem[]; readonly receipt?: SaveReceipt; readonly replayed?: true }
   | { readonly ok: false; readonly reason: "revision"; readonly state: ConfigState }
   | { readonly ok: false; readonly reason: "problems"; readonly problems: readonly Problem[] };
 
@@ -153,7 +171,8 @@ function fieldViews(fields: Readonly<Record<string, FieldDescriptor>> | undefine
 /** A driver's fields for the settings page. Each it inherits names the type it takes values from, with that type's label. */
 export function driverFields(driver: BackendDriver<any>, drivers: readonly BackendDriver<any>[]): FieldView[] {
   const inherits = driver.inherits && { ...driver.inherits, label: drivers.find((other) => other.type === driver.inherits!.from)?.label ?? driver.inherits.from };
-  return fieldViews(driver.fields, inherits);
+  const offWhenEmpty = new Set(driver.offWhenEmpty ?? []);
+  return fieldViews(driver.fields, inherits).map((field) => (offWhenEmpty.has(field.key) ? { ...field, offWhenEmpty: true } : field));
 }
 
 function failedReport(detail: string): DoctorReport {
@@ -184,30 +203,68 @@ export class Configuration {
   readonly #deps: ConfigurationDeps;
   #document: ConfigDocument;
   #secrets: Secrets;
+  #ledger: SaveLedger;
+  #configuredRevision: number | null = null;
+  #setupDone: SetupDone | null = null;
   readonly #doctor = new Map<string, DoctorRun>();
   /** Writes and the reconfiguring after them, one at a time. */
   #queue: Promise<unknown> = Promise.resolve();
 
-  private constructor(deps: ConfigurationDeps, document: ConfigDocument, secrets: Secrets) {
+  private constructor(deps: ConfigurationDeps, document: ConfigDocument, secrets: Secrets, ledger: SaveLedger) {
     this.#deps = deps;
     this.#document = document;
     this.#secrets = secrets;
+    this.#ledger = ledger;
   }
 
   /** The stored document and secrets, and each backend's last doctor run. */
   static async load(deps: ConfigurationDeps): Promise<Configuration> {
-    const stored = (await deps.kv.get<ConfigDocument>(DOCUMENT_KEY)) ?? emptyDocument();
+    const saved = await deps.kv.get<SavedRecord>(SAVED_KEY);
+    const mirror = (await deps.kv.get<ConfigDocument>(DOCUMENT_KEY)) ?? emptyDocument();
+    const stored = saved && saved.document.revision >= mirror.revision ? saved.document : mirror;
+    const secrets = (await deps.kv.get<Secrets>(SECRETS_KEY)) ?? {};
     // Earlier kind IDs move to their kinds once (041), as a write would.
     const upgraded = upgradeDocument(stored);
-    const document = upgraded ? { ...upgraded, revision: stored.revision + 1 } : stored;
-    if (upgraded) await deps.kv.set(DOCUMENT_KEY, document).catch((error) => deps.logError("move earlier kind IDs in the configuration", error));
-    const secrets = (await deps.kv.get<Secrets>(SECRETS_KEY)) ?? {};
-    const configuration = new Configuration(deps, document, secrets);
+    const repaired = stored.revision + 1;
+    const ledger = saved ? stampedLedger(saved.ledger, upgraded ?? stored, secrets, deps.drivers, repaired) : stampedLedger(EMPTY_LEDGER, upgraded ?? stored, secrets, deps.drivers, stored.revision);
+    const moved = upgraded !== null || (saved !== undefined && stampsMoved(ledger, repaired));
+    const document = moved ? { ...(upgraded ?? stored), revision: repaired } : stored;
+    const configuration = new Configuration(deps, document, secrets, ledger);
+    if (moved) await configuration.#store(document, secrets, ledger).catch((error) => deps.logError("bring the configuration's saves up to date", error));
+    else if (saved && saved.document.revision > mirror.revision) await deps.kv.set(DOCUMENT_KEY, saved.document).catch((error) => deps.logError("copy the saved configuration", error));
     for (const key of await deps.kv.list(DOCTOR_PREFIX)) {
       const run = await deps.kv.get<DoctorRun>(key);
-      if (run) configuration.#doctor.set(key.slice(DOCTOR_PREFIX.length), run);
+      if (run) configuration.#doctor.set(key.slice(DOCTOR_PREFIX.length), { ...run, revision: run.revision ?? null });
     }
+    configuration.#setupDone = (await deps.kv.get<SetupDone>(SETUP_DONE_KEY)) ?? null;
     return configuration;
+  }
+
+  async #store(document: ConfigDocument, secrets: Secrets, ledger: SaveLedger): Promise<void> {
+    await this.#deps.kv.set(SECRETS_KEY, secrets);
+    await this.#deps.kv.set(SAVED_KEY, { document, ledger } satisfies SavedRecord);
+    await this.#deps.kv.set(DOCUMENT_KEY, document);
+  }
+
+  #now(): number {
+    return (this.#deps.now ?? Date.now)();
+  }
+
+  get liveRevision(): number {
+    return this.#configuredRevision ?? this.#document.revision;
+  }
+
+  get setupDone(): SetupDone | null {
+    return this.#setupDone;
+  }
+
+  async noteSetupDone(): Promise<void> {
+    if (this.#setupDone) return;
+    const making = this.#deps.backends.statuses().some((status) => status.state === "active" && status.kinds.length > 0);
+    const madeBoxes = !making && (await Promise.resolve().then(() => this.#deps.boxes()).catch(() => [])).length > 0;
+    if ((!making && !madeBoxes) || this.#setupDone) return;
+    this.#setupDone = { at: this.#now(), revision: this.#document.revision };
+    await this.#deps.kv.set(SETUP_DONE_KEY, this.#setupDone).catch((error) => this.#deps.logError("mark setup done", error));
   }
 
   get document(): ConfigDocument {
@@ -223,8 +280,10 @@ export class Configuration {
   }
 
   /** Builds the backends from the stored document. */
-  configure(): Promise<void> {
-    return this.#deps.backends.configure(this.#document, this.#secrets);
+  async configure(): Promise<void> {
+    const revision = this.#document.revision;
+    await this.#deps.backends.configure(this.#document, this.#secrets);
+    this.#configuredRevision = revision;
   }
 
   async inUse(): Promise<InUse> {
@@ -249,8 +308,8 @@ export class Configuration {
     return checkDocument(this.#document, this.#secrets, this.#deps.drivers, await this.inUse());
   }
 
-  async recordDoctor(id: string, report: DoctorReport): Promise<void> {
-    const run = { report, at: (this.#deps.now ?? Date.now)() };
+  async recordDoctor(id: string, report: DoctorReport, revision: number = this.liveRevision): Promise<void> {
+    const run: DoctorRun = { report, at: this.#now(), revision };
     this.#doctor.set(id, run);
     await this.#deps.kv.set(DOCTOR_PREFIX + id, run).catch((error) => this.#deps.logError("doctor report", error));
   }
@@ -278,6 +337,8 @@ export class Configuration {
 
   async #snapshot(): Promise<ConfigState> {
     const { drivers } = this.#deps;
+    await this.noteSetupDone();
+    const ledger = this.#ledger;
     const inUse = await this.inUse();
     const statuses = this.#deps.backends.statuses();
     const copy = await this.migrated();
@@ -288,7 +349,7 @@ export class Configuration {
       return has.size === 1 ? has.has(true) : null;
     };
     return {
-      document: this.exported(),
+      document: exported(this.#document, this.#secrets, drivers, (owner, key) => secretVersion(ledger, owner, key)),
       revision: this.#document.revision,
       defaults: { general: GENERAL_DEFAULTS, monitor: MONITOR_DEFAULTS, kinds: kindDefaults(drivers) },
       kinds: knownKinds(drivers).map((id) => ({
@@ -321,10 +382,13 @@ export class Configuration {
           kinds: status?.kinds ?? [],
           doctor: this.#doctor.get(backend.id) ?? null,
           warmShort: this.#deps.backends.warmShort(backend.id),
+          changed: ledger.backends[backend.id]?.changed ?? this.#document.revision,
         };
       }),
       problems: checkDocument(this.#document, this.#secrets, drivers, inUse),
       migrated: copy ? { at: copy.at, version: copy.version } : null,
+      receipts: keptReceipts(ledger.receipts, this.#now()).map(receiptView),
+      setupDone: this.#setupDone,
     };
   }
 
@@ -352,9 +416,10 @@ export class Configuration {
     if (!parsed.ok) return { problems, doctor: null };
     const doctor = await this.#test(backend.id, driver, parsed.config, signal);
     // The report is the backend's own when the draft's fields are those it was built from.
+    const tested = this.#document.revision;
     const stored = this.#document.backends.find((candidate) => candidate.id === backend.id);
     const live = stored && driver.parse(backendPart(stored, driver, this.#secrets, this.#document.backends));
-    if (live?.ok && JSON.stringify(live.config) === JSON.stringify(parsed.config)) await this.recordDoctor(backend.id, doctor);
+    if (live?.ok && JSON.stringify(live.config) === JSON.stringify(parsed.config)) await this.recordDoctor(backend.id, doctor, tested);
     return { problems, doctor };
   }
 
@@ -384,8 +449,11 @@ export class Configuration {
    * answers with the state after it, and tells open pages. The draft's own
    * revision is ignored.
    */
-  apply(input: unknown, revision: number | null): Promise<ApplyResult> {
+  apply(input: unknown, revision: number | null, operation?: ApplyOperation): Promise<ApplyResult> {
     const write = this.#queue.catch(() => {}).then(async (): Promise<ApplyResult> => {
+      const submission = operation && submissionDigest(operation.submission === undefined ? input : operation.submission);
+      const earlier = operation && this.#ledger.receipts.find((receipt) => receipt.operation === operation.id);
+      if (operation && earlier) return earlier.submission === submission ? { ok: true, state: await this.#snapshot(), problems: [], receipt: receiptView(earlier), replayed: true } : refusedOperation(operation.id, earlier);
       if (revision !== null && revision !== this.#document.revision) return { ok: false, reason: "revision", state: await this.#snapshot() };
       const { drivers } = this.#deps;
       const draft = readDraft(input, drivers);
@@ -394,16 +462,29 @@ export class Configuration {
       const all = [...draft.problems, ...checkDocument(draft.document, secrets, drivers, inUse)];
       const problems = blocking(all, draft.document, inUse, drivers);
       if (problems.length) return { ok: false, reason: "problems", problems };
-      const document: ConfigDocument = { ...withoutSecrets(draft.document, drivers), schema: SCHEMA, revision: this.#document.revision + 1 };
-      await this.#deps.kv.set(SECRETS_KEY, secrets);
-      await this.#deps.kv.set(DOCUMENT_KEY, document);
+      const next = this.#document.revision + 1;
+      const document: ConfigDocument = { ...withoutSecrets(draft.document, drivers), schema: SCHEMA, revision: next };
+      const now = this.#now();
+      const receipt: StoredReceipt | null = operation && submission ? { operation: operation.id, submission, revision: next, at: now } : null;
+      const stamped = stampedLedger(this.#ledger, document, secrets, drivers, next);
+      const ledger: SaveLedger = { ...stamped, receipts: keptReceipts(receipt ? [...stamped.receipts, receipt] : stamped.receipts, now) };
+      await this.#store(document, secrets, ledger);
       this.#document = document;
       this.#secrets = secrets;
+      this.#ledger = ledger;
       await this.configure().catch((error) => this.#deps.logError("configure", error));
       this.#deps.changed();
-      return { ok: true, state: await this.#snapshot(), problems: all };
+      return { ok: true, state: await this.#snapshot(), problems: all, ...(receipt ? { receipt: receiptView(receipt) } : {}) };
     });
     this.#queue = write;
     return write;
   }
+}
+
+function refusedOperation(id: string, earlier: StoredReceipt): ApplyResult {
+  return {
+    ok: false,
+    reason: "problems",
+    problems: [{ path: "operation", message: `Operation ${id} was saved at revision ${earlier.revision} with other changes, so these were not saved. A new save needs a new operation ID.` }],
+  };
 }

@@ -10,6 +10,7 @@ export const hetznerDriver: BackendDriver<HetznerConfig> = {
   form: "Docker",
   kinds: HETZNER_KINDS,
   fields: HETZNER_FIELDS,
+  offWhenEmpty: ["linux-image", "desktop-image", "wayland-desktop-image"],
   setup: {
     guide: "docs/guide/hetzner.md",
     scripts: [],

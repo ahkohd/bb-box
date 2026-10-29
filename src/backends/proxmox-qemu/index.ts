@@ -11,6 +11,7 @@ export const proxmoxQemuDriver: BackendDriver<QemuConfig> = {
   form: "VM",
   kinds: QEMU_KINDS,
   fields: QEMU_FIELDS,
+  offWhenEmpty: ["windows-templates", "linux-templates", "linux-desktop-templates", "android-templates"],
   inherits: QEMU_INHERITS,
   setup: { guide: "setup/proxmox-qemu/README.md", scripts: ["setup/proxmox-qemu/build.sh"] },
   parse: parseQemuPart,

@@ -675,6 +675,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       applied = draft as ConfigDocument;
       return { ok: true, state: configState({ ...options.config, document: applied, revision: revision + 1 }), problems: options.savedWith ?? [] };
     },
+    "config.migrated.remove": () => ({ removed: true, state: configState({ ...options.config, migrated: null }) }),
     // BB machines that can host Docker boxes (042), switched as the tests ask.
     "docker.hosts": () => ({ hosts: dockerHosts }),
     "docker.host.set": ({ hostId, enabled }) => {
@@ -765,9 +766,12 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
       kinds: backend.enabled ? ["linux", "linux-desktop"] : [],
       doctor: null,
       warmShort: [],
+      changed: document.revision,
     })),
     problems: document.backends.some((backend) => backend.enabled && (backend.fields.token as { set: boolean } | undefined)?.set === false) ? [{ path: "backends.fake.token", message: "Set the API token." }] : [],
     migrated: { at: 1_790_000_000_000, version: "0.2.0" },
+    receipts: [],
+    setupDone: null,
     ...overrides,
   };
 }

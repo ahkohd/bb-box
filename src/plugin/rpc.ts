@@ -19,6 +19,7 @@ import { withPurposes } from "../transports/spawns.ts";
 import { desktopDisplays } from "../backends/types.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
 import { monitorRpcHandlers } from "./monitor.ts";
+import { DROPPED_REPLY_MESSAGE } from "./live-checks.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
 const PROFILES_KEPT = 5;
@@ -258,7 +259,12 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     doctor: () => app.doctor(),
     "config.get": () => app.configuration.state(),
     "config.check": ({ draft, test }) => app.configuration.check(draft, test),
-    "config.apply": ({ draft, revision }) => app.configuration.apply(draft, revision),
+    "config.apply": async ({ draft, revision, operation, submission }) => {
+      const result = await app.configuration.apply(draft, revision, operation === undefined ? undefined : { id: operation, submission });
+      if (result.ok && !result.replayed && app.replyDrops?.take()) throw new Error(DROPPED_REPLY_MESSAGE);
+      return result;
+    },
+    "config.migrated.remove": async () => ({ removed: await app.configuration.removeMigrated(), state: await app.configuration.state() }),
     "docker.hosts": async () => ({ hosts: await app.dockerHosts.list() }),
     "setup.offer": async () => ({ machines: await app.setups(), access: await app.machineAccess() }),
     "images.progress": async () => ({ progress: app.imageJobs.progress(), running: app.imageJobs.running() }),

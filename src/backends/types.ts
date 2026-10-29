@@ -1001,7 +1001,7 @@ export type ParsedSettings<C> =
   | { readonly enabled: true; readonly ok: false; readonly problems: readonly string[] };
 
 /** Where the settings page shows a field (029). */
-export type FieldGroup = "connection" | "credentials" | "boxes" | "advanced";
+export type FieldGroup = "connection" | "credentials" | "boxes" | "ios-hosts" | "advanced";
 
 /** A field of a backend or of its hosts: BB's setting descriptor and its group. */
 export type FieldDescriptor = PluginSettingDescriptor & { readonly group: FieldGroup };
@@ -1082,6 +1082,7 @@ export interface BackendDriver<C = unknown> {
   readonly fields: Readonly<Record<string, FieldDescriptor>>;
   /** Fields of each host, for a backend whose hosts are set up alike. Hosts have a name and a switch besides. */
   readonly hostFields?: Readonly<Record<string, FieldDescriptor>>;
+  readonly offWhenEmpty?: readonly string[];
   /**
    * Fields a backend may leave empty to take the values of the first backend
    * of type `from`, such as the connection to a host another backend already

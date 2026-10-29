@@ -14,6 +14,7 @@ export const GROUPS: readonly { readonly id: FieldGroup; readonly title: string 
   { id: "connection", title: "Connection" },
   { id: "credentials", title: "Credentials" },
   { id: "boxes", title: "Boxes" },
+  { id: "ios-hosts", title: "Shared iOS hosts" },
   { id: "advanced", title: "Advanced" },
 ];
 
@@ -215,8 +216,11 @@ export function inheritedValues(fields: readonly FieldView[], values: Readonly<R
   return out;
 }
 
-/** The fields for the draft: empty text takes the default, numbers are numbers, and secrets go as the control holds them. */
-export function draftFields(values: Readonly<Record<string, FormValue>>, fields: readonly FieldView[]): Record<string, FieldValue | SecretState | null> {
+/**
+ * The fields for the draft: empty text takes the default, but stays empty where empty turns boxes off and `stored` has
+ * the field, so a field saved or cleared to off stays off. Numbers are numbers, and secrets go as the control holds them.
+ */
+export function draftFields(values: Readonly<Record<string, FormValue>>, fields: readonly FieldView[], stored: Readonly<Record<string, unknown>> = {}): Record<string, FieldValue | SecretState | null> {
   const out: Record<string, FieldValue | SecretState | null> = {};
   for (const field of fields) {
     const value = values[field.key];
@@ -237,7 +241,10 @@ export function draftFields(values: Readonly<Record<string, FormValue>>, fields:
       if (typeof value === "boolean" && value !== (field.default ?? false)) out[field.key] = value;
       continue;
     }
-    if (typeof value === "string" && value.trim() === "") continue;
+    if (typeof value === "string" && value.trim() === "") {
+      if (field.offWhenEmpty && typeof stored[field.key] === "string") out[field.key] = "";
+      continue;
+    }
     out[field.key] = value as FieldValue;
   }
   return out;

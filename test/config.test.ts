@@ -679,7 +679,7 @@ test("config.get gives the document with each secret as set or not, the defaults
   const { rpc } = await start({ "fake-enabled": true, "fake-token": "t0ken", "enrol-boxes": false });
   const state = await rpc<ConfigState>("config.get", null);
   assert.equal(state.revision, 1);
-  assert.deepEqual(state.document.backends, [{ id: "fake", type: "fake", enabled: true, fields: { token: { set: true } } }]);
+  assert.deepEqual(state.document.backends, [{ id: "fake", type: "fake", enabled: true, fields: { token: { set: true, version: 1 } } }]);
   assert.ok(!JSON.stringify(state).includes("t0ken"));
   assert.deepEqual(state.defaults.general, { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true, iosEncoder: "auto" });
   assert.deepEqual(state.defaults.kinds.linux!.presets.small, { cores: 2, memoryMiB: 4096, diskGiB: null });
@@ -699,7 +699,7 @@ test("config.get gives the document with each secret as set or not, the defaults
     spares: { ready: 0, making: 0 },
   });
   assert.deepEqual(state.drivers[0]!.fields.map((field) => [field.key, field.group]), [["address", "connection"], ["token", "credentials"]]);
-  assert.deepEqual(state.backends, [{ id: "fake", type: "fake", label: "Fake host", form: "VM", state: "active", problems: [], boxes: 0, kinds: ["linux", "linux-desktop"], doctor: null, warmShort: [] }]);
+  assert.deepEqual(state.backends, [{ id: "fake", type: "fake", label: "Fake host", form: "VM", state: "active", problems: [], boxes: 0, kinds: ["linux", "linux-desktop"], doctor: null, warmShort: [], changed: 1 }]);
   assert.deepEqual(state.problems, []);
   assert.ok(state.migrated);
 });

@@ -268,7 +268,11 @@ export const contract = defineRpcContract({
    * The draft's own revision is ignored. A saved answer lists the problems saved anyway, in backends
    * that are off and have no boxes.
    */
-  "config.apply": { input: z.object({ draft, revision: z.number().int().min(0) }), output: z.custom<ApplyResult>() },
+  "config.apply": {
+    input: z.object({ draft, revision: z.number().int().min(0), operation: z.string().min(1).max(200).optional(), submission: z.unknown().optional() }),
+    output: z.custom<ApplyResult>(),
+  },
+  "config.migrated.remove": { input: z.null(), output: z.custom<{ readonly removed: boolean; readonly state: ConfigState }>() },
   /** BB machines that can host Docker boxes, with Docker as it answers through bb-box's relay (042). */
   "docker.hosts": { input: z.null(), output: z.custom<{ hosts: DockerHostView[] }>() },
   /** What each BB machine offers first-run setup, the server's first, and what stands in the way of boxes joining BB, if anything. */

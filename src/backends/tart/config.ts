@@ -487,7 +487,7 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.linuxDesktopImage, "boxes"],
     [TART_KEYS.windowsImage, "boxes"],
     [TART_KEYS.iosImage, "boxes"],
-    [TART_KEYS.iosHostsOn, "boxes"],
+    [TART_KEYS.iosHostsOn, "ios-hosts"],
     [TART_KEYS.windowsEnrol, "boxes"],
     [TART_KEYS.video, "boxes"],
     [TART_KEYS.vmUser, "advanced"],
@@ -495,13 +495,13 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
     [TART_KEYS.reserveMemoryMiB, "advanced"],
     [TART_KEYS.reserveDiskGiB, "advanced"],
     [TART_KEYS.warmMaxHours, "advanced"],
-    [TART_KEYS.iosHostsMost, "advanced"],
-    [TART_KEYS.iosHostsAhead, "advanced"],
-    [TART_KEYS.iosHostsResettingMost, "advanced"],
-    [TART_KEYS.iosHostsCores, "advanced"],
-    [TART_KEYS.iosHostsMemoryGiB, "advanced"],
-    [TART_KEYS.iosHostsPerMac, "advanced"],
-    [TART_KEYS.iosHostsDiskReserveGiB, "advanced"],
+    [TART_KEYS.iosHostsMost, "ios-hosts"],
+    [TART_KEYS.iosHostsAhead, "ios-hosts"],
+    [TART_KEYS.iosHostsResettingMost, "ios-hosts"],
+    [TART_KEYS.iosHostsCores, "ios-hosts"],
+    [TART_KEYS.iosHostsMemoryGiB, "ios-hosts"],
+    [TART_KEYS.iosHostsPerMac, "ios-hosts"],
+    [TART_KEYS.iosHostsDiskReserveGiB, "ios-hosts"],
   ] as const).map(([key, group]) => {
     const setting = TART_SETTINGS[key]!;
     return [key.slice(TART_PREFIX.length), { ...setting, label: IMAGE_LABELS[key] ?? fieldLabel(setting.label), group } as FieldDescriptor];
@@ -524,19 +524,19 @@ export const TART_HOST_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "number",
     label: "Slots per shared iOS host",
     description: "The most slots a shared iOS host on this Mac has, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate for the Mac.",
-    group: "advanced",
+    group: "ios-hosts",
   },
   [MAC_IOS_HOST_FIELDS.cores.field]: {
     type: "number",
     label: "Cores of a shared iOS host",
     description: "The cores of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else the Mac's performance cores.",
-    group: "advanced",
+    group: "ios-hosts",
   },
   [MAC_IOS_HOST_FIELDS.memoryGiB.field]: {
     type: "number",
     label: "Memory of a shared iOS host (GiB)",
     description: "The memory of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate.",
-    group: "advanced",
+    group: "ios-hosts",
   },
 };
 
