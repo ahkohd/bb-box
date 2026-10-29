@@ -1,4 +1,4 @@
-import type { DeviceElement, ElementFrame } from "../core/device.ts";
+import { KEYBOARD_KEY_ROLE, type DeviceElement, type ElementFrame } from "../core/device.ts";
 import { DriverError } from "./driver.ts";
 
 const TAPPABLE_TRAITS = new Set(["Button", "Link", "LaunchIcon", "KeyboardKey", "TabBarItem", "ToggleButton", "Adjustable", "TextEntry", "SearchField"]);
@@ -74,7 +74,7 @@ function converted(element: IdbElement, scale: number, inScroller: boolean, dept
   const editable = traits.has("TextEntry") || EDITABLE_ROLES.has(axRole);
   const children = depth < MOST_DEPTH && Array.isArray(element.children) ? element.children : [];
   return {
-    role: roleWords(axRole),
+    role: traits.has("KeyboardKey") ? KEYBOARD_KEY_ROLE : roleWords(axRole),
     identifier: identifier || null,
     label: words(element.AXLabel) || words(element.title),
     value: value || null,

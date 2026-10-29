@@ -1,6 +1,7 @@
 import type { BoxRecord } from "./boxes.ts";
 import { ComputerError, IMAGE_MAX_EDGE, TREE_LIMIT, chord, pngSize, type ActInput, type ComputerResult, type Direction, type TypeInput, type WindowRef } from "./computer.ts";
 import {
+  KEYBOARD_KEY_ROLE,
   PERSON_HAS_CONTROL_WORDS,
   orientationWord,
   type DeviceAgentRequest,
@@ -32,6 +33,8 @@ const SCROLLER_LEAST_FRACTION = 1 / 3;
 export const TYPED_WAIT_MS = 5_000;
 const TYPED_STILL_READS = 3;
 export const APP_WAIT = { everyMs: 250, mostMs: 5_000 } as const;
+export const KEYBOARD_WAIT = { everyMs: 250, mostMs: 5_000 } as const;
+export const KEYBOARD_NEVER_CAME_WORDS = `No text field had the focus with its keyboard shown within ${KEYBOARD_WAIT.mostMs / 1000} s of the tap, so bb-box typed anyway, and the first keys may be lost: check what the field reads.`;
 const STATUS_BAR_FRACTION = 0.08;
 const SETTINGS_APP = "Settings";
 const SWITCH_REF = /^[+-] \[(e\d+)\] switch /;
@@ -661,6 +664,7 @@ export class DeviceComputer {
     let before: Snapshot;
     let words = "the focused element";
     let ref: string | null = null;
+    let keyboardNote = "";
     const frames = await this.#frames(box);
     if (input.ref !== undefined) {
       const target = await this.#target(box, state, { ref: input.ref }, "typing");
@@ -670,6 +674,7 @@ export class DeviceComputer {
       if (!target.shown!.element.focused) {
         await this.#send(box, { type: "tap", at: target.point }, "The tap that focuses it failed");
         await this.#settled(box, SCROLL_STEP_SETTLE);
+        if (input.text) keyboardNote = await this.#awaitKeyboard(box, state);
       }
     } else before = await this.#read(box, state);
     if (input.text !== undefined && input.text !== "") {
@@ -687,7 +692,22 @@ export class DeviceComputer {
     const seen = await this.#after(box, state, before, frames);
     const typed = [input.text ? `Typed ${quoted(input.text)}` : null, key ? `pressed ${input.keys}` : null].filter(Boolean).join(" and ");
     const reads = ref ? readBack(seen.after, ref) : focusedReads(seen.after);
-    return { text: [`${typed[0]!.toUpperCase()}${typed.slice(1)} into ${words}.${reads}`, ...seen.parts].join("\n\n"), hints: [] };
+    return { text: [`${typed[0]!.toUpperCase()}${typed.slice(1)} into ${words}.${reads}${keyboardNote}`, ...seen.parts].join("\n\n"), hints: [] };
+  }
+
+  async #awaitKeyboard(box: BoxRecord, state: BoxState): Promise<string> {
+    for (let polls = 0; polls <= KEYBOARD_WAIT.mostMs / KEYBOARD_WAIT.everyMs; polls++) {
+      const snapshot = await this.#readOnce(box, state).catch((error: unknown) => {
+        if (error instanceof ComputerError && error.code === "driver") return null;
+        throw error;
+      });
+      if (snapshot && focusedFieldWithKeyboard(snapshot)) {
+        await this.#settled(box, SCROLL_STEP_SETTLE);
+        return "";
+      }
+      await this.#sleep(KEYBOARD_WAIT.everyMs);
+    }
+    return ` ${KEYBOARD_NEVER_CAME_WORDS}`;
   }
 
   async #typeChecked(box: BoxRecord, state: BoxState, text: string, ref: string | null): Promise<{ readonly whole: boolean; readonly field: string; readonly reads: string }> {
@@ -857,6 +877,11 @@ function readBack(snapshot: Snapshot, ref: string): string {
   if (!shown) return ` ${ref} is no longer on the screen.`;
   const value = shown.element.value;
   return value === null ? ` ${shown.ref} reads nothing now.` : ` ${shown.ref} reads ${quoted(value)} now.`;
+}
+
+function focusedFieldWithKeyboard(snapshot: Snapshot): boolean {
+  const field = snapshot.shown.some((shown) => shown.element.focused && (shown.element.can?.edit ?? /text|search|edit/i.test(shown.element.role)));
+  return field && snapshot.shown.some((shown) => shown.element.role === "keyboard" || shown.element.role === KEYBOARD_KEY_ROLE);
 }
 
 function focusedReads(snapshot: Snapshot): string {

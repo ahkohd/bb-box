@@ -3730,3 +3730,60 @@ for the box, with test values only:
   paste. Text typed into the field once open arrived whole, as in F-21's
   runs. `computer_type` could wait for the field to be focused and its
   keyboard shown before the first key.
+
+## F-25: keys typed as a field opens
+
+Built on 29 October 2026, from F-23b's follow-up. `computer_type` into
+Safari's closed address field lost the keys before a paste, or put some
+after it: `bbtest first keyboard ✓ 日本 é` arrived as `✓ 日本 é`, and
+`bbtest second open ✓ 日本 é` as `✓ 日本 éd open`, on a shared slot,
+through production.
+
+### The cause
+
+`computer_type` taps the field, waits for the screen to be still for
+150 ms, at most 1 s, and types. Safari's address field moves up as it
+opens, and a new focused field and its keyboard come in. Read on a new
+shared slot, by taps sent straight to the device server and its tree
+read as fast as it answered, 3 times: the tap was answered in 61 ms, and
+the focused field and its keyboard's keys showed 333, 335 and 414 ms
+after it. A screen still for 150 ms can end the wait before that, and
+the keys sent then are lost.
+
+### The fix
+
+- **After the tap that focuses a field, the first key waits** until the
+  device's elements show a field with the focus and a keyboard, read
+  every 250 ms for at most 5 s, then for the screen to settle.
+- **A keyboard can be seen on both platforms.** iOS's tree names a key
+  with iOS's `KeyboardKey` trait a `keyboard key`; Android's has its
+  keyboard's window as a `keyboard`. Device server version 34.
+- **If none comes,** the text goes anyway, and the answer says: "No text
+  field had the focus with its keyboard shown within 5 s of the tap, so
+  bb-box typed anyway, and the first keys may be lost: check what the
+  field reads."
+- The panel's Type text is the person's own input: it types into the
+  field the person has opened and sees, so it is unchanged.
+- `computer_type`'s description says it waits.
+
+Tests: after a tap that opens a field, the text goes only once the field
+and its keyboard show, on iOS and Android; with no keyboard, the text
+goes after the whole wait, with the words.
+
+### Checked before the deploy
+
+`DeviceComputer`, the code `computer_type` runs, was run on each box over
+the device server's own socket, with the device server's new tree put in
+its own folder and started again. Each run tapped Safari's closed address
+field, or Chrome's on Android, and typed a text with a paste, then closed
+the field. Test values only.
+
+| Box | Before, through production | This change |
+| --- | --- | --- |
+| Shared slot on a Tart host made for the box, iPhone 18 Pro | lost the keys before the paste, 2 of 2 (F-23b's check) | `bbtest one`, `two` and `three ✓ 日本 é`: 3 of 3 whole and in order |
+| Dedicated Tart box, iPhone 18 Pro | 1 of 1 whole | 3 of 3 whole and in order |
+| Dedicated box, with the device server's old tree, which shows no keyboard | | 3 of 3 whole, each after the 5 s wait, with the words |
+| android box, Pixel 8, Chrome's address bar | 3 of 3 whole: Android gives the field the focus at once | 3 of 3 whole, no wait words |
+
+Main's code also took 3 of 3 whole through the same harness on the
+shared slot, so the loss depends on timing, as the read above shows.
