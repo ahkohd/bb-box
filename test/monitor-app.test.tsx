@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
-import type { ExperimentalSidebarFooterDisclosureProps } from "@get-bb/plugin-sdk/app";
+import type { ExperimentalSidebarFooterDisclosureProps, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { ComponentType } from "react";
-import type { BoxEntry, Contract, Machine, MonitorSnapshot } from "../src/plugin/contract.ts";
+import type { BoxEntry, Contract, Machine, MachinesState, MonitorSnapshot, ThreadOnBox } from "../src/plugin/contract.ts";
 import type { BoxView } from "../src/plugin/views.ts";
 
 const SERVER_HOST = "host_server";
@@ -76,15 +76,29 @@ function boxView(patch: Partial<BoxView> & Pick<BoxView, "id" | "name">): BoxVie
 }
 
 const BOX_ENTRIES: BoxEntry[] = [
-  { threadId: "thr_lxc", owner: "thread", box: boxView({ id: "bx_lxc", name: "glad-coral", terminal: true }) },
+  { threadId: "thr_lxc", owner: "thread", box: boxView({ id: "bx_lxc", name: "glad-coral", terminal: true, enrol: { state: "enrolled", hostId: "host_lxc", error: null } }) },
   { threadId: "thr_slot", owner: "thread", box: boxView({ id: "bx_slot", name: "keen-iris", os: "macos", terminal: false, device: { platform: "ios", model: "iPhone 17", simulatorHost: false } }) },
-  { threadId: "operator", owner: "yours", box: boxView({ id: "bx_desk", name: "quiet-moth", desktop: true }) },
+  { threadId: "operator", owner: "yours", box: boxView({ id: "bx_desk", name: "quiet-moth", desktop: true, enrol: { state: "enrolled", hostId: "host_desk", error: null } }) },
   { threadId: "thr_both", owner: "thread", box: boxView({ id: "bx_both", name: "brisk-wren", desktop: true, device: { platform: "android", model: "Pixel 9", simulatorHost: false } }) },
   { threadId: "thr_stopped", owner: "thread", box: boxView({ id: "bx_stopped", name: "deep-elm", desktop: true, state: "stopped" }) },
 ];
 
+const CHIPS_ON_QUIET_MOTH: ThreadOnBox[] = [
+  { id: "thr_chip_idle", title: "Idle on the chips", running: false, activeAt: 5 },
+  { id: "thr_chip_busy", title: "Busy on the chips", running: true, activeAt: 1 },
+];
+
+const MACHINES_STATE = {
+  machines: [{ box: BOX_ENTRIES[2]!.box, threads: CHIPS_ON_QUIET_MOTH }],
+  kinds: [],
+  desktopOnDemand: null,
+  desktopProblem: null,
+  access: null,
+} as unknown as MachinesState;
+
 function handlers(readings: Record<string, MonitorSnapshot>): PluginRpcTestHandlers<Contract> {
   return {
+    "machines.list": () => MACHINES_STATE,
     "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true }),
     "monitor.machines": () => ({ machines: MACHINES }),
     allBoxes: () => BOX_ENTRIES,
@@ -295,9 +309,9 @@ test("F-24: a section's tooltip does not show while its section has scrolled out
   }
 });
 
-function openMonitor(machineId: string | null) {
+function openMonitor(machineId: string | null, threads: readonly PluginSidebarThread[] = []) {
   if (machineId) localStorage.setItem("bb-box:monitor:machine", machineId);
-  return renderSlot(footer!, { dismiss: vi.fn() }, { rpc: handlers({}), pluginId: "bb-box" });
+  return renderSlot(footer!, { dismiss: vi.fn() }, { rpc: handlers({}), pluginId: "bb-box", sidebarThreads: { threads } });
 }
 
 function header(): HTMLElement {
@@ -436,3 +450,126 @@ test("the header has no settings gear: the Monitor's settings are on BB Box's se
   expect(within(header()).queryByRole("link", { name: "Machine status settings" })).toBeNull();
   expect(tabbable(header()).map((element) => element.getAttribute("aria-label"))).toEqual(["Machine", "Reload machine status", "Hide machine status"]);
 });
+
+function sidebarThread(id: string, title: string, patch: { hostId?: string; status?: string; pending?: boolean; updatedAt?: number; archived?: boolean } = {}): PluginSidebarThread {
+  return {
+    id,
+    projectId: "proj_one",
+    title,
+    titleFallback: null,
+    displayTitle: title,
+    status: patch.status ?? "idle",
+    hasPendingInteraction: patch.pending ?? false,
+    isArchived: patch.archived ?? false,
+    isHidden: false,
+    host: patch.hostId ? { id: patch.hostId, name: patch.hostId } : null,
+    href: `/projects/proj_one/threads/${id}`,
+    createdAt: 0,
+    updatedAt: patch.updatedAt ?? 0,
+  } as unknown as PluginSidebarThread;
+}
+
+function threadLabels(menu: HTMLElement): string[] {
+  const group = within(menu).queryByRole("group", { name: "Threads" });
+  return group ? within(group).getAllByRole("menuitem").map((item) => item.getAttribute("aria-label") ?? item.textContent ?? "") : [];
+}
+
+const HOLDER = sidebarThread("thr_lxc", "Builds the release", { status: "idle", updatedAt: 9 });
+const ON_GLAD_CORAL = sidebarThread("thr_child", "Runs the tests on the box", { hostId: "host_lxc", status: "active", updatedAt: 3 });
+const ELSEWHERE = sidebarThread("thr_other", "Works somewhere else", { hostId: "host_build", status: "active" });
+
+test("a thread's box lists, after a divider and a Threads label, the thread that holds it, then the threads running on it, each with whether it is working", async () => {
+  openMonitor("host_lxc", [ELSEWHERE, ON_GLAD_CORAL, HOLDER]);
+  const menu = await openViews();
+  expect(within(menu).getAllByRole("separator")).toHaveLength(1);
+  expect(within(menu).getByText("Threads")).toBeTruthy();
+  expect(items(menu)).toEqual(["Open terminal", "Builds the release", "Runs the tests on the box"]);
+  expect(threadLabels(menu)).toEqual(["Builds the release, idle", "Runs the tests on the box, working"]);
+  const working = within(menu).getByRole("menuitem", { name: "Runs the tests on the box, working" });
+  expect(within(working).getByLabelText("Working")).toBeTruthy();
+  expect(within(within(menu).getByRole("menuitem", { name: "Builds the release, idle" })).queryByLabelText("Working")).toBeNull();
+});
+
+test("a kept machine lists the threads running on it, working first, then the most recent, as its Boxes row's chips do; archived threads are not listed", async () => {
+  openMonitor("box:bx_desk", [
+    sidebarThread("thr_old", "Finished last week", { hostId: "host_desk", updatedAt: 1 }),
+    sidebarThread("thr_new", "Finished today", { hostId: "host_desk", updatedAt: 8 }),
+    sidebarThread("thr_ask", "Waits on a question", { hostId: "host_desk", pending: true, updatedAt: 2 }),
+    sidebarThread("thr_busy", "Starts the server", { hostId: "host_desk", status: "starting", updatedAt: 4 }),
+    sidebarThread("thr_gone", "Archived", { hostId: "host_desk", archived: true, updatedAt: 9 }),
+  ]);
+  expect(threadLabels(await openViews())).toEqual(["Starts the server, working", "Waits on a question, working", "Finished today, idle", "Finished last week, idle"]);
+});
+
+test("more than 5 threads: the first 5, then N more on the Boxes page, which opens the Boxes page where the box is listed", async () => {
+  const seven = Array.from({ length: 7 }, (_, index) => sidebarThread(`thr_${index}`, `Thread ${index}`, { hostId: "host_desk", updatedAt: 10 - index }));
+  const kept = openMonitor("box:bx_desk", seven);
+  const menu = await openViews();
+  expect(threadLabels(menu)).toEqual(["Thread 0, idle", "Thread 1, idle", "Thread 2, idle", "Thread 3, idle", "Thread 4, idle", "2 more on the Boxes page"]);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "2 more on the Boxes page" }));
+  expect(kept.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("machines"));
+  cleanup();
+  const children = Array.from({ length: 6 }, (_, index) => sidebarThread(`thr_${index}`, `Child ${index}`, { hostId: "host_lxc", updatedAt: 10 - index }));
+  const held = openMonitor("host_lxc", [HOLDER, ...children]);
+  const heldMenu = await openViews();
+  expect(threadLabels(heldMenu).at(0)).toBe("Builds the release, idle");
+  fireEvent.click(within(heldMenu).getByRole("menuitem", { name: "2 more on the Boxes page" }));
+  expect(held.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("threads"));
+});
+
+test("a box with no threads has no divider and no Threads section", async () => {
+  openMonitor("box:bx_both", [ELSEWHERE]);
+  const menu = await openViews();
+  expect(items(menu)).toEqual(["Open emulator", "Open desktop", "Open terminal"]);
+  expect(within(menu).queryByRole("separator")).toBeNull();
+  expect(within(menu).queryByText("Threads")).toBeNull();
+});
+
+test("a thread item opens that thread through BB's navigation, as a thread chip does", async () => {
+  const monitor = openMonitor("host_lxc", [HOLDER, ON_GLAD_CORAL]);
+  await openViews();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Runs the tests on the box, working" }));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual({ method: "toThread", threadId: "thr_child" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+});
+
+test("the keyboard moves from the views to the threads in order, past the divider and the label", async () => {
+  openMonitor("box:bx_desk", [sidebarThread("thr_a", "First thread", { hostId: "host_desk", status: "active" }), sidebarThread("thr_b", "Second thread", { hostId: "host_desk" })]);
+  const open = await openButton();
+  open.focus();
+  fireEvent.keyDown(open, { key: "Enter" });
+  await screen.findByRole("menu");
+  const focused = () => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.textContent;
+  await waitFor(() => expect(focused()).toBe("Open desktop"));
+  for (const next of ["Open terminal", "First thread, working", "Second thread, idle"]) {
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    await waitFor(() => expect(focused()).toBe(next));
+  }
+});
+
+function withoutLiveThreads(replacement: (() => never) | undefined, run: () => Promise<void>): Promise<void> {
+  const app = (globalThis as unknown as { __bbPluginRuntime: { pluginSdkApp: Record<string, unknown> } }).__bbPluginRuntime.pluginSdkApp;
+  const live = app.experimental_useSidebarThreads;
+  if (replacement) app.experimental_useSidebarThreads = replacement;
+  else delete app.experimental_useSidebarThreads;
+  return run().finally(() => {
+    app.experimental_useSidebarThreads = live;
+  });
+}
+
+for (const [why, replacement] of [["missing", undefined], ["throws", () => { throw new Error("no sidebar here"); }]] as const) {
+  test(`when BB's live thread list is ${why}, a kept machine lists its Boxes row's chips, and a thread's box lists none`, async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await withoutLiveThreads(replacement, async () => {
+      openMonitor("box:bx_desk");
+      const menu = await openViews();
+      await waitFor(() => expect(threadLabels(menu)).toEqual(["Busy on the chips, working", "Idle on the chips, idle"]));
+      cleanup();
+      openMonitor("host_lxc");
+      const held = await openViews();
+      expect(items(held)).toEqual(["Open terminal"]);
+      expect(within(held).queryByRole("separator")).toBeNull();
+    });
+    vi.mocked(console.error).mockRestore();
+  });
+}

@@ -48,4 +48,20 @@ const MenuItem = React.forwardRef<
   );
 });
 
-export { Menu, MenuTrigger, MenuContent, MenuItem };
+const MenuGroup = MenuPrimitive.Group;
+
+const MenuLabel = React.forwardRef<
+  React.ComponentRef<typeof MenuPrimitive.Label>,
+  React.ComponentPropsWithoutRef<typeof MenuPrimitive.Label>
+>(function MenuLabelComponent({ className, ...props }, ref) {
+  return <MenuPrimitive.Label ref={ref} className={cn("px-2 pb-1 pt-1.5 text-xs text-muted-foreground", className)} {...props} />;
+});
+
+const MenuSeparator = React.forwardRef<
+  React.ComponentRef<typeof MenuPrimitive.Separator>,
+  React.ComponentPropsWithoutRef<typeof MenuPrimitive.Separator>
+>(function MenuSeparatorComponent({ className, ...props }, ref) {
+  return <MenuPrimitive.Separator ref={ref} className={cn("-mx-1 my-1 h-px bg-border", className)} {...props} />;
+});
+
+export { Menu, MenuTrigger, MenuContent, MenuItem, MenuGroup, MenuLabel, MenuSeparator };

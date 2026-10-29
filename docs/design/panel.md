@@ -762,6 +762,32 @@ the Boxes page's rows do. The Box panel's row takes its quick actions from
 machine list's `boxId`, and the box itself from the Boxes page's list,
 `allBoxes`.
 
+After the views come the threads on the box (the owner, 29 October 2026:
+"list of threads that this machine is working"): a divider, a "Threads"
+label, then one item for each thread, with its title and, while it works,
+the spinning mark the Boxes row's thread chips have. A thread's box lists
+the thread that holds it first, then the threads running on it as a BB
+machine. A kept machine lists the threads running on it, the ones its
+Boxes row shows as chips. Both are in the chips' order: working first,
+then the most recently active. An item opens its thread through BB's
+navigation, as a chip does. The menu shows at most 5; after them, "2 more
+on the Boxes page" opens the Boxes page's Machines tab for a kept machine,
+where its row has every chip, and its Threads tab for a thread's box. A
+box with no threads has no divider and no section. Screen readers hear
+each item as its title and "working" or "idle", in the menu's group named
+Threads; the arrows move from the views to the threads in order.
+
+The threads come from BB's own live thread list
+(`experimental_useSidebarThreads`): those whose machine is the box's BB
+machine, and the holder by its ID, not archived. That list costs no
+request and changes when BB's sidebar does; the chips' list,
+`machines.list`, refreshes only on a box's events. "Working" is the
+chips' rule, `threadOnBox` (`src/plugin/thread-on-box.ts`): starting,
+active, pending or stopping, or waiting on a question. That hook is
+experimental, so when it is missing or throws, a kept machine lists the
+threads from `machines.list`, as its chips do, and a thread's box lists
+none (`src/app/monitor/box-threads.tsx`).
+
 A box that is not ready keeps its items, disabled, each with the reason
 under its words, as in "brisk-wren is stopped". The Box panel's row hides
 its buttons instead, as before. The menu is the Monitor's own, styled as

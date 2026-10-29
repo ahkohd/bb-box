@@ -60,6 +60,7 @@ import { bbAppDigest, DockerImages, outdated } from "./docker-images.ts";
 import { hostContract } from "../host/contract.ts";
 import { Refreshing } from "./refreshing.ts";
 import type { DesktopOnDemandView, ThreadOnBox } from "./contract.ts";
+import { threadOnBox } from "./thread-on-box.ts";
 import { dockerKind } from "../backends/docker/backend.ts";
 import { NEW_BOX_PROVIDER_ID, newBoxHost, registerNewBox } from "./new-box.ts";
 import { registerRpc } from "./rpc.ts";
@@ -1508,10 +1509,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const hostId = box.enrol.hostId;
       if (!hostId) return [];
       const threads = await bb.sdk.threads.list({ hostId, archived: false, includeHidden: true });
-      const working = new Set(["active", "starting", "pending", "stopping"]);
       return threads
         .filter((thread) => !isSet(thread.archivedAt) && !isSet(thread.deletedAt))
-        .map((thread): ThreadOnBox => ({ id: thread.id, title: thread.title ?? thread.titleFallback ?? null, running: working.has(thread.status) || thread.hasPendingInteraction, ...(typeof thread.updatedAt === "number" ? { activeAt: thread.updatedAt } : {}) }))
+        .map(threadOnBox)
         .sort((a, b) => Number(b.running) - Number(a.running) || (b.activeAt ?? 0) - (a.activeAt ?? 0));
     },
     async checkInUse(box, action) {
