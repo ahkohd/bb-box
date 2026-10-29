@@ -186,7 +186,7 @@ With control, the device takes your pointer, keys and text:
 | Cmd+V (Ctrl+V off a Mac) | your computer's clipboard, pasted into the device |
 | **Type text** | the whole text: as keys when every letter has a key, otherwise as one paste |
 
-When bb-box pastes for you or the agent, it puts the device's own clipboard back afterwards, your Cmd+V and **Paste from this computer** too. BB Box reads your clipboard only when you paste, as text, never when you take control, so a paste from the device's own menu uses the device's own clipboard.
+When bb-box pastes for you or the agent, it puts the device's own clipboard back afterwards, your Cmd+V and **Paste from this computer** too. BB Box reads your clipboard only when you paste, as text, never when you take control, so a paste from the device's own menu uses the device's own clipboard. If your browser does not let BB Box read your clipboard, a field opens: paste your text there and select **Paste into the device**.
 
 On iOS, each paste shows 'pasted from CoreSimulatorBridge' at the top of the screen for about 2.5 seconds, and the device takes no keys while it shows, so bb-box holds your keys until it goes. Touches are not held. iOS also adds a space before pasted text that follows a word or a punctuation mark directly, as it does on a phone; type long or mixed text with **Type text**, which pastes it in one piece.
 

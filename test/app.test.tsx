@@ -18,7 +18,7 @@ import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-off
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
 import { boxTitleBadges, fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
-import { BoxLine, DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
+import { BoxLine, DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DEVICE_PASTE_FIELD_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, SLOW_VIDEO_RETRY_MS, SLOW_VIDEO_STILLS_WORDS, STALL_MS, STILLS_WORDS, SelkiesSession, decodesMacroblocks, devicePasteTooLongWords, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
 import { DEVICE_CLIPBOARD_MOST, PASTE_REQUEST_SINCE_VERSION } from "../src/core/device.ts";
@@ -3250,6 +3250,31 @@ test("a device gets this computer's clipboard only with a paste: taking control 
     expect(await slot.findByText(devicePasteTooLongWords(DEVICE_CLIPBOARD_MOST + 1))).toBeTruthy();
     expect(pastes()).toHaveLength(2);
     expect(clipboardSent()).toEqual([]);
+  } finally {
+    unsize();
+    undo();
+  }
+});
+
+test("on a device, the field Paste offers when this computer's clipboard cannot be read says the device's clipboard is put back, and sends one paste (F-16)", async () => {
+  const undo = withVideo();
+  const unsize = sizedPanel(900, 800);
+  try {
+    window.sessionStorage.clear();
+    fakeClipboard(() => Promise.reject(new Error("Read permission denied.")));
+    const { slot, requests } = await deviceShown("iPhone 18 Pro", IPHONE_STATE, iosHello().replace('"version":10', `"version":${PASTE_REQUEST_SINCE_VERSION}`));
+    fireEvent.click(slot.getByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    const menu = await openMenu(slot.getByRole("button", { name: "Desktop actions" }));
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Paste from this computer" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(DEVICE_PASTE_FIELD_WORDS)).toBeTruthy();
+    expect(within(dialog).queryByText(/goes to the box's clipboard/)).toBeNull();
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Text to paste" }), { target: { value: "typed into the field" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Paste into the device" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(requests().filter((request) => request.type === "paste")).toHaveLength(1));
+    expect(requests().find((request) => request.type === "paste")).toMatchObject({ type: "paste", text: "typed into the field" });
   } finally {
     unsize();
     undo();

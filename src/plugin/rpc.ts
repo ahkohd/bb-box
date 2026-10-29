@@ -210,9 +210,10 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       if (!answer.ok) return { png: null, model: answer.state?.model ?? null, error: answer.error.words };
       return answer.result.type === "screenshot" ? { png: answer.result.png, model: answer.state.model, error: null } : { png: null, model: answer.state.model, error: "The device server answered without a picture." };
     },
-    async desktopPaste({ threadId, box: ref, viewer, text, automatic }) {
+    async desktopPaste({ threadId, box: ref, viewer, text }) {
       const box = await desktopBox(threadId, ref);
-      return (await app.desktops.paste(box.id, viewer, text, { automatic: automatic === true })) ? null : false;
+      await app.desktops.paste(box.id, viewer, text);
+      return null;
     },
     handBack: ({ threadId, box: ref }) =>
       change("Handing back control", async () => {

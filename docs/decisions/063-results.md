@@ -3648,3 +3648,24 @@ Not checked here: the panel's Paste and Cmd+V on an android box, which go
 through the same paste as the agent's text; an app's own text field other
 than Chrome's address bar; and how much longer a paste takes, which is at
 least the 100 ms of quiet.
+
+## F-16: the paste RPC's automatic flag, and the paste field's words on a device
+
+Built on 29 October 2026.
+
+- **No automatic flag.** F-15 had the `desktopPaste` RPC refuse a send
+  marked `automatic`, which only a panel tab opened before F-15's deploy
+  made. Those tabs are long gone, and the panel sends no such flag, so the
+  flag is gone: the RPC takes the viewer's text and answers null, or
+  refuses in words.
+- **The paste field says what a device does.** Where the browser will not
+  let the panel read the clipboard, Paste from this computer opens a field
+  to paste into. On a device it said the text "goes to the box's
+  clipboard". It now says: "This computer's clipboard cannot be read here.
+  Paste the text below: it is pasted where the cursor is, and the
+  device's own clipboard is put back after." Its button says Paste into
+  the device. A desktop's words are as before.
+
+Tests: the desktop paste test without the flag; on a device, the field
+shows the device's words, and its button sends one `paste` request with
+the field's text.
