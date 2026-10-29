@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { StatusDot, type Tone } from "@/src/app/common.tsx";
 import type { Check, Health } from "./data";
+import type { BackendState } from "./model";
 import { relative } from "./store";
 import { Card, Icon } from "./ui";
 
@@ -61,15 +62,16 @@ function Note({ text }: { text: string }) {
 
 export function healthTone(health: Health | null, checking: boolean): { tone: Tone; words: string } {
   if (checking) return { tone: "busy", words: "Checking…" };
-  if (!health) return { tone: "off", words: "Not checked" };
+  if (!health) return { tone: "off", words: "Not checked yet" };
   if (health.checks.some((check) => check.status === "fail")) return { tone: "bad", words: "Not working" };
   if (health.checks.some((check) => check.status === "warn")) return { tone: "warn", words: "Needs attention" };
   return { tone: "ok", words: "Ready" };
 }
 
-export function HealthCard({ health, checking, onCheck, againstDraft, off }: { health: Health | null; checking: boolean; onCheck: () => void; againstDraft?: boolean; off?: boolean }) {
+export function HealthCard({ state, health, checking, onCheck, againstDraft, off, checkLabel }: { state?: BackendState; health: Health | null; checking: boolean; onCheck: () => void; againstDraft?: boolean; off?: boolean; checkLabel?: string }) {
   const [all, setAll] = useState(false);
-  const { tone, words } = off && !checking && !againstDraft ? { tone: "off" as Tone, words: "Off" } : healthTone(health, checking);
+  const fromChecks = healthTone(health, checking);
+  const { tone, words } = checking ? fromChecks : againstDraft ? fromChecks : off ? { tone: "off" as Tone, words: state?.status === "unfinished" ? "Not finished" : "Off" } : state && ["changed", "stale", "never"].includes(state.status) ? { tone: state.tone, words: state.words } : fromChecks;
   const problems = health?.checks.filter((check) => check.status === "fail" || check.status === "warn") ?? [];
   const rest = health?.checks.filter((check) => !problems.includes(check)) ?? [];
   const passed = health?.checks.filter((check) => check.status === "ok").length ?? 0;
@@ -84,19 +86,23 @@ export function HealthCard({ health, checking, onCheck, againstDraft, off }: { h
           </p>
           <p className="mt-0.5 pl-3 text-xs text-subtle-foreground">
             {checking
-              ? "Running its checks, up to 30 s."
-              : off && !againstDraft
-                ? "Off: it takes no new boxes. Check it before you turn it on."
-                : health
-                  ? againstDraft
-                    ? "Checked just now, against your changes. Nothing is saved yet."
-                    : `${passed} of ${health.checks.length} checks passed · checked ${relative(health.checkedAt)}`
-                  : "Not checked yet."}
+              ? "Running all its checks, up to 30 s."
+              : againstDraft
+                ? "Checked just now, against your unsaved changes. Nothing is saved yet."
+                : off
+                  ? state?.status === "unfinished"
+                    ? `${state.items[0] ?? "Some settings are missing"}. Check it before you turn it on.`
+                    : "It takes no new boxes. Check it before you turn it on."
+                  : health
+                    ? state?.status === "changed"
+                      ? `Its settings changed after its last check, ${relative(health.checkedAt)}, which passed ${passed} of ${health.checks.length}. Check again to know.`
+                      : `${passed} of ${health.checks.length} checks passed · checked ${relative(health.checkedAt)}${state?.status === "stale" ? ", so it may have changed since" : ""}`
+                    : "Not checked yet."}
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" className="h-7 shrink-0" disabled={checking} onClick={onCheck}>
           {checking ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-          {checking ? "Checking…" : health ? "Check again" : "Check"}
+          {checking ? "Checking…" : (checkLabel ?? (health ? "Check again" : "Check"))}
         </Button>
       </div>
       {!checking && problems.length ? (
@@ -115,7 +121,7 @@ export function HealthCard({ health, checking, onCheck, againstDraft, off }: { h
       ) : null}
       {!checking && rest.length ? (
         <div className="border-t border-border">
-          <button type="button" onClick={() => setAll((current) => !current)} aria-expanded={all} className="flex w-full cursor-pointer items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground">
+          <button type="button" onClick={() => setAll((current) => !current)} aria-expanded={all} className="flex w-full cursor-pointer items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
             <Icon name={all ? "ChevronDown" : "ChevronRight"} className="size-3.5" aria-hidden />
             {all ? "Hide the checks" : problems.length ? `${rest.length} other checks` : `Show the ${rest.length} checks`}
           </button>

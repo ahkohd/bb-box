@@ -1,7 +1,7 @@
 import meta from "./meta.json";
 
 export type FieldValue = string | number | boolean;
-export type SecretState = { readonly set: boolean };
+export type SecretState = { readonly set: boolean; readonly version: string };
 export type Stored = FieldValue | SecretState;
 
 export interface FieldView {
@@ -72,6 +72,7 @@ export interface HostConfig {
 export interface BackendConfig {
   readonly id: string;
   readonly type: string;
+  readonly label?: string;
   readonly enabled: boolean;
   readonly fields: Readonly<Record<string, Stored>>;
   readonly hosts?: readonly HostConfig[];
@@ -92,13 +93,15 @@ export interface ProjectImage {
   readonly projects: readonly string[];
   readonly bake: "auto" | "always" | "never";
   readonly script: string;
+  readonly check: string;
   readonly source: string;
   readonly updated: string;
+  readonly builds: string;
 }
 
 export interface BoxFile {
   readonly path: string;
-  readonly set: boolean;
+  readonly content: SecretState;
 }
 
 export interface Document {
@@ -115,10 +118,11 @@ export interface Document {
     readonly encoderLedger: boolean;
     readonly iosEncoder: "auto" | "hardware" | "software";
     readonly files: readonly BoxFile[];
-    readonly tailnet: { readonly mode: "off" | "oauth"; readonly tags: string; readonly clientId: boolean; readonly clientSecret: boolean };
+    readonly tailnet: { readonly mode: "off" | "oauth"; readonly tags: string; readonly clientId: SecretState; readonly clientSecret: SecretState };
   };
   readonly monitor: { readonly enabled: boolean; readonly refreshIntervalSeconds: number; readonly backgroundMonitoring: boolean; readonly pressureNotifications: boolean };
   readonly images: readonly ProjectImage[];
+  readonly migrated: string | null;
 }
 
 export type CheckStatus = "ok" | "warn" | "fail" | "skipped";
@@ -135,7 +139,15 @@ export interface Health {
   readonly summary: string;
   readonly checks: readonly Check[];
   readonly checkedAt: number;
+  readonly checkedRevision?: number;
   readonly notes?: readonly string[];
+}
+
+export interface WarmShort {
+  readonly kind: string;
+  readonly ready: number;
+  readonly wanted: number;
+  readonly reason: string;
 }
 
 export interface BackendLive {
@@ -143,6 +155,9 @@ export interface BackendLive {
   readonly offers: readonly string[];
   readonly health: Health | null;
   readonly checking: boolean;
+  readonly changedRevision: number;
+  readonly warmShort?: readonly WarmShort[];
+  readonly building?: string;
   readonly bbMachine?: { readonly name: string; readonly connected: boolean; readonly facts: string };
 }
 
@@ -152,6 +167,7 @@ export interface DockerMachine {
   readonly docker: string | null;
   readonly facts: string;
   readonly connected: boolean;
+  readonly fault?: string;
 }
 
 export interface StandardImage {
@@ -160,13 +176,14 @@ export interface StandardImage {
   readonly age: string;
   readonly due: string | null;
   readonly last: string;
+  readonly lastState: "refreshed" | "failed" | "waiting" | "skipped" | "not started" | null;
 }
 
 export const HOURS = 3_600_000;
 export const NOW = Date.now();
 
-function secret(set: boolean): SecretState {
-  return { set };
+function secret(set: boolean, version = "r180"): SecretState {
+  return { set, version: set ? version : "none" };
 }
 
 function defaultsOf(id: string): KindConfig {
@@ -228,8 +245,8 @@ export function initialDocument(firstRun: boolean): Document {
       testDevice: false,
       encoderLedger: true,
       iosEncoder: "auto",
-      files: firstRun ? [] : [{ path: ".pi/agent/models.json", set: true }],
-      tailnet: firstRun ? { mode: "off", tags: "tag:bb-box", clientId: false, clientSecret: false } : { mode: "oauth", tags: "tag:bb-box", clientId: true, clientSecret: true },
+      files: firstRun ? [] : [{ path: ".pi/agent/models.json", content: secret(true, "r150") }],
+      tailnet: firstRun ? { mode: "off", tags: "tag:bb-box", clientId: secret(false), clientSecret: secret(false) } : { mode: "oauth", tags: "tag:bb-box", clientId: secret(true, "r120"), clientSecret: secret(true, "r120") },
     },
     monitor: { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true },
     images: firstRun
@@ -241,10 +258,13 @@ export function initialDocument(firstRun: boolean): Document {
             projects: ["web-app"],
             bake: "auto",
             script: "#!/bin/sh\nset -e\napt-get update\napt-get install -y postgresql-client redis-tools\nnpm install -g pnpm@9",
-            source: ".bb/box-setup.sh",
+            check: "psql --version && redis-cli --version && pnpm --version",
+            source: ".bb/box-setup.sh and .bb/box-check.sh",
             updated: "26 October",
+            builds: "Built ahead after 2 boxes in 14 days; last built 27 October for Linux on Proxmox LXC",
           },
         ],
+    migrated: firstRun ? null : "3 October",
   };
 }
 
@@ -329,6 +349,7 @@ export const BOX_COUNTS: Record<string, number> = { "proxmox-lxc": 4, tart: 1, "
 export const DOCKER_MACHINES: readonly DockerMachine[] = [
   { id: "host_pc1example", name: "pc-1", docker: "29.8.1", facts: "16 cores · 93 GiB memory", connected: true },
   { id: "host_pc2example", name: "pc-2", docker: "29.8.1", facts: "64 cores · 128 GiB memory", connected: true },
+  { id: "host_pc3example", name: "pc-3", docker: "28.1.1", facts: "8 cores · 32 GiB memory", connected: true, fault: "Docker answers, but cannot start a container: permission denied on /var/run/docker.sock. Add BB's user on pc-3 to the docker group, then check again." },
   { id: "host_bb1example", name: "bb-1", docker: null, facts: "", connected: true },
   { id: "host_mac1example", name: "mac-1", docker: null, facts: "", connected: true },
   { id: "host_mac2example", name: "mac-2", docker: null, facts: "", connected: true },
@@ -336,11 +357,11 @@ export const DOCKER_MACHINES: readonly DockerMachine[] = [
 ];
 
 export const STANDARD_IMAGES: readonly StandardImage[] = [
-  { name: "Linux template 9100", backend: "Proxmox LXC", age: "4 days", due: null, last: "Rebuilt 24 October" },
-  { name: "GPU desktop template 9101", backend: "Proxmox LXC", age: "4 days", due: null, last: "Rebuilt 24 October" },
-  { name: "bbbox/linux:1", backend: "Docker on docker-1", age: "9 days", due: "a week old", last: "Rebuilt 19 October" },
-  { name: "bb-box-macos", backend: "Tart on mac-1", age: "16 days", due: "macOS 26.1 is out", last: "Rebuilt 12 October" },
-  { name: "Windows template 9104", backend: "Proxmox QEMU", age: "8 days", due: null, last: "Rebuilt 20 October" },
+  { name: "Linux template 9100", backend: "Proxmox LXC on pve-1", age: "4 days", due: null, last: "Rebuilt last night", lastState: "refreshed" },
+  { name: "GPU desktop template 9101", backend: "Proxmox LXC on pve-1", age: "4 days", due: null, last: "Rebuilt last night", lastState: "refreshed" },
+  { name: "bbbox/linux:1", backend: "Docker on docker-1", age: "9 days", due: "over a week old", last: "Waited last night: docker-1 had no room", lastState: "waiting" },
+  { name: "bb-box-macos", backend: "Tart on mac-1", age: "16 days", due: "macOS 26.1 is out", last: "Failed last night: Tart could not clone it, as mac-1's disk was full", lastState: "failed" },
+  { name: "Windows template 9104", backend: "Proxmox QEMU on pve-1", age: "8 days", due: null, last: "Skipped last night: built within the week", lastState: "skipped" },
 ];
 
 export const SETUP_GROUPS: readonly { readonly title: string; readonly description: string; readonly types: readonly string[] }[] = [
