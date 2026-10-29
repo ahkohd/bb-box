@@ -93,9 +93,9 @@ In order:
    page on its Machines tab.
 
 On every row a switch sits at the right, just before the chevron, and the
-chevron is always the last thing on the row. Switches line up in one column
-and chevrons in another; option rows without a switch keep the switch's
-space. The whole row opens its page; the switch acts on its own.
+chevron is always the last thing on the row. Rows without a switch keep no
+space for one: their value sits close to the chevron. The whole row opens
+its page; the switch acts on its own.
 
 ### Status words
 
