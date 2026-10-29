@@ -117,3 +117,28 @@ The panel's content tooltips now go through `hud-tooltip.tsx`:
 
 The header's own tooltips, Reload and Hide, do not scroll and are unchanged.
 The panel's look is the same.
+
+### F-24 in the panel
+
+Checked on 29 October 2026 in the owner's browser, at 1882 by 1010 px, with
+the panel open on BB's server. The panel's scrolling element was 320 px
+tall, from 642 to 962 px, with the header's bottom edge at 680 px.
+
+Before the deploy, the CPU card's tooltip opened at 741 px, the card's top.
+After one 50 px scroll it was closing, at opacity 0.65, and had moved to
+692 px. After a second it was at 645 px, at opacity 0.01, above the panel's
+top.
+
+After the deploy (main 0df3486), with the same steps:
+
+- The tooltip was hidden in the same frame as the first scroll event, and
+  stayed hidden through two more 50 px scrolls. A screenshot during the
+  scroll showed no tooltip.
+- With the pointer still, 1.2 s after the scroll, the section now under it,
+  Memory, opened its tooltip at its own top, 736 px, inside the panel.
+- Hovering the CPU card again, whose top was then at 591 px under the
+  header, opened its tooltip with its top at 680 px, the header's edge.
+
+The hidden tooltip still plays its fade-out, unseen, before Radix removes
+it, about 150 ms later. Radix's popper replaces the inline animation style
+the fix sets.
