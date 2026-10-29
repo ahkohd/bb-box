@@ -3477,3 +3477,6 @@ android row still read 'vivid-badger Android [VM]'. The browser measured a
 first line of 188 px: the name 80 px and Android 45 px, with their gap,
 left 55 px, and Emulator needs 56 px and its gap. So ranking alone could
 not show Emulator beside a name of that length, and F-22d followed.
+
+After F-22d's deploy (main 80b4b79), at 360 px, the same row read
+'vivid-badger [Emulator] [VM]', with 188 px for its first line.
