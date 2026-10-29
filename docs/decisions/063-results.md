@@ -3356,12 +3356,37 @@ apps are let paste, about 0.3 s for each read-back, and the 250 ms after
 the read. On a host made for the box, the boot is said about 15 to 25 s
 later, the time in which reads and pastes failed before.
 
+### Checked after the deploy
+
+On production BB at main a90c5f9, device server version 32, on 29 October
+2026, with test values only. The agent's checks went through
+`computer_type`; the runs of 20 went through the device server's own
+socket, as before the deploy.
+
+| Box | Check | Result |
+| --- | --- | --- |
+| Shared slot on a Tart host made for it | the first `computer_observe` | the whole Home Screen, 14 elements, first time, in 39 ms. In the boot, two reads of the screen went unanswered, after 10.3 and 7.7 s; the server said the device booted only when the third answered, 20.4 s after the boot |
+| | `computer_type` of `bbtest after boot ✓ 日本 é` into Safari, at once after a reboot | arrived as `✓ 日本 é`: the device's first keyboard showed iOS's tip "Speed up your typing by sliding your finger across the letters", and the keys before the paste went to it. The paste arrived and the clipboard was put back |
+| | the same, after the tip's Continue and another reboot | whole, the clipboard put back |
+| | 20 mixed texts in a row into Safari's address field | 20 of 20 whole, 5 with iOS's smart-paste space; the clipboard put back each time; no paste line in the server's log and no log stream left |
+| Dedicated Tart box | `computer_type` of `bbtest ✓ 日本 é` into the probe app, the device's first boot | whole, the earlier clipboard put back |
+| | `computer_type` of `bbtest reboot ✓ 日本 é`, at once after a reboot | whole, the earlier clipboard put back |
+| | the same 20 mixed texts into the probe app | 20 of 20 whole, 5 with the smart-paste space; the clipboard put back each time; no log stream left |
+
+The server waited 8.3 s for the dedicated box's device to answer after
+its first boot, and 5.0 to 6.0 s after each reboot, on both kinds of box.
+
 ### Not checked here
 
-- **A host's first boot with this change.** A new host gets the deployed
-  server, so this is for after the deploy. Here the boot wait ran on a
-  reboot a minute after its host was made.
 - **A Namespace slot and the pool's Mac,** whose clipboard goes the same
   way as a Tart slot's, through the user's own launchd session.
 - **Android** is unchanged: its clipboard goes back 300 ms after the paste
   key (E21).
+
+### Follow-up
+
+- **The keyboard's first-use tip takes keys.** On a device whose keyboard
+  has never shown, iOS shows a tip with a Continue button as a field takes
+  the focus, and keys typed then are lost. A new slot's device, made
+  fresh, has it; the image's carried devices may not. The image could mark
+  the tip as seen, or `computer_type` could look for it.
