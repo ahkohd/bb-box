@@ -64,7 +64,7 @@ Each kind's entry, by its ID. A kind with no entry has its defaults, in the [kin
 
 ## backends
 
-Each backend's entry, in the order acquire tries them. Its ID is its type, or `<type>:<name>` for another backend of the type. A backend keeps at most 20 warm boxes of a kind.
+Each backend's entry, in the order acquire tries them. Its ID is its type, or `<type>:<name>` for another backend of the type. A backend keeps at most 20 warm boxes of a kind, and only of the kinds it keeps warm, as [Each backend's fields](#each-backends-fields) lists them; a count for another kind is kept but does nothing.
 
 | Key | Type | Default | What it is |
 | --- | --- | --- | --- |
@@ -111,17 +111,17 @@ The Monitor (066): machine status in BB's sidebar footer for BB's server, your m
 
 ## Each backend's fields
 
-| Type | Backend | Kinds |
-| --- | --- | --- |
-| [`proxmox-lxc`](#proxmox-lxc) | Proxmox LXC | linux, linux-desktop, linux-desktop-cpu, linux-desktop-wayland-cpu |
-| [`proxmox-qemu`](#proxmox-qemu) | Proxmox QEMU | windows-desktop, linux, linux-desktop-cpu, android |
-| [`ssh-pool`](#ssh-pool) | SSH host pool | linux, macos, macos-desktop, ios |
-| [`tart`](#tart) | Tart | macos, macos-desktop, linux-arm64, linux-arm64-desktop-cpu, windows-arm64-desktop, ios |
-| [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu |
-| [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
-| [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu, linux-arm64, linux-arm64-desktop-cpu |
-| [`namespace`](#namespace) | Namespace | macos, macos-desktop, linux, linux-desktop-cpu, linux-desktop-wayland-cpu |
-| [`boat`](#boat) | boat.dev | linux, linux-desktop-cpu, android |
+| Type | Backend | Kinds | Keeps warm |
+| --- | --- | --- | --- |
+| [`proxmox-lxc`](#proxmox-lxc) | Proxmox LXC | linux, linux-desktop, linux-desktop-cpu, linux-desktop-wayland-cpu | linux, linux-desktop, linux-desktop-cpu, linux-desktop-wayland-cpu |
+| [`proxmox-qemu`](#proxmox-qemu) | Proxmox QEMU | windows-desktop, linux, linux-desktop-cpu, android | windows-desktop |
+| [`ssh-pool`](#ssh-pool) | SSH host pool | linux, macos, macos-desktop, ios | none |
+| [`tart`](#tart) | Tart | macos, macos-desktop, linux-arm64, linux-arm64-desktop-cpu, windows-arm64-desktop, ios | macos, macos-desktop, windows-arm64-desktop |
+| [`docker`](#docker) | Docker | linux, linux-desktop-cpu, linux-desktop, linux-desktop-wayland-cpu | none |
+| [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu | none |
+| [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu, linux-arm64, linux-arm64-desktop-cpu | none |
+| [`namespace`](#namespace) | Namespace | macos, macos-desktop, linux, linux-desktop-cpu, linux-desktop-wayland-cpu, ios (on shared iOS hosts only) | none |
+| [`boat`](#boat) | boat.dev | linux, linux-desktop-cpu, android | none |
 
 ### proxmox-lxc
 
@@ -199,10 +199,10 @@ Setup: [setup/ssh-pool/README.md](../../setup/ssh-pool/README.md).
 | `machines` | Machines | string | boxes |  | Your machines, one line each, with the kinds of box each serves. A line is a name, [user@]host[:port], its kinds, and optionally via=&lt;jump host>, reset=machine and labels=&lt;words>, such as "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. The kind ios on a Mac lends iOS slots there, each a macOS user with its own device, for iOS boxes asked for with shared: true; ios:&lt;slots> sets how many, where bb-box would estimate them from the Mac. |
 | `known-hosts` | Host keys | string | connection |  | The SSH host keys of every machine and jump host. bb-box connects only to a machine whose key is here. Paste the known_hosts lines setup.sh and setup-mac.sh print. |
 | `ssh-private-key` | SSH private key | string, secret | credentials |  | The SSH key bb-box logs in to the machines with. Paste an unencrypted OpenSSH private key that their admin user accepts. Leave it empty and bb-box makes one and shows its public key, which you then give setup.sh. |
-| `ios-hosts-most` | Slots for iOS boxes per Mac | number | ios-hosts |  | The most iOS slots each Mac has at once, making, ready or held. This counts only Macs whose line lists ios, and a Mac is lent whole only while it lends no slot. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:&lt;slots> on a Mac's line wins. |
-| `ios-hosts-ahead` | Ready slots for iOS boxes kept on a Mac | number | ios-hosts | `1` | Slots each Mac keeps ready, so the next iOS box is ready in seconds. This counts only Macs whose line lists ios, while they are not lent whole. |
-| `ios-hosts-resetting-most` | Slots a Mac resets at once | number | ios-hosts | `4` | The most released iOS slots a Mac resets in one pass, sweeping their files. |
-| `ios-hosts-disk-reserve-gib` | Disk a Mac keeps free (GiB) | number | ios-hosts | `40` | A Mac makes no new iOS slot while it has less free disk than this. |
+| `ios-hosts-most` | Slots per shared iOS host | number | ios-hosts |  | The most slots each shared iOS host has at once, making, ready or held. Here a shared iOS host is a Mac whose line lists ios, and it is lent whole only while it lends no slot. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:&lt;slots> on a Mac's line wins. |
+| `ios-hosts-ahead` | Ready slots kept on a shared iOS host | number | ios-hosts | `1` | Slots a shared iOS host keeps ready, so the next iOS box is ready in seconds. Here a shared iOS host is a Mac whose line lists ios, while it is not lent whole. |
+| `ios-hosts-resetting-most` | Slots a shared iOS host resets at once | number | ios-hosts | `4` | The most released slots a shared iOS host resets in one pass, sweeping their files. |
+| `ios-hosts-disk-reserve-gib` | Disk a shared iOS host keeps free (GiB) | number | ios-hosts | `40` | A shared iOS host makes no new slot while it has less free disk than this. |
 
 ### tart
 
@@ -326,10 +326,10 @@ Setup: [docs/guide/namespace.md](../../docs/guide/namespace.md).
 | `longest-life-hours` | Longest life (hours) | number | boxes | `3` | How long the workspace's plan lets a machine live. That is 3 hours on Developer, 5 on Team and up to 24 on Business. A box ends then, and its thread hears an hour ahead. |
 | `largest-machine` | Largest machine | string | boxes |  | The largest Mac bb-box asks for, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before bb-box asks Namespace, so another backend can take it. Empty: the largest the workspace allows, which bb-box reads from Namespace when the token may, or learns the first time Namespace refuses a Mac for its size. |
 | `ios-hosts-on` | Shared iOS hosts | boolean | ios-hosts | `true` | Lends iOS boxes as macOS users on a shared Namespace Mac. A host is made for an iOS box that finds no slot on a pool Mac or a Tart host, and deleted when its last box goes. It lends once bb-box has measured that Namespace's Macs run the iOS Simulator. A host takes the workspace's one Mac, so no macOS box starts on Namespace while it lives. |
-| `ios-hosts-most` | Slots a host lends at most | number | ios-hosts |  | The most slots a shared host has at once, making, ready or held. Empty, bb-box estimates it from the Mac's cores, memory and video encoder, as for a pool Mac. |
-| `ios-hosts-ahead` | Slots a host keeps ready | number | ios-hosts | `1` | Slots a shared host keeps ready while it holds a box. |
-| `ios-hosts-resetting-most` | Slots a host resets at once | number | ios-hosts | `2` | The most released slots a shared host resets at once. |
-| `ios-hosts-disk-reserve-gib` | Disk a host keeps free (GiB) | number | ios-hosts | `20` | A shared host makes no new slot while it has less free disk than this. |
+| `ios-hosts-most` | Slots per shared iOS host | number | ios-hosts |  | The most slots each shared iOS host has at once, making, ready or held. Empty, bb-box estimates it from the Mac's cores, memory and video encoder, as for a pool Mac. |
+| `ios-hosts-ahead` | Ready slots kept on a shared iOS host | number | ios-hosts | `1` | Slots a shared iOS host keeps ready while it holds a box, so the next box is ready in seconds. |
+| `ios-hosts-resetting-most` | Slots a shared iOS host resets at once | number | ios-hosts | `2` | The most released slots a shared iOS host resets in one pass, sweeping their files. |
+| `ios-hosts-disk-reserve-gib` | Disk a shared iOS host keeps free (GiB) | number | ios-hosts | `20` | A shared iOS host makes no new slot while it has less free disk than this. |
 
 ### boat
 

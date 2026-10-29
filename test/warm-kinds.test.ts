@@ -20,3 +20,12 @@ test("a driver says it keeps warm boxes only of kinds it makes, and only when it
     assert.equal(warmKinds.length > 0, readsWarmCounts(driver.type), `${driver.type}: warmKinds and the warm counts its backend reads agree`);
   }
 });
+
+test("a kind a driver makes only on shared iOS hosts is not among its kinds, and keeps no warm boxes", () => {
+  for (const driver of DRIVERS) {
+    for (const kind of driver.sharedKinds ?? []) {
+      assert.ok(!driver.kinds.includes(kind), `${driver.type} lists ${kind} once`);
+      assert.ok(!(driver.warmKinds ?? []).includes(kind), `${driver.type} keeps no warm ${kind} boxes`);
+    }
+  }
+});

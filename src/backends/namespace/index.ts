@@ -9,6 +9,7 @@ export const namespaceDriver: BackendDriver<NamespaceConfig> = {
   nature: "virtual",
   form: "VM",
   kinds: NAMESPACE_KINDS,
+  sharedKinds: ["ios"],
   fields: NAMESPACE_FIELDS,
   setup: { guide: "docs/guide/namespace.md", scripts: [] },
   parse: parseNamespacePart,

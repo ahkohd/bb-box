@@ -275,9 +275,9 @@ const checks = {
     await open(page, "#kind/ios", "iOS Simulator");
     const where = page.getByRole("region", { name: "Where it runs" });
     const listed = (await where.locator("[data-row-key^='runs-on-']").allTextContents()).map((text) => text.trim());
-    expect(listed.join() === "Tart,SSH host pool", `iOS Simulator lists ${listed}`);
+    expect(listed.join() === "Tart,SSH host pool,Namespace", `iOS Simulator lists ${listed}`);
     const iosNotes = await where.getByText("No warm boxes: its shared iOS hosts keep slots ready instead.").count();
-    expect(iosNotes === 2, `each says why it keeps no warm boxes: ${iosNotes}`);
+    expect(iosNotes === 3, `each says why it keeps no warm boxes: ${iosNotes}`);
     expect(!(await where.getByRole("textbox").count()), "no warm count where none is kept");
     await snap(page, run, "live-ios-where");
     await where.getByRole("button", { name: "Open its shared iOS hosts" }).first().click();

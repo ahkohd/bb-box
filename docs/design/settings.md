@@ -296,9 +296,9 @@ revision reloads and says so.
   cores as a whole number, at least 1."
 - **Where it runs**: each backend that makes the kind, in the document's
   order, which is the order a new box tries them. A backend is listed when
-  its driver declares the kind or when it makes it now: Namespace makes iOS
-  boxes only through its shared iOS hosts, so it is listed for the iOS
-  Simulator while it lends them. Each row has its name (a link to its page),
+  its driver declares the kind, among its kinds or its `sharedKinds` (kinds
+  it makes only on shared iOS hosts, as Namespace makes iOS boxes), or when
+  it makes it now. Each row has its name (a link to its page),
   its form, whether it makes the kind now, is off, is set up not to make
   it, or cannot make it now (with why), its warm count and any shortfall.
   A warm count is offered only where the backend keeps warm boxes of the

@@ -225,7 +225,7 @@ function configurationPage(): string {
     "",
     "## Each backend's fields",
     "",
-    table(["Type", "Backend", "Kinds", "Keeps warm"], DRIVERS.map((driver) => [`[\`${driver.type}\`](#${anchor(driver.type)})`, driver.label, driver.kinds.join(", "), driver.warmKinds?.join(", ") || "none"])),
+    table(["Type", "Backend", "Kinds", "Keeps warm"], DRIVERS.map((driver) => [`[\`${driver.type}\`](#${anchor(driver.type)})`, driver.label, [...driver.kinds, ...(driver.sharedKinds ?? []).map((kind) => `${kind} (on shared iOS hosts only)`)].join(", "), driver.warmKinds?.join(", ") || "none"])),
   ];
   for (const driver of DRIVERS) {
     lines.push("", `### ${driver.type}`, "", `${driver.label}: ${driver.description}`, "", `Setup: [${driver.setup.guide}](../../${driver.setup.guide}).`);
@@ -242,7 +242,7 @@ function screenWords(model: DeviceModel): string {
 }
 
 function kindsPage(): string {
-  const offeredBy = (kind: string) => DRIVERS.filter((driver) => driver.kinds.includes(kind)).map((driver) => driver.label);
+  const offeredBy = (kind: string) => DRIVERS.flatMap((driver) => (driver.kinds.includes(kind) ? [driver.label] : driver.sharedKinds?.includes(kind) ? [`${driver.label} (on shared iOS hosts only)`] : []));
   const kinds = Object.keys(KIND_INFO);
   const lines = [
     "# Kinds and sizes",

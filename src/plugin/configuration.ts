@@ -359,7 +359,7 @@ export class Configuration {
         id,
         ...kindInfo(id),
         docker: docker(id),
-        drivers: drivers.filter((driver) => driver.kinds.includes(id)).map((driver) => driver.type),
+        drivers: drivers.filter((driver) => driver.kinds.includes(id) || driver.sharedKinds?.includes(id)).map((driver) => driver.type),
         spares: spares[id] ?? { ready: 0, making: 0 },
       })),
       drivers: drivers.map((driver) => ({
