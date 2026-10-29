@@ -112,6 +112,7 @@ export interface BackendState {
   /** Its warm pools that are short for want of room now, and why (#356). */
   readonly warmShort: readonly WarmShortfall[];
   readonly changed: number;
+  readonly hostEstimates?: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }
 
 export interface ConfigState {
@@ -383,6 +384,7 @@ export class Configuration {
           doctor: this.#doctor.get(backend.id) ?? null,
           warmShort: this.#deps.backends.warmShort(backend.id),
           changed: ledger.backends[backend.id]?.changed ?? this.#document.revision,
+          ...(backend.hosts?.length ? { hostEstimates: this.#deps.backends.hostEstimates(backend.id) } : {}),
         };
       }),
       problems: checkDocument(this.#document, this.#secrets, drivers, inUse),

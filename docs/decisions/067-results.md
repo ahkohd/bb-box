@@ -786,3 +786,244 @@ These read well already, and are as they were:
    the same setting, such as Tart's "Slots per shared iOS host" and
    Namespace's "Slots a host lends at most". Unifying them is a label
    change unit 3 could make with its cards. Not done here.
+
+## Unit 3: each backend's page on the engine
+
+Built on 29 October 2026, on units 1, 2 and 4 and the owner's two row
+layout changes (#1250, #1251). A backend's page is now a form on the draft
+registry, like Boxes and Monitor, with its health, what it holds, its
+fields in cards, its Macs, and a menu. Setting up a new backend still opens
+the form from before 067 until unit 7.
+
+### What changed
+
+- **Header**: icon, name, host chip, "BB machine" chip, description, "Saved
+  changes reach new boxes; boxes already made keep theirs", the saving
+  rule, then the Saved tick, "Takes new boxes" and its switch, and a menu:
+  Rename…, Copy saved settings as JSON, Open the setup guide and Remove
+  backend…. Rename acts at once, as an operation. Remove asks, naming the
+  secrets it deletes. While the page knows of boxes the item says "Remove:
+  release its 1 box first"; a box made after the page loaded is refused by
+  BB Box, and the page says "Docker was not removed: Backend docker has 1
+  box, so it cannot be removed or renamed. Turn it off and release them
+  first." Removed, the page goes to the overview.
+- **Health** uses the check revisions of unit 2's server part: "Not checked
+  since it changed" and how that check went, "2 of 6 checks passed ·
+  checked 6 hours ago, so it may have changed since", "Not finished" and
+  what is missing. Failed checks and warnings come first with their fixes,
+  then the notes; passed checks fold. With a draft, the button and the
+  bar's Check say "Check with my changes" and run the checks on the same
+  candidate Save would send, a new Mac and a pasted secret included. The
+  result is bound to the revision and a hash of the edits
+  (`settings-checks.ts`); a later edit clears it: "Your form changed after
+  you checked it, so that result was cleared. Check again."
+- **In use**: boxes now, the kinds it makes (each opens the kind), warm
+  boxes with any shortfall.
+- **Cards** in the driver's groups, with the `ios-hosts` group as "Shared
+  iOS hosts". It and Advanced fold with a summary, and open by themselves
+  for an edit, a conflict or a problem.
+- **Fields**: the first sentence of the help, by `helpParts`, with More for
+  the rest; Changed; the problem from the last save or the stored
+  configuration; conflicts with both choices. An empty field shows inside
+  it the value it takes, and under it where from: "Empty: 9100, the
+  default", "Empty: https://…, from Proxmox LXC". A field where empty turns
+  boxes off has an Offer checkbox: unticked, it is saved empty and stays
+  off. On-or-off fields are checkboxes. A secret says Set or Not set and
+  offers Set or Replace and Clear; replaced elsewhere while edited, it is a
+  conflict that names the revision.
+- **Macs**: each row has its address, the Saved tick, its switch (at once)
+  and its chevron last. A row opens to its fields and "Its own shared iOS
+  host size", each empty size saying "Empty: 6 cores, Tart's setting" or
+  "Empty: 4 cores, bb-box's estimate for mac-1". Add Mac stages a Mac with
+  a provisional identity, `backends/tart/hosts/@new-…`, named by its first
+  field; on the receipt its edits, newer typing included, move to the Mac
+  it made. A name already on the backend is refused at its field before
+  anything is sent. Remove… asks and stages the removal until Save.
+- **The engine** gained backend paths: fields, secrets with their versions,
+  explicit empty, a backend's name and removal, Macs (saved, new and
+  removed) and their switches. Server problems at
+  `backends.tart.hosts.1.ios-hosts-cores` resolve to the field of the Mac
+  that was sent as host 1. Secrets typed are kept in memory only, like
+  files' contents.
+- **The overview**: each backend row has its host chip from its fields (the
+  Proxmox node or its API URL's host, Tart's Mac or "2 Macs", the Docker or
+  microsandbox host or "this machine", an SSH host pool's machine count),
+  else the name in its ID. Its chip says "Saving…" while a save of it is
+  out and "Unsaved changes" while a draft waits; the option rows do the
+  same.
+- **Focus**: Save stays on the page. Opening the settings on an inner page,
+  as BB's own back button does after leaving by BB's sidebar, focuses the
+  page's heading.
+- **One server addition**: a backend may report, for each host, what an
+  empty host size field takes (`hostEstimates`). Tart computes it from the
+  Mac it last read, with the backend's own settings, and reads a Mac it has
+  not read yet in the background when the page asks, at most once a
+  minute, then tells open pages (`factsChanged`).
+
+New: `src/app/settings-backend-page.tsx`, `settings-backend-fields.tsx`,
+`settings-checks.ts`, and `067-settings-page/unit-3/live-check.mjs` and
+`screens-and-keys.mjs`. Changed: `settings-paths.ts`, `settings-drafts.ts`,
+`settings-saving.tsx`, `settings-context.tsx`, `settings-overview.tsx`,
+`settings-pages.tsx`, `settings-parts.tsx`, `settings-status.ts`,
+`settings-nav.ts`, `src/backends/types.ts`, `index.ts`, `tart/backend.ts`,
+`tart/ios-hosts.ts`, `tart/config.ts`, `src/plugin/configuration.ts`,
+`docs/design/settings.md` and the tests.
+
+### Tests
+
+`test/settings-drafts.test.ts` has six more, on the real `Configuration`
+with a small driver that has Macs: fields, a number typed as text, an
+explicit off and its return to the default, a secret's version as its base,
+Clear; G1 with a secret through a retry; a secret replaced in two tabs; G6;
+G7; a Mac removed with the form, a Mac's field changed elsewhere, and a
+backend removed elsewhere. `test/tart.test.ts` has one for the estimates.
+`test/app.test.tsx` replaces the old form's three tests with seven: the
+page's cards, help, effective values, explicit off, Check with my changes
+and its clearing, and Save staying on the page; a refusal at fields and in
+the bar; Not finished; Tart's Macs with a switch, own sizes, Tart's
+setting, Add Mac refused by name then saved, and a staged removal; G7 with
+Show; the menu's Rename and Remove, refused and confirmed; Saving… on the
+overview and the host chips.
+
+On a Linux box, 8 cores, on the commit delivered:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,777 tests: 2,489 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 37 s |
+| vitest | 268 pass, in 4 files |
+| `test/docs.test.ts` and `scripts/reference.ts --check` | pass; the reference is unchanged |
+
+The commit delivered differs from the one tested only in this section and
+its screenshots. One full run before the last rebase had two tests fail
+that wait on timing under load, outside settings: a device server's
+delivery and a terminal's script on a fake macOS. Each passed alone 3 of 3
+times, and both passed in the runs before and after.
+
+### Live check on separate BBs
+
+Two fresh BBs, each `npx bb-app` 0.48.0 with no account, its own data
+folder and port, started with `env -i`, `HOME`, `PATH` and
+`BB_BOX_LIVE_CHECKS=1` only, with bb-box installed from this branch by `bb
+plugin install` of its path:
+
+- **Linux**: a Linux box with Docker. Docker on BB's server (its Linux image
+  built by Use Docker on this machine), and a Proxmox LXC backend saved off
+  with a made-up token, whose API URL is a closed local port.
+- **Mac**: a macOS box (a macOS 27 VM, 4 cores, 8 GiB, Apple M4 Max
+  (Virtual)), with Tart 2.41.1 installed from its release. The Linux BB
+  could not reach a Mac box, nor a Mac box the Linux BB: the Mac VMs are on
+  their host's own network. So the Mac box ran its own BB, with a Tart
+  backend whose one Mac, mac-1, is that same Mac over SSH to 127.0.0.1.
+  BB Box read it as it reads any Mac: 4 performance cores and 8 GiB, so
+  its estimates for a shared iOS host were 1 slot, 4 cores and 8 GiB. It
+  has no Tart images, so its checks fail on images, which the page shows.
+
+The script, [`live-check.mjs`](067-settings-page/unit-3/live-check.mjs),
+drives headless Chromium at 1440 by 1000, as unit 2's does: another tab is
+a second browser context or a save through BB's HTTP API, and a held or
+doubled request is Playwright's routing of the page's own calls. Secrets
+are read back from BB's storage to compare them. Every check passed 3 runs
+in a row, 27 of 27 (12 on Linux, 15 on the Mac), on the commit delivered.
+Earlier series on the code as it was polished also passed in full; the
+first single runs found one fault in the page (an empty secret input
+left open after Keep the saved one) and three in the script.
+
+| Check | What the page said, and what BB Box stored | Runs |
+| --- | --- | --- |
+| A Docker backend edited, refused and saved: Most boxes "lots", Host "tcp://192.0.2.1:2375", Enter | "Not saved: fix the 2 fields marked. Your changes are still here." with "Most boxes is a number." and "Docker: the host … must be unix:///path/to/docker.sock, ssh://user@host or bb:<machine ID>, or empty …" under their fields, both marked invalid; nothing stored. Then Most boxes 11, Host empty, Wayland desktop image's Offer unticked, Save: "Saved.", the page stayed, one receipt; stored `boxes` 11 and `wayland-desktop-image` "". After a reload the image is still off and its field says Off | 3 of 3 |
+| A secret replaced in two tabs | B saved first; A at once: "Replaced elsewhere while you edited, at revision 300. Saving yours replaces that one.", and the bar "A setting you changed was changed elsewhere too. Choose for each, then save." Keep mine and Save stored A's secret. Again with Keep the saved one: A's typed secret went and B's stayed stored. No secret was in the page's HTML | 3 of 3 |
+| A Tart backend with a real Mac's own sizes | mac-1's empty cores field held "4", and under it "Empty: 4 cores, bb-box's estimate for mac-1". With Tart's own cores at 6, unsaved: "Empty: 6 cores, Tart's setting". mac-1's own cores 2 and memory 8, Save: stored on mac-1, and its row said "its own shared iOS host size" | 3 of 3 |
+| A Mac added by name, then removed | Add Mac, its name, address, user and host keys, Save: stored, its row gained its switch, no `@new-` left in the page. Remove… asked, "Removed when you save", Save: gone | 3 of 3 |
+| Check with a Mac's change, cleared by a later edit | mac-1's cores 3 in the draft, Check with my changes: the check sent was of Tart, with mac-1's cores 3; the card said "Not working with your changes · macos image on mac-1: mac-1 has no Tart VM bb-box-macos." and "Checked just now, against your unsaved changes. Nothing is saved yet. 2 of 6 checks passed." Then a typed user: "Your form changed after you checked it, so that result was cleared. Check again." | 3 of 3 |
+| Remove refused with boxes and confirmed without | With the page's reads held, a box made on Docker, then Remove backend… and its confirmation: "Docker was not removed: Backend docker has 1 box, so it cannot be removed or renamed. Turn it off and release them first."; still stored, the page stayed. Once the page saw the box, the item said "Remove: release its 1 box first", disabled. The box released, Remove backend…: the overview, and Docker gone | 3 of 3 |
+
+The gates:
+
+| Gate | Steps | Passes when, and what the page said | Runs |
+| --- | --- | --- | --- |
+| G1 with a secret | Replace Proxmox LXC's API token secret with A and Save; another writer saves first, so it retries; B typed while the retry is held | A stored, B not, B still in the field and marked Changed. "Saved at revision 313, on top of a change made elsewhere. Your newer change is not saved yet." Both requests had the same operation and submission, B was in neither, and the bar named nothing else | 3 of 3 |
+| G6 | Add Mac review-mac and Save, held; its cores 8 typed while it saves; Save again | The name waited while the save was out. "Saved. Your newer change is not saved yet."; review-mac stored without cores; no `@new-` in the page's session storage. Save again: "Saved."; one review-mac with 8 cores; two operations | 3 of 3 |
+| G7 | Add Mac small-mac with 1 core and Save; then the name mac-1 | "Not saved: fix the field marked. Your changes are still here." with "Mac small-mac: the cores of a shared iOS host on it must be a whole number from 2 to 64, or empty for bb-box's estimate." under its cores field; Show focused that field. Then "mac-1 is already a Mac on Tart." at its name field, marked invalid, and nothing sent | 3 of 3 |
+
+### Keyboard only
+
+On the same BBs, by keys alone
+([`screens-and-keys.mjs`](067-settings-page/unit-3/screens-and-keys.mjs)):
+
+- From the overview Tab reached the Docker row; Enter opened its page with
+  focus on its heading. Tab then went: the switch, More for Docker, Check,
+  the three kinds it makes, then each field in order with its More, the
+  Offer checkboxes before their fields. Every stop had a focus ring.
+- Typing in Most boxes and Enter saved: "Saved.", focus stayed in the
+  field.
+- Enter on More for Docker opened the menu on Rename…; Enter opened the
+  dialog with its name selected; typing and Enter stored the new name.
+  Focus went back to More for Docker.
+- Leaving by BB's sidebar and coming back with BB's own back button
+  focused the page's heading.
+- On Tart: Enter on Add Mac put focus in the new Mac's name; Tab went to
+  Takes boxes, then its fields. Enter on mac-1's row opened it, and Tab
+  went to its switch. Enter on Remove mac-1… opened the dialog; its Remove
+  when I save staged the removal and focus went back to mac-1's row.
+- No animation ran (`document.getAnimations()` was empty).
+- The first pass found two faults, both fixed and passed again: the Rename
+  dialog focused Cancel, so typing went nowhere, and focus fell to the
+  page after a dialog whose menu had closed.
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark: the Docker page, refused, its
+menu and its Remove dialog; the overview with Unsaved changes; Proxmox
+LXC with a secret's conflict; Tart's page, a Mac's own sizes, a new Mac,
+and a check of a draft. 60 in the thread's storage, and the live checks'
+own. A selection:
+
+[the page](067-settings-page/unit-3/backend-1440-dark.png),
+[refused at its fields](067-settings-page/unit-3/refused-1440-light.png),
+[Unsaved changes on the overview](067-settings-page/unit-3/overview-unsaved-760-dark.png),
+[a secret's conflict at 390](067-settings-page/unit-3/secret-conflict-390-dark.png),
+[the menu](067-settings-page/unit-3/menu-1440-dark.png),
+[Remove at 760](067-settings-page/unit-3/remove-760-light.png),
+[a Mac's own sizes](067-settings-page/unit-3/mac-sizes-1440-light.png),
+[a new Mac at 390](067-settings-page/unit-3/new-mac-390-dark.png),
+[a check of a draft](067-settings-page/unit-3/checked-draft-760-light.png),
+and from the live checks:
+[G1 with a secret](067-settings-page/unit-3/live-g1-secret.png),
+[removal refused](067-settings-page/unit-3/live-remove-refused.png),
+[the real Mac's sizes](067-settings-page/unit-3/live-tart-own-sizes.png),
+[a check cleared](067-settings-page/unit-3/live-check-cleared.png),
+[G6](067-settings-page/unit-3/live-g6.png),
+[G7 with Show](067-settings-page/unit-3/live-g7-show.png).
+
+### Deviations from 067
+
+- One server change 067 does not list: `hostEstimates` and the background
+  read of a Mac not read yet, so a Mac's empty size can say bb-box's
+  estimate as a number.
+- A check's result is bound to the revision as well as the edits, so a
+  change elsewhere clears it too: "The configuration changed after you
+  checked it, so that result was cleared." It is kept in the page's memory,
+  not across a reload.
+- Remove backend… is disabled while the page knows of boxes, as the
+  prototype has it; the server's refusal shows when a box comes after the
+  page loaded.
+- A new Mac's name and Takes boxes wait while its save is out; its other
+  fields stay open, as G6 needs.
+- "Takes boxes" for a new Mac is a checkbox in its details, not on its
+  row, which keeps no switch space under the owner's rule (#1251).
+- An optional secret that is not set says Not set quietly, in amber only
+  when a check or save names it.
+- The Tart live checks ran on a second fresh BB on the Mac box, with that
+  Mac as its own Tart host, not on the Linux BB (see above).
+- Setting up a new backend keeps the form from before 067 (unit 7). A BB
+  machine's Docker shows the cards without Host, then the Docker on BB
+  machines list (unit 5).
+- The restored note's lost items are paths now; the page names them, as
+  "the API token secret", since a backend's labels need the configuration.
+
+### Not done here
+
+- Unit 4's second open question, unifying the Shared iOS hosts labels
+  across Tart, the SSH host pool and Namespace, waits for the owner.
+- A look in production in the owner's browser, after the lead deploys.

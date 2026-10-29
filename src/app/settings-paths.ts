@@ -1,7 +1,8 @@
 import { pathProblem, type BoxFileSetting } from "../core/box-files.ts";
-import type { ConfigDocument, Problem } from "../core/document.ts";
-import type { ConfigState } from "../plugin/configuration.ts";
-import { effectiveKind, isSecretState, kindChanges, withBackend, withGeneral, withKind, withMonitor } from "./config.ts";
+import type { BackendConfig, ConfigDocument, HostConfig, Problem } from "../core/document.ts";
+import type { FieldValue } from "../backends/types.ts";
+import type { ConfigState, FieldView } from "../plugin/configuration.ts";
+import { effectiveKind, isSecretField, isSecretState, kindChanges, withBackend, withGeneral, withKind, withMonitor, withoutBackend } from "./config.ts";
 
 export type Path = string;
 export type PlainValue = string | number | boolean | null;
@@ -10,9 +11,10 @@ export type EditValue =
   | { readonly kind: "plain"; readonly value: PlainValue }
   | { readonly kind: "secret"; readonly text: string | null }
   | { readonly kind: "new-file"; readonly path: string; readonly text: string | null }
+  | { readonly kind: "new-host"; readonly name: string; readonly enabled: boolean }
   | { readonly kind: "removed" };
 
-export type Stored = { readonly kind: "value"; readonly value: PlainValue } | { readonly kind: "version"; readonly version: number | null };
+export type Stored = { readonly kind: "value"; readonly value: PlainValue } | { readonly kind: "version"; readonly version: number | null } | { readonly kind: "gone" };
 
 export interface Edit {
   readonly value: EditValue;
@@ -43,6 +45,7 @@ export interface Candidate {
 
 const NEW_MARK = "@new-";
 const FILES = "files/";
+const HOST_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export function plain(value: PlainValue): EditValue {
   return { kind: "plain", value };
@@ -56,6 +59,26 @@ export function newFilePath(id: string): Path {
   return `${FILES}${NEW_MARK}${id}`;
 }
 
+export function backendPath(id: string): Path {
+  return `backends/${id}`;
+}
+
+export function backendFieldPath(id: string, key: string): Path {
+  return `backends/${id}/fields/${key}`;
+}
+
+export function hostPath(id: string, name: string): Path {
+  return `backends/${id}/hosts/${name}`;
+}
+
+export function newHostPath(id: string, mark: string): Path {
+  return hostPath(id, `${NEW_MARK}${mark}`);
+}
+
+export function hostFieldPath(host: Path, key: string): Path {
+  return `${host}/fields/${key}`;
+}
+
 export function isProvisional(path: Path): boolean {
   return path.includes(`/${NEW_MARK}`);
 }
@@ -67,6 +90,37 @@ export function isFilePath(path: Path): boolean {
 export function fileOfPath(path: Path): string | null {
   if (!isFilePath(path) || isProvisional(path)) return null;
   return decodeURIComponent(path.slice(FILES.length));
+}
+
+export type BackendAt =
+  | { readonly at: "backend"; readonly id: string }
+  | { readonly at: "enabled"; readonly id: string }
+  | { readonly at: "label"; readonly id: string }
+  | { readonly at: "field"; readonly id: string; readonly key: string }
+  | { readonly at: "host"; readonly id: string; readonly host: string }
+  | { readonly at: "host-name"; readonly id: string; readonly host: string }
+  | { readonly at: "host-enabled"; readonly id: string; readonly host: string }
+  | { readonly at: "host-field"; readonly id: string; readonly host: string; readonly key: string };
+
+export function backendAt(path: Path): BackendAt | null {
+  const [section, id, ...rest] = path.split("/");
+  if (section !== "backends" || !id) return null;
+  if (!rest.length) return { at: "backend", id };
+  if (rest.length === 1 && rest[0] === "enabled") return { at: "enabled", id };
+  if (rest.length === 1 && rest[0] === "label") return { at: "label", id };
+  if (rest.length === 2 && rest[0] === "fields" && rest[1]) return { at: "field", id, key: rest[1] };
+  if (rest[0] !== "hosts" || !rest[1]) return null;
+  const host = rest[1];
+  const tail = rest.slice(2);
+  if (!tail.length) return { at: "host", id, host };
+  if (tail.length === 1 && tail[0] === "name") return { at: "host-name", id, host };
+  if (tail.length === 1 && tail[0] === "enabled") return { at: "host-enabled", id, host };
+  if (tail.length === 2 && tail[0] === "fields" && tail[1]) return { at: "host-field", id, host, key: tail[1] };
+  return null;
+}
+
+export function isNewHost(host: string): boolean {
+  return host.startsWith(NEW_MARK);
 }
 
 export function holdsSecret(value: EditValue): boolean {
@@ -88,6 +142,7 @@ export function sameValue(a: EditValue, b: EditValue): boolean {
 }
 
 function sameStored(a: Stored, b: Stored): boolean {
+  if (a.kind === "gone" || b.kind === "gone") return a.kind === b.kind;
   if (a.kind === "version" && b.kind === "version") return a.version === b.version;
   if (a.kind === "value" && b.kind === "value") return JSON.stringify(a.value) === JSON.stringify(b.value);
   return false;
@@ -107,10 +162,49 @@ function settingOf(path: Path): { readonly section: "general" | "monitor"; reado
   return null;
 }
 
-export function documentValue(defaults: Defaults, path: Path, value: PlainValue): PlainValue {
+function backendIn(document: ConfigDocument, id: string): BackendConfig | undefined {
+  return document.backends.find((backend) => backend.id === id);
+}
+
+function hostIn(backend: BackendConfig | undefined, name: string): HostConfig | undefined {
+  return backend?.hosts?.find((host) => host.name === name);
+}
+
+export function fieldAt(state: ConfigState, path: Path): FieldView | null {
+  const at = backendAt(path);
+  if (!at || (at.at !== "field" && at.at !== "host-field")) return null;
+  const type = backendIn(state.document, at.id)?.type ?? at.id.split(":")[0];
+  const driver = state.drivers.find((candidate) => candidate.type === type);
+  const fields = at.at === "field" ? driver?.fields : driver?.hostFields;
+  return fields?.find((field) => field.key === at.key) ?? null;
+}
+
+function asPlain(value: unknown): PlainValue {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? value : null;
+}
+
+function fieldValue(field: FieldView | null, value: PlainValue): PlainValue {
+  if (!field || value === null) return value;
+  if (field.type === "boolean") return value === (field.default ?? false) ? null : value;
+  if (field.type === "number") {
+    if (typeof value !== "string") return value;
+    const text = value.trim();
+    if (text === "") return null;
+    const number = Number(text);
+    return Number.isFinite(number) ? number : value;
+  }
+  if (typeof value !== "string") return value;
+  if (field.offWhenEmpty && value === "") return "";
+  return value.trim() === "" ? null : value;
+}
+
+export function documentValue(state: ConfigState, path: Path, value: PlainValue): PlainValue {
+  const at = backendAt(path);
+  if (at?.at === "field" || at?.at === "host-field") return fieldValue(fieldAt(state, path), value);
+  if (at?.at === "label") return typeof value === "string" ? value.trim() || null : value;
   const setting = settingOf(path);
   if (!setting) return value;
-  const fallback = defaultOf(defaults, setting.section, setting.key);
+  const fallback = defaultOf(state.defaults, setting.section, setting.key);
   if (typeof fallback !== "number" || typeof value !== "string") return value;
   const text = value.trim();
   if (text === "") return fallback;
@@ -124,16 +218,46 @@ function fileVersion(document: ConfigDocument, path: string): number | null {
   return isSecretState(file.content) ? (file.content.version ?? 0) : 0;
 }
 
+function storedAtBackend(state: ConfigState, at: BackendAt, path: Path): Stored {
+  const backend = backendIn(state.document, at.id);
+  if (!backend) return { kind: "gone" };
+  switch (at.at) {
+    case "backend":
+      return { kind: "value", value: true };
+    case "enabled":
+      return { kind: "value", value: backend.enabled };
+    case "label":
+      return { kind: "value", value: backend.label ?? null };
+    case "field": {
+      const field = fieldAt(state, path);
+      const raw = backend.fields[at.key];
+      if (field && isSecretField(field)) return { kind: "version", version: isSecretState(raw) ? (raw.version ?? 0) : null };
+      return { kind: "value", value: fieldValue(field, asPlain(raw)) };
+    }
+    case "host":
+    case "host-name":
+      return hostIn(backend, at.host) ? { kind: "value", value: true } : { kind: "gone" };
+    case "host-enabled": {
+      const host = hostIn(backend, at.host);
+      return host ? { kind: "value", value: host.enabled } : { kind: "gone" };
+    }
+    case "host-field": {
+      const host = hostIn(backend, at.host);
+      return host ? { kind: "value", value: fieldValue(fieldAt(state, path), asPlain(host.fields[at.key])) } : { kind: "gone" };
+    }
+  }
+}
+
 export function storedAt(state: ConfigState, path: Path, value?: EditValue): Stored {
   const setting = settingOf(path);
   if (setting) {
     const values: Readonly<Record<string, unknown>> = setting.section === "general" ? { ...state.defaults.general, ...state.document.general } : { ...state.defaults.monitor, ...state.document.monitor };
-    const found = values[setting.key];
-    return { kind: "value", value: typeof found === "string" || typeof found === "number" || typeof found === "boolean" ? found : null };
+    return { kind: "value", value: asPlain(values[setting.key]) };
   }
+  const at = backendAt(path);
+  if (at) return storedAtBackend(state, at, path);
   const [section, id, key] = path.split("/");
   if (section === "kinds" && id && key === "enabled") return { kind: "value", value: effectiveKind(state, id).enabled };
-  if (section === "backends" && id && key === "enabled") return { kind: "value", value: state.document.backends.find((backend) => backend.id === id)?.enabled ?? null };
   if (isFilePath(path)) {
     const file = value?.kind === "new-file" ? value.path.trim() : fileOfPath(path);
     return { kind: "version", version: file ? fileVersion(state.document, file) : null };
@@ -144,11 +268,12 @@ export function storedAt(state: ConfigState, path: Path, value?: EditValue): Sto
 export function conflictOf(state: ConfigState, edit: PathEdit): Conflict | null {
   const stored = storedAt(state, edit.path, edit.value);
   if (sameStored(stored, edit.base)) return null;
-  if (edit.value.kind === "removed") return null;
+  if (stored.kind === "gone") return edit.value.kind === "removed" ? null : { kind: "removed" };
+  if (edit.value.kind === "removed") return stored.kind === "version" && stored.version !== null && backendAt(edit.path) !== null ? { kind: "replaced", version: stored.version } : null;
+  if (edit.value.kind === "new-host") return null;
   if (edit.value.kind === "plain") {
     if (stored.kind !== "value") return null;
-    if (JSON.stringify(stored.value) === JSON.stringify(documentValue(state.defaults, edit.path, edit.value.value))) return null;
-    if (stored.value === null && settingOf(edit.path) === null) return { kind: "removed" };
+    if (JSON.stringify(stored.value) === JSON.stringify(documentValue(state, edit.path, edit.value.value))) return null;
     return { kind: "changed", stored: stored.value };
   }
   if (stored.kind !== "version") return null;
@@ -165,7 +290,9 @@ export function fileIsStored(state: ConfigState, path: Path): boolean {
 export function isChange(state: ConfigState, edit: PathEdit): boolean {
   if (edit.value.kind !== "plain") return true;
   const stored = storedAt(state, edit.path);
-  return !(stored.kind === "value" && JSON.stringify(stored.value) === JSON.stringify(documentValue(state.defaults, edit.path, edit.value.value)));
+  const value = documentValue(state, edit.path, edit.value.value);
+  if (stored.kind === "gone") return value !== null;
+  return !(stored.kind === "value" && JSON.stringify(stored.value) === JSON.stringify(value));
 }
 
 function writeSetting(state: ConfigState, document: ConfigDocument, section: "general" | "monitor", key: string, value: PlainValue): ConfigDocument {
@@ -180,7 +307,13 @@ interface FileDraft {
   readonly from: Path;
 }
 
-function withFiles(document: ConfigDocument, edits: readonly PathEdit[]): { readonly document: ConfigDocument; readonly sentAs: Record<string, Path>; readonly needed: boolean } {
+interface Built {
+  readonly document: ConfigDocument;
+  readonly sentAs: Record<string, Path>;
+  readonly needed: boolean;
+}
+
+function withFiles(document: ConfigDocument, edits: readonly PathEdit[]): Built {
   const fileEdits = edits.filter((edit) => isFilePath(edit.path));
   if (!fileEdits.length) return { document, sentAs: {}, needed: false };
   let needed = false;
@@ -212,6 +345,98 @@ function withFiles(document: ConfigDocument, edits: readonly PathEdit[]): { read
   return { document: withGeneral(document, { files: sent.length ? sent : undefined }), sentAs, needed };
 }
 
+type DraftFields = Record<string, FieldValue | { readonly set: boolean; readonly version?: number } | null>;
+
+interface HostDraft {
+  readonly host: HostConfig;
+  readonly from: Path;
+}
+
+function setField(fields: Record<string, unknown>, key: string, value: PlainValue): void {
+  if (value === null) delete fields[key];
+  else fields[key] = value;
+}
+
+function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: readonly PathEdit[]): Built {
+  const byBackend = new Map<string, PathEdit[]>();
+  for (const edit of edits) {
+    const at = backendAt(edit.path);
+    if (at) byBackend.set(at.id, [...(byBackend.get(at.id) ?? []), edit]);
+  }
+  let document = input;
+  let needed = false;
+  const sentAs: Record<string, Path> = {};
+  for (const [id, list] of byBackend) {
+    const backend = backendIn(document, id);
+    if (!backend) continue;
+    if (list.some((edit) => backendAt(edit.path)?.at === "backend" && edit.value.kind === "removed")) {
+      document = withoutBackend(document, id);
+      needed = true;
+      continue;
+    }
+    const fields: DraftFields = { ...backend.fields };
+    let label = backend.label;
+    let enabled = backend.enabled;
+    let hosts: HostDraft[] = (backend.hosts ?? []).map((host) => ({ host, from: hostPath(id, host.name) }));
+    const newHosts: PathEdit[] = [];
+    const editHost = (name: string, change: (host: HostConfig) => HostConfig) => {
+      hosts = hosts.map((each) => (each.host.name === name ? { ...each, host: change(each.host) } : each));
+    };
+    for (const edit of list) {
+      const at = backendAt(edit.path)!;
+      const changed = isChange(state, edit);
+      if (edit.value.kind === "plain") {
+        const value = documentValue(state, edit.path, edit.value.value);
+        if (at.at === "enabled" && typeof value === "boolean") enabled = value;
+        else if (at.at === "label") label = typeof value === "string" ? value : undefined;
+        else if (at.at === "field") setField(fields, at.key, value);
+        else if (at.at === "host-enabled" && typeof value === "boolean") editHost(at.host, (host) => ({ ...host, enabled: value }));
+        else if (at.at === "host-field" && !isNewHost(at.host)) {
+          editHost(at.host, (host) => {
+            const next: Record<string, unknown> = { ...host.fields };
+            setField(next, at.key, value);
+            return { ...host, fields: next as Record<string, FieldValue> };
+          });
+        } else continue;
+        if (changed) needed = true;
+      } else if (edit.value.kind === "secret" && at.at === "field") {
+        if (edit.value.text === null) continue;
+        fields[at.key] = edit.value.text;
+        needed = true;
+      } else if (edit.value.kind === "removed" && at.at === "field") {
+        fields[at.key] = null;
+        needed = true;
+      } else if (edit.value.kind === "removed" && at.at === "host") {
+        if (hosts.some((each) => each.host.name === at.host)) needed = true;
+        hosts = hosts.filter((each) => each.host.name !== at.host);
+      } else if (edit.value.kind === "new-host" && at.at === "host") newHosts.push(edit);
+    }
+    for (const added of newHosts) {
+      if (added.value.kind !== "new-host") continue;
+      const own: Record<string, unknown> = {};
+      for (const edit of list) {
+        const at = backendAt(edit.path);
+        if (at?.at !== "host-field" || hostPath(id, at.host) !== added.path || edit.value.kind !== "plain") continue;
+        setField(own, at.key, documentValue(state, edit.path, edit.value.value));
+      }
+      hosts = [...hosts, { host: { name: added.value.name.trim(), enabled: added.value.enabled, fields: own as Record<string, FieldValue> }, from: added.path }];
+      needed = true;
+    }
+    hosts.forEach((each, index) => {
+      sentAs[`backends.${id}.hosts.${index}`] = each.from;
+    });
+    const { label: _label, hosts: _hosts, ...rest } = backend;
+    document = withBackend(document, {
+      ...rest,
+      ...(label ? { label } : {}),
+      enabled,
+      fields,
+      ...(hosts.length || backend.hosts ? { hosts: hosts.map((each) => each.host) } : {}),
+    });
+  }
+  return { document, sentAs, needed };
+}
+
 export function candidateOf(state: ConfigState, edits: readonly PathEdit[]): Candidate {
   const conflicts = edits.filter((edit) => conflictOf(state, edit) !== null).map((edit) => edit.path);
   let document = state.document;
@@ -219,23 +444,26 @@ export function candidateOf(state: ConfigState, edits: readonly PathEdit[]): Can
   for (const edit of edits) {
     if (edit.value.kind !== "plain") continue;
     const setting = settingOf(edit.path);
-    const value = documentValue(state.defaults, edit.path, edit.value.value);
-    if (isChange(state, edit)) needed = true;
-    if (setting) {
-      document = writeSetting(state, document, setting.section, setting.key, value);
-      continue;
-    }
     const [section, id, key] = edit.path.split("/");
-    if (section === "kinds" && id && key === "enabled" && typeof value === "boolean") {
+    if (setting) {
+      if (isChange(state, edit)) needed = true;
+      document = writeSetting(state, document, setting.section, setting.key, documentValue(state, edit.path, edit.value.value));
+    } else if (section === "kinds" && id && key === "enabled" && typeof edit.value.value === "boolean") {
+      if (isChange(state, edit)) needed = true;
       const current = { ...state, document };
-      document = withKind(document, id, kindChanges(current, id, { ...effectiveKind(current, id), enabled: value }));
-    } else if (section === "backends" && id && key === "enabled" && typeof value === "boolean") {
-      const backend = document.backends.find((candidate) => candidate.id === id);
-      if (backend) document = withBackend(document, { ...backend, enabled: value });
+      document = withKind(document, id, kindChanges(current, id, { ...effectiveKind(current, id), enabled: edit.value.value }));
     }
   }
-  const files = withFiles(document, edits);
-  return { document: files.document, conflicts, needed: needed || files.needed, sentAs: files.sentAs };
+  const backends = withBackendEdits(state, document, edits);
+  const files = withFiles(backends.document, edits);
+  return { document: files.document, conflicts, needed: needed || backends.needed || files.needed, sentAs: { ...backends.sentAs, ...files.sentAs } };
+}
+
+function hostProblemPath(id: string, index: string, rest: string | undefined, sentAs: Readonly<Record<string, Path>>): Path {
+  const at = sentAs[`backends.${id}.hosts.${index}`];
+  if (!at) return `backends/${id}/hosts`;
+  if (rest === undefined) return at;
+  return rest === "name" || rest === "enabled" ? `${at}/${rest}` : hostFieldPath(at, rest);
 }
 
 export function problemPath(serverPath: string, sentAs: Readonly<Record<string, Path>>): Path {
@@ -250,6 +478,14 @@ export function problemPath(serverPath: string, sentAs: Readonly<Record<string, 
   if (setting) return `${setting[1]}/${setting[2]}`;
   const kind = /^kinds\.([^.]+)$/.exec(serverPath);
   if (kind) return `kinds/${kind[1]}/enabled`;
+  const host = /^backends\.([^.]+)\.hosts\.(\d+)(?:\.(.+))?$/.exec(serverPath);
+  if (host) return hostProblemPath(host[1]!, host[2]!, host[3], sentAs);
+  const hosts = /^backends\.([^.]+)\.hosts$/.exec(serverPath);
+  if (hosts) return `backends/${hosts[1]}/hosts`;
+  const own = /^backends\.([^.]+)\.(label|enabled)$/.exec(serverPath);
+  if (own) return `backends/${own[1]}/${own[2]}`;
+  const field = /^backends\.([^.]+)\.([^.]+)$/.exec(serverPath);
+  if (field && field[2] !== "warm") return backendFieldPath(field[1]!, field[2]!);
   const backend = /^backends\.([^.]+)$/.exec(serverPath);
   if (backend) return `backends/${backend[1]}/enabled`;
   return serverPath;
@@ -257,6 +493,53 @@ export function problemPath(serverPath: string, sentAs: Readonly<Record<string, 
 
 export function draftProblems(problems: readonly Problem[], sentAs: Readonly<Record<string, Path>>): DraftProblem[] {
   return problems.map((problem) => ({ path: problemPath(problem.path, sentAs), message: problem.message }));
+}
+
+export function storedProblemPath(state: ConfigState, serverPath: string): Path {
+  const sentAs: Record<string, Path> = {};
+  for (const backend of state.document.backends) (backend.hosts ?? []).forEach((host, index) => (sentAs[`backends.${backend.id}.hosts.${index}`] = hostPath(backend.id, host.name)));
+  return problemPath(serverPath, sentAs);
+}
+
+export function hostNoun(type: string): string {
+  return type === "tart" ? "Mac" : "host";
+}
+
+function driverLabelOf(state: ConfigState, id: string): string {
+  const type = backendIn(state.document, id)?.type ?? id.split(":")[0]!;
+  return state.drivers.find((driver) => driver.type === type)?.label ?? type;
+}
+
+function hostEditProblems(state: ConfigState, edits: readonly PathEdit[]): DraftProblem[] {
+  const problems: DraftProblem[] = [];
+  const added = edits.flatMap((edit) => (edit.value.kind === "new-host" ? [{ path: edit.path, id: backendAt(edit.path)!.id, name: edit.value.name.trim() }] : []));
+  const timesNamed = (id: string, name: string) => added.filter((each) => each.id === id && each.name === name).length;
+  for (const { path, id, name } of added) {
+    const backend = backendIn(state.document, id);
+    const noun = hostNoun(backend?.type ?? id);
+    const at = `${path}/name`;
+    const example = noun === "Mac" ? "mac-2" : "host-2";
+    if (!name) problems.push({ path: at, message: `Name the new ${noun}, such as ${example}.` });
+    else if (!HOST_NAME.test(name)) problems.push({ path: at, message: `Name a ${noun} with lower-case letters, digits and "-", such as ${example}.` });
+    else if (hostIn(backend, name)) problems.push({ path: at, message: `${name} is already a ${noun} on ${driverLabelOf(state, id)}.` });
+    else if (timesNamed(id, name) > 1) problems.push({ path: at, message: `${name} is a new ${noun} here twice. Give each its own name.` });
+  }
+  return problems;
+}
+
+function secretEditProblems(state: ConfigState, edits: readonly PathEdit[]): DraftProblem[] {
+  const problems: DraftProblem[] = [];
+  for (const edit of edits) {
+    if (edit.value.kind !== "secret" || backendAt(edit.path)?.at !== "field") continue;
+    const label = fieldAt(state, edit.path)?.label ?? "secret";
+    if (edit.value.text === null) problems.push({ path: edit.path, message: `Paste the ${label} again: what you pasted was not kept when the page reloaded.` });
+    else if (edit.value.text === "") problems.push({ path: edit.path, message: `Paste the new ${label}, or keep the saved one.` });
+  }
+  return problems;
+}
+
+export function editProblems(state: ConfigState, edits: readonly PathEdit[]): DraftProblem[] {
+  return [...fileEditProblems(edits), ...secretEditProblems(state, edits), ...hostEditProblems(state, edits)];
 }
 
 export function fileEditProblems(edits: readonly PathEdit[]): DraftProblem[] {
@@ -291,11 +574,25 @@ const SETTING_LABELS: Readonly<Record<string, string>> = {
   "monitor/pressureNotifications": "Pressure notifications",
 };
 
-export function labelOf(path: Path, value?: EditValue): string {
+function backendLabelOf(path: Path, value: EditValue | undefined, state: ConfigState | undefined): string | null {
+  const at = backendAt(path);
+  if (!at) return null;
+  if (at.at === "label") return "Name";
+  if (at.at === "field" || at.at === "host-field") {
+    const label = (state && fieldAt(state, path)?.label) ?? at.key;
+    const field = state ? fieldAt(state, path) : null;
+    const named = field && isSecretField(field) ? `the ${label}` : label;
+    return at.at === "field" ? named : `${named} on ${isNewHost(at.host) ? "the new Mac" : at.host}`;
+  }
+  if (at.at === "host") return value?.kind === "new-host" ? value.name.trim() || "the new Mac" : at.host;
+  return null;
+}
+
+export function labelOf(path: Path, value?: EditValue, state?: ConfigState): string {
   const setting = SETTING_LABELS[path];
   if (setting) return setting;
   if (value?.kind === "new-file") return `the content of ~/${value.path.trim() || "the new file"}`;
   const file = fileOfPath(path);
   if (file !== null) return `the content of ~/${file}`;
-  return path;
+  return backendLabelOf(path, value, state) ?? path;
 }

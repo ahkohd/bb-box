@@ -496,6 +496,8 @@ export interface Backend {
   /** Real backends: what a release restores, the box user's home or the whole machine. */
   readonly restores?: "home" | "machine";
 
+  hostEstimates?(): Readonly<Record<string, Readonly<Record<string, number>>>>;
+
   /** The kinds this backend can acquire now. */
   kinds(): readonly BoxKind[];
   withheldKinds?(kind: string, signal?: AbortSignal): Promise<readonly WithheldKind[]>;
@@ -929,6 +931,7 @@ export interface BackendContext {
    * take them, as they do at bb-box's start (#215), not only new boxes.
    */
   kindsChanged?(): void;
+  factsChanged?(): void;
   readonly encoder?: EncoderAccess;
 }
 

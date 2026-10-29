@@ -2,8 +2,10 @@ import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { CloudIcon } from "@hugeicons/core-free-icons";
 import { useId, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Meta, StatusDot, type Tone } from "./common.tsx";
+import { useSettings } from "./settings-context.tsx";
 
 export const FOCUS_RING = "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
@@ -179,5 +181,17 @@ export function TextLink({ onClick, children, className }: { onClick: () => void
     <button type="button" onClick={onClick} className={cn("cursor-pointer rounded-sm text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", className)}>
       {children}
     </button>
+  );
+}
+
+export function NotHere({ what }: { what: string }) {
+  const { nav } = useSettings();
+  return (
+    <div className="space-y-3">
+      <PageHeader title={`This ${what} is not here`} description={`BB Box's configuration has no such ${what}. It may have been removed, or the link may be wrong.`} />
+      <Button type="button" variant="outline" size="sm" className="h-8" onClick={nav.toOverview}>
+        Go to BB Box settings
+      </Button>
+    </div>
   );
 }

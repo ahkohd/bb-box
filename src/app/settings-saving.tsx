@@ -6,9 +6,10 @@ import type { ConfigState } from "../plugin/configuration.ts";
 import { Badge } from "./common.tsx";
 import { useSettings } from "./settings-context.tsx";
 import { drafts, type DraftRegistry, type InstantNote, type InstantOutcome, type InstantWrite, type Outcome, type PartState } from "./settings-drafts.ts";
-import { isChange, storedAt, type Conflict, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
+import { isChange, labelOf, storedAt, type Conflict, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
 
 export const SAVED_BAR_MS = 4000;
+export const SAVING_RULE = "Switches, and menus that stand alone, act at once. Fields, checkboxes and radio choices wait for Save.";
 export const DISCARD_WORDS = "Puts back the saved values of the fields you changed here. Switches you already turned stay as they are.";
 
 export function useRegistry(): DraftRegistry {
@@ -83,6 +84,7 @@ export interface Draft {
   readonly conflicts: readonly Path[];
   readonly busy: boolean;
   edit(path: Path): EditValue | null;
+  current(path: Path): PlainValue;
   text(path: Path): string;
   stored(path: Path): PlainValue;
   changed(path: Path): boolean;
@@ -91,6 +93,7 @@ export interface Draft {
   beingSaved(path: Path): boolean;
   set(path: Path, value: EditValue): void;
   forget(path: Path): void;
+  forgetUnder(path: Path): void;
   keepMine(path: Path): void;
   discard(): void;
   save(): void;
@@ -117,6 +120,12 @@ export function useDraft(part: string, what: string): Draft {
     conflicts,
     busy: operation !== null && operation.phase.at !== "unconfirmed",
     edit: (path) => entry.edits.get(path)?.value ?? null,
+    current: (path) => {
+      const value = entry.edits.get(path)?.value;
+      if (value?.kind === "plain") return value.value;
+      const stored = storedAt(latest, path);
+      return stored.kind === "value" ? stored.value : null;
+    },
     text: (path) => {
       const value = entry.edits.get(path)?.value;
       if (value?.kind === "plain") return value.value === null ? "" : String(value.value);
@@ -139,6 +148,7 @@ export function useDraft(part: string, what: string): Draft {
       registry.set(part, path, value);
     },
     forget: (path) => registry.forget(part, path),
+    forgetUnder: (path) => registry.forgetUnder(part, path),
     keepMine: (path) => {
       ensure();
       registry.keepMine(part, path);
@@ -149,7 +159,7 @@ export function useDraft(part: string, what: string): Draft {
       void registry.save(part).then(() => {
         const after = registry.part(part);
         const first = after.outcome?.kind === "problems" ? after.problems[0]?.path : after.outcome?.kind === "conflicts" ? registry.conflicts(part)[0] : undefined;
-        if (first) revealSetting(first);
+        if (first) setTimeout(() => revealSetting(first), 0);
       });
     },
     dismissRestored: () => registry.dismissRestored(part),
@@ -233,7 +243,7 @@ function barOf(draft: Draft, savedShown: boolean): { readonly words: string; rea
   return null;
 }
 
-export function SaveBar({ draft, primary = "Save", inline = false, unplaced = [] }: { draft: Draft; primary?: string; inline?: boolean; unplaced?: readonly string[] }) {
+export function SaveBar({ draft, primary = "Save", inline = false, unplaced = [], actions }: { draft: Draft; primary?: string; inline?: boolean; unplaced?: readonly string[]; actions?: ReactNode }) {
   const registry = useRegistry();
   const outcome = draft.entry.outcome;
   const shownAt = draft.entry.outcomeShownAt;
@@ -280,6 +290,7 @@ export function SaveBar({ draft, primary = "Save", inline = false, unplaced = []
         </span>
         {showButtons ? (
           <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {actions}
             {bar.show ? (
               <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.revealFirst}>
                 Show
@@ -364,7 +375,7 @@ export function RestoredNote({ draft }: { draft: Draft }) {
       <Icon name="Info" className="mt-px size-4 shrink-0 text-muted-foreground" aria-hidden />
       <span className="min-w-0 flex-1 basis-56 text-foreground">
         Your unsaved changes to {draft.what} are back{restored.count ? `: ${changesWords(restored.count)}` : ""}.
-        {restored.lost.length ? <span className="text-muted-foreground"> For safety {restored.lost.join(" and ")} you pasted was not kept; paste it again.</span> : null}
+        {restored.lost.length ? <span className="text-muted-foreground"> For safety {restored.lost.map((path) => labelOf(path, draft.entry.edits.get(path)?.value, draft.latest)).join(" and ")} you pasted was not kept; paste it again.</span> : null}
       </span>
       <span className="flex gap-1.5">
         <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.dismissRestored}>

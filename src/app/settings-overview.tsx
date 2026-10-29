@@ -21,6 +21,7 @@ import {
   backendHealth,
   backendLabel,
   backendLine,
+  hostChip,
   isMachineDocker,
   KIND_GROUPS,
   kindAvailability,
@@ -32,7 +33,7 @@ import {
   statusItems,
   statusLine,
 } from "./settings-status.ts";
-import { backendName } from "./settings-backends.tsx";
+import { backendPart } from "./settings-backend-fields.tsx";
 
 const keptHere = new Set<string>();
 let monitorChangedThisLoad = false;
@@ -129,10 +130,6 @@ function Status() {
   );
 }
 
-function hostChip(config: BackendConfig, label: string): string | null {
-  return backendName(config.id, label);
-}
-
 function BackendRow({ config, showAge }: { config: BackendConfig; showAge: boolean }) {
   const { state, nav, instant, writes } = useSettings();
   const now = Date.now();
@@ -142,20 +139,25 @@ function BackendRow({ config, showAge }: { config: BackendConfig; showAge: boole
   const key = switchKey.backend(config.id);
   const pending = instant.pendingValue<boolean>(key);
   const stateId = `settings-backend-state-${config.id.replace(/[^a-z0-9]/gi, "-")}`;
+  const chipsId = `settings-backend-chips-${config.id.replace(/[^a-z0-9]/gi, "-")}`;
   const rowKey = `backend-${config.id}`;
   const note = instant.note(key);
+  const draftChip = useDraftChip();
   return (
     <div className="transition-colors duration-150 hover:bg-state-hover">
       <div className="relative flex items-start gap-3 px-4 py-3">
-        <RowButton rowKey={rowKey} label={label} describedBy={stateId} onClick={() => nav.go({ page: "backend", id: config.id }, rowKey)} />
+        <RowButton rowKey={rowKey} label={label} describedBy={`${chipsId} ${stateId}`} onClick={() => nav.go({ page: "backend", id: config.id }, rowKey)} />
         <ProviderGlyph type={config.type} className="pointer-events-none mt-0.5" />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
             <span className="pointer-events-none min-w-0 truncate" aria-hidden>
               {label}
             </span>
-            {chip ? <Badge>{chip}</Badge> : null}
-            {isMachineDocker(config) ? <Badge>BB machine</Badge> : null}
+            <span id={chipsId} className="pointer-events-none flex items-center gap-1.5 empty:hidden">
+              {chip ? <Badge>{chip}</Badge> : null}
+              {isMachineDocker(config) ? <Badge>BB machine</Badge> : null}
+              {draftChip([backendPart(config.id)])}
+            </span>
           </span>
           <StateLine id={stateId} className="pointer-events-none mt-0.5" tone={health.tone} words={health.words} items={backendLine(state, config, health, now, showAge)} />
         </span>
@@ -316,7 +318,8 @@ export function iosEncoderWords(value: string): string {
 function Options() {
   const { state, nav, instant, writes } = useSettings();
   const navigate = useBbNavigate();
-  const unsavedChip = useUnsavedChip();
+  const draftChip = useDraftChip();
+  const unsavedChip = (option: string) => draftChip(OPTION_PARTS[option] ?? []);
   const general = { ...state.defaults.general, ...state.document.general };
   const monitor = { ...state.defaults.monitor, ...state.document.monitor };
   const defaultInfo = state.kinds.find((kind) => kind.id === general.defaultKind);
@@ -376,9 +379,12 @@ function Options() {
 
 const OPTION_PARTS: Readonly<Record<string, readonly string[]>> = { boxes: [BOXES_PART, FILES_PART], monitor: [MONITOR_PART] };
 
-function useUnsavedChip(): (option: string) => ReactNode {
+function useDraftChip(): (parts: readonly string[]) => ReactNode {
   const registry = useRegistry();
-  return (option) => ((OPTION_PARTS[option] ?? []).some((part) => registry.hasChanges(part)) ? <Badge tone="warn">Unsaved changes</Badge> : null);
+  return (parts) => {
+    if (parts.some((part) => registry.saving(part))) return <Badge>Saving…</Badge>;
+    return parts.some((part) => registry.hasChanges(part)) ? <Badge tone="warn">Unsaved changes</Badge> : null;
+  };
 }
 
 export function ReloadNote() {

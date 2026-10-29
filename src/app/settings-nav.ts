@@ -18,6 +18,14 @@ export interface SettingsNav {
   replace(view: SettingsView): void;
 }
 
+const MOUNT_SERIAL = 1;
+
+function arrivalOnMount(view: SettingsView): Arrival | null {
+  if (view.page !== "overview") return { kind: "open", row: null, scroll: 0, serial: MOUNT_SERIAL };
+  const entry = entryOf(window.history.state);
+  return entry?.row ? { kind: "return", row: entry.row, scroll: entry.scroll ?? 0, serial: MOUNT_SERIAL } : null;
+}
+
 function urlFor(view: SettingsView): string {
   return `${window.location.pathname}${window.location.search}${hashOf(view)}`;
 }
@@ -28,8 +36,8 @@ export function useSettingsNav(scroller: () => HTMLElement | null): SettingsNav 
     const from = entryOf(window.history.state)?.from;
     return from === null || from === undefined ? null : viewFromHash(from);
   });
-  const [arrival, setArrival] = useState<Arrival | null>(null);
-  const serial = useRef(0);
+  const [arrival, setArrival] = useState<Arrival | null>(() => arrivalOnMount(viewFromHash(window.location.hash)));
+  const serial = useRef(MOUNT_SERIAL);
   const viewRef = useRef(view);
   viewRef.current = view;
 

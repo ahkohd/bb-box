@@ -81,7 +81,13 @@ In order:
    callout of everything that needs the person, each with its fix and Open.
 3. **Backends**: one row each, with its icon, name, a host chip, a "BB
    machine" chip for Docker on one of your BB machines, one state line, and
-   the "takes new boxes" switch. Add backend is beside the title.
+   the "takes new boxes" switch. The host chip comes from the backend's
+   fields: the Proxmox node (or its API URL's host), Tart's Mac or how many
+   Macs, the Docker or microsandbox host ("this machine" for BB's server),
+   or how many machines an SSH host pool lists; else the name in a second
+   backend's ID. While its page has a draft the row says "Unsaved
+   changes", and "Saving…" while a save of it is out. Add backend is beside
+   the title.
 4. **Kinds**: one row each, in one list with no group headings, Linux kinds
    first, then macOS and iOS, then Windows and Android, with the kind's full name, a Default chip, its default
    size, how many backends make it, warm and spare counts, and the
@@ -131,13 +137,16 @@ each is confirmed only by BB Box's reply or its receipt.
 
 ### Forms
 
-The Boxes page's Boxes per thread, its files for every box, and the
-Monitor's Refresh every are forms on the registry. Other pages keep the
-forms they had before 067 until their units.
+The Boxes page's Boxes per thread, its files for every box, the
+Monitor's Refresh every, and each backend's page are forms on the
+registry. Other pages keep the forms they had before 067 until their
+units.
 
-- An edit is a setting's path, such as `monitor/refreshIntervalSeconds` or
-  `files/<path>`, with the value typed and the stored value it started
-  from: a file's content starts from its version.
+- An edit is a setting's path, such as `monitor/refreshIntervalSeconds`,
+  `files/<path>`, `backends/<id>/fields/<key>` or
+  `backends/<id>/hosts/<name>/fields/<key>`, with the value typed and the
+  stored value it started from: a file's content and a secret start from
+  their version.
 - A changed field has a "Changed" chip. The bar says "1 change to the
   Monitor not saved", with Discard and Save. Enter in a field saves.
 - A change made elsewhere to another setting shows as stored. A change
@@ -166,7 +175,9 @@ forms they had before 067 until their units.
   "Since then, changed elsewhere: the content of ~/.cfg/a.json (revision
   216)".
 - A new file has a provisional identity, such as `files/@new-k3x9`, until
-  its save is confirmed; then its edits move to `files/<path>`. A new file
+  its save is confirmed; then its edits move to `files/<path>`. A new Mac
+  is `backends/tart/hosts/@new-k3x9` in the same way, and its fields'
+  edits, typed while its save was out included, move to the Mac it made. A new file
   given the path of a file already there replaces it, from that file's
   version: "~/.cfg/a.json is already a file here. Saving replaces it." An
   empty or wrong path is refused at its field.
@@ -199,16 +210,64 @@ first and says what follows.
   with its operation ID, which builds its images.
 
 Each other part's page holds today's form for it, as it was before 067,
-until a later unit replaces it: a backend's setup form with Save, Save and
+until a later unit replaces it: setting up a backend, with Save, Save and
 turn on, Check and the last report; a kind's editor; the tailnet's form;
 Rebuild now. These save the whole document with their Save, and a stale
 revision reloads and says so.
+
+## A backend's page
+
+- **Header**: its icon, name, host chip, "BB machine" chip, description,
+  "Saved changes reach new boxes; boxes already made keep theirs", the
+  saving rule, the "takes new boxes" switch, and a menu: Rename…, Copy
+  saved settings as JSON (each secret as whether it is set), Open the
+  setup guide, and Remove backend…. Rename acts at once. Remove asks,
+  naming the secrets it deletes, and is refused while the backend has
+  boxes: the menu says "Remove: release its 1 box first", and a refusal
+  that races a new box says "Docker was not removed: …" under the header.
+- **Health**: the same state as its row, from the revision its settings
+  last changed at and the revision its last check tested: "Not checked
+  since it changed" and how that check went, "2 of 6 checks passed ·
+  checked 6 hours ago, so it may have changed since", "Not finished" with
+  what is missing. Failed checks and warnings come first with their fixes,
+  then the notes; passed checks fold. Check runs its checks against what is
+  saved; with a draft, "Check with my changes" runs them against the same
+  candidate Save would send, a new Mac and a pasted secret included. That
+  result is bound to the revision and a hash of the edits, and any later
+  edit clears it: "Your form changed after you checked it, so that result
+  was cleared. Check again."
+- **In use**: boxes now, the kinds it makes (each a link), and warm boxes,
+  with "0 of 1 Linux ready: no room" where a pool is short.
+- **Cards** in the driver's groups: Connection, Credentials, Boxes, Shared
+  iOS hosts and Advanced. The last two fold, with a summary such as "Off ·
+  All at their defaults", and open by themselves when they hold an edit, a
+  conflict or a problem. A BB machine's Docker keeps its host to itself.
+- **Each field** shows the first sentence of its help (`helpParts`), with
+  More for the rest, a Changed chip, its problem (from the last save, or
+  the stored configuration's) and its conflict. An empty field shows the
+  value it takes inside it and under it: "Empty: 4096, the default",
+  "Empty: https://…, from Proxmox LXC". A field where empty turns boxes off
+  has an Offer checkbox: unticked, it is saved empty, so off, and says so.
+  On-or-off fields are checkboxes. A secret says Set or Not set and offers
+  Set or Replace and Clear; its conflict names the revision that replaced
+  it.
+- **Macs**, for Tart: a row each, with its address, its switch, which acts
+  at once, and its chevron last. A row opens to its address, user, host
+  keys and "Its own shared iOS host size", each empty size saying what it
+  takes: "Empty: 6 cores, Tart's setting" or "Empty: 4 cores, bb-box's
+  estimate for mac-1". The estimate is from what bb-box last read of the
+  Mac; a Mac it has not read yet is read in the background when the page
+  asks, at most once a minute. Add Mac stages a new Mac, named in its
+  first field, with "Takes boxes"; a name already on the backend is refused
+  at its field before anything is sent. Remove… asks and stages the
+  removal until Save.
+- **The bar** has Check beside Discard and Save. Save stays on the page.
 
 ## Each page
 
 | Page | Holds |
 | --- | --- |
-| A backend | Header with its icon, name, chips, description, "Saved changes reach new boxes; boxes already made keep theirs", and the "takes new boxes" switch. Health: its state, its last check's age, its fix; boxes now and the kinds it makes. Then its setup form, or for Docker on a BB machine the Docker on BB machines list |
+| A backend | See [A backend's page](#a-backends-page). For Docker on a BB machine, the Docker on BB machines list follows the cards |
 | A kind | Header with its full name, badges, description, Make default, and the "offered to threads" switch; the default kind's switch is disabled, with why. Then its editor: sizes, the default size, largest size, warm boxes per backend and spares |
 | Boxes | Default kind (a menu that acts at once); boxes per thread; boxes join BB as machines and Linux desktops as video (switches); Files for every box |
 | Images | Rebuild each night (a switch); Rebuild now; the names of projects' images, set with `bb box image set` |
@@ -245,14 +304,20 @@ on the Boxes page, under Machines".
 | Unit of 067 | State |
 | --- | --- |
 | 1: views and the hash, the overview with its rows, switches and Status, the option pages, Machines to the Boxes page; each part's page opens today's form | Built |
-| 2 and later: the editing engine, backend and kind pages of their own, Docker on BB machines as backends, first run, Images, Devices and Network, Configuration, Find | To come, as 067 lists them |
+| 2: the editing engine on Boxes and Monitor, and every switch on it | Built |
+| 3: each backend's page on the engine, with health, In use, cards, Macs and the menu | Built |
+| 4: the drivers' help text | Built |
+| 5 and later: Docker on BB machines as backends, kind pages, first run, Images, Devices and Network, Configuration, Find | To come, as 067 lists them |
 
-The code: `src/app/settings.tsx` (the view: hash, focus, scroll, motion),
+The code: `src/app/settings.tsx` (the view: hash, focus and scroll),
 `settings-route.ts` (views, hashes and `openSettingsView`),
 `settings-link.tsx`, `settings-nav.ts` (history entries), `settings-status.ts`
-(state words, Status and the callout), `settings-instant.ts` (the at-once
-write path), `settings-context.tsx`, `settings-overview.tsx`,
-`settings-pages.tsx` and `settings-parts.tsx`. Today's forms stay in
+(state words, Status and the callout), `settings-drafts.ts`,
+`settings-paths.ts` and `settings-saving.tsx` (the engine),
+`settings-checks.ts` (checks bound to a form), `settings-backend-page.tsx`
+and `settings-backend-fields.tsx` (a backend's page),
+`settings-context.tsx`, `settings-overview.tsx`, `settings-pages.tsx` and
+`settings-parts.tsx`. Today's forms stay in
 `settings-backends.tsx`, `settings-kinds.tsx`, `settings-fields.tsx`,
 `settings-files.tsx`, `settings-tailnet.tsx`, `settings-docker-hosts.tsx`,
 `rebuild-now.tsx` and `first-run.tsx`, with the helpers in `config.ts`.

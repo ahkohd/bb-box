@@ -101,8 +101,8 @@ import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, followWind
 import type { OpenStream } from "../../core/selkies.ts";
 import { SELKIES_DISPLAY, SELKIES_LAUNCHER, selkiesDisplay } from "../selkies.ts";
 import { openRoute } from "../../transports/route.ts";
-import { IOS_IMAGE_KIND, TART_KINDS, type IosHostsConfig, type TartConfig, type TartHost, type TartKind } from "./config.ts";
-import { IosHosts, isHostOwner, slotRefOf } from "./ios-hosts.ts";
+import { IOS_IMAGE_KIND, MAC_IOS_HOST_FIELDS, TART_KINDS, type IosHostsConfig, type TartConfig, type TartHost, type TartKind } from "./config.ts";
+import { IosHosts, isHostOwner, sizeHostOnMac, slotRefOf } from "./ios-hosts.ts";
 import {
   captureScript,
   claimScript,
@@ -179,6 +179,7 @@ import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScri
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
 const VM_STOPPED_POLL_MS = 3_000;
+const UNREAD_MAC_READ_MS = 60_000;
 const STARTS_LEFT_MOST_MS = 15_000;
 /**
  * How long no warm VM is filled after a box is ready, for its enrolment: a fill, a VM booting beside it, made BB's
@@ -866,6 +867,8 @@ export class TartBackend implements Backend {
   /** The Macs whose build is ready, as their state last said. */
   readonly #qemuVideoReady = new Set<string>();
   readonly #chips = new Map<string, string>();
+  readonly #lastStates = new Map<string, HostState>();
+  #unreadMacsAskedAt = 0;
   readonly #iosImages = new Map<string, IosImageFacts | null>();
   readonly #probes: MacProbeCache;
 
@@ -908,6 +911,33 @@ export class TartBackend implements Backend {
   #iosReport(mac: string): MacReport | null {
     if (!this.#iosImages.has(mac) && !this.#probes.report(mac)) return null;
     return imageCapabilities(mac, this.#iosImages.get(mac) ?? null, this.#probes.report(mac), Date.now());
+  }
+
+  #readUnreadMacs(): void {
+    const unread = this.#config.hosts.filter((host) => !this.#lastStates.has(host.name)).length;
+    if (!unread || Date.now() - this.#unreadMacsAskedAt < UNREAD_MAC_READ_MS) return;
+    this.#unreadMacsAskedAt = Date.now();
+    void this.#states()
+      .then(() => {
+        if (this.#config.hosts.filter((host) => !this.#lastStates.has(host.name)).length < unread) this.#context.factsChanged?.();
+      })
+      .catch((error) => this.#context.logError("read the Macs for their shared iOS host estimates", error));
+  }
+
+  hostEstimates(): Readonly<Record<string, Readonly<Record<string, number>>>> {
+    this.#readUnreadMacs();
+    const estimates: Record<string, Record<string, number>> = {};
+    for (const host of this.#config.hosts) {
+      const state = this.#lastStates.get(host.name);
+      if (!state) continue;
+      const sizing = sizeHostOnMac(host, state, this.#config, hardwareKnown(this.#iosReport(host.name)), {});
+      estimates[host.name] = {
+        [MAC_IOS_HOST_FIELDS.most.field]: sizing.most.value,
+        [MAC_IOS_HOST_FIELDS.cores.field]: sizing.cores.value,
+        [MAC_IOS_HOST_FIELDS.memoryGiB.field]: sizing.memoryGiB.value,
+      };
+    }
+    return estimates;
   }
 
   macCapabilities(): readonly MacReport[] {
@@ -2907,6 +2937,7 @@ export class TartBackend implements Backend {
     else this.#qemuVideoReady.delete(host.name);
     if (qemuVideo?.status === "missing") this.#buildVideo(host);
     const state = parseState(text);
+    this.#lastStates.set(host.name, state);
     if (state.chip) this.#chips.set(host.name, state.chip);
     if (this.#config.iosImage) this.#iosImages.set(host.name, this.#iosImageFacts(state));
     return { ...state, qemu: parseQemuState(text), qemuVideo };

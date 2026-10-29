@@ -3,7 +3,7 @@ import type { BackendConfig, ConfigDocument, Problem } from "../core/document.ts
 import type { ApplyResult, ConfigState } from "../plugin/contract.ts";
 import type { DockerHostView } from "../plugin/docker-hosts.ts";
 import { submittedWrite, type InstantWrite, type Operation } from "./settings-drafts.ts";
-import { candidateOf, fileIsStored, filePath, plain, storedAt, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
+import { backendPath, candidateOf, fileIsStored, filePath, hostPath, plain, storedAt, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
 import type { Instant } from "./settings-saving.tsx";
 import type { SettingsNav } from "./settings-nav.ts";
 import { machineHostId } from "./settings-status.ts";
@@ -36,6 +36,9 @@ export type MonitorAtOnce = "enabled" | "backgroundMonitoring" | "pressureNotifi
 
 export interface SettingsWrites {
   backendOn(state: ConfigState, config: BackendConfig, on: boolean, what: string): InstantWrite;
+  backendLabel(state: ConfigState, config: BackendConfig, label: string, what: string): InstantWrite;
+  removeBackend(state: ConfigState, config: BackendConfig, what: string): InstantWrite;
+  hostOn(state: ConfigState, config: BackendConfig, host: string, on: boolean, what: string): InstantWrite;
   kindOn(state: ConfigState, id: string, on: boolean, what: string): InstantWrite;
   general(state: ConfigState, key: GeneralAtOnce, value: boolean | string, what: string, say?: (value: PlainValue) => string): InstantWrite;
   monitor(state: ConfigState, key: MonitorAtOnce, value: boolean, what: string): InstantWrite;
@@ -45,6 +48,9 @@ export interface SettingsWrites {
 
 export const switchKey = {
   backend: (id: string) => `backend:${id}`,
+  backendLabel: (id: string) => `backend-label:${id}`,
+  removeBackend: (id: string) => `remove-backend:${id}`,
+  host: (id: string, name: string) => `host:${id}:${name}`,
   kind: (id: string) => `kind:${id}`,
   general: (key: string) => `general:${key}`,
   monitor: (key: string) => `monitor:${key}`,
@@ -84,6 +90,21 @@ export function settingsWrites(rpc: { call: (...args: never[]) => Promise<unknow
       const hostId = machineHostId(config);
       if (!hostId) return write;
       return { ...write, send: (_transport, _built, _state, operation) => dockerHostSet(hostId, on, operation) };
+    },
+    backendLabel(state, config, label, what) {
+      const path = `${backendPath(config.id)}/label`;
+      return pathWrite(state, switchKey.backendLabel(config.id), what, path, plain(label), label, (latest) => latest.document.backends.find((backend) => backend.id === config.id)?.label ?? "the driver's name");
+    },
+    removeBackend(state, config, what) {
+      const path = backendPath(config.id);
+      return {
+        ...pathWrite(state, switchKey.removeBackend(config.id), what, path, { kind: "removed" }, true, (latest) => (latest.document.backends.some((backend) => backend.id === config.id) ? "still here" : "removed")),
+        undone: "removed",
+      };
+    },
+    hostOn(state, config, host, on, what) {
+      const path = `${hostPath(config.id, host)}/enabled`;
+      return pathWrite(state, switchKey.host(config.id, host), what, path, plain(on), on, settingWords(path, onOff));
     },
     kindOn(state, id, on, what) {
       const path = `kinds/${id}/enabled`;
