@@ -115,6 +115,7 @@ export interface RunOptions {
   readonly log?: (line: string) => void;
   /** "bb-app": only the images that carry another build of BB's app than BB's server gives, after a BB update; the night does the rest. */
   readonly only?: "bb-app";
+  readonly image?: string;
 }
 
 /** Where a refresh run is, image by image, for the settings page's Rebuild now: the run going on, or the last one. */
@@ -365,6 +366,15 @@ export class ImageJobs {
     return { started: true, message: null };
   }
 
+  async startOne(name: string): Promise<{ readonly started: boolean; readonly message: string | null }> {
+    const views = await this.list().catch(() => [] as ImageView[]);
+    if (!views.some((view) => view.name === name)) return { started: false, message: `There is no image ${name} on a backend that is on.` };
+    const running = this.#running;
+    if (running) return this.startNow();
+    void this.refreshAll({ image: name }).catch(() => null);
+    return { started: true, message: null };
+  }
+
   /** Stops a run: the image being refreshed fails, its old build stays, and no other starts. */
   stop(): void {
     this.#running?.stop.abort(new Error("bb-box is stopping."));
@@ -402,7 +412,7 @@ export class ImageJobs {
       const views = await this.list(signal);
       const limit = started + (options.limitMs ?? RUN_LIMIT_MS);
       // After a BB update, the images with BB's old app alone; the others stay for the night.
-      const taken = (view: ImageView) => !!view.due && (options.only !== "bb-app" || this.#appStale(view.build, app));
+      const taken = (view: ImageView) => (options.image ? view.name === options.image : !!view.due && (options.only !== "bb-app" || this.#appStale(view.build, app)));
       /** A taken image's outcome, in the run's lines and its progress. */
       const note = (line: RunLine & { outcome: RunProgress["images"][number]["state"] }) => {
         lines.push(line);
@@ -418,7 +428,7 @@ export class ImageJobs {
         const backend = this.#deps.backends().find((candidate) => candidate.id === view.backend)!;
         const pins = await this.#deps.facts.pins(pinSet(view.build.kind)).catch(() => null);
         const from = this.#from(view.build, pins, app, versions);
-        if (view.last && !view.last.ok && !view.last.waiting && view.last.from === from) {
+        if (!options.image && view.last && !view.last.ok && !view.last.waiting && view.last.from === from) {
           note({ name: view.name, outcome: "skipped", detail: `its last rebuild failed and nothing it is built from has changed; bb box images build ${view.name} tries again` });
           continue;
         }
@@ -443,7 +453,7 @@ export class ImageJobs {
             continue;
           }
         }
-        say(`refreshing ${view.name}: ${view.due}`);
+        say(`refreshing ${view.name}: ${view.due ?? "asked for again"}`);
         this.#setImage(view.name, { state: "refreshing", since: this.#now(), line: null });
         let step: { at: number; of: number } | undefined;
         const result = await this.#refreshOne(backend, view, {
@@ -465,8 +475,8 @@ export class ImageJobs {
         this.#setImage(view.name, result.ok ? { state: "refreshed", detail: `now ${result.build?.build ?? "a new build"}, in ${result.seconds} s`, line: null } : { state: "failed", detail: result.reason ?? "no reason given", line: null });
         lines.push(result.ok ? { name: view.name, outcome: "refreshed", detail: `now ${result.build?.build ?? "a new build"}, in ${result.seconds} s` } : { name: view.name, outcome: "failed", detail: result.reason ?? "no reason given" });
       }
-      for (const view of views) if (!taken(view)) lines.push({ name: view.name, outcome: "skipped", detail: view.due ? "it is due for another reason than a BB update: the night refreshes it" : "not due" });
-      if (bakes && options.only !== "bb-app") lines.push(...(await bakes.maintain({ until: limit, signal })));
+      if (!options.image) for (const view of views) if (!taken(view)) lines.push({ name: view.name, outcome: "skipped", detail: view.due ? "it is due for another reason than a BB update: the night refreshes it" : "not due" });
+      if (bakes && options.only !== "bb-app" && !options.image) lines.push(...(await bakes.maintain({ until: limit, signal })));
       const ok = !lines.some((line) => line.outcome === "failed");
       await this.#deps.storage.set(LAST_RUN, { at: this.#now(), ok, lines });
       if (this.#progress) this.#setProgress({ ...this.#progress, ended: this.#now() });

@@ -694,7 +694,8 @@ export function imageLine(view: ImageView): string {
   const record = view.build.record;
   const age = record ? Math.floor((Date.now() - Date.parse(record.built)) / 86_400_000) : null;
   const built = record ? `${record.build}, ${age === 0 ? "built today" : `${age} days old`}` : "no record";
-  const last = view.last ? `; last rebuild ${new Date(view.last.at).toISOString().slice(0, 10)} ${view.last.ok ? "passed" : view.last.waiting ? `waited: ${view.last.reason}` : `failed: ${view.last.reason}`}` : "";
+  const reason = (view.last?.reason ?? "").replace(/\.+$/, "");
+  const last = view.last ? `; last rebuild ${new Date(view.last.at).toISOString().slice(0, 10)} ${view.last.ok ? "passed" : view.last.waiting ? `waited: ${reason}` : `failed: ${reason}`}` : "";
   return `${view.name} (${view.build.kind}): ${built}; ${view.due ? `due, as ${view.due}` : "not due"}${last}.`;
 }
 

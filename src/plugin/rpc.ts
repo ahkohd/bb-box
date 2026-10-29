@@ -296,6 +296,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       };
     },
     "images.refresh": async () => app.imageJobs.startNow(),
+    "images.build": async ({ image }) => app.imageJobs.startOne(image),
     "setup.desktop": async ({ threadId, hostId, kind, size, name }) => ({ result: await app.buildDesktop({ threadId, hostId, ...(kind ? { kind } : {}), ...(size ? { size } : {}), ...(name ? { name } : {}) }) }),
     "setup.docker": async ({ hostId }) => {
       const result = await app.setDockerHost(hostId, true, true);
