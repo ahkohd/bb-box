@@ -171,13 +171,9 @@ export function kindSummary(state: ConfigState, info: KindInfoView): string {
   return [`${size.cores} ${size.cores === 1 ? "core" : "cores"} · ${Math.round((size.memoryMiB / 1024) * 10) / 10} GiB`, plural(offeringBackends(state, info.id).length, "backend"), ...(warm ? [`${warm} warm`] : []), ...(sizes.spares ? [plural(sizes.spares, "spare")] : [])].join(" · ");
 }
 
-export const KIND_GROUPS = [
-  { id: "linux", title: "Linux" },
-  { id: "apple", title: "macOS and iOS" },
-  { id: "windows", title: "Windows and Android" },
-] as const;
+export const KIND_GROUPS = ["linux", "apple", "windows"] as const;
 
-export function kindGroup(info: KindInfoView): (typeof KIND_GROUPS)[number]["id"] {
+export function kindGroup(info: KindInfoView): (typeof KIND_GROUPS)[number] {
   if (info.device === "ios" || info.os === "macos") return "apple";
   if (info.device === "android" || info.os === "windows") return "windows";
   return "linux";

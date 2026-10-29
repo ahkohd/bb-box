@@ -281,23 +281,17 @@ function Kinds() {
       Change the default
     </button>
   );
+  const listed = KIND_GROUPS.flatMap((group) => state.kinds.filter((info) => kindGroup(info) === group && (shown(info) || showFolded)));
   return (
     <Group title="Kinds" description={defaultInfo ? `What a thread can ask for. ${kindName(state.kinds, defaultInfo)} is the default.` : "What a thread can ask for."} action={changeDefault}>
       <Card>
-        {KIND_GROUPS.map((group) => {
-          const members = state.kinds.filter((info) => kindGroup(info) === group.id && (shown(info) || showFolded));
-          if (!members.length) return null;
-          return (
-            <div key={group.id} className="border-b border-border last:border-b-0">
-              <p className="px-4 pb-1 pt-2.5 text-2xs font-medium text-subtle-foreground">{group.title}</p>
-              <Rows>
-                {members.map((info) => (
-                  <KindRow key={info.id} info={info} />
-                ))}
-              </Rows>
-            </div>
-          );
-        })}
+        {listed.length ? (
+          <Rows>
+            {listed.map((info) => (
+              <KindRow key={info.id} info={info} />
+            ))}
+          </Rows>
+        ) : null}
         {folded.length ? (
           <button type="button" aria-expanded={showFolded} onClick={() => setShowFolded((current) => !current)} className={cn("flex w-full cursor-pointer items-center gap-1.5 border-t border-border px-4 py-2.5 text-left text-xs text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground", FOCUS_RING)}>
             <Icon name={showFolded ? "ChevronDown" : "ChevronRight"} className="size-3.5" aria-hidden />
