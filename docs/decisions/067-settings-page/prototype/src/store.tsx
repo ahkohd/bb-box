@@ -18,7 +18,7 @@ import {
 import { readPath, same, type Path } from "./paths";
 
 export type Scenario = "healthy" | "problem" | "first-run";
-export type NextSave = "ok" | "refused" | "lost";
+export type NextSave = "ok" | "refused" | "lost" | "dropped";
 export type ServerDocker = "ready" | "missing" | "permission" | "disk";
 
 export interface Problem {
@@ -27,7 +27,7 @@ export interface Problem {
 }
 
 export type ApplyResult =
-  | { readonly ok: true; readonly revision: number }
+  | { readonly ok: true; readonly revision: number; readonly operation: string }
   | { readonly ok: false; readonly reason: "revision"; readonly revision: number }
   | { readonly ok: false; readonly reason: "problems"; readonly problems: readonly Problem[] }
   | { readonly ok: false; readonly reason: "error"; readonly message: string };
@@ -49,6 +49,9 @@ interface State {
   readonly checkingAll: boolean;
   readonly firstRun: FirstRunSetup;
   readonly monitorChanged: boolean;
+  readonly receipts: Readonly<Record<string, number>>;
+  readonly raceNext: number;
+  readonly setupDone: boolean;
 }
 
 export const BUILD_STEPS = 9;
@@ -89,6 +92,9 @@ function initial(scenario: Scenario): State {
     checkingAll: false,
     firstRun: { state: "offer", step: 0 },
     monitorChanged: false,
+    receipts: {},
+    raceNext: 0,
+    setupDone: scenario !== "first-run",
   };
 }
 
@@ -186,11 +192,14 @@ function wait(ms: number): Promise<void> {
 function stamped(doc: Document, secrets: Readonly<Record<Path, string | null>>, revision: number): Document {
   let next = doc;
   for (const [path, value] of Object.entries(secrets)) {
-    const state = value === null ? { set: false, version: "none" } : { set: true, version: `r${revision}` };
+    const state = { set: value !== null, version: `r${revision}` };
     const [root, id, section, key] = path.split("/");
     if (root === "backends") next = { ...next, backends: next.backends.map((each) => (each.id === id && section === "fields" ? { ...each, fields: { ...each.fields, [key!]: state } } : each)) };
     if (root === "general" && id === "tailnet") next = { ...next, general: { ...next.general, tailnet: { ...next.general.tailnet, [section!]: state } } };
-    if (root === "general" && id === "files") next = { ...next, general: { ...next.general, files: next.general.files.map((file) => (file.path === path.slice("general/files/".length) ? { ...file, content: state } : file)) } };
+    if (root === "files") {
+      const filePath = decodeURIComponent(path.slice("files/".length));
+      next = { ...next, general: { ...next.general, files: next.general.files.map((file) => (file.path === filePath ? { ...file, content: state } : file)) } };
+    }
   }
   return next;
 }
@@ -201,7 +210,9 @@ interface Store extends State {
   setServerDocker(docker: ServerDocker): void;
   bringMacBack(): void;
   agentApply(): void;
-  apply(draft: Document, revision: number, secrets?: Readonly<Record<Path, string | null>>): Promise<ApplyResult>;
+  apply(draft: Document, revision: number, secrets?: Readonly<Record<Path, string | null>>, operation?: string): Promise<ApplyResult>;
+  receipt(operation: string): number | null;
+  setRaceNext(count: number): void;
   fetch(): Document;
   check(id: string): Promise<void>;
   checkAll(): Promise<void>;
@@ -257,20 +268,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const apply = useCallback(
-    async (draft: Document, revision: number, secrets: Readonly<Record<Path, string | null>> = {}): Promise<ApplyResult> => {
+    async (draft: Document, revision: number, secrets: Readonly<Record<Path, string | null>> = {}, operation = `op-${Math.random().toString(36).slice(2)}`): Promise<ApplyResult> => {
       await wait(700);
       const before = current.current;
+      const done = before.receipts[operation];
+      if (done !== undefined) return { ok: true, revision: done, operation };
+      if (before.raceNext > 0) {
+        update((state) => ({ ...state, raceNext: state.raceNext - 1, doc: { ...state.doc, revision: state.doc.revision + 1 } }));
+        return { ok: false, reason: "revision", revision: before.doc.revision + 1 };
+      }
+      if (before.nextSave === "dropped") {
+        update((state) => ({ ...state, nextSave: "ok" }));
+        await wait(1200);
+        throw new LostReply("No reply");
+      }
       if (before.nextSave === "refused") {
         update((state) => ({ ...state, nextSave: "ok" }));
         return { ok: false, reason: "error", message: "BB Box refused the save: its configuration file is busy." };
       }
       if (revision !== before.doc.revision) return { ok: false, reason: "revision", revision: before.doc.revision };
-      const parts = partsChanged(before.doc, draft);
-      for (const path of Object.keys(secrets)) parts.add(path.startsWith("backends/") ? path.split("/").slice(0, 2).join("/") : "general");
-      const problems = problemsOf(draft, parts);
-      if (problems.length) return { ok: false, reason: "problems", problems };
       const next = revision + 1;
-      const stored = { ...stamped(draft, secrets, next), revision: next };
+      const candidate = stamped(draft, secrets, next);
+      const parts = partsChanged(before.doc, candidate);
+      for (const path of Object.keys(secrets)) parts.add(path.startsWith("backends/") ? path.split("/").slice(0, 2).join("/") : "general");
+      const problems = problemsOf(candidate, parts);
+      if (problems.length) return { ok: false, reason: "problems", problems };
+      const stored = { ...candidate, revision: next };
       const turnedOn: string[] = [];
       update((state) => {
         const live = { ...state.live };
@@ -289,14 +312,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         }
         for (const id of Object.keys(live)) if (!stored.backends.some((backend) => backend.id === id)) delete live[id];
-        return { ...state, doc: stored, live, nextSave: state.nextSave === "lost" ? "ok" : state.nextSave, monitorChanged: state.monitorChanged || before.doc.monitor.enabled !== stored.monitor.enabled };
+        const offering = stored.backends.some((backend) => backend.enabled && !problemsOf({ ...stored, backends: [backend] }, new Set([`backends/${backend.id}`])).length);
+        return { ...state, doc: stored, live, receipts: { ...state.receipts, [operation]: next }, setupDone: state.setupDone || offering, nextSave: state.nextSave === "lost" ? "ok" : state.nextSave, monitorChanged: state.monitorChanged || before.doc.monitor.enabled !== stored.monitor.enabled };
       });
       for (const id of turnedOn) void runCheck(id);
       if (before.nextSave === "lost") {
         await wait(1200);
         throw new LostReply("No reply");
       }
-      return { ok: true, revision: next };
+      return { ok: true, revision: next, operation };
     },
     [update, runCheck],
   );
@@ -305,9 +329,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     update((state) => {
       const revision = state.doc.revision + 1;
       const backends = state.doc.backends.map((backend) =>
-        backend.id === "proxmox-lxc" ? { ...backend, fields: { ...backend.fields, "reserve-memory-mib": 8192, "token-secret": { set: true, version: `r${revision}` } } } : backend,
+        backend.id === "proxmox-lxc"
+          ? { ...backend, fields: { ...backend.fields, "reserve-memory-mib": 8192, "token-secret": { set: true, version: `r${revision}` } } }
+          : backend.id === "tart"
+            ? { ...backend, hosts: (backend.hosts ?? []).map((host) => (host.name === "mac-1" ? { ...host, fields: { ...host.fields, "ios-hosts-cores": 12 } } : host)) }
+            : backend,
       );
-      const doc: Document = { ...state.doc, revision, backends, general: { ...state.doc.general, boxesPerThread: 4 }, monitor: { ...state.doc.monitor, refreshIntervalSeconds: 10 }, kinds: { ...state.doc.kinds, linux: { ...state.doc.kinds.linux!, spares: 2 } } };
+      const files = state.doc.general.files.map((file) => ({ ...file, content: { set: true, version: `r${revision}` } }));
+      const doc: Document = { ...state.doc, revision, backends, general: { ...state.doc.general, boxesPerThread: 4, files }, monitor: { ...state.doc.monitor, refreshIntervalSeconds: 10 }, kinds: { ...state.doc.kinds, linux: { ...state.doc.kinds.linux!, spares: 2 } } };
       const live = { ...state.live };
       if (live["proxmox-lxc"]) live["proxmox-lxc"] = { ...live["proxmox-lxc"], changedRevision: revision };
       return { ...state, doc, live };
@@ -347,6 +376,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ...state,
           doc,
           firstRun: { state: "built", step: BUILD_STEPS },
+          setupDone: true,
           live: { ...state.live, docker: { boxes: 0, offers: ["linux"], checking: false, changedRevision: revision, health: { summary: "Docker 29.8 on bb-1", checkedAt: Date.now(), checkedRevision: revision, checks: [{ id: "daemon", name: "Docker", status: "ok", detail: "29.8.2 on bb-1, BB's server." }, { id: "images", name: "Images", status: "ok", detail: "bbbox/linux:1 built just now." }] } } },
         };
       });
@@ -385,6 +415,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       bringMacBack: () => update((state) => ({ ...state, macBack: true })),
       agentApply,
       apply,
+      receipt: (operation) => current.current.receipts[operation] ?? null,
+      setRaceNext: (raceNext) => update((state) => ({ ...state, raceNext })),
       fetch: () => current.current.doc,
       check: (id) => runCheck(id),
       checkAll,

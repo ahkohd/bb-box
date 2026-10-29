@@ -57,8 +57,16 @@ export function offering(doc: Document, live: Readonly<Record<string, BackendLiv
   return doc.backends.filter((backend) => backend.enabled && live[backend.id]?.offers.includes(kind));
 }
 
+export function configuredKinds(backend: BackendConfig): string[] {
+  const driver = driverOf(backend.type);
+  return offersOf(backend).filter((kind) => {
+    const field = driver.fields.find((each) => each.group === "boxes" && each.type === "string" && (each.description ?? "").includes(`${kind} boxes`) && /Empty(,| turns| offers)/.test(each.description ?? ""));
+    return !field || backend.fields[field.key] !== "";
+  });
+}
+
 export function configuredFor(doc: Document, kind: string): BackendConfig[] {
-  return doc.backends.filter((backend) => backend.enabled && offersOf(backend).includes(kind));
+  return doc.backends.filter((backend) => backend.enabled && configuredKinds(backend).includes(kind));
 }
 
 export function canMake(doc: Document, kind: string): BackendConfig[] {
@@ -147,6 +155,7 @@ export function statusItems(doc: Document, live: Readonly<Record<string, Backend
       items.push({ key: `w-${backend.id}-${short.kind}`, tone: "warn", title: `Warm ${kindName(short.kind)} boxes on ${backendTitle(backend, live[backend.id])}`, detail: `${short.ready} of ${short.wanted} ready: ${short.reason}`, fix: "Lower the warm count, or free memory on the host.", open: { page: "kind", id: short.kind } });
     }
   }
+  if (doc.backends.length && !doc.backends.some((backend) => backend.enabled)) items.push({ key: "all-off", tone: "bad", title: "Every backend is off", detail: "Threads get no boxes until one is on. Boxes already made keep working.", fix: "Turn on a backend below.", open: { page: "backend", id: doc.backends[0]!.id } });
   const defaultKind = doc.general.defaultKind;
   if (!doc.kinds[defaultKind]?.enabled) items.push({ key: "default-off", tone: "bad", title: `The default kind, ${kindName(defaultKind)}, is off`, detail: "A thread that names no kind gets no box.", fix: "Turn it on, or choose another default.", open: { page: "option", id: "boxes" } });
   for (const id of kindOrder()) {

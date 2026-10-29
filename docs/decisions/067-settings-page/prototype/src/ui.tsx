@@ -109,7 +109,7 @@ export function SavedTick({ show }: { show: boolean }) {
 }
 
 export function SaveRule() {
-  return <p className="text-2xs text-subtle-foreground">Switches act at once. Fields, checkboxes and choices below wait for Save.</p>;
+  return <p className="text-2xs text-subtle-foreground">Switches, and menus that stand alone, act at once. Fields, checkboxes and radio choices wait for Save.</p>;
 }
 
 function firstSentence(text: string): { lead: string; rest: string } {
@@ -118,7 +118,7 @@ function firstSentence(text: string): { lead: string; rest: string } {
   return { lead: match[1]!, rest: match[3]! };
 }
 
-export function Help({ text, id }: { text?: string; id?: string }) {
+export function Help({ text, id, label }: { text?: string; id?: string; label?: string }) {
   const [open, setOpen] = useState(false);
   if (!text) return null;
   const { lead, rest } = firstSentence(text);
@@ -128,7 +128,7 @@ export function Help({ text, id }: { text?: string; id?: string }) {
       {rest ? (
         <>
           {open ? ` ${rest}` : " "}
-          <button type="button" className="rounded-sm text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+          <button type="button" aria-label={`${open ? "Less" : "More"} about ${label ?? "this setting"}`} className="rounded-sm text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
             {open ? "Less" : "More"}
           </button>
         </>
@@ -155,14 +155,17 @@ export function SettingRow({ id, label, help, problem, conflict, children, stack
   const controlId = useId();
   const helpId = useId();
   const problemId = useId();
-  const found = id !== undefined && nav.found === id;
+  const found = id !== undefined && nav.found?.path === id;
   useEffect(() => {
     if (!found && !focus) return;
-    ref.current?.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-    const control = ref.current?.querySelector<HTMLElement>("input, textarea, button, [role=combobox]");
-    control?.focus({ preventScroll: true });
-    onFocused?.();
-  }, [found, focus]);
+    const timer = setTimeout(() => {
+      ref.current?.scrollIntoView({ block: "center", behavior: "auto" });
+      const control = ref.current?.querySelector<HTMLElement>("input, textarea, button:not([aria-expanded]), [role=combobox]");
+      control?.focus({ preventScroll: true });
+      onFocused?.();
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [found, focus, nav.found?.nonce]);
   return (
     <RowIds.Provider value={{ controlId, describedBy: [help ? helpId : "", problem ? problemId : ""].filter(Boolean).join(" "), invalid: !!problem }}>
       <div ref={ref} data-setting={id} className={cn("px-4 py-3", found && "found", problem && "bg-surface-destructive", conflict && "bg-surface-warning")}>
@@ -172,7 +175,7 @@ export function SettingRow({ id, label, help, problem, conflict, children, stack
               {label}
               {chips}
             </label>
-            <Help text={help} id={helpId} />
+            <Help text={help} id={helpId} label={label} />
           </div>
           <div className={cn("flex min-w-0 items-center gap-2", stacked ? "w-full" : "w-full sm:w-auto sm:shrink-0")}>{children}</div>
         </div>
@@ -309,6 +312,7 @@ function useEnterSaves(draft: Draft): void {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (event.key !== "Enter" || event.isComposing || !target || target.tagName !== "INPUT" || target.getAttribute("role") === "combobox" || !target.closest("[data-setting], [data-form]")) return;
+      if (target.closest("[data-part]")?.getAttribute("data-part") !== latest.current.part) return;
       if (!latest.current.changes || latest.current.bar.kind === "saving") return;
       event.preventDefault();
       latest.current.save();
@@ -318,17 +322,18 @@ function useEnterSaves(draft: Draft): void {
   }, []);
 }
 
-export function SaveBar({ draft, onCheck, checking, primary = "Save", secondary, hideIdle = true }: { draft: Draft; onCheck?: () => void; checking?: boolean; primary?: string; secondary?: ReactNode; hideIdle?: boolean }) {
+export function SaveBar({ draft, onCheck, checking, primary = "Save", secondary, hideIdle = true, inline = false }: { draft: Draft; onCheck?: () => void; checking?: boolean; primary?: string; secondary?: ReactNode; hideIdle?: boolean; inline?: boolean }) {
   useEnterSaves(draft);
   const { bar, changes } = draft;
   if (bar.kind === "idle" && hideIdle) return null;
   const busy = bar.kind === "saving";
   const words = barWords(bar, changes, draft.what);
   const bad = bar.kind === "error" || bar.kind === "problems";
+  const retry = bar.kind === "error" || bar.kind === "unknown";
   return (
-    <div className="pointer-events-none sticky bottom-3 z-20 mt-6 flex justify-center">
+    <div className={inline ? "flex" : "pointer-events-none sticky bottom-3 z-20 mt-6 flex justify-center"}>
       <div role="region" aria-label={`Save ${draft.what}`} className="rise-in pointer-events-auto flex w-full max-w-xl flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-popover px-3 py-2 shadow-[0_2px_10px_rgb(0_0_0/0.25)]">
-        <span role="status" aria-live="polite" className={cn("min-w-0 flex-1 text-xs leading-snug", bad ? "text-destructive-text" : bar.kind === "conflicts" ? "text-warning-text" : bar.kind === "saved" ? "text-foreground" : "text-muted-foreground")}>
+        <span role="status" aria-live="polite" className={cn("min-w-0 flex-1 text-xs leading-snug", bad ? "text-destructive-text" : bar.kind === "conflicts" || bar.kind === "unknown" ? "text-warning-text" : bar.kind === "saved" ? "text-foreground" : "text-muted-foreground")}>
           {bar.kind === "saved" ? <Icon name="Check" className="mr-1 inline size-3.5 align-[-2px]" aria-hidden /> : null}
           {busy ? <Icon name="Loading" className="mr-1 inline size-3.5 animate-spin align-[-2px]" aria-hidden /> : null}
           {words}
@@ -336,7 +341,7 @@ export function SaveBar({ draft, onCheck, checking, primary = "Save", secondary,
         {bar.kind === "saved" ? null : (
           <span className="flex shrink-0 flex-wrap items-center gap-1.5">
             {bar.kind === "problems" || bar.kind === "conflicts" ? (
-              <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => document.querySelector<HTMLElement>(bar.kind === "conflicts" ? "[data-setting] [role=alert]" : "[data-setting] [aria-invalid=true], [data-setting] [role=alert]")?.closest<HTMLElement>("[data-setting]")?.scrollIntoView({ block: "center" })}>
+              <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.revealFirst}>
                 Show
               </Button>
             ) : null}
@@ -350,8 +355,8 @@ export function SaveBar({ draft, onCheck, checking, primary = "Save", secondary,
               </Button>
             ) : null}
             {secondary}
-            <Button type="button" size="sm" className="h-7" disabled={busy || !changes} onClick={draft.save}>
-              {bar.kind === "error" ? "Save again" : primary}
+            <Button type="button" size="sm" className="h-7" disabled={busy || (!changes && !retry)} onClick={draft.save}>
+              {retry ? "Save again" : primary}
             </Button>
           </span>
         )}
@@ -376,6 +381,8 @@ function barWords(bar: BarState, changes: number, what: string): string {
       return `${bar.count === 1 ? "A field you changed was" : `${bar.count} fields you changed were`} changed elsewhere too. Choose for each, then save.`;
     case "error":
       return bar.message;
+    case "unknown":
+      return bar.words;
   }
 }
 

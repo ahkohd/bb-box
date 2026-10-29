@@ -21,7 +21,6 @@ interface Entry {
 
 const SYNONYMS: Record<string, readonly string[]> = {
   ram: ["memory"],
-  memory: ["ram"],
   cpu: ["cores", "cpu"],
   cores: ["cpu"],
   vnc: ["video"],
@@ -118,7 +117,7 @@ export function search(entries: readonly Entry[], query: string): Entry[] {
     .map((entry) => {
       const label = entry.label.toLowerCase();
       const text = `${entry.label} ${entry.words} ${entry.where}`.toLowerCase();
-      const matches = words.map((word) => [word, ...(SYNONYMS[word] ?? [])].some((candidate) => text.includes(candidate)));
+      const matches = words.map((word) => text.includes(word) || (SYNONYMS[word] ?? []).some((candidate) => label.includes(candidate)));
       if (!matches.every(Boolean)) return null;
       const score = words.reduce((sum, word) => sum + (label.startsWith(word) ? 4 : label.includes(word) ? 2 : 0), 0) - entry.where.split("›").length * 0.1;
       return { entry, score };
@@ -129,6 +128,7 @@ export function search(entries: readonly Entry[], query: string): Entry[] {
 }
 
 let keptQuery = "";
+const SHOWN = 40;
 
 export function FindBox({ wide }: { wide?: boolean }) {
   const store = useStore();
@@ -172,11 +172,11 @@ export function FindBox({ wide }: { wide?: boolean }) {
           if (event.key === "ArrowDown") {
             event.preventDefault();
             setOpen(true);
-            setActive((current) => Math.min(current + 1, Math.max(0, results.length - 1)));
+            setActive((current) => Math.min(current + 1, Math.max(0, Math.min(results.length, SHOWN) - 1)));
           } else if (event.key === "ArrowUp") {
             event.preventDefault();
             setActive((current) => Math.max(0, current - 1));
-          } else if (event.key === "Enter" && results[active]) {
+          } else if (event.key === "Enter" && active < SHOWN && results[active]) {
             event.preventDefault();
             choose(results[active]!);
           } else if (event.key === "Escape") {
@@ -186,13 +186,13 @@ export function FindBox({ wide }: { wide?: boolean }) {
         }}
       />
       <span className="sr-only" aria-live="polite">
-        {query.trim() ? (results.length ? `${results.length} ${results.length === 1 ? "setting matches" : "settings match"}` : "No setting matches") : ""}
+        {query.trim() ? (results.length ? `${results.length} ${results.length === 1 ? "setting matches" : "settings match"}${results.length > SHOWN ? `; the first ${SHOWN} are listed` : ""}` : "No setting matches") : ""}
       </span>
       {open && query.trim() ? (
         <div className="absolute right-0 top-9 z-30 w-full min-w-[min(100vw-2rem,26rem)] overflow-hidden rounded-lg border border-border bg-popover shadow-[0_6px_24px_rgb(0_0_0/0.3)]">
-          <p className="border-b border-border px-3 py-1.5 text-2xs text-subtle-foreground">{results.length ? `${results.length} ${results.length === 1 ? "match" : "matches"} · ↑↓ to move, Enter to open, Esc to clear` : `No setting matches “${query}”. Try a word from its label, such as memory, template or spares.`}</p>
+          <p className="border-b border-border px-3 py-1.5 text-2xs text-subtle-foreground">{results.length ? `${results.length} ${results.length === 1 ? "match" : "matches"}${results.length > SHOWN ? `, the first ${SHOWN} listed; add a word to narrow them` : ""} · ↑↓ to move, Enter to open, Esc to clear` : `No setting matches “${query}”. Try a word from its label, such as memory, template or spares.`}</p>
           <ul id={listId} role="listbox" aria-label="Settings that match" className="max-h-80 overflow-y-auto py-1">
-            {results.slice(0, 40).map((entry, at) => (
+            {results.slice(0, SHOWN).map((entry, at) => (
               <li
                 key={entry.key}
                 id={`${listId}-${at}`}
@@ -202,7 +202,7 @@ export function FindBox({ wide }: { wide?: boolean }) {
                   event.preventDefault();
                   choose(entry);
                 }}
-                onMouseEnter={() => setActive(at)}
+                onMouseMove={() => setActive(at)}
                 className={cn("flex cursor-pointer items-start gap-3 px-3 py-1.5", at === active && "bg-state-hover")}
               >
                 <span className="min-w-0 flex-1">

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { DRIVERS, KINDS } from "./data";
 
 export type OptionPage = "boxes" | "images" | "devices" | "network" | "monitor" | "configuration";
 
@@ -17,10 +18,15 @@ interface Entry {
   readonly row?: string;
 }
 
+export interface Found {
+  readonly path: string;
+  readonly nonce: number;
+}
+
 interface Nav {
   readonly view: View;
   readonly animate: "forward" | "back" | "none";
-  readonly found: string | null;
+  readonly found: Found | null;
   readonly cameFrom: View | null;
   readonly returnRow: string | null;
   go(view: View, options?: { found?: string; row?: string }): void;
@@ -50,6 +56,19 @@ export function parseHash(hash: string): View {
   return { page: "overview" };
 }
 
+export function knownView(view: View): boolean {
+  if (view.page === "kind") return KINDS.some((kind) => kind.id === view.id);
+  if (view.page === "setup") return DRIVERS.some((driver) => driver.type === view.type);
+  return true;
+}
+
+export const OPEN_VIEW = "bbbox-open-settings-view";
+
+export function openSettingsView(hash: string): void {
+  history.pushState({ ...(history.state ?? {}) }, "", `${location.pathname}${location.search}${hash}`);
+  window.dispatchEvent(new CustomEvent(OPEN_VIEW, { detail: hash }));
+}
+
 function entryOf(state: unknown): Entry | null {
   return typeof state === "object" && state !== null && "bbbox" in state ? ((state as { bbbox: Entry }).bbbox ?? null) : null;
 }
@@ -71,13 +90,15 @@ function motionAllowed(): boolean {
 export function NavProvider({ children, scroller }: { children: ReactNode; scroller: () => HTMLElement | null }) {
   const [view, setView] = useState<View>(() => parseHash(location.hash));
   const [animate, setAnimate] = useState<"forward" | "back" | "none">("none");
-  const [found, setFound] = useState<string | null>(null);
+  const [found, setFound] = useState<Found | null>(null);
   const [returnRow, setReturnRow] = useState<string | null>(null);
   const [cameFrom, setCameFrom] = useState<View | null>(() => {
     const entry = entryOf(history.state);
     return entry?.from ? parseHash(entry.from) : null;
   });
   const pending = useRef<View | null>(null);
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   const remember = useCallback(
     (row?: string) => {
@@ -110,21 +131,36 @@ export function NavProvider({ children, scroller }: { children: ReactNode; scrol
       setView(next);
       requestAnimationFrame(() => scroller()?.scrollTo({ top: entry?.scroll ?? 0 }));
     };
+    const reread = () => {
+      if (hashOf(viewRef.current) !== (location.hash === "#" ? "" : location.hash)) onPop();
+    };
     window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+    window.addEventListener(OPEN_VIEW, onPop);
+    window.addEventListener("focus", reread);
+    document.addEventListener("visibilitychange", reread);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener(OPEN_VIEW, onPop);
+      window.removeEventListener("focus", reread);
+      document.removeEventListener("visibilitychange", reread);
+    };
   }, [scroller]);
 
   const go = useCallback(
     (next: View, options: { found?: string; row?: string } = {}) => {
+      if (viewKey(next) === viewKey(view)) {
+        if (options.found) setFound({ path: options.found, nonce: Date.now() });
+        return;
+      }
       remember(options.row);
       const depth = (entryOf(history.state)?.depth ?? 0) + 1;
       history.pushState({ ...(history.state ?? {}), bbbox: { depth, from: hashOf(view) || "#" } }, "", urlFor(next));
       setAnimate(motionAllowed() ? "forward" : "none");
-      setFound(options.found ?? null);
+      setFound(options.found ? { path: options.found, nonce: Date.now() } : null);
       setReturnRow(null);
       setCameFrom(view);
       setView(next);
-      requestAnimationFrame(() => scroller()?.scrollTo({ top: 0 }));
+      if (!options.found) requestAnimationFrame(() => scroller()?.scrollTo({ top: 0 }));
     },
     [remember, scroller, view],
   );

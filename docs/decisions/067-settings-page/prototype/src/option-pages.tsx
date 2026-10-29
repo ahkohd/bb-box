@@ -9,8 +9,8 @@ import { StatusDot } from "@/src/app/common.tsx";
 import type { Document, ProjectImage } from "./data";
 import { kindName, plural } from "./model";
 import { useNav, type OptionPage } from "./nav";
-import { imagesFor, LostReply, useStore } from "./store";
-import { useDraft, useInstant, type Draft } from "./drafts";
+import { imagesFor, useStore } from "./store";
+import { isSecretEdit, newKey, useDraft, useInstant, useWrite, type Draft, type NewFileEdit } from "./drafts";
 import { same } from "./paths";
 import { ReloadNote } from "./overview";
 import { Badge, Card, ConflictNote, Confirm, FOCUS_RING, Icon, PageHeader, RestoredNote, Rows, SaveBar, SaveRule, SavedTick, Section, SecretInput, SettingRow, useRowIds } from "./ui";
@@ -61,7 +61,7 @@ function BoxesOptions() {
   const set = (key: string, path: string, value: unknown, what: string) => void instant.run(key, [[path, value]], what);
   const pending = (key: string, stored: unknown) => (instant.pendingValue(key) !== undefined ? instant.pendingValue(key) : stored);
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-part={draft.part}>
       <PageHeader title="Boxes" description="What a thread gets, and what every box has." note={<SaveRule />} />
       <RestoredNote draft={draft} />
       <Refusal instant={instant} />
@@ -103,122 +103,104 @@ function BoxesOptions() {
   );
 }
 
-const fileDrafts = new Map<string, { path: string; content: string; replacing: string | null }>();
+function decodeFile(path: string): string {
+  return decodeURIComponent(path.slice("files/".length));
+}
 
 function FilesSection() {
   const store = useStore();
-  const [editing, setEditingState] = useState(() => fileDrafts.get("files") ?? null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const write = useWrite();
+  const draft = useDraft({ part: "files", what: "files for every box", label: (path) => (path.includes("@new-") ? "new file's content" : `content of ~/${decodeFile(path)}`) });
+  const [opened, setOpened] = useState<readonly string[]>([]);
   const [removing, setRemoving] = useState<string | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
-  const setEditing = (next: typeof editing) => {
-    if (next) fileDrafts.set("files", next);
-    else fileDrafts.delete("files");
-    setEditingState(next);
-  };
+  const [message, setMessage] = useState<string | null>(null);
   const files = store.doc.general.files;
-  const write = async (change: (doc: Document) => Document, secrets: Record<string, string | null>, check: (doc: Document) => boolean, label: string) => {
-    setBusy(true);
-    setMessage(null);
-    try {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const latest = store.fetch();
-        try {
-          const result = await store.apply(change(latest), latest.revision, secrets);
-          if (result.ok) break;
-          if (result.reason === "revision") continue;
-          setMessage(result.reason === "problems" ? result.problems.map((problem) => problem.message).join(" ") : `Not saved: ${result.message} Your text is still here.`);
-          return false;
-        } catch (error) {
-          if (!(error instanceof LostReply)) throw error;
-          if (!check(store.fetch())) {
-            setMessage("Save not confirmed, and the file is not in the configuration. Your text is still here: save again.");
-            return false;
-          }
-          break;
-        }
-      }
-      setSaved(label);
-      setTimeout(() => setSaved(null), 1600);
-      return true;
-    } finally {
-      setBusy(false);
-    }
-  };
+  const keys = draft.editKeys().filter((key) => key.startsWith("files/"));
+  const newKeys = keys.filter((key) => key.includes("@new-"));
+  const editing = (key: string) => keys.includes(key) || opened.includes(key);
   return (
+    <div data-part={draft.part}>
     <Section
       title="Files for every box"
       description="Copied into each Linux and macOS box's home when it is made. Contents are kept secret and never shown again."
       action={
-        <Button type="button" variant="outline" size="sm" className="h-7" disabled={editing !== null} onClick={() => setEditing({ path: "", content: "", replacing: null })}>
+        <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => draft.set(newKey("files/"), { newFile: true, path: "", replace: "" } satisfies NewFileEdit)}>
           <Icon name="Plus" aria-hidden />
           Add file
         </Button>
       }
     >
-      {files.length || editing ? (
+      <RestoredNote draft={draft} />
+      {files.length || newKeys.length ? (
         <Card>
           <Rows>
-            {files.map((file) => (
-              <div key={file.path} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
-                <code className="min-w-0 flex-1 truncate text-xs text-foreground">~/{file.path}</code>
-                <SavedTick show={saved === file.path} />
-                <span className="text-xs text-subtle-foreground">{file.content.set ? "Set" : "Not set"}</span>
-                <Button type="button" variant="outline" size="sm" className="h-7" disabled={editing !== null} onClick={() => setEditing({ path: file.path, content: "", replacing: file.path })}>
-                  Replace…
-                </Button>
-                <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground" onClick={() => setRemoving(file.path)}>
-                  Remove…
-                </Button>
-              </div>
-            ))}
-            {editing ? (
-              <div className="space-y-2 bg-surface-raised px-4 py-3">
-                <p className="text-xs font-medium text-foreground">{editing.replacing ? `New content for ~/${editing.replacing}` : "A new file"}</p>
-                <Input aria-label="Path under the box user's home" className="h-8 font-mono text-xs" placeholder=".config/tool/settings.json" value={editing.path} disabled={editing.replacing !== null} onChange={(event) => setEditing({ ...editing, path: event.target.value })} />
-                <Textarea aria-label="The file's content" className="min-h-24 font-mono text-xs" placeholder="Paste the file's text. It is never shown again." value={editing.content} onChange={(event) => setEditing({ ...editing, content: event.target.value })} />
-                {message ? (
-                  <p role="alert" className="text-xs text-destructive-text">
-                    {message}
-                  </p>
-                ) : null}
-                <p className="text-2xs text-subtle-foreground">Boxes made from now on get it; boxes already made keep what they have.</p>
-                <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-7"
-                    disabled={busy || !editing.path.trim() || !editing.content}
-                    onClick={async () => {
-                      const path = editing.path.trim();
-                      const before = files.find((file) => file.path === path)?.content.version;
-                      const ok = await write(
-                        (doc) => ({ ...doc, general: { ...doc.general, files: editing.replacing ? doc.general.files : [...doc.general.files, { path, content: { set: true, version: "pending" } }] } }),
-                        { [`general/files/${path}`]: editing.content },
-                        (doc) => doc.general.files.some((file) => file.path === path && file.content.set && file.content.version !== before),
-                        path,
-                      );
-                      if (ok) setEditing(null);
-                    }}
-                  >
-                    {busy ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-                    Save file
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" className="h-7" disabled={busy} onClick={() => setEditing(null)}>
-                    Cancel
+            {files.map((file) => {
+              const key = `files/${encodeURIComponent(file.path)}`;
+              const edit = draft.value(key);
+              const conflict = draft.conflictAt(key);
+              return (
+                <div key={file.path} data-setting={key} className="px-4 py-2.5">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <code className="min-w-0 flex-1 truncate text-xs text-foreground">~/{file.path}</code>
+                    <span className="text-xs text-subtle-foreground">{file.content.set ? "Set" : "Not set"}</span>
+                    {editing(key) ? null : (
+                      <Button type="button" variant="outline" size="sm" className="h-7" aria-label={`Replace the content of ~/${file.path}`} onClick={() => setOpened((current) => [...current, key])}>
+                        Replace…
+                      </Button>
+                    )}
+                    <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground" aria-label={`Remove ~/${file.path}`} onClick={() => setRemoving(file.path)}>
+                      Remove…
+                    </Button>
+                  </div>
+                  {editing(key) ? (
+                    <div className="mt-2 space-y-1.5">
+                      <Textarea
+                        aria-label={`New content for ~/${file.path}`}
+                        className="min-h-24 font-mono text-xs"
+                        placeholder="Paste the file's new text. It is never shown again."
+                        value={isSecretEdit(edit) && "replace" in edit ? edit.replace : ""}
+                        onChange={(event) => (event.target.value ? draft.set(key, { replace: event.target.value }) : draft.forget(key))}
+                      />
+                      {conflict ? <ConflictNote secret saved={conflict.saved} onUseSaved={() => draft.useSaved(key)} onKeepMine={() => draft.keepMine(key)} /> : null}
+                      {!keys.includes(key) ? (
+                        <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => setOpened((current) => current.filter((each) => each !== key))}>
+                          Cancel
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+            {newKeys.map((key) => {
+              const edit = draft.value(key) as NewFileEdit;
+              const problem = draft.problems.find((each) => each.path.startsWith("files/") || each.path === "general/files")?.message;
+              return (
+                <div key={key} data-setting={key} className="space-y-1.5 bg-surface-raised px-4 py-3">
+                  <p className="text-xs font-medium text-foreground">A new file</p>
+                  <Input aria-label="New file's path under the box user's home" className="h-8 font-mono text-xs" placeholder=".config/tool/settings.json" value={edit.path} onChange={(event) => draft.set(key, { ...edit, path: event.target.value })} />
+                  <Textarea aria-label="New file's content" className="min-h-24 font-mono text-xs" placeholder="Paste the file's text. It is never shown again." value={edit.replace} onChange={(event) => draft.set(key, { ...edit, replace: event.target.value })} />
+                  {problem ? (
+                    <p role="alert" className="text-xs text-destructive-text">
+                      {problem}
+                    </p>
+                  ) : null}
+                  <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => draft.forget(key)}>
+                    Don't add it
                   </Button>
                 </div>
-              </div>
-            ) : null}
+              );
+            })}
           </Rows>
         </Card>
       ) : null}
-      {message && !editing ? (
-        <p role="alert" className="text-xs text-destructive-text">
+      <p className="px-1 text-2xs text-subtle-foreground">Boxes made from now on get these files; boxes already made keep what they have.</p>
+      {message ? (
+        <p role="alert" className="px-1 text-xs text-destructive-text">
           {message}
         </p>
       ) : null}
+      <SaveBar draft={draft} inline primary="Save files" />
       <Confirm
         open={removing !== null}
         title={`Remove ~/${removing}?`}
@@ -233,10 +215,14 @@ function FilesSection() {
         onConfirm={() => {
           const path = removing;
           setRemoving(null);
-          void write((doc) => ({ ...doc, general: { ...doc.general, files: doc.general.files.filter((file) => file.path !== path) } }), {}, (doc) => !doc.general.files.some((file) => file.path === path), path ?? "");
+          setMessage(null);
+          void write((latest) => ({ ...latest, general: { ...latest.general, files: latest.general.files.filter((file) => file.path !== path) } }), `~/${path} was not removed`).then((result) => {
+            if (!result.ok) setMessage(result.message);
+          });
         }}
       />
     </Section>
+    </div>
   );
 }
 
@@ -249,6 +235,14 @@ function ImagesOptions() {
   const [open, setOpen] = useState<string | null>(null);
   const [removing, setRemoving] = useState<ProjectImage | null>(null);
   const [imageSaved, setImageSaved] = useState<string | null>(null);
+  const [imageRefused, setImageRefused] = useState<string | null>(null);
+  const write = useWrite();
+  const applyImages = async (change: (images: readonly ProjectImage[]) => readonly ProjectImage[], failed: string): Promise<boolean> => {
+    setImageRefused(null);
+    const result = await write((latest) => ({ ...latest, images: change(latest.images) }), failed);
+    if (!result.ok) setImageRefused(result.message);
+    return result.ok;
+  };
   const images = imagesFor(store.scenario);
   const due = images.filter((image) => image.due);
   const rebuild = () => {
@@ -306,6 +300,11 @@ function ImagesOptions() {
         </div>
       </Section>
       <Section title="Project images" description="A script run on a standard image, for one project's boxes. Agents set them with bb box image set, from the project's .bb/box-setup.sh.">
+        {imageRefused ? (
+          <p role="alert" className="text-xs text-destructive-text">
+            {imageRefused}
+          </p>
+        ) : null}
         {store.doc.images.length ? (
           <Card>
             <Rows>
@@ -330,7 +329,8 @@ function ImagesOptions() {
                     <Select
                       value={image.bake}
                       onValueChange={(bake) =>
-                        void applyImages(store, (images) => images.map((each) => (each.name === image.name ? { ...each, bake: bake as ProjectImage["bake"] } : each))).then(() => {
+                        void applyImages((images) => images.map((each) => (each.name === image.name ? { ...each, bake: bake as ProjectImage["bake"] } : each)), `When ${image.name} is built was not changed`).then((ok) => {
+                          if (!ok) return;
                           setImageSaved(image.name);
                           setTimeout(() => setImageSaved(null), 1600);
                         })
@@ -389,24 +389,11 @@ function ImagesOptions() {
         onConfirm={() => {
           const name = removing?.name;
           setRemoving(null);
-          void applyImages(store, (images) => images.filter((each) => each.name !== name));
+          void applyImages((images) => images.filter((each) => each.name !== name), `The project image ${name} was not removed`);
         }}
       />
     </div>
   );
-}
-
-async function applyImages(store: ReturnType<typeof useStore>, change: (images: readonly ProjectImage[]) => readonly ProjectImage[]): Promise<void> {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const latest = store.fetch();
-    try {
-      const result = await store.apply({ ...latest, images: change(latest.images) }, latest.revision);
-      if (result.ok || result.reason !== "revision") return;
-    } catch (error) {
-      if (error instanceof LostReply) return;
-      throw error;
-    }
-  }
 }
 
 function DevicesOptions() {
@@ -481,10 +468,10 @@ function DevicesOptions() {
 }
 
 function NetworkOptions() {
-  const draft = useDraft({ part: "general/tailnet", what: "the tailnet", secretPaths: new Set(["general/tailnet/clientId", "general/tailnet/clientSecret"]), label: (path) => (path.endsWith("clientId") ? "OAuth client ID" : "OAuth client secret") });
+  const draft = useDraft({ part: "general/tailnet", what: "the tailnet", label: (path) => (path.endsWith("clientId") ? "OAuth client ID" : "OAuth client secret") });
   const mode = draft.value("general/tailnet/mode");
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-part={draft.part}>
       <PageHeader title="Network" description="How machines BB Box makes reach BB." note={<SaveRule />} />
       <RestoredNote draft={draft} />
       <Section title="Tailnet" description="When BB is on a Tailscale tailnet, machines BB Box makes, such as cloud Macs, join it with a single-use key. These settings are saved together.">
@@ -534,7 +521,7 @@ function MonitorOptions() {
   const pending = (key: string, stored: unknown) => (instant.pendingValue(key) !== undefined ? instant.pendingValue(key) : stored);
   const on = pending("enabled", monitor.enabled) as boolean;
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-part={draft.part}>
       <PageHeader title="Monitor" description="Machine status in BB's sidebar footer, for BB's server, your machines and every box." note={<SaveRule />} />
       <RestoredNote draft={draft} />
       <Refusal instant={instant} />
@@ -572,29 +559,38 @@ function diffPaths(from: unknown, to: unknown, prefix = ""): string[] {
 
 function ConfigurationOptions() {
   const store = useStore();
+  const write = useWrite();
+  const draft = useDraft({ part: "import", what: "the import", label: () => "import" });
   const [copied, setCopied] = useState(false);
-  const [importing, setImporting] = useState<{ text: string; parsed: Document | null; error: string | null; changes: string[]; revision: number } | null>(null);
-  const [result, setResult] = useState<string | null>(null);
+  const [checked, setChecked] = useState<{ fingerprint: string; parsed: Document | null; error: string | null; changes: string[]; revision: number } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; words: string } | null>(null);
   const [removeCopy, setRemoveCopy] = useState(false);
-  const check = (text: string) => {
+  const [copyRefused, setCopyRefused] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const text = draft.value("import/text");
+  const importing = typeof text === "string";
+  const current = checked && checked.fingerprint === String(text ?? "") ? checked : null;
+  const check = () => {
+    const raw = String(text ?? "");
     try {
-      const parsed = JSON.parse(text) as Document;
+      const parsed = JSON.parse(raw) as Document;
       const latest = store.fetch();
-      const backends = parsed.backends?.map((backend) => backend.id) ?? [];
-      setImporting({ text, parsed, error: null, changes: diffPaths(latest, { ...latest, ...parsed, backends: parsed.backends ?? latest.backends }).map((path) => path.replace(/^backends\.(\d+)/, (_, index) => `backend ${backends[Number(index)] ?? index}`)), revision: latest.revision });
+      const ids = parsed.backends?.map((backend) => backend.id) ?? [];
+      setChecked({ fingerprint: raw, parsed, error: null, changes: diffPaths(latest, { ...latest, ...parsed, backends: parsed.backends ?? latest.backends }).map((path) => path.replace(/^backends\.(\d+)/, (_, index) => `backend ${ids[Number(index)] ?? index}`)), revision: latest.revision });
     } catch {
-      setImporting({ text, parsed: null, error: "This is not a configuration file: it is not valid JSON.", changes: [], revision: store.doc.revision });
+      setChecked({ fingerprint: raw, parsed: null, error: "This is not a configuration file: it is not valid JSON.", changes: [], revision: store.doc.revision });
     }
   };
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-part={draft.part}>
       <PageHeader title="Configuration" description="Everything on these pages is one checked file. Every save makes a new revision." />
+      <RestoredNote draft={draft} />
       <Card>
         <Rows>
-          <SettingRow label={`Revision ${store.doc.revision}`} help="Each save names the revision it was made from. When someone saved first, the page checks your changes against theirs: changes to other settings are kept and yours go on top; a setting changed both ways asks you which to keep.">
+          <SettingRow label={`Revision ${store.doc.revision}`} help="Each save names the revision it was made from and carries a receipt. When someone saved first, the page checks your changes against theirs: changes to other settings are kept and yours go on top; a setting changed both ways asks you which to keep.">
             <span />
           </SettingRow>
-          <SettingRow id="configuration/export" label="Export" help="The whole configuration as JSON, with no secret in it. To set BB Box up again from it, paste the tokens, keys and file contents again: the export says which.">
+          <SettingRow id="configuration/export" label="Export" help="The whole configuration as JSON, with no secret in it. To set BB Box up again from it, paste the tokens, keys and file contents again: the export lists which.">
             <Button
               type="button"
               variant="outline"
@@ -611,13 +607,13 @@ function ConfigurationOptions() {
             </Button>
           </SettingRow>
           <SettingRow id="configuration/import" label="Import" help="Apply a JSON file as the whole configuration. BB Box checks it and lists what it changes before anything is saved.">
-            <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => setImporting({ text: JSON.stringify({ ...store.doc, monitor: { ...store.doc.monitor, refreshIntervalSeconds: 15 } }, null, 2), parsed: null, error: null, changes: [], revision: store.doc.revision })}>
+            <Button type="button" variant="outline" size="sm" className="h-7" disabled={importing} onClick={() => draft.set("import/text", JSON.stringify({ ...store.doc, monitor: { ...store.doc.monitor, refreshIntervalSeconds: 15 } }, null, 2))}>
               <Icon name="Upload" aria-hidden />
               Paste a file…
             </Button>
           </SettingRow>
           {store.doc.migrated ? (
-            <SettingRow label="Settings moved from BB" help={`BB Box kept a copy of BB's own settings for it when it moved them here on ${store.doc.migrated}. Remove it once you no longer need it.`}>
+            <SettingRow label="Settings moved from BB" help={`BB Box kept a copy of BB's own settings for it when it moved them here on ${store.doc.migrated}. Remove it once you no longer need it.`} problem={copyRefused}>
               <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground" onClick={() => setRemoveCopy(true)}>
                 Remove copy…
               </Button>
@@ -628,19 +624,20 @@ function ConfigurationOptions() {
       {importing ? (
         <Card className="space-y-2 px-4 py-3">
           <p className="text-xs font-medium text-foreground">Import a configuration</p>
-          <Textarea aria-label="Configuration JSON" className="min-h-40 font-mono text-2xs" value={importing.text} onChange={(event) => setImporting({ ...importing, text: event.target.value, parsed: null, changes: [] })} />
-          {importing.error ? (
+          <Textarea aria-label="Configuration JSON" className="min-h-40 font-mono text-2xs" value={String(text)} onChange={(event) => draft.set("import/text", event.target.value)} />
+          {checked && !current ? <p className="text-xs text-warning-text">The text changed after you checked it. Check it again.</p> : null}
+          {current?.error ? (
             <p role="alert" className="text-xs text-destructive-text">
-              {importing.error}
+              {current.error}
             </p>
           ) : null}
-          {importing.parsed ? (
+          {current?.parsed ? (
             <div className="text-xs" role="status">
-              {importing.changes.length ? (
+              {current.changes.length ? (
                 <>
-                  <p className="text-foreground">It changes {plural(importing.changes.length, "setting")} against revision {importing.revision}:</p>
+                  <p className="text-foreground">It changes {plural(current.changes.length, "setting")} against revision {current.revision}:</p>
                   <ul className="mt-1 list-disc pl-5 text-muted-foreground">
-                    {importing.changes.slice(0, 12).map((change) => (
+                    {current.changes.slice(0, 12).map((change) => (
                       <li key={change}>{change}</li>
                     ))}
                   </ul>
@@ -650,35 +647,55 @@ function ConfigurationOptions() {
               )}
             </div>
           ) : null}
-          {result ? <p role="status" className="text-xs text-foreground">{result}</p> : null}
+          {result ? (
+            <p role={result.ok ? "status" : "alert"} className={cn("text-xs", result.ok ? "text-foreground" : "text-destructive-text")}>
+              {result.words}
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-1.5">
-            <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => check(importing.text)}>
+            <Button type="button" variant="outline" size="sm" className="h-7" onClick={check}>
               Check it
             </Button>
             <Button
               type="button"
               size="sm"
               className="h-7"
-              disabled={!importing.parsed || !importing.changes.length}
+              disabled={busy || !current?.parsed || !current.changes.length}
               onClick={async () => {
-                if (store.fetch().revision !== importing.revision) {
-                  setResult("The configuration changed since you checked the file. Check it again to see what it changes now.");
-                  setImporting({ ...importing, parsed: null, changes: [] });
-                  return;
-                }
-                const latest = store.fetch();
-                const outcome = await store.apply({ ...latest, ...importing.parsed!, revision: latest.revision }, importing.revision).catch(() => null);
-                setResult(outcome?.ok ? `Imported: revision ${outcome.revision}.` : outcome && !outcome.ok && outcome.reason === "problems" ? `Not imported: ${outcome.problems[0]?.message}` : "Import not confirmed. Check the revision above, then try again.");
-                if (outcome?.ok) setImporting(null);
+                const plan = current!;
+                setBusy(true);
+                setResult(null);
+                const outcome = await write((latest) => (latest.revision === plan.revision ? { ...latest, ...plan.parsed!, revision: latest.revision } : null), "Not imported");
+                setBusy(false);
+                if (outcome.ok) {
+                  setResult({ ok: true, words: `Imported: revision ${outcome.revision}.` });
+                  draft.discard();
+                  setChecked(null);
+                } else setResult({ ok: false, words: outcome.message.includes("changed elsewhere first") ? "Not imported: the configuration changed after you checked the file. Check it again to see what it changes now." : outcome.message });
               }}
             >
-              Apply {importing.changes.length ? plural(importing.changes.length, "change") : ""}
+              {busy ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
+              Apply {current?.changes.length ? plural(current.changes.length, "change") : ""}
             </Button>
-            <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => setImporting(null)}>
-              Cancel
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7"
+              onClick={() => {
+                draft.discard();
+                setChecked(null);
+                setResult(null);
+              }}
+            >
+              Discard
             </Button>
           </div>
         </Card>
+      ) : result?.ok ? (
+        <p role="status" className="text-xs text-foreground">
+          {result.words}
+        </p>
       ) : null}
       <Section title="From a terminal">
         <Card className="px-4 py-3">
@@ -698,7 +715,20 @@ function ConfigurationOptions() {
           </ul>
         </Card>
       </Section>
-      <Confirm open={removeCopy} title="Remove the copy of BB's earlier settings?" description={<p>BB Box no longer needs it: everything in it moved into this configuration. Once removed it cannot be got back.</p>} action="Remove copy" onCancel={() => setRemoveCopy(false)} onConfirm={() => { setRemoveCopy(false); const latest = store.fetch(); void store.apply({ ...latest, migrated: null }, latest.revision).catch(() => null); }} />
+      <Confirm
+        open={removeCopy}
+        title="Remove the copy of BB's earlier settings?"
+        description={<p>BB Box no longer needs it: everything in it moved into this configuration. Once removed it cannot be got back.</p>}
+        action="Remove copy"
+        onCancel={() => setRemoveCopy(false)}
+        onConfirm={() => {
+          setRemoveCopy(false);
+          setCopyRefused(null);
+          void write((latest) => ({ ...latest, migrated: null }), "The copy was not removed").then((outcome) => {
+            if (!outcome.ok) setCopyRefused(outcome.message);
+          });
+        }}
+      />
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "@/src/app/common.tsx";
-import { BUILD_STEPS, imagesFor, relative, STALE_MS, useStore } from "./store";
+import { BUILD_STEPS, imagesFor, relative, useStore } from "./store";
 import { DOCKER_MACHINES, driverOf, type BackendConfig } from "./data";
 import { availability, backendState, backendTitle, defaultSize, KIND_GROUPS, kindBadges, kindName, kindTitle, offering, plural, qualifierOf, sizeWords, statusItems, warmTotal } from "./model";
 import { useNav } from "./nav";
@@ -12,7 +12,7 @@ import { Badge, Card, Chevron, FOCUS_RING, Icon, NavRow, PageHeading, ProviderGl
 
 export function Overview() {
   const store = useStore();
-  const usable = store.doc.backends.some((backend) => backend.enabled && (store.live[backend.id]?.offers.length ?? 0) > 0);
+  const usable = store.setupDone;
   const [showMore, setShowMore] = useState(false);
   return (
     <div className="space-y-7">
@@ -54,34 +54,36 @@ function Status() {
   const oldest = checkedTimes.length ? Math.min(...checkedTimes) : null;
   const newest = checkedTimes.length ? Math.max(...checkedTimes) : null;
   const unchecked = states.filter((state) => state.status === "never" || state.status === "changed").length;
-  const stale = oldest !== null && Date.now() - oldest > STALE_MS;
-  const ready = states.filter((state) => state.status === "ready" || state.status === "stale").length;
+  const fresh = states.filter((state) => state.status === "ready").length;
+  const passedOld = states.filter((state) => state.status === "stale").length;
+  const passed = fresh + passedOld;
   const off = store.doc.backends.length - on.length;
   const checkAll = (
-    <Button type="button" variant={stale || unchecked ? "default" : "outline"} size="sm" className="h-7 shrink-0" disabled={store.checkingAll} onClick={() => void store.checkAll()}>
+    <Button type="button" variant={passedOld || unchecked ? "default" : "outline"} size="sm" className="h-7 shrink-0" disabled={store.checkingAll} onClick={() => void store.checkAll()}>
       {store.checkingAll ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
       {store.checkingAll ? "Checking…" : "Check all"}
     </Button>
   );
   const age = oldest === null ? "" : oldest === newest || Math.abs((oldest ?? 0) - (newest ?? 0)) < 5 * 60_000 ? `checked ${relative(oldest)}` : `checked between ${relative(newest!)} and ${relative(oldest)}`;
+  const words = passedOld ? "passed their last check" : "ready";
   const headline = store.checkingAll
     ? `Checking ${plural(on.length, "backend")}, up to 30 s each, side by side…`
-    : on.length === 1 && ready === 1
-      ? `${backendTitle(on[0]!, store.live[on[0]!.id])} is ready`
-      : ready === on.length && on.length
-        ? stale
-          ? `All ${plural(on.length, "backend")} passed their last check`
-          : `All ${plural(on.length, "backend")} ready`
-        : `${ready} of ${plural(on.length, "backend")} ready`;
+    : !on.length
+      ? "Every backend is off"
+      : on.length === 1 && passed === 1
+        ? `${backendTitle(on[0]!, store.live[on[0]!.id])} ${passedOld ? "passed its last check" : "is ready"}`
+        : passed === on.length
+          ? `All ${plural(on.length, "backend")} ${words}`
+          : `${passed} of ${plural(on.length, "backend")} ${words}`;
   return (
     <section aria-label="Status" className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <p className="flex min-w-0 flex-1 items-start gap-2 text-sm text-foreground" role="status" aria-live="polite">
-          <StatusDot tone={store.checkingAll ? "busy" : items.length ? "warn" : stale || unchecked ? "off" : "ok"} />
+          <StatusDot tone={store.checkingAll ? "busy" : items.length ? "warn" : passedOld || unchecked ? "off" : "ok"} />
           <span>
             {headline}
             <span className="text-muted-foreground">
-              {store.checkingAll ? "" : [unchecked ? ` · ${unchecked} not checked since ${unchecked === 1 ? "it" : "they"} changed` : "", off ? ` · ${off} off` : "", ` · ${plural(kinds, "kind")} on offer`, age ? ` · ${age}` : ""].join("")}
+              {store.checkingAll || !on.length ? "" : [unchecked ? ` · ${unchecked} not checked since ${unchecked === 1 ? "it" : "they"} changed` : "", off ? ` · ${off} off` : "", ` · ${plural(kinds, "kind")} on offer`, age ? ` · ${age}` : ""].join("")}
             </span>
           </span>
         </p>
@@ -116,7 +118,10 @@ function BackendRow({ backend, instant }: { backend: BackendConfig; instant: Ret
   const nav = useNav();
   const drafts = useDraftParts();
   const live = store.live[backend.id];
-  const state = backendState(store.doc, backend, live);
+  const raw = backendState(store.doc, backend, live);
+  const ages = store.doc.backends.filter((each) => each.enabled).map((each) => store.live[each.id]?.health?.checkedAt ?? 0);
+  const sameAge = Math.max(...ages) - Math.min(...ages) < 5 * 60_000;
+  const state = raw.status === "stale" && sameAge ? { ...raw, items: raw.items.slice(1) } : raw;
   const driver = driverOf(backend.type);
   const qualifier = qualifierOf(backend, live);
   const title = backendTitle(backend, live);
@@ -420,7 +425,7 @@ function FirstRun({ usable }: { usable: boolean }) {
     );
   } else if (serverDocker === "missing") {
     card = (
-      <FirstRunCard title="Set up BB Box" action={checkAgain}>
+      <FirstRunCard title="bb-1 has no Docker" action={checkAgain}>
         bb-1, where BB runs, has no Docker. Install it, then check again:
         <CopyLine line="curl -fsSL https://get.docker.com | sh" />
         {others.length ? <p className="mt-2">Or use a BB machine that has Docker: {others[0]!.name} has Docker {others[0]!.docker}. <button type="button" className="text-foreground underline underline-offset-2" onClick={() => nav.go({ page: "add" })}>Use {others[0]!.name}</button></p> : null}
@@ -428,7 +433,7 @@ function FirstRun({ usable }: { usable: boolean }) {
     );
   } else if (serverDocker === "permission") {
     card = (
-      <FirstRunCard title="Set up BB Box" action={checkAgain}>
+      <FirstRunCard title="BB cannot use Docker on bb-1" action={checkAgain}>
         bb-1 has Docker 29.8, but BB's user there cannot use it. Add the user to the docker group, then restart BB so it takes effect:
         <CopyLine line="sudo usermod -aG docker bb" />
         <CopyLine line="npx bb-app stop && npx bb-app" />
@@ -436,7 +441,7 @@ function FirstRun({ usable }: { usable: boolean }) {
     );
   } else if (serverDocker === "disk") {
     card = (
-      <FirstRunCard title="Set up BB Box" action={checkAgain}>
+      <FirstRunCard title="Not enough disk on bb-1" action={checkAgain}>
         The Linux image needs about 10 GB free to build, and bb-1 has 9 GB. Free some, then check again:
         <CopyLine line="docker builder prune" />
       </FirstRunCard>

@@ -2,14 +2,13 @@ import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "@/src/app/common.tsx";
-import { DOCKER_MACHINES, NEEDS, SETUP_GROUPS, SETUP_WORDS, driverOf, type BackendConfig, type Document, type Health } from "./data";
-import { FieldGroups, fieldPath, MacsSection, offable, REPOSITORY } from "./backend-page";
+import { DOCKER_MACHINES, DRIVERS, NEEDS, SETUP_GROUPS, SETUP_WORDS, driverOf, type BackendConfig, type Document } from "./data";
+import { candidateBackend, FieldGroups, fieldPath, GonePage, MacsSection, offable, REPOSITORY, useDraftCheck } from "./backend-page";
 import { HealthCard } from "./health";
 import { availableTypes, kindName } from "./model";
 import { useNav } from "./nav";
 import { useStore } from "./store";
-import { isSecretEdit, useDraft } from "./drafts";
-import { writePath } from "./paths";
+import { useDraft } from "./drafts";
 import { Badge, Card, Chevron, FOCUS_RING, Icon, PageHeader, ProviderGlyph, RestoredNote, Rows, SaveRule } from "./ui";
 
 export function AddBackend() {
@@ -150,25 +149,21 @@ function Step({ number, title, description, children }: { number: number; title:
 }
 
 export function SetupBackend({ type }: { type: string }) {
+  if (!DRIVERS.some((driver) => driver.type === type)) return <GonePage what="This kind of backend" />;
+  return <SetupForm type={type} />;
+}
+
+function SetupForm({ type }: { type: string }) {
   const store = useStore();
   const nav = useNav();
   const driver = driverOf(type);
-  const id = store.doc.backends.some((backend) => backend.id === type) ? `${type}:2` : type;
+  const [id] = useState(() => (store.doc.backends.some((backend) => backend.id === type) ? `${type}:2` : type));
   const empty: BackendConfig = { id, type, enabled: false, fields: {}, hosts: [] };
-  const secretPaths = new Set(driver.fields.filter((field) => field.secret).map((field) => fieldPath(empty, field.key)));
-  const draft = useDraft({ part: `setup/${type}`, what: `the ${driver.label} setup`, secretPaths, label: (path) => driver.fields.find((field) => path.endsWith(`/${field.key}`))?.label ?? "secret" });
-  const [busy, setBusy] = useState<"on" | "off" | "check" | null>(null);
-  const [health, setHealth] = useState<Health | null>(null);
+  const draft = useDraft({ part: `setup/${type}`, what: `the ${driver.label} setup`, label: (path) => driver.fields.find((field) => path.endsWith(`/${field.key}`))?.label ?? "secret" });
+  const [busy, setBusy] = useState<"on" | "off" | null>(null);
   const backend = store.doc.backends.find((each) => each.id === id) ?? empty;
-  const candidate = (): BackendConfig => {
-    let next: Document = { ...store.fetch(), backends: [...store.fetch().backends.filter((each) => each.id !== id), empty] };
-    for (const field of driver.fields) {
-      const path = fieldPath(empty, field.key);
-      if (draft.edited(path) && !isSecretEdit(draft.value(path))) next = writePath(next, path, draft.value(path));
-      if (isSecretEdit(draft.value(path))) next = writePath(next, path, { set: true, version: "draft" });
-    }
-    return next.backends.find((each) => each.id === id)!;
-  };
+  const withNew = (enabled: boolean) => (doc: Document): Document => ({ ...doc, backends: [...doc.backends.filter((each) => each.id !== id), { ...empty, enabled }] });
+  const check = useDraftCheck(draft, () => candidateBackend(draft, id, withNew(true)));
   const makes = driver.kinds.filter((kind) => {
     const field = driver.fields.find((each) => offable(each) && each.description?.includes(`${kind} boxes`));
     if (!field) return true;
@@ -178,7 +173,7 @@ export function SetupBackend({ type }: { type: string }) {
   });
   const save = async (enabled: boolean) => {
     setBusy(enabled ? "on" : "off");
-    const saved = await draft.saveWith((doc) => ({ ...doc, backends: [...doc.backends.filter((each) => each.id !== id), { ...empty, enabled }] }));
+    const saved = await draft.saveWith(withNew(enabled));
     setBusy(null);
     if (saved) nav.landAfterSetup({ page: "backend", id });
   };
@@ -227,23 +222,13 @@ export function SetupBackend({ type }: { type: string }) {
       </Step>
       <Step number={connection ? 4 : 3} title="Check it" description={`Runs all of ${driver.label}'s checks against this form, as it will be saved, up to 30 s. Nothing is saved.`}>
         <div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7"
-            disabled={busy !== null}
-            onClick={async () => {
-              setBusy("check");
-              setHealth(await store.checkDraft(candidate()));
-              setBusy(null);
-            }}
-          >
-            {busy === "check" ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-            {busy === "check" ? "Checking…" : "Check"}
+          <Button type="button" variant="outline" size="sm" className="h-7" disabled={busy !== null || check.checking} onClick={() => void check.run()}>
+            {check.checking ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
+            {check.checking ? "Checking…" : "Check"}
           </Button>
         </div>
-        {health || busy === "check" ? <HealthCard health={health} checking={busy === "check"} againstDraft onCheck={async () => setHealth(await store.checkDraft(candidate()))} /> : null}
+        {check.stale && !check.checking ? <p className="text-xs text-warning-text">The form changed after you checked it, so that result was cleared. Check again.</p> : null}
+        {check.health || check.checking ? <HealthCard health={check.health} checking={check.checking} againstDraft onCheck={() => void check.run()} /> : null}
       </Step>
       <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center">
         <div role="region" aria-label={`Save ${driver.label}`} className="rise-in pointer-events-auto flex w-full max-w-xl flex-wrap items-center gap-2 rounded-lg border border-border bg-popover px-3 py-2 shadow-[0_2px_10px_rgb(0_0_0/0.25)]">

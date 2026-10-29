@@ -9,6 +9,7 @@ import { availability, backendTitle, canMake, FORMS, gib, kindBadges, kindName, 
 import { useNav } from "./nav";
 import { useStore } from "./store";
 import { useDraft, useInstant, type Draft } from "./drafts";
+import { GonePage } from "./backend-page";
 import { Badge, Card, ConflictNote, FOCUS_RING, Icon, PageHeader, ProviderGlyph, RestoredNote, Rows, SaveBar, SaveRule, SavedTick, Section, SettingRow, shown } from "./ui";
 
 type Part = "cores" | "memoryMiB" | "diskGiB";
@@ -31,16 +32,19 @@ function parse(part: Part, text: string): unknown {
   return part === "memoryMiB" ? Math.round(Number(trimmed) * 1024) : Number(trimmed);
 }
 
-function SizeCell({ draft, path, part, label, base }: { draft: Draft; path: string; part: Part; label: string; base: boolean }) {
+function SizeCell({ draft, path, part, label, base, errorId }: { draft: Draft; path: string; part: Part; label: string; base: boolean; errorId?: string }) {
   const ref = useRef<HTMLInputElement>(null);
   const nav = useNav();
   const problem = draft.problemAt(path);
   useEffect(() => {
-    if (draft.focusPath !== path && nav.found !== path) return;
-    ref.current?.scrollIntoView({ block: "center" });
-    ref.current?.focus({ preventScroll: true });
-    if (draft.focusPath === path) draft.clearFocus();
-  }, [draft.focusPath, nav.found]);
+    if (draft.focusPath !== path && nav.found?.path !== path) return;
+    const timer = setTimeout(() => {
+      ref.current?.scrollIntoView({ block: "center" });
+      ref.current?.focus({ preventScroll: true });
+      if (draft.focusPath === path) draft.clearFocus();
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [draft.focusPath, nav.found?.nonce]);
   const partLabel = PARTS.find((each) => each.part === part)!.label;
   return (
     <label className="flex min-w-0 flex-col gap-1">
@@ -49,6 +53,7 @@ function SizeCell({ draft, path, part, label, base }: { draft: Draft; path: stri
         ref={ref}
         aria-label={`${label} ${partLabel}`}
         aria-invalid={problem ? true : undefined}
+        aria-describedby={problem && errorId ? errorId : undefined}
         className={cn("h-8 w-full min-w-0 text-right text-xs tabular-nums", draft.edited(path) && "border-warning/60")}
         inputMode="decimal"
         placeholder={base && part === "diskGiB" ? "Image's own" : undefined}
@@ -60,6 +65,12 @@ function SizeCell({ draft, path, part, label, base }: { draft: Draft; path: stri
 }
 
 export function KindPage({ id }: { id: string }) {
+  const store = useStore();
+  if (!store.doc.kinds[id]) return <GonePage what="This kind" />;
+  return <KindEditor id={id} />;
+}
+
+function KindEditor({ id }: { id: string }) {
   const store = useStore();
   const nav = useNav();
   const instant = useInstant();
@@ -88,23 +99,23 @@ export function KindPage({ id }: { id: string }) {
             <span className="text-sm text-foreground">{label}</span>
             {preset ? (
               <label className="flex items-center gap-1.5 text-2xs text-muted-foreground sm:hidden">
-                <input type="radio" name="default-size-narrow" checked={draft.value(`kinds/${id}/default`) === preset} onChange={() => draft.set(`kinds/${id}/default`, preset)} className="size-3.5 accent-foreground" />
+                <input type="radio" name="default-size-narrow" aria-label={`${label} is the default size`} checked={draft.value(`kinds/${id}/default`) === preset} onChange={() => draft.set(`kinds/${id}/default`, preset)} className="size-3.5 accent-foreground" />
                 Default
               </label>
             ) : null}
           </div>
           {PARTS.map(({ part }) => (
-            <SizeCell key={part} draft={draft} path={paths[part]} part={part} label={label} base={preset !== null} />
+            <SizeCell key={part} draft={draft} path={paths[part]} part={part} label={label} base={preset !== null} errorId={`size-error-${id}-${label}`} />
           ))}
           <span className="hidden justify-center sm:flex">
             {preset ? <input type="radio" name="default-size" aria-label={`${label} is the default size`} checked={draft.value(`kinds/${id}/default`) === preset} onChange={() => draft.set(`kinds/${id}/default`, preset)} className={cn("size-3.5 cursor-pointer accent-foreground", FOCUS_RING)} /> : <span className="text-2xs text-subtle-foreground">custom</span>}
           </span>
         </div>
-        {problems.map((problem) => (
-          <p key={problem} role="alert" className="mt-1 text-xs text-destructive-text">
-            {label}: {problem}
+        {problems.length ? (
+          <p id={`size-error-${id}-${label}`} role="alert" className="mt-1 text-xs text-destructive-text">
+            {problems.map((problem) => `${label}: ${problem}`).join(" ")}
           </p>
-        ))}
+        ) : null}
         {conflicts.map((path) => (
           <ConflictNote key={path} saved={draft.conflictAt(path)!.saved} onUseSaved={() => draft.useSaved(path)} onKeepMine={() => draft.keepMine(path)} />
         ))}
@@ -112,7 +123,7 @@ export function KindPage({ id }: { id: string }) {
     );
   };
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-part={draft.part}>
       <PageHeader
         title={kindTitle(id)}
         chips={

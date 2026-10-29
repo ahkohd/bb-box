@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,8 @@ import { HealthCard } from "./health";
 import { backendState, backendTitle, kindName, plural, qualifierOf } from "./model";
 import { useNav } from "./nav";
 import { useStore } from "./store";
-import { isSecretEdit, useDraft, useInstant, type Draft } from "./drafts";
-import { isSecretState, writePath, type Path } from "./paths";
+import { isSecretEdit, newKey, useDraft, useInstant, useWrite, type Draft } from "./drafts";
+import { isSecretState, type Path } from "./paths";
 import { Badge, Card, Checkbox, ConflictNote, FieldInput, Icon, PageHeader, ProviderGlyph, RestoredNote, Rows, SaveBar, SaveRule, SavedTick, Section, SettingRow, Confirm, FOCUS_RING } from "./ui";
 
 export const REPOSITORY = "https://github.com/moonstead/bb-box/blob/main";
@@ -40,11 +40,16 @@ function inheritedValue(field: FieldView, backends: readonly BackendConfig[]): s
   return String(value);
 }
 
-export function placeholderOf(field: FieldView, backends: readonly BackendConfig[]): string | undefined {
+export interface Effective {
+  readonly value: string;
+  readonly source: string;
+}
+
+export function effectiveOf(field: FieldView, backends: readonly BackendConfig[]): Effective | undefined {
   const inherited = inheritedValue(field, backends);
-  if (inherited) return `From ${field.inherits!.label}: ${inherited}`;
-  if (field.default !== undefined && field.default !== "") return `Default: ${String(field.default)}`;
-  if (field.key.startsWith("ios-hosts-")) return "Estimated for each Mac";
+  if (inherited) return { value: inherited, source: `from ${field.inherits!.label}` };
+  if (field.default !== undefined && field.default !== "") return { value: String(field.default), source: "the default" };
+  if (field.key.startsWith("ios-hosts-")) return { value: "estimated", source: "for each Mac by bb-box" };
   return undefined;
 }
 
@@ -52,36 +57,50 @@ export function fieldPath(backend: { id: string }, key: string): Path {
   return `backends/${backend.id}/fields/${key}`;
 }
 
-export function FieldRow({ draft, backend, field, backends, path = fieldPath(backend, field.key), placeholder }: { draft: Draft; backend: { id: string }; field: FieldView; backends: readonly BackendConfig[]; path?: Path; placeholder?: string }) {
+function EffectiveLine({ effective, shown }: { effective?: Effective; shown: boolean }) {
+  if (!effective || !shown) return null;
+  return (
+    <span className="block text-2xs text-subtle-foreground">
+      Empty: <span className="text-muted-foreground">{effective.value}</span>, {effective.source}
+    </span>
+  );
+}
+
+export function FieldRow({ draft, backend, field, backends, path = fieldPath(backend, field.key), label = field.label, effective }: { draft: Draft; backend: { id: string }; field: FieldView; backends: readonly BackendConfig[]; path?: Path; label?: string; effective?: Effective }) {
   const value = draft.value(path);
   const stored = draft.stored(path);
   const conflict = draft.conflictAt(path);
   const off = offable(field);
   const isOff = off && value === "";
-  const control = <FieldInput field={field} value={value} stored={stored} onChange={(next) => draft.set(path, next === "" && !off ? undefined : next)} placeholder={isOff ? "Off" : (placeholder ?? placeholderOf(field, backends))} disabled={isOff} />;
+  const shownEffective = effective ?? effectiveOf(field, backends);
+  const blank = value === undefined || value === "" || value === null;
+  const control = <FieldInput field={{ ...field, label }} value={value} stored={stored} onChange={(next) => draft.set(path, next === "" && !off ? undefined : next)} placeholder={isOff ? "Off" : shownEffective && shownEffective.value !== "estimated" ? shownEffective.value : undefined} disabled={isOff} />;
   return (
     <SettingRow
       id={path}
-      label={field.label}
+      label={label}
       help={field.description}
       problem={draft.problemAt(path)}
       stacked={field.experimental_multiline}
       focus={draft.focusPath === path}
       onFocused={draft.clearFocus}
-      chips={field.inherits && (value === undefined || value === "" || (isSecretState(value) && !value.set)) ? <Badge>from {field.inherits.label}</Badge> : draft.edited(path) && !conflict ? <Badge tone="warn">Changed</Badge> : null}
+      chips={field.inherits && blank ? <Badge>from {field.inherits.label}</Badge> : draft.edited(path) && !conflict ? <Badge tone="warn">Changed</Badge> : null}
       conflict={conflict ? <ConflictNote saved={conflict.saved} secret={field.secret} onUseSaved={() => draft.useSaved(path)} onKeepMine={() => draft.keepMine(path)} /> : null}
     >
-      {off ? (
-        <span className="flex w-full items-center gap-2 sm:w-auto">
-          <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <Checkbox label={`${field.label}: offer it`} checked={!isOff} onChange={(checked) => draft.set(path, checked ? undefined : "")} />
-            Offer
-          </label>
-          {control}
-        </span>
-      ) : (
-        control
-      )}
+      <span className="flex w-full flex-col gap-1 sm:w-auto sm:items-end">
+        {off ? (
+          <span className="flex w-full items-center gap-2 sm:w-auto">
+            <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <Checkbox label={`${label}: offer it`} checked={!isOff} onChange={(checked) => draft.set(path, checked ? undefined : "")} />
+              Offer
+            </label>
+            {control}
+          </span>
+        ) : (
+          control
+        )}
+        <EffectiveLine effective={shownEffective} shown={!field.secret && !isOff && blank && field.type !== "boolean"} />
+      </span>
     </SettingRow>
   );
 }
@@ -108,7 +127,7 @@ export function FieldGroups({ draft, backend, driver, backends, only }: { draft:
     <>
       {groups.map((group) => {
         const paths = group.fields.map((field) => fieldPath(backend, field.key));
-        const forced = paths.some((path) => draft.problemAt(path) || draft.conflictAt(path) || draft.edited(path) || nav.found === path || draft.focusPath === path);
+        const forced = paths.some((path) => draft.problemAt(path) || draft.conflictAt(path) || draft.edited(path) || nav.found?.path === path || draft.focusPath === path);
         const shown = !group.folded || open[group.id] || forced;
         return (
           <Section
@@ -140,23 +159,31 @@ export function FieldGroups({ draft, backend, driver, backends, only }: { draft:
   );
 }
 
+const MAC_ESTIMATES: Record<string, string> = { "ios-hosts-memory-gib": "17 GiB", "ios-hosts-cores": "10 cores", "ios-hosts-most": "6 slots" };
+
 export function MacsSection({ draft, backend, driver, saved }: { draft: Draft; backend: BackendConfig; driver: DriverView; saved: boolean }) {
   const store = useStore();
   const instant = useInstant();
   const nav = useNav();
-  const [open, setOpen] = useState<string | null>(() => (backend.hosts ?? []).find((host) => nav.found?.includes(`/hosts/${host.name}/`))?.name ?? null);
+  const [open, setOpen] = useState<string | null>(() => (backend.hosts ?? []).find((host) => nav.found?.path.includes(`/hosts/${host.name}/`))?.name ?? null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const target = nav.found?.path ?? draft.focusPath ?? "";
+  useEffect(() => {
+    const match = target.match(/\/hosts\/([^/]+)\//);
+    if (match) setOpen(match[1]!);
+  }, [target, nav.found?.nonce]);
   if (!driver.hostFields.length) return null;
+  const prefix = `backends/${backend.id}/hosts/`;
   const savedHosts = store.doc.backends.find((each) => each.id === backend.id)?.hosts ?? [];
-  const stagedNew: HostConfig[] = [];
-  for (let index = 1; index < 6; index += 1) {
-    const value = draft.value(`backends/${backend.id}/hosts/new-mac-${index}`);
-    if (value && typeof value === "object" && "name" in (value as object)) stagedNew.push(value as HostConfig);
-  }
-  const hosts = [...savedHosts.map((host) => ({ host, fresh: false })), ...stagedNew.map((host) => ({ host, fresh: true }))];
+  const staged = draft
+    .editKeys()
+    .filter((key) => key.startsWith(prefix) && key.slice(prefix.length).startsWith("@new-") && !key.slice(prefix.length).includes("/"))
+    .map((key) => ({ key: key.slice(prefix.length), host: draft.value(key) as HostConfig }))
+    .filter((entry) => entry.host);
+  const rows = [...savedHosts.map((host) => ({ key: host.name, host, fresh: false })), ...staged.map((entry) => ({ ...entry, fresh: true }))];
   const main = driver.hostFields.filter((field) => field.group !== "advanced");
   const own = driver.hostFields.filter((field) => field.group === "advanced");
-  const tartValue = (key: string) => draft.value(fieldPath(backend, key));
+  const backendValue = (key: string) => draft.value(fieldPath(backend, key));
   return (
     <Section
       title="Macs"
@@ -168,10 +195,9 @@ export function MacsSection({ draft, backend, driver, saved }: { draft: Draft; b
           size="sm"
           className="h-7"
           onClick={() => {
-            const index = stagedNew.length + 1;
-            const name = `new-mac-${index}`;
-            draft.set(`backends/${backend.id}/hosts/${name}`, { name, enabled: true, fields: {} });
-            setOpen(name);
+            const key = newKey("");
+            draft.set(`${prefix}${key}`, { name: "", enabled: true, fields: {} });
+            setOpen(key);
           }}
         >
           <Icon name="Plus" aria-hidden />
@@ -186,76 +212,108 @@ export function MacsSection({ draft, backend, driver, saved }: { draft: Draft; b
       ) : null}
       <Card>
         <Rows>
-          {hosts.map(({ host, fresh }) => {
-            const removed = !fresh && draft.value(`backends/${backend.id}/hosts/${host.name}`) === null;
-            const hostPath = (key: string) => (fresh ? `backends/${backend.id}/hosts/${host.name}` : `backends/${backend.id}/hosts/${host.name}/fields/${key}`);
-            const read = (key: string) => (fresh ? ((draft.value(hostPath(key)) as HostConfig).fields[key] ?? "") : draft.value(hostPath(key)));
-            const write = (key: string, value: unknown) => {
-              if (!fresh) return draft.set(hostPath(key), value);
-              const current = draft.value(hostPath(key)) as HostConfig;
-              draft.set(hostPath(key), { ...current, fields: { ...current.fields, [key]: value ?? "" } });
+          {rows.map(({ key, host, fresh }) => {
+            const name = host.name || "the new Mac";
+            const removed = !fresh && draft.value(`${prefix}${host.name}`) === null;
+            const fieldKey = (field: string) => (fresh ? `${prefix}${key}` : `${prefix}${host.name}/fields/${field}`);
+            const read = (field: string) => (fresh ? (host.fields[field] ?? "") : draft.value(fieldKey(field)));
+            const write = (field: string, value: unknown) => {
+              if (!fresh) return draft.set(fieldKey(field), value);
+              const fields = { ...host.fields } as Record<string, unknown>;
+              if (value === undefined || value === "") delete fields[field];
+              else fields[field] = value;
+              draft.set(`${prefix}${key}`, { ...host, fields });
             };
+            const problemFor = (field: string) => draft.problemAt(`${prefix}${host.name}/fields/${field}`);
+            const conflictFor = (field: string) => (fresh ? null : draft.conflictAt(fieldKey(field)));
             const pendingValue = instant.pendingValue(host.name);
+            const fieldRow = (field: FieldView, placeholder?: string, effective?: string) => {
+              const conflict = conflictFor(field.key);
+              const value = read(field.key);
+              return (
+                <SettingRow
+                  key={field.key}
+                  id={fieldKey(field.key)}
+                  label={`${field.label} on ${name}`}
+                  help={field.description}
+                  stacked={field.experimental_multiline}
+                  problem={problemFor(field.key)}
+                  focus={draft.focusPath === fieldKey(field.key)}
+                  onFocused={draft.clearFocus}
+                  chips={!fresh && draft.edited(fieldKey(field.key)) && !conflict ? <Badge tone="warn">Changed</Badge> : null}
+                  conflict={conflict ? <ConflictNote saved={conflict.saved} onUseSaved={() => draft.useSaved(fieldKey(field.key))} onKeepMine={() => draft.keepMine(fieldKey(field.key))} /> : null}
+                >
+                  <span className="flex w-full flex-col gap-1 sm:w-auto sm:items-end">
+                    <FieldInput field={{ ...field, label: `${field.label} on ${name}` }} value={value} stored={undefined} placeholder={placeholder} onChange={(next) => write(field.key, next === "" ? undefined : next)} />
+                    {effective && (value === undefined || value === "") ? (
+                      <span className="block text-2xs text-subtle-foreground">
+                        Empty: <span className="text-muted-foreground">{effective}</span>
+                      </span>
+                    ) : null}
+                  </span>
+                </SettingRow>
+              );
+            };
             return (
-              <div key={host.name} className={cn(removed && "opacity-60")}>
+              <div key={key} className={cn(removed && "opacity-60")}>
                 <div className="flex items-center gap-3 pr-4">
-                  <button type="button" className={cn("flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 pl-4 text-left", FOCUS_RING)} onClick={() => setOpen((current) => (current === host.name ? null : host.name))} aria-expanded={open === host.name}>
+                  <button type="button" className={cn("flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 pl-4 text-left", FOCUS_RING)} onClick={() => setOpen((current) => (current === key ? null : key))} aria-expanded={open === key}>
                     <ProviderGlyph type="tart" />
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-1.5 text-sm text-foreground">
-                        {fresh ? "New Mac" : host.name}
+                        {fresh ? host.name || "New Mac" : host.name}
                         {fresh ? <Badge tone="warn">Added when you save</Badge> : null}
                         {removed ? <Badge tone="warn">Removed when you save</Badge> : null}
                       </span>
                       <span className="block truncate text-xs text-muted-foreground">
                         {String(read("user") || "user")}@{String(read("address") || "address")}
-                        {own.some((field) => { const value = read(field.key); return value !== undefined && value !== ""; }) ? " · its own shared iOS host size" : ""}
+                        {own.some((field) => {
+                          const value = read(field.key);
+                          return value !== undefined && value !== "";
+                        })
+                          ? " · its own shared iOS host size"
+                          : ""}
                       </span>
                     </span>
-                    <Icon name={open === host.name ? "ChevronDown" : "ChevronRight"} className="size-4 text-subtle-foreground" aria-hidden />
+                    <Icon name={open === key ? "ChevronDown" : "ChevronRight"} className="size-4 text-subtle-foreground" aria-hidden />
                   </button>
                   {fresh ? (
                     <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Checkbox label="New Mac takes boxes" checked={(draft.value(hostPath("")) as HostConfig).enabled} onChange={(enabled) => draft.set(hostPath(""), { ...(draft.value(hostPath("")) as HostConfig), enabled })} />
+                      <Checkbox label={`${name}: takes boxes`} checked={host.enabled} onChange={(enabled) => draft.set(`${prefix}${key}`, { ...host, enabled })} />
                       Takes boxes
                     </label>
                   ) : (
                     <>
                       <SavedTick show={instant.saved === host.name} />
-                      <Switch aria-label={`Mac ${host.name}: takes new boxes`} checked={pendingValue !== undefined ? (pendingValue as boolean) : host.enabled} disabled={!saved || removed || instant.pending === host.name} onCheckedChange={(enabled) => void instant.run(host.name, [[`backends/${backend.id}/hosts/${host.name}/enabled`, enabled]], `Mac ${host.name}`)} />
+                      <Switch aria-label={`Mac ${host.name}: takes new boxes`} checked={pendingValue !== undefined ? (pendingValue as boolean) : host.enabled} disabled={!saved || removed || instant.pending === host.name} onCheckedChange={(enabled) => void instant.run(host.name, [[`${prefix}${host.name}/enabled`, enabled]], `Mac ${host.name}`)} />
                     </>
                   )}
                 </div>
-                {instant.refused?.key === host.name ? <p className="px-4 pb-2 text-xs text-destructive-text">{instant.refused.message}</p> : null}
-                {open === host.name && !removed ? (
+                {instant.refused?.key === host.name ? (
+                  <p role="alert" className="px-4 pb-2 text-xs text-destructive-text">
+                    {instant.refused.message}
+                  </p>
+                ) : null}
+                {open === key && !removed ? (
                   <div className="border-t border-border bg-surface-raised">
                     <Rows>
                       {fresh ? (
-                        <SettingRow label="Name" help="Lower-case letters, digits and hyphens. It cannot be changed once the Mac has boxes." problem={draft.problemAt(`backends/${backend.id}/hosts/${host.name}/name`)}>
-                          <Input aria-label="New Mac's name" className="h-8 w-full text-xs sm:w-72" placeholder="for example mac-2" onChange={(event) => draft.set(hostPath(""), { ...(draft.value(hostPath("")) as HostConfig), name: event.target.value })} />
+                        <SettingRow label="Name of the new Mac" help="Lower-case letters, digits and hyphens. It cannot be changed once the Mac has boxes." problem={draft.problemAt(`${prefix}${host.name}/name`)}>
+                          <Input aria-label="Name of the new Mac" className="h-8 w-full text-xs sm:w-72" placeholder="for example mac-2" value={host.name} onChange={(event) => draft.set(`${prefix}${key}`, { ...host, name: event.target.value })} />
                         </SettingRow>
                       ) : null}
-                      {main.map((field) => (
-                        <SettingRow key={field.key} id={hostPath(field.key)} label={field.label} help={field.description} stacked={field.experimental_multiline} problem={draft.problemAt(`backends/${backend.id}/hosts/${host.name}/fields/${field.key}`)} conflict={!fresh && draft.conflictAt(hostPath(field.key)) ? <ConflictNote saved={draft.conflictAt(hostPath(field.key))!.saved} onUseSaved={() => draft.useSaved(hostPath(field.key))} onKeepMine={() => draft.keepMine(hostPath(field.key))} /> : null}>
-                          <FieldInput field={field} value={read(field.key)} stored={undefined} onChange={(value) => write(field.key, value === "" ? undefined : value)} />
-                        </SettingRow>
-                      ))}
+                      {main.map((field) => fieldRow(field))}
                       <div className="px-4 pb-1 pt-3">
                         <p className="text-xs font-medium text-foreground">Its own shared iOS host size</p>
                         <p className="text-xs text-subtle-foreground">Empty takes Tart's setting above, or bb-box's estimate for this Mac. A change reaches the next shared host made on it; one running now keeps its size.</p>
                       </div>
                       {own.map((field) => {
-                        const backendKey = field.key;
-                        const fromTart = tartValue(backendKey);
-                        const effective = fromTart !== undefined && fromTart !== "" ? `Tart's setting: ${String(fromTart)}` : field.key === "ios-hosts-memory-gib" ? "Estimate for this Mac: 17 GiB" : field.key === "ios-hosts-cores" ? "Estimate for this Mac: 10 cores" : "Estimate for this Mac: 6 slots";
-                        return (
-                          <SettingRow key={field.key} id={hostPath(field.key)} label={field.label} problem={draft.problemAt(`backends/${backend.id}/hosts/${host.name}/fields/${field.key}`)} focus={draft.focusPath === `backends/${backend.id}/hosts/${host.name}/fields/${field.key}`} onFocused={draft.clearFocus}>
-                            <FieldInput field={field} value={read(field.key)} stored={undefined} placeholder={effective} onChange={(value) => write(field.key, value === "" ? undefined : value)} />
-                          </SettingRow>
-                        );
+                        const fromTart = backendValue(field.key);
+                        const effective = fromTart !== undefined && fromTart !== "" ? `${String(fromTart)}, Tart's setting` : `${MAC_ESTIMATES[field.key] ?? "estimated"}, bb-box's estimate for ${name}`;
+                        return fieldRow(field, fromTart !== undefined && fromTart !== "" ? String(fromTart) : (MAC_ESTIMATES[field.key] ?? "").split(" ")[0], effective);
                       })}
                       <div className="flex justify-end px-4 py-2.5">
-                        <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground" onClick={() => (fresh ? draft.useSaved(hostPath("")) : setRemoving(host.name))}>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground" onClick={() => (fresh ? draft.forget(`${prefix}${key}`) : setRemoving(host.name))}>
                           <Icon name="Trash2" aria-hidden />
                           {fresh ? "Don't add it" : `Remove ${host.name}…`}
                         </Button>
@@ -280,7 +338,7 @@ export function MacsSection({ draft, backend, driver, saved }: { draft: Draft; b
         action="Remove when I save"
         onCancel={() => setRemoving(null)}
         onConfirm={() => {
-          draft.set(`backends/${backend.id}/hosts/${removing}`, null);
+          draft.set(`${prefix}${removing}`, null);
           setRemoving(null);
         }}
       />
@@ -369,47 +427,75 @@ function Facts({ backend }: { backend: BackendConfig }) {
   );
 }
 
+export function GonePage({ what }: { what: string }) {
+  const nav = useNav();
+  return (
+    <div className="space-y-3">
+      <PageHeader title={`${what} is not here`} description="It was removed, here or elsewhere, or the link is wrong." />
+      <Button type="button" variant="outline" size="sm" className="h-7" onClick={nav.toOverview}>
+        Go to BB Box settings
+      </Button>
+    </div>
+  );
+}
+
 export function BackendPage({ id }: { id: string }) {
   const store = useStore();
   const backend = store.doc.backends.find((each) => each.id === id);
-  if (!backend) {
-    return (
-      <div className="space-y-3">
-        <PageHeader title="This backend is gone" description="It was removed, here or elsewhere. Its settings are no longer in the configuration." />
-      </div>
-    );
-  }
+  if (!backend) return <GonePage what="This backend" />;
   return <BackendEditor key={id} backend={backend} />;
+}
+
+export function useDraftCheck(draft: Draft, candidateBackend: () => BackendConfig | null) {
+  const store = useStore();
+  const [check, setCheck] = useState<{ fingerprint: string; health: Health } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const current = check && check.fingerprint === draft.fingerprint ? check.health : null;
+  const run = async () => {
+    const backend = candidateBackend();
+    if (!backend) return;
+    const fingerprint = draft.fingerprint;
+    setChecking(true);
+    const health = await store.checkDraft(backend);
+    setCheck({ fingerprint, health });
+    setChecking(false);
+  };
+  return { health: current, stale: !!check && !current, checking, run };
+}
+
+export function candidateBackend(draft: Draft, id: string, prepare?: Parameters<Draft["candidate"]>[0]): BackendConfig | null {
+  const built = draft.candidate(prepare);
+  if (!built) return null;
+  const backend = built.doc.backends.find((each) => each.id === id);
+  if (!backend) return null;
+  const fields = { ...backend.fields };
+  for (const [path, value] of Object.entries(built.secrets)) {
+    const key = path.split("/").pop()!;
+    if (path.startsWith(`backends/${id}/fields/`)) fields[key] = { set: value !== null, version: "candidate" };
+  }
+  return { ...backend, fields };
 }
 
 function BackendEditor({ backend }: { backend: BackendConfig }) {
   const store = useStore();
   const nav = useNav();
   const instant = useInstant();
+  const write = useWrite();
   const driver = driverOf(backend.type);
   const live = store.live[backend.id];
   const title = backendTitle(backend, live);
-  const secretPaths = new Set(driver.fields.filter((field) => field.secret).map((field) => fieldPath(backend, field.key)));
-  const draft = useDraft({ part: `backends/${backend.id}`, what: title, secretPaths, label: (path) => driver.fields.find((field) => path.endsWith(`/${field.key}`))?.label ?? "secret" });
-  const [draftHealth, setDraftHealth] = useState<{ revision: number; changes: number; health: Health } | null>(null);
-  const [checkingDraft, setCheckingDraft] = useState(false);
+  const draft = useDraft({ part: `backends/${backend.id}`, what: title, label: (path) => driver.fields.find((field) => path.endsWith(`/${field.key}`))?.label ?? path.split("/").slice(-1)[0] ?? "setting" });
+  const check = useDraftCheck(draft, () => candidateBackend(draft, backend.id));
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removeRefused, setRemoveRefused] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const qualifier = qualifierOf(backend, live);
   const boxes = live?.boxes ?? 0;
   const state = backendState(store.doc, backend, live);
-  const checkDraft = async () => {
-    setCheckingDraft(true);
-    let candidate = store.fetch();
-    for (const path of driver.fields.map((field) => fieldPath(backend, field.key))) if (draft.edited(path) && !isSecretEdit(draft.value(path))) candidate = writePath(candidate, path, draft.value(path));
-    const health = await store.checkDraft(candidate.backends.find((each) => each.id === backend.id)!);
-    setDraftHealth({ revision: store.doc.revision, changes: draft.changes, health });
-    setCheckingDraft(false);
-  };
   const secrets = driver.fields.filter((field) => field.secret && isSecretState(backend.fields[field.key]) && (backend.fields[field.key] as { set: boolean }).set).map((field) => field.label);
   const pendingValue = instant.pendingValue("enabled");
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-part={draft.part}>
       <PageHeader
         glyph={<ProviderGlyph type={backend.type} className="size-4.5" />}
         title={backend.label ?? driver.label}
@@ -422,7 +508,7 @@ function BackendEditor({ backend }: { backend: BackendConfig }) {
         description={driver.description}
         aside={
           <>
-            <SavedTick show={instant.saved === "enabled"} />
+            <SavedTick show={instant.saved === "enabled" || instant.saved === "rename"} />
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               Takes new boxes
               <Switch aria-label={`${title}: takes new boxes`} checked={pendingValue !== undefined ? (pendingValue as boolean) : backend.enabled} disabled={instant.pending === "enabled"} onCheckedChange={(enabled) => void instant.run("enabled", [[`backends/${backend.id}/enabled`, enabled]], title)} />
@@ -462,6 +548,11 @@ function BackendEditor({ backend }: { backend: BackendConfig }) {
                 {instant.refused.message}
               </p>
             ) : null}
+            {removeRefused ? (
+              <p role="alert" className="text-xs text-destructive-text">
+                {removeRefused}
+              </p>
+            ) : null}
             <p className="text-xs text-subtle-foreground">Saved changes reach new boxes; boxes already made keep theirs.</p>
             <SaveRule />
           </div>
@@ -470,18 +561,19 @@ function BackendEditor({ backend }: { backend: BackendConfig }) {
       <RestoredNote draft={draft} />
       <HealthCard
         state={state}
-        health={draftHealth && draftHealth.revision === store.doc.revision && draftHealth.changes === draft.changes ? draftHealth.health : (live?.health ?? null)}
-        checking={checkingDraft || !!live?.checking}
-        againstDraft={!!draftHealth && draftHealth.revision === store.doc.revision && draftHealth.changes === draft.changes && draft.changes > 0}
+        health={check.health ?? live?.health ?? null}
+        checking={check.checking || !!live?.checking}
+        againstDraft={!!check.health}
+        staleDraftCheck={check.stale && draft.changes > 0}
         off={!backend.enabled}
-        onCheck={() => (draft.changes ? void checkDraft() : void store.check(backend.id))}
+        onCheck={() => (draft.changes ? void check.run() : void store.check(backend.id))}
         checkLabel={draft.changes ? "Check with my changes" : undefined}
       />
       <Facts backend={backend} />
       <FieldGroups draft={draft} backend={backend} driver={driver} backends={store.doc.backends} />
       <MacsSection draft={draft} backend={backend} driver={driver} saved />
       <GuideLine driver={driver} />
-      <SaveBar draft={draft} onCheck={() => void checkDraft()} checking={checkingDraft} />
+      <SaveBar draft={draft} onCheck={() => void check.run()} checking={check.checking} />
       <Confirm
         open={confirmRemove}
         title={`Remove ${title}?`}
@@ -495,9 +587,10 @@ function BackendEditor({ backend }: { backend: BackendConfig }) {
         onCancel={() => setConfirmRemove(false)}
         onConfirm={() => {
           setConfirmRemove(false);
-          const latest = store.fetch();
-          void store.apply({ ...latest, backends: latest.backends.filter((each) => each.id !== backend.id) }, latest.revision).then((result) => {
+          setRemoveRefused(null);
+          void write((latest) => ({ ...latest, backends: latest.backends.filter((each) => each.id !== backend.id) }), `${title} was not removed`).then((result) => {
             if (result.ok) nav.toOverview();
+            else setRemoveRefused(result.message);
           });
         }}
       />
@@ -514,7 +607,7 @@ function BackendEditor({ backend }: { backend: BackendConfig }) {
               onClick={() => {
                 const label = renaming?.trim() ?? "";
                 setRenaming(null);
-                void instant.run("rename", [[`backends/${backend.id}/label`, label || undefined]], title);
+                void instant.run("rename", [[`backends/${backend.id}/label`, label || undefined]], `The name of ${title}`);
               }}
             >
               Save name
@@ -525,3 +618,5 @@ function BackendEditor({ backend }: { backend: BackendConfig }) {
     </div>
   );
 }
+
+export { isSecretEdit };

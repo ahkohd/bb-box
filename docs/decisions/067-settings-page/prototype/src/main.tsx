@@ -12,7 +12,7 @@ import { forgetDrafts, useLeaveWarning } from "./drafts";
 import { FindBox } from "./find";
 import { KindPage } from "./kind-page";
 import { backendTitle, kindName } from "./model";
-import { NavProvider, useNav, viewKey, type View } from "./nav";
+import { knownView, NavProvider, OPEN_VIEW, openSettingsView, useNav, viewKey, type View } from "./nav";
 import { OptionPageView } from "./option-pages";
 import { Overview } from "./overview";
 import { StoreProvider, useStore, type NextSave, type Scenario, type ServerDocker } from "./store";
@@ -29,6 +29,7 @@ function useViewTitle(): (view: View | null) => string {
       const backend = store.doc.backends.find((each) => each.id === view.id);
       return backend ? backendTitle(backend, store.live[backend.id]) : "the backend";
     }
+    if (!knownView(view)) return "Not found";
     if (view.page === "kind") return kindName(view.id);
     if (view.page === "option") return view.id.charAt(0).toUpperCase() + view.id.slice(1);
     if (view.page === "add") return "Add a backend";
@@ -166,6 +167,7 @@ function ScenarioBar({ dark, setDark }: { dark: boolean; setDark: (dark: boolean
               { id: "ok", label: "Works" },
               { id: "refused", label: "Is refused" },
               { id: "lost", label: "Saves, reply lost" },
+              { id: "dropped", label: "Never arrives" },
             ]}
             onChange={store.setNextSave}
           />
@@ -174,7 +176,10 @@ function ScenarioBar({ dark, setDark }: { dark: boolean; setDark: (dark: boolean
             <Button type="button" variant="outline" size="sm" className="h-7 w-full text-2xs" onClick={store.agentApply}>
               An agent runs bb box config apply
             </Button>
-            <p className="text-2xs leading-snug text-subtle-foreground">It changes Proxmox LXC's memory kept free and token secret, boxes per thread, the Monitor's refresh and Linux spares.</p>
+            <Button type="button" variant="outline" size="sm" className="h-7 w-full text-2xs" onClick={() => store.setRaceNext(3)}>
+              {store.raceNext ? `Someone saves first, ${store.raceNext} more ${store.raceNext === 1 ? "time" : "times"}` : "Someone saves first, 3 times running"}
+            </Button>
+            <p className="text-2xs leading-snug text-subtle-foreground">The agent changes Proxmox LXC's memory kept free and token secret, mac-1's own shared iOS host cores, every file's content, boxes per thread, the Monitor's refresh and Linux spares.</p>
             {store.scenario === "problem" ? (
               <Button type="button" variant="outline" size="sm" className="h-7 w-full text-2xs" disabled={store.macBack} onClick={store.bringMacBack}>
                 {store.macBack ? "mac-1 answers again" : "Bring mac-1 back, then Check again"}
@@ -241,9 +246,11 @@ function Frame() {
       read();
     };
     window.addEventListener("popstate", read);
+    window.addEventListener(OPEN_VIEW, read);
     window.addEventListener("bb-open", open);
     return () => {
       window.removeEventListener("popstate", read);
+      window.removeEventListener(OPEN_VIEW, read);
       window.removeEventListener("bb-open", open);
     };
   }, []);
@@ -271,6 +278,10 @@ function Frame() {
               {section}
             </button>
           ))}
+          <button type="button" className={cn("mt-3 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-foreground/90 hover:bg-state-hover", FOCUS_RING)} onClick={() => openSettingsView("#option/monitor")}>
+            <Icon name="Activity" className="size-4" aria-hidden />
+            Machine status: its settings
+          </button>
           <p className="mt-4 px-2 pb-1 text-xs text-subtle-foreground">Plugins</p>
           {PLUGINS.map((plugin) => (
             <button key={plugin} type="button" className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-state-hover", plugin === "BB Box" && onSettings ? "bg-state-active text-foreground" : "text-foreground/90", FOCUS_RING)} onClick={() => (plugin === "BB Box" ? toBB("") : undefined)}>

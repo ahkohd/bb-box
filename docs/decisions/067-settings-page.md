@@ -129,9 +129,18 @@ the step. The probe's settings section and the script are in
 | `UrlLink` to bb-box's settings with a hash, from another page | The hash is kept and read on mount |
 
 So the hash works for deep links, back, forward and reload, and no
-fallback is needed. Two rules follow: the page moves between its own views
-with `pushState` and its own listener, never with `UrlLink`; and anything
-that must outlive the section, such as drafts, is kept outside React state.
+fallback is needed. Three rules follow. The page moves between its own
+views with `pushState` and its own listener, never with `UrlLink`. Links
+from other parts of bb-box that may be on screen while the settings page
+shows, such as the Monitor panel and the Box panel, use one shared helper,
+`openSettingsView`, which pushes the hash and sends an event the section
+listens to; the section also re-reads the hash when the window regains
+focus or becomes visible. And anything that must outlive the section, such
+as drafts, is kept outside React state.
+
+A link to something that does not exist, such as `#kind/no-such-kind` or
+a removed backend, shows "This kind is not here" with a link to the
+overview, never a blank page.
 
 ## Decision
 
@@ -215,9 +224,10 @@ A backend's page ([page](067-settings-page/new/12-restored-after-reload.png)):
   A card opens by itself when it holds a problem, a conflict, an edit or
   the setting Find opened.
 - Each field shows the first sentence of its help, with More for the rest.
-  A blank field shows the value it takes and from where: "Default: 4096",
-  "From Proxmox LXC: https://…", or for a Mac "Estimate for this Mac: 10
-  cores". A template or image field that turns a kind off when empty has an
+  A blank field shows the value it takes inside the input, as a number
+  that fits, and under it where that comes from: "Empty: 4096, the
+  default", "Empty: https://…, from Proxmox LXC", or for a Mac "Empty: 10
+  cores, bb-box's estimate for mac-1". A template or image field that turns a kind off when empty has an
   Offer checkbox instead: unticked, it is saved as off, never as "use the
   default".
 - Tart's Macs: one row each with its own switch, which acts at once. A row
@@ -273,15 +283,17 @@ in first run. ([not finished](067-settings-page/new/17-not-finished.png))
 
 ### 4. Saving: one rule, and a merge that never loses anyone's change
 
-The rule, shown under each page header that has a form: switches act at
-once; fields, checkboxes and choices wait for Save.
+The rule, shown under each page header that has a form: "Switches, and
+menus that stand alone, act at once. Fields, checkboxes and radio choices
+wait for Save."
 
 - A switch is an independent decision and acts at once: a backend or a
   kind on or off, a saved Mac on or off, an option such as video or
   background monitoring. A menu that stands alone acts at once too: the
   default kind, iOS video encoding, when a project's image is built ahead.
-  Each shows "Saved" beside it for a moment. A refusal puts it back and
-  says why under its row.
+  Each shows "Saved" beside it for a moment, only once BB Box confirms it.
+  A refusal, a lost request or three refusals in a row put it back and
+  say why under its row.
 - Everything that belongs together is a form with one explicit Save:
   a backend's fields, a kind's sizes with its default size, warm counts
   and spares, the tailnet's choice with its tags and credentials, a new
@@ -300,6 +312,12 @@ once; fields, checkboxes and choices wait for Save.
   no undo, and it is refused while it has boxes); a Mac (staged until
   Save, refused while it has boxes); a file; a project's image; the copy
   of BB's earlier settings. ([remove a backend](067-settings-page/new/32-remove-confirm.png))
+  If the removal is refused, the dialog closes and the reason shows where
+  the person is: "Namespace was not removed: …".
+- Every write goes through one path with the same outcomes: a form's
+  Save, a switch, a standalone menu, Rename, a removal, a project
+  image's change, an import and the copy's removal. None says "Saved" or
+  closes quietly without BB Box's confirmation.
 
 The merge. Agents change the configuration while the page is open, with
 `bb box config apply` and `bb box image set`, so the page must never send
@@ -323,26 +341,55 @@ back a value it read before someone else changed it.
   moved since the edit began is a conflict: "Replaced elsewhere while you
   edited, at revision 216. Saving yours replaces that one", with Keep the
   saved one and Keep mine. ([secret conflict](067-settings-page/new/05-secret-conflict.png))
+- Every edited path has the same controls, a Mac's own fields and a
+  file's content included: a file being replaced whose content changed
+  elsewhere since the edit began is a conflict like a secret's. The bar's
+  Show opens what holds the first conflict or problem, such as a folded
+  card or a closed Mac, scrolls to it and focuses it.
+  ([a Mac's field](067-settings-page/new/r3-5-mac-conflict.png))
 - Save sends the edits applied to the latest configuration the page has,
   with that configuration's revision. When the server says someone saved
   first, the page reloads, checks the edits against the new values, and
-  either saves on the new revision ("Saved, on top of a change made
-  elsewhere") or stops with the conflicts on their rows. It never retries
-  with a revision it has not checked, and stops after three tries.
+  either saves on the new revision ("Saved at revision 216, on top of a
+  change made elsewhere") or stops with the conflicts on their rows. It
+  never retries with a revision it has not checked. After three refusals
+  in a row it stops and says so: "Not saved: the configuration changed
+  three times while saving. Your changes are still here".
 - A refusal keeps the draft: "Not saved: … Your changes are still here",
   with Save again. ([refused](067-settings-page/new/09-refused.png))
-- An unknown outcome is not called a failure. `config.apply` stores the
-  document before it replies, so a lost reply may hide a save. The bar
-  says "Save not confirmed: BB Box did not reply. Checking whether it was
-  saved…", reloads, and compares each edit with what is stored, and for a
-  secret, its version. Then it says "Saved. The reply was lost, so BB Box
-  checked: your changes are there", or "Save not confirmed, and your
-  changes are not in the configuration. Nothing is lost: save again".
-  ([not confirmed](067-settings-page/new/07-not-confirmed.png),
-  [reconciled](067-settings-page/new/08-reconciled.png))
-- "Saved" belongs to what was sent. Typing during a save stays a change:
-  "Saved. Your newer change is not saved yet."
-  ([saved, with newer typing](067-settings-page/new/10-saved-earlier-change.png))
+- No success without proof. Each write carries an operation ID that the
+  page makes. `config.apply` records the ID with the revision it produced,
+  replies with it, and keeps the last 100 receipts in `config.get`. A
+  write sent again with the same ID is never applied twice: the server
+  returns the first receipt.
+- An unknown outcome is called neither a failure nor a success.
+  `config.apply` stores the document before it replies, so a lost reply
+  may hide a save. The bar says "Save not confirmed: BB Box did not reply.
+  Looking for this save's receipt…" and reloads. With the receipt, it
+  says "Saved at revision 215. The reply was lost; BB Box's receipt for
+  this save confirms it". Without one, it says "Save not confirmed: BB Box
+  has no receipt for it yet. Your changes are still here. Saving again
+  resends the same request, which BB Box applies at most once". A changed
+  secret version is never taken as proof: it only shows that someone set
+  the secret.
+  ([receipt, then a racing change](067-settings-page/new/r3-1a-receipt-and-race.png),
+  [no receipt](067-settings-page/new/r3-1b-not-confirmed.png))
+- After a confirmed save the page says what changed elsewhere since:
+  "Since then, changed elsewhere: API token secret (revision 216)", so a
+  person whose save landed and was then overtaken knows it.
+- "Saved" belongs to what was sent. Each edit sent is cleared only if it
+  is still what was sent; typing during a save stays a change, for
+  secrets and files too: "Saved. Your newer change is not saved yet."
+  ([newer secret typing](067-settings-page/new/r3-2-newer-secret.png))
+- Check and Save build the same candidate: the latest configuration with
+  every edit applied, a Mac's fields and the presence of a new secret
+  included. A check's result is bound to that candidate's fingerprint
+  (the revision and a hash of the edits) and cleared by any later edit:
+  "Your form changed after you checked it, so that result was cleared".
+  ([check cleared](067-settings-page/new/r3-4-check-cleared.png))
+- New things have stable draft identities until saved, never their
+  names: a new Mac is `backends/tart/hosts/@new-k3x9`, a new file
+  `files/@new-p2m4`. Typing a new Mac's name only changes a field.
 
 ### 5. Drafts survive everything
 
@@ -363,16 +410,26 @@ A draft lives outside the page's components, so it outlives them.
   ([unsaved chip](067-settings-page/new/11-unsaved-chip.png)) Closing or
   reloading the tab with a draft asks first, through the browser's own
   warning.
-- The same holds for every editor: a backend, its setup, a kind, Boxes,
-  Monitor, the tailnet, per-Mac fields, a file being added or replaced,
-  and an import being checked. A draft is cleared only by a confirmed save
-  or by Discard. A refused file save keeps the editor open with its text.
-  ([file kept](067-settings-page/new/13-file-kept.png))
+- The same holds for every editor, through one draft registry: a
+  backend, its setup, a kind, Boxes, Monitor, the tailnet, per-Mac
+  fields, a file being added or replaced, and an import being checked. A
+  file's path is kept in session storage and its content in memory only;
+  after a reload the page says "the content of ~/.cfg/a.json you pasted
+  was not kept; paste it again". An import's text has no secret in it and
+  is kept like any field. A draft is cleared only by a confirmed save or
+  by Discard. A refused file save keeps the editor open with its text.
+  ([file kept](067-settings-page/new/13-file-kept.png),
+  [import back after a reload](067-settings-page/new/r3-6-import-restored.png))
 
 ### 6. First run stays until something works
 
 First run shows until a backend that is on makes at least one kind, not
-merely until a backend exists. It keeps today's guidance from
+merely until a backend exists. That moment is recorded once, as "setup
+done" in bb-box's storage, so first run is about setup, not about today's
+availability: an established install whose backends are all off or all
+failing keeps its overview, with "Every backend is off" or each failure in
+Status, never the setup card again.
+([all off](067-settings-page/new/r3-8-all-off.png)) It keeps today's guidance from
 `first-run.tsx`, word for word where it is good:
 
 - Docker on BB's server is usable: "Use Docker on this machine", with the
@@ -391,7 +448,11 @@ merely until a backend exists. It keeps today's guidance from
   what is missing, stays in the card.
   ([resume](067-settings-page/new/18-first-run-resume.png))
 - Kinds and Options fold under "Sizes and options … for later". No amber
-  "Not offered" appears for kinds no backend makes.
+  "Not offered" appears for kinds no backend makes, nor for kinds a
+  backend was set up not to make: Use Docker on this machine makes Linux
+  only, and its empty desktop images are a choice, not a fault.
+- Problem cards are titled for the problem: "bb-1 has no Docker", "BB
+  cannot use Docker on bb-1", "Not enough disk on bb-1".
   ([first run](067-settings-page/new/14-first-run.png))
 
 ### 7. States of each part
@@ -404,7 +465,7 @@ merely until a backend exists. It keeps today's guidance from
 | Not checked since it changed | "Not checked since it changed": its settings changed after the last check; the check is bound to the configuration it tested | — | Counted, and Check all becomes the main button |
 | Checking | "Checking…" with BB's spinner, up to 30 s | — | "Checking 8 backends, up to 30 s each, side by side…" |
 | Last check passed, over an hour ago | "Last check passed · 6 hours ago" | — | "passed their last check", with the range of ages |
-| Ready | "Ready", checked within the hour | Its summary | "All 8 backends ready" |
+| Ready | "Ready", checked within the hour | Its summary | "All 8 backends ready". Never "ready" for a pass over an hour old: "6 of 8 backends passed their last check", "Docker on this machine passed its last check". When every check has the same age, rows drop it and Status gives it |
 | Needs attention | Amber, with the warning | — | Listed with its fix |
 | Not working | Red, with the failure | "Not offered now: its backends cannot make it" | Listed with its fix |
 | Warm pool short | "0 of 1 ready: no room" in In use | On the kind's page with the reason | Listed |
@@ -418,10 +479,14 @@ merely until a backend exists. It keeps today's guidance from
   threads", "Proxmox LXC on pve-1: takes new boxes", with its row's state
   as its description. Kinds are named in full everywhere, never by a chip
   alone.
-- Help and errors are tied to their field with `aria-describedby`; a
-  field with a problem is marked invalid. On a refused save the first
-  invalid field is scrolled into view and focused; the bar's Show does the
-  same.
+- Help and errors are tied to their field with `aria-describedby`, the
+  size grid's cells included; a field with a problem is marked invalid. On
+  a refused save the first invalid field is opened, scrolled into view and
+  focused; the bar's Show does the same.
+- Every name is unique: each default-size radio says its size ("Small is
+  the default size"); help links say what they open ("More about TLS
+  fingerprint"); a Mac's fields carry the Mac ("Cores of a shared iOS host
+  on mac-1").
 - Saving, conflicts and Find's result count are announced through polite
   live regions. A secret's buttons say what they do: "Replace the API
   token secret".
@@ -440,11 +505,16 @@ every backend, each Mac's own fields, each kind's sizes, largest size,
 spares and warm count on each backend, and every option. Each word of the
 query must match the setting's label, place, help or key, or a synonym
 added beside it (memory and RAM, cores and CPU); words are not replaced.
-Results show each setting's value. Arrow keys move, Enter opens, Escape
-clears, and the count is announced. Opening a result scrolls to the
-setting, opens its folded card or its Mac, focuses it, and highlights it
-for a moment; the query stays in the field when the person comes back. Find
-does not take the browser's own Find shortcut.
+Synonyms are matched against labels only, so "RAM" finds memory settings
+and not every help text that says memory. Results show each setting's
+value. Arrow keys move, but never past the results shown; Enter opens,
+Escape clears, and the count is announced, with "the first 40 are listed"
+when there are more. Opening a result scrolls to the setting after the
+page has settled, opens its folded card or its Mac, focuses it, and
+highlights it for a moment, on another page or on the same one; the query
+stays in the field when the person comes back. Find does not take the
+browser's own Find shortcut.
+([from the same page](067-settings-page/new/r3-7-find-same-page.png))
 ([Find](067-settings-page/new/28-find.png),
 [opened a Mac's field](067-settings-page/new/29-found-mac-field.png))
 
@@ -504,9 +574,14 @@ checked retries, lost-reply reconcile, submitted versions, draft storage),
 
 Changes on the server, all small:
 
+- Operation receipts: `config.apply` takes an operation ID, applies it at
+  most once, returns it with the revision, and `config.get` lists the
+  last 100 receipts.
+- A "setup done" marker, set the first time a backend that is on makes a
+  kind, so first run never returns to an established install.
 - Each secret in `config.get` carries an opaque change version, the
-  revision that last set it (`{ set, version }`); `config.apply` sets it
-  for each secret it replaces or clears. No value ever leaves bb-box.
+  revision that last set or cleared it (`{ set, version }`), never reused;
+  `config.apply` sets it for each secret it replaces or clears. No value ever leaves bb-box.
 - A backend's state carries the revision its configuration last changed
   at, and each doctor report the revision it tested, so "not checked since
   it changed" is exact.
@@ -528,17 +603,17 @@ edit anything.
 | Unit | Change | Live check |
 | --- | --- | --- |
 | 0 | The hash test | Done, above |
-| 1 | `SettingsView`, the overview's rows, switches and honest Status, Options rows with the Monitor switch, Machines as a link to the Boxes page's Machines tab, the hash and focus rules; each part's page opens today's form for it, unchanged | Deep links, back, forward, reload, leaving by BB's sidebar; switches refused and saved; keyboard to every row |
-| 2 | The editing engine on the two simplest pages, Boxes and Monitor: drafts, merge, conflicts, checked retries, lost replies, submitted versions, draft storage; the server's secret versions and the test switch | An agent's `bb box config apply` while a draft is open; two tabs saving the same field and different fields; a lost reply after a store; typing during a save; a reload with a draft |
-| 3 | The backend's page on the engine: health card with check revisions, facts, field cards, help one step in, effective values, explicit off, Macs with their own sizes, the menu and confirmed removal; `ios-hosts` group | A Docker backend edited, refused and saved; a secret replaced in two tabs; a Tart backend with a real Mac's own sizes on a Mac box; remove refused with boxes and confirmed without |
+| 1 | `SettingsView`, the overview's rows, switches and honest Status, Options rows with the Monitor switch, Machines as a link to the Boxes page's Machines tab, the hash and focus rules; each part's page opens today's form for it, unchanged | Deep links, back, forward, reload, leaving by BB's sidebar; a link from the Monitor panel while settings show another view; a link to a kind or backend that does not exist; switches refused, saved and refused three times; keyboard to every row |
+| 2 | The editing engine on the two simplest pages, Boxes and Monitor, and the shared write path for every switch, menu and removal: drafts, merge, conflicts, checked retries, receipts, submitted versions, draft storage; the server's secret versions, operation receipts and the test switch | An agent's `bb box config apply` while a draft is open; two tabs saving the same field and different fields; a lost reply after a store, with a secret replaced in another tab before the page looks; a request that never arrives, then Save again applied once; three refusals in a row for a form and for a switch; typing during a save, a secret and a file included; a reload with a draft |
+| 3 | The backend's page on the engine: health card with check revisions, facts, field cards, help one step in, effective values, explicit off, Macs with their own sizes, the menu and confirmed removal; `ios-hosts` group | A Docker backend edited, refused and saved; a secret replaced in two tabs; a Tart backend with a real Mac's own sizes on a Mac box, a Mac added by name, and Check with a Mac's change; a check cleared by a later edit; remove refused with boxes and confirmed without |
 | 4 | The drivers' help text, trimmed for the owner's approval | The pages read in full |
 | 5 | Docker on BB machines folded into Backends and Add backend, with "Cannot host boxes" | A second BB machine in a box with Docker, used, broken (no docker group), fixed, turned off |
 | 6 | The kind's page, the default-kind rule everywhere, kinds staying in place | A kind edit racing a warm-count edit in another tab; the default kind's switch on both surfaces |
-| 7 | First run, Add backend and setting up a backend | A fresh BB with Docker missing, without access, with too little disk, and ready; a backend saved off, resumed and turned on |
+| 7 | First run, Add backend and setting up a backend | A fresh BB with Docker missing, without access, with too little disk, and ready; a Linux-only Docker setup with no warning about desktops; a backend saved on in one go with its secret; a backend saved off, resumed and turned on; every backend turned off afterwards, without first run returning |
 | 8 | Images, with every run state and projects' images | A run with a waiting and a failing image; a project's image removed |
 | 9 | Devices and Network | The tailnet's choice and credentials saved together and refused part way |
 | 10 | Configuration: export, import with its change list, `config.migrated.remove` | Export, change, import against a moved revision |
-| 11 | Find | Searches across every field, a Mac's own field, a kind's size, several words, no match; keyboard only |
+| 11 | Find | Searches across every field, a Mac's own field, a kind's size, several words, no match, from the overview and from the target's own page, with the setting on screen each time; arrow keys at the end of the list; keyboard only |
 
 `docs/design/settings.md` is rewritten to this design in unit 1, and the
 reference and the skill name any new words.
@@ -662,9 +737,13 @@ The dashed Prototype panel, bottom left (top right on a phone), sets:
 - the scenario: All ready, Problems (Tart's Mac does not answer, a Docker
   machine is offline, a warm pool is short, a kind is not offered, an image
   failed to rebuild), or First run;
-- what the next save does: works, is refused, or saves but loses its reply;
+- what the next save does: works, is refused, saves but loses its reply,
+  or never arrives;
 - An agent runs bb box config apply: changes the configuration while the
-  page is open, as an agent would;
+  page is open, as an agent would, including a secret, a Mac's own size
+  and every file's content;
+- Someone saves first, 3 times running: makes the next three writes meet
+  a newer revision;
 - Bring mac-1 back, in Problems, so Check again recovers;
 - Docker on BB's server, in First run: ready, missing, no access, or low
   disk;
@@ -677,8 +756,10 @@ Worth trying:
    value. Choose Use theirs, then Save.
 2. Replace the API token secret, press the agent button: the secret's
    conflict names the revision.
-3. Set the next save to lose its reply, change a field, Save: "Save not
-   confirmed", then "Saved. The reply was lost…".
+3. Set the next save to lose its reply, replace the API token secret,
+   Save, and press the agent button at once: the receipt confirms your
+   save, and the bar says the secret changed elsewhere since. Set it to
+   "never arrives": "no receipt", then Save again saves once.
 4. On Monitor, type 10, Save, and at once type 15.
 5. Change a field, choose General in BB's sidebar, come back: the row says
    "Unsaved changes". Reload: the change comes back, and the pasted secret
@@ -687,6 +768,10 @@ Worth trying:
    nothing filled in, then Save, keep it off, then back.
 7. Find: "iOS memory", "CPU desktop", "turn off monitor", "mac-1 cores".
 8. Tab through the overview, Enter on a row, then back.
+9. On Tart, Add Mac, name it and save; open mac-1, change its own cores,
+   press the agent button, then Show.
+10. On any inner page, choose "Machine status: its settings" in BB's
+    sidebar: the stand-in for the Monitor panel's link.
 
 To rebuild it, on a box: `npm ci` at the repository's root, then `npm ci`
 and `npm run build` in `docs/decisions/067-settings-page/prototype`, which
@@ -722,3 +807,34 @@ see it.
 | Astra: placeholders | Rename, Import with its change list and Remove copy are working flows, and Your machines opens the Boxes page's Machines tab (a stand-in page in the prototype); export says which secrets to paste again; a project image shows its check script; the fake server checks a Mac's sizes as bb-box does | Backend menu; Configuration; Images |
 | Both: build units too broad; unsafe middle releases; missing checks | Unit 0 done; eleven smaller units; today's forms stay reachable until replaced; the engine first on simple pages; checks for lost replies, two-tab secrets, racing warm counts, refused files, first-run failures, real per-Mac sizes, keyboard and screenshots at three widths (section 12) | — |
 | Both: words | The words table in section 10 | Throughout |
+
+## What changed after the second reviews
+
+Opus found all 13 first findings answered and asked for five small
+changes (N1 to N5). Astra found 3 answered, 9 partly and 7 new, several of
+them real defects in the prototype's saving engine. Each is answered
+below, with the scripted test that shows it, in
+[067-settings-page/tests/checks.mjs](067-settings-page/tests/checks.mjs); all 13
+tests pass, and the first round's 41 checks in `tests/flows.mjs` still
+pass.
+
+| Finding | Change | Test |
+| --- | --- | --- |
+| Astra N1: a changed secret version falsely confirmed a lost save | Operation IDs with receipts, applied at most once; a lost reply is confirmed only by its receipt; a secret changed since is named (section 4) | 1a lost reply, racing secret |
+| Astra N2, lead 1: a switch said "Saved" after three refusals; a removal refused silently; other writes the same | One write path for every form, switch, menu, removal, image, import and the copy; three refusals is a failure shown; a removal's refusal shows on the page (section 4) | 1c retries exhausted ([switch](067-settings-page/new/r3-1c-switch-exhausted.png)); 1d removal, image and import refusals |
+| Lead 1: an unknown outcome with no receipt | "Save not confirmed: BB Box has no receipt for it yet", the draft kept, Save again resending the same operation | 1b request never arrives |
+| Astra N3, lead 2: newer secret and file typing lost | An edit sent is cleared only if it is still what was sent, for secrets and files too | 2 newer secret and file typing |
+| Astra N4, lead 3: a new backend could not be saved on; Add Mac crashed | The server applies secrets before it validates; new Macs and files have stable draft keys, never their names | 3 creation end to end ([backend on](067-settings-page/new/r3-3-created-on.png), [Mac added](067-settings-page/new/r3-3-mac-added.png)) |
+| Astra N5, lead 4: Check left out Mac fields and outlived later edits | Check and Save build one candidate; its result is bound to the candidate's fingerprint and cleared by any edit | 4 check binds and clears |
+| Astra previous 1, lead 5: a Mac's own fields had no conflict choices; Show did not open the Mac; no stale-content check on a file | The same conflict controls on every path; Show opens, scrolls to and focuses the field; a file's content is versioned like a secret | 5 conflict controls and reveal |
+| Astra previous 4, lead 6: files and imports outside the draft lifecycle | One draft registry for files and imports, with the reload warning and the note on what to paste again | 6 files and imports keep their drafts |
+| Opus N1, Astra previous 10, lead 7: Find did not scroll; not on the same page; keys past the list; "RAM" too broad | Reveal on every target, after the page settles; keys bounded to the results shown; synonyms against labels only | 7 Find |
+| Opus N4, Astra previous 6, lead 8: "ready" for old passes in mixed and single summaries | "passed their last check" whenever any pass is over an hour old, in every form of the headline | 8 status words |
+| Astra N6, lead 8: an established install with every backend off returned to first run; a Linux-only Docker setup warned about desktops | A "setup done" marker separates setup from availability; kinds a backend was set up not to make are not warnings | 8 established all-off, Linux-only Docker |
+| Astra previous 8, Opus N3, lead 9: radio names, error ties, Show focus, help links, a Mac's field names | Radios say their size; size errors tied by `aria-describedby`; Show focuses; "More about TLS fingerprint"; "Address on mac-1" | 9 accessibility |
+| Astra previous 11, lead 10: estimates clipped inside inputs | A number that fits inside, and "Empty: 10 cores, bb-box's estimate for mac-1" under the input | 10 smaller: effective values |
+| Astra previous 3, lead 10: "choices below wait for Save" above a menu that saves at once | "Switches, and menus that stand alone, act at once. Fields, checkboxes and radio choices wait for Save" | 10 smaller: rule words |
+| Opus N2, Astra previous 7, lead 10: links into an open settings page | `openSettingsView` for links from the Monitor and Box panels; the hash re-read on focus and visibility; a unit 1 live check | 10 smaller: Monitor link |
+| Astra N7: an invalid route blanked the page | Unknown kinds and setup types show "This kind is not here" with a way to the overview | 10 smaller: invalid route |
+| Opus N5: first-run titles, a double full stop, ages on every row, Find's breadth, the health line at 390 px | Titled for the problem; one full stop; rows drop the age when Status gives it; synonyms narrowed; the host on its own line on narrow screens | 10 smaller: titles, full stops; 7 Find |
+| Astra: a cleared secret reused the version "none" | A clear gets the revision that made it, like a set, never reused (section 12) | Covered by 1a and 5, which compare versions |

@@ -68,7 +68,7 @@ export function healthTone(health: Health | null, checking: boolean): { tone: To
   return { tone: "ok", words: "Ready" };
 }
 
-export function HealthCard({ state, health, checking, onCheck, againstDraft, off, checkLabel }: { state?: BackendState; health: Health | null; checking: boolean; onCheck: () => void; againstDraft?: boolean; off?: boolean; checkLabel?: string }) {
+export function HealthCard({ state, health, checking, onCheck, againstDraft, staleDraftCheck, off, checkLabel }: { state?: BackendState; health: Health | null; checking: boolean; onCheck: () => void; againstDraft?: boolean; staleDraftCheck?: boolean; off?: boolean; checkLabel?: string }) {
   const [all, setAll] = useState(false);
   const fromChecks = healthTone(health, checking);
   const { tone, words } = checking ? fromChecks : againstDraft ? fromChecks : off ? { tone: "off" as Tone, words: state?.status === "unfinished" ? "Not finished" : "Off" } : state && ["changed", "stale", "never"].includes(state.status) ? { tone: state.tone, words: state.words } : fromChecks;
@@ -82,8 +82,10 @@ export function HealthCard({ state, health, checking, onCheck, againstDraft, off
           <p className="flex items-center gap-1.5 text-sm text-foreground">
             <StatusDot tone={tone} />
             <span className={cn("font-medium", tone === "bad" && "text-destructive-text", tone === "warn" && "text-warning-text")}>{words}</span>
-            {health && !checking ? <span className="truncate text-muted-foreground">· {health.summary}</span> : null}
+            {health && !checking ? <span className="hidden truncate text-muted-foreground sm:inline">· {health.summary}</span> : null}
           </p>
+          {health && !checking ? <p className="pl-3 text-xs text-muted-foreground sm:hidden">{health.summary}</p> : null}
+          {staleDraftCheck && !checking ? <p className="mt-0.5 pl-3 text-xs text-warning-text">Your form changed after you checked it, so that result was cleared. Check again.</p> : null}
           <p className="mt-0.5 pl-3 text-xs text-subtle-foreground">
             {checking
               ? "Running all its checks, up to 30 s."
@@ -91,7 +93,7 @@ export function HealthCard({ state, health, checking, onCheck, againstDraft, off
                 ? "Checked just now, against your unsaved changes. Nothing is saved yet."
                 : off
                   ? state?.status === "unfinished"
-                    ? `${state.items[0] ?? "Some settings are missing"}. Check it before you turn it on.`
+                    ? `${(state.items[0] ?? "Some settings are missing").replace(/\.$/, "")}. Check it before you turn it on.`
                     : "It takes no new boxes. Check it before you turn it on."
                   : health
                     ? state?.status === "changed"

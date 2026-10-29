@@ -45,6 +45,10 @@ export function readPath(doc: Document, path: Path): unknown {
     return doc.general[id as "defaultKind"];
   }
   if (root === "monitor") return doc.monitor[id as "enabled"];
+  if (root === "files") {
+    if (path.includes("@new-")) return undefined;
+    return doc.general.files.find((file) => file.path === decodeURIComponent(path.slice("files/".length)))?.content;
+  }
   return undefined;
 }
 
@@ -98,6 +102,10 @@ export function writePath(doc: Document, path: Path, value: unknown): Document {
     return { ...doc, general: { ...doc.general, [id!]: value } };
   }
   if (root === "monitor") return { ...doc, monitor: { ...doc.monitor, [id!]: value } };
+  if (root === "files" && value === null) {
+    const filePath = decodeURIComponent(path.slice("files/".length));
+    return { ...doc, general: { ...doc.general, files: doc.general.files.filter((file) => file.path !== filePath) } };
+  }
   return doc;
 }
 
