@@ -13,6 +13,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Alert02Icon, ArrowDataTransferVerticalIcon, BatteryChargingIcon, BatteryFullIcon, Clock01Icon, CloudOffIcon, CpuIcon, GpuIcon, HardDriveIcon, RamMemoryIcon, ServerIcon } from "@hugeicons/core-free-icons";
 import { BarChart, BigValue, DetailRow, Footnote, LineChart, LoadingText, METRIC_COLORS, MetricSection, Pill, ProgressBar } from "./metric-parts.tsx";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { HudScrollProvider, HudTooltip, HudTooltipContent, HudTooltipTrigger } from "./hud-tooltip.tsx";
 import { hasGpuReadings, readPanelShape, rememberPanelShape, type PanelShape } from "./panel-shape.ts";
 
 const GREEN = "#22c55e";
@@ -202,12 +203,12 @@ function SummaryStrip({ snapshot, isServer, waitingFor }: { snapshot: MonitorSna
   return (
     <div className="flex flex-wrap items-center gap-1 px-3 py-2">
       {health.issues.length > 0 ? (
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild><span tabIndex={0} className="inline-flex outline-none">{healthPill}</span></TooltipTrigger>
-          <TooltipContent side="right" align="start" className="max-w-64 space-y-1 text-xs">
+        <HudTooltip delayDuration={300}>
+          <HudTooltipTrigger asChild><span tabIndex={0} className="inline-flex outline-none">{healthPill}</span></HudTooltipTrigger>
+          <HudTooltipContent side="right" align="start" className="max-w-64 space-y-1 text-xs">
             {health.issues.map((issue) => <p key={issue.label}>{issue.message}</p>)}
-          </TooltipContent>
-        </Tooltip>
+          </HudTooltipContent>
+        </HudTooltip>
       ) : healthPill}
       <Pill>{PLATFORM_NAMES[host.platform] ?? host.platform} · {host.arch}</Pill>
       <Pill>{formatBytes(memory.totalBytes)}</Pill>
@@ -239,10 +240,10 @@ function SlotPills({ slot }: { slot: NonNullable<MonitorSnapshot["slot"]> }) {
     <>
       <Pill>on {slot.host}</Pill>
       {slot.encoder ? (
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild><span tabIndex={0} className="inline-flex outline-none"><Pill>encoder {Math.round(slot.encoder.usedPercent)}%</Pill></span></TooltipTrigger>
-          <TooltipContent side="right" align="start" className="max-w-64 text-xs">{slot.encoder.words}</TooltipContent>
-        </Tooltip>
+        <HudTooltip delayDuration={300}>
+          <HudTooltipTrigger asChild><span tabIndex={0} className="inline-flex outline-none"><Pill>encoder {Math.round(slot.encoder.usedPercent)}%</Pill></span></HudTooltipTrigger>
+          <HudTooltipContent side="right" align="start" className="max-w-64 text-xs">{slot.encoder.words}</HudTooltipContent>
+        </HudTooltip>
       ) : null}
     </>
   );
@@ -467,12 +468,12 @@ function ProcessRows({ snapshot }: { snapshot: MonitorSnapshot | null }) {
   if (!processes.available) return <span className="col-span-3 text-muted-foreground">Unavailable</span>;
   return processes.top.slice(0, PROCESS_ROWS).map((process) => (
     <div key={process.pid} className="contents">
-      <Tooltip delayDuration={400}>
-        <TooltipTrigger asChild>
+      <HudTooltip delayDuration={400}>
+        <HudTooltipTrigger asChild>
           <span className="min-w-0 truncate text-sidebar-foreground" data-reveal="">{process.name}</span>
-        </TooltipTrigger>
-        <TooltipContent side="right" className="text-xs">{process.name} · PID {process.pid}</TooltipContent>
-      </Tooltip>
+        </HudTooltipTrigger>
+        <HudTooltipContent side="right" className="text-xs">{process.name} · PID {process.pid}</HudTooltipContent>
+      </HudTooltip>
       <span className="text-right tabular-nums text-subtle-foreground" data-reveal="" style={{ color: shareColor(memory.totalBytes > 0 ? process.rssBytes / memory.totalBytes : 0, 0.25, 0.5) }}>{formatBytes(process.rssBytes)}</span>
       <span className="text-right tabular-nums text-subtle-foreground" data-reveal="" style={{ color: shareColor(process.cpuPercent, 50, 100) }}>{process.cpuPercent.toFixed(1)}</span>
     </div>
@@ -518,7 +519,7 @@ function StatusPopover({ snapshot, isServer, expected, waitingFor }: { snapshot:
 
 function MachineHeader({ machines, selected, onSelect, onOpen, actions }: { machines: Machine[] | null; selected: string; onSelect: (machineId: string) => void; onOpen: () => void; actions: ReactNode }) {
   return (
-    <div className="sticky top-0 z-10 bg-sidebar">
+    <div data-bb-box-monitor-header className="sticky top-0 z-10 bg-sidebar">
       <div className="flex h-9 min-w-0 items-center gap-1 bg-sidebar-accent/50 px-1.5">
         <MachinePicker machines={machines} selected={selected} onSelect={onSelect} onOpen={onOpen} />
         <span className="flex-1" />
@@ -588,6 +589,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
   }, [selected, loadedGpu, loadedBattery, loadedTailscaleRows]);
   return (
     <TooltipProvider>
+    <HudScrollProvider container={container}>
     <div ref={container} data-bb-box-monitor-shell aria-busy={(active && !snapshot && !error) || reloading} className="w-full min-w-0 divide-y divide-sidebar-border">
       <MachineHeader
         machines={machines}
@@ -604,6 +606,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
         ? <UnavailableState message={errorMessage} />
         : <StatusPopover snapshot={snapshot} isServer={selected === SERVER_MACHINE} expected={expectedShape} waitingFor={slowLoad ? machineName : null} />}
     </div>
+    </HudScrollProvider>
     </TooltipProvider>
   );
 }

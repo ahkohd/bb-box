@@ -90,3 +90,30 @@ is deployed, both footer entries show. To keep only bb-box's:
 5. Reload BB's page so the footer has only bb-box's entry.
 6. On each Mac it read, remove Beacon's helper folder,
    `~/Library/Caches/bb-plugin-beacon`.
+
+## F-24: a section's tooltip no longer follows a scroll
+
+Built on 29 October 2026, from the owner's capture of the same day. In the
+panel, a section's details tooltip, such as the CPU card's, moved with the
+content while the panel scrolled. It drifted up past the panel's top, over
+BB's sidebar, and sometimes faded out where it no longer belonged.
+
+Radix's tooltip already closes when an ancestor of its trigger scrolls, but
+it then plays its fade-out while it keeps following its trigger. Within the
+300 ms after a close, the next tooltip opens with no delay, so each section
+that passed under a still pointer opened its tooltip in turn.
+
+The panel's content tooltips now go through `hud-tooltip.tsx`:
+
+- While the panel scrolls, and for 150 ms after its last scroll event, an
+  open tooltip is hidden at once, with no animation, and Radix's own close
+  removes it. A pointer move in that time does not open one.
+- When the scroll ends, a tooltip opens again only if the pointer stays on a
+  section for that section's delay, or moves onto one.
+- A tooltip opens only while its trigger shows in the panel's visible area:
+  inside the scrolling element, below the sticky header and inside the
+  window. A side tooltip whose section's top is under the header starts at
+  the header's bottom edge instead.
+
+The header's own tooltips, Reload and Hide, do not scroll and are unchanged.
+The panel's look is the same.

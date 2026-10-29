@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { HudTooltip, HudTooltipContent, HudTooltipTrigger } from "./hud-tooltip.tsx";
 import { cn } from "@/lib/utils";
 
 export const METRIC_COLORS = {
@@ -185,12 +185,12 @@ export function MetricSection({
   );
   if (!details) return body;
   return (
-    <Tooltip delayDuration={400}>
-      <TooltipTrigger asChild>{body}</TooltipTrigger>
-      <TooltipContent side="right" align="start" className="max-w-64 space-y-1 text-xs">
+    <HudTooltip delayDuration={400}>
+      <HudTooltipTrigger asChild>{body}</HudTooltipTrigger>
+      <HudTooltipContent side="right" align="start" className="max-w-64 space-y-1 text-xs">
         {details}
-      </TooltipContent>
-    </Tooltip>
+      </HudTooltipContent>
+    </HudTooltip>
   );
 }
 
