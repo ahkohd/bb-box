@@ -15,6 +15,7 @@ import type { BbBox } from "./setup.ts";
 import { adminText, boxDetail, dockerText, kindResizeText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, versionsText } from "./views.ts";
 import { setupDocker } from "./setup-docker.ts";
 import { monitorCommands } from "./monitor-cli.ts";
+import { configCommands } from "./config-cli.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -185,7 +186,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           async run({ options }) {
             const kinds = await app.kinds();
             if (options.json) return json(kinds);
-            if (!kinds.length) return out("No backend is on, so there are no kinds. bb box setup docker sets up Docker on the machine that runs BB; or turn one on in bb-box's settings.");
+            if (!kinds.length) return out("No backend is on, so there are no kinds. bb box setup docker sets up Docker on the machine that runs BB; or add one with bb box backend add <type>, or in bb-box's settings.");
             return out(
               kinds
                 .map((kind) => {
@@ -241,6 +242,27 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             guard("Checking the box", async () => {
               const box = await boxes.refresh(threadOf(options.thread, ctx), positionals.box, ctx.signal);
               return options.json ? json(app.view(box)) : out(boxDetail(box, app.control(box)));
+            }),
+        }),
+        run: cliCommand({
+          summary: "Run a shell command in a thread's box, or with --machine in one of your machines, as its user, and print its output. It exits with the command's exit code. For a long command, use box_run, which keeps it as a job.",
+          positionals: [
+            { name: "box", description: "The box's name or ID.", required: true },
+            { name: "command", description: "The command, run by the box user's shell, such as \"uname -a\". Quote it as one word.", required: true, variadic: true },
+          ],
+          options: {
+            ...threadOption,
+            machine: { type: "boolean", description: "The box is one of your machines, from bb box machines, not a thread's." },
+            "timeout-seconds": { type: "integer", min: 1, max: 600, description: "Seconds before the command is stopped: 120 by default, at most 600." },
+          },
+          run: ({ positionals, options }, ctx) =>
+            guard("Running the command", async () => {
+              const owner = options.machine ? OPERATOR : threadOf(options.thread, ctx);
+              const box = await boxes.get(owner, positionals.box);
+              const command = (positionals.command as string[]).join(" ");
+              const { result } = await boxes.run(owner, box.id, command, { timeoutMs: (options["timeout-seconds"] ?? 120) * 1000, ...(ctx.signal ? { signal: ctx.signal } : {}), maxOutputBytes: 1024 * 1024 });
+              if (result.timedOut) return { exitCode: 124, stdout: result.stdout, stderr: `${result.stderr}Timed out in box ${box.name} after ${(result.durationMs / 1000).toFixed(1)} s.\n` };
+              return { exitCode: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr };
             }),
         }),
         resize: cliCommand({
@@ -623,6 +645,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           },
         }),
         ...(app.replyDrops ? replyDropCommands(app.replyDrops) : {}),
+        ...configCommands(app.configuration),
         ...monitorCommands(bb, app.monitor),
         sweep: cliCommand({
           summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers.",

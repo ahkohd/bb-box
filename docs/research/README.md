@@ -21,6 +21,7 @@ decided is in the [decisions](../decisions/README.md).
 | [Android emulator boxes](android-emulator-boxes.md) | 26 October 2026 | not yet |
 | [Slimming an iOS Simulator](ios-simulator-slimming.md) | 26 October 2026 | not yet |
 | [Several iOS Simulators in one macOS VM](ios-shared-hosts.md) | 26 October 2026 | not yet |
+| [An agent sets bb-box up](agent-setup.md) | 29 October 2026 | built as the `bb-box-setup` skill and the `bb box backend`, `kind` and `option` commands |
 
 [computer-use-rig](computer-use-rig/README.md) is the test rig the computer
 use research ran in.

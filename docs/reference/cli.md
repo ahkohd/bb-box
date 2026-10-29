@@ -11,6 +11,7 @@
 | [`bb box list`](#bb-box-list) | List a thread's boxes, or every box with --all. |
 | [`bb box acquire`](#bb-box-acquire) | Acquire a box for a thread and wait until it answers. |
 | [`bb box status`](#bb-box-status) | Show one box, checking its power state with the backend. |
+| [`bb box run`](#bb-box-run) | Run a shell command in a thread's box, or with --machine in one of your machines, as its user, and print its output. It exits with the command's exit code. For a long command, use box_run, which keeps it as a job. |
 | [`bb box resize`](#bb-box-resize) | Resize a thread's box: its cores, memory or disk, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
 | [`bb box machines`](#bb-box-machines) | List your machines: boxes you own, kept as BB machines, which no thread ending releases. |
 | [`bb box machines add`](#bb-box-machines-add) | Add a machine of your own: a box of the kind, kept as a BB machine under the name until you remove it. |
@@ -35,6 +36,20 @@
 | [`bb box config check`](#bb-box-config-check) | Check a configuration file without saving it. --test also runs the doctor of each backend in it that is on, within 30 s each. |
 | [`bb box config apply`](#bb-box-config-apply) | Save a configuration file as bb-box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or --replace, saves over what is there, as when setting bb-box up again from an export. |
 | [`bb box config migrated`](#bb-box-config-migrated) | Show the copy of BB's settings bb-box kept when it moved them into its configuration. --remove removes it. |
+| [`bb box backend list`](#bb-box-backend-list) | List the configuration's backends, in the order a new box tries them: each one's switch, state, kinds, boxes and last check. |
+| [`bb box backend types`](#bb-box-backend-types) | List the types of backend bb-box has: what each is for, the kinds it makes, and its setup guide and scripts in bb-box's repository. |
+| [`bb box backend fields`](#bb-box-backend-fields) | List a backend type's fields, or a backend's with their values now: each key, what it takes, whether it is a secret, and the first line of its help. Secrets show only as set or not. |
+| [`bb box backend add`](#bb-box-backend-add) | Add a backend, on unless --off, through the same checked save as the settings page, then run its checks. Secrets come only from a dotenv file or stdin. Exits 2 when it saved and its checks failed. |
+| [`bb box backend set`](#bb-box-backend-set) | Change a backend: its fields, secrets, switch, name or warm boxes, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed. |
+| [`bb box backend remove`](#bb-box-backend-remove) | Remove a backend: its settings, its secrets, which cannot be got back, and its warm boxes. Refused while it has boxes, as on the settings page. Asks for --yes. |
+| [`bb box backend host add`](#bb-box-backend-host-add) | Add a host to a backend whose hosts are set up alike, such as a Mac to Tart. The SSH host pool lists its machines in its machines field instead: bb box backend set ssh-pool --add-line. |
+| [`bb box backend host set`](#bb-box-backend-host-set) | Change a backend's host: its fields, or its switch. Off, it takes no new boxes, and its boxes keep working. |
+| [`bb box backend host remove`](#bb-box-backend-host-remove) | Remove a host from a backend. Refused while it has boxes, as on the settings page. |
+| [`bb box kind set`](#bb-box-kind-set) | Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, or make it the default kind, through the same checked save as the settings page. Sizes change new boxes only. |
+| [`bb box option list`](#bb-box-option-list) | List the general and Monitor options: each one's value now, its default, and what it does. |
+| [`bb box option get`](#bb-box-option-get) | Show one general or Monitor option: its value now, its default, and what it does. |
+| [`bb box option set`](#bb-box-option-set) | Set general and Monitor options, such as monitor.enabled=false or defaultKind=linux, in one checked save, as the settings page saves them. bb box option list lists them. |
+| [`bb box option unset`](#bb-box-option-unset) | Give general and Monitor options back their defaults, in one checked save. general.tailnet.mode turns the tailnet off and clears its client. |
 | [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
 | [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
 | [`bb box monitor logs`](#bb-box-monitor-logs) | Show background monitoring's diagnostic records, oldest first: the last 100, or --limit up to 500. --json gives JSON lines. |
@@ -125,6 +140,25 @@ Options:
   --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
   --json            Print JSON.
   --help, -h        Show this help and exit
+```
+
+## bb box run
+
+Run a shell command in a thread's box, or with --machine in one of your machines, as its user, and print its output. It exits with the command's exit code. For a long command, use box_run, which keeps it as a job.
+
+```text
+Usage:
+  bb box run <box> <command...> [--thread <value>] [--machine] [--timeout-seconds <1-600>]
+
+Arguments:
+  <box>         The box's name or ID. (required)
+  <command...>  The command, run by the box user's shell, such as "uname -a". Quote it as one word. (required)
+
+Options:
+  --thread <value>           The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine                  The box is one of your machines, from bb box machines, not a thread's.
+  --timeout-seconds <1-600>  Seconds before the command is stopped: 120 by default, at most 600.
+  --help, -h                 Show this help and exit
 ```
 
 ## bb box resize
@@ -513,6 +547,311 @@ Options:
   --json      Print JSON.
   --remove    Remove the copy.
   --help, -h  Show this help and exit
+```
+
+## bb box backend list
+
+List the configuration's backends, in the order a new box tries them: each one's switch, state, kinds, boxes and last check.
+
+```text
+Usage:
+  bb box backend list [--json]
+
+Options:
+  --json      Print JSON.
+  --help, -h  Show this help and exit
+```
+
+## bb box backend types
+
+List the types of backend bb-box has: what each is for, the kinds it makes, and its setup guide and scripts in bb-box's repository.
+
+```text
+Usage:
+  bb box backend types [--json]
+
+Options:
+  --json      Print JSON.
+  --help, -h  Show this help and exit
+```
+
+## bb box backend fields
+
+List a backend type's fields, or a backend's with their values now: each key, what it takes, whether it is a secret, and the first line of its help. Secrets show only as set or not.
+
+```text
+Usage:
+  bb box backend fields <backend> [--json]
+
+Arguments:
+  <backend>  A type, from bb box backend types, or a backend's ID, from bb box backend list. (required)
+
+Options:
+  --json      Print JSON.
+  --help, -h  Show this help and exit
+```
+
+## bb box backend add
+
+Add a backend, on unless --off, through the same checked save as the settings page, then run its checks. Secrets come only from a dotenv file or stdin. Exits 2 when it saved and its checks failed.
+
+```text
+Usage:
+  bb box backend add <type> [--json] [--check] [--revision <n>] [--operation <value>] [--field <key=value>]... [--field-file <key=path>]... [--unset <key>]... [--add-line <key=line>]... [--remove-line <key=text>]... [--secret-file <field=path>]... [--clear-secret <field>]... [--secret <field=VARIABLE>]... [--secrets-file <path>] [--secrets <line>] [--on] [--off] [--label <value>] [--warm <kind=count>]... [--no-doctor] [--id <value>]
+
+Arguments:
+  <type>  The type, from bb box backend types, such as docker or ssh-pool. (required)
+
+Options:
+  --json                      Print JSON.
+  --check                     Save nothing: say what would change and what is wrong with it, and for a backend run its checks with the change, as the settings page's Check does.
+  --revision <n>              Save only while the configuration is at this revision, which bb box config show gives, and refuse otherwise. Left out, the change is made on the latest revision, trying up to 3 times.
+  --operation <value>         An ID for this save. The same command again with the same ID, as after an answer that never came, is saved once and answers with the first save's receipt, kept 24 hours. A new ID is made when left out.
+  --field <key=value>         Set a field, such as host=unix:///var/run/docker.sock. Repeat for each. key= with nothing after it saves an empty value, which for an image or template field turns its kind off here. Not for secrets. (repeatable)
+  --field-file <key=path>     Set a field to a file's text, for a field of several lines, such as known-hosts. Read on the machine BB's server runs on. (repeatable)
+  --unset <key>               Leave a field unset, so it takes its default. (repeatable)
+  --add-line <key=line>       Add a line to a field of lines, such as machines="build-1 192.0.2.21 linux". A line already there is not added again. (repeatable)
+  --remove-line <key=text>    Remove the lines of a field that are the text or start with it and a space, such as machines=build-1. (repeatable)
+  --secret-file <field=path>  Set a secret field to a whole file's text, such as ssh-private-key=key.pem. Read on the machine BB's server runs on. (repeatable)
+  --clear-secret <field>      Clear a secret field. (repeatable)
+  --secret <field=VARIABLE>   A secret field and the variable in the dotenv file that holds its value, such as token=HCLOUD_TOKEN. Repeat for each. The value is read from --secrets-file or --secrets-stdin, never from the command line. (repeatable)
+  --secrets-file <path>       A dotenv file, as bb secret request --write-env writes, read on the machine BB's server runs on; a relative path is from where you run bb.
+  --secrets <line>            Only as --secrets-stdin, which reads one line: a VARIABLE=value line, as grep '^HCLOUD_TOKEN=' secrets.env | bb box backend add hetzner --secret token=HCLOUD_TOKEN --secrets-stdin, or a whole dotenv file in base64, as base64 < secrets.env | tr -d '\n' | bb box ... --secrets-stdin, for several secrets at once. Works from any machine. (or --secrets-stdin from the bb CLI)
+  --on                        Turn it on.
+  --off                       Turn it off: it makes no new boxes, and its boxes keep working.
+  --label <value>             Its name in the settings and in box_list, such as Docker on build-1. Empty gives back the type's name.
+  --warm <kind=count>         Ready boxes of a kind to keep waiting here, such as linux=1; 0 keeps none. (repeatable)
+  --no-doctor                 Do not run the backend's checks after saving.
+  --id <value>                Its ID, for a second backend of a type that allows several, such as docker:build-1, or just build-1. The type by default.
+  --help, -h                  Show this help and exit
+```
+
+## bb box backend set
+
+Change a backend: its fields, secrets, switch, name or warm boxes, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed.
+
+```text
+Usage:
+  bb box backend set <backend> [--json] [--check] [--revision <n>] [--operation <value>] [--field <key=value>]... [--field-file <key=path>]... [--unset <key>]... [--add-line <key=line>]... [--remove-line <key=text>]... [--secret-file <field=path>]... [--clear-secret <field>]... [--secret <field=VARIABLE>]... [--secrets-file <path>] [--secrets <line>] [--on] [--off] [--label <value>] [--warm <kind=count>]... [--no-doctor]
+
+Arguments:
+  <backend>  The backend's ID, from bb box backend list. (required)
+
+Options:
+  --json                      Print JSON.
+  --check                     Save nothing: say what would change and what is wrong with it, and for a backend run its checks with the change, as the settings page's Check does.
+  --revision <n>              Save only while the configuration is at this revision, which bb box config show gives, and refuse otherwise. Left out, the change is made on the latest revision, trying up to 3 times.
+  --operation <value>         An ID for this save. The same command again with the same ID, as after an answer that never came, is saved once and answers with the first save's receipt, kept 24 hours. A new ID is made when left out.
+  --field <key=value>         Set a field, such as host=unix:///var/run/docker.sock. Repeat for each. key= with nothing after it saves an empty value, which for an image or template field turns its kind off here. Not for secrets. (repeatable)
+  --field-file <key=path>     Set a field to a file's text, for a field of several lines, such as known-hosts. Read on the machine BB's server runs on. (repeatable)
+  --unset <key>               Leave a field unset, so it takes its default. (repeatable)
+  --add-line <key=line>       Add a line to a field of lines, such as machines="build-1 192.0.2.21 linux". A line already there is not added again. (repeatable)
+  --remove-line <key=text>    Remove the lines of a field that are the text or start with it and a space, such as machines=build-1. (repeatable)
+  --secret-file <field=path>  Set a secret field to a whole file's text, such as ssh-private-key=key.pem. Read on the machine BB's server runs on. (repeatable)
+  --clear-secret <field>      Clear a secret field. (repeatable)
+  --secret <field=VARIABLE>   A secret field and the variable in the dotenv file that holds its value, such as token=HCLOUD_TOKEN. Repeat for each. The value is read from --secrets-file or --secrets-stdin, never from the command line. (repeatable)
+  --secrets-file <path>       A dotenv file, as bb secret request --write-env writes, read on the machine BB's server runs on; a relative path is from where you run bb.
+  --secrets <line>            Only as --secrets-stdin, which reads one line: a VARIABLE=value line, as grep '^HCLOUD_TOKEN=' secrets.env | bb box backend add hetzner --secret token=HCLOUD_TOKEN --secrets-stdin, or a whole dotenv file in base64, as base64 < secrets.env | tr -d '\n' | bb box ... --secrets-stdin, for several secrets at once. Works from any machine. (or --secrets-stdin from the bb CLI)
+  --on                        Turn it on.
+  --off                       Turn it off: it makes no new boxes, and its boxes keep working.
+  --label <value>             Its name in the settings and in box_list, such as Docker on build-1. Empty gives back the type's name.
+  --warm <kind=count>         Ready boxes of a kind to keep waiting here, such as linux=1; 0 keeps none. (repeatable)
+  --no-doctor                 Do not run the backend's checks after saving.
+  --help, -h                  Show this help and exit
+```
+
+## bb box backend remove
+
+Remove a backend: its settings, its secrets, which cannot be got back, and its warm boxes. Refused while it has boxes, as on the settings page. Asks for --yes.
+
+```text
+Usage:
+  bb box backend remove <backend> [--json] [--check] [--revision <n>] [--operation <value>] [--yes]
+
+Arguments:
+  <backend>  The backend's ID, from bb box backend list. (required)
+
+Options:
+  --json               Print JSON.
+  --check              Save nothing: say what would change and what is wrong with it, and for a backend run its checks with the change, as the settings page's Check does.
+  --revision <n>       Save only while the configuration is at this revision, which bb box config show gives, and refuse otherwise. Left out, the change is made on the latest revision, trying up to 3 times.
+  --operation <value>  An ID for this save. The same command again with the same ID, as after an answer that never came, is saved once and answers with the first save's receipt, kept 24 hours. A new ID is made when left out.
+  --yes                Remove it. Without it, the command says what would go and removes nothing.
+  --help, -h           Show this help and exit
+```
+
+## bb box backend host add
+
+Add a host to a backend whose hosts are set up alike, such as a Mac to Tart. The SSH host pool lists its machines in its machines field instead: bb box backend set ssh-pool --add-line.
+
+```text
+Usage:
+  bb box backend host add <backend> <host> [--json] [--check] [--revision <n>] [--operation <value>] [--field <key=value>]... [--field-file <key=path>]... [--unset <key>]... [--on] [--off] [--no-doctor]
+
+Arguments:
+  <backend>  The backend's ID, such as tart. (required)
+  <host>     The host's name: lower-case letters, digits and "-", such as mac-1. (required)
+
+Options:
+  --json                   Print JSON.
+  --check                  Save nothing: say what would change and what is wrong with it, and for a backend run its checks with the change, as the settings page's Check does.
+  --revision <n>           Save only while the configuration is at this revision, which bb box config show gives, and refuse otherwise. Left out, the change is made on the latest revision, trying up to 3 times.
+  --operation <value>      An ID for this save. The same command again with the same ID, as after an answer that never came, is saved once and answers with the first save's receipt, kept 24 hours. A new ID is made when left out.
+  --field <key=value>      Set a field, such as host=unix:///var/run/docker.sock. Repeat for each. key= with nothing after it saves an empty value, which for an image or template field turns its kind off here. Not for secrets. (repeatable)
+  --field-file <key=path>  Set a field to a file's text, for a field of several lines, such as known-hosts. Read on the machine BB's server runs on. (repeatable)
+  --unset <key>            Leave a field unset, so it takes its default. (repeatable)
+  --on                     Turn it on.
+  --off                    Turn it off: it makes no new boxes, and its boxes keep working.
+  --no-doctor              Do not run the backend's checks after saving.
+  --help, -h               Show this help and exit
+```
+
+## bb box backend host set
+
+Change a backend's host: its fields, or its switch. Off, it takes no new boxes, and its boxes keep working.
+
+```text
+Usage:
+  bb box backend host set <backend> <host> [--json] [--check] [--revision <n>] [--operation <value>] [--field <key=value>]... [--field-file <key=path>]... [--unset <key>]... [--on] [--off] [--no-doctor]
+
+Arguments:
+  <backend>  The backend's ID, such as tart. (required)
+  <host>     The host's name, from bb box backend list. (required)
+
+Options:
+  --json                   Print JSON.
+  --check                  Save nothing: say what would change and what is wrong with it, and for a backend run its checks with the change, as the settings page's Check does.
+  --revision <n>           Save only while the configuration is at this revision, which bb box config show gives, and refuse otherwise. Left out, the change is made on the latest revision, trying up to 3 times.
+  --operation <value>      An ID for this save. The same command again with the same ID, as after an answer that never came, is saved once and answers with the first save's receipt, kept 24 hours. A new ID is made when left out.
+  --field <key=value>      Set a field, such as host=unix:///var/run/docker.sock. Repeat for each. key= with nothing after it saves an empty value, which for an image or template field turns its kind off here. Not for secrets. (repeatable)
+  --field-file <key=path>  Set a field to a file's text, for a field of several lines, such as known-hosts. Read on the machine BB's server runs on. (repeatable)
+  --unset <key>            Leave a field unset, so it takes its default. (repeatable)
+  --on                     Turn it on.
+  --off                    Turn it off: it makes no new boxes, and its boxes keep working.
+  --no-doctor              Do not run the backend's checks after saving.
+  --help, -h               Show this help and exit
+```
+
+## bb box backend host remove
+
+Remove a host from a backend. Refused while it has boxes, as on the settings page.
+
+```text
+Usage:
+  bb box backend host remove <backend> <host> [--json] [--check] [--revision <n>] [--operation <value>]
+
+Arguments:
+  <backend>  The backend's ID, such as tart. (required)
+  <host>     The host's name, from bb box backend list. (required)
+
+Options:
+  --json               Print JSON.
+  --check              Save nothing: say what would change and what is wrong with it, and for a backend run its checks with the change, as the settings page's Check does.
+  --revision <n>       Save only while the configuration is at this revision, which bb box config show gives, and refuse otherwise. Left out, the change is made on the latest revision, trying up to 3 times.
+  --operation <value>  An ID for this save. The same command again with the same ID, as after an answer that never came, is saved once and answers with the first save's receipt, kept 24 hours. A new ID is made when left out.
+  --help, -h           Show this help and exit
+```
+
+## bb box kind set
+
+Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, or make it the default kind, through the same checked save as the settings page. Sizes change new boxes only.
+
+```text
+Usage:
+  bb box kind set <kind> [--json] [--check] [--revision <n>] [--operation <value>] [--on] [--off] [--make-default] [--default-preset <small|medium|large>] [--preset <small|medium|large>] [--cores <1-1024>] [--memory-gib <value>] [--disk-gib <value>] [--largest-cores <1-1024>] [--largest-memory-gib <value>] [--largest-disk-gib <value>] [--spares <0-100>] [--reset]
+
+Arguments:
+  <kind>  The kind, such as linux. bb box kinds lists those on offer. (required)
+
+Options:
+  --json                         Print JSON.
+  --check                        Save nothing: say what would change and what is wrong with it, and for a backend run its checks with the change, as the settings page's Check does.
+  --revision <n>                 Save only while the configuration is at this revision, which bb box config show gives, and refuse otherwise. Left out, the change is made on the latest revision, trying up to 3 times.
+  --operation <value>            An ID for this save. The same command again with the same ID, as after an answer that never came, is saved once and answers with the first save's receipt, kept 24 hours. A new ID is made when left out.
+  --on                           Turn it on.
+  --off                          Turn it off: it makes no new boxes, and its boxes keep working.
+  --make-default                 Make it the kind a thread gets when it asks for none.
+  --default-preset <small|medium|large>  The preset a box gets when it asks for no size.
+  --preset <small|medium|large>  The preset that --cores, --memory-gib and --disk-gib change. The kind's default preset by default.
+  --cores <1-1024>               The preset's cores.
+  --memory-gib <value>           The preset's memory in GiB, such as 8 or 0.5.
+  --disk-gib <value>             The preset's disk in GiB, or "base" for the size the image comes with.
+  --largest-cores <1-1024>       The most cores a custom size may ask for.
+  --largest-memory-gib <value>   The most memory in GiB a custom size may ask for.
+  --largest-disk-gib <value>     The most disk in GiB a custom size may ask for.
+  --spares <0-100>               Spare boxes to keep ready, enrolled and owned by no thread; 0 keeps none.
+  --reset                        Go back to bb-box's own sizes and switch for the kind first.
+  --help, -h                     Show this help and exit
+```
+
+## bb box option list
+
+List the general and Monitor options: each one's value now, its default, and what it does.
+
+```text
+Usage:
+  bb box option list [--json]
+
+Options:
+  --json      Print JSON.
+  --help, -h  Show this help and exit
+```
+
+## bb box option get
+
+Show one general or Monitor option: its value now, its default, and what it does.
+
+```text
+Usage:
+  bb box option get <option> [--json]
+
+Arguments:
+  <option>  The option's name, such as monitor.enabled or defaultKind. (required)
+
+Options:
+  --json      Print JSON.
+  --help, -h  Show this help and exit
+```
+
+## bb box option set
+
+Set general and Monitor options, such as monitor.enabled=false or defaultKind=linux, in one checked save, as the settings page saves them. bb box option list lists them.
+
+```text
+Usage:
+  bb box option set [<options...>] [--json] [--check] [--revision <n>] [--operation <value>] [--secret <field=VARIABLE>]... [--secrets-file <path>] [--secrets <line>]
+
+Arguments:
+  <options...>  Each as <name>=<value>, such as monitor.enabled=false; or one name and its value as two words.
+
+Options:
+  --json                     Print JSON.
+  --check                    Save nothing: say what would change and what is wrong with it, and for a backend run its checks with the change, as the settings page's Check does.
+  --revision <n>             Save only while the configuration is at this revision, which bb box config show gives, and refuse otherwise. Left out, the change is made on the latest revision, trying up to 3 times.
+  --operation <value>        An ID for this save. The same command again with the same ID, as after an answer that never came, is saved once and answers with the first save's receipt, kept 24 hours. A new ID is made when left out.
+  --secret <field=VARIABLE>  A secret field and the variable in the dotenv file that holds its value, such as token=HCLOUD_TOKEN. Repeat for each. The value is read from --secrets-file or --secrets-stdin, never from the command line. (repeatable)
+  --secrets-file <path>      A dotenv file, as bb secret request --write-env writes, read on the machine BB's server runs on; a relative path is from where you run bb.
+  --secrets <line>           Only as --secrets-stdin, which reads one line: a VARIABLE=value line, as grep '^HCLOUD_TOKEN=' secrets.env | bb box backend add hetzner --secret token=HCLOUD_TOKEN --secrets-stdin, or a whole dotenv file in base64, as base64 < secrets.env | tr -d '\n' | bb box ... --secrets-stdin, for several secrets at once. Works from any machine. (or --secrets-stdin from the bb CLI)
+  --help, -h                 Show this help and exit
+```
+
+## bb box option unset
+
+Give general and Monitor options back their defaults, in one checked save. general.tailnet.mode turns the tailnet off and clears its client.
+
+```text
+Usage:
+  bb box option unset <options...> [--json] [--check] [--revision <n>] [--operation <value>]
+
+Arguments:
+  <options...>  The options' names, such as monitor.refreshIntervalSeconds. (required)
+
+Options:
+  --json               Print JSON.
+  --check              Save nothing: say what would change and what is wrong with it, and for a backend run its checks with the change, as the settings page's Check does.
+  --revision <n>       Save only while the configuration is at this revision, which bb box config show gives, and refuse otherwise. Left out, the change is made on the latest revision, trying up to 3 times.
+  --operation <value>  An ID for this save. The same command again with the same ID, as after an answer that never came, is saved once and answers with the first save's receipt, kept 24 hours. A new ID is made when left out.
+  --help, -h           Show this help and exit
 ```
 
 ## bb box monitor snapshot

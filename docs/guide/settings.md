@@ -135,4 +135,6 @@ If someone saves the settings while you are changing a form, BB Box reloads the 
 
 ## From the command line
 
-You can see and change the same settings with `bb box config show`, `bb box config check` and `bb box config apply`. `bb box doctor` runs every health check. See the [command-line reference](../reference/cli.md) and [health checks](../reference/checks.md).
+You can see and change the same settings from a terminal. `bb box backend add`, `bb box backend set` and `bb box backend remove` change a backend, `bb box kind set` a kind, and `bb box option set` the options under Options. Each makes one checked save, as the page does: it is refused for the same reasons, and it says what it changed and how the backend's checks went. `bb box config show` prints the whole configuration, and `bb box config apply` saves a whole file. `bb box doctor` runs every health check. See the [command-line reference](../reference/cli.md) and [health checks](../reference/checks.md).
+
+To have an agent set bb-box up for you, ask it in a thread, such as "set up Docker boxes here". bb-box gives agents the `bb-box-setup` skill, which says what to ask you, which scripts to run where, how to take a secret from you without seeing it, and how to prove it worked with a first box.
