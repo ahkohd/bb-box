@@ -301,6 +301,19 @@ export class AndroidTreeSource {
     return list;
   }
 
+  async pasteIntoFocusedField(): Promise<boolean> {
+    if (this.#options.onlyDump || this.#now() < this.#brokenUntil) return false;
+    try {
+      const line = await (await this.#server()).ask("paste", TREE_ANSWER_MS);
+      const answer = JSON.parse(line) as { ok?: unknown; pasted?: unknown; words?: unknown };
+      if (answer.ok !== true) this.#options.log(`paste: the tree server did not paste, so the Paste key goes: ${typeof answer.words === "string" ? answer.words : line.slice(0, 120)}`);
+      return answer.ok === true && answer.pasted === true;
+    } catch (error) {
+      this.#options.log(`paste: the tree server did not answer, so the Paste key goes: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+
   labelOf(pkg: string): string | null {
     return this.#apps?.list.find((each) => each.pkg === pkg)?.label ?? null;
   }

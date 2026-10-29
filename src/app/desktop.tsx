@@ -103,6 +103,9 @@ export const DESKTOP_PAGE = "desktop";
 export const DESKTOP_OWN_PASTE_WORDS = "A paste from the box's own menu, or a middle click, uses the box's own clipboard.";
 export const DEVICE_OWN_PASTE_WORDS = "A paste from the device's own menu uses the device's own clipboard.";
 
+export const DEVICE_PASTE_FIELD_WORDS =
+  "This computer's clipboard cannot be read here. Paste the text below: it is pasted where the cursor is, and the device's own clipboard is put back after.";
+
 export function ownPasteWords(deviceShown: boolean): string {
   return deviceShown ? DEVICE_OWN_PASTE_WORDS : DESKTOP_OWN_PASTE_WORDS;
 }
@@ -1937,9 +1940,11 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
           <AlertDialogHeader>
             <AlertDialogTitle>Paste into {box?.name ?? "the box"}</AlertDialogTitle>
             <AlertDialogDescription>
-              {stream === "selkies"
-                ? "This computer's clipboard cannot be read here. Paste text or an image below: it goes to the box's clipboard and is pasted where the cursor is."
-                : "This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is."}
+              {deviceShown
+                ? DEVICE_PASTE_FIELD_WORDS
+                : stream === "selkies"
+                  ? "This computer's clipboard cannot be read here. Paste text or an image below: it goes to the box's clipboard and is pasted where the cursor is."
+                  : "This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Textarea
@@ -1968,7 +1973,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
                 setPasteField(null);
               }}
             >
-              Paste into the box
+              {deviceShown ? "Paste into the device" : "Paste into the box"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -69,14 +69,14 @@ needed_services_enabled() {
 }
 
 keyboard_defaults_hold() {
-  udid=$1
+  udid=$1 simctl_as=${2:-simctl}
   for setting in com.apple.keyboard.preferences:KeyboardAutocorrection com.apple.keyboard.preferences:SmartTyping \
     com.apple.keyboard.preferences:KeyboardPeriodShortcut com.apple.keyboard.predictive:KeyboardPrediction \
     com.apple.keyboard.ContinuousPath:KeyboardContinuousPathEnabled; do
-    value=$(simctl spawn "$udid" defaults read "${setting%%:*}" "${setting#*:}" 2>/dev/null)
+    value=$("$simctl_as" spawn "$udid" defaults read "${setting%%:*}" "${setting#*:}" 2>/dev/null)
     [ "$value" = 0 ] || { echo "${setting#*:} is ${value:-unset}, not off"; return 1; }
   done
-  [ "$(simctl spawn "$udid" defaults read com.apple.Preferences DidShowContinuousPathIntroduction 2>/dev/null)" = 1 ] ||
+  [ "$("$simctl_as" spawn "$udid" defaults read com.apple.Preferences DidShowContinuousPathIntroduction 2>/dev/null)" = 1 ] ||
     { echo "the keyboard's slide to type sheet is not answered"; return 1; }
   echo "autocorrect, smart punctuation, predictions and slide to type off"
 }
@@ -271,11 +271,12 @@ carried_slots_ready() {
 
 slot_clipboard="/usr/local/libexec/bb-box/slot-clipboard"
 
+as_slot() { (cd / && sudo -n launchctl asuser "$(id -u "$user")" sudo -n -H -u "$user" -- perl -e 'alarm shift; exec @ARGV' "$simctl_most_s" xcrun simctl "$@"); }
+
 carried_slot_clipboard_works() {
   user=bbd-i1
   udid=$(sudo -n "$helper" status 2>/dev/null | awk -F '\t' '$1 == "slot=i1" { print $12 }')
   [ -n "$udid" ] || { echo "no carried slot i1"; return 1; }
-  as_slot() { (cd / && sudo -n launchctl asuser "$(id -u "$user")" sudo -n -H -u "$user" -- perl -e 'alarm shift; exec @ARGV' "$simctl_most_s" xcrun simctl "$@"); }
   as_slot boot "$udid" >/dev/null 2>&1
   as_slot bootstatus "$udid" -b >/dev/null 2>&1 || { as_slot shutdown "$udid" >/dev/null 2>&1; echo "carried slot i1's device $udid did not boot"; return 1; }
   said=$(sudo -n "$slot_clipboard" "$user" "$udid" 2>&1)
@@ -283,6 +284,19 @@ carried_slot_clipboard_works() {
   as_slot shutdown "$udid" >/dev/null 2>&1 || { echo "carried slot i1's device did not shut down after the check"; return 1; }
   printf '%s\n' "$said"
   return "$worked"
+}
+
+carried_slot_keyboard_holds() {
+  user=bbd-i1
+  udid=$(sudo -n "$helper" status 2>/dev/null | awk -F '\t' '$1 == "slot=i1" { print $12 }')
+  [ -n "$udid" ] || { echo "no carried slot i1"; return 1; }
+  as_slot boot "$udid" >/dev/null 2>&1
+  as_slot bootstatus "$udid" -b >/dev/null 2>&1 || { as_slot shutdown "$udid" >/dev/null 2>&1; echo "carried slot i1's device $udid did not boot"; return 1; }
+  said=$(keyboard_defaults_hold "$udid" as_slot)
+  held=$?
+  as_slot shutdown "$udid" >/dev/null 2>&1 || { echo "carried slot i1's device did not shut down after the check"; return 1; }
+  printf 'carried slot i1: %s\n' "$said"
+  return "$held"
 }
 
 held_ports="3000 4200 5000 5173 8000 8080 8081 19000"
@@ -315,6 +329,7 @@ check "held ports free" held_ports_free
 check "carried slots" carried_slots_ready
 check "slot uids" slot_uids_only_carried
 check "slot clipboard" carried_slot_clipboard_works
+check "slot keyboard" carried_slot_keyboard_holds
 check "disabled.plist kept" sh -c 'ls /usr/local/share/bb-box/ios/*.disabled.plist'
 check "bb-box-h264" /usr/local/bin/bb-box-h264 --version
 check "idb_companion" /usr/local/bin/idb_companion --version

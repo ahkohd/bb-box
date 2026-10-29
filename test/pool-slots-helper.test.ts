@@ -100,7 +100,7 @@ test("a kept host, as the pool's Mac is, starts closed with no carried slots, ho
   const values = lines(summary.stdout);
   assert.deepEqual(
     ["helper", "kept", "closed", "deleting", "most", "ahead", "held", "ready", "waiting", "sweeping", "runtime", "model", "labels"].map((key) => values.get(key)),
-    ["5", "1", "", "", "12", "1", "0", values.get("ready"), "0", "0", `${RUNTIME}\t27.0\t24A434\t${LIST}`, "iPhone 18 Pro\tcom.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", undefined],
+    ["6", "1", "", "", "12", "1", "0", values.get("ready"), "0", "0", `${RUNTIME}\t27.0\t24A434\t${LIST}`, "iPhone 18 Pro\tcom.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", undefined],
   );
   assert.equal(host.status().values.get("kept"), "1");
 

@@ -21,7 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 public final class TreeServer {
-    static final int VERSION = 1;
+    static final int VERSION = 2;
     static final int MOST_NODES = 6000;
     static final int MOST_DEPTH = 80;
     static final long INSTRUMENTATION_LOOK_MS = 100;
@@ -29,6 +29,8 @@ public final class TreeServer {
     static final int WINDOWS_STILL_READS = 3;
     static final long FIRST_QUIET_MS = 300;
     static final long FIRST_QUIET_MOST_MS = 2_000;
+    static final long KEYS_LANDED_QUIET_MS = 100;
+    static final long KEYS_LANDED_MOST_MS = 1_500;
     static final int CLICKABLE = 1, LONG_CLICKABLE = 2, SCROLLABLE = 4, EDITABLE = 8, ENABLED = 16, FOCUSED = 32, CHECKABLE = 64, CHECKED = 128, SELECTED = 256, PASSWORD = 512, VISIBLE = 1024, SHOWING_HINT = 2048, FOCUSABLE = 4096;
 
     final Object lock = new Object();
@@ -77,6 +79,7 @@ public final class TreeServer {
     String answer(String request) throws Exception {
         if (request.equals("tree")) return tree();
         if (request.equals("apps")) return apps();
+        if (request.equals("paste")) return paste();
         if (request.equals("ping")) return "{\"ok\":true,\"version\":" + VERSION + ",\"held\":" + (held != null) + ",\"instrumentation\":" + instrumentation + "}";
         return refusal("bad-request", "No such request: " + request);
     }
@@ -168,24 +171,95 @@ public final class TreeServer {
         }
     }
 
+    static final class Refused extends Exception {
+        final String answer;
+
+        Refused(String answer) {
+            this.answer = answer;
+        }
+    }
+
+    UiAutomation readyAutomation() throws Exception {
+        boolean wasHeld = held != null;
+        if (!wasHeld) {
+            String other = anotherUser();
+            instrumentation = other != null;
+            if (other != null) throw new Refused(refusal("instrumentation", "bb-box's tree server gives way to " + other + " running on the device."));
+        }
+        UiAutomation automation;
+        try {
+            automation = connected();
+        } catch (HeldElsewhere error) {
+            throw new Refused(refusal("held-elsewhere", error.getMessage()));
+        }
+        if (!wasHeld) {
+            awaitWindows(automation);
+            awaitQuiet(automation);
+        }
+        return automation;
+    }
+
+    String paste() throws Exception {
+        long began = System.nanoTime();
+        synchronized (lock) {
+            UiAutomation automation;
+            try {
+                automation = readyAutomation();
+            } catch (Refused refused) {
+                return refused.answer;
+            }
+            awaitKeysLanded(automation);
+            AccessibilityNodeInfo field = focusedTextField(automation);
+            boolean pasted = field != null && field.performAction(AccessibilityNodeInfo.ACTION_PASTE);
+            automation.clearCache();
+            lastReadAt = System.currentTimeMillis();
+            if (lingerMs <= 0) letGo();
+            String fieldClass = field == null ? null : String.valueOf(field.getClassName());
+            return "{\"ok\":true,\"pasted\":" + pasted + ",\"field\":" + quoted(fieldClass) + ",\"ms\":" + (System.nanoTime() - began) / 1_000_000.0 + "}";
+        }
+    }
+
+    static void awaitKeysLanded(UiAutomation automation) {
+        long now = android.os.SystemClock.uptimeMillis();
+        for (int action : new int[] {android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.ACTION_UP}) {
+            android.view.KeyEvent marker = new android.view.KeyEvent(now, now, action, android.view.KeyEvent.KEYCODE_SHIFT_LEFT, 0);
+            automation.injectInputEvent(marker, true);
+        }
+        try {
+            automation.waitForIdle(KEYS_LANDED_QUIET_MS, KEYS_LANDED_MOST_MS);
+        } catch (java.util.concurrent.TimeoutException stillBusy) {
+        }
+    }
+
+    static AccessibilityNodeInfo focusedTextField(UiAutomation automation) {
+        AccessibilityNodeInfo inputFocus = automation.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+        AccessibilityNodeInfo found = inputFocus == null ? null : focusedEditableWithin(inputFocus, 0);
+        if (found != null) return found;
+        AccessibilityNodeInfo root = automation.getRootInActiveWindow();
+        return root == null ? null : focusedEditableWithin(root, 0);
+    }
+
+    static AccessibilityNodeInfo focusedEditableWithin(AccessibilityNodeInfo node, int depth) {
+        if (node.isFocused() && node.isEditable()) return node;
+        if (depth >= MOST_DEPTH) return null;
+        for (int index = 0; index < node.getChildCount(); index++) {
+            AccessibilityNodeInfo child = node.getChild(index);
+            if (child == null) continue;
+            AccessibilityNodeInfo found = focusedEditableWithin(child, depth + 1);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     String tree() throws Exception {
         long began = System.nanoTime();
         synchronized (lock) {
             boolean wasHeld = held != null;
-            if (!wasHeld) {
-                String other = anotherUser();
-                instrumentation = other != null;
-                if (other != null) return refusal("instrumentation", "bb-box's tree server gives way to " + other + " running on the device.");
-            }
             UiAutomation automation;
             try {
-                automation = connected();
-            } catch (HeldElsewhere error) {
-                return refusal("held-elsewhere", error.getMessage());
-            }
-            if (!wasHeld) {
-                awaitWindows(automation);
-                awaitQuiet(automation);
+                automation = readyAutomation();
+            } catch (Refused refused) {
+                return refused.answer;
             }
             long connectedAt = System.nanoTime();
             StringBuilder out = new StringBuilder(64 * 1024);

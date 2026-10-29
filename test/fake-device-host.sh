@@ -167,6 +167,11 @@ case $tool in
         ;;
       spawn)
         [ "$(device_value "$2" state)" = Booted ] || { echo "Device is not booted." >&2; exit 149; }
+        if [ "$3 $4" = "defaults write" ]; then
+          flag defaults-write-fails && exit 1
+          printf '%s %s %s %s\n' "$5" "$6" "$7" "$8" >>"$sims/.$2.defaults"
+          exit 0
+        fi
         [ "$3 $4" = "launchctl disable" ] || exit 1
         flag spawn-skips && exit 0
         store=$R/private/var/tmp/com.apple.CoreSimulator.SimDevice.$2

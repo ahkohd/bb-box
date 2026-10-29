@@ -510,6 +510,7 @@ export class AndroidDriver implements DeviceDriver {
 
   async paste(): Promise<void> {
     this.#booted();
+    if (await this.#tree.pasteIntoFocusedField()) return;
     await this.#press(PASTE_KEY);
   }
 

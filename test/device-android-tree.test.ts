@@ -320,6 +320,33 @@ describe("where an Android tree comes from (063, 7.3)", () => {
     ]);
   });
 
+  test("pastes into the focused text field through the tree server, which Chrome's pages take where the Paste key reads a stale clipboard (F-18)", async () => {
+    const channel = new FakeChannel();
+    channel.answers.push(() => JSON.stringify({ ok: true, pasted: true, field: "android.widget.EditText", ms: 48 }));
+    channel.answers.push(() => JSON.stringify({ ok: true, pasted: false, field: null, ms: 12 }));
+    const { tree, logs } = source({ channels: [channel] });
+    assert.equal(await tree.pasteIntoFocusedField(), true);
+    assert.equal(await tree.pasteIntoFocusedField(), false, "no focused text field: the caller presses the Paste key");
+    assert.deepEqual(channel.sent, ["paste", "paste"]);
+    assert.deepEqual(logs.filter((line) => line.startsWith("paste:")), []);
+  });
+
+  test("a paste the tree server cannot make leaves it to the Paste key, with the reason logged (F-18)", async () => {
+    const held = new FakeChannel();
+    held.answers.push(() => JSON.stringify({ ok: false, code: "instrumentation", words: "bb-box's tree server gives way to an instrumentation running on the device." }));
+    const first = source({ channels: [held] });
+    assert.equal(await first.tree.pasteIntoFocusedField(), false);
+    assert.ok(first.logs.some((line) => /^paste: the tree server did not paste, so the Paste key goes: bb-box's tree server gives way/.test(line)));
+
+    const silent = source({ channels: [new FakeChannel("Exception in thread main")] });
+    assert.equal(await silent.tree.pasteIntoFocusedField(), false);
+    assert.ok(silent.logs.some((line) => /^paste: the tree server did not answer, so the Paste key goes/.test(line)));
+
+    const dumpOnly = source({ onlyDump: true });
+    assert.equal(await dumpOnly.tree.pasteIntoFocusedField(), false);
+    assert.deepEqual(dumpOnly.spawned, []);
+  });
+
   test("finds an app by its package, its label, or its package's last word", () => {
     const apps: LauncherApp[] = [
       { pkg: "com.android.settings", activity: "com.android.settings.Settings", label: "Settings", system: true },

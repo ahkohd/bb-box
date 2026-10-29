@@ -283,7 +283,7 @@ Take control of a desktop box's desktop, or a device box's device, back from a p
 
 ## computer_type
 
-Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. On a device box, text a US keyboard has goes as keys and the rest as one paste; cmd is the Command key on iOS, and ctrl+a selects all on Android. For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards.
+Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. On a device box, text a US keyboard has goes as keys and the rest as one paste; cmd is the Command key on iOS, and ctrl+a selects all on Android, where ctrl+v pastes nothing in Chrome: send the text instead. For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

@@ -3532,3 +3532,140 @@ minutes for the start's last sign of life, and F-7's test failed.
 The whole file did not fail before the change on this box either, in 30
 runs and in 562 runs of the failing test alone but for the one above, so
 the new test is what shows the race.
+
+## F-23: the keyboard's first-use tip on a slot's device
+
+Built on 29 October 2026, from F-21's follow-up. On a new shared slot's
+device, the first keyboard showed iOS's tip "Speed up your typing by
+sliding your finger across the letters", with a Continue button, and keys
+typed before a paste went to it.
+
+The image's own devices never had it: `build-ios.sh` writes each device's
+keyboard defaults, and `DidShowContinuousPathIntroduction` among them, and
+`bb-box-check-ios` checks them. A slot's device is made fresh by
+`device-host`, in the slot's own user, so it had none of them: the tip,
+and autocorrect, smart punctuation and predictions on too.
+
+- **A slot's first boot writes them.** `device-host` writes the image
+  devices' seven keyboard defaults with `simctl spawn ... defaults write`,
+  as the slot's user, while the device is booted for the first time, and
+  keeps a `keyboard-defaults` file in the slot's folder once all are
+  written. A write is tried 5 times, 2 s apart; if one still fails, the
+  slot is not made, as for any first-boot failure. This covers slots on
+  Tart hosts, Namespace hosts and the pool's Mac, which all make devices
+  through `device-host`. `mac-ios.sh` needs no change: its own devices are
+  the seed's and the clipboard check's, made and deleted there.
+- **A carried slot made before this gets them at its warm-up,** which
+  boots its device before a claim. A write that fails there is left for
+  the next warm-up, and the claim goes on.
+- **The image's check covers a carried slot's device.** The new line
+  `slot keyboard` boots `bbd-i1`'s device, reads its keyboard defaults as
+  `bbd-i1` with the image devices' own check, and shuts it down again.
+- `device-host` is version 6.
+
+Tests: a slot's first boot writes the seven defaults on its device, once;
+a carried slot without them gets them at its warm-up; the image's check
+runs the new line as the slot's user.
+
+Not checked here: a live slot. Tart and Namespace hosts get the new
+`device-host` as each host starts, so the check is a new shared slot after
+the deploy: `computer_type` into Safari's address field right after the
+device's first keyboard opens. The pool's Mac gets it when `setup-mac.sh`
+runs again. The image needs no rebuild: its carried slots get the defaults
+at their next warm-up. The next image build writes them as it makes the
+carried slots, and its `slot keyboard` line checks them there.
+
+## F-18: Chrome on an Android device takes a paste
+
+Built on 29 October 2026, from F-15's finding that Chrome on the Android
+device took no paste at all from its first start, where unit 5.1 had
+found 4.
+
+### The cause
+
+Chrome's pages paste nothing for the Paste key or Ctrl+V. Checked on an
+android box's Pixel 8 (Android 15, API 35, Chrome 124.0.6367.219), on a
+test page that logs each paste event's text:
+
+- `computer_type` of `ab ✓ 日本`, and of `✓1` to `✓5`: each paste event
+  carried no text, and nothing was pasted. Android logged no "Chrome
+  pasted from your clipboard", so Chrome did not read the clipboard at
+  all.
+- The text copied in Chrome itself, by Ctrl+A and Ctrl+C, then Ctrl+V:
+  nothing pasted, and the selection was replaced by nothing.
+- Chrome's own Paste menu, by a long press on the field: pasted the
+  copied text at once, and so did Android's accessibility paste on the
+  field (`ACTION_PASTE`), with the clipboard set by the emulator. Each
+  logged "Chrome pasted from your clipboard".
+
+So Chrome's key path uses a clipboard it does not read again, whoever
+set the clipboard; its menu and accessibility paths read it. The clipboard
+being put back 300 ms after the key (E21) is not the cause: Chrome never
+asked. Why Chrome's key path holds a stale clipboard on the emulator is
+not known.
+
+### The fix
+
+- **A paste goes as Android's accessibility paste.** The device server's
+  Android driver asks bb-box's tree server, which holds UiAutomation, to
+  paste. It finds the focused text field, in the input focus first and in
+  the active window otherwise, and performs `ACTION_PASTE` on it. Where no
+  text field has the focus, or the tree server cannot run, as during an
+  instrumentation test, the Paste key goes as before, and the server's log
+  says why.
+- **Keys typed before the paste land first.** An accessibility paste goes
+  straight to the app, so it overtook keys still on their way: `a✓b日本c`
+  arrived as `a✓日本bc`, and with a 150 ms wait for quiet first, `naïve`
+  still arrived as `ïnave`. The tree server now injects a Shift press and
+  release through UiAutomation, and waits for Android to finish them,
+  which is after the keys before them; then 100 ms of quiet, at most
+  1.5 s. A page sees that Shift key.
+- **Reads after a paste stay fresh.** After an accessibility paste, the
+  tree server's own reads of Chrome's page stopped changing until it let
+  UiAutomation go, 30 s later. It clears its node cache after each paste.
+- The tree server is version 2, the device server version 33.
+- `computer_type`'s description says that ctrl+v pastes nothing in Chrome
+  on Android, and to send the text instead.
+
+### Checked before the deploy
+
+The new tree server and driver were put in the android box's own device
+server folder, and the server started again by systemd, so it ran as
+production runs it. Each check was the agent's `computer_type` through
+production BB, into the test page in Chrome, started afresh first, and
+test values only:
+
+| Check | Version 32 | This change |
+| --- | --- | --- |
+| A text with a paste into the page, Chrome just started | `ab ✓ 日本` arrived as `ab `, and `✓1` to `✓5` as their digits only | `bbtest ✓ 日本 é` whole |
+| 13 mixed texts in 3 calls, 18 pastes among keys: `naïve`, `naïve café ✓`, `a✓b日本c`, `Grüße, 世界 — ok`, `x→y ∑ 🙂 z`, `ab ✓`, `q✓w✓e✓r`, `bbtest ✓ 日本 é`, `né`, `ña`, `üb`, `日本語のテキスト`, `z✓` | | 13 of 13 whole and in order |
+| `bbtest ✓ 日本 é` into Chrome's address bar, a native field | | whole |
+
+`computer_type`'s read of the field after each call gave the field's
+text.
+
+Not checked here: the panel's Paste and Cmd+V on an android box, which go
+through the same paste as the agent's text; an app's own text field other
+than Chrome's address bar; and how much longer a paste takes, which is at
+least the 100 ms of quiet.
+
+## F-16: the paste RPC's automatic flag, and the paste field's words on a device
+
+Built on 29 October 2026.
+
+- **No automatic flag.** F-15 had the `desktopPaste` RPC refuse a send
+  marked `automatic`, which only a panel tab opened before F-15's deploy
+  made. Those tabs are long gone, and the panel sends no such flag, so the
+  flag is gone: the RPC takes the viewer's text and answers null, or
+  refuses in words.
+- **The paste field says what a device does.** Where the browser will not
+  let the panel read the clipboard, Paste from this computer opens a field
+  to paste into. On a device it said the text "goes to the box's
+  clipboard". It now says: "This computer's clipboard cannot be read here.
+  Paste the text below: it is pasted where the cursor is, and the
+  device's own clipboard is put back after." Its button says Paste into
+  the device. A desktop's words are as before.
+
+Tests: the desktop paste test without the flag; on a device, the field
+shows the device's words, and its button sends one `paste` request with
+the field's text.
