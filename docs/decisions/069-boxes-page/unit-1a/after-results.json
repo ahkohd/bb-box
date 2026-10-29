@@ -1,0 +1,516 @@
+{
+  "label": "after",
+  "menus": {
+    "panel · ready-heron · ready": {
+      "items": [
+        {
+          "text": "Open terminal",
+          "disabled": false
+        },
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Stop",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Check now",
+          "disabled": false
+        },
+        {
+          "text": "Release…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "panel · ready-heron · stopped": {
+      "items": [
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Start",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Check now",
+          "disabled": false
+        },
+        {
+          "text": "Release…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "panel · bright-sparrow · ready": {
+      "items": [
+        {
+          "text": "Open desktop",
+          "disabled": false
+        },
+        {
+          "text": "Open in browser",
+          "disabled": false
+        },
+        {
+          "text": "Open terminal",
+          "disabled": false
+        },
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Stop",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Check now",
+          "disabled": false
+        },
+        {
+          "text": "Release…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "panel · golden-comet · ready": {
+      "items": [
+        {
+          "text": "Open terminal",
+          "disabled": false
+        },
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Stop",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Check now",
+          "disabled": false
+        },
+        {
+          "text": "Release…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "threads · ready-heron · ready": {
+      "items": [
+        {
+          "text": "Open terminal",
+          "disabled": false
+        },
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Stop",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Check now",
+          "disabled": false
+        },
+        {
+          "text": "Release…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "threads · ready-heron · stopped": {
+      "items": [
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Start",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Check now",
+          "disabled": false
+        },
+        {
+          "text": "Release…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "threads · bright-sparrow · ready": {
+      "items": [
+        {
+          "text": "Open desktop",
+          "disabled": false
+        },
+        {
+          "text": "Open in browser",
+          "disabled": false
+        },
+        {
+          "text": "Open terminal",
+          "disabled": false
+        },
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Stop",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Check now",
+          "disabled": false
+        },
+        {
+          "text": "Release…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "threads · zesty-pine · ready": {
+      "items": [
+        {
+          "text": "Open terminal",
+          "disabled": false
+        },
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Stop",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Check now",
+          "disabled": false
+        },
+        {
+          "text": "Release…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "machines · workbench · ready": {
+      "items": [
+        {
+          "text": "Open terminal",
+          "disabled": false
+        },
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Stop",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Remove…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "machines · workbench · stopped": {
+      "items": [
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Start",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Remove…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "machines · studio · ready": {
+      "items": [
+        {
+          "text": "Open desktop",
+          "disabled": false
+        },
+        {
+          "text": "Open in browser",
+          "disabled": false
+        },
+        {
+          "text": "Open terminal",
+          "disabled": false
+        },
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Stop",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Remove…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "machines · spare-e · ready": {
+      "items": [
+        {
+          "text": "Open terminal",
+          "disabled": false
+        },
+        {
+          "text": "Copy address",
+          "disabled": false
+        },
+        {
+          "text": "Stop",
+          "disabled": false
+        },
+        {
+          "text": "Resize…",
+          "disabled": false
+        },
+        {
+          "text": "Remove…",
+          "disabled": false
+        }
+      ],
+      "separators": 2
+    },
+    "settings": {
+      "buttons": []
+    }
+  },
+  "effects": [
+    {
+      "place": "panel",
+      "box": "ready-heron",
+      "item": "Copy address",
+      "outcome": "clipboard 172.16.1.2"
+    },
+    {
+      "place": "panel",
+      "box": "ready-heron",
+      "item": "Check now",
+      "outcome": "calls refresh {\"threadId\":\"thr_bgdv3b5b4u\",\"box\":\"bxpwmunzulorzc\"}; monitor.state null; state {\"threadId\":\"thr_bgdv3b5b4u\"}; state {\"threadId\":\"thr_bgdv3b5b4u\"}"
+    },
+    {
+      "place": "panel",
+      "box": "ready-heron",
+      "item": "Resize…",
+      "outcome": "dialog \"Resize ready-heron\", calls resize {\"threadId\":\"thr_bgdv3b5b4u\",\"box\":\"bxpwmunzulorzc\",\"size\":{},\"check\":true}"
+    },
+    {
+      "place": "panel",
+      "box": "ready-heron",
+      "item": "Stop",
+      "outcome": "stopped"
+    },
+    {
+      "place": "panel",
+      "box": "ready-heron",
+      "item": "Start",
+      "outcome": "ready"
+    },
+    {
+      "place": "panel",
+      "box": "ready-heron",
+      "item": "Open terminal",
+      "outcome": "url /projects/proj_jcnn9ya5fi/threads/thr_bgdv3b5b4u, panel tabs [Terminal: ready-heron], calls desktop"
+    },
+    {
+      "place": "panel",
+      "box": "bright-sparrow",
+      "item": "Open in browser",
+      "outcome": "new tab /plugins/bb-box/desktop/thr_bgdv3b5b4u/bxh57qa72p2p5v"
+    },
+    {
+      "place": "panel",
+      "box": "bright-sparrow",
+      "item": "Open desktop",
+      "outcome": "url /projects/proj_jcnn9ya5fi/threads/thr_bgdv3b5b4u, panel tabs [Terminal: ready-heron, Desktop]"
+    },
+    {
+      "place": "panel",
+      "box": "golden-comet",
+      "item": "Release…",
+      "outcome": "asked \"Release golden-comet?Its disk and everything on it will be deleted. Copy out anything you want to keep first.CancelRelease\", then released"
+    },
+    {
+      "place": "threads",
+      "box": "ready-heron",
+      "item": "Copy address",
+      "outcome": "clipboard 172.16.1.2"
+    },
+    {
+      "place": "threads",
+      "box": "ready-heron",
+      "item": "Check now",
+      "outcome": "calls refresh {\"threadId\":\"thr_bgdv3b5b4u\",\"box\":\"bxpwmunzulorzc\"}; allBoxes null; monitor.state null; allBoxes null; machines.list null"
+    },
+    {
+      "place": "threads",
+      "box": "ready-heron",
+      "item": "Resize…",
+      "outcome": "dialog \"Resize ready-heron\", calls resize {\"threadId\":\"thr_bgdv3b5b4u\",\"box\":\"bxpwmunzulorzc\",\"size\":{},\"check\":true}"
+    },
+    {
+      "place": "threads",
+      "box": "ready-heron",
+      "item": "Stop",
+      "outcome": "stopped"
+    },
+    {
+      "place": "threads",
+      "box": "ready-heron",
+      "item": "Start",
+      "outcome": "ready"
+    },
+    {
+      "place": "threads",
+      "box": "ready-heron",
+      "item": "Open terminal",
+      "outcome": "url /plugins/bb-box/desktop/thr_bgdv3b5b4u/bxpwmunzulorzc/terminal, panel tabs [], calls desktop"
+    },
+    {
+      "place": "threads",
+      "box": "bright-sparrow",
+      "item": "Open in browser",
+      "outcome": "new tab /plugins/bb-box/desktop/thr_bgdv3b5b4u/bxh57qa72p2p5v"
+    },
+    {
+      "place": "threads",
+      "box": "bright-sparrow",
+      "item": "Open desktop",
+      "outcome": "url /plugins/bb-box/desktop/thr_bgdv3b5b4u/bxh57qa72p2p5v, panel tabs []"
+    },
+    {
+      "place": "threads",
+      "box": "zesty-pine",
+      "item": "Release…",
+      "outcome": "asked \"Release zesty-pine?Its disk and everything on it will be deleted. Copy out anything you want to keep first.CancelRelease\", then released"
+    },
+    {
+      "place": "machines",
+      "box": "workbench",
+      "item": "Copy address",
+      "outcome": "clipboard 172.16.1.3"
+    },
+    {
+      "place": "machines",
+      "box": "workbench",
+      "item": "Resize…",
+      "outcome": "dialog \"Resize workbench\", calls machines.resize {\"box\":\"bx6ewikq6utobp\",\"size\":{},\"check\":true}"
+    },
+    {
+      "place": "machines",
+      "box": "workbench",
+      "item": "Stop",
+      "outcome": "stopped"
+    },
+    {
+      "place": "machines",
+      "box": "workbench",
+      "item": "Start",
+      "outcome": "ready"
+    },
+    {
+      "place": "machines",
+      "box": "workbench",
+      "item": "Open terminal",
+      "outcome": "url /plugins/bb-box/desktop/operator/bx6ewikq6utobp/terminal"
+    },
+    {
+      "place": "machines",
+      "box": "studio",
+      "item": "Open in browser",
+      "outcome": "new tab /plugins/bb-box/desktop/operator/bx3lvqtp2666ho"
+    },
+    {
+      "place": "machines",
+      "box": "studio",
+      "item": "Open desktop",
+      "outcome": "url /plugins/bb-box/desktop/operator/bx3lvqtp2666ho"
+    },
+    {
+      "place": "machines",
+      "box": "spare-e",
+      "item": "Remove…",
+      "outcome": "asked \"Remove spare-e?Its machine leaves BB, and its disk and everything on it will be deleted. Copy out anything you want to keep first.CancelRemove\", then removed"
+    },
+    {
+      "place": "settings",
+      "box": "-",
+      "item": "box menus on the page",
+      "outcome": "none"
+    }
+  ]
+}
