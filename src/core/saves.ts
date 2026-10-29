@@ -2,12 +2,11 @@ import { createHash } from "node:crypto";
 import { isSecret, type BackendDriver } from "../backends/types.ts";
 import { GENERAL_SECRETS, contentKey } from "./box-files.ts";
 import { backendPart, type ConfigDocument, type SaveReceipt, type Secrets } from "./document.ts";
+import { RECEIPTS_KEPT_AT_LEAST, RECEIPTS_KEPT_AT_MOST, RECEIPTS_KEPT_MS } from "./receipt-window.ts";
 import { TAILNET_SECRET_KEYS } from "./tailnet-settings.ts";
 
+export { RECEIPTS_KEPT_AT_LEAST, RECEIPTS_KEPT_AT_MOST, RECEIPTS_KEPT_MS };
 export const SAVED_KEY = "config/saved";
-export const RECEIPTS_KEPT_MS = 24 * 60 * 60 * 1000;
-export const RECEIPTS_KEPT_AT_LEAST = 100;
-export const RECEIPTS_KEPT_AT_MOST = 500;
 
 export interface StoredReceipt extends SaveReceipt {
   readonly submission: string;

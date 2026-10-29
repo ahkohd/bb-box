@@ -26,8 +26,8 @@ come back to the browser: the page shows whether each is set.
 | --- | --- |
 | `config.get` | the document, each secret as set or not, each part's problems, a revision, and each backend's live state and last check |
 | `config.check(draft, { test? })` | problems keyed by field path, without saving; with `test`, a backend's doctor against the draft, within 30 s. A check of the stored backend is kept as its last check |
-| `config.apply(draft, revision)` | one checked write; refused when the revision moved on or a field is wrong |
-| `docker.host.set(hostId, enabled)` | Docker on one of your BB machines on or off, with its images |
+| `config.apply(draft, revision, operation?, submission?)` | one checked write; refused when the revision moved on or a field is wrong. With an operation ID, applied at most once: its receipt is listed by `config.get` |
+| `docker.host.set(hostId, enabled, operation?)` | Docker on one of your BB machines on or off, with its images, and its receipt with an operation ID |
 
 The page refetches on bb-box's change signal.
 
@@ -120,32 +120,88 @@ off, and kinds that backends that are on cannot make now.
 
 ## Saving
 
-The rule, on each page with a form: switches, and menus that stand alone,
-act at once; fields wait for their Save.
+The rule, on each page with a form: "Switches, and menus that stand alone,
+act at once. Fields, checkboxes and radio choices wait for Save."
 
-A switch, or a menu that stands alone, such as the default kind, sends the
-latest document with that one change and the revision it was read at.
+Every write goes through one path, the draft registry in
+`settings-drafts.ts`, which lives outside the page's components, so it
+outlives them. Each write is an operation with an ID the page makes, and
+each is confirmed only by BB Box's reply or its receipt.
+
+### Forms
+
+The Boxes page's Boxes per thread, its files for every box, and the
+Monitor's Refresh every are forms on the registry. Other pages keep the
+forms they had before 067 until their units.
+
+- An edit is a setting's path, such as `monitor/refreshIntervalSeconds` or
+  `files/<path>`, with the value typed and the stored value it started
+  from: a file's content starts from its version.
+- A changed field has a "Changed" chip. The bar says "1 change to the
+  Monitor not saved", with Discard and Save. Enter in a field saves.
+- A change made elsewhere to another setting shows as stored. A change
+  made elsewhere to a setting edited here is a conflict on its row at
+  once: "Changed elsewhere to 8 while you edited", with Use theirs and Keep
+  mine; for a file, "Replaced elsewhere while you edited, at revision 216",
+  with Keep the saved one and Keep mine. Save waits until each is chosen,
+  and Show focuses the first.
+- Save freezes the part's edits as the operation's submission. It sends
+  them applied to the latest configuration the page has, with its
+  revision. When someone saved first, it checks the submission against
+  the newer configuration the refusal carries, and saves on it or stops
+  with the conflicts; after 3 refusals in a row it stops: "Not saved: the
+  configuration changed three times while saving. Your changes are still
+  here."
+- Typing during a save is a change of its own. Only edits still as sent
+  are cleared: "Saved. Your newer change is not saved yet."
+- When BB Box does not reply, the page looks for the save's receipt: with
+  it, "Saved at revision 215. The reply was lost; BB Box's receipt for this
+  save confirms it"; without it, "Save not confirmed: BB Box has no receipt
+  for it yet … Saving again resends the same request, which BB Box applies
+  at most once." Save again sends the frozen submission with its first ID.
+  A save older than the receipts BB Box keeps is never sent again, and is
+  said as not confirmed.
+- After a confirmed save, the bar names what changed elsewhere since:
+  "Since then, changed elsewhere: the content of ~/.cfg/a.json (revision
+  216)".
+- A new file has a provisional identity, such as `files/@new-k3x9`, until
+  its save is confirmed; then its edits move to `files/<path>`. A new file
+  given the path of a file already there replaces it, from that file's
+  version: "~/.cfg/a.json is already a file here. Saving replaces it." An
+  empty or wrong path is refused at its field.
+- Leaving the page keeps the draft, and the overview marks the option's
+  row "Unsaved changes". A save still out completes in the registry, and
+  the page shows its state on return. Each part's edits, without file
+  contents, and its pending save are kept in session storage; file
+  contents are kept in memory only. After a reload: "Your unsaved changes
+  to files for every box are back: 1 change. For safety the content of
+  ~/.cfg/a.json you pasted was not kept; paste it again." Closing or
+  reloading the tab with a draft asks first.
+
+### Switches, menus and removals
+
+A switch, a menu that stands alone such as the default kind, and removing
+a file are operations of one change, sent at once. Removing a file asks
+first and says what follows.
 
 - It says "Saved" beside it for 1.6 s, only once BB Box confirms it.
 - A refusal puts it back and says why under its row: "Fake host was not
   changed: Set the API token."
-- When someone saved first, it takes the newer document the refusal
-  carries and tries again, at most 3 times. If the newer document already
-  has the value, it says "Already off: changed elsewhere at revision 216".
-  After 3 refusals in a row it says "… was not changed: the configuration
-  changed 3 times while saving. It is on; try again."
-- When BB Box does not reply, it reads the configuration again and says
-  "Not confirmed: BB Box did not reply (…). Fake host is on now, at
-  revision 215." A reply that never came is never called saved or failed.
+- When someone saved first, it tries again on the newer configuration, at
+  most 3 times. If that already has the value: "Already off: changed
+  elsewhere at revision 216". After 3 refusals: "… was not changed: the
+  configuration changed 3 times while saving. It is on; try again."
+- When BB Box does not reply and has no receipt: "Not confirmed: BB Box did
+  not reply (…), and has no receipt for this change. Fake host is on now,
+  at revision 215." A receipt found later says so.
 - Docker on one of your BB machines switches through `docker.host.set`,
-  which builds its images.
+  with its operation ID, which builds its images.
 
-Each part's page holds today's form for it, as it was before 067, until a
-later unit replaces it: a backend's setup form with Save, Save and turn on,
-Check and the last report; a kind's editor; the tailnet's form; Files for
-every box; Rebuild now. These save the whole document with their Save, and
-a stale revision reloads and says so. Boxes per thread and Refresh every
-save when the field is left, or on Enter.
+Each other part's page holds today's form for it, as it was before 067,
+until a later unit replaces it: a backend's setup form with Save, Save and
+turn on, Check and the last report; a kind's editor; the tailnet's form;
+Rebuild now. These save the whole document with their Save, and a stale
+revision reloads and says so.
 
 ## Each page
 
@@ -169,7 +225,11 @@ save when the field is left, or on Enter.
   offered to threads" or "Proxmox LXC: takes new boxes", with its row's
   state as its description. Kinds are named in full; two kinds with one
   label are told apart as (GPU) and (CPU).
-- Status, Saved and switch notes are live regions.
+- Status, Saved, switch notes, the save bar and conflicts are live
+  regions. Help, problems and conflicts are tied to their field with
+  `aria-describedby`, and a field with a problem is marked invalid.
+- While it saves, Save stays focusable and ignores presses; when the bar's
+  buttons go, focus stays on the bar's words.
 
 ## Machines
 

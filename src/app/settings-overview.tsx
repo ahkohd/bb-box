@@ -14,7 +14,9 @@ import { DESKTOP_PAGE, MACHINES_TAB } from "./desktop.tsx";
 import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
+import { BOXES_PART, FILES_PART, MONITOR_PART } from "./settings-drafts.ts";
 import { Card, Chevron, FOCUS_RING, Group, NavRow, ProviderGlyph, RowButton, RowControl, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
+import { useRegistry } from "./settings-saving.tsx";
 import {
   backendHealth,
   backendLabel,
@@ -160,9 +162,9 @@ function BackendRow({ config, showAge }: { config: BackendConfig; showAge: boole
                 aria-describedby={stateId}
                 checked={pending ?? config.enabled}
                 aria-disabled={instant.pending !== null || undefined}
-                onCheckedChange={(on) => void instant.run(writes.backendOn(config, on, label))}
+                onCheckedChange={(on) => void instant.run(writes.backendOn(state, config, on, label))}
               />
-              <SavedTick show={instant.saved === key} />
+              <SavedTick show={instant.isSaved(key)} />
             </RowControl>
           </span>
           <StateLine id={stateId} className="pointer-events-none mt-0.5" tone={health.tone} words={health.words} items={backendLine(state, config, health, now, showAge)} />
@@ -240,10 +242,10 @@ function KindRow({ info }: { info: KindInfoView }) {
                 aria-disabled={instant.pending !== null || undefined}
                 onCheckedChange={(on) => {
                   keptHere.add(info.id);
-                  void instant.run(writes.kindOn(info.id, on, name));
+                  void instant.run(writes.kindOn(state, info.id, on, name));
                 }}
               />
-              <SavedTick show={instant.saved === key} />
+              <SavedTick show={instant.isSaved(key)} />
             </RowControl>
           </span>
           <span id={summaryId} className={cn("pointer-events-none min-w-0 flex-1 truncate text-xs sm:text-right", availability === "lost" ? "text-warning-text" : "text-muted-foreground")}>
@@ -314,6 +316,7 @@ export function iosEncoderWords(value: string): string {
 function Options() {
   const { state, nav, instant, writes } = useSettings();
   const navigate = useBbNavigate();
+  const unsavedChip = useUnsavedChip();
   const general = { ...state.defaults.general, ...state.document.general };
   const monitor = { ...state.defaults.monitor, ...state.document.monitor };
   const defaultInfo = state.kinds.find((kind) => kind.id === general.defaultKind);
@@ -334,7 +337,7 @@ function Options() {
       <Card>
         <Rows>
           {rows.map((row) => (
-            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} value={row.value} onClick={() => go(row.id)} />
+            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} chips={unsavedChip(row.id)} value={row.value} onClick={() => go(row.id)} />
           ))}
           <div>
             <NavRow
@@ -342,6 +345,7 @@ function Options() {
               valueId="settings-option-monitor"
               icon={<OptionIcon icon={Activity01Icon} />}
               title="Monitor"
+              chips={unsavedChip("monitor")}
               value={monitorOn ? `In the sidebar · every ${monitor.refreshIntervalSeconds} s` : "Off"}
               onClick={() => go("monitor")}
               control={
@@ -352,12 +356,12 @@ function Options() {
                     checked={monitorOn}
                     aria-disabled={instant.pending !== null || undefined}
                     onCheckedChange={(enabled) =>
-                      void instant.run(writes.monitor("enabled", enabled, "The Monitor")).then((outcome) => {
+                      void instant.run(writes.monitor(state, "enabled", enabled, "The Monitor")).then((outcome) => {
                         if (outcome?.kind === "saved") noteMonitorChanged();
                       })
                     }
                   />
-                  <SavedTick show={instant.saved === monitorKey} />
+                  <SavedTick show={instant.isSaved(monitorKey)} />
                 </>
               }
             />
@@ -370,6 +374,13 @@ function Options() {
       {monitorChanged() ? <ReloadNote /> : null}
     </Group>
   );
+}
+
+const OPTION_PARTS: Readonly<Record<string, readonly string[]>> = { boxes: [BOXES_PART, FILES_PART], monitor: [MONITOR_PART] };
+
+function useUnsavedChip(): (option: string) => ReactNode {
+  const registry = useRegistry();
+  return (option) => ((OPTION_PARTS[option] ?? []).some((part) => registry.hasChanges(part)) ? <Badge tone="warn">Unsaved changes</Badge> : null);
 }
 
 export function ReloadNote() {

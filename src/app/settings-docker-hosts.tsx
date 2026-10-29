@@ -5,13 +5,15 @@
 // machine is used until a person turns it on.
 
 import { experimental_Icon as Icon, experimental_usePluginId, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { DockerHostView } from "../plugin/docker-hosts.ts";
-import { EmptyPanel, message, Meta, StatusDot, useLive, type Tone } from "./common.tsx";
+import { EmptyPanel, Meta, StatusDot, useLive, type Tone } from "./common.tsx";
+import { switchKey, useSettings } from "./settings-context.tsx";
 import { Section } from "./settings-fields.tsx";
+import { RowNote, SavedTick } from "./settings-parts.tsx";
 import { ServerGlyph } from "./glyphs.tsx";
 
 /** How often the list looks again while a machine builds its images. */
@@ -57,8 +59,7 @@ export function DockerHostsSection() {
   const pluginId = experimental_usePluginId();
   // Each look opens the machines' relays, so only a change here reloads it.
   const { value: hosts, error, refresh } = useLive<DockerHostView[]>("docker-hosts", async () => (await rpc.call("docker.hosts")).hosts, () => false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { instant, writes } = useSettings();
   // A build takes minutes: look again every few seconds while one runs.
   const building = hosts?.some((host) => host.images?.state === "checking" || host.images?.state === "building") ?? false;
   useEffect(() => {
@@ -68,17 +69,8 @@ export function DockerHostsSection() {
   }, [building, refresh]);
 
   const set = async (host: DockerHostView, enabled: boolean) => {
-    setBusy(host.hostId);
-    setNotice(null);
-    try {
-      const { result } = await rpc.call("docker.host.set", { hostId: host.hostId, enabled });
-      if (!result.ok) setNotice(result.reason === "revision" ? "Someone saved the configuration first. Try again." : result.problems.map((problem) => problem.message).join(" "));
-      await refresh();
-    } catch (caught) {
-      setNotice(message(caught));
-    } finally {
-      setBusy(null);
-    }
+    await instant.run(writes.dockerHost(host, enabled));
+    await refresh();
   };
 
   const description = "Your own BB machines that run Docker, such as a PC with WSL. A box there is a privileged container, root on the machine, so none is used until you turn it on.";
@@ -99,15 +91,12 @@ export function DockerHostsSection() {
   }
   return (
     <Section title="Docker on BB machines" description={description}>
-      {notice ? (
-        <p role="alert" className="mb-2 text-xs leading-snug text-destructive-text">
-          {notice}
-        </p>
-      ) : null}
       {orderHosts(hosts).map((host) => {
         const state = hostState(host);
         const build = buildWords(host);
-        const on = host.backend?.enabled ?? false;
+        const key = switchKey.dockerHost(host.hostId);
+        const pending = instant.pendingValue<boolean>(key);
+        const on = pending ?? host.backend?.enabled ?? false;
         return (
           <div key={host.hostId} data-resource-row className="grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 py-3 first:pt-0 last:pb-0">
             <span className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
@@ -120,6 +109,7 @@ export function DockerHostsSection() {
                 <Meta items={[state.text, ...dockerFacts(host)]} />
               </div>
               {host.problem && host.connected ? <p className="mt-0.5 text-xs leading-snug text-destructive-text">{host.problem}</p> : null}
+              <RowNote note={instant.note(key)} className="mt-0.5" />
               {build ? (
                 <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
                   <StatusDot tone={build.tone} />
@@ -127,12 +117,16 @@ export function DockerHostsSection() {
                 </div>
               ) : null}
             </div>
-            <Switch
-              aria-label={`Host boxes on ${host.name}`}
-              checked={on}
-              disabled={busy !== null || (!on && !host.docker)}
-              onCheckedChange={(enabled) => void set(host, enabled)}
-            />
+            <span className="flex items-center gap-2">
+              <SavedTick show={instant.isSaved(key)} />
+              <Switch
+                aria-label={`Host boxes on ${host.name}`}
+                checked={on}
+                disabled={!on && !host.docker}
+                aria-disabled={instant.pending !== null || undefined}
+                onCheckedChange={(enabled) => void set(host, enabled)}
+              />
+            </span>
           </div>
         );
       })}

@@ -285,7 +285,7 @@ export const contract = defineRpcContract({
    * on it, last in acquire order; off removes it, or turns it off while it
    * has boxes. Answers with the configuration's answer and the list again.
    */
-  "docker.host.set": { input: z.object({ hostId: z.string().min(1).max(64), enabled: z.boolean() }), output: z.custom<{ result: ApplyResult; hosts: DockerHostView[] }>() },
+  "docker.host.set": { input: z.object({ hostId: z.string().min(1).max(64), enabled: z.boolean(), operation: z.string().min(1).max(200).optional() }), output: z.custom<{ result: ApplyResult; hosts: DockerHostView[] }>() },
   "monitor.state": { input: z.null(), output: z.object({ enabled: z.boolean(), backgroundMonitoring: z.boolean(), pressureNotifications: z.boolean() }) },
   "monitor.server": { input: z.object({ force: z.boolean() }), output: snapshotSchema },
   "monitor.machines": { input: z.null(), output: z.object({ machines: z.array(machineSchema) }) },
