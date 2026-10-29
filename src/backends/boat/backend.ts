@@ -61,6 +61,7 @@ const VNC_PORT = 5900;
 const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 const DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
 const DISPLAY_WAIT_MS = 300_000;
+const RESTORE_WAIT_MS = 5 * 60_000;
 export const BOAT_READY_FILE = "/run/bb-box/boat-ready";
 const SETTLED_SCRIPT = `test -e ${BOAT_READY_FILE} && docker info >/dev/null 2>&1`;
 const SETTLE_KICK_AFTER_MS = 20_000;
@@ -267,6 +268,7 @@ export class BoatBackend implements Backend {
       forget: (sandbox) => this.#forget(sandbox),
       answers: (sandbox, user, deadline, signal) => this.#answers(sandbox, user, deadline, signal),
       settled: (sandbox, deadline, signal) => this.#settled(sandbox, deadline, signal),
+      restored: (sandbox, deadline, signal) => this.#restored(sandbox, deadline, signal),
       ...(options.cuaReadyScript ? { cuaReady: options.cuaReadyScript } : {}),
       now: this.#now,
       sleep: this.#sleep,
@@ -386,7 +388,10 @@ export class BoatBackend implements Backend {
         const mode = await step("display", () => this.#display(sandbox.id, signal));
         if (mode) facts.push({ label: "Display", value: mode });
       }
-      if (KINDS[kind].capabilities.computerUse) await step("computer use", () => this.#computerUse(sandbox.id, signal));
+      if (KINDS[kind].capabilities.computerUse) {
+        await step("restore", () => this.#restored(sandbox.id, this.#now() + RESTORE_WAIT_MS, signal));
+        await step("computer use", () => this.#computerUse(sandbox.id, signal));
+      }
       const guest = this.#guest(box.boxId, sandbox, shape, facts);
       await hooks.claim(guest);
       return guest;
@@ -448,7 +453,10 @@ export class BoatBackend implements Backend {
     await step("settle", () => this.#settled(sandbox.id, this.#now() + this.#readyMs(), signal));
     const kind = (this.#offered() as readonly string[]).includes(sandbox.labels[LABELS.kind] ?? "") ? (sandbox.labels[LABELS.kind] as BoatKind) : null;
     if (kind && desktopDisplays(KINDS[kind].capabilities.displays).length) await step("display", () => this.#display(sandbox.id, signal));
-    if (kind && KINDS[kind].capabilities.computerUse) await step("computer use", () => this.#computerUse(sandbox.id, signal));
+    if (kind && KINDS[kind].capabilities.computerUse) {
+      await step("restore", () => this.#restored(sandbox.id, this.#now() + RESTORE_WAIT_MS, signal));
+      await step("computer use", () => this.#computerUse(sandbox.id, signal));
+    }
     const tailnet = this.#context.tailnet?.() ?? null;
     if (tailnet) await step("tailnet", () => this.#join(sandbox.id, ownerOf(sandbox)?.name ?? sandbox.id, tailnet, signal));
   }
@@ -826,6 +834,15 @@ export class BoatBackend implements Backend {
       await this.#sleep(250, signal);
     }
     throw new Error(`boat's sandbox ${sandbox} did not finish restoring its template in time: ${BOAT_READY_FILE} is missing or Docker does not answer${last ? ` (${last})` : ""}. Check bb-box-boat-ready.service and docker.service in the box.`);
+  }
+
+  async #restored(sandbox: string, deadline: number, signal?: AbortSignal): Promise<void> {
+    try {
+      await this.#api.waitFor(sandbox, (each) => each.hydrated, deadline, signal);
+    } catch (error) {
+      if (!(error instanceof BoatError && error.kind === "busy")) throw error;
+      this.#context.log?.(`boat: sandbox ${sandbox} was still restoring its template ${Math.round(RESTORE_WAIT_MS / 1000)} s on, so bb-box starts Cua Driver before boat has finished.`);
+    }
   }
 
   async #computerUse(sandbox: string, signal?: AbortSignal): Promise<void> {

@@ -254,6 +254,42 @@ before it says the system files are in. How long a desktop takes to start
 depends most on boat's restore of the template's files: 25 to 63 s in
 eight acquires on quiet machines, and over 6 minutes once on a busy one.
 
+### The desktop in production
+
+After phase 2 was deployed (main `ae2ad0a6`), production adopted the
+templates the smoke runs had built, so nothing was rebuilt. From an agent
+thread with BB's own tools, and the owner's browser on the Box panel:
+
+| Step | Result |
+| --- | --- |
+| `box_acquire` linux-desktop-cpu | ready in 59.1 s: fork 0.3, ready 20.7, ssh 13.1, settle 6.7, tailnet 8.9, display 0.1, computer use 8.0; a BB machine in 29.4 s |
+| Computer use | `computer_launch` failed at first: Cua Driver had answered during the acquire, but stopped answering when boat finished restoring the template, 61 s after it started. Restarted, it answered (Cua 0.28.3, 62 tools, 1920x1080); Mousepad opened and took 65 characters |
+| The panel | control taken and handed back; text typed in the panel reached Mousepad |
+| `box_release` | released; boat answered 404 for the sandbox |
+
+Measured in the panel's page, a Chromium browser on a Mac on the same
+network as BB's server (TCP connect 5 ms); BB's server to the box's SSH
+address, 17 to 22 ms. For frame rate, a page full screen on the box drew a
+new colour 59 to 60 times a second, by its own count, and the panel's
+canvas was sampled on every animation frame for 10 s. For keys, a page on
+the box flipped from black to white on each key, and each of 30 keys was
+timed from its keydown in the panel to the first frame that changed.
+
+| Stream | Frame rate, 3 runs | Keys p50 / p95 | Box cores busy, of 4 |
+| --- | --- | --- | --- |
+| video (Selkies) | 40.8, 39.9, 42.3 fps | 59 / 616 ms, the slow ones the first three after switching stream | 2.4 |
+| VNC | 41.0, 34.1, 46.5 fps | 73 / 413 ms | 2.1 |
+
+Chrome drawing the page took about a core, Selkies 0.3 and boat's lazy
+file system 0.2. The page changed all of its top half every frame, which is
+the hardest case for either stream; the 060 harness's drag and keys, from
+BB's server, are above.
+
+So a desktop box now waits for boat to say the sandbox is restored
+(`hydrated`) before it checks Cua Driver, which restarts it, when it is
+made, when it starts again and in the template's trial fork. The wait gives
+up after 5 minutes and checks Cua Driver anyway.
+
 ## Android, before its live run
 
 Phase 3's code is tested against the fake API: android is withheld, with

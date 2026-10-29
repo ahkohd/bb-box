@@ -83,6 +83,7 @@ export interface TemplateDeps {
   readonly forget: (sandbox: string) => Promise<void>;
   readonly answers: (sandbox: string, user: "user" | "box", deadline: number, signal?: AbortSignal) => Promise<void>;
   readonly settled: (sandbox: string, deadline: number, signal?: AbortSignal) => Promise<void>;
+  readonly restored: (sandbox: string, deadline: number, signal?: AbortSignal) => Promise<void>;
   readonly cuaReady?: string;
   readonly now: () => number;
   readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -363,6 +364,7 @@ export class BoatTemplates {
       await this.#deps.settled(trial.id, now() + STATE_WITHIN_MS);
       if (TEMPLATE_STEP[kind] === "desktop") {
         await this.#desktopUp(trial.id, now() + STATE_WITHIN_MS);
+        await this.#deps.restored(trial.id, now() + STATE_WITHIN_MS);
         await this.#must((await this.#deps.reach(trial.id, "box")).run(this.#deps.cuaReady ?? CUA_READY, { timeoutMs: 240_000 }), "get Cua Driver answering in a fork of the template");
       }
       const check = await (await this.#deps.reach(trial.id, "box")).run(TEMPLATE_CHECK[kind], { timeoutMs: 10 * 60_000 });

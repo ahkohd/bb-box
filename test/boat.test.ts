@@ -113,10 +113,34 @@ test("a desktop box waits for its display and offers bb-box's VNC and Selkies th
   const { backend } = setup();
   const recorded = hooks();
   const guest = await backend.acquire(box("d1", "linux-desktop-cpu", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, recorded.hooks, signal());
-  assert.deepEqual(recorded.steps, ["fork", "ready", "ssh", "settle", "display", "computer use"]);
+  assert.deepEqual(recorded.steps, ["fork", "ready", "ssh", "settle", "display", "restore", "computer use"]);
   assert.ok(guest.facts?.some((fact) => fact.label === "Display"));
   const transports = await backend.transports(guest, "linux-desktop-cpu");
   assert.deepEqual(transports.displays.map((display) => display.protocol), ["rfb", "selkies"]);
+});
+
+test("a desktop box checks Cua Driver only once boat has finished restoring the template, when it is made and when it starts again", async () => {
+  const { fake, backend } = setup();
+  fake.startsRestoreForReads = 3;
+  const recorded = hooks();
+  const guest = await backend.acquire(box("d1", "linux-desktop-cpu", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, recorded.hooks, signal());
+  const made = fake.sandboxes.get(String(guest.data?.sandbox))!;
+  assert.equal(made.restoringReads, 0, "the acquire waited until boat said the sandbox was restored");
+  assert.deepEqual(recorded.steps.slice(-2), ["restore", "computer use"]);
+  await backend.stop!(guest);
+  const steps: string[] = [];
+  await backend.start!(guest, undefined, (step) => void steps.push(step));
+  assert.equal(made.restoringReads, 0, "the start waited until boat said the sandbox was restored");
+  assert.deepEqual(steps, ["resume", "ssh", "settle", "display", "restore", "computer use"]);
+});
+
+test("a Linux box without a desktop does not wait for boat's restore", async () => {
+  const { fake, backend } = setup();
+  fake.startsRestoreForReads = 3;
+  const recorded = hooks();
+  const guest = await backend.acquire(box("b1"), null, recorded.hooks, signal());
+  assert.ok(fake.sandboxes.get(String(guest.data?.sandbox))!.restoringReads > 0);
+  assert.deepEqual(recorded.steps, ["fork", "ready", "ssh", "settle"]);
 });
 
 test("boat's busy answers are tried again, then refused as no capacity so another backend can take the box, and the sandbox goes", async () => {
@@ -234,6 +258,7 @@ test("with no template, the first box waits for its build and says so; the build
     forget: async () => {},
     answers: async () => {},
     settled: async () => {},
+    restored: async (sandbox) => void scripts.push({ sandbox, user: "bb-box", script: "boat restored" }),
     now: Date.now,
     sleep: async () => {},
     log: () => {},
@@ -261,6 +286,10 @@ test("with no template, the first box waits for its build and says so; the build
   checkFails = true;
   await storage.delete("template/linux-desktop-cpu");
   await assert.rejects(templates.build("linux-desktop-cpu", "test"), /failed its check in a fork of it: Docker +FAIL no daemon/);
+  const restoredAt = scripts.findIndex((each) => each.script === "boat restored");
+  const cuaAt = scripts.findIndex((each) => each.script.includes("cua-probe"));
+  assert.ok(restoredAt >= 0 && restoredAt < cuaAt, "the desktop's trial fork checks Cua Driver once boat has restored it");
+  assert.equal(scripts.filter((each) => each.script === "boat restored").length, 1, "a Linux template's trial does not wait for it");
   assert.equal([...fake.sandboxes.values()].filter((each) => each.labels[LABELS.kind] === "linux-desktop-cpu" && each.state !== "deleted").length, 0);
   assert.deepEqual(failedChecks("a ok\nb FAIL x\n"), ["b FAIL x"]);
 });
@@ -440,6 +469,7 @@ test("the Android template's build writes the licence's acceptance before the gu
     forget: async () => {},
     answers: async () => {},
     settled: async () => {},
+    restored: async () => {},
     now: Date.now,
     sleep: async () => {},
     log: () => {},
