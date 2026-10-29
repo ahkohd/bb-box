@@ -40,6 +40,8 @@ import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import { openSettingsView } from "../src/app/settings-route.ts";
 import { forgetDrafts } from "../src/app/settings-drafts.ts";
+import { forgetFormChecks } from "../src/app/settings-checks.ts";
+import { hostChip } from "../src/app/settings-status.ts";
 import type { BackendConfig } from "../src/core/document.ts";
 import type { FieldView } from "../src/plugin/configuration.ts";
 import packageJson from "../package.json";
@@ -708,7 +710,12 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
 
 function savedLike(draft: ConfigDocument, revision: number): ConfigDocument {
   const files = draft.general.files?.map((file) => (typeof file.content === "string" ? { path: file.path, content: { set: true, version: revision } } : file.content === undefined ? { path: file.path, content: { set: true, version: 1 } } : file));
-  return { ...draft, general: { ...draft.general, ...(files ? { files } : {}) } };
+  const secrets = new Set(configState({ document: draft }).drivers.flatMap((driver) => driver.fields.filter((field) => field.type === "string" && field.secret).map((field) => `${driver.type} ${field.key}`)));
+  const backends = draft.backends.map((backend) => ({
+    ...backend,
+    fields: Object.fromEntries(Object.entries(backend.fields).map(([key, value]) => [key, secrets.has(`${backend.type} ${key}`) && (typeof value === "string" || value === null) ? { set: value !== null, version: revision } : value])),
+  }));
+  return { ...draft, backends, general: { ...draft.general, ...(files ? { files } : {}) } };
 }
 
 let applied: ConfigDocument | null = null;
@@ -750,7 +757,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
           { key: "url", type: "string", label: "API URL", description: "For example https://192.0.2.10:8006.", group: "connection", default: "" },
           { key: "token", type: "string", label: "API token", secret: true, group: "credentials" },
           { key: "key", type: "string", label: "SSH key", secret: true, group: "credentials" },
-          { key: "templates", type: "string", label: "Templates", description: "VMIDs, separated by spaces.", group: "boxes", default: "9100" },
+          { key: "templates", type: "string", label: "Templates", description: "VMIDs, separated by spaces. Empty turns them off.", group: "boxes", default: "9100", offWhenEmpty: true },
           { key: "reserve", type: "number", label: "Memory kept free (MiB)", group: "advanced", default: 4096 },
         ],
         hostFields: [],
@@ -1836,6 +1843,7 @@ test("the panel refetches on its thread's change signals and after a reconnect",
 function settings(handlers: PluginRpcTestHandlers<Contract>, hash = "", { keepDrafts = false } = {}) {
   if (!keepDrafts) {
     forgetDrafts();
+    forgetFormChecks();
     window.sessionStorage.clear();
   }
   window.history.replaceState(null, "", `/settings/plugins/bb-box${hash}`);
@@ -1952,43 +1960,67 @@ test("each row opens its part's page by the hash with focus on its heading, back
   }
 });
 
-test("a backend's page holds today's setup form: its fields by group with problems, a check of the draft, and Save of the whole document", async () => {
-  const { handlers, changes } = server([], {
-    checkWith: { problems: [], doctor: { ok: true, summary: "Fake host 1.0", checks: [{ id: "proxmox.api", name: "API", status: "ok", detail: "Answers.", fix: null }], notes: ["Install this key: ssh-ed25519 AAAA"] } },
+function spanSaying(text: string) {
+  return (_content: string, element: Element | null) => element?.tagName === "SPAN" && element.textContent === text;
+}
+
+function bodyOf(change: string) {
+  return JSON.parse(change.slice(change.indexOf("{")));
+}
+
+test("a backend's page: health, In use, its fields by card with the first sentence of help, effective values and explicit off, and Save on the engine that stays on the page", async () => {
+  const { handlers, changes, operations } = server([], {
+    checkWith: { problems: [], doctor: { ok: true, summary: "Fake host 1.0", checks: [{ id: "proxmox.api", name: "API", status: "ok", detail: "Answers.", fix: null }], notes: ["Install this key:\nssh-ed25519 AAAA"] } },
   });
   const slot = settings(handlers, "#backend/fake");
-  const guideLink = await slot.findByRole("link", { name: "Fake host setup guide" });
-  expect(guideLink.getAttribute("href")).toBe("https://github.com/moonstead/bb-box/blob/main/setup/fake/README.md");
-  expect(guideLink.closest("p")!.textContent).toBe("Follow the Fake host setup guide; it gives the values for this form. Its script: one.sh.");
-  expect(slot.getByText("Connection")).toBeTruthy();
-  expect(slot.getByText("Credentials")).toBeTruthy();
-  const url = slot.getByLabelText(/API URL/) as HTMLInputElement;
+  const heading = await slot.findByRole("heading", { name: "Fake host" });
+  await waitFor(() => expect(document.activeElement).toBe(heading));
+  expect(slot.getByText("Not working")).toBeTruthy();
+  expect(slot.getAllByText("Set the API token.").length).toBeGreaterThan(0);
+  const inUse = slot.getByRole("region", { name: "In use" });
+  expect(within(inUse).getByText("2 boxes")).toBeTruthy();
+  expect(within(inUse).getByRole("button", { name: "Linux desktop" })).toBeTruthy();
+  expect(within(inUse).getByText("1 Linux")).toBeTruthy();
+
+  const url = slot.getByRole("textbox", { name: "API URL" }) as HTMLInputElement;
   expect(url.value).toBe("https://192.0.2.10:8006");
-  expect((slot.getByLabelText(/Templates/) as HTMLInputElement).placeholder).toBe("9100");
-  expect(slot.getAllByText("secret")).toHaveLength(2);
-  expect(slot.getByText("not set")).toBeTruthy();
-  expect(slot.getAllByRole("alert").map((alert) => alert.textContent)).toContain("Set the API token.");
-  expect(slot.queryByLabelText(/Memory kept free/)).toBeNull();
-  fireEvent.click(slot.getByRole("button", { name: "Advanced" }));
-  expect((slot.getByLabelText(/Memory kept free/) as HTMLInputElement).placeholder).toBe("4096");
+  const templates = slot.getByRole("textbox", { name: "Templates" }) as HTMLInputElement;
+  expect(templates.placeholder).toBe("9100");
+  expect(slot.getByText("VMIDs, separated by spaces.")).toBeTruthy();
+  expect(slot.queryByText(/Empty turns them off/)).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "More about Templates" }));
+  expect(slot.getByText(/Empty turns them off/)).toBeTruthy();
+  expect(document.getElementById(templates.getAttribute("aria-describedby")!.split(" ").at(-1)!)!.textContent).toBe("Empty: 9100, the default");
+  expect(slot.queryByRole("textbox", { name: "Memory kept free (MiB)" })).toBeNull();
+  expect(slot.getByText("Not set")).toBeTruthy();
 
-  fireEvent.change(slot.getByLabelText(/API token/), { target: { value: "s3cret" } });
-  fireEvent.click(slot.getByRole("button", { name: "Clear" }));
-  expect(slot.getByText("Will be cleared when you save.")).toBeTruthy();
-  fireEvent.change(slot.getByLabelText(/Memory kept free/), { target: { value: "2048" } });
+  fireEvent.click(slot.getByRole("button", { name: "Set the API token" }));
+  fireEvent.change(slot.getByLabelText("API token", { selector: "input" }), { target: { value: "s3cret" } });
+  fireEvent.click(slot.getByRole("button", { name: "Clear the SSH key" }));
+  expect(slot.getByText("Cleared when you save.")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Show Advanced: 1 setting" }));
+  fireEvent.change(slot.getByRole("textbox", { name: "Memory kept free (MiB)" }), { target: { value: "2048" } });
+  fireEvent.click(slot.getByRole("checkbox", { name: "Offer Templates" }));
+  expect((slot.getByRole("textbox", { name: "Templates" }) as HTMLInputElement).placeholder).toBe("Off");
+  expect(slot.getByText("4 changes to Fake host not saved")).toBeTruthy();
 
-  fireEvent.click(slot.getByRole("button", { name: "Check" }));
-  expect(await slot.findByText("Answers.")).toBeTruthy();
-  expect(slot.getByText(/checked just now, against the form/)).toBeTruthy();
-  const check = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
+  fireEvent.click(slot.getByRole("button", { name: "Check with my changes" }));
+  expect(await slot.findByText("Your changes pass its checks")).toBeTruthy();
+  expect(slot.getByText(/against your unsaved changes\. Nothing is saved yet\./)).toBeTruthy();
   expect(changes[0]!.startsWith("check fake ")).toBe(true);
-  expect(check.backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", token: "s3cret", key: null, reserve: 2048 });
+  expect(bodyOf(changes[0]!).backends[0].fields).toEqual({ url: "https://192.0.2.10:8006", token: "s3cret", key: null, reserve: 2048, templates: "" });
+  fireEvent.change(url, { target: { value: "https://192.0.2.11:8006" } });
+  expect(slot.getByText("Your form changed after you checked it, so that result was cleared. Check again.")).toBeTruthy();
+  expect(slot.queryByText("Your changes pass its checks")).toBeNull();
 
   fireEvent.click(slot.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(changes).toHaveLength(2));
   expect(changes[1]!.startsWith("apply 3 ")).toBe(true);
-  const saved = JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{")));
-  expect(saved.backends[0]).toEqual({ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: "s3cret", key: null, reserve: 2048 }, warm: { linux: 1 } });
+  expect(operations).toHaveLength(1);
+  expect(bodyOf(changes[1]!).backends[0]).toEqual({ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.11:8006", token: "s3cret", key: null, reserve: 2048, templates: "" }, warm: { linux: 1 } });
+  expect(await slot.findByText("Saved.")).toBeTruthy();
+  expect(window.location.hash).toBe("#backend/fake");
+  expect(slot.getByText("Off: saved empty, so its boxes are not offered.")).toBeTruthy();
 });
 
 test("an empty field another backend fills says where its value comes from, until its set is filled here", async () => {
@@ -2018,25 +2050,185 @@ test("an empty field another backend fills says where its value comes from, unti
   expect(slot.getAllByText("not set")).toHaveLength(2);
 });
 
-test("a refused save shows each problem at its field, and a form saved on a stale revision reloads and says so", async () => {
+test("a refused save shows each problem at its field and the rest in the bar, and keeps the draft", async () => {
   const { handlers } = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake.url", message: "Use an https URL." }, { path: "backends.fake", message: "bb-box runs one Fake host backend for now." }] } });
   const slot = settings(handlers, "#backend/fake");
-  fireEvent.click(await slot.findByRole("button", { name: "Save" }));
+  fireEvent.change(await slot.findByRole("textbox", { name: "API URL" }), { target: { value: "http://192.0.2.10:8006" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
   expect(await slot.findByText("Use an https URL.")).toBeTruthy();
   expect(slot.getByText("bb-box runs one Fake host backend for now.")).toBeTruthy();
-  cleanup();
-
-  const stale = settings(server([], { applyWith: { ok: false, reason: "revision", state: configState({}) } }).handlers, "#backend/fake");
-  fireEvent.click(await stale.findByRole("button", { name: "Save" }));
-  expect((await stale.findAllByText(/Someone saved the configuration first/)).length).toBeGreaterThan(0);
+  expect(slot.getByText(/^Not saved: fix the 2 fields marked\. Your changes are still here\./)).toBeTruthy();
+  expect(slot.getByRole("textbox", { name: "API URL" }).getAttribute("aria-invalid")).toBe("true");
+  expect((slot.getByRole("textbox", { name: "API URL" }) as HTMLInputElement).value).toBe("http://192.0.2.10:8006");
 });
 
-test("a backend that is off saves part way, and the form says what is still missing", async () => {
-  const { handlers } = server([], { savedWith: [{ path: "backends.fake.url", message: "Set the API URL." }] });
+test("a backend saved off part way says Not finished with what is missing, and its stored problems sit under their fields", async () => {
+  const unfinished: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: false, fields: { token: { set: false } } }], kinds: {}, general: {} };
+  const base = configState({ document: unfinished });
+  const { handlers } = server([], { config: { document: unfinished, problems: [{ path: "backends.fake.url", message: "Set the API URL." }], backends: base.backends.map((backend) => ({ ...backend, state: "off" as const, boxes: 0 })) } });
   const slot = settings(handlers, "#backend/fake");
-  fireEvent.click(await slot.findByRole("button", { name: "Save" }));
-  expect(await slot.findByText("Saved. It stays off until these are fixed.")).toBeTruthy();
-  expect(slot.getByText("Set the API URL.")).toBeTruthy();
+  expect(await slot.findByText("Not finished")).toBeTruthy();
+  expect(slot.getByText("Set the API URL. Finish its settings, then turn it on.")).toBeTruthy();
+  const url = slot.getByRole("textbox", { name: "API URL" });
+  expect(document.getElementById(url.getAttribute("aria-describedby")!.split(" ")[1]!)!.textContent).toBe("Set the API URL.");
+});
+
+function tartPage(options: { estimates?: Record<string, Record<string, number>>; boxes?: number } = {}) {
+  const tart: ConfigState["drivers"][number] = {
+    type: "tart",
+    label: "Tart",
+    description: "macOS VMs on your Macs.",
+    nature: "virtual",
+    kinds: ["linux"],
+    fields: [
+      { key: "ios-hosts-on", type: "boolean", label: "Shared iOS hosts", group: "ios-hosts", default: false },
+      { key: "ios-hosts-cores", type: "number", label: "Cores of a shared iOS host", description: "The cores of a shared iOS host's VM. Empty takes each Mac's performance cores.", group: "ios-hosts" },
+    ],
+    hostFields: [
+      { key: "address", type: "string", label: "Address", description: "The Mac's address.", group: "connection", default: "" },
+      { key: "user", type: "string", label: "User", group: "connection", default: "" },
+      { key: "ios-hosts-cores", type: "number", label: "Cores of a shared iOS host", description: "In place of the backend's setting.", group: "ios-hosts" },
+    ],
+    setup: { guide: "setup/tart/README.md", scripts: [] },
+  };
+  const document: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "tart", type: "tart", enabled: true, fields: {}, hosts: [{ name: "mac-1", enabled: true, fields: { address: "192.0.2.20", user: "admin" } }] }], kinds: {}, general: {} };
+  const base = configState({ document });
+  const backends = [{ ...base.backends[0]!, label: "Tart", boxes: options.boxes ?? 0, hostEstimates: options.estimates ?? { "mac-1": { "ios-hosts-cores": 10 } } }];
+  applied = document;
+  return server([], { config: { drivers: [...base.drivers, tart], backends, problems: [] } });
+}
+
+test("a Tart backend's Macs: each switch acts at once, each Mac opens to its fields and its own sizes with what an empty one takes, and Add Mac stages a new Mac by name", async () => {
+  const { handlers, changes, operations } = tartPage();
+  const slot = settings(handlers, "#backend/tart");
+  expect(await slot.findByRole("heading", { name: /^Tart/ })).toBeTruthy();
+  expect(slot.getByText("mac-1", { selector: "h2 span" })).toBeTruthy();
+  const macs = slot.getByRole("region", { name: "Macs" });
+  expect(within(macs).getByText("admin@192.0.2.20")).toBeTruthy();
+  fireEvent.click(within(macs).getByRole("switch", { name: "Mac mac-1: takes new boxes" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(bodyOf(changes[0]!).backends[0].hosts).toEqual([{ name: "mac-1", enabled: false, fields: { address: "192.0.2.20", user: "admin" } }]);
+  expect(operations).toHaveLength(1);
+
+  fireEvent.click(within(macs).getByRole("button", { name: /^mac-1/ }));
+  const cores = within(macs).getByRole("textbox", { name: "Cores of a shared iOS host on mac-1" }) as HTMLInputElement;
+  expect(cores.placeholder).toBe("10");
+  expect(within(macs).getByText(spanSaying("Empty: 10 cores, bb-box's estimate for mac-1"))).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Show Shared iOS hosts: 2 settings" }));
+  fireEvent.change(slot.getByRole("textbox", { name: "Cores of a shared iOS host" }), { target: { value: "8" } });
+  expect(within(macs).getByText(spanSaying("Empty: 8 cores, Tart's setting"))).toBeTruthy();
+  fireEvent.change(slot.getByRole("textbox", { name: "Cores of a shared iOS host" }), { target: { value: "" } });
+
+  fireEvent.click(within(macs).getByRole("button", { name: "Add Mac" }));
+  const name = await within(macs).findByRole("textbox", { name: "Name of the new Mac" });
+  await waitFor(() => expect(document.activeElement).toBe(name));
+  fireEvent.change(name, { target: { value: "mac-1" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  expect(await within(macs).findByText("mac-1 is already a Mac on Tart.")).toBeTruthy();
+  expect(changes).toHaveLength(1);
+  fireEvent.change(name, { target: { value: "review-mac" } });
+  fireEvent.change(within(macs).getByRole("textbox", { name: "Address on review-mac" }), { target: { value: "192.0.2.30" } });
+  fireEvent.change(within(macs).getByRole("textbox", { name: "Cores of a shared iOS host on review-mac" }), { target: { value: "8" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(bodyOf(changes[1]!).backends[0].hosts).toEqual([
+    { name: "mac-1", enabled: false, fields: { address: "192.0.2.20", user: "admin" } },
+    { name: "review-mac", enabled: true, fields: { address: "192.0.2.30", "ios-hosts-cores": 8 } },
+  ]);
+  expect(await slot.findByText("Saved.")).toBeTruthy();
+  expect(within(macs).queryByText("Added when you save")).toBeNull();
+
+  fireEvent.click(within(macs).getByRole("button", { name: "Remove mac-1…" }));
+  fireEvent.click(await slot.findByRole("button", { name: "Remove when I save" }));
+  expect(await within(macs).findByText("Removed when you save")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toHaveLength(3));
+  expect(bodyOf(changes[2]!).backends[0].hosts.map((host: { name: string }) => host.name)).toEqual(["review-mac"]);
+});
+
+test("G7 on the page: a new Mac's refused cores are shown under its field, and Show opens it and focuses that field", async () => {
+  const { handlers } = tartPage();
+  const refusing: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    "config.apply": () => ({ ok: false, reason: "problems", problems: [{ path: "backends.tart.hosts.1.ios-hosts-cores", message: "Mac small-mac: the cores of a shared iOS host on it must be a whole number from 2 to 64." }] }),
+  };
+  const slot = settings(refusing, "#backend/tart");
+  fireEvent.click(await slot.findByRole("button", { name: "Add Mac" }));
+  fireEvent.change(await slot.findByRole("textbox", { name: "Name of the new Mac" }), { target: { value: "small-mac" } });
+  fireEvent.change(slot.getByRole("textbox", { name: "Cores of a shared iOS host on small-mac" }), { target: { value: "1" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  expect(await slot.findByText("Mac small-mac: the cores of a shared iOS host on it must be a whole number from 2 to 64.")).toBeTruthy();
+  const cores = slot.getByRole("textbox", { name: "Cores of a shared iOS host on small-mac" });
+  expect(cores.getAttribute("aria-invalid")).toBe("true");
+  slot.getByRole("button", { name: "Save again" }).focus();
+  fireEvent.click(slot.getByRole("button", { name: "Show" }));
+  expect(document.activeElement).toBe(cores);
+});
+
+test("the backend's menu renames at once, copies nothing secret, and removes only after asking: refused while it has boxes, and gone once confirmed", async () => {
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers, "#backend/fake");
+  let menu = await openMenu(await slot.findByRole("button", { name: "More for Fake host" }));
+  expect(within(menu).getByRole("menuitem", { name: "Remove: release its 2 boxes first" }).getAttribute("aria-disabled")).toBe("true");
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Rename…" }));
+  fireEvent.change(await screen.findByRole("textbox", { name: "Name" }), { target: { value: "Fake on lab-2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(bodyOf(changes[0]!).backends[0].label).toBe("Fake on lab-2");
+  cleanup();
+  applied = null;
+
+  const empty = configState({}).backends.map((backend) => ({ ...backend, boxes: 0 }));
+  const refusing = server([], { config: { backends: empty }, applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake", message: "Backend fake has 1 box, so it cannot be removed or renamed. Turn it off and release them first." }] } });
+  const refused = settings(refusing.handlers, "#backend/fake");
+  menu = await openMenu(await refused.findByRole("button", { name: "More for Fake host" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove backend…" }));
+  expect(await screen.findByText(/with the SSH key, which BB Box cannot show or get back/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Remove backend" }));
+  expect(await refused.findByText("Fake host was not removed: Backend fake has 1 box, so it cannot be removed or renamed. Turn it off and release them first.")).toBeTruthy();
+  expect(window.location.hash).toBe("#backend/fake");
+  cleanup();
+
+  const removing = server([], { config: { backends: empty } });
+  const removed = settings(removing.handlers, "#backend/fake");
+  menu = await openMenu(await removed.findByRole("button", { name: "More for Fake host" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove backend…" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Remove backend" }));
+  await waitFor(() => expect(removing.changes).toHaveLength(1));
+  expect(bodyOf(removing.changes[0]!).backends).toEqual([]);
+  await waitFor(() => expect(window.location.hash).toBe(""));
+});
+
+test("the overview's backend row says Saving while a save is out and Unsaved changes after, and each row has its host from its fields", async () => {
+  const { handlers } = server([]);
+  let release = () => {};
+  const held: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    "config.apply": (input) =>
+      new Promise((resolve) => {
+        release = () => resolve(handlers["config.apply"]!(input as never) as ApplyResult);
+      }),
+  };
+  const slot = settings(held, "#backend/fake");
+  fireEvent.change(await slot.findByRole("textbox", { name: "API URL" }), { target: { value: "https://192.0.2.12:8006" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  fireEvent.click(await slot.findByRole("button", { name: "BB Box settings" }));
+  expect(await slot.findByRole("button", { name: "Fake host", description: /Saving…/ })).toBeTruthy();
+  await act(async () => release());
+  await waitFor(() => expect(slot.queryByText("Saving…")).toBeNull());
+  expect(slot.queryByText("Unsaved changes")).toBeNull();
+
+  const backend = (type: string, fields: BackendConfig["fields"], hosts: BackendConfig["hosts"] = undefined): BackendConfig => ({ id: type, type, enabled: true, fields, ...(hosts ? { hosts } : {}) });
+  expect(hostChip(backend("proxmox-lxc", { node: "pve-1", url: "https://192.0.2.5:8006" }), "Proxmox LXC")).toBe("pve-1");
+  expect(hostChip(backend("proxmox-qemu", { url: "https://pve-2.example:8006" }), "Proxmox QEMU")).toBe("pve-2.example");
+  expect(hostChip(backend("tart", {}, [{ name: "mac-1", enabled: true, fields: {} }]), "Tart")).toBe("mac-1");
+  expect(hostChip(backend("tart", {}, [{ name: "mac-1", enabled: true, fields: {} }, { name: "mac-2", enabled: true, fields: {} }]), "Tart")).toBe("2 Macs");
+  expect(hostChip(backend("docker", { host: "ssh://admin@docker-1.example" }), "Docker")).toBe("docker-1.example");
+  expect(hostChip(backend("docker", {}), "Docker")).toBe("this machine");
+  expect(hostChip({ ...backend("docker", { host: "bb:host_abc" }), id: "docker:bb-1" }, "Docker on bb-1")).toBeNull();
+  expect(hostChip(backend("microsandbox", { host: "ssh://msb-1:2222" }), "microsandbox")).toBe("msb-1");
+  expect(hostChip(backend("ssh-pool", { machines: "a admin@192.0.2.1\n# b\nc admin@192.0.2.3" }), "SSH host pool")).toBe("2 machines");
+  expect(hostChip(backend("hetzner", {}), "Hetzner Cloud")).toBeNull();
 });
 
 test("Add backend lists every driver; setting one up offers Save and turn on, which Enter saves on in one go, lands on its page, and a refusal saves nothing", async () => {

@@ -30,6 +30,57 @@ export function machineHostId(config: BackendConfig): string | null {
   return isMachineDocker(config) ? (config.fields.host as string).slice("bb:".length) : null;
 }
 
+function fieldText(config: BackendConfig, key: string): string {
+  const value = config.fields[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function urlHost(url: string): string | null {
+  try {
+    return url ? new URL(url).hostname || null : null;
+  } catch {
+    return null;
+  }
+}
+
+function daemonHost(host: string): string | null {
+  if (!host || host.startsWith("unix://")) return "this machine";
+  if (host.startsWith("bb:")) return null;
+  const ssh = /^ssh:\/\/(?:[^@/]+@)?(\[[^\]]+\]|[^:/]+)/.exec(host);
+  return ssh ? ssh[1]!.replace(/^\[|\]$/g, "") : urlHost(host);
+}
+
+function machineLines(text: string): number {
+  return text.split("\n").filter((line) => line.replace(/#.*/, "").trim()).length;
+}
+
+function hostOfFields(config: BackendConfig): string | null {
+  switch (config.type) {
+    case "proxmox-lxc":
+    case "proxmox-qemu":
+      return fieldText(config, "node") || urlHost(fieldText(config, "url"));
+    case "tart": {
+      const names = (config.hosts ?? []).map((host) => host.name);
+      return names.length === 1 ? names[0]! : names.length > 1 ? plural(names.length, "Mac") : null;
+    }
+    case "docker":
+    case "microsandbox":
+      return daemonHost(fieldText(config, "host"));
+    case "ssh-pool": {
+      const count = machineLines(fieldText(config, "machines"));
+      return count ? plural(count, "machine") : null;
+    }
+    default:
+      return null;
+  }
+}
+
+export function hostChip(config: BackendConfig, label: string): string | null {
+  const named = config.id.includes(":") ? config.id.slice(config.id.indexOf(":") + 1) : null;
+  const host = hostOfFields(config) ?? named;
+  return host && !label.toLowerCase().includes(host.toLowerCase()) ? host : null;
+}
+
 export function backendLabel(state: ConfigState, config: BackendConfig): string {
   const live = state.backends.find((candidate) => candidate.id === config.id);
   return live?.label ?? config.label ?? state.drivers.find((driver) => driver.type === config.type)?.label ?? config.type;

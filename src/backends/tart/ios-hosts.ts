@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { placementData, readPlacement, slotDaemonPortOf, slotModelRefusal, slotPorts, slotUser, spareMaking, AskOrder, LAST_GENERATION, type SlotKind, type SlotLender, type SlotPlacement, type SlotTaken, type SlotTier } from "../../core/device-host.ts";
-import { hostSizingWords, sizeHost, type HostSizing } from "../../core/slot-sizing.ts";
+import { hostSizingWords, sizeHost, type HostSizing, type SlotsSizedBy } from "../../core/slot-sizing.ts";
 import { pause } from "../../transports/ready.ts";
 import { quote } from "../../transports/process.ts";
 import type { RunResult, SshAccess } from "../../transports/types.ts";
@@ -298,6 +298,14 @@ export function noRoomWords(vm: string, status: HostStatus): string | null {
   return null;
 }
 
+export function sizeHostOnMac(mac: TartHost, known: HostState | null, config: TartConfig, hardware: boolean | null, macSet: SlotsSizedBy): HostSizing {
+  const settings = config.iosHosts;
+  const memoryGiB = known && known.memoryMiB > 0 ? Math.floor(known.memoryMiB / 1024) : null;
+  const memoryLeftGiB = known && memoryGiB !== null ? Math.floor((known.memoryMiB - config.reserve.memoryMiB) / 1024 / settings.perMac) : null;
+  const facts = { name: mac.name, cores: known?.cpus || null, performanceCores: known?.performanceCores ?? null, memoryGiB, chip: known?.chip ?? null, hardware };
+  return sizeHost(facts, macSet, settings.sizedBy, settings, memoryLeftGiB);
+}
+
 export class IosHosts implements SlotLender {
   readonly on = "tart" as const;
   readonly #access: HostsAccess;
@@ -422,12 +430,7 @@ export class IosHosts implements SlotLender {
   }
 
   #hostSizing(mac: TartHost, state: HostState | Error | undefined): HostSizing {
-    const settings = this.#settings;
-    const known = state && !(state instanceof Error) ? state : null;
-    const memoryGiB = known && known.memoryMiB > 0 ? Math.floor(known.memoryMiB / 1024) : null;
-    const memoryLeftGiB = known && memoryGiB !== null ? Math.floor((known.memoryMiB - this.#access.config().reserve.memoryMiB) / 1024 / settings.perMac) : null;
-    const facts = { name: mac.name, cores: known?.cpus || null, performanceCores: known?.performanceCores ?? null, memoryGiB, chip: known?.chip ?? null, hardware: this.#access.hardware?.(mac) ?? null };
-    return sizeHost(facts, mac.iosHostsSizedBy ?? {}, settings.sizedBy, settings, memoryLeftGiB);
+    return sizeHostOnMac(mac, state && !(state instanceof Error) ? state : null, this.#access.config(), this.#access.hardware?.(mac) ?? null, mac.iosHostsSizedBy ?? {});
   }
 
   #settingsFor(mac: TartHost, state: HostState | Error | undefined): IosHostsConfig {

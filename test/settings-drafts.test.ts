@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Backends } from "../src/backends/index.ts";
+import type { Backend, BackendDriver, FieldProblem } from "../src/backends/types.ts";
 import { GENERAL_SECRETS, contentKey } from "../src/core/box-files.ts";
 import type { ConfigDocument } from "../src/core/document.ts";
 import { RECEIPTS_KEPT_AT_MOST, RECEIPTS_KEPT_MS } from "../src/core/receipt-window.ts";
@@ -18,7 +19,7 @@ import {
   type SaveTransport,
   type StoredPart,
 } from "../src/app/settings-drafts.ts";
-import { filePath, newFilePath, plain, problemPath, storedAt, type EditValue } from "../src/app/settings-paths.ts";
+import { backendFieldPath, filePath, hostFieldPath, hostPath, labelOf, newFilePath, newHostPath, plain, problemPath, storedAt, type EditValue } from "../src/app/settings-paths.ts";
 import { MemoryStorage } from "./helpers.ts";
 
 interface Deferred {
@@ -53,9 +54,9 @@ class Server {
     this.configuration = configuration;
   }
 
-  static async start(clock: { now: number }, files: readonly { readonly path: string; readonly content: string }[] = []): Promise<Server> {
+  static async start(clock: { now: number }, files: readonly { readonly path: string; readonly content: string }[] = [], drivers: readonly BackendDriver<unknown>[] = []): Promise<Server> {
     const backends = new Backends({ storage: new MemoryStorage(), installId: "i1", logError: () => {} });
-    const configuration = await Configuration.load({ kv: new MemoryStorage(), backends, drivers: [], boxes: async () => [], changed: () => {}, logError: () => {}, now: () => clock.now });
+    const configuration = await Configuration.load({ kv: new MemoryStorage(), backends, drivers, boxes: async () => [], changed: () => {}, logError: () => {}, now: () => clock.now });
     const server = new Server(configuration);
     if (files.length) await server.elsewhere((document) => withGeneral(document, { files }));
     return server;
@@ -71,6 +72,10 @@ class Server {
 
   content(path: string): string | undefined {
     return this.configuration.secrets[GENERAL_SECRETS]?.[contentKey(path)];
+  }
+
+  secret(backend: string, key: string): string | undefined {
+    return this.configuration.secrets[backend]?.[key];
   }
 
   async elsewhere(change: (document: ConfigDocument) => ConfigDocument, operation?: string): Promise<ConfigState> {
@@ -458,7 +463,9 @@ test("secrets, file contents and new files' text are kept in memory only; a relo
   assert.equal(storage.text().includes(".cfg/new.json"), true, "a new file's path is kept");
 
   const reloaded = await page(server, clock, storage);
-  assert.deepEqual(reloaded.registry.part(FILES_PART).restored, { count: 2, lost: ["the content of ~/.cfg/a.json", "the content of ~/.cfg/new.json"] });
+  const restored = reloaded.registry.part(FILES_PART);
+  assert.deepEqual(restored.restored, { count: 2, lost: [filePath(".cfg/a.json"), newFilePath("n1")] });
+  assert.deepEqual(restored.restored!.lost.map((path) => labelOf(path, restored.edits.get(path)?.value)), ["the content of ~/.cfg/a.json", "the content of ~/.cfg/new.json"]);
   assert.deepEqual(reloaded.registry.part(MONITOR_PART).restored, { count: 1, lost: [] });
   await reloaded.registry.save(MONITOR_PART);
   assert.equal(server.stored().monitor?.refreshIntervalSeconds, 12);
@@ -542,4 +549,179 @@ test("Discard puts back the saved values of a part's edits and nothing else", as
   assert.equal(registry.part(BOXES_PART).edits.size, 1);
   assert.deepEqual(registry.partsWithDrafts(), [BOXES_PART]);
   assert.equal(server.stored().monitor, undefined);
+});
+
+function macsDriver(): BackendDriver<unknown> {
+  return {
+    type: "macs",
+    label: "Macs",
+    description: "Boxes on Macs.",
+    nature: "virtual",
+    form: "VM",
+    kinds: ["linux"],
+    fields: {
+      token: { type: "string", label: "API token secret", secret: true, group: "credentials" },
+      image: { type: "string", label: "Linux image", group: "boxes", default: "base" },
+      reserve: { type: "number", label: "Memory kept free (MiB)", group: "advanced", default: 4096 },
+    },
+    offWhenEmpty: ["image"],
+    hostFields: {
+      address: { type: "string", label: "Address", group: "connection", default: "" },
+      cores: { type: "number", label: "Cores of a shared iOS host", group: "ios-hosts" },
+    },
+    setup: { guide: "", scripts: [] },
+    parse(part) {
+      const problems: FieldProblem[] = [];
+      part.hosts.forEach((host, n) => {
+        const cores = host.fields.cores;
+        if (cores !== undefined && (typeof cores !== "number" || cores < 2 || cores > 64)) problems.push({ path: `hosts.${n}.cores`, message: `Mac ${host.name}: the cores of a shared iOS host on it must be a whole number from 2 to 64.` });
+      });
+      return problems.length ? { ok: false, problems } : { ok: true, config: {} };
+    },
+    create: (_config, context) => ({ id: context.id, label: "Macs", nature: "virtual", kinds: () => [] }) as unknown as Backend,
+  };
+}
+
+const MACS = "macs";
+const BACKEND_PART = "backend/macs";
+
+async function withMacs(enabled = true, hosts: readonly string[] = ["mac-1"]): Promise<Page> {
+  const clock = { now: 1_800_000_000_000 };
+  const server = await Server.start(clock, [], [macsDriver()]);
+  await server.elsewhere((document) => ({ ...document, backends: [{ id: MACS, type: MACS, enabled, fields: { token: "made-up-token-0" }, hosts: hosts.map((name) => ({ name, enabled: true, fields: { address: `${name}.example` } })) }] }));
+  return page(server, clock);
+}
+
+test("a backend's fields save through the registry: text, a number typed as text, an explicit off that stays off, and the secret's version as its base", async () => {
+  const { registry, server } = await withMacs(false);
+  const image = backendFieldPath(MACS, "image");
+  const reserve = backendFieldPath(MACS, "reserve");
+  assert.deepEqual(registry.part(BACKEND_PART).edits.size, 0);
+  registry.set(BACKEND_PART, reserve, plain("2048"));
+  registry.set(BACKEND_PART, image, plain(""));
+  assert.equal(registry.changeCount(BACKEND_PART), 2);
+  await registry.save(BACKEND_PART);
+  assert.equal(registry.part(BACKEND_PART).outcome?.kind, "saved");
+  assert.deepEqual(server.stored().backends[0]!.fields, { image: "", reserve: 2048 });
+  assert.equal(server.secret(MACS, "token"), "made-up-token-0", "the secret not edited is kept");
+
+  registry.set(BACKEND_PART, image, plain(null));
+  await registry.save(BACKEND_PART);
+  assert.deepEqual(server.stored().backends[0]!.fields, { reserve: 2048 }, "offered again with the default: the field is left out");
+  registry.set(BACKEND_PART, reserve, plain("2048"));
+  assert.equal(registry.changeCount(BACKEND_PART), 0, "typing the stored value is no change");
+
+  const token = backendFieldPath(MACS, "token");
+  const version = (registry.latest!.document.backends[0]!.fields.token as { version: number }).version;
+  registry.set(BACKEND_PART, token, { kind: "secret", text: "made-up-token-1" });
+  assert.deepEqual(registry.part(BACKEND_PART).edits.get(token)?.base, { kind: "version", version });
+  await registry.save(BACKEND_PART);
+  assert.equal(server.secret(MACS, "token"), "made-up-token-1");
+  registry.set(BACKEND_PART, token, { kind: "removed" });
+  await registry.save(BACKEND_PART);
+  assert.equal(server.secret(MACS, "token"), undefined, "Clear removes it");
+});
+
+test("G1 with a secret: the secret sent is the one stored through a retry, and newer typing waits with the saved version as its base", async () => {
+  const { registry, server } = await withMacs(false);
+  const token = backendFieldPath(MACS, "token");
+  registry.set(BACKEND_PART, token, { kind: "secret", text: "made-up-A" });
+  const held = deferred();
+  server.faults.push({ before: async () => void (await server.elsewhere(setRefresh(9))) }, { before: () => held.promise });
+  const saving = registry.save(BACKEND_PART);
+  await until(() => (registry.part(BACKEND_PART).operation?.phase as { attempt?: number } | undefined)?.attempt === 2);
+  registry.set(BACKEND_PART, token, { kind: "secret", text: "made-up-B" });
+  held.release();
+  await saving;
+  assert.equal(server.secret(MACS, "token"), "made-up-A", "A is stored");
+  const revision = server.stored().revision;
+  assert.deepEqual(registry.part(BACKEND_PART).edits.get(token), { value: { kind: "secret", text: "made-up-B" }, base: { kind: "version", version: revision } }, "B is not stored, and shows as a change");
+  const outcome = registry.part(BACKEND_PART).outcome;
+  assert.deepEqual(outcome, { kind: "saved", revision, lostReply: false, rebased: true, changedElsewhere: [], newer: 1 }, "the bar names nothing else");
+  assert.deepEqual(server.arrived[0]!.submission, server.arrived[1]!.submission);
+  assert.equal(JSON.stringify(server.arrived[0]!.submission).includes("made-up-B"), false);
+});
+
+test("a secret replaced in two tabs: the second is a conflict that names the revision, with both choices", async () => {
+  const clock = { now: 1_800_000_000_000 };
+  const first = await withMacs(false);
+  const second = await page(first.server, clock);
+  const token = backendFieldPath(MACS, "token");
+  first.registry.set(BACKEND_PART, token, { kind: "secret", text: "made-up-first" });
+  second.registry.set(BACKEND_PART, token, { kind: "secret", text: "made-up-second" });
+  await second.registry.save(BACKEND_PART);
+  first.registry.observe(await first.server.state());
+  const revision = first.server.stored().revision;
+  assert.deepEqual(first.registry.conflictAt(BACKEND_PART, token), { kind: "replaced", version: revision });
+  await first.registry.save(BACKEND_PART);
+  assert.equal(first.registry.part(BACKEND_PART).outcome?.kind, "conflicts");
+  assert.equal(first.server.secret(MACS, "token"), "made-up-second");
+  first.registry.keepMine(BACKEND_PART, token);
+  await first.registry.save(BACKEND_PART);
+  assert.equal(first.server.secret(MACS, "token"), "made-up-first");
+});
+
+test("G6: a new Mac saved while its cores are typed becomes the saved Mac, and the second Save updates it", async () => {
+  const { registry, server } = await withMacs(true);
+  const fresh = newHostPath(MACS, "k3x9");
+  registry.set(BACKEND_PART, fresh, { kind: "new-host", name: "review-mac", enabled: true });
+  registry.set(BACKEND_PART, hostFieldPath(fresh, "address"), plain("review.example"));
+  const held = deferred();
+  server.faults.push({ before: () => held.promise });
+  const saving = registry.save(BACKEND_PART);
+  await until(() => registry.part(BACKEND_PART).operation?.phase.at === "sending");
+  registry.set(BACKEND_PART, hostFieldPath(fresh, "cores"), plain("8"));
+  held.release();
+  await saving;
+  const saved = hostPath(MACS, "review-mac");
+  assert.deepEqual(server.stored().backends[0]!.hosts!.map((host) => host.name), ["mac-1", "review-mac"]);
+  assert.equal(registry.savedIdentity(fresh), saved);
+  const part = registry.part(BACKEND_PART);
+  assert.deepEqual([...part.edits.keys()], [hostFieldPath(saved, "cores")], "no edit keeps an @new- identity");
+  assert.deepEqual(part.edits.get(hostFieldPath(saved, "cores"))?.base, { kind: "value", value: null });
+  assert.equal((part.outcome as { newer: number }).newer, 1);
+  await registry.save(BACKEND_PART);
+  const hosts = server.stored().backends[0]!.hosts!;
+  assert.equal(hosts.filter((host) => host.name === "review-mac").length, 1, "one review-mac");
+  assert.deepEqual(hosts.find((host) => host.name === "review-mac")!.fields, { address: "review.example", cores: 8 });
+  assert.equal(registry.part(BACKEND_PART).edits.size, 0);
+});
+
+test("G7: a new Mac with 1 core is refused at its cores field, and a Mac named like another is refused at its name before anything is sent", async () => {
+  const { registry, server } = await withMacs(true);
+  const fresh = newHostPath(MACS, "a1");
+  registry.set(BACKEND_PART, fresh, { kind: "new-host", name: "small-mac", enabled: true });
+  registry.set(BACKEND_PART, hostFieldPath(fresh, "cores"), plain("1"));
+  await registry.save(BACKEND_PART);
+  const refused = registry.part(BACKEND_PART);
+  assert.equal(refused.outcome?.kind, "problems");
+  assert.deepEqual(refused.problems.map((problem) => problem.path), [hostFieldPath(fresh, "cores")]);
+  assert.equal(server.stored().backends[0]!.hosts!.length, 1, "nothing saved");
+  assert.equal(problemPath("backends.macs.hosts.1.cores", { "backends.macs.hosts.1": fresh }), hostFieldPath(fresh, "cores"));
+
+  registry.forgetUnder(BACKEND_PART, fresh);
+  const twin = newHostPath(MACS, "b2");
+  registry.set(BACKEND_PART, twin, { kind: "new-host", name: "mac-1", enabled: true });
+  const sent = server.arrived.length;
+  await registry.save(BACKEND_PART);
+  assert.deepEqual(registry.part(BACKEND_PART).problems, [{ path: `${twin}/name`, message: "mac-1 is already a host on Macs." }]);
+  assert.equal(server.arrived.length, sent, "nothing was sent");
+});
+
+test("a Mac removed when the form is saved, a Mac's own field changed elsewhere is a conflict, and a removed backend is gone", async () => {
+  const { registry, server } = await withMacs(false, ["mac-1", "mac-2"]);
+  const address = hostFieldPath(hostPath(MACS, "mac-1"), "address");
+  registry.set(BACKEND_PART, address, plain("new.example"));
+  registry.observe(await server.elsewhere((document) => ({ ...document, backends: document.backends.map((backend) => ({ ...backend, hosts: backend.hosts!.map((host) => (host.name === "mac-1" ? { ...host, fields: { address: "other.example" } } : host)) })) })));
+  assert.deepEqual(registry.conflictAt(BACKEND_PART, address), { kind: "changed", stored: "other.example" });
+  registry.forget(BACKEND_PART, address);
+  registry.set(BACKEND_PART, hostPath(MACS, "mac-2"), { kind: "removed" });
+  await registry.save(BACKEND_PART);
+  assert.deepEqual(server.stored().backends[0]!.hosts!.map((host) => host.name), ["mac-1"]);
+
+  registry.set(BACKEND_PART, backendFieldPath(MACS, "reserve"), plain("1024"));
+  const removal = switchWrite(registry.latest!, `backends/${MACS}`, { kind: "removed" }, "Macs");
+  assert.equal((await registry.runInstant(removal))?.kind, "saved");
+  assert.deepEqual(server.stored().backends, []);
+  assert.deepEqual(registry.conflictAt(BACKEND_PART, backendFieldPath(MACS, "reserve")), { kind: "removed" });
 });

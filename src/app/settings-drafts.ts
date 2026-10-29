@@ -2,15 +2,17 @@ import type { ConfigDocument } from "../core/document.ts";
 import { receiptMayBeGone } from "../core/receipt-window.ts";
 import type { ApplyResult, ConfigState } from "../plugin/configuration.ts";
 import {
+  backendAt,
   candidateOf,
   conflictOf,
   documentValue,
   draftProblems,
-  fileEditProblems,
+  editProblems,
   fileIsStored,
   fileOfPath,
   filePath,
   holdsSecret,
+  hostPath,
   isChange,
   labelOf,
   newFilePath,
@@ -66,7 +68,7 @@ export type Outcome =
 
 export interface Restored {
   readonly count: number;
-  readonly lost: readonly string[];
+  readonly lost: readonly Path[];
 }
 
 export interface PartState {
@@ -189,34 +191,57 @@ export interface Completion {
   readonly identities: Map<Path, Path>;
 }
 
-function savedBase(latest: ConfigState, edit: PathEdit, revision: number): Stored {
-  if (edit.value.kind === "plain") return { kind: "value", value: documentValue(latest.defaults, edit.path, edit.value.value) };
+function savedBase(latest: ConfigState, savedPath: Path, edit: PathEdit, revision: number): Stored {
+  if (edit.value.kind === "plain") return { kind: "value", value: documentValue(latest, savedPath, edit.value.value) };
   return { kind: "version", version: revision };
+}
+
+function identitiesOf(submission: Submission): Map<Path, Path> {
+  const identities = new Map<Path, Path>();
+  for (const sent of submission.edits) {
+    if (sent.value.kind === "new-file") identities.set(sent.path, filePath(sent.value.path.trim()));
+    const at = backendAt(sent.path);
+    if (sent.value.kind === "new-host" && at) identities.set(sent.path, hostPath(at.id, sent.value.name.trim()));
+  }
+  return identities;
+}
+
+function savedPathOf(identities: ReadonlyMap<Path, Path>, path: Path): Path {
+  for (const [from, to] of identities) {
+    if (path === from) return to;
+    if (path.startsWith(`${from}/`)) return `${to}${path.slice(from.length)}`;
+  }
+  return path;
 }
 
 export function completeSave(edits: ReadonlyMap<Path, Edit>, submission: Submission, revision: number, latest: ConfigState, restoredLost: ReadonlySet<Path> = new Set()): Completion {
   const next = new Map(edits);
-  const identities = new Map<Path, Path>();
+  const identities = identitiesOf(submission);
   for (const sent of submission.edits) {
-    const savedPath = sent.value.kind === "new-file" ? filePath(sent.value.path.trim()) : sent.path;
-    if (sent.value.kind === "new-file") identities.set(sent.path, savedPath);
+    const savedPath = savedPathOf(identities, sent.path);
     const current = next.get(sent.path);
     if (!current) continue;
     next.delete(sent.path);
     const stillLostSinceReload = restoredLost.has(sent.path) && holdsSecret(current.value) && secretTextOf(current.value) === null && sameValue(withoutSecretText(current.value), withoutSecretText(sent.value));
-    if (sameValue(current.value, sent.value) || stillLostSinceReload) continue;
+    if (sameValue(current.value, sent.value) || stillLostSinceReload || sent.value.kind === "new-host") continue;
     if (sent.value.kind === "new-file" && current.value.kind === "new-file") {
       next.set(savedPath, { value: { kind: "secret", text: current.value.text }, base: { kind: "version", version: revision } });
       continue;
     }
-    next.set(savedPath, { value: current.value, base: savedBase(latest, sent, revision) });
+    next.set(savedPath, { value: current.value, base: savedBase(latest, savedPath, sent, revision) });
+  }
+  for (const [path, edit] of [...next]) {
+    const savedPath = savedPathOf(identities, path);
+    if (savedPath === path) continue;
+    next.delete(path);
+    next.set(savedPath, { value: edit.value, base: storedAt(latest, savedPath, edit.value) });
   }
   const changedElsewhere: string[] = [];
   for (const sent of submission.edits) {
-    if (sent.value.kind === "removed") continue;
-    const savedPath = sent.value.kind === "new-file" ? filePath(sent.value.path.trim()) : sent.path;
+    if (sent.value.kind === "removed" || sent.value.kind === "new-host") continue;
+    const savedPath = savedPathOf(identities, sent.path);
     const stored = storedAt(latest, savedPath);
-    const label = labelOf(savedPath);
+    const label = labelOf(savedPath, undefined, latest);
     if (sent.value.kind === "plain") {
       if (isChange(latest, { path: savedPath, value: sent.value, base: stored })) changedElsewhere.push(label);
     } else if (stored.kind === "version") {
@@ -270,7 +295,7 @@ export function storablePart(part: PartState): StoredPart | null {
 
 export function restoredPart(stored: StoredPart): PartState {
   const edits = new Map<Path, Edit>(stored.edits.map(([path, edit]) => [path, edit]));
-  const lost = stored.lost.filter((path) => edits.has(path)).map((path) => labelOf(path, edits.get(path)!.value));
+  const lost = stored.lost.filter((path) => edits.has(path));
   const operation: Operation | null = stored.operation
     ? {
         id: stored.operation.id,
@@ -505,6 +530,18 @@ export class DraftRegistry {
     });
   }
 
+  forgetUnder(part: string, path: Path): void {
+    this.#update(part, (entry) => {
+      const under = (each: Path) => each === path || each.startsWith(`${path}/`);
+      return { ...entry, edits: new Map([...entry.edits].filter(([each]) => !under(each))), problems: entry.problems.filter((problem) => !under(problem.path)) };
+    });
+  }
+
+  saving(part: string): boolean {
+    const phase = this.part(part).operation?.phase.at;
+    return phase === "sending" || phase === "looking";
+  }
+
   forget(part: string, path: Path): void {
     this.#update(part, (entry) => {
       const edits = new Map(entry.edits);
@@ -560,7 +597,7 @@ export class DraftRegistry {
     }
     const edits: PathEdit[] = [...entry.edits].map(([path, edit]) => ({ path, ...edit }));
     if (!edits.length) return;
-    const problems = fileEditProblems(edits);
+    const problems = editProblems(latest, edits);
     if (problems.length) {
       this.#put(part, { ...entry, operation: null, problems, outcome: { kind: "problems", count: problems.length }, outcomeShownAt: null, restored: null });
       return;

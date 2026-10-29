@@ -444,7 +444,7 @@ function checkIosHosts(values: Readonly<Record<string, unknown>>, problem: Probl
   };
 }
 
-const MAC_IOS_HOST_FIELDS = {
+export const MAC_IOS_HOST_FIELDS = {
   most: { field: "ios-hosts-most", least: 1, most: MOST_SLOTS, words: "the slots of a shared iOS host on it" },
   cores: { field: "ios-hosts-cores", least: 2, most: 64, words: "the cores of a shared iOS host on it" },
   memoryGiB: { field: "ios-hosts-memory-gib", least: 8, most: 512, words: "the memory of a shared iOS host on it, in GiB," },

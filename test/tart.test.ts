@@ -1506,3 +1506,19 @@ test("the iOS image setting is a Tart VM name of its own, and needs a macOS imag
   ]);
   assert.deepEqual(problems({ "tart-ios-image": "bb-box-macos" }), ['Tart: "bb-box-macos" is another kind\'s image; the iOS image is a VM of its own.']);
 });
+
+test("what a Mac's empty shared iOS host sizes take is bb-box's estimate from the Mac it last read, read once when first asked, and open pages are told (067)", async () => {
+  const { make } = setup();
+  let told = 0;
+  const tart = make({ ...testContext(new MemoryStorage()), factsChanged: () => (told += 1) });
+  assert.deepEqual(tart.hostEstimates(), {}, "nothing is known before bb-box reads the Mac");
+  for (let tries = 0; tries < 200 && !told; tries += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(told, 1);
+  const mac = tart.hostEstimates().mac1!;
+  assert.equal(mac["ios-hosts-cores"], 12, "the Mac's performance cores");
+  assert.ok(Number.isInteger(mac["ios-hosts-most"]) && mac["ios-hosts-most"]! >= 1);
+  assert.ok(Number.isInteger(mac["ios-hosts-memory-gib"]) && mac["ios-hosts-memory-gib"]! >= 8);
+  tart.hostEstimates();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(told, 1, "a Mac already read is not read again for this");
+});

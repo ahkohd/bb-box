@@ -342,6 +342,7 @@ export class Backends {
       tailnet: () => this.tailnet(),
       ...(this.#bbUrl ? { bbUrl: this.#bbUrl } : {}),
       kindsChanged: () => this.#kindsChanged(),
+      factsChanged: () => this.#changed(),
       ...(this.#encoder ? { encoder: this.#encoderFor(id, this.#encoder) } : {}),
       hostOn: (name) => this.#document?.backends.find((candidate) => candidate.id === id)?.hosts?.find((host) => host.name === name)?.enabled ?? false,
       kind: (kind) => {
@@ -410,6 +411,10 @@ export class Backends {
       this.#short.set(id, short);
     }
     return short;
+  }
+
+  hostEstimates(id: string): Readonly<Record<string, Readonly<Record<string, number>>>> {
+    return this.#entries.get(id)?.backend.hostEstimates?.() ?? {};
   }
 
   /** The backend's warm pools that its last upkeep left short for want of room (#356), while it is built. */

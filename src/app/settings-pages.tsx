@@ -10,33 +10,22 @@ import { Badge, KindBadges, isArm64Badge, lacksDocker, message, relativeTime } f
 import { runsWayland } from "./boxes-filter.ts";
 import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, withGeneral, withKind } from "./config.ts";
 import { RebuildNow } from "./rebuild-now.tsx";
-import { BackendForm, backendName, type BackendRowModel } from "./settings-backends.tsx";
+import { BackendForm, type BackendRowModel } from "./settings-backends.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { DockerHostsSection } from "./settings-docker-hosts.tsx";
 import { DraftNumberRow, unplacedProblems } from "./settings-draft-fields.tsx";
 import { BOXES_PART, MONITOR_PART } from "./settings-drafts.ts";
 import { BoxFilesSection } from "./settings-files.tsx";
-import { RestoredNote, SaveBar, useDraft } from "./settings-saving.tsx";
+import { RestoredNote, SAVING_RULE, SaveBar, useDraft } from "./settings-saving.tsx";
+import { BackendPage } from "./settings-backend-page.tsx";
 import { KindForm, kindRowModel } from "./settings-kinds.tsx";
 import { iosEncoderWords, monitorChanged, noteMonitorChanged, ReloadNote } from "./settings-overview.tsx";
-import { Card, Chevron, FOCUS_RING, Group, PageHeader, ProviderGlyph, RowNote, Rows, SavedTick, SettingRow, StateLine } from "./settings-parts.tsx";
+import { Card, Chevron, FOCUS_RING, Group, NotHere, PageHeader, ProviderGlyph, RowNote, Rows, SavedTick, SettingRow } from "./settings-parts.tsx";
 import { isOptionPage, type SettingsView } from "./settings-route.ts";
-import { backendHealth, backendLabel, isMachineDocker, kindName, plural } from "./settings-status.ts";
+import { backendLabel, isMachineDocker, kindName, plural } from "./settings-status.ts";
 import { TailnetSection } from "./settings-tailnet.tsx";
 
-export const SAVING_RULE = "Switches, and menus that stand alone, act at once. Fields, checkboxes and radio choices wait for Save.";
 
-export function NotHere({ what }: { what: string }) {
-  const { nav } = useSettings();
-  return (
-    <div className="space-y-3">
-      <PageHeader title={`This ${what} is not here`} description={`BB Box's configuration has no such ${what}. It may have been removed, or the link may be wrong.`} />
-      <Button type="button" variant="outline" size="sm" className="h-8" onClick={nav.toOverview}>
-        Go to BB Box settings
-      </Button>
-    </div>
-  );
-}
 
 function backendModel(state: ReturnType<typeof useSettings>["state"], driver: DriverView, config: BackendConfig | null): BackendRowModel {
   const id = config?.id ?? driver.type;
@@ -64,77 +53,6 @@ function useBackendForm() {
       }
     },
   };
-}
-
-export function BackendPage({ id }: { id: string }) {
-  const { state, nav, instant, writes } = useSettings();
-  const form = useBackendForm();
-  const config = state.document.backends.find((backend) => backend.id === id);
-  const driver = config ? state.drivers.find((candidate) => candidate.type === config.type) : undefined;
-  if (!config) return <NotHere what="backend" />;
-  const now = Date.now();
-  const label = backendLabel(state, config);
-  const health = backendHealth(state, config, now);
-  const chip = backendName(config.id, label);
-  const key = switchKey.backend(config.id);
-  const pending = instant.pendingValue<boolean>(key);
-  const live = state.backends.find((candidate) => candidate.id === config.id);
-  const healthId = "settings-backend-health";
-  const checked = health.checkedAt !== null ? `checked ${relativeTime(health.checkedAt, now)}` : null;
-  const healthItems = [
-    ...(health.status === "stale" ? [`${relativeTime(health.checkedAt!, now)}, so it may have changed since`] : checked && health.status !== "off" && health.status !== "unfinished" ? [checked] : []),
-    ...(health.detail && health.status !== "stale" && health.status !== "ready" ? [health.detail] : []),
-  ];
-  const kinds = live?.kinds ?? [];
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        glyph={<ProviderGlyph type={config.type} className="size-5" />}
-        title={label}
-        chips={
-          <>
-            {chip ? <Badge>{chip}</Badge> : null}
-            {isMachineDocker(config) ? <Badge>BB machine</Badge> : null}
-          </>
-        }
-        description={
-          <>
-            <p>{driver?.description ?? config.type}</p>
-            <p className="mt-1">Saved changes reach new boxes; boxes already made keep theirs.</p>
-          </>
-        }
-        aside={
-          <label className="flex items-center gap-2 text-xs text-foreground">
-            <SavedTick show={instant.isSaved(key)} />
-            Takes new boxes
-            <Switch aria-label={`${label}: takes new boxes`} aria-describedby={healthId} checked={pending ?? config.enabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={(on) => void instant.run(writes.backendOn(state, config, on, label))} />
-          </label>
-        }
-      >
-        <RowNote note={instant.note(key)} />
-      </PageHeader>
-      <Group title="Health">
-        <Card className="space-y-1.5 px-4 py-3">
-          <StateLine id={healthId} tone={health.tone} words={health.words} items={healthItems} />
-          {health.fix && (health.status === "failing" || health.status === "attention" || health.status === "unfinished") ? <p className="pl-5 text-xs text-foreground">Fix: {health.fix}</p> : null}
-          <p className="pl-5 text-xs text-muted-foreground">
-            {[plural(live?.boxes ?? 0, "box", "boxes") + " now", kinds.length ? `makes ${kinds.map((kind) => { const info = state.kinds.find((candidate) => candidate.id === kind); return info ? kindName(state.kinds, info) : kind; }).join(", ")}` : "makes no kind now"].join(" · ")}
-          </p>
-        </Card>
-      </Group>
-      {isMachineDocker(config) ? (
-        <DockerHostsSection />
-      ) : driver ? (
-        <Group title="Settings" description="Today's form for this backend: Save, Check and its last check report.">
-          <Card className="px-4 pb-4 pt-1 [&>form]:mt-0 [&>form]:border-t-0">
-            <BackendForm key={`${config.id}-${state.revision}`} model={backendModel(state, driver, config)} onSave={form.onSave} onCheck={form.onCheck} onClose={nav.back} />
-          </Card>
-        </Group>
-      ) : (
-        <p className="text-xs text-destructive-text">This version of BB Box has no driver for {config.type}.</p>
-      )}
-    </div>
-  );
 }
 
 export function AddBackendPage() {
