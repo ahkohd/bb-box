@@ -5,7 +5,7 @@ import { STALL_LIMITS } from "../../monitor/health.ts";
 import { SERVER_MACHINE, useMonitorSnapshot } from "./use-snapshot.ts";
 import { useRevealOnLoad } from "./use-reveal-on-load.ts";
 import { machineKey, useMachines } from "./use-machines.ts";
-import { useScreensOf, type BoxScreens } from "./box-screens.tsx";
+import { useBoxLookOf, useScreensOf, type BoxScreens, type LookOf } from "./box-screens.tsx";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "./menu.tsx";
 import { cn } from "@/lib/utils";
 import { PressureNotifications, bindStatusOpener } from "./pressure-notifications.tsx";
@@ -547,12 +547,12 @@ function StatusPopover({ snapshot, isServer, expected, waitingFor }: { snapshot:
   );
 }
 
-function MachineHeader({ machines, selected, onSelect, onOpen, screens, actions }: { machines: Machine[] | null; selected: string; onSelect: (machineId: string) => void; onOpen: () => void; screens: BoxScreens | null; actions: ReactNode }) {
+function MachineHeader({ machines, selected, onSelect, onOpen, screens, lookOf, actions }: { machines: Machine[] | null; selected: string; onSelect: (machineId: string) => void; onOpen: () => void; screens: BoxScreens | null; lookOf: LookOf; actions: ReactNode }) {
   return (
     <div data-bb-box-monitor-header className="sticky top-0 z-10 bg-sidebar">
       <div className="flex h-9 min-w-0 items-center gap-1 bg-sidebar-accent/50 px-1.5">
         <span className="flex min-w-0 items-center">
-          <MachinePicker machines={machines} selected={selected} onSelect={onSelect} onOpen={onOpen} />
+          <MachinePicker machines={machines} selected={selected} onSelect={onSelect} onOpen={onOpen} lookOf={lookOf} />
           <HeaderScreenMenu screens={screens} />
         </span>
         <span className="flex-1" />
@@ -608,6 +608,7 @@ function ServerMark({ className }: { className?: string }) {
 function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps) {
   const { machines, selected, setSelected, refresh: refreshMachines } = useMachines();
   const screensOf = useScreensOf();
+  const lookOf = useBoxLookOf();
   const { container, active, snapshot, error, reload, reloading } = useMonitorSnapshot(selected);
   const machineName = selectedMachine(machines, selected).name;
   const errorMessage = error ? loadErrorCopy(error, machineName) : "";
@@ -631,6 +632,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
         onSelect={setSelected}
         onOpen={() => void refreshMachines()}
         screens={screensOf(machines?.find((machine) => machineKey(machine) === selected))}
+        lookOf={lookOf}
         actions={<>
           <ReloadButton onReload={reload} reloading={reloading} loading={!snapshot && !error} updatedAt={snapshot?.timestamp ?? null} />
           <CollapseButton onCollapse={dismiss} />
