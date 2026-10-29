@@ -7063,3 +7063,20 @@ test("F-22c: at 360 px an android row shows Emulator before VM, and a shared ios
     window.matchMedia = wide;
   }
 });
+
+test("F-22d: on a device box the system word gives way before the device badge, which says it already; a row with room keeps both", () => {
+  const android = { name: 80, system: 45, model: 38, badges: [{ width: 56, rank: 0, outranksSystem: true }, { width: 30, rank: 2 }] };
+  expect(fitTitle({ room: 188, ...android })).toEqual({ nameRoom: null, showsSystem: false, modelRoom: null, showsModel: false, showsBadge: [true, true] });
+  expect(fitTitle({ room: 300, ...android })).toEqual({ nameRoom: null, showsSystem: true, modelRoom: null, showsModel: true, showsBadge: [true, true] });
+  expect(fitTitle({ room: 188, ...android, badges: android.badges.map(({ width, rank }) => ({ width, rank })) })).toEqual({ nameRoom: null, showsSystem: true, modelRoom: null, showsModel: false, showsBadge: [false, true] });
+  expect(fitTitle({ room: 120, ...android })).toEqual({ nameRoom: null, showsSystem: false, modelRoom: null, showsModel: false, showsBadge: [false, false] });
+});
+
+test("F-22d: at 360 px an android row whose name leaves no room for Emulator beside Android shows its name, Emulator and VM", async () => {
+  await withRowLayout(188, async () => {
+    const slot = panel(server([{ ...ANDROID, name: "vivid-badger" }, box()]).handlers);
+    await slot.findByText("vivid-badger");
+    expect(shownTitle(slot.getByRole("button", { name: "vivid-badger: details" }))).toEqual({ name: "vivid-badger", parts: ["Emulator", "VM"], cut: null });
+    expect(shownTitle(slot.getByRole("button", { name: "calm-otter: details" }))).toEqual({ name: "calm-otter", parts: ["Linux", "LXC"], cut: null });
+  });
+});
