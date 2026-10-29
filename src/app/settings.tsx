@@ -13,14 +13,7 @@ import { hashOf } from "./settings-route.ts";
 export type { Saved } from "./settings-context.tsx";
 
 const STALE = "Someone saved the configuration first. It has been reloaded; make your change again.";
-const SLIDE_PX = 12;
-const SLIDE_MS = 220;
 const RESTORE_TRIES = 40;
-
-function slideIn(element: HTMLElement, from: "right" | "left"): void {
-  if (typeof element.animate !== "function") return;
-  element.animate([{ transform: `translateX(${from === "right" ? SLIDE_PX : -SLIDE_PX}px)`, opacity: 0.6 }, { transform: "translateX(0)", opacity: 1 }], { duration: SLIDE_MS, easing: "cubic-bezier(0.23, 1, 0.32, 1)" });
-}
 
 function useArrival(arrival: Arrival | null, root: RefObject<HTMLDivElement | null>, page: RefObject<HTMLDivElement | null>, ready: boolean): void {
   const handled = useRef(0);
@@ -37,7 +30,6 @@ function useArrival(arrival: Arrival | null, root: RefObject<HTMLDivElement | nu
       scroller?.scrollTo({ top: 0 });
       page.current?.querySelector<HTMLElement>("[data-page-heading]")?.focus({ preventScroll: true });
     }
-    if (arrival.moving && page.current) slideIn(page.current, arrival.kind === "return" ? "left" : "right");
     handled.current = arrival.serial;
     tries.current = 0;
   });

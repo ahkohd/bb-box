@@ -5,7 +5,6 @@ export interface Arrival {
   readonly kind: "open" | "return" | "replace";
   readonly row: string | null;
   readonly scroll: number;
-  readonly moving: boolean;
   readonly serial: number;
 }
 
@@ -19,26 +18,11 @@ export interface SettingsNav {
   replace(view: SettingsView): void;
 }
 
-let lastInput: "keyboard" | "pointer" = "keyboard";
-let listening = false;
-
-function listenForInput(): void {
-  if (listening || typeof window === "undefined") return;
-  listening = true;
-  window.addEventListener("keydown", () => void (lastInput = "keyboard"), true);
-  window.addEventListener("pointerdown", () => void (lastInput = "pointer"), true);
-}
-
-export function pointerMotionAllowed(): boolean {
-  return lastInput === "pointer" && !(typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-}
-
 function urlFor(view: SettingsView): string {
   return `${window.location.pathname}${window.location.search}${hashOf(view)}`;
 }
 
 export function useSettingsNav(scroller: () => HTMLElement | null): SettingsNav {
-  listenForInput();
   const [view, setView] = useState<SettingsView>(() => viewFromHash(window.location.hash));
   const [cameFrom, setCameFrom] = useState<SettingsView | null>(() => {
     const from = entryOf(window.history.state)?.from;
@@ -52,28 +36,26 @@ export function useSettingsNav(scroller: () => HTMLElement | null): SettingsNav 
   const arrive = useCallback((next: Omit<Arrival, "serial">) => setArrival({ ...next, serial: ++serial.current }), []);
 
   useEffect(() => {
-    const follow = (moving: boolean) => {
+    const follow = () => {
       const entry = entryOf(window.history.state);
       const next = viewFromHash(currentHash());
       setCameFrom(entry?.from === null || entry?.from === undefined ? null : viewFromHash(entry.from));
       setView(next);
-      arrive({ kind: entry?.row || entry?.scroll ? "return" : "open", row: entry?.row ?? null, scroll: entry?.scroll ?? 0, moving });
+      arrive({ kind: entry?.row || entry?.scroll ? "return" : "open", row: entry?.row ?? null, scroll: entry?.scroll ?? 0 });
     };
-    const onPop = () => follow(pointerMotionAllowed());
-    const onOpen = () => follow(false);
     const reread = () => {
       if (document.visibilityState === "hidden") return;
-      if (hashOf(viewRef.current) !== currentHash()) follow(false);
+      if (hashOf(viewRef.current) !== currentHash()) follow();
     };
-    window.addEventListener("popstate", onPop);
+    window.addEventListener("popstate", follow);
     window.addEventListener("hashchange", reread);
-    window.addEventListener(OPEN_SETTINGS_VIEW_EVENT, onOpen);
+    window.addEventListener(OPEN_SETTINGS_VIEW_EVENT, follow);
     window.addEventListener("focus", reread);
     document.addEventListener("visibilitychange", reread);
     return () => {
-      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("popstate", follow);
       window.removeEventListener("hashchange", reread);
-      window.removeEventListener(OPEN_SETTINGS_VIEW_EVENT, onOpen);
+      window.removeEventListener(OPEN_SETTINGS_VIEW_EVENT, follow);
       window.removeEventListener("focus", reread);
       document.removeEventListener("visibilitychange", reread);
     };
@@ -88,7 +70,7 @@ export function useSettingsNav(scroller: () => HTMLElement | null): SettingsNav 
       window.history.pushState(withEntry({ depth: entry.depth + 1, from: hashOf(here) }), "", urlFor(next));
       setCameFrom(here);
       setView(next);
-      arrive({ kind: "open", row: null, scroll: 0, moving: pointerMotionAllowed() });
+      arrive({ kind: "open", row: null, scroll: 0 });
     },
     [arrive, scroller],
   );
@@ -116,7 +98,7 @@ export function useSettingsNav(scroller: () => HTMLElement | null): SettingsNav 
       const entry = entryOf(window.history.state) ?? { depth: 0, from: null };
       window.history.replaceState(withEntry({ depth: entry.depth, from: entry.from }), "", urlFor(next));
       setView(next);
-      arrive({ kind: "replace", row: null, scroll: 0, moving: false });
+      arrive({ kind: "replace", row: null, scroll: 0 });
     },
     [arrive],
   );

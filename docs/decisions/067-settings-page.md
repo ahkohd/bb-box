@@ -549,8 +549,8 @@ Status, never the setup card again.
 - Saving, conflicts and Find's result count are announced through polite
   live regions. A secret's buttons say what they do: "Replace the API
   token secret".
-- Keyboard navigation and reduced motion move nothing: pages change in
-  place. Pointer navigation slides a page 12 px over 220 ms.
+- Pages change in place, with no slide, by pointer or keyboard (the
+  owner removed the slide on 29 October 2026).
 - Below 640 px each setting stacks its label over its control, inputs take
   the full width, the size grid becomes blocks, the header's controls wrap
   under the title, and the save bar wraps its buttons under its words.
@@ -609,8 +609,8 @@ The page uses BB's tokens and bb-box's own parts, as the Boxes page and the
 Monitor do: hairline cards, BB's status dot and chips, one state line per
 row, BB's button, switch, input, select, menu and alert dialog from
 `components/ui`, and `StatusDot`, `Meta` and `Badge` from
-`src/app/common.tsx`. Motion is quiet: a page slides 12 px with a strong
-ease-out over 220 ms; the save bar rises 8 px over 200 ms; "Saved" fades
+`src/app/common.tsx`. Motion is quiet: pages change in place with no slide
+(the owner removed it on 29 October 2026); the save bar rises 8 px over 200 ms; "Saved" fades
 after 1.6 s; a found setting's ring fades over 1.4 s. Typing, switching
 and keyboard actions do not animate.
 
