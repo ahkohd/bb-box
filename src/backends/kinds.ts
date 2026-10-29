@@ -135,7 +135,7 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
   },
   ios: {
     label: "iOS Simulator",
-    description: "An iOS Simulator device, an iPhone or iPad, on a macOS VM, or in a slot on a shared Mac or VM: for installing, running and testing iOS apps, shared with a person in the panel.",
+    description: "An iPhone or iPad in the iOS Simulator, for installing, running and testing iOS apps. It runs on a macOS VM, or in a slot on a shared Mac or VM, and is shared with a person in the panel.",
     gpu: false,
     desktop: false,
     os: "macos",
@@ -146,7 +146,7 @@ export const KIND_INFO: Readonly<Record<string, KindInfo>> = {
   },
   android: {
     label: "Android emulator",
-    description: "An Android emulator device, a phone, foldable or tablet, on a Linux VM: for installing, running and testing Android apps, shared with a person in the panel.",
+    description: "A phone, foldable or tablet in the Android emulator, for installing, running and testing Android apps. It runs on a Linux VM, and is shared with a person in the panel.",
     gpu: false,
     desktop: false,
     os: "linux",

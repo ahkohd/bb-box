@@ -1018,6 +1018,12 @@ export function fieldLabel(settingLabel: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+export function helpParts(help: string): { readonly lead: string; readonly more: string } {
+  const end = help.search(/[.!?]\s/);
+  if (end === -1) return { lead: help.trim(), more: "" };
+  return { lead: help.slice(0, end + 1).trim(), more: help.slice(end + 1).trim() };
+}
+
 /** A field BB would keep as a secret: write-only, and kept apart from the configuration. */
 export function isSecret(field: PluginSettingDescriptor): boolean {
   return field.type === "string" && field.secret === true;

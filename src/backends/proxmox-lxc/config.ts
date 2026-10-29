@@ -165,21 +165,21 @@ function withEarlierKeys(values: Readonly<Record<string, unknown>>): Readonly<Re
 const FLAVOUR_WORDS: Readonly<Record<LxcFlavour, { readonly name: string; readonly templates: string }>> = {
   linux: {
     name: "Linux",
-    templates: "VMIDs of the CT templates linux boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+    templates: "The CT templates Linux boxes are linked clones of. List their VMIDs, separated by spaces or commas. Empty turns Linux boxes off.",
   },
   desktop: {
     name: "GPU desktop",
     templates:
-      "One line per GPU desktop template that linux-desktop boxes are linked clones of: its VMID, a space and the ID of the GPU it carries, such as the UUID nvidia-smi -L shows. Empty turns them off.",
+      "The CT templates Linux desktops on a GPU are linked clones of, each with the GPU it carries. One line per template: its VMID, a space and the GPU's ID, such as the UUID nvidia-smi -L shows. Empty turns these desktops off.",
   },
   "desktop-cpu": {
     name: "CPU desktop",
-    templates: "VMIDs of the CPU-only desktop templates linux-desktop-cpu boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+    templates: "The CT templates Linux desktops drawn by the CPU are linked clones of. List their VMIDs, separated by spaces or commas. Empty turns these desktops off.",
   },
   "desktop-wayland-cpu": {
     name: "CPU Wayland desktop",
     templates:
-      "VMIDs of the CPU-only Wayland desktop templates linux-desktop-wayland-cpu boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+      "The CT templates Linux desktops on Wayland are linked clones of. List their VMIDs, separated by spaces or commas. Empty turns these desktops off.",
   },
 };
 
@@ -250,13 +250,13 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [LXC_KEYS.url]: {
     type: "string",
     label: "Proxmox LXC: API URL",
-    description: "For example https://192.0.2.10:8006/api2/json, as the setup guide's token file gives it.",
+    description: "The Proxmox API's address, from the setup guide's token file. For example https://192.0.2.10:8006/api2/json.",
     default: "",
   },
   [LXC_KEYS.tokenId]: {
     type: "string",
     label: "Proxmox LXC: API token ID",
-    description: "For example bbbox@pve!plugin. The setup guide lists the privileges it needs.",
+    description: "The Proxmox API token bb-box signs in with, such as bbbox@pve!plugin. The setup guide lists the privileges it needs.",
     default: "",
   },
   [LXC_KEYS.tokenSecret]: { type: "string", label: "Proxmox LXC: API token secret", description: "The secret of the API token, from the setup guide's token file.", secret: true },
@@ -264,13 +264,13 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "Proxmox LXC: TLS fingerprint",
     description:
-      "The SHA-256 fingerprint of the Proxmox API's certificate, from the setup guide's token file. bb-box then trusts that certificate alone. Leave empty to check the certificate against its CA.",
+      "Pins the Proxmox API's certificate, so bb-box trusts that certificate alone. Paste its SHA-256 fingerprint from the setup guide's token file. Leave it empty to check the certificate against its CA instead.",
     default: "",
   },
   [LXC_KEYS.caCertificate]: {
     type: "string",
     label: "Proxmox LXC: CA certificate",
-    description: "PEM certificate of the CA that signed the Proxmox API's certificate, when there is no TLS fingerprint. Leave empty for a publicly trusted one.",
+    description: "The CA that signed the Proxmox API's certificate, for when there is no TLS fingerprint. Paste it as a PEM certificate. Leave it empty when the API's certificate is publicly trusted.",
     experimental_multiline: true,
     default: "",
   },
@@ -283,7 +283,7 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [LXC_KEYS.pool]: {
     type: "string",
     label: "Proxmox LXC: resource pool",
-    description: "Boxes are made in this pool. The token needs rights on it.",
+    description: "The Proxmox resource pool boxes are made in. The token needs rights on it.",
     default: LXC_DEFAULTS.pool,
   },
   ...flavourSettings("linux"),
@@ -293,26 +293,26 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "number",
     label: "Proxmox LXC: desktops per GPU",
     description:
-      "A new linux-desktop box goes to the GPU with the fewest desktops, and is refused when every GPU runs this many. 0 means no limit.",
+      "The most Linux desktops each GPU runs at once. A new one goes to the GPU with the fewest, and is refused when every GPU runs this many. 0 means no limit.",
     default: 0,
   },
   [LXC_KEYS.vmidFirst]: {
     type: "number",
     label: "Proxmox LXC: first box VMID",
-    description: "Boxes take VMIDs from this range. Keep other guests out of it.",
+    description: "The first VMID boxes take. Keep other guests out of the range.",
     default: LXC_DEFAULTS.vmidFirst,
   },
-  [LXC_KEYS.vmidLast]: { type: "number", label: "Proxmox LXC: last box VMID", description: "The end of the range boxes take VMIDs from.", default: LXC_DEFAULTS.vmidLast },
+  [LXC_KEYS.vmidLast]: { type: "number", label: "Proxmox LXC: last box VMID", description: "The last VMID boxes take.", default: LXC_DEFAULTS.vmidLast },
   [LXC_KEYS.bridge]: {
     type: "string",
     label: "Proxmox LXC: network bridge",
-    description: "The bridge boxes attach to.",
+    description: "The Proxmox network bridge boxes attach to.",
     default: LXC_DEFAULTS.bridge,
   },
   [LXC_KEYS.subnet]: {
     type: "string",
     label: "Proxmox LXC: subnet",
-    description: "The bridge's subnet in CIDR form. Boxes get static addresses; there is no DHCP.",
+    description: "The bridge's subnet, in CIDR form such as 10.200.0.0/24. Boxes get static addresses from it; there is no DHCP.",
     default: LXC_DEFAULTS.subnet,
   },
   [LXC_KEYS.gateway]: {
@@ -324,14 +324,14 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [LXC_KEYS.addresses]: {
     type: "string",
     label: "Proxmox LXC: box addresses",
-    description: "The range bb-box hands out. The n-th VMID gets the n-th address. Leave empty to use the whole subnet except the gateway.",
+    description: "The range of addresses boxes get, inside the subnet. The n-th VMID gets the n-th address. Empty uses the whole subnet except the gateway.",
     default: LXC_DEFAULTS.addresses,
   },
   [LXC_KEYS.sshPrivateKey]: {
     type: "string",
     label: "Proxmox LXC: SSH private key",
     description:
-      "The unencrypted OpenSSH private key the templates were built with (the setup guide's BBBOX_SSH_KEY). Leave empty and bb-box makes one and shows its public key, which the templates must then accept.",
+      "The SSH key bb-box reaches boxes with. Paste the unencrypted OpenSSH private key the templates were built with, the setup guide's BBBOX_SSH_KEY. Leave it empty and bb-box makes one and shows its public key, which the templates must then accept.",
     secret: true,
   },
   [LXC_KEYS.sshUser]: {
@@ -343,13 +343,13 @@ export const LXC_SETTINGS: Record<string, PluginSettingDescriptor> = {
   [LXC_KEYS.reserveMemoryMiB]: {
     type: "number",
     label: "Proxmox LXC: memory kept free (MiB)",
-    description: "A new box is refused if the node would have less memory than this left.",
+    description: "Memory the node keeps for itself. A new box is refused if the node would have less than this left.",
     default: LXC_DEFAULTS.reserveMemoryMiB,
   },
   [LXC_KEYS.reserveDiskGiB]: {
     type: "number",
     label: "Proxmox LXC: disk kept free (GiB)",
-    description: "A new box is refused if the template's storage has less free space than this.",
+    description: "Disk the node keeps free. A new box is refused if the template's storage has less free space than this.",
     default: LXC_DEFAULTS.reserveDiskGiB,
   },
   ...replacedSizeSettings("linux"),
