@@ -1422,12 +1422,52 @@ and from the live checks:
   in the box, and a memory reserve no host has. Its images are plain images
   with no record, not bb-box's built Linux image, to keep a run to seconds.
 
-### Not done here
+### The lead's answers
 
-- A look in production in the owner's browser, after the lead deploys.
-- Open for the lead: whether an image that waited for room belongs in
-  Status; and whether a failed image wants a Try again on its row, which
-  needs an RPC for `bb box images build`.
+An image that waited for room stays out of Status. A failed image gets Try
+again, below.
+
+### Production look
+
+After the deploy, in the owner's browser (Helium, its own profile, a tab of
+my own through playwriter, closed after), at 1440 by 1000, looking only:
+the Images page listed 22 standard images on 6 backends, "0 of 22 images
+due.", each "Up to date" with its build; Projects' images said none is set;
+Status said "All 11 backends ready", with no image in the callout, as
+`images.progress` listed no failure; the Images row said "Rebuilt each
+night". Nothing was pressed. It found two things, fixed below: two
+backends both named Docker (one on a BB machine) read alike on the rows,
+and "Up to date, rebuilt 6 days ago" sat beside "5 days old".
+
+### Follow-up: Try again
+
+- A row whose last rebuild failed has Try again. It rebuilds that image
+  alone through a new RPC, `images.build`, as a run of one image: the same
+  lock, room check, bar and row states as Rebuild what is due, but it
+  takes the image due or not, and does not skip it for having failed with
+  nothing changed. It stays on a row the last run skipped, and is disabled
+  while a run goes on. A refusal says why under it. Status's fix says
+  "Fix the cause, then Try again on the Images page, or run bb box images
+  build …".
+- Two backends with one label are told apart by their host: "Linux on
+  Docker (pc-1)". An up-to-date image with a record says "Up to date",
+  its build giving its age once.
+- `bb box images list` says a failure's reason with one full stop.
+
+Tests: one more in `test/app.test.tsx` (Try again on the failed row alone,
+`images.build` sent, refused, disabled during a run, and kept after a
+skip), one for two backends with one label; two in
+`test/image-jobs.test.ts` (a one-image run, due or not and after a failure,
+refused while a run goes on and for an image not there; the CLI line).
+The live check gained "Try again rebuilds the failing image alone, which a
+run of what is due skips": one row offered it; Rebuild 2 images skipped
+the failing image; Try again rebuilt it alone, and it failed again for the
+same real reason. 15 of 15 passed 3 runs in a row on a fresh BB on the
+commit delivered ([Try again](067-settings-page/unit-8/live-try-again.png)).
+The first series found one fault in the page, Try again gone after a skip,
+and one in the run, the other images listed as skipped in a one-image
+run's lines; both are fixed and tested. By keys, Try again is the second
+stop on the page, with its ring.
 
 The same suite on the commit before unit 9 passed too (2,782 tests, 0
 fail; vitest 284). One full run before that, outside a git checkout, had two tests

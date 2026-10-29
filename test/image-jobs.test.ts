@@ -5,6 +5,7 @@ import type { Backend, BackendImages, Capacity, ImageBuild } from "../src/backen
 import type { Versions } from "../src/backends/versions.ts";
 import type { RefreshOptions, RefreshResult } from "../src/core/refresh.ts";
 import { AUTOMATION, ImageJobs } from "../src/plugin/images.ts";
+import { imageLine } from "../src/plugin/views.ts";
 import { MemoryStorage } from "./helpers.ts";
 
 const DAY = 24 * 60 * 60_000;
@@ -377,6 +378,29 @@ test("Rebuild now starts the night's refresh, shows it image by image with its b
     ],
   );
   assert.ok(changes.count >= 5, `the page heard of each change: ${changes.count}`);
+});
+
+test("Try again rebuilds one image alone, due or not, even when its last rebuild failed and nothing changed; it refuses an image that is not there and waits for a run going on", async () => {
+  const lxc = backend("proxmox-lxc", [build("9100", "linux", record(1)), build("9101", "linux-desktop-cpu", record(10))]);
+  const { job, refreshed } = jobs([lxc.backend], { fail: ["9101"] });
+  await job.refreshAll();
+  assert.deepEqual(refreshed, ["9101"]);
+  assert.equal((await job.refreshAll()).lines.find((line) => line.name === "proxmox-lxc/9101")?.outcome, "skipped", "a run skips it");
+  assert.deepEqual(await job.startOne("proxmox-lxc/9101"), { started: true, message: null });
+  assert.deepEqual(await job.startOne("proxmox-lxc/9100"), { started: false, message: "A rebuild has gone on since 02:01 UTC, one image at a time. Start another once it ends." }, "the clock moved a minute with the first rebuild");
+  const again = await job.refreshAll();
+  assert.deepEqual(again.lines.map((line) => [line.name, line.outcome]), [["proxmox-lxc/9101", "failed"]], "that image alone, tried again");
+  assert.deepEqual(refreshed, ["9101", "9101"]);
+  assert.deepEqual(job.progress()!.images.map((image) => [image.name, image.state]), [["proxmox-lxc/9101", "failed"]]);
+  assert.deepEqual(await job.startOne("proxmox-lxc/9100"), { started: true, message: null });
+  await job.refreshAll();
+  assert.deepEqual(refreshed, ["9101", "9101", "9100"], "one that is not due is rebuilt too");
+  assert.deepEqual(await job.startOne("proxmox-lxc/nope"), { started: false, message: "There is no image proxmox-lxc/nope on a backend that is on." });
+});
+
+test("bb box images list says a failed rebuild's reason with one full stop", () => {
+  const view = { name: "docker/linux", backend: "docker", build: build("linux", "linux", null), due: null, last: { at: NOW, ok: false, reason: "setup/docker/build.sh exited with 1.", build: null, seconds: 1, output: [], from: "x" } };
+  assert.equal(imageLine(view), "docker/linux (linux): no record; not due; last rebuild 2026-10-03 failed: setup/docker/build.sh exited with 1.");
 });
 
 test("the iOS image is due after 30 days or when the macOS image under it has a newer build, and comes after that macOS image (063, 3.2)", async () => {

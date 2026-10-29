@@ -120,13 +120,13 @@ const checks = {
     await page.getByText("2 of 2 images due.").waitFor();
     const before = await imageRow(page, WAITS).textContent();
     const lastRun = (await rpc("images.progress")).progress;
-    expect(lastRun ? before.includes("Waits:") : before.includes("Due: it has no record, so its age is not known"), `before the run the waiting image's row says ${before}`);
+    expect(before.includes("Due: it has no record, so its age is not known") || (lastRun && before.includes("Waits:")), `before the run the waiting image's row says ${before}`);
     const seen = new Set();
     const started = Date.now();
     await page.getByRole("button", { name: "Rebuild 2 images" }).click();
     await waitFor(async () => {
       const { progress } = await rpc("images.progress");
-      if (!progress || progress.started < started - 1_000) return false;
+      if (!progress || progress.started === (lastRun?.started ?? null)) return false;
       if (await page.getByRole("progressbar", { name: "Rebuilding images" }).count()) seen.add("bar");
       for (const name of [WAITS, FAILS]) {
         const text = (await imageRow(page, name).textContent().catch(() => "")) ?? "";
@@ -150,7 +150,7 @@ const checks = {
     const things = page.getByRole("region", { name: "Things that need you" });
     await things.getByText("The Linux image on Docker for the failing image did not rebuild").waitFor();
     const callout = await things.textContent();
-    expect(callout.includes(`Fix: Fix the cause, then run bb box images build ${FAILS}.`), `the callout says ${callout}`);
+    expect(callout.includes(`Fix: Fix the cause, then Try again on the Images page, or run bb box images build ${FAILS}.`), `the callout says ${callout}`);
     expect(!callout.includes("bb-live/waits"), "a waiting image is not a problem in Status");
     const option = await page.locator("#settings-option-images").textContent();
     expect(option.includes("1 failed"), `the Images row says ${option}`);
@@ -160,6 +160,40 @@ const checks = {
     expect(page.url().endsWith("#option/images"), `Open went to ${page.url()}`);
     await context.close();
     return `${seconds} s; seen on the page: ${[...seen].sort().join(", ")}; waits: "${waits.match(/Waits:[^·]*/)?.[0]?.trim()}"; fails: "${fails.match(/Failed:[^·]*/)?.[0]?.trim()}"; ${summary}; Status: the failing one with its fix, not the waiting one; the Images row: ${option.trim()}`;
+  },
+
+  async "Try again rebuilds the failing image alone, which a run of what is due skips"(run) {
+    const { page, context } = await tab();
+    const runAfter = async (before) => {
+      let images = [];
+      await waitFor(async () => {
+        const { progress } = await rpc("images.progress");
+        if (!progress || progress.started === before) return false;
+        images = progress.images;
+        return progress.ended !== null;
+      }, "the run to end", 240_000);
+      return images;
+    };
+    await open(page, "#option/images", "Images");
+    const again = page.getByRole("button", { name: "Try the Linux image on Docker for the failing image again" });
+    await again.waitFor();
+    const offered = await page.getByRole("button", { name: /^Try .* again$/ }).count();
+    expect(offered === 1, `${offered} rows offer Try again`);
+    const lastStarted = async () => (await rpc("images.progress")).progress?.started ?? null;
+    const beforeDue = await lastStarted();
+    await page.getByRole("button", { name: "Rebuild 2 images" }).click();
+    const due = await runAfter(beforeDue);
+    const skipped = due.find((image) => image.name === FAILS);
+    expect(skipped?.state === "skipped", `Rebuild 2 images did ${JSON.stringify(skipped)}`);
+    await page.getByText(/Skipped: its last rebuild failed/).waitFor();
+    const beforeAgain = await lastStarted();
+    await again.click();
+    const alone = await runAfter(beforeAgain);
+    expect(alone.length === 1 && alone[0].name === FAILS && alone[0].state === "failed", `Try again ran ${JSON.stringify(alone)}`);
+    await page.getByText("Failed: setup/docker/build.sh exited with 1.").waitFor();
+    if (run === 1) await page.screenshot({ path: join(shots, "live-try-again.png") });
+    await context.close();
+    return `one row offers it; Rebuild 2 images skipped the failing image ("${skipped.detail}"); Try again rebuilt it alone: ${alone[0].state}, ${alone[0].detail}`;
   },
 
   async "a project's image removed after its confirmation"(run) {

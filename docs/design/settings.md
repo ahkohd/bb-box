@@ -31,6 +31,7 @@ come back to the browser: the page shows whether each is set.
 | `images.list` | the standard images bb-box rebuilds, each with its build and age, why it is due, and what its last rebuild did |
 | `images.progress` | the rebuild going on, or the last one, image by image; and every failed rebuild: each standard image whose last rebuild failed, on a backend that is on, and each project image's failed build |
 | `images.refresh` | starts a rebuild of what is due, as the night does; one going on is not doubled |
+| `images.build(image)` | starts a rebuild of one standard image alone, due or not, as `bb box images build` does, with its progress; refused while a run goes on |
 | `images` | the projects' images, with their projects' names, their builds and their failed builds |
 
 The page refetches on bb-box's change signal.
@@ -343,7 +344,9 @@ overview, dimmed, until the person leaves BB Box's settings.
   it: Next, Rebuilding with its step, Rebuilt, Waits with why, Failed with
   why, Skipped, Not started. Otherwise it is its last rebuild's failure or
   wait, why it is due, or Up to date, with its build and age and its name
-  for `bb box images build`.
+  for `bb box images build`. A row whose last rebuild failed has Try again,
+  which rebuilds that image alone, even when nothing it is built from has
+  changed, through the same run as Rebuild what is due.
 - **Rebuild what is due**: "Rebuild 2 images", which starts the night's
   rebuild. While it runs, a bar shows how far it is, image by image and step
   by step, and it goes on if the person leaves. A run going on is not

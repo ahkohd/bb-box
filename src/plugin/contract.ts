@@ -272,6 +272,7 @@ export const contract = defineRpcContract({
   "images.progress": { input: z.null(), output: z.custom<Pick<ImagesStatus, "progress" | "running" | "failures">>() },
   /** Starts the night's refresh now; refused, with why, while a run goes on. */
   "images.refresh": { input: z.null(), output: z.custom<{ readonly started: boolean; readonly message: string | null }>() },
+  "images.build": { input: z.object({ image: z.string().min(1) }), output: z.custom<{ readonly started: boolean; readonly message: string | null }>() },
   "config.get": { input: z.null(), output: z.custom<ConfigState>() },
   /** Problems with a draft, saving nothing. `test`, a backend's ID, also runs its doctor against the draft, within 30 s. */
   "config.check": { input: z.object({ draft, test: z.string().min(1).optional() }), output: z.custom<CheckResult>() },

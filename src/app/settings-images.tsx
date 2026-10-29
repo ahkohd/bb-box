@@ -14,7 +14,7 @@ import { RebuildNow, RUN_TONE, isRunning, stateWords, type RunImage } from "./re
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { Card, FOCUS_RING, Group, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
 import type { PlainValue } from "./settings-paths.ts";
-import { backendLabel, kindName, plural, type StatusItem } from "./settings-status.ts";
+import { backendLabel, hostChip, kindName, plural, type StatusItem } from "./settings-status.ts";
 
 type StandardImage = ImagesStatus["images"][number];
 type ImagesProgress = Pick<ImagesStatus, "progress" | "running" | "failures">;
@@ -50,7 +50,11 @@ function kindWords(state: ConfigState, kind: string | null): string | null {
 
 function backendWords(state: ConfigState, id: string): string {
   const config = state.document.backends.find((backend) => backend.id === id);
-  return config ? backendLabel(state, config) : id;
+  if (!config) return id;
+  const label = backendLabel(state, config);
+  const sharesItsLabel = state.document.backends.some((other) => other.id !== id && backendLabel(state, other) === label);
+  const chip = sharesItsLabel ? hostChip(config, label) : null;
+  return chip ? `${label} (${chip})` : label;
 }
 
 function bakeWords(value: PlainValue): string {
@@ -76,7 +80,7 @@ function failureItem(state: ConfigState, failure: ImageFailure, now: number): St
     tone: "warn",
     title: `${kind ? `The ${kind} image` : `The image ${failure.name}`} on ${backend} did not rebuild`,
     detail: `Failed ${when}: ${failure.reason} New boxes start from its last build meanwhile.`,
-    fix: `Fix the cause, then run bb box images build ${failure.name}.`,
+    fix: `Fix the cause, then Try again on the Images page, or run bb box images build ${failure.name}.`,
     open: { page: "option", id: "images" },
   };
 }
@@ -114,13 +118,52 @@ function rowState(row: StandardRow, now: number): { readonly tone: Tone; readonl
   if (outcome?.state === "failed") return { tone: "bad", words: `Its last rebuild failed ${relativeTime(outcome.at, now)}: ${outcome.reason ?? "no reason given"}`, saysWhyDue: false };
   if (outcome?.state === "waiting") return { tone: "warn", words: `Its last rebuild waited ${relativeTime(outcome.at, now)}: ${outcome.reason ?? "no room"}`, saysWhyDue: false };
   if (image?.due) return { tone: "warn", words: `Due: ${image.due}`, saysWhyDue: true };
-  return { tone: "ok", words: outcome?.state === "refreshed" ? `Up to date, rebuilt ${relativeTime(outcome.at, now)}` : "Up to date", saysWhyDue: false };
+  const ageUnknown = !image || image.built === "no record";
+  return { tone: "ok", words: outcome?.state === "refreshed" && ageUnknown ? `Up to date, rebuilt ${relativeTime(outcome.at, now)}` : "Up to date", saysWhyDue: false };
 }
 
-function StandardImageRow({ row, now }: { row: StandardRow; now: number }) {
+function failedLast(row: StandardRow): boolean {
+  if (row.run?.state === "refreshed") return false;
+  return row.run?.state === "failed" || row.image?.outcome?.state === "failed";
+}
+
+function TryAgain({ name, label, running, onStarted }: { name: string; label: string; running: boolean; onStarted: () => void }) {
+  const rpc = useRpc<Contract>();
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const start = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      const answer = await rpc.call("images.build", { image: name });
+      if (answer.started) onStarted();
+      else setProblem(answer.message);
+    } catch (caught) {
+      setProblem(message(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button type="button" variant="outline" size="sm" className="h-7 shrink-0" aria-label={`Try ${label} again`} disabled={busy || running} onClick={() => void start()}>
+        {busy ? <Icon name="Loading" className="animate-spin" aria-hidden /> : <Icon name="ArrowReloadHorizontal" aria-hidden />}
+        Try again
+      </Button>
+      {problem ? (
+        <p role="alert" className="basis-full text-xs leading-snug text-destructive-text">
+          {problem}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+function StandardImageRow({ row, now, running, onStarted }: { row: StandardRow; now: number; running: boolean; onStarted: () => void }) {
   const { state } = useSettings();
   const { tone, words, saysWhyDue } = rowState(row, now);
   const kind = kindWords(state, row.kind) ?? row.kind;
+  const backend = backendWords(state, row.backend);
   const items: ReactNode[] = [];
   if (row.image?.built) items.push(<span key="built">{row.image.built}</span>);
   if (row.image?.due && !saysWhyDue) items.push(<span key="due">due: {row.image.due}</span>);
@@ -130,12 +173,15 @@ function StandardImageRow({ row, now }: { row: StandardRow; now: number }) {
     </code>,
   );
   return (
-    <div className="px-4 py-2.5" data-image-row={row.name}>
-      <p className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-sm text-foreground">
-        <span>{kind}</span>
-        <span className="text-xs text-muted-foreground">on {backendWords(state, row.backend)}</span>
-      </p>
-      <StateLine tone={tone} words={words} items={items} className="mt-0.5 [&_span]:break-words" />
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5" data-image-row={row.name}>
+      <div className="min-w-0 flex-1 basis-60">
+        <p className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-sm text-foreground">
+          <span>{kind}</span>
+          <span className="text-xs text-muted-foreground">on {backend}</span>
+        </p>
+        <StateLine tone={tone} words={words} items={items} className="mt-0.5 [&_span]:break-words" />
+      </div>
+      {failedLast(row) && row.image ? <TryAgain name={row.name} label={`the ${kind} image on ${backend}`} running={running} onStarted={onStarted} /> : null}
     </div>
   );
 }
@@ -182,7 +228,7 @@ function StandardImages({ nightly }: { nightly: ReactNode }) {
         <Rows>
           {nightly}
           {rows.map((row) => (
-            <StandardImageRow key={row.name} row={row} now={now} />
+            <StandardImageRow key={row.name} row={row} now={now} running={isRunning(progress)} onStarted={() => setAsked((count) => count + 1)} />
           ))}
           {list !== null && rows.length ? <RebuildNow progress={progress} due={due} onStarted={() => setAsked((count) => count + 1)} /> : null}
         </Rows>

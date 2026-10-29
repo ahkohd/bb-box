@@ -548,6 +548,10 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       changes.push("images.refresh");
       return options.refusal ? { started: false, message: options.refusal } : { started: true, message: null };
     },
+    "images.build": ({ image }) => {
+      changes.push(`images.build ${image}`);
+      return options.refusal ? { started: false, message: options.refusal } : { started: true, message: null };
+    },
     "desktop.sharp": ({ on }) => {
       changes.push(`desktop.sharp ${on}`);
       return { error: null };
@@ -2461,13 +2465,50 @@ test("the Images page lists every standard image with its build, why it is due a
   expect(row("fake/linux").getByText("Due: it is 10 days old, past its 7-day interval")).toBeTruthy();
   expect(row("fake/linux").getByText("on Fake host")).toBeTruthy();
   expect(row("fake/linux").getByText("build.2026-10-01, 10 days old")).toBeTruthy();
-  expect(row("fake/desktop").getByText("Up to date, rebuilt yesterday")).toBeTruthy();
+  expect(row("fake/desktop").getByText("Up to date")).toBeTruthy();
+  expect(row("fake/desktop").getByText("build.2026-10-10, 1 day old")).toBeTruthy();
   expect(row("fake/desktop").getByText("Linux desktop")).toBeTruthy();
   expect(row("fake/old").getByText("Its last rebuild failed yesterday: the trial box did not answer.")).toBeTruthy();
   expect(row("fake/old").getByText("due: it fails the doctor")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Rebuild 2 images" }));
   await waitFor(() => expect(changes).toContain("images.refresh"));
   expect(await slot.findByText("A rebuild has gone on since 02:00 UTC, one image at a time. Start another once it ends.")).toBeTruthy();
+});
+
+test("a standard image whose last rebuild failed has Try again on its row, which rebuilds that image alone; a refusal says why, and a run going on disables it", async () => {
+  const images: ImagesStatus["images"] = [
+    { name: "fake/old", kind: "linux", backend: "fake", built: "build.2026-09-01, 40 days old", due: "it fails the doctor", last: null, outcome: { state: "failed", at: Date.now() - 3_600_000, reason: "the trial box did not answer." } },
+    { name: "fake/linux", kind: "linux", backend: "fake", built: "build.2026-10-01, 10 days old", due: "it is 10 days old, past its 7-day interval", last: null, outcome: { state: "waiting", at: Date.now() - 3_600_000, reason: "no room" } },
+  ];
+  const { handlers, changes } = server([], { rebuildable: images });
+  const slot = settings(handlers, "#option/images");
+  const again = await slot.findByRole("button", { name: "Try the Linux image on Fake host again" });
+  expect(slot.getAllByRole("button", { name: /^Try .* again$/ })).toHaveLength(1);
+  fireEvent.click(again);
+  await waitFor(() => expect(changes).toEqual(["images.build fake/old"]));
+  cleanup();
+  const refused = server([], { rebuildable: images, refusal: "A rebuild has gone on since 02:00 UTC, one image at a time. Start another once it ends." });
+  const page = settings(refused.handlers, "#option/images");
+  fireEvent.click(await page.findByRole("button", { name: "Try the Linux image on Fake host again" }));
+  expect(await page.findByText("A rebuild has gone on since 02:00 UTC, one image at a time. Start another once it ends.")).toBeTruthy();
+  cleanup();
+  const progress: ImagesStatus["progress"] = { started: Date.now() - 5_000, ended: null, only: null, images: [{ name: "fake/linux", kind: "linux", state: "refreshing", detail: null }] };
+  const busy = settings(server([], { rebuildable: images, progress }).handlers, "#option/images");
+  expect(((await busy.findByRole("button", { name: "Try the Linux image on Fake host again" })) as HTMLButtonElement).disabled).toBe(true);
+  cleanup();
+  const skipped: ImagesStatus["progress"] = { started: Date.now() - 60_000, ended: Date.now() - 30_000, only: null, images: [{ name: "fake/old", kind: "linux", state: "skipped", detail: "its last rebuild failed and nothing it is built from has changed; bb box images build fake/old tries again" }] };
+  const after = settings(server([], { rebuildable: images, progress: skipped }).handlers, "#option/images");
+  expect(await after.findByText(/^Skipped: its last rebuild failed/)).toBeTruthy();
+  expect(((await after.findByRole("button", { name: "Try the Linux image on Fake host again" })) as HTMLButtonElement).disabled).toBe(false);
+});
+
+test("two backends with one label are told apart on the Images page by their host", async () => {
+  applied = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: true, fields: { token: { set: true, version: 1 } } }, { id: "fake:second", type: "fake", enabled: true, fields: { token: { set: true, version: 1 } } }], kinds: {}, general: {} };
+  const listed = (name: string, backend: string): ImagesStatus["images"][number] => ({ name, kind: "linux", backend, built: "build.2026-10-11, 2 days old", due: null, last: null, outcome: null });
+  const slot = settings(server([], { rebuildable: [listed("fake/linux", "fake"), listed("fake:second/linux", "fake:second")] }).handlers, "#option/images");
+  const row = (name: string) => within(document.querySelector<HTMLElement>(`[data-image-row="${name}"]`)!);
+  expect(await slot.findByText("on Fake host (second)")).toBeTruthy();
+  expect(row("fake/linux").getByText("on Fake host")).toBeTruthy();
 });
 
 test("after a run the Images page says what it did to each image: rebuilt, waited for room, failed with why, skipped or not started", async () => {
@@ -2605,7 +2646,7 @@ test("a failed rebuild and a project image's failed build are in the overview's 
   const things = within(await slot.findByRole("region", { name: "Things that need you" }));
   expect(await things.findByText("The Linux image on Fake host did not rebuild")).toBeTruthy();
   expect(things.getByText("Failed 1 hour ago: the trial box did not answer. New boxes start from its last build meanwhile.")).toBeTruthy();
-  expect(things.getByText("Fix: Fix the cause, then run bb box images build fake/9100.")).toBeTruthy();
+  expect(things.getByText("Fix: Fix the cause, then Try again on the Images page, or run bb box images build fake/9100.")).toBeTruthy();
   expect(things.getByText("The image rust-tools did not build for Linux desktop on Fake host")).toBeTruthy();
   expect(things.getByText("Fix: Fix its script, then set the image again with bb box image set rust-tools.")).toBeTruthy();
   expect(things.getByText("5 things need you")).toBeTruthy();
