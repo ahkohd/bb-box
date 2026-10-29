@@ -1827,7 +1827,13 @@ test("first run in settings leads until a backend that is on makes a kind: Use D
 
   const allOff: ConfigDocument = { schema: 1, revision: 9, backends: [{ id: "fake", type: "fake", enabled: false, fields: { url: "https://192.0.2.10:8006", token: { set: true }, key: { set: true } } }], kinds: {}, general: {} };
   const established = settings(server([], { setups: [setup()], config: { document: allOff, setupDone: { at: 1_790_000_000_000, revision: 4 } } }).handlers);
-  expect(await established.findByText("Every backend is off")).toBeTruthy();
+  const callout = await established.findByRole("region", { name: "Things that need you" });
+  expect(within(callout).getByText("Every backend is off")).toBeTruthy();
+  expect(within(callout).getByText("Threads get no boxes until one is on. Boxes already made keep working.")).toBeTruthy();
+  expect(within(callout).getByText("Fix: Turn a backend on with its switch below.")).toBeTruthy();
+  fireEvent.click(within(callout).getByRole("button", { name: "Show the backends' switches" }));
+  expect(document.activeElement).toBe(established.getByRole("switch", { name: "Fake host: takes new boxes" }));
+  expect(window.location.hash).toBe("");
   expect(established.queryByRole("heading", { name: "Set up BB Box" })).toBeNull();
   expect(established.queryByText("Use Docker on this machine")).toBeNull();
   expect(established.getByText("Kinds")).toBeTruthy();
@@ -2384,20 +2390,21 @@ test("Add backend groups every driver by where boxes run, with what it makes and
 
 test("a backend type that is added already opens it from Add backend; one that allows several offers Add another, under the next free ID (067 unit 7)", async () => {
   const drivers = configState({}).drivers.map((driver) => (driver.type === "other" ? { ...driver, several: true } : driver));
-  const document: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: { set: true }, key: { set: true } } }, { id: "other", type: "other", enabled: true, fields: { machines: "a 192.0.2.5 linux" } }], kinds: {}, general: {} };
+  const document: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: { set: true }, key: { set: true } } }, { id: "other", type: "other", enabled: true, fields: { machines: "a 192.0.2.5 linux" } }, { id: "other:2", type: "other", enabled: true, fields: { machines: "c 192.0.2.7 linux" } }], kinds: {}, general: {} };
   const { handlers, changes } = server([], { config: { drivers, document } });
   const slot = settings(handlers, "#add");
   expect((await slot.findByRole("button", { name: /^Fake host/ })).textContent).toContain("Added: open it");
   const other = slot.getByRole("button", { name: /^Other pool/ });
-  expect(other.textContent).toContain("1 added");
+  expect(other.textContent).toContain("2 added");
+  expect(other.textContent).not.toContain("addeds");
   expect(other.textContent).toContain("Add another");
   fireEvent.click(other);
   fireEvent.change(await slot.findByRole("textbox", { name: "Machines" }), { target: { value: "b 192.0.2.6 linux" } });
   fireEvent.click(slot.getByRole("button", { name: "Save, keep it off" }));
   await waitFor(() => expect(changes.filter((change) => change.startsWith("apply"))).toHaveLength(1));
   const apply = changes.find((change) => change.startsWith("apply"))!;
-  expect(JSON.parse(apply.slice(apply.indexOf("{"))).backends.map((backend: { id: string; enabled: boolean }) => [backend.id, backend.enabled])).toEqual([["fake", true], ["other", true], ["other:2", false]]);
-  await waitFor(() => expect(window.location.hash).toBe("#backend/other%3A2"));
+  expect(JSON.parse(apply.slice(apply.indexOf("{"))).backends.map((backend: { id: string; enabled: boolean }) => [backend.id, backend.enabled])).toEqual([["fake", true], ["other", true], ["other:2", true], ["other:3", false]]);
+  await waitFor(() => expect(window.location.hash).toBe("#backend/other%3A3"));
 });
 
 test("a kind's page saves its sizes, default size, largest size, warm counts and spares together, as changes from the shipped sizes, and Enter saves", async () => {

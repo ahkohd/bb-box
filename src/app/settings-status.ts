@@ -265,10 +265,15 @@ export interface StatusItem {
   readonly detail: string;
   readonly fix: string | null;
   readonly open: SettingsView;
+  readonly showSwitch?: string;
 }
 
 export function statusItems(state: ConfigState, now: number, machines: MachineHosts = null): StatusItem[] {
   const items: StatusItem[] = [];
+  const first = state.document.backends[0];
+  if (first && !state.document.backends.some((backend) => backend.enabled)) {
+    items.push({ key: "all-off", tone: "bad", title: "Every backend is off", detail: "Threads get no boxes until one is on. Boxes already made keep working.", fix: "Turn a backend on with its switch below.", open: { page: "overview" }, showSwitch: first.id });
+  }
   for (const backend of state.document.backends) {
     const health = backendHealth(state, backend, now, machines);
     const label = backendLabel(state, backend);

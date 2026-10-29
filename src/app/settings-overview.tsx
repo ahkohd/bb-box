@@ -138,9 +138,15 @@ function Status({ machines }: { machines: Machines }) {
                   {item.detail ? <p className="text-muted-foreground">{item.detail}</p> : null}
                   {item.fix ? <p className="mt-0.5 text-foreground">Fix: {item.fix}</p> : null}
                 </div>
-                <Button type="button" variant="outline" size="sm" className="h-7 shrink-0" aria-label={`Open ${item.title}`} data-row-key={`status-${item.key}`} onClick={() => nav.go(item.open, `status-${item.key}`)}>
-                  Open
-                </Button>
+                {item.showSwitch ? (
+                  <Button type="button" variant="outline" size="sm" className="h-7 shrink-0" aria-label="Show the backends' switches" data-row-key={`status-${item.key}`} onClick={() => showBackendSwitch(item.showSwitch!)}>
+                    Show
+                  </Button>
+                ) : (
+                  <Button type="button" variant="outline" size="sm" className="h-7 shrink-0" aria-label={`Open ${item.title}`} data-row-key={`status-${item.key}`} onClick={() => nav.go(item.open, `status-${item.key}`)}>
+                    Open
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
@@ -148,6 +154,12 @@ function Status({ machines }: { machines: Machines }) {
       ) : null}
     </section>
   );
+}
+
+function showBackendSwitch(id: string): void {
+  const toggle = document.querySelector<HTMLElement>(`[data-backend-switch="${CSS.escape(id)}"]`);
+  toggle?.scrollIntoView?.({ block: "center" });
+  toggle?.focus({ preventScroll: true });
 }
 
 function BackendRow({ config, showAge, machines }: { config: BackendConfig; showAge: boolean; machines: Machines }) {
@@ -189,6 +201,7 @@ function BackendRow({ config, showAge, machines }: { config: BackendConfig; show
           <RowControl>
             <Switch
               aria-label={`${label}: takes new boxes`}
+              data-backend-switch={config.id}
               aria-describedby={stateId}
               checked={pending ?? config.enabled}
               aria-disabled={instant.pending !== null || undefined}

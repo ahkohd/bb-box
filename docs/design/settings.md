@@ -100,6 +100,9 @@ In order:
    on BB's server "Docker on this machine".
 2. **Status**: one line that is never more certain than the checks, and a
    callout of everything that needs the person, each with its fix and Open.
+   With every backend off, the callout's first item is "Every backend is
+   off", with "Turn a backend on with its switch below" and Show, which
+   moves focus to the first backend's switch.
 3. **Backends**: one row each, with its icon, name, a host chip, a "BB
    machine" chip for Docker or microsandbox on one of your BB machines, one
    state line, and the "takes new boxes" switch. The host chip is the host
