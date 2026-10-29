@@ -147,3 +147,100 @@ test("the overlay remembers the server's switch for the next load", async () => 
   renderSlot(overlay, {} as never, { rpc: off, pluginId: "bb-box" });
   await waitFor(() => expect(localStorage.getItem("bb-box:monitor:on")).toBe("off"));
 });
+
+const PORT_TOP = 100;
+const PORT_BOTTOM = 500;
+const HEADER_BOTTOM = 136;
+const CPU_TOP_UNSCROLLED = 300;
+const CPU_HEIGHT = 120;
+
+function rect(top: number, bottom: number): DOMRect {
+  return { top, bottom, left: 0, right: 280, x: 0, y: top, width: 280, height: bottom - top, toJSON: () => ({}) } as DOMRect;
+}
+
+function pause(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function scrolledHud() {
+  const geometry = { scrollTop: 0 };
+  const rects = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.querySelector(":scope > [data-bb-box-monitor-shell]")) return rect(PORT_TOP, PORT_BOTTOM);
+    if (this.hasAttribute("data-bb-box-monitor-header")) return rect(PORT_TOP, HEADER_BOTTOM);
+    if (this.getAttribute("aria-label") === "CPU") {
+      const top = CPU_TOP_UNSCROLLED - geometry.scrollTop;
+      return rect(top, top + CPU_HEIGHT);
+    }
+    return rect(0, 0);
+  });
+  const viewportWidth = vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(1280);
+  const viewportHeight = vi.spyOn(document.documentElement, "clientHeight", "get").mockReturnValue(800);
+  renderSlot(footer!, { dismiss: vi.fn() }, { rpc: handlers({}), pluginId: "bb-box" });
+  await screen.findByText("load 0.50");
+  const port = document.querySelector("[data-bb-box-monitor-shell]")!.parentElement!;
+  port.style.overflowY = "auto";
+  const cpu = screen.getByRole("region", { name: "CPU" });
+  const scrollTo = (scrollTop: number) => {
+    geometry.scrollTop = scrollTop;
+    fireEvent.scroll(port);
+  };
+  const restore = () => {
+    rects.mockRestore();
+    viewportWidth.mockRestore();
+    viewportHeight.mockRestore();
+  };
+  return { cpu, scrollTo, restore };
+}
+
+function cpuTooltip() {
+  return screen.queryAllByRole("tooltip", { hidden: true }).find((tooltip) => tooltip.textContent?.includes("AMD EPYC 9654")) ?? null;
+}
+
+function tooltipPlace(): { side: string | null; top: number | null } {
+  const wrapper = document.querySelector<HTMLElement>("[data-radix-popper-content-wrapper]");
+  const match = wrapper?.style.transform.match(/translate\(\s*[-\d.]+px,\s*([-\d.]+)px\)/);
+  return { side: wrapper?.firstElementChild?.getAttribute("data-side") ?? null, top: match ? Number(match[1]) : null };
+}
+
+test("F-24: a scroll in the panel closes a section's tooltip at once, and it shows again only when the pointer rests after the scroll", async () => {
+  const { cpu, scrollTo, restore } = await scrolledHud();
+  try {
+    fireEvent.pointerMove(cpu);
+    await waitFor(() => expect(cpuTooltip()).toBeTruthy());
+
+    scrollTo(40);
+    expect(cpuTooltip()).toBeNull();
+
+    for (const scrollTop of [80, 120, 160, 200]) {
+      fireEvent.pointerMove(cpu);
+      await pause(100);
+      scrollTo(scrollTop);
+      expect(cpuTooltip()).toBeNull();
+    }
+
+    await waitFor(() => expect(cpuTooltip()).toBeTruthy(), { timeout: 1500 });
+    await waitFor(() => expect(tooltipPlace()).toEqual({ side: "right", top: HEADER_BOTTOM }));
+  } finally {
+    restore();
+  }
+});
+
+test("F-24: a section's tooltip does not show while its section has scrolled out of the panel's visible area", async () => {
+  const { cpu, scrollTo, restore } = await scrolledHud();
+  try {
+    scrollTo(CPU_TOP_UNSCROLLED + CPU_HEIGHT - HEADER_BOTTOM);
+    await pause(200);
+    fireEvent.pointerMove(cpu);
+    await pause(700);
+    expect(cpuTooltip()).toBeNull();
+
+    scrollTo(0);
+    await pause(200);
+    fireEvent.pointerLeave(cpu);
+    fireEvent.pointerMove(cpu);
+    await waitFor(() => expect(cpuTooltip()).toBeTruthy());
+    await waitFor(() => expect(tooltipPlace()).toEqual({ side: "right", top: CPU_TOP_UNSCROLLED }));
+  } finally {
+    restore();
+  }
+});
