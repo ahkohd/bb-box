@@ -88,6 +88,15 @@ export interface ImageState {
   readonly output: readonly string[];
   /** What it was built from: a failed image is not tried again until this changes (049). */
   readonly from: string;
+  readonly kind?: string;
+}
+
+export interface StandardImageFailure {
+  readonly name: string;
+  readonly backend: string;
+  readonly kind: string | null;
+  readonly at: number;
+  readonly reason: string;
 }
 
 export interface ImageView {
@@ -236,6 +245,20 @@ export class ImageJobs {
     if (osOf(build.kind) === "windows") return createHash("sha256").update(JSON.stringify({ pins, month: new Date(this.#now()).toISOString().slice(0, 7), current: build.build })).digest("hex").slice(0, 16);
     const tools = versions?.tools.filter((tool) => tool.arch === (build.record?.arch === "arm64" ? "arm64" : "x86_64")).map((tool) => `${tool.name}@${tool.version}`) ?? [];
     return createHash("sha256").update(JSON.stringify({ pins, app, tools, current: build.build })).digest("hex").slice(0, 16);
+  }
+
+  async failures(): Promise<StandardImageFailure[]> {
+    const on = new Set(this.#deps.backends().map((backend) => backend.id));
+    const failures: StandardImageFailure[] = [];
+    for (const entry of await this.#deps.storage.list(STATE)) {
+      const name = entry.slice(STATE.length);
+      const backend = name.slice(0, name.indexOf("/"));
+      if (!on.has(backend)) continue;
+      const state = await this.#deps.storage.get<ImageState>(entry);
+      if (!state || state.ok || state.waiting) continue;
+      failures.push({ name, backend, kind: state.kind ?? null, at: state.at, reason: state.reason ?? "no reason given" });
+    }
+    return failures.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name));
   }
 
   /** Where the run going on is, image by image, or the last run of this bb-box's life; null before any. */
@@ -407,7 +430,7 @@ export class ImageJobs {
           const room = await backend.capacity(view.build.kind, size, boxless ? [] : [{ kind: view.build.kind, size }], signal).catch(() => null);
           if (room && !room.ok) {
             const reason = `no room for its ${boxless ? "trial box" : "build and trial boxes"}: ${room.message ?? "the host is full"}`;
-            await this.#record(view.name, { at: this.#now(), ok: false, waiting: true, reason, build: view.build.build, seconds: 0, output: [], from });
+            await this.#record(view.name, { at: this.#now(), ok: false, waiting: true, reason, build: view.build.build, seconds: 0, output: [], from, kind: view.build.kind });
             note({ name: view.name, outcome: "waiting", detail: reason });
             continue;
           }
@@ -415,7 +438,7 @@ export class ImageJobs {
           const short = await backend.images?.room?.(view.build, signal).catch(() => null);
           if (short) {
             const reason = `no room for its build: ${short}`;
-            await this.#record(view.name, { at: this.#now(), ok: false, waiting: true, reason, build: view.build.build, seconds: 0, output: [], from });
+            await this.#record(view.name, { at: this.#now(), ok: false, waiting: true, reason, build: view.build.build, seconds: 0, output: [], from, kind: view.build.kind });
             note({ name: view.name, outcome: "waiting", detail: reason });
             continue;
           }
@@ -480,7 +503,7 @@ export class ImageJobs {
     });
     // A try changes nothing, so it records nothing.
     if (options.replace) {
-      await this.#record(view.name, { at: this.#now(), ok: result.ok, reason: result.reason, build: result.build?.build ?? view.build.build, seconds: result.seconds, output: result.output, from: options.from });
+      await this.#record(view.name, { at: this.#now(), ok: result.ok, reason: result.reason, build: result.build?.build ?? view.build.build, seconds: result.seconds, output: result.output, from: options.from, kind: view.build.kind });
     }
     return result;
   }

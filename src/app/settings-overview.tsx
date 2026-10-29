@@ -34,6 +34,7 @@ import {
   statusLine,
 } from "./settings-status.ts";
 import { backendPart } from "./settings-backend-fields.tsx";
+import { failedImagesWords, imageStatusItems, useImagesProgress } from "./settings-images.tsx";
 
 const keptHere = new Set<string>();
 let monitorChangedThisLoad = false;
@@ -73,7 +74,8 @@ function Status() {
   const [checkNote, setCheckNote] = useState<string | null>(null);
   const now = Date.now();
   const line = statusLine(state, now, checking);
-  const items = statusItems(state, now);
+  const images = useImagesProgress();
+  const items = [...statusItems(state, now), ...imageStatusItems(state, images, now)];
   const checkAll = async () => {
     const on = state.document.backends.filter((backend) => backend.enabled);
     setChecking(on.length);
@@ -325,13 +327,14 @@ function Options() {
   const defaultInfo = state.kinds.find((kind) => kind.id === general.defaultKind);
   const files = state.document.general.files?.length ?? 0;
   const projectImages = Object.keys(state.document.images ?? {}).length;
+  const failedImages = failedImagesWords(useImagesProgress());
   const monitorKey = switchKey.monitor("enabled");
   const monitorPending = instant.pendingValue<boolean>(monitorKey);
   const monitorOn = monitorPending ?? monitor.enabled;
   const go = (id: string) => nav.go({ page: "option", id }, `option-${id}`);
-  const rows: { id: string; icon: ReactNode; title: string; value: string }[] = [
+  const rows: { id: string; icon: ReactNode; title: string; value: string; tone?: "warn" }[] = [
     { id: "boxes", icon: <BoxGlyph />, title: "Boxes", value: [`${defaultInfo ? kindName(state.kinds, defaultInfo) : general.defaultKind} by default`, general.boxesPerThread ? `${general.boxesPerThread} per thread` : "no limit per thread", plural(files, "file")].join(" · ") },
-    { id: "images", icon: <OptionIcon icon={Image01Icon} />, title: "Images", value: [general.nightlyImages ? "Rebuilt each night" : "Not rebuilt on a schedule", ...(projectImages ? [plural(projectImages, "project image")] : [])].join(" · ") },
+    { id: "images", icon: <OptionIcon icon={Image01Icon} />, title: "Images", value: [general.nightlyImages ? "Rebuilt each night" : "Not rebuilt on a schedule", ...(failedImages ? [failedImages] : []), ...(projectImages ? [plural(projectImages, "project image")] : [])].join(" · "), ...(failedImages ? { tone: "warn" as const } : {}) },
     { id: "devices", icon: <OptionIcon icon={SmartPhone01Icon} />, title: "Devices", value: `iOS video: ${iosEncoderWords(general.iosEncoder)}` },
     { id: "network", icon: <OptionIcon icon={Globe02Icon} />, title: "Network", value: general.tailnet?.mode === "oauth" ? "Machines join your tailnet" : "No tailnet" },
   ];
@@ -340,7 +343,7 @@ function Options() {
       <Card>
         <Rows>
           {rows.map((row) => (
-            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} chips={unsavedChip(row.id)} value={row.value} onClick={() => go(row.id)} />
+            <NavRow key={row.id} rowKey={`option-${row.id}`} valueId={`settings-option-${row.id}`} icon={row.icon} title={row.title} chips={unsavedChip(row.id)} value={row.value} tone={row.tone} onClick={() => go(row.id)} />
           ))}
           <div>
             <NavRow

@@ -1,9 +1,9 @@
 import { createContext, useContext } from "react";
-import type { BackendConfig, ConfigDocument, Problem } from "../core/document.ts";
+import type { BackendConfig, ConfigDocument, ImageBake, Problem } from "../core/document.ts";
 import type { ApplyResult, ConfigState } from "../plugin/contract.ts";
 import type { DockerHostView } from "../plugin/docker-hosts.ts";
 import { submittedWrite, type InstantWrite, type Operation } from "./settings-drafts.ts";
-import { backendPath, candidateOf, fileIsStored, filePath, hostPath, plain, storedAt, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
+import { backendPath, candidateOf, fileIsStored, filePath, hostPath, imageBakePath, imagePath, plain, storedAt, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
 import type { Instant } from "./settings-saving.tsx";
 import type { SettingsNav } from "./settings-nav.ts";
 import { machineHostId } from "./settings-status.ts";
@@ -44,6 +44,8 @@ export interface SettingsWrites {
   monitor(state: ConfigState, key: MonitorAtOnce, value: boolean, what: string): InstantWrite;
   dockerHost(host: DockerHostView, on: boolean): InstantWrite;
   removeFile(state: ConfigState, path: string): InstantWrite;
+  imageBake(state: ConfigState, name: string, bake: ImageBake, say: (value: PlainValue) => string): InstantWrite;
+  removeImage(state: ConfigState, name: string): InstantWrite;
 }
 
 export const switchKey = {
@@ -56,6 +58,8 @@ export const switchKey = {
   monitor: (key: string) => `monitor:${key}`,
   dockerHost: (hostId: string) => `docker-host:${hostId}`,
   removeFile: (path: string) => `remove-file:${path}`,
+  imageBake: (name: string) => `image-bake:${name}`,
+  removeImage: (name: string) => `remove-image:${name}`,
 };
 
 function onOff(value: PlainValue): string {
@@ -132,6 +136,16 @@ export function settingsWrites(rpc: { call: (...args: never[]) => Promise<unknow
       const at = filePath(path);
       return {
         ...pathWrite(state, switchKey.removeFile(path), `~/${path}`, at, { kind: "removed" }, true, (latest) => (fileIsStored(latest, at) ? "still here" : "removed")),
+        undone: "removed",
+      };
+    },
+    imageBake(state, name, bake, say) {
+      const path = imageBakePath(name);
+      return pathWrite(state, switchKey.imageBake(name), `When ${name} is built ahead`, path, plain(bake), bake, settingWords(path, say));
+    },
+    removeImage(state, name) {
+      return {
+        ...pathWrite(state, switchKey.removeImage(name), `The image ${name}`, imagePath(name), { kind: "removed" }, true, (latest) => (latest.document.images?.[name] ? "still here" : "removed")),
         undone: "removed",
       };
     },

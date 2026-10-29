@@ -453,6 +453,22 @@ test("box_image_set and bb box image set, list, show and remove keep a project's
   assert.equal((await harness.behavior.runCli(["image", "remove", "rust-tools"])).exitCode, 1);
 });
 
+test("a project's image removed by config.apply, as the settings page removes it, loses its builds, and its failed build leaves the page's Status (049, 067)", async (t) => {
+  const { bb, app, harness, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const file = join(world.root, "setup.sh");
+  writeFileSync(file, "#!/bin/bash\necho rust\n");
+  assert.equal((await harness.behavior.runCli(["image", "set", "rust-tools", "--kinds", "linux", "--script-file", file, "--project", PROJECT])).exitCode, 0);
+  await bb.storage.kv.set("images/bake/rust-tools/fake/linux/failed", { at: 1, reason: "It exited with 100.", output: [], script: "x", base: null });
+  const failures = async () => ((await harness.behavior.callRpc("images.progress", null)) as { failures: unknown[] }).failures;
+  assert.deepEqual(await failures(), [{ of: "project", name: "rust-tools", kind: "linux", backend: "fake", at: 1, reason: "It exited with 100." }]);
+  const { kinds: _kinds, images: _images, ...rest } = app.configuration.exported();
+  const applied = (await harness.behavior.callRpc("config.apply", { draft: rest, revision: rest.revision })) as { ok: boolean };
+  assert.ok(applied.ok, JSON.stringify(applied));
+  await until("its failed build to go", async () => (await bb.storage.kv.list("images/bake/")).length === 0);
+  assert.deepEqual(await failures(), []);
+});
+
 function isError(result: PluginAgentToolResult): boolean {
   return typeof result !== "string" && result.isError === true;
 }

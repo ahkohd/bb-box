@@ -267,7 +267,15 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     "config.migrated.remove": async () => ({ removed: await app.configuration.removeMigrated(), state: await app.configuration.state() }),
     "docker.hosts": async () => ({ hosts: await app.dockerHosts.list() }),
     "setup.offer": async () => ({ machines: await app.setups(), access: await app.machineAccess() }),
-    "images.progress": async () => ({ progress: app.imageJobs.progress(), running: app.imageJobs.running() }),
+    "images.progress": async () => {
+      const standard = await app.imageJobs.failures().catch(() => []);
+      const projects = await app.imageBakes.failures().catch(() => []);
+      return {
+        progress: app.imageJobs.progress(),
+        running: app.imageJobs.running(),
+        failures: [...standard.map((failure) => ({ of: "standard" as const, ...failure })), ...projects.map((failure) => ({ of: "project" as const, ...failure }))],
+      };
+    },
     "images.list": async () => {
       const views = await app.imageJobs.list().catch(() => []);
       return {
@@ -281,6 +289,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
             built: record ? `${record.build}, ${age === 0 ? "built today" : `${age} ${age === 1 ? "day" : "days"} old`}` : "no record",
             due: view.due,
             last: view.last ? (view.last.ok ? `Last rebuilt ${when}` : view.last.waiting ? `Its last rebuild waited, on ${when}: ${view.last.reason}` : `Its last rebuild failed, on ${when}: ${view.last.reason}`) : null,
+            backend: view.backend,
+            outcome: view.last ? { state: view.last.ok ? ("refreshed" as const) : view.last.waiting ? ("waiting" as const) : ("failed" as const), at: view.last.at, reason: view.last.reason } : null,
           };
         }),
       };

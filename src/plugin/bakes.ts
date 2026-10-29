@@ -700,6 +700,19 @@ export class ImageBakes {
     return found;
   }
 
+  async failures(name?: string): Promise<{ name: string; kind: string; backend: string; at: number; reason: string }[]> {
+    const images = this.#deps.images();
+    const found: { name: string; kind: string; backend: string; at: number; reason: string }[] = [];
+    for (const entry of await this.#deps.storage.list(name === undefined ? BAKE : `${BAKE}${name}/`)) {
+      if (!entry.endsWith("/failed")) continue;
+      const at = parts(entry);
+      if (!images[at.name]) continue;
+      const failure = await this.#deps.storage.get<BakeFailure>(entry);
+      if (failure) found.push({ name: at.name, kind: at.kind, backend: at.backend, at: failure.at, reason: failure.reason });
+    }
+    return found;
+  }
+
   /** An image's builds and failed bakes, for bb box image list: a line each. */
   async lines(name: string): Promise<string[]> {
     const lines: string[] = [];

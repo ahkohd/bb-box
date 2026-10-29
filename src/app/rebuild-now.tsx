@@ -1,24 +1,14 @@
-// Rebuild now, beside Rebuild images each night in settings (the operator,
-// 11 October 2026): the standard images that are due and why, as bb box
-// images list gives them, and one button that starts the night's refresh,
-// one image at a time. While it runs, the card shows how far it is, image by
-// image, as first-run setup's card does. A run going on is not doubled: the
-// button says so instead.
-
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { Contract, ImagesStatus } from "../plugin/contract.ts";
+import type { Contract } from "../plugin/contract.ts";
 import type { RunProgress } from "../plugin/images.ts";
-import { message, useLive, useNow } from "./common.tsx";
+import { message, useNow, type Tone } from "./common.tsx";
 import { roughly } from "./first-run.tsx";
 
-const CARD = "rounded-lg border border-border bg-card px-4 py-4";
+export type RunImage = RunProgress["images"][number];
 
-type Image = RunProgress["images"][number];
-
-/** What an image of a run did, or does, in a few words. */
-export function stateWords(image: Image): string {
+export function stateWords(image: RunImage): string {
   switch (image.state) {
     case "next":
       return "Next";
@@ -37,76 +27,57 @@ export function stateWords(image: Image): string {
   }
 }
 
-const TONE: Record<Image["state"], string> = {
-  next: "text-subtle-foreground",
-  refreshing: "text-foreground",
-  refreshed: "text-muted-foreground",
-  failed: "text-destructive-text",
-  waiting: "text-warning-text",
-  skipped: "text-subtle-foreground",
-  "not started": "text-subtle-foreground",
+export const RUN_TONE: Readonly<Record<RunImage["state"], Tone>> = {
+  next: "off",
+  refreshing: "busy",
+  refreshed: "ok",
+  failed: "bad",
+  waiting: "warn",
+  skipped: "off",
+  "not started": "off",
 };
 
-function RunImages({ images }: { images: readonly Image[] }) {
-  return (
-    <ul className="mt-3 space-y-1.5">
-      {images.map((image) => (
-        <li key={image.name} className="min-w-0 text-xs leading-snug">
-          <span className="text-foreground">{image.name}</span> <span className="text-subtle-foreground">({image.kind})</span>
-          <span className={`block ${TONE[image.state]}`}>{stateWords(image)}</span>
-        </li>
-      ))}
-    </ul>
-  );
+export function isRunning(progress: RunProgress | null): boolean {
+  return progress !== null && progress.ended === null;
+}
+
+function runPlace(progress: RunProgress): { readonly share: number; readonly current: RunImage | null; readonly at: number } {
+  const total = progress.images.length;
+  const index = progress.images.findIndex((image) => image.state === "refreshing" || image.state === "next");
+  const current = index >= 0 ? progress.images[index]! : null;
+  const withinTheImageBeingRebuilt = current?.step ? Math.max(0, (current.step.at - 1) / current.step.of) : 0;
+  const share = total ? Math.min(0.97, Math.max(0.03, ((index < 0 ? total : index) + withinTheImageBeingRebuilt) / total)) : 0.03;
+  return { share, current, at: Math.min(index + 1, total) };
 }
 
 function Running({ progress }: { progress: RunProgress }) {
   const now = useNow(true, 1000);
-  const total = progress.images.length;
-  const index = progress.images.findIndex((image) => image.state === "refreshing" || image.state === "next");
-  const current = index >= 0 ? progress.images[index]! : null;
-  // The bar follows the images, and the steps of the one being rebuilt, as the time varies with the host and the image.
-  const within = current?.step ? Math.max(0, (current.step.at - 1) / current.step.of) : 0;
-  const share = total ? Math.min(0.97, Math.max(0.03, ((index < 0 ? total : index) + within) / total)) : 0.03;
+  const { share, current, at } = runPlace(progress);
+  const title = progress.only === "bb-app" ? "Rebuilding images after a BB update" : "Rebuilding images";
   return (
-    <div className={CARD}>
-      <p className="text-sm font-medium text-foreground">{progress.only === "bb-app" ? "Rebuilding images after a BB update" : "Rebuilding images"}</p>
-      <p className="mt-1 text-xs leading-snug text-muted-foreground">{current ? `${Math.min(index + 1, total)} of ${total} · ${current.name}` : "Finishing"}</p>
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Rebuilding images" aria-valuenow={Math.round(share * 100)} aria-valuemin={0} aria-valuemax={100}>
-        <div className="h-full rounded-full bg-foreground/70 transition-[width] duration-500" style={{ width: `${Math.round(share * 100)}%` }} />
+    <div className="px-4 py-3" role="status" aria-live="polite">
+      <p className="text-sm text-foreground">{title}</p>
+      <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{current ? `${at} of ${progress.images.length} · ${current.name}` : "Finishing"}</p>
+      <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={title} aria-valuenow={Math.round(share * 100)} aria-valuemin={0} aria-valuemax={100}>
+        <div className="h-full rounded-full bg-foreground/70" style={{ width: `${Math.round(share * 100)}%` }} />
       </div>
       <p className="mt-2 text-xs text-subtle-foreground">Started {roughly(Math.max(0, now - progress.started))} ago. One image at a time; it goes on if you leave this page.</p>
-      <RunImages images={progress.images} />
     </div>
   );
 }
 
-export function RebuildNow() {
+export function RebuildNow({ progress, due, onStarted }: { progress: RunProgress | null; due: number; onStarted: () => void }) {
   const rpc = useRpc<Contract>();
-  const { value: live } = useLive("images-progress", () => rpc.call("images.progress"), () => true);
-  const [images, setImages] = useState<ImagesStatus["images"] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const progress = live?.progress ?? null;
-  const ended = progress?.ended ?? null;
-  // The list on opening, and again when a run ends, as its images are no longer due.
-  useEffect(() => {
-    let current = true;
-    rpc.call("images.list").then(
-      (answer) => current && setImages(answer.images),
-      (caught: unknown) => current && setProblem(message(caught)),
-    );
-    return () => {
-      current = false;
-    };
-  }, [rpc, ended]);
-  if (progress && progress.ended === null) return <Running progress={progress} />;
-  const due = images?.filter((image) => image.due) ?? [];
+  if (progress && isRunning(progress)) return <Running progress={progress} />;
   const start = async () => {
     setBusy(true);
+    setProblem(null);
     try {
       const answer = await rpc.call("images.refresh");
-      setProblem(answer.started ? null : answer.message);
+      if (answer.started) onStarted();
+      else setProblem(answer.message);
     } catch (caught) {
       setProblem(message(caught));
     } finally {
@@ -114,46 +85,16 @@ export function RebuildNow() {
     }
   };
   return (
-    <div className={CARD}>
-      <p className="text-sm font-medium text-foreground">Rebuild now</p>
-      {images === null ? (
-        <p className="mt-1 text-xs text-muted-foreground">{problem ?? "Reading the images…"}</p>
-      ) : !images.length ? (
-        <p className="mt-1 text-xs text-muted-foreground">No backend that is on has images BB Box rebuilds.</p>
-      ) : (
-        <>
-          <p className="mt-1 text-xs leading-snug text-muted-foreground">
-            {due.length ? `${due.length} of ${images.length} ${images.length === 1 ? "image is" : "images are"} due. A rebuild takes them one at a time, as the night does.` : "No image is due."}
-          </p>
-          {due.length ? (
-            <ul className="mt-3 space-y-1.5">
-              {due.map((image) => (
-                <li key={image.name} className="min-w-0 text-xs leading-snug">
-                  <span className="text-foreground">{image.name}</span> <span className="text-subtle-foreground">({image.kind})</span>
-                  <span className="block text-muted-foreground">Due, as {image.due}</span>
-                  {image.last ? <span className="block text-subtle-foreground">{image.last}</span> : null}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <Button type="button" size="sm" onClick={() => void start()} disabled={busy || !due.length}>
-              {busy ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-              {due.length === 1 ? "Rebuild 1 image" : `Rebuild ${due.length} images`}
-            </Button>
-          </div>
-        </>
-      )}
-      {problem && images !== null ? (
-        <p role="alert" className="mt-2 text-xs leading-snug text-destructive-text">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+      <Button type="button" variant="outline" size="sm" className="h-7" disabled={busy || !due} onClick={() => void start()}>
+        {busy ? <Icon name="Loading" className="animate-spin" aria-hidden /> : <Icon name="ArrowReloadHorizontal" aria-hidden />}
+        {due === 0 ? "Rebuild what is due" : due === 1 ? "Rebuild 1 image" : `Rebuild ${due} images`}
+      </Button>
+      <span className="min-w-0 flex-1 text-xs leading-snug text-subtle-foreground">{due ? "What is due, one at a time, as the night does. It goes on if you leave this page." : "No image is due, so there is nothing to rebuild."}</span>
+      {problem ? (
+        <p role="alert" className="basis-full text-xs leading-snug text-destructive-text">
           {problem}
         </p>
-      ) : null}
-      {progress && ended !== null ? (
-        <>
-          <p className="mt-4 text-xs text-subtle-foreground">The last rebuild ended {roughly(Math.max(0, Date.now() - ended))} ago:</p>
-          <RunImages images={progress.images} />
-        </>
       ) : null}
     </div>
   );

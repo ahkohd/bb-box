@@ -1219,3 +1219,217 @@ and from the live checks:
 - A look in production in the owner's browser, after the lead deploys.
 - The Network page does not run the tailnet's doctor check; `bb box
   doctor` does, under Tailnet.
+
+## Unit 8: Images
+
+Built on 29 October 2026, on units 1 to 4 and 9. The Images page is on the
+engine: every standard image with what the last rebuild did to it, Rebuild
+what is due with its progress, and projects' images with their projects,
+kinds and builds, when each is built ahead and Remove…. Failed rebuilds are
+in the overview's Status.
+
+### What changed
+
+- **Standard images**: one line with how many are due and what the last
+  rebuild did: "2 of 2 images due. The last rebuild ended just now: 1
+  waited for room, 1 failed." Then Rebuild each night, the switch that acts
+  at once, and a row for each image: its kind on its backend, and one state
+  line. While a rebuild runs, or after one, that line is what the run did:
+  Next, "Rebuilding · step 3 of 9", "Rebuilt, now build.…", "Waits: …",
+  "Failed: …", "Skipped: …", "Not started: …", in today's words from
+  `RebuildNow`'s `stateWords`. Otherwise it is the image's last rebuild
+  that failed or waited, why it is due, or Up to date. After it come the
+  build and its age, why it is due if the line does not say, and its name
+  for `bb box images build`.
+- **Rebuild what is due**: "Rebuild 2 images" starts the night's rebuild,
+  as Rebuild now did. While it runs, the row becomes today's bar: "2 of 3 ·
+  docker/desktop", the bar by image and step, "Started 2 min ago. One image
+  at a time; it goes on if you leave this page." A run going on is not
+  doubled: the refusal says why under the button. With nothing due the
+  button says "Rebuild what is due", disabled.
+- **Projects' images**: a row each with its name, its projects by name, its
+  kinds and its builds ("Built for Linux on Docker", "Its build for Linux
+  desktop on Docker failed", "Its script runs as each box starts", "Not
+  built yet: it is built once two boxes use it within 14 days"), then "When
+  it is built ahead", a menu that acts at once (Built when used often,
+  Always built ahead, Run at each box's start), and the chevron last. The
+  row opens to where its files came from and when, each build and failed
+  build, its script and its check, and Remove…. Remove asks: "New Linux
+  boxes in proj_example start from the standard images again, without its
+  script. Its builds are deleted. Boxes already made keep what they have.
+  An agent can set it again from the project's files with bb box image
+  set." A refusal says "The image rust-tools was not removed: …" under its
+  row. Removed, focus goes to the next row.
+- **Status**: each standard image whose last rebuild failed, on a backend
+  that is on: "The Linux image on Docker did not rebuild", "Failed 1 hour
+  ago: … New boxes start from its last build meanwhile.", "Fix: Fix the
+  cause, then run bb box images build docker/…", with Open to the Images
+  page. A project image's failed build is there too, with the doctor's fix.
+  The Images row says "1 failed", in amber. An image that waited for room is
+  not a problem in Status; the page and the doctor still say it waited.
+- **The engine** gained two paths: `images/<name>`, removed, and
+  `images/<name>/bake`. Both go through the shared write path with
+  operation IDs, as every switch and removal does.
+- **The server**, all small. `images.progress` also lists the failures
+  (`ImageJobs.failures`, from each image's stored last rebuild, which now
+  keeps its kind; `ImageBakes.failures`). `images.list` gives each image's
+  backend and its last outcome as data, beside today's phrase. The `images`
+  view gives each project image's failed builds. And bb-box now settles
+  each project image that changed with every change of the configuration,
+  not only after `bb box image set` and `remove`: a removal from the page,
+  or by `bb box config apply`, deletes its builds as `bb box image remove`
+  does, and Always built ahead bakes at once.
+
+New: `src/app/settings-images.tsx`, and
+`067-settings-page/unit-8/live-check.mjs` and `screens-and-keys.mjs`.
+Changed: `rebuild-now.tsx` (its run states and bar kept, its list of due
+images now the page's rows), `settings-paths.ts`, `settings-context.tsx`,
+`settings-pages.tsx` (`ImagesOptions` only, and the page's description),
+`settings-overview.tsx` (Status and the Images row only),
+`src/plugin/images.ts`, `bakes.ts`, `contract.ts`, `views.ts`, `rpc.ts`,
+`setup.ts`, `docs/design/settings.md` and the tests. Of the files units 5,
+6 and 9 also change, this unit touched `settings-pages.tsx`,
+`settings-overview.tsx`, `settings-context.tsx`, `settings-paths.ts`,
+`contract.ts` and `test/app.test.tsx`, each in a few lines of its own.
+
+### Tests
+
+`test/app.test.tsx` replaces Rebuild now's two tests with six: every image
+with its build, why it is due and its last outcome, and Rebuild 2 images
+refused while a run goes on; after a run, each image's state (rebuilt,
+waited, failed, skipped, not started) and the summary; a run going on with
+its bar and each row's state; projects' images with their projects, kinds,
+builds, failed builds, script and check, and the menu acting at once,
+"auto" leaving the key out; removal asked, cancelled, refused with the
+reason, and confirmed with focus on the next row; failed rebuilds and a
+failed project build in Status with their fixes, the Images row's "2
+failed" and Open. `test/image-jobs.test.ts` has one for the failures,
+waiting not counted, a removed backend's left out, and a rebuild that
+passes clearing it; `test/bakes.test.ts` checks a failed bake's failure;
+`test/plugin.test.ts` has one for a project image removed by `config.apply`
+losing its failed build.
+
+On a Linux box, 8 cores, on a clone of the commit delivered, on unit 9,
+before this section and its screenshots were added to it:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,785 tests: 2,497 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 32 s |
+| vitest | 287 pass, in 4 files |
+| `test/docs.test.ts` and `scripts/reference.ts --check` | pass; the reference is unchanged |
+
+### Live check on a separate BB
+
+A Linux box with Docker, 8 cores, 16 GiB, ran a fresh `npx bb-app` 0.48.0
+with no account, its own data folder and port, started with `env -i`,
+`HOME`, `PATH` and `BB_BOX_LIVE_CHECKS=1` only, with bb-box installed from
+this branch by `bb plugin install` of its path. It had two Docker backends
+on the box's own Docker, each with a Linux image that has no record, so
+both are due ("it has no record, so its age is not known"):
+
+- **Docker**, keeping 900,000 MiB of memory free, so its rebuild waits for
+  room;
+- **Docker for the failing image**, on the same daemon by another socket
+  path, whose rebuild runs the real `setup/docker/build.sh`. Docker Hub's
+  names point at 0.0.0.0 in the box's `/etc/hosts`, so the build cannot pull
+  Ubuntu and exits with 1.
+
+And two projects' images set with `bb box image set`: rust-tools, with a
+check, and go-tools, run at each box's start.
+
+The script, [`live-check.mjs`](067-settings-page/unit-8/live-check.mjs),
+drives headless Chromium at 1440 by 1000. Between runs it deletes bb-box's
+stored image states from BB's database, so the failing image is tried
+again rather than skipped, and sets rust-tools again. Every check passed 3
+runs in a row, 12 of 12, on the commit delivered, on a second fresh BB set
+up the same way; and 12 of 12 on the commit before it was rebased onto
+unit 9. The first series found two faults in the script, none in
+the page: it read the run before as the new one.
+
+| Check | What the page said, and what BB Box stored | Runs |
+| --- | --- | --- |
+| Rebuild each night switched | Off at first; on: "Saved", `nightlyImages` true, still on after a reload; off again: stored as the default, the key left out | 3 of 3 |
+| A run with a waiting and a failing image, on the page | Before: "2 of 2 images due.", each row "Due: it has no record, so its age is not known" in the first run, and the run before's state after it. Rebuild 2 images: the bar, then "Next" and "Rebuilding" on the rows; after 2 to 3 s, "Failed: setup/docker/build.sh exited with 1." and "Waits: no room for its trial box: Docker on <box> cannot take this linux box: <box> has 16 GiB of memory free and keeps 878.9 GiB free, so a box with 4 GiB does not fit. …"; the summary "The last rebuild ended just now: 1 waited for room, 1 failed."; `images.progress` listed the failing one alone | 3 of 3 |
+| The same run in Status | "The Linux image on Docker for the failing image did not rebuild", "Failed just now: setup/docker/build.sh exited with 1. New boxes start from its last build meanwhile.", "Fix: Fix the cause, then run bb box images build docker:second/bb-live/fails:1."; the waiting one not listed; the Images row "Not rebuilt on a schedule · 1 failed · 2 project images"; Open went to `#option/images` | 3 of 3 |
+| A project's image removed after its confirmation | rust-tools opened to its script; Remove rust-tools… asked, naming its kinds and project; Cancel stored nothing and put focus back on its row; Remove image: gone from the configuration, "Removed the image rust-tools.", its row gone, focus on go-tools | 3 of 3 |
+| When a project's image is built ahead, at once | go-tools from Run at each box's start to Built when used often: "Saved", stored without `bake`; back: `never` | 3 of 3 |
+
+### Keyboard only
+
+On the same BB, by keys alone
+([`screens-and-keys.mjs`](067-settings-page/unit-8/screens-and-keys.mjs)),
+at 1440 px, dark:
+
+- From the page's heading Tab went: Rebuild each night, Rebuild 2 images,
+  go-tools, its menu, rust-tools, its menu, then BB's own sidebar. Every
+  stop had a focus ring. The standard images' rows have no action, so they
+  take no stop.
+- Space on Rebuild each night saved it on, and again off.
+- Enter on rust-tools opened it. Tab to its menu, Enter, ArrowDown, Enter
+  stored Always built ahead, with focus kept on the menu; ArrowUp went back.
+- Tab then went to its script and its check, each a scrollable block with a
+  ring, then Remove rust-tools….
+- Enter on Remove rust-tools… opened the dialog on Cancel; Escape closed it
+  with focus on the row and nothing removed. Again, Tab to Remove image and
+  Enter: removed, focus on go-tools.
+- No animation ran (`document.getAnimations()` was empty).
+- The first pass pressed ArrowDown before the menu had focused its first
+  choice, so nothing changed; with 300 ms for that, as a person takes, it
+  works. The script waits so.
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark: the page after the run, a
+project's image open, its Remove dialog, and the overview's Status. 24 in
+the thread's storage, and the live checks' own. A selection:
+
+[the page](067-settings-page/unit-8/images-1440-dark.png),
+[at 760](067-settings-page/unit-8/images-760-light.png),
+[at 390](067-settings-page/unit-8/images-390-light.png),
+[a project's image](067-settings-page/unit-8/project-image-760-dark.png),
+[a project's image at 390](067-settings-page/unit-8/project-image-390-dark.png),
+[Remove](067-settings-page/unit-8/remove-760-light.png),
+[Remove at 390](067-settings-page/unit-8/remove-390-dark.png),
+[Status](067-settings-page/unit-8/status-1440-light.png),
+[Status at 390](067-settings-page/unit-8/status-390-dark.png),
+and from the live checks:
+[the run ended](067-settings-page/unit-8/live-run-ended.png),
+[the run in Status](067-settings-page/unit-8/live-status.png),
+[the removal asked](067-settings-page/unit-8/live-remove-dialog.png),
+[Rebuild each night on](067-settings-page/unit-8/live-nightly-on.png).
+
+### Deviations from 067
+
+- Server changes 067 does not list: the failures on `images.progress`,
+  each image's outcome and backend on `images.list`, a project image's
+  failed builds on its view, and settling changed project images on every
+  configuration change.
+- Status lists failed project builds as well as failed rebuilds of the
+  standard images. It does not list an image that waited for room, as the
+  prototype does not.
+- What the last run did to an image (skipped and not started included)
+  is the last run of this bb-box's life, as Rebuild now's was. After bb-box
+  restarts, a row shows the image's own last rebuild instead: rebuilt,
+  waited or failed.
+- Rebuild what is due counts every image that is due. The run skips one
+  whose last rebuild failed until what it is built from changes, and its
+  row then says so ("Skipped: its last rebuild failed and nothing it is
+  built from has changed; bb box images build … tries again").
+- A project's image is set only with `bb box image set`, as 067 says; the
+  page shows its script and check and does not edit them.
+- The live check's failure and wait are real, but made: Docker Hub blocked
+  in the box, and a memory reserve no host has. Its images are plain images
+  with no record, not bb-box's built Linux image, to keep a run to seconds.
+
+### Not done here
+
+- A look in production in the owner's browser, after the lead deploys.
+- Open for the lead: whether an image that waited for room belongs in
+  Status; and whether a failed image wants a Try again on its row, which
+  needs an RPC for `bb box images build`.
+
+The same suite on the commit before unit 9 passed too (2,782 tests, 0
+fail; vitest 284). One full run before that, outside a git checkout, had two tests
+fail: the docs test, which needs git, and a job's command outliving its
+connection (#405), which failed in 15 ms under load and passed alone.

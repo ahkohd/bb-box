@@ -562,6 +562,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   // The files for every box (#455), once the boxes are there.
   let files: BoxFiles | null = null;
   let monitorChanged = () => {};
+  let settleChangedImages = () => {};
   const configuration = await Configuration.load({
     kv,
     backends,
@@ -573,6 +574,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       notify(null);
       needsConfiguration();
       monitorChanged();
+      settleChangedImages();
       if (ledger.on !== ledgerWasOn) {
         ledgerWasOn = ledger.on;
         deviceServers?.ledgerSwitched();
@@ -687,6 +689,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     boxExists: async (id) => (await boxes.find(id)) !== null,
   });
+  let settledImages = configuration.document.images ?? {};
+  settleChangedImages = () => {
+    const images = configuration.document.images ?? {};
+    for (const name of new Set([...Object.keys(settledImages), ...Object.keys(images)])) if (JSON.stringify(settledImages[name]) !== JSON.stringify(images[name])) imageBakes.settle(name);
+    settledImages = images;
+  };
   const boxes: Boxes = new Boxes({
     kv: bb.storage.kv,
     backends,
@@ -1224,8 +1232,6 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       for (let tries = 0; ; tries++) {
         const document = configuration.exported();
         const result = await configuration.apply(withImage(document, name, image), document.revision);
-        // A changed script's builds are baked again at once, and a removed image's go (049).
-        if (result.ok) imageBakes.settle(name);
         if (result.ok || result.reason !== "revision" || tries >= 2) return result;
       }
     },
@@ -1265,6 +1271,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           projects: image.projects.map((id) => ({ id, name: names.get(id) ?? id })),
           mine: !!project && image.projects.includes(project),
           builds: await imageBakes.builds(name),
+          failed: (await imageBakes.failures(name)).map(({ kind, backend, at, reason }) => ({ kind, backend, at, reason })),
           spares: Object.entries(spareCounts)
             .filter(([key]) => key.startsWith(`${name}|`))
             .map(([key, count]) => {
