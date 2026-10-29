@@ -3707,3 +3707,26 @@ through the device. Without the change, that test fails.
 Not checked live: F-23b itself, which needs its deploy. The check is the
 same: a new shared slot on a Tart host made for the box, `computer_type`
 right after the first keyboard opens.
+
+### F-23b checked after the deploy
+
+On production BB at main 7431ca8, `device-host` version 7, on 29 October
+2026, on a new shared slot, carried slot `bbd-i1`, on a Tart host made
+for the box, with test values only:
+
+| Check | Result |
+| --- | --- |
+| the device's keyboard defaults, read with `simctl spawn ... defaults read` | written: `DidShowContinuousPathIntroduction` 1, autocorrect and slide to type 0 |
+| `computer_type` into Safari's address field, the device's first keyboard, and again after the field was closed | no slide to type tip either time |
+| `computer_type` of ` bbtest again ✓ 日本 é` into the field once open | whole |
+
+### Follow-up
+
+- **Keys typed as Safari's address field opens are lost or out of
+  order.** With the tip gone, `bbtest first keyboard ✓ 日本 é` still
+  arrived as `✓ 日本 é` on the first opening, and `bbtest second open ✓ 日本 é`
+  as `✓ 日本 éd open` on the second: the keys that went while the field
+  moved up and its keyboard came in were lost, and some came after the
+  paste. Text typed into the field once open arrived whole, as in F-21's
+  runs. `computer_type` could wait for the field to be focused and its
+  keyboard shown before the first key.
