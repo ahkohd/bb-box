@@ -10,6 +10,7 @@ export const tartDriver: BackendDriver<TartConfig> = {
   form: "VM",
   kinds: [...TART_KINDS, IOS_IMAGE_KIND],
   fields: TART_FIELDS,
+  offWhenEmpty: ["macos-image", "macos-desktop-image", "linux-image", "linux-desktop-image", "windows-image", "ios-image"],
   hostFields: TART_HOST_FIELDS,
   setup: {
     guide: "setup/tart/README.md",

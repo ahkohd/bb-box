@@ -2,6 +2,7 @@
 // enrolment, thread events, the sweep, and the tools, RPC and CLI that use
 // them. server.ts calls setup with the built-in drivers; tests pass fakes.
 
+import { ReplyDrops, liveChecksOn } from "./live-checks.ts";
 import { tailnetDoctor } from "../core/tailnet-doctor.ts";
 import { hostname } from "node:os";
 import { machineAccessProblem, machineSetups, type AccessConfig, type MachineAccessProblem, type MachineSetup } from "./setup-offer.ts";
@@ -153,6 +154,7 @@ export interface BbBox {
   readonly deviceComputer: DeviceComputer;
   /** The configuration document (029). */
   readonly configuration: Configuration;
+  readonly replyDrops: ReplyDrops | null;
   /** The Monitor (066): machine status in BB's sidebar footer, and background monitoring of BB's server. */
   readonly monitor: Monitor;
   /** The Docker API relay to BB machines that are Docker hosts (042). */
@@ -361,6 +363,7 @@ export interface SetupOptions {
   readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
   readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "callTimeoutMs" | "launchWaitMs" | "lookupWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree" | "nameWindows">;
+  readonly liveChecks?: boolean;
 }
 
 function awaitedNames(gitToken: boolean, variablesSet: boolean): readonly string[] | undefined {
@@ -759,6 +762,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   probeEncoder = (mac, signal) => boxes.probeEncoder(mac, signal);
   kindsChanged = () => {
     notify(null);
+    void configuration.noteSetupDone();
     void boxes.refreshCapabilities().catch((error) => logError("capabilities", error));
   };
   files = new BoxFiles({ boxes, files: () => boxFilesOf(configuration.document.general.files, configuration.secrets), logError });
@@ -1244,6 +1248,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     computer: computing,
     deviceComputer: deviceComputing,
     configuration,
+    replyDrops: (options.liveChecks ?? liveChecksOn()) ? new ReplyDrops() : null,
     general,
     view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), backends.get(box.backend)?.resizing?.(box.kind) ?? null),
     control: (box) => control.view(box.id),
@@ -1358,12 +1363,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           },
         });
       }
+      const tested = configuration.liveRevision;
       const reports = await Promise.all(
         backends.on().map(async (backend) => {
           const doctor = await boundedDoctor((bounded) => backend.doctor(bounded), DOCTOR_TIMEOUT_MS, signal);
           const short = warmChecks(backends.warmShort(backend.id));
           const report = short.length ? { ...doctor, checks: [...doctor.checks, ...short] } : doctor;
-          await configuration.recordDoctor(backend.id, report);
+          await configuration.recordDoctor(backend.id, report, tested);
           return { title: backend.label, report };
         }),
       );

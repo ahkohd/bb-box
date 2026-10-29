@@ -10,6 +10,7 @@ export const microsandboxDriver: BackendDriver<MsbConfig> = {
   form: "microVM",
   kinds: MSB_KINDS,
   fields: MSB_FIELDS,
+  offWhenEmpty: ["linux-image", "desktop-image", "linux-arm64-image", "desktop-arm64-image"],
   setup: {
     guide: "setup/microsandbox/README.md",
     scripts: [],

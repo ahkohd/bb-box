@@ -9,8 +9,8 @@ export type TailnetMode = "off" | "oauth";
 export interface TailnetSetting {
   readonly mode: TailnetMode;
   readonly tags?: readonly string[];
-  readonly clientId?: { readonly set: boolean };
-  readonly clientSecret?: { readonly set: boolean };
+  readonly clientId?: { readonly set: boolean; readonly version?: number };
+  readonly clientSecret?: { readonly set: boolean; readonly version?: number };
 }
 
 export interface TailnetUse {
@@ -26,7 +26,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isSetState(value: unknown): value is { readonly set: boolean } {
-  return isRecord(value) && typeof value.set === "boolean" && Object.keys(value).length === 1;
+  return isRecord(value) && typeof value.set === "boolean" && Object.keys(value).every((key) => key === "set" || (key === "version" && typeof value.version === "number"));
 }
 
 function readSecret(value: unknown, key: string, at: string, what: string, problem: (path: string, message: string) => void, changes: Record<string, string | null>): void {

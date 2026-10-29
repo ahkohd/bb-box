@@ -16,6 +16,25 @@ bb-box's configuration is one document (029): `bb box config show --json` prints
 | `images` | `Readonly<Record<string, ImageConfig>>` |  | Projects' images, by name (049). |
 | `monitor` | `MonitorSettings` |  | The Monitor (066): machine status in BB's sidebar footer, and background monitoring of BB's server. |
 
+## Secrets
+
+A secret's value never leaves bb-box. Each secret field shows its state:
+
+| Key | Type | Default | What it is |
+| --- | --- | --- | --- |
+| `set` | `boolean` |  | Whether it has a value. In a draft, true keeps it and false clears it. |
+| `version` | `number` |  | As the settings page reads the configuration, from config.get and config.apply: the revision that last set or cleared it, so the page can tell that it changed while a person edited. A secret never has the same version twice, and the version says nothing of its value. bb box config show leaves it out; a draft may send it back, and it is ignored. |
+
+## Saves from the settings page
+
+The settings page saves with an operation ID it makes for each save, and the changes it froze for it. bb-box applies an ID at most once: the same ID again gets the first save's receipt, and the same ID with other changes is refused. The receipt is stored in the same write as the configuration, and config.get lists the receipts:
+
+| Key | Type | Default | What it is |
+| --- | --- | --- | --- |
+| `operation` | `string` |  | The ID the page gave the save. config.apply applies an ID at most once and refuses it with another submission. |
+| `revision` | `number` |  | The revision the save made. |
+| `at` | `number` |  | When it was saved, in milliseconds since 1970. Receipts are kept for 24 hours, and at least the last 100. |
+
 ## general
 
 | Key | Type | Default | What it is |
@@ -179,10 +198,10 @@ Setup: [setup/ssh-pool/README.md](../../setup/ssh-pool/README.md).
 | `machines` | Machines | string | boxes |  | Your machines, one line each, with the kinds of box each serves. A line is a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>, such as "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. The kind ios on a Mac lends iOS slots there, each a macOS user with its own device, for iOS boxes asked for with shared: true; ios:<slots> sets how many, where bb-box would estimate them from the Mac. |
 | `known-hosts` | Host keys | string | connection |  | The SSH host keys of every machine and jump host. bb-box connects only to a machine whose key is here. Paste the known_hosts lines setup.sh and setup-mac.sh print. |
 | `ssh-private-key` | SSH private key | string, secret | credentials |  | The SSH key bb-box logs in to the machines with. Paste an unencrypted OpenSSH private key that their admin user accepts. Leave it empty and bb-box makes one and shows its public key, which you then give setup.sh. |
-| `ios-hosts-most` | Slots for iOS boxes per Mac | number | advanced |  | The most iOS slots each Mac has at once, making, ready or held. This counts only Macs whose line lists ios, and a Mac is lent whole only while it lends no slot. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins. |
-| `ios-hosts-ahead` | Ready slots for iOS boxes kept on a Mac | number | advanced | `1` | Slots each Mac keeps ready, so the next iOS box is ready in seconds. This counts only Macs whose line lists ios, while they are not lent whole. |
-| `ios-hosts-resetting-most` | Slots a Mac resets at once | number | advanced | `4` | The most released iOS slots a Mac resets in one pass, sweeping their files. |
-| `ios-hosts-disk-reserve-gib` | Disk a Mac keeps free (GiB) | number | advanced | `40` | A Mac makes no new iOS slot while it has less free disk than this. |
+| `ios-hosts-most` | Slots for iOS boxes per Mac | number | ios-hosts |  | The most iOS slots each Mac has at once, making, ready or held. This counts only Macs whose line lists ios, and a Mac is lent whole only while it lends no slot. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins. |
+| `ios-hosts-ahead` | Ready slots for iOS boxes kept on a Mac | number | ios-hosts | `1` | Slots each Mac keeps ready, so the next iOS box is ready in seconds. This counts only Macs whose line lists ios, while they are not lent whole. |
+| `ios-hosts-resetting-most` | Slots a Mac resets at once | number | ios-hosts | `4` | The most released iOS slots a Mac resets in one pass, sweeping their files. |
+| `ios-hosts-disk-reserve-gib` | Disk a Mac keeps free (GiB) | number | ios-hosts | `40` | A Mac makes no new iOS slot while it has less free disk than this. |
 
 ### tart
 
@@ -199,7 +218,7 @@ Setup: [setup/tart/README.md](../../setup/tart/README.md).
 | `linux-desktop-image` | Linux desktop image (arm64) | string | boxes |  | The Tart VM on each Mac that Linux desktops on arm64 are cloned from. setup/tart/prepare-linux-image.sh --desktop builds it, as bb-box-linux-desktop. Empty turns them off. |
 | `windows-image` | Windows image (arm64) | string | boxes |  | The image on each Mac that Windows desktops on arm64 are made from, run by QEMU. It is in ~/.bb-box/qemu/images. Empty turns them off. |
 | `ios-image` | iOS image | string | boxes |  | The Tart VM on each Mac that iOS Simulator boxes are cloned from. setup/tart/prepare-ios-image.sh builds it on the macOS image, as bb-box-ios, with idb_companion and a booted-once, slimmed iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5). bb-box checks and refreshes it with the macOS image. Empty turns iOS boxes off. |
-| `ios-hosts-on` | Shared iOS hosts | boolean | boxes | `false` | Lends iOS boxes as slots on shared hosts, which are VMs of the iOS image. Each slot is a macOS user with its own device, for an iOS box asked for with shared: true. A host is made when a box needs one, and deleted when its last box is released. |
+| `ios-hosts-on` | Shared iOS hosts | boolean | ios-hosts | `false` | Lends iOS boxes as slots on shared hosts, which are VMs of the iOS image. Each slot is a macOS user with its own device, for an iOS box asked for with shared: true. A host is made when a box needs one, and deleted when its last box is released. |
 | `windows-enrol` | Windows boxes as BB machines | boolean | boxes | `true` | Windows boxes join BB as machines, so threads and terminals can use them. Linux and macOS boxes always do. Off, Windows boxes are boxes only. |
 | `video` | Video by default for macOS desktops | boolean | boxes | `false` | Opens macOS desktops as video, from bb-box-stream in the image, instead of VNC. Off, they open as VNC, which is already smooth on a Tart Mac at 52 to 55 frames a second, and a person can choose video under Display. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31. |
 | `vm-user` | VM user | string | advanced | `admin` | The user in the macOS images that bb-box and BB work as. It is logged in to the desktop automatically. Linux boxes work as box. |
@@ -207,13 +226,13 @@ Setup: [setup/tart/README.md](../../setup/tart/README.md).
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `16384` | Memory each Mac keeps for its own use. A new box is refused if the Mac would have less than this left, after its running VMs. |
 | `reserve-disk-gib` | Disk kept free (GiB) | number | advanced | `50` | Disk each Mac keeps free. A new box is refused if the Mac's disk has less free space than this. |
 | `warm-max-hours` | Hours a macOS warm VM or spare is kept | number | advanced | `6` | How long a suspended macOS warm VM or spare is kept before a fresh one replaces it. An old saved state may not restore. |
-| `ios-hosts-most` | Slots per shared iOS host | number | advanced |  | The most slots each shared iOS host has at once, making, ready or held. Empty, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins. |
-| `ios-hosts-ahead` | Ready slots kept on a shared iOS host | number | advanced | `1` | Slots a shared iOS host keeps ready while it holds a box, so the next box is ready in seconds. |
-| `ios-hosts-resetting-most` | Slots a shared iOS host resets at once | number | advanced | `4` | The most released slots a shared iOS host resets in one pass, sweeping their files. |
-| `ios-hosts-cores` | Cores of a shared iOS host | number | advanced |  | The cores of each shared iOS host's VM, shared by its slots. Empty uses the Mac's performance cores. A Mac's own value wins. |
-| `ios-hosts-memory-gib` | Memory of a shared iOS host (GiB) | number | advanced |  | The memory of each shared iOS host's VM, shared by its slots. Empty uses 8 GiB for the host and 1.5 GiB for each slot, within the Mac's memory. A Mac's own value wins. |
-| `ios-hosts-per-mac` | Shared iOS hosts per Mac | number | advanced | `1` | The most shared iOS hosts a Mac runs. Each is one of the Mac's two macOS VMs, and both share the Mac's video encoder. |
-| `ios-hosts-disk-reserve-gib` | Disk a shared iOS host keeps free (GiB) | number | advanced | `10` | A shared iOS host makes no new slot while its VM has less free disk than this. |
+| `ios-hosts-most` | Slots per shared iOS host | number | ios-hosts |  | The most slots each shared iOS host has at once, making, ready or held. Empty, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins. |
+| `ios-hosts-ahead` | Ready slots kept on a shared iOS host | number | ios-hosts | `1` | Slots a shared iOS host keeps ready while it holds a box, so the next box is ready in seconds. |
+| `ios-hosts-resetting-most` | Slots a shared iOS host resets at once | number | ios-hosts | `4` | The most released slots a shared iOS host resets in one pass, sweeping their files. |
+| `ios-hosts-cores` | Cores of a shared iOS host | number | ios-hosts |  | The cores of each shared iOS host's VM, shared by its slots. Empty uses the Mac's performance cores. A Mac's own value wins. |
+| `ios-hosts-memory-gib` | Memory of a shared iOS host (GiB) | number | ios-hosts |  | The memory of each shared iOS host's VM, shared by its slots. Empty uses 8 GiB for the host and 1.5 GiB for each slot, within the Mac's memory. A Mac's own value wins. |
+| `ios-hosts-per-mac` | Shared iOS hosts per Mac | number | ios-hosts | `1` | The most shared iOS hosts a Mac runs. Each is one of the Mac's two macOS VMs, and both share the Mac's video encoder. |
+| `ios-hosts-disk-reserve-gib` | Disk a shared iOS host keeps free (GiB) | number | ios-hosts | `10` | A shared iOS host makes no new slot while its VM has less free disk than this. |
 
 Each host's fields:
 
@@ -222,9 +241,9 @@ Each host's fields:
 | `address` | Address | string | connection |  | The Mac's address, with :port when SSH is not on 22. For example 192.0.2.20. |
 | `user` | User | string | connection |  | The user bb-box logs in to the Mac as, which runs tart. |
 | `host-keys` | Host keys | string | connection |  | The Mac's SSH host keys as known_hosts lines. ssh-keyscan -t ed25519 <address> prints one. bb-box checks them on every connection. |
-| `ios-hosts-most` | Slots per shared iOS host | number | advanced |  | The most slots a shared iOS host on this Mac has, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate for the Mac. |
-| `ios-hosts-cores` | Cores of a shared iOS host | number | advanced |  | The cores of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else the Mac's performance cores. |
-| `ios-hosts-memory-gib` | Memory of a shared iOS host (GiB) | number | advanced |  | The memory of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate. |
+| `ios-hosts-most` | Slots per shared iOS host | number | ios-hosts |  | The most slots a shared iOS host on this Mac has, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate for the Mac. |
+| `ios-hosts-cores` | Cores of a shared iOS host | number | ios-hosts |  | The cores of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else the Mac's performance cores. |
+| `ios-hosts-memory-gib` | Memory of a shared iOS host (GiB) | number | ios-hosts |  | The memory of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate. |
 
 ### docker
 
@@ -305,8 +324,8 @@ Setup: [docs/guide/namespace.md](../../docs/guide/namespace.md).
 | `machines` | Most machines | number | boxes | `2` | The most Namespace machines bb-box has at once. Each box is one machine, billed by the minute while it exists. |
 | `longest-life-hours` | Longest life (hours) | number | boxes | `3` | How long the workspace's plan lets a machine live. That is 3 hours on Developer, 5 on Team and up to 24 on Business. A box ends then, and its thread hears an hour ahead. |
 | `largest-machine` | Largest machine | string | boxes |  | The largest Mac bb-box asks for, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before bb-box asks Namespace, so another backend can take it. Empty: the largest the workspace allows, which bb-box reads from Namespace when the token may, or learns the first time Namespace refuses a Mac for its size. |
-| `ios-hosts-on` | Shared iOS hosts | boolean | boxes | `true` | Lends iOS boxes as macOS users on a shared Namespace Mac. A host is made for an iOS box that finds no slot on a pool Mac or a Tart host, and deleted when its last box goes. It lends once bb-box has measured that Namespace's Macs run the iOS Simulator. A host takes the workspace's one Mac, so no macOS box starts on Namespace while it lives. |
-| `ios-hosts-most` | Slots a host lends at most | number | advanced |  | The most slots a shared host has at once, making, ready or held. Empty, bb-box estimates it from the Mac's cores, memory and video encoder, as for a pool Mac. |
-| `ios-hosts-ahead` | Slots a host keeps ready | number | advanced | `1` | Slots a shared host keeps ready while it holds a box. |
-| `ios-hosts-resetting-most` | Slots a host resets at once | number | advanced | `2` | The most released slots a shared host resets at once. |
-| `ios-hosts-disk-reserve-gib` | Disk a host keeps free (GiB) | number | advanced | `20` | A shared host makes no new slot while it has less free disk than this. |
+| `ios-hosts-on` | Shared iOS hosts | boolean | ios-hosts | `true` | Lends iOS boxes as macOS users on a shared Namespace Mac. A host is made for an iOS box that finds no slot on a pool Mac or a Tart host, and deleted when its last box goes. It lends once bb-box has measured that Namespace's Macs run the iOS Simulator. A host takes the workspace's one Mac, so no macOS box starts on Namespace while it lives. |
+| `ios-hosts-most` | Slots a host lends at most | number | ios-hosts |  | The most slots a shared host has at once, making, ready or held. Empty, bb-box estimates it from the Mac's cores, memory and video encoder, as for a pool Mac. |
+| `ios-hosts-ahead` | Slots a host keeps ready | number | ios-hosts | `1` | Slots a shared host keeps ready while it holds a box. |
+| `ios-hosts-resetting-most` | Slots a host resets at once | number | ios-hosts | `2` | The most released slots a shared host resets at once. |
+| `ios-hosts-disk-reserve-gib` | Disk a host keeps free (GiB) | number | ios-hosts | `20` | A shared host makes no new slot while it has less free disk than this. |

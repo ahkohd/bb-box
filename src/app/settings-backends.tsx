@@ -185,7 +185,7 @@ export function toBackendConfig(model: BackendRowModel, draft: BackendDraft): Dr
     type: model.driver.type,
     ...(draft.label.trim() ? { label: draft.label.trim() } : {}),
     enabled: model.config?.enabled ?? false,
-    fields: draftFields(draft.fields, model.driver.fields),
+    fields: draftFields(draft.fields, model.driver.fields, model.config?.fields),
     ...(model.config?.warm ? { warm: model.config.warm } : {}),
     ...(hosts ? { hosts } : {}),
   };
@@ -211,7 +211,7 @@ export function BackendForm({
   const [problems, setProblems] = useState<readonly Problem[]>(model.problems);
   const [doctor, setDoctor] = useState<{ report: DoctorReport; at: number; fresh: boolean } | null>(model.state?.doctor ? { ...model.state.doctor, fresh: false } : null);
   const [busy, setBusy] = useState<"save" | "on" | "check" | null>(null);
-  const [advanced, setAdvanced] = useState(false);
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(() => new Set());
   const [notice, setNotice] = useState<string | null>(null);
 
   const setField = (key: string, value: FormValue) => setDraft((current) => ({ ...current, fields: { ...current.fields, [key]: value } }));
@@ -295,13 +295,15 @@ export function BackendForm({
         </p>
       ) : null}
       {groups.map((group) => {
-        const folded = group.id === "advanced";
+        const folded = group.id === "advanced" || group.id === "ios-hosts";
+        const open = unfolded.has(group.id);
+        const toggle = () => setUnfolded((current) => (current.has(group.id) ? new Set([...current].filter((id) => id !== group.id)) : new Set([...current, group.id])));
         return (
           <div key={group.id} className="space-y-2">
-            <FormHeading open={advanced} onToggle={folded ? () => setAdvanced((current) => !current) : undefined}>
+            <FormHeading open={open} onToggle={folded ? toggle : undefined}>
               {group.title}
             </FormHeading>
-            {!folded || advanced ? (
+            {!folded || open ? (
               <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
                 {group.fields.map((field) => (
                   <FieldControl

@@ -273,10 +273,10 @@ export const SSH_POOL_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object
     [SSH_POOL_KEYS.machines, "boxes"],
     [SSH_POOL_KEYS.knownHosts, "connection"],
     [SSH_POOL_KEYS.sshPrivateKey, "credentials"],
-    [SSH_POOL_KEYS.iosHostsMost, "advanced"],
-    [SSH_POOL_KEYS.iosHostsAhead, "advanced"],
-    [SSH_POOL_KEYS.iosHostsResettingMost, "advanced"],
-    [SSH_POOL_KEYS.iosHostsDiskReserveGiB, "advanced"],
+    [SSH_POOL_KEYS.iosHostsMost, "ios-hosts"],
+    [SSH_POOL_KEYS.iosHostsAhead, "ios-hosts"],
+    [SSH_POOL_KEYS.iosHostsResettingMost, "ios-hosts"],
+    [SSH_POOL_KEYS.iosHostsDiskReserveGiB, "ios-hosts"],
   ] as const).map(([key, group]) => {
     const setting = SSH_POOL_SETTINGS[key]!;
     return [key.slice(SSH_POOL_PREFIX.length), { ...setting, label: fieldLabel(setting.label), group } as FieldDescriptor];

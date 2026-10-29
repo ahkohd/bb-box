@@ -6,7 +6,8 @@ import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, describeError, isAcquiring, type BoxRecord } from "../core/boxes.ts";
 import type { DoctorReport } from "../backends/types.ts";
-import type { ImageBake, Problem } from "../core/document.ts";
+import { withoutSecretVersions, type ImageBake, type Problem } from "../core/document.ts";
+import { LIVE_CHECKS_VARIABLE, type ReplyDrops } from "./live-checks.ts";
 import { PRESETS } from "../core/sizes.ts";
 import { SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
@@ -75,6 +76,21 @@ async function guard(action: string, task: () => Promise<PluginCliResult>): Prom
     const code = error instanceof BoxError ? error.code : "failed";
     return { exitCode: 1, stderr: `${describeError(error, action)} (${code})\n` };
   }
+}
+
+function replyDropCommands(drops: ReplyDrops) {
+  return {
+    "config drop-replies": cliCommand({
+      summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: the next config.apply calls from the settings page that save store the configuration and then drop their reply.`,
+      options: { count: { type: "string", description: "How many replies to drop. 1 by default." }, off: { type: "boolean", description: "Drop no more replies." } },
+      async run({ options }) {
+        const count = options.off ? 0 : Number(options.count ?? "1");
+        if (!Number.isInteger(count) || count < 0 || count > 100) return { exitCode: 1, stderr: "Give --count as a whole number from 0 to 100.\n" };
+        drops.arm(count);
+        return { exitCode: 0, stdout: count ? `The next ${count === 1 ? "save's reply is" : `${count} saves' replies are`} dropped after storing.\n` : "No reply is dropped.\n" };
+      },
+    }),
+  };
 }
 
 const fileArgument = [
@@ -541,7 +557,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           options: jsonOption,
           async run({ options }) {
             const state = await app.configuration.state();
-            if (options.json) return json(state.document);
+            if (options.json) return json(withoutSecretVersions(state.document));
             return out(configText(state));
           },
         }),
@@ -577,7 +593,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const draft = await readConfigFile(positionals.file, ctx);
               const revision = (draft as { revision?: unknown })?.revision;
               const result = await app.configuration.apply(draft, typeof revision === "number" && !options.replace ? revision : null);
-              if (options.json) return { exitCode: result.ok ? 0 : 1, stdout: `${JSON.stringify(result.ok ? result.state.document : result, null, 2)}\n` };
+              if (options.json) return { exitCode: result.ok ? 0 : 1, stdout: `${JSON.stringify(result.ok ? withoutSecretVersions(result.state.document) : result, null, 2)}\n` };
               if (result.ok) {
                 const saved = `Saved revision ${result.state.revision}. bb box config show shows it, and bb box doctor checks the backends.`;
                 return out(result.problems.length ? `${saved}\nSaved with these problems, in backends that are off:\n${problemsText(result.problems)}` : saved);
@@ -606,6 +622,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             return out(copy ? movedText(copy) : "There is no copy of BB's settings: bb-box never moved any, or the copy was removed.");
           },
         }),
+        ...(app.replyDrops ? replyDropCommands(app.replyDrops) : {}),
         ...monitorCommands(bb, app.monitor),
         sweep: cliCommand({
           summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers.",
