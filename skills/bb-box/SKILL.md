@@ -439,7 +439,9 @@ one, follow these steps:
 ## The bb box command
 
 The `bb box` command checks and sets up bb-box; the
-[CLI reference](../../docs/reference/cli.md) lists it. An agent mostly needs:
+[CLI reference](../../docs/reference/cli.md) lists it. To set up a backend,
+or change kinds, sizes, spares or options, use the `bb-box-setup` skill. An
+agent mostly needs:
 
 - `bb box doctor`, which checks each backend and says how to fix what is
   wrong.
