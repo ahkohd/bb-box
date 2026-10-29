@@ -3669,3 +3669,41 @@ Built on 29 October 2026.
 Tests: the desktop paste test without the flag; on a device, the field
 shows the device's words, and its button sends one `paste` request with
 the field's text.
+
+## F-14, F-23, F-18 and F-16: checked after the deploy
+
+On production BB at main ccdc82c, device server version 33, `device-host`
+version 6, on 29 October 2026, with test values only.
+
+| Box | Check | Result |
+| --- | --- | --- |
+| Shared slot on a Tart host made for the box: carried slot `bbd-i1` | its device's keyboard defaults, read with `simctl spawn ... defaults read` | none written: `DidShowContinuousPathIntroduction` and the rest missing |
+| | `computer_type` of `bbtest first keyboard ✓ 日本 é` into Safari's address field, the device's first keyboard | arrived as `✓ 日本 é`: the slide to type tip showed, with Continue, and took the keys before the paste |
+| | the same slot's device shut down, the seven defaults written into its own preference files with `plutil` as the slot's user, booted again, the same `computer_type` | whole, with no tip |
+| | a device made for the check, the same writes while shut down, then booted | each default read back on the device as written |
+| android box, Pixel 8, Chrome 124, Chrome's first start | 7 mixed texts by `computer_type` into a test page, among them `naïve café`, `a✓b日本c`, `x→y ∑ 🙂 z` and `q✓w✓e✓r`, 13 pastes | all whole and in order; 13 paste events, and 13 "Chrome pasted from your clipboard" |
+| | the panel's Paste from this computer, in Helium, in a tab of its own whose `navigator.clipboard` was a stub holding a test value | one read of the stub; "Pasted"; the page got `bbtest panel paste ✓ 日本 é` whole; Copy to this computer then said the device's clipboard had no text, as before the paste |
+
+### F-23b: a carried slot claimed at once
+
+The live check found what F-23 missed. On a host made for the box, the
+first box takes carried slot `i1` at once. Its claim loads the slot's
+daemons and the device server boots the device, so `device-host` never
+boots it and never wrote the defaults. Only `i2`, warmed after, got
+them. So a new host's first box still met the tip.
+
+- **A claim writes them too.** Through the device when it is booted, as
+  before; and when it is shut down, as a carried slot's is until a box or
+  a warm-up boots it, into the device's own preference files, with
+  `plutil -replace`, as the slot's user, before its device server boots
+  it. The live check above shows that a device booted after such writes
+  reads them, and shows no tip.
+- `device-host` is version 7.
+
+Tests: a carried slot whose defaults are gone is claimed with its device
+shut down; the seven defaults are in its device's files, and none went
+through the device. Without the change, that test fails.
+
+Not checked live: F-23b itself, which needs its deploy. The check is the
+same: a new shared slot on a Tart host made for the box, `computer_type`
+right after the first keyboard opens.
