@@ -108,7 +108,8 @@ supervise() {
     child=$!
     wait "$child"
     [ -e "$gave_up" ] && exit 0
-    sleep 1
+    sleep 1 8>&- &
+    wait "$!"
   done
 }
 
@@ -158,10 +159,23 @@ supervisor_alive() {
   [ -s "$dir/supervisor.pid" ] && kill -0 "$(cat "$dir/supervisor.pid")" 2>/dev/null
 }
 
+wait_until_gone() {
+  waited=0
+  for pid in "$@"; do
+    while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 200 ]; do
+      sleep 0.05
+      waited=$((waited + 1))
+    done
+  done
+}
+
 stop_supervised() {
-  [ -s "$dir/supervisor.pid" ] && kill "$(cat "$dir/supervisor.pid")" 2>/dev/null
-  [ -s "$dir/server.pid" ] && kill "$(cat "$dir/server.pid")" 2>/dev/null
+  supervisor=$(cat "$dir/supervisor.pid" 2>/dev/null)
+  server=$(cat "$dir/server.pid" 2>/dev/null)
+  [ -n "$supervisor" ] && kill "$supervisor" 2>/dev/null
+  [ -n "$server" ] && kill "$server" 2>/dev/null
   rm -f "$dir/supervisor.pid" "$dir/server.pid"
+  wait_until_gone $supervisor $server
   return 0
 }
 
