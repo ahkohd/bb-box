@@ -1081,6 +1081,8 @@ export interface BackendDriver<C = unknown> {
   readonly family?: string;
   /** The kinds its backends can make, which take warm counts. */
   readonly kinds: readonly string[];
+  readonly warmKinds?: readonly string[];
+  readonly sharedKinds?: readonly string[];
   /** In the order the settings page shows them. */
   readonly fields: Readonly<Record<string, FieldDescriptor>>;
   /** Fields of each host, for a backend whose hosts are set up alike. Hosts have a name and a switch besides. */

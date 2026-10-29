@@ -219,7 +219,8 @@ export function offeringBackends(state: ConfigState, id: string): BackendConfig[
 }
 
 export function warmCount(state: ConfigState, id: string): number {
-  return state.document.backends.reduce((sum, backend) => sum + (backend.warm?.[id] ?? 0), 0);
+  const keepsWarm = (type: string) => state.drivers.find((driver) => driver.type === type)?.warmKinds.includes(id) ?? false;
+  return state.document.backends.reduce((sum, backend) => sum + (backend.enabled && keepsWarm(backend.type) ? (backend.warm?.[id] ?? 0) : 0), 0);
 }
 
 export function kindName(kinds: readonly KindInfoView[], info: KindInfoView): string {

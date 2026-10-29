@@ -1,39 +1,131 @@
-// The Kinds section of the settings page: a row per kind with its switch,
-// presets, largest size, warm counts and spares, and an editor for them.
-
-import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { useState, type ReactNode } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { forwardRef } from "react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import type { BoxForm, BoxSize, WarmShortfall } from "../backends/types.ts";
-import type { Problem } from "../core/document.ts";
-import type { Preset } from "../core/sizes.ts";
-import type { BackendState, ConfigState, KindInfoView } from "../plugin/configuration.ts";
-import { isArm64Badge, KindBadges, lacksDocker, Meta, osName, StatusDot } from "./common.tsx";
-import { runsWayland } from "./boxes-filter.ts";
-import { PRESET_LABELS, PRESET_NAMES, gib, mib, problemAt, problemsLeft, sizeWords, warmShortWords, type KindSizes } from "./config.ts";
-import { FieldShell, FormHeading } from "./settings-fields.tsx";
+import type { BoxForm, WarmShortfall } from "../backends/types.ts";
+import type { BackendConfig } from "../core/document.ts";
+import type { ConfigState, DriverView, KindInfoView } from "../plugin/configuration.ts";
+import type { Tone } from "./common.tsx";
+import { effectiveKind } from "./config.ts";
+import { switchKey, useSettings } from "./settings-context.tsx";
+import { backendHealth, backendLabel, kindName } from "./settings-status.ts";
 
-export interface KindRowModel {
-  readonly info: KindInfoView;
-  readonly sizes: KindSizes;
-  /** The backends in the document that can make it, with what its boxes are there, whether each offers it now, its warm count, and any shortfall its warm pool is left at for want of room (#356). */
-  readonly backends: readonly { readonly id: string; readonly label: string; readonly form: BoxForm | null; readonly offers: boolean; readonly warm: number; readonly short: WarmShortfall | null }[];
-  readonly problems: readonly Problem[];
+export function kindPart(id: string): string {
+  return `kind/${id}`;
 }
 
-export function kindRowModel(state: ConfigState, info: KindInfoView, sizes: KindSizes): KindRowModel {
-  const backends = state.document.backends
-    .filter((backend) => info.drivers.includes(backend.type))
-    .map((backend) => {
-      const live: BackendState | undefined = state.backends.find((candidate) => candidate.id === backend.id);
-      const short = live?.warmShort?.find((pool) => pool.kinds.includes(info.id)) ?? null;
-      return { id: backend.id, label: live?.label ?? backend.label ?? backend.type, form: live?.form ?? null, offers: live?.kinds.includes(info.id) ?? false, warm: backend.warm?.[info.id] ?? 0, short };
+export const DEFAULT_STAYS_ON = "The default kind stays on. Choose another default to turn it off.";
+
+const turnedThisVisit = new Set<string>();
+
+export function keepKindInPlace(id: string): void {
+  turnedThisVisit.add(id);
+}
+
+export function keptInPlace(id: string): boolean {
+  return turnedThisVisit.has(id);
+}
+
+export function forgetKindsKeptInPlace(): void {
+  turnedThisVisit.clear();
+}
+
+export function useKindSwitch(info: KindInfoView) {
+  const { state, instant, writes } = useSettings();
+  const key = switchKey.kind(info.id);
+  const general = { ...state.defaults.general, ...state.document.general };
+  const isDefault = (instant.pendingValue<string>(switchKey.general("defaultKind")) ?? general.defaultKind) === info.id;
+  const enabled = instant.pendingValue<boolean>(key) ?? effectiveKind(state, info.id).enabled;
+  const name = kindName(state.kinds, info);
+  const turn = (on: boolean) => {
+    keepKindInPlace(info.id);
+    return instant.run(writes.kindOn(state, info.id, on, name));
+  };
+  return { key, isDefault, enabled, locked: isDefault && enabled, name, turn };
+}
+
+export const KindSwitch = forwardRef<HTMLButtonElement, { info: KindInfoView; describedBy?: string }>(function KindSwitch({ info, describedBy }, ref) {
+  const { instant } = useSettings();
+  const kind = useKindSwitch(info);
+  return (
+    <Switch
+      ref={ref}
+      aria-label={`${kind.name}: offered to threads`}
+      aria-describedby={describedBy}
+      aria-disabled={kind.locked || instant.pending !== null || undefined}
+      title={kind.locked ? DEFAULT_STAYS_ON : undefined}
+      className={cn(kind.locked && "cursor-not-allowed opacity-50")}
+      checked={kind.enabled}
+      onClick={(event) => {
+        if (kind.locked) event.preventDefault();
+      }}
+      onCheckedChange={(on) => void kind.turn(on)}
+    />
+  );
+});
+
+export type MakesIt = "makes" | "off" | "left-out" | "cannot";
+
+export type NoWarmReason = "shared-ios-hosts" | "made-when-asked";
+
+export interface RunsOn {
+  readonly config: BackendConfig;
+  readonly label: string;
+  readonly form: BoxForm | null;
+  readonly makes: MakesIt;
+  readonly problem: string | null;
+  readonly keepsWarm: boolean;
+  readonly noWarm: NoWarmReason | null;
+  readonly sharedIosField: string | null;
+  readonly short: WarmShortfall | null;
+}
+
+function makesIt(state: ConfigState, config: BackendConfig, kind: string): { readonly makes: MakesIt; readonly problem: string | null } {
+  if (!config.enabled) return { makes: "off", problem: null };
+  const live = state.backends.find((each) => each.id === config.id);
+  if (live?.state === "active" && live.kinds.includes(kind)) return { makes: "makes", problem: null };
+  const health = backendHealth(state, config, Date.now());
+  if (live?.state === "active" && health.tone !== "bad") return { makes: "left-out", problem: null };
+  return { makes: "cannot", problem: health.detail ?? health.words };
+}
+
+function sharedIosFieldOf(driver: DriverView | undefined): string | null {
+  const fields = driver?.fields.filter((field) => field.group === "ios-hosts") ?? [];
+  return (fields.find((field) => field.key.endsWith("ios-hosts-ahead")) ?? fields[0])?.key ?? null;
+}
+
+export function runsOn(state: ConfigState, info: KindInfoView): RunsOn[] {
+  return state.document.backends
+    .filter((config) => info.drivers.includes(config.type) || state.backends.some((live) => live.id === config.id && live.kinds.includes(info.id)))
+    .map((config) => {
+      const driver = state.drivers.find((each) => each.type === config.type);
+      const keepsWarm = driver?.warmKinds.includes(info.id) ?? false;
+      const sharedIosField = info.device === "ios" ? sharedIosFieldOf(driver) : null;
+      return {
+        config,
+        label: backendLabel(state, config),
+        form: state.backends.find((each) => each.id === config.id)?.form ?? null,
+        ...makesIt(state, config, info.id),
+        keepsWarm,
+        noWarm: keepsWarm ? null : sharedIosField ? "shared-ios-hosts" : "made-when-asked",
+        sharedIosField,
+        short: state.backends.find((each) => each.id === config.id)?.warmShort.find((pool) => pool.kinds.includes(info.id)) ?? null,
+      };
     });
-  return { info, sizes, backends, problems: state.problems.filter((problem) => problem.path === `kinds.${info.id}` || problem.path.startsWith(`kinds.${info.id}.`)) };
 }
+
+export const MAKES_WORDS: Readonly<Record<MakesIt, string>> = {
+  makes: "Makes it now",
+  off: "Off",
+  "left-out": "Set up not to make it",
+  cannot: "Cannot make it now",
+};
+
+export const MAKES_TONES: Readonly<Record<MakesIt, Tone>> = { makes: "ok", off: "off", "left-out": "off", cannot: "warn" };
+
+export const NO_WARM_WORDS: Readonly<Record<NoWarmReason, string>> = {
+  "shared-ios-hosts": "No warm boxes: its shared iOS hosts keep slots ready instead.",
+  "made-when-asked": "No warm boxes of this kind: it makes each box when a thread asks.",
+};
 
 /** A kind's spares in its status line (032): "2 spares ready", "1 of 2 spares ready" or "2 spares, being made". */
 export function sparesWords(target: number, now: { readonly ready: number; readonly making: number }): string[] {
@@ -41,223 +133,5 @@ export function sparesWords(target: number, now: { readonly ready: number; reado
   const spares = `${target} ${target === 1 ? "spare" : "spares"}`;
   if (now.ready >= target) return [`${spares} ready`];
   if (now.ready > 0) return [`${now.ready} of ${spares} ready`];
-  // None ready and none being made, as while its backend is off: the row's state says why.
   return now.making > 0 ? [`${spares}, being made`] : [];
-}
-
-export function KindRow({ model, open, onToggle, onSwitch, switching, children }: { model: KindRowModel; open: boolean; onToggle: () => void; onSwitch: (on: boolean) => void; switching: boolean; children?: ReactNode }) {
-  const { info, sizes, backends } = model;
-  const offering = backends.filter((backend) => backend.offers);
-  const warm = backends.filter((backend) => backend.warm > 0).map((backend) => `${backend.warm} warm on ${backend.label}`);
-  const spares = sparesWords(sizes.spares, info.spares);
-  const presets = PRESET_NAMES.map((preset) => `${PRESET_LABELS[preset]} ${sizeWords(sizes.presets[preset])}${preset === sizes.default ? " (default)" : ""}`);
-  // The badges say what its boxes are on the backends that offer it now, as the "From" line names them.
-  const forms = [...new Set(offering.map((backend) => backend.form).filter((form): form is BoxForm => form !== null))];
-  return (
-    <div className="py-3 first:pt-0 last:pb-0">
-      <div className="flex items-start gap-3">
-        <Switch aria-label={`${info.label} on`} className="mt-1" checked={sizes.enabled} disabled={switching} onCheckedChange={onSwitch} />
-        <div className="min-w-0 flex-1">
-          <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
-            <span className="truncate">{osName(info.os)}</span>
-            <KindBadges desktop={info.desktop} wayland={runsWayland({ desktop: info.desktop, kind: info.id })} gpu={info.gpu} noDocker={lacksDocker(info)} arm64={isArm64Badge(info.os, info.arch)} forms={forms} />
-          </p>
-          <div className="mt-0.5 flex min-w-0 items-start gap-1.5 text-xs leading-snug text-muted-foreground">
-            <StatusDot tone={!sizes.enabled ? "off" : offering.length ? "ok" : "warn"} />
-            <Meta
-              items={[
-                !sizes.enabled ? "Off" : offering.length ? `From ${offering.map((backend) => backend.label).join(" and ")}` : <span className="text-warning-text">Not offered: no backend has it</span>,
-                ...warm,
-                ...spares,
-              ]}
-            />
-          </div>
-          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-            {presets.join(" · ")} · up to {sizeWords(sizes.largest)}
-          </p>
-          {model.problems.length && !open ? (
-            <ul className="mt-0.5 text-xs leading-snug text-destructive-text">
-              {model.problems.map((problem) => (
-                <li key={problem.path + problem.message}>{problem.message}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-        <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 px-2" aria-expanded={open} onClick={onToggle}>
-          Edit
-          <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3.5" aria-hidden />
-        </Button>
-      </div>
-      {open ? children : null}
-    </div>
-  );
-}
-
-interface SizeFields {
-  readonly cores: string;
-  readonly memoryGiB: string;
-  readonly diskGiB: string;
-}
-
-function fieldsOf(size: BoxSize): SizeFields {
-  return { cores: String(size.cores), memoryGiB: String(gib(size.memoryMiB)), diskGiB: size.diskGiB === null ? "" : String(size.diskGiB) };
-}
-
-/** A size from its fields, or null when a field is not a number. An empty disk is the base disk, or for the largest, unchanged. */
-function sizeOf(fields: SizeFields, fallback: BoxSize, largest: boolean): BoxSize | null {
-  const cores = Number(fields.cores.trim());
-  const memory = Number(fields.memoryGiB.trim());
-  if (!fields.cores.trim() || !fields.memoryGiB.trim() || !Number.isFinite(cores) || !Number.isFinite(memory)) return null;
-  const disk = fields.diskGiB.trim();
-  if (disk && !Number.isFinite(Number(disk))) return null;
-  return { cores, memoryMiB: mib(memory), diskGiB: disk ? Number(disk) : largest ? fallback.diskGiB : null };
-}
-
-export interface KindEdit {
-  readonly sizes: KindSizes;
-  readonly warm: Readonly<Record<string, number>>;
-}
-
-export function KindForm({ model, onSave, onClose }: { model: KindRowModel; onSave: (edit: KindEdit) => Promise<{ readonly saved: boolean; readonly problems: readonly Problem[] }>; onClose: () => void }) {
-  const { info, sizes } = model;
-  const path = `kinds.${info.id}`;
-  const [presets, setPresets] = useState<Record<Preset, SizeFields>>({ small: fieldsOf(sizes.presets.small), medium: fieldsOf(sizes.presets.medium), large: fieldsOf(sizes.presets.large) });
-  const [largest, setLargest] = useState<SizeFields>(fieldsOf(sizes.largest));
-  const [chosen, setChosen] = useState<Preset>(sizes.default);
-  const [warm, setWarm] = useState<Record<string, string>>(Object.fromEntries(model.backends.map((backend) => [backend.id, String(backend.warm)])));
-  const [spares, setSpares] = useState(String(sizes.spares));
-  const [problems, setProblems] = useState<readonly Problem[]>(model.problems);
-  const [busy, setBusy] = useState(false);
-
-  const built = (): KindEdit | null => {
-    const next = {} as Record<Preset, BoxSize>;
-    for (const preset of PRESET_NAMES) {
-      const size = sizeOf(presets[preset], sizes.presets[preset], false);
-      if (!size) return null;
-      next[preset] = size;
-    }
-    const top = sizeOf(largest, sizes.largest, true);
-    if (!top) return null;
-    const counts: Record<string, number> = {};
-    for (const [id, text] of Object.entries(warm)) {
-      const count = Number(text.trim() || "0");
-      if (!Number.isFinite(count)) return null;
-      counts[id] = count;
-    }
-    const spareCount = Number(spares.trim() || "0");
-    if (!Number.isFinite(spareCount)) return null;
-    return { sizes: { enabled: sizes.enabled, presets: next, default: chosen, largest: top, spares: spareCount }, warm: counts };
-  };
-  const edit = built();
-  const save = async () => {
-    if (!edit) return;
-    setBusy(true);
-    try {
-      const { saved, problems: left } = await onSave(edit);
-      setProblems(left);
-      if (saved) onClose();
-    } finally {
-      setBusy(false);
-    }
-  };
-  const shown = [...PRESET_NAMES.flatMap((preset) => [`${path}.presets.${preset}`, `${path}.presets.${preset}.cores`, `${path}.presets.${preset}.memoryMiB`, `${path}.presets.${preset}.diskGiB`]), `${path}.largest`, `${path}.default`, `${path}.spares`];
-  const rest = problemsLeft(problems, path, shown);
-  const sizeRow = (label: string, key: Preset | "largest", fields: SizeFields, set: (next: SizeFields) => void, extra?: ReactNode) => {
-    const at = key === "largest" ? `${path}.largest` : `${path}.presets.${key}`;
-    const problem = [problemAt(problems, at), problemAt(problems, `${at}.cores`), problemAt(problems, `${at}.memoryMiB`), problemAt(problems, `${at}.diskGiB`)].find(Boolean) ?? null;
-    return (
-      <div key={key} className="grid grid-cols-[6rem_minmax(0,1fr)] items-start gap-3">
-        <div className="pt-1.5 text-xs text-foreground">
-          {label}
-          {extra}
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          <FieldShell label="Cores">
-            <Input className="h-8 text-xs" inputMode="numeric" aria-label={`${label} cores`} value={fields.cores} onChange={(event) => set({ ...fields, cores: event.target.value })} />
-          </FieldShell>
-          <FieldShell label="Memory, GiB">
-            <Input className="h-8 text-xs" inputMode="numeric" aria-label={`${label} memory`} value={fields.memoryGiB} onChange={(event) => set({ ...fields, memoryGiB: event.target.value })} />
-          </FieldShell>
-          <FieldShell label="Disk, GiB" problem={problem}>
-            <Input className="h-8 text-xs" inputMode="numeric" aria-label={`${label} disk`} value={fields.diskGiB} placeholder={key === "largest" ? undefined : "base"} onChange={(event) => set({ ...fields, diskGiB: event.target.value })} />
-          </FieldShell>
-        </div>
-      </div>
-    );
-  };
-  return (
-    <form
-      className="mt-3 space-y-4 border-t border-border pt-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void save();
-      }}
-    >
-      <div className="space-y-2">
-        <FormHeading>Presets</FormHeading>
-        <p className="text-2xs leading-snug text-subtle-foreground/75">An empty disk is the base disk.</p>
-        <div role="radiogroup" aria-label="Default preset" className="space-y-2">
-          {PRESET_NAMES.map((preset) =>
-            sizeRow(
-              PRESET_LABELS[preset],
-              preset,
-              presets[preset],
-              (next) => setPresets((current) => ({ ...current, [preset]: next })),
-              <label className="mt-1 flex items-center gap-1.5 text-2xs text-muted-foreground">
-                <input type="radio" name={`${info.id}-default`} role="radio" aria-label={`${PRESET_LABELS[preset]} is the default`} aria-checked={chosen === preset} checked={chosen === preset} onChange={() => setChosen(preset)} className="size-3 accent-foreground" />
-                default
-              </label>,
-            ),
-          )}
-        </div>
-      </div>
-      <div className="space-y-2">
-        <FormHeading>Largest custom size</FormHeading>
-        {sizeRow("Largest", "largest", largest, setLargest)}
-      </div>
-      {model.backends.length ? (
-        <div className="space-y-2">
-          <FormHeading>Warm boxes</FormHeading>
-          <p className="text-2xs leading-snug text-subtle-foreground/75">Ready boxes kept waiting, so a new one is ready at once.</p>
-          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-            {model.backends.map((backend) => (
-              <FieldShell key={backend.id} label={backend.label} problem={problemAt(problems, `backends.${backend.id}.warm.${info.id}`)}>
-                <Input className="h-8 w-24 text-xs" inputMode="numeric" aria-label={`Warm ${info.label} boxes on ${backend.label}`} value={warm[backend.id] ?? "0"} onChange={(event) => setWarm((current) => ({ ...current, [backend.id]: event.target.value }))} />
-                {backend.short ? (
-                  <span role="status" className="text-2xs leading-snug text-warning-text/80">
-                    {warmShortWords(backend.short)}
-                  </span>
-                ) : null}
-              </FieldShell>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      <div className="space-y-2">
-        <FormHeading>Spare boxes</FormHeading>
-        <p className="text-2xs leading-snug text-subtle-foreground/75">
-          Boxes made and added to BB ahead, so a box of the default size is ready with the thread's access at once. Each holds its memory, and BB lists it as a machine whose name ends in "(spare)" until a thread takes it. 0 keeps none.
-        </p>
-        <FieldShell label="Spares" problem={problemAt(problems, `${path}.spares`)}>
-          <Input className="h-8 w-24 text-xs" inputMode="numeric" aria-label={`Spare ${info.label} boxes`} value={spares} onChange={(event) => setSpares(event.target.value)} />
-        </FieldShell>
-      </div>
-      {rest.length ? (
-        <ul role="alert" className="space-y-0.5 text-xs leading-snug text-destructive-text">
-          {rest.map((problem) => (
-            <li key={problem.path + problem.message}>{problem.message}</li>
-          ))}
-        </ul>
-      ) : null}
-      <div className={cn("flex items-center gap-2")}>
-        <Button type="submit" size="sm" className="h-7" disabled={busy || !edit}>
-          {busy ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
-          Save
-        </Button>
-        <Button type="button" variant="ghost" size="sm" className="h-7" disabled={busy} onClick={onClose}>
-          Cancel
-        </Button>
-      </div>
-    </form>
-  );
 }

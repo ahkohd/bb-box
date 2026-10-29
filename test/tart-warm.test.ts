@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, u
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { TartBackend } from "../src/backends/tart/backend.ts";
+import { tartDriver } from "../src/backends/tart/index.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
 import type { AcquireHooks, BoxIdentity, BoxSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { FAKE_DISK_GIB, FAKE_IMAGE, FAKE_MAC, addImage, addVmFiles, fakeMacTools, runVmElsewhere, tartConfig } from "./fake-mac.ts";
@@ -548,4 +549,18 @@ test("a start whose saved state does not restore boots afresh and says so in its
   await backend.start(guest, signal(), (step, ms) => (booted[step] = ms));
   assert.equal(typeof booted.boot, "number");
   await backend.release(guest, releasing);
+});
+
+test("maintain reads the warm counts of the kinds the driver says it keeps warm, and no others", async () => {
+  const ssh = fakeSsh();
+  const mac = ssh.home(FAKE_MAC);
+  fakeMacTools(mac);
+  addImage(mac);
+  const asked = new Set<string>();
+  const context = { ...testContext(new MemoryStorage(), "test"), warm: (kind: string) => (asked.add(kind), 0) };
+  const images = Object.fromEntries(["macos", "macos-desktop", "linux", "linux-desktop", "windows"].map((kind) => [`tart-${kind}-image`, FAKE_IMAGE]));
+  const backend = new TartBackend(tartConfig(images), context, { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER, fillQuietMs: 0 });
+  made.push(backend);
+  await backend.maintain();
+  assert.deepEqual([...asked].sort(), [...tartDriver.warmKinds!].sort());
 });

@@ -52,7 +52,7 @@ export function useInstant(): Instant {
 
 function settingElement(path: Path): HTMLElement | null {
   if (typeof document === "undefined") return null;
-  return document.querySelector<HTMLElement>(`[data-draft-path="${CSS.escape(path)}"]`);
+  return document.querySelector<HTMLElement>(`[data-draft-path="${CSS.escape(path)}"]`) ?? document.querySelector<HTMLElement>(`[data-draft-path^="${CSS.escape(`${path}/`)}"]`);
 }
 
 export function revealSetting(path: Path): boolean {

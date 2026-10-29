@@ -71,15 +71,16 @@ The same page lists **Docker on BB machines**: your own BB machines that run Doc
 
 A kind is a type of box, such as a Linux desktop. A kind is offered when it is on and a backend that is on makes it.
 
-Each kind is a row with a switch, in three groups: Linux; macOS and iOS; Windows and Android. The row gives the kind's default size, how many backends make it, and how many warm and spare boxes it keeps. Kinds that are off, and kinds no backend you have makes, are folded into one line at the end. The default kind's switch stays on: choose another default first.
+Each kind is a row with a switch, in one list: Linux kinds first, then macOS and iOS, then Windows and Android. The row gives the kind's default size, how many backends make it, and how many warm and spare boxes it keeps. Kinds that are off, and kinds no backend you have makes, are folded into one line at the end. A kind you turn off stays where it is, dimmed, until you leave the settings.
 
-Select a kind's row to open its page, where you can make it the default and change it:
+The default kind's switch stays on. To turn it off, choose another default first: **Choose another default** on its page, or **Change the default** above the list, opens the Default kind menu.
 
-- Presets: the cores, memory and disk of Small, Medium and Large. An empty disk keeps the size the image comes with.
-- Default preset: the size a box gets when no one says.
-- Largest custom size: the most a Custom size can ask for.
-- Warm boxes: ready boxes kept waiting on each backend, so a new box is ready at once.
-- Spare boxes: ready boxes that are already BB machines and belong to no thread, so a thread can have one at once. See [spare boxes](spares.md).
+Select a kind's row to open its page. **Make default** makes it the default at once. The rest is one form, saved with **Save**:
+
+- Sizes: the cores, memory and disk of Small, Medium and Large, and the Largest a custom size can ask for. An empty disk keeps the size the image comes with.
+- Default: the size a box gets when no one says.
+- Where it runs: each backend that makes the kind, in the order a new box tries them, with whether it makes it now. Where a backend keeps warm boxes of the kind, **Warm** sets how many wait ready there, so a new box is ready at once. Other backends say why they keep none: most make each box when a thread asks, and shared iOS hosts keep slots ready instead.
+- Spares to keep: ready boxes that are already BB machines and belong to no thread, so a thread can have one at once. See [spare boxes](spares.md).
 
 The kinds and their shipped sizes are in [kinds and sizes](../reference/kinds.md).
 

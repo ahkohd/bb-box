@@ -5,6 +5,7 @@ export interface Arrival {
   readonly kind: "open" | "return" | "replace";
   readonly row: string | null;
   readonly scroll: number;
+  readonly focus?: string;
   readonly serial: number;
 }
 
@@ -12,7 +13,7 @@ export interface SettingsNav {
   readonly view: SettingsView;
   readonly cameFrom: SettingsView | null;
   readonly arrival: Arrival | null;
-  go(view: SettingsView, row?: string): void;
+  go(view: SettingsView, row?: string, focus?: string): void;
   back(): void;
   toOverview(): void;
   replace(view: SettingsView): void;
@@ -70,7 +71,7 @@ export function useSettingsNav(scroller: () => HTMLElement | null): SettingsNav 
   }, [arrive]);
 
   const go = useCallback(
-    (next: SettingsView, row?: string) => {
+    (next: SettingsView, row?: string, focus?: string) => {
       const here = viewRef.current;
       if (sameView(next, here)) return;
       const entry = entryOf(window.history.state) ?? { depth: 0, from: null };
@@ -78,7 +79,7 @@ export function useSettingsNav(scroller: () => HTMLElement | null): SettingsNav 
       window.history.pushState(withEntry({ depth: entry.depth + 1, from: hashOf(here) }), "", urlFor(next));
       setCameFrom(here);
       setView(next);
-      arrive({ kind: "open", row: null, scroll: 0 });
+      arrive({ kind: "open", row: null, scroll: 0, ...(focus ? { focus } : {}) });
     },
     [arrive, scroller],
   );

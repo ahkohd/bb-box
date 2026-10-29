@@ -203,7 +203,7 @@ function configurationPage(): string {
     "",
     "## backends",
     "",
-    `Each backend's entry, in the order acquire tries them. Its ID is its type, or \`<type>:<name>\` for another backend of the type. A backend keeps at most ${MAX_WARM} warm boxes of a kind.`,
+    `Each backend's entry, in the order acquire tries them. Its ID is its type, or \`<type>:<name>\` for another backend of the type. A backend keeps at most ${MAX_WARM} warm boxes of a kind, and only of the kinds it keeps warm, as [Each backend's fields](#each-backends-fields) lists them; a count for another kind is kept but does nothing.`,
     "",
     memberTable("BackendConfig"),
     "",
@@ -225,7 +225,7 @@ function configurationPage(): string {
     "",
     "## Each backend's fields",
     "",
-    table(["Type", "Backend", "Kinds"], DRIVERS.map((driver) => [`[\`${driver.type}\`](#${anchor(driver.type)})`, driver.label, driver.kinds.join(", ")])),
+    table(["Type", "Backend", "Kinds", "Keeps warm"], DRIVERS.map((driver) => [`[\`${driver.type}\`](#${anchor(driver.type)})`, driver.label, [...driver.kinds, ...(driver.sharedKinds ?? []).map((kind) => `${kind} (on shared iOS hosts only)`)].join(", "), driver.warmKinds?.join(", ") || "none"])),
   ];
   for (const driver of DRIVERS) {
     lines.push("", `### ${driver.type}`, "", `${driver.label}: ${driver.description}`, "", `Setup: [${driver.setup.guide}](../../${driver.setup.guide}).`);
@@ -242,7 +242,7 @@ function screenWords(model: DeviceModel): string {
 }
 
 function kindsPage(): string {
-  const offeredBy = (kind: string) => DRIVERS.filter((driver) => driver.kinds.includes(kind)).map((driver) => driver.label);
+  const offeredBy = (kind: string) => DRIVERS.flatMap((driver) => (driver.kinds.includes(kind) ? [driver.label] : driver.sharedKinds?.includes(kind) ? [`${driver.label} (on shared iOS hosts only)`] : []));
   const kinds = Object.keys(KIND_INFO);
   const lines = [
     "# Kinds and sizes",

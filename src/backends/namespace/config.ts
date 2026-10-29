@@ -104,28 +104,28 @@ export const NAMESPACE_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   },
   [NAMESPACE_KEYS.iosHostsMost]: {
     type: "number",
-    label: "Slots a host lends at most",
-    description: "The most slots a shared host has at once, making, ready or held. Empty, bb-box estimates it from the Mac's cores, memory and video encoder, as for a pool Mac.",
+    label: "Slots per shared iOS host",
+    description: "The most slots each shared iOS host has at once, making, ready or held. Empty, bb-box estimates it from the Mac's cores, memory and video encoder, as for a pool Mac.",
     group: "ios-hosts",
   },
   [NAMESPACE_KEYS.iosHostsAhead]: {
     type: "number",
-    label: "Slots a host keeps ready",
-    description: "Slots a shared host keeps ready while it holds a box.",
+    label: "Ready slots kept on a shared iOS host",
+    description: "Slots a shared iOS host keeps ready while it holds a box, so the next box is ready in seconds.",
     group: "ios-hosts",
     default: NAMESPACE_IOS_HOSTS_DEFAULTS.ahead,
   },
   [NAMESPACE_KEYS.iosHostsResettingMost]: {
     type: "number",
-    label: "Slots a host resets at once",
-    description: "The most released slots a shared host resets at once.",
+    label: "Slots a shared iOS host resets at once",
+    description: "The most released slots a shared iOS host resets in one pass, sweeping their files.",
     group: "ios-hosts",
     default: NAMESPACE_IOS_HOSTS_DEFAULTS.resettingMost,
   },
   [NAMESPACE_KEYS.iosHostsDiskReserveGiB]: {
     type: "number",
-    label: "Disk a host keeps free (GiB)",
-    description: "A shared host makes no new slot while it has less free disk than this.",
+    label: "Disk a shared iOS host keeps free (GiB)",
+    description: "A shared iOS host makes no new slot while it has less free disk than this.",
     group: "ios-hosts",
     default: NAMESPACE_IOS_HOSTS_DEFAULTS.diskReserveGiB,
   },
@@ -179,7 +179,7 @@ export function parseNamespacePart(part: BackendPart): ParsedBackend<NamespaceCo
   const on = values[NAMESPACE_KEYS.iosHostsOn];
   const mostText = values[NAMESPACE_KEYS.iosHostsMost];
   const most = mostText === undefined || mostText === null || mostText === "" ? null : number(values, NAMESPACE_KEYS.iosHostsMost, NaN);
-  if (most !== null && !(Number.isInteger(most) && most >= 1 && most <= 64)) problem(NAMESPACE_KEYS.iosHostsMost, "Namespace: the slots a host lends at most must be a whole number from 1 to 64, or empty.");
+  if (most !== null && !(Number.isInteger(most) && most >= 1 && most <= 64)) problem(NAMESPACE_KEYS.iosHostsMost, "Namespace: the slots per shared iOS host must be a whole number from 1 to 64, or empty.");
   const ahead = number(values, NAMESPACE_KEYS.iosHostsAhead, NAMESPACE_IOS_HOSTS_DEFAULTS.ahead);
   const resettingMost = number(values, NAMESPACE_KEYS.iosHostsResettingMost, NAMESPACE_IOS_HOSTS_DEFAULTS.resettingMost);
   const diskReserveGiB = number(values, NAMESPACE_KEYS.iosHostsDiskReserveGiB, NAMESPACE_IOS_HOSTS_DEFAULTS.diskReserveGiB);

@@ -54,6 +54,7 @@ export interface DriverView {
   readonly nature: MachineNature;
   /** The kinds its backends can make. */
   readonly kinds: readonly string[];
+  readonly warmKinds: readonly string[];
   readonly fields: readonly FieldView[];
   readonly hostFields: readonly FieldView[];
   /** Paths in bb-box's repository: the guide first, then the scripts in the order it runs them. */
@@ -358,7 +359,7 @@ export class Configuration {
         id,
         ...kindInfo(id),
         docker: docker(id),
-        drivers: drivers.filter((driver) => driver.kinds.includes(id)).map((driver) => driver.type),
+        drivers: drivers.filter((driver) => driver.kinds.includes(id) || driver.sharedKinds?.includes(id)).map((driver) => driver.type),
         spares: spares[id] ?? { ready: 0, making: 0 },
       })),
       drivers: drivers.map((driver) => ({
@@ -367,6 +368,7 @@ export class Configuration {
         description: driver.description,
         nature: driver.nature,
         kinds: driver.kinds,
+        warmKinds: driver.warmKinds ?? [],
         fields: driverFields(driver, drivers),
         hostFields: fieldViews(driver.hostFields),
         setup: driver.setup,

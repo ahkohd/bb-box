@@ -1433,3 +1433,241 @@ The same suite on the commit before unit 9 passed too (2,782 tests, 0
 fail; vitest 284). One full run before that, outside a git checkout, had two tests
 fail: the docs test, which needs git, and a job's command outliving its
 connection (#405), which failed in 15 ms under load and passed alone.
+
+## Unit 6: each kind's page on the engine
+
+Built on 29 October 2026, on units 1 to 4. A kind's page is now one form
+on the draft registry, like a backend's, and the default kind's rule and
+kinds kept in place work the same on the overview and the page.
+
+### What changed
+
+- **Header**: the kind's full name, its badges, "Default kind", its
+  description, "Saved changes reach new boxes; boxes already made keep
+  their size", the saving rule, then the Saved tick, Make default and
+  "Offered to threads". Make default acts at once, shows only while the
+  kind is on and not the default, and then moves focus to the kind's
+  switch. A state line says "Off: no new boxes", "Not offered: its
+  backends are off" and the like.
+- **The default kind's rule**, on the overview's row and the page alike:
+  its switch stays on. It is `aria-disabled`, not `disabled`, so it keeps
+  focus and reads its reason, "The default kind stays on. Choose another
+  default to turn it off."; a click or Space does nothing. The page shows
+  that line with Choose another default, and the overview has Change the
+  default; both open Boxes with focus on the Default kind menu. A default
+  kind that is off says so as a problem, and its switch turns it on.
+- **Sizes**: Small, Medium, Large and Largest by cores, memory in GiB and
+  disk in GiB, with the default size as a radio in its own column. One
+  radio per size: below 640 px the grid puts it beside the size's name and
+  each field gets its visible label. Empty disk is the image's own;
+  Largest needs one. Problems sit under their size, named, such as
+  "Small: give the cores as a whole number, at least 1.", and the server's
+  "the medium linux preset … is above the largest size" lands on Medium.
+  Show focuses the first field of a size whose whole row is wrong.
+- **Where it runs**: every backend that makes the kind, in the document's
+  order, the order a new box tries them, declared by its driver or making
+  it now. Each row has its name (a link to its page), its form, "Makes it
+  now", "Off", "Set up not to make it" or "Cannot make it now" with why, a
+  warm count where the backend keeps warm boxes of the kind, and any
+  shortfall. Elsewhere the row says why it keeps none: "No warm boxes of
+  this kind: it makes each box when a thread asks", or for iOS "No warm
+  boxes: its shared iOS hosts keep slots ready instead" with Open its
+  shared iOS hosts, which opens that card on the backend's page with focus
+  on its ready slots. A stored count where it does nothing stays editable
+  and says "This count does nothing here: set it to 0."
+- **Spare boxes**: Spares to keep, with how many are ready or being made;
+  on device kinds it says spares are off by default and why.
+- **Kinds kept in place**: a kind switched on or off on the overview or its
+  page keeps its place on the overview, dimmed when off, until the person
+  leaves BB Box's settings (the section unmounts); then it folds.
+- **The engine** gained a kind's paths: `kinds/<id>/presets/<size>/<cores |
+  memoryGiB | diskGiB>`, `kinds/<id>/largest/…`, `kinds/<id>/default`,
+  `kinds/<id>/spares` and `backends/<id>/warm/<kind>`, with their stored
+  values, checks before sending, labels for "Since then, changed
+  elsewhere", and the server's problem paths mapped to them. The part
+  `kind/<id>` writes them together as changes from the shipped sizes.
+- **Navigation** can focus a setting on arrival (`nav.go(view, row,
+  focus)`), and a folded card on a backend's page opens when it holds
+  that setting.
+- **The overview**: a kind's row has "Unsaved changes" and "Saving…" like
+  a backend's, and its warm count counts only backends that are on and
+  keep warm boxes of the kind.
+
+New: `src/app/settings-kind-page.tsx`, `test/warm-kinds.test.ts`, and
+`067-settings-page/unit-6/live-check.mjs` and `screens-and-keys.mjs`.
+`settings-kinds.tsx` now holds the page's model, the kind switch and the
+kept-in-place set; the editor from before 067 is gone. Changed:
+`settings-paths.ts`, `settings-overview.tsx`, `settings-pages.tsx`,
+`settings-status.ts`, `settings-nav.ts`, `settings.tsx`,
+`settings-saving.tsx` (Show's fallback to a row's first field),
+`settings-backend-fields.tsx` (a folded card opens for the setting to
+focus), `src/backends/types.ts`, `src/plugin/configuration.ts`, the
+Proxmox LXC, Proxmox QEMU and Tart drivers, the labels in
+`ssh-pool/config.ts`, `namespace/config.ts` and `tart/config.ts`,
+`scripts/reference.ts`, the reference, `docs/design/settings.md`,
+`docs/guide/settings.md`, `docs/guide/spares.md` and the tests. Files
+unit 5 may also touch: `settings-overview.tsx`, `settings-pages.tsx`,
+`settings-backend-fields.tsx`, `settings-status.ts`,
+`docs/design/settings.md` (its As built table) and `test/app.test.tsx`.
+
+### Why Namespace was missing from the iOS Simulator
+
+The overview counts backends whose live state makes a kind; the kind's
+editor listed backends whose driver declares it (`driver.kinds`).
+Namespace declares macOS, macOS desktop and three Linux kinds, not ios: it
+makes iOS boxes only through its shared iOS hosts, when they lend. So on
+a BB where Namespace lends, the overview said 3 backends and the editor
+listed 2. The page now lists a backend that declares the kind or makes it
+now. Namespace also declares ios as a kind it makes only on its shared iOS
+hosts (`sharedKinds`), so it is listed for the iOS Simulator while its
+hosts do not lend too, saying whether it makes it now, and the reference
+(`kinds.md` and the backends table) names it. Its `kinds` are unchanged,
+so the server still refuses an ios warm count on it, and a test holds a
+shared kind out of a driver's kinds and warm kinds.
+
+### Warm counts, and which backends keep them
+
+Looking into that showed a warm count does nothing on most backends. Only
+Proxmox LXC (its four Linux kinds), Proxmox QEMU (Windows desktop) and
+Tart (macOS, macOS desktop and Windows on arm64) read one; Docker,
+microsandbox, Hetzner Cloud, Namespace, the SSH host pool and boat.dev do
+not, and no backend keeps warm iOS boxes. With the lead's agreement, a
+driver now declares `warmKinds`, read-only: the server accepts what it did
+before, so no stored document is refused. The page offers a warm count
+only there, and the reference's backend table gains a "Keeps warm"
+column. Tests hold the declaration to the code: for Proxmox LXC, Proxmox
+QEMU and Tart, `maintain` on their fakes reads the warm counts of exactly
+the declared kinds; every other backend's source reads none. Adding ios to
+Tart's or android to QEMU's declaration failed those tests, and passed
+again once put back.
+
+### Shared iOS hosts labels
+
+The four settings the SSH host pool and Namespace share with Tart now read
+as Tart's do, as the lead asked: "Slots per shared iOS host", "Ready slots
+kept on a shared iOS host", "Slots a shared iOS host resets at once" and
+"Disk a shared iOS host keeps free (GiB)". The SSH host pool's help says
+that there a shared iOS host is a Mac whose line lists ios. The drivers'
+messages for these fields use the same words ("resets", not "sweeps").
+
+### Tests
+
+`test/settings-drafts.test.ts` has three more, on the real
+`Configuration`: a kind's sizes, default size, spares and a warm count
+saved as one part, memory typed as 24.5 GiB stored as 25088 MiB, an empty
+warm count left out and an empty disk saved as the image's own; a kind
+edit racing a warm-count edit in another tab, merged on the newer revision
+with the same operation, then the same warm count as a conflict, Keep mine
+and saved; and the checks before sending and the server's problems
+resolving to their rows. `test/app.test.tsx` replaces the old editor's two
+tests with eight: the form saved by Enter as changes from the shipped
+sizes; refusals at their rows; Where it runs with a live-only backend and
+a stored count that does nothing; a shortfall; the default kind's switch
+on both surfaces with Choose another default focusing the menu; Make
+default moving focus; a default kind that is off; and kinds kept in place
+until leaving. The drift tests are above.
+
+On a Linux box, 8 cores, on the bundle delivered, rebased onto units 8
+and 9, the docs site and boat.dev's phases 2 and 3, with the reference
+regenerated:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,802 tests: 2,514 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 49 s |
+| vitest | 293 pass, in 4 files |
+| `test/docs.test.ts`, `test/site.test.ts` and `scripts/reference.ts --check` | pass: 8 of 8, and the reference is current |
+
+### Live check on a separate BB
+
+A fresh `npx bb-app` 0.48.0 with no account in a Linux box, its own data
+folder and port, started with `env -i`, `HOME`, `PATH` and
+`BB_BOX_LIVE_CHECKS=1` only; bb-box installed from this branch's commit by
+`bb plugin install` of its path. Backends, through BB's HTTP API: Docker on
+this machine (on, making Linux and the two CPU desktops), and Proxmox LXC,
+Tart, the SSH host pool and Namespace saved off. The script,
+[`live-check.mjs`](067-settings-page/unit-6/live-check.mjs), drives
+headless Chromium at 1440 by 1000; another tab is a second browser
+context, and "before the page looks" is Playwright holding the page's
+`config.get`. Every check passed 3 runs in a row, 15 of 15, on the commit
+delivered; the first runs found faults in the script only, and one in the
+page (Show did nothing for a problem on a whole size). After the rebases
+onto unit 9 and then unit 8, every check passed 3 runs in a row again, 15
+of 15 each time, on another fresh BB, with Namespace listed for the iOS
+Simulator.
+
+| Check | What the page said, and what BB Box stored | Runs |
+| --- | --- | --- |
+| A kind edit racing a warm-count edit in another tab | Tab A typed Small cores 3 while its reads were held; tab B saved Proxmox LXC's warm 2: "Saved."; A's Save: "Saved at revision 139, on top of a change made elsewhere.", both stored, the retry with A's first operation ID. Then A typed 4 and B saved 5: at once on A's row "Changed elsewhere to 5 while you edited." and in the bar "A setting you changed was changed elsewhere too. Choose for each, then save."; nothing stored until Keep mine and Save stored 4 | 3 of 3 |
+| The default kind's switch on the overview and the kind page | Linux's switch on the overview: on, `aria-disabled`, described as "2 cores · 4 GiB · 1 backend The default kind stays on. Choose another default to turn it off."; a click and Space sent nothing. Change the default opened Boxes with focus on the Default kind menu. On Linux's page the same switch and line, no Make default; Choose another default focused the menu too. Make default on Linux desktop (CPU) stored it at once, moved focus to its switch, now locked; Linux's switch was free again | 3 of 3 |
+| A kind turned off stays in place until the person leaves | Linux desktop (CPU) turned off on the overview: stored off, its row stayed, at opacity 0.7, "Off: no new boxes", nothing folded. Opened and back: still there. Linux desktop on Wayland turned off on its own page: in place too on the overview. Leaving by BB's sidebar and coming back: "2 kinds off · 9 kinds no backend you have makes", both folded | 3 of 3 |
+| Every backend that makes a kind is listed in its warm boxes | iOS Simulator: Tart, the SSH host pool and Namespace, each "No warm boxes: its shared iOS hosts keep slots ready instead.", no warm field; Open its shared iOS hosts opened Tart's page with focus on `ios-hosts-ahead`. macOS: Tart, the SSH host pool and Namespace, a warm field on Tart. Linux, with a warm count of 2 stored on Docker: Docker "Makes it now", its field holding 2 and "No warm boxes of this kind: it makes each box when a thread asks. This count does nothing here: set it to 0."; set to 0 and saved, it was left out and the field went; Proxmox LXC kept its field while off | 3 of 3 |
+| A size above the largest is refused at its row | Medium cores 40 and Enter: "Not saved: fix the field marked. Your changes are still here.", under Medium "Medium: the medium linux preset, 40 cores, 8 GiB memory, is above the largest size, 16 cores, 32 GiB memory, 256 GiB disk.", its cores marked invalid, nothing stored; Show focused Medium's cores | 3 of 3 |
+
+Namespace making iOS boxes now, rather than being listed off, cannot be
+shown on a fresh BB without a Namespace account. A test covers a backend
+listed only because it makes the kind now, and the look in production
+below is the place to see Namespace say "Makes it now".
+
+### Keyboard only
+
+On the same BB, by keys alone
+([`screens-and-keys.mjs`](067-settings-page/unit-6/screens-and-keys.mjs)):
+
+- From the overview, Tab reached the Linux desktop (CPU) row; Enter opened
+  its page with focus on its heading.
+- Tab then went: Make default, the switch, Small's cores, memory and disk,
+  the default size (one stop for the group), Medium's, Large's and
+  Largest's fields, Docker, Proxmox LXC, its warm count, Namespace, Spares
+  to keep. Every stop had a focus ring.
+- Typing 1 in Spares to keep and Enter saved it; focus stayed in the
+  field. Arrow down in the default size chose Medium; Enter saved it.
+- Enter on Make default stored it and put focus on the switch; Space on it
+  then did nothing. Enter on Choose another default opened Boxes with
+  focus on the Default kind menu.
+- No animation ran (`document.getAnimations()` was empty).
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark: Linux's page, its Where it runs
+with a count that does nothing, the iOS Simulator's Where it runs, and the
+overview with a kind kept in place; refusals at 390, 760 and 1440; a warm
+count's conflict. 28 in the thread's storage, and the live checks' own. A
+selection:
+
+[the page](067-settings-page/unit-6/kind-1440-dark.png),
+[narrow](067-settings-page/unit-6/kind-390-dark.png),
+[where it runs](067-settings-page/unit-6/kind-where-760-light.png),
+[the iOS Simulator](067-settings-page/unit-6/ios-where-1440-light.png),
+[a kind kept in place](067-settings-page/unit-6/overview-kept-390-light.png),
+[refused at 390](067-settings-page/unit-6/refused-390-dark.png),
+[a warm count's conflict](067-settings-page/unit-6/warm-conflict-1440-dark.png),
+and from the live checks:
+[the race merged](067-settings-page/unit-6/live-race-merged.png),
+[the race's conflict](067-settings-page/unit-6/live-race-conflict.png),
+[the default kind](067-settings-page/unit-6/live-default-kind.png),
+[folded after leaving](067-settings-page/unit-6/live-folded-after-leaving.png).
+
+### Deviations from 067
+
+- Where it runs offers a warm count only where the backend keeps warm
+  boxes of the kind, from the drivers' new `warmKinds`; 067 and the
+  prototype have one on every row. Agreed with the lead.
+- A backend is listed when its driver declares the kind, among its kinds
+  or its new `sharedKinds`, or it makes the kind now.
+- The default kind's switch is `aria-disabled` rather than `disabled`, so
+  keyboard and screen reader users reach it and hear why; it looks
+  disabled and does nothing.
+- A kind kept in place is cleared when BB Box's settings unmount, as when
+  the person leaves by BB's sidebar; a reload clears it too.
+- The overview's kind row counts warm boxes only on backends that are on
+  and keep them.
+- The Largest row has no "custom" mark in the Default column, which the
+  prototype has; the Sizes description says what Largest is.
+
+### Not done here
+
+- A look in production in the owner's browser, after the lead deploys:
+  the iOS Simulator's page should list Namespace beside Tart and the SSH
+  host pool, saying "Makes it now" while its shared iOS hosts lend.
+- Find (unit 11) does not index a kind's settings yet.

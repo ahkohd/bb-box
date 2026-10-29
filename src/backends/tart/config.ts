@@ -431,7 +431,7 @@ function checkIosHosts(values: Readonly<Record<string, unknown>>, problem: Probl
     on: values[TART_KEYS.iosHostsOn] === true,
     most,
     ahead: read(TART_KEYS.iosHostsAhead, IOS_HOSTS_DEFAULTS.ahead, 0, MOST_SLOTS, "the ready slots kept on a shared iOS host"),
-    resettingMost: read(TART_KEYS.iosHostsResettingMost, IOS_HOSTS_DEFAULTS.resettingMost, 1, 64, "the slots a shared iOS host sweeps at once"),
+    resettingMost: read(TART_KEYS.iosHostsResettingMost, IOS_HOSTS_DEFAULTS.resettingMost, 1, 64, "the slots a shared iOS host resets at once"),
     cores,
     memoryGiB,
     perMac: read(TART_KEYS.iosHostsPerMac, IOS_HOSTS_DEFAULTS.perMac, 1, MACOS_VMS_PER_MAC, "the shared iOS hosts per Mac"),

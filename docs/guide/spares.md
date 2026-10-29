@@ -5,7 +5,7 @@ A spare is a box made ahead and joined to BB as a machine, which belongs to no t
 ## Keep spares for a kind
 
 1. In BB Box's settings, go to Kinds and select the kind's row.
-2. Set **Spare boxes** to how many to keep ready.
+2. Under Spare boxes, set **Spares to keep** to how many to keep ready, then select **Save**.
 
 The row then says how many spares the kind keeps. BB Box makes them in the background, and makes another when a thread takes one.
 
@@ -22,7 +22,7 @@ On Proxmox's VMs, android boxes among them, and Tart's macOS and Windows VMs, a 
 
 ## Spares of device boxes
 
-ios and android boxes keep no spares unless you set a number. Their spares are off by default because each one costs disk while it waits. Set **Spare boxes** on the kind's row to turn them on.
+ios and android boxes keep no spares unless you set a number. Their spares are off by default because each one costs disk while it waits. Set **Spares to keep** on the kind's page to turn them on.
 
 - An android spare waits as a hibernated Proxmox VM with its device booted. It holds no memory. Its saved memory takes about as much disk as the box's memory: 16.8 GiB for a box of 16 GiB, measured.
 - An ios spare on Tart waits as a suspended macOS VM with its device booted. It takes none of the Mac's two VM slots. Its saved memory takes less disk than the box's memory: 5.2 GiB for a box of 16 GiB, measured.

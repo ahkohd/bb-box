@@ -1456,3 +1456,15 @@ test("with an Android template and KVM on, android boxes are offered once its re
   const set = Number(/date -u -s @([\d.]+)/.exec(readFileSync(join(ssh.home(host), "clock"), "utf8"))?.[1]);
   assert.ok(set >= before - 1 && set <= Date.now() / 1000 + 1, "set to BB's server's time");
 });
+
+function recordingWarm<T extends { warm(kind: string): number }>(context: T): { context: T; asked: Set<string> } {
+  const asked = new Set<string>();
+  return { context: { ...context, warm: (kind: string) => (asked.add(kind), 0) }, asked };
+}
+
+test("maintain reads the warm counts of the kinds the driver says it keeps warm, and no others", async () => {
+  const { context, make } = setup();
+  const recorded = recordingWarm(context);
+  await make(recorded.context).maintain();
+  assert.deepEqual([...recorded.asked].sort(), [...proxmoxQemuDriver.warmKinds!].sort());
+});

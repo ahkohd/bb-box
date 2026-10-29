@@ -20,7 +20,7 @@ import {
   type SaveTransport,
   type StoredPart,
 } from "../src/app/settings-drafts.ts";
-import { backendFieldPath, filePath, hostFieldPath, hostPath, labelOf, newFilePath, newHostPath, plain, problemPath, storedAt, tailnetPath, type EditValue } from "../src/app/settings-paths.ts";
+import { backendFieldPath, filePath, hostFieldPath, hostPath, kindPath, labelOf, newFilePath, newHostPath, plain, problemPath, sizePath, storedAt, tailnetPath, warmPath, type EditValue } from "../src/app/settings-paths.ts";
 import { TAILNET_CLIENT_ID, TAILNET_CLIENT_SECRET } from "../src/core/tailnet-settings.ts";
 import { MemoryStorage } from "./helpers.ts";
 
@@ -561,6 +561,7 @@ function macsDriver(): BackendDriver<unknown> {
     nature: "virtual",
     form: "VM",
     kinds: ["linux"],
+    warmKinds: ["linux"],
     fields: {
       token: { type: "string", label: "API token secret", secret: true, group: "credentials" },
       image: { type: "string", label: "Linux image", group: "boxes", default: "base" },
@@ -809,4 +810,89 @@ test("the tailnet's pasted secrets are kept in memory only; after a reload the p
     ["Paste the OAuth client ID again: what you pasted was not kept when the page reloaded.", "Paste the OAuth client secret again: what you pasted was not kept when the page reloaded."],
   );
   assert.equal(server.arrived.length, 0);
+});
+
+const KIND_PART = "kind/linux";
+
+test("a kind's sizes, default size, spares and a backend's warm count save together as one part, memory typed in GiB stored in MiB, as changes from the shipped sizes", async () => {
+  const { registry, server } = await withMacs();
+  const shipped = registry.latest!.defaults.kinds.linux!;
+  assert.deepEqual(storedAt(registry.latest!, sizePath("linux", "small", "memoryGiB")), { kind: "value", value: shipped.presets.small.memoryMiB / 1024 });
+  assert.deepEqual(storedAt(registry.latest!, warmPath(MACS, "linux")), { kind: "value", value: 0 });
+  registry.set(KIND_PART, sizePath("linux", "large", "cores"), plain("12"));
+  registry.set(KIND_PART, sizePath("linux", "large", "memoryGiB"), plain("24.5"));
+  registry.set(KIND_PART, sizePath("linux", "large", "diskGiB"), plain("40"));
+  registry.set(KIND_PART, kindPath("linux", "default"), plain("medium"));
+  registry.set(KIND_PART, kindPath("linux", "spares"), plain("1"));
+  registry.set(KIND_PART, warmPath(MACS, "linux"), plain("2"));
+  registry.set(KIND_PART, sizePath("linux", "small", "cores"), plain(String(shipped.presets.small.cores)));
+  assert.equal(registry.changeCount(KIND_PART), 6, "typing the stored value is no change");
+  await registry.save(KIND_PART);
+  assert.equal(registry.part(KIND_PART).outcome?.kind, "saved");
+  assert.deepEqual(server.stored().kinds.linux, { spares: 1, presets: { large: { cores: 12, memoryMiB: 25088, diskGiB: 40 } }, default: "medium" });
+  assert.deepEqual(server.stored().backends[0]!.warm, { linux: 2 });
+  assert.equal(server.stored().backends[0]!.hosts?.length, 1, "the backend's own settings are kept");
+
+  registry.set(KIND_PART, warmPath(MACS, "linux"), plain(""));
+  registry.set(KIND_PART, sizePath("linux", "large", "diskGiB"), plain(""));
+  await registry.save(KIND_PART);
+  assert.equal(server.stored().backends[0]!.warm, undefined, "an empty warm count is 0, and 0 is left out");
+  assert.deepEqual(server.stored().kinds.linux?.presets?.large, { cores: 12, memoryMiB: 25088, diskGiB: null }, "an empty disk is the image's own");
+});
+
+test("a kind edit racing a warm-count edit in another tab: different settings merge on the newer revision, and the same warm count is a conflict on its row", async () => {
+  const one = await withMacs();
+  const two = await page(one.server, one.clock);
+  one.registry.set(KIND_PART, sizePath("linux", "small", "cores"), plain("3"));
+  two.registry.set(KIND_PART, warmPath(MACS, "linux"), plain("2"));
+  await two.registry.save(KIND_PART);
+  assert.deepEqual(one.server.stored().backends[0]!.warm, { linux: 2 });
+  await one.registry.save(KIND_PART);
+  const merged = one.registry.part(KIND_PART).outcome;
+  assert.equal(merged?.kind, "saved");
+  assert.equal(merged?.kind === "saved" && merged.rebased, true, "saved on top of the other tab's change");
+  assert.equal(one.server.stored().kinds.linux?.presets?.small?.cores, 3);
+  assert.deepEqual(one.server.stored().backends[0]!.warm, { linux: 2 }, "the other tab's warm count is kept");
+
+  one.registry.set(KIND_PART, warmPath(MACS, "linux"), plain("4"));
+  two.registry.observe(await one.server.state());
+  two.registry.set(KIND_PART, warmPath(MACS, "linux"), plain("5"));
+  await two.registry.save(KIND_PART);
+  const before = one.server.stored().revision;
+  await one.registry.save(KIND_PART);
+  assert.equal(one.registry.part(KIND_PART).outcome?.kind, "conflicts");
+  assert.equal(one.server.stored().revision, before, "nothing is stored until it is chosen");
+  assert.deepEqual(one.registry.conflictAt(KIND_PART, warmPath(MACS, "linux")), { kind: "changed", stored: 5 });
+  one.registry.keepMine(KIND_PART, warmPath(MACS, "linux"));
+  await one.registry.save(KIND_PART);
+  assert.deepEqual(one.server.stored().backends[0]!.warm, { linux: 4 });
+});
+
+test("a kind's fields are checked before anything is sent, and the server's problems about a size or a warm count resolve to their rows", async () => {
+  const { registry, server } = await withMacs();
+  const arrived = server.arrived.length;
+  registry.set(KIND_PART, sizePath("linux", "small", "cores"), plain("two"));
+  registry.set(KIND_PART, sizePath("linux", "small", "memoryGiB"), plain("0.1"));
+  registry.set(KIND_PART, sizePath("linux", "largest", "diskGiB"), plain(""));
+  registry.set(KIND_PART, kindPath("linux", "spares"), plain("1.5"));
+  registry.set(KIND_PART, warmPath(MACS, "linux"), plain("-1"));
+  await registry.save(KIND_PART);
+  assert.equal(server.arrived.length, arrived);
+  assert.deepEqual(
+    registry.part(KIND_PART).problems.map((problem) => problem.path),
+    [sizePath("linux", "small", "cores"), sizePath("linux", "small", "memoryGiB"), sizePath("linux", "largest", "diskGiB"), kindPath("linux", "spares"), warmPath(MACS, "linux")],
+  );
+
+  registry.discard(KIND_PART);
+  registry.set(KIND_PART, sizePath("linux", "medium", "cores"), plain("100"));
+  registry.set(KIND_PART, warmPath(MACS, "linux"), plain("50"));
+  await registry.save(KIND_PART);
+  const problems = registry.part(KIND_PART).problems.map((problem) => problem.path);
+  assert.ok(problems.includes("kinds/linux/presets/medium"), JSON.stringify(problems));
+  assert.ok(problems.includes(warmPath(MACS, "linux")), JSON.stringify(problems));
+  assert.equal(problemPath("kinds.linux.presets.small.memoryMiB", {}), sizePath("linux", "small", "memoryGiB"));
+  assert.equal(problemPath("kinds.linux.largest.diskGiB", {}), sizePath("linux", "largest", "diskGiB"));
+  assert.equal(problemPath("kinds.linux.spares", {}), kindPath("linux", "spares"));
+  assert.equal(labelOf(sizePath("linux", "small", "memoryGiB")), "Small memory");
+  assert.equal(labelOf(warmPath(MACS, "linux"), undefined, registry.latest!), `Warm boxes on ${registry.latest!.backends[0]!.label}`);
 });
