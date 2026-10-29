@@ -12,19 +12,22 @@ import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testC
 const disposed = disposedOnceTheFileEnds();
 const CONFIG = { key: FAKE_BOAT_KEY, mostBoxes: 2, leaseMinutes: 30 };
 const SMALL = { cores: 2, memoryMiB: 4096, diskGiB: null };
+const NO_BUILDS = async (): Promise<Buffer> => {
+  throw new Error("These tests build no template over SSH: the fake ssh runs commands on this machine.");
+};
 
 function setup(options: { now?: () => number; config?: Partial<typeof CONFIG>; templates?: boolean } = {}) {
   fakeSsh();
   const fake = new FakeBoat(options.now ? { now: options.now } : {});
   const storage = new MemoryStorage();
   const context = testContext(storage, "inst1");
-  const backend = disposed(new BoatBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, busyGivesUpAfterMs: 0, ownKeyScript: () => ":", settledScript: "true", kinds: ["linux", "linux-desktop-cpu"], templates: { fingerprint: () => "fp1" }, ...(options.now ? { now: options.now } : {}) }));
+  const backend = disposed(new BoatBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, busyGivesUpAfterMs: 0, ownKeyScript: () => ":", settledScript: "true", kinds: ["linux", "linux-desktop-cpu"], templates: { fingerprint: () => "fp1", setupArchive: NO_BUILDS }, ...(options.now ? { now: options.now } : {}) }));
   const templates: Record<string, string> = {};
   if (options.templates !== false) {
     for (const kind of ["linux", "linux-desktop-cpu"] as const) {
       const made = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: kind, [LABELS.key]: "fp1" }, state: "archived", type: "default" });
       templates[kind] = made.id;
-      const record: TemplateRecord = { kind, sandbox: made.id, key: "fp1", builtAt: Date.now(), buildMs: 600_000, usedAt: null };
+      const record: TemplateRecord = { kind, sandbox: made.id, key: "fp1", builtAt: (options.now ?? Date.now)(), buildMs: 600_000, usedAt: null };
       void storage.set(`template/${kind}`, record);
     }
   }
@@ -263,7 +266,7 @@ test("with no template, the first box waits for its build and says so; the build
 
 test("boat offers linux boxes; its desktop kind waits until it is proved there", () => {
   fakeSsh();
-  const backend = disposed(new BoatBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), { fetch: new FakeBoat().fetch, sshBinary: FAKE_SSH_BINARY }));
+  const backend = disposed(new BoatBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), { fetch: new FakeBoat().fetch, sshBinary: FAKE_SSH_BINARY, templates: { setupArchive: NO_BUILDS } }));
   assert.deepEqual(backend.kinds().map((kind) => kind.id), ["linux"]);
   assert.deepEqual(backend.kinds()[0]!.capabilities.features, ["docker", "kernel", "kvm"]);
 });
@@ -296,7 +299,7 @@ test("BB's URL on a private network, with no tailnet, is said plainly with its f
   fakeSsh();
   const fake = new FakeBoat();
   const context = { ...testContext(new MemoryStorage(), "inst1"), bbUrl: () => "https://bb.example.com" };
-  const backend = disposed(new BoatBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, busyGivesUpAfterMs: 0, resolve: async () => ["10.0.0.69"], ownKeyScript: () => ":", settledScript: "true", templates: { fingerprint: () => "fp1" } }));
+  const backend = disposed(new BoatBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, busyGivesUpAfterMs: 0, resolve: async () => ["10.0.0.69"], ownKeyScript: () => ":", settledScript: "true", templates: { fingerprint: () => "fp1", setupArchive: NO_BUILDS } }));
   const check = (await backend.doctor()).checks.find((each) => each.id === "boat.bb")!;
   assert.equal(check.status, "warn");
   assert.match(check.detail, /cannot reach BB's server: bb.example.com points at 10.0.0.69, on a private network. So boat boxes run commands and copy files, but do not become BB machines/);
