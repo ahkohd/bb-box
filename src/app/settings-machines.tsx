@@ -1,26 +1,16 @@
-import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import type { Contract, MachineEntry, MachinesState } from "../plugin/contract.ts";
-import type { BoxView } from "../plugin/views.ts";
-import { BoxBadges, deviceModelOf, EmptyPanel, forThread, hasViewer, IconButton, message, Meta, OPERATOR, StatusDot, systemName, useLive, useNow } from "./common.tsx";
-import { DESKTOP_PAGE, desktopSubPath, pageUrl } from "./desktop.tsx";
-import { ProblemLine, useMachineActions } from "./box-actions.tsx";
-import { NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
-import { Section } from "./settings-fields.tsx";
+import type { MachineEntry } from "../plugin/contract.ts";
+import { BoxBadges, deviceModelOf, hasViewer, IconButton, Meta, OPERATOR, StatusDot, systemName } from "./common.tsx";
+import { DESKTOP_PAGE, desktopSubPath } from "./desktop.tsx";
 import { statusOf } from "./status.ts";
 import { canOpenTerminal } from "./terminal.tsx";
 import { BoxGlyph, MonitorGlyph, TerminalGlyph } from "./glyphs.tsx";
-import { canResize, ResizeDialog, useResizeNote } from "./resize.tsx";
+import { useResizeNote } from "./resize.tsx";
 import { ThreadChips } from "./thread-chips.tsx";
-
-
-
-function isMoving(box: BoxView): boolean {
-  return box.state === "acquiring" || box.state === "starting" || box.state === "stopping" || box.state === "releasing";
-}
+import type { BoxOpens } from "./box-opens.tsx";
+import { BoxMenu } from "./box-menu.tsx";
 
 /**
  * One of your machines as a row: name, OS and badges, state and threads, and its actions. In settings its desktop and
@@ -28,13 +18,14 @@ function isMoving(box: BoxView): boolean {
  */
 export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from = "settings" }: { entry: MachineEntry; now: number; busy: string | null; onStop: () => void; onStart: () => void; onRemove: () => void; from?: "settings" | "boxes" }) {
   const { box, threads } = entry;
-  const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
   const status = statusOf(box, now);
   const ready = box.state === "ready";
   const back = from === "settings" ? "settings" : undefined;
-  const openDesktop = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "desktop", back) });
-  const openTerminal = () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, box.id, "terminal", back) });
+  const opens: BoxOpens = {
+    screen: (machine, screen) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, machine.id, screen, back) }),
+    terminal: (machine) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(OPERATOR, machine.id, "terminal", back) }),
+  };
   const acting = busy !== null && busy.endsWith(`:${box.id}`);
   const [resizing, setResizing] = useState(false);
   const resizeNote = useResizeNote(box, resizing);
@@ -69,69 +60,12 @@ export function MachineRow({ entry, now, busy, onStop, onStart, onRemove, from =
         {resizeNote ? <p className={cn("mt-0.5 text-xs leading-snug", resizeNote.failed ? "text-destructive-text" : "text-muted-foreground")}>{resizeNote.text}</p> : null}
       </div>
       <span data-row-action className="flex shrink-0 items-center gap-0.5">
-        {hasViewer(box) && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={openDesktop} /> : null}
-        {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={openTerminal} /> : null}
+        {hasViewer(box) && ready ? <IconButton label="Open desktop" icon={<MonitorGlyph />} onClick={() => opens.screen(box, "desktop")} /> : null}
+        {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => opens.terminal(box)} /> : null}
         {box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={onStart} loading={busy === `start:${box.id}`} disabled={acting} /> : null}
         {box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={onStop} loading={busy === `stop:${box.id}`} disabled={acting} /> : null}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label={`${box.name} actions`}>
-              <Icon name="MoreHorizontal" className="size-4" aria-hidden />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-max min-w-40 max-w-72" mobileTitle={box.name}>
-            {hasViewer(box) && ready ? (
-              <DropdownMenuItem onSelect={openDesktop}>
-                <MonitorGlyph />
-                Open desktop
-              </DropdownMenuItem>
-            ) : null}
-            {from === "boxes" && hasViewer(box) && ready ? (
-              <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, OPERATOR, box.id))}>
-                <Icon name="ExternalLink" aria-hidden />
-                Open in browser
-              </DropdownMenuItem>
-            ) : null}
-            {canOpenTerminal(box) ? (
-              <DropdownMenuItem onSelect={openTerminal}>
-                <TerminalGlyph />
-                Open terminal
-              </DropdownMenuItem>
-            ) : null}
-            {box.address ? (
-              <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(box.address ?? "")}>
-                <Icon name="Copy" aria-hidden />
-                Copy address
-              </DropdownMenuItem>
-            ) : null}
-            {(hasViewer(box) && ready) || canOpenTerminal(box) || box.address ? <DropdownMenuSeparator /> : null}
-            {box.canStopStart && ready ? (
-              <DropdownMenuItem onSelect={onStop}>
-                <Icon name="Square" aria-hidden />
-                Stop
-              </DropdownMenuItem>
-            ) : null}
-            {box.canStopStart && box.state === "stopped" ? (
-              <DropdownMenuItem onSelect={onStart}>
-                <Icon name="Play" aria-hidden />
-                Start
-              </DropdownMenuItem>
-            ) : null}
-            {canResize(box) ? (
-              <DropdownMenuItem onSelect={() => setResizing(true)}>
-                <Icon name="Maximize2" aria-hidden />
-                Resize…
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" disabled={box.state === "releasing"} onSelect={onRemove}>
-              <Icon name="Trash2" aria-hidden />
-              Remove…
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <BoxMenu box={box} of={{ owner: "yours", inBrowser: from === "boxes", stop: onStop, start: onStart, remove: onRemove }} opens={opens} resizing={resizing} onResizing={setResizing} />
       </span>
-      <ResizeDialog box={resizing ? box : null} onClose={() => setResizing(false)} />
     </div>
   );
 }
