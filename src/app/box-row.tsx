@@ -1,36 +1,20 @@
 // One box in the Box panel: its name, kind and status line, its details
-// when open, its quick actions and its menu, and the release confirmation.
+// when open, its quick actions and its menu.
 
-import { experimental_Icon as Icon, experimental_usePluginId, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useState, type MouseEvent, type ReactNode } from "react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
 import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { deviceModelOf, hasViewer, IconButton, osName, relativeTime, RowTitle, boxTitleBadges, StatusLine, systemName } from "./common.tsx";
-import { DESKTOP_PAGE, MACHINES_TAB, pageUrl, useOpenScreen } from "./desktop.tsx";
+import { deviceModelOf, IconButton, osName, relativeTime, RowTitle, boxTitleBadges, StatusLine, systemName } from "./common.tsx";
+import { DESKTOP_PAGE, MACHINES_TAB, useOpenScreen } from "./desktop.tsx";
 import { JoinHelp } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
-import { canOpenTerminal, useOpenTerminal } from "./terminal.tsx";
-import { BoxGlyph, TerminalGlyph } from "./glyphs.tsx";
-import { screensOf } from "./screens.ts";
-import { openActions, openableNow, openWords, screenGlyph, type BoxOpens } from "./box-opens.tsx";
-import { canResize, ResizeDialog, useResizeNote } from "./resize.tsx";
-
-export type BoxAction = "release" | "stop" | "start" | "refresh";
+import { useOpenTerminal } from "./terminal.tsx";
+import { BoxGlyph } from "./glyphs.tsx";
+import { openActions, openableNow, type BoxOpens } from "./box-opens.tsx";
+import { useResizeNote } from "./resize.tsx";
+import { BoxMenu, type BoxAction } from "./box-menu.tsx";
 
 /** The viewer IDs this browser tab holds, one per box, as the desktop tabs keep them. */
 export function myViewers(): Set<string> {
@@ -97,31 +81,14 @@ export function BoxRow({
   /** "New thread on this box…": a child of `threadId`'s thread. Off on the Boxes page, where "this thread" names none. */
   threading?: boolean;
 }) {
-  const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
   const openInPanel = useOpenScreen(threadId);
   const terminalInPanel = useOpenTerminal();
   const openScreen = opens?.screen ?? openInPanel;
   const openTerminal = opens?.terminal ?? terminalInPanel;
   const [busy, setBusy] = useState<BoxAction | null>(null);
-  const [confirming, setConfirming] = useState(false);
   const [resizing, setResizing] = useState(false);
   const resizeNote = useResizeNote(box, resizing);
-  const rpc = useRpc<Contract>();
-  /** The new-thread dialog: closed, or its prompt, whether it is starting and why it did not. */
-  const [threading, setThreading] = useState<{ prompt: string; starting: boolean; error: string | null } | null>(null);
-  const startThread = async () => {
-    if (!threading?.prompt.trim()) return;
-    setThreading({ ...threading, starting: true, error: null });
-    const result = await rpc.call("thread", { threadId, box: box.id, prompt: threading.prompt.trim() }).catch((error: unknown) => ({
-      threadId: null,
-      error: error instanceof Error ? error.message : String(error),
-    }));
-    if (result.threadId) {
-      setThreading(null);
-      navigate.toThread(result.threadId);
-    } else setThreading((current) => current && { ...current, starting: false, error: result.error });
-  };
   const run = async (method: BoxAction) => {
     setBusy(method);
     try {
@@ -130,7 +97,6 @@ export function BoxRow({
       setBusy(null);
     }
   };
-  const settling = box.state === "acquiring" || box.state === "starting" || box.state === "stopping" || box.state === "releasing";
   const status = statusOf(box, now, myViewers());
   const ready = box.state === "ready";
   const showsError = box.error !== null;
@@ -223,124 +189,8 @@ export function BoxRow({
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
         {compact ? quickActions.slice(0, 1) : quickActions}
         {extra}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" className="size-7 p-0 text-muted-foreground hover:text-foreground" aria-label={`${box.name} actions`}>
-              <Icon name="MoreHorizontal" className="size-4" aria-hidden />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-max min-w-40 max-w-72" mobileTitle={box.name}>
-            {hasViewer(box) && ready ? (
-              <>
-                {screensOf(box).map((screen) => (
-                  <DropdownMenuItem key={screen} onSelect={() => openScreen(box, screen)}>
-                    {screenGlyph(screen)}
-                    {openWords(box, screen)}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuItem onSelect={() => void navigate.openUrl(pageUrl(pluginId, threadId, box.id))}>
-                  <Icon name="ExternalLink" aria-hidden />
-                  Open in browser
-                </DropdownMenuItem>
-              </>
-            ) : null}
-            {canOpenTerminal(box) ? (
-              <DropdownMenuItem onSelect={() => openTerminal(box)}>
-                <TerminalGlyph />
-                Open terminal
-              </DropdownMenuItem>
-            ) : null}
-            {box.address ? (
-              <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(box.address ?? "")}>
-                <Icon name="Copy" aria-hidden />
-                Copy address
-              </DropdownMenuItem>
-            ) : null}
-            {offersThread && !held && ready && box.enrol.state === "enrolled" ? (
-              <DropdownMenuItem onSelect={() => setThreading({ prompt: "", starting: false, error: null })}>
-                <Icon name="MessageSquarePlus" fallback="Plus" aria-hidden />
-                New thread on this box…
-              </DropdownMenuItem>
-            ) : null}
-            {(hasViewer(box) && ready) || canOpenTerminal(box) || box.address || (offersThread && !held && ready && box.enrol.state === "enrolled") ? <DropdownMenuSeparator /> : null}
-            {!held && box.canStopStart && ready ? (
-              <DropdownMenuItem onSelect={() => void run("stop")}>
-                <Icon name="Square" aria-hidden />
-                Stop
-              </DropdownMenuItem>
-            ) : null}
-            {!held && box.canStopStart && box.state === "stopped" ? (
-              <DropdownMenuItem onSelect={() => void run("start")}>
-                <Icon name="Play" aria-hidden />
-                Start
-              </DropdownMenuItem>
-            ) : null}
-            {!held && canResize(box) ? (
-              <DropdownMenuItem onSelect={() => setResizing(true)}>
-                <Icon name="Maximize2" aria-hidden />
-                Resize…
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem disabled={settling} onSelect={() => void run("refresh")}>
-              <Icon name="ArrowReloadHorizontal" aria-hidden />
-              Check now
-            </DropdownMenuItem>
-            {held ? null : (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" disabled={box.state === "releasing"} onSelect={() => setConfirming(true)}>
-              <Icon name="Trash2" aria-hidden />
-                  Release…
-                </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <BoxMenu box={box} of={{ owner: "thread", threadId, held: held !== null, offersThread, act: (method) => void run(method) }} opens={{ screen: openScreen, terminal: openTerminal }} resizing={resizing} onResizing={setResizing} />
       </span>
-      <AlertDialog open={threading !== null} onOpenChange={(open) => !open && setThreading(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>New thread on {box.name}</AlertDialogTitle>
-            <AlertDialogDescription>
-              A child of this thread, working in a worktree of the project on the box. It is archived with this thread.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <Textarea
-            aria-label="Prompt"
-            placeholder="What should it do on the box?"
-            value={threading?.prompt ?? ""}
-            onChange={(event) => setThreading((current) => current && { ...current, prompt: event.target.value })}
-            rows={4}
-            autoFocus
-          />
-          {threading?.error ? <p className="text-sm text-destructive">{threading.error}</p> : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={threading?.starting}>Cancel</AlertDialogCancel>
-            <Button type="button" disabled={!threading?.prompt.trim() || threading.starting} onClick={() => void startThread()}>
-              {threading?.starting ? "Starting…" : "Start thread"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <ResizeDialog box={resizing ? box : null} threadId={threadId} onClose={() => setResizing(false)} />
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Release {box.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {box.nature === "real"
-                ? "The machine will be reset and returned to its pool. Anything in the box user's home will be deleted."
-                : "Its disk and everything on it will be deleted. Copy out anything you want to keep first."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => void run("release")}>
-              Release
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
