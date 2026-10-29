@@ -24,7 +24,7 @@ export function byActivity(threads: readonly ThreadOnBox[]): ThreadOnBox[] {
 
 const CHIP = "inline-flex h-6 min-w-0 max-w-56 items-center gap-1 whitespace-nowrap rounded-full border border-border px-2 text-xs leading-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-function WorkingMark() {
+export function WorkingMark() {
   return <Icon name="Loading" className="size-3 shrink-0 animate-spin text-muted-foreground" aria-label="Working" />;
 }
 

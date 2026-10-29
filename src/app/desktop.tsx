@@ -2195,6 +2195,7 @@ export function BoxesPage({ subPath }: { subPath: string }) {
     return <DesktopViewer key={`${threadId}/${boxId}`} threadId={threadId} boxId={boxId} newTab={false} onBack={back} />;
   }
   if (threadId === MACHINES_TAB && !boxId) return <BoxList key={MACHINES_TAB} opening={MACHINES_TAB} />;
+  if (threadId === THREADS_TAB && !boxId) return <BoxList key={THREADS_TAB} opening={THREADS_TAB} />;
   return <BoxList />;
 }
 
@@ -2242,6 +2243,8 @@ export function opensOnBoxesPage(navigate: ReturnType<typeof useBbNavigate>, thr
 type BoxesTab = "machines" | "threads";
 
 export const MACHINES_TAB = "machines";
+
+export const THREADS_TAB = "threads";
 
 function BoxList({ opening }: { opening?: BoxesTab }) {
   const rpc = useRpc<Contract>();

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, useRealtime, useRpc, type ExperimentalSidebarFooterDisclosureProps, type PluginAppBuilder } from "@get-bb/plugin-sdk/app";
-import type { Contract, Machine, MonitorSnapshot } from "../../plugin/contract.ts";
+import type { Contract, Machine, MonitorSnapshot, ThreadOnBox } from "../../plugin/contract.ts";
 import { STALL_LIMITS } from "../../monitor/health.ts";
 import { SERVER_MACHINE, useMonitorSnapshot } from "./use-snapshot.ts";
 import { useRevealOnLoad } from "./use-reveal-on-load.ts";
 import { machineKey, useMachines } from "./use-machines.ts";
 import { useBoxLookOf, useScreensOf, type BoxScreens, type LookOf } from "./box-screens.tsx";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "./menu.tsx";
+import { ThreadItems, ThreadsOnBox } from "./box-threads.tsx";
 import { cn } from "@/lib/utils";
 import { PressureNotifications, bindStatusOpener } from "./pressure-notifications.tsx";
 import { MachinePicker, selectedMachine } from "./machine-picker.tsx";
@@ -100,6 +101,10 @@ function HeaderButton({ label, tooltip, onClick, disabled, busy, children }: { l
 
 function HeaderScreenMenu({ screens }: { screens: BoxScreens | null }) {
   if (!screens) return null;
+  return <ThreadsOnBox box={screens}>{(threads) => <ScreenMenu screens={screens} threads={threads} />}</ThreadsOnBox>;
+}
+
+function ScreenMenu({ screens, threads }: { screens: BoxScreens; threads: readonly ThreadOnBox[] }) {
   return (
     <Menu>
       <Tooltip delayDuration={350} disableHoverableContent>
@@ -110,7 +115,7 @@ function HeaderScreenMenu({ screens }: { screens: BoxScreens | null }) {
         </TooltipTrigger>
         <TooltipContent side="top">{`Open a view of ${screens.boxName}`}</TooltipContent>
       </Tooltip>
-      <MenuContent side="bottom">
+      <MenuContent side="bottom" className="max-w-64">
         {screens.actions.map((action) => (
           <MenuItem key={action.key} disabled={action.closedBecause !== null} onSelect={action.open}>
             <span className={cn("flex h-4 shrink-0 items-center text-muted-foreground", action.closedBecause && "opacity-50")}>{action.glyph("size-3.5")}</span>
@@ -120,6 +125,7 @@ function HeaderScreenMenu({ screens }: { screens: BoxScreens | null }) {
             </span>
           </MenuItem>
         ))}
+        <ThreadItems box={screens} threads={threads} />
       </MenuContent>
     </Menu>
   );
