@@ -3787,3 +3787,13 @@ the field. Test values only.
 
 Main's code also took 3 of 3 whole through the same harness on the
 shared slot, so the loss depends on timing, as the read above shows.
+
+### Checked after the deploy
+
+On production BB at main a35f023, device server version 34, on 29
+October 2026, on a new shared slot on a Tart host made for the box,
+through production's `computer_type`, with test values only: `bbtest one`,
+`two` and `three ✓ 日本 é` into Safari's closed address field, closed
+again with its Close button between them, arrived 3 of 3 whole and in
+order, with no words that the keyboard did not come. The keyboard's keys
+read as `keyboard key` in `computer_observe`.
