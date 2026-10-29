@@ -403,7 +403,7 @@ function ExportRow() {
         label="Export"
         description={
           <>
-            The whole configuration at revision {state.revision} as JSON, as <code className="font-mono">bb box config show --json</code> prints it. It has no secret in it: each shows only as set or not.
+            The whole configuration at revision {state.revision} as JSON, as <code className="whitespace-nowrap font-mono">bb box config show --json</code> prints it. It has no secret in it: each shows only as set or not.
           </>
         }
       >
