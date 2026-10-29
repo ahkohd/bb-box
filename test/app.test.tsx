@@ -17,7 +17,7 @@ import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
 import type { MachineAccessProblem, MachineSetup } from "../src/plugin/setup-offer.ts";
 import type { ImagesStatus } from "../src/plugin/contract.ts";
 import { buildPlace, roughly } from "../src/app/first-run.tsx";
-import { forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
+import { fitTitle, forgetLive, isArm64Badge, lacksDocker, Meta } from "../src/app/common.tsx";
 import { BoxLine, DESKTOP_OWN_PASTE_WORDS, DEVICE_OWN_PASTE_WORDS, DesktopSession, HIGH_RESOLUTION_WORDS, PASTE_CHORD_DELAY_MS, SETTLE_MS, WINDOWS_HIGH_RESOLUTION_WORDS, forgetInsecurePageNote, forgetStreams, streamChoiceKey } from "../src/app/desktop.tsx";
 import { rgbaPng } from "../src/core/png.ts";
 import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD_SETTLE_MS, RESTART_GAP_MS, SLOW_VIDEO_RETRY_MS, SLOW_VIDEO_STILLS_WORDS, STALL_MS, STILLS_WORDS, SelkiesSession, decodesMacroblocks, devicePasteTooLongWords, forgetFullColour, spsCodec, unicodeKeysym } from "../src/app/selkies.ts";
@@ -835,16 +835,15 @@ test("the app registers the Boxes panel, a desktop tab, a device tab with a phon
   expect(declared).toContain("box");
 });
 
-test("a row keeps its name and kind on one line, and its status on one, dropping whole items from the end, with the whole line in a tooltip when it does", async () => {
+test("a row keeps its name and kind on one line, the name whole first (F-22b), and its status on one, dropping whole items from the end, with the whole line in a tooltip when it does", async () => {
   const slot = panel(server([desktopBox({ control: { owner: "human", holder: "viewer-9" } })]).handlers);
   await slot.findByText("bold-heron");
-  // The first line does not wrap; the name gives way first.
   const name = slot.getByText("bold-heron");
   expect(name.className).toContain("truncate");
-  expect(name.parentElement!.className).not.toContain("flex-wrap");
-  const badges = name.parentElement!.querySelector<HTMLElement>("[data-row-badges]")!;
-  expect(badges.className.split(" ")).toEqual(expect.arrayContaining(["flex-1", "basis-0", "flex-wrap", "overflow-hidden", "h-[1.125rem]"]));
-  expect(badges.textContent).toBe("DesktopGPULXC");
+  const title = name.closest<HTMLElement>("[data-row-title]")!;
+  expect(title.className.split(" ")).toEqual(expect.arrayContaining(["flex", "overflow-hidden", "whitespace-nowrap"]));
+  expect(title.className).not.toContain("flex-wrap");
+  expect(title.querySelector<HTMLElement>("[data-row-badges]")!.textContent).toBe("DesktopGPULXC");
   // The second is one line high: the state, what to act on, then the rest; what does not fit drops whole from the end.
   const line = slot.getByText("Ready in 2.1 s").closest<HTMLElement>("[data-status-line]")!;
   expect(line.className).toContain("overflow-hidden");
@@ -6870,9 +6869,9 @@ test("F-19: moving from a box's Desktop tab with control to its Simulator tab ke
 });
 
 function rowTitle(details: HTMLElement): { system: string[]; badges: string[] } {
-  const title = details.querySelector("[data-row-badges]")!.parentElement!;
-  const system = Array.from(title.children).slice(1).filter((part) => !part.hasAttribute("data-row-badges")).map((part) => part.textContent ?? "");
-  const badges = Array.from(title.querySelectorAll("[data-row-badges] > span > span")).map((badge) => badge.textContent ?? "");
+  const title = details.querySelector("[data-row-title]")!;
+  const system = ["system", "model"].flatMap((part) => Array.from(title.querySelectorAll(`[data-title-part="${part}"]`)).map((each) => each.textContent ?? ""));
+  const badges = Array.from(title.querySelectorAll("[data-badge-rank]")).map((badge) => badge.textContent ?? "");
   return { system, badges };
 }
 
@@ -6927,10 +6926,18 @@ test("F-22: at 360 px the panel's rows open tabs titled by the box's name where 
     };
     expect(await opened("Open simulator", 0)).toBe("brisk-wren");
     expect(await opened("Open simulator", 1)).toBe("tall-ridge");
-    expect(await opened("Open desktop", 0)).toBe("tall-ridge");
     expect(await opened("Open emulator")).toBe("Emulator");
-    expect(await opened("Open desktop", 1)).toBe("bold-heron");
-    expect(await opened("Open terminal", 0)).toBe("brisk-wren");
+    expect(await opened("Open desktop", 0)).toBe("bold-heron");
+    fireEvent.click(slot.getByRole("button", { name: "tall-ridge actions" }));
+    const before = slot.inspection.navigateCalls.length;
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open desktop" }));
+    await waitFor(() => expect(slot.inspection.navigateCalls.length).toBe(before + 1));
+    expect((slot.inspection.navigateCalls.at(-1) as { options: { title: string } }).options.title).toBe("tall-ridge");
+    fireEvent.click(slot.getByRole("button", { name: "brisk-wren actions" }));
+    const beforeTerminal = slot.inspection.navigateCalls.length;
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open terminal" }));
+    await waitFor(() => expect(slot.inspection.navigateCalls.length).toBe(beforeTerminal + 1));
+    expect((slot.inspection.navigateCalls.at(-1) as { options: { title: string } }).options.title).toBe("brisk-wren");
     cleanup();
   } finally {
     window.matchMedia = wide;
@@ -6946,4 +6953,83 @@ test("F-22: each panel tab has an icon of its own: a monitor for Desktop, a phon
   ]);
   const declared = (packageJson as { bb: { branding: { experimental_icons: Record<string, string> } } }).bb.branding.experimental_icons;
   expect([declared.monitor, declared.phone, declared.terminal]).toEqual(["./assets/monitor.svg", "./assets/phone.svg", "./assets/terminal.svg"]);
+});
+
+test("F-22b: a row title keeps the name whole, then badges by rank, Simulator, Emulator, Shared and the form before Desktop, and cuts the model, then drops it, before any badge", () => {
+  const shared = { name: 70, system: 18, model: 91, badges: [{ width: 66, rank: 0 }, { width: 48, rank: 0 }] };
+  expect(fitTitle({ room: 400, ...shared })).toEqual({ nameRoom: null, showsSystem: true, modelRoom: null, showsModel: true, showsBadge: [true, true] });
+  expect(fitTitle({ room: 300, ...shared })).toEqual({ nameRoom: null, showsSystem: true, modelRoom: 70, showsModel: true, showsBadge: [true, true] });
+  expect(fitTitle({ room: 250, ...shared })).toEqual({ nameRoom: null, showsSystem: true, modelRoom: null, showsModel: false, showsBadge: [true, true] });
+  expect(fitTitle({ room: 170, ...shared })).toEqual({ nameRoom: null, showsSystem: true, modelRoom: null, showsModel: false, showsBadge: [true, false] });
+  const dedicated = { name: 70, system: 18, model: 63, badges: [{ width: 66, rank: 0 }, { width: 54, rank: 1 }, { width: 24, rank: 0 }] };
+  expect(fitTitle({ room: 240, ...dedicated })).toEqual({ nameRoom: null, showsSystem: true, modelRoom: 34, showsModel: true, showsBadge: [true, false, true] });
+  expect(fitTitle({ room: 262, ...dedicated })).toEqual({ nameRoom: null, showsSystem: true, modelRoom: null, showsModel: false, showsBadge: [true, true, true] });
+  expect(fitTitle({ room: 185, ...dedicated })).toEqual({ nameRoom: null, showsSystem: true, modelRoom: null, showsModel: false, showsBadge: [true, false, false] });
+  expect(fitTitle({ room: 90, ...dedicated })).toEqual({ nameRoom: null, showsSystem: false, modelRoom: null, showsModel: false, showsBadge: [false, false, false] });
+  expect(fitTitle({ room: 60, ...dedicated })).toEqual({ nameRoom: 60, showsSystem: false, modelRoom: null, showsModel: false, showsBadge: [false, false, false] });
+});
+
+function withRowLayout<T>(room: number, run: () => Promise<T>): Promise<T> {
+  const restore: (() => void)[] = [];
+  const stub = (target: object, key: string, get: (this: HTMLElement) => unknown) => {
+    const before = Object.getOwnPropertyDescriptor(target, key);
+    Object.defineProperty(target, key, { configurable: true, get });
+    restore.push(() => (before ? Object.defineProperty(target, key, before) : delete (target as Record<string, unknown>)[key]));
+  };
+  stub(HTMLElement.prototype, "clientWidth", function () {
+    return this.hasAttribute("data-row-title") ? room : 0;
+  });
+  stub(Element.prototype, "scrollWidth", function () {
+    return (this.textContent ?? "").length * 7;
+  });
+  const rect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function () {
+    const width = (this.textContent ?? "").length * 6 + (this.hasAttribute("data-badge-rank") ? 12 : 0);
+    return { width, height: 18, x: 0, y: 0, top: 0, left: 0, right: width, bottom: 18, toJSON: () => ({}) } as DOMRect;
+  };
+  restore.push(() => (Element.prototype.getBoundingClientRect = rect));
+  const observer = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
+  restore.push(() => (globalThis.ResizeObserver = observer));
+  return run().finally(() => {
+    cleanup();
+    for (const undo of restore.reverse()) undo();
+  });
+}
+
+function shownTitle(details: HTMLElement): { name: string; parts: string[]; cut: string | null } {
+  const title = details.querySelector("[data-row-title]")!;
+  const shown = (element: Element) => !element.className.includes("invisible");
+  const parts = Array.from(title.querySelectorAll('[data-title-part="system"], [data-title-part="model"], [data-badge-rank]')).filter(shown).map((part) => part.textContent ?? "");
+  const model = title.querySelector<HTMLElement>('[data-title-part="model"]');
+  const name = title.querySelector<HTMLElement>('[data-title-part="name"]')!;
+  return { name: name.style.maxWidth ? `${name.textContent} cut to ${name.style.maxWidth}` : (name.textContent ?? ""), parts, cut: model && shown(model) && model.style.maxWidth ? model.style.maxWidth : null };
+}
+
+test("F-22b: in the thread pane's 506 px a shared ios row shows its name, iOS, Simulator and Shared, with the model cut to the room left", async () => {
+  await withRowLayout(300, async () => {
+    const slot = panel(server([SHARED_IOS]).handlers);
+    await slot.findByText("brisk-wren");
+    expect(shownTitle(slot.getByRole("button", { name: "brisk-wren: details" }))).toEqual({ name: "brisk-wren", parts: ["iOS", "iPhone 18 Pro", "Simulator", "Shared"], cut: "70px" });
+  });
+});
+
+test("F-22b: at 360 px a dedicated ios row shows its name, iOS and Simulator, its model and the badges after them giving way, and one quick action beside the menu", async () => {
+  const compact = (query: string) => ({ matches: query === "(max-width: 767px)", media: query, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false });
+  const wide = window.matchMedia;
+  window.matchMedia = compact as unknown as typeof window.matchMedia;
+  try {
+    await withRowLayout(185, async () => {
+      const slot = panel(server([DEDICATED_IOS, box()]).handlers);
+      await slot.findByText("tall-ridge");
+      expect(shownTitle(slot.getByRole("button", { name: "tall-ridge: details" }))).toEqual({ name: "tall-ridge", parts: ["iOS", "Simulator"], cut: null });
+      const actions = (name: string) => Array.from(slot.getByRole("button", { name: `${name}: details` }).closest("[data-resource-row]")!.querySelectorAll("[data-row-action] button")).map((button) => button.getAttribute("aria-label"));
+      expect(actions("tall-ridge")).toEqual(["Open simulator", "tall-ridge actions"]);
+      expect(actions("calm-otter")).toEqual(["Open terminal", "calm-otter actions"]);
+      fireEvent.click(slot.getByRole("button", { name: "tall-ridge actions" }));
+      expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual(expect.arrayContaining(["Open simulator", "Open desktop", "Open terminal", "Stop"]));
+    });
+  } finally {
+    window.matchMedia = wide;
+  }
 });

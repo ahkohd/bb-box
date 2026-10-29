@@ -14,12 +14,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { Contract } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { BoxBadges, deviceModelOf, hasViewer, IconButton, osName, relativeTime, RowTitle, SETTINGS_PATH, StatusLine, systemName } from "./common.tsx";
+import { deviceModelOf, hasViewer, IconButton, osName, relativeTime, RowTitle, boxTitleBadges, SETTINGS_PATH, StatusLine, systemName } from "./common.tsx";
 import { pageUrl, useOpenScreen } from "./desktop.tsx";
 import { JoinHelp } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
@@ -140,6 +141,13 @@ export function BoxRow({
   const status = statusOf(box, now, myViewers());
   const ready = box.state === "ready";
   const showsError = box.error !== null;
+  const compact = useIsCompactViewport();
+  const quickActions = [
+    ...(ready ? screensOf(box).map((screen) => <IconButton key={screen} label={openWords(box, screen)} icon={screenGlyph(screen)} onClick={() => openScreen(box, screen)} />) : []),
+    ...(canOpenTerminal(box) ? [<IconButton key="terminal" label="Open terminal" icon={<TerminalGlyph />} onClick={() => openTerminal(box)} />] : []),
+    ...(!held && box.canStopStart && box.state === "stopped" ? [<IconButton key="start" label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} />] : []),
+    ...(!held && box.canStopStart && ready ? [<IconButton key="stop" label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} />] : []),
+  ];
 
   return (
     <div
@@ -161,7 +169,7 @@ export function BoxRow({
           className="block w-full min-w-0 cursor-pointer rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
           {/* Each line stays one line in the panel's 560 px: the name and kind, then the state and what to act on. */}
-          <RowTitle name={box.name} os={systemName(box)} device={deviceModelOf(box)} badges={<BoxBadges box={box} machine={held !== null} />} />
+          <RowTitle name={box.name} os={systemName(box)} device={deviceModelOf(box)} badges={boxTitleBadges(box, held !== null)} />
         </button>
         <StatusLine tone={status.tone} items={[...status.items, ...meta]} />
         {box.waitingOn ? <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{box.waitingOn}</p> : null}
@@ -221,10 +229,7 @@ export function BoxRow({
         ) : null}
       </div>
       <span data-row-action className="flex shrink-0 cursor-default items-center gap-0.5">
-        {ready ? screensOf(box).map((screen) => <IconButton key={screen} label={openWords(box, screen)} icon={screenGlyph(screen)} onClick={() => openScreen(box, screen)} />) : null}
-        {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => openTerminal(box)} /> : null}
-        {!held && box.canStopStart && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} /> : null}
-        {!held && box.canStopStart && ready ? <IconButton label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} /> : null}
+        {compact ? quickActions.slice(0, 1) : quickActions}
         {extra}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

@@ -3390,3 +3390,38 @@ its first boot, and 5.0 to 6.0 s after each reboot, on both kinds of box.
   the focus, and keys typed then are lost. A new slot's device, made
   fresh, has it; the image's carried devices may not. The image could mark
   the tip as seen, or `computer_type` could look for it.
+
+## F-22: device box badges, narrow tab titles and tab icons
+
+Built on 28 October 2026, from the owner's request that a device box's row
+have badges as a desktop's has.
+
+What changed:
+
+- **A device box's row reads as a desktop's.** Its system is its device's,
+  iOS or Android, then the device's model, then badges: Simulator or
+  Emulator where Desktop goes, and Shared, for a macOS user on a shared
+  host, or the box's form, such as VM, where a desktop's form goes. A
+  dedicated ios box keeps its Desktop badge after Simulator.
+- **A tab on a narrow screen is named for its box alone.** Under 768 px,
+  BB's compact layout, a tab that would be 'Simulator · box-2',
+  'Desktop · box-2' or 'Terminal: box-2' is 'box-2', as its icon says what
+  it shows. A name that is the only one of its kind, such as Simulator,
+  stays.
+- **The Desktop and Terminal tabs have icons of their own**: a monitor and
+  a terminal, as the Device tab has a phone.
+
+### F-22 in the panel
+
+On 29 October 2026, after the deploy (main 1652050), through the
+production panel in the owner's browser (Helium), in a tab of its own,
+the Boxes page searched to this thread's boxes, at 1,440 and 360 px wide:
+
+| Check | Result |
+| --- | --- |
+| The panel's launcher | Box with the cube, Desktop with a monitor, Device with a phone, Terminal with a terminal |
+| Rows, in a pane wide enough | a shared ios box 'iOS iPhone 18 Pro [Simulator] [Shared]'; a dedicated ios box, a Tart VM, 'iOS iPhone 17 [Simulator] [Desktop] [VM]'; an android box 'Android Pixel 8 [Emulator] [VM]'; a Linux desktop 'Linux [Desktop] [LXC]'. The Boxes page at 1,440 px showed each in full |
+| Rows, in the thread's pane at its width then, 506 px | the shared ios row showed Simulator but not Shared, and the dedicated row Simulator but not Desktop or VM: badges that do not fit drop from the end, as they always have, and a device's model takes room a desktop's row does not have |
+| Tabs at 1,440 px | Simulator, Emulator, Desktop and 'Terminal: ' and the box's name, each with its icon. With a Linux desktop and a dedicated ios box, 'Desktop · ' and each box's name |
+| Tabs at 360 px | a terminal's tab was the box's name alone, with the terminal icon. The two clashing Desktop tabs were each box's name alone, with the monitor icon, and Simulator and Emulator kept their names, with the phone |
+| Rows at 360 px | the name, system and model, and no badges, as a desktop's row had before. A dedicated ios row, with four buttons, showed none of its name: the system and model do not give way |

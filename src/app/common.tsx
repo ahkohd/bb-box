@@ -4,7 +4,7 @@
 
 import type { BoxForm } from "../backends/types.ts";
 import { experimental_Icon as Icon, useRealtime, useRealtimeConnectionState, UrlLink } from "@get-bb/plugin-sdk/app";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -211,18 +211,108 @@ export function StatusLine({ tone, items }: { tone: Tone; items: readonly (LineI
   );
 }
 
-/** A box row's first line: its name, then its system and badges, on one line; the name gives way first, cut with its tooltip. */
-export function RowTitle({ name, os, device = null, badges }: { name: string; os: string; device?: string | null; badges: ReactNode }) {
+export interface TitleBadge {
+  readonly label: string;
+  readonly rank: number;
+}
+
+export interface TitleWidths {
+  readonly room: number;
+  readonly name: number;
+  readonly system: number;
+  readonly model: number;
+  readonly badges: readonly { readonly width: number; readonly rank: number }[];
+}
+
+export interface TitleFit {
+  readonly nameRoom: number | null;
+  readonly showsSystem: boolean;
+  readonly modelRoom: number | null;
+  readonly showsModel: boolean;
+  readonly showsBadge: readonly boolean[];
+}
+
+export const TITLE_GAP_PX = 8;
+export const BADGE_GAP_PX = 4;
+export const MODEL_LEAST_PX = 32;
+
+export function fitTitle({ room, name, system, model, badges }: TitleWidths): TitleFit {
+  const noBadges = badges.map(() => false);
+  if (name >= room) return { nameRoom: room, showsSystem: false, modelRoom: null, showsModel: false, showsBadge: noBadges };
+  if (name + TITLE_GAP_PX + system > room) return { nameRoom: null, showsSystem: false, modelRoom: null, showsModel: false, showsBadge: noBadges };
+  let left = room - name - TITLE_GAP_PX - system;
+  const showsBadge = [...noBadges];
+  const byRank = badges.map((_, index) => index).sort((a, b) => badges[a]!.rank - badges[b]!.rank || a - b);
+  for (const index of byRank) {
+    const cost = badges[index]!.width + (showsBadge.includes(true) ? BADGE_GAP_PX : TITLE_GAP_PX);
+    if (cost > left) continue;
+    showsBadge[index] = true;
+    left -= cost;
+  }
+  const modelLeft = left - TITLE_GAP_PX;
+  if (model > 0 && model <= modelLeft) return { nameRoom: null, showsSystem: true, modelRoom: null, showsModel: true, showsBadge };
+  if (model > 0 && modelLeft >= MODEL_LEAST_PX) return { nameRoom: null, showsSystem: true, modelRoom: modelLeft, showsModel: true, showsBadge };
+  return { nameRoom: null, showsSystem: true, modelRoom: null, showsModel: false, showsBadge };
+}
+
+const OUT_OF_FLOW = "invisible absolute";
+
+function widthOf(element: Element | null | undefined): number {
+  return element ? Math.ceil(element.getBoundingClientRect().width) : 0;
+}
+
+function measuredTitle(title: HTMLElement, badges: readonly TitleBadge[]): TitleWidths {
+  const part = (name: string) => title.querySelector(`[data-title-part="${name}"]`);
+  return {
+    room: title.clientWidth,
+    name: part("name")?.firstElementChild?.scrollWidth ?? 0,
+    system: widthOf(part("system")),
+    model: part("model")?.scrollWidth ?? 0,
+    badges: Array.from(title.querySelectorAll("[data-badge-rank]")).map((badge, index) => ({ width: widthOf(badge), rank: badges[index]?.rank ?? 0 })),
+  };
+}
+
+function useTitleFit(badges: readonly TitleBadge[], parts: string): [RefObject<HTMLSpanElement | null>, TitleFit | null] {
+  const title = useRef<HTMLSpanElement>(null);
+  const [fit, setFit] = useState<TitleFit | null>(null);
+  useLayoutEffect(() => {
+    const shown = title.current;
+    if (!shown || typeof ResizeObserver !== "function") return;
+    const refit = () => setFit(fitTitle(measuredTitle(shown, badges)));
+    refit();
+    const observer = new ResizeObserver(refit);
+    observer.observe(shown);
+    return () => observer.disconnect();
+  }, [parts]);
+  return [title, fit];
+}
+
+export function RowTitle({ name, os, device = null, badges }: { name: string; os: string; device?: string | null; badges: readonly TitleBadge[] }) {
+  const [title, fit] = useTitleFit(badges, [name, os, device ?? "", ...badges.map((badge) => `${badge.rank}:${badge.label}`)].join("\n"));
   return (
-    <span className="flex min-w-0 items-center gap-x-2">
-      <OneLine full={name} className="text-sm font-medium text-foreground">
-        {name}
-      </OneLine>
-      <span className="shrink-0 text-xs font-normal text-muted-foreground">{os}</span>
-      {device ? <span className="shrink-0 text-xs font-normal text-foreground">{device}</span> : null}
-      <span data-row-badges className="flex h-[1.125rem] min-w-0 flex-1 basis-0 flex-wrap content-start items-center gap-1 overflow-hidden *:contents before:-mr-1 before:h-full before:w-0 before:content-['']">
-        {badges}
+    <span ref={title} data-row-title className="relative flex min-w-0 items-center gap-x-2 overflow-hidden whitespace-nowrap">
+      <span data-title-part="name" className="min-w-0 shrink-0" style={fit?.nameRoom ? { maxWidth: fit.nameRoom } : undefined}>
+        <OneLine full={name} className="text-sm font-medium text-foreground">
+          {name}
+        </OneLine>
       </span>
+      <span data-title-part="system" className={cn("shrink-0 text-xs font-normal text-muted-foreground", fit && !fit.showsSystem && OUT_OF_FLOW)}>
+        {os}
+      </span>
+      {device ? (
+        <span data-title-part="model" className={cn("min-w-0 shrink-0 truncate text-xs font-normal text-foreground", fit && !fit.showsModel && OUT_OF_FLOW)} style={fit?.modelRoom ? { maxWidth: fit.modelRoom } : undefined}>
+          {device}
+        </span>
+      ) : null}
+      {badges.length ? (
+        <span data-row-badges className="flex shrink-0 items-center gap-1">
+          {badges.map((badge, index) => (
+            <Badge key={badge.label} data-badge-rank={badge.rank} className={cn(fit && !fit.showsBadge[index] && OUT_OF_FLOW)}>
+              {badge.label}
+            </Badge>
+          ))}
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -329,8 +419,8 @@ export const SETTINGS_PATH = "/settings/plugins/bb-box";
 export const BOXES_ACTION = "boxes";
 
 /** BB's chip: one small bordered word, as its machine picker and settings sections show one. */
-export function Badge({ children, tone = "muted", className }: { children: ReactNode; tone?: "muted" | "warn"; className?: string }) {
-  return <span className={cn("shrink-0 rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-2xs leading-none", tone === "warn" ? "text-warning-text" : "text-subtle-foreground", className)}>{children}</span>;
+export function Badge({ children, tone = "muted", className, "data-badge-rank": rank }: { children: ReactNode; tone?: "muted" | "warn"; className?: string; "data-badge-rank"?: number }) {
+  return <span data-badge-rank={rank} className={cn("shrink-0 rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 text-2xs leading-none", tone === "warn" ? "text-warning-text" : "text-subtle-foreground", className)}>{children}</span>;
 }
 
 export function hasViewer(box: Pick<BoxView, "desktop" | "device">): boolean {
@@ -423,19 +513,32 @@ export function KindBadges({
   );
 }
 
+const BADGE_RANKS = { what: 0, desktop: 1, more: 2 } as const;
+
+export function boxTitleBadges(box: BoxView, machine = false): readonly TitleBadge[] {
+  const badge = (label: string | false | null, rank: number) => (label ? [{ label, rank }] : []);
+  return [
+    ...badge(box.device ? screenWord(box, "device") : null, BADGE_RANKS.what),
+    ...badge(box.desktop && "Desktop", BADGE_RANKS.desktop),
+    ...badge(runsWayland(box) && "Wayland", BADGE_RANKS.more),
+    ...badge(box.gpu && "GPU", BADGE_RANKS.more),
+    ...badge(lacksDocker(box) && "No Docker", BADGE_RANKS.more),
+    ...badge(isArm64Badge(box.os, box.arch) && "arm64", BADGE_RANKS.more),
+    ...hostFormBadges(box).map((form) => ({ label: formBadge(form), rank: BADGE_RANKS.what })),
+    ...badge(box.shared && "Shared", BADGE_RANKS.what),
+    ...badge(machine && "BB machine", BADGE_RANKS.what),
+  ];
+}
+
 export function BoxBadges({ box, machine = false }: { box: BoxView; machine?: boolean }) {
+  const badges = boxTitleBadges(box, machine);
+  if (!badges.length) return null;
   return (
-    <KindBadges
-      deviceWord={box.device ? screenWord(box, "device") : null}
-      desktop={box.desktop}
-      wayland={runsWayland(box)}
-      gpu={box.gpu}
-      noDocker={lacksDocker(box)}
-      arm64={isArm64Badge(box.os, box.arch)}
-      forms={hostFormBadges(box)}
-      shared={box.shared}
-      machine={machine}
-    />
+    <span className="inline-flex shrink-0 items-center gap-1">
+      {badges.map((badge) => (
+        <Badge key={badge.label}>{badge.label}</Badge>
+      ))}
+    </span>
   );
 }
 
