@@ -27,3 +27,22 @@ export function useScreensOf(): ScreensOf {
     [entryOf, navigate],
   );
 }
+
+export type BoxLook = "device" | "desktop";
+
+export type LookOf = (machine: Machine | undefined) => BoxLook | null;
+
+export function useBoxLookOf(): LookOf {
+  const rpc = useRpc<Contract>();
+  const { value: entries } = useLive<BoxEntry[]>("allBoxes", () => rpc.call("allBoxes"), () => true);
+  const boxOf = useMemo(() => new Map((entries ?? []).map((entry) => [entry.box.id, entry.box])), [entries]);
+  return useCallback(
+    (machine) => {
+      const box = machine?.boxId ? boxOf.get(machine.boxId) : undefined;
+      if (!box) return null;
+      if (box.device) return "device";
+      return box.desktop ? "desktop" : null;
+    },
+    [boxOf],
+  );
+}

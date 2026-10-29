@@ -370,6 +370,16 @@ test("BB's server and a BB machine that is not a box get no Open button, and the
   expect(within(header()).queryByRole("button", { name: "Open" })).toBeNull();
 });
 
+test("a box's icon says what it is: a phone for a device box, a monitor for a desktop box, the box icon otherwise, in the picker and the header", async () => {
+  openMonitor("box:bx_desk");
+  await waitFor(() => expect(within(header()).getByRole("img", { name: "Desktop box" })).toBeTruthy());
+  fireEvent.click(await screen.findByRole("button", { name: "Machine" }));
+  const list = await screen.findByRole("listbox", { name: "Machines" });
+  const iconOf = (name: string) => within(within(list).getAllByRole("option").find((option) => option.textContent?.includes(name))!).getByRole("img").getAttribute("aria-label");
+  await waitFor(() => expect(iconOf("keen-iris")).toBe("Device box"));
+  expect([iconOf("brisk-wren"), iconOf("quiet-moth"), iconOf("glad-coral"), iconOf("build-server")]).toEqual(["Device box", "Desktop box", "Box", "Machine"]);
+});
+
 test("the picker lists names only, as options, and pressing one still switches the Monitor", async () => {
   openMonitor(null);
   fireEvent.click(await screen.findByRole("button", { name: "Machine" }));

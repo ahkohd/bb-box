@@ -6,10 +6,12 @@ import { machineKey } from "./use-machines.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { MiddleTruncate } from "./middle-truncate.tsx";
 import { cn } from "@/lib/utils";
+import { screenGlyph } from "../box-opens.tsx";
+import type { LookOf } from "./box-screens.tsx";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { CrownIcon, ServerIcon } from "@hugeicons/core-free-icons";
 
-type MachineKind = "server" | "machine" | "box";
+type MachineKind = "server" | "machine" | "box" | "device" | "desktop";
 
 const KIND_ICONS = { server: CrownIcon, machine: ServerIcon } as const;
 const BB_BOX_ICON = "bb-box/box";
@@ -18,14 +20,24 @@ const KIND_LABELS: Record<MachineKind, string> = {
   server: "bb server",
   machine: "Machine",
   box: "Box",
+  device: "Device box",
+  desktop: "Desktop box",
 };
 
-function kindOf(machine: Machine): MachineKind {
+function kindOf(machine: Machine, lookOf?: LookOf): MachineKind {
   if (machine.isServer) return "server";
-  return machine.isBox ? "box" : "machine";
+  if (!machine.isBox) return "machine";
+  return lookOf?.(machine) ?? "box";
 }
 
 function KindIcon({ kind, className }: { kind: MachineKind; className?: string }) {
+  if (kind === "device" || kind === "desktop") {
+    return (
+      <span role="img" aria-label={KIND_LABELS[kind]} className={cn("inline-flex shrink-0", className)}>
+        {screenGlyph(kind, "size-3.5")}
+      </span>
+    );
+  }
   if (kind === "box") {
     return (
       <span role="img" aria-label={KIND_LABELS.box} className={cn("inline-flex shrink-0", className)}>
@@ -47,9 +59,9 @@ function matchesQuery(machine: Machine, query: string): boolean {
   return machine.name.toLowerCase().includes(query.trim().toLowerCase());
 }
 
-export function selectedMachine(machines: Machine[] | null, selected: string): { name: string; kind: MachineKind } {
+export function selectedMachine(machines: Machine[] | null, selected: string, lookOf?: LookOf): { name: string; kind: MachineKind } {
   const machine = machines?.find((candidate) => machineKey(candidate) === selected);
-  if (machine) return { name: machine.name, kind: kindOf(machine) };
+  if (machine) return { name: machine.name, kind: kindOf(machine, lookOf) };
   return selected === SERVER_MACHINE
     ? { name: "This bb server", kind: "server" }
     : { name: "Machine", kind: "machine" };
@@ -60,11 +72,13 @@ export function MachinePicker({
   selected,
   onSelect,
   onOpen,
+  lookOf,
 }: {
   machines: Machine[] | null;
   selected: string;
   onSelect: (machineId: string) => void;
   onOpen: () => void;
+  lookOf?: LookOf;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -75,7 +89,7 @@ export function MachinePicker({
     () => (machines ?? []).filter((machine) => matchesQuery(machine, query)),
     [machines, query],
   );
-  const current = selectedMachine(machines, selected);
+  const current = selectedMachine(machines, selected, lookOf);
 
   const activeIndex = Math.min(highlighted, Math.max(0, flat.length - 1));
 
@@ -170,7 +184,7 @@ export function MachinePicker({
                     itemIndex === activeIndex && "bg-state-hover",
                   )}
                 >
-                  <KindIcon kind={kindOf(machine)} className="text-muted-foreground" />
+                  <KindIcon kind={kindOf(machine, lookOf)} className="text-muted-foreground" />
                   <span className="flex min-w-0 flex-1"><MiddleTruncate text={machine.name} /></span>
                   {isSelected ? <Icon name="Check" className="size-3.5 shrink-0" aria-hidden /> : null}
                 </button>
