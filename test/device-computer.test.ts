@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { ComputerError } from "../src/core/computer.ts";
-import { DeviceComputer, deviceKey, scrollSwipe, type DeviceComputerDeps } from "../src/core/device-computer.ts";
-import { PERSON_HAS_CONTROL_WORDS, type DeviceAgentRequest, type DeviceAnswer, type DeviceElement, type DeviceInput, type DeviceRead, type DeviceState } from "../src/core/device.ts";
+import { DeviceComputer, KEYBOARD_NEVER_CAME_WORDS, KEYBOARD_WAIT, deviceKey, scrollSwipe, type DeviceComputerDeps } from "../src/core/device-computer.ts";
+import { KEYBOARD_KEY_ROLE, PERSON_HAS_CONTROL_WORDS, type DeviceAgentRequest, type DeviceAnswer, type DeviceElement, type DeviceInput, type DeviceRead, type DeviceState } from "../src/core/device.ts";
 import { rgbaPng } from "../src/core/png.ts";
 import { instrumentationWords } from "../src/device/android-tree-source.ts";
 import { GrpcError } from "../src/device/grpc.ts";
@@ -142,6 +142,15 @@ function screenOf(children: DeviceElement[]): readonly DeviceElement[] {
 }
 
 describe("iOS's accessibility tree, read from idb (063, 7.1)", () => {
+  test("names a key of iOS's keyboard a keyboard key, so a typist can wait for the keyboard (F-25)", () => {
+    const [key, button] = flatten(iosTree([
+      { role: "AXButton", AXLabel: "q", traits: ["KeyboardKey"], frame: { x: 0, y: 700, width: 30, height: 40 }, enabled: true },
+      { role: "AXButton", AXLabel: "Done", traits: ["Button"], frame: { x: 40, y: 700, width: 60, height: 40 }, enabled: true },
+    ], SCALE));
+    assert.deepEqual([key!.role, key!.label, key!.can?.tap], [KEYBOARD_KEY_ROLE, "q", true]);
+    assert.equal(button!.role, "button");
+  });
+
   test("turns idb's elements into the device's, in the video's pixels, with identifiers, values and what each can do", () => {
     const tree = flatten(iosTree(fixture("settings"), SCALE));
     const general = tree.find((each) => each.identifier === "com.apple.settings.general")!;
@@ -516,15 +525,63 @@ describe("the computer tools on a device (063, 7.1)", () => {
   test("type taps the field first, types, presses keys by their W3C names, and says what it reads", async () => {
     const field = element("text field", "Address", { x: 60, y: 600, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
     const device = new FakeDevice(screenOf([field]));
+    const key = element(KEYBOARD_KEY_ROLE, "q", { x: 0, y: 2000, width: 100, height: 150 });
     device.onInput = (input) => {
-      if (input.type === "text") device.tree = screenOf([{ ...field, value: input.text, focused: true }]);
+      if (input.type === "tap") device.tree = screenOf([{ ...field, focused: true }, key]);
+      if (input.type === "text") device.tree = screenOf([{ ...field, value: input.text, focused: true }, key]);
     };
     const computer = new DeviceComputer(device.deps());
     const ref = refOf((await computer.observe(BOX, { window: 1 })).text, /"Address"/);
     const done = await computer.type(BOX, { ref, text: "example.com", keys: "Return" });
     assert.deepEqual(device.inputs.map((input) => input.type), ["tap", "text", "key"]);
+    assert.doesNotMatch(done.text, /typed anyway/);
     assert.deepEqual(device.inputs.at(-1), { type: "key", key: "Enter", modifiers: [] });
     assert.match(done.text, new RegExp(`^Typed "example\\.com" and pressed Return into ${ref}, text field "Address"\\. ${ref} reads "example\\.com" now\\.`));
+  });
+
+  test("after the tap that opens a field, the first key waits until a field has the focus and its keyboard shows, as Safari's address field moves and its keyboard comes in (F-25)", async () => {
+    for (const platform of ["ios", "android"] as const) {
+      const closed = element("text field", "Address", { x: 60, y: 2400, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
+      const opened = element("text field", "Address", { x: 60, y: 200, width: 1000, height: 120 }, { identifier: "URL", focused: true, can: { tap: true, edit: true, scroll: false } });
+      const keyboard = platform === "ios" ? element(KEYBOARD_KEY_ROLE, "q", { x: 0, y: 2000, width: 100, height: 150 }) : element("keyboard", "Gboard", { x: 0, y: 1600, width: 1080, height: 800 });
+      const device = new FakeDevice(screenOf([closed]));
+      device.platform = platform;
+      let readsToCome = -1;
+      let keyboardAtText: boolean | null = null;
+      device.onInput = (input) => {
+        if (input.type === "tap") {
+          device.tree = screenOf([opened]);
+          readsToCome = 3;
+        }
+        if (input.type === "text") keyboardAtText = device.tree.some((root) => root.children.includes(keyboard));
+      };
+      const deps = device.deps();
+      const read = deps.read;
+      deps.read = async (box, request) => {
+        if (request.type === "tree" && readsToCome >= 0 && readsToCome-- === 0) device.tree = screenOf([opened, keyboard]);
+        return read(box, request);
+      };
+      const computer = new DeviceComputer(deps);
+      const ref = refOf((await computer.observe(BOX, { window: 1 })).text, /"Address"/);
+      const done = await computer.type(BOX, { ref, text: "bbtest ✓" });
+      assert.equal(keyboardAtText, true, `${platform}: the text went only once the keyboard showed`);
+      assert.doesNotMatch(done.text, /typed anyway/);
+    }
+  });
+
+  test("when no keyboard comes after the tap, the text goes anyway after the wait, and the answer says so (F-25)", async () => {
+    const field = element("text field", "Address", { x: 60, y: 600, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
+    const device = new FakeDevice(screenOf([field]));
+    device.onInput = (input) => {
+      if (input.type === "tap") device.tree = screenOf([{ ...field, focused: true }]);
+    };
+    const computer = new DeviceComputer(device.deps());
+    const ref = refOf((await computer.observe(BOX, { window: 1 })).text, /"Address"/);
+    const before = device.reads.filter((each) => each === "tree").length;
+    const done = await computer.type(BOX, { ref, text: "hello" });
+    assert.deepEqual(device.inputs.map((input) => input.type), ["tap", "text"]);
+    assert.ok(device.reads.filter((each) => each === "tree").length - before >= KEYBOARD_WAIT.mostMs / KEYBOARD_WAIT.everyMs, "it read the screen through the whole wait");
+    assert.ok(done.text.includes(KEYBOARD_NEVER_CAME_WORDS), done.text);
   });
 
   test("waits for typed text that the device takes slowly, and presses no keys when it never arrives", async () => {

@@ -321,6 +321,8 @@ export interface ElementFrame {
   readonly height: number;
 }
 
+export const KEYBOARD_KEY_ROLE = "keyboard key";
+
 export interface DeviceElement {
   readonly role: string;
   readonly identifier: string | null;
@@ -690,7 +692,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 2;
 export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
-export const DEVICE_SERVER_VERSION = 33;
+export const DEVICE_SERVER_VERSION = 34;
 export const CLIPBOARD_READ_SINCE_VERSION = 28;
 export const PASTE_REQUEST_SINCE_VERSION = 29;
 export const DEVICE_CLIPBOARD_MOST = 100_000;
