@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
@@ -5,8 +6,12 @@ import { CUA_DRIVER } from "../docker/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { KeyFile, Ssh, SshTransport } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type SshAccess } from "../../transports/types.ts";
+import type { DeviceOffer } from "../../core/device.ts";
+import { setupDir } from "../setup-dir.ts";
 import {
   BackendError,
+  DEVICE_DISPLAY,
+  desktopDisplays,
   type AcquireHooks,
   type Backend,
   type BackendContext,
@@ -24,10 +29,11 @@ import {
   type PowerState,
   type ReleaseHooks,
   type StopReason,
+  type WithheldKind,
 } from "../types.ts";
 import { BoatApi, BoatError, SIZE_SHAPES, perWindow, isRunning, isStarting, isStopped, shapeOf, type BoatFetch, type BoatLimits, type Sandbox, type SizeShape, type SshReach } from "./api.ts";
 import { BOAT_KINDS, type BoatConfig, type BoatKind } from "./config.ts";
-import { BoatTemplates, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
+import { BoatTemplates, CUA_READY, FAILED_BUILD_RETRY_MS, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
 import { CANNOT_ENROL_FIX, bbReach, cannotEnrolWords, type BbReach } from "./reach-bb.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 
@@ -43,6 +49,7 @@ export const LABELS = {
 } as const;
 
 export const READY_TIMEOUT_MS = 5 * 60_000;
+export const DESKTOP_READY_TIMEOUT_MS = 10 * 60_000;
 export const BOX_USER = "box";
 export const BUSY_RETRY_MS = 15_000;
 export const BUSY_GIVES_UP_AFTER_MS = 2 * 60_000;
@@ -53,9 +60,11 @@ const STATE_WITHIN_MS = 5 * 60_000;
 const VNC_PORT = 5900;
 const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 const DISPLAY_MODE_FILE = "/run/bb-box/display-mode";
-const DISPLAY_WAIT_MS = 120_000;
+const DISPLAY_WAIT_MS = 300_000;
 export const BOAT_READY_FILE = "/run/bb-box/boat-ready";
 const SETTLED_SCRIPT = `test -e ${BOAT_READY_FILE} && docker info >/dev/null 2>&1`;
+const SETTLE_KICK_AFTER_MS = 20_000;
+const SETTLE_KICK = "sudo -n systemctl daemon-reload; sudo -n systemctl start --no-block bb-box-boat-ready.service docker.service";
 const NAME_PREFIX = "bb-box:";
 const MIB_PER_GB = 1024;
 const STALE_DEVICE_MS = 15 * 60_000;
@@ -108,7 +117,7 @@ const LINUX_DESKTOP_KIND: BoxKind = {
     displays: [{ id: "desktop", protocol: "rfb", resizable: true }, SELKIES_DISPLAY],
     computerUse: CUA_DRIVER,
   },
-  readyTimeoutMs: READY_TIMEOUT_MS,
+  readyTimeoutMs: DESKTOP_READY_TIMEOUT_MS,
 };
 
 export function ownKeyScript(publicKey: string): string {
@@ -125,7 +134,30 @@ export function ownKeyScript(publicKey: string): string {
   ].join("\n");
 }
 
-const KINDS: Readonly<Record<BoatKind, BoxKind>> = { linux: LINUX_KIND, "linux-desktop-cpu": LINUX_DESKTOP_KIND };
+const ANDROID_KIND: BoxKind = {
+  id: "android",
+  label: "Android emulator",
+  description:
+    "An Android emulator device, a phone, foldable or tablet, booted in a Linux VM on boat.dev with KVM, for installing, running and testing Android apps, with its screen shown in the panel. Commands run on the Linux host, as the box user with sudo, with the Android SDK in /opt/android-sdk; adb takes the device as emulator-5554.",
+  requires: [],
+  capabilities: { ...LINUX_KIND.capabilities, displays: [DEVICE_DISPLAY], device: null },
+  readyTimeoutMs: READY_TIMEOUT_MS,
+};
+
+function androidKind(device: DeviceOffer): BoxKind {
+  return { ...ANDROID_KIND, capabilities: { ...ANDROID_KIND.capabilities, device } };
+}
+
+export function androidLicenceLine(setup = setupDir()): string | null {
+  try {
+    const pins = JSON.parse(readFileSync(join(setup, "android", "pins.json"), "utf8")) as { license?: { accepted?: unknown } };
+    return typeof pins.license?.accepted === "string" ? pins.license.accepted : null;
+  } catch {
+    return null;
+  }
+}
+
+const KINDS: Readonly<Record<BoatKind, BoxKind>> = { linux: LINUX_KIND, "linux-desktop-cpu": LINUX_DESKTOP_KIND, android: ANDROID_KIND };
 
 export interface BoatBackendOptions {
   readonly fetch?: BoatFetch;
@@ -141,6 +173,7 @@ export interface BoatBackendOptions {
   readonly ownKeyScript?: (publicKey: string) => string;
   readonly settledScript?: string;
   readonly kinds?: readonly BoatKind[];
+  readonly cuaReadyScript?: string;
 }
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
@@ -213,6 +246,7 @@ export class BoatBackend implements Backend {
   #ssh: Promise<{ ssh: Ssh; publicKey: string }> | null = null;
   #limits: { readonly at: number; readonly limits: Promise<BoatLimits> } | null = null;
   #bbReach: { readonly at: number; readonly reach: Promise<BbReach> } | null = null;
+  #androidOffer: DeviceOffer | null = null;
 
   constructor(config: BoatConfig, context: BackendContext, options: BoatBackendOptions = {}) {
     if (!config.key) throw new BackendError("unsupported", "boat.dev has no API key: set it in BB Box's settings.");
@@ -233,15 +267,41 @@ export class BoatBackend implements Backend {
       forget: (sandbox) => this.#forget(sandbox),
       answers: (sandbox, user, deadline, signal) => this.#answers(sandbox, user, deadline, signal),
       settled: (sandbox, deadline, signal) => this.#settled(sandbox, deadline, signal),
+      ...(options.cuaReadyScript ? { cuaReady: options.cuaReadyScript } : {}),
       now: this.#now,
       sleep: this.#sleep,
       log: (line) => context.log?.(line),
+      androidLicence: () => (this.#config.androidLicence ? androidLicenceLine() : null),
+      sizeFor: async (kind) => (kind === "android" && (await this.#readLimits()).sizes.find((each) => each.size === "large")?.available ? "large" : "default"),
       ...options.templates,
     });
+    void this.#readAndroidOffer().catch((error) => context.logError("read boat's Android template", error));
   }
 
   kinds(): readonly BoxKind[] {
-    return this.#offered().map((kind) => KINDS[kind]);
+    return this.#offered().flatMap((kind) => {
+      if (kind !== "android") return [KINDS[kind]];
+      return this.#config.androidLicence && this.#androidOffer ? [androidKind(this.#androidOffer)] : [];
+    });
+  }
+
+  async withheldKinds(kind: string): Promise<readonly WithheldKind[]> {
+    if (kind !== "android" || !(this.#offered() as readonly string[]).includes("android")) return [];
+    if (!this.#config.androidLicence) return [{ kind, why: "The Android SDK's licence is not accepted in boat.dev's settings in BB Box, so boat.dev offers no Android boxes. Turning Android SDK licence on there is the acceptance.", passing: false }];
+    if (this.#androidOffer) return [];
+    const why = this.templates.building("android")
+      ? `boat.dev is building its Android template, about ${buildWaitWords("android", null).match(/about (\d+) minutes/)?.[1] ?? "30"} minutes; Android boxes come once it is ready.`
+      : "boat.dev has no Android template yet; bb-box builds it in its next upkeep, within a few minutes, and Android boxes come once it is ready.";
+    return [{ kind, why, passing: false }];
+  }
+
+  async #readAndroidOffer(): Promise<void> {
+    const record = await this.templates.record("android");
+    const devices = record?.devices;
+    const offer = Array.isArray(devices) && devices.length ? ({ platform: "android", devices } as unknown as DeviceOffer) : null;
+    const changed = JSON.stringify(offer) !== JSON.stringify(this.#androidOffer);
+    this.#androidOffer = offer;
+    if (changed) this.#context.kindsChanged?.();
   }
 
   offerNote(kind: string): string | null {
@@ -322,10 +382,11 @@ export class BoatBackend implements Backend {
       const facts: GuestFact[] = [];
       const reach = await this.#reachOfBb();
       if (reach.from === "nowhere") facts.push({ label: "BB machine", value: `No. ${cannotEnrolWords(reach)} ${CANNOT_ENROL_FIX}` });
-      if (KINDS[kind].capabilities.displays.length) {
+      if (desktopDisplays(KINDS[kind].capabilities.displays).length) {
         const mode = await step("display", () => this.#display(sandbox.id, signal));
         if (mode) facts.push({ label: "Display", value: mode });
       }
+      if (KINDS[kind].capabilities.computerUse) await step("computer use", () => this.#computerUse(sandbox.id, signal));
       const guest = this.#guest(box.boxId, sandbox, shape, facts);
       await hooks.claim(guest);
       return guest;
@@ -385,6 +446,9 @@ export class BoatBackend implements Backend {
       await this.#answers(sandbox.id, BOX_USER, this.#now() + this.#readyMs(), signal);
     });
     await step("settle", () => this.#settled(sandbox.id, this.#now() + this.#readyMs(), signal));
+    const kind = (this.#offered() as readonly string[]).includes(sandbox.labels[LABELS.kind] ?? "") ? (sandbox.labels[LABELS.kind] as BoatKind) : null;
+    if (kind && desktopDisplays(KINDS[kind].capabilities.displays).length) await step("display", () => this.#display(sandbox.id, signal));
+    if (kind && KINDS[kind].capabilities.computerUse) await step("computer use", () => this.#computerUse(sandbox.id, signal));
     const tailnet = this.#context.tailnet?.() ?? null;
     if (tailnet) await step("tailnet", () => this.#join(sandbox.id, ownerOf(sandbox)?.name ?? sandbox.id, tailnet, signal));
   }
@@ -430,10 +494,22 @@ export class BoatBackend implements Backend {
       await this.#api.extend(sandbox.id, lease, signal).catch((error) => this.#context.logError(`renew boat sandbox ${sandbox.id}'s auto-stop`, error));
     }
     await this.templates.tidy(all.filter((sandbox) => sandbox.labels[LABELS.role] === TEMPLATE_ROLE || sandbox.labels[LABELS.role] === TRIAL_ROLE), signal).catch((error) => this.#context.logError("tidy boat's templates", error));
-    for (const { kind, why } of await this.templates.due().catch(() => [])) {
-      void this.templates.build(kind, why).catch((error) => this.#context.logError(`build boat's ${kind} template`, error));
-    }
+    const [next] = await this.templates.due(signal).catch(() => []);
+    if (next && !this.templates.anyBuilding()) void this.templates.build(next.kind, next.why).catch((error) => this.#context.logError(`build boat's ${next.kind} template`, error));
+    await this.#keepAndroidTemplate(signal).catch((error) => this.#context.logError("build boat's Android template", error));
+    await this.#readAndroidOffer();
     await this.#removeStaleDevices(all, signal).catch((error) => this.#context.logError("remove boat sandboxes' leftover tailnet devices", error));
+  }
+
+  async #keepAndroidTemplate(signal?: AbortSignal): Promise<void> {
+    if (!this.#config.androidLicence || !(this.#offered() as readonly string[]).includes("android") || !this.#context.kind("android").enabled) return;
+    if (await this.templates.record("android")) return;
+    if (await this.templates.keepAdoptable("android", signal)) return;
+    if (this.templates.anyBuilding() || (await this.templates.failedLately("android"))) return;
+    void this.templates
+      .build("android", "Android boxes need it")
+      .then(() => this.#readAndroidOffer())
+      .catch((error) => this.#context.logError("build boat's Android template", error));
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
@@ -444,7 +520,7 @@ export class BoatBackend implements Backend {
     const command = new SshTransport(ssh, access, "linux");
     const displays: Display[] = KINDS[this.#kind(kind)].capabilities.displays.map((display) =>
       display.protocol === "selkies"
-        ? selkiesDisplay((port) => command.route(port))
+        ? selkiesDisplay((port) => command.route(port), display)
         : {
             ...display,
             label: "Desktop",
@@ -486,6 +562,7 @@ export class BoatBackend implements Backend {
     checks.push(this.#limitsCheck(limits));
     checks.push(await this.#bbCheck());
     checks.push(await this.#templatesCheck());
+    if ((this.#offered() as readonly string[]).includes("android")) checks.push(this.#androidCheck(limits));
     const held = await this.#held(signal).catch(() => []);
     const unclaimed = held.filter((sandbox) => !ownerOf(sandbox));
     const described = held.map((sandbox) => {
@@ -549,8 +626,18 @@ export class BoatBackend implements Backend {
     return { ...check, status: "skipped", detail: "bb-box knows no URL for BB's server here, so it cannot tell whether boat boxes reach it.", fix: null };
   }
 
+  #androidCheck(limits: BoatLimits): DoctorCheck {
+    const check = { id: "boat.android" as const, name: "Android" };
+    if (!this.#config.androidLicence) return { ...check, status: "ok", detail: "Off: the Android SDK's licence is not accepted in boat.dev's settings, so boat.dev offers no Android boxes.", fix: null };
+    const allowed = [...SIZE_SHAPES].reverse().find((shape) => limits.sizes.find((each) => each.size === shape.size)?.available ?? true);
+    const sizes = allowed ? ` The plan allows Android boxes of at most ${allowed.cores} cores and ${allowed.memoryGB} GB (boat's ${allowed.size})${allowed.size === "default" || allowed.size === "small" ? `, less than the kind's presets: ask for cores ${allowed.cores} and memory_gib ${allowed.memoryGB}; a paid plan allows the large size of 8 cores and 16 GB` : ""}.` : "";
+    if (this.#androidOffer) return { ...check, status: "ok", detail: `Offered, with ${(this.#androidOffer.devices as readonly unknown[]).length} devices from the template.${sizes}`, fix: null };
+    return { ...check, status: "warn", detail: `Not offered yet: ${this.templates.building("android") ? "its template is being built" : "its template is built at the next upkeep"}.${sizes}`, fix: null };
+  }
+
   async #templatesCheck(): Promise<DoctorCheck> {
     const lines: string[] = [];
+    const failures: string[] = [];
     for (const kind of this.#offered()) {
       const record = await this.templates.record(kind);
       const building = this.templates.building(kind) ? ", being built now" : "";
@@ -563,7 +650,11 @@ export class BoatBackend implements Backend {
       const why = await this.templates.whyBuild(kind);
       lines.push(`${kind}: ${record.sandbox}, built ${days} day${days === 1 ? "" : "s"} ago${record.buildMs ? ` in ${Math.round(record.buildMs / 60_000)} minutes` : ""}${why ? `, due again as ${why}` : ""}${building}`);
     }
-    return { id: "boat.templates", name: "Templates", status: "ok", detail: `Stopped sandboxes boxes fork, at no cost: ${lines.join("; ")}.`, fix: null };
+    for (const kind of this.#offered()) {
+      const failed = await this.templates.failedBuild(kind);
+      if (failed) failures.push(`${kind}'s last build failed at ${new Date(failed.at).toISOString().slice(11, 16)} UTC, and is tried again ${Math.round(FAILED_BUILD_RETRY_MS / 3_600_000)} hours later or when a box needs it: ${failed.why}`);
+    }
+    return { id: "boat.templates", name: "Templates", status: failures.length ? "warn" : "ok", detail: `Stopped sandboxes boxes fork, at no cost: ${lines.join("; ")}.${failures.length ? ` ${failures.join(" ")}` : ""}`, fix: failures.length ? "bb-box's log shows each build's steps. A box of the kind tries the build again at once." : null };
   }
 
   async #readLimits(signal?: AbortSignal, fresh = false): Promise<BoatLimits> {
@@ -720,14 +811,26 @@ export class BoatBackend implements Backend {
 
   async #settled(sandbox: string, deadline: number, signal?: AbortSignal): Promise<void> {
     const command = await this.#command(sandbox, BOX_USER, signal);
+    const kickAt = this.#now() + SETTLE_KICK_AFTER_MS;
+    let kicked = false;
     let last = "";
     while (this.#now() < deadline) {
       const read = await command.run(this.#options.settledScript ?? SETTLED_SCRIPT, { timeoutMs: 15_000, signal, maxOutputBytes: 4096 }).catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: message(error) }));
       if (read.exitCode === 0) return;
       last = read.stderr.trim();
+      if (!kicked && this.#now() >= kickAt) {
+        kicked = true;
+        await command.run(SETTLE_KICK, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 }).catch(() => undefined);
+        this.#context.log?.(`boat: sandbox ${sandbox} had not run bb-box-boat-ready ${Math.round(SETTLE_KICK_AFTER_MS / 1000)} s after it answered, so bb-box started it.`);
+      }
       await this.#sleep(250, signal);
     }
     throw new Error(`boat's sandbox ${sandbox} did not finish restoring its template in time: ${BOAT_READY_FILE} is missing or Docker does not answer${last ? ` (${last})` : ""}. Check bb-box-boat-ready.service and docker.service in the box.`);
+  }
+
+  async #computerUse(sandbox: string, signal?: AbortSignal): Promise<void> {
+    const ready = await (await this.#command(sandbox, BOX_USER, signal)).run(this.#options.cuaReadyScript ?? CUA_READY, { timeoutMs: 240_000, signal, maxOutputBytes: 8192 });
+    if (ready.exitCode !== 0) throw new Error(`boat's sandbox ${sandbox} has no working Cua Driver: ${ready.stderr.trim().slice(-300) || `exit ${ready.exitCode}`}`);
   }
 
   async #display(sandbox: string, signal?: AbortSignal): Promise<string | null> {

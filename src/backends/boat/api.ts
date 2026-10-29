@@ -342,7 +342,7 @@ export class BoatApi {
     const answer = await this.#call(
       "POST",
       "/sandboxes",
-      { type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, name: make.name, noEnv: true },
+      { type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, name: make.name, noEnv: true, monitoring: false },
       { "idempotency-key": make.idempotencyKey ?? randomUUID() },
       signal,
     );
@@ -353,7 +353,7 @@ export class BoatApi {
     const answer = await this.#call(
       "POST",
       `/sandboxes/${encodeURIComponent(from)}/fork`,
-      { type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, noEnv: true },
+      { type: make.size, ttlSeconds: make.ttlSeconds, labels: make.labels, noEnv: true, monitoring: false },
       { "idempotency-key": make.idempotencyKey ?? randomUUID() },
       signal,
     );
@@ -385,6 +385,18 @@ export class BoatApi {
       if (error instanceof BoatError && error.kind === "gone") return;
       throw error;
     }
+  }
+
+  async latestSnapshotFile(id: string, path: string, signal?: AbortSignal): Promise<string | null> {
+    const latest = await this.#call("GET", `/sandboxes/${encodeURIComponent(id)}/snapshots/latest`, undefined, {}, signal);
+    const snapshot = latest.snapshot && typeof latest.snapshot === "object" ? String((latest.snapshot as Record<string, unknown>).id ?? "") : "";
+    if (!snapshot) return null;
+    const response = await this.#fetch(`${this.#endpoint}/snapshots/${encodeURIComponent(snapshot)}/files?${new URLSearchParams({ path: path.replace(/^\/+/, "") })}`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${this.#options.key}` },
+      ...(signal ? { signal } : {}),
+    });
+    return response.ok ? response.text() : null;
   }
 
   async sshKey(id: string, publicKey: string, signal?: AbortSignal): Promise<SshReach> {

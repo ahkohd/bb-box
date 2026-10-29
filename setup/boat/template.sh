@@ -3,7 +3,7 @@ set -euo pipefail
 die() { echo "template: $*" >&2; exit 1; }
 step=${1:-}
 kind=${2:-}
-case "$kind" in linux) artifacts=linux ;; desktop) artifacts=desktop-cpu ;; *) die "the kind must be linux or desktop" ;; esac
+case "$kind" in linux | android) artifacts=linux ;; desktop) artifacts=desktop-cpu ;; *) die "the kind must be linux, desktop or android" ;; esac
 here=$(cd "$(dirname "$0")" && pwd)
 src=$here/../proxmox-lxc/template
 [ -f "$src/build.env" ] || die "no $src/build.env"
@@ -14,6 +14,7 @@ boat_sources=/etc/apt/sources.list.d.boat
 set_boat_sources_aside() {
   mkdir -p "$boat_sources"
   for source in /etc/apt/sources.list.d/*; do
+    [ -e "$source" ] || continue
     case "$(basename "$source")" in ubuntu.sources | zz-bb-box-*) ;; *) mv "$source" "$boat_sources/" ;; esac
   done
 }
@@ -29,6 +30,29 @@ set_boat_tools_aside() {
     [ -e "$link" ] || [ -L "$link" ] || continue
     case "$(readlink "$link" 2>/dev/null)" in /opt/bb-box-tools/*) ;; *) mv "$link" /usr/local/lib/boat-tools/ ;; esac
   done
+}
+set_boat_rust_aside() {
+  mkdir -p /usr/local/lib/boat-rust
+  for dir in /usr/local/rustup /usr/local/cargo; do
+    [ ! -d "$dir" ] || mv "$dir" /usr/local/lib/boat-rust/
+  done
+  sed -i -e '/^RUSTUP_HOME=/d' -e '/^CARGO_HOME=/d' -e 's|/usr/local/cargo/bin:||g' /etc/environment
+  for profile in /etc/profile.d/*; do
+    if grep -qE 'RUSTUP_HOME|CARGO_HOME|/usr/local/cargo' "$profile" 2>/dev/null; then mv "$profile" /usr/local/lib/boat-rust/; fi
+  done
+  unset RUSTUP_HOME CARGO_HOME
+}
+remove_boat_keyring() {
+  if dpkg-query -W -f='${Status}' gnome-keyring 2>/dev/null | grep -q "install ok installed"; then apt-get purge -y -q gnome-keyring >/dev/null; fi
+}
+pin_bb_box_cua() {
+  pinned=$(readlink -f /usr/local/bin/cua-driver)
+  case "$pinned" in /opt/cua-driver/*) ;; *) die "bb-box's Cua Driver is not what /usr/local/bin/cua-driver points at" ;; esac
+  install -d -m 0755 /usr/local/lib/bb-box/bin
+  ln -sfn "$pinned" /usr/local/lib/bb-box/bin/cua-driver
+  sed -i "s|/usr/local/bin/cua-driver|$pinned|g" /etc/systemd/user/bb-box-cua-driver.service
+  grep -q '^PATH="/usr/local/lib/bb-box/bin:' /etc/environment || sed -i 's|^PATH="|PATH="/usr/local/lib/bb-box/bin:|' /etc/environment
+  grep -q '^PATH="/usr/local/lib/bb-box/bin:' /etc/environment || die "could not put bb-box's Cua Driver first on PATH"
 }
 put_boat_sources_back() {
   [ -d "$boat_sources" ] || return 0
@@ -48,8 +72,15 @@ case "$step" in
     say "customize-sandbox.sh"
     bash "$here/customize-sandbox.sh" "$src" </dev/null
     if [ "$kind" = desktop ]; then
+      set_boat_rust_aside
       say "customize-desktop.sh"
       bash "$src/guest/customize-desktop.sh" "$src" </dev/null
+      pin_bb_box_cua
+      remove_boat_keyring
+    fi
+    if [ "$kind" = android ]; then
+      say "customize-android.sh"
+      bash "$here/../android/customize-android.sh" "$src" </dev/null
     fi
     say "customized" ;;
   finalize)

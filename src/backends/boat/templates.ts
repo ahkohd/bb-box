@@ -15,19 +15,32 @@ export const TEMPLATE_REBUILT_AFTER_MS = 7 * 24 * 3_600_000;
 export const RETIRED_TEMPLATE_KEPT_MS = 60 * 60_000;
 export const LEFT_BUILD_GRACE_MS = 10 * 60_000;
 export const BUILD_TTL_SECONDS = 2 * 3600;
-export const TEMPLATE_INPUTS = ["proxmox-lxc/template", "proxmox-lxc/host/common.sh", "boat"] as const;
+export const TEMPLATE_INPUTS = ["proxmox-lxc/template", "proxmox-lxc/host/common.sh", "android", "boat"] as const;
 const BUILD_DIR = "/var/tmp/bb-box-build";
+const DESKTOP_UP = 'pgrep -x xfwm4 >/dev/null && test -S "$HOME/.cache/cua-driver/cua-driver.sock"';
+export const CUA_READY = [
+  "for round in 1 2 3 4 5 6; do",
+  "  systemctl --user restart bb-box-cua-driver.service",
+  '  for attempt in 1 2 3 4; do if timeout 6 node /usr/local/libexec/bb-box/cua-probe.mjs --socket "$HOME/.cache/cua-driver/cua-driver.sock" >/dev/null 2>&1; then exit 0; fi; sleep 1; done',
+  "done",
+  'echo "Cua Driver did not answer over MCP after 6 restarts in about 3 minutes." >&2',
+  "journalctl --user -u bb-box-cua-driver.service -n 5 --no-pager -o cat >&2 2>/dev/null || :",
+  "exit 1",
+].join("\n");
 const BUILD_POLL_MS = 10_000;
 const BUILD_RENEW_MS = 15 * 60_000;
 const CUSTOMIZE_WITHIN_MS = 90 * 60_000;
 const STATE_WITHIN_MS = 10 * 60_000;
 const RECORD = "template/";
+const FAILED = "template-failed/";
+export const FAILED_BUILD_RETRY_MS = 6 * 3_600_000;
 const RETIRED = "retired-templates";
 
-export const TEMPLATE_STEP: Readonly<Record<BoatKind, "linux" | "desktop">> = { linux: "linux", "linux-desktop-cpu": "desktop" };
-export const TEMPLATE_CHECK: Readonly<Record<BoatKind, string>> = { linux: "bb-box-check-headless", "linux-desktop-cpu": "bb-box-check-desktop" };
-const USUAL_BUILD_MINUTES: Readonly<Record<BoatKind, number>> = { linux: 6, "linux-desktop-cpu": 12 };
-const KIND_WORDS: Readonly<Record<BoatKind, string>> = { linux: "Linux", "linux-desktop-cpu": "Linux desktop" };
+export const TEMPLATE_STEP: Readonly<Record<BoatKind, "linux" | "desktop" | "android">> = { linux: "linux", "linux-desktop-cpu": "desktop", android: "android" };
+export const TEMPLATE_CHECK: Readonly<Record<BoatKind, string>> = { linux: "bb-box-check-headless", "linux-desktop-cpu": "bb-box-check-desktop", android: "bb-box-check-android" };
+const USUAL_BUILD_MINUTES: Readonly<Record<BoatKind, number>> = { linux: 6, "linux-desktop-cpu": 12, android: 30 };
+const KIND_WORDS: Readonly<Record<BoatKind, string>> = { linux: "Linux", "linux-desktop-cpu": "Linux desktop", android: "Android" };
+const ANDROID_DEVICES_FILE = "/usr/share/bb-box/android-devices.json";
 
 export interface TemplateRecord {
   readonly kind: BoatKind;
@@ -36,6 +49,12 @@ export interface TemplateRecord {
   readonly builtAt: number;
   readonly buildMs: number;
   readonly usedAt: number | null;
+  readonly devices?: readonly unknown[] | null;
+}
+
+export interface FailedBuild {
+  readonly at: number;
+  readonly why: string;
 }
 
 interface RetiredTemplate {
@@ -64,12 +83,15 @@ export interface TemplateDeps {
   readonly forget: (sandbox: string) => Promise<void>;
   readonly answers: (sandbox: string, user: "user" | "box", deadline: number, signal?: AbortSignal) => Promise<void>;
   readonly settled: (sandbox: string, deadline: number, signal?: AbortSignal) => Promise<void>;
+  readonly cuaReady?: string;
   readonly now: () => number;
   readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly log: (line: string) => void;
   readonly fingerprint?: () => string;
   readonly setupArchive?: () => Promise<Buffer>;
   readonly buildEnv?: (kind: BoatKind) => string;
+  readonly androidLicence?: () => string | null;
+  readonly sizeFor?: (kind: BoatKind) => Promise<SandboxSize>;
 }
 
 export function templateFingerprint(setup = setupDir()): string {
@@ -185,12 +207,28 @@ export class BoatTemplates {
     );
   }
 
+  async keepAdoptable(kind: BoatKind, signal?: AbortSignal): Promise<TemplateRecord | null> {
+    const adopted = await this.#adopt(kind, signal);
+    if (adopted) await this.#deps.storage.set(`${RECORD}${kind}`, adopted);
+    return adopted;
+  }
+
   async #adopt(kind: BoatKind, signal?: AbortSignal): Promise<TemplateRecord | null> {
     const labels = this.#deps.labelKeys;
     const found = await this.adoptable(kind, signal);
     if (!found) return null;
     this.#deps.log(`boat: using the ${kind} template ${found.id}, which bb-box built ${found.labels[labels.install] === this.#deps.installId ? "before" : "for another install on this account"}.`);
-    return { kind, sandbox: found.id, key: this.key(), builtAt: found.createdAt ?? this.#deps.now(), buildMs: 0, usedAt: null };
+    let devices: readonly unknown[] | null = null;
+    if (TEMPLATE_STEP[kind] === "android") {
+      const text = await this.#deps.api.latestSnapshotFile(found.id, ANDROID_DEVICES_FILE, signal).catch(() => null);
+      try {
+        devices = text ? (JSON.parse(text) as unknown[]) : null;
+      } catch {
+        devices = null;
+      }
+      if (!Array.isArray(devices) || !devices.length) return null;
+    }
+    return { kind, sandbox: found.id, key: this.key(), builtAt: found.createdAt ?? this.#deps.now(), buildMs: 0, usedAt: null, ...(devices ? { devices } : {}) };
   }
 
   async #usable(record: TemplateRecord, signal?: AbortSignal): Promise<boolean> {
@@ -198,21 +236,50 @@ export class BoatTemplates {
     return sandbox !== null && sandbox.dataExpiredAt === null && sandbox.state !== "error";
   }
 
-  async due(): Promise<{ readonly kind: BoatKind; readonly why: string }[]> {
+  async due(signal?: AbortSignal): Promise<{ readonly kind: BoatKind; readonly why: string }[]> {
     const due: { kind: BoatKind; why: string }[] = [];
     for (const kind of Object.keys(TEMPLATE_STEP) as BoatKind[]) {
       const record = await this.record(kind);
-      if (!record || this.#building.has(kind)) continue;
+      if (!record || this.#building.has(kind) || (await this.failedLately(kind))) continue;
       const why = await this.whyBuild(kind);
-      if (why) due.push({ kind, why });
+      if (!why) continue;
+      const adopted = why === "it is a week old" ? null : await this.#adopt(kind, signal);
+      if (adopted && adopted.sandbox !== record.sandbox) {
+        await this.#deps.storage.set(`${RECORD}${kind}`, { ...adopted, usedAt: record.usedAt });
+        if (adopted.sandbox !== record.sandbox && record.key !== adopted.key) await this.#retire(record.sandbox);
+        continue;
+      }
+      due.push({ kind, why });
     }
     return due;
+  }
+
+  anyBuilding(): boolean {
+    return this.#building.size > 0;
+  }
+
+  async failedBuild(kind: BoatKind): Promise<FailedBuild | null> {
+    return (await this.#deps.storage.get<FailedBuild>(`${FAILED}${kind}`)) ?? null;
+  }
+
+  async failedLately(kind: BoatKind): Promise<boolean> {
+    const failed = await this.failedBuild(kind);
+    return failed !== null && this.#deps.now() - failed.at < FAILED_BUILD_RETRY_MS;
   }
 
   build(kind: BoatKind, why: string): Promise<TemplateRecord> {
     let building = this.#building.get(kind);
     if (!building) {
-      building = this.#build(kind, why).finally(() => this.#building.delete(kind));
+      building = this.#build(kind, why)
+        .then(async (record) => {
+          await this.#deps.storage.delete(`${FAILED}${kind}`);
+          return record;
+        })
+        .catch(async (error: unknown) => {
+          await this.#deps.storage.set(`${FAILED}${kind}`, { at: this.#deps.now(), why: (error instanceof Error ? error.message : String(error)).slice(0, 600) });
+          throw error;
+        })
+        .finally(() => this.#building.delete(kind));
       building.catch(() => undefined);
       this.#building.set(kind, building);
     }
@@ -225,9 +292,12 @@ export class BoatTemplates {
     const key = this.key();
     const labels = this.#deps.labelKeys;
     log(`boat: building the ${kind} template, as ${why}.`);
+    const size = (await this.#deps.sizeFor?.(kind).catch(() => null)) ?? TEMPLATE_SIZE;
+    const licence = TEMPLATE_STEP[kind] === "android" ? (this.#deps.androidLicence?.() ?? null) : null;
+    if (TEMPLATE_STEP[kind] === "android" && !licence) throw new Error("boat's Android template needs the Android SDK's licence accepted in BB Box's settings first.");
     const made = await api
       .create({
-        size: TEMPLATE_SIZE,
+        size,
         ttlSeconds: BUILD_TTL_SECONDS,
         labels: { [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: key },
         name: `bb-box ${kind} template`,
@@ -247,13 +317,15 @@ export class BoatTemplates {
       const buildId = `build.${new Date(started).toISOString().replace(/[-:]/g, "").slice(0, 15)}`;
       await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/build.env >/dev/null`, { stdin: (this.#deps.buildEnv ?? (() => buildEnvFor(buildId)))(kind), timeoutMs: 30_000 }), "write the build's settings");
       await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/plugin-key.pub >/dev/null`, { stdin: `${await this.#deps.publicKey()}\n`, timeoutMs: 30_000 }), "write bb-box's key");
+      if (licence) await this.#must(asUser.run(`sudo -n tee ${BUILD_DIR}/proxmox-lxc/template/android-sdk-license >/dev/null`, { stdin: `${licence}\n`, timeoutMs: 30_000 }), "write the Android SDK licence's acceptance");
       await this.#must(asUser.run(`sudo -n sh -c ${quote(customizeScript(kind))}`, { timeoutMs: 30_000 }), "start the guest scripts");
       await this.#follow(made.id, kind);
       const finalized = await (await this.#deps.reach(made.id, "user")).run(`sudo -n bash ${BUILD_DIR}/boat/template.sh finalize ${TEMPLATE_STEP[kind]}`, { timeoutMs: 20 * 60_000 });
       if (finalized.exitCode !== 0) throw new Error(`boat's ${kind} template did not finalize: ${finalized.stderr.trim().slice(-400) || `exit ${finalized.exitCode}`}`);
+      const devices = TEMPLATE_STEP[kind] === "android" ? await this.#devices(made.id) : null;
       await this.#stop(made.id);
       await this.#tryAFork(made.id, kind);
-      const record: TemplateRecord = { kind, sandbox: made.id, key, builtAt: now(), buildMs: now() - started, usedAt: null };
+      const record: TemplateRecord = { kind, sandbox: made.id, key, builtAt: now(), buildMs: now() - started, usedAt: null, ...(devices ? { devices } : {}) };
       const previous = await this.record(kind);
       await this.#deps.storage.set(`${RECORD}${kind}`, record);
       if (previous && previous.sandbox !== made.id) await this.#retire(previous.sandbox);
@@ -268,6 +340,18 @@ export class BoatTemplates {
     }
   }
 
+  async #devices(sandbox: string): Promise<readonly unknown[]> {
+    const read = await (await this.#deps.reach(sandbox, "user")).run(`cat ${ANDROID_DEVICES_FILE}`, { timeoutMs: 30_000 });
+    let devices: unknown = null;
+    try {
+      devices = JSON.parse(read.stdout);
+    } catch {
+      devices = null;
+    }
+    if (read.exitCode !== 0 || !Array.isArray(devices) || !devices.length) throw new Error(`boat's Android template lists no devices in ${ANDROID_DEVICES_FILE}: ${read.stderr.trim().slice(-300) || "it is empty"}`);
+    return devices;
+  }
+
   async #tryAFork(template: string, kind: BoatKind): Promise<void> {
     const { api, now } = this.#deps;
     const labels = this.#deps.labelKeys;
@@ -277,6 +361,10 @@ export class BoatTemplates {
       await this.#running(trial.id);
       await this.#deps.answers(trial.id, "box", now() + STATE_WITHIN_MS);
       await this.#deps.settled(trial.id, now() + STATE_WITHIN_MS);
+      if (TEMPLATE_STEP[kind] === "desktop") {
+        await this.#desktopUp(trial.id, now() + STATE_WITHIN_MS);
+        await this.#must((await this.#deps.reach(trial.id, "box")).run(this.#deps.cuaReady ?? CUA_READY, { timeoutMs: 240_000 }), "get Cua Driver answering in a fork of the template");
+      }
       const check = await (await this.#deps.reach(trial.id, "box")).run(TEMPLATE_CHECK[kind], { timeoutMs: 10 * 60_000 });
       const failed = failedChecks(check.stdout);
       if (check.exitCode !== 0 || failed.length) throw new Error(`boat's ${kind} template failed its check in a fork of it: ${failed.join("; ") || check.stderr.trim().slice(-400) || `exit ${check.exitCode}`}`);
@@ -285,6 +373,16 @@ export class BoatTemplates {
       await api.delete(trial.id).catch((cause) => this.#deps.log(`boat: could not delete the template's trial fork ${trial.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
       this.#buildSandboxes.delete(trial.id);
     }
+  }
+
+  async #desktopUp(sandbox: string, deadline: number): Promise<void> {
+    const asBox = await this.#deps.reach(sandbox, "box");
+    while (this.#deps.now() < deadline) {
+      const up = await asBox.run(DESKTOP_UP, { timeoutMs: 15_000 }).catch(() => null);
+      if (up?.exitCode === 0) return;
+      await this.#deps.sleep(1_000);
+    }
+    throw new Error(`The desktop in a fork of boat's template did not come up: no XFCE window manager or Cua Driver socket within ${Math.round(STATE_WITHIN_MS / 60_000)} minutes.`);
   }
 
   async #must(running: Promise<RunResult>, what: string): Promise<void> {

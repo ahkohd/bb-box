@@ -112,6 +112,7 @@ export const CHECKS = {
   "boat.api": { name: "boat.dev API", from: ["boat"], what: "boat's API answers to the API key in BB Box's settings, and on which plan." },
   "boat.limits": { name: "Plan limits", from: ["boat"], what: "What the boat plan allows now: sandboxes at once, starts left in each window, the sizes and their prices, and the trial's compute hours left." },
   "boat.bb": { name: "Reaching BB", from: ["boat"], what: "Whether boat's sandboxes can reach BB's server, through the tailnet or a URL on the internet, so boat boxes become BB machines. It warns when BB's URL is on a private network and the tailnet is off." },
+  "boat.android": { name: "Android", from: ["boat"], what: "Whether boat.dev offers Android boxes: the Android SDK's licence accepted in its settings, its Android template and the devices in it, and the largest size the plan allows them." },
   "boat.templates": { name: "Templates", from: ["boat"], what: "The stopped template sandbox each kind's boxes fork: when it was built, whether a new one is due, and whether one is being built." },
   "boat.sandboxes": { name: "Sandboxes", from: ["boat"], what: "The boat sandboxes bb-box holds for its boxes, each with its state, size, price an hour and age, and any no box claims." },
 

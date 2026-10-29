@@ -18,6 +18,7 @@ export interface FakeSandbox {
   keys: string[];
   forkedFrom: string | null;
   idempotencyKey: string | null;
+  files: Record<string, string>;
 }
 
 export interface FakeCall {
@@ -77,6 +78,7 @@ export class FakeBoat {
       keys: [],
       forkedFrom: null,
       idempotencyKey: null,
+      files: {},
       ...partial,
     };
     this.sandboxes.set(id, sandbox);
@@ -119,7 +121,7 @@ export class FakeBoat {
     const refuse = (status: number, code: string, details: Record<string, unknown> = {}) => reply(status, { ok: false, type: "sandbox.error", status, code, message: code, error: { code, message: code, status, details }, requestId: "req_fake" });
     if (headers.authorization !== `Bearer ${this.key}`) return refuse(401, "unauthorized");
     const parts = path.split("/").filter(Boolean);
-    const route = `${init.method} /${parts.map((part, index) => (index === 1 && parts[0] === "sandboxes" ? ":id" : part)).join("/")}`;
+    const route = parts[0] === "snapshots" ? `${init.method} /snapshots` : `${init.method} /${parts.map((part, index) => (index === 1 && parts[0] === "sandboxes" ? ":id" : part)).join("/")}`;
     const failure = this.failures.get(route);
     if (failure && failure.times > 0) {
       failure.times -= 1;
@@ -128,6 +130,15 @@ export class FakeBoat {
     const sandbox = parts[0] === "sandboxes" && parts[1] ? this.sandboxes.get(parts[1]) : undefined;
     const ttl = (value: unknown) => (typeof value === "number" ? value : value === null ? null : 3600);
     switch (route) {
+      case "GET /snapshots": {
+        const [, snapshot, what] = parts;
+        const owner = this.sandboxes.get(String(snapshot).replace(/^snap-/, ""));
+        if (what === "files" && owner) {
+          const content = owner.files[(parsed.searchParams.get("path") ?? "").replace(/^\/+/, "")];
+          if (content !== undefined) return { ok: true, status: 200, text: async () => content };
+        }
+        return refuse(404, "not_found");
+      }
       case "GET /me":
         return reply(200, { type: "user.info", user: { id: "sandbox_fake" } });
       case "GET /limits":
@@ -153,6 +164,8 @@ export class FakeBoat {
     if (parts[0] === "sandboxes" && (!sandbox || sandbox.state === "deleted")) return refuse(404, "not_found");
     const id = sandbox!;
     switch (route) {
+      case "GET /sandboxes/:id/snapshots/latest":
+        return reply(200, { type: "snapshot.latest", snapshot: id.state === "archived" ? { id: `snap-${id.id}`, sandboxId: id.id, status: "completed" } : null });
       case "GET /sandboxes/:id": {
         const view = this.#view(id);
         if (id.state === "provisioning") id.state = "ready";

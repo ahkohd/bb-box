@@ -17,7 +17,7 @@ boat.dev bills a sandbox for every second it runs. A stopped sandbox costs nothi
 
 A plan's price comes back as sandbox time at these prices, and boat.dev uses it first. BB Box gives each box the smallest size that has at least the cores, memory and disk the box asks for, so a box can have more than it asked for.
 
-BB Box also keeps a stopped template sandbox for each kind, which every box of the kind is a copy of. A stopped sandbox costs nothing. Building one takes a sandbox of the `default` size for about 6 minutes, when the first box of the kind needs it and again after a week or when BB Box's scripts change.
+BB Box also keeps a stopped template sandbox for each kind, which every box of the kind is a copy of. A stopped sandbox costs nothing. Building one takes a sandbox of the `default` size for about 6 minutes for Linux and 13 for a Linux desktop, one template at a time, when the first box of the kind needs it and again after a week or when BB Box's scripts change.
 
 ### What your plan allows
 
@@ -56,7 +56,7 @@ The key is kept as a secret. BB Box's settings show only that it is set.
 
 ### 3. Turn on the kinds
 
-Under **Kinds**, turn on **Linux**, if you want it from boat.dev. Linux desktops on boat.dev come once they are proved there.
+Under **Kinds**, turn on **Linux** and **Linux desktop**, if you want them from boat.dev.
 
 ## Check it works
 
@@ -70,8 +70,8 @@ Then make a box from the Box panel, or ask an agent to. The first box of each ki
 
 ## What a box is like
 
-A box is a virtual machine of its own: Ubuntu 24.04, with its own kernel, systemd, Docker and KVM, and BB Box's tools, as on its other backends. You use it as `box`, who can use `sudo`. 
-Once its template is built, a box is ready in 9 to 25 seconds: BB Box copies the template, the copy starts, and boat.dev brings in the template's system files and starts Docker.
+A box is a virtual machine of its own: Ubuntu 24.04, with its own kernel, systemd, Docker and KVM, and BB Box's tools, as on its other backends. You use it as `box`, who can use `sudo`. A desktop box has the same desktop and apps as a Linux desktop on BB Box's other backends, drawn by the CPU, with computer use, and you watch and use it in the Box panel. 
+Once its template is built, a Linux box is ready in 9 to 25 seconds, and a desktop in 25 to 63: BB Box copies the template, the copy starts, and boat.dev brings in the template's system files and starts Docker, and for a desktop its desktop and Cua Driver. On a busy boat.dev machine a desktop has taken over 6 minutes.
 
 BB Box reaches each box over SSH, with a key of its own and the host key boat.dev gives, which BB Box checks. A box gets no secret from your boat.dev account.
 

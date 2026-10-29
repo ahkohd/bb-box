@@ -10,7 +10,7 @@ import { FAKE_BOAT_KEY, FakeBoat } from "./fake-boat.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
 const disposed = disposedOnceTheFileEnds();
-const CONFIG = { key: FAKE_BOAT_KEY, mostBoxes: 2, leaseMinutes: 30 };
+const CONFIG = { key: FAKE_BOAT_KEY, mostBoxes: 2, leaseMinutes: 30, androidLicence: false };
 const SMALL = { cores: 2, memoryMiB: 4096, diskGiB: null };
 const NO_BUILDS = async (): Promise<Buffer> => {
   throw new Error("These tests build no template over SSH: the fake ssh runs commands on this machine.");
@@ -21,7 +21,7 @@ function setup(options: { now?: () => number; config?: Partial<typeof CONFIG>; t
   const fake = new FakeBoat(options.now ? { now: options.now } : {});
   const storage = new MemoryStorage();
   const context = testContext(storage, "inst1");
-  const backend = disposed(new BoatBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, busyGivesUpAfterMs: 0, ownKeyScript: () => ":", settledScript: "true", kinds: ["linux", "linux-desktop-cpu"], templates: { fingerprint: () => "fp1", setupArchive: NO_BUILDS }, ...(options.now ? { now: options.now } : {}) }));
+  const backend = disposed(new BoatBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, busyGivesUpAfterMs: 0, ownKeyScript: () => ":", settledScript: "true", cuaReadyScript: "true", kinds: ["linux", "linux-desktop-cpu", "android"], templates: { fingerprint: () => "fp1", setupArchive: NO_BUILDS }, ...(options.now ? { now: options.now } : {}) }));
   const templates: Record<string, string> = {};
   if (options.templates !== false) {
     for (const kind of ["linux", "linux-desktop-cpu"] as const) {
@@ -78,7 +78,7 @@ test("boat's answers read as sandboxes, an SSH reach through the IPv4 forward, a
 
 test("the settings need a boat_ key, and an auto-stop within what the trial allows", () => {
   const part = (fields: Record<string, unknown>) => parseBoatPart({ id: "boat", hosts: [], fields: fields as never });
-  assert.deepEqual(part({ [BOAT_KEYS.key]: "boat_abc" }), { ok: true, config: { key: "boat_abc", mostBoxes: 2, leaseMinutes: 30 } });
+  assert.deepEqual(part({ [BOAT_KEYS.key]: "boat_abc" }), { ok: true, config: { key: "boat_abc", mostBoxes: 2, leaseMinutes: 30, androidLicence: false } });
   assert.equal(part({}).ok, false);
   assert.equal(part({ [BOAT_KEYS.key]: "sk-123" }).ok, false);
   assert.equal(part({ [BOAT_KEYS.key]: "boat_abc", [BOAT_KEYS.leaseMinutes]: 121 }).ok, false);
@@ -98,6 +98,7 @@ test("an acquire claims the box before boat makes anything, forks the kind's tem
   assert.deepEqual(made.labels, { [LABELS.install]: "inst1", [LABELS.box]: "b1", [LABELS.thread]: "thr_1", [LABELS.name]: "box-b1", [LABELS.kind]: "linux", [LABELS.created]: String(Date.parse("2030-01-01T00:00:00Z")) });
   assert.equal(made.name, sandboxName(box("b1")));
   assert.equal(fake.calls.find((call) => call.path.endsWith("/fork"))?.body.noEnv, true, "a box never gets the account's secrets");
+  assert.equal(fake.calls.find((call) => call.path.endsWith("/fork"))?.body.monitoring, false, "boat keeps no process log of a box, which costs it CPU");
   assert.deepEqual(guest.data, { box: "b1", sandbox: made.id });
   assert.equal(guest.ref, "bbbox-b1");
   assert.deepEqual(guest.size, { cores: 2, memoryMiB: 4096, diskGiB: 51 });
@@ -112,7 +113,7 @@ test("a desktop box waits for its display and offers bb-box's VNC and Selkies th
   const { backend } = setup();
   const recorded = hooks();
   const guest = await backend.acquire(box("d1", "linux-desktop-cpu", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, recorded.hooks, signal());
-  assert.deepEqual(recorded.steps, ["fork", "ready", "ssh", "settle", "display"]);
+  assert.deepEqual(recorded.steps, ["fork", "ready", "ssh", "settle", "display", "computer use"]);
   assert.ok(guest.facts?.some((fact) => fact.label === "Display"));
   const transports = await backend.transports(guest, "linux-desktop-cpu");
   assert.deepEqual(transports.displays.map((display) => display.protocol), ["rfb", "selkies"]);
@@ -264,11 +265,14 @@ test("with no template, the first box waits for its build and says so; the build
   assert.deepEqual(failedChecks("a ok\nb FAIL x\n"), ["b FAIL x"]);
 });
 
-test("boat offers linux boxes; its desktop kind waits until it is proved there", () => {
+test("boat offers linux and the CPU desktop, both VMs with KVM, the desktop with bb-box's own VNC, Selkies and Cua Driver", () => {
   fakeSsh();
   const backend = disposed(new BoatBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), { fetch: new FakeBoat().fetch, sshBinary: FAKE_SSH_BINARY, templates: { setupArchive: NO_BUILDS } }));
-  assert.deepEqual(backend.kinds().map((kind) => kind.id), ["linux"]);
+  assert.deepEqual(backend.kinds().map((kind) => kind.id), ["linux", "linux-desktop-cpu"]);
   assert.deepEqual(backend.kinds()[0]!.capabilities.features, ["docker", "kernel", "kvm"]);
+  const desktop = backend.kinds()[1]!.capabilities;
+  assert.deepEqual(desktop.displays.map((display) => display.protocol), ["rfb", "selkies"]);
+  assert.equal(desktop.computerUse?.version, "0.28.3");
 });
 
 test("the doctor says what the plan allows and what the key is missing, in words", async () => {
@@ -350,4 +354,117 @@ test("the upkeep keeps the newest stopped template of the current scripts, even 
   assert.equal(fake.sandboxes.get(templates["linux-desktop-cpu"]!)?.state, "archived");
   assert.equal(old.state, "deleted");
   assert.equal(leftBuild.state, "deleted");
+});
+
+test("the upkeep forks a template of the current scripts that the account already has rather than build one, and builds one template at a time", async () => {
+  const { fake, backend, storage, templates } = setup();
+  await storage.set("template/linux", { kind: "linux", sandbox: templates.linux, key: "old", builtAt: Date.now(), buildMs: 1, usedAt: null });
+  await storage.set("template/linux-desktop-cpu", { kind: "linux-desktop-cpu", sandbox: templates["linux-desktop-cpu"], key: "old", builtAt: Date.now(), buildMs: 1, usedAt: null });
+  const current = fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, state: "archived" });
+  fake.sandboxes.get(templates["linux-desktop-cpu"]!)!.labels[LABELS.key] = "old";
+  fake.sandboxes.get(templates.linux!)!.labels[LABELS.key] = "old";
+  fake.failNext("POST /sandboxes", 503, "out_of_capacity", 5);
+  await backend.maintain(undefined, new Set());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal((await storage.get<TemplateRecord>("template/linux"))?.sandbox, current.id, "the account's current template is forked from now on");
+  const builds = fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes");
+  assert.equal(builds.length, 1, "only the desktop's template is built, and only one at a time");
+  assert.equal((builds[0]!.body.labels as Record<string, string>)[LABELS.kind], "linux-desktop-cpu");
+});
+
+const ANDROID_DEVICES = [{ model: "Pixel 8", native: "pixel_8", runtime: { platform: "android", api: 36 } }];
+
+test("android is offered only once the Android SDK's licence is accepted and a template lists its devices; until then box_list and the doctor say why", async () => {
+  const off = setup();
+  assert.deepEqual(off.backend.kinds().map((kind) => kind.id), ["linux", "linux-desktop-cpu"]);
+  assert.match((await off.backend.withheldKinds("android"))[0]?.why ?? "", /licence is not accepted/);
+  assert.match((await off.backend.doctor()).checks.find((check) => check.id === "boat.android")?.detail ?? "", /^Off/);
+
+  const on = setup({ config: { androidLicence: true } });
+  assert.match((await on.backend.withheldKinds("android"))[0]?.why ?? "", /no Android template yet/);
+  on.fake.failNext("POST /sandboxes", 503, "out_of_capacity", 5);
+  await on.backend.maintain(undefined, new Set());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const build = on.fake.calls.find((call) => call.method === "POST" && call.path === "/sandboxes");
+  assert.equal((build?.body.labels as Record<string, string>)[LABELS.kind], "android", "the upkeep builds the Android template, as no box can ask for a kind not offered");
+  assert.equal(build?.body.type, "default", "at the largest size the trial allows");
+  assert.match((await on.backend.doctor()).checks.find((check) => check.id === "boat.android")?.detail ?? "", /at most 4 cores and 8 GB \(boat's default\), less than the kind's presets: ask for cores 4 and memory_gib 8/);
+});
+
+test("an Android box forks the template, and shows its device, not a desktop", async () => {
+  const { fake, backend, storage } = setup({ config: { androidLicence: true } });
+  const template = fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, state: "archived", type: "default" });
+  await storage.set("template/android", { kind: "android", sandbox: template.id, key: "fp1", builtAt: Date.now(), buildMs: 1, usedAt: null, devices: ANDROID_DEVICES });
+  await backend.maintain(undefined, new Set());
+  const android = backend.kinds().find((kind) => kind.id === "android")!;
+  assert.deepEqual(android.capabilities.device, { platform: "android", devices: ANDROID_DEVICES });
+  assert.deepEqual(android.capabilities.features, ["docker", "kernel", "kvm"]);
+  const recorded = hooks();
+  const guest = await backend.acquire(box("a1", "android", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, recorded.hooks, signal());
+  assert.equal(fake.sandboxes.get(String(guest.data?.sandbox))?.forkedFrom, template.id);
+  assert.deepEqual(recorded.steps, ["fork", "ready", "ssh", "settle"], "no desktop to wait for");
+  const displays = (await backend.transports(guest, "android")).displays;
+  assert.deepEqual(displays.map((display) => [display.id, display.protocol]), [["device", "selkies"]]);
+  assert.equal((await backend.capacity("android", { cores: 8, memoryMiB: 16384, diskGiB: null }, [])).ok, false, "the kind's own preset needs a paid plan");
+});
+
+test("another install's Android template is forked once its devices are read from its snapshot", async () => {
+  const { fake, backend } = setup({ config: { androidLicence: true } });
+  const theirs = fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "android", [LABELS.key]: "fp1" }, state: "archived" });
+  theirs.files["usr/share/bb-box/android-devices.json"] = JSON.stringify(ANDROID_DEVICES);
+  await backend.maintain(undefined, new Set());
+  assert.deepEqual(backend.kinds().find((kind) => kind.id === "android")?.capabilities.device, { platform: "android", devices: ANDROID_DEVICES });
+  assert.equal(fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes").length, 0, "nothing was built");
+});
+
+
+test("the Android template's build writes the licence's acceptance before the guest scripts, and keeps the devices its build made", async () => {
+  const fake = new FakeBoat();
+  const scripts: { script: string; stdin: string }[] = [];
+  const reached = (): Reached => ({
+    run: async (script, options) => {
+      scripts.push({ script, stdin: String(options.stdin ?? "") });
+      const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+      if (script.includes("exit=")) return { ...ok, stdout: "exit=0\n" };
+      if (script.startsWith("cat /usr/share/bb-box/android-devices.json")) return { ...ok, stdout: JSON.stringify(ANDROID_DEVICES) };
+      return ok;
+    },
+  });
+  const deps = {
+    api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
+    storage: new MemoryStorage(),
+    installId: "inst1",
+    labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key },
+    publicKey: async () => "ssh-ed25519 AAAAkey",
+    reach: async () => reached(),
+    forget: async () => {},
+    answers: async () => {},
+    settled: async () => {},
+    now: Date.now,
+    sleep: async () => {},
+    log: () => {},
+    fingerprint: () => "fp1",
+    setupArchive: async () => Buffer.from("tar"),
+  };
+  await assert.rejects(new BoatTemplates({ ...deps, androidLicence: () => null }).build("android", "test"), /licence accepted/);
+  const record = await new BoatTemplates({ ...deps, androidLicence: () => "abc123" }).build("android", "test");
+  const licence = scripts.findIndex((each) => each.script.includes("android-sdk-license"));
+  const customize = scripts.findIndex((each) => each.script.includes("customize android"));
+  assert.ok(licence >= 0 && licence < customize, "the acceptance is written before the guest scripts run");
+  assert.equal(scripts[licence]!.stdin, "abc123\n");
+  assert.deepEqual(record.devices, ANDROID_DEVICES);
+});
+
+test("a template build that failed is not tried again by the upkeep for hours, and the doctor says why", async () => {
+  const { fake, backend, storage, templates } = setup();
+  await storage.set("template/linux", { kind: "linux", sandbox: templates.linux, key: "old", builtAt: Date.now(), buildMs: 1, usedAt: null });
+  fake.failNext("POST /sandboxes", 503, "out_of_capacity", 1);
+  await backend.maintain(undefined, new Set());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await backend.maintain(undefined, new Set());
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(fake.calls.filter((call) => call.method === "POST" && call.path === "/sandboxes").length, 1, "one try, not one every upkeep");
+  const check = (await backend.doctor()).checks.find((each) => each.id === "boat.templates")!;
+  assert.equal(check.status, "warn");
+  assert.match(check.detail, /linux's last build failed at \d\d:\d\d UTC, and is tried again 6 hours later or when a box needs it: boat has no machine free/);
 });

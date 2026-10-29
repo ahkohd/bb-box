@@ -18,6 +18,9 @@ install -d -m 0755 /usr/local/lib/bb-box
 cat >/usr/local/lib/bb-box/boat-ready <<'SCRIPT'
 #!/bin/sh
 systemctl reset-failed
+if [ -e /usr/local/lib/bb-box/bin/cua-driver ] && [ "$(readlink -f /usr/local/bin/cua-driver)" != "$(readlink -f /usr/local/lib/bb-box/bin/cua-driver)" ]; then
+  ln -sfn "$(readlink -f /usr/local/lib/bb-box/bin/cua-driver)" /usr/local/bin/cua-driver
+fi
 install -d -m 0755 /run/bb-box
 touch /run/bb-box/boat-ready
 SCRIPT

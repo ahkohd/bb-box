@@ -5,7 +5,7 @@ import { BOAT_FIELDS, BOAT_KINDS, parseBoatPart, type BoatConfig } from "./confi
 export const boatDriver: BackendDriver<BoatConfig> = {
   type: "boat",
   label: "boat.dev",
-  description: "Linux VMs rented by the second from boat.dev, one for each box. Each box is forked from bb-box's template in seconds, and deleted when it is released.",
+  description: "Linux VMs, with or without a desktop, rented by the second from boat.dev, one for each box. Each box is forked from bb-box's template in seconds, and deleted when it is released.",
   nature: "virtual",
   form: "VM",
   kinds: BOAT_KINDS,

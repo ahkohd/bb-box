@@ -171,5 +171,6 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `boat.api` | boat.dev API | boat's API answers to the API key in BB Box's settings, and on which plan. |
 | `boat.limits` | Plan limits | What the boat plan allows now: sandboxes at once, starts left in each window, the sizes and their prices, and the trial's compute hours left. |
 | `boat.bb` | Reaching BB | Whether boat's sandboxes can reach BB's server, through the tailnet or a URL on the internet, so boat boxes become BB machines. It warns when BB's URL is on a private network and the tailnet is off. |
+| `boat.android` | Android | Whether boat.dev offers Android boxes: the Android SDK's licence accepted in its settings, its Android template and the devices in it, and the largest size the plan allows them. |
 | `boat.templates` | Templates | The stopped template sandbox each kind's boxes fork: when it was built, whether a new one is due, and whether one is being built. |
 | `boat.sandboxes` | Sandboxes | The boat sandboxes bb-box holds for its boxes, each with its state, size, price an hour and age, and any no box claims. |
