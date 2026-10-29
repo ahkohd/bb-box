@@ -8,7 +8,10 @@ const COMMAND_MS = 120_000;
 const SPAWN_TRIES = 5;
 const SPAWN_RETRY_MS = 1_000;
 export const LOG_LISTEN_MS = 2_000;
+const SPAWNED_STOP_GRACE_MS = 2_000;
 const UTF8 = { LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" };
+export const PASTEBOARD_NOT_ANSWERING_EXIT = 60;
+export const PASTEBOARD_ANSWER_WAIT = { mostMs: 30_000, everyMs: 1_000 } as const;
 
 export interface SimDevice {
   readonly udid: string;
@@ -65,7 +68,15 @@ export type LineSpawner = (program: string, args: readonly string[], signal: Abo
 export async function* spawnedLines(program: string, args: readonly string[], signal: AbortSignal): AsyncIterable<string> {
   if (signal.aborted) return;
   const child = spawn(program, [...args], { stdio: ["ignore", "pipe", "pipe"] });
-  const stop = () => child.kill("SIGKILL");
+  let stopping = false;
+  const stop = () => {
+    if (stopping || child.exitCode !== null || child.signalCode !== null) return;
+    stopping = true;
+    child.kill("SIGINT");
+    const hard = setTimeout(() => child.kill("SIGKILL"), SPAWNED_STOP_GRACE_MS);
+    hard.unref();
+    child.once("exit", () => clearTimeout(hard));
+  };
   signal.addEventListener("abort", stop, { once: true });
   const lines = createInterface({ input: child.stdout });
   createInterface({ input: child.stderr }).on("line", (line) => lines.emit("line", line));
@@ -97,12 +108,14 @@ export class Simctl {
   readonly #run: Runner;
   readonly #lines: LineSpawner;
   readonly #pasteboard: PasteboardWay;
+  readonly #pasteboardAnswerWait: { readonly mostMs: number; readonly everyMs: number };
 
-  constructor(options: { readonly xcrun?: string; readonly run?: Runner; readonly lines?: LineSpawner; readonly pasteboard?: PasteboardWay } = {}) {
+  constructor(options: { readonly xcrun?: string; readonly run?: Runner; readonly lines?: LineSpawner; readonly pasteboard?: PasteboardWay; readonly pasteboardAnswerWait?: { readonly mostMs: number; readonly everyMs: number } } = {}) {
     this.#xcrun = options.xcrun ?? XCRUN;
     this.#run = options.run ?? runProgram;
     this.#lines = options.lines ?? spawnedLines;
     this.#pasteboard = options.pasteboard ?? { run: this.#run, ready: async () => null };
+    this.#pasteboardAnswerWait = options.pasteboardAnswerWait ?? PASTEBOARD_ANSWER_WAIT;
   }
 
   async #simctl(args: readonly string[], options: SimctlOptions = {}, run: Runner = this.#run): Promise<Ran> {
@@ -184,6 +197,10 @@ export class Simctl {
     }
   }
 
+  pasteLog(udid: string, predicate: string, signal: AbortSignal): AsyncIterable<string> {
+    return this.#lines(this.#xcrun, ["simctl", "spawn", udid, "log", "stream", "--style", "compact", "--predicate", predicate], signal);
+  }
+
   async disabled(udid: string, signal?: AbortSignal): Promise<ReadonlySet<string>> {
     return disabledLabels(await this.#spawn(udid, ["launchctl", "print-disabled", "system"], signal));
   }
@@ -234,12 +251,31 @@ export class Simctl {
     return Number.isFinite(value) ? value : null;
   }
 
+  async #onceThePasteboardAnswers(what: string, args: readonly string[], input?: string): Promise<string> {
+    const began = performance.now();
+    for (let tries = 1; ; tries++) {
+      const ran = await this.#simctl(args, { ...(input === undefined ? {} : { input }), env: UTF8, timeoutMs: 30_000 }, this.#pasteboard.run);
+      if (ran.code === 0) return ran.stdout;
+      const said = (ran.stderr || ran.stdout).trim().split("\n").slice(-2).join(" ") || `exit code ${ran.code}`;
+      if (ran.code !== PASTEBOARD_NOT_ANSWERING_EXIT) throw new DriverError("failed", `simctl could not ${what}: ${said}`);
+      const waited = performance.now() - began;
+      if (waited + this.#pasteboardAnswerWait.everyMs > this.#pasteboardAnswerWait.mostMs) {
+        throw new DriverError("failed", `simctl could not ${what}: the device's pasteboard did not answer in ${Math.round(waited / 1000)} s and ${tries} tries (${said}). A device's pasteboard answers some seconds after it boots; if it never does, a reboot of the device may help.`);
+      }
+      await wait(this.#pasteboardAnswerWait.everyMs);
+    }
+  }
+
+  async pasteboardAnswers(udid: string): Promise<boolean> {
+    return (await this.#simctl(["pbpaste", udid], { env: UTF8, timeoutMs: 30_000 }, this.#pasteboard.run)).code !== PASTEBOARD_NOT_ANSWERING_EXIT;
+  }
+
   async setClipboard(udid: string, text: string): Promise<void> {
-    await this.#must("set the device's clipboard", ["pbcopy", udid], { input: text, env: UTF8, timeoutMs: 30_000 }, this.#pasteboard.run);
+    await this.#onceThePasteboardAnswers("set the device's clipboard", ["pbcopy", udid], text);
   }
 
   async clipboard(udid: string): Promise<string> {
-    return this.#must("read the device's clipboard", ["pbpaste", udid], { env: UTF8, timeoutMs: 30_000 }, this.#pasteboard.run);
+    return this.#onceThePasteboardAnswers("read the device's clipboard", ["pbpaste", udid]);
   }
 
   pasteboardReady(): Promise<string | null> {

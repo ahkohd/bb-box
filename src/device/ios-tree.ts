@@ -110,6 +110,10 @@ function coversScreen(element: DeviceElement, screen: { readonly width: number; 
   return !element.label && element.frame.width * element.frame.height >= screen.width * screen.height * 0.9;
 }
 
+export function accessibilityUnanswered(error: unknown): boolean {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError" || /did not answer/i.test(error.message));
+}
+
 export function namesNoFrontApp(error: unknown): boolean {
   return error instanceof Error && /no frontmost application/i.test(error.message);
 }

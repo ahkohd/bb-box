@@ -31,6 +31,7 @@ export const DEVICE_SERVER_FILES = [
   "src/device/ios-controls.ts",
   "src/device/ios-driver.ts",
   "src/device/ios-input.ts",
+  "src/device/ios-paste-watch.ts",
   "src/device/ios-tree.ts",
   "src/device/ios-video.ts",
   "src/device/keys.ts",

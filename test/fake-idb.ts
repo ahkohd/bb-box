@@ -35,6 +35,7 @@ const noEncoder = process.env.FAKE_IDB_NO_ENCODER === "1";
 const note = (line: string) => log && appendFileSync(log, `${process.pid} ${line}\n`);
 
 let orientation = 1;
+let accessibilityUnanswered = Number(process.env.FAKE_IDB_AX_UNANSWERED ?? 0);
 
 rmSync(socket, { force: true });
 const server = createServer();
@@ -86,6 +87,14 @@ server.on("stream", (stream, headers) => {
   const asked: Uint8Array[] = [];
   stream.on("data", (chunk: Buffer) => asked.push(...deframer.push(new Uint8Array(chunk))));
   stream.on("end", () => {
+    if (path === GRPC_METHODS.idb.accessibilityInfo && accessibilityUnanswered > 0) {
+      accessibilityUnanswered--;
+      note("accessibility unanswered");
+      stream.respond({ ":status": 200, "content-type": "application/grpc" }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => stream.sendTrailers({ "grpc-status": "2", "grpc-message": encodeURIComponent("The simulator's accessibility service did not answer a frontmost request within 5.0s, 5.0s into the read; retry the read.") }));
+      stream.end();
+      return;
+    }
     ok();
     if (path === GRPC_METHODS.idb.setOrientation) {
       const to = (decode(IDB_SCHEMA, "idb.SetOrientationRequest", asked[0] ?? new Uint8Array(0)) as { orientation?: number }).orientation ?? 0;
