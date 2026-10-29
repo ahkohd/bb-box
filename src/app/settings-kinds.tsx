@@ -7,7 +7,7 @@ import type { ConfigState, DriverView, KindInfoView } from "../plugin/configurat
 import type { Tone } from "./common.tsx";
 import { effectiveKind } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
-import { backendHealth, backendLabel, kindName } from "./settings-status.ts";
+import { backendHealth, backendLabel, hostChip, kindName, onBbMachine } from "./settings-status.ts";
 
 export function kindPart(id: string): string {
   return `kind/${id}`;
@@ -70,6 +70,8 @@ export type NoWarmReason = "shared-ios-hosts" | "made-when-asked";
 export interface RunsOn {
   readonly config: BackendConfig;
   readonly label: string;
+  readonly chip: string | null;
+  readonly bbMachine: boolean;
   readonly form: BoxForm | null;
   readonly makes: MakesIt;
   readonly problem: string | null;
@@ -100,9 +102,12 @@ export function runsOn(state: ConfigState, info: KindInfoView): RunsOn[] {
       const driver = state.drivers.find((each) => each.type === config.type);
       const keepsWarm = driver?.warmKinds.includes(info.id) ?? false;
       const sharedIosField = info.device === "ios" ? sharedIosFieldOf(driver) : null;
+      const label = backendLabel(state, config);
       return {
         config,
-        label: backendLabel(state, config),
+        label,
+        chip: hostChip(config, label, state.backends.find((each) => each.id === config.id)?.hosts),
+        bbMachine: onBbMachine(config),
         form: state.backends.find((each) => each.id === config.id)?.form ?? null,
         ...makesIt(state, config, info.id),
         keepsWarm,

@@ -2347,6 +2347,31 @@ test("Where it runs lists every backend that makes the kind, declared or live, w
   expect(runs.getAllByText("Makes it now")).toHaveLength(2);
 });
 
+test("Where it runs names each backend's host as the overview does, so two backends of one kind can be told apart", async () => {
+  const stored: ConfigDocument = {
+    schema: 1,
+    revision: 3,
+    backends: [
+      { id: "fake", type: "fake", enabled: true, fields: { token: { set: true } } },
+      { id: "fake:second", type: "fake", enabled: true, fields: { token: { set: true } } },
+    ],
+    kinds: {},
+    general: {},
+  };
+  applied = stored;
+  const base = configState({ document: stored });
+  const backends = base.backends.map((backend) => ({ ...backend, hosts: [backend.id === "fake" ? "pve-1" : "pve-2"] }));
+  const slot = settings(server([], { config: { backends } }).handlers, "#kind/linux");
+  const where = within((await slot.findByRole("heading", { name: "Where it runs" })).closest("section")!);
+  const rows = where.getAllByRole("button", { name: "Fake host" });
+  expect(rows).toHaveLength(2);
+  expect(rows.map((row) => document.getElementById(row.getAttribute("aria-describedby")!)!.textContent)).toEqual(["pve-1", "pve-2"]);
+  cleanup();
+  const overview = settings(server([], { config: { backends } }).handlers);
+  expect(await overview.findByRole("button", { name: "Fake host", description: /^pve-1/ })).toBeTruthy();
+  expect(overview.getByRole("button", { name: "Fake host", description: /^pve-2/ })).toBeTruthy();
+});
+
 test("a kind's warm pool short of room shows a note under that backend's warm count, and none when it has room", async () => {
   const short = { kinds: ["linux"], count: 1, have: 0, reason: "pve has no memory left." };
   const withShort = configState({}).backends.map((backend) => (backend.id === "fake" ? { ...backend, warmShort: [short] } : backend));
