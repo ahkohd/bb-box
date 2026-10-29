@@ -172,8 +172,14 @@ time is used first. The trial's 25 hours count a `small` hour as half.
 
 - A new backend type, `boat`, in `src/backends/boat`, offering `linux`, and
   `linux-desktop-cpu` from phase 2, once its template built and its stream
-  was measured live. `android` follows if a sandbox's KVM runs the emulator
-  at speed.
+  was measured live, and `android` from phase 3. Android needs the
+  operator's acceptance of the Android SDK's licence, a boat setting that
+  is off by default; while it is off, boat withholds android with that
+  reason. As android is offered only once a template lists its devices, the
+  upkeep builds its template as soon as the licence is accepted and the
+  kind is on, rather than when a box asks. On the trial it runs at the
+  `default` size, 4 cores and 8 GB, below the kind's presets, and the doctor
+  says the largest size the plan allows.
 - The template build uses a sandbox for about as long as the guest scripts
   take, from the plan's time.
 - A box's address is not fixed, so `ssh <box>` from a thread is written

@@ -253,3 +253,16 @@ answers over MCP; and `bb-box-boat-ready` no longer waits for the desktop
 before it says the system files are in. How long a desktop takes to start
 depends most on boat's restore of the template's files: 25 to 63 s in
 eight acquires on quiet machines, and over 6 minutes once on a busy one.
+
+## Android, before its live run
+
+Phase 3's code is tested against the fake API: android is withheld, with
+its reason, until the Android SDK's licence is accepted in boat's settings
+and a template lists its devices; the upkeep then builds the template, at
+the largest size the plan allows (the trial's `default`); the build writes
+the acceptance before the guest scripts and keeps the devices the build
+made; another install's template is forked once its devices are read from
+its snapshot; an Android box forks the template and shows its device, not
+a desktop. The live build, the emulator's boot, the device's stream in the
+panel and its input are proved once the field is on in production, as the
+trial's starts allow.

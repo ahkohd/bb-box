@@ -2,7 +2,7 @@ import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "
 
 export const BOAT_TEMPLATE_KINDS = ["linux", "linux-desktop-cpu", "android"] as const;
 export type BoatKind = (typeof BOAT_TEMPLATE_KINDS)[number];
-export const BOAT_KINDS: readonly BoatKind[] = ["linux", "linux-desktop-cpu"];
+export const BOAT_KINDS: readonly BoatKind[] = ["linux", "linux-desktop-cpu", "android"];
 
 export interface BoatConfig {
   readonly key: string;
@@ -25,17 +25,6 @@ export const BOAT_KEYS = {
   androidLicence: "android-sdk-licence",
 } as const;
 
-export const ANDROID_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
-  [BOAT_KEYS.androidLicence]: {
-    type: "boolean",
-    label: "Android SDK licence",
-    description:
-      "Whether you accept the Android SDK's licence, which Android boxes on boat.dev need. Google's terms cover the SDK, the emulator and the system image that bb-box installs, as setup/android/pins.json pins them; read them with setup/android/accept-sdk-licence.sh, or at developer.android.com/studio/terms. Turning this on is your acceptance. While it is off, boat.dev offers no Android boxes.",
-    group: "boxes",
-    default: false,
-  },
-};
-
 export const BOAT_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [BOAT_KEYS.key]: {
     type: "string",
@@ -52,6 +41,14 @@ export const BOAT_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
       "The most boat sandboxes bb-box runs at once, a template being built included. Each box is one sandbox, billed by the second while it runs: $0.018 an hour for 2 cores and 4 GB, $0.036 for 4 and 8, $0.072 for 8 and 16. A stopped box costs nothing. The free trial allows 2 at once.",
     group: "boxes",
     default: BOAT_DEFAULTS.mostBoxes,
+  },
+  [BOAT_KEYS.androidLicence]: {
+    type: "boolean",
+    label: "Android SDK licence",
+    description:
+      "Whether you accept the Android SDK's licence, which Android boxes on boat.dev need. Google's terms cover the SDK, the emulator and the system image that bb-box installs, as setup/android/pins.json pins them; read them with setup/android/accept-sdk-licence.sh, or at developer.android.com/studio/terms. Turning this on is your acceptance. While it is off, boat.dev offers no Android boxes.",
+    group: "boxes",
+    default: false,
   },
   [BOAT_KEYS.leaseMinutes]: {
     type: "number",

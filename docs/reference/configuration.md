@@ -121,7 +121,7 @@ The Monitor (066): machine status in BB's sidebar footer for BB's server, your m
 | [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
 | [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu, linux-arm64, linux-arm64-desktop-cpu |
 | [`namespace`](#namespace) | Namespace | macos, macos-desktop, linux, linux-desktop-cpu, linux-desktop-wayland-cpu |
-| [`boat`](#boat) | boat.dev | linux, linux-desktop-cpu |
+| [`boat`](#boat) | boat.dev | linux, linux-desktop-cpu, android |
 
 ### proxmox-lxc
 
@@ -341,4 +341,5 @@ Setup: [docs/guide/boat.md](../../docs/guide/boat.md).
 | --- | --- | --- | --- | --- | --- |
 | `api-key` | API key | string, secret | credentials |  | The boat.dev API key bb-box makes and deletes sandboxes with. Make one in boat's dashboard, or with boat api-key create, starting boat_. A key that expires stops bb-box's boxes there when it does. It is kept as a secret and never shown. |
 | `most-boxes` | Most boxes | number | boxes | `2` | The most boat sandboxes bb-box runs at once, a template being built included. Each box is one sandbox, billed by the second while it runs: $0.018 an hour for 2 cores and 4 GB, $0.036 for 4 and 8, $0.072 for 8 and 16. A stopped box costs nothing. The free trial allows 2 at once. |
+| `android-sdk-licence` | Android SDK licence | boolean | boxes | `false` | Whether you accept the Android SDK's licence, which Android boxes on boat.dev need. Google's terms cover the SDK, the emulator and the system image that bb-box installs, as setup/android/pins.json pins them; read them with setup/android/accept-sdk-licence.sh, or at developer.android.com/studio/terms. Turning this on is your acceptance. While it is off, boat.dev offers no Android boxes. |
 | `lease-minutes` | Auto-stop (minutes) | number | advanced | `30` | How long a box runs on after bb-box last renewed it. bb-box renews each box it holds every few minutes, so a box stops this long after bb-box stops for good, and keeps its disk. From 10 to 120: the free trial allows at most 120. |
