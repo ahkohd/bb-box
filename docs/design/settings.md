@@ -82,8 +82,8 @@ In order:
 3. **Backends**: one row each, with its icon, name, a host chip, a "BB
    machine" chip for Docker on one of your BB machines, one state line, and
    the "takes new boxes" switch. Add backend is beside the title.
-4. **Kinds**: one row each in three groups (Linux; macOS and iOS; Windows
-   and Android), with the kind's full name, a Default chip, its default
+4. **Kinds**: one row each, in one list with no group headings, Linux kinds
+   first, then macOS and iOS, then Windows and Android, with the kind's full name, a Default chip, its default
    size, how many backends make it, warm and spare counts, and the
    "offered to threads" switch. Kinds that are off, and kinds no backend
    you have makes, fold into one line. A kind switched off on this visit
