@@ -8147,6 +8147,7 @@ test("the Configuration page exports with no secret in it and says which to give
   expect(await slot.findByText("Revision 3")).toBeTruthy();
   expect(slot.getByText("Fake host: the SSH key")).toBeTruthy();
   expect(slot.getByRole("button", { name: "Copy as JSON" })).toBeTruthy();
+  expect(slot.getByText("bb box config show --json", { selector: "code" }).className).toContain("whitespace-nowrap");
 
   fireEvent.click(slot.getByRole("button", { name: "Import…" }));
   const text = await slot.findByRole("textbox", { name: "Import a configuration" });
