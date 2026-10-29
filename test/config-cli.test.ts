@@ -260,7 +260,7 @@ test("--field, --unset, --add-line and --remove-line edit fields, and an unknown
   const none = await cli(["backend", "set", "ssh-pool", "--remove-line", "machines=build-9"]);
   assert.match(none.stderr ?? "", /No line of Machines \(machines\) is "build-9" or starts with it\./);
   const notNumber = await cli(["backend", "set", "ssh-pool", "--field", "ios-hosts-ahead=two"]);
-  assert.match(notNumber.stderr ?? "", /Ready slots for iOS boxes kept on a Mac \(ios-hosts-ahead\) is a number, not "two"\./);
+  assert.match(notNumber.stderr ?? "", /Ready slots kept on a shared iOS host \(ios-hosts-ahead\) is a number, not "two"\./);
 });
 
 test("remove asks for --yes, is refused while the backend has boxes, and then removes it with its secret", async () => {
