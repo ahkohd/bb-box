@@ -179,6 +179,7 @@ import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScri
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
 const VM_STOPPED_POLL_MS = 3_000;
+const STARTS_LEFT_MOST_MS = 15_000;
 /**
  * How long no warm VM is filled after a box is ready, for its enrolment: a fill, a VM booting beside it, made BB's
  * installer in a claimed Mac take 21.9 s, where it takes 3.3 s alone. None is filled while an acquire runs either.
@@ -2792,9 +2793,8 @@ export class TartBackend implements Backend {
     this.slots?.dispose();
     if (this.#quietKick) clearTimeout(this.#quietKick);
     await this.#upkeep.running?.catch(() => undefined);
-    const pending = this.#ssh;
-    this.#ssh = null;
-    const keys = await pending?.catch(() => null);
+    await this.slots?.startsLeft(STARTS_LEFT_MOST_MS);
+    const keys = await this.#ssh?.catch(() => null);
     await keys?.ssh.dispose().catch(() => undefined);
     await this.#keyFile.dispose();
   }

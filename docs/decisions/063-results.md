@@ -3480,3 +3480,55 @@ not show Emulator beside a name of that length, and F-22d followed.
 
 After F-22d's deploy (main 80b4b79), at 360 px, the same row read
 'vivid-badger [Emulator] [VM]', with 188 px for its first line.
+
+## F-14: a test's teardown that failed with ENOTEMPTY
+
+Built on 29 October 2026. `tart-ios-hosts.test.ts` failed on CI at times,
+twice on 29 October: the Tart backend's dispose ended with "ENOTEMPTY,
+Directory not empty: '/tmp/bb-box-cm-...'", from `KeyFile.dispose`, as it
+removed the folder of SSH's shared-connection sockets.
+
+### The cause
+
+The test that failed ends while a shared host's VM is still starting. As
+bb-box stops, that start is aborted, and it still sends one SSH command,
+on purpose: a note on the Mac that it left the start, so the next bb-box
+instance carries it on at once (F-7). The Tart backend's dispose dropped
+its `Ssh` before that, so the note, or any command in that window, made a
+new `Ssh` on the same folders, never disposed, whose shared connection
+put a socket in the folder being removed. On CI, the socket came between
+the removal's reading the folder and its removing it. Logged through the
+fake `ssh` in the test, on the code before this change, a shared
+connection opened during or after the dispose in each of 4 runs, and
+once, in 562 runs of that test alone, the new `Ssh`'s own folders were
+left behind.
+
+### The fix
+
+- **The Tart backend lets the starts it stops leave their note first,**
+  for at most 15 s, then disposes its `Ssh` and keeps it, so a later
+  command uses it rather than making another.
+- **A disposed `Ssh` opens no shared connection;** a later command dials
+  alone.
+- **A disposed `KeyFile` writes no key, known hosts or folder again.**
+- **The removal tries again** on ENOTEMPTY and the like, up to 10 times,
+  50 ms apart and longer each time, as a socket that was opening as the
+  removal began can still come.
+
+A first version stopped the Tart backend making any SSH connection once
+it was stopping. That lost the note, so the next instance waited 2
+minutes for the start's last sign of life, and F-7's test failed.
+
+### Checks
+
+| Check | Before | After |
+| --- | --- | --- |
+| A new test: bb-box stops while a shared host starts; each shared connection opened as it stopped is closed before its folder goes | failed in 4 of 5 runs | passed in 5 of 5 |
+| F-7's test, a start that one instance leaves and the next carries on | passed | passed in 5 of 5 |
+| `tart-ios-hosts.test.ts` whole, on a Linux box, 3 at a time | 30 of 30 passed | 30 of 30 passed |
+| `KeyFile.dispose` with sockets still coming into the folder, 3,000 files written as it removes | failed, 3 of 3 | passed, 3 of 3 |
+| A disposed `Ssh` asked for a command | opened a shared connection | dialed alone |
+
+The whole file did not fail before the change on this box either, in 30
+runs and in 562 runs of the failing test alone but for the one above, so
+the new test is what shows the race.

@@ -24,7 +24,7 @@
 import { spawn } from "node:child_process";
 import { startChild } from "./forker.ts";
 import { createHash } from "node:crypto";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -81,6 +81,7 @@ const SHARE_MAX_SESSIONS = 8;
 /** After a shared connection could not be made, commands dial alone for this long. */
 const SHARE_RETRY_MS = 5_000;
 const SHARE_START_TIMEOUT_MS = 15_000;
+const REMOVAL_RACING_SOCKETS = { recursive: true, force: true, maxRetries: 10, retryDelay: 50 } as const;
 
 /** A connection that commands to one box share. */
 interface Shared {
@@ -128,6 +129,7 @@ export class Ssh {
   /** Shared connections new commands no longer use, until their socket goes. */
   readonly #retired = new Set<Shared>();
   #count = 0;
+  #disposed = false;
 
   constructor(options: SshOptions) {
     this.#options = options;
@@ -187,7 +189,7 @@ export class Ssh {
   /** A place on the box's shared connection, opening it first. Null dials alone. */
   async #lease(access: SshAccess, waitMs?: number, signal?: AbortSignal): Promise<Lease | null> {
     const dir = this.#options.shareDir;
-    if (!dir || process.platform === "win32") return null;
+    if (!dir || this.#disposed || process.platform === "win32") return null;
     const options = this.options(access);
     const target = `${access.user}@${access.host}`;
     const key = createHash("sha256").update([...options, target].join("\0")).digest("hex").slice(0, 12);
@@ -310,6 +312,7 @@ export class Ssh {
 
   /** Closes every shared connection, retired ones too. */
   async dispose(): Promise<void> {
+    this.#disposed = true;
     const all = [...this.#shared.values(), ...this.#retired];
     this.#shared.clear();
     this.#retired.clear();
@@ -610,8 +613,14 @@ export class KeyFile {
   #shareDir: string | null = null;
   #path: string | null = null;
   #key: string | null = null;
+  #disposed = false;
+
+  #refuseOnceDisposed(): void {
+    if (this.#disposed) throw new SshError("bb-box is stopping, so it opens no new SSH connection.");
+  }
 
   async path(privateKey: string): Promise<string> {
+    this.#refuseOnceDisposed();
     const key = privateKey.replace(/\r\n/g, "\n").trim() + "\n";
     if (this.#path && this.#key === key) return this.#path;
     if (!this.#dir) this.#dir = await makeTempFolder("bb-box-ssh-");
@@ -624,6 +633,7 @@ export class KeyFile {
 
   /** Writes known_hosts lines for pinned host keys, and returns the file's path. */
   async knownHosts(lines: readonly string[]): Promise<string> {
+    this.#refuseOnceDisposed();
     const text = lines.map((line) => line.trim()).filter(Boolean).join("\n") + "\n";
     if (!this.#dir) this.#dir = await makeTempFolder("bb-box-ssh-");
     const path = join(this.#dir, `known_hosts-${createHash("sha256").update(text).digest("hex").slice(0, 16)}`);
@@ -633,12 +643,14 @@ export class KeyFile {
 
   /** A directory for shared connections' sockets. A socket's path must fit in about 100 bytes, so it is short. */
   async shareDir(): Promise<string> {
+    this.#refuseOnceDisposed();
     this.#shareDir ??= await makeTempFolder("bb-box-cm-", shortTempBase());
     return this.#shareDir;
   }
 
   async dispose(): Promise<void> {
-    for (const dir of [this.#dir, this.#shareDir]) if (dir) rmSync(dir, { recursive: true, force: true });
+    this.#disposed = true;
+    await Promise.all([this.#dir, this.#shareDir].filter((dir) => dir !== null).map((dir) => rm(dir, REMOVAL_RACING_SOCKETS)));
     this.#dir = this.#shareDir = this.#path = this.#key = null;
   }
 }

@@ -437,6 +437,24 @@ test("a new shared host goes to the Mac whose video encoder streams least; a VM'
   assert.equal(backend.encoderOf({ ref: "elsewhere", host: "mac9", address: null, size: null, data: {} }), null);
 });
 
+test("bb-box stopping while a shared host starts closes every shared SSH connection it opened before it removes their folder (F-14)", async () => {
+  const { backend, ssh, hosts } = setup();
+  const tier = await backend.slots!.offer("ios", null, signal());
+  const taking = backend.slots!.take(tier, identity(), signal()).catch(() => null);
+  await until(() => hosts().length > 0, "the host's VM to be made");
+  const from = ssh.log().length;
+  made.splice(made.indexOf(backend), 1);
+  await backend.dispose();
+  const disposed = ssh.log().length;
+  await taking;
+  await new Promise((resolve) => setTimeout(resolve, 2_000));
+  const log = ssh.log();
+  const socketOf = (index: number) => log[index]!.args.find((arg) => arg.startsWith("ControlPath="));
+  const closedBeforeItsFolderWent = (opened: number) => log.slice(opened + 1, disposed).some((entry, offset) => entry.control === "exit" && socketOf(opened + 1 + offset) === socketOf(opened));
+  const left = log.map((entry, index) => ({ entry, index })).filter(({ entry, index }) => index >= from && entry.control === "master" && !closedBeforeItsFolderWent(index));
+  assert.deepEqual(left, [], "each shared connection opened as it stopped was closed before its folder went");
+});
+
 function newIosBuild(mac: string): void {
   writeFileSync(join(mac, ".bb-box", "tart", "images", "bb-box-ios.json"), `${imageRecord("ios", { build: "build.20261028-002015-2222", base: "build.20261003-021500", devices: IOS_HOST_DEVICES, tools: { idb_companion: "1.7.7" } })}\n`);
 }
