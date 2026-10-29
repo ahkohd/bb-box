@@ -3459,3 +3459,21 @@ line's width, as the browser measured it:
 
 On the Boxes page at 1,440 px every row showed its model and all its
 badges, room 754 to 784. At 360 px it showed the same as the panel.
+
+## F-22c and F-22d: the device badge first on a narrow row
+
+Built on 29 October 2026, from F-22b's live check, where an android row at
+360 px showed VM rather than Emulator.
+
+- **F-22c ranks a row's badges** the device's word, Simulator or Emulator,
+  first, then Shared, then the box's form and BB machine, then Desktop,
+  then the rest.
+- **F-22d lets the system word give way** on a box with a device, before
+  Simulator or Emulator, which say it already. A row with room for both
+  keeps it.
+
+After F-22c's deploy (main 0795f88), at 360 px in the owner's browser, an
+android row still read 'vivid-badger Android [VM]'. The browser measured a
+first line of 188 px: the name 80 px and Android 45 px, with their gap,
+left 55 px, and Emulator needs 56 px and its gap. So ranking alone could
+not show Emulator beside a name of that length, and F-22d followed.
