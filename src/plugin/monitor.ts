@@ -103,13 +103,13 @@ export function routeOs(box: MonitoredBox): RouteOs | null {
 
 export function listMachines(hosts: readonly MonitorHost[], serverHostId: string | null, boxes: readonly MonitoredBox[]): Machine[] {
   const connectedHosts = new Set(hosts.filter((host) => host.connected).map((host) => host.id));
-  const boxHosts = new Set(boxes.flatMap((box) => (box.hostId ? [box.hostId] : [])));
+  const boxOnHost = new Map(boxes.flatMap((box) => (box.hostId ? [[box.hostId, box.id] as const] : [])));
   const fromHosts = hosts
-    .map((host) => ({ id: host.id, name: host.name, connected: host.connected, isServer: host.id === serverHostId, isBox: boxHosts.has(host.id) || isBoxProvider(host.machineProviderId) }))
+    .map((host) => ({ id: host.id, name: host.name, connected: host.connected, isServer: host.id === serverHostId, isBox: boxOnHost.has(host.id) || isBoxProvider(host.machineProviderId), boxId: boxOnHost.get(host.id) ?? null }))
     .filter((machine) => machine.connected || machine.isServer);
   const routed = boxes
     .filter((box) => box.ready && !(box.hostId && connectedHosts.has(box.hostId)) && routeOs(box) !== null)
-    .map((box) => ({ id: `${BOX_MACHINE_PREFIX}${box.id}`, name: box.name, connected: true, isServer: false, isBox: true }));
+    .map((box) => ({ id: `${BOX_MACHINE_PREFIX}${box.id}`, name: box.name, connected: true, isServer: false, isBox: true, boxId: box.id }));
   return sortMachines([...fromHosts, ...routed]);
 }
 

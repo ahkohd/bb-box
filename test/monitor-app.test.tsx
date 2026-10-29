@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ExperimentalSidebarFooterDisclosureProps } from "@get-bb/plugin-sdk/app";
 import type { ComponentType } from "react";
-import type { Contract, Machine, MonitorSnapshot } from "../src/plugin/contract.ts";
+import type { BoxEntry, Contract, Machine, MonitorSnapshot } from "../src/plugin/contract.ts";
+import type { BoxView } from "../src/plugin/views.ts";
 
 const SERVER_HOST = "host_server";
 
@@ -28,16 +29,65 @@ function snapshot(patch: Partial<MonitorSnapshot> = {}): MonitorSnapshot {
 }
 
 const MACHINES: Machine[] = [
-  { id: SERVER_HOST, name: "bb", connected: true, isServer: true, isBox: false },
-  { id: "host_lxc", name: "glad-coral", connected: true, isServer: false, isBox: true },
-  { id: "host_slot", name: "keen-iris", connected: true, isServer: false, isBox: true },
-  { id: "host_long", name: "a-shared-ios-box-with-a-very-long-name-1234", connected: true, isServer: false, isBox: true },
+  { id: SERVER_HOST, name: "bb", connected: true, isServer: true, isBox: false, boxId: null },
+  { id: "host_build", name: "build-server", connected: true, isServer: false, isBox: false, boxId: null },
+  { id: "host_lxc", name: "glad-coral", connected: true, isServer: false, isBox: true, boxId: "bx_lxc" },
+  { id: "host_slot", name: "keen-iris", connected: true, isServer: false, isBox: true, boxId: "bx_slot" },
+  { id: "host_long", name: "a-shared-ios-box-with-a-very-long-name-1234", connected: true, isServer: false, isBox: true, boxId: "bx_long" },
+  { id: "box:bx_desk", name: "quiet-moth", connected: true, isServer: false, isBox: true, boxId: "bx_desk" },
+  { id: "box:bx_both", name: "brisk-wren", connected: true, isServer: false, isBox: true, boxId: "bx_both" },
+  { id: "host_stopped", name: "deep-elm", connected: true, isServer: false, isBox: true, boxId: "bx_stopped" },
+];
+
+function boxView(patch: Partial<BoxView> & Pick<BoxView, "id" | "name">): BoxView {
+  return {
+    kind: "linux",
+    kindLabel: "Linux",
+    backendLabel: "Fake host",
+    nature: "virtual",
+    form: "LXC",
+    shared: false,
+    role: "box",
+    state: "ready",
+    error: null,
+    stopped: null,
+    createdAt: Date.now() - 60_000,
+    readyAt: Date.now() - 50_000,
+    os: "linux",
+    arch: "x86_64",
+    gpu: false,
+    requires: [],
+    extras: [],
+    docker: false,
+    desktop: false,
+    display: null,
+    control: null,
+    computerUse: false,
+    terminal: true,
+    address: null,
+    facts: [],
+    timings: {},
+    enrol: { state: "off", hostId: null, error: null },
+    enrols: false,
+    canStopStart: true,
+    size: null,
+    ...patch,
+  } as BoxView;
+}
+
+const BOX_ENTRIES: BoxEntry[] = [
+  { threadId: "thr_lxc", owner: "thread", box: boxView({ id: "bx_lxc", name: "glad-coral", terminal: true }) },
+  { threadId: "thr_slot", owner: "thread", box: boxView({ id: "bx_slot", name: "keen-iris", os: "macos", terminal: false, device: { platform: "ios", model: "iPhone 17", simulatorHost: false } }) },
+  { threadId: "operator", owner: "yours", box: boxView({ id: "bx_desk", name: "quiet-moth", desktop: true }) },
+  { threadId: "thr_both", owner: "thread", box: boxView({ id: "bx_both", name: "brisk-wren", desktop: true, device: { platform: "android", model: "Pixel 9", simulatorHost: false } }) },
+  { threadId: "thr_stopped", owner: "thread", box: boxView({ id: "bx_stopped", name: "deep-elm", desktop: true, state: "stopped" }) },
 ];
 
 function handlers(readings: Record<string, MonitorSnapshot>): PluginRpcTestHandlers<Contract> {
   return {
     "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true }),
     "monitor.machines": () => ({ machines: MACHINES }),
+    allBoxes: () => BOX_ENTRIES,
     "monitor.server": () => readings.server ?? snapshot(),
     "monitor.machine": ({ machineId }: { machineId: string }) => readings[machineId] ?? snapshot(),
     "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
@@ -243,4 +293,113 @@ test("F-24: a section's tooltip does not show while its section has scrolled out
   } finally {
     restore();
   }
+});
+
+function openMonitor(machineId: string | null) {
+  if (machineId) localStorage.setItem("bb-box:monitor:machine", machineId);
+  return renderSlot(footer!, { dismiss: vi.fn() }, { rpc: handlers({}), pluginId: "bb-box" });
+}
+
+function header(): HTMLElement {
+  return document.querySelector<HTMLElement>("[data-bb-box-monitor-header]")!;
+}
+
+async function openButton(): Promise<HTMLElement> {
+  return await waitFor(() => within(header()).getByRole("button", { name: "Open" }));
+}
+
+async function openViews(): Promise<HTMLElement> {
+  fireEvent.keyDown(await openButton(), { key: "Enter" });
+  return await screen.findByRole("menu");
+}
+
+function items(menu: HTMLElement): string[] {
+  return within(menu).getAllByRole("menuitem").map((item) => `${item.textContent}${item.hasAttribute("data-disabled") ? " (disabled)" : ""}`);
+}
+
+const TO_BOXES_PAGE = (subPath: string) => ({ method: "toPluginPanel", path: "desktop", options: { subPath } });
+
+test("a desktop box's Open menu offers its desktop and terminal, each opening the Boxes page's view as the Boxes row does", async () => {
+  const monitor = openMonitor("box:bx_desk");
+  expect(items(await openViews())).toEqual(["Open desktop", "Open terminal"]);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open desktop" }));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("operator/bx_desk"));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await openViews();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open terminal" }));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("operator/bx_desk/terminal"));
+  expect(localStorage.getItem("bb-box:monitor:machine")).toBe("box:bx_desk");
+});
+
+test("a device box's Open menu offers its Simulator alone when it has no terminal, and it opens the device view", async () => {
+  const monitor = openMonitor("host_slot");
+  expect(items(await openViews())).toEqual(["Open simulator"]);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open simulator" }));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("thr_slot/bx_slot/device"));
+});
+
+test("a box with a desktop and an Emulator offers both, then its terminal", async () => {
+  const monitor = openMonitor("box:bx_both");
+  expect(items(await openViews())).toEqual(["Open emulator", "Open desktop", "Open terminal"]);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open emulator" }));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("thr_both/bx_both/device"));
+});
+
+test("the Open button's tooltip names the box", async () => {
+  openMonitor("box:bx_both");
+  fireEvent.pointerMove(await openButton());
+  await waitFor(() => expect(screen.queryAllByRole("tooltip", { hidden: true }).some((tooltip) => tooltip.textContent === "Open a view of brisk-wren")).toBe(true));
+});
+
+test("a stopped box's views are in the menu, disabled, each with the reason, and open nothing", async () => {
+  const monitor = openMonitor("host_stopped");
+  const menu = await openViews();
+  expect(items(menu)).toEqual(["Open desktopdeep-elm is stopped (disabled)", "Open terminaldeep-elm is stopped (disabled)"]);
+  fireEvent.click(within(menu).getAllByRole("menuitem")[0]!);
+  expect(monitor.inspection.navigateCalls.filter((call) => call.method === "toPluginPanel")).toEqual([]);
+});
+
+test("BB's server and a BB machine that is not a box get no Open button, and the header keeps its own", async () => {
+  openMonitor(null);
+  await screen.findByText("load 0.50");
+  await waitFor(() => expect(within(header()).getByRole("button", { name: "Machine" }).textContent).toContain("bb"));
+  expect(within(header()).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Machine", "Reload machine status", "Hide machine status"]);
+  cleanup();
+  openMonitor("host_build");
+  await waitFor(() => expect(within(header()).getByRole("button", { name: "Machine" }).textContent).toContain("build-server"));
+  expect(within(header()).queryByRole("button", { name: "Open" })).toBeNull();
+});
+
+test("the picker lists names only, as options, and pressing one still switches the Monitor", async () => {
+  openMonitor(null);
+  fireEvent.click(await screen.findByRole("button", { name: "Machine" }));
+  const list = await screen.findByRole("listbox", { name: "Machines" });
+  expect(within(list).queryAllByRole("button", { name: /^Open/ })).toEqual([]);
+  fireEvent.click(within(list).getAllByRole("option").find((option) => option.textContent?.includes("brisk-wren"))!);
+  expect(localStorage.getItem("bb-box:monitor:machine")).toBe("box:bx_both");
+  await openButton();
+});
+
+function tabbable(container: ParentNode): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>("button, input, a[href], [tabindex]")).filter((element) => !element.hasAttribute("disabled") && element.tabIndex >= 0);
+}
+
+test("the keyboard reaches Open after the name; Enter or Space opens the menu, arrows move, Escape closes only the menu and focus returns to Open", async () => {
+  openMonitor("box:bx_both");
+  const open = await openButton();
+  expect(tabbable(header()).map((element) => element.getAttribute("aria-label"))).toEqual(["Machine", "Open", "Reload machine status", "Machine status settings", "Hide machine status"]);
+  open.focus();
+  fireEvent.keyDown(open, { key: " " });
+  const menu = await screen.findByRole("menu");
+  await waitFor(() => expect(document.activeElement?.textContent).toBe("Open emulator"));
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+  await waitFor(() => expect(document.activeElement?.textContent).toBe("Open desktop"));
+  const escapeBeyondMenu = vi.fn();
+  window.addEventListener("keydown", escapeBeyondMenu);
+  fireEvent.keyDown(menu, { key: "Escape" });
+  window.removeEventListener("keydown", escapeBeyondMenu);
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(open));
+  expect(escapeBeyondMenu).not.toHaveBeenCalled();
+  expect(header()).toBeTruthy();
 });

@@ -10,6 +10,7 @@ You can open a box's desktop from:
 - the thread's Desktop tab: it opens the thread's desktop straight away, lists them when there are several, or offers the Box panel when there is none
 - a browser tab of its own: select **Open in browser** in the box's menu
 - the Boxes page: the desktop shows on the page, with a back arrow to the list
+- the Monitor's machine status in BB's sidebar: when it shows a box, select **Open** beside the box's name, then **Open desktop**. The desktop shows on the Boxes page
 
 The thread's Desktop tab counts the machine the thread runs on, if it is a desktop.
 
@@ -112,6 +113,8 @@ Take control to use the device, as with a desktop: one control covers the device
 On an `ios` box, the Desktop tab is the macOS host's, for Xcode. It says above it: 'Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Simulator tab.' Xcode's Run opens Device Hub even so. bb-box closes it within 5 seconds, by stopping its process: quitting it would shut the device down. `bb box doctor` says whether Device Hub runs on each `ios` box, and how often bb-box has closed it.
 
 A device has a tab of its own in the thread's right panel, named for what it shows: **Simulator** for an `ios` box's device, **Emulator** for an `android` box's, with a phone for its icon. Open it with **Open simulator** or **Open emulator** on the box's row, or from the thread's **Device** tab, which opens the thread's device straight away, lists them when there are several, or offers the Box panel when there is none. When the thread has another box whose tab would have the same name, the name says which box, as in 'Simulator · box-2', or on a narrow screen the box's name alone, beside the phone.
+
+The Monitor's machine status opens a box's device on the Boxes page: when it shows the box, select **Open** beside its name, then **Open simulator** or **Open emulator**.
 
 A box with both a device and a desktop, such as a dedicated `ios` box, has two tabs: **Simulator** and **Desktop**. Each tab's toolbar has a button that opens the other. A shared `ios` box has no desktop, so it has only **Simulator**. The thread's Desktop tab, opened from the panel's launcher, shows a box's desktop if it has one; for a box with only a device, it shows the device and renames itself **Simulator** or **Emulator**. On the Boxes page and in a browser tab of its own, the same button switches the box's view between the two. Each keeps its own connection while you look at the other, so switching is instant.
 

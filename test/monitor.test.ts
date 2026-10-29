@@ -342,6 +342,21 @@ test("lists the server first, then own machines, then boxes, and hides offline m
   );
 });
 
+test("each machine that is a box names its box, whether it is a BB machine or read through the route; other machines name none", () => {
+  assert.deepEqual(
+    Object.fromEntries(listMachines(HOSTS, SERVER_HOST, BOXES).map(({ id, boxId }) => [id, boxId])),
+    {
+      [SERVER_HOST]: null,
+      host_build: null,
+      host_mac: null,
+      "box:bx_offline_slot": "bx_offline_slot",
+      "box:bx_docker": "bx_docker",
+      host_box: "bx_lxc",
+      host_slot: "bx_slot",
+    },
+  );
+});
+
 test("each kind of box takes its path: a BB machine through the host entry, a slot's as its own user, the rest through bb-box's route", async (t) => {
   const hostCalls: { hostId: string; scope: string }[] = [];
   const ranIn: string[] = [];

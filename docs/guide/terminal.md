@@ -9,6 +9,7 @@ You can open a box's terminal from:
 - the Box panel: select **Open terminal** on the box's row, which opens a tab called 'Terminal:' and the box's name, with a terminal for its icon. On a narrow screen, such as a phone's, the tab is called by the box's name alone
 - the thread's Terminal tab: it opens the thread's terminal straight away, lists the boxes when there are several, or offers the Box panel when there is none
 - the Boxes page: the terminal shows on the page, with a back arrow to the list
+- the Monitor's machine status in BB's sidebar: when it shows a box, select **Open** beside the box's name, then **Open terminal**. The terminal shows on the Boxes page
 
 The thread's Terminal tab counts the machine the thread runs on.
 
