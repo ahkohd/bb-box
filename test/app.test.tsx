@@ -40,6 +40,7 @@ import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import { openSettingsView } from "../src/app/settings-route.ts";
 import { forgetDrafts } from "../src/app/settings-drafts.ts";
+import { forgetConfigurationPage } from "../src/app/settings-configuration.tsx";
 import { forgetFormChecks } from "../src/app/settings-checks.ts";
 import { hostChip, onBbMachine } from "../src/app/settings-status.ts";
 import type { BackendConfig } from "../src/core/document.ts";
@@ -1932,6 +1933,7 @@ function settings(handlers: PluginRpcTestHandlers<Contract>, hash = "", { keepDr
   if (!keepDrafts) {
     forgetDrafts();
     forgetFormChecks();
+    forgetConfigurationPage();
     window.sessionStorage.clear();
   }
   window.history.replaceState(null, "", `/settings/plugins/bb-box${hash}`);
@@ -8131,4 +8133,85 @@ test("a check with a failure says Not working on its row and its page, in the fa
   expect(state.textContent).toContain("Not working");
   expect(state.querySelector(".text-destructive-text")).toBeTruthy();
   expect(within(slot.getByRole("region", { name: "Things that need you" })).getByText("pve-1 is offline.")).toBeTruthy();
+});
+
+test("the Configuration page exports with no secret in it and says which to give again; an import is checked, lists each change before and after, keeps its text out of storage, and applies (067 unit 10)", async () => {
+  applied = null;
+  const read = {
+    document: { schema: 1 as const, revision: 0, backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006" }, warm: { linux: 1 } }], kinds: {}, general: {}, monitor: { refreshIntervalSeconds: 15 } },
+    secrets: { fake: { token: "set" as const } },
+    unknownTypes: [],
+  };
+  const { handlers, changes } = server([], { checkWith: { problems: [], doctor: null, read } });
+  const slot = settings(handlers, "#option/configuration");
+  expect(await slot.findByText("Revision 3")).toBeTruthy();
+  expect(slot.getByText("Fake host: the SSH key")).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Copy as JSON" })).toBeTruthy();
+
+  fireEvent.click(slot.getByRole("button", { name: "Import…" }));
+  const text = await slot.findByRole("textbox", { name: "Import a configuration" });
+  await waitFor(() => expect(document.activeElement).toBe(text));
+  fireEvent.change(text, { target: { value: '{"monitor": made-up-token-5Rt1' } });
+  fireEvent.click(slot.getByRole("button", { name: "Check" }));
+  expect((await slot.findByRole("alert")).textContent).toMatch(/^This is not a configuration file: it is not valid JSON/);
+  expect(changes.filter((change) => change.startsWith("check"))).toHaveLength(0);
+  expect(slot.getByRole("alert").textContent).not.toContain("made-up-token");
+
+  const file = JSON.stringify({ backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: "made-up-token-5Rt1" }, warm: { linux: 1 } }], monitor: { refreshIntervalSeconds: 15 } }, null, 2);
+  fireEvent.change(text, { target: { value: file } });
+  fireEvent.click(slot.getByRole("button", { name: "Check" }));
+  const list = await slot.findByRole("region", { name: /^What it changes against revision 3: 2 changes/ });
+  const monitor = within(within(list).getByRole("group", { name: "Monitor" }));
+  expect(monitor.getByText("Refresh every")).toBeTruthy();
+  expect(monitor.getByText("5 s")).toBeTruthy();
+  expect(monitor.getByText("15 s")).toBeTruthy();
+  const fake = within(within(list).getByRole("group", { name: "Fake host" }));
+  expect(fake.getByText("The API token")).toBeTruthy();
+  expect(fake.getByText("A new value (not shown)")).toBeTruthy();
+  expect(list.textContent).not.toContain("made-up-token");
+  const stored = JSON.stringify({ ...window.sessionStorage });
+  expect(stored).toContain("monitor/refreshIntervalSeconds");
+  expect(stored).not.toContain("made-up-token");
+
+  fireEvent.click(slot.getByRole("button", { name: "Apply" }));
+  expect(await slot.findByText("Applied.")).toBeTruthy();
+  const sent = JSON.parse(changes.find((change) => change.startsWith("apply"))!.replace(/^apply \d+ /, "")) as ConfigDocument;
+  expect(sent.monitor?.refreshIntervalSeconds).toBe(15);
+  expect(sent.backends[0]!.fields.token).toBe("made-up-token-5Rt1");
+  await waitFor(() => expect(slot.queryByRole("textbox", { name: "Import a configuration" })).toBeNull());
+  expect(JSON.stringify({ ...window.sessionStorage })).not.toContain("made-up-token");
+  fireEvent.click(slot.getByRole("button", { name: "Import…" }));
+  const again = await slot.findByRole("textbox", { name: "Import a configuration" });
+  fireEvent.change(again, { target: { value: "{}" } });
+  expect(slot.queryByText(/^Applied/)).toBeNull();
+  expect(slot.getByText("Check it to see what it changes. Nothing is applied until you choose Apply.")).toBeTruthy();
+});
+
+test("the copy of BB's earlier settings is removed only after Remove copy is confirmed, and the page says so once BB Box has removed it (067 unit 10)", async () => {
+  applied = null;
+  const fake = server([]);
+  let removed = false;
+  const get = fake.handlers["config.get"]!;
+  const handlers: PluginRpcTestHandlers<Contract> = {
+    ...fake.handlers,
+    "config.get": (input: null) => ({ ...(get(input) as ConfigState), migrated: removed ? null : { at: 1_790_000_000_000, version: "0.2.0" } }),
+    "config.migrated.remove": () => {
+      removed = true;
+      return { removed: true, state: configState({ migrated: null }) };
+    },
+  };
+  const slot = settings(handlers, "#option/configuration");
+  expect(await slot.findByText("Settings moved from BB")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Remove copy…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Remove the copy of BB's earlier settings?" });
+  expect(dialog.textContent).toContain("Once removed it cannot be got back.");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(removed).toBe(false);
+  fireEvent.click(slot.getByRole("button", { name: "Remove copy…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove copy" }));
+  expect(await slot.findByText("Removed the copy of BB's earlier settings.")).toBeTruthy();
+  expect(removed).toBe(true);
+  await waitFor(() => expect(slot.queryByText("Settings moved from BB")).toBeNull());
+  await waitFor(() => expect(document.activeElement?.textContent).toBe("Removed the copy of BB's earlier settings."));
 });

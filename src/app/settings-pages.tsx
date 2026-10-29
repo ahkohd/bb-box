@@ -15,6 +15,7 @@ import { BOXES_PART, MONITOR_PART } from "./settings-drafts.ts";
 import { BoxFilesSection } from "./settings-files.tsx";
 import { RestoredNote, SAVING_RULE, SaveBar, useDraft } from "./settings-saving.tsx";
 import { BackendPage } from "./settings-backend-page.tsx";
+import { ConfigurationOptions } from "./settings-configuration.tsx";
 import { AddBackendPage, SetupPage } from "./settings-setup.tsx";
 import { KindPage } from "./settings-kind-page.tsx";
 import { iosEncoderWords, monitorChanged, noteMonitorChanged, ReloadNote } from "./settings-overview.tsx";
@@ -234,29 +235,6 @@ function MonitorOptions() {
       </Card>
       {monitorChanged() ? <ReloadNote /> : null}
       <SaveBar draft={draft} unplaced={unplacedProblems(draft, ["monitor/refreshIntervalSeconds"])} />
-    </div>
-  );
-}
-
-function ConfigurationOptions() {
-  const { state } = useSettings();
-  const commands = ["bb box config show", "bb box config show --json > bb-box.json", "bb box config apply bb-box.json", ...(state.migrated ? ["bb box config migrated"] : [])];
-  return (
-    <div className="space-y-6">
-      <Card className="space-y-2 px-4 py-3 text-xs leading-snug text-muted-foreground">
-        <p className="text-sm text-foreground">Revision {state.revision}</p>
-        <p>Each save names the revision it was made from. When someone saved first, the save is refused and the page reloads, so nobody overwrites another's change unseen.</p>
-        {state.migrated ? <p>BB Box keeps a copy of BB's earlier settings for it, made {relativeTime(state.migrated.at, Date.now())}.</p> : null}
-      </Card>
-      <Group title="From a terminal" description="Agents and scripts change the configuration with these. The JSON file has no secret in it.">
-        <Card className="space-y-1.5 px-4 py-3">
-          {commands.map((command) => (
-            <code key={command} className="block font-mono text-xs text-foreground">
-              {command}
-            </code>
-          ))}
-        </Card>
-      </Group>
     </div>
   );
 }

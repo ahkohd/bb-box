@@ -258,7 +258,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     backends: () => app.backendViews(),
     doctor: () => app.doctor(),
     "config.get": () => app.configuration.state(),
-    "config.check": ({ draft, test }) => app.configuration.check(draft, test),
+    "config.check": ({ draft, test, read }) => app.configuration.check(draft, test, undefined, { read }),
     "config.apply": async ({ draft, revision, operation, submission }) => {
       const result = await app.configuration.apply(draft, revision, operation === undefined ? undefined : { id: operation, submission });
       if (result.ok && !result.replayed && app.replyDrops?.take()) throw new Error(DROPPED_REPLY_MESSAGE);

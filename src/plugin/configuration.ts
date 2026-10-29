@@ -29,6 +29,7 @@ import {
   type InUse,
   type Problem,
   type SaveReceipt,
+  type SecretChanges,
   type Secrets,
 } from "../core/document.ts";
 import { COPY_KEY, DOCUMENT_KEY, SECRETS_KEY, type MovedCopy } from "../core/move.ts";
@@ -138,10 +139,19 @@ export interface ConfigState {
   readonly setupDone: SetupDone | null;
 }
 
+export type SecretChange = "set" | "cleared";
+
+export interface DraftRead {
+  readonly document: ConfigDocument;
+  readonly secrets: Readonly<Record<string, Readonly<Record<string, SecretChange>>>>;
+  readonly unknownTypes: readonly string[];
+}
+
 export interface CheckResult {
   readonly problems: readonly Problem[];
   /** The tested backend's doctor, when a test was asked for and its fields are valid. */
   readonly doctor: DoctorReport | null;
+  readonly read?: DraftRead | null;
 }
 
 export type ApplyResult =
@@ -409,11 +419,12 @@ export class Configuration {
    * Problems with a draft, saving nothing. With `test`, a backend's ID, also
    * runs that backend's doctor against the draft (029).
    */
-  async check(input: unknown, test?: string, signal?: AbortSignal): Promise<CheckResult> {
+  async check(input: unknown, test?: string, signal?: AbortSignal, options: { readonly read?: boolean } = {}): Promise<CheckResult> {
     const { drivers } = this.#deps;
     const draft = readDraft(input, drivers);
     const secrets = withSecretChanges(this.#secrets, draft.secrets, draft.document);
     const problems = [...draft.problems, ...checkDocument(draft.document, secrets, drivers, await this.inUse())];
+    if (options.read) return { problems, doctor: null, read: draft.problems.length ? null : draftRead(draft.document, draft.secrets, drivers) };
     if (test === undefined) return { problems, doctor: null };
     const backend = draft.document.backends.find((candidate) => candidate.id === test);
     if (!backend) return { problems: [...problems, { path: `backends.${test}`, message: `There is no backend ${test} in the configuration to check.` }], doctor: null };
@@ -487,6 +498,18 @@ export class Configuration {
     this.#queue = write;
     return write;
   }
+}
+
+function draftRead(document: ConfigDocument, changes: SecretChanges, drivers: readonly BackendDriver<any>[]): DraftRead {
+  const known = (type: string) => drivers.some((driver) => driver.type === type);
+  const bare = withoutSecrets(document, drivers);
+  const change = (value: string | null): SecretChange => (value === null ? "cleared" : "set");
+  const secrets = Object.fromEntries(Object.entries(changes).map(([owner, keys]) => [owner, Object.fromEntries(Object.entries(keys).map(([key, value]) => [key, change(value)]))]));
+  return {
+    document: { ...bare, backends: bare.backends.filter((backend) => known(backend.type)) },
+    secrets,
+    unknownTypes: [...new Set(document.backends.filter((backend) => !known(backend.type)).map((backend) => backend.type))],
+  };
 }
 
 function refusedOperation(id: string, earlier: StoredReceipt): ApplyResult {

@@ -2204,3 +2204,220 @@ on removes it; Add another's test now has two backends of the type, "2
 added", and saves the third as `other:3`; `test/app.test.tsx`'s established all-off overview checks
 its words and that Show focuses the switch without leaving the overview.
 
+
+## Unit 10: Configuration, export and import
+
+Built on 29 October 2026, on units 1 to 9. The Configuration page is on
+the engine: Export, Import with its change list, and the removal of the
+copy of BB's earlier settings. Gates G8 and G9 pass on a separate BB.
+
+### What changed
+
+- **Export**: Copy as JSON and Download (`bb-box-revision-N.json`). The
+  file is the text `bb box config show --json` prints, with no secret in
+  it. Under it, the secrets that must be given again to set
+  BB Box up from it, each by where it lives: "Hetzner Cloud: the API
+  token", "Files for every box: the content of ~/.cfg/tools.json", and
+  the tailnet's client ID and secret.
+- **Import**: Import… opens a form on the draft registry, part
+  `option/configuration`. The text is pasted, or opened from a file, and
+  is an edit at `import/text` that holds a secret, so it is kept in memory
+  only, valid or not (R1). Check parses it in the page; text that is not
+  JSON says where ("This is not a configuration file: it is not valid
+  JSON, at line 1, column 43. Nothing was checked."), and quotes none of
+  it. Valid JSON goes to `config.check` with `read`. The page turns each
+  difference between the configuration and the file as bb-box reads it
+  into an edit of the registry at the paths the other pages use. So the
+  change list names each change by its place and label, with before and
+  after: "Monitor · Refresh every · 5 s → 15 s", "Kind: Linux · Medium
+  memory · 8 GiB → 12 GiB", "Hetzner Cloud · Location · Empty: nbg1, the
+  default → hel1". A secret or a file's content says only "Set → A new
+  value (not shown)" or "Added, with its content (not shown)".
+  Problems BB Box's checks find are listed above it; a file that adds a
+  file for every box without its content, clears a secret the page cannot
+  clear alone, or has a backend type this BB Box lacks, says why and
+  Apply waits.
+- **Applied safely on a moved revision**: Apply is a save of the part. Its
+  submission is the checked changes, frozen, and a retry rebases them on
+  the newer configuration: a change made elsewhere after the check to a
+  setting the import leaves alone stays, and the bar says "Applied at
+  revision 69, on top of a change made elsewhere." A change made elsewhere
+  to a setting the import changes is a conflict on that row at once,
+  "Changed elsewhere to 40 s while you edited.", with Use theirs and Keep
+  mine, and Apply waits. The whole file is never saved over a revision
+  nobody checked it against.
+- **R1 and R4**: only the checked edits, without secrets, go into session
+  storage, so after a reload the page says "Your import is back: what it
+  would have changed, 6 changes. The configuration you pasted was not
+  kept, as it may hold secrets; paste it again." Text typed after Check
+  clears the change list ("Your text changed after you checked it, so
+  what it changes was cleared. Check it again."). Text typed while the
+  import applies stays in the editor, and completion clears only what was
+  sent: "Applied. Your newer text is not applied yet."
+- **The copy of BB's earlier settings**: while it is kept, a row says when
+  BB Box made it and why, with Remove copy…. The dialog says what follows
+  ("Once removed it cannot be got back"); Remove copy calls
+  `config.migrated.remove`, and the page says "Removed the copy of BB's
+  earlier settings." only once BB Box answers, or, after a lost reply,
+  once the configuration read again shows it gone. Focus goes to that
+  note.
+- The overview's Configuration row says "Unsaved changes" while an import
+  waits. "From a terminal" lists the `bb box config` commands with what
+  each does.
+- Server: `config.check` takes `read: true` and answers with `read`, the
+  draft as bb-box reads it: the document without secrets or unknown
+  backend types, and for each secret only "set" or "cleared". It is null
+  when the draft's shape has problems.
+- Engine: two paths, `images/<name>/definition` (a project image's whole
+  entry, so an import can add or change one) and `order/backends`; the
+  save bar and the restored note take their words, so the import says
+  Apply, Applying… and Applied; and the registry's `replace` swaps a
+  part's edits in one step. A new backend's edits move to its own page
+  only from setting it up, so an import that adds backends keeps its
+  newer text.
+
+New: `src/app/settings-configuration.tsx`, `settings-import.ts`,
+`test/settings-import.test.ts`, and
+[`live-check.mjs`](067-settings-page/unit-10/live-check.mjs) and
+[`screens-and-keys.mjs`](067-settings-page/unit-10/screens-and-keys.mjs).
+Changed: `settings-drafts.ts`, `settings-paths.ts`, `settings-saving.tsx`,
+`settings-pages.tsx`, `settings-overview.tsx`,
+`src/plugin/configuration.ts`, `contract.ts`, `rpc.ts`,
+`test/app.test.tsx`, `docs/design/settings.md` and the bb-box-setup skill.
+
+### Tests
+
+`test/settings-import.test.ts`, 6 tests, against the real `Configuration`
+class: `config.check`'s read has no secret value and is null for a wrong
+shape; an export imported unchanged changes nothing; a changed one lists
+each change with before and after, no secret in the list, and applies a
+field, a secret, a host, a new backend with its key, a removed backend
+and its secrets, a file's content, a kind's size, two images and the
+backends' order; the same file again only gives its secrets again; a
+moved revision keeps the change made elsewhere, and a conflict stops it
+until Keep mine; G8; G9 for valid text, text that is not JSON and the
+checked form; and the imports the page cannot apply. `test/app.test.tsx`
+has two through the page: export, a check of text that is not JSON, the
+change list, nothing pasted in session storage, Apply and Import… again;
+and Remove copy… with Cancel and confirmation.
+
+On a Linux box, 8 cores, in a fresh clone of the commit delivered, after
+`npm ci`:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,841 tests: 2,553 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 42 s |
+| vitest | 306 pass |
+| `test/docs.test.ts` (in the node suite) and `scripts/reference.ts --check` | pass; the reference is unchanged |
+| The site: `npm ci`, `npm run build` and `npm run check-links` | pass: 19,100 internal links and assets on 117 pages, none broken |
+
+An earlier run of the node suite, before the rebase onto main, had one
+test fail that waits a fixed time for background work, Namespace's older
+probe, as in unit 2; it does not touch the configuration, and passed in
+the run above.
+
+### Live check on a separate BB
+
+A fresh `npx bb-app` 0.48.0 with no account, its own data folder and
+port, in a Linux box, started with `env -i`, `HOME`, `PATH` and
+`BB_BOX_LIVE_CHECKS=1` only, with bb-box installed by `bb plugin install`
+from a clone of this branch's commit. The script,
+[`live-check.mjs`](067-settings-page/unit-10/live-check.mjs), drives
+headless Chromium at 1440 by 1000. A change made elsewhere is a save
+through BB's HTTP API, as an agent's `bb box config apply` makes; the CLI
+is that BB's `bb box config`. Secrets and file contents are made up, and
+read back from BB's storage to compare them. The copy of BB's earlier
+settings is written into BB's storage first, as a move from an earlier
+bb-box leaves it, since a fresh BB never moves any. Every check passed 3
+runs in a row, 12 of 12, on the code delivered, as in a series before
+the rebase. The first single run found one fault in the page: after an
+import was applied, Import… did not open again, as the applied result kept
+the editor shut. It was fixed, with a test.
+
+| Check | What the page said, and what BB Box stored | Runs |
+| --- | --- | --- |
+| Export, change, import against a moved revision | Download gave `bb-box-revision-N.json`, the same text as `bb box config show --json` printed, compared without the line breaks at its ends, with neither the token nor the file's content in it; the page listed "Hetzner Cloud: the API token" and "Files for every box: the content of ~/.cfg/live-import.json" to give again. In the file, Refresh every 15, boxes per thread 2, a new token and a new content. Check: "What it changes against revision N: 4 changes", with "Refresh every 5 s → 15 s", "Boxes per thread 0 → 2", "The API token Set → A new value (not shown)" and the file's "New content (not shown)"; no pasted secret on the page outside the editor or in browser storage. With the page's reads held, another writer turned background monitoring on, then Apply: "Applied at revision N+2, on top of a change made elsewhere.", one revision past the other writer's; 15, 2, the new token and the new content stored, and background monitoring still on. The import closed. Again with Refresh every 30, then 40 set elsewhere: at once "Changed elsewhere to 40 s while you edited." on the row, the bar "A setting the import changes was changed elsewhere after you checked it. Choose for each, then apply.", Apply disabled; Keep mine and Apply stored 30 | 3 of 3 |
+| G8 import-newer-typing | An import setting Refresh every to 15 checked; Apply with its request held; the text changed to 20; the request let go: "Applied. Your newer text is not applied yet.", 15 stored, one revision more, the editor open with the text saying 20, no change list until it is checked, and Check offered | 3 of 3 |
+| G9 import-secret-storage | Pasted: a file with a made-up token, a second backend's made-up token and private key, and a file's made-up content. Nothing of them in session or local storage before or after a reload without Check or Apply; after it, "The configuration you pasted was not kept, as it may hold secrets; paste it again.", the editor empty. The same for text that is not valid JSON holding a token, a content and a key: the part's draft in session storage held its `import/text` edit without the text | 3 of 3 |
+| The kept copy removed after its confirmation | `bb box config migrated` showed the copy; the page's row "Settings moved from BB"; Remove copy… asked "Remove the copy of BB's earlier settings?"; Cancel kept it; Remove copy: "Removed the copy of BB's earlier settings.", focus on those words, the row gone, `config.get` with no copy, and `bb box config migrated` "There is no copy of BB's settings" | 3 of 3 |
+
+### Keyboard only
+
+On the same BB, by keys alone ([`screens-and-keys.mjs`](067-settings-page/unit-10/screens-and-keys.mjs)), at 1440, dark:
+
+- From the page's heading, Tab went to Copy as JSON, Download, Import…
+  and Remove copy…, each with a ring.
+- Enter on Import… put focus in the text. With a file pasted, one Tab
+  reached Check; Enter listed "What it changes against revision 29: 6
+  changes", and focus stayed on Check again. Two Tabs reached Apply;
+  Enter applied it, and focus went to "Applied.", with a ring.
+- Enter on Remove copy… opened the dialog with focus on Cancel; Escape
+  closed it with focus back on Remove copy…; Enter, Tab and Enter removed
+  the copy, and focus went to "Removed the copy of BB's earlier
+  settings.", with a ring.
+- No animation ran (`document.getAnimations()` was empty).
+- The first pass found focus falling to the page after Apply, as the
+  editor closed, and after Escape from the dialog, which BB's dialog does
+  not give back without its own trigger. Both were fixed, and the pass
+  run again.
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark: the page with the copy kept;
+text that is not JSON; a checked import with its change list; a conflict
+on a row; the import back after a reload; and the Remove copy dialog. 36
+in the thread's storage, and the live checks' own. A selection:
+
+[the page](067-settings-page/unit-10/configuration-page-1440-light.png),
+[a checked import](067-settings-page/unit-10/configuration-checked-1440-dark.png),
+[at 390](067-settings-page/unit-10/configuration-checked-390-light.png),
+[a conflict on a row](067-settings-page/unit-10/configuration-conflict-760-dark.png),
+[back after a reload](067-settings-page/unit-10/configuration-restored-390-dark.png),
+[text that is not JSON](067-settings-page/unit-10/configuration-invalid-390-dark.png),
+[Remove copy](067-settings-page/unit-10/configuration-copy-760-light.png),
+[focus after Apply](067-settings-page/unit-10/keys-02-applied.png),
+and from the live checks:
+[checked](067-settings-page/unit-10/live-import-checked.png),
+[a conflict](067-settings-page/unit-10/live-import-conflict.png),
+[G8](067-settings-page/unit-10/live-g8.png),
+[G9 after a reload](067-settings-page/unit-10/live-g9-broken.png),
+[the copy removed](067-settings-page/unit-10/live-copy-removed.png).
+
+### Deviations from 067
+
+- An import applies the changes it was checked with, not the whole file:
+  on a moved revision a change made elsewhere to another setting stays,
+  as section 4 says for every save. `bb box config apply` still refuses a
+  file whose revision is not the current one, and `--replace` saves it
+  over, as before.
+- A secret given in a file is always a change ("A new value (not shown)"),
+  as secrets are never compared; importing the same file again lists them
+  again. An export's `{"set": false}` reads as clearing; the page clears
+  only a secret that is set.
+- The page cannot import a new file for every box without its content, a
+  file's content cleared, a tailnet secret cleared alone, or a backend
+  type this BB Box lacks. Each is said as a problem; `bb box config apply`
+  takes such a file.
+- The removal of the copy has no operation ID or receipt: it is not a
+  `config.apply`, and removing twice removes once. A lost reply is settled
+  by reading the configuration again. Its state is in the page's memory,
+  so it shows after leaving and coming back, but not after a reload.
+- "Applied." names no revision unless the save was rebased or its reply
+  lost, as 067's words for G8 have it. A conflict on the import's row says
+  "while you edited", as on every page.
+- Nothing fades or moves, under the owner's rule of no page motion.
+
+### Open questions
+
+- Should an import applied on a moved revision instead save the whole
+  file over the change made elsewhere, after saying so? The page keeps
+  the change, as section 4 does; the CLI's `apply --replace` does the
+  other.
+
+### Not done here
+
+- A look in production in the owner's browser, after the lead deploys.
+- `bb box config check` does not print the change list the page shows; it
+  could, from the same `read`.
+- Find (unit 11) does not index the Configuration page's rows.
