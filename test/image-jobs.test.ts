@@ -192,6 +192,28 @@ test("a failed image is tried again once BB's app changes, and an image waits wh
   assert.match((await short.job.checks()).find((one) => one.id === "images.microsandbox/bbbox/linux:1-arm64")!.detail, /waited: no room for its build: The Mac has 37 GiB free where msb keeps its images\. It waits for the next night\.$/);
 });
 
+test("the failures the settings page's Status lists: each standard image whose last rebuild failed, with its kind, on a backend that is on; waiting is not failing, and a rebuild that passes clears it", async () => {
+  const lxc = backend("proxmox-lxc", [build("9101", "linux-desktop-cpu", record(10)), build("9102", "linux", record(10))]);
+  const on = { backends: [lxc.backend] };
+  const { job, storage } = jobs(on.backends, { fail: ["9101"] });
+  await job.refreshAll();
+  await storage.set("images/state/docker/bbbox/linux:1", { at: NOW, ok: false, reason: "a backend since removed", build: null, seconds: 1, output: [], from: "x" });
+  await storage.set("images/state/proxmox-lxc/9103", { at: NOW, ok: false, waiting: true, reason: "no room", build: null, seconds: 0, output: [], from: "x" });
+  assert.deepEqual(await job.failures(), [{ name: "proxmox-lxc/9101", backend: "proxmox-lxc", kind: "linux-desktop-cpu", at: NOW + 60_000, reason: "The new build failed the kind's check: docker FAIL" }]);
+  const passing = new ImageJobs({
+    backends: () => on.backends,
+    setup: "/plugin/setup",
+    bbUrl: () => null,
+    facts: { pins: async () => PINS, bbApp: async () => APP },
+    storage,
+    now: () => NOW,
+    versions: versions as never,
+    refresh: (async (refresh: RefreshOptions) => ({ ok: true, build: refresh.current, checks: [], reason: null, output: [], seconds: 1 })) as never,
+  });
+  await passing.build("proxmox-lxc/9101", { signal: AbortSignal.timeout(5_000) });
+  assert.deepEqual(await passing.failures(), []);
+});
+
 test("a run starts no image after its time limit, and one run at a time", async () => {
   const lxc = backend("proxmox-lxc", [build("9101", "linux", record(10)), build("9102", "linux", record(11))]);
   const { job, refreshed, storage } = jobs([lxc.backend]);

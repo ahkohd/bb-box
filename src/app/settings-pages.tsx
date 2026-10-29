@@ -9,10 +9,10 @@ import type { DriverView } from "../plugin/configuration.ts";
 import { Badge, KindBadges, isArm64Badge, lacksDocker, message, relativeTime } from "./common.tsx";
 import { runsWayland } from "./boxes-filter.ts";
 import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, withKind } from "./config.ts";
-import { RebuildNow } from "./rebuild-now.tsx";
 import { BackendForm, type BackendRowModel } from "./settings-backends.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { DockerHostsSection } from "./settings-docker-hosts.tsx";
+import { ImagesPage } from "./settings-images.tsx";
 import { DraftNumberRow, unplacedProblems } from "./settings-draft-fields.tsx";
 import { BOXES_PART, MONITOR_PART } from "./settings-drafts.ts";
 import { BoxFilesSection } from "./settings-files.tsx";
@@ -274,37 +274,18 @@ function BoxesOptions() {
 function ImagesOptions() {
   const { state, instant, writes } = useSettings();
   const general = { ...state.defaults.general, ...state.document.general };
-  const projectImages = Object.keys(state.document.images ?? {});
   return (
-    <div className="space-y-6">
-      <Card>
+    <ImagesPage
+      nightly={
         <AtOnceSwitch
           label="Rebuild each night"
-          description="At 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates. After a BB update, it refreshes the Linux images within the hour."
+          description="At 03:00 on BB's server, BB Box rebuilds the standard images that are due, and replaces each only when its trial box passes. After a BB update, it refreshes the Linux images within the hour."
           settingKey={switchKey.general("nightlyImages")}
           value={general.nightlyImages}
           onChange={(on) => void instant.run(writes.general(state, "nightlyImages", on, "Rebuild each night"))}
         />
-      </Card>
-      <Group title="Rebuild now">
-        <RebuildNow />
-      </Group>
-      <Group title="Projects' images" description="Set from a project's files with bb box image set; bb box image lists them.">
-        {projectImages.length ? (
-          <Card>
-            <Rows>
-              {projectImages.map((name) => (
-                <p key={name} className="px-4 py-2.5 font-mono text-xs text-foreground">
-                  {name}
-                </p>
-              ))}
-            </Rows>
-          </Card>
-        ) : (
-          <p className="px-1 text-xs text-subtle-foreground">No project has an image of its own.</p>
-        )}
-      </Group>
-    </div>
+      }
+    />
   );
 }
 
@@ -465,7 +446,7 @@ const OPTION_TITLES: Readonly<Record<string, string>> = { boxes: "Boxes", images
 
 const OPTION_DESCRIPTIONS: Readonly<Record<string, string>> = {
   boxes: "What a thread gets, how many, and what every box has.",
-  images: "The images new boxes start from.",
+  images: "What new boxes start from: BB Box's standard images, and your projects' own.",
   devices: "iOS and Android devices in boxes.",
   network: "How machines BB Box makes reach BB.",
   monitor: "Machine status in BB's sidebar.",

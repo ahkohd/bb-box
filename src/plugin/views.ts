@@ -712,6 +712,7 @@ export interface ImageOptionView {
   readonly mine: boolean;
   /** Where it is built ahead, so a box there starts from the build; elsewhere its script runs as the box starts. */
   readonly builds: readonly { readonly kind: string; readonly backend: string; readonly build: string | null; /** ISO 8601. */ readonly built: string }[];
+  readonly failed?: readonly { readonly kind: string; readonly backend: string; readonly at: number; readonly reason: string }[];
   /** Its spares (#440), where it has any: a box claims a ready one at once. */
   readonly spares: readonly { readonly kind: string; readonly backend: string; readonly ready: number; readonly making: number }[];
 }

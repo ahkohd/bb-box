@@ -1,5 +1,6 @@
 import { pathProblem, type BoxFileSetting } from "../core/box-files.ts";
-import type { BackendConfig, ConfigDocument, HostConfig, Problem } from "../core/document.ts";
+import type { BackendConfig, ConfigDocument, HostConfig, ImageBake, Problem } from "../core/document.ts";
+import { withImage } from "../core/project-images.ts";
 import type { TailnetSetting } from "../core/tailnet-settings.ts";
 import type { FieldValue } from "../backends/types.ts";
 import type { ConfigState, FieldView } from "../plugin/configuration.ts";
@@ -141,6 +142,49 @@ export function backendAt(path: Path): BackendAt | null {
   if (tail.length === 1 && tail[0] === "enabled") return { at: "host-enabled", id, host };
   if (tail.length === 2 && tail[0] === "fields" && tail[1]) return { at: "host-field", id, host, key: tail[1] };
   return null;
+}
+
+export function imagePath(name: string): Path {
+  return `images/${name}`;
+}
+
+export function imageBakePath(name: string): Path {
+  return `images/${name}/bake`;
+}
+
+type ImageAt = { readonly at: "image"; readonly name: string } | { readonly at: "bake"; readonly name: string };
+
+function imageAt(path: Path): ImageAt | null {
+  const [section, name, ...rest] = path.split("/");
+  if (section !== "images" || !name) return null;
+  if (!rest.length) return { at: "image", name };
+  if (rest.length === 1 && rest[0] === "bake") return { at: "bake", name };
+  return null;
+}
+
+function storedAtImage(document: ConfigDocument, at: ImageAt): Stored {
+  const image = document.images?.[at.name];
+  if (!image) return { kind: "gone" };
+  return at.at === "image" ? { kind: "value", value: true } : { kind: "value", value: image.bake ?? "auto" };
+}
+
+function withImageEdits(state: ConfigState, input: ConfigDocument, edits: readonly PathEdit[]): Built {
+  let document = input;
+  let needed = false;
+  for (const edit of edits) {
+    const at = imageAt(edit.path);
+    const image = at ? document.images?.[at.name] : undefined;
+    if (!at || !image) continue;
+    if (at.at === "image" && edit.value.kind === "removed") {
+      document = withImage(document, at.name, null);
+      needed = true;
+    } else if (at.at === "bake" && edit.value.kind === "plain" && typeof edit.value.value === "string") {
+      const { bake: _bake, ...rest } = image;
+      document = withImage(document, at.name, edit.value.value === "auto" ? rest : { ...rest, bake: edit.value.value as ImageBake });
+      if (isChange(state, edit)) needed = true;
+    }
+  }
+  return { document, sentAs: {}, needed };
 }
 
 export function isNewHost(host: string): boolean {
@@ -296,6 +340,8 @@ export function storedAt(state: ConfigState, path: Path, value?: EditValue): Sto
   }
   const at = backendAt(path);
   if (at) return storedAtBackend(state, at, path);
+  const image = imageAt(path);
+  if (image) return storedAtImage(state.document, image);
   const [section, id, key] = path.split("/");
   if (section === "kinds" && id && key === "enabled") return { kind: "value", value: effectiveKind(state, id).enabled };
   if (isFilePath(path)) {
@@ -533,7 +579,8 @@ export function candidateOf(state: ConfigState, edits: readonly PathEdit[]): Can
   const backends = withBackendEdits(state, document, edits);
   const files = withFiles(backends.document, edits);
   const tailnet = withTailnet(state, files.document, edits);
-  return { document: tailnet.document, conflicts, needed: needed || backends.needed || files.needed || tailnet.needed, sentAs: { ...backends.sentAs, ...files.sentAs } };
+  const images = withImageEdits(state, tailnet.document, edits);
+  return { document: images.document, conflicts, needed: needed || backends.needed || files.needed || tailnet.needed || images.needed, sentAs: { ...backends.sentAs, ...files.sentAs } };
 }
 
 function hostProblemPath(id: string, index: string, rest: string | undefined, sentAs: Readonly<Record<string, Path>>): Path {

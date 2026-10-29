@@ -28,6 +28,10 @@ come back to the browser: the page shows whether each is set.
 | `config.check(draft, { test? })` | problems keyed by field path, without saving; with `test`, a backend's doctor against the draft, within 30 s. A check of the stored backend is kept as its last check |
 | `config.apply(draft, revision, operation?, submission?)` | one checked write; refused when the revision moved on or a field is wrong. With an operation ID, applied at most once: its receipt is listed by `config.get` |
 | `docker.host.set(hostId, enabled, operation?)` | Docker on one of your BB machines on or off, with its images, and its receipt with an operation ID |
+| `images.list` | the standard images bb-box rebuilds, each with its build and age, why it is due, and what its last rebuild did |
+| `images.progress` | the rebuild going on, or the last one, image by image; and every failed rebuild: each standard image whose last rebuild failed, on a backend that is on, and each project image's failed build |
+| `images.refresh` | starts a rebuild of what is due, as the night does; one going on is not doubled |
+| `images` | the projects' images, with their projects' names, their builds and their failed builds |
 
 The page refetches on bb-box's change signal.
 
@@ -129,7 +133,9 @@ attention", and never hides them either.
 
 The callout lists backends that fail, backends saved but
 not finished, warm pools short for want of room, the default kind turned
-off, and kinds that backends that are on cannot make now.
+off, kinds that backends that are on cannot make now, standard images whose
+last rebuild failed, and projects' images whose build failed. The Images row
+says how many failed.
 
 ## Saving
 
@@ -217,7 +223,7 @@ first and says what follows.
 
 Each other part's page holds today's form for it, as it was before 067,
 until a later unit replaces it: setting up a backend, with Save, Save and
-turn on, Check and the last report; a kind's editor; Rebuild now. These save the whole document with their Save, and a stale
+turn on, Check and the last report; a kind's editor. These save the whole document with their Save, and a stale
 revision reloads and says so.
 
 ## A backend's page
@@ -275,13 +281,40 @@ revision reloads and says so.
 | A backend | See [A backend's page](#a-backends-page). For Docker on a BB machine, the Docker on BB machines list follows the cards |
 | A kind | Header with its full name, badges, description, Make default, and the "offered to threads" switch; the default kind's switch is disabled, with why. Then its editor: sizes, the default size, largest size, warm boxes per backend and spares |
 | Boxes | Default kind (a menu that acts at once); boxes per thread; boxes join BB as machines and Linux desktops as video (switches); Files for every box |
-| Images | Rebuild each night (a switch); Rebuild now; the names of projects' images, set with `bb box image set` |
+| Images | See [The Images page](#the-images-page) |
 | Devices | Streaming: iOS video encoding, a menu, and "Share each Mac's encoder fairly", a switch, both at once. Set on other pages: each backend's shared iOS hosts, and each device kind's spares with "None, as by default" and why they are off by default, each opening its page. For testing: the test device, a switch |
 | Network | The tailnet as one form on the engine: whether machines join (two radio choices), tags (empty for `tag:bb-box`), and the OAuth client ID and secret, Set or Replace, with their versions. Saved together with one Save, or Enter; a refusal keeps every change, with the reason under the field it names. Choosing No hides the rest, drops their edits and says "Saving No deletes the saved OAuth client ID and secret" |
 | Monitor | Machine status (a switch, also on its overview row), Refresh every … s, background monitoring and pressure notifications. After machine status changes: "The sidebar's machine status changes when BB next loads", with Reload BB now |
 | Configuration | The revision and what happens when two people save; the `bb box config` commands |
 | Add a backend | Every driver, each with what it is; one already added says "Added: open it". Then Docker on BB machines, every machine with Docker's state and its switch |
 | Set up a backend | The driver's guide and setup form, with Save and turn on |
+
+## The Images page
+
+- **Standard images**: one line saying how many are due and what the last
+  rebuild did ("The last rebuild ended 2 hours ago: 1 rebuilt, 1 waited for
+  room, 1 failed."). Then Rebuild each night, a switch that acts at once,
+  and a row for each standard image: its kind on its backend, and one state
+  line. While a rebuild runs, or after one, the line is what the run did to
+  it: Next, Rebuilding with its step, Rebuilt, Waits with why, Failed with
+  why, Skipped, Not started. Otherwise it is its last rebuild's failure or
+  wait, why it is due, or Up to date, with its build and age and its name
+  for `bb box images build`.
+- **Rebuild what is due**: "Rebuild 2 images", which starts the night's
+  rebuild. While it runs, a bar shows how far it is, image by image and step
+  by step, and it goes on if the person leaves. A run going on is not
+  doubled: the button's refusal says why.
+- **Projects' images**: a row each, with its name, its projects' names, its
+  kinds and its builds on one state line, "When it is built ahead", a menu
+  that acts at once (Built when used often, Always built ahead, Run at each
+  box's start), and its chevron last. A row opens to where its files came
+  from and when, each build and each failed build, its script and its
+  check, and Remove…, which asks first and says what follows. A refusal
+  says "The image rust-tools was not removed: …" under its row. Agents set
+  them with `bb box image set`; the page shows and removes them.
+- Removing a project's image, from the page or with `bb box config apply`,
+  deletes its builds, as `bb box image remove` does: bb-box settles every
+  project image that changed with each change of the configuration.
 
 ## Keyboard and screen readers
 
@@ -312,7 +345,8 @@ on the Boxes page, under Machines".
 | 2: the editing engine on Boxes and Monitor, and every switch on it | Built |
 | 3: each backend's page on the engine, with health, In use, cards, Macs and the menu | Built |
 | 4: the drivers' help text | Built |
-| 5 to 8: Docker on BB machines as backends, kind pages, first run, Images | To come, as 067 lists them |
+| 5 to 7: Docker on BB machines as backends, kind pages, first run | To come, as 067 lists them |
+| 8: Images, with every rebuild's run state, projects' images, and failed rebuilds in Status | Built |
 | 9: Devices and Network on the engine | Built |
 | 10 and 11: Configuration, Find | To come, as 067 lists them |
 
@@ -322,10 +356,11 @@ The code: `src/app/settings.tsx` (the view: hash, focus and scroll),
 (state words, Status and the callout), `settings-drafts.ts`,
 `settings-paths.ts` and `settings-saving.tsx` (the engine),
 `settings-checks.ts` (checks bound to a form), `settings-backend-page.tsx`
-and `settings-backend-fields.tsx` (a backend's page),
+and `settings-backend-fields.tsx` (a backend's page), `settings-images.tsx`
+and `rebuild-now.tsx` (the Images page),
 `settings-tailnet.tsx` (Network), `settings-context.tsx`,
 `settings-overview.tsx`, `settings-pages.tsx` and `settings-parts.tsx`.
 Today's forms stay in
 `settings-backends.tsx`, `settings-kinds.tsx`, `settings-fields.tsx`,
-`settings-files.tsx`, `settings-docker-hosts.tsx`,
-`rebuild-now.tsx` and `first-run.tsx`, with the helpers in `config.ts`.
+`settings-files.tsx`, `settings-docker-hosts.tsx`
+and `first-run.tsx`, with the helpers in `config.ts`.

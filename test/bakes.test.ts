@@ -218,6 +218,10 @@ test("a bake that fails removes what it made, says why in the doctor, and waits 
   assert.deepEqual([check!.name, check!.status], ["Build of rust for linux on proxmox-lxc", "warn"]);
   assert.equal(check!.detail, "Its last build, on 2026-10-03, failed: It exited with 100: E: Unable to locate package ripgrep. Its boxes run its script as they start meanwhile.");
 
+  assert.deepEqual(await on.failures(), [{ name: "rust", kind: "linux", backend: "proxmox-lxc", at: NOW, reason: "It exited with 100: E: Unable to locate package ripgrep" }]);
+  assert.deepEqual(await on.failures("rust"), await on.failures());
+  assert.deepEqual(await on.failures("other"), []);
+
   // Boxes go on running the script; the bake waits a day.
   await storage.set("images/usage/rust/proxmox-lxc/linux", [NOW]);
   on.ready(box({ name: "rust", state: "done" }));

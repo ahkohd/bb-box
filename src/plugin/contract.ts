@@ -63,10 +63,22 @@ export interface ImagesStatus {
     readonly due: string | null;
     /** What its last rebuild did, as a phrase such as "Last rebuilt 2026-10-10", or null. */
     readonly last: string | null;
+    readonly backend: string;
+    readonly outcome: { readonly state: "refreshed" | "waiting" | "failed"; readonly at: number; readonly reason: string | null } | null;
   }[];
   readonly progress: RunProgress | null;
   /** When the run going on started, or null. */
   readonly running: number | null;
+  readonly failures: readonly ImageFailure[];
+}
+
+export interface ImageFailure {
+  readonly of: "standard" | "project";
+  readonly name: string;
+  readonly kind: string | null;
+  readonly backend: string;
+  readonly at: number;
+  readonly reason: string;
 }
 
 /** One box's desktop or terminal, for its tab. */
@@ -257,7 +269,7 @@ export const contract = defineRpcContract({
   /** The standard images bb-box rebuilds, most needed first, with why each is due (Rebuild now). Lists each backend's images. */
   "images.list": { input: z.null(), output: z.custom<{ readonly images: ImagesStatus["images"] }>() },
   /** Where a refresh run is, image by image, at once: the run going on, or the last one. */
-  "images.progress": { input: z.null(), output: z.custom<Pick<ImagesStatus, "progress" | "running">>() },
+  "images.progress": { input: z.null(), output: z.custom<Pick<ImagesStatus, "progress" | "running" | "failures">>() },
   /** Starts the night's refresh now; refused, with why, while a run goes on. */
   "images.refresh": { input: z.null(), output: z.custom<{ readonly started: boolean; readonly message: string | null }>() },
   "config.get": { input: z.null(), output: z.custom<ConfigState>() },

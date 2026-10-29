@@ -513,7 +513,7 @@ const BACKENDS: BackendView[] = [
 ];
 
 /** RPC handlers over one thread's boxes, recording each change. */
-function server(initial: BoxView[], options: { rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string } = {}) {
+function server(initial: BoxView[], options: { rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -543,7 +543,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
     profile: async () => ({ lines: [] }),
     "setup.offer": () => ({ machines: setups, access: options.access ?? null }),
     "images.list": () => ({ images: options.rebuildable ?? [] }),
-    "images.progress": () => ({ progress: options.progress ?? null, running: options.progress && options.progress.ended === null ? options.progress.started : null }),
+    "images.progress": () => ({ progress: options.progress ?? null, running: options.progress && options.progress.ended === null ? options.progress.started : null, failures: options.failures ?? [] }),
     "images.refresh": () => {
       changes.push("images.refresh");
       return options.refusal ? { started: false, message: options.refusal } : { started: true, message: null };
@@ -2322,40 +2322,171 @@ test("the Boxes and Images options: a field waits for Save, which Enter gives, a
   expect(JSON.parse(changes[2]!.slice(changes[2]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3, enrol: false, nightlyImages: true });
 });
 
-test("Rebuild now lists the due images and why, starts the night's refresh, and says why when one is going already", async () => {
+test("the Images page lists every standard image with its build, why it is due and what the last rebuild did to it, and rebuilds what is due", async () => {
+  const hours = (count: number) => Date.now() - count * 3_600_000;
   const images: ImagesStatus["images"] = [
-    { name: "docker/linux", kind: "linux", built: "build.2026-10-01, 10 days old", due: "it is 10 days old, past its 7-day interval", last: null },
-    { name: "docker/desktop", kind: "linux-desktop-cpu", built: "build.2026-10-10, 1 day old", due: null, last: "Last rebuilt 2026-10-10" },
+    { name: "fake/linux", kind: "linux", backend: "fake", built: "build.2026-10-01, 10 days old", due: "it is 10 days old, past its 7-day interval", last: null, outcome: null },
+    { name: "fake/desktop", kind: "linux-desktop", backend: "fake", built: "build.2026-10-10, 1 day old", due: null, last: "Last rebuilt 2026-10-10", outcome: { state: "refreshed", at: hours(26), reason: null } },
+    { name: "fake/old", kind: "linux", backend: "fake", built: "build.2026-09-01, 40 days old", due: "it fails the doctor", last: null, outcome: { state: "failed", at: hours(30), reason: "the trial box did not answer." } },
   ];
   const { handlers, changes } = server([], { rebuildable: images, refusal: "A rebuild has gone on since 02:00 UTC, one image at a time. Start another once it ends." });
   const slot = settings(handlers, "#option/images");
-  expect(await slot.findByText("1 of 2 images are due. A rebuild takes them one at a time, as the night does.")).toBeTruthy();
-  expect(slot.getByText("Due, as it is 10 days old, past its 7-day interval")).toBeTruthy();
-  expect(slot.queryByText("docker/desktop")).toBeNull();
-  fireEvent.click(slot.getByRole("button", { name: "Rebuild 1 image" }));
+  expect(await slot.findByText("2 of 3 images due.")).toBeTruthy();
+  const row = (name: string) => within(document.querySelector<HTMLElement>(`[data-image-row="${name}"]`)!);
+  expect(row("fake/linux").getByText("Due: it is 10 days old, past its 7-day interval")).toBeTruthy();
+  expect(row("fake/linux").getByText("on Fake host")).toBeTruthy();
+  expect(row("fake/linux").getByText("build.2026-10-01, 10 days old")).toBeTruthy();
+  expect(row("fake/desktop").getByText("Up to date, rebuilt yesterday")).toBeTruthy();
+  expect(row("fake/desktop").getByText("Linux desktop")).toBeTruthy();
+  expect(row("fake/old").getByText("Its last rebuild failed yesterday: the trial box did not answer.")).toBeTruthy();
+  expect(row("fake/old").getByText("due: it fails the doctor")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Rebuild 2 images" }));
   await waitFor(() => expect(changes).toContain("images.refresh"));
   expect(await slot.findByText("A rebuild has gone on since 02:00 UTC, one image at a time. Start another once it ends.")).toBeTruthy();
 });
 
-test("while a rebuild runs, Rebuild now shows it image by image, with the step of the one being rebuilt", async () => {
+test("after a run the Images page says what it did to each image: rebuilt, waited for room, failed with why, skipped or not started", async () => {
+  const ended = Date.now() - 2 * 3_600_000;
+  const listed = (name: string, kind: string): ImagesStatus["images"][number] => ({ name, kind, backend: "fake", built: "build.2026-10-11, built today", due: null, last: null, outcome: null });
+  const progress: ImagesStatus["progress"] = {
+    started: ended - 600_000,
+    ended,
+    only: null,
+    images: [
+      { name: "fake/linux", kind: "linux", state: "refreshed", detail: "now build.2026-10-11, in 300 s" },
+      { name: "fake/desktop", kind: "linux-desktop", state: "waiting", detail: "no room for its build and trial boxes: the host is full" },
+      { name: "fake/old", kind: "linux", state: "failed", detail: "the trial box did not answer." },
+      { name: "fake/arm", kind: "linux", state: "skipped", detail: "not due" },
+      { name: "fake/last", kind: "linux", state: "not started", detail: "the run's 4 hours were up" },
+    ],
+  };
+  const slot = settings(server([], { rebuildable: ["fake/linux", "fake/desktop", "fake/old", "fake/arm"].map((name, index) => listed(name, index === 1 ? "linux-desktop" : "linux")), progress }).handlers, "#option/images");
+  expect(await slot.findByText("0 of 5 images due. The last rebuild ended 2 hours ago: 1 rebuilt, 1 waited for room, 1 failed, 1 skipped, 1 not started.")).toBeTruthy();
+  expect(slot.getByText("Rebuilt, now build.2026-10-11, in 300 s")).toBeTruthy();
+  expect(slot.getByText("Waits: no room for its build and trial boxes: the host is full")).toBeTruthy();
+  expect(slot.getByText("Failed: the trial box did not answer.")).toBeTruthy();
+  expect(slot.getByText("Skipped: not due")).toBeTruthy();
+  expect(slot.getByText("Not started: the run's 4 hours were up")).toBeTruthy();
+  expect((slot.getByRole("button", { name: "Rebuild what is due" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(slot.getByText("No image is due, so there is nothing to rebuild.")).toBeTruthy();
+});
+
+test("while a rebuild runs, the Images page shows how far it is, and each image's own state on its row", async () => {
   const progress: ImagesStatus["progress"] = {
     started: Date.now() - 125_000,
     ended: null,
     only: null,
     images: [
-      { name: "docker/linux", kind: "linux", state: "refreshed", detail: "now build.2026-10-11, in 300 s" },
-      { name: "docker/desktop", kind: "linux-desktop-cpu", state: "refreshing", detail: "it is 40 days old", since: Date.now() - 20_000, line: "#9 [desktop 3/9] RUN", step: { at: 3, of: 9 } },
-      { name: "pve/9100", kind: "linux", state: "next", detail: "it fails the doctor" },
+      { name: "fake/linux", kind: "linux", state: "refreshed", detail: "now build.2026-10-11, in 300 s" },
+      { name: "fake/desktop", kind: "linux-desktop", state: "refreshing", detail: "it is 40 days old", since: Date.now() - 20_000, line: "#9 [desktop 3/9] RUN", step: { at: 3, of: 9 } },
+      { name: "fake/9100", kind: "linux", state: "next", detail: "it fails the doctor" },
     ],
   };
   const slot = settings(server([], { progress }).handlers, "#option/images");
   expect(await slot.findByText("Rebuilding images")).toBeTruthy();
-  expect(slot.getByText("2 of 3 · docker/desktop")).toBeTruthy();
+  expect(slot.getByText("2 of 3 · fake/desktop")).toBeTruthy();
   expect(slot.getByText("Started 2 min ago. One image at a time; it goes on if you leave this page.")).toBeTruthy();
   expect(slot.getByText("Rebuilt, now build.2026-10-11, in 300 s")).toBeTruthy();
   expect(slot.getByText("Rebuilding · step 3 of 9")).toBeTruthy();
   expect(slot.getByText("Next")).toBeTruthy();
-  expect(slot.getByRole("progressbar", { name: "Rebuilding images" })).toBeTruthy();
+  expect(slot.getByRole("progressbar", { name: "Rebuilding images" }).getAttribute("aria-valuenow")).toBe("41");
+  expect(slot.queryByRole("button", { name: /^Rebuild \d/ })).toBeNull();
+});
+
+const PROJECT_IMAGE = { kinds: ["linux", "linux-desktop"], script: "apt-get install -y ripgrep\n", check: "rg --version\n", projects: ["proj_1"], source: { script: ".bb/box-setup.sh", check: ".bb/box-check.sh" }, updated: new Date(Date.now() - 3 * 86_400_000).toISOString() };
+
+function withProjectImages(): void {
+  applied = {
+    schema: 1,
+    revision: 3,
+    backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: { set: true, version: 1 }, key: { set: true } } }],
+    kinds: {},
+    general: {},
+    images: { "rust-tools": PROJECT_IMAGE, "go-tools": { kinds: ["linux"], script: "apt-get install -y golang\n", projects: ["proj_2"], bake: "never" } },
+  };
+}
+
+const PROJECT_VIEWS: ImageOptionView[] = [
+  { name: "rust-tools", kinds: ["linux", "linux-desktop"], projects: [{ id: "proj_1", name: "Example" }], mine: false, builds: [{ kind: "linux", backend: "fake", build: "b1", built: new Date(Date.now() - 86_400_000).toISOString() }], failed: [{ kind: "linux-desktop", backend: "fake", at: Date.now() - 3_600_000, reason: "its check failed: exit code 127: rg: not found" }], spares: [] },
+  { name: "go-tools", kinds: ["linux"], projects: [{ id: "proj_2", name: "Another project" }], mine: false, builds: [], spares: [] },
+];
+
+test("projects' images: each with its projects, kinds and builds, its script and check one step in, and when it is built ahead changed at once", async () => {
+  withProjectImages();
+  const { handlers, changes, operations } = server([], { images: PROJECT_VIEWS });
+  const slot = settings(handlers, "#option/images");
+  const rust = await slot.findByRole("button", { name: "rust-tools" });
+  expect(document.getElementById(rust.getAttribute("aria-describedby")!.split(" ")[0]!)!.textContent).toBe("For Example");
+  expect(await slot.findByText("Its build for Linux desktop on Fake host failed")).toBeTruthy();
+  expect(slot.getByText("Its script runs as each box starts")).toBeTruthy();
+  expect(slot.getByText("Linux and Linux desktop")).toBeTruthy();
+  expect(rust.getAttribute("aria-expanded")).toBe("false");
+  fireEvent.click(rust);
+  expect(rust.getAttribute("aria-expanded")).toBe("true");
+  expect(slot.getByText("From .bb/box-setup.sh and .bb/box-check.sh in the project's repository, set 3 days ago.")).toBeTruthy();
+  expect(slot.getByText("Built for Linux on Fake host")).toBeTruthy();
+  expect(slot.getByText("Its build for Linux desktop on Fake host failed 1 hour ago: its check failed: exit code 127: rg: not found")).toBeTruthy();
+  expect(slot.getByLabelText("Script of rust-tools, run as root").textContent).toBe("apt-get install -y ripgrep");
+  expect(slot.getByLabelText("Check of rust-tools, run as the box user").textContent).toBe("rg --version");
+  expect(screen.getByRole("combobox", { name: "When go-tools is built ahead" }).textContent).toBe("Run at each box's start");
+  await choose("When rust-tools is built ahead", "Always built ahead");
+  await waitFor(() => expect(changes).toHaveLength(1));
+  const sent = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
+  expect(sent.images["rust-tools"]).toEqual({ ...PROJECT_IMAGE, bake: "always" });
+  expect(sent.images["go-tools"].bake).toBe("never");
+  expect(operations).toHaveLength(1);
+  expect(await slot.findByText("Saved")).toBeTruthy();
+  await choose("When go-tools is built ahead", "Built when used often");
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).images["go-tools"]).toEqual({ kinds: ["linux"], script: "apt-get install -y golang\n", projects: ["proj_2"] });
+});
+
+test("removing a project's image asks first and says what follows; a refusal says why on the page, and a confirmed removal sends the configuration without it", async () => {
+  withProjectImages();
+  const refusing = server([], { images: PROJECT_VIEWS, applyWith: { ok: false, reason: "problems", problems: [{ path: "images", message: "The configuration is locked for a test." }] } });
+  const slot = settings(refusing.handlers, "#option/images");
+  fireEvent.click(await slot.findByRole("button", { name: "rust-tools" }));
+  fireEvent.click(slot.getByRole("button", { name: "Remove rust-tools…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Remove the image rust-tools?" });
+  expect(dialog.textContent).toContain("New Linux and Linux desktop boxes in Example start from the standard images again, without its script. Its builds are deleted.");
+  expect(dialog.textContent).toContain("Boxes already made keep what they have.");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(refusing.changes).toHaveLength(0);
+  fireEvent.click(slot.getByRole("button", { name: "Remove rust-tools…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove image" }));
+  expect(await slot.findByText("The image rust-tools was not removed: The configuration is locked for a test.")).toBeTruthy();
+  expect(slot.getByRole("button", { name: "rust-tools" })).toBeTruthy();
+  cleanup();
+  withProjectImages();
+  const { handlers, changes } = server([], { images: PROJECT_VIEWS });
+  const page = settings(handlers, "#option/images");
+  fireEvent.click(await page.findByRole("button", { name: "rust-tools" }));
+  fireEvent.click(page.getByRole("button", { name: "Remove rust-tools…" }));
+  fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove image" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(Object.keys(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).images)).toEqual(["go-tools"]);
+  expect(await page.findByText("Removed the image rust-tools.")).toBeTruthy();
+  await waitFor(() => expect(page.queryByRole("button", { name: "rust-tools" })).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(page.getByRole("button", { name: "go-tools" })));
+});
+
+test("a failed rebuild and a project image's failed build are in the overview's Status, each with its fix and a way to the Images page", async () => {
+  const failures: ImagesStatus["failures"] = [
+    { of: "standard", name: "fake/9100", kind: "linux", backend: "fake", at: Date.now() - 3_600_000, reason: "the trial box did not answer." },
+    { of: "project", name: "rust-tools", kind: "linux-desktop", backend: "fake", at: Date.now() - 7_200_000, reason: "its check failed: exit code 127." },
+  ];
+  const slot = settings(server([], { failures }).handlers);
+  const things = within(await slot.findByRole("region", { name: "Things that need you" }));
+  expect(await things.findByText("The Linux image on Fake host did not rebuild")).toBeTruthy();
+  expect(things.getByText("Failed 1 hour ago: the trial box did not answer. New boxes start from its last build meanwhile.")).toBeTruthy();
+  expect(things.getByText("Fix: Fix the cause, then run bb box images build fake/9100.")).toBeTruthy();
+  expect(things.getByText("The image rust-tools did not build for Linux desktop on Fake host")).toBeTruthy();
+  expect(things.getByText("Fix: Fix its script, then set the image again with bb box image set rust-tools.")).toBeTruthy();
+  expect(things.getByText("5 things need you")).toBeTruthy();
+  expect(document.getElementById("settings-option-images")!.textContent).toContain("2 failed");
+  fireEvent.click(things.getByRole("button", { name: "Open The Linux image on Fake host did not rebuild" }));
+  expect(window.location.hash).toBe("#option/images");
 });
 
 test("files for every box show each path and whether it is set, never a content; Save files sends a kept file's path alone, and Remove asks first (#455)", async () => {
