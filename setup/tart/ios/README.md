@@ -167,7 +167,7 @@ For a shared host it checks:
 | carried slots | `bbd-i1` or `bbd-i2` is missing, not ready, its device not seeded, or booted |
 | slot uids | any file on the Data volume is owned by a UID from 80000 to 89999, or from 79990 to 79999 but the carried users' own |
 | slot clipboard | `bbd-i1`'s device, booted for the check, cannot have its clipboard set and read back intact through a launchd job in `bbd-i1`'s own session, with macOS's pasteboard server loaded there, as the device server sets it (F-17). The device is shut down again after |
-| slot keyboard | `bbd-i1`'s device, booted for the check, has a keyboard default that is not off, or slide to type's first-use tip not marked seen. A slot's first boot, or its warm-up, writes them as the image's devices have them (F-23). The device is shut down again after |
+| slot keyboard | `bbd-i1`'s device, booted for the check, has a keyboard default that is not off, or slide to type's first-use tip not marked seen. A slot's first boot, its claim or its warm-up writes them as the image's devices have them (F-23). The device is shut down again after |
 | disabled.plist kept | the image kept no runtime's `disabled.plist` |
 
 It builds a small app with a UI test, [`probe`](probe), for the last. Give
@@ -249,7 +249,8 @@ slots, so it does not close.
   `disabled.plist` before its first boot. Its first boot writes the image
   devices' keyboard defaults, and marks slide to type's first-use tip seen,
   so keys typed into a slot's first field are not lost to the tip. A
-  carried slot made before that gets them at its next warm-up.
+  carried slot made before that gets them as it is claimed, written into
+  its shut-down device's own preference files, or at its next warm-up.
 - **Ports.** Each slot has 100 ports from `BB_PORT_BASE`, 20000 plus 100
   for each place, in its `.zshenv`, `~/.bb-box/ports` and its daemons. The
   held ports' daemon, as `nobody`, answers 3000, 4200, 5000, 5173, 8000,

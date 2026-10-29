@@ -7,7 +7,7 @@ export PATH LC_ALL
 
 ROOT=
 
-VERSION=6
+VERSION=7
 HOST=$ROOT/var/db/bb-box/host
 SHARE=$ROOT/usr/local/share/bb-box
 IOS_SHARE=$SHARE/ios
@@ -383,6 +383,16 @@ write_keyboard_defaults() {
   marker=$(slot_dir "$id")/keyboard-defaults
   [ ! -e "$marker" ] || return 0
   user=$(slot_user "$id") udid=$(device_udid "$id")
+  if device_booted "$id" "$udid"; then
+    keyboard_defaults_through_device "$user" "$udid" || return 1
+  else
+    keyboard_defaults_in_files "$id" "$user" "$udid" || return 1
+  fi
+  : >"$marker"
+}
+
+keyboard_defaults_through_device() {
+  user=$1 udid=$2
   for setting in $KEYBOARD_DEFAULTS; do
     default_domain=${setting%%:*} default_pair=${setting#*:}
     default_key=${default_pair%%:*} default_value=${default_pair#*:}
@@ -393,7 +403,21 @@ write_keyboard_defaults() {
       sleep 2
     done
   done
-  : >"$marker"
+}
+
+keyboard_defaults_in_files() {
+  id=$1 user=$2 udid=$3
+  preferences=$(home_of "$id")/Library/Developer/CoreSimulator/Devices/$udid/data/Library/Preferences
+  [ -d "$preferences" ] && [ ! -L "$preferences" ] || { echo "$user's device $udid has no preferences folder yet." >&2; return 1; }
+  for setting in $KEYBOARD_DEFAULTS; do
+    default_domain=${setting%%:*} default_pair=${setting#*:}
+    default_key=${default_pair%%:*} default_value=${default_pair#*:}
+    file=$preferences/$default_domain.plist
+    [ -f "$file" ] || as_user "$user" plutil -create xml1 "$file" >/dev/null 2>&1 ||
+      { echo "plutil could not make $default_domain's preferences on $user's device $udid." >&2; return 1; }
+    as_user "$user" plutil -replace "$default_key" -bool "$default_value" "$file" >/dev/null 2>&1 ||
+      { echo "plutil could not write the keyboard default $default_key on $user's device $udid." >&2; return 1; }
+  done
 }
 
 first_boot() {
@@ -1039,6 +1063,7 @@ lend() {
     return 0
   fi
   copy_server "$id" "$from" || return 1
+  write_keyboard_defaults "$id" || :
   [ -e "$(slot_dir "$id")/loaded" ] || load_slot_daemons "$id"
 }
 

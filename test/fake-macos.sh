@@ -417,7 +417,15 @@ case $tool in
     ;;
   plutil)
     # plutil -extract <key> raw <plist>: a <key>'s <string> in an XML plist.
+    # plutil -create xml1 <plist> makes an empty one, and plutil -replace
+    # <key> -bool <YES|NO> <plist> sets a <key>, one line each.
     if [ "$1" = -convert ]; then exec cat "$5"; fi
+    if [ "$1" = -create ]; then printf '<plist><dict>\n</dict></plist>\n' >"$3"; exit; fi
+    if [ "$1" = -replace ]; then
+      [ -f "$5" ] || exit 1
+      grep -v "<key>$2</key>" "$5" | sed "s:^</dict></plist>$:<key>$2</key><bool>$4</bool>\n&:" >"$5.new" && mv -f "$5.new" "$5"
+      exit
+    fi
     sed -n "s:.*<key>$2</key><string>\([^<]*\)</string>.*:\1:p" "$4" | head -n 1
     ;;
   codesign)

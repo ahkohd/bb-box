@@ -42,6 +42,7 @@ boot_device() {
   [ -f "$sims/$1" ] || { echo "Invalid device: $1" >&2; exit 164; }
   [ "$(device_value "$1" state)" = Shutdown ] || { echo "Unable to boot device in current state: Booted" >&2; exit 149; }
   set_device_value "$1" state Booted
+  mkdir -p "$R/Users/$as/Library/Developer/CoreSimulator/Devices/$1/data/Library/Preferences"
   pid=$(next_number pids 20000)
   echo "$pid $(uid_of "$as") launchd_sim 1" >>"$F/processes"
   mkdir -p "$F/commands"
