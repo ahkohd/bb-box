@@ -1,0 +1,1801 @@
+{
+ "drivers": [
+  {
+   "type": "proxmox-lxc",
+   "label": "Proxmox LXC",
+   "description": "Linux boxes, with or without a desktop, as containers on a Proxmox VE host.",
+   "nature": "virtual",
+   "kinds": [
+    "linux",
+    "linux-desktop",
+    "linux-desktop-cpu",
+    "linux-desktop-wayland-cpu"
+   ],
+   "several": false,
+   "fields": [
+    {
+     "key": "url",
+     "type": "string",
+     "label": "API URL",
+     "description": "For example https://192.0.2.10:8006/api2/json, as the setup guide's token file gives it.",
+     "default": "",
+     "group": "connection"
+    },
+    {
+     "key": "node",
+     "type": "string",
+     "label": "Node",
+     "description": "The node boxes run on. Leave empty on a single-node host.",
+     "default": "",
+     "group": "connection"
+    },
+    {
+     "key": "tls-fingerprint",
+     "type": "string",
+     "label": "TLS fingerprint",
+     "description": "The SHA-256 fingerprint of the Proxmox API's certificate, from the setup guide's token file. bb-box then trusts that certificate alone. Leave empty to check the certificate against its CA.",
+     "default": "",
+     "group": "connection"
+    },
+    {
+     "key": "ca-certificate",
+     "type": "string",
+     "label": "CA certificate",
+     "description": "PEM certificate of the CA that signed the Proxmox API's certificate, when there is no TLS fingerprint. Leave empty for a publicly trusted one.",
+     "experimental_multiline": true,
+     "default": "",
+     "group": "connection"
+    },
+    {
+     "key": "token-id",
+     "type": "string",
+     "label": "API token ID",
+     "description": "For example bbbox@pve!plugin. The setup guide lists the privileges it needs.",
+     "default": "",
+     "group": "credentials"
+    },
+    {
+     "key": "token-secret",
+     "type": "string",
+     "label": "API token secret",
+     "description": "The secret of the API token, from the setup guide's token file.",
+     "secret": true,
+     "group": "credentials"
+    },
+    {
+     "key": "ssh-private-key",
+     "type": "string",
+     "label": "SSH private key",
+     "description": "The unencrypted OpenSSH private key the templates were built with (the setup guide's BBBOX_SSH_KEY). Leave empty and bb-box makes one and shows its public key, which the templates must then accept.",
+     "secret": true,
+     "group": "credentials"
+    },
+    {
+     "key": "pool",
+     "type": "string",
+     "label": "Resource pool",
+     "description": "Boxes are made in this pool. The token needs rights on it.",
+     "default": "bbbox",
+     "group": "boxes"
+    },
+    {
+     "key": "linux-templates",
+     "type": "string",
+     "label": "Linux templates",
+     "description": "VMIDs of the CT templates linux boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+     "group": "boxes",
+     "default": "9100"
+    },
+    {
+     "key": "desktop-templates",
+     "type": "string",
+     "label": "GPU desktop templates",
+     "description": "One line per GPU desktop template that linux-desktop boxes are linked clones of: its VMID, a space and the ID of the GPU it carries, such as the UUID nvidia-smi -L shows. Empty turns them off.",
+     "experimental_multiline": true,
+     "default": "",
+     "group": "boxes"
+    },
+    {
+     "key": "desktop-cpu-templates",
+     "type": "string",
+     "label": "CPU desktop templates",
+     "description": "VMIDs of the CPU-only desktop templates linux-desktop-cpu boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+     "default": "",
+     "group": "boxes"
+    },
+    {
+     "key": "desktop-wayland-cpu-templates",
+     "type": "string",
+     "label": "CPU Wayland desktop templates",
+     "description": "VMIDs of the CPU-only Wayland desktop templates linux-desktop-wayland-cpu boxes are linked clones of, separated by spaces or commas. Empty turns them off.",
+     "default": "",
+     "group": "boxes"
+    },
+    {
+     "key": "desktops-per-gpu",
+     "type": "number",
+     "label": "Desktops per GPU",
+     "description": "A new linux-desktop box goes to the GPU with the fewest desktops, and is refused when every GPU runs this many. 0 means no limit.",
+     "default": 0,
+     "group": "advanced"
+    },
+    {
+     "key": "bridge",
+     "type": "string",
+     "label": "Network bridge",
+     "description": "The bridge boxes attach to.",
+     "default": "vmbr200",
+     "group": "advanced"
+    },
+    {
+     "key": "subnet",
+     "type": "string",
+     "label": "Subnet",
+     "description": "The bridge's subnet in CIDR form. Boxes get static addresses; there is no DHCP.",
+     "default": "10.200.0.0/24",
+     "group": "advanced"
+    },
+    {
+     "key": "gateway",
+     "type": "string",
+     "label": "Gateway",
+     "description": "The host's address on the bridge.",
+     "default": "10.200.0.1",
+     "group": "advanced"
+    },
+    {
+     "key": "addresses",
+     "type": "string",
+     "label": "Box addresses",
+     "description": "The range bb-box hands out. The n-th VMID gets the n-th address. Leave empty to use the whole subnet except the gateway.",
+     "default": "10.200.0.10-10.200.0.254",
+     "group": "advanced"
+    },
+    {
+     "key": "vmid-first",
+     "type": "number",
+     "label": "First box VMID",
+     "description": "Boxes take VMIDs from this range. Keep other guests out of it.",
+     "default": 9900,
+     "group": "advanced"
+    },
+    {
+     "key": "vmid-last",
+     "type": "number",
+     "label": "Last box VMID",
+     "description": "The end of the range boxes take VMIDs from.",
+     "default": 9999,
+     "group": "advanced"
+    },
+    {
+     "key": "ssh-user",
+     "type": "string",
+     "label": "SSH user",
+     "description": "The user in the templates that bb-box and BB work as.",
+     "default": "box",
+     "group": "advanced"
+    },
+    {
+     "key": "reserve-memory-mib",
+     "type": "number",
+     "label": "Memory kept free (MiB)",
+     "description": "A new box is refused if the node would have less memory than this left.",
+     "default": 4096,
+     "group": "advanced"
+    },
+    {
+     "key": "reserve-disk-gib",
+     "type": "number",
+     "label": "Disk kept free (GiB)",
+     "description": "A new box is refused if the template's storage has less free space than this.",
+     "default": 50,
+     "group": "advanced"
+    }
+   ],
+   "hostFields": [],
+   "setup": {
+    "guide": "setup/proxmox-lxc/README.md",
+    "scripts": [
+     "setup/proxmox-lxc/host/setup-host.sh",
+     "setup/proxmox-lxc/host/setup-network.sh",
+     "setup/proxmox-lxc/template/build.sh",
+     "setup/proxmox-lxc/host/setup-token.sh"
+    ]
+   }
+  },
+  {
+   "type": "proxmox-qemu",
+   "label": "Proxmox QEMU",
+   "description": "Windows desktops as VMs on a Proxmox VE host.",
+   "nature": "virtual",
+   "kinds": [
+    "windows-desktop",
+    "linux",
+    "linux-desktop-cpu",
+    "android"
+   ],
+   "several": false,
+   "fields": [
+    {
+     "key": "url",
+     "type": "string",
+     "label": "API URL",
+     "description": "For example https://192.0.2.10:8006/api2/json, as the Proxmox LXC setup guide's token file gives it. Leave it, the token, the fingerprint and the CA certificate empty to use Proxmox LXC's.",
+     "group": "connection",
+     "default": "",
+     "inherits": {
+      "from": "proxmox-lxc",
+      "label": "Proxmox LXC",
+      "set": [
+       "url",
+       "token-id",
+       "token-secret",
+       "tls-fingerprint",
+       "ca-certificate"
+      ]
+     }
+    },
+    {
+     "key": "node",
+     "type": "string",
+     "label": "Node",
+     "description": "The node boxes run on. Leave empty on a single-node host.",
+     "group": "connection",
+     "default": ""
+    },
+    {
+     "key": "tls-fingerprint",
+     "type": "string",
+     "label": "TLS fingerprint",
+     "description": "The SHA-256 fingerprint of the Proxmox API's certificate, from the setup guide's token file. bb-box then trusts that certificate alone. Leave empty to check the certificate against its CA.",
+     "group": "connection",
+     "default": "",
+     "inherits": {
+      "from": "proxmox-lxc",
+      "label": "Proxmox LXC",
+      "set": [
+       "url",
+       "token-id",
+       "token-secret",
+       "tls-fingerprint",
+       "ca-certificate"
+      ]
+     }
+    },
+    {
+     "key": "ca-certificate",
+     "type": "string",
+     "label": "CA certificate",
+     "description": "PEM certificate of the CA that signed the Proxmox API's certificate, when there is no TLS fingerprint. Leave empty for a publicly trusted one.",
+     "experimental_multiline": true,
+     "group": "connection",
+     "default": "",
+     "inherits": {
+      "from": "proxmox-lxc",
+      "label": "Proxmox LXC",
+      "set": [
+       "url",
+       "token-id",
+       "token-secret",
+       "tls-fingerprint",
+       "ca-certificate"
+      ]
+     }
+    },
+    {
+     "key": "token-id",
+     "type": "string",
+     "label": "API token ID",
+     "description": "For example bbbox@pve!plugin. The setup guide lists the privileges it needs.",
+     "group": "credentials",
+     "default": "",
+     "inherits": {
+      "from": "proxmox-lxc",
+      "label": "Proxmox LXC",
+      "set": [
+       "url",
+       "token-id",
+       "token-secret",
+       "tls-fingerprint",
+       "ca-certificate"
+      ]
+     }
+    },
+    {
+     "key": "token-secret",
+     "type": "string",
+     "label": "API token secret",
+     "description": "The secret of the API token, from the setup guide's token file.",
+     "secret": true,
+     "group": "credentials",
+     "inherits": {
+      "from": "proxmox-lxc",
+      "label": "Proxmox LXC",
+      "set": [
+       "url",
+       "token-id",
+       "token-secret",
+       "tls-fingerprint",
+       "ca-certificate"
+      ]
+     }
+    },
+    {
+     "key": "ssh-private-key",
+     "type": "string",
+     "label": "SSH private key",
+     "description": "Paste BBBOX_SSH_KEY, the private key build.sh put in the template, or leave it empty to use Proxmox LXC's. With neither, bb-box makes a key, which the template does not accept until you add its public key.",
+     "secret": true,
+     "group": "credentials",
+     "inherits": {
+      "from": "proxmox-lxc",
+      "label": "Proxmox LXC",
+      "set": [
+       "ssh-private-key"
+      ]
+     }
+    },
+    {
+     "key": "pool",
+     "type": "string",
+     "label": "Resource pool",
+     "description": "Boxes are made in this pool. The token needs rights on it.",
+     "group": "boxes",
+     "default": "bbbox"
+    },
+    {
+     "key": "windows-templates",
+     "type": "string",
+     "label": "Windows templates",
+     "description": "VMIDs of the Windows templates windows-desktop boxes are linked clones of, separated by spaces or commas. setup/proxmox-qemu/build.sh builds one. A new box is cloned from the least used.",
+     "group": "boxes",
+     "default": "9104"
+    },
+    {
+     "key": "linux-templates",
+     "type": "string",
+     "label": "Linux templates",
+     "description": "VMIDs of the Linux templates that linux boxes as VMs are linked clones of, separated by spaces or commas, for a box with its own kernel. setup/proxmox-qemu/build.sh linux builds one. Empty offers no Linux VMs.",
+     "group": "boxes",
+     "default": ""
+    },
+    {
+     "key": "linux-desktop-templates",
+     "type": "string",
+     "label": "Linux desktop templates",
+     "description": "VMIDs of the Linux desktop templates that linux-desktop-cpu boxes as VMs are linked clones of, separated by spaces or commas, for a desktop with its own kernel. setup/proxmox-qemu/build.sh linux-desktop builds one. Empty offers no Linux desktop VMs.",
+     "group": "boxes",
+     "default": ""
+    },
+    {
+     "key": "android-templates",
+     "type": "string",
+     "label": "Android templates",
+     "description": "VMIDs of the Android templates, separated by spaces or commas: the Linux template with the Android SDK, the emulator and a booted device for each model. setup/proxmox-qemu/build.sh android builds one, on a host with nested virtualization, and the nightly job refreshes it monthly. bb-box offers android boxes from it while linux-kvm is on and its record lists its devices.",
+     "group": "boxes",
+     "default": ""
+    },
+    {
+     "key": "windows-enrol",
+     "type": "boolean",
+     "label": "Windows boxes as BB machines",
+     "description": "Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only.",
+     "group": "boxes",
+     "default": true
+    },
+    {
+     "key": "linux-kvm",
+     "type": "boolean",
+     "label": "KVM in Linux VM boxes",
+     "description": "Linux VM boxes can run VMs of their own through /dev/kvm, and linux-kvm asks for one. Turn it on when the host allows nested virtualization: build.sh linux says whether /dev/kvm works in a clone.",
+     "group": "boxes",
+     "default": false
+    },
+    {
+     "key": "bridge",
+     "type": "string",
+     "label": "Network bridge",
+     "description": "The bridge boxes attach to.",
+     "group": "advanced",
+     "default": "vmbr200"
+    },
+    {
+     "key": "subnet",
+     "type": "string",
+     "label": "Subnet",
+     "description": "The bridge's subnet in CIDR form. Boxes get static addresses; there is no DHCP.",
+     "group": "advanced",
+     "default": "10.200.0.0/24"
+    },
+    {
+     "key": "gateway",
+     "type": "string",
+     "label": "Gateway",
+     "description": "The host's address on the bridge.",
+     "group": "advanced",
+     "default": "10.200.0.1"
+    },
+    {
+     "key": "addresses",
+     "type": "string",
+     "label": "Box addresses",
+     "description": "The range bb-box hands out. The n-th VMID gets the n-th address. Keep it apart from the Proxmox LXC backend's. Leave empty to use the whole subnet except the gateway.",
+     "group": "advanced",
+     "default": "10.200.0.150-10.200.0.254"
+    },
+    {
+     "key": "vmid-first",
+     "type": "number",
+     "label": "First box VMID",
+     "description": "Boxes take VMIDs from this range. Keep other guests out of it, the Proxmox LXC backend's too.",
+     "group": "advanced",
+     "default": 9700
+    },
+    {
+     "key": "vmid-last",
+     "type": "number",
+     "label": "Last box VMID",
+     "description": "The end of the range boxes take VMIDs from.",
+     "group": "advanced",
+     "default": 9799
+    },
+    {
+     "key": "ssh-user",
+     "type": "string",
+     "label": "SSH user",
+     "description": "The user in the template that bb-box and BB work as.",
+     "group": "advanced",
+     "default": "box"
+    },
+    {
+     "key": "reserve-memory-mib",
+     "type": "number",
+     "label": "Memory kept free (MiB)",
+     "description": "A new box is refused if the node would have less memory than this left.",
+     "group": "advanced",
+     "default": 4096
+    },
+    {
+     "key": "reserve-disk-gib",
+     "type": "number",
+     "label": "Disk kept free (GiB)",
+     "description": "A new box is refused if the template's storage has less free space than this.",
+     "group": "advanced",
+     "default": 50
+    }
+   ],
+   "hostFields": [],
+   "setup": {
+    "guide": "setup/proxmox-qemu/README.md",
+    "scripts": [
+     "setup/proxmox-qemu/build.sh"
+    ]
+   }
+  },
+  {
+   "type": "ssh-pool",
+   "label": "SSH host pool",
+   "description": "Your own Linux machines and Macs, reached over SSH and reset between boxes.",
+   "nature": "real",
+   "kinds": [
+    "linux",
+    "macos",
+    "macos-desktop",
+    "ios"
+   ],
+   "several": false,
+   "fields": [
+    {
+     "key": "machines",
+     "type": "string",
+     "label": "Machines",
+     "description": "One line per machine: a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>. For example \"build-1 192.0.2.21 linux\" or \"mac-mini 192.0.2.30 macos,macos-desktop\". ios on a Mac lends iOS slots there, each a macOS user with its own device, for ios boxes asked for with shared: true; ios:<slots> sets how many, where bb-box would estimate them from the Mac. setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine.",
+     "experimental_multiline": true,
+     "default": "",
+     "group": "boxes"
+    },
+    {
+     "key": "known-hosts",
+     "type": "string",
+     "label": "Host keys",
+     "description": "known_hosts lines for every machine and jump host, as setup.sh and setup-mac.sh print them. bb-box connects only to a machine whose key is here.",
+     "experimental_multiline": true,
+     "default": "",
+     "group": "connection"
+    },
+    {
+     "key": "ssh-private-key",
+     "type": "string",
+     "label": "SSH private key",
+     "description": "An unencrypted OpenSSH private key that the machines' admin user accepts. Leave empty and bb-box makes one and shows its public key, which you then give setup.sh.",
+     "secret": true,
+     "group": "credentials"
+    },
+    {
+     "key": "ios-hosts-most",
+     "type": "number",
+     "label": "Slots for ios boxes per Mac",
+     "description": "The most iOS slots a Mac whose line lists ios has making, ready or held at once. It is lent whole only while it lends none. Unset, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins.",
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-ahead",
+     "type": "number",
+     "label": "Ready slots for ios boxes kept on a Mac",
+     "description": "Slots a Mac whose line lists ios keeps ready while it is not lent whole, so the next ios box is ready in seconds.",
+     "default": 1,
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-resetting-most",
+     "type": "number",
+     "label": "Slots a Mac sweeps at once",
+     "description": "The most released iOS slots whose files a Mac sweeps in one pass.",
+     "default": 4,
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-disk-reserve-gib",
+     "type": "number",
+     "label": "Disk a Mac keeps free of slots (GiB)",
+     "description": "A Mac makes no new iOS slot while it has less free disk than this.",
+     "default": 40,
+     "group": "advanced"
+    }
+   ],
+   "hostFields": [],
+   "setup": {
+    "guide": "setup/ssh-pool/README.md",
+    "scripts": [
+     "setup/ssh-pool/setup.sh",
+     "setup/ssh-pool/machine.sh",
+     "setup/ssh-pool/setup-mac.sh",
+     "setup/ssh-pool/machine-mac.sh",
+     "setup/ssh-pool/mac-ios.sh"
+    ]
+   }
+  },
+  {
+   "type": "tart",
+   "label": "Tart",
+   "description": "macOS boxes, iOS Simulator boxes, and Linux and Windows boxes on arm64, as VMs on your Macs with Apple silicon.",
+   "nature": "virtual",
+   "kinds": [
+    "macos",
+    "macos-desktop",
+    "linux-arm64",
+    "linux-arm64-desktop-cpu",
+    "windows-arm64-desktop",
+    "ios"
+   ],
+   "several": false,
+   "fields": [
+    {
+     "key": "ssh-private-key",
+     "type": "string",
+     "label": "SSH private key",
+     "description": "The unencrypted OpenSSH private key that each Mac's user and each image's VM user accept. Leave empty and bb-box makes one and shows its public key.",
+     "secret": true,
+     "group": "credentials"
+    },
+    {
+     "key": "macos-image",
+     "type": "string",
+     "label": "macOS image",
+     "description": "The Tart VM on each Mac that macos boxes, with no desktop shown, are cloned from. Empty turns them off.",
+     "default": "bb-box-macos",
+     "group": "boxes"
+    },
+    {
+     "key": "macos-desktop-image",
+     "type": "string",
+     "label": "macOS desktop image",
+     "description": "The Tart VM on each Mac that macos-desktop boxes are cloned from. Empty turns them off.",
+     "default": "bb-box-macos",
+     "group": "boxes"
+    },
+    {
+     "key": "linux-image",
+     "type": "string",
+     "label": "Linux image (arm64)",
+     "description": "The Tart VM on each Mac that linux-arm64 boxes are cloned from, as setup/tart/prepare-linux-image.sh builds it (bb-box-linux). Empty turns them off.",
+     "default": "",
+     "group": "boxes"
+    },
+    {
+     "key": "linux-desktop-image",
+     "type": "string",
+     "label": "Linux desktop image (arm64)",
+     "description": "The Tart VM on each Mac that linux-arm64-desktop-cpu boxes are cloned from, as setup/tart/prepare-linux-image.sh --desktop builds it (bb-box-linux-desktop). Empty turns them off.",
+     "default": "",
+     "group": "boxes"
+    },
+    {
+     "key": "windows-image",
+     "type": "string",
+     "label": "Windows image (arm64)",
+     "description": "The Windows image on each Mac, in ~/.bb-box/qemu/images, that windows-arm64-desktop boxes are made from, run by QEMU. Empty turns them off.",
+     "default": "",
+     "group": "boxes"
+    },
+    {
+     "key": "ios-image",
+     "type": "string",
+     "label": "iOS image",
+     "description": "The Tart VM on each Mac that ios boxes are cloned from, as setup/tart/prepare-ios-image.sh builds it on the macOS image (bb-box-ios): idb_companion and a booted-once, slimmed iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5). bb-box checks and refreshes it with the macOS image. Empty, the default, turns it off. ios boxes are not offered yet.",
+     "default": "",
+     "group": "boxes"
+    },
+    {
+     "key": "ios-hosts-on",
+     "type": "boolean",
+     "label": "Shared iOS hosts",
+     "description": "ios boxes asked for with shared: true take a slot, a macOS user with its own device, on a VM of the iOS image made as a shared host: made when a box needs one, deleted when its last box is released. Off by default.",
+     "default": false,
+     "group": "boxes"
+    },
+    {
+     "key": "windows-enrol",
+     "type": "boolean",
+     "label": "Windows boxes as BB machines",
+     "description": "Windows boxes join BB as machines, so threads and terminals can use them, as Linux and macOS boxes do. Off, they are boxes only.",
+     "default": true,
+     "group": "boxes"
+    },
+    {
+     "key": "video",
+     "type": "boolean",
+     "label": "Video by default for macOS desktops",
+     "description": "macOS desktops open as video, from bb-box-stream in the image, not VNC. Off by default: they open as VNC, which is already smooth on a Tart Mac, at 52 to 55 frames a second, and a person can choose video under Display. Video uses much less bandwidth, about 1.2 Mbit/s against 20 while scrolling, but a key shows a little later, about 57 ms against 31.",
+     "default": false,
+     "group": "boxes"
+    },
+    {
+     "key": "vm-user",
+     "type": "string",
+     "label": "VM user",
+     "description": "The user in the macOS images that bb-box and BB work as. It is logged in to the desktop automatically. Linux boxes work as box.",
+     "default": "admin",
+     "group": "advanced"
+    },
+    {
+     "key": "vms-per-host",
+     "type": "number",
+     "label": "VMs per Mac",
+     "description": "The most macOS VMs that run on each Mac at once, counting every VM Tart runs there, not only bb-box's. At most 2, which Apple's licence and the Virtualization framework allow.",
+     "default": 2,
+     "group": "advanced"
+    },
+    {
+     "key": "reserve-memory-mib",
+     "type": "number",
+     "label": "Memory kept free (MiB)",
+     "description": "A new box is refused if the Mac would have less memory than this left for its own use, after its running VMs.",
+     "default": 16384,
+     "group": "advanced"
+    },
+    {
+     "key": "reserve-disk-gib",
+     "type": "number",
+     "label": "Disk kept free (GiB)",
+     "description": "A new box is refused if the Mac's disk has less free space than this.",
+     "default": 50,
+     "group": "advanced"
+    },
+    {
+     "key": "warm-max-hours",
+     "type": "number",
+     "label": "Hours a macOS warm VM or spare is kept",
+     "description": "A suspended macOS warm VM, or a spare that waits suspended, saved longer ago than this is replaced by a fresh one, as an old saved state may not restore.",
+     "default": 6,
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-most",
+     "type": "number",
+     "label": "Slots per shared iOS host",
+     "description": "The most slots a shared iOS host has making, ready or held at once. Unset, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins.",
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-ahead",
+     "type": "number",
+     "label": "Ready slots kept on a shared iOS host",
+     "description": "Slots a shared iOS host keeps ready while it holds a box, so the next box is ready in seconds.",
+     "default": 1,
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-resetting-most",
+     "type": "number",
+     "label": "Slots a shared iOS host sweeps at once",
+     "description": "The most released slots whose files a shared iOS host sweeps in one pass.",
+     "default": 4,
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-cores",
+     "type": "number",
+     "label": "Cores of a shared iOS host",
+     "description": "The cores of each shared iOS host's VM, shared by its slots. Unset, the Mac's performance cores. A Mac's own value wins.",
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-memory-gib",
+     "type": "number",
+     "label": "Memory of a shared iOS host (GiB)",
+     "description": "The memory of each shared iOS host's VM, shared by its slots. Unset, 8 GiB for the host and 1.5 GiB for each slot, within the Mac's memory. A Mac's own value wins.",
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-per-mac",
+     "type": "number",
+     "label": "Shared iOS hosts per Mac",
+     "description": "The most shared iOS hosts a Mac runs. Each is one of the Mac's two macOS VMs, and both share the Mac's video encoder.",
+     "default": 1,
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-disk-reserve-gib",
+     "type": "number",
+     "label": "Disk a shared iOS host keeps free (GiB)",
+     "description": "A shared iOS host makes no new slot while its VM has less free disk than this.",
+     "default": 10,
+     "group": "advanced"
+    }
+   ],
+   "hostFields": [
+    {
+     "key": "address",
+     "type": "string",
+     "label": "Address",
+     "description": "The Mac's address, with :port when SSH is not on 22. For example 192.0.2.20.",
+     "group": "connection",
+     "default": ""
+    },
+    {
+     "key": "user",
+     "type": "string",
+     "label": "User",
+     "description": "The user bb-box logs in to the Mac as, which runs tart.",
+     "group": "connection",
+     "default": ""
+    },
+    {
+     "key": "host-keys",
+     "type": "string",
+     "label": "Host keys",
+     "description": "The Mac's SSH host keys as known_hosts lines. ssh-keyscan -t ed25519 <address> prints one. bb-box checks them on every connection.",
+     "experimental_multiline": true,
+     "group": "connection",
+     "default": ""
+    },
+    {
+     "key": "ios-hosts-most",
+     "type": "number",
+     "label": "Slots per shared iOS host",
+     "description": "The most slots a shared iOS host on this Mac has, over the backend's setting and bb-box's estimate for the Mac. Empty for those.",
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-cores",
+     "type": "number",
+     "label": "Cores of a shared iOS host",
+     "description": "The cores of a shared iOS host's VM on this Mac, over the backend's setting and the Mac's performance cores. Empty for those.",
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-memory-gib",
+     "type": "number",
+     "label": "Memory of a shared iOS host (GiB)",
+     "description": "The memory of a shared iOS host's VM on this Mac, over the backend's setting and bb-box's estimate. Empty for those.",
+     "group": "advanced"
+    }
+   ],
+   "setup": {
+    "guide": "setup/tart/README.md",
+    "scripts": [
+     "setup/tart/prepare-image.sh",
+     "setup/tart/prepare-linux-image.sh",
+     "setup/tart/prepare-ios-image.sh"
+    ]
+   }
+  },
+  {
+   "type": "docker",
+   "label": "Docker",
+   "description": "Linux boxes, with or without a desktop, as containers on a Docker host. It needs only Docker.",
+   "nature": "virtual",
+   "kinds": [
+    "linux",
+    "linux-desktop-cpu",
+    "linux-desktop",
+    "linux-desktop-wayland-cpu"
+   ],
+   "several": true,
+   "fields": [
+    {
+     "key": "host",
+     "type": "string",
+     "label": "Host",
+     "description": "Where the Docker daemon is, as unix:///path/to/docker.sock, ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket. Over SSH, BB's server user must log in without a prompt.",
+     "group": "connection",
+     "default": ""
+    },
+    {
+     "key": "linux-image",
+     "type": "string",
+     "label": "Linux image",
+     "description": "The image linux boxes run. setup/docker/build.sh builds it. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux:1"
+    },
+    {
+     "key": "desktop-image",
+     "type": "string",
+     "label": "Desktop image",
+     "description": "The image linux-desktop-cpu boxes, and linux-desktop boxes when GPU desktops are on, run. setup/docker/build.sh builds it. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux-desktop:1"
+    },
+    {
+     "key": "wayland-desktop-image",
+     "type": "string",
+     "label": "Wayland desktop image",
+     "description": "The image linux-desktop-wayland-cpu boxes run: Sway on Wayland, drawn by the CPU. setup/docker/build.sh builds it. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux-desktop-wayland:1"
+    },
+    {
+     "key": "privileged",
+     "type": "boolean",
+     "label": "Docker in boxes",
+     "description": "Give each box its own Docker daemon, started by its first docker command. Each runs as a privileged container, which can take over the Docker host. Off, or on rootless Docker, boxes say No Docker.",
+     "group": "boxes",
+     "default": true
+    },
+    {
+     "key": "gpu-desktops",
+     "type": "boolean",
+     "label": "GPU desktops",
+     "description": "Offer linux-desktop boxes on the host's NVIDIA GPUs, which the NVIDIA Container Toolkit lists as CDI devices (nvidia-ctk cdi generate).",
+     "group": "boxes",
+     "default": false
+    },
+    {
+     "key": "desktops-per-gpu",
+     "type": "number",
+     "label": "Desktops per GPU",
+     "description": "The most linux-desktop boxes that share one GPU.",
+     "group": "advanced",
+     "default": 4
+    },
+    {
+     "key": "network",
+     "type": "string",
+     "label": "Network",
+     "description": "The Docker network bb-box makes for its boxes, apart from the host's other containers.",
+     "group": "advanced",
+     "default": "bbbox"
+    },
+    {
+     "key": "boxes",
+     "type": "number",
+     "label": "Most boxes",
+     "description": "The most bb-box containers on the host at once, running or stopped, counting those of every bb-box install that uses it.",
+     "group": "advanced",
+     "default": 10
+    },
+    {
+     "key": "reserve-memory-mib",
+     "type": "number",
+     "label": "Memory kept free (MiB)",
+     "description": "A new box is refused if the host would have less memory than this left, after the memory limits of the running boxes.",
+     "group": "advanced",
+     "default": 4096
+    }
+   ],
+   "hostFields": [],
+   "setup": {
+    "guide": "setup/docker/README.md",
+    "scripts": [
+     "setup/docker/build.sh"
+    ]
+   }
+  },
+  {
+   "type": "microsandbox",
+   "label": "microsandbox",
+   "description": "Linux boxes, with or without a desktop, as microVMs that start in under a second, on a Linux host with KVM or a Mac. bb-box installs its own msb there.",
+   "nature": "virtual",
+   "kinds": [
+    "linux",
+    "linux-desktop-cpu",
+    "linux-arm64",
+    "linux-arm64-desktop-cpu"
+   ],
+   "several": true,
+   "fields": [
+    {
+     "key": "host",
+     "type": "string",
+     "label": "Host",
+     "description": "The host that runs the boxes, a Linux host with KVM or a Mac: ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there, in a folder of its own.",
+     "group": "connection",
+     "default": ""
+    },
+    {
+     "key": "linux-image",
+     "type": "string",
+     "label": "Linux image",
+     "description": "The image linux boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux:1"
+    },
+    {
+     "key": "desktop-image",
+     "type": "string",
+     "label": "Desktop image",
+     "description": "The image linux-desktop-cpu boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux-desktop:1"
+    },
+    {
+     "key": "linux-arm64-image",
+     "type": "string",
+     "label": "Linux image (arm64)",
+     "description": "The image linux-arm64 boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux:1-arm64"
+    },
+    {
+     "key": "desktop-arm64-image",
+     "type": "string",
+     "label": "Desktop image (arm64)",
+     "description": "The image linux-arm64-desktop-cpu boxes run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there in a microVM of its own. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux-desktop:1-arm64"
+    },
+    {
+     "key": "docker",
+     "type": "boolean",
+     "label": "Docker in boxes",
+     "description": "Give each box its own Docker daemon, started by its first docker command, with its data on a disk of the box's own. Each box has its own kernel, so this needs no privilege on the host.",
+     "group": "boxes",
+     "default": true
+    },
+    {
+     "key": "docker-disk-gib",
+     "type": "number",
+     "label": "Docker disk (GiB)",
+     "description": "The most each box's Docker disk may grow to. It takes only what Docker writes, and goes with the box.",
+     "group": "advanced",
+     "default": 64
+    },
+    {
+     "key": "disk-gib",
+     "type": "number",
+     "label": "Root disk (GiB)",
+     "description": "The most a box's root disk may grow to when no disk size is asked for. It takes only what the box writes.",
+     "group": "advanced",
+     "default": 32
+    },
+    {
+     "key": "network",
+     "type": "string",
+     "label": "Network profiles",
+     "description": "msb's network profiles for each box, comma-separated: public reaches the internet, private the host's local networks and tailnet, where BB's server often is.",
+     "group": "advanced",
+     "default": "public,private"
+    },
+    {
+     "key": "boxes",
+     "type": "number",
+     "label": "Most boxes",
+     "description": "The most bb-box microVMs on the host at once, running or stopped, counting those of every bb-box install that uses it.",
+     "group": "advanced",
+     "default": 20
+    },
+    {
+     "key": "reserve-memory-mib",
+     "type": "number",
+     "label": "Memory kept free (MiB)",
+     "description": "A new box is refused if the host would have less memory than this left, after the memory of the running boxes.",
+     "group": "advanced",
+     "default": 4096
+    },
+    {
+     "key": "memory-overcommit",
+     "type": "number",
+     "label": "Memory overcommit",
+     "description": "How many times the host's memory the boxes may take in all, after the memory kept free: 1 to 4. At 1, each box counts at its full memory. Above 1, a new box also needs memory free on the host now. Raise it for mostly idle boxes.",
+     "group": "advanced",
+     "default": 1
+    }
+   ],
+   "hostFields": [],
+   "setup": {
+    "guide": "setup/microsandbox/README.md",
+    "scripts": []
+   }
+  },
+  {
+   "type": "hetzner",
+   "label": "Hetzner Cloud",
+   "description": "Linux boxes on x86 or Arm, with or without a desktop, as containers on Docker hosts that bb-box makes in a Hetzner Cloud project as boxes need them, and deletes once they are idle.",
+   "nature": "virtual",
+   "kinds": [
+    "linux",
+    "linux-desktop-cpu",
+    "linux-desktop-wayland-cpu",
+    "linux-arm64",
+    "linux-arm64-desktop-cpu"
+   ],
+   "several": false,
+   "fields": [
+    {
+     "key": "token",
+     "type": "string",
+     "label": "API token",
+     "description": "A Read & Write API token of the Hetzner Cloud project bb-box makes its hosts in, from the project's Security page. The project should hold nothing else.",
+     "secret": true,
+     "group": "credentials"
+    },
+    {
+     "key": "location",
+     "type": "string",
+     "label": "Location",
+     "description": "Where hosts are made, such as nbg1 (Nuremberg), fsn1 (Falkenstein) or hel1 (Helsinki): near BB's server, as a desktop's stream crosses between them.",
+     "group": "connection",
+     "default": "nbg1"
+    },
+    {
+     "key": "server-type",
+     "type": "string",
+     "label": "Server type",
+     "description": "The type of every host, such as cpx42 (8 cores, 16 GB, 320 GB disk). A box at its largest must fit one, with the memory kept free.",
+     "group": "boxes",
+     "default": "cpx42"
+    },
+    {
+     "key": "arm-server-type",
+     "type": "string",
+     "label": "Arm server type",
+     "description": "The type of the hosts for linux-arm64 boxes, an Ampere type such as cax31 (8 cores, 16 GB, 160 GB disk). Empty offers no arm64 boxes. Arm hosts have their own host image.",
+     "group": "boxes",
+     "default": ""
+    },
+    {
+     "key": "most-hosts",
+     "type": "number",
+     "label": "Most hosts",
+     "description": "The most hosts at once. At this many, a box that fits on none of them is refused.",
+     "group": "boxes",
+     "default": 2
+    },
+    {
+     "key": "idle-minutes",
+     "type": "number",
+     "label": "Idle minutes",
+     "description": "A host with no box for this long is deleted. Hetzner bills by the started hour, so a shorter time saves little and makes acquires wait for a new host more often.",
+     "group": "boxes",
+     "default": 30
+    },
+    {
+     "key": "monthly-limit-eur",
+     "type": "number",
+     "label": "Monthly limit (EUR)",
+     "description": "bb-box makes no host when this calendar month's spend so far, and an hour more of every host with the new one, would pass this many euros before VAT. A busy host keeps running until it is idle. 0 sets no limit. Hetzner has no limit of its own: set a cost alert in its Console too.",
+     "group": "boxes",
+     "default": 20
+    },
+    {
+     "key": "host-image",
+     "type": "string",
+     "label": "Host image",
+     "description": "What hosts start from. An image name, such as ubuntu-26.04, is the base of the host image bb-box builds as a snapshot, with Docker, Tailscale and the box images in it, and rebuilds weekly or when its scripts change, keeping two; until the first is built, hosts start from the image itself. A snapshot's ID makes hosts start from that snapshot, and bb-box builds none.",
+     "group": "advanced",
+     "default": "ubuntu-26.04"
+    },
+    {
+     "key": "ssh-from",
+     "type": "string",
+     "label": "SSH from",
+     "description": "Only with the tailnet off: the addresses, as CIDRs separated by commas, that may reach a host's SSH over the internet, such as BB's server's public address. With the tailnet on, a host's SSH is reached on the tailnet alone.",
+     "group": "advanced",
+     "default": ""
+    },
+    {
+     "key": "linux-image",
+     "type": "string",
+     "label": "Linux image",
+     "description": "The image linux boxes run. setup/docker/build.sh builds it. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux:1"
+    },
+    {
+     "key": "desktop-image",
+     "type": "string",
+     "label": "Desktop image",
+     "description": "The image linux-desktop-cpu boxes, and linux-desktop boxes when GPU desktops are on, run. setup/docker/build.sh builds it. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux-desktop:1"
+    },
+    {
+     "key": "wayland-desktop-image",
+     "type": "string",
+     "label": "Wayland desktop image",
+     "description": "The image linux-desktop-wayland-cpu boxes run: Sway on Wayland, drawn by the CPU. setup/docker/build.sh builds it. Empty turns them off.",
+     "group": "boxes",
+     "default": "bbbox/linux-desktop-wayland:1"
+    },
+    {
+     "key": "privileged",
+     "type": "boolean",
+     "label": "Docker in boxes",
+     "description": "Give each box its own Docker daemon, started by its first docker command. Each runs as a privileged container, which can take over the Docker host. Off, or on rootless Docker, boxes say No Docker.",
+     "group": "boxes",
+     "default": true
+    },
+    {
+     "key": "boxes",
+     "type": "number",
+     "label": "Most boxes",
+     "description": "The most bb-box containers on the host at once, running or stopped, counting those of every bb-box install that uses it.",
+     "group": "advanced",
+     "default": 10
+    },
+    {
+     "key": "reserve-memory-mib",
+     "type": "number",
+     "label": "Memory kept free (MiB)",
+     "description": "A new box is refused if the host would have less memory than this left, after the memory limits of the running boxes.",
+     "group": "advanced",
+     "default": 4096
+    },
+    {
+     "key": "network",
+     "type": "string",
+     "label": "Network",
+     "description": "The Docker network bb-box makes for its boxes, apart from the host's other containers.",
+     "group": "advanced",
+     "default": "bbbox"
+    }
+   ],
+   "hostFields": [],
+   "setup": {
+    "guide": "docs/guide/hetzner.md",
+    "scripts": []
+   }
+  },
+  {
+   "type": "namespace",
+   "label": "Namespace",
+   "description": "Macs and Linux machines rented by the minute from Namespace, one machine for each box, ended when the box is released or at the plan's longest life.",
+   "nature": "virtual",
+   "kinds": [
+    "macos",
+    "macos-desktop",
+    "linux",
+    "linux-desktop-cpu",
+    "linux-desktop-wayland-cpu"
+   ],
+   "several": false,
+   "fields": [
+    {
+     "key": "token",
+     "type": "string",
+     "label": "API token",
+     "description": "A revocable token for the Namespace workspace, from nsc token create, granted the instance actions the guide lists. It is kept as a secret and never shown.",
+     "group": "connection",
+     "secret": true
+    },
+    {
+     "key": "region",
+     "type": "string",
+     "label": "API region",
+     "description": "us or eu: where bb-box calls Namespace's API and its SSH gateway. Where the machines run is the workspace's regional preference, which Namespace's support sets.",
+     "group": "connection",
+     "default": "us"
+    },
+    {
+     "key": "macos-version",
+     "type": "string",
+     "label": "macOS version",
+     "description": "The macOS a box runs, as Namespace's base images name it, such as 26.x.",
+     "group": "boxes",
+     "default": "26.x"
+    },
+    {
+     "key": "machines",
+     "type": "number",
+     "label": "Most machines",
+     "description": "The most Namespace machines bb-box has at once. Each box is one machine, billed by the minute while it exists.",
+     "group": "boxes",
+     "default": 2
+    },
+    {
+     "key": "longest-life-hours",
+     "type": "number",
+     "label": "Longest life (hours)",
+     "description": "How long the workspace's plan lets a machine live: 3 hours on Developer, 5 on Team, up to 24 on Business. A box ends then, and its thread hears an hour ahead.",
+     "group": "boxes",
+     "default": 3
+    },
+    {
+     "key": "largest-machine",
+     "type": "string",
+     "label": "Largest machine",
+     "description": "The largest Mac bb-box asks for, as cores x memory in GB, such as 6x14. A box that needs a larger one is refused before bb-box asks Namespace, so another backend can take it. Empty: the largest the workspace allows, which bb-box reads from Namespace when the token may, or learns the first time Namespace refuses a Mac for its size.",
+     "group": "boxes"
+    },
+    {
+     "key": "ios-hosts-on",
+     "type": "boolean",
+     "label": "Shared iOS hosts",
+     "description": "Whether Namespace lends ios boxes as macOS users on a shared host: a Namespace Mac made for an ios box that finds no slot on a pool Mac or a Tart host, and deleted when its last box goes. It lends once bb-box has measured that Namespace's Macs run the iOS Simulator. A host takes the workspace's one Mac, so no macos box starts on Namespace while it lives.",
+     "group": "boxes",
+     "default": true
+    },
+    {
+     "key": "ios-hosts-most",
+     "type": "number",
+     "label": "Slots a host lends at most",
+     "description": "Empty: bb-box estimates it from the Mac's cores, memory and video encoder, as for a pool Mac.",
+     "group": "advanced"
+    },
+    {
+     "key": "ios-hosts-ahead",
+     "type": "number",
+     "label": "Slots a host keeps ready",
+     "description": "Ready slots a host keeps while it holds a box.",
+     "group": "advanced",
+     "default": 1
+    },
+    {
+     "key": "ios-hosts-resetting-most",
+     "type": "number",
+     "label": "Slots a host resets at once",
+     "description": "Released slots a host sweeps at once, at most.",
+     "group": "advanced",
+     "default": 2
+    },
+    {
+     "key": "ios-hosts-disk-reserve-gib",
+     "type": "number",
+     "label": "Disk a host keeps free (GiB)",
+     "description": "Below this much free disk, a host makes no new slot.",
+     "group": "advanced",
+     "default": 20
+    }
+   ],
+   "hostFields": [],
+   "setup": {
+    "guide": "docs/guide/namespace.md",
+    "scripts": []
+   }
+  }
+ ],
+ "kinds": [
+  {
+   "id": "linux",
+   "label": "Linux",
+   "description": "A Linux box for builds, backend services and the agent's own work.",
+   "gpu": false,
+   "desktop": false,
+   "os": "linux",
+   "arch": "x86_64",
+   "windowing": "x11",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "proxmox-lxc",
+    "proxmox-qemu",
+    "ssh-pool",
+    "docker",
+    "microsandbox",
+    "hetzner",
+    "namespace"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 2,
+      "memoryMiB": 4096,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 8,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 16,
+     "memoryMiB": 32768,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "linux-desktop",
+   "label": "Linux desktop",
+   "description": "A Linux desktop on a GPU, for computer use, browsers and app development.",
+   "gpu": true,
+   "desktop": true,
+   "os": "linux",
+   "arch": "x86_64",
+   "windowing": "x11",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "proxmox-lxc",
+    "docker"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 8,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 16,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 32,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "linux-desktop-cpu",
+   "label": "Linux desktop",
+   "description": "A Linux desktop drawn by the CPU, for computer use and browsers.",
+   "gpu": false,
+   "desktop": true,
+   "os": "linux",
+   "arch": "x86_64",
+   "windowing": "x11",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "proxmox-lxc",
+    "proxmox-qemu",
+    "docker",
+    "microsandbox",
+    "hetzner",
+    "namespace"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 8,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 16,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 32,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "linux-desktop-wayland-cpu",
+   "label": "Linux desktop on Wayland",
+   "description": "A Linux desktop on Wayland (Sway), drawn by the CPU, for computer use, browsers and apps built for Wayland. X11-only apps do not run there.",
+   "gpu": false,
+   "desktop": true,
+   "os": "linux",
+   "arch": "x86_64",
+   "windowing": "wayland",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "proxmox-lxc",
+    "docker",
+    "hetzner",
+    "namespace"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 8,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 16,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 32,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "windows-desktop",
+   "label": "Windows desktop",
+   "description": "A Windows desktop for computer use, browsers and Windows apps.",
+   "gpu": false,
+   "desktop": true,
+   "os": "windows",
+   "arch": "x86_64",
+   "windowing": "x11",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "proxmox-qemu"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 8,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 16,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 32,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "android",
+   "label": "Android emulator",
+   "description": "An Android emulator device, a phone, foldable or tablet, on a Linux VM: for installing, running and testing Android apps, shared with a person in the panel.",
+   "gpu": false,
+   "desktop": false,
+   "os": "linux",
+   "arch": "x86_64",
+   "windowing": "x11",
+   "features": [],
+   "device": "android",
+   "drivers": [
+    "proxmox-qemu"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 8,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 12,
+      "memoryMiB": 24576,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 16,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 32,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "macos",
+   "label": "macOS",
+   "description": "A Mac for builds and Apple's tools.",
+   "gpu": false,
+   "desktop": false,
+   "os": "macos",
+   "arch": "arm64",
+   "windowing": "x11",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "ssh-pool",
+    "tart",
+    "namespace"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 6,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 8,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 16,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "macos-desktop",
+   "label": "macOS desktop",
+   "description": "A macOS desktop for computer use and app development.",
+   "gpu": false,
+   "desktop": true,
+   "os": "macos",
+   "arch": "arm64",
+   "windowing": "x11",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "ssh-pool",
+    "tart",
+    "namespace"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 6,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 8,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 16,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "ios",
+   "label": "iOS Simulator",
+   "description": "An iOS Simulator device, an iPhone or iPad, on a macOS VM, or in a slot on a shared Mac or VM: for installing, running and testing iOS apps, shared with a person in the panel.",
+   "gpu": false,
+   "desktop": false,
+   "os": "macos",
+   "arch": "arm64",
+   "windowing": "x11",
+   "features": [],
+   "device": "ios",
+   "drivers": [
+    "ssh-pool",
+    "tart"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 6,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 8,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "medium",
+    "largest": {
+     "cores": 16,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "linux-arm64",
+   "label": "Linux on arm64",
+   "description": "A Linux box on arm64. amd64 container images and x86_64 binaries do not run there.",
+   "gpu": false,
+   "desktop": false,
+   "os": "linux",
+   "arch": "arm64",
+   "windowing": "x11",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "tart",
+    "microsandbox",
+    "hetzner"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 2,
+      "memoryMiB": 4096,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 8,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 16,
+     "memoryMiB": 32768,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "linux-arm64-desktop-cpu",
+   "label": "Linux desktop on arm64",
+   "description": "A Linux desktop on arm64, drawn by the CPU. amd64 container images and x86_64 binaries do not run there.",
+   "gpu": false,
+   "desktop": true,
+   "os": "linux",
+   "arch": "arm64",
+   "windowing": "x11",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "tart",
+    "microsandbox",
+    "hetzner"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 8,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 16,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 32,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  },
+  {
+   "id": "windows-arm64-desktop",
+   "label": "Windows desktop on arm64",
+   "description": "A Windows desktop on arm64, for computer use, browsers and Windows apps. x64 apps run under Windows' emulation, more slowly; x64 drivers do not.",
+   "gpu": false,
+   "desktop": true,
+   "os": "windows",
+   "arch": "arm64",
+   "windowing": "x11",
+   "features": [],
+   "device": null,
+   "drivers": [
+    "tart"
+   ],
+   "sizes": {
+    "presets": {
+     "small": {
+      "cores": 4,
+      "memoryMiB": 8192,
+      "diskGiB": null
+     },
+     "medium": {
+      "cores": 8,
+      "memoryMiB": 16384,
+      "diskGiB": null
+     },
+     "large": {
+      "cores": 16,
+      "memoryMiB": 32768,
+      "diskGiB": null
+     }
+    },
+    "default": "small",
+    "largest": {
+     "cores": 32,
+     "memoryMiB": 65536,
+     "diskGiB": 256
+    }
+   }
+  }
+ ],
+ "general": {
+  "boxesPerThread": 0,
+  "enrol": true,
+  "defaultKind": "linux",
+  "video": true,
+  "nightlyImages": false,
+  "testDevice": false,
+  "encoderLedger": true,
+  "iosEncoder": "auto"
+ },
+ "monitor": {
+  "enabled": true,
+  "refreshIntervalSeconds": 5,
+  "backgroundMonitoring": false,
+  "pressureNotifications": true
+ }
+}
