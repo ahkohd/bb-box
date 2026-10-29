@@ -52,7 +52,7 @@ its view in the URL's hash (unit 0 of 067 showed BB keeps it):
   settings page shows use `SettingsLink`: a real link to the settings page
   with the hash, which, when the settings page is already open, calls
   `openSettingsView` instead. That pushes the hash and sends an event the
-  page listens to. The Monitor panel's settings button is one.
+  page listens to.
 - The page also reads the hash again when the window regains focus or
   becomes visible, and on `hashchange`.
 - Back and forward walk the views. Reload keeps the view. Leaving by BB's

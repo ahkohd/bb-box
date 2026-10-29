@@ -749,6 +749,10 @@ header had 23 px to spare, and three buttons left the name about 19 px. The
 machine picker lists names only, as before; a button on each row was
 noise.
 
+The header has no settings gear (the owner, 29 October 2026): the
+Monitor's settings are on BB Box's settings page, under Monitor. It holds
+the name, Open for a box, Reload and Hide.
+
 Each item opens what the Boxes page's row opens, through the same code:
 `openActions` (`src/app/box-opens.tsx`) gives the views a box has, and
 `opensOnBoxesPage` (`src/app/desktop.tsx`) opens the view at
@@ -763,9 +767,9 @@ under its words, as in "brisk-wren is stopped". The Box panel's row hides
 its buttons instead, as before. The menu is the Monitor's own, styled as
 its picker's popover (`src/app/monitor/menu.tsx`), not BB's, which becomes
 a drawer on a narrow screen. Enter, Space or Down opens it, the arrows
-move, Escape closes it and focus returns to Open. The menu keeps Escape to
-itself: BB's sidebar footer closes the whole Monitor on Escape, which the
-picker still lets through.
+move, Escape closes it and focus returns to Open. The menu and the picker
+keep Escape to themselves: BB's sidebar footer closes the whole Monitor on
+Escape.
 
 ## Copy
 

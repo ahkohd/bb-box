@@ -2,7 +2,7 @@
 
 BB Box's settings page is where you see whether everything works, set up the places boxes come from, and choose which kinds of box are on offer and how big they are.
 
-To open it, select the gear on the Boxes page, or open BB Box in BB's settings. The gear on the Monitor's machine status opens its own settings.
+To open it, select the gear on the Boxes page, or open BB Box in BB's settings. The Monitor's settings are on it, under Monitor.
 
 ![BB Box's settings page](../design/mockups/built/settings-light.png)
 
