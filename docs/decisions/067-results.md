@@ -288,7 +288,232 @@ Today's form for Tart, with the new group folded and open:
   versions: unit 2's next part.
 - A real Mac's Tart backend, for the `ios-hosts` group on a page: unit 3.
 
-||||||| parent of 2ff5e515 (feat(settings): 067 unit 1, the settings page as an overview with a page for each part)
+## Unit 2: the page's engine
+
+Built on 29 October 2026, on unit 2's server part. Every write the
+settings page makes now goes through one draft registry, as an operation
+with an ID, confirmed only by BB Box's reply or its receipt. The Boxes and
+Monitor pages are the first forms on it. Other pages keep the forms they
+had before 067 until their units.
+
+### What changed
+
+- The draft registry (`src/app/settings-drafts.ts`) lives outside the
+  page's components. Each part, such as `option/monitor` or `files`, holds
+  its edits and, while a save is out, that save's operation: its ID, its
+  frozen submission and its phase (sending, looking for its receipt, or
+  not confirmed). The save runs in the registry, so it finishes, and its
+  state shows, when the person has left and come back.
+- An edit is a setting's path, its value and the stored value it started
+  from (`src/app/settings-paths.ts`); a file's content starts from its
+  version. A change made elsewhere to another setting shows as stored; to
+  an edited one it is a conflict on its row at once, with Use theirs and
+  Keep mine, or Keep the saved one and Keep mine for a file. Save waits
+  for each choice.
+- Save freezes the submission. On a refusal for a newer revision it checks
+  that submission against the configuration the refusal carries, and saves
+  on it or stops with conflicts; after 3 refusals it stops. Typing during
+  a save stays a change; only edits still as sent are cleared. A lost
+  reply is confirmed by the receipt, or said as not confirmed, and Save
+  again resends the same operation. A save whose receipt BB Box may no
+  longer keep is never sent again. A confirmed save names what changed
+  elsewhere since.
+- New files have provisional identities (`files/@new-…`) until their save
+  is confirmed; then their edits move to the saved file, with its version
+  as their base. A new file with the path of an existing one replaces it,
+  from that file's version. Problems the server reports resolve to the
+  draft's field.
+- Session storage keeps each part's edits without file contents, and its
+  pending save. File contents are kept in memory only. After a reload a
+  note brings the draft back and says which contents to paste again; the
+  browser asks before the tab closes with a draft.
+- `useDraft`, `useInstant`, `SaveBar`, `ConflictNote` and `RestoredNote`
+  (`src/app/settings-saving.tsx`) and the draft fields
+  (`settings-draft-fields.tsx`). The bar's words are those of 067 section
+  4. While it saves, Save stays focusable and ignores presses; focus stays
+  in the bar when its buttons go; a conflict's choice and Add file move
+  focus to the field.
+- Boxes: Boxes per thread waits for Save, or Enter; files for every box are
+  a form of their own with Save files. A file's editor closes once its new
+  content is confirmed, and stays open with its text after a refusal or
+  with newer text. Remove asks first and is an operation. Monitor: Refresh every waits for Save. The saving rule under
+  their headers now says "Fields, checkboxes and radio choices wait for
+  Save".
+- Every switch, the default kind's menu, Make default, a file's removal and
+  the Docker on BB machines switches send an operation ID and read their
+  receipts. `docker.host.set` takes an optional operation ID for this.
+- The overview marks the Boxes and Monitor rows "Unsaved changes" while a
+  draft waits.
+- A failed reload of the configuration no longer replaces the page with
+  the error: the page keeps what it last read and says so above it.
+- The receipt constants moved to `src/core/receipt-window.ts`, with the
+  page's rule for when a receipt may be gone.
+
+New: `src/app/settings-drafts.ts`, `settings-paths.ts`,
+`settings-saving.tsx`, `settings-draft-fields.tsx`,
+`src/core/receipt-window.ts`, `test/settings-drafts.test.ts`, and
+`067-settings-page/unit-2/live-check.mjs` and `screens-and-keys.mjs`.
+Changed: `settings.tsx`, `settings-context.tsx`, `settings-pages.tsx`,
+`settings-files.tsx`, `settings-overview.tsx`, `settings-parts.tsx`,
+`settings-docker-hosts.tsx`, `src/core/saves.ts`, `src/plugin/contract.ts`,
+`rpc.ts`, `setup.ts`, `test/app.test.tsx`, `test/settings-view.test.tsx`
+and `docs/design/settings.md`. Gone: `settings-instant.ts`, whose writes
+the registry runs now.
+
+### Tests
+
+`test/settings-drafts.test.ts`, 19 tests, runs the registry against the
+real `Configuration` class, with a transport that can lose a request,
+drop a reply after the store, hold a request or a reply, send a request
+twice at once, and let another writer save first. It covers the merge and
+conflict choices, checked retries, G1 for a field and a file, G2 to G5, a
+lost reply with a file replaced since, a request that never arrives and
+Save again, a request sent twice, a late reply after the receipt was
+seen, a receipt aged out by count and by time, three refusals, problems
+at new files' fields and server problems resolved through the submission,
+the memory-only rule and restore after a reload, a pending save restored
+with and without its receipt, and switches.
+
+`test/app.test.tsx` has three new tests through the page (a conflict on
+its row with both choices and Show; a draft kept on leaving, marked on the
+overview, restored after a reload without the pasted content, and the
+browser's warning; Save again after a request that never arrived), and the
+Boxes, files and switch tests now check operation IDs.
+
+On a Linux box, 8 cores, on the code delivered:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,770 tests: 2,482 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 17 s |
+| vitest | 264 pass, in 4 files |
+| `test/docs.test.ts` and `scripts/reference.ts` | pass; the reference is unchanged |
+
+### Live check on a separate BB
+
+A fresh `npx bb-app` (0.48.0) with no account, its own data folder and
+port, in a Linux box, started with `BB_BOX_LIVE_CHECKS=1` and nothing else
+from the box's environment; bb-box installed from this branch with `bb
+plugin install` of its path. The script,
+[`live-check.mjs`](067-settings-page/unit-2/live-check.mjs), drives
+headless Chromium at 1440 by 1000. "Another tab" is a second browser
+context, or a save through BB's HTTP API as the page makes it; "an agent"
+is `bb box config show --json` and `bb box config apply`. Network faults
+are made with Playwright's request routing on the page's own calls: a
+request aborted before it leaves, a reply held, a request sent twice. A
+lost reply is BB Box's `bb box config drop-replies`, which stores and then
+answers with an error. Where a check needs the page not to look yet, the
+script holds the page's `config.get` calls: without that, BB's change
+signal often lets the page find the receipt before the dropped reply
+comes back, which the page then rightly reports as Saved (the first run
+of the script found this). Each check passed 3 runs in a row, 51 of 51,
+on the code delivered. Before the series, two single runs found faults in
+the script itself: two locators, and the need to hold reads. The series of
+3 runs then ran six times as main moved and the code was polished. One of
+them failed a check 3 times on a bug in a screenshot line the script had
+just gained, after the check's own assertions had passed; the other five
+passed 51 of 51.
+
+| Check | What the page said, and what BB Box stored | Runs |
+| --- | --- | --- |
+| An agent's `bb box config apply` while Refresh every is 12 in a draft: the agent sets it to 8, boxes per thread to 4 and background monitoring on | On the field's row at once: "Changed elsewhere to 8 while you edited.", with Use theirs and Keep mine. The field kept 12, the background monitoring switch showed on, and the bar said "A setting you changed was changed elsewhere too. Choose for each, then save." After Keep mine and Save: 12 stored, with the agent's 4 and on | 3 of 3 |
+| Two tabs, the same field: A types 12, B types 15, A saves | A: "Saved." B, at once: "Changed elsewhere to 12 while you edited." B chose Keep mine and saved: 15 stored, and A showed 15 | 3 of 3 |
+| Two tabs, different fields, saved at the same moment: A's boxes per thread, B's new file | One "Saved.", the other "Saved at revision N, on top of a change made elsewhere." Both stored, the file's content as sent | 3 of 3 |
+| A lost reply after a store, with the file's content replaced in another tab before the page looks | "Save not confirmed: BB Box did not reply. Looking for this save's receipt…", then "Saved at revision N. The reply was lost; BB Box's receipt for this save confirms it. Since then, changed elsewhere: the content of ~/.cfg/lost-1.json (revision N+1)." One receipt; the other tab's content stored | 3 of 3 |
+| A request that never arrives, then Save again | "Save not confirmed: BB Box has no receipt for it yet. Your changes are still here. Saving again resends the same request, which BB Box applies at most once." Nothing stored. Save again sent the same operation ID and submission: "Saved.", one revision more, one receipt | 3 of 3 |
+| The same request sent twice at once | "Saved." One revision more, one receipt, and one of the two answers was a replay | 3 of 3 |
+| A late reply after leaving the page: the reply held, the page left by BB's sidebar, the reply let go, then back | "Saved.", from the one request's reply; the field showed the stored value, not marked Changed | 3 of 3 |
+| A receipt aged out: a lost reply while the page's reads are held, the page left, 505 saves with receipts by another writer, the page back | BB Box listed 500 receipts, not this one. "Save not confirmed: this save is older than the receipts BB Box keeps. What is saved now matches your changes." Never sent again, and no Save again | 3 of 3 |
+| Three refusals in a row, for a form and for a switch: another writer saves before each request | "Not saved: the configuration changed three times while saving. Your changes are still here." The switch put back: "Background monitoring was not changed: the configuration changed 3 times while saving. It is off; try again." | 3 of 3 |
+| Typing during a save: boxes per thread 6 then 7; a file's content A then B | "Saved. Your newer change is not saved yet." each time; 6 and A stored; 7 and B still in their fields | 3 of 3 |
+| A reload with a draft: Refresh every 18, and a new file with pasted content | "Your unsaved changes to the Monitor are back: 1 change." and "Your unsaved changes to files for every box are back: 1 change. For safety the content of ~/.cfg/reload-1.json you pasted was not kept; paste it again." The content was in neither session nor local storage, the path was in session storage, and closing the tab asked first | 3 of 3 |
+
+The gates, scripted as 067 gives them:
+
+| Gate | Steps | Passes when, and what the page said | Runs |
+| --- | --- | --- | --- |
+| G1, a field | Boxes per thread 6 and Save; another writer saves first, so it retries; 7 typed while the retry is held | 6 stored, 7 not, shown as Changed: "Saved at revision N, on top of a change made elsewhere. Your newer change is not saved yet." Both requests had the same ID and submission, and the bar named nothing else | 3 of 3 |
+| G1, a file | The same with a file's content, A then B | A stored, B in the editor; the same words | 3 of 3 |
+| G2 | A new file given an existing file's path ("~/.cfg/g2-1.json is already a file here. Saving replaces it."); another tab replaces that file | "Replaced elsewhere while you edited, at revision N. Saving yours replaces that one.", with Keep the saved one and Keep mine; Save files waits; theirs stays stored until Keep mine, then mine; one file | 3 of 3 |
+| G3 | A new file saved while its request is held; newer content typed; then another tab changes the file; Save again | "Saved. Your newer change is not saved yet."; no `@new-` path in the page or in session storage; the newer text on the saved file; then a conflict on it, Save waits, and still one file | 3 of 3 |
+| G4 | Monitor 12 and Save, with a lost reply held; leave by BB's sidebar; back to "Saving…"; type 15; the reply let go; leave and come back again | 12 stored once: one revision, one receipt, one request. 15 shown and marked Changed. "Saved at revision N. The reply was lost; BB Box's receipt for this save confirms it. Your newer change is not saved yet." | 3 of 3 |
+| G5 | A file's content replaced and Save files, held; leave and come back; newer text typed | On return the editor was open with the text being saved; then "Saved. Your newer change is not saved yet.", with the newer text in the open editor and the first content stored | 3 of 3 |
+
+### Keyboard only
+
+On the same BB, by keys alone ([`screens-and-keys.mjs`](067-settings-page/unit-2/screens-and-keys.mjs)):
+
+- Monitor, from its heading: Tab reached Machine status, then Refresh
+  every; typing 12 and Enter saved it: "Saved."
+- With a conflict from another writer: Tab reached Use theirs and Keep
+  mine. Enter on Keep mine put focus back on the field. Tab went through
+  the two switches to Discard and Save; Enter on Save saved, and focus
+  stayed on the bar's words, "Saved.", with a ring.
+- Boxes: Enter on Add file put focus on the new file's path; Tab to its
+  content, then Don't add it, Discard and Save files; Enter saved, and the
+  file was listed.
+- Every stop showed a focus ring, and no animation ran
+  (`document.getAnimations()` was empty).
+- The first pass found focus falling to the page after Keep mine, and Add
+  file leaving focus four stops from the new fields; both were fixed and
+  the pass run again.
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark: Monitor with a draft, with a
+conflict and not confirmed; the overview with Unsaved changes; Boxes with
+a field, a replaced file and a new file that replaces another; Boxes
+restored after a reload. 36 in the thread's storage, and the live
+checks' own. A selection:
+
+[a conflict](067-settings-page/unit-2/monitor-conflict-1440-light.png),
+[at 390](067-settings-page/unit-2/monitor-conflict-390-dark.png),
+[not confirmed](067-settings-page/unit-2/monitor-not-confirmed-760-dark.png),
+[Unsaved changes on the overview](067-settings-page/unit-2/overview-unsaved-760-light.png),
+[Boxes with drafts](067-settings-page/unit-2/boxes-drafts-1440-dark.png),
+[restored after a reload](067-settings-page/unit-2/boxes-restored-390-light.png),
+[focus after Save](067-settings-page/unit-2/keys-03-after-save.png),
+and from the live checks:
+[a lost reply confirmed by its receipt](067-settings-page/unit-2/live-lost-reply-receipt.png),
+[a receipt aged out](067-settings-page/unit-2/live-receipt-aged-out.png),
+[three refusals](067-settings-page/unit-2/live-three-refusals.png),
+[G2](067-settings-page/unit-2/live-g2-conflict.png),
+[G4](067-settings-page/unit-2/live-g4-after.png).
+
+### Deviations from 067
+
+- `docker.host.set` takes an operation ID, a small server change, so a
+  BB machine's Docker switch has a receipt like every other switch.
+- No motion: the save bar does not rise and Saved does not fade, as the
+  owner asked for no page motion after 067 was written.
+- A save may have aged out when BB Box lists at least 100 receipts and the
+  oldest is newer than the save could be, or when it is 24 hours old by
+  the page's clock. This is by revisions, not the server's clock, and errs
+  towards "not confirmed".
+- Words 067 does not give: "Already saved: the same was saved elsewhere,
+  at revision N"; for an aged-out save, "Save not confirmed: this save is
+  older than the receipts BB Box keeps", then either "Your changes are
+  still here, checked against what is saved now" or "What is saved now
+  matches your changes"; for a save restored after a reload with a pasted
+  content and no receipt, "Save not confirmed: BB Box has no receipt for it
+  yet. What you pasted was not kept when the page reloaded, so it cannot be
+  sent again: paste it again, then save"; and a switch's later receipt,
+  "Saved at revision N: BB Box did not reply, and its receipt for this
+  change confirms it".
+- An edit typed back to the stored value, or one saved the same elsewhere,
+  stops being a change, unless a save of that part is out.
+- Switches still save one at a time, as in unit 1: a press while another
+  switch saves is ignored.
+- Check and its fingerprint are unit 3's: Boxes and Monitor have no Check.
+- This section replaces a stray merge marker that unit 1's results left in
+  this file.
+
+### Not done here
+
+- The backend's page, a kind's page, the tailnet and setting up a backend
+  still save with their forms from before 067, without operation IDs:
+  units 3, 6, 7 and 9 move them onto the registry, with secrets' versions
+  and Macs' provisional identities.
 
 ## Unit 4: the drivers' help text
 

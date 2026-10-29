@@ -1,110 +1,296 @@
-// The files for every box (#455): each a path under the box user's home and
-// its content, which is a secret. The page shows whether each content is
-// set, and takes a new one or removes the file, but never shows a content.
-
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { useId, useState } from "react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useState } from "react";
-import type { BoxFileSetting } from "../core/box-files.ts";
-import type { Problem } from "../core/document.ts";
+import { cn } from "@/lib/utils";
+import { isSecretState } from "./config.ts";
+import { switchKey, useSettings } from "./settings-context.tsx";
+import { describedBy, unplacedProblems } from "./settings-draft-fields.tsx";
+import { FILES_PART, operationId } from "./settings-drafts.ts";
 import { Section } from "./settings-fields.tsx";
+import { RowNote } from "./settings-parts.tsx";
+import { filePath, newFilePath, storedAt, type Path } from "./settings-paths.ts";
+import { ChangedChip, ConflictNote, RestoredNote, SaveBar, focusAfterRender, useDraft, type Draft } from "./settings-saving.tsx";
 
-function isSet(file: BoxFileSetting): boolean {
-  return typeof file.content === "object" && file.content !== null && file.content.set;
+const CONTENT_PLACEHOLDER = "Paste the file's text. It is never shown again.";
+const ADD_FILE = "files/add";
+
+function newFileId(): string {
+  return operationId().slice(-8);
 }
 
-export function BoxFilesSection({ files, problems, save }: { files: readonly BoxFileSetting[]; problems: readonly Problem[]; save: (files: BoxFileSetting[]) => Promise<boolean> }) {
-  const [busy, setBusy] = useState(false);
-  /** The file being added (index null) or given a new content. */
-  const [editing, setEditing] = useState<{ index: number | null; path: string; content: string } | null>(null);
-  // A file without a content in the draft keeps the one stored.
-  const kept: BoxFileSetting[] = files.map(({ path }) => ({ path }));
-  const commit = async (next: BoxFileSetting[]) => {
-    setBusy(true);
-    try {
-      if (await save(next)) setEditing(null);
-    } finally {
-      setBusy(false);
-    }
-  };
+function ContentEditor({ draft, path, label, onEmptied, onClose }: { draft: Draft; path: Path; label: string; onEmptied: () => void; onClose: () => void }) {
+  const id = useId();
+  const value = draft.edit(path);
+  const text = value?.kind === "secret" ? (value.text ?? "") : "";
+  const conflict = draft.conflict(path);
+  const problem = draft.problem(`${path}/content`);
   return (
-    // One line (the operator, 4 October 2026: "Can this be shortened?"); the details are in the docs. Add file sits in the
-    // header as Machines' Add machine does, and the card shows only with something in it: no empty box with a lone button.
+    <div className="mt-2 space-y-1.5">
+      <Textarea
+        id={id}
+        data-draft-path={`${path}/content`}
+        aria-label={label}
+        aria-describedby={describedBy(problem && `${id}-problem`, conflict && `${id}-conflict`)}
+        aria-invalid={problem ? true : undefined}
+        className={cn("min-h-24 font-mono text-xs", value && "border-warning/60")}
+        placeholder={CONTENT_PLACEHOLDER}
+        autoComplete="off"
+        spellCheck={false}
+        value={text}
+        onChange={(event) => {
+          if (event.target.value) {
+            draft.set(path, { kind: "secret", text: event.target.value });
+            onClose();
+            return;
+          }
+          draft.forget(path);
+          onEmptied();
+        }}
+      />
+      {problem ? (
+        <p id={`${id}-problem`} role="alert" className="text-xs text-destructive-text">
+          {problem}
+        </p>
+      ) : null}
+      {conflict ? (
+        <ConflictNote
+          id={`${id}-conflict`}
+          conflict={conflict}
+          onTheirs={() => {
+            draft.forget(path);
+            focusAfterRender(`${path}/content`, path, ADD_FILE);
+          }}
+          onMine={() => {
+            draft.keepMine(path);
+            focusAfterRender(`${path}/content`, ADD_FILE);
+          }}
+        />
+      ) : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7"
+        disabled={draft.beingSaved(path) && draft.busy}
+        onClick={() => {
+          draft.forget(path);
+          onClose();
+          focusAfterRender(path);
+        }}
+      >
+        {value ? "Don't replace it" : "Cancel"}
+      </Button>
+    </div>
+  );
+}
+
+function NewFileEditor({ draft, path }: { draft: Draft; path: Path }) {
+  const id = useId();
+  const value = draft.edit(path);
+  const latest = draft.latest;
+  if (value?.kind !== "new-file") return null;
+  const pathProblem = draft.problem(`${path}/path`);
+  const contentProblem = draft.problem(`${path}/content`);
+  const conflict = draft.conflict(path);
+  const stored = storedAt(latest, path, value);
+  const replaces = !conflict && stored.kind === "version" && stored.version !== null;
+  const typed = value.path.trim();
+  const sending = draft.beingSaved(path) && draft.busy;
+  return (
+    <div className="space-y-1.5 bg-surface-raised px-4 py-3">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+        A new file
+        <ChangedChip show />
+      </p>
+      <Input
+        id={`${id}-path`}
+        data-draft-path={`${path}/path`}
+        aria-label="New file's path under the box user's home"
+        aria-describedby={describedBy(pathProblem && `${id}-path-problem`, replaces && `${id}-replaces`)}
+        aria-invalid={pathProblem ? true : undefined}
+        className="h-8 font-mono text-xs"
+        placeholder=".config/tool/settings.json"
+        disabled={sending}
+        value={value.path}
+        onChange={(event) => draft.set(path, { kind: "new-file", path: event.target.value, text: value.text })}
+      />
+      {pathProblem ? (
+        <p id={`${id}-path-problem`} role="alert" className="text-xs text-destructive-text">
+          {pathProblem}
+        </p>
+      ) : null}
+      {replaces ? (
+        <p id={`${id}-replaces`} className="text-xs text-warning-text">
+          ~/{typed} is already a file here. Saving replaces it.
+        </p>
+      ) : null}
+      <Textarea
+        id={`${id}-content`}
+        data-draft-path={`${path}/content`}
+        aria-label={typed ? `Content of ~/${typed}` : "New file's content"}
+        aria-describedby={describedBy(contentProblem && `${id}-content-problem`, conflict && `${id}-conflict`)}
+        aria-invalid={contentProblem ? true : undefined}
+        className="min-h-24 font-mono text-xs"
+        placeholder={CONTENT_PLACEHOLDER}
+        autoComplete="off"
+        spellCheck={false}
+        value={value.text ?? ""}
+        onChange={(event) => draft.set(path, { kind: "new-file", path: value.path, text: event.target.value })}
+      />
+      {contentProblem ? (
+        <p id={`${id}-content-problem`} role="alert" className="text-xs text-destructive-text">
+          {contentProblem}
+        </p>
+      ) : null}
+      {conflict ? (
+        <ConflictNote
+          id={`${id}-conflict`}
+          conflict={conflict}
+          onTheirs={() => {
+            draft.forget(path);
+            focusAfterRender(ADD_FILE);
+          }}
+          onMine={() => {
+            draft.keepMine(path);
+            focusAfterRender(`${path}/content`);
+          }}
+        />
+      ) : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7"
+        disabled={sending}
+        onClick={() => {
+          draft.forget(path);
+          focusAfterRender(ADD_FILE);
+        }}
+      >
+        Don't add it
+      </Button>
+    </div>
+  );
+}
+
+export function BoxFilesSection() {
+  const { state, instant, writes } = useSettings();
+  const draft = useDraft(FILES_PART, "files for every box");
+  const [opened, setOpened] = useState<readonly string[]>([]);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [removed, setRemoved] = useState<string | null>(null);
+  const files = draft.latest.document.general.files ?? [];
+  const newFiles = [...draft.entry.edits].filter(([, edit]) => edit.value.kind === "new-file").map(([path]) => path);
+  const editing = (path: string) => opened.includes(path) || draft.edit(filePath(path))?.kind === "secret";
+  const placed = [...draft.entry.edits.keys()].flatMap((path) => [path, `${path}/path`, `${path}/content`]);
+  const removeKey = removed ? switchKey.removeFile(removed) : null;
+  return (
     <Section
       title="Files for every box"
       description="Copied into each Linux and macOS box's home. Contents are kept secret."
       action={
-        <Button type="button" variant="outline" size="sm" className="h-7" disabled={busy || editing !== null} onClick={() => setEditing({ index: null, path: "", content: "" })}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7"
+          data-draft-path={ADD_FILE}
+          onClick={() => {
+            const path = newFilePath(newFileId());
+            draft.set(path, { kind: "new-file", path: "", text: "" });
+            focusAfterRender(`${path}/path`);
+          }}
+        >
           <Icon name="Plus" aria-hidden />
           Add file
         </Button>
       }
-      plain={!files.length && !editing && !problems.length}
+      plain={!files.length && !newFiles.length && !draft.entry.restored && !draft.entry.outcome && !draft.entry.problems.length}
     >
-      <>
-        {files.map((file, index) => (
-          <div key={file.path} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
-            <code className="min-w-0 truncate text-xs text-foreground">{file.path}</code>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <span className="text-xs text-subtle-foreground">{isSet(file) ? "Set" : "Not set"}</span>
-              <Button type="button" variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => setEditing({ index, path: file.path, content: "" })}>
-                Replace
-              </Button>
-              <Button type="button" variant="ghost" size="sm" className="h-8" disabled={busy} onClick={() => void commit(kept.filter((_, at) => at !== index))}>
-                Remove
-              </Button>
-            </div>
-          </div>
-        ))}
-        {editing ? (
-          <div className="flex flex-col gap-1.5 py-2 first:pt-0 last:pb-0">
-            <Input
-              aria-label="Path under the box user's home"
-              className="h-8 font-mono text-xs"
-              placeholder=".pi/agent/models.json"
-              value={editing.path}
-              disabled={editing.index !== null}
-              onChange={(event) => setEditing({ ...editing, path: event.target.value })}
-            />
-            <Textarea
-              aria-label="The file's content"
-              className="min-h-32 font-mono text-xs"
-              placeholder="Paste the file's text"
-              autoComplete="off"
-              spellCheck={false}
-              value={editing.content}
-              onChange={(event) => setEditing({ ...editing, content: event.target.value })}
-            />
-            <div className="flex items-center gap-1.5">
-              <Button
-                type="button"
-                size="sm"
-                className="h-8"
-                disabled={busy || !editing.path.trim() || !editing.content}
-                onClick={() =>
-                  void commit(
-                    editing.index === null
-                      ? [...kept, { path: editing.path.trim(), content: editing.content }]
-                      : kept.map((file, at) => (at === editing.index ? { path: file.path, content: editing.content } : file)),
-                  )
-                }
-              >
-                Save
-              </Button>
-              <Button type="button" variant="ghost" size="sm" className="h-8" disabled={busy} onClick={() => setEditing(null)}>
-                Cancel
-              </Button>
-            </div>
+      <div className="space-y-2">
+        <RestoredNote draft={draft} />
+        {files.length || newFiles.length ? (
+          <div className="divide-y divide-border">
+            {files.map((file) => {
+              const path = filePath(file.path);
+              const set = isSecretState(file.content) && file.content.set;
+              return (
+                <div key={file.path} data-setting={path} className="py-2.5 first:pt-0 last:pb-0">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <code className="min-w-0 flex-1 truncate text-xs text-foreground">~/{file.path}</code>
+                    <ChangedChip show={draft.edit(path) !== null} />
+                    <span className="text-xs text-subtle-foreground">{set ? "Set" : "Not set"}</span>
+                    {editing(file.path) ? null : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7"
+                        data-draft-path={path}
+                        aria-label={`Replace the content of ~/${file.path}`}
+                        onClick={() => {
+                          setOpened((current) => [...current, file.path]);
+                          focusAfterRender(`${path}/content`);
+                        }}
+                      >
+                        Replace…
+                      </Button>
+                    )}
+                    <Button type="button" variant="ghost" size="sm" className="h-7 text-muted-foreground" aria-label={`Remove ~/${file.path}`} disabled={instant.pending !== null} onClick={() => setRemoving(file.path)}>
+                      Remove…
+                    </Button>
+                  </div>
+                  {editing(file.path) ? (
+                    <ContentEditor
+                      draft={draft}
+                      path={path}
+                      label={`New content for ~/${file.path}`}
+                      onEmptied={() => setOpened((current) => (current.includes(file.path) ? current : [...current, file.path]))}
+                      onClose={() => setOpened((current) => current.filter((each) => each !== file.path))}
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+            {newFiles.map((path) => (
+              <NewFileEditor key={path} draft={draft} path={path} />
+            ))}
           </div>
         ) : null}
-        {problems.map((problem) => (
-          <p key={problem.path} role="alert" className="py-2 text-xs text-destructive-text first:pt-0 last:pb-0">
-            {problem.message}
-          </p>
-        ))}
-      </>
+        {removeKey ? <RowNote note={instant.note(removeKey)} /> : null}
+        <SaveBar draft={draft} inline primary="Save files" unplaced={unplacedProblems(draft, placed)} />
+      </div>
+      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove ~/{removing}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>Boxes made from now on no longer get it. Boxes already made keep their copy.</p>
+                <p>Its content is deleted from BB Box and cannot be shown or got back; to use it again, paste it again.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                const path = removing;
+                setRemoving(null);
+                if (!path) return;
+                setRemoved(path);
+                void instant.run(writes.removeFile(state, path));
+              }}
+            >
+              Remove file
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Section>
   );
 }

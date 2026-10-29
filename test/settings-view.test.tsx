@@ -1,7 +1,6 @@
 import { expect, test } from "vitest";
 import type { ConfigDocument } from "../src/core/document.ts";
-import type { ApplyResult, ConfigState } from "../src/plugin/contract.ts";
-import { runInstant, type InstantWrite } from "../src/app/settings-instant.ts";
+import type { ConfigState } from "../src/plugin/contract.ts";
 import { hashOf, viewFromHash } from "../src/app/settings-route.ts";
 import { backendHealth, kindAvailability, statusItems, statusLine } from "../src/app/settings-status.ts";
 
@@ -94,29 +93,4 @@ test("a kind no backend you have makes is quiet, and one whose backends cannot m
   const stuck = state([{ id: "a", misconfigured: true, kinds: [] }]);
   expect(kindAvailability(stuck, "linux")).toBe("lost");
   expect(kindAvailability(state([{ id: "a" }], { linux: { enabled: false } }), "linux")).toBe("off");
-});
-
-function write(value: boolean, send: (seen: ConfigState) => Promise<ApplyResult>): InstantWrite<boolean> {
-  return { key: "k", what: "Fake a", value, read: (seen) => seen.document.backends[0]!.enabled, say: (on) => (on ? "on" : "off"), send };
-}
-
-test("a switch is saved once BB Box confirms it, retried on a newer revision at most three times, and an unknown outcome is said as such", async () => {
-  const seen = state([{ id: "a" }]);
-  const saved = await runInstant(write(false, async () => ({ ok: true, state: { ...seen, revision: 8 }, problems: [] })), seen, async () => seen);
-  expect(saved).toEqual({ kind: "saved", revision: 8, note: null });
-
-  const refused = await runInstant(write(false, async () => ({ ok: false, reason: "problems", problems: [{ path: "backends.a", message: "It has 2 boxes." }] })), seen, async () => seen);
-  expect(refused).toEqual({ kind: "refused", note: "Fake a was not changed: It has 2 boxes." });
-
-  let sends = 0;
-  const raced = await runInstant(write(false, async () => (sends++, { ok: false, reason: "revision", state: { ...seen, revision: 7 + sends } })), seen, async () => seen);
-  expect([raced.kind, sends]).toEqual(["raced", 3]);
-  expect(raced.note).toBe("Fake a was not changed: the configuration changed 3 times while saving. It is on; try again.");
-
-  const offElsewhere = { ...seen, revision: 9, document: { ...seen.document, backends: [{ ...seen.document.backends[0]!, enabled: false }] } };
-  const already = await runInstant(write(false, async () => ({ ok: false, reason: "revision", state: offElsewhere })), seen, async () => seen);
-  expect(already).toEqual({ kind: "already", revision: 9, note: "Already off: changed elsewhere at revision 9." });
-
-  const unknown = await runInstant(write(false, async () => { throw new Error("timed out"); }), seen, async () => offElsewhere);
-  expect(unknown).toEqual({ kind: "unknown", note: "Not confirmed: BB Box did not reply (timed out). Fake a is off now, at revision 9." });
 });

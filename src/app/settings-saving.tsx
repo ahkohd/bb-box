@@ -1,0 +1,379 @@
+import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import type { ConfigState } from "../plugin/configuration.ts";
+import { Badge } from "./common.tsx";
+import { useSettings } from "./settings-context.tsx";
+import { drafts, type DraftRegistry, type InstantNote, type InstantOutcome, type InstantWrite, type Outcome, type PartState } from "./settings-drafts.ts";
+import { isChange, storedAt, type Conflict, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
+
+export const SAVED_BAR_MS = 4000;
+export const DISCARD_WORDS = "Puts back the saved values of the fields you changed here. Switches you already turned stay as they are.";
+
+export function useRegistry(): DraftRegistry {
+  const registry = drafts();
+  useSyncExternalStore(
+    (listener) => registry.subscribe(listener),
+    () => registry.serial,
+    () => registry.serial,
+  );
+  return registry;
+}
+
+export function newestState(state: ConfigState, registry: DraftRegistry): ConfigState {
+  const latest = registry.latest;
+  return latest && latest.revision > state.revision ? latest : state;
+}
+
+export interface Instant {
+  readonly pending: string | null;
+  pendingValue<T>(key: string): T | undefined;
+  isSaved(key: string): boolean;
+  note(key: string): InstantNote | null;
+  run(write: InstantWrite): Promise<InstantOutcome | null>;
+}
+
+export function useInstant(): Instant {
+  const registry = useRegistry();
+  const busy = registry.instantBusy();
+  return {
+    pending: busy ? "busy" : null,
+    pendingValue: <T,>(key: string) => {
+      const pending = registry.instant(key).pending;
+      return pending ? (pending.value as T) : undefined;
+    },
+    isSaved: (key) => registry.instant(key).saved,
+    note: (key) => registry.instant(key).note,
+    run: (write) => registry.runInstant(write),
+  };
+}
+
+function settingElement(path: Path): HTMLElement | null {
+  if (typeof document === "undefined") return null;
+  return document.querySelector<HTMLElement>(`[data-draft-path="${CSS.escape(path)}"]`);
+}
+
+export function revealSetting(path: Path): boolean {
+  const target = settingElement(path);
+  if (!target) return false;
+  target.scrollIntoView?.({ block: "center" });
+  target.focus({ preventScroll: true });
+  return true;
+}
+
+export function focusAfterRender(...paths: readonly Path[]): void {
+  setTimeout(() => {
+    for (const path of paths) {
+      const target = settingElement(path);
+      if (target) {
+        target.focus();
+        return;
+      }
+    }
+  }, 0);
+}
+
+export interface Draft {
+  readonly part: string;
+  readonly what: string;
+  readonly entry: PartState;
+  readonly latest: ConfigState;
+  readonly changes: number;
+  readonly conflicts: readonly Path[];
+  readonly busy: boolean;
+  edit(path: Path): EditValue | null;
+  text(path: Path): string;
+  stored(path: Path): PlainValue;
+  changed(path: Path): boolean;
+  conflict(path: Path): Conflict | null;
+  problem(path: Path): string | null;
+  beingSaved(path: Path): boolean;
+  set(path: Path, value: EditValue): void;
+  forget(path: Path): void;
+  keepMine(path: Path): void;
+  discard(): void;
+  save(): void;
+  dismissRestored(): void;
+  revealFirst(): void;
+}
+
+export function useDraft(part: string, what: string): Draft {
+  const { state } = useSettings();
+  const registry = useRegistry();
+  const latest = newestState(state, registry);
+  const entry = registry.part(part);
+  const ensure = () => {
+    if (!registry.latest || registry.latest.revision < latest.revision) registry.observe(latest);
+  };
+  const conflicts = registry.latest ? registry.conflicts(part) : [];
+  const operation = entry.operation;
+  const draft: Draft = {
+    part,
+    what,
+    entry,
+    latest,
+    changes: registry.latest ? registry.changeCount(part) : entry.edits.size,
+    conflicts,
+    busy: operation !== null && operation.phase.at !== "unconfirmed",
+    edit: (path) => entry.edits.get(path)?.value ?? null,
+    text: (path) => {
+      const value = entry.edits.get(path)?.value;
+      if (value?.kind === "plain") return value.value === null ? "" : String(value.value);
+      const stored = storedAt(latest, path);
+      return stored.kind === "value" && stored.value !== null ? String(stored.value) : "";
+    },
+    stored: (path) => {
+      const stored = storedAt(latest, path);
+      return stored.kind === "value" ? stored.value : null;
+    },
+    changed: (path) => {
+      const edit = entry.edits.get(path);
+      return edit !== undefined && isChange(latest, { path, ...edit });
+    },
+    conflict: (path) => (registry.latest ? registry.conflictAt(part, path) : null),
+    problem: (path) => entry.problems.find((problem) => problem.path === path)?.message ?? null,
+    beingSaved: (path) => operation !== null && operation.submission.edits.some((edit) => edit.path === path),
+    set: (path, value) => {
+      ensure();
+      registry.set(part, path, value);
+    },
+    forget: (path) => registry.forget(part, path),
+    keepMine: (path) => {
+      ensure();
+      registry.keepMine(part, path);
+    },
+    discard: () => registry.discard(part),
+    save: () => {
+      ensure();
+      void registry.save(part).then(() => {
+        const after = registry.part(part);
+        const first = after.outcome?.kind === "problems" ? after.problems[0]?.path : after.outcome?.kind === "conflicts" ? registry.conflicts(part)[0] : undefined;
+        if (first) revealSetting(first);
+      });
+    },
+    dismissRestored: () => registry.dismissRestored(part),
+    revealFirst: () => {
+      const first = conflicts[0] ?? entry.problems[0]?.path;
+      if (first) revealSetting(first);
+    },
+  };
+  return draft;
+}
+
+export function saveOnEnter(draft: Draft) {
+  return (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (event.currentTarget instanceof HTMLTextAreaElement) return;
+    event.preventDefault();
+    draft.save();
+  };
+}
+
+function changesWords(count: number): string {
+  return `${count} ${count === 1 ? "change" : "changes"}`;
+}
+
+function newerWords(count: number): string {
+  if (!count) return "";
+  return count === 1 ? " Your newer change is not saved yet." : ` Your ${count} newer changes are not saved yet.`;
+}
+
+function outcomeWords(outcome: Outcome, draft: Draft): string {
+  switch (outcome.kind) {
+    case "saved": {
+      const head = outcome.lostReply
+        ? `Saved at revision ${outcome.revision}. The reply was lost; BB Box's receipt for this save confirms it.`
+        : outcome.rebased
+          ? `Saved at revision ${outcome.revision}, on top of a change made elsewhere.`
+          : "Saved.";
+      const since = outcome.changedElsewhere.length ? ` Since then, changed elsewhere: ${outcome.changedElsewhere.join(", ")}.` : "";
+      return `${head}${since}${newerWords(draft.changes)}`;
+    }
+    case "already":
+      return `Already saved: the same was saved elsewhere, at revision ${outcome.revision}.${newerWords(draft.changes)}`;
+    case "conflicts":
+      return conflictWords(Math.max(outcome.count, draft.conflicts.length));
+    case "problems":
+      return `Not saved: fix the ${outcome.count === 1 ? "field" : `${outcome.count} fields`} marked. Your changes are still here.`;
+    case "refused":
+      return `Not saved: ${outcome.reason} Your changes are still here.`;
+    case "exhausted":
+      return "Not saved: the configuration changed three times while saving. Your changes are still here.";
+    case "expired":
+      return draft.changes
+        ? "Save not confirmed: this save is older than the receipts BB Box keeps, so it is not sent again. Your changes are still here, checked against what is saved now."
+        : "Save not confirmed: this save is older than the receipts BB Box keeps. What is saved now matches your changes.";
+    case "unsendable":
+      return "Save not confirmed: BB Box has no receipt for it yet. What you pasted was not kept when the page reloaded, so it cannot be sent again: paste it again, then save.";
+  }
+}
+
+function conflictWords(count: number): string {
+  return `${count === 1 ? "A setting you changed was" : `${count} settings you changed were`} changed elsewhere too. Choose for each, then save.`;
+}
+
+type BarTone = "quiet" | "busy" | "warn" | "bad" | "done";
+
+function barOf(draft: Draft, savedShown: boolean): { readonly words: string; readonly tone: BarTone; readonly retry: boolean; readonly show: boolean } | null {
+  const { entry } = draft;
+  const operation = entry.operation;
+  if (operation?.phase.at === "sending") return { words: operation.phase.rebased ? "Someone saved first. Checking your changes against theirs…" : "Saving…", tone: "busy", retry: false, show: false };
+  if (operation?.phase.at === "looking") return { words: "Save not confirmed: BB Box did not reply. Looking for this save's receipt…", tone: "busy", retry: false, show: false };
+  if (operation?.phase.at === "unconfirmed") return { words: "Save not confirmed: BB Box has no receipt for it yet. Your changes are still here. Saving again resends the same request, which BB Box applies at most once.", tone: "warn", retry: true, show: false };
+  if (draft.conflicts.length) return { words: conflictWords(draft.conflicts.length), tone: "warn", retry: false, show: true };
+  const outcome = entry.outcome;
+  if (outcome && (outcome.kind === "saved" || outcome.kind === "already")) {
+    if (savedShown || draft.changes) return { words: outcomeWords(outcome, draft), tone: "done", retry: false, show: false };
+  } else if (outcome) {
+    const bad = outcome.kind === "problems" || outcome.kind === "refused" || outcome.kind === "exhausted";
+    return { words: outcomeWords(outcome, draft), tone: bad ? "bad" : "warn", retry: bad, show: outcome.kind === "problems" };
+  }
+  if (draft.changes) return { words: `${changesWords(draft.changes)} to ${draft.what} not saved`, tone: "quiet", retry: false, show: false };
+  return null;
+}
+
+export function SaveBar({ draft, primary = "Save", inline = false, unplaced = [] }: { draft: Draft; primary?: string; inline?: boolean; unplaced?: readonly string[] }) {
+  const registry = useRegistry();
+  const outcome = draft.entry.outcome;
+  const shownAt = draft.entry.outcomeShownAt;
+  const [, setTick] = useState(0);
+  const savedOutcome = outcome?.kind === "saved" || outcome?.kind === "already";
+  useEffect(() => {
+    if (savedOutcome && shownAt === null) registry.markOutcomeShown(draft.part);
+  }, [savedOutcome, shownAt, registry, draft.part]);
+  useEffect(() => {
+    if (!savedOutcome || shownAt === null) return;
+    const left = SAVED_BAR_MS - (Date.now() - shownAt);
+    if (left <= 0) return;
+    const timer = setTimeout(() => setTick((tick) => tick + 1), left);
+    return () => clearTimeout(timer);
+  }, [savedOutcome, shownAt]);
+  const [focusWithin, setFocusWithin] = useState(false);
+  const status = useRef<HTMLSpanElement>(null);
+  const savedShown = savedOutcome && (shownAt === null || Date.now() - shownAt < SAVED_BAR_MS || focusWithin);
+  const bar = barOf(draft, savedShown);
+  const busy = bar?.tone === "busy";
+  const showButtons = bar !== null && (bar.tone !== "done" || draft.changes > 0);
+  useLayoutEffect(() => {
+    if (focusWithin && !showButtons && document.activeElement === document.body) status.current?.focus();
+  }, [focusWithin, showButtons]);
+  if (!bar) return null;
+  const canSave = !busy && !draft.conflicts.length && (draft.changes > 0 || bar.retry);
+  const keepsFocus = (enabled: boolean) => !enabled && !busy;
+  return (
+    <div className={inline ? "flex" : "pointer-events-none sticky bottom-3 z-20 mt-6 flex justify-center"}>
+      <div
+        role="region"
+        aria-label={`Save ${draft.what}`}
+        onFocus={() => setFocusWithin(true)}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusWithin(false);
+        }}
+        className="pointer-events-auto flex w-full max-w-xl flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-popover px-3 py-2 shadow-[0_2px_10px_rgb(0_0_0/0.25)]"
+      >
+        <span ref={status} tabIndex={-1} role="status" aria-live="polite" className={cn("rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", "min-w-0 flex-1 basis-56 text-xs leading-snug", bar.tone === "bad" ? "text-destructive-text" : bar.tone === "warn" ? "text-warning-text" : bar.tone === "done" ? "text-foreground" : "text-muted-foreground")}>
+          {bar.tone === "done" ? <Icon name="Check" className="mr-1 inline size-3.5 align-[-2px]" aria-hidden /> : null}
+          {busy ? <Icon name="Loading" className="mr-1 inline size-3.5 animate-spin align-[-2px]" aria-hidden /> : null}
+          {bar.words}
+          {unplaced.length ? <span className="mt-1 block text-destructive-text">{unplaced.join(" ")}</span> : null}
+        </span>
+        {showButtons ? (
+          <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {bar.show ? (
+              <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.revealFirst}>
+                Show
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7"
+              disabled={keepsFocus(draft.changes > 0 || draft.entry.operation !== null)}
+              aria-disabled={busy || undefined}
+              aria-description={DISCARD_WORDS}
+              onClick={() => {
+                if (!busy) draft.discard();
+              }}
+            >
+              Discard
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7"
+              disabled={keepsFocus(canSave)}
+              aria-disabled={busy || undefined}
+              onClick={() => {
+                if (canSave) draft.save();
+              }}
+            >
+              {bar.retry ? "Save again" : primary}
+            </Button>
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function ChangedChip({ show }: { show: boolean }) {
+  return show ? <Badge tone="warn">Changed</Badge> : null;
+}
+
+function conflictText(conflict: Conflict, shown: (value: PlainValue) => string): ReactNode {
+  switch (conflict.kind) {
+    case "changed":
+      return (
+        <>
+          Changed elsewhere to <span className="font-mono">{shown(conflict.stored)}</span> while you edited.
+        </>
+      );
+    case "replaced":
+      return <>Replaced elsewhere while you edited, at revision {conflict.version}. Saving yours replaces that one.</>;
+    case "added":
+      return <>A file at this path was added elsewhere while you edited, at revision {conflict.version}. Saving yours replaces it.</>;
+    case "removed":
+      return <>Removed elsewhere while you edited.</>;
+  }
+}
+
+export function ConflictNote({ conflict, onTheirs, onMine, shown = (value) => (value === null ? "empty" : String(value)), id }: { conflict: Conflict; onTheirs: () => void; onMine: () => void; shown?: (value: PlainValue) => string; id?: string }) {
+  const versioned = conflict.kind !== "changed";
+  return (
+    <div id={id} role="status" aria-live="polite" className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-md border border-warning/40 px-3 py-2 text-xs leading-snug">
+      <span className="min-w-0 flex-1 basis-48 text-foreground">{conflictText(conflict, shown)}</span>
+      <span className="flex shrink-0 gap-1.5">
+        <Button type="button" variant="ghost" size="sm" className="h-7" onClick={onTheirs}>
+          {conflict.kind === "removed" ? "Keep it removed" : versioned ? "Keep the saved one" : "Use theirs"}
+        </Button>
+        <Button type="button" variant="outline" size="sm" className="h-7" onClick={onMine}>
+          {conflict.kind === "removed" ? "Add mine again" : "Keep mine"}
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+export function RestoredNote({ draft }: { draft: Draft }) {
+  const restored = draft.entry.restored;
+  if (!restored) return null;
+  return (
+    <div role="status" className="flex flex-wrap items-start gap-3 rounded-lg border border-border bg-surface-raised px-4 py-3 text-xs leading-snug">
+      <Icon name="Info" className="mt-px size-4 shrink-0 text-muted-foreground" aria-hidden />
+      <span className="min-w-0 flex-1 basis-56 text-foreground">
+        Your unsaved changes to {draft.what} are back{restored.count ? `: ${changesWords(restored.count)}` : ""}.
+        {restored.lost.length ? <span className="text-muted-foreground"> For safety {restored.lost.join(" and ")} you pasted was not kept; paste it again.</span> : null}
+      </span>
+      <span className="flex gap-1.5">
+        <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.dismissRestored}>
+          Keep them
+        </Button>
+        <Button type="button" variant="outline" size="sm" className="h-7" disabled={draft.busy} onClick={draft.discard}>
+          Discard them
+        </Button>
+      </span>
+    </div>
+  );
+}

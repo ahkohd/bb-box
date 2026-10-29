@@ -1,7 +1,6 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { BackendConfig, ConfigDocument } from "../core/document.ts";
@@ -9,12 +8,15 @@ import type { Contract } from "../plugin/contract.ts";
 import type { DriverView } from "../plugin/configuration.ts";
 import { Badge, KindBadges, isArm64Badge, lacksDocker, message, relativeTime } from "./common.tsx";
 import { runsWayland } from "./boxes-filter.ts";
-import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, withGeneral, withKind, withMonitor } from "./config.ts";
+import { effectiveKind, inheritSource, kindChanges, sourceName, withBackend, withGeneral, withKind } from "./config.ts";
 import { RebuildNow } from "./rebuild-now.tsx";
 import { BackendForm, backendName, type BackendRowModel } from "./settings-backends.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { DockerHostsSection } from "./settings-docker-hosts.tsx";
+import { DraftNumberRow, unplacedProblems } from "./settings-draft-fields.tsx";
+import { BOXES_PART, MONITOR_PART } from "./settings-drafts.ts";
 import { BoxFilesSection } from "./settings-files.tsx";
+import { RestoredNote, SaveBar, useDraft } from "./settings-saving.tsx";
 import { KindForm, kindRowModel } from "./settings-kinds.tsx";
 import { iosEncoderWords, monitorChanged, noteMonitorChanged, ReloadNote } from "./settings-overview.tsx";
 import { Card, Chevron, FOCUS_RING, Group, PageHeader, ProviderGlyph, RowNote, Rows, SavedTick, SettingRow, StateLine } from "./settings-parts.tsx";
@@ -22,7 +24,7 @@ import { isOptionPage, type SettingsView } from "./settings-route.ts";
 import { backendHealth, backendLabel, isMachineDocker, kindName, plural } from "./settings-status.ts";
 import { TailnetSection } from "./settings-tailnet.tsx";
 
-export const SAVING_RULE = "Switches, and menus that stand alone, act at once. Fields wait for their Save, or save when you leave them.";
+export const SAVING_RULE = "Switches, and menus that stand alone, act at once. Fields, checkboxes and radio choices wait for Save.";
 
 export function NotHere({ what }: { what: string }) {
   const { nav } = useSettings();
@@ -103,9 +105,9 @@ export function BackendPage({ id }: { id: string }) {
         }
         aside={
           <label className="flex items-center gap-2 text-xs text-foreground">
-            <SavedTick show={instant.saved === key} />
+            <SavedTick show={instant.isSaved(key)} />
             Takes new boxes
-            <Switch aria-label={`${label}: takes new boxes`} aria-describedby={healthId} checked={pending ?? config.enabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={(on) => void instant.run(writes.backendOn(config, on, label))} />
+            <Switch aria-label={`${label}: takes new boxes`} aria-describedby={healthId} checked={pending ?? config.enabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={(on) => void instant.run(writes.backendOn(state, config, on, label))} />
           </label>
         }
       >
@@ -244,14 +246,14 @@ export function KindPage({ id }: { id: string }) {
         aside={
           <>
             {!isDefault ? (
-              <Button type="button" variant="outline" size="sm" className="h-7" disabled={!enabled} aria-disabled={instant.pending !== null || undefined} onClick={() => void instant.run(writes.general("defaultKind", id, "The default kind", (value) => kindName(state.kinds, state.kinds.find((kind) => kind.id === value) ?? info)))}>
+              <Button type="button" variant="outline" size="sm" className="h-7" disabled={!enabled} aria-disabled={instant.pending !== null || undefined} onClick={() => void instant.run(writes.general(state, "defaultKind", id, "The default kind", (value) => kindName(state.kinds, state.kinds.find((kind) => kind.id === value) ?? info)))}>
                 Make default
               </Button>
             ) : null}
             <label className="flex items-center gap-2 text-xs text-foreground">
-              <SavedTick show={instant.saved === key || instant.saved === defaultKey} />
+              <SavedTick show={instant.isSaved(key) || instant.isSaved(defaultKey)} />
               Offered to threads
-              <Switch aria-label={`${name}: offered to threads`} checked={enabled} disabled={isDefault && enabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={(on) => void instant.run(writes.kindOn(id, on, name))} />
+              <Switch aria-label={`${name}: offered to threads`} checked={enabled} disabled={isDefault && enabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={(on) => void instant.run(writes.kindOn(state, id, on, name))} />
             </label>
           </>
         }
@@ -291,41 +293,16 @@ function AtOnceSwitch({ label, description, settingKey, value, disabled, onChang
     <div>
       <SettingRow label={label} description={description}>
         <Switch aria-label={label} checked={pending ?? value} disabled={disabled} aria-disabled={instant.pending !== null || undefined} onCheckedChange={onChange} />
-        <SavedTick show={instant.saved === settingKey} />
+        <SavedTick show={instant.isSaved(settingKey)} />
       </SettingRow>
       <RowNote note={instant.note(settingKey)} className="px-4 pb-3" />
     </div>
   );
 }
 
-function NumberOnLeave({ label, description, value, problem, disabled, onSave }: { label: string; description: string; value: number; problem: string | null; disabled?: boolean; onSave: (value: number) => void }) {
-  const [text, setText] = useState<string | null>(null);
-  return (
-    <SettingRow label={label} description={description} problem={problem}>
-      <Input
-        className="h-8 w-20 text-xs"
-        inputMode="numeric"
-        aria-label={label}
-        disabled={disabled}
-        value={text ?? String(value)}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-        }}
-        onBlur={() => {
-          if (text === null) return;
-          const next = Number(text.trim() || "0");
-          setText(null);
-          if (!Number.isFinite(next) || next === value) return;
-          onSave(next);
-        }}
-      />
-    </SettingRow>
-  );
-}
-
 function BoxesOptions() {
-  const { state, instant, writes, applyNow, apply } = useSettings();
+  const { state, instant, writes } = useSettings();
+  const draft = useDraft(BOXES_PART, "Boxes");
   const general = { ...state.defaults.general, ...state.document.general };
   const defaultKey = switchKey.general("defaultKind");
   const pendingDefault = instant.pendingValue<string>(defaultKey);
@@ -338,12 +315,13 @@ function BoxesOptions() {
   const problem = (path: string) => state.problems.find((candidate) => candidate.path === path)?.message ?? null;
   return (
     <div className="space-y-6">
+      <RestoredNote draft={draft} />
       <Card>
         <Rows>
           <div>
             <SettingRow label="Default kind" description="What a thread gets when it does not say." problem={problem("general.defaultKind")}>
-              <SavedTick show={instant.saved === defaultKey} />
-              <Select value={pendingDefault ?? general.defaultKind} onValueChange={(kind) => void instant.run(writes.general("defaultKind", kind, "The default kind", nameOf))}>
+              <SavedTick show={instant.isSaved(defaultKey)} />
+              <Select value={pendingDefault ?? general.defaultKind} onValueChange={(kind) => void instant.run(writes.general(state, "defaultKind", kind, "The default kind", nameOf))}>
                 <SelectTrigger className="h-8 w-56 text-xs" aria-label="Default kind">
                   <SelectValue />
                 </SelectTrigger>
@@ -358,28 +336,19 @@ function BoxesOptions() {
             </SettingRow>
             <RowNote note={instant.note(defaultKey)} className="px-4 pb-3" />
           </div>
-          <NumberOnLeave
-            label="Boxes per thread"
-            description="0 means no limit. Saves when you leave the field."
-            value={general.boxesPerThread}
-            problem={problem("general.boxesPerThread")}
-            onSave={(count) => void applyNow("general", withGeneral(state.document, { boxesPerThread: count === state.defaults.general.boxesPerThread ? undefined : count }))}
-          />
-          <AtOnceSwitch label="Boxes join BB as machines" description="Threads and terminals can then use a box, with the thread's credentials." settingKey={switchKey.general("enrol")} value={general.enrol} onChange={(on) => void instant.run(writes.general("enrol", on, "Boxes join BB as machines"))} />
+          <DraftNumberRow draft={draft} path="general/boxesPerThread" label="Boxes per thread" description="The most boxes one thread may hold at once. 0 means no limit." />
+          <AtOnceSwitch label="Boxes join BB as machines" description="Threads and terminals can then use a box, with the thread's credentials." settingKey={switchKey.general("enrol")} value={general.enrol} onChange={(on) => void instant.run(writes.general(state, "enrol", on, "Boxes join BB as machines"))} />
           <AtOnceSwitch
             label="Linux desktops as video"
             description="X11 desktops drawn by the CPU show as video: drags follow closely, and it stays smooth on a slow connection. Every viewer can go back with Show as VNC in its menu."
             settingKey={switchKey.general("video")}
             value={general.video}
-            onChange={(on) => void instant.run(writes.general("video", on, "Linux desktops as video"))}
+            onChange={(on) => void instant.run(writes.general(state, "video", on, "Linux desktops as video"))}
           />
         </Rows>
       </Card>
-      <BoxFilesSection
-        files={state.document.general.files ?? []}
-        problems={state.problems.filter((candidate) => candidate.path.startsWith("general.files"))}
-        save={async (files) => (await apply(withGeneral(state.document, { files: files.length ? files : undefined }))).saved}
-      />
+      <SaveBar draft={draft} unplaced={unplacedProblems(draft, ["general/boxesPerThread"])} />
+      <BoxFilesSection />
     </div>
   );
 }
@@ -396,7 +365,7 @@ function ImagesOptions() {
           description="At 03:00 on BB's server, BB Box rebuilds the standard images that are due, so new boxes have current tools and updates. After a BB update, it refreshes the Linux images within the hour."
           settingKey={switchKey.general("nightlyImages")}
           value={general.nightlyImages}
-          onChange={(on) => void instant.run(writes.general("nightlyImages", on, "Rebuild each night"))}
+          onChange={(on) => void instant.run(writes.general(state, "nightlyImages", on, "Rebuild each night"))}
         />
       </Card>
       <Group title="Rebuild now">
@@ -474,12 +443,14 @@ function NetworkOptions() {
 }
 
 function MonitorOptions() {
-  const { state, instant, writes, applyNow } = useSettings();
+  const { state, instant, writes } = useSettings();
+  const draft = useDraft(MONITOR_PART, "the Monitor");
   const monitor = { ...state.defaults.monitor, ...state.document.monitor };
   const enabledKey = switchKey.monitor("enabled");
   const on = instant.pendingValue<boolean>(enabledKey) ?? monitor.enabled;
   return (
     <div className="space-y-3">
+      <RestoredNote draft={draft} />
       <Card>
         <Rows>
           <AtOnceSwitch
@@ -488,26 +459,18 @@ function MonitorOptions() {
             settingKey={enabledKey}
             value={monitor.enabled}
             onChange={(enabled) =>
-              void instant.run(writes.monitor("enabled", enabled, "Machine status")).then((outcome) => {
+              void instant.run(writes.monitor(state, "enabled", enabled, "Machine status")).then((outcome) => {
                 if (outcome?.kind === "saved") noteMonitorChanged();
               })
             }
           />
-          <NumberOnLeave
-            label="Refresh every … s"
-            description="Seconds between readings while machine status is open, 2 to 60. Saves when you leave the field."
-            value={monitor.refreshIntervalSeconds}
-            problem={state.problems.find((problem) => problem.path === "monitor.refreshIntervalSeconds")?.message ?? null}
-            disabled={!on}
-            onSave={(seconds) => {
-              void applyNow("monitor", withMonitor(state.document, { refreshIntervalSeconds: seconds === state.defaults.monitor.refreshIntervalSeconds ? undefined : seconds }));
-            }}
-          />
-          <AtOnceSwitch label="Background monitoring" description="Checks BB's server's CPU and memory every 30 seconds while nobody looks, and keeps logs for bb box monitor logs." settingKey={switchKey.monitor("backgroundMonitoring")} value={monitor.backgroundMonitoring} disabled={!on} onChange={(value) => void instant.run(writes.monitor("backgroundMonitoring", value, "Background monitoring"))} />
-          <AtOnceSwitch label="Pressure notifications" description="With background monitoring on, a toast in BB when CPU or memory stays high for a minute, and when it recovers." settingKey={switchKey.monitor("pressureNotifications")} value={monitor.pressureNotifications} disabled={!on} onChange={(value) => void instant.run(writes.monitor("pressureNotifications", value, "Pressure notifications"))} />
+          <DraftNumberRow draft={draft} path="monitor/refreshIntervalSeconds" label="Refresh every" unit="s" unitWord="seconds" description="Seconds between readings while machine status is open, 2 to 60." disabled={!on} />
+          <AtOnceSwitch label="Background monitoring" description="Checks BB's server's CPU and memory every 30 seconds while nobody looks, and keeps logs for bb box monitor logs." settingKey={switchKey.monitor("backgroundMonitoring")} value={monitor.backgroundMonitoring} disabled={!on} onChange={(value) => void instant.run(writes.monitor(state, "backgroundMonitoring", value, "Background monitoring"))} />
+          <AtOnceSwitch label="Pressure notifications" description="With background monitoring on, a toast in BB when CPU or memory stays high for a minute, and when it recovers." settingKey={switchKey.monitor("pressureNotifications")} value={monitor.pressureNotifications} disabled={!on} onChange={(value) => void instant.run(writes.monitor(state, "pressureNotifications", value, "Pressure notifications"))} />
         </Rows>
       </Card>
       {monitorChanged() ? <ReloadNote /> : null}
+      <SaveBar draft={draft} unplaced={unplacedProblems(draft, ["monitor/refreshIntervalSeconds"])} />
     </div>
   );
 }

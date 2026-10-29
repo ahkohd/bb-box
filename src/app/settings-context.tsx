@@ -1,8 +1,10 @@
 import { createContext, useContext } from "react";
 import type { BackendConfig, ConfigDocument, Problem } from "../core/document.ts";
 import type { ApplyResult, ConfigState } from "../plugin/contract.ts";
-import { effectiveKind, kindChanges, withBackend, withGeneral, withKind, withMonitor } from "./config.ts";
-import type { Instant, InstantWrite } from "./settings-instant.ts";
+import type { DockerHostView } from "../plugin/docker-hosts.ts";
+import { submittedWrite, type InstantWrite, type Operation } from "./settings-drafts.ts";
+import { candidateOf, fileIsStored, filePath, plain, storedAt, type EditValue, type Path, type PlainValue } from "./settings-paths.ts";
+import type { Instant } from "./settings-saving.tsx";
 import type { SettingsNav } from "./settings-nav.ts";
 import { machineHostId } from "./settings-status.ts";
 
@@ -17,10 +19,8 @@ export interface SettingsContextValue {
   readonly instant: Instant;
   readonly writes: SettingsWrites;
   readonly notice: string | null;
-  readonly busy: string | null;
   refresh(): Promise<void>;
   apply(draft: ConfigDocument): Promise<Saved>;
-  applyNow(key: string, draft: ConfigDocument): Promise<void>;
 }
 
 export const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -35,10 +35,12 @@ export type GeneralAtOnce = "enrol" | "video" | "nightlyImages" | "defaultKind";
 export type MonitorAtOnce = "enabled" | "backgroundMonitoring" | "pressureNotifications";
 
 export interface SettingsWrites {
-  backendOn(config: BackendConfig, on: boolean, what: string): InstantWrite<boolean>;
-  kindOn(id: string, on: boolean, what: string): InstantWrite<boolean>;
-  general(key: GeneralAtOnce, value: boolean | string, what: string, say?: (value: boolean | string) => string): InstantWrite<boolean | string>;
-  monitor(key: MonitorAtOnce, value: boolean, what: string): InstantWrite<boolean>;
+  backendOn(state: ConfigState, config: BackendConfig, on: boolean, what: string): InstantWrite;
+  kindOn(state: ConfigState, id: string, on: boolean, what: string): InstantWrite;
+  general(state: ConfigState, key: GeneralAtOnce, value: boolean | string, what: string, say?: (value: PlainValue) => string): InstantWrite;
+  monitor(state: ConfigState, key: MonitorAtOnce, value: boolean, what: string): InstantWrite;
+  dockerHost(host: DockerHostView, on: boolean): InstantWrite;
+  removeFile(state: ConfigState, path: string): InstantWrite;
 }
 
 export const switchKey = {
@@ -46,60 +48,70 @@ export const switchKey = {
   kind: (id: string) => `kind:${id}`,
   general: (key: string) => `general:${key}`,
   monitor: (key: string) => `monitor:${key}`,
+  dockerHost: (hostId: string) => `docker-host:${hostId}`,
+  removeFile: (path: string) => `remove-file:${path}`,
 };
 
-function onOff(value: unknown): string {
+function onOff(value: PlainValue): string {
   return value === true ? "on" : value === false ? "off" : String(value);
 }
 
+type Call = <T>(method: string, input?: unknown) => Promise<T>;
+
+function pathWrite(state: ConfigState, key: string, what: string, path: Path, value: EditValue, pending: unknown, say: (state: ConfigState) => string): InstantWrite {
+  const edits = [{ path, value, base: storedAt(state, path, value) }];
+  return { key, what, pending, say, ...submittedWrite({ part: `instant:${key}`, edits }) };
+}
+
+function settingWords(path: Path, say: (value: PlainValue) => string) {
+  return (state: ConfigState) => {
+    const stored = storedAt(state, path);
+    return say(stored.kind === "value" ? stored.value : null);
+  };
+}
+
+function dockerHostOn(state: ConfigState, hostId: string): boolean {
+  return state.document.backends.some((backend) => machineHostId(backend) === hostId && backend.enabled);
+}
+
 export function settingsWrites(rpc: { call: (...args: never[]) => Promise<unknown> }): SettingsWrites {
-  const call = rpc.call as unknown as <T>(method: string, input?: unknown) => Promise<T>;
-  const applyTo = (state: ConfigState, draft: ConfigDocument) => call<ApplyResult>("config.apply", { draft, revision: state.revision });
+  const call = rpc.call as unknown as Call;
+  const dockerHostSet = async (hostId: string, enabled: boolean, operation: Operation) => (await call<{ result: ApplyResult }>("docker.host.set", { hostId, enabled, operation: operation.id })).result;
   return {
-    backendOn(config, on, what) {
+    backendOn(state, config, on, what) {
+      const path = `backends/${config.id}/enabled`;
+      const write = pathWrite(state, switchKey.backend(config.id), what, path, plain(on), on, settingWords(path, onOff));
       const hostId = machineHostId(config);
+      if (!hostId) return write;
+      return { ...write, send: (_transport, _built, _state, operation) => dockerHostSet(hostId, on, operation) };
+    },
+    kindOn(state, id, on, what) {
+      const path = `kinds/${id}/enabled`;
+      return pathWrite(state, switchKey.kind(id), what, path, plain(on), on, settingWords(path, onOff));
+    },
+    general(state, key, value, what, say = onOff) {
+      const path = `general/${key}`;
+      return pathWrite(state, switchKey.general(key), what, path, plain(value), value, settingWords(path, say));
+    },
+    monitor(state, key, value, what) {
+      const path = `monitor/${key}`;
+      return pathWrite(state, switchKey.monitor(key), what, path, plain(value), value, settingWords(path, onOff));
+    },
+    dockerHost(host, on) {
       return {
-        key: switchKey.backend(config.id),
-        what,
-        value: on,
-        read: (state) => state.document.backends.find((backend) => backend.id === config.id)?.enabled ?? false,
-        say: onOff,
-        send: async (state) => {
-          if (hostId) return (await call<{ result: ApplyResult }>("docker.host.set", { hostId, enabled: on })).result;
-          const latest = state.document.backends.find((backend) => backend.id === config.id);
-          if (!latest) return { ok: false, reason: "problems", problems: [{ path: `backends.${config.id}`, message: "It was removed elsewhere." }] };
-          return applyTo(state, withBackend(state.document, { ...latest, enabled: on }));
-        },
+        key: switchKey.dockerHost(host.hostId),
+        what: `Hosting boxes on ${host.name}`,
+        pending: on,
+        say: (state) => (dockerHostOn(state, host.hostId) ? "on" : "off"),
+        build: (state) => ({ ...candidateOf(state, []), needed: dockerHostOn(state, host.hostId) !== on }),
+        send: (_transport, _built, _state, operation) => dockerHostSet(host.hostId, on, operation),
       };
     },
-    kindOn(id, on, what) {
+    removeFile(state, path) {
+      const at = filePath(path);
       return {
-        key: switchKey.kind(id),
-        what,
-        value: on,
-        read: (state) => effectiveKind(state, id).enabled,
-        say: onOff,
-        send: (state) => applyTo(state, withKind(state.document, id, kindChanges(state, id, { ...effectiveKind(state, id), enabled: on }))),
-      };
-    },
-    general(key, value, what, say = onOff) {
-      return {
-        key: switchKey.general(key),
-        what,
-        value,
-        read: (state) => ({ ...state.defaults.general, ...state.document.general })[key] as boolean | string,
-        say,
-        send: (state) => applyTo(state, withGeneral(state.document, { [key]: value === state.defaults.general[key] ? undefined : value })),
-      };
-    },
-    monitor(key, value, what) {
-      return {
-        key: switchKey.monitor(key),
-        what,
-        value,
-        read: (state) => ({ ...state.defaults.monitor, ...state.document.monitor })[key] as boolean,
-        say: onOff,
-        send: (state) => applyTo(state, withMonitor(state.document, { [key]: value === state.defaults.monitor[key] ? undefined : value })),
+        ...pathWrite(state, switchKey.removeFile(path), `~/${path}`, at, { kind: "removed" }, true, (latest) => (fileIsStored(latest, at) ? "still here" : "removed")),
+        undone: "removed",
       };
     },
   };

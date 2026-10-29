@@ -4,7 +4,8 @@ import type { ConfigDocument } from "../core/document.ts";
 import type { ConfigState, Contract } from "../plugin/contract.ts";
 import { EmptyPanel, message, useLive } from "./common.tsx";
 import { SettingsContext, settingsWrites, type Saved, type SettingsContextValue } from "./settings-context.tsx";
-import { useInstant } from "./settings-instant.ts";
+import { drafts, type SaveTransport } from "./settings-drafts.ts";
+import { newestState, useInstant, useRegistry } from "./settings-saving.tsx";
 import { scrollParent, useSettingsNav, type Arrival } from "./settings-nav.ts";
 import { forgetKindsKeptHere, Overview } from "./settings-overview.tsx";
 import { TopRow, viewPage } from "./settings-pages.tsx";
@@ -42,11 +43,17 @@ export function SettingsSection() {
   const page = useRef<HTMLDivElement>(null);
   const scroller = useCallback(() => scrollParent(root.current), []);
   const nav = useSettingsNav(scroller);
-  const reload = useCallback(() => rpc.call("config.get"), [rpc]);
-  const instant = useInstant(state, reload, refresh);
+  const registry = useRegistry();
+  const instant = useInstant();
   const writes = useMemo(() => settingsWrites(rpc), [rpc]);
-  const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const transport: SaveTransport = { apply: (request) => rpc.call("config.apply", request), read: () => rpc.call("config.get") };
+    drafts().connect(transport);
+  }, [rpc]);
+  useLayoutEffect(() => {
+    if (state) drafts().observe(state);
+  }, [state]);
   useEffect(() => () => forgetKindsKeptHere(), []);
   useEffect(() => setNotice(null), [nav.view]);
   useArrival(nav.arrival, root, page, state !== null);
@@ -76,26 +83,18 @@ export function SettingsSection() {
     },
     [rpc, refresh],
   );
-  const applyNow = useCallback(
-    async (key: string, draft: ConfigDocument): Promise<void> => {
-      setBusy(key);
-      try {
-        const { saved, problems } = await apply(draft);
-        setNotice(!saved && problems.length ? problems.map((problem) => problem.message).join(" ") : null);
-      } finally {
-        setBusy(null);
-      }
-    },
-    [apply],
-  );
-
-  if (error) return <EmptyPanel role="alert">{error}</EmptyPanel>;
+  if (error && !state) return <EmptyPanel role="alert">{error}</EmptyPanel>;
   if (!state) return null;
-  const context: SettingsContextValue = { state, nav, instant, writes, notice, busy, refresh, apply, applyNow };
+  const context: SettingsContextValue = { state: newestState(state, registry), nav, instant, writes, notice, refresh, apply };
   return (
     <SettingsContext.Provider value={context}>
       <div ref={root} className="space-y-5" data-settings-view={hashOf(nav.view) || "#"}>
         <TopRow />
+        {error ? (
+          <p role="alert" className="rounded-md border border-warning/40 bg-surface-recessed px-3 py-2 text-xs leading-snug text-warning-text">
+            The configuration could not be read again: {error.replace(/\.?$/, ".")} This page shows it as last read.
+          </p>
+        ) : null}
         {notice ? (
           <p role="alert" className="rounded-md border border-warning/40 bg-surface-recessed px-3 py-2 text-xs leading-snug text-warning-text">
             {notice}

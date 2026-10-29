@@ -10,7 +10,7 @@ import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import type { ImageOptionView } from "../src/plugin/views.ts";
 import type { ApplyResult, BoxResult, CheckResult, ConfigState, Contract, DesktopState, MachineEntry, PanelState, ResizeResult, ThreadOnBox } from "../src/plugin/contract.ts";
-import type { ConfigDocument, Problem } from "../src/core/document.ts";
+import type { ConfigDocument, Problem, SaveReceipt } from "../src/core/document.ts";
 import type { BackendView, BoxView, DoctorView, KindView, ProviderProfile } from "../src/plugin/views.ts";
 import type { GpuRoom } from "../src/backends/types.ts";
 import type { DockerHostView } from "../src/plugin/docker-hosts.ts";
@@ -39,6 +39,7 @@ import { terminalTitle } from "../src/app/terminal.tsx";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import { openSettingsView } from "../src/app/settings-route.ts";
+import { forgetDrafts } from "../src/app/settings-drafts.ts";
 import type { BackendConfig } from "../src/core/document.ts";
 import type { FieldView } from "../src/plugin/configuration.ts";
 import packageJson from "../package.json";
@@ -334,6 +335,7 @@ afterEach(() => {
   FakeObserver.made = [];
   window.sessionStorage.clear();
   window.localStorage.clear();
+  forgetDrafts();
   forgetStreams();
   forgetResizesAsked();
 });
@@ -515,6 +517,8 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
   let dockerHosts = [...(options.dockerHosts ?? [])];
   let setups = [...(options.setups ?? [])];
   const changes: string[] = [];
+  const operations: string[] = [];
+  const receipts: SaveReceipt[] = [];
   /** The providers whose profiles the form asked for, in order. */
   const asked: string[] = [];
   const result = (found: BoxView | null): BoxResult => (options.failWith ? { box: null, error: options.failWith } : { box: found, error: null });
@@ -665,22 +669,27 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
         },
       ],
     }),
-    "config.get": () => configState(options.config ?? {}),
+    "config.get": () => configState({ ...options.config, receipts: [...receipts] }),
     "config.check": ({ draft, test }): CheckResult => {
       changes.push(`check ${test ?? "-"} ${JSON.stringify(draft)}`);
       return options.checkWith ?? { problems: [], doctor: null };
     },
-    "config.apply": ({ draft, revision }): ApplyResult => {
+    "config.apply": ({ draft, revision, operation }): ApplyResult => {
       changes.push(`apply ${revision} ${JSON.stringify(draft)}`);
+      if (operation) operations.push(operation);
       if (options.applyWith) return options.applyWith;
-      applied = draft as ConfigDocument;
-      return { ok: true, state: configState({ ...options.config, document: applied, revision: revision + 1 }), problems: options.savedWith ?? [] };
+      const next = revision + 1;
+      applied = savedLike(draft as ConfigDocument, next);
+      const receipt = operation ? { operation, revision: next, at: Date.now() } : null;
+      if (receipt) receipts.push(receipt);
+      return { ok: true, state: configState({ ...options.config, document: applied, revision: next, receipts: [...receipts] }), problems: options.savedWith ?? [], ...(receipt ? { receipt } : {}) };
     },
     "config.migrated.remove": () => ({ removed: true, state: configState({ ...options.config, migrated: null }) }),
     // BB machines that can host Docker boxes (042), switched as the tests ask.
     "docker.hosts": () => ({ hosts: dockerHosts }),
-    "docker.host.set": ({ hostId, enabled }) => {
+    "docker.host.set": ({ hostId, enabled, operation }) => {
       changes.push(`docker.host.set ${hostId} ${enabled}`);
+      if (operation) operations.push(operation);
       dockerHosts = dockerHosts.map((host) => (host.hostId === hostId ? { ...host, backend: enabled ? { id: `docker:${host.name}`, enabled: true, boxes: 0 } : null } : host));
       return { result: { ok: true, state: configState(options.config ?? {}), problems: [] }, hosts: dockerHosts };
     },
@@ -694,7 +703,12 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
     },
     "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
   };
-  return { handlers, changes, asked, copyInBox };
+  return { handlers, changes, asked, copyInBox, operations, receipts };
+}
+
+function savedLike(draft: ConfigDocument, revision: number): ConfigDocument {
+  const files = draft.general.files?.map((file) => (typeof file.content === "string" ? { path: file.path, content: { set: true, version: revision } } : file.content === undefined ? { path: file.path, content: { set: true, version: 1 } } : file));
+  return { ...draft, general: { ...draft.general, ...(files ? { files } : {}) } };
 }
 
 let applied: ConfigDocument | null = null;
@@ -1819,7 +1833,11 @@ test("the panel refetches on its thread's change signals and after a reconnect",
   await waitFor(() => expect(stateCalls(slot)).toBe(4));
 });
 
-function settings(handlers: PluginRpcTestHandlers<Contract>, hash = "") {
+function settings(handlers: PluginRpcTestHandlers<Contract>, hash = "", { keepDrafts = false } = {}) {
+  if (!keepDrafts) {
+    forgetDrafts();
+    window.sessionStorage.clear();
+  }
   window.history.replaceState(null, "", `/settings/plugins/bb-box${hash}`);
   const [section] = app.settingsSections;
   return renderSlot(section!, {}, { rpc: handlers, pluginId: "bb-box" });
@@ -1866,7 +1884,7 @@ test("status says a check's age, never ready for a pass over an hour old, and Ch
 });
 
 test("a switch saves at once and says Saved; a refusal, three refusals in a row and a lost reply put it back and say why", async () => {
-  const { handlers, changes } = server([]);
+  const { handlers, changes, operations } = server([]);
   const slot = settings(handlers);
   fireEvent.click(await slot.findByRole("switch", { name: "Linux desktop: offered to threads" }));
   await waitFor(() => expect(changes).toHaveLength(1));
@@ -1878,6 +1896,8 @@ test("a switch saves at once and says Saved; a refusal, three refusals in a row 
   fireEvent.click(slot.getByRole("switch", { name: "Fake host: takes new boxes" }));
   await waitFor(() => expect(changes).toHaveLength(2));
   expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).backends[0].enabled).toBe(false);
+  expect(operations).toHaveLength(2);
+  expect(new Set(operations).size).toBe(2);
   cleanup();
   applied = null;
 
@@ -1899,7 +1919,7 @@ test("a switch saves at once and says Saved; a refusal, three refusals in a row 
   const lost = server([]);
   const silent = settings({ ...lost.handlers, "config.apply": () => { throw new Error("The connection closed."); } });
   fireEvent.click(await silent.findByRole("switch", { name: "Fake host: takes new boxes" }));
-  expect(await silent.findByText("Not confirmed: BB Box did not reply (The connection closed). Fake host is on now, at revision 3.")).toBeTruthy();
+  expect(await silent.findByText("Not confirmed: BB Box did not reply (The connection closed), and has no receipt for this change. Fake host is on now, at revision 3.")).toBeTruthy();
   expect(silent.queryByText("Saved")).toBeNull();
 });
 
@@ -2071,17 +2091,25 @@ test("a kind's warm pool short of room shows a note under that backend's warm co
   expect(ok.queryByText(/no room/)).toBeNull();
 });
 
-test("the Boxes and Images options save a field when it is left and a switch at once, leaving out a value at its default", async () => {
-  const { handlers, changes } = server([]);
+test("the Boxes and Images options: a field waits for Save, which Enter gives, and a switch saves at once, leaving out a value at its default", async () => {
+  const { handlers, changes, operations } = server([]);
   const slot = settings(handlers, "#option/boxes");
+  expect(await slot.findByText("Switches, and menus that stand alone, act at once. Fields, checkboxes and radio choices wait for Save.")).toBeTruthy();
   const limit = await slot.findByRole("textbox", { name: "Boxes per thread" });
   fireEvent.change(limit, { target: { value: "3" } });
   fireEvent.blur(limit);
+  expect(changes).toHaveLength(0);
+  expect(slot.getByText("Changed")).toBeTruthy();
+  expect(slot.getByRole("region", { name: "Save Boxes" }).textContent).toContain("1 change to Boxes not saved");
+  fireEvent.keyDown(limit, { key: "Enter" });
   await waitFor(() => expect(changes).toHaveLength(1));
   expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3 });
+  expect(await slot.findByText("Saved.")).toBeTruthy();
+  expect(slot.queryByText("Changed")).toBeNull();
   fireEvent.click(slot.getByRole("switch", { name: "Boxes join BB as machines" }));
   await waitFor(() => expect(changes).toHaveLength(2));
   expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).general).toEqual({ boxesPerThread: 3, enrol: false });
+  expect(operations).toHaveLength(2);
   cleanup();
   const images = settings(handlers, "#option/images");
   const nightly = await images.findByRole("switch", { name: "Rebuild each night" });
@@ -2127,34 +2155,131 @@ test("while a rebuild runs, Rebuild now shows it image by image, with the step o
   expect(slot.getByRole("progressbar", { name: "Rebuilding images" })).toBeTruthy();
 });
 
-test("files for every box show each path and whether it is set, never a content, and save at once, sending a kept file's path alone (#455)", async () => {
-  // As saved: config.get gives the document last applied.
-  applied = { schema: 1, revision: 3, backends: [], kinds: {}, general: { files: [{ path: ".pi/agent/models.json", content: { set: true } }] } };
-  const { handlers, changes } = server([]);
+test("files for every box show each path and whether it is set, never a content; Save files sends a kept file's path alone, and Remove asks first (#455)", async () => {
+  applied = { schema: 1, revision: 3, backends: [], kinds: {}, general: { files: [{ path: ".pi/agent/models.json", content: { set: true, version: 2 } }] } };
+  const { handlers, changes, operations } = server([]);
   const slot = settings(handlers, "#option/boxes");
-  expect(await slot.findByText(".pi/agent/models.json")).toBeTruthy();
+  expect(await slot.findByText("~/.pi/agent/models.json")).toBeTruthy();
   expect(slot.getByText("Set")).toBeTruthy();
   const sent = (at: number) => JSON.parse(changes[at]!.slice(changes[at]!.indexOf("{"))).general.files;
 
   fireEvent.click(slot.getByRole("button", { name: "Add file" }));
-  fireEvent.change(slot.getByRole("textbox", { name: "Path under the box user's home" }), { target: { value: " .config/tool/config.toml " } });
-  fireEvent.change(slot.getByRole("textbox", { name: "The file's content" }), { target: { value: "key = 1" } });
-  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  fireEvent.change(slot.getByRole("textbox", { name: "New file's path under the box user's home" }), { target: { value: " .config/tool/config.toml " } });
+  fireEvent.change(slot.getByRole("textbox", { name: "Content of ~/.config/tool/config.toml" }), { target: { value: "key = 1" } });
+  expect(slot.getByRole("region", { name: "Save files for every box" }).textContent).toContain("1 change to files for every box not saved");
+  expect(window.sessionStorage.getItem("bb-box.settings.draft.files")).not.toContain("key = 1");
+  fireEvent.click(slot.getByRole("button", { name: "Save files" }));
   await waitFor(() => expect(changes).toHaveLength(1));
   expect(sent(0)).toEqual([{ path: ".pi/agent/models.json" }, { path: ".config/tool/config.toml", content: "key = 1" }]);
-  await waitFor(() => expect(slot.queryByRole("textbox", { name: "The file's content" })).toBeNull());
+  expect(await slot.findByText("~/.config/tool/config.toml")).toBeTruthy();
+  await waitFor(() => expect(slot.queryByRole("textbox", { name: "Content of ~/.config/tool/config.toml" })).toBeNull());
   expect(slot.queryByText(/key = 1/)).toBeNull();
 
-  // Replace keeps the path; Remove sends the rest, each by its path alone.
-  fireEvent.click(slot.getAllByRole("button", { name: "Replace" })[0]!);
-  expect((slot.getByRole("textbox", { name: "Path under the box user's home" }) as HTMLInputElement).disabled).toBe(true);
-  fireEvent.change(slot.getByRole("textbox", { name: "The file's content" }), { target: { value: "{}" } });
-  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  fireEvent.click(slot.getByRole("button", { name: "Replace the content of ~/.pi/agent/models.json" }));
+  fireEvent.change(slot.getByRole("textbox", { name: "New content for ~/.pi/agent/models.json" }), { target: { value: "{}" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save files" }));
   await waitFor(() => expect(changes).toHaveLength(2));
   expect(sent(1)).toEqual([{ path: ".pi/agent/models.json", content: "{}" }, { path: ".config/tool/config.toml" }]);
-  fireEvent.click(slot.getAllByRole("button", { name: "Remove" })[1]!);
+  await waitFor(() => expect(slot.queryByRole("textbox", { name: "New content for ~/.pi/agent/models.json" })).toBeNull());
+
+  fireEvent.click(slot.getByRole("button", { name: "Remove ~/.config/tool/config.toml" }));
+  expect(changes).toHaveLength(2);
+  fireEvent.click(await slot.findByRole("button", { name: "Remove file" }));
   await waitFor(() => expect(changes).toHaveLength(3));
   expect(sent(2)).toEqual([{ path: ".pi/agent/models.json" }]);
+  expect(operations).toHaveLength(3);
+});
+
+const MONITOR_DOCUMENT: ConfigDocument = { schema: 1, revision: 3, backends: [], kinds: {}, general: {} };
+
+test("a field edited here that changed elsewhere is a conflict on its row at once, with Use theirs and Keep mine, while a switch follows the stored value", async () => {
+  applied = MONITOR_DOCUMENT;
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers, "#option/monitor");
+  const refresh = (await slot.findByRole("textbox", { name: "Refresh every, in seconds" })) as HTMLInputElement;
+  expect(refresh.value).toBe("5");
+  fireEvent.change(refresh, { target: { value: "12" } });
+  expect(slot.getByRole("region", { name: "Save the Monitor" }).textContent).toContain("1 change to the Monitor not saved");
+  applied = { ...MONITOR_DOCUMENT, revision: 4, monitor: { refreshIntervalSeconds: 8, backgroundMonitoring: true } };
+  await slot.emitRealtime("changed", null);
+  expect(await slot.findByText(/Changed elsewhere to/)).toBeTruthy();
+  expect(slot.getByText("8").closest("[role=status]")).toBeTruthy();
+  expect(slot.getByRole("switch", { name: "Background monitoring" }).getAttribute("aria-checked")).toBe("true");
+  expect(refresh.value).toBe("12");
+  expect(refresh.getAttribute("aria-describedby")).toContain("conflict");
+  expect(slot.getByRole("region", { name: "Save the Monitor" }).textContent).toContain("A setting you changed was changed elsewhere too. Choose for each, then save.");
+  expect((slot.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(slot.getByRole("button", { name: "Show" }));
+  expect(document.activeElement).toBe(refresh);
+  fireEvent.click(slot.getByRole("button", { name: "Keep mine" }));
+  expect(slot.queryByText(/Changed elsewhere to/)).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(changes[0]!.startsWith("apply 4 ")).toBe(true);
+  expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).monitor).toEqual({ refreshIntervalSeconds: 12, backgroundMonitoring: true });
+
+  fireEvent.change(refresh, { target: { value: "20" } });
+  applied = { ...applied!, revision: 6, monitor: { refreshIntervalSeconds: 30 } };
+  await slot.emitRealtime("changed", null);
+  fireEvent.click(await slot.findByRole("button", { name: "Use theirs" }));
+  expect(refresh.value).toBe("30");
+  expect(slot.queryByRole("region", { name: "Save the Monitor" })?.textContent ?? "").not.toContain("not saved");
+});
+
+test("a draft waits when the page is left, the overview marks its row, a reload brings it back without what was pasted, and closing the tab asks first", async () => {
+  applied = { ...MONITOR_DOCUMENT, general: { files: [{ path: ".cfg/a.json", content: { set: true, version: 2 } }] } };
+  const { handlers } = server([]);
+  const slot = settings(handlers, "#option/monitor");
+  fireEvent.change(await slot.findByRole("textbox", { name: "Refresh every, in seconds" }), { target: { value: "12" } });
+  fireEvent.click(slot.getByRole("button", { name: "BB Box settings" }));
+  expect(await slot.findByRole("button", { name: "Monitor", description: /^Unsaved changes/ })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Boxes" }).getAttribute("aria-describedby")!.split(" ")).toHaveLength(1);
+  cleanup();
+
+  const back = settings(handlers, "#option/boxes", { keepDrafts: true });
+  fireEvent.click(await back.findByRole("button", { name: "Replace the content of ~/.cfg/a.json" }));
+  fireEvent.change(back.getByRole("textbox", { name: "New content for ~/.cfg/a.json" }), { target: { value: "made-up-file-secret" } });
+  const leaving = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(leaving);
+  expect(leaving.defaultPrevented).toBe(true);
+  expect(JSON.stringify({ ...window.sessionStorage })).not.toContain("made-up-file-secret");
+  cleanup();
+
+  forgetDrafts();
+  const reloaded = settings(handlers, "#option/monitor", { keepDrafts: true });
+  expect(await reloaded.findByText("Your unsaved changes to the Monitor are back: 1 change.")).toBeTruthy();
+  expect(((await reloaded.findByRole("textbox", { name: "Refresh every, in seconds" })) as HTMLInputElement).value).toBe("12");
+  cleanup();
+  const files = settings(handlers, "#option/boxes", { keepDrafts: true });
+  expect(await files.findByText(/For safety the content of ~\/\.cfg\/a\.json you pasted was not kept; paste it again\./)).toBeTruthy();
+  fireEvent.click(files.getByRole("button", { name: "Discard them" }));
+  expect(files.queryByText(/For safety/)).toBeNull();
+});
+
+test("a save whose request never arrived is not confirmed, and Save again resends the same operation, applied once", async () => {
+  applied = MONITOR_DOCUMENT;
+  const { handlers, changes, operations } = server([]);
+  let lost = 1;
+  const flaky: PluginRpcTestHandlers<Contract> = {
+    ...handlers,
+    "config.apply": (input) => {
+      if (lost-- > 0) throw new Error("The connection closed.");
+      return handlers["config.apply"]!(input as never) as ApplyResult;
+    },
+  };
+  const slot = settings(flaky, "#option/monitor");
+  const refresh = await slot.findByRole("textbox", { name: "Refresh every, in seconds" });
+  fireEvent.change(refresh, { target: { value: "12" } });
+  fireEvent.keyDown(refresh, { key: "Enter" });
+  expect(await slot.findByText("Save not confirmed: BB Box has no receipt for it yet. Your changes are still here. Saving again resends the same request, which BB Box applies at most once.")).toBeTruthy();
+  expect(slot.queryByText("Saved.")).toBeNull();
+  fireEvent.change(refresh, { target: { value: "15" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save again" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).monitor).toEqual({ refreshIntervalSeconds: 12 });
+  expect(await slot.findByText("Saved. Your newer change is not saved yet.")).toBeTruthy();
+  expect(operations).toHaveLength(1);
+  expect((refresh as HTMLInputElement).value).toBe("15");
 });
 
 function desktopTab(handlers: PluginRpcTestHandlers<Contract>, boxId = "box_2") {
