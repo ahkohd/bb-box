@@ -21,6 +21,7 @@ A box belongs to a thread. It stays until you release it, or until its thread is
 - [A cloud server as a Docker host](cloud-docker-host.md): rent a server, such as one on Hetzner Cloud, and make Docker boxes there
 - [Linux boxes on Hetzner Cloud](hetzner.md): Docker hosts BB Box makes in Hetzner Cloud as boxes need them, and deletes once idle
 - [Mac and Linux boxes on Namespace](namespace.md): rent a Mac or a Linux machine for each box by the minute
+- [Linux boxes on boat.dev](boat.md): rent a Linux VM for each box by the second
 - [Joining cloud machines to your tailnet](tailnet.md): let the machines BB Box rents reach a BB server on a Tailscale tailnet
 
 ## Reference
