@@ -660,6 +660,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       options.inUse && !force ? { box: find(ref), error: null, threads: options.inUse } : change(force ? "stop (forced)" : "stop", ref, (found) => ({ ...found, state: "stopped" })),
     start: ({ box: ref }) => change("start", ref, (found) => ({ ...found, state: "ready" })),
     refresh: ({ box: ref }) => change("refresh", ref, (found) => found),
+    forget: ({ box: ref }) => change("forget", ref, () => null),
     backends: () => BACKENDS,
     doctor: (): DoctorView => ({
       ok: false,

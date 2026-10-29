@@ -19,7 +19,7 @@ import { ImageBakes } from "./bakes.ts";
 import { BoxFiles } from "./box-files.ts";
 import { ImageJobs } from "./images.ts";
 import { namedImage, projectImage, withImage } from "../core/project-images.ts";
-import { BoxError, Boxes, SPARES, type BoxRecord, type ThreadAnswer , type ResizeAnswer } from "../core/boxes.ts";
+import { BoxError, Boxes, SPARES, forgetRefusal, type BoxRecord, type ThreadAnswer , type ResizeAnswer } from "../core/boxes.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
@@ -72,7 +72,11 @@ import { startMonitor, type Monitor, type MonitoredBox } from "./monitor.ts";
 import { inSlot, placementOf } from "../core/device-host.ts";
 import { monitorConfig } from "../core/document.ts";
 import { roomWords } from "../core/encoder-ledger.ts";
-import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile } from "./views.ts";
+import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile, type ReachView } from "./views.ts";
+import { BOX_HISTORY_MIGRATIONS, openBoxFiles, unopenedFiles } from "./attached-files.ts";
+import { BOX_LOG_GAPS_KEY, BOX_LOG_MIGRATIONS, BoxLogStore, historyFileChecks } from "./box-log-store.ts";
+import { ReachCheck } from "../core/reach.ts";
+import type { Actor } from "../core/box-log.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 export const CHANGED = "changed";
@@ -196,6 +200,11 @@ export interface BbBox {
   view(box: BoxRecord): BoxView;
   /** Who controls a box's desktop. */
   control(box: BoxRecord): ControlView;
+  readonly boxLog: BoxLogStore;
+  readonly reach: ReachCheck;
+  backendInSettings(box: BoxRecord): boolean;
+  forget(threadId: string, ref: string, who: Actor): Promise<void>;
+  checkNow(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord>;
   /** With each kind's sizes from bb-box's settings. */
   kinds(): Promise<KindView[]>;
   /** The projects' images a box can choose (049), marked as `project`'s or not, with their projects' names and builds. */
@@ -407,6 +416,26 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     }
   }
   if (settings) await clearSettings(kv, settings, earlier).catch((error) => logError("clear the settings bb-box moved", error));
+
+  const storedFiles = (() => {
+    try {
+      return openBoxFiles(bb.storage, { log: BOX_LOG_MIGRATIONS, history: BOX_HISTORY_MIGRATIONS });
+    } catch (error) {
+      logError("open bb-box's box log and box history", error);
+      return unopenedFiles(error);
+    }
+  })();
+  if (storedFiles.shared) bb.log.warn(`bb-box keeps its box log and box history in its own database, as BB's handle refused to attach their files: ${storedFiles.log.refusal}`);
+  for (const file of [storedFiles.log, storedFiles.history]) {
+    if (file.problem) bb.log.warn(`bb-box could not set up ${file.spec.file}: ${file.problem}`);
+    else bb.log.info(`Opened ${file.attached ? `${file.spec.file}, attached to bb-box's database` : `${file.spec.file}'s tables in bb-box's database`}: ${file.migrationsRun === 0 ? "no migration to run" : `ran ${file.migrationsRun} ${file.migrationsRun === 1 ? "migration" : "migrations"}`}.`);
+  }
+  const boxLog = new BoxLogStore({
+    file: storedFiles.log,
+    gaps: (await kv.get<Record<string, number>>(BOX_LOG_GAPS_KEY).catch(() => undefined)) ?? {},
+    gapsChanged: (gaps) => void kv.set(BOX_LOG_GAPS_KEY, gaps).catch((error) => logError("keep the box log's gaps", error)),
+    logError,
+  });
 
   // bb-box's host entry on BB machines (src/host/entry.ts).
   const host = bb.hosts.experimental_client({ contract: hostContract });
@@ -696,8 +725,33 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     for (const name of new Set([...Object.keys(settledImages), ...Object.keys(images)])) if (JSON.stringify(settledImages[name]) !== JSON.stringify(images[name])) imageBakes.settle(name);
     settledImages = images;
   };
+  const reach = new ReachCheck({
+    find: (boxId) => boxes.find(boxId),
+    checkable: (box) => box.state === "ready" && !!box.guest && backends.get(box.backend) !== null && (box.capabilities.command !== null || box.enrol.state === "enrolled"),
+    async attempt(box, signal) {
+      const hostId = box.enrol.state === "enrolled" ? box.enrol.hostId : null;
+      if (hostId) {
+        machineStates.delete(hostId);
+        const connected = await machineConnected(hostId);
+        if (connected !== true) return offline(hostId, connected).message;
+      }
+      const { command } = await boxes.transports(box);
+      if (!command) return null;
+      return (await command.probe(signal)) ? null : "It did not answer a command.";
+    },
+    changed: (box) => notify(box.threadId),
+    log: (message) => bb.log.info(`Reach check: ${message}`),
+  });
+  bb.onDispose(() => reach.dispose());
+  const backendInSettings = (box: BoxRecord) => configuration.document.backends.some((backend) => backend.id === box.backend);
+  const reachOf = (box: BoxRecord): ReachView => {
+    const known = reach.reach(box);
+    return backendInSettings(box) ? known : { is: "not-in-settings", backend: box.backendLabel, lastAnswered: known.lastAnswered };
+  };
   const boxes: Boxes = new Boxes({
     kv: bb.storage.kv,
+    events: boxLog,
+    reach,
     backends,
     general,
     // A project's image for a kind (049), from the configuration as it is now.
@@ -993,6 +1047,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       while (!signal.aborted) {
         await step("sweep", () => boxes.sweep(signal));
         if (signal.aborted) break;
+        await step("prune the box log", async () => boxLog.prune(new Set((await boxes.all()).map((box) => box.id))));
         await step("sweep enrolment", () => enrolment.sweep(signal));
         // An abort during a sweep came before this sleep began: sleep sees it at once.
         await sleep(SWEEP_EVERY_MS, signal);
@@ -1033,7 +1088,19 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return serverHostId;
     },
     boxes: async () => (await boxes.all()).map(monitoredBox),
-    hostSnapshot: (hostId, input, timeoutMs) => host.call("monitor", input, { hostId, timeoutMs }),
+    hostSnapshot: async (hostId, input, timeoutMs) => {
+      try {
+        return await host.call("monitor", input, { hostId, timeoutMs });
+      } catch (error) {
+        const box = (await boxes.all()).find((candidate) => candidate.enrol.hostId === hostId && candidate.state === "ready");
+        if (box && !reach.notAnswering(box.id)) {
+          machineStates.delete(hostId);
+          const connected = await machineConnected(hostId).catch(() => null);
+          if (connected !== true) reach.failed(box, offline(hostId, connected).message);
+        }
+        throw error;
+      }
+    },
     runInBox: async (boxId, script, timeoutMs) => {
       const box = (await boxes.all()).find((candidate) => candidate.id === boxId);
       if (!box) throw new Error("That box is gone.");
@@ -1264,7 +1331,20 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     configuration,
     replyDrops: (options.liveChecks ?? liveChecksOn()) ? new ReplyDrops() : null,
     general,
-    view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), backends.get(box.backend)?.resizing?.(box.kind) ?? null),
+    view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), backends.get(box.backend)?.resizing?.(box.kind) ?? null, { log: boxLog.view(box.id), reach: reachOf(box) }),
+    boxLog,
+    reach,
+    backendInSettings,
+    async forget(threadId, ref, who) {
+      const box = await boxes.get(threadId, ref);
+      if (backendInSettings(box)) throw forgetRefusal(box);
+      await boxes.forget(threadId, box.id, who);
+    },
+    async checkNow(threadId, ref, signal) {
+      const box = await boxes.refresh(threadId, ref, signal);
+      if (box.state === "ready") await reach.checkNow(box);
+      return (await boxes.find(box.id)) ?? box;
+    },
     control: (box) => control.view(box.id),
     async imageOptions(project) {
       const images = Object.entries(configuration.document.images ?? {});
@@ -1434,6 +1514,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         });
       }
       sections.push({ title: "Monitor", report: { ok: true, summary: "Machine status in BB's sidebar footer, and background monitoring of BB's server.", checks: monitor.checks(), notes: [] } });
+      const logChecks = [...boxLog.checks(), ...historyFileChecks(storedFiles.history)];
+      sections.push({ title: "Box log", report: { ok: logChecks.every((check) => check.status !== "fail"), summary: "Who stopped, started, resized and released each box, and what bb-box saw after an operation failed.", checks: logChecks, notes: [] } });
       const overlaps = overlapChecks(backends.on());
       if (overlaps.length) {
         sections.push({

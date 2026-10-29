@@ -3191,7 +3191,7 @@ test("the panel lists, acquires, stops, starts and releases boxes over RPC", asy
   const backends = (await harness.behavior.callRpc("backends")) as { type: string; state: string }[];
   assert.deepEqual(backends.map((backend) => [backend.type, backend.state]), [["fake", "active"]]);
   const doctor = (await harness.behavior.callRpc("doctor")) as { ok: boolean; sections: { title: string }[] };
-  assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host", "Monitor"]]);
+  assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host", "Monitor", "Box log"]]);
 });
 
 /** Everything the plugin sent a desktop viewer, joined. */
@@ -5839,4 +5839,60 @@ test("box_acquire and bb box acquire take a device, refuse it on other kinds, an
   assert.ok(!isError(await tool("box_acquire", { kind: "linux" })), "a box with no device is as before");
   assert.ok(asked.every((kind) => !offered.has(kind)), "a backend is asked only for a kind no backend offers");
   assert.deepEqual(asked.filter((kind) => kind === "ios"), ["ios", "ios", "ios"], "by acquire twice, then by box_list");
+});
+
+test("the box log names who stopped and started a box from the panel, a tool and bb box, in box-log.db beside bb-box's database, and the view and the doctor say so (069)", async (t) => {
+  const { app, bb, harness, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const folder = dirname(bb.storage.database().name);
+  assert.ok(existsSync(join(folder, "box-log.db")) && existsSync(join(folder, "box-history.db")), "both files are made on start");
+  assert.equal(app.boxLog.file.attached, true);
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  const box = await app.boxes.enrolled(await only(app));
+  const view = async () => ((await harness.behavior.callRpc("allBoxes", null)) as { box: { id: string; log: { lastStop: { by: unknown } | null; lastStart: { by: unknown; first: boolean } | null }; reach: { is: string } } }[]).find((entry) => entry.box.id === box.id)!.box;
+
+  assert.equal(((await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { error: string | null }).error, null);
+  assert.deepEqual((await view()).log.lastStop?.by, { is: "person" });
+  assert.equal(((await harness.behavior.callRpc("start", { threadId: THREAD, box: box.name })) as { error: string | null }).error, null);
+  assert.deepEqual((await view()).log.lastStart?.by, { is: "person" });
+  assert.equal((await view()).log.lastStart?.first, false);
+
+  assert.ok(!isError(await tool("box_stop", { box: box.name })));
+  assert.deepEqual((await view()).log.lastStop?.by, { is: "agent", threadId: THREAD });
+  assert.ok(!isError(await tool("box_start", { box: box.name })));
+  assert.deepEqual((await view()).log.lastStart?.by, { is: "agent", threadId: THREAD });
+
+  const stopped = await harness.behavior.runCli(["stop", box.name, "--thread", THREAD]);
+  assert.equal(stopped.exitCode, 0, stopped.stderr);
+  assert.match(stopped.stdout ?? "", new RegExp(`^Box ${box.name} is stopped\\.`));
+  assert.deepEqual((await view()).log.lastStop?.by, { is: "command" });
+  const started = await harness.behavior.runCli(["start", box.name, "--thread", THREAD, "--json"]);
+  assert.equal(started.exitCode, 0, started.stderr);
+  assert.deepEqual((JSON.parse(started.stdout ?? "{}") as { log: { lastStart: { by: unknown } } }).log.lastStart.by, { is: "command" });
+  assert.equal((await view()).reach.is, "answers");
+
+  const forget = await harness.behavior.runCli(["forget", box.name, "--thread", THREAD]);
+  assert.equal(forget.exitCode, 1, "a box whose backend is in the settings is released, not forgotten");
+  assert.match(forget.stderr ?? "", /release the box instead/);
+  const doctor = (await harness.behavior.callRpc("doctor", null)) as { sections: { title: string; report: { checks: { id: string; status: string; detail: string }[] } }[] };
+  const check = doctor.sections.find((section) => section.title === "Box log")?.report.checks[0];
+  assert.equal(check?.status, "ok");
+  assert.match(check?.detail ?? "", /box-log\.db, attached to bb-box's database: \d+ events/);
+});
+
+test("the reach check follows a box that stops answering with the Monitor off, and Check now checks it at once (069 G7)", async (t) => {
+  const { app, harness, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  assert.equal((await harness.behavior.runCli(["option", "set", "monitor.enabled=false"])).exitCode, 0);
+  assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
+  const box = await app.boxes.enrolled(await only(app));
+  world.backend!.faults.silent = box.guest!.ref;
+  assert.ok(isError(await tool("box_run", { box: box.name, command: "true" })));
+  const reach = app.reach.reach(box);
+  assert.equal(reach.is, "not-answering");
+  if (reach.is === "not-answering") assert.ok(reach.nextCheckAt! - reach.since === 60_000, "it checks again in a minute");
+  assert.ok(harness.inspection.logEntries.some((entry) => entry.message.startsWith(`Reach check: box ${box.name} of thread ${THREAD}: it does not answer:`)));
+  world.backend!.faults.silent = undefined;
+  const checked = (await harness.behavior.callRpc("refresh", { threadId: THREAD, box: box.name })) as { box: { reach: { is: string } } };
+  assert.equal(checked.box.reach.is, "answers", "Check now checks it at once");
 });

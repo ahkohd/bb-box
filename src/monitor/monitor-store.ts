@@ -1,6 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { freshPressureState, isPressureState, type PressureState, type PressureEvent } from "./pressure.ts";
 import { isAlertNotice } from "./alert-receiver.ts";
+import { mainCapBytes } from "../plugin/attached-files.ts";
 
 export const LOG_LIMIT = 4096;
 export type LogEntry = { type: string; timestamp: number; [key: string]: string | number | boolean | null };
@@ -27,7 +28,7 @@ export function createMonitorStore(bb: Pick<BbPluginApi, "storage">) {
     "CREATE TABLE pressure_notices (metric TEXT PRIMARY KEY, payload TEXT NOT NULL)",
   ]);
   const pageSize = Number(db.pragma("page_size", { simple: true }));
-  db.pragma(`max_page_count = ${Math.floor(10 * 1024 * 1024 / pageSize)}`);
+  db.pragma(`max_page_count = ${Math.floor(mainCapBytes(db) / pageSize)}`);
   const latestSequence = db.prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM pressure_logs");
   const cursor = () => (latestSequence.get() as { sequence: number }).sequence;
   const insert = db.prepare("INSERT OR REPLACE INTO pressure_logs(slot, sequence, type, payload) VALUES (?, ?, ?, ?)");

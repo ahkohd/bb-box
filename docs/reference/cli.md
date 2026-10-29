@@ -19,6 +19,9 @@
 | [`bb box machines remove`](#bb-box-machines-remove) | Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force. |
 | [`bb box thread`](#bb-box-thread) | Start a child thread of a thread on one of its boxes, as a BB machine, with the thread's project. |
 | [`bb box release`](#bb-box-release) | Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. |
+| [`bb box stop`](#bb-box-stop) | Stop a thread's box, or with --machine one of your machines, keeping its disk. A box a thread is working on is refused unless --force. |
+| [`bb box start`](#bb-box-start) | Start a thread's stopped box, or with --machine one of your machines, and wait until it answers. |
+| [`bb box forget`](#bb-box-forget) | Forget a box whose backend is no longer in bb-box's settings: bb-box removes its record and deletes nothing, so a guest that still runs keeps running. |
 | [`bb box image set`](#bb-box-image-set) | Set a project's image (049): a script run as root on its kinds' standard images, for the boxes of the project's threads, with an optional check run as the box user. bb-box keeps a copy of the files. Setting it changes every new box of those kinds in the project. |
 | [`bb box image remove`](#bb-box-image-remove) | Remove a project's image (049). Boxes of its kinds in its projects start from the standard images again. |
 | [`bb box image list`](#bb-box-image-list) | List projects' images (049): each one's kinds, projects, how it is baked, where its script came from, and its builds. |
@@ -296,6 +299,59 @@ Arguments:
 Options:
   --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
   --force           Release it even while threads are working on it, which ends their work.
+  --help, -h        Show this help and exit
+```
+
+## bb box stop
+
+Stop a thread's box, or with --machine one of your machines, keeping its disk. A box a thread is working on is refused unless --force.
+
+```text
+Usage:
+  bb box stop <box> [--thread <value>] [--machine] [--force]
+
+Arguments:
+  <box>  The box's name or ID. (required)
+
+Options:
+  --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine         The box is one of your machines, from bb box machines, not a thread's.
+  --force           Stop it even while threads are working on it, which ends their work.
+  --help, -h        Show this help and exit
+```
+
+## bb box start
+
+Start a thread's stopped box, or with --machine one of your machines, and wait until it answers.
+
+```text
+Usage:
+  bb box start <box> [--thread <value>] [--machine] [--json]
+
+Arguments:
+  <box>  The box's name or ID. (required)
+
+Options:
+  --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine         The box is one of your machines, from bb box machines, not a thread's.
+  --json            Print JSON.
+  --help, -h        Show this help and exit
+```
+
+## bb box forget
+
+Forget a box whose backend is no longer in bb-box's settings: bb-box removes its record and deletes nothing, so a guest that still runs keeps running.
+
+```text
+Usage:
+  bb box forget <box> [--thread <value>] [--machine]
+
+Arguments:
+  <box>  The box's name or ID. (required)
+
+Options:
+  --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine         The box is one of your machines, from bb box machines, not a thread's.
   --help, -h        Show this help and exit
 ```
 

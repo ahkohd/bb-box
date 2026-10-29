@@ -21,6 +21,15 @@ import { actionsOf, deviceModel, isTestOffer, platformWord, type DevicePlatform,
 import { deviceStateWords } from "../core/device-settings.ts";
 import { inSlot, isSlotKind, placementOf, placementWords, rootRefusalWords, SHARED_HOSTS_OFF, SHARED_MACOS_DESKTOP_WORDS, SHARED_MACOS_WORDS, type SharedHosts, type SlotKind } from "../core/device-host.ts";
 import { offeredWords } from "../core/mac-capabilities.ts";
+import type { BoxLogView } from "../core/box-log.ts";
+import type { Reach } from "../core/reach.ts";
+
+export type ReachView = Reach | { readonly is: "not-in-settings"; readonly backend: string; readonly lastAnswered: number | null };
+
+export interface BoxTold {
+  readonly log: BoxLogView | null;
+  readonly reach: ReachView | null;
+}
 
 const DEVICE_HOST_KINDS: ReadonlySet<string> = new Set(["ios", "macos", "macos-desktop"]);
 
@@ -75,6 +84,8 @@ export interface BoxView {
   readonly resizing?: Resizing | null;
   /** Its last resize (061), or null. Absent from older plugins. */
   readonly lastResize?: ResizeView | null;
+  readonly log?: BoxLogView | null;
+  readonly reach?: ReachView | null;
 }
 
 /** A box's last resize (061), as the panel shows it. */
@@ -103,7 +114,7 @@ function platformOfUnofferedDevice(os: string): DevicePlatform {
   return os === "macos" ? "ios" : "android";
 }
 
-export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlView, resizing: Resizing | null = null): BoxView {
+export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlView, resizing: Resizing | null = null, told: BoxTold = { log: null, reach: null }): BoxView {
   const [display] = desktopDisplays(box.capabilities.displays);
   const offer = box.capabilities.device;
   const device = deviceDisplayOf(box.capabilities.displays)
@@ -148,6 +159,8 @@ export function boxView(box: BoxRecord, canStopStart: boolean, control: ControlV
     sizeNow: boxSize(box) ? sizeView(boxSize(box)!) : null,
     resizing,
     lastResize: box.resize ? { to: sizeView(box.resize.to), at: box.resize.at, state: box.resize.state, restart: box.resize.restart, ms: box.resize.ms, error: box.resize.error } : null,
+    log: told.log,
+    reach: told.reach,
   };
 }
 
