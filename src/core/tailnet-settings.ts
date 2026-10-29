@@ -1,4 +1,6 @@
-import { DEFAULT_TAILNET_TAGS, type TailnetCredentials } from "./tailnet.ts";
+import type { TailnetCredentials } from "./tailnet.ts";
+
+export const DEFAULT_TAILNET_TAGS: readonly string[] = ["tag:bb-box"];
 
 export const TAILNET_CLIENT_ID = "tailnet:client-id";
 export const TAILNET_CLIENT_SECRET = "tailnet:client-secret";

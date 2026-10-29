@@ -34,6 +34,7 @@ export const MOST_TRIES = 3;
 export const SAVED_SHOWN_MS = 1600;
 export const BOXES_PART = "option/boxes";
 export const MONITOR_PART = "option/monitor";
+export const NETWORK_PART = "option/network";
 export const FILES_PART = "files";
 
 export interface Submission {

@@ -12,6 +12,7 @@ import {
   DraftRegistry,
   FILES_PART,
   MONITOR_PART,
+  NETWORK_PART,
   submittedWrite,
   type ApplyRequest,
   type DraftStorage,
@@ -19,7 +20,8 @@ import {
   type SaveTransport,
   type StoredPart,
 } from "../src/app/settings-drafts.ts";
-import { backendFieldPath, filePath, hostFieldPath, hostPath, labelOf, newFilePath, newHostPath, plain, problemPath, storedAt, type EditValue } from "../src/app/settings-paths.ts";
+import { backendFieldPath, filePath, hostFieldPath, hostPath, labelOf, newFilePath, newHostPath, plain, problemPath, storedAt, tailnetPath, type EditValue } from "../src/app/settings-paths.ts";
+import { TAILNET_CLIENT_ID, TAILNET_CLIENT_SECRET } from "../src/core/tailnet-settings.ts";
 import { MemoryStorage } from "./helpers.ts";
 
 interface Deferred {
@@ -724,4 +726,87 @@ test("a Mac removed when the form is saved, a Mac's own field changed elsewhere 
   assert.equal((await registry.runInstant(removal))?.kind, "saved");
   assert.deepEqual(server.stored().backends, []);
   assert.deepEqual(registry.conflictAt(BACKEND_PART, backendFieldPath(MACS, "reserve")), { kind: "removed" });
+});
+
+function tailnetSecret(server: Server, key: string): string | undefined {
+  return server.configuration.secrets[GENERAL_SECRETS]?.[key];
+}
+
+test("the tailnet's choice, tags and OAuth client save together: refused part way, nothing is stored and every edit stays; then saved, with the secrets' versions as later bases (067 unit 9)", async () => {
+  const { registry, server } = await started();
+  const before = server.stored().revision;
+  registry.set(NETWORK_PART, tailnetPath("mode"), plain("oauth"));
+  registry.set(NETWORK_PART, tailnetPath("tags"), plain("tag:bb-box,  tag:ci tag:ci"));
+  registry.set(NETWORK_PART, tailnetPath("clientId"), { kind: "secret", text: "made-up-id" });
+  await registry.save(NETWORK_PART);
+  const refused = registry.part(NETWORK_PART);
+  assert.deepEqual(refused.outcome, { kind: "problems", count: 1 });
+  assert.deepEqual(refused.problems, [{ path: tailnetPath("clientSecret"), message: "Set the Tailscale OAuth client's secret, as the guide shows." }]);
+  assert.equal(refused.edits.size, 3);
+  assert.equal(server.stored().revision, before);
+  assert.equal(server.stored().general.tailnet, undefined);
+  assert.equal(tailnetSecret(server, TAILNET_CLIENT_ID), undefined);
+
+  registry.set(NETWORK_PART, tailnetPath("clientSecret"), { kind: "secret", text: "made-up-secret" });
+  await registry.save(NETWORK_PART);
+  assert.equal(registry.part(NETWORK_PART).outcome?.kind, "saved");
+  assert.equal(registry.part(NETWORK_PART).edits.size, 0);
+  assert.deepEqual(server.stored().general.tailnet, { mode: "oauth", tags: ["tag:bb-box", "tag:ci"] });
+  assert.equal(tailnetSecret(server, TAILNET_CLIENT_ID), "made-up-id");
+  assert.equal(tailnetSecret(server, TAILNET_CLIENT_SECRET), "made-up-secret");
+  assert.equal(server.arrived.length, 2);
+  assert.notEqual(server.arrived[0]!.operation, server.arrived[1]!.operation);
+  const saved = server.stored().revision;
+  assert.deepEqual(storedAt(await server.state(), tailnetPath("clientSecret")), { kind: "version", version: saved });
+
+  registry.set(NETWORK_PART, tailnetPath("tags"), plain(""));
+  await registry.save(NETWORK_PART);
+  assert.deepEqual(server.stored().general.tailnet, { mode: "oauth" }, "empty tags go back to the default, and the secrets stay");
+  assert.equal(tailnetSecret(server, TAILNET_CLIENT_SECRET), "made-up-secret");
+
+  registry.set(NETWORK_PART, tailnetPath("mode"), plain("off"));
+  await registry.save(NETWORK_PART);
+  assert.equal(server.stored().general.tailnet, undefined);
+  assert.equal(tailnetSecret(server, TAILNET_CLIENT_ID), undefined, "No deletes the OAuth client");
+});
+
+test("a tailnet secret replaced in two tabs: the second is a conflict that names the revision; Keep mine saves mine, and the other secret is kept (067 unit 9)", async () => {
+  const clock = { now: 1_800_000_000_000 };
+  const first = await page(await Server.start(clock), clock);
+  await first.server.elsewhere((document) => withGeneral(document, { tailnet: { mode: "oauth", clientId: "made-up-id", clientSecret: "made-up-0" } as never }));
+  first.registry.observe(await first.server.state());
+  const second = await page(first.server, clock);
+  const secret = tailnetPath("clientSecret");
+  first.registry.set(NETWORK_PART, secret, { kind: "secret", text: "made-up-first" });
+  second.registry.set(NETWORK_PART, secret, { kind: "secret", text: "made-up-second" });
+  await second.registry.save(NETWORK_PART);
+  first.registry.observe(await first.server.state());
+  const revision = first.server.stored().revision;
+  assert.deepEqual(first.registry.conflictAt(NETWORK_PART, secret), { kind: "replaced", version: revision });
+  await first.registry.save(NETWORK_PART);
+  assert.equal(first.registry.part(NETWORK_PART).outcome?.kind, "conflicts");
+  assert.equal(tailnetSecret(first.server, TAILNET_CLIENT_SECRET), "made-up-second");
+  first.registry.keepMine(NETWORK_PART, secret);
+  await first.registry.save(NETWORK_PART);
+  assert.equal(tailnetSecret(first.server, TAILNET_CLIENT_SECRET), "made-up-first");
+  assert.equal(tailnetSecret(first.server, TAILNET_CLIENT_ID), "made-up-id");
+  assert.equal(labelOf(secret), "the OAuth client secret");
+  assert.equal(problemPath("general.tailnet.clientId", {}), tailnetPath("clientId"));
+  assert.equal(problemPath("general.tailnet", {}), tailnetPath("mode"));
+});
+
+test("the tailnet's pasted secrets are kept in memory only; after a reload the page asks for them again before it saves (067 unit 9)", async () => {
+  const { registry, server, clock, storage } = await started();
+  registry.set(NETWORK_PART, tailnetPath("mode"), plain("oauth"));
+  registry.set(NETWORK_PART, tailnetPath("clientId"), { kind: "secret", text: "made-up-id" });
+  registry.set(NETWORK_PART, tailnetPath("clientSecret"), { kind: "secret", text: "made-up-secret" });
+  assert.equal(storage.text().includes("made-up"), false);
+  const reloaded = await page(server, clock, storage);
+  assert.deepEqual(reloaded.registry.part(NETWORK_PART).restored, { count: 3, lost: [tailnetPath("clientId"), tailnetPath("clientSecret")] });
+  await reloaded.registry.save(NETWORK_PART);
+  assert.deepEqual(
+    reloaded.registry.part(NETWORK_PART).problems.map((problem) => problem.message),
+    ["Paste the OAuth client ID again: what you pasted was not kept when the page reloaded.", "Paste the OAuth client secret again: what you pasted was not kept when the page reloaded."],
+  );
+  assert.equal(server.arrived.length, 0);
 });

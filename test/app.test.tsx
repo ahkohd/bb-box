@@ -715,7 +715,11 @@ function savedLike(draft: ConfigDocument, revision: number): ConfigDocument {
     ...backend,
     fields: Object.fromEntries(Object.entries(backend.fields).map(([key, value]) => [key, secrets.has(`${backend.type} ${key}`) && (typeof value === "string" || value === null) ? { set: value !== null, version: revision } : value])),
   }));
-  return { ...draft, backends, general: { ...draft.general, ...(files ? { files } : {}) } };
+  const tailnet = draft.general.tailnet && {
+    ...draft.general.tailnet,
+    ...Object.fromEntries((["clientId", "clientSecret"] as const).flatMap((key) => (typeof draft.general.tailnet?.[key] === "string" ? [[key, { set: true, version: revision }]] : []))),
+  };
+  return { ...draft, backends, general: { ...draft.general, ...(files ? { files } : {}), ...(tailnet ? { tailnet } : {}) } };
 }
 
 let applied: ConfigDocument | null = null;
@@ -6895,38 +6899,114 @@ test("over video, Ctrl+Shift+V from Linux pastes this computer's text into a Win
   }
 });
 
-test("the tailnet saves its mode, tags and OAuth client as secrets; a set secret shows only as set and is kept until replaced; off saves none", async () => {
+const TAILNET_SET: ConfigDocument = { schema: 1, revision: 3, backends: [], kinds: {}, general: { tailnet: { mode: "oauth", clientId: { set: true, version: 2 }, clientSecret: { set: true, version: 2 } } } };
+
+function sentTailnet(changes: readonly string[], at: number): unknown {
+  return JSON.parse(changes[at]!.slice(changes[at]!.indexOf("{"))).general.tailnet;
+}
+
+test("the tailnet's choice, tags and OAuth client save together with one operation; a set secret shows only as set and is kept until replaced; No deletes them, and says so first (067 unit 9)", async () => {
+  applied = { ...TAILNET_SET, general: {} };
   const fresh = server([]);
   const slot = settings(fresh.handlers, "#option/network");
-  await slot.findByRole("combobox", { name: "Tailnet" });
-  await choose("Tailnet", "Yes, with a Tailscale OAuth client");
-  fireEvent.change(slot.getByLabelText("Tags"), { target: { value: "tag:bb-box, tag:bb-box-mac" } });
-  fireEvent.change(slot.getByLabelText("OAuth client ID"), { target: { value: "kCLIENTid" } });
-  fireEvent.change(slot.getByLabelText("OAuth client secret"), { target: { value: "tskey-client-SECRET" } });
-  expect(slot.getByLabelText("OAuth client secret").id).toBe("tailnet-oauth-client-secret");
-  fireEvent.click(slot.getByRole("button", { name: "Save the tailnet" }));
+  const no = (await slot.findByRole("radio", { name: "No: BB is reached without one" })) as HTMLInputElement;
+  expect(no.checked).toBe(true);
+  expect(slot.getByText("Switches, and menus that stand alone, act at once. Fields, checkboxes and radio choices wait for Save.")).toBeTruthy();
+  expect(slot.queryByRole("textbox", { name: "Tags" })).toBeNull();
+  fireEvent.click(slot.getByRole("radio", { name: "Yes, with a Tailscale OAuth client" }));
+  expect(slot.getByRole("region", { name: "Save the tailnet" }).textContent).toContain("1 change to the tailnet not saved");
+  expect((slot.getByRole("textbox", { name: "Tags" }) as HTMLInputElement).placeholder).toBe("tag:bb-box");
+  expect(slot.getByText(/the default/).textContent).toContain("Empty: tag:bb-box, the default");
+  fireEvent.change(slot.getByRole("textbox", { name: "Tags" }), { target: { value: "tag:bb-box tag:bb-box-mac" } });
+  fireEvent.click(slot.getByRole("button", { name: "Set the OAuth client ID" }));
+  fireEvent.change(slot.getByLabelText("OAuth client ID"), { target: { value: "kMADEUPid" } });
+  fireEvent.click(slot.getByRole("button", { name: "Set the OAuth client secret" }));
+  fireEvent.change(slot.getByLabelText("OAuth client secret"), { target: { value: "tskey-client-MADEUP" } });
+  expect(JSON.stringify({ ...window.sessionStorage })).not.toContain("MADEUP");
+  expect(slot.getByRole("region", { name: "Save the tailnet" }).textContent).toContain("4 changes to the tailnet not saved");
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(fresh.changes).toHaveLength(1));
-  expect(JSON.parse(fresh.changes[0]!.slice(fresh.changes[0]!.indexOf("{"))).general.tailnet).toEqual({
-    mode: "oauth",
-    tags: ["tag:bb-box", "tag:bb-box-mac"],
-    clientId: "kCLIENTid",
-    clientSecret: "tskey-client-SECRET",
-  });
+  expect(fresh.operations).toHaveLength(1);
+  expect(sentTailnet(fresh.changes, 0)).toEqual({ mode: "oauth", tags: ["tag:bb-box", "tag:bb-box-mac"], clientId: "kMADEUPid", clientSecret: "tskey-client-MADEUP" });
+  expect(await slot.findByText("Saved.")).toBeTruthy();
+  expect(slot.getAllByText("Set")).toHaveLength(2);
+  expect(slot.queryByDisplayValue(/MADEUP/)).toBeNull();
   cleanup();
 
-  const document = { ...configState({}).document, general: { tailnet: { mode: "oauth" as const, clientId: { set: true }, clientSecret: { set: true } } } };
-  const stored = server([], { config: configState({ document }) });
+  applied = TAILNET_SET;
+  const stored = server([]);
   const again = settings(stored.handlers, "#option/network");
-  await again.findByRole("combobox", { name: "Tailnet" });
-  expect(again.getAllByText("Set")).toHaveLength(2);
-  expect(again.queryByDisplayValue(/tskey/)).toBeNull();
-  fireEvent.click(again.getByRole("button", { name: "Save the tailnet" }));
+  fireEvent.change(await again.findByRole("textbox", { name: "Tags" }), { target: { value: "tag:ci" } });
+  fireEvent.keyDown(again.getByRole("textbox", { name: "Tags" }), { key: "Enter" });
   await waitFor(() => expect(stored.changes).toHaveLength(1));
-  expect(JSON.parse(stored.changes[0]!.slice(stored.changes[0]!.indexOf("{"))).general.tailnet).toEqual({ mode: "oauth", clientId: { set: true }, clientSecret: { set: true } });
-  await choose("Tailnet", "No: BB is reached without one");
-  fireEvent.click(again.getByRole("button", { name: "Save the tailnet" }));
+  expect(sentTailnet(stored.changes, 0)).toEqual({ mode: "oauth", tags: ["tag:ci"], clientId: { set: true, version: 2 }, clientSecret: { set: true, version: 2 } });
+  fireEvent.click(again.getByRole("radio", { name: "No: BB is reached without one" }));
+  expect(again.getByText("Saving No deletes the saved OAuth client ID and secret.")).toBeTruthy();
+  expect(again.queryByRole("textbox", { name: "Tags" })).toBeNull();
+  fireEvent.click(again.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(stored.changes).toHaveLength(2));
-  expect(JSON.parse(stored.changes[1]!.slice(stored.changes[1]!.indexOf("{"))).general.tailnet).toBeUndefined();
+  expect(sentTailnet(stored.changes, 1)).toBeUndefined();
+});
+
+test("the tailnet refused part way keeps every change, with the reason under the field it names, and nothing saved (067 unit 9)", async () => {
+  applied = { ...TAILNET_SET, general: {} };
+  const refused = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "general.tailnet.clientSecret", message: "Set the Tailscale OAuth client's secret, as the guide shows." }] } });
+  const slot = settings(refused.handlers, "#option/network");
+  fireEvent.click(await slot.findByRole("radio", { name: "Yes, with a Tailscale OAuth client" }));
+  fireEvent.click(slot.getByRole("button", { name: "Set the OAuth client ID" }));
+  fireEvent.change(slot.getByLabelText("OAuth client ID"), { target: { value: "kMADEUPid" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  expect(await slot.findByText("Not saved: fix the field marked. Your changes are still here.")).toBeTruthy();
+  const problem = slot.getByText("Set the Tailscale OAuth client's secret, as the guide shows.");
+  const setSecret = slot.getByRole("button", { name: "Set the OAuth client secret" });
+  expect(setSecret.getAttribute("aria-describedby")).toContain(problem.id);
+  expect(document.activeElement).toBe(setSecret);
+  expect((slot.getByLabelText("OAuth client ID") as HTMLInputElement).value).toBe("kMADEUPid");
+  expect((slot.getByRole("radio", { name: "Yes, with a Tailscale OAuth client" }) as HTMLInputElement).checked).toBe(true);
+  expect(applied!.general.tailnet).toBeUndefined();
+});
+
+test("a tailnet secret replaced elsewhere while it is replaced here is a conflict that names the revision, with both choices (067 unit 9)", async () => {
+  applied = TAILNET_SET;
+  const { handlers, changes } = server([]);
+  const slot = settings(handlers, "#option/network");
+  fireEvent.click(await slot.findByRole("button", { name: "Replace the OAuth client secret" }));
+  fireEvent.change(slot.getByLabelText("New OAuth client secret"), { target: { value: "tskey-client-MINE" } });
+  applied = { ...TAILNET_SET, revision: 4, general: { tailnet: { mode: "oauth", clientId: { set: true, version: 2 }, clientSecret: { set: true, version: 4 } } } };
+  await slot.emitRealtime("changed", null);
+  expect(await slot.findByText("Replaced elsewhere while you edited, at revision 4. Saving yours replaces that one.")).toBeTruthy();
+  expect((slot.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(slot.getByRole("button", { name: "Keep mine" }));
+  fireEvent.click(slot.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(changes[0]!.startsWith("apply 4 ")).toBe(true);
+  expect(sentTailnet(changes, 0)).toEqual({ mode: "oauth", clientId: { set: true, version: 2 }, clientSecret: "tskey-client-MINE" });
+});
+
+test("Devices: iOS video encoding acts at once as a menu, encoder sharing and the test device as switches, each with its receipt; the device kinds' spares say they are off by default and open the kind (067 unit 9)", async () => {
+  applied = { schema: 1, revision: 3, backends: [], kinds: { android: { spares: 2 } }, general: {} };
+  const deviceKind = (id: string, label: string, platform: "ios" | "android") => ({ ...configState({}).kinds[0]!, id, label, device: platform, drivers: ["fake"] });
+  const { handlers, changes, operations } = server([], { config: { kinds: [...configState({}).kinds, deviceKind("ios", "iOS Simulator", "ios"), deviceKind("android", "Android emulator", "android")] } });
+  const slot = settings(handlers, "#option/devices");
+  await slot.findByRole("combobox", { name: "iOS video encoding" });
+  expect(slot.queryByText(/bb box config apply/)).toBeNull();
+  await choose("iOS video encoding", "Software only");
+  await waitFor(() => expect(changes).toHaveLength(1));
+  expect(JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{"))).general.iosEncoder).toBe("software");
+  fireEvent.click(slot.getByRole("switch", { name: "Share each Mac's encoder fairly" }));
+  await waitFor(() => expect(changes).toHaveLength(2));
+  expect(JSON.parse(changes[1]!.slice(changes[1]!.indexOf("{"))).general.encoderLedger).toBe(false);
+  fireEvent.click(slot.getByRole("switch", { name: "Test device" }));
+  await waitFor(() => expect(changes).toHaveLength(3));
+  expect(JSON.parse(changes[2]!.slice(changes[2]!.indexOf("{"))).general.testDevice).toBe(true);
+  expect(operations).toHaveLength(3);
+  expect(slot.getByText(/Spares of device boxes are off unless you set a number/)).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Spare iOS Simulator boxes" }).getAttribute("aria-describedby")).toBeTruthy();
+  expect(slot.getByText("None, as by default")).toBeTruthy();
+  expect(slot.getByText("2 spares")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Spare Android emulator boxes" }));
+  expect(await slot.findByRole("heading", { name: /Android emulator/ })).toBeTruthy();
+  expect(window.location.hash).toBe("#kind/android");
 });
 
 test("an ios box's New box form chooses Shared or a VM of its own before the device; Shared is off with its words until a shared host is set up, and a VM of its own sends dedicated with its size (064, unit 2)", async () => {

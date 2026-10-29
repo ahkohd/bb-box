@@ -1,134 +1,180 @@
-import { Button } from "@/components/ui/button";
+import { useId, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useState } from "react";
-import type { Problem } from "../core/document.ts";
-import type { TailnetMode, TailnetSetting } from "../core/tailnet-settings.ts";
-import { Section } from "./settings-fields.tsx";
+import { cn } from "@/lib/utils";
+import { DEFAULT_TAILNET_TAGS, type TailnetMode } from "../core/tailnet-settings.ts";
+import type { ConfigState } from "../plugin/configuration.ts";
+import { Badge } from "./common.tsx";
+import { describedBy, DraftRow, SecretControl, unplacedProblems } from "./settings-draft-fields.tsx";
+import { NETWORK_PART } from "./settings-drafts.ts";
+import { Card, Group, Rows } from "./settings-parts.tsx";
+import { isSecretState } from "./config.ts";
+import { plain, problemPath, TAILNET_SECRET_LABELS, tailnetPath, type Path, type PlainValue } from "./settings-paths.ts";
+import { RestoredNote, SaveBar, saveOnEnter, useDraft, type Draft } from "./settings-saving.tsx";
 
-export type TailnetDraft = {
-  readonly mode: TailnetMode;
-  readonly tags?: readonly string[];
-  readonly clientId?: { readonly set: boolean } | string;
-  readonly clientSecret?: { readonly set: boolean } | string;
+const MODE_WORDS: Readonly<Record<TailnetMode, string>> = {
+  off: "No: BB is reached without one",
+  oauth: "Yes, with a Tailscale OAuth client",
 };
 
-const DEFAULT_TAGS = "tag:bb-box";
+const SECRET_HELP: Readonly<Record<"clientId" | "clientSecret", string>> = {
+  clientId: "From Tailscale's admin console, under Settings, Trust credentials, as the tailnet guide shows.",
+  clientSecret: "Tailscale shows it once, beside the client's ID. BB Box never shows it again, only whether it is set.",
+};
 
-function isSet(value: TailnetSetting["clientId"]): boolean {
-  return !!value?.set;
+const TAILNET_PATHS: readonly Path[] = (["mode", "tags", "clientId", "clientSecret"] as const).map(tailnetPath);
+
+function modeWords(value: PlainValue): string {
+  return value === "off" || value === "oauth" ? MODE_WORDS[value] : String(value);
 }
 
-function tagsFrom(text: string): string[] {
-  return text
-    .split(/[\s,]+/)
-    .map((tag) => tag.trim())
-    .filter(Boolean);
+function storedProblem(state: ConfigState, path: Path): string | null {
+  return state.problems.find((problem) => problem.path.startsWith("general.tailnet") && problemPath(problem.path, {}) === path)?.message ?? null;
 }
 
-function inputIdFor(label: string): string {
-  return `tailnet-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+function problemOf(draft: Draft, state: ConfigState, path: Path): string | null {
+  return draft.problem(path) ?? (draft.edit(path) ? null : storedProblem(state, path));
 }
 
-function SecretRow({ label, set, value, onChange }: { label: string; set: boolean; value: string; onChange: (value: string) => void }) {
-  const [replacing, setReplacing] = useState(!set);
-  const inputId = inputIdFor(label);
+function chooseMode(draft: Draft, mode: TailnetMode): void {
+  draft.set(tailnetPath("mode"), plain(mode));
+  if (mode === "off") for (const key of ["tags", "clientId", "clientSecret"] as const) draft.forget(tailnetPath(key));
+}
+
+function ModeRow({ draft, state }: { draft: Draft; state: ConfigState }) {
+  const id = useId();
+  const path = tailnetPath("mode");
+  const mode = draft.current(path) === "oauth" ? "oauth" : "off";
+  const problem = problemOf(draft, state, path);
+  const deletesCredentials = mode === "off" && draft.stored(path) === "oauth";
+  const modes: readonly TailnetMode[] = ["off", "oauth"];
   return (
-    <div className="flex items-center justify-between gap-3 py-2">
-      <label className="text-xs text-foreground" htmlFor={inputId}>
-        {label}
-      </label>
-      {replacing ? (
-        <Input
-          id={inputId}
-          type="password"
-          autoComplete="new-password"
-          aria-label={label}
-          className="h-8 w-64 text-xs"
-          value={value}
-          placeholder={set ? "Paste the new value" : "Paste the value"}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      ) : (
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-subtle-foreground">Set</span>
-          <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setReplacing(true)}>
-            Replace
-          </Button>
-        </div>
-      )}
-    </div>
+    <DraftRow
+      draft={draft}
+      path={path}
+      id={id}
+      label="Join machines to the tailnet"
+      description={
+        <>
+          Cloud machines, such as Namespace's Macs and Hetzner's servers, need it when BB is on a Tailscale tailnet.
+          {deletesCredentials ? <span className="mt-0.5 block text-warning-text">Saving No deletes the saved OAuth client ID and secret.</span> : null}
+        </>
+      }
+      problem={problem}
+      shown={modeWords}
+      wide
+    >
+      <span id={id} role="radiogroup" aria-label="Join machines to the tailnet" aria-describedby={describedBy(`${id}-help`, problem && `${id}-problem`)} className="flex flex-col gap-1.5 text-xs text-foreground sm:items-start">
+        {modes.map((choice) => (
+          <label key={choice} className="flex cursor-pointer items-center gap-2">
+            <input
+              id={`${id}-${choice}`}
+              type="radio"
+              name={`${id}-mode`}
+              value={choice}
+              data-draft-path={choice === mode ? path : undefined}
+              checked={choice === mode}
+              onChange={() => chooseMode(draft, choice)}
+              onKeyDown={saveOnEnter(draft)}
+              className="size-3.5 shrink-0 cursor-pointer accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+            {MODE_WORDS[choice]}
+          </label>
+        ))}
+      </span>
+    </DraftRow>
   );
 }
 
-export function TailnetSection({ tailnet, problems, save }: { tailnet: TailnetSetting | undefined; problems: readonly Problem[]; save: (tailnet: TailnetDraft | undefined) => Promise<boolean> }) {
-  const [mode, setMode] = useState<TailnetMode>(tailnet?.mode ?? "off");
-  const [tags, setTags] = useState((tailnet?.tags ?? []).join(", ") || DEFAULT_TAGS);
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [busy, setBusy] = useState(false);
-  const commit = async () => {
-    setBusy(true);
-    try {
-      const draft: TailnetDraft | undefined =
-        mode === "off"
-          ? undefined
-          : {
-              mode,
-              ...(tags.trim() && tags.trim() !== DEFAULT_TAGS ? { tags: tagsFrom(tags) } : {}),
-              clientId: clientId ? clientId : { set: isSet(tailnet?.clientId) },
-              clientSecret: clientSecret ? clientSecret : { set: isSet(tailnet?.clientSecret) },
-            };
-      if (await save(draft)) {
-        setClientId("");
-        setClientSecret("");
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
+function TagsRow({ draft, state }: { draft: Draft; state: ConfigState }) {
+  const id = useId();
+  const path = tailnetPath("tags");
+  const problem = problemOf(draft, state, path);
+  const conflict = draft.conflict(path);
+  const fallback = DEFAULT_TAILNET_TAGS.join(", ");
   return (
-    <Section title="Tailnet" description="How machines BB Box makes, such as cloud Macs, reach BB when BB is on a Tailscale tailnet: each joins with a single-use key BB Box makes.">
-      <>
-        <div className="flex items-center justify-between gap-3 py-2 first:pt-0">
-          <span className="text-xs text-foreground">Join machines to the tailnet</span>
-          <Select value={mode} onValueChange={(value) => setMode(value as TailnetMode)}>
-            <SelectTrigger className="h-8 w-64 text-xs" aria-label="Tailnet">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="off" className="text-xs">
-                No: BB is reached without one
-              </SelectItem>
-              <SelectItem value="oauth" className="text-xs">
-                Yes, with a Tailscale OAuth client
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        {mode === "oauth" ? (
-          <>
-            <div className="flex items-center justify-between gap-3 py-2">
-              <label className="text-xs text-foreground" htmlFor="tailnet-tags">
-                Tags
-              </label>
-              <Input id="tailnet-tags" aria-label="Tags" className="h-8 w-64 text-xs" value={tags} onChange={(event) => setTags(event.target.value)} />
-            </div>
-            <SecretRow label="OAuth client ID" set={isSet(tailnet?.clientId)} value={clientId} onChange={setClientId} />
-            <SecretRow label="OAuth client secret" set={isSet(tailnet?.clientSecret)} value={clientSecret} onChange={setClientSecret} />
-          </>
-        ) : null}
-        {problems.map((problem) => (
-          <p key={problem.path} className="py-1 text-xs text-destructive">
-            {problem.message}
-          </p>
-        ))}
-        <div className="flex justify-end pt-2">
-          <Button type="button" size="sm" className="h-8" aria-label="Save the tailnet" disabled={busy} onClick={() => void commit()}>
-            Save
-          </Button>
-        </div>
-      </>
-    </Section>
+    <DraftRow draft={draft} path={path} id={id} label="Tags" description="Machines join with these tags, separated by commas. The OAuth client must own them." problem={problem} wide>
+      <span className="flex w-full flex-col gap-1 sm:items-end">
+        <Input
+          id={id}
+          data-draft-path={path}
+          aria-describedby={describedBy(`${id}-help`, `${id}-effective`, problem && `${id}-problem`, conflict && `${id}-conflict`)}
+          aria-invalid={problem ? true : undefined}
+          className={cn("h-8 w-full text-xs", draft.changed(path) && "border-warning/60")}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={fallback}
+          value={draft.text(path)}
+          onChange={(event) => draft.set(path, plain(event.target.value))}
+          onKeyDown={saveOnEnter(draft)}
+        />
+        <span id={`${id}-effective`} className="text-2xs leading-snug text-subtle-foreground sm:text-right">
+          Empty: <span className="text-muted-foreground">{fallback}</span>, the default
+        </span>
+      </span>
+    </DraftRow>
+  );
+}
+
+function SecretRow({ draft, state, secret }: { draft: Draft; state: ConfigState; secret: "clientId" | "clientSecret" }) {
+  const id = useId();
+  const [replacing, setReplacing] = useState(false);
+  const path = tailnetPath(secret);
+  const label = TAILNET_SECRET_LABELS[secret];
+  const stored = state.document.general.tailnet?.[secret];
+  const set = isSecretState(stored) && stored.set;
+  const problem = problemOf(draft, state, path);
+  const conflict = draft.conflict(path);
+  return (
+    <DraftRow
+      draft={draft}
+      path={path}
+      id={`${id}-control`}
+      label={label}
+      description={SECRET_HELP[secret]}
+      chips={<Badge tone={!set && problem ? "warn" : "muted"}>{set ? "Set" : "Not set"}</Badge>}
+      problem={problem}
+      onTheirs={() => setReplacing(false)}
+      wide
+    >
+      <SecretControl
+        draft={draft}
+        path={path}
+        label={label}
+        set={set}
+        controlId={`${id}-control`}
+        describedBy={describedBy(`${id}-control-help`, problem && `${id}-control-problem`, conflict && `${id}-control-conflict`)}
+        invalid={problem !== null}
+        conflicted={conflict !== null}
+        clearable={false}
+        replacing={replacing}
+        onReplacing={setReplacing}
+      />
+    </DraftRow>
+  );
+}
+
+export function NetworkOptions() {
+  const draft = useDraft(NETWORK_PART, "the tailnet");
+  const oauth = draft.current(tailnetPath("mode")) === "oauth";
+  return (
+    <div className="space-y-6">
+      <RestoredNote draft={draft} />
+      <Group title="Tailnet" description="When BB is on a Tailscale tailnet, machines BB Box makes join it, each with a single-use key BB Box makes. These settings are saved together.">
+        <Card>
+          <Rows>
+            <ModeRow draft={draft} state={draft.latest} />
+            {oauth ? (
+              <>
+                <TagsRow draft={draft} state={draft.latest} />
+                {(["clientId", "clientSecret"] as const).map((secret) => (
+                  <SecretRow key={secret} draft={draft} state={draft.latest} secret={secret} />
+                ))}
+              </>
+            ) : null}
+          </Rows>
+        </Card>
+      </Group>
+      <SaveBar draft={draft} unplaced={unplacedProblems(draft, TAILNET_PATHS)} />
+    </div>
   );
 }

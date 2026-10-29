@@ -14,7 +14,7 @@ import { DESKTOP_PAGE, MACHINES_TAB } from "./desktop.tsx";
 import { FirstRun, SetupProgress } from "./first-run.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
-import { BOXES_PART, FILES_PART, MONITOR_PART } from "./settings-drafts.ts";
+import { BOXES_PART, FILES_PART, MONITOR_PART, NETWORK_PART } from "./settings-drafts.ts";
 import { Card, Chevron, FOCUS_RING, Group, NavRow, ProviderGlyph, RowButton, RowControl, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
 import { useRegistry } from "./settings-saving.tsx";
 import {
@@ -377,7 +377,7 @@ function Options() {
   );
 }
 
-const OPTION_PARTS: Readonly<Record<string, readonly string[]>> = { boxes: [BOXES_PART, FILES_PART], monitor: [MONITOR_PART] };
+const OPTION_PARTS: Readonly<Record<string, readonly string[]>> = { boxes: [BOXES_PART, FILES_PART], network: [NETWORK_PART], monitor: [MONITOR_PART] };
 
 function useDraftChip(): (parts: readonly string[]) => ReactNode {
   const registry = useRegistry();

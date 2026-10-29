@@ -217,8 +217,7 @@ first and says what follows.
 
 Each other part's page holds today's form for it, as it was before 067,
 until a later unit replaces it: setting up a backend, with Save, Save and
-turn on, Check and the last report; a kind's editor; the tailnet's form;
-Rebuild now. These save the whole document with their Save, and a stale
+turn on, Check and the last report; a kind's editor; Rebuild now. These save the whole document with their Save, and a stale
 revision reloads and says so.
 
 ## A backend's page
@@ -277,8 +276,8 @@ revision reloads and says so.
 | A kind | Header with its full name, badges, description, Make default, and the "offered to threads" switch; the default kind's switch is disabled, with why. Then its editor: sizes, the default size, largest size, warm boxes per backend and spares |
 | Boxes | Default kind (a menu that acts at once); boxes per thread; boxes join BB as machines and Linux desktops as video (switches); Files for every box |
 | Images | Rebuild each night (a switch); Rebuild now; the names of projects' images, set with `bb box image set` |
-| Devices | iOS video encoding, sharing each Mac's encoder fairly and the test device, as values, with how to change them with `bb box config`; each device kind's spares, linked |
-| Network | The tailnet: whether machines join, tags, OAuth client ID and secret, saved together |
+| Devices | Streaming: iOS video encoding, a menu, and "Share each Mac's encoder fairly", a switch, both at once. Set on other pages: each backend's shared iOS hosts, and each device kind's spares with "None, as by default" and why they are off by default, each opening its page. For testing: the test device, a switch |
+| Network | The tailnet as one form on the engine: whether machines join (two radio choices), tags (empty for `tag:bb-box`), and the OAuth client ID and secret, Set or Replace, with their versions. Saved together with one Save, or Enter; a refusal keeps every change, with the reason under the field it names. Choosing No hides the rest, drops their edits and says "Saving No deletes the saved OAuth client ID and secret" |
 | Monitor | Machine status (a switch, also on its overview row), Refresh every … s, background monitoring and pressure notifications. After machine status changes: "The sidebar's machine status changes when BB next loads", with Reload BB now |
 | Configuration | The revision and what happens when two people save; the `bb box config` commands |
 | Add a backend | Every driver, each with what it is; one already added says "Added: open it". Then Docker on BB machines, every machine with Docker's state and its switch |
@@ -313,7 +312,9 @@ on the Boxes page, under Machines".
 | 2: the editing engine on Boxes and Monitor, and every switch on it | Built |
 | 3: each backend's page on the engine, with health, In use, cards, Macs and the menu | Built |
 | 4: the drivers' help text | Built |
-| 5 and later: Docker on BB machines as backends, kind pages, first run, Images, Devices and Network, Configuration, Find | To come, as 067 lists them |
+| 5 to 8: Docker on BB machines as backends, kind pages, first run, Images | To come, as 067 lists them |
+| 9: Devices and Network on the engine | Built |
+| 10 and 11: Configuration, Find | To come, as 067 lists them |
 
 The code: `src/app/settings.tsx` (the view: hash, focus and scroll),
 `settings-route.ts` (views, hashes and `openSettingsView`),
@@ -322,8 +323,9 @@ The code: `src/app/settings.tsx` (the view: hash, focus and scroll),
 `settings-paths.ts` and `settings-saving.tsx` (the engine),
 `settings-checks.ts` (checks bound to a form), `settings-backend-page.tsx`
 and `settings-backend-fields.tsx` (a backend's page),
-`settings-context.tsx`, `settings-overview.tsx`, `settings-pages.tsx` and
-`settings-parts.tsx`. Today's forms stay in
+`settings-tailnet.tsx` (Network), `settings-context.tsx`,
+`settings-overview.tsx`, `settings-pages.tsx` and `settings-parts.tsx`.
+Today's forms stay in
 `settings-backends.tsx`, `settings-kinds.tsx`, `settings-fields.tsx`,
-`settings-files.tsx`, `settings-tailnet.tsx`, `settings-docker-hosts.tsx`,
+`settings-files.tsx`, `settings-docker-hosts.tsx`,
 `rebuild-now.tsx` and `first-run.tsx`, with the helpers in `config.ts`.

@@ -1,5 +1,6 @@
 import { pathProblem, type BoxFileSetting } from "../core/box-files.ts";
 import type { BackendConfig, ConfigDocument, HostConfig, Problem } from "../core/document.ts";
+import type { TailnetSetting } from "../core/tailnet-settings.ts";
 import type { FieldValue } from "../backends/types.ts";
 import type { ConfigState, FieldView } from "../plugin/configuration.ts";
 import { effectiveKind, isSecretField, isSecretState, kindChanges, withBackend, withGeneral, withKind, withMonitor, withoutBackend } from "./config.ts";
@@ -77,6 +78,29 @@ export function newHostPath(id: string, mark: string): Path {
 
 export function hostFieldPath(host: Path, key: string): Path {
   return `${host}/fields/${key}`;
+}
+
+export type TailnetKey = "mode" | "tags" | "clientId" | "clientSecret";
+
+const TAILNET = "general/tailnet/";
+const TAILNET_KEYS: readonly TailnetKey[] = ["mode", "tags", "clientId", "clientSecret"];
+
+export function tailnetPath(key: TailnetKey): Path {
+  return `${TAILNET}${key}`;
+}
+
+export function tailnetKeyOf(path: Path): TailnetKey | null {
+  if (!path.startsWith(TAILNET)) return null;
+  const key = path.slice(TAILNET.length);
+  return (TAILNET_KEYS as readonly string[]).includes(key) ? (key as TailnetKey) : null;
+}
+
+export function isTailnetSecret(key: TailnetKey | null): key is "clientId" | "clientSecret" {
+  return key === "clientId" || key === "clientSecret";
+}
+
+export function tagsFromText(text: string): string[] {
+  return [...new Set(text.split(/[\s,]+/).map((tag) => tag.trim()).filter(Boolean))];
 }
 
 export function isProvisional(path: Path): boolean {
@@ -198,7 +222,14 @@ function fieldValue(field: FieldView | null, value: PlainValue): PlainValue {
   return value.trim() === "" ? null : value;
 }
 
+function tailnetValue(key: TailnetKey, value: PlainValue): PlainValue {
+  if (key !== "tags" || typeof value !== "string") return value;
+  return tagsFromText(value).join(", ") || null;
+}
+
 export function documentValue(state: ConfigState, path: Path, value: PlainValue): PlainValue {
+  const tailnetKey = tailnetKeyOf(path);
+  if (tailnetKey) return tailnetValue(tailnetKey, value);
   const at = backendAt(path);
   if (at?.at === "field" || at?.at === "host-field") return fieldValue(fieldAt(state, path), value);
   if (at?.at === "label") return typeof value === "string" ? value.trim() || null : value;
@@ -248,7 +279,16 @@ function storedAtBackend(state: ConfigState, at: BackendAt, path: Path): Stored 
   }
 }
 
+function storedAtTailnet(tailnet: TailnetSetting | undefined, key: TailnetKey): Stored {
+  if (key === "mode") return { kind: "value", value: tailnet?.mode ?? "off" };
+  if (key === "tags") return { kind: "value", value: tailnet?.tags?.length ? tailnet.tags.join(", ") : null };
+  const secret = tailnet?.[key];
+  return { kind: "version", version: isSecretState(secret) ? (secret.version ?? 0) : null };
+}
+
 export function storedAt(state: ConfigState, path: Path, value?: EditValue): Stored {
+  const tailnetKey = tailnetKeyOf(path);
+  if (tailnetKey) return storedAtTailnet(state.document.general.tailnet, tailnetKey);
   const setting = settingOf(path);
   if (setting) {
     const values: Readonly<Record<string, unknown>> = setting.section === "general" ? { ...state.defaults.general, ...state.document.general } : { ...state.defaults.monitor, ...state.document.monitor };
@@ -437,6 +477,42 @@ function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: read
   return { document, sentAs, needed };
 }
 
+type TailnetDraft = Omit<TailnetSetting, "clientId" | "clientSecret"> & {
+  readonly clientId?: TailnetSetting["clientId"] | string;
+  readonly clientSecret?: TailnetSetting["clientSecret"] | string;
+};
+
+function withTailnet(state: ConfigState, document: ConfigDocument, edits: readonly PathEdit[]): Built {
+  const tailnetEdits = edits.filter((edit) => tailnetKeyOf(edit.path) !== null);
+  if (!tailnetEdits.length) return { document, sentAs: {}, needed: false };
+  const stored = document.general.tailnet;
+  const editOf = (key: TailnetKey) => tailnetEdits.find((edit) => edit.path === tailnetPath(key));
+  const modeEdit = editOf("mode");
+  const mode = modeEdit?.value.kind === "plain" && (modeEdit.value.value === "off" || modeEdit.value.value === "oauth") ? modeEdit.value.value : (stored?.mode ?? "off");
+  const modeChanged = modeEdit !== undefined && isChange(state, modeEdit);
+  if (mode === "off") return { document: withGeneral(document, { tailnet: undefined }), sentAs: {}, needed: modeChanged };
+  let needed = modeChanged;
+  const tagsEdit = editOf("tags");
+  let tags = stored?.tags;
+  if (tagsEdit?.value.kind === "plain") {
+    const value = documentValue(state, tagsEdit.path, tagsEdit.value.value);
+    tags = typeof value === "string" ? value.split(", ") : undefined;
+    if (isChange(state, tagsEdit)) needed = true;
+  }
+  const secretOf = (key: "clientId" | "clientSecret") => {
+    const edit = editOf(key);
+    if (edit?.value.kind === "secret" && edit.value.text !== null) {
+      needed = true;
+      return edit.value.text;
+    }
+    return stored?.[key];
+  };
+  const clientId = secretOf("clientId");
+  const clientSecret = secretOf("clientSecret");
+  const tailnet: TailnetDraft = { mode, ...(tags?.length ? { tags } : {}), ...(clientId !== undefined ? { clientId } : {}), ...(clientSecret !== undefined ? { clientSecret } : {}) };
+  return { document: withGeneral(document, { tailnet: tailnet as TailnetSetting }), sentAs: {}, needed };
+}
+
 export function candidateOf(state: ConfigState, edits: readonly PathEdit[]): Candidate {
   const conflicts = edits.filter((edit) => conflictOf(state, edit) !== null).map((edit) => edit.path);
   let document = state.document;
@@ -456,7 +532,8 @@ export function candidateOf(state: ConfigState, edits: readonly PathEdit[]): Can
   }
   const backends = withBackendEdits(state, document, edits);
   const files = withFiles(backends.document, edits);
-  return { document: files.document, conflicts, needed: needed || backends.needed || files.needed, sentAs: { ...backends.sentAs, ...files.sentAs } };
+  const tailnet = withTailnet(state, files.document, edits);
+  return { document: tailnet.document, conflicts, needed: needed || backends.needed || files.needed || tailnet.needed, sentAs: { ...backends.sentAs, ...files.sentAs } };
 }
 
 function hostProblemPath(id: string, index: string, rest: string | undefined, sentAs: Readonly<Record<string, Path>>): Path {
@@ -474,6 +551,8 @@ export function problemPath(serverPath: string, sentAs: Readonly<Record<string, 
     return "files";
   }
   if (serverPath === "general.files") return "files";
+  const tailnet = /^general\.tailnet(?:\.([A-Za-z]+))?$/.exec(serverPath);
+  if (tailnet) return tailnetPath(TAILNET_KEYS.find((key) => key === tailnet[1]) ?? "mode");
   const setting = /^(general|monitor)\.([A-Za-z]+)$/.exec(serverPath);
   if (setting) return `${setting[1]}/${setting[2]}`;
   const kind = /^kinds\.([^.]+)$/.exec(serverPath);
@@ -530,8 +609,10 @@ function hostEditProblems(state: ConfigState, edits: readonly PathEdit[]): Draft
 function secretEditProblems(state: ConfigState, edits: readonly PathEdit[]): DraftProblem[] {
   const problems: DraftProblem[] = [];
   for (const edit of edits) {
-    if (edit.value.kind !== "secret" || backendAt(edit.path)?.at !== "field") continue;
-    const label = fieldAt(state, edit.path)?.label ?? "secret";
+    if (edit.value.kind !== "secret") continue;
+    const tailnetKey = tailnetKeyOf(edit.path);
+    if (backendAt(edit.path)?.at !== "field" && !isTailnetSecret(tailnetKey)) continue;
+    const label = isTailnetSecret(tailnetKey) ? TAILNET_SECRET_LABELS[tailnetKey] : (fieldAt(state, edit.path)?.label ?? "secret");
     if (edit.value.text === null) problems.push({ path: edit.path, message: `Paste the ${label} again: what you pasted was not kept when the page reloaded.` });
     else if (edit.value.text === "") problems.push({ path: edit.path, message: `Paste the new ${label}, or keep the saved one.` });
   }
@@ -562,8 +643,17 @@ export function fileEditProblems(edits: readonly PathEdit[]): DraftProblem[] {
   return problems;
 }
 
+export const TAILNET_SECRET_LABELS: Readonly<Record<"clientId" | "clientSecret", string>> = { clientId: "OAuth client ID", clientSecret: "OAuth client secret" };
+
 const SETTING_LABELS: Readonly<Record<string, string>> = {
   "general/boxesPerThread": "Boxes per thread",
+  "general/iosEncoder": "iOS video encoding",
+  "general/encoderLedger": "Share each Mac's encoder fairly",
+  "general/testDevice": "Test device",
+  "general/tailnet/mode": "Join machines to the tailnet",
+  "general/tailnet/tags": "Tags",
+  "general/tailnet/clientId": "the OAuth client ID",
+  "general/tailnet/clientSecret": "the OAuth client secret",
   "general/enrol": "Boxes join BB as machines",
   "general/video": "Linux desktops as video",
   "general/nightlyImages": "Rebuild each night",
