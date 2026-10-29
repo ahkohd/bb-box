@@ -71,6 +71,8 @@ test("status is never more certain than the checks: ready within the hour, passe
   expect(statusLine(changed, NOW, 0).details).toContain("1 not checked since it changed");
   expect(statusLine(state([{ id: "a", checkedAgo: 30_000 }, { id: "b", enabled: false }]), NOW, 0).details).toEqual(["1 off", "1 kind on offer", "checked just now"]);
   expect(statusLine(state([{ id: "a", enabled: false }]), NOW, 0).headline).toBe("Every backend is off");
+  expect(statusItems(state([{ id: "a", enabled: false }, { id: "b", enabled: false }]), NOW)[0]).toMatchObject({ key: "all-off", title: "Every backend is off", fix: "Turn a backend on with its switch below.", open: { page: "overview" }, showSwitch: "a" });
+  expect(statusItems(state([{ id: "a", enabled: false }, { id: "b", checkedAgo: 60_000 }]), NOW).some((item) => item.key === "all-off")).toBe(false);
   expect(statusLine(state([{ id: "a", checkedAgo: 60_000 }]), NOW, 3).headline).toBe("Checking 3 backends, up to 30 s each, side by side…");
 });
 

@@ -2145,20 +2145,62 @@ A selection, with the box named bb-1:
   there" stand alone.
 - A secret on a setup form starts as Set, as on a backend's page, not as an
   open field.
-- Every backend off is said by Status's headline alone, not as a callout
-  item: Open would lead nowhere.
 - The progress card keeps today's words, "goes on if you close this
   panel", on the settings page too.
 
-### Open questions for the owner
+### The owner's answers
 
-1. The nine "You need:" lines are new driver words, from each guide's
-   "What you need": they wait for your approval, as unit 4's did.
-2. Should "Every backend is off" also be an item in the callout, as the
-   prototype has it, with its fix "Turn on a backend below"?
+1. The nine "You need:" lines are approved, with Proxmox QEMU's reworded
+   by the lead: "A Proxmox host set up for Proxmox LXC; a Windows 11 ISO
+   only for Windows desktops."
+2. "Every backend is off" is also an item in the callout. Built as a
+   follow-up, below.
 
 ### Not done here
 
 - A look in production in the owner's browser, after the lead deploys.
 - A map from each Offer field to the kinds it turns off, so step 3 can say
   "It will make Linux and Linux desktop", is a driver change for later.
+
+### Follow-up: Every backend is off in the callout
+
+With backends and none of them on, the callout's first item is "Every
+backend is off", "Threads get no boxes until one is on. Boxes already made
+keep working.", "Fix: Turn a backend on with its switch below.", and Show
+("Show the backends' switches"), which scrolls to the first backend's
+switch on the overview and focuses it, so Space turns it on. With no
+backend at all there is no item: first run, or Add backend, says what to
+do. Status's headline stays "Every backend is off".
+
+Live check: three fresh BBs in a Linux box (`npx bb-app` 0.48.0, no
+account, `env -i` with `BB_BOX_LIVE_CHECKS=1`, bb-box from this branch),
+each with Docker on this machine set up and then turned off by its row's
+switch ([`all-off-check.mjs`](067-settings-page/unit-7/all-off-check.mjs),
+[`all-off-run.sh`](067-settings-page/unit-7/all-off-run.sh)). Each time the
+callout said "1 thing needs you · Every backend is off · Threads get no
+boxes until one is on. Boxes already made keep working. · Fix: Turn a
+backend on with its switch below. · Show"; Show focused "Docker on bb-1:
+takes new boxes" and stayed on the overview; Space turned it on, stored
+on, and the item went. 3 of 3. A first series failed on BB's own Skip
+setup screen, which the script had not passed, and then on two copies of
+the series running at once; neither was in the page.
+
+On a Linux box: `tsc` passes; the node suite 2,835 tests, 2,547 pass, 0
+fail, 288 skipped; vitest 303 pass; `scripts/reference.ts --check` passes.
+
+The production look after PR 1276 was deployed, in the owner's browser
+(looking only, at revision 134, nothing changed): the overview established,
+with no first run and "All 11 backends ready"; Add backend in its five
+groups, each driver with what it makes and "You need: …", the approved
+words, Proxmox QEMU's as reworded; Docker "1 added" with Add another, and
+the types added once "Added: open it"; setting up microsandbox in four
+steps, with "It can make Linux, Linux desktop (CPU), Linux on arm64 and
+Linux desktop on arm64" and the bar's three buttons, and no draft in
+session storage from opening it. One fault: microsandbox said "2 addeds".
+It now says "2 added".
+
+Tests: `test/settings-view.test.tsx` checks the item and that one backend
+on removes it; Add another's test now has two backends of the type, "2
+added", and saves the third as `other:3`; `test/app.test.tsx`'s established all-off overview checks
+its words and that Show focuses the switch without leaving the overview.
+

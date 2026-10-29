@@ -80,7 +80,7 @@ export function AddBackendPage() {
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
                         {driver.label}
-                        {added.length && driver.several ? <Badge>{plural(added.length, "added")}</Badge> : null}
+                        {added.length && driver.several ? <Badge>{added.length} added</Badge> : null}
                       </span>
                       <span id={descriptionId} className="block">
                         <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">Makes {kindsWords(state, driver.kinds)}.</span>
