@@ -121,7 +121,7 @@ The Monitor (066): machine status in BB's sidebar footer for BB's server, your m
 | [`microsandbox`](#microsandbox) | microsandbox | linux, linux-desktop-cpu, linux-arm64, linux-arm64-desktop-cpu |
 | [`hetzner`](#hetzner) | Hetzner Cloud | linux, linux-desktop-cpu, linux-desktop-wayland-cpu, linux-arm64, linux-arm64-desktop-cpu |
 | [`namespace`](#namespace) | Namespace | macos, macos-desktop, linux, linux-desktop-cpu, linux-desktop-wayland-cpu |
-| [`boat`](#boat) | boat.dev | linux |
+| [`boat`](#boat) | boat.dev | linux, linux-desktop-cpu |
 
 ### proxmox-lxc
 
@@ -333,7 +333,7 @@ Setup: [docs/guide/namespace.md](../../docs/guide/namespace.md).
 
 ### boat
 
-boat.dev: Linux VMs rented by the second from boat.dev, one for each box. Each box is forked from bb-box's template in seconds, and deleted when it is released.
+boat.dev: Linux VMs, with or without a desktop, rented by the second from boat.dev, one for each box. Each box is forked from bb-box's template in seconds, and deleted when it is released.
 
 Setup: [docs/guide/boat.md](../../docs/guide/boat.md).
 

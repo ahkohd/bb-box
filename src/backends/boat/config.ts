@@ -1,13 +1,14 @@
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 
-export const BOAT_TEMPLATE_KINDS = ["linux", "linux-desktop-cpu"] as const;
+export const BOAT_TEMPLATE_KINDS = ["linux", "linux-desktop-cpu", "android"] as const;
 export type BoatKind = (typeof BOAT_TEMPLATE_KINDS)[number];
-export const BOAT_KINDS: readonly BoatKind[] = ["linux"];
+export const BOAT_KINDS: readonly BoatKind[] = ["linux", "linux-desktop-cpu"];
 
 export interface BoatConfig {
   readonly key: string;
   readonly mostBoxes: number;
   readonly leaseMinutes: number;
+  readonly androidLicence: boolean;
 }
 
 export const BOAT_DEFAULTS = {
@@ -21,7 +22,19 @@ export const BOAT_KEYS = {
   key: "api-key",
   mostBoxes: "most-boxes",
   leaseMinutes: "lease-minutes",
+  androidLicence: "android-sdk-licence",
 } as const;
+
+export const ANDROID_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
+  [BOAT_KEYS.androidLicence]: {
+    type: "boolean",
+    label: "Android SDK licence",
+    description:
+      "Whether you accept the Android SDK's licence, which Android boxes on boat.dev need. Google's terms cover the SDK, the emulator and the system image that bb-box installs, as setup/android/pins.json pins them; read them with setup/android/accept-sdk-licence.sh, or at developer.android.com/studio/terms. Turning this on is your acceptance. While it is off, boat.dev offers no Android boxes.",
+    group: "boxes",
+    default: false,
+  },
+};
 
 export const BOAT_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [BOAT_KEYS.key]: {
@@ -75,5 +88,6 @@ export function parseBoatPart(part: BackendPart): ParsedBackend<BoatConfig> {
   if (!Number.isInteger(leaseMinutes) || leaseMinutes < LEASE_MINUTES_RANGE.least || leaseMinutes > LEASE_MINUTES_RANGE.most)
     problem(BOAT_KEYS.leaseMinutes, `boat.dev: the auto-stop must be a whole number of minutes from ${LEASE_MINUTES_RANGE.least} to ${LEASE_MINUTES_RANGE.most}.`);
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { key, mostBoxes, leaseMinutes } };
+  const licence = values[BOAT_KEYS.androidLicence];
+  return { ok: true, config: { key, mostBoxes, leaseMinutes, androidLicence: licence === true || licence === "true" } };
 }

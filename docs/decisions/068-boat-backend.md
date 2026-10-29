@@ -76,12 +76,19 @@ trial account showed:
    its own apt sources set aside during the build, its Docker CE replaced by
    the guest scripts' `docker.io`, its copies of the pinned tools moved off
    the PATH, its own desktop stream turned off, and Docker enabled at boot,
-   as boat restarts only enabled services after a restore.
+   as boat restarts only enabled services after a restore For a desktop, its
+   Rust in `/usr/local` is set aside, so the box user's own installs, and
+   bb-box's Cua Driver is called by its pinned path and put first on the
+   PATH, as boat puts its own wrapper back at `/usr/local/bin/cua-driver` in
+   every fork.
 3. **A template serves the account.** It is found by its labels: the kind
    and the fingerprint of the scripts it was built from, so a second install
    on the account, or one that lost its storage, forks it rather than
    building another, which the trial's 2 sandboxes at once would not allow.
-   Each install tidies only the templates it built. As a template holds its
+   Each install tidies only the templates it built, and its upkeep forks a
+   current template the account already has before it builds one, and
+   builds one template at a time, as a build takes one of the trial's 2
+   sandboxes. As a template holds its
    builder's SSH key, an acquire replaces the box user's and root's
    `authorized_keys` with its own install's key, through boat's own `user`,
    before it uses the box.
@@ -113,7 +120,9 @@ trial account showed:
    shared control, computer use and recording then work as on every other
    Linux desktop. Boat's stream is a web page in an iframe, with no channel
    for bb-box's control, input or recording, and its URL carries a token.
-   Measured in [the results](068-results.md).
+   Measured live through a BB's relay, bb-box's video trails a drag by 57
+   to 59 ms at 62 fps, and VNC by 62 to 63 ms at over 100 fps, 30 to 40 ms
+   more than on a LAN ([the results](068-results.md)).
 9. **A box gets the smallest size that holds it**, and the doctor and the
    settings page say what each costs an hour. Sizes above what the plan
    allows are refused before boat is asked, so another backend can take the
@@ -134,6 +143,8 @@ sandbox; the details are in [the results](068-results.md):
 | Resume to first SSH | 1.0 s |
 | Building the `linux` template, its check in a fork included | 6 min |
 | A `linux` box from the template, to ready with Docker answering | 8.8 to 24.6 s, in 5 acquires |
+| Building the `linux-desktop-cpu` template, its check in a fork included | 13 min |
+| A `linux-desktop-cpu` box, to ready with Cua Driver answering | 24.8 to 63 s |
 
 A box that starts in 9 to 25 s needs no warm pool, which would also take
 one of the trial's 2 sandboxes. bb-box keeps none.
@@ -159,11 +170,10 @@ time is used first. The trial's 25 hours count a `small` hour as half.
 
 ## Consequences
 
-- A new backend type, `boat`, in `src/backends/boat`, offering `linux`.
-  `linux-desktop-cpu` is built in and offered once its template builds and
-  its stream is measured live (phase 2): its first build stopped on boat's
-  own Rust in `/usr/local/rustup`. `android` follows if a sandbox's KVM runs
-  the emulator at speed.
+- A new backend type, `boat`, in `src/backends/boat`, offering `linux`, and
+  `linux-desktop-cpu` from phase 2, once its template built and its stream
+  was measured live. `android` follows if a sandbox's KVM runs the emulator
+  at speed.
 - The template build uses a sandbox for about as long as the guest scripts
   take, from the plan's time.
 - A box's address is not fixed, so `ssh <box>` from a thread is written
