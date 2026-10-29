@@ -1155,7 +1155,9 @@ export class DeviceServer {
     if (this.#controlBusy !== null) throw new Refused("busy", this.#switching ? `The box is switching to the ${this.#switching.to}. Try again when it has booted.` : "Another control is under way on this device. Try again when it has finished.");
     if (control.action !== "switch" && control.action !== "reboot") this.#booted();
     this.#controlBusy = id;
-    if (GEOMETRY_ACTIONS.has(control.action)) {
+    const reboots = this.#options.driver.rebootsFor?.(control) ?? false;
+    const geometry = reboots || GEOMETRY_ACTIONS.has(control.action);
+    if (geometry) {
       this.#awaitGeometry();
       this.#stopSource("agent", `The device is about to ${control.action.replace("_", " ")}, so the agent's input under way was stopped.`);
       this.#person.forget();
@@ -1163,9 +1165,9 @@ export class DeviceServer {
     }
     const work = (control.action === "switch" ? this.#switch(id, control.device) : this.#controlThenRead(control, byAgent && personHasControl)).finally(() => {
       this.#controlBusy = null;
-      if (GEOMETRY_ACTIONS.has(control.action)) this.#geometryControlDone();
+      if (geometry) this.#geometryControlDone();
     });
-    const deadline = deadlineFor(control, { ...DEADLINES_MS, ...this.#options.deadlines });
+    const deadline = deadlineFor(reboots ? { action: "reboot" } : control, { ...DEADLINES_MS, ...this.#options.deadlines });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<"late">((resolve) => (timer = setTimeout(() => resolve("late"), deadline)));
     const outcome = await Promise.race([work.then(() => "done" as const), late]).finally(() => clearTimeout(timer));

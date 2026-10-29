@@ -16,6 +16,7 @@ import {
   type Point,
   type VideoSize,
 } from "./device.ts";
+import { changesShowAtStart } from "./device-settings.ts";
 
 export const DEVICE_WINDOW = 1;
 export const DEVICE_SETTLE = { quietMs: 300, mostMs: 2_000, fromNow: true } as const;
@@ -32,6 +33,10 @@ export const TYPED_WAIT_MS = 5_000;
 const TYPED_STILL_READS = 3;
 export const APP_WAIT = { everyMs: 250, mostMs: 5_000 } as const;
 const STATUS_BAR_FRACTION = 0.08;
+const SETTINGS_APP = "Settings";
+const SWITCH_LINE = /^[+-] \[e\d+\] switch /;
+export const SETTING_SHOWN_AT_START_WORDS =
+  "On this shared box, iOS shows a change to a system setting, such as Dark or Bold Text, only at the device's start: call box_device with action reboot to see it, which closes open apps. A dedicated box shows such a change at once.";
 const CHANGES_MOST_LINES = 60;
 const REFS_MOST = 20_000;
 
@@ -69,6 +74,8 @@ interface Snapshot {
   readonly screen: VideoSize;
   readonly orientation: string;
   readonly app: string;
+  readonly starting: boolean;
+  readonly changesShowAtStart?: boolean;
   readonly shown: readonly Shown[];
   readonly byRef: ReadonlyMap<string, Shown>;
 }
@@ -310,7 +317,8 @@ export class DeviceComputer {
     const answer = await this.#ok(this.#deps.read(box, { type: "tree" }), "bb-box could not read the device's elements");
     if (answer.result.type !== "tree") throw new ComputerError("driver", "The device server answered a read of its elements with something else.", "Try again.");
     const { screen, orientation } = this.#screen(answer.state);
-    return this.#snapshot(state, answer.state.model, answer.state.platform, answer.result.generation, screen, orientation, answer.result.elements);
+    const snapshot = this.#snapshot(state, answer.state.model, answer.state.platform, answer.result.generation, screen, orientation, answer.result.elements);
+    return changesShowAtStart(answer.state) ? { ...snapshot, changesShowAtStart: true } : snapshot;
   }
 
   #snapshot(state: BoxState, model: string, platform: DevicePlatform, generation: number, screen: VideoSize, orientation: string, roots: readonly DeviceElement[]): Snapshot {
@@ -356,7 +364,8 @@ export class DeviceComputer {
       state.refs.delete(ref);
     }
     const app = roots[0]?.label || "";
-    const snapshot: Snapshot = { model, platform, generation, screen, orientation, app, shown, byRef };
+    const starting = roots[0]?.role === "application" && roots[0].children.length === 0;
+    const snapshot: Snapshot = { model, platform, generation, screen, orientation, app, starting, shown, byRef };
     state.snapshot = snapshot;
     return snapshot;
   }
@@ -529,6 +538,7 @@ export class DeviceComputer {
     const added = now.filter((line) => !was.has(line)).map((line) => `+ ${line.replace(/^- /, "")}`);
     const removed = [...was].filter((line) => !nowSet.has(line)).map((line) => `- ${line.replace(/^- /, "")}`);
     const changes = [...removed, ...added];
+    if (after.changesShowAtStart && after.app === SETTINGS_APP && (!changes.length || changes.some((line) => SWITCH_LINE.test(line)))) parts.push(SETTING_SHOWN_AT_START_WORDS);
     if (!changes.length) {
       parts.push(settled.frames === framesBefore ? "Nothing on the screen changed." : "The picture changed, but no element did.");
       return { parts, after };
@@ -710,13 +720,14 @@ export class DeviceComputer {
       let done: string;
       let front: (snapshot: Snapshot) => boolean = drawn;
       if (input.url !== undefined) {
+        front = (snapshot) => !!snapshot.app && !snapshot.starting;
         await this.#ok(this.#deps.agentRequest(box, { type: "open", url: input.url }), `bb-box could not open ${input.url}`);
         done = `Opened ${input.url}.`;
       } else {
         const answer = await this.#ok(this.#deps.agentRequest(box, { type: "launch", app: input.app! }), `bb-box could not launch ${input.app}`);
         const launched = answer.result.type === "launched" ? answer.result.app : null;
         done = launched ? `Launched ${launched.name} (${launched.id}).` : `Launched ${input.app}.`;
-        if (launched) front = (snapshot) => snapshot.app.toLowerCase() === launched.name.toLowerCase();
+        if (launched) front = (snapshot) => !snapshot.starting && snapshot.app.toLowerCase() === launched.name.toLowerCase();
       }
       await this.#read(box, state, front);
       const settled = await this.#settled(box);
@@ -748,10 +759,12 @@ function selectAllModifier(platform: DevicePlatform): KeyModifier {
 }
 
 function frontWords(snapshot: Snapshot): string {
-  return snapshot.app || "the Home Screen or a system screen";
+  if (!snapshot.app) return snapshot.starting ? "an app still starting" : "the Home Screen or a system screen";
+  return snapshot.starting ? `${snapshot.app} (still starting)` : snapshot.app;
 }
 
 function drawn(snapshot: Snapshot): boolean {
+  if (snapshot.starting) return false;
   if (snapshot.app) return true;
   const band = snapshot.screen.height * STATUS_BAR_FRACTION;
   return snapshot.shown.some((shown) => shown.depth > 0 && shown.element.frame.y + shown.element.frame.height > band);

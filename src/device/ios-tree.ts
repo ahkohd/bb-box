@@ -7,6 +7,8 @@ const EDITABLE_ROLES = new Set(["AXTextField", "AXSecureTextField", "AXSearchFie
 const FOCUSED_TRAITS = new Set(["IsEditing", "Focused"]);
 const DIRECTION_MARKS = /[‎‏‪-‮⁦-⁩]/g;
 const MOST_DEPTH = 60;
+export const SWITCH_KNOB_POINTS = { width: 63, fromRight: 14 } as const;
+const ROW_SWITCH_WIDE_BY = 3;
 
 interface IdbElement {
   readonly role?: unknown;
@@ -54,9 +56,17 @@ function roleOf(element: IdbElement, traits: ReadonlySet<string>): string {
   return words(element.role) || (words(element.type) ? `AX${words(element.type)}` : "AXElement");
 }
 
+function knobOfRowSwitch(frame: ElementFrame, scale: number): ElementFrame {
+  if (frame.width < frame.height * ROW_SWITCH_WIDE_BY) return frame;
+  const width = Math.round(SWITCH_KNOB_POINTS.width * scale);
+  const right = frame.x + frame.width - Math.round(SWITCH_KNOB_POINTS.fromRight * scale);
+  return { x: right - width, y: frame.y, width, height: frame.height };
+}
+
 function converted(element: IdbElement, scale: number, inScroller: boolean, depth: number): DeviceElement {
   const traits = traitsOf(element);
   const axRole = roleOf(element, traits);
+  const frame = frameOf(element.frame, scale);
   const enabled = element.enabled !== false && !traits.has("NotEnabled");
   const scrollable = traits.has("Scrollable");
   const value = words(element.AXValue);
@@ -68,7 +78,7 @@ function converted(element: IdbElement, scale: number, inScroller: boolean, dept
     identifier: identifier || null,
     label: words(element.AXLabel) || words(element.title),
     value: value || null,
-    frame: frameOf(element.frame, scale),
+    frame: axRole === "AXSwitch" ? knobOfRowSwitch(frame, scale) : frame,
     enabled,
     focused: [...traits].some((trait) => FOCUSED_TRAITS.has(trait)),
     can: {
@@ -93,6 +103,8 @@ export function iosTree(raw: unknown, scale: number): readonly DeviceElement[] {
 
 export const SCREEN_BY_POINTS = { across: 6, downPoints: 30, atOnce: 8 } as const;
 export const READ_BY_POINTS_WORDS = "read point by point, as iOS named no app in front";
+export const STARTING_WORDS = "still starting: iOS shows none of its elements yet, so observe again in a few seconds";
+export const PAGE_BY_POINTS_WORDS = "its page, read point by point, as iOS lists a web page's elements only that way: an element smaller than the points' spacing may be missing, so use computer_screenshot to see the whole page";
 
 function coversScreen(element: DeviceElement, screen: { readonly width: number; readonly height: number }): boolean {
   return !element.label && element.frame.width * element.frame.height >= screen.width * screen.height * 0.9;
@@ -105,22 +117,82 @@ export function namesNoFrontApp(error: unknown): boolean {
 export interface PointReads {
   at(point: { readonly x: number; readonly y: number }): Promise<unknown>;
   processName(pid: number): Promise<string | null>;
+  appName(pid: number): Promise<string | null>;
 }
 
 export interface TreeReads extends PointReads {
   tree(): Promise<unknown>;
 }
 
-export async function readIosTree(reads: TreeReads, size: { readonly width: number; readonly height: number }, scale: number): Promise<{ readonly elements: readonly DeviceElement[]; readonly byPoints: boolean }> {
-  try {
-    return { elements: iosTree(await reads.tree(), scale), byPoints: false };
-  } catch (error) {
-    if (!namesNoFrontApp(error)) throw error;
-    return { elements: await screenByPoints(reads, size, scale), byPoints: true };
-  }
+type Points = { readonly width: number; readonly height: number };
+
+function pidOf(raw: unknown): number | null {
+  const found = Array.isArray(raw) ? raw[0] : raw;
+  const pid = (found as { pid?: unknown } | null)?.pid;
+  return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-function gridPoints(size: { readonly width: number; readonly height: number }): { readonly x: number; readonly y: number }[] {
+export async function readIosTree(reads: TreeReads, size: Points, scale: number): Promise<{ readonly elements: readonly DeviceElement[]; readonly byPoints: boolean; readonly pageByPoints: boolean }> {
+  let raw: unknown;
+  try {
+    raw = await reads.tree();
+  } catch (error) {
+    if (!namesNoFrontApp(error)) throw error;
+    return { elements: await screenByPoints(reads, size, scale), byPoints: true, pageByPoints: false };
+  }
+  const front = await withFrontAppNamed(iosTree(raw, scale), pidOf(raw), reads);
+  const page = await withPageByPoints(front, pidOf(raw), reads, size, scale);
+  return { elements: page ?? front, byPoints: false, pageByPoints: page !== null };
+}
+
+async function withFrontAppNamed(elements: readonly DeviceElement[], pid: number | null, reads: PointReads): Promise<readonly DeviceElement[]> {
+  const [root, ...rest] = elements;
+  if (!root || root.role !== "application") return elements;
+  const label = root.label || (pid === null ? "" : ((await reads.appName(pid).catch(() => null)) ?? ""));
+  const value = root.children.length ? root.value : STARTING_WORDS;
+  if (label === root.label && value === root.value) return elements;
+  return [{ ...root, label, value }, ...rest];
+}
+
+function contains(frame: ElementFrame, point: { readonly x: number; readonly y: number }): boolean {
+  return point.x >= frame.x && point.x < frame.x + frame.width && point.y >= frame.y && point.y < frame.y + frame.height;
+}
+
+function shownAt(elements: readonly DeviceElement[], point: { readonly x: number; readonly y: number }): boolean {
+  return elements.some((element) => ((!!element.label || !!element.value || !!element.can?.tap) && contains(element.frame, point)) || shownAt(element.children, point));
+}
+
+async function withPageByPoints(elements: readonly DeviceElement[], appPid: number | null, reads: PointReads, size: Points, scale: number): Promise<readonly DeviceElement[] | null> {
+  const [root, ...rest] = elements;
+  if (!root || root.role !== "application" || !root.label || !root.children.length || appPid === null) return null;
+  const middle = { x: size.width / 2, y: size.height / 2 };
+  if (shownAt(root.children, { x: middle.x * scale, y: middle.y * scale })) return null;
+  const pagePid = pidOf(await reads.at(middle).catch(() => null));
+  if (pagePid === null || pagePid === appPid) return null;
+  const points = gridPoints(size).filter((point) => !shownAt(root.children, { x: point.x * scale, y: point.y * scale }));
+  const found = (await elementsAtPoints(reads, points, size, scale)).filter((each) => each.pid === pagePid).map((each) => each.element);
+  if (!found.length) return null;
+  const scrolls = found.some((each) => each.can?.scroll);
+  const page = found.map((each) => (each.can?.scroll ? { ...each, can: { ...each.can, scroll: false } } : each));
+  const left = Math.min(...page.map((each) => each.frame.x));
+  const top = Math.min(...page.map((each) => each.frame.y));
+  const right = Math.max(...page.map((each) => each.frame.x + each.frame.width));
+  const bottom = Math.max(...page.map((each) => each.frame.y + each.frame.height));
+  const webView: DeviceElement = {
+    role: "web view",
+    identifier: null,
+    label: "",
+    value: PAGE_BY_POINTS_WORDS,
+    frame: { x: left, y: top, width: right - left, height: bottom - top },
+    enabled: true,
+    focused: false,
+    can: { tap: false, edit: false, scroll: scrolls },
+    children: page,
+  };
+  return [{ ...root, children: [webView, ...root.children] }, ...rest];
+}
+
+function gridPoints(size: Points): { readonly x: number; readonly y: number }[] {
   const points: { x: number; y: number }[] = [];
   const across = size.width / SCREEN_BY_POINTS.across;
   for (let y = SCREEN_BY_POINTS.downPoints / 2; y < size.height; y += SCREEN_BY_POINTS.downPoints) {
@@ -129,8 +201,7 @@ function gridPoints(size: { readonly width: number; readonly height: number }): 
   return points;
 }
 
-export async function screenByPoints(reads: PointReads, size: { readonly width: number; readonly height: number }, scale: number): Promise<readonly DeviceElement[]> {
-  const points = gridPoints(size);
+async function elementsAtPoints(reads: PointReads, points: readonly { readonly x: number; readonly y: number }[], size: Points, scale: number): Promise<{ readonly element: DeviceElement; readonly pid: number | null }[]> {
   const found: unknown[] = [];
   for (let start = 0; start < points.length; start += SCREEN_BY_POINTS.atOnce) {
     const batch = await Promise.all(points.slice(start, start + SCREEN_BY_POINTS.atOnce).map((point) => reads.at(point).catch(() => null)));
@@ -138,33 +209,38 @@ export async function screenByPoints(reads: PointReads, size: { readonly width: 
   }
   const screen = { width: Math.round(size.width * scale), height: Math.round(size.height * scale) };
   const seen = new Set<string>();
-  const elements: DeviceElement[] = [];
-  const owners = new Map<number, number>();
+  const elements: { element: DeviceElement; pid: number | null }[] = [];
   for (const raw of found) {
     const element = iosElementAt(raw, scale);
     if (!element || element.role === "application" || coversScreen(element, screen)) continue;
     const key = JSON.stringify([element.role, element.label, element.value, element.frame]);
     if (seen.has(key)) continue;
     seen.add(key);
-    elements.push(element);
-    const pid = (raw as { pid?: unknown }).pid;
-    if (typeof pid === "number") owners.set(pid, (owners.get(pid) ?? 0) + 1);
+    elements.push({ element, pid: pidOf(raw) });
   }
-  const named = await Promise.all([...owners].map(async ([pid, count]) => ({ name: await reads.processName(pid).catch(() => null), count })));
+  return elements.sort((a, b) => a.element.frame.y - b.element.frame.y || a.element.frame.x - b.element.frame.x);
+}
+
+export async function screenByPoints(reads: PointReads, size: Points, scale: number): Promise<readonly DeviceElement[]> {
+  const found = await elementsAtPoints(reads, gridPoints(size), size, scale);
+  const owners = new Map<number, number>();
+  for (const { pid } of found) if (pid !== null) owners.set(pid, (owners.get(pid) ?? 0) + 1);
+  const named = await Promise.all([...owners].map(async ([pid, count]) => ({ pid, name: await reads.processName(pid).catch(() => null), count })));
   const springBoardOwns = named.filter((each) => !!each.name && /SpringBoard/.test(each.name)).reduce((sum, each) => sum + each.count, 0);
-  const springBoard = elements.length > 0 && springBoardOwns * 2 >= elements.length;
-  elements.sort((a, b) => a.frame.y - b.frame.y || a.frame.x - b.frame.x);
+  const springBoard = found.length > 0 && springBoardOwns * 2 >= found.length;
+  const most = [...named].sort((a, b) => b.count - a.count)[0];
+  const label = springBoard ? "Home Screen" : most && most.count * 2 >= found.length ? ((await reads.appName(most.pid).catch(() => null)) ?? "") : "";
   return [
     {
       role: "application",
       identifier: null,
-      label: springBoard ? "Home Screen" : "",
+      label,
       value: READ_BY_POINTS_WORDS,
-      frame: { x: 0, y: 0, ...screen },
+      frame: { x: 0, y: 0, width: Math.round(size.width * scale), height: Math.round(size.height * scale) },
       enabled: true,
       focused: false,
       can: { tap: false, edit: false, scroll: false },
-      children: elements,
+      children: found.map((each) => each.element),
     },
   ];
 }

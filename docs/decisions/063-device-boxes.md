@@ -1169,10 +1169,14 @@ The agent's work on the host is commands.
   covers the element, as a title bar, the keyboard or a hidden page can.
 - **After an action** the tool waits until the screen has not changed for
   300 ms, at most 2 s, and answers with what changed, as on desktops.
-- **Web pages** in Safari show only Safari's toolbar in the tree, so the
-  agent uses screenshots there. Chrome on Android shows a page's contents
-  only some of the time, to `uiautomator dump` and the tree server alike;
-  otherwise the tree has a `web view` whose value says so.
+- **Web pages** in Safari are not in iOS's nested tree, which stops at
+  Safari's own controls, but each point of the page names its element. So
+  where the app's own elements leave the screen's middle to another
+  process, bb-box reads the page point by point and lists it in a `web
+  view` (F-20 in [063 results](063-results.md#f-20-settings-taps-the-front-app-and-web-pages)).
+  Chrome on Android shows a page's contents only some of the time, to
+  `uiautomator dump` and the tree server alike; otherwise the tree has a
+  `web view` whose value says so.
 - **Android's tree** comes from bb-box's tree server in the device, in 2 to
   4 ms a read, and from `uiautomator dump`, 1.9 s, when the server cannot
   run (units 7.2 and 7.3). Android lets one UiAutomation client in at a

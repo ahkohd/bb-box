@@ -299,7 +299,7 @@ export class DeviceServers {
     const id = options.id ?? newRequestId();
     const last = () => this.#lastState(box.id);
     if (control.action !== "install" && this.#deps.personHasControl(box.id)) return { id, ok: false, error: { code: "person-has-control", words: PERSON_HAS_CONTROL_WORDS }, state: last() };
-    const deadline = controlDeadlineMs(control) + ANSWER_MARGIN_MS;
+    const deadline = controlDeadlineMs(control, undefined, last()) + ANSWER_MARGIN_MS;
     const began = Date.now();
     const link = await this.#controlLink(box);
     if (!link) return { id, ok: false, error: { code: "not-booted", words: `Box ${box.name}'s device server is not connected.` }, state: null };

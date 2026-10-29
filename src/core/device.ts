@@ -198,6 +198,7 @@ export interface IosSettings {
   readonly textSize: Observed<IosContentSize>;
   readonly location: Override<LatLon>;
   readonly statusBar: Override<IosStatusBar>;
+  readonly changesShowAtStart?: boolean;
 }
 
 export interface AndroidSettings {
@@ -689,7 +690,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 2;
 export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
-export const DEVICE_SERVER_VERSION = 30;
+export const DEVICE_SERVER_VERSION = 31;
 export const CLIPBOARD_READ_SINCE_VERSION = 28;
 export const PASTE_REQUEST_SINCE_VERSION = 29;
 export const DEVICE_CLIPBOARD_MOST = 100_000;

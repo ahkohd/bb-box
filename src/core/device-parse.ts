@@ -310,7 +310,7 @@ function battery(value: unknown, path: string): Battery {
 const appearance = (value: unknown, path: string) => oneOf(value, path, ["light", "dark"]);
 
 function iosSettings(value: unknown, path: string): IosSettings {
-  const read = fields(value, path, ["appearance", "textSize", "location", "statusBar"]);
+  const read = fields(value, path, ["appearance", "textSize", "location", "statusBar", "changesShowAtStart"]);
   const statusBar = (bar: unknown, at: string): IosStatusBar => {
     const parts = fields(bar, at, ["clean", "battery"]);
     return { clean: bool(parts.clean, `${at}.clean`), battery: parts.battery === null ? null : battery(parts.battery, `${at}.battery`) };
@@ -320,6 +320,7 @@ function iosSettings(value: unknown, path: string): IosSettings {
     textSize: observed(read.textSize, `${path}.textSize`, (size, at) => oneOf(size, at, IOS_CONTENT_SIZES)),
     location: override(read.location, `${path}.location`, latLon),
     statusBar: override(read.statusBar, `${path}.statusBar`, statusBar),
+    ...(read.changesShowAtStart === undefined ? {} : { changesShowAtStart: bool(read.changesShowAtStart, `${path}.changesShowAtStart`) }),
   };
 }
 

@@ -455,7 +455,7 @@ export class SelkiesSession implements Kept {
   }
 
   sendDeviceControl(control: DeviceControl): Promise<DeviceAnswer> {
-    return this.#askDevice({ type: "control", control }, controlDeadlineMs(control), (why) => personLostWords(control.action, why));
+    return this.#askDevice({ type: "control", control }, controlDeadlineMs(control, undefined, this.#device?.state ?? null), (why) => personLostWords(control.action, why));
   }
 
   openDeviceUrl(url: string): Promise<DeviceAnswer> {

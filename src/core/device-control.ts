@@ -1,4 +1,4 @@
-import { EMULATOR_OWN_LOCATION, SLOW_NETWORK, batteryWords, deviceStateWords, locationWords } from "./device-settings.ts";
+import { EMULATOR_OWN_LOCATION, SLOW_NETWORK, batteryWords, deviceStateWords, locationWords, rebootsToShow } from "./device-settings.ts";
 import {
   ANDROID_FONT_SCALES,
   DEVICE_ACTIONS,
@@ -283,6 +283,13 @@ export function afterWords(control: DeviceControl, platform: DeviceModel["platfo
   return "";
 }
 
+export const SHOWN_AT_START_WORDS =
+  "The device rebooted to show it: on a shared box, iOS shows a change to a system setting only at the device's start, as the box's macOS user is not the one iOS expects. Apps that were open are closed. A dedicated box shows such a change at once";
+
+function shownAtStartWords(control: DeviceControl, state: DeviceState): string {
+  return rebootsToShow(control, state) ? ` ${SHOWN_AT_START_WORDS}.` : "";
+}
+
 export function answerText(control: DeviceControl, model: DeviceModel, answer: Extract<DeviceAnswer, { readonly ok: true }>): string {
-  return `${doneWords(control, model.name, model.platform)} in ${(answer.ms / 1000).toFixed(1)} s.${afterWords(control, model.platform)} Now: ${deviceStateWords(answer.state)}.`;
+  return `${doneWords(control, model.name, model.platform)} in ${(answer.ms / 1000).toFixed(1)} s.${afterWords(control, model.platform)}${shownAtStartWords(control, answer.state)} Now: ${deviceStateWords(answer.state)}.`;
 }

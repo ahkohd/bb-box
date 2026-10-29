@@ -8,7 +8,8 @@ import { PERSON_HAS_CONTROL_WORDS, type DeviceAgentRequest, type DeviceAnswer, t
 import { rgbaPng } from "../src/core/png.ts";
 import { instrumentationWords } from "../src/device/android-tree-source.ts";
 import { GrpcError } from "../src/device/grpc.ts";
-import { READ_BY_POINTS_WORDS, iosTree, readIosTree, roleWords, type TreeReads } from "../src/device/ios-tree.ts";
+import { PAGE_BY_POINTS_WORDS, READ_BY_POINTS_WORDS, STARTING_WORDS, iosElementAt, iosTree, readIosTree, roleWords, type TreeReads } from "../src/device/ios-tree.ts";
+import { SETTING_SHOWN_AT_START_WORDS } from "../src/core/device-computer.ts";
 
 const SCALE = 3;
 const SCREEN = { width: 1206, height: 2622 };
@@ -34,6 +35,7 @@ class FakeDevice {
   onInput: (input: DeviceInput) => void = () => undefined;
   took = false;
   platform: "ios" | "android" = "ios";
+  changesShowAtStart = false;
 
   constructor(tree: readonly DeviceElement[]) {
     this.tree = tree;
@@ -67,7 +69,7 @@ class FakeDevice {
       model: "iPhone 18 Pro",
       power: { is: "booted", awake: true },
       geometry: { generation: this.generation, physical: "upright", content: "upright", video: SCREEN },
-      settings: { appearance: { known: false, why: "test" }, textSize: { known: false, why: "test" }, location: { set: null, at: null }, statusBar: { set: null, at: null } },
+      settings: { appearance: { known: false, why: "test" }, textSize: { known: false, why: "test" }, location: { set: null, at: null }, statusBar: { set: null, at: null }, ...(this.changesShowAtStart ? { changesShowAtStart: true } : {}) },
       at: 0,
     };
   }
@@ -170,6 +172,7 @@ describe("iOS's accessibility tree, read from idb (063, 7.1)", () => {
       },
       at: async (point) => raw.find(({ frame }) => point.x >= frame.x && point.y >= frame.y && point.x < frame.x + frame.width && point.y < frame.y + frame.height) ?? { role: "AXApplication", AXLabel: " ", frame: { x: 0, y: 0, width: 402, height: 874 }, pid: 78378 },
       processName: async () => "/Library/Developer/CoreSimulator/Volumes/iOS_24A434/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard",
+      appName: async () => null,
     };
     const read = await readIosTree(reads, { width: 402, height: 874 }, SCALE);
     assert.equal(read.byPoints, true);
@@ -186,6 +189,129 @@ describe("iOS's accessibility tree, read from idb (063, 7.1)", () => {
     assert.match((await computer.observe(BOX, { window: 1 })).text, /- \[e\d+\] application "Home Screen" = "read point by point, as iOS named no app in front"/);
     await assert.rejects(readIosTree({ ...reads, tree: async () => { throw new GrpcError(14, "connection refused"); } }, { width: 402, height: 874 }, SCALE), /connection refused/);
     assert.equal((await readIosTree({ ...reads, tree: async () => fixture("settings") }, { width: 402, height: 874 }, SCALE)).byPoints, false);
+  });
+
+  test("names the app in front from its process when iOS gives it no name, and says one with no elements yet is still starting, as Safari is for 8.5 s after a cold start (F-20)", async () => {
+    const SAFARI_PID = 52745;
+    const app = (children: unknown[]) => [{ role: "AXApplication", AXLabel: "", pid: SAFARI_PID, frame: { x: 0, y: 0, width: 402, height: 874 }, children }];
+    const asked: number[] = [];
+    const reads = (raw: unknown): TreeReads => ({
+      tree: async () => raw,
+      at: async () => null,
+      processName: async () => null,
+      appName: async (pid) => {
+        asked.push(pid);
+        return pid === SAFARI_PID ? "Safari" : null;
+      },
+    });
+    const starting = await readIosTree(reads(app([])), { width: 402, height: 874 }, SCALE);
+    assert.equal(starting.elements[0]!.label, "Safari");
+    assert.equal(starting.elements[0]!.value, STARTING_WORDS);
+    assert.deepEqual(asked, [SAFARI_PID]);
+    const device = new FakeDevice(starting.elements);
+    const computer = new DeviceComputer(device.deps());
+    assert.match((await computer.windows(BOX)).text, /Safari \(still starting\) in front/);
+    const shown = await readIosTree(reads(app([{ role: "AXButton", AXLabel: "Tabs", frame: { x: 320, y: 792, width: 48, height: 48 } }])), { width: 402, height: 874 }, SCALE);
+    assert.equal(shown.elements[0]!.label, "Safari");
+    assert.equal(shown.elements[0]!.value, null);
+    device.tree = shown.elements;
+    assert.match((await new DeviceComputer(device.deps()).windows(BOX)).text, /Safari in front/);
+    const named = await readIosTree(reads(fixture("settings")), { width: 402, height: 874 }, SCALE);
+    assert.equal(named.elements[0]!.label, "Settings");
+    assert.deepEqual(asked, [SAFARI_PID, SAFARI_PID], "an app iOS names is not looked up");
+  });
+
+  test("lists a web page's elements, read point by point, in a web view, where the app's own elements leave the screen's middle to another process's page (F-20)", async () => {
+    const SAFARI_PID = 100;
+    const PAGE_PID = 200;
+    const toolbar = [
+      { role: "AXButton", AXLabel: "Back", frame: { x: 34, y: 792, width: 48, height: 48 } },
+      { role: "AXButton", AXLabel: "Tabs", frame: { x: 320, y: 792, width: 48, height: 48 } },
+    ];
+    const page = [
+      { role: "AXHeading", AXLabel: "Example Domain", frame: { x: 20, y: 120, width: 360, height: 40 }, pid: PAGE_PID },
+      { role: "AXStaticText", AXLabel: "This domain is for use in documentation examples.", frame: { x: 20, y: 200, width: 360, height: 300 }, traits: ["Scrollable"], pid: PAGE_PID },
+      { role: "AXLink", AXLabel: "Learn more", frame: { x: 20, y: 520, width: 360, height: 60 }, traits: ["Link"], pid: PAGE_PID },
+    ];
+    const within = (frame: { x: number; y: number; width: number; height: number }, point: { x: number; y: number }) => point.x >= frame.x && point.y >= frame.y && point.x < frame.x + frame.width && point.y < frame.y + frame.height;
+    let atCalls = 0;
+    const reads = (appPid: number, pagePid: number): TreeReads => ({
+      tree: async () => [{ role: "AXApplication", AXLabel: "Safari", pid: appPid, frame: { x: 0, y: 0, width: 402, height: 874 }, children: toolbar }],
+      at: async (point) => {
+        atCalls++;
+        return [...toolbar.map((each) => ({ ...each, pid: appPid })), ...page.map((each) => ({ ...each, pid: pagePid }))].find((each) => within(each.frame, point)) ?? { role: "AXGroup", AXLabel: "", frame: { x: 0, y: 0, width: 402, height: 874 }, pid: pagePid };
+      },
+      processName: async () => null,
+      appName: async () => null,
+    });
+    const read = await readIosTree(reads(SAFARI_PID, PAGE_PID), { width: 402, height: 874 }, SCALE);
+    assert.equal(read.pageByPoints, true);
+    const root = read.elements[0]!;
+    const web = root.children[0]!;
+    assert.equal(web.role, "web view");
+    assert.equal(web.value, PAGE_BY_POINTS_WORDS);
+    assert.deepEqual(web.children.map((each) => each.label), ["Example Domain", "This domain is for use in documentation examples.", "Learn more"]);
+    assert.equal(web.children[2]!.can?.tap, true, "a link is tappable");
+    assert.equal(web.can?.scroll, true, "the page scrolls");
+    assert.ok(web.children.every((each) => !each.can?.scroll), "its elements, inside it, are not scrollers of their own");
+    assert.deepEqual(root.children.slice(1).map((each) => each.label), ["Back", "Tabs"], "Safari's own controls follow");
+    assert.ok(atCalls < 200, `one point read a grid point, at most: ${atCalls}`);
+
+    const device = new FakeDevice(read.elements);
+    const computer = new DeviceComputer(device.deps());
+    const text = (await computer.observe(BOX, { window: 1 })).text;
+    assert.match(text, /- \[e\d+\] web view = "its page, read point by point/);
+    const tapped = await computer.act(BOX, { action: "click", ref: refOf(text, /link "Learn more"/) });
+    assert.match(tapped.text, /^Tapped e\d+, link "Learn more"/);
+
+    atCalls = 0;
+    const own = await readIosTree(reads(SAFARI_PID, SAFARI_PID), { width: 402, height: 874 }, SCALE);
+    assert.equal(own.pageByPoints, false, "what the app draws itself is in its tree already");
+    assert.equal(atCalls, 1, "one point read to tell");
+    atCalls = 0;
+    const settings = await readIosTree({ ...reads(SAFARI_PID, PAGE_PID), tree: async () => fixture("settings") }, { width: 402, height: 874 }, SCALE);
+    assert.equal(settings.pageByPoints, false);
+    assert.equal(atCalls, 0, "an app whose elements cover the middle costs no point read");
+    const home = await readIosTree({ ...reads(SAFARI_PID, PAGE_PID), tree: async () => [{ role: "AXApplication", AXLabel: " ", pid: SAFARI_PID, frame: { x: 0, y: 0, width: 402, height: 874 }, children: toolbar }] }, { width: 402, height: 874 }, SCALE);
+    assert.equal(home.pageByPoints, false, "the Home Screen, which iOS names no app, is not read as a page, though its widgets are other processes'");
+    assert.equal(atCalls, 0);
+  });
+
+  test("puts a row switch's frame on its knob, so a tap by reference toggles it rather than landing on the row's label (F-20)", () => {
+    const boldText = { role: "AXCheckBox", subrole: "AXSwitch", AXLabel: "Bold Text", AXValue: "0", traits: ["Button", "Scrollable", "Toggle"], frame: { x: 16, y: 706.6666666666666, width: 370, height: 52 }, pid: 5672 };
+    const knob = { x: Math.round((386 - 14 - 63) * SCALE), y: Math.round(706.6666666666666 * SCALE), width: 63 * SCALE, height: Math.round(758.6666666666666 * SCALE) - Math.round(706.6666666666666 * SCALE) };
+    const [settings] = iosTree([{ role: "AXApplication", AXLabel: "Settings", frame: { x: 0, y: 0, width: 402, height: 874 }, children: [boldText] }], SCALE);
+    const row = settings!.children[0]!;
+    assert.equal(row.role, "switch");
+    assert.deepEqual(row.frame, knob);
+    assert.equal(Math.round((row.frame.x + row.frame.width / 2) / SCALE), 341, "the knob's middle, 45 points in from the row's right");
+    assert.deepEqual(iosElementAt(boldText, SCALE)!.frame, knob, "a point read gives the same frame, so the tap's check matches it");
+    const bare = iosElementAt({ ...boldText, frame: { x: 300, y: 700, width: 51, height: 31 } }, SCALE)!;
+    assert.deepEqual(bare.frame, { x: 900, y: 2100, width: 153, height: 93 }, "a switch of its own keeps its frame");
+  });
+
+  test("says after a tap in Settings that changes a switch or nothing, on a device that shows a system setting's change only at its start, to reboot it to see it (F-20)", async () => {
+    const boldText = element("switch", "Bold Text", { x: 927, y: 2120, width: 189, height: 156 }, { value: "0" });
+    const appearance = element("button", "Text Size", { x: 48, y: 1900, width: 1110, height: 150 });
+    const settings = () => [element("application", "Settings", { x: 0, y: 0, ...SCREEN }, { can: { tap: false, edit: false, scroll: false }, children: [appearance, boldText] })];
+    const device = new FakeDevice(settings());
+    device.changesShowAtStart = true;
+    device.onInput = () => {
+      device.tree = [element("application", "Settings", { x: 0, y: 0, ...SCREEN }, { can: { tap: false, edit: false, scroll: false }, children: [appearance, { ...boldText, value: "1" }] })];
+    };
+    const computer = new DeviceComputer(device.deps());
+    const text = (await computer.observe(BOX, { window: 1 })).text;
+    const toggled = await computer.act(BOX, { action: "click", ref: refOf(text, /switch "Bold Text"/) });
+    assert.ok(toggled.text.includes(SETTING_SHOWN_AT_START_WORDS), toggled.text);
+    device.onInput = () => undefined;
+    const still = await computer.act(BOX, { action: "click", ref: refOf(text, /button "Text Size"/) });
+    assert.ok(still.text.includes(SETTING_SHOWN_AT_START_WORDS), "nothing changed, as a tap on Dark there shows nothing");
+    device.changesShowAtStart = false;
+    device.onInput = () => {
+      device.tree = settings();
+    };
+    const dedicated = await computer.act(BOX, { action: "click", ref: refOf(text, /switch "Bold Text"/) });
+    assert.ok(!dedicated.text.includes(SETTING_SHOWN_AT_START_WORDS), "a device that shows it at once says nothing of it");
   });
 
   test("names roles in words", () => {
