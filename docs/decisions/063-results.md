@@ -3425,3 +3425,37 @@ the Boxes page searched to this thread's boxes, at 1,440 and 360 px wide:
 | Tabs at 1,440 px | Simulator, Emulator, Desktop and 'Terminal: ' and the box's name, each with its icon. With a Linux desktop and a dedicated ios box, 'Desktop · ' and each box's name |
 | Tabs at 360 px | a terminal's tab was the box's name alone, with the terminal icon. The two clashing Desktop tabs were each box's name alone, with the monitor icon, and Simulator and Emulator kept their names, with the phone |
 | Rows at 360 px | the name, system and model, and no badges, as a desktop's row had before. A dedicated ios row, with four buttons, showed none of its name: the system and model do not give way |
+
+## F-22b: a row keeps its name and its key badges
+
+Built on 29 October 2026, from F-22's live check. In the thread pane's
+506 px, badges that did not fit wrapped out of sight from the end, so a
+shared ios row lost Shared. At 360 px, a dedicated ios row lost all of its
+name.
+
+What changed:
+
+- **A row's first line places its parts in order.** It measures them and
+  keeps the name whole, then the system, then badges by rank: Simulator,
+  Emulator, Shared, the box's form and BB machine first, Desktop next,
+  then the rest. The device's model takes what is left, cut, and is
+  dropped under 32 px. The name is cut only when it alone does not fit.
+- **One quick action on a narrow screen.** Under 768 px, a row has its
+  first quick action beside its menu, which has the rest.
+
+### F-22b in the panel
+
+On 29 October 2026, after the deploy (main 52b4def), through the
+production panel in the owner's browser (Helium), in a tab of its own,
+the Boxes page searched to this thread's boxes. "Room" is the first
+line's width, as the browser measured it:
+
+| Row | Thread pane, 506 px of a 1,440 px window | 360 px |
+| --- | --- | --- |
+| Shared ios | room 302: name, iOS, 'iPhone 18 Pro' cut to 64 px, Simulator, Shared; 2 quick actions | room 188: name, iOS, Simulator; Open simulator and the menu |
+| Dedicated ios, a Tart VM | room 242: name, iOS, 'iPhone 17' cut to 46 px, Simulator, VM; Desktop gave way first | room 188: name, iOS, Simulator, VM; Open simulator and the menu |
+| Android | room 272: name, Android, Emulator, VM; the model dropped | room 188: name, Android, VM. Emulator, of the same rank, did not fit, and VM, shorter, did |
+| Linux desktop | room 272: name, Linux, Desktop, LXC | room 188: name, Linux, LXC |
+
+On the Boxes page at 1,440 px every row showed its model and all its
+badges, room 754 to 784. At 360 px it showed the same as the panel.

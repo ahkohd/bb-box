@@ -513,20 +513,20 @@ export function KindBadges({
   );
 }
 
-const BADGE_RANKS = { what: 0, desktop: 1, more: 2 } as const;
+export const BADGE_RANKS = { device: 0, shared: 1, form: 2, desktop: 3, more: 4 } as const;
 
 export function boxTitleBadges(box: BoxView, machine = false): readonly TitleBadge[] {
   const badge = (label: string | false | null, rank: number) => (label ? [{ label, rank }] : []);
   return [
-    ...badge(box.device ? screenWord(box, "device") : null, BADGE_RANKS.what),
+    ...badge(box.device ? screenWord(box, "device") : null, BADGE_RANKS.device),
     ...badge(box.desktop && "Desktop", BADGE_RANKS.desktop),
     ...badge(runsWayland(box) && "Wayland", BADGE_RANKS.more),
     ...badge(box.gpu && "GPU", BADGE_RANKS.more),
     ...badge(lacksDocker(box) && "No Docker", BADGE_RANKS.more),
     ...badge(isArm64Badge(box.os, box.arch) && "arm64", BADGE_RANKS.more),
-    ...hostFormBadges(box).map((form) => ({ label: formBadge(form), rank: BADGE_RANKS.what })),
-    ...badge(box.shared && "Shared", BADGE_RANKS.what),
-    ...badge(machine && "BB machine", BADGE_RANKS.what),
+    ...hostFormBadges(box).map((form) => ({ label: formBadge(form), rank: BADGE_RANKS.form })),
+    ...badge(box.shared && "Shared", BADGE_RANKS.shared),
+    ...badge(machine && "BB machine", BADGE_RANKS.form),
   ];
 }
 
