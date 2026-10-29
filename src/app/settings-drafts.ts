@@ -3,6 +3,7 @@ import { receiptMayBeGone } from "../core/receipt-window.ts";
 import type { ApplyResult, ConfigState } from "../plugin/configuration.ts";
 import {
   backendAt,
+  backendPath,
   candidateOf,
   conflictOf,
   documentValue,
@@ -11,6 +12,7 @@ import {
   fileIsStored,
   fileOfPath,
   filePath,
+  freeBackendId,
   holdsSecret,
   hostPath,
   isChange,
@@ -36,6 +38,14 @@ export const BOXES_PART = "option/boxes";
 export const MONITOR_PART = "option/monitor";
 export const NETWORK_PART = "option/network";
 export const FILES_PART = "files";
+
+export function backendPart(id: string): string {
+  return `backend/${id}`;
+}
+
+export function setupPart(type: string): string {
+  return `setup/${type}`;
+}
 
 export interface Submission {
   readonly part: string;
@@ -197,22 +207,29 @@ function savedBase(latest: ConfigState, savedPath: Path, edit: PathEdit, revisio
   return { kind: "version", version: revision };
 }
 
+function createdBackend(submission: Submission): { readonly path: Path; readonly id: string } | null {
+  const sent = submission.edits.find((edit) => edit.value.kind === "new-backend");
+  return sent?.value.kind === "new-backend" ? { path: sent.path, id: sent.value.id } : null;
+}
+
 function identitiesOf(submission: Submission): Map<Path, Path> {
   const identities = new Map<Path, Path>();
+  const created = createdBackend(submission);
+  if (created) identities.set(created.path, backendPath(created.id));
   for (const sent of submission.edits) {
     if (sent.value.kind === "new-file") identities.set(sent.path, filePath(sent.value.path.trim()));
     const at = backendAt(sent.path);
-    if (sent.value.kind === "new-host" && at) identities.set(sent.path, hostPath(at.id, sent.value.name.trim()));
+    if (sent.value.kind === "new-host" && at) identities.set(sent.path, hostPath(created && backendPath(at.id) === created.path ? created.id : at.id, sent.value.name.trim()));
   }
   return identities;
 }
 
 function savedPathOf(identities: ReadonlyMap<Path, Path>, path: Path): Path {
+  let best: { readonly from: Path; readonly to: Path } | null = null;
   for (const [from, to] of identities) {
-    if (path === from) return to;
-    if (path.startsWith(`${from}/`)) return `${to}${path.slice(from.length)}`;
+    if ((path === from || path.startsWith(`${from}/`)) && (!best || from.length > best.from.length)) best = { from, to };
   }
-  return path;
+  return best ? `${best.to}${path.slice(best.from.length)}` : path;
 }
 
 export function completeSave(edits: ReadonlyMap<Path, Edit>, submission: Submission, revision: number, latest: ConfigState, restoredLost: ReadonlySet<Path> = new Set()): Completion {
@@ -224,7 +241,7 @@ export function completeSave(edits: ReadonlyMap<Path, Edit>, submission: Submiss
     if (!current) continue;
     next.delete(sent.path);
     const stillLostSinceReload = restoredLost.has(sent.path) && holdsSecret(current.value) && secretTextOf(current.value) === null && sameValue(withoutSecretText(current.value), withoutSecretText(sent.value));
-    if (sameValue(current.value, sent.value) || stillLostSinceReload || sent.value.kind === "new-host") continue;
+    if (sameValue(current.value, sent.value) || stillLostSinceReload || sent.value.kind === "new-host" || sent.value.kind === "new-backend") continue;
     if (sent.value.kind === "new-file" && current.value.kind === "new-file") {
       next.set(savedPath, { value: { kind: "secret", text: current.value.text }, base: { kind: "version", version: revision } });
       continue;
@@ -239,7 +256,7 @@ export function completeSave(edits: ReadonlyMap<Path, Edit>, submission: Submiss
   }
   const changedElsewhere: string[] = [];
   for (const sent of submission.edits) {
-    if (sent.value.kind === "removed" || sent.value.kind === "new-host") continue;
+    if (sent.value.kind === "removed" || sent.value.kind === "new-host" || sent.value.kind === "new-backend") continue;
     const savedPath = savedPathOf(identities, sent.path);
     const stored = storedAt(latest, savedPath);
     const label = labelOf(savedPath, undefined, latest);
@@ -390,6 +407,7 @@ export class DraftRegistry {
   readonly #instants = new Map<string, InstantEntry>();
   readonly #listeners = new Set<() => void>();
   readonly #identities = new Map<Path, Path>();
+  readonly #landings = new Map<string, string>();
   #latest: ConfigState | null = null;
   #transport: SaveTransport | null = null;
   #serial = 0;
@@ -430,6 +448,14 @@ export class DraftRegistry {
 
   savedIdentity(path: Path): Path {
     return this.#identities.get(path) ?? path;
+  }
+
+  landing(part: string): string | null {
+    return this.#landings.get(part) ?? null;
+  }
+
+  forgetLanding(part: string): void {
+    if (this.#landings.delete(part)) this.#notify();
   }
 
   partsWithDrafts(): string[] {
@@ -563,6 +589,8 @@ export class DraftRegistry {
         const file = fileOfPath(path) ?? "";
         edits.delete(path);
         edits.set(newFilePath(this.#deps.newId().slice(-8)), { value: { kind: "new-file", path: file, text: edit.value.kind === "secret" ? edit.value.text : null }, base: { kind: "version", version: null } });
+      } else if (edit.value.kind === "new-backend") {
+        edits.set(path, { value: { ...edit.value, id: freeBackendId(latest.document, edit.value.type, true) }, base: edit.base });
       } else edits.set(path, { value: edit.value, base: storedAt(latest, path, edit.value) });
       return { ...entry, edits, outcome: entry.outcome?.kind === "conflicts" ? null : entry.outcome };
     });
@@ -657,6 +685,15 @@ export class DraftRegistry {
           finish.kind === "applied"
             ? { kind: "saved", revision, lostReply: finish.lostReply, rebased: finish.rebased, changedElsewhere: done.changedElsewhere, newer: done.newer }
             : { kind: "already", revision, newer: done.newer };
+        const created = createdBackend(operation.submission);
+        const landed = created && part !== backendPart(created.id) ? backendPart(created.id) : null;
+        if (landed && created) {
+          const there = this.part(landed);
+          this.#landings.set(part, created.id);
+          this.#put(part, EMPTY_PART);
+          this.#put(landed, { ...there, edits: new Map([...there.edits, ...done.edits]), outcome, outcomeShownAt: null, problems: [], restored: null });
+          return;
+        }
         this.#put(part, { ...ended, edits: done.edits, outcome, problems: [], restored: done.edits.size ? entry.restored : null });
         return;
       }

@@ -15,6 +15,7 @@ export type EditValue =
   | { readonly kind: "secret"; readonly text: string | null }
   | { readonly kind: "new-file"; readonly path: string; readonly text: string | null }
   | { readonly kind: "new-host"; readonly name: string; readonly enabled: boolean }
+  | { readonly kind: "new-backend"; readonly type: string; readonly id: string; readonly enabled: boolean }
   | { readonly kind: "removed" };
 
 export type Stored = { readonly kind: "value"; readonly value: PlainValue } | { readonly kind: "version"; readonly version: number | null } | { readonly kind: "gone" };
@@ -32,7 +33,8 @@ export type Conflict =
   | { readonly kind: "changed"; readonly stored: PlainValue }
   | { readonly kind: "replaced"; readonly version: number }
   | { readonly kind: "added"; readonly version: number }
-  | { readonly kind: "removed" };
+  | { readonly kind: "removed" }
+  | { readonly kind: "taken"; readonly id: string };
 
 export interface DraftProblem {
   readonly path: Path;
@@ -64,6 +66,26 @@ export function newFilePath(id: string): Path {
 
 export function backendPath(id: string): Path {
   return `backends/${id}`;
+}
+
+export function newBackendPath(type: string, mark: string): Path {
+  return backendPath(`${type}${NEW_MARK}${mark}`);
+}
+
+export function isNewBackendId(id: string): boolean {
+  return id.includes(NEW_MARK);
+}
+
+export function typeOfBackendId(id: string): string {
+  return id.split(/[:@]/)[0]!;
+}
+
+export function freeBackendId(document: ConfigDocument, type: string, several: boolean): string {
+  const taken = (id: string) => document.backends.some((backend) => backend.id === id);
+  if (!several || !taken(type)) return type;
+  let number = 2;
+  while (taken(`${type}:${number}`)) number += 1;
+  return `${type}:${number}`;
 }
 
 export function backendFieldPath(id: string, key: string): Path {
@@ -106,7 +128,7 @@ export function tagsFromText(text: string): string[] {
 }
 
 export function isProvisional(path: Path): boolean {
-  return path.includes(`/${NEW_MARK}`);
+  return path.includes(NEW_MARK);
 }
 
 export function isFilePath(path: Path): boolean {
@@ -401,7 +423,7 @@ function hostIn(backend: BackendConfig | undefined, name: string): HostConfig | 
 export function fieldAt(state: ConfigState, path: Path): FieldView | null {
   const at = backendAt(path);
   if (!at || (at.at !== "field" && at.at !== "host-field")) return null;
-  const type = backendIn(state.document, at.id)?.type ?? at.id.split(":")[0];
+  const type = backendIn(state.document, at.id)?.type ?? typeOfBackendId(at.id);
   const driver = state.drivers.find((candidate) => candidate.type === type);
   const fields = at.at === "field" ? driver?.fields : driver?.hostFields;
   return fields?.find((field) => field.key === at.key) ?? null;
@@ -517,6 +539,7 @@ export function storedAt(state: ConfigState, path: Path, value?: EditValue): Sto
 }
 
 export function conflictOf(state: ConfigState, edit: PathEdit): Conflict | null {
+  if (edit.value.kind === "new-backend") return backendIn(state.document, edit.value.id) ? { kind: "taken", id: edit.value.id } : null;
   const stored = storedAt(state, edit.path, edit.value);
   if (sameStored(stored, edit.base)) return null;
   if (stored.kind === "gone") return edit.value.kind === "removed" ? null : { kind: "removed" };
@@ -618,8 +641,13 @@ function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: read
   let needed = false;
   const sentAs: Record<string, Path> = {};
   for (const [id, list] of byBackend) {
-    const backend = backendIn(document, id);
+    const created = list.find((edit) => backendAt(edit.path)?.at === "backend" && edit.value.kind === "new-backend")?.value;
+    const backend = backendIn(document, id) ?? (created?.kind === "new-backend" && !backendIn(document, created.id) ? { id: created.id, type: created.type, enabled: created.enabled, fields: {} } : undefined);
     if (!backend) continue;
+    if (backend.id !== id) {
+      sentAs[`backends.${backend.id}`] = backendPath(id);
+      needed = true;
+    }
     if (list.some((edit) => backendAt(edit.path)?.at === "backend" && edit.value.kind === "removed")) {
       document = withoutBackend(document, id);
       needed = true;
@@ -679,7 +707,7 @@ function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: read
       needed = true;
     }
     hosts.forEach((each, index) => {
-      sentAs[`backends.${id}.hosts.${index}`] = each.from;
+      sentAs[`backends.${backend.id}.hosts.${index}`] = each.from;
     });
     const { label: _label, hosts: _hosts, warm: _warm, ...rest } = backend;
     document = withBackend(document, {
@@ -789,8 +817,18 @@ export function problemPath(serverPath: string, sentAs: Readonly<Record<string, 
   return serverPath;
 }
 
+function provisionalBackendPath(path: Path, sentAs: Readonly<Record<string, Path>>): Path {
+  for (const [sent, provisional] of Object.entries(sentAs)) {
+    const id = /^backends\.([^.]+)$/.exec(sent)?.[1];
+    if (!id) continue;
+    const saved = backendPath(id);
+    if (path === saved || path.startsWith(`${saved}/`)) return `${provisional}${path.slice(saved.length)}`;
+  }
+  return path;
+}
+
 export function draftProblems(problems: readonly Problem[], sentAs: Readonly<Record<string, Path>>): DraftProblem[] {
-  return problems.map((problem) => ({ path: problemPath(problem.path, sentAs), message: problem.message }));
+  return problems.map((problem) => ({ path: provisionalBackendPath(problemPath(problem.path, sentAs), sentAs), message: problem.message }));
 }
 
 export function storedProblemPath(state: ConfigState, serverPath: string): Path {
@@ -804,7 +842,7 @@ export function hostNoun(type: string): string {
 }
 
 function driverLabelOf(state: ConfigState, id: string): string {
-  const type = backendIn(state.document, id)?.type ?? id.split(":")[0]!;
+  const type = backendIn(state.document, id)?.type ?? typeOfBackendId(id);
   return state.drivers.find((driver) => driver.type === type)?.label ?? type;
 }
 
@@ -814,7 +852,7 @@ function hostEditProblems(state: ConfigState, edits: readonly PathEdit[]): Draft
   const timesNamed = (id: string, name: string) => added.filter((each) => each.id === id && each.name === name).length;
   for (const { path, id, name } of added) {
     const backend = backendIn(state.document, id);
-    const noun = hostNoun(backend?.type ?? id);
+    const noun = hostNoun(backend?.type ?? typeOfBackendId(id));
     const at = `${path}/name`;
     const example = noun === "Mac" ? "mac-2" : "host-2";
     if (!name) problems.push({ path: at, message: `Name the new ${noun}, such as ${example}.` });

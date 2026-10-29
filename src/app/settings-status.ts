@@ -162,7 +162,11 @@ export interface StatusLine {
   readonly checkFirst: boolean;
 }
 
-export function statusLine(state: ConfigState, now: number, checking: number, machines: MachineHosts = null): StatusLine {
+function statusName(state: ConfigState, config: BackendConfig, here: string | null): string {
+  return here !== null && machineHostId(config) === here ? "Docker on this machine" : backendLabel(state, config);
+}
+
+export function statusLine(state: ConfigState, now: number, checking: number, machines: MachineHosts = null, here: string | null = null): StatusLine {
   const on = state.document.backends.filter((backend) => backend.enabled);
   const off = state.document.backends.length - on.length;
   const healths = on.map((backend) => backendHealth(state, backend, now, machines));
@@ -180,13 +184,13 @@ export function statusLine(state: ConfigState, now: number, checking: number, ma
   const words = stale ? "passed their last check" : "ready";
   const headline =
     on.length === 1 && passed === 1
-      ? `${backendLabel(state, on[0]!)} ${stale ? "passed its last check" : "is ready"}`
+      ? `${statusName(state, on[0]!, here)} ${stale ? "passed its last check" : "is ready"}`
       : on.length === 1 && never === 1
-        ? `${backendLabel(state, on[0]!)} is not checked yet`
+        ? `${statusName(state, on[0]!, here)} is not checked yet`
         : on.length === 1 && changed === 1
-          ? `${backendLabel(state, on[0]!)} is not checked since it changed`
+          ? `${statusName(state, on[0]!, here)} is not checked since it changed`
         : on.length === 1
-          ? `${backendLabel(state, on[0]!)} ${offline ? "is offline in BB" : "is not working"}`
+          ? `${statusName(state, on[0]!, here)} ${offline ? "is offline in BB" : "is not working"}`
           : passed === on.length
         ? `All ${plural(on.length, "backend")} ${words}`
         : `${passed} of ${plural(on.length, "backend")} ${words}`;

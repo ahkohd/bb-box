@@ -14,6 +14,7 @@ export const sshPoolDriver: BackendDriver<SshPoolConfig> = {
   setup: {
     guide: "setup/ssh-pool/README.md",
     scripts: ["setup/ssh-pool/setup.sh", "setup/ssh-pool/machine.sh", "setup/ssh-pool/setup-mac.sh", "setup/ssh-pool/machine-mac.sh", "setup/ssh-pool/mac-ios.sh"],
+    needs: "Linux machines or Macs that take SSH key logins, each set up once with the guide's scripts, as root.",
   },
   parse: parseSshPoolPart,
   create: (config, context) => new SshPoolBackend(config, context),

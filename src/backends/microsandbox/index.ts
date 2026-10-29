@@ -14,6 +14,7 @@ export const microsandboxDriver: BackendDriver<MsbConfig> = {
   setup: {
     guide: "setup/microsandbox/README.md",
     scripts: [],
+    needs: "A Linux host on x86_64 with KVM, or a Mac with Apple silicon, with curl and tar.",
   },
   parse: parseMsbPart,
   // One per host: a BB machine's (053), ssh://, or BB's server.

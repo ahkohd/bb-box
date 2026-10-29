@@ -16,6 +16,7 @@ export const tartDriver: BackendDriver<TartConfig> = {
   setup: {
     guide: "setup/tart/README.md",
     scripts: ["setup/tart/prepare-image.sh", "setup/tart/prepare-linux-image.sh", "setup/tart/prepare-ios-image.sh"],
+    needs: "A Mac with Apple silicon on macOS 14 or later, with Tart and an image from prepare-image.sh.",
   },
   parse: parseTartPart,
   create: (config, context) => new TartBackend(config, context),

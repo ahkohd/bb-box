@@ -14,6 +14,7 @@ export const dockerDriver: BackendDriver<DockerConfig> = {
   setup: {
     guide: "setup/docker/README.md",
     scripts: ["setup/docker/build.sh"],
+    needs: "Docker Engine on Linux, or Docker Desktop, on BB's server or a host bb-box reaches over SSH.",
   },
   parse: parseDockerPart,
   // One per Docker host: a BB machine's (042), a socket or ssh://, or the CLI's default.

@@ -83,6 +83,7 @@ export interface Draft {
   readonly changes: number;
   readonly conflicts: readonly Path[];
   readonly busy: boolean;
+  readonly enterSaves: boolean;
   edit(path: Path): EditValue | null;
   current(path: Path): PlainValue;
   text(path: Path): string;
@@ -101,7 +102,7 @@ export interface Draft {
   revealFirst(): void;
 }
 
-export function useDraft(part: string, what: string): Draft {
+export function useDraft(part: string, what: string, { enterSaves = true }: { readonly enterSaves?: boolean } = {}): Draft {
   const { state } = useSettings();
   const registry = useRegistry();
   const latest = newestState(state, registry);
@@ -119,6 +120,7 @@ export function useDraft(part: string, what: string): Draft {
     changes: registry.latest ? registry.changeCount(part) : entry.edits.size,
     conflicts,
     busy: operation !== null && operation.phase.at !== "unconfirmed",
+    enterSaves,
     edit: (path) => entry.edits.get(path)?.value ?? null,
     current: (path) => {
       const value = entry.edits.get(path)?.value;
@@ -173,7 +175,7 @@ export function useDraft(part: string, what: string): Draft {
 
 export function saveOnEnter(draft: Draft) {
   return (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (!draft.enterSaves || event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     if (event.currentTarget instanceof HTMLTextAreaElement) return;
     event.preventDefault();
     draft.save();
@@ -225,7 +227,7 @@ function conflictWords(count: number): string {
 
 type BarTone = "quiet" | "busy" | "warn" | "bad" | "done";
 
-function barOf(draft: Draft, savedShown: boolean): { readonly words: string; readonly tone: BarTone; readonly retry: boolean; readonly show: boolean } | null {
+export function barOf(draft: Draft, savedShown: boolean): { readonly words: string; readonly tone: BarTone; readonly retry: boolean; readonly show: boolean } | null {
   const { entry } = draft;
   const operation = entry.operation;
   if (operation?.phase.at === "sending") return { words: operation.phase.rebased ? "Someone saved first. Checking your changes against theirs…" : "Saving…", tone: "busy", retry: false, show: false };
@@ -347,6 +349,8 @@ function conflictText(conflict: Conflict, shown: (value: PlainValue) => string):
       return <>A file at this path was added elsewhere while you edited, at revision {conflict.version}. Saving yours replaces it.</>;
     case "removed":
       return <>Removed elsewhere while you edited.</>;
+    case "taken":
+      return <>A backend {conflict.id} was added elsewhere while you set this up.</>;
   }
 }
 

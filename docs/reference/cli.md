@@ -37,7 +37,7 @@
 | [`bb box config apply`](#bb-box-config-apply) | Save a configuration file as bb-box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or --replace, saves over what is there, as when setting bb-box up again from an export. |
 | [`bb box config migrated`](#bb-box-config-migrated) | Show the copy of BB's settings bb-box kept when it moved them into its configuration. --remove removes it. |
 | [`bb box backend list`](#bb-box-backend-list) | List the configuration's backends, in the order a new box tries them: each one's switch, state, kinds, boxes and last check. |
-| [`bb box backend types`](#bb-box-backend-types) | List the types of backend bb-box has: what each is for, the kinds it makes, and its setup guide and scripts in bb-box's repository. |
+| [`bb box backend types`](#bb-box-backend-types) | List the types of backend bb-box has: what each is for, what setting it up needs, the kinds it makes, and its setup guide and scripts in bb-box's repository. |
 | [`bb box backend fields`](#bb-box-backend-fields) | List a backend type's fields, or a backend's with their values now: each key, what it takes, whether it is a secret, and the first line of its help. Secrets show only as set or not. |
 | [`bb box backend add`](#bb-box-backend-add) | Add a backend, on unless --off, through the same checked save as the settings page, then run its checks. Secrets come only from a dotenv file or stdin. Exits 2 when it saved and its checks failed. |
 | [`bb box backend set`](#bb-box-backend-set) | Change a backend: its fields, secrets, switch, name or warm boxes, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed. |
@@ -564,7 +564,7 @@ Options:
 
 ## bb box backend types
 
-List the types of backend bb-box has: what each is for, the kinds it makes, and its setup guide and scripts in bb-box's repository.
+List the types of backend bb-box has: what each is for, what setting it up needs, the kinds it makes, and its setup guide and scripts in bb-box's repository.
 
 ```text
 Usage:

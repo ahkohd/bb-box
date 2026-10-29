@@ -13,15 +13,13 @@ import { Badge } from "./common.tsx";
 import { GROUPS, inheritSource, inheritedValues, isSecretField, isSecretState, sourceName, type FieldGroup, type FormValue } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { describedBy, SecretControl } from "./settings-draft-fields.tsx";
-import { operationId } from "./settings-drafts.ts";
+import { backendPart, operationId } from "./settings-drafts.ts";
 import { Card, FOCUS_RING, Group, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendFieldPath, hostFieldPath, hostNoun, hostPath, newHostPath, plain, storedProblemPath, type Path, type PlainValue } from "./settings-paths.ts";
 import { ChangedChip, ConflictNote, focusAfterRender, saveOnEnter, type Draft } from "./settings-saving.tsx";
 import { plural } from "./settings-status.ts";
 
-export function backendPart(id: string): string {
-  return `backend/${id}`;
-}
+export { backendPart };
 
 export const FOLDED_GROUPS: ReadonlySet<FieldGroup> = new Set(["ios-hosts", "advanced"]);
 
@@ -482,7 +480,7 @@ function HostDetails({ form, host, noun }: { form: BackendForm; host: HostRow; n
   );
 }
 
-export function HostsSection({ form, forced, onRemove }: { form: BackendForm; forced: (path: Path) => boolean; onRemove: (name: string) => void }) {
+export function HostsSection({ form, forced, onRemove, settingUp = false }: { form: BackendForm; forced: (path: Path) => boolean; onRemove: (name: string) => void; settingUp?: boolean }) {
   const { draft, config, driver } = form;
   const { state, instant, writes } = useSettings();
   const [open, setOpen] = useState<ReadonlySet<Path>>(() => new Set());
@@ -501,7 +499,7 @@ export function HostsSection({ form, forced, onRemove }: { form: BackendForm; fo
   return (
     <Group
       title={nouns}
-      description={`A new box goes to the first ${noun} in the list with room. A ${noun}'s switch acts at once; its fields wait for Save.`}
+      description={settingUp ? `A new box goes to the first ${noun} in the list with room. Each ${noun} is added with the backend when you save.` : `A new box goes to the first ${noun} in the list with room. A ${noun}'s switch acts at once; its fields wait for Save.`}
       action={
         <Button type="button" variant="outline" size="sm" className="h-7" onClick={add}>
           <Icon name="Plus" aria-hidden />

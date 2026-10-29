@@ -58,7 +58,8 @@ export interface DriverView {
   readonly fields: readonly FieldView[];
   readonly hostFields: readonly FieldView[];
   /** Paths in bb-box's repository: the guide first, then the scripts in the order it runs them. */
-  readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
+  readonly setup: { readonly guide: string; readonly scripts: readonly string[]; readonly needs?: string };
+  readonly several: boolean;
 }
 
 export interface KindInfoView {
@@ -372,6 +373,7 @@ export class Configuration {
         fields: driverFields(driver, drivers),
         hostFields: fieldViews(driver.hostFields),
         setup: driver.setup,
+        several: driver.several !== undefined,
       })),
       backends: this.#document.backends.map((backend) => {
         const status = statuses.find((candidate) => candidate.id === backend.id);

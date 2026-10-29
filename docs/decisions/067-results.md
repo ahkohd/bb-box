@@ -1932,3 +1932,233 @@ configuration uses, which stays.
   says nothing of it, as the build's state is kept in memory. The images
   are built again by `bb box docker-build`, or by turning the machine's
   Docker off and on.
+
+## Unit 7: first run, Add backend and setting up a backend
+
+Built on 29 October 2026, on units 1 to 6, 8 and 9. First run now lasts
+until a backend that is on makes a kind, and never comes back once it has.
+Setting up a new backend is a form on the draft registry, with a
+provisional identity until its first save, and saves on in one go with its
+secrets. Add backend groups every driver by where boxes run, after Docker
+on your BB machines, which stays first.
+
+### What changed
+
+- **First run** (`settings-first-run.tsx`) shows while `config.get`'s
+  `setupDone`, from unit 2's server part, is empty. "Set up BB Box", then
+  one card titled for what it offers or what stands in the way, with
+  `first-run.tsx`'s guidance word for word where it was there before:
+  - Use Docker on this machine, with the Linux image's build estimate, the
+    machine access warning, and Try again after a failed build;
+  - "bb-1 has no Docker": install Docker Engine, Docker's install line to
+    copy, and "Or use a BB machine that has Docker: pc-1 has Docker 29.8.1"
+    with Use Docker on pc-1, when there is one;
+  - "BB cannot use Docker on bb-1": the docker group line, the restart line
+    or words, and what a restart ends;
+  - "Not enough disk on bb-1", with the free disk and the fix;
+  - Check again asks that machine's Docker again (`docker.hosts` with
+    `recheck`), then reads the offer again.
+
+  Below the card, "Finish setting up Proxmox LXC on 192.0.2.10" for each
+  backend saved off and not finished, with what is missing, then Choose
+  another backend, which opens Add backend. Kinds and Options fold under
+  "Sizes and options: kinds, images, devices, network, Monitor and the
+  configuration file, for later". Status waits until setup is done.
+- **Once setup is done** the overview is the established one for good:
+  with every backend off it says "Every backend is off" and keeps Kinds
+  and Options. The build's progress shows above Status, then for an hour
+  "Docker on this machine is ready", what to do next and Add another
+  backend. Status names Docker on BB's server "Docker on this machine", as
+  in "Docker on this machine is ready".
+- **Add backend** (`settings-setup.tsx`): Docker on your BB machines first,
+  as unit 5 made it. Then the drivers in four groups, "On BB's server or a
+  machine you have", "On a Proxmox VE host", "On your Macs with Apple
+  silicon" and "In the cloud, paid by use", each saying the kinds it makes
+  and "You need: …". A type that allows one backend and has it says "Added:
+  open it"; a type that allows several, Docker and microsandbox, says "1
+  added" and Add another.
+- **Setting up a backend** has four steps: 1, Prepare: the guide, what it
+  needs, and its scripts in order, each a link; 2, Connect: connection,
+  credentials and Macs; 3, Choose what it makes: "It can make Linux and
+  Linux desktop", and the Offer boxes left unticked; 4, Check it: "Runs all
+  of Proxmox LXC's checks against this form, as it will be saved, up to 30
+  s. Nothing is saved", its result cleared by any later edit. The fields
+  are unit 3's: help one step in, effective values, explicit off, secrets
+  Set and kept in memory only. The bar offers Discard and go back, Save,
+  keep it off, and Save and turn on; Enter saves nothing. Saved on with a
+  field missing: "Not saved: it cannot be on without the 3 fields marked.
+  Fix it, or save it off to finish later.", each problem under its field,
+  and nothing stored. Saved off, it is stored, and its page says Not
+  finished.
+- **The engine**: a new backend's fields sit under a provisional identity,
+  `backends/proxmox-lxc@new-k3x9/…`, in the part `setup/<type>`. Save adds
+  an edit `new-backend` with the ID it will be saved as (its type, or
+  `docker:2` and on for a type that allows several) and whether it is on.
+  The candidate makes the backend under that ID; a backend added elsewhere
+  with that ID is a conflict, "A Proxmox LXC backend, proxmox-lxc, was
+  added elsewhere while you set this up, so this form was not saved over
+  it", with Open proxmox-lxc, and for a type
+  that allows several Add mine beside it takes the next free ID. Server
+  problems at `backends.<id>.…` resolve to the provisional fields, a new
+  Mac's included. On the receipt the registry maps the provisional
+  identity to the saved backend, moves any edits typed during the save to
+  the backend's own part, `backend/<id>`, with the saved values as their
+  base, and the setup view is replaced in history by the backend's page,
+  which shows "Saved." A second Save there updates the backend it made.
+- **Two server additions**: each driver's `setup` may say what setting it
+  up needs (`needs`), shown on Add backend, in step 1 and by `bb box
+  backend types`; and `DriverView.several` says whether a type allows
+  several backends. The CLI's refusals and words are otherwise unchanged.
+- The form from before 067 (`BackendForm`, `BackendRow` and `Report` in
+  `settings-backends.tsx`) is gone; nothing used it any more.
+
+New: `src/app/settings-setup.tsx`, `settings-first-run.tsx`, and
+`067-settings-page/unit-7/live-check.mjs`, `live-run.sh` and
+`screens-and-keys.mjs`. Changed: `settings-paths.ts`, `settings-drafts.ts`,
+`settings-saving.tsx` (`enterSaves`, the taken conflict's words),
+`settings-backend-fields.tsx`, `settings-backend-page.tsx` (exports only),
+`settings-overview.tsx`, `settings-pages.tsx`, `settings-status.ts`,
+`settings-backends.tsx`, `first-run.tsx` (exports only),
+`src/plugin/configuration.ts`, `config-cli.ts`, `src/backends/types.ts`,
+each driver's `index.ts` (`needs`), the tests, `docs/reference/cli.md`
+and `docs/design/settings.md`.
+
+### Tests
+
+`test/settings-drafts.test.ts` has three more, on the real
+`Configuration`: a new backend saved on is refused at its provisional
+field with nothing stored, then saved on with its secret in one go, typing
+during the save moves to the backend's own part, and a second Save updates
+it; saved off with a field missing it is stored off with its problem, and
+a new Mac under it becomes the saved Mac; a backend added elsewhere with
+the ID is a conflict, never saved over, and Add mine beside it takes
+`pool:2`. `test/app.test.tsx` replaces the old setup and first-run tests
+with six: first run until setup is done, its build, Kinds and Options for
+later, and an established install with every backend off; the missing,
+no access and low disk cards with Check again; Finish setting up; Add
+backend's groups, a setup in four steps with Enter saving nothing, Check
+against the form, Save and turn on with its secret and an operation ID,
+landing on the backend's page with no `@new-` or secret in session
+storage, then a refusal at its fields and Save, keep it off; Add another
+under the next free ID; and the inherited field on a setup form.
+
+On a Linux box, 8 cores, on the commit delivered:
+
+| Check | Result |
+| --- | --- |
+| `tsc` | passes |
+| Node suite | 2,835 tests: 2,547 pass, 0 fail, 288 skipped (the live suites, skipped as on main), 3 min 20 s |
+| vitest | 303 pass, in 4 files |
+| `test/docs.test.ts`, `test/site.test.ts` and `scripts/reference.ts --check` | pass; the reference changes only in `bb box backend types`'s summary |
+
+### Live check on separate BBs
+
+Fresh BBs in a Linux box with Docker 29.1.3, one for each run: `npx
+bb-app` 0.48.0 with no account, its own data folder and port, started
+through `sudo -u box env -i` with `HOME`, `PATH` and
+`BB_BOX_LIVE_CHECKS=1` only, so the daemon reads its groups afresh, and
+bb-box installed from this branch by `bb plugin install` of its path. The
+box was named bb-1. The script,
+[`live-run.sh`](067-settings-page/unit-7/live-run.sh), makes each state on
+the machine and restarts BB between them; [`live-check.mjs`](067-settings-page/unit-7/live-check.mjs)
+drives headless Chromium at 1440 by 1000 and reads `config.get` over BB's
+HTTP API. Credentials are made up. Each run starts with bb-box's images
+removed, so each builds the Linux image again, from Docker's cache: 8 to
+10 s. Every check passed 3 runs in a row, 30 of 30, on the code as
+rebased on main, and again on the commit delivered. A first series found
+one fault in the script (it looked for the build inside first run, which
+had ended, see below) and one in the series (runs 2 and 3 found the image
+built by run 1, so showed no build).
+
+| Check | What the page said, and what BB Box stored | Runs |
+| --- | --- | --- |
+| Docker missing: its daemon stopped and its CLI moved away | "bb-1 has no Docker", "bb-1, where BB runs, has no Docker. Install Docker Engine there, then check again. On Linux, Docker's install script does it:" with `curl -fsSL https://get.docker.com \| sudo sh` to copy, Check again and Choose another backend; no Kinds, Sizes and options for later. Docker put back, Check again: "Use Docker on this machine" | 3 of 3 |
+| Without access: BB's user out of the docker group | "BB cannot use Docker on bb-1", "Docker is on this machine, but BB's user, box, cannot use it. Add box to the docker group, then restart BB's daemon there.", `sudo usermod -aG docker box` to copy, "Then restart BB there, or log out and in again, or reboot. That ends the turns of threads running there.", Check again | 3 of 3 |
+| Too little disk: a file filling all but 6 GB | "Not enough disk on bb-1", "The Linux image needs about 10 GB free to build, and this machine has 6 GB. Free some, for example with docker builder prune, then check again." The file removed, Check again: "Use Docker on this machine" | 3 of 3 |
+| A backend saved off and resumed: Choose another backend, Proxmox LXC, its API URL, Enter, then Save, keep it off | Four steps; Enter stored nothing. Saved: its page, Health "Not finished · Set the Proxmox API token ID. Finish its settings, then turn it on."; stored off. Back went to Add backend, not to the form. The overview's first run: "Finish setting up Proxmox LXC on 192.0.2.10 · Saved, not finished: Set the Proxmox API token ID." | 3 of 3 |
+| Ready, and a Linux-only Docker setup: Use Docker on bb-1 | "Setting up Docker on this machine · Building the Linux image", above Status, as setup was recorded done when Docker on this machine was turned on; then "Docker on this machine is ready", "BB Box makes Linux boxes on bb-1 now…". After Check all, Status "Docker on this machine is ready · 1 off · 1 kind on offer · checked just now". No warning about desktops: the callout held only Proxmox LXC not finished, and Kinds "Linux · 1 backend" and, quietly, "11 kinds no backend you have makes" | 3 of 3 |
+| Resumed and turned on: Open in the callout, its token ID and secret, Save, then its switch | "Saved."; stored on, the secret `{ set: true, version: 4 }`; no made-up value in session or local storage | 3 of 3 |
+| A backend saved on in one go with its secret: Add backend, Hetzner Cloud, its API token, Save and turn on | Its page in place of the form, "Saved."; stored on with the token `{ set: true, version: 6 }` in the same save, one receipt more; the token in neither the page nor browser storage | 3 of 3 |
+| Every backend turned off afterwards | "Every backend is off · 3 backends off", no first run, Kinds and Options shown; the same after a reload; `setupDone` kept from revision 3 | 3 of 3 |
+
+### Keyboard only
+
+On another fresh BB, by keys alone
+([`screens-and-keys.mjs`](067-settings-page/unit-7/screens-and-keys.mjs)):
+
+- From the overview's heading Tab went: How boxes join BB, Use Docker on
+  bb-1, Choose another backend, Sizes and options… for later. Each had a
+  focus ring.
+- Enter on Choose another backend opened Add backend with focus on its
+  heading; Tab reached Proxmox LXC in 5 stops, then Enter opened its setup
+  with focus on its heading.
+- Tab went: the setup guide, each script ("setup-host.sh, script 1 of 4"),
+  then each field with its More.
+- Typing the API URL and Enter saved nothing.
+- Tab reached Save, keep it off; Enter saved it and opened the backend's
+  page with focus on its heading.
+- No animation ran (`document.getAnimations()` was empty).
+
+### Screenshots
+
+At 1440, 760 and 390 px, light and dark: first run, Add backend, setting
+up Proxmox LXC, its refusal, setting up Tart, and after setup the
+overview, a backend not finished and Add backend; and each live check's
+own, about 230 in the thread's storage. The first set found the setup
+bar's buttons running off a 390 px screen, and Tart's setup saying a Mac's
+switch acts at once where a new Mac has none; the bar's buttons now wrap
+under its words, and the Macs say each is added with the backend when you
+save.
+A selection, with the box named bb-1:
+
+[first run](067-settings-page/unit-7/first-overview-1440-light.png),
+[at 390](067-settings-page/unit-7/first-overview-390-dark.png),
+[no Docker](067-settings-page/unit-7/live-missing.png),
+[no access](067-settings-page/unit-7/live-access.png),
+[too little disk](067-settings-page/unit-7/live-disk.png),
+[Add backend](067-settings-page/unit-7/first-add-760-light.png),
+[setting up Proxmox LXC](067-settings-page/unit-7/first-setup-1440-dark.png),
+[refused, at 390](067-settings-page/unit-7/first-setup-refused-390-dark.png),
+[Tart at 760](067-settings-page/unit-7/first-setup-tart-760-light.png),
+[Finish setting up](067-settings-page/unit-7/live-resume.png),
+[Docker on this machine is ready](067-settings-page/unit-7/done-overview-760-dark.png),
+[not finished at 390](067-settings-page/unit-7/done-unfinished-390-light.png),
+[saved on in one go](067-settings-page/unit-7/live-saved-on.png),
+[every backend off](067-settings-page/unit-7/live-all-off.png).
+
+### Deviations from 067
+
+- First run ends when Docker on this machine is turned on, not when its
+  image is built: the server's `setupDone` counts a backend that is on and
+  offers a kind, and Docker offers Linux at once while its image builds.
+  The build's progress and then "Docker on this machine is ready" show
+  above Status, so the guidance is the same.
+- Step 3 says the kinds the driver can make and names the Offer boxes left
+  unticked, "Left out, as you unticked Offer: Wayland desktop image", not
+  the kinds left: drivers do not say which kinds each field turns off.
+- Two server changes 067 does not list: `setup.needs` for each driver,
+  shown on the page and by `bb box backend types`, and
+  `DriverView.several`. The groups of Add backend are a list in the page,
+  by type; a new type falls into "Others".
+- The missing-Docker card's install line is Docker's install script for
+  Linux, with sudo; on a Mac or Windows the words "Install Docker Engine
+  there" stand alone.
+- A secret on a setup form starts as Set, as on a backend's page, not as an
+  open field.
+- Every backend off is said by Status's headline alone, not as a callout
+  item: Open would lead nowhere.
+- The progress card keeps today's words, "goes on if you close this
+  panel", on the settings page too.
+
+### Open questions for the owner
+
+1. The nine "You need:" lines are new driver words, from each guide's
+   "What you need": they wait for your approval, as unit 4's did.
+2. Should "Every backend is off" also be an item in the callout, as the
+   prototype has it, with its fix "Turn on a backend below"?
+
+### Not done here
+
+- A look in production in the owner's browser, after the lead deploys.
+- A map from each Offer field to the kinds it turns off, so step 3 can say
+  "It will make Linux and Linux desktop", is a driver change for later.
