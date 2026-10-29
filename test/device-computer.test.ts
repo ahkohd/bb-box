@@ -306,6 +306,14 @@ describe("iOS's accessibility tree, read from idb (063, 7.1)", () => {
     device.onInput = () => undefined;
     const still = await computer.act(BOX, { action: "click", ref: refOf(text, /button "Text Size"/) });
     assert.ok(still.text.includes(SETTING_SHOWN_AT_START_WORDS), "nothing changed, as a tap on Dark there shows nothing");
+    const page = element("switch", "Automatic", { x: 927, y: 1200, width: 189, height: 156 }, { value: "0" });
+    device.onInput = () => {
+      device.tree = [element("application", "Settings", { x: 0, y: 0, ...SCREEN }, { can: { tap: false, edit: false, scroll: false }, children: [appearance, { ...boldText, value: "1" }, page] })];
+    };
+    const opened = await computer.act(BOX, { action: "click", ref: refOf(text, /button "Text Size"/) });
+    assert.match(opened.text, /\+ \[e\d+\] switch "Automatic"/);
+    assert.ok(!opened.text.includes(SETTING_SHOWN_AT_START_WORDS), "a tap that opens a page of switches changes no setting");
+    device.tree = settings();
     device.changesShowAtStart = false;
     device.onInput = () => {
       device.tree = settings();

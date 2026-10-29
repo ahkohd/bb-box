@@ -34,7 +34,7 @@ const TYPED_STILL_READS = 3;
 export const APP_WAIT = { everyMs: 250, mostMs: 5_000 } as const;
 const STATUS_BAR_FRACTION = 0.08;
 const SETTINGS_APP = "Settings";
-const SWITCH_LINE = /^[+-] \[e\d+\] switch /;
+const SWITCH_REF = /^[+-] \[(e\d+)\] switch /;
 export const SETTING_SHOWN_AT_START_WORDS =
   "On this shared box, iOS shows a change to a system setting, such as Dark or Bold Text, only at the device's start: call box_device with action reboot to see it, which closes open apps. A dedicated box shows such a change at once.";
 const CHANGES_MOST_LINES = 60;
@@ -538,7 +538,7 @@ export class DeviceComputer {
     const added = now.filter((line) => !was.has(line)).map((line) => `+ ${line.replace(/^- /, "")}`);
     const removed = [...was].filter((line) => !nowSet.has(line)).map((line) => `- ${line.replace(/^- /, "")}`);
     const changes = [...removed, ...added];
-    if (after.changesShowAtStart && after.app === SETTINGS_APP && (!changes.length || changes.some((line) => SWITCH_LINE.test(line)))) parts.push(SETTING_SHOWN_AT_START_WORDS);
+    if (after.changesShowAtStart && after.app === SETTINGS_APP && (!changes.length || switchToggled(removed, added))) parts.push(SETTING_SHOWN_AT_START_WORDS);
     if (!changes.length) {
       parts.push(settled.frames === framesBefore ? "Nothing on the screen changed." : "The picture changed, but no element did.");
       return { parts, after };
@@ -756,6 +756,12 @@ export class DeviceComputer {
 
 function selectAllModifier(platform: DevicePlatform): KeyModifier {
   return platform === "android" ? "control" : "meta";
+}
+
+function switchToggled(removed: readonly string[], added: readonly string[]): boolean {
+  const refs = (lines: readonly string[]) => new Set(lines.flatMap((line) => SWITCH_REF.exec(line)?.slice(1, 2) ?? []));
+  const before = refs(removed);
+  return [...refs(added)].some((ref) => before.has(ref));
 }
 
 function frontWords(snapshot: Snapshot): string {
