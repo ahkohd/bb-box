@@ -17,8 +17,9 @@ export function otherScreen(box: Showing, screen: Screen): Screen | null {
   return screensOf(box).find((each) => each !== screen) ?? null;
 }
 
-export function screenTitle(box: Pick<BoxView, "id" | "name" | "device" | "desktop">, screen: Screen, neighbours: readonly Pick<BoxView, "id" | "device" | "desktop">[]): string {
+export function screenTitle(box: Pick<BoxView, "id" | "name" | "device" | "desktop">, screen: Screen, neighbours: readonly Pick<BoxView, "id" | "device" | "desktop">[], compactViewport = false): string {
   const word = screenWord(box, screen);
   const clashes = neighbours.some((other) => other.id !== box.id && screensOf(other).some((each) => screenWord(other, each) === word));
-  return clashes ? `${word} · ${box.name}` : word;
+  if (!clashes) return word;
+  return compactViewport ? box.name : `${word} · ${box.name}`;
 }

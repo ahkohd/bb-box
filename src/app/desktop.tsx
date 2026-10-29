@@ -2059,8 +2059,9 @@ function screenNeighbours(state: PanelState | null | undefined): BoxView[] {
 export function useOpenScreen(threadId: string): (box: BoxView, screen: Screen) => void {
   const navigate = useBbNavigate();
   const rpc = useRpc<Contract>();
+  const compactViewport = useIsCompactViewport();
   return (box, screen) => {
-    const open = (neighbours: readonly BoxView[]) => void navigate.openThreadPanel({ actionId: actionOf(screen), title: screenTitle(box, screen, neighbours), params: screenParams(box, screen) });
+    const open = (neighbours: readonly BoxView[]) => void navigate.openThreadPanel({ actionId: actionOf(screen), title: screenTitle(box, screen, neighbours, compactViewport), params: screenParams(box, screen) });
     const known = rememberedLive<PanelState>(threadId);
     if (known) return open(screenNeighbours(known));
     void rpc.call("state", { threadId }).then(screenNeighbours, () => []).then(open);

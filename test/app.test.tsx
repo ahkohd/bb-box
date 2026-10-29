@@ -35,6 +35,7 @@ import { sparesWords } from "../src/app/settings-kinds.tsx";
 import { statusOf, timingWords } from "../src/app/status.ts";
 import { choices, NO_FILTERS, shown, splitGroups, stateGroup, tagCounts, tagsOf } from "../src/app/boxes-filter.ts";
 import { screensOf, screenTitle, screenWord } from "../src/app/screens.ts";
+import { terminalTitle } from "../src/app/terminal.tsx";
 import { sourceName, warmShortWords } from "../src/app/config.ts";
 import { FieldControl } from "../src/app/settings-fields.tsx";
 import type { BackendConfig } from "../src/core/document.ts";
@@ -6898,5 +6899,40 @@ test("F-22: the Boxes page's rows and the bare tabs' choosers badge a device box
     const line = render(<BoxLine box={one} />);
     expect([one.name, rowTitle(line.container as HTMLElement)]).toEqual([one.name, expected]);
     line.unmount();
+  }
+});
+
+test("F-22: where BB's viewport is compact, a tab that would name its box says the box's name alone, as its icon says what it shows; a terminal's tab too", () => {
+  expect(screenTitle(SHARED_IOS, "device", [SHARED_IOS, DEDICATED_IOS], true)).toBe("brisk-wren");
+  expect(screenTitle(DEDICATED_IOS, "desktop", [DEDICATED_IOS, LINUX_DESKTOP], true)).toBe("tall-ridge");
+  expect(screenTitle(SHARED_IOS, "device", [SHARED_IOS, ANDROID], true)).toBe("Simulator");
+  expect(screenTitle(DEDICATED_IOS, "desktop", [DEDICATED_IOS, SHARED_IOS], true)).toBe("Desktop");
+  expect(screenTitle(SHARED_IOS, "device", [SHARED_IOS, DEDICATED_IOS], false)).toBe("Simulator · brisk-wren");
+  expect(terminalTitle(box(), true)).toBe("calm-otter");
+  expect(terminalTitle(box(), false)).toBe("Terminal: calm-otter");
+});
+
+test("F-22: at 360 px the panel's rows open tabs titled by the box's name where a wide panel would say 'Simulator · ' and the name, and a terminal by its box's name", async () => {
+  const compact = (query: string) => ({ matches: query === "(max-width: 767px)", media: query, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false });
+  const wide = window.matchMedia;
+  window.matchMedia = compact as unknown as typeof window.matchMedia;
+  try {
+    const slot = panel(server([SHARED_IOS, DEDICATED_IOS, ANDROID, LINUX_DESKTOP]).handlers);
+    await slot.findByText("brisk-wren");
+    const opened = async (label: string, index = 0) => {
+      const before = slot.inspection.navigateCalls.length;
+      fireEvent.click(slot.getAllByRole("button", { name: label })[index]!);
+      await waitFor(() => expect(slot.inspection.navigateCalls.length).toBe(before + 1));
+      return (slot.inspection.navigateCalls.at(-1) as { options: { title: string } }).options.title;
+    };
+    expect(await opened("Open simulator", 0)).toBe("brisk-wren");
+    expect(await opened("Open simulator", 1)).toBe("tall-ridge");
+    expect(await opened("Open desktop", 0)).toBe("tall-ridge");
+    expect(await opened("Open emulator")).toBe("Emulator");
+    expect(await opened("Open desktop", 1)).toBe("bold-heron");
+    expect(await opened("Open terminal", 0)).toBe("brisk-wren");
+    cleanup();
+  } finally {
+    window.matchMedia = wide;
   }
 });
