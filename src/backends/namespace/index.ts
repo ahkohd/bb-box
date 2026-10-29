@@ -11,7 +11,7 @@ export const namespaceDriver: BackendDriver<NamespaceConfig> = {
   kinds: NAMESPACE_KINDS,
   sharedKinds: ["ios"],
   fields: NAMESPACE_FIELDS,
-  setup: { guide: "docs/guide/namespace.md", scripts: [] },
+  setup: { guide: "docs/guide/namespace.md", scripts: [], needs: "A Namespace workspace, a token made with its CLI, and a way for its machines to reach BB." },
   parse: parseNamespacePart,
   create: (config, context) => new NamespaceBackend(config, context),
 };

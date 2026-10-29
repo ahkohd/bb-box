@@ -8,133 +8,20 @@ import type { Contract } from "../plugin/contract.ts";
 import type { DriverView } from "../plugin/configuration.ts";
 import { message, relativeTime } from "./common.tsx";
 import { effectiveKind, inheritSource, sourceName, withBackend } from "./config.ts";
-import { BackendForm, type BackendRowModel } from "./settings-backends.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
-import { MachineOffersGroup, useMachineHosts } from "./settings-docker-hosts.tsx";
 import { ImagesPage } from "./settings-images.tsx";
 import { DraftNumberRow, unplacedProblems } from "./settings-draft-fields.tsx";
 import { BOXES_PART, MONITOR_PART } from "./settings-drafts.ts";
 import { BoxFilesSection } from "./settings-files.tsx";
 import { RestoredNote, SAVING_RULE, SaveBar, useDraft } from "./settings-saving.tsx";
 import { BackendPage } from "./settings-backend-page.tsx";
+import { AddBackendPage, SetupPage } from "./settings-setup.tsx";
 import { KindPage } from "./settings-kind-page.tsx";
 import { iosEncoderWords, monitorChanged, noteMonitorChanged, ReloadNote } from "./settings-overview.tsx";
 import { Card, Chevron, FOCUS_RING, Group, NavRow, NotHere, PageHeader, ProviderGlyph, RowNote, Rows, SavedTick, SettingRow } from "./settings-parts.tsx";
 import { isOptionPage, type SettingsView } from "./settings-route.ts";
 import { backendLabel, isMachineDocker, kindName, plural } from "./settings-status.ts";
 import { NetworkOptions } from "./settings-tailnet.tsx";
-
-
-
-function backendModel(state: ReturnType<typeof useSettings>["state"], driver: DriverView, config: BackendConfig | null): BackendRowModel {
-  const id = config?.id ?? driver.type;
-  const source = inheritSource(state.document, driver.fields, id);
-  return {
-    driver,
-    config,
-    source,
-    sourceName: source ? sourceName(state.document, source, state.drivers.find((candidate) => candidate.type === source.type)?.label ?? source.type) : null,
-    state: config ? (state.backends.find((candidate) => candidate.id === config.id) ?? null) : null,
-    problems: config ? state.problems.filter((problem) => problem.path === `backends.${config.id}` || problem.path.startsWith(`backends.${config.id}.`)) : [],
-  };
-}
-
-function useBackendForm() {
-  const { state, apply } = useSettings();
-  const rpc = useRpc<Contract>();
-  return {
-    onSave: (config: Parameters<typeof withBackend>[1]) => apply(withBackend(state.document, config)),
-    onCheck: async (config: Parameters<typeof withBackend>[1]) => {
-      try {
-        return await rpc.call("config.check", { draft: withBackend(state.document, config), test: config.id });
-      } catch (caught) {
-        return { problems: [{ path: `backends.${config.id}`, message: message(caught) }], doctor: null };
-      }
-    },
-  };
-}
-
-export function AddBackendPage() {
-  const { state, nav } = useSettings();
-  const machines = useMachineHosts();
-  const added = (driver: DriverView) => state.document.backends.find((backend) => backend.type === driver.type && !isMachineDocker(backend));
-  return (
-    <div className="space-y-6">
-      <PageHeader title="Add a backend" description="Where boxes can run. Each says what it makes; setting one up opens its guide and form." />
-      <MachineOffersGroup machines={machines} />
-      <Group title="Backends">
-        <Card>
-          <Rows>
-            {state.drivers.map((driver) => {
-              const existing = added(driver);
-              const rowKey = `add-${driver.type}`;
-              return (
-                <button
-                  key={driver.type}
-                  type="button"
-                  data-row-key={rowKey}
-                  onClick={() => nav.go(existing ? { page: "backend", id: existing.id } : { page: "setup", type: driver.type }, rowKey)}
-                  className={`flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left transition-colors duration-150 hover:bg-state-hover ${FOCUS_RING}`}
-                >
-                  <ProviderGlyph type={driver.type} className="mt-0.5" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium text-foreground">{driver.label}</span>
-                    <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{driver.description}</span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2 self-center text-xs text-muted-foreground">
-                    {existing ? "Added: open it" : "Set up"}
-                    <Chevron />
-                  </span>
-                </button>
-              );
-            })}
-          </Rows>
-        </Card>
-      </Group>
-    </div>
-  );
-}
-
-export function SetupPage({ type }: { type: string }) {
-  const { state, nav } = useSettings();
-  const form = useBackendForm();
-  const driver = state.drivers.find((candidate) => candidate.type === type);
-  const exists = state.document.backends.some((backend) => backend.id === type);
-  const existedAtStart = useRef(exists);
-  const saved = useRef(false);
-  const land = () => nav.replace({ page: "backend", id: type });
-  useEffect(() => {
-    if (exists && !existedAtStart.current) nav.replace({ page: "backend", id: type });
-  }, [exists, nav, type]);
-  if (!driver) return <NotHere what="kind of backend" />;
-  if (exists && existedAtStart.current) {
-    return (
-      <div className="space-y-3">
-        <PageHeader title={`${driver.label} is added`} description="It has its own page, with its settings and checks." />
-        <Button type="button" variant="outline" size="sm" className="h-8" onClick={land}>
-          Open {driver.label}
-        </Button>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-6">
-      <PageHeader glyph={<ProviderGlyph type={driver.type} className="size-5" />} title={`Set up ${driver.label}`} description={driver.description} />
-      <Card className="px-4 pb-4 pt-1 [&>form]:mt-0 [&>form]:border-t-0">
-        <BackendForm
-          model={backendModel(state, driver, null)}
-          onSave={async (config) => {
-            const result = await form.onSave(config);
-            if (result.saved) saved.current = true;
-            return result;
-          }}
-          onCheck={form.onCheck}
-          onClose={() => (saved.current ? land() : nav.back())}
-        />
-      </Card>
-    </div>
-  );
-}
 
 function AtOnceSwitch({ label, description, settingKey, value, disabled, onChange }: { label: string; description?: ReactNode; settingKey: string; value: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
   const { instant } = useSettings();

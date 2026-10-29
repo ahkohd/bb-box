@@ -685,7 +685,7 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       if (operation) operations.push(operation);
       if (options.applyWith) return options.applyWith;
       const next = revision + 1;
-      applied = savedLike(draft as ConfigDocument, next);
+      applied = savedLike(draft as ConfigDocument, next, options.config?.drivers);
       const receipt = operation ? { operation, revision: next, at: Date.now() } : null;
       if (receipt) receipts.push(receipt);
       return { ok: true, state: configState({ ...options.config, document: applied, revision: next, receipts: [...receipts] }), problems: options.savedWith ?? [], ...(receipt ? { receipt } : {}) };
@@ -719,9 +719,9 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
   return { handlers, changes, asked, copyInBox, operations, receipts };
 }
 
-function savedLike(draft: ConfigDocument, revision: number): ConfigDocument {
+function savedLike(draft: ConfigDocument, revision: number, drivers: ConfigState["drivers"] = configState({ document: draft }).drivers): ConfigDocument {
   const files = draft.general.files?.map((file) => (typeof file.content === "string" ? { path: file.path, content: { set: true, version: revision } } : file.content === undefined ? { path: file.path, content: { set: true, version: 1 } } : file));
-  const secrets = new Set(configState({ document: draft }).drivers.flatMap((driver) => driver.fields.filter((field) => field.type === "string" && field.secret).map((field) => `${driver.type} ${field.key}`)));
+  const secrets = new Set(drivers.flatMap((driver) => driver.fields.filter((field) => field.type === "string" && field.secret).map((field) => `${driver.type} ${field.key}`)));
   const backends = draft.backends.map((backend) => ({
     ...backend,
     fields: Object.fromEntries(Object.entries(backend.fields).map(([key, value]) => [key, secrets.has(`${backend.type} ${key}`) && (typeof value === "string" || value === null) ? { set: value !== null, version: revision } : value])),
@@ -778,6 +778,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
         ],
         hostFields: [],
         setup: { guide: "setup/fake/README.md", scripts: ["setup/fake/one.sh"] },
+        several: false,
       },
       {
         type: "other",
@@ -792,6 +793,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
           { key: "user", type: "string", label: "User", group: "connection", default: "" },
         ],
         setup: { guide: "setup/other/README.md", scripts: [] },
+        several: false,
       },
     ],
     backends: document.backends.map((backend) => ({
@@ -810,7 +812,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
     problems: document.backends.some((backend) => backend.enabled && (backend.fields.token as { set: boolean } | undefined)?.set === false) ? [{ path: "backends.fake.token", message: "Set the API token." }] : [],
     migrated: { at: 1_790_000_000_000, version: "0.2.0" },
     receipts: [],
-    setupDone: null,
+    setupDone: document.backends.some((backend) => backend.enabled) ? { at: 1_790_000_000_000, revision: 1 } : null,
     ...overrides,
   };
 }
@@ -1799,14 +1801,77 @@ test("New box says before making a box that it will not join BB, in the offer's 
   expect(screen.queryByText(/Boxes will not join BB yet/)).toBeNull();
 });
 
-test("first run in settings: with no backend on, the offer leads the page, without the link to settings itself; with one on, it is not there", async () => {
-  const none = settings(server([], { setups: [setup()], config: { document: { schema: 1, revision: 1, backends: [], kinds: {}, general: {} } } }).handlers);
-  expect(await none.findByRole("button", { name: "Use Docker on this machine" })).toBeTruthy();
+test("first run in settings leads until a backend that is on makes a kind: Use Docker on this machine, then the build, with Kinds and Options for later; once setup is done it never comes back, every backend off included (067 unit 7)", async () => {
+  const empty: ConfigDocument = { schema: 1, revision: 1, backends: [], kinds: {}, general: {} };
+  const { handlers, changes } = server([], { setups: [setup()], config: { document: empty } });
+  const none = settings(handlers);
+  expect(await none.findByRole("heading", { name: "Set up BB Box" })).toBeTruthy();
+  expect(none.getByText("Use Docker on this machine")).toBeTruthy();
+  expect(none.getByText("bb, where BB runs, has Docker 29.8.1. BB Box builds its Linux image there, usually 5 to 12 min, then makes Linux boxes in seconds.")).toBeTruthy();
   expect(none.queryByRole("link", { name: "Other backends" })).toBeNull();
+  expect(none.queryByText("Kinds")).toBeNull();
+  expect(none.queryByText("Every backend is off")).toBeNull();
+  fireEvent.click(none.getByRole("button", { name: /^Sizes and options: kinds, images, devices, network, Monitor and the configuration file, for later/ }));
+  expect(await none.findByText("Kinds")).toBeTruthy();
+  expect(none.getByText("Options")).toBeTruthy();
+  fireEvent.click(none.getByRole("button", { name: "Use Docker on bb" }));
+  await waitFor(() => expect(changes).toContain("setup.docker host_bb"));
+  expect(await none.findByText("Setting up Docker on this machine")).toBeTruthy();
+  expect(none.queryByRole("button", { name: /Choose another backend/ })).toBeNull();
   cleanup();
-  const on = settings(server([], { setups: [setup({ state: "on" })] }).handlers);
-  await on.findByText("Backends");
-  expect(on.queryByRole("button", { name: "Use Docker on this machine" })).toBeNull();
+
+  const choose = settings(server([], { setups: [setup()], config: { document: empty } }).handlers);
+  fireEvent.click(await choose.findByRole("button", { name: /^Choose another backend/ }));
+  expect(window.location.hash).toBe("#add");
+  cleanup();
+
+  const allOff: ConfigDocument = { schema: 1, revision: 9, backends: [{ id: "fake", type: "fake", enabled: false, fields: { url: "https://192.0.2.10:8006", token: { set: true }, key: { set: true } } }], kinds: {}, general: {} };
+  const established = settings(server([], { setups: [setup()], config: { document: allOff, setupDone: { at: 1_790_000_000_000, revision: 4 } } }).handlers);
+  expect(await established.findByText("Every backend is off")).toBeTruthy();
+  expect(established.queryByRole("heading", { name: "Set up BB Box" })).toBeNull();
+  expect(established.queryByText("Use Docker on this machine")).toBeNull();
+  expect(established.getByText("Kinds")).toBeTruthy();
+});
+
+test("first run says what stands in the way, titled for it: no Docker with its install line and a BB machine that has Docker, BB's user outside the docker group, too little disk; Check again asks Docker again (067 unit 7)", async () => {
+  const empty: ConfigDocument = { schema: 1, revision: 1, backends: [], kinds: {}, general: {} };
+  const missing = server([], { setups: [setup({ state: "none", docker: null }), setup({ hostId: "host_pc", name: "pc-1", here: false })], config: { document: empty } });
+  const slot = settings(missing.handlers);
+  expect(await slot.findByText("bb has no Docker")).toBeTruthy();
+  expect(slot.getByText("curl -fsSL https://get.docker.com | sudo sh")).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Copy the command: curl -fsSL https://get.docker.com | sudo sh" })).toBeTruthy();
+  expect(slot.getByText("Or use a BB machine that has Docker: pc-1 has Docker 29.8.1.")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Check bb for Docker again" }));
+  await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "docker.hosts" && (call.input as { recheck?: string } | null)?.recheck === "host_bb")).toBe(true));
+  await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "setup.offer").length).toBeGreaterThan(1));
+  fireEvent.click(slot.getByRole("button", { name: "Use Docker on pc-1" }));
+  await waitFor(() => expect(missing.changes).toContain("setup.docker host_pc"));
+  cleanup();
+
+  const fix = setup({ state: "fix", problem: "Docker is on this machine, but BB's user, dev, cannot use it. Add dev to the docker group, then restart BB's daemon there.", fix: "sudo usermod -aG docker dev", restart: "sudo systemctl restart user@1000.service" });
+  const access = settings(server([], { setups: [fix], config: { document: empty } }).handlers);
+  expect(await access.findByText("BB cannot use Docker on bb")).toBeTruthy();
+  expect(access.getByText("sudo usermod -aG docker dev")).toBeTruthy();
+  expect(access.getByText("sudo systemctl restart user@1000.service")).toBeTruthy();
+  expect(access.getByText(/^The second line restarts all of that user's services/)).toBeTruthy();
+  cleanup();
+
+  const disk = settings(server([], { setups: [setup({ state: "fix", freeGb: 6, problem: "The Linux image needs about 10 GB free to build, and this machine has 6 GB. Free some, for example with docker builder prune, then check again." })], config: { document: empty } }).handlers);
+  expect(await disk.findByText("Not enough disk on bb")).toBeTruthy();
+  expect(disk.getByText(/^The Linux image needs about 10 GB free to build, and this machine has 6 GB\./)).toBeTruthy();
+  expect(disk.getByRole("button", { name: "Check Docker on bb again" })).toBeTruthy();
+});
+
+test("a backend saved off and not finished stays in first run as Finish setting up, which opens its page (067 unit 7)", async () => {
+  const unfinished: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: false, fields: { token: { set: false } } }], kinds: {}, general: {} };
+  const base = configState({ document: unfinished });
+  const slot = settings(server([], { setups: [], config: { document: unfinished, problems: [{ path: "backends.fake.url", message: "Set the API URL." }], backends: base.backends.map((backend) => ({ ...backend, state: "off" as const, boxes: 0 })) } }).handlers);
+  const finish = await slot.findByRole("button", { name: /^Finish setting up Fake host/ });
+  expect(finish.textContent).toContain("Saved, not finished: Set the API URL.");
+  expect(slot.getByText("Backends")).toBeTruthy();
+  fireEvent.click(finish);
+  expect(window.location.hash).toBe("#backend/fake");
+  expect(await slot.findByText("Not finished")).toBeTruthy();
 });
 
 test("once the Linux image is built, the panel says it is ready until the thread has a box", async () => {
@@ -2056,16 +2121,17 @@ test("an empty field another backend fills says where its value comes from, unti
     ],
     hostFields: [],
     setup: { guide: "setup/win/README.md", scripts: [] },
+    several: false,
   };
   const slot = settings(server([], { config: { drivers: [...configState({}).drivers, windows] } }).handlers, "#setup/win");
-  const url = (await slot.findByLabelText(/API URL/)) as HTMLInputElement;
+  const url = (await slot.findByRole("textbox", { name: "API URL" })) as HTMLInputElement;
   expect(url.value).toBe("");
   expect(url.placeholder).toBe("https://192.0.2.10:8006");
-  expect(slot.getAllByText("from Fake host")).toHaveLength(2);
-  expect(slot.getAllByText("not set")).toHaveLength(1);
+  expect(slot.getByText((_, element) => element?.tagName === "SPAN" && element.textContent === "Empty: https://192.0.2.10:8006, from Fake host")).toBeTruthy();
+  expect(slot.getAllByText("from Fake host")).toHaveLength(1);
   fireEvent.change(url, { target: { value: "https://192.0.2.20:8006" } });
+  expect(slot.queryByText((_, element) => element?.tagName === "SPAN" && (element.textContent ?? "").startsWith("Empty: https"))).toBeNull();
   expect(slot.queryByText("from Fake host")).toBeNull();
-  expect(slot.getAllByText("not set")).toHaveLength(2);
 });
 
 test("a refused save shows each problem at its field and the rest in the bar, and keeps the draft", async () => {
@@ -2109,6 +2175,7 @@ function tartPage(options: { estimates?: Record<string, Record<string, number>>;
       { key: "ios-hosts-cores", type: "number", label: "Cores of a shared iOS host", description: "In place of the backend's setting.", group: "ios-hosts" },
     ],
     setup: { guide: "setup/tart/README.md", scripts: [] },
+    several: false,
   };
   const document: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "tart", type: "tart", enabled: true, fields: {}, hosts: [{ name: "mac-1", enabled: true, fields: { address: "192.0.2.20", user: "admin" } }] }], kinds: {}, general: {} };
   const base = configState({ document });
@@ -2257,26 +2324,80 @@ test("the overview's backend row says Saving while a save is out and Unsaved cha
   expect(hostChip(backend("hetzner", {}), "Hetzner Cloud")).toBeNull();
 });
 
-test("Add backend lists every driver; setting one up offers Save and turn on, which Enter saves on in one go, lands on its page, and a refusal saves nothing", async () => {
-  const { handlers, changes } = server([]);
+test("Add backend groups every driver by where boxes run, with what it makes and needs; setting one up runs in four steps on the engine, saves on in one go with its secret and an operation ID, and lands on its page in place of the form (067 unit 7)", async () => {
+  const { handlers, changes, operations } = server([], { config: { drivers: configState({}).drivers.map((driver) => (driver.type === "fake" ? { ...driver, type: "proxmox-lxc", label: "Proxmox LXC", setup: { ...driver.setup, needs: "A Proxmox VE host." } } : driver)) } });
   const slot = settings(handlers, "#add");
   expect(await slot.findByRole("heading", { name: "Add a backend" })).toBeTruthy();
-  expect(slot.getByRole("button", { name: /^Fake host.*Added: open it/ })).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: /^Other pool/ }));
-  expect(window.location.hash).toBe("#setup/other");
-  fireEvent.submit((await slot.findByRole("button", { name: "Save and turn on" })).closest("form")!);
-  await waitFor(() => expect(changes).toHaveLength(1));
-  const saved = JSON.parse(changes[0]!.slice(changes[0]!.indexOf("{")));
-  expect(saved.backends.find((backend: { id: string }) => backend.id === "other")).toMatchObject({ id: "other", type: "other", enabled: true });
-  await waitFor(() => expect(window.location.hash).toBe("#backend/other"));
-  expect(await slot.findByRole("heading", { name: "Fake host" })).toBeTruthy();
+  const lxc = slot.getByRole("button", { name: /^Proxmox LXC/ });
+  expect(lxc.closest("section")!.querySelector("h3")!.textContent).toBe("On a Proxmox VE host");
+  expect(lxc.textContent).toContain("Makes Linux and Linux desktop.");
+  expect(lxc.textContent).toContain("You need: A Proxmox VE host.");
+  expect(lxc.textContent).toContain("Set up");
+  fireEvent.click(lxc);
+  expect(window.location.hash).toBe("#setup/proxmox-lxc");
+  expect(await slot.findByRole("heading", { name: "Set up Proxmox LXC" })).toBeTruthy();
+  for (const step of ["Step 1: Prepare", "Step 2: Connect", "Step 3: Choose what it makes", "Step 4: Check it"]) expect(slot.getByRole("region", { name: step })).toBeTruthy();
+  expect(slot.getByText("It can make Linux and Linux desktop. Untick Offer to leave one out.")).toBeTruthy();
+  expect(slot.getByRole("link", { name: "one.sh, script 1 of 1" }).getAttribute("href")).toMatch(/setup\/fake\/one\.sh$/);
+  const url = slot.getByRole("textbox", { name: "API URL" });
+  fireEvent.change(url, { target: { value: "https://192.0.2.30:8006" } });
+  fireEvent.keyDown(url, { key: "Enter" });
+  expect(changes.filter((change) => change.startsWith("apply"))).toHaveLength(0);
+  fireEvent.click(slot.getByRole("checkbox", { name: "Offer Templates" }));
+  expect(slot.getByText("It can make Linux and Linux desktop. Left out, as you unticked Offer: Templates.")).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Set the API token" }));
+  fireEvent.change(slot.getByLabelText(/^API token$/, { selector: "input" }), { target: { value: "made-up-setup-token" } });
+  fireEvent.click(slot.getByRole("button", { name: "Check" }));
+  await waitFor(() => expect(changes.some((change) => change.startsWith("check proxmox-lxc "))).toBe(true));
+  const checked = JSON.parse(changes.find((change) => change.startsWith("check proxmox-lxc "))!.slice("check proxmox-lxc ".length));
+  expect(checked.backends.find((backend: { id: string }) => backend.id === "proxmox-lxc")).toMatchObject({ enabled: false, fields: { url: "https://192.0.2.30:8006", templates: "" } });
+  expect(changes.filter((change) => change.startsWith("apply"))).toHaveLength(0);
+  fireEvent.click(slot.getByRole("button", { name: "Save and turn on" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("apply"))).toHaveLength(1));
+  const apply = changes.find((change) => change.startsWith("apply"))!;
+  const saved = JSON.parse(apply.slice(apply.indexOf("{")));
+  expect(saved.backends.find((backend: { id: string }) => backend.id === "proxmox-lxc")).toMatchObject({ id: "proxmox-lxc", type: "proxmox-lxc", enabled: true, fields: { url: "https://192.0.2.30:8006", templates: "", token: "made-up-setup-token" } });
+  expect(apply).not.toContain("@new-");
+  expect(operations).toHaveLength(1);
+  await waitFor(() => expect(window.location.hash).toBe("#backend/proxmox-lxc"));
+  expect(await slot.findByRole("heading", { name: /^Fake host/ })).toBeTruthy();
+  expect(slot.getByText("Saved.")).toBeTruthy();
+  expect(JSON.stringify({ ...window.sessionStorage })).not.toContain("made-up-setup-token");
+  expect(JSON.stringify({ ...window.sessionStorage })).not.toContain("@new-");
   cleanup();
   applied = null;
 
-  const refused = settings(server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.other.machines", message: "Add a machine." }] } }).handlers, "#setup/other");
-  fireEvent.click(await refused.findByRole("button", { name: "Save and turn on" }));
-  expect(await refused.findByText("Add a machine.")).toBeTruthy();
-  expect(refused.getByText("Not saved: it cannot be on with these. Save keeps it off while you fix them.")).toBeTruthy();
+  const refused = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.other.machines", message: "Add a machine." }, { path: "backends.other", message: "bb-box runs one Other pool backend for now." }] } });
+  const again = settings(refused.handlers, "#setup/other");
+  fireEvent.click(await again.findByRole("button", { name: "Save and turn on" }));
+  expect(await again.findByText("Add a machine.")).toBeTruthy();
+  expect(again.getByText("bb-box runs one Other pool backend for now.")).toBeTruthy();
+  expect(again.getByText(/^Not saved: it cannot be on without the 2 fields marked\. Fix it, or save it off to finish later\./)).toBeTruthy();
+  expect(window.location.hash).toBe("#setup/other");
+  fireEvent.click(again.getByRole("button", { name: "Save, keep it off" }));
+  await waitFor(() => expect(refused.changes.filter((change) => change.startsWith("apply"))).toHaveLength(2));
+  const off = refused.changes.filter((change) => change.startsWith("apply"))[1]!;
+  expect(JSON.parse(off.slice(off.indexOf("{"))).backends.find((backend: { id: string }) => backend.id === "other")).toMatchObject({ enabled: false });
+  fireEvent.click(again.getByRole("button", { name: "Discard and go back" }));
+  expect(again.queryByText("Add a machine.")).toBeNull();
+});
+
+test("a backend type that is added already opens it from Add backend; one that allows several offers Add another, under the next free ID (067 unit 7)", async () => {
+  const drivers = configState({}).drivers.map((driver) => (driver.type === "other" ? { ...driver, several: true } : driver));
+  const document: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: true, fields: { url: "https://192.0.2.10:8006", token: { set: true }, key: { set: true } } }, { id: "other", type: "other", enabled: true, fields: { machines: "a 192.0.2.5 linux" } }], kinds: {}, general: {} };
+  const { handlers, changes } = server([], { config: { drivers, document } });
+  const slot = settings(handlers, "#add");
+  expect((await slot.findByRole("button", { name: /^Fake host/ })).textContent).toContain("Added: open it");
+  const other = slot.getByRole("button", { name: /^Other pool/ });
+  expect(other.textContent).toContain("1 added");
+  expect(other.textContent).toContain("Add another");
+  fireEvent.click(other);
+  fireEvent.change(await slot.findByRole("textbox", { name: "Machines" }), { target: { value: "b 192.0.2.6 linux" } });
+  fireEvent.click(slot.getByRole("button", { name: "Save, keep it off" }));
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("apply"))).toHaveLength(1));
+  const apply = changes.find((change) => change.startsWith("apply"))!;
+  expect(JSON.parse(apply.slice(apply.indexOf("{"))).backends.map((backend: { id: string; enabled: boolean }) => [backend.id, backend.enabled])).toEqual([["fake", true], ["other", true], ["other:2", false]]);
+  await waitFor(() => expect(window.location.hash).toBe("#backend/other%3A2"));
 });
 
 test("a kind's page saves its sizes, default size, largest size, warm counts and spares together, as changes from the shipped sizes, and Enter saves", async () => {
@@ -2778,7 +2899,7 @@ test("a field edited here that changed elsewhere is a conflict on its row at onc
 
 test("a draft waits when the page is left, the overview marks its row, a reload brings it back without what was pasted, and closing the tab asks first", async () => {
   applied = { ...MONITOR_DOCUMENT, general: { files: [{ path: ".cfg/a.json", content: { set: true, version: 2 } }] } };
-  const { handlers } = server([]);
+  const { handlers } = server([], { config: { setupDone: { at: 1_790_000_000_000, revision: 1 } } });
   const slot = settings(handlers, "#option/monitor");
   fireEvent.change(await slot.findByRole("textbox", { name: "Refresh every, in seconds" }), { target: { value: "12" } });
   fireEvent.click(slot.getByRole("button", { name: "BB Box settings" }));
@@ -6884,6 +7005,7 @@ const DOCKER_DRIVER: ConfigState["drivers"][number] = {
   hostFields: [],
   warmKinds: ["linux"],
   setup: { guide: "setup/docker/README.md", scripts: [] },
+  several: true,
 };
 
 function dockerMachine(hostId: string, name: string, more: Partial<DockerHostView> = {}): DockerHostView {
@@ -6921,7 +7043,7 @@ test("Add backend offers Docker on your BB machines first: Add for those that ca
   const slot = settings(handlers, "#add");
   const group = (await slot.findByRole("heading", { name: "Docker on your BB machines" })).closest("section") as HTMLElement;
   const headings = slot.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
-  expect(headings.indexOf("Docker on your BB machines")).toBeLessThan(headings.indexOf("Backends"));
+  expect(headings.indexOf("Docker on your BB machines")).toBeLessThan(headings.indexOf("On BB's server or a machine you have"));
   const row = (name: string) => within(group).getByText(name, { selector: "p, span" }).closest("div.flex, button") as HTMLElement;
   expect(within(row("devpc")).getByText("Can host boxes")).toBeTruthy();
   expect(within(row("devpc")).getByText("16 cores")).toBeTruthy();

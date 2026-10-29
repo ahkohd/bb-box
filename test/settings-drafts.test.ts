@@ -13,6 +13,8 @@ import {
   FILES_PART,
   MONITOR_PART,
   NETWORK_PART,
+  backendPart,
+  setupPart,
   submittedWrite,
   type ApplyRequest,
   type DraftStorage,
@@ -20,7 +22,7 @@ import {
   type SaveTransport,
   type StoredPart,
 } from "../src/app/settings-drafts.ts";
-import { backendFieldPath, filePath, hostFieldPath, hostPath, kindPath, labelOf, newFilePath, newHostPath, plain, problemPath, sizePath, storedAt, tailnetPath, warmPath, type EditValue } from "../src/app/settings-paths.ts";
+import { backendFieldPath, backendPath, filePath, freeBackendId, newBackendPath, hostFieldPath, hostPath, kindPath, labelOf, newFilePath, newHostPath, plain, problemPath, sizePath, storedAt, tailnetPath, warmPath, type EditValue } from "../src/app/settings-paths.ts";
 import { TAILNET_CLIENT_ID, TAILNET_CLIENT_SECRET } from "../src/core/tailnet-settings.ts";
 import { MemoryStorage } from "./helpers.ts";
 
@@ -895,4 +897,118 @@ test("a kind's fields are checked before anything is sent, and the server's prob
   assert.equal(problemPath("kinds.linux.spares", {}), kindPath("linux", "spares"));
   assert.equal(labelOf(sizePath("linux", "small", "memoryGiB")), "Small memory");
   assert.equal(labelOf(warmPath(MACS, "linux"), undefined, registry.latest!), `Warm boxes on ${registry.latest!.backends[0]!.label}`);
+});
+
+function cloudDriver(type: string, several: boolean): BackendDriver<unknown> {
+  return {
+    type,
+    label: several ? "Pool" : "Cloud",
+    description: "Boxes rented by the minute.",
+    nature: "virtual",
+    form: "VM",
+    kinds: ["linux"],
+    fields: {
+      host: { type: "string", label: "Host", group: "connection", default: "" },
+      token: { type: "string", label: "API token", secret: true, group: "credentials" },
+      image: { type: "string", label: "Linux image", group: "boxes", default: "base" },
+    },
+    offWhenEmpty: ["image"],
+    hostFields: several ? {} : { address: { type: "string", label: "Address", group: "connection", default: "" } },
+    setup: { guide: "", scripts: [], needs: "An account and a token." },
+    ...(several ? { several: (fields: Readonly<Record<string, unknown>>) => (typeof fields.host === "string" ? fields.host : "") } : {}),
+    parse(part) {
+      return typeof part.fields.token === "string" && part.fields.token ? { ok: true, config: {} } : { ok: false, problems: [{ path: "token", message: "Set the API token." }] };
+    },
+    create: (_config, context) => ({ id: context.id, label: "Cloud", nature: "virtual", kinds: () => [] }) as unknown as Backend,
+  };
+}
+
+async function withDrivers(): Promise<Page> {
+  const clock = { now: 1_800_000_000_000 };
+  return page(await Server.start(clock, [], [cloudDriver("cloud", false), cloudDriver("pool", true)]), clock);
+}
+
+function newBackend(type: string, id: string, enabled: boolean): EditValue {
+  return { kind: "new-backend", type, id, enabled };
+}
+
+test("a new backend is set up under a provisional identity: saved on, it is refused at its fields with nothing stored; with its secret it is saved on in one go and becomes the saved backend; typing during the save moves to the backend's own part, and a second Save updates it (067 unit 7)", async () => {
+  const { registry, server } = await withDrivers();
+  const setup = setupPart("cloud");
+  const created = newBackendPath("cloud", "n1");
+  const provisional = "cloud@new-n1";
+  registry.set(setup, backendFieldPath(provisional, "image"), plain("img-1"));
+  registry.set(setup, created, newBackend("cloud", "cloud", true));
+  await registry.save(setup);
+  assert.equal(registry.part(setup).outcome?.kind, "problems");
+  assert.deepEqual(registry.part(setup).problems, [{ path: backendFieldPath(provisional, "token"), message: "Set the API token." }], "the server's problem resolves to the provisional field");
+  assert.equal(server.stored().backends.length, 0, "nothing is stored");
+
+  registry.set(setup, backendFieldPath(provisional, "token"), { kind: "secret", text: "made-up-cloud-token" });
+  const held = deferred();
+  server.faults.push({ before: () => held.promise });
+  const saving = registry.save(setup);
+  await until(() => registry.part(setup).operation?.phase.at === "sending");
+  registry.set(setup, backendFieldPath(provisional, "image"), plain("img-2"));
+  held.release();
+  await saving;
+  assert.deepEqual(server.stored().backends.map((backend) => [backend.id, backend.enabled, backend.fields.image]), [["cloud", true, "img-1"]]);
+  assert.equal(server.secret("cloud", "token"), "made-up-cloud-token");
+  assert.equal(registry.savedIdentity(created), backendPath("cloud"));
+  assert.equal(registry.landing(setup), "cloud");
+  assert.equal(registry.part(setup).edits.size, 0, "the setup form is empty once saved");
+  const own = registry.part(backendPart("cloud"));
+  assert.deepEqual([...own.edits], [[backendFieldPath("cloud", "image"), { value: plain("img-2"), base: { kind: "value", value: "img-1" } }]], "no edit keeps an @new- identity");
+  assert.deepEqual(own.outcome, { kind: "saved", revision: server.stored().revision, lostReply: false, rebased: false, changedElsewhere: [], newer: 1 });
+
+  await registry.save(backendPart("cloud"));
+  assert.deepEqual(server.stored().backends.map((backend) => [backend.id, backend.fields.image]), [["cloud", "img-2"]], "the second Save updated the backend it made");
+  assert.equal(server.secret("cloud", "token"), "made-up-cloud-token");
+});
+
+test("a new backend saved off with a field missing is stored off, with its problem for its page; a new host under it becomes the saved host (067 unit 7)", async () => {
+  const { registry, server } = await withDrivers();
+  const setup = setupPart("cloud");
+  const provisional = "cloud@new-n2";
+  const host = newHostPath(provisional, "h1");
+  registry.set(setup, host, { kind: "new-host", name: "mac-1", enabled: true });
+  registry.set(setup, hostFieldPath(host, "address"), plain("mac-1.example"));
+  registry.set(setup, newBackendPath("cloud", "n2"), newBackend("cloud", "cloud", false));
+  await registry.save(setup);
+  assert.equal(registry.part(backendPart("cloud")).outcome?.kind, "saved");
+  const stored = server.stored().backends[0]!;
+  assert.deepEqual([stored.id, stored.enabled, stored.hosts], ["cloud", false, [{ name: "mac-1", enabled: true, fields: { address: "mac-1.example" } }]]);
+  const state = await server.state();
+  assert.deepEqual(state.problems.filter((problem) => problem.path.startsWith("backends.cloud")).map((problem) => problem.message), ["Set the API token."]);
+  assert.equal(registry.savedIdentity(host), hostPath("cloud", "mac-1"));
+});
+
+test("a backend added elsewhere with the ID a setup would take is a conflict, never saved over; for a type that allows several, Add mine beside it takes the next free ID (067 unit 7)", async () => {
+  const { registry, server } = await withDrivers();
+  const setup = setupPart("pool");
+  const created = newBackendPath("pool", "n3");
+  registry.set(setup, backendFieldPath("pool@new-n3", "host"), plain("ssh://two.example"));
+  registry.set(setup, backendFieldPath("pool@new-n3", "token"), { kind: "secret", text: "made-up-pool-token" });
+  registry.set(setup, created, newBackend("pool", freeBackendId(server.stored(), "pool", true), true));
+  await server.elsewhere((document) => ({ ...document, backends: [{ id: "pool", type: "pool", enabled: false, fields: { host: "ssh://one.example" } }] }));
+  registry.observe(await server.state());
+  assert.deepEqual(registry.conflictAt(setup, created), { kind: "taken", id: "pool" });
+  await registry.save(setup);
+  assert.equal(registry.part(setup).outcome?.kind, "conflicts");
+  assert.deepEqual(server.stored().backends.map((backend) => [backend.id, backend.fields.host]), [["pool", "ssh://one.example"]], "the other backend is not saved over");
+  registry.keepMine(setup, created);
+  assert.equal(registry.conflictAt(setup, created), null);
+  await registry.save(setup);
+  assert.deepEqual(server.stored().backends.map((backend) => [backend.id, backend.fields.host]), [["pool", "ssh://one.example"], ["pool:2", "ssh://two.example"]]);
+  assert.equal(registry.landing(setup), "pool:2");
+
+  const single = setupPart("cloud");
+  const cloud = newBackendPath("cloud", "n4");
+  registry.set(single, backendFieldPath("cloud@new-n4", "token"), { kind: "secret", text: "made-up-cloud-token" });
+  registry.set(single, cloud, newBackend("cloud", freeBackendId(server.stored(), "cloud", false), true));
+  await server.elsewhere((document) => ({ ...document, backends: [...document.backends, { id: "cloud", type: "cloud", enabled: false, fields: {} }] }));
+  registry.observe(await server.state());
+  await registry.save(single);
+  assert.equal(registry.part(single).outcome?.kind, "conflicts");
+  assert.equal(server.stored().backends.find((backend) => backend.id === "cloud")?.enabled, false, "the one added elsewhere is kept as it was");
 });

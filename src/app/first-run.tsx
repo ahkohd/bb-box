@@ -23,7 +23,7 @@ export const LINUX_BUILD_WORDS = "5 to 12 min";
 export const DESKTOP_BUILD_WORDS = "4 to 10 min";
 export const DESKTOPS_BUILD_WORDS = "8 to 16 min";
 /** How long the panel says the Linux image is ready, while the thread has no box yet. */
-const READY_MS = 60 * 60_000;
+export const READY_MS = 60 * 60_000;
 
 /** A build's estimate: this host's last time when it has one, as "about 8 min", else the usual range, as "usually 4 to 10 min". */
 export function estimate(took: number | null | undefined, range: string): string {
@@ -52,16 +52,16 @@ function usualTime(build: NonNullable<MachineSetup["build"]>, desktop: boolean):
 
 /** A build of desktop images alone, as when a desktop was first asked for. */
 const isDesktopBuild = (build: NonNullable<MachineSetup["build"]>) => build.targets.length > 0 && build.targets.every((target) => target.startsWith("desktop"));
-const whose = (setup: MachineSetup) => (setup.here ? "this machine" : setup.name);
+export const whose = (setup: MachineSetup) => (setup.here ? "this machine" : setup.name);
 
-function useSetups() {
+export function useSetups() {
   const rpc = useRpc<Contract>();
   return useLive<{ machines: MachineSetup[]; access: MachineAccessProblem | null }>("setup.offer", () => rpc.call("setup.offer"), forThread(""));
 }
 
 const CARD = "rounded-lg border border-border bg-card px-4 py-4";
 
-function Progress({ setup }: { setup: MachineSetup }) {
+export function Progress({ setup }: { setup: MachineSetup }) {
   const now = useNow(true, 1000);
   const build = setup.build!;
   const elapsed = Math.max(0, now - build.startedAt);

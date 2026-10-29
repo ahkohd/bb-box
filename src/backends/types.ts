@@ -1105,7 +1105,7 @@ export interface BackendDriver<C = unknown> {
    * Paths in bb-box's repository. The guide is the entry point: the settings
    * page links it first, then the scripts in the order the guide runs them.
    */
-  readonly setup: { readonly guide: string; readonly scripts: readonly string[] };
+  readonly setup: { readonly guide: string; readonly scripts: readonly string[]; readonly needs?: string };
   /** Checks the backend's part and gives each problem at its field. */
   parse(part: BackendPart): ParsedBackend<C>;
   create(config: C, context: BackendContext): Backend;

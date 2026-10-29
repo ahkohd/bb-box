@@ -14,7 +14,7 @@ export const proxmoxQemuDriver: BackendDriver<QemuConfig> = {
   fields: QEMU_FIELDS,
   offWhenEmpty: ["windows-templates", "linux-templates", "linux-desktop-templates", "android-templates"],
   inherits: QEMU_INHERITS,
-  setup: { guide: "setup/proxmox-qemu/README.md", scripts: ["setup/proxmox-qemu/build.sh"] },
+  setup: { guide: "setup/proxmox-qemu/README.md", scripts: ["setup/proxmox-qemu/build.sh"], needs: "A Proxmox host set up for Proxmox LXC; a Windows 11 ISO only for Windows desktops." },
   parse: parseQemuPart,
   create: (config, context) => new ProxmoxQemuBackend(config, context),
 };

@@ -42,7 +42,7 @@ function useFormChecks() {
   return checks;
 }
 
-function CheckRow({ check }: { check: DoctorCheck }) {
+export function CheckRow({ check }: { check: DoctorCheck }) {
   const look = CHECK_LOOK[check.status];
   return (
     <li className="grid grid-cols-[1rem_minmax(0,1fr)] items-start gap-2.5 text-xs leading-snug">
@@ -61,7 +61,7 @@ function CheckRow({ check }: { check: DoctorCheck }) {
   );
 }
 
-function NoteBlock({ text }: { text: string }) {
+export function NoteBlock({ text }: { text: string }) {
   const [lead, ...rest] = text.split("\n");
   return (
     <div className="space-y-1.5">
@@ -71,13 +71,13 @@ function NoteBlock({ text }: { text: string }) {
   );
 }
 
-function draftLook(report: DoctorReport): { readonly tone: Tone; readonly words: string } {
+export function draftLook(report: DoctorReport): { readonly tone: Tone; readonly words: string } {
   const warnings = warningsIn(report);
   if (report.checks.some((check) => check.status === "fail") || (!report.ok && !warnings)) return { tone: "bad", words: "Not working with your changes" };
   return { tone: "ok", words: withWarnings("Your changes pass its checks", warnings) };
 }
 
-function passedWords(report: DoctorReport): string {
+export function passedWords(report: DoctorReport): string {
   const passed = report.checks.filter((check) => check.status === "ok").length;
   return `${passed} of ${plural(report.checks.length, "check")} passed`;
 }
@@ -100,7 +100,7 @@ function storedLine(health: BackendHealth, report: DoctorReport | null, now: num
   }
 }
 
-function clearedWords(binding: ReturnType<typeof bindingOf> | null): string | null {
+export function clearedWords(binding: ReturnType<typeof bindingOf> | null): string | null {
   if (binding === "form-changed") return "Your form changed after you checked it, so that result was cleared. Check again.";
   if (binding === "configuration-changed") return "The configuration changed after you checked it, so that result was cleared. Check again.";
   return null;
@@ -380,11 +380,11 @@ function RemoveBackendDialog({ open, id, label, secrets, onCancel, onConfirm }: 
   );
 }
 
-function draftEdits(draft: Draft): PathEdit[] {
+export function draftEdits(draft: Draft): PathEdit[] {
   return [...draft.entry.edits].map(([path, edit]) => ({ path, ...edit }));
 }
 
-function placedPaths(form: BackendForm, fields: readonly FieldView[]): Path[] {
+export function placedPaths(form: BackendForm, fields: readonly FieldView[]): Path[] {
   const id = form.config.id;
   const placed: Path[] = fields.map((field) => `backends/${id}/fields/${field.key}`);
   placed.push(`backends/${id}/hosts`);

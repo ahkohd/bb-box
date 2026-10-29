@@ -21,6 +21,7 @@ export const proxmoxLxcDriver: BackendDriver<LxcConfig> = {
       "setup/proxmox-lxc/template/build.sh",
       "setup/proxmox-lxc/host/setup-token.sh",
     ],
+    needs: "Proxmox VE 8 or 9 with root on the host, storage for linked clones, and the guide's four scripts run there.",
   },
   parse: parseLxcPart,
   create: (config, context) => new ProxmoxLxcBackend(config, context),

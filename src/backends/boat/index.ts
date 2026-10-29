@@ -10,7 +10,7 @@ export const boatDriver: BackendDriver<BoatConfig> = {
   form: "VM",
   kinds: BOAT_KINDS,
   fields: BOAT_FIELDS,
-  setup: { guide: "docs/guide/boat.md", scripts: ["setup/boat/template.sh", "setup/boat/customize-sandbox.sh"] },
+  setup: { guide: "docs/guide/boat.md", scripts: ["setup/boat/template.sh", "setup/boat/customize-sandbox.sh"], needs: "A boat.dev account and API key, and a way for its sandboxes to reach BB." },
   parse: parseBoatPart,
   create: (config, context) => new BoatBackend(config, context),
 };

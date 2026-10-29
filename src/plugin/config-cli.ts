@@ -365,7 +365,7 @@ export function configCommands(configuration: Configuration) {
       },
     }),
     "backend types": cliCommand({
-      summary: "List the types of backend bb-box has: what each is for, the kinds it makes, and its setup guide and scripts in bb-box's repository.",
+      summary: "List the types of backend bb-box has: what each is for, what setting it up needs, the kinds it makes, and its setup guide and scripts in bb-box's repository.",
       options: jsonOption,
       async run({ options }) {
         const state = await configuration.state();
@@ -373,7 +373,7 @@ export function configCommands(configuration: Configuration) {
         if (options.json) return json(types);
         return out(
           types
-            .map((type) => `${type.type}: ${type.label}. ${type.description} Kinds: ${type.kinds.join(", ")}. Guide: ${type.setup.guide}${type.setup.scripts.length ? `; scripts ${type.setup.scripts.join(", ")}` : ""}.${type.backends.length ? ` Added: ${type.backends.join(", ")}.` : ""}`)
+            .map((type) => `${type.type}: ${type.label}. ${type.description}${type.setup.needs ? ` You need: ${type.setup.needs}` : ""} Kinds: ${type.kinds.join(", ")}. Guide: ${type.setup.guide}${type.setup.scripts.length ? `; scripts ${type.setup.scripts.join(", ")}` : ""}.${type.backends.length ? ` Added: ${type.backends.join(", ")}.` : ""}`)
             .join("\n"),
         );
       },

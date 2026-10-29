@@ -81,8 +81,23 @@ form.
 
 In order:
 
-1. First run, while no backend is on, or the setup job's progress once one
-   is (`first-run.tsx`, today's guidance).
+1. First run, "Set up BB Box", until a backend that is on makes a kind:
+   bb-box records that moment once as `setupDone`, so an established
+   install whose backends are all off or failing keeps its overview, with
+   "Every backend is off" or each failure in Status, and never the setup
+   card again (`settings-first-run.tsx`, with `first-run.tsx`'s guidance).
+   The card is titled for what it offers or what stands in the way: Use
+   Docker on this machine, with the Linux image's build and then "Docker on
+   this machine is ready" for an hour; "bb-1 has no Docker", with Docker's
+   install line and a BB machine that has Docker; "BB cannot use Docker on
+   bb-1", with the docker group line and the restart words; "Not enough
+   disk on bb-1". Check again asks that machine's Docker again. Below it,
+   "Finish setting up Proxmox LXC" for each backend saved off and not
+   finished, then Choose another backend, which opens Add backend. Kinds
+   and Options fold under "Sizes and options … for later", and Status
+   waits until setup is done. Once it is, the setup job's progress shows
+   above Status while a BB machine builds images, and Status names Docker
+   on BB's server "Docker on this machine".
 2. **Status**: one line that is never more certain than the checks, and a
    callout of everything that needs the person, each with its fix and Open.
 3. **Backends**: one row each, with its icon, name, a host chip, a "BB
@@ -156,9 +171,8 @@ each is confirmed only by BB Box's reply or its receipt.
 ### Forms
 
 The Boxes page's Boxes per thread, its files for every box, the
-Monitor's Refresh every, and each backend's page are forms on the
-registry. Other pages keep the forms they had before 067 until their
-units.
+Monitor's Refresh every, each backend's page, each kind's page, the
+tailnet and setting up a backend are forms on the registry.
 
 - An edit is a setting's path, such as `monitor/refreshIntervalSeconds`,
   `files/<path>`, `backends/<id>/fields/<key>` or
@@ -229,10 +243,23 @@ first and says what follows.
   images. It turns off like any backend, and stays a row; Remove
   backend… in its menu removes it.
 
-Each other part's page holds today's form for it, as it was before 067,
-until a later unit replaces it: setting up a backend, with Save, Save and
-turn on, Check and the last report; a kind's editor. These save the whole document with their Save, and a stale
-revision reloads and says so.
+### Setting up a backend
+
+A new backend has a provisional identity until its first save, such as
+`backends/proxmox-lxc@new-k3x9`, and its fields' edits sit under it, in
+the part `setup/<type>`, so typing never depends on an ID that someone
+else may take. Save writes one more edit, the new backend with the ID it
+will be saved as (its type, or `docker:2` and on for a type that allows
+several) and whether it is on. A backend added elsewhere with that ID is a
+conflict, never saved over: for a type that allows several, Add mine
+beside it takes the next free ID. Problems the server reports at
+`backends.<id>.…` resolve to the provisional fields. On the receipt the
+registry maps the provisional identity to the saved one, moves any edits
+typed during the save to the backend's own part, `backend/<id>`, with the
+saved values as their base, and the setup view is replaced by the
+backend's page, which shows the save's outcome. A second Save there
+updates the backend it made, and never makes another. Secrets typed in the
+form are kept in memory only, as on every page.
 
 ## A backend's page
 
@@ -338,8 +365,8 @@ overview, dimmed, until the person leaves BB Box's settings.
 | Network | The tailnet as one form on the engine: whether machines join (two radio choices), tags (empty for `tag:bb-box`), and the OAuth client ID and secret, Set or Replace, with their versions. Saved together with one Save, or Enter; a refusal keeps every change, with the reason under the field it names. Choosing No hides the rest, drops their edits and says "Saving No deletes the saved OAuth client ID and secret" |
 | Monitor | Machine status (a switch, also on its overview row), Refresh every … s, background monitoring and pressure notifications. After machine status changes: "The sidebar's machine status changes when BB next loads", with Reload BB now |
 | Configuration | The revision and what happens when two people save; the `bb box config` commands |
-| Add a backend | Docker on your BB machines first: each machine that can host boxes with Docker's facts and Add; each whose Docker cannot, with why, the lines that fix it and Check again; each added, "Added: open it"; each offline; and one line for those with no Docker. Then every driver, each with what it is; one already added says "Added: open it" |
-| Set up a backend | The driver's guide and setup form, with Save and turn on |
+| Add a backend | Docker on your BB machines first: each machine that can host boxes with Docker's facts and Add; each whose Docker cannot, with why, the lines that fix it and Check again; each added, "Added: open it"; each offline; and one line for those with no Docker. Then every driver, grouped by where boxes run (on BB's server or a machine you have, on a Proxmox VE host, on your Macs, in the cloud), each with the kinds it makes and what setting it up needs, the driver's `setup.needs`. One already added says "Added: open it"; a type that allows several says how many are added and Add another |
+| Set up a backend | Four numbered steps: 1, Prepare: the guide and what it needs, and its scripts in the order it runs them; 2, Connect: connection, credentials and Macs; 3, Choose what it makes: the kinds it can make and the Offer boxes left unticked; 4, Check it: all its checks against the form as it will be saved, up to 30 s, with nothing saved, the result cleared by any later edit. The bar offers Discard and go back, Save, keep it off, and Save and turn on; Enter saves nothing, as whether to turn it on is the person's choice. Saved on with a field missing is refused with the fields marked and nothing stored; saved off, it is stored and Not finished |
 
 ## The Images page
 
@@ -401,7 +428,7 @@ on the Boxes page, under Machines".
 | 4: the drivers' help text | Built |
 | 5: Docker on BB machines as backends, rows and pages, and in Add backend | Built |
 | 6: each kind's page on the engine, the default kind's rule everywhere, kinds kept in place | Built |
-| 7: first run | To come, as 067 lists it |
+| 7: first run, Add backend and setting up a backend on the engine | Built |
 | 8: Images, with every rebuild's run state, projects' images, and failed rebuilds in Status | Built |
 | 9: Devices and Network on the engine | Built |
 | 10 and 11: Configuration, Find | To come, as 067 lists them |
@@ -418,8 +445,10 @@ and `rebuild-now.tsx` (the Images page),
 runs, and the kind switch with the default kind's rule),
 `settings-machine-docker.ts` and `settings-docker-hosts.tsx` (Docker on
 your BB machines),
-`settings-tailnet.tsx` (Network), `settings-context.tsx`,
-`settings-overview.tsx`, `settings-pages.tsx` and `settings-parts.tsx`.
-Today's forms stay in
-`settings-backends.tsx`, `settings-fields.tsx`, `settings-files.tsx` and
-`first-run.tsx`, with the helpers in `config.ts`.
+`settings-tailnet.tsx` (Network), `settings-setup.tsx` (Add backend and
+setting up a backend), `settings-first-run.tsx` (first run on the
+overview), `settings-context.tsx`, `settings-overview.tsx`,
+`settings-pages.tsx` and `settings-parts.tsx`. `first-run.tsx` keeps the
+Box panel's first run and the guidance both share, `settings-files.tsx`
+files for every box, and `settings-fields.tsx` the section and field
+parts from before 067, with the helpers in `config.ts`.

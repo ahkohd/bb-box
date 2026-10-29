@@ -10,7 +10,8 @@ import type { Contract } from "../plugin/contract.ts";
 import type { KindInfoView } from "../plugin/configuration.ts";
 import { Badge, StatusDot } from "./common.tsx";
 import { DESKTOP_PAGE, MACHINES_TAB } from "./desktop.tsx";
-import { FirstRun, SetupProgress } from "./first-run.tsx";
+import { SetupProgress } from "./first-run.tsx";
+import { FirstRunSection, JustReady, useHereHostId } from "./settings-first-run.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { BOXES_PART, FILES_PART, MONITOR_PART, NETWORK_PART } from "./settings-drafts.ts";
@@ -51,16 +52,34 @@ export function monitorChanged(): boolean {
 export function Overview() {
   const { state } = useSettings();
   const machines = useMachineHosts();
+  const [later, setLater] = useState(false);
+  const setUp = state.setupDone !== null;
   return (
     <div className="space-y-7">
       <h2 tabIndex={-1} data-page-heading className="sr-only">
         BB Box settings
       </h2>
-      {state.document.backends.some((backend) => backend.enabled) ? <SetupProgress empty={false} /> : <FirstRun fallback={null} others={false} />}
-      {state.document.backends.length ? <Status machines={machines} /> : null}
-      <Backends machines={machines} />
-      <Kinds />
-      <Options />
+      {setUp ? (
+        <>
+          <SetupProgress empty={false} />
+          <JustReady />
+          {state.document.backends.length ? <Status machines={machines} /> : null}
+        </>
+      ) : (
+        <FirstRunSection machines={machines} />
+      )}
+      {setUp || state.document.backends.length ? <Backends machines={machines} /> : null}
+      {setUp || later ? (
+        <>
+          <Kinds />
+          <Options />
+        </>
+      ) : (
+        <button type="button" data-row-key="first-run-later" aria-expanded={false} onClick={() => setLater(true)} className={cn("flex w-full cursor-pointer items-center gap-2 rounded-lg border border-dashed border-border px-4 py-3 text-left text-xs text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground", FOCUS_RING)}>
+          <Icon name="ChevronRight" className="size-3.5" aria-hidden />
+          Sizes and options: kinds, images, devices, network, Monitor and the configuration file, for later
+        </button>
+      )}
     </div>
   );
 }
@@ -71,7 +90,7 @@ function Status({ machines }: { machines: Machines }) {
   const [checking, setChecking] = useState(0);
   const [checkNote, setCheckNote] = useState<string | null>(null);
   const now = Date.now();
-  const line = statusLine(state, now, checking, machines.hosts);
+  const line = statusLine(state, now, checking, machines.hosts, useHereHostId());
   const images = useImagesProgress();
   const items = [...statusItems(state, now, machines.hosts), ...imageStatusItems(state, images, now)];
   const checkAll = async () => {
