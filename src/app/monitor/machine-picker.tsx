@@ -126,7 +126,7 @@ export function MachinePicker({
         <MiddleTruncate text={current.name} />
         <Icon name="ChevronDown" className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       </PopoverTrigger>
-      <PopoverContent className="w-60 p-0" side="bottom">
+      <PopoverContent className="w-60 p-0" side="bottom" onEscapeKeyDown={(event) => event.stopPropagation()}>
         <div className="border-b border-border p-1">
           <input
             autoFocus

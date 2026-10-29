@@ -387,7 +387,7 @@ function tabbable(container: ParentNode): HTMLElement[] {
 test("the keyboard reaches Open after the name; Enter or Space opens the menu, arrows move, Escape closes only the menu and focus returns to Open", async () => {
   openMonitor("box:bx_both");
   const open = await openButton();
-  expect(tabbable(header()).map((element) => element.getAttribute("aria-label"))).toEqual(["Machine", "Open", "Reload machine status", "Machine status settings", "Hide machine status"]);
+  expect(tabbable(header()).map((element) => element.getAttribute("aria-label"))).toEqual(["Machine", "Open", "Reload machine status", "Hide machine status"]);
   open.focus();
   fireEvent.keyDown(open, { key: " " });
   const menu = await screen.findByRole("menu");
@@ -402,4 +402,27 @@ test("the keyboard reaches Open after the name; Enter or Space opens the menu, a
   await waitFor(() => expect(document.activeElement).toBe(open));
   expect(escapeBeyondMenu).not.toHaveBeenCalled();
   expect(header()).toBeTruthy();
+});
+
+test("Escape in the machine picker closes only the picker: the Monitor stays open and focus returns to the name", async () => {
+  openMonitor(null);
+  const trigger = await screen.findByRole("button", { name: "Machine" });
+  fireEvent.click(trigger);
+  const search = await screen.findByRole("textbox", { name: "Search machines" });
+  const escapeBeyondPicker = vi.fn();
+  window.addEventListener("keydown", escapeBeyondPicker);
+  fireEvent.keyDown(search, { key: "Escape" });
+  window.removeEventListener("keydown", escapeBeyondPicker);
+  await waitFor(() => expect(screen.queryByRole("listbox", { name: "Machines" })).toBeNull());
+  expect(escapeBeyondPicker).not.toHaveBeenCalled();
+  expect(header()).toBeTruthy();
+  await waitFor(() => expect(document.activeElement).toBe(trigger));
+});
+
+test("the header has no settings gear: the Monitor's settings are on BB Box's settings page", async () => {
+  openMonitor(null);
+  await screen.findByText("load 0.50");
+  expect(within(header()).queryByRole("link")).toBeNull();
+  expect(within(header()).queryByRole("link", { name: "Machine status settings" })).toBeNull();
+  expect(tabbable(header()).map((element) => element.getAttribute("aria-label"))).toEqual(["Machine", "Reload machine status", "Hide machine status"]);
 });
