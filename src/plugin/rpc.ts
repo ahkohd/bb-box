@@ -265,7 +265,10 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       return result;
     },
     "config.migrated.remove": async () => ({ removed: await app.configuration.removeMigrated(), state: await app.configuration.state() }),
-    "docker.hosts": async () => ({ hosts: await app.dockerHosts.list() }),
+    "docker.hosts": async (input) => {
+      if (input?.recheck) app.dockerHosts.forget(input.recheck);
+      return { hosts: await app.dockerHosts.list() };
+    },
     "setup.offer": async () => ({ machines: await app.setups(), access: await app.machineAccess() }),
     "images.progress": async () => {
       const standard = await app.imageJobs.failures().catch(() => []);

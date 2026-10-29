@@ -549,12 +549,12 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           summary:
             "Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout or with another build of BB's app, through bb-box's relay (042). Waits for the build. " +
             `Building all three needs about ${BUILD_FREE_GB} GB free there; with less, it does not start.`,
-          positionals: [{ name: "machine", description: "The BB machine's ID or name, from bb machine list. It must be turned on under Docker on BB machines.", required: true }],
+          positionals: [{ name: "machine", description: "The BB machine's ID or name, from bb machine list. Its Docker must be added in bb-box's settings, under Add backend.", required: true }],
           run: ({ positionals }) =>
             guard("Building the images", async () => {
               // From BB's record and the configuration: listing would look at every machine's Docker.
               const host = await app.dockerHostOf(positionals.machine);
-              if (!host?.backend) throw new BoxError("not_found", `${positionals.machine} is not a Docker host in bb-box's settings. Turn it on under Docker on BB machines first.`);
+              if (!host?.backend) throw new BoxError("not_found", `${positionals.machine} is not a Docker host in bb-box's settings. Add its Docker under Add backend first.`);
               const build = await app.dockerImages.ensure(host.hostId);
               const took = build.endedAt ? ` in ${Math.round((build.endedAt - build.startedAt) / 1000)} s` : "";
               if (build.state === "failed") return { exitCode: 1, stderr: `Building the images on ${host.name} failed${took}: ${build.detail ?? "no reason given"}\n` };

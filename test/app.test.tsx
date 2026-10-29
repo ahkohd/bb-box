@@ -693,6 +693,13 @@ function server(initial: BoxView[], options: { rooms?: Record<string, string> | 
       changes.push(`docker.host.set ${hostId} ${enabled}`);
       if (operation) operations.push(operation);
       dockerHosts = dockerHosts.map((host) => (host.hostId === hostId ? { ...host, backend: enabled ? { id: `docker:${host.name}`, enabled: true, boxes: 0 } : null } : host));
+      const named = dockerHosts.find((host) => host.hostId === hostId)?.name ?? hostId;
+      if (applied) {
+        const others = applied.backends.filter((backend) => backend.fields.host !== `bb:${hostId}`);
+        const existing = applied.backends.find((backend) => backend.fields.host === `bb:${hostId}`);
+        const backend = existing ? { ...existing, enabled } : { id: `docker:${named}`, type: "docker", label: `Docker on ${named}`, enabled: true, fields: { host: `bb:${hostId}`, privileged: true } };
+        applied = { ...applied, revision: applied.revision + 1, backends: enabled || existing ? [...others, backend] : others };
+      }
       return { result: { ok: true, state: configState(options.config ?? {}), problems: [] }, hosts: dockerHosts };
     },
     "monitor.state": () => ({ enabled: false, backgroundMonitoring: false, pressureNotifications: true }),
@@ -6780,52 +6787,129 @@ test("a field that takes a value from another backend names that backend when th
   expect(screen.getByText("from Proxmox LXC")).toBeTruthy();
 });
 
-test("Docker on BB machines lists each machine with Docker's facts, and its switch makes it a Docker host (042)", async () => {
-  const machine = (hostId: string, name: string, more: Partial<DockerHostView> = {}): DockerHostView => ({
-    hostId,
-    name,
-    connected: true,
-    docker: { version: "29.8.1", os: "Arch Linux", arch: "x86_64", cpus: 16, memoryMiB: 100 * 1024 },
-    problem: null,
-    absent: false,
-    backend: null,
-    images: null,
-    ...more,
-  });
-  const { handlers, changes } = server([], {
-    dockerHosts: [
-      machine("host_b", "devpc"),
-      machine("host_p", "plain", { docker: null, problem: null, absent: true }),
-      machine("host_n", "no-docker", { docker: null, problem: "Docker did not answer: connect: no such file or directory" }),
-      machine("host_o", "sleepy", { connected: false, docker: null, problem: "The machine is offline in BB.", backend: { id: "docker:sleepy", enabled: true, boxes: 1 } }),
-      machine("host_g", "builder", { backend: { id: "docker:builder", enabled: true, boxes: 0 }, images: { state: "building", targets: ["linux", "desktop"], detail: "#5 [linux 2/9] RUN apt-get install", startedAt: 0, endedAt: null } }),
-      machine("host_f", "broken", { backend: { id: "docker:broken", enabled: true, boxes: 0 }, images: { state: "failed", targets: ["linux"], detail: "build.sh exited with 1: ERROR: failed to solve", startedAt: 0, endedAt: 1 } }),
-    ],
-  });
-  const slot = settings(handlers, "#add");
-  expect(await slot.findByText("Docker on BB machines")).toBeTruthy();
-  const row = (name: string) => slot.getByText(name).closest("[data-resource-row]") as HTMLElement;
-  expect(within(row("devpc")).getByText("Can host boxes")).toBeTruthy();
-  expect(within(row("devpc")).getByText("Docker 29.8.1")).toBeTruthy();
-  expect(within(row("devpc")).getByText("16 cores")).toBeTruthy();
-  expect(within(row("devpc")).getByText("100 GiB memory")).toBeTruthy();
-  // Docker that is there but fails is red with its words; a machine with no Docker reads "No Docker", muted, and sits last.
-  expect(within(row("no-docker")).getByText("Cannot host boxes")).toBeTruthy();
-  expect(within(row("no-docker")).getByText(/Docker did not answer/)).toBeTruthy();
-  expect((within(row("no-docker")).getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
-  expect(within(row("plain")).getByText("No Docker")).toBeTruthy();
-  expect(within(row("plain")).queryByText(/did not answer/)).toBeNull();
-  expect((within(row("plain")).getByRole("switch") as HTMLButtonElement).disabled).toBe(true);
-  const names = slot.getAllByText(/^(devpc|plain|no-docker|sleepy|builder|broken)$/).map((node) => node.textContent);
-  expect(names.indexOf("plain")).toBe(names.length - 1);
-  expect(within(row("sleepy")).getByText("Offline in BB, 1 box on it")).toBeTruthy();
-  // A machine turned on builds the images it lacks, and the row says so until the build ends.
-  expect(within(row("builder")).getByText("Building linux and desktop images: #5 [linux 2/9] RUN apt-get install")).toBeTruthy();
-  expect(within(row("broken")).getByText("Building its images failed: build.sh exited with 1: ERROR: failed to solve")).toBeTruthy();
+const DOCKER_DRIVER: ConfigState["drivers"][number] = {
+  type: "docker",
+  label: "Docker",
+  description: "Linux boxes as containers on a Docker host.",
+  nature: "virtual",
+  kinds: ["linux"],
+  fields: [
+    { key: "host", type: "string", label: "Host", group: "connection", default: "" },
+    { key: "boxes", type: "number", label: "Most boxes", group: "advanced", default: 20 },
+  ],
+  hostFields: [],
+  warmKinds: ["linux"],
+  setup: { guide: "setup/docker/README.md", scripts: [] },
+};
 
-  fireEvent.click(within(row("devpc")).getByRole("switch", { name: "Host boxes on devpc" }));
+function dockerMachine(hostId: string, name: string, more: Partial<DockerHostView> = {}): DockerHostView {
+  return { hostId, name, connected: true, docker: { version: "29.8.1", os: "Arch Linux", arch: "x86_64", cpus: 16, memoryMiB: 100 * 1024 }, problem: null, absent: false, backend: null, images: null, fix: null, ...more };
+}
+
+const NO_GROUP: Partial<DockerHostView> = {
+  docker: null,
+  problem: "Docker did not answer: Docker's socket refused BB's daemon.",
+  fix: { problem: "Docker is on lab, but BB's user, bb, cannot use it. Add bb to the docker group, then restart BB's daemon there.", command: "sudo usermod -aG docker bb", restart: "sudo systemctl restart user@1000.service" },
+};
+
+function machineBackend(hostId: string, name: string, enabled = true): BackendConfig {
+  return { id: `docker:${name}`, type: "docker", label: `Docker on ${name}`, enabled, fields: { host: `bb:${hostId}`, privileged: true } };
+}
+
+function machinesServer(hosts: DockerHostView[], backends: BackendConfig[]) {
+  const document: ConfigDocument = { schema: 1, revision: 3, backends, kinds: {}, general: {} };
+  applied = document;
+  const base = configState({ document });
+  const live = base.backends.map((backend) => ({ ...backend, label: backends.find((each) => each.id === backend.id)?.label ?? backend.label, boxes: 0, kinds: backend.state === "active" ? ["linux"] : [] }));
+  return server([], { dockerHosts: hosts, config: { drivers: [...base.drivers, DOCKER_DRIVER], backends: live, problems: [] } });
+}
+
+test("Add backend offers Docker on your BB machines first: Add for those that can host boxes, Cannot host boxes with its fix and Check again, those added, and one line for machines with no Docker", async () => {
+  const hosts = [
+    dockerMachine("host_b", "devpc"),
+    dockerMachine("host_n", "lab", NO_GROUP),
+    dockerMachine("host_p", "plain", { docker: null, absent: true }),
+    dockerMachine("host_q", "quiet", { docker: null, absent: true }),
+    dockerMachine("host_o", "sleepy", { connected: false, docker: null, problem: "The machine is offline in BB." }),
+    dockerMachine("host_g", "builder", { backend: { id: "docker:builder", enabled: true, boxes: 0 }, images: { state: "building", targets: ["linux"], detail: "#5 [linux 2/9] RUN apt-get install", startedAt: 0, endedAt: null } }),
+  ];
+  const { handlers, changes, operations } = machinesServer(hosts, [machineBackend("host_g", "builder")]);
+  const slot = settings(handlers, "#add");
+  const group = (await slot.findByRole("heading", { name: "Docker on your BB machines" })).closest("section") as HTMLElement;
+  const headings = slot.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
+  expect(headings.indexOf("Docker on your BB machines")).toBeLessThan(headings.indexOf("Backends"));
+  const row = (name: string) => within(group).getByText(name, { selector: "p, span" }).closest("div.flex, button") as HTMLElement;
+  expect(within(row("devpc")).getByText("Can host boxes")).toBeTruthy();
+  expect(within(row("devpc")).getByText("16 cores")).toBeTruthy();
+  expect(within(row("lab")).getByText("Cannot host boxes")).toBeTruthy();
+  expect(within(row("lab")).getByText(/BB's user, bb, cannot use it/)).toBeTruthy();
+  expect(within(row("lab")).getByText("sudo usermod -aG docker bb")).toBeTruthy();
+  expect(within(row("lab")).getByText("sudo systemctl restart user@1000.service")).toBeTruthy();
+  expect(within(row("sleepy")).getByText("Offline in BB")).toBeTruthy();
+  expect(within(row("builder")).getByText("Added: open it")).toBeTruthy();
+  expect(within(row("builder")).getByText("Building linux images: #5 [linux 2/9] RUN apt-get install")).toBeTruthy();
+  expect(within(group).getByText("No Docker on plain and quiet.")).toBeTruthy();
+  expect(within(group).queryByRole("switch")).toBeNull();
+
+  fireEvent.click(within(group).getByRole("button", { name: "Check Docker on lab again" }));
+  await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "docker.hosts" && (call.input as { recheck?: string } | null)?.recheck === "host_n")).toBe(true));
+
+  fireEvent.click(within(group).getByRole("button", { name: "Add Docker on devpc" }));
   await waitFor(() => expect(changes).toContain("docker.host.set host_b true"));
-  expect(await within(row("devpc")).findByText("Hosts boxes")).toBeTruthy();
+  expect(operations).toHaveLength(1);
+  const added = await within(group).findByRole("button", { name: /^devpc/ });
+  await waitFor(() => expect(document.activeElement).toBe(added));
+  expect(within(added).getByText("Added: open it")).toBeTruthy();
+});
+
+test("a BB machine's Docker in use is a backend row like the others: its build on the row, Cannot host boxes on the row and in Status with its fix, and the machines that could host boxes in one line", async () => {
+  const hosts = [
+    dockerMachine("host_g", "builder", { backend: { id: "docker:builder", enabled: true, boxes: 0 }, images: { state: "building", targets: ["linux", "desktop", "desktop-wayland"], detail: "#5 [linux 2/9] RUN apt-get install", image: { at: 1, of: 3 }, step: { at: 2, of: 9 }, startedAt: 0, endedAt: null } }),
+    dockerMachine("host_n", "lab", { ...NO_GROUP, backend: { id: "docker:lab", enabled: true, boxes: 0 } }),
+    dockerMachine("host_b", "devpc"),
+    dockerMachine("host_x", "attic", { docker: null, problem: "Docker did not answer: connect: no such file or directory" }),
+  ];
+  const { handlers } = machinesServer(hosts, [machineBackend("host_g", "builder"), machineBackend("host_n", "lab")]);
+  const slot = settings(handlers);
+  const backends = (await slot.findByRole("heading", { name: "Backends" })).closest("section") as HTMLElement;
+  const rowOf = (name: string) => within(backends).getByRole("button", { name }).parentElement as HTMLElement;
+  await waitFor(() => expect(within(rowOf("Docker on lab")).getByText("Cannot host boxes")).toBeTruthy());
+  expect(within(rowOf("Docker on lab")).getAllByText("BB machine").length).toBe(1);
+  expect(within(rowOf("Docker on builder")).getByText("Building linux, desktop and desktop-wayland images · Image 1 of 3, step 2 of 9")).toBeTruthy();
+  const callout = slot.getByRole("region", { name: "Things that need you" });
+  expect(within(callout).getByText("Docker on lab")).toBeTruthy();
+  expect(within(callout).getByText("Fix: On lab, run sudo usermod -aG docker bb, then sudo systemctl restart user@1000.service. Then check again.")).toBeTruthy();
+  expect(within(backends).getByText(/devpc has Docker and could host boxes\. Docker on attic cannot host boxes now\./)).toBeTruthy();
+  fireEvent.click(within(backends).getByRole("button", { name: "See them under Add backend" }));
+  expect(await slot.findByRole("heading", { name: "Add a backend" })).toBeTruthy();
+});
+
+test("a BB machine's Docker page: the machine, Docker's facts and its fix, off keeps the backend and on goes through docker.host.set", async () => {
+  const hosts = [dockerMachine("host_n", "lab", { ...NO_GROUP, backend: { id: "docker:lab", enabled: true, boxes: 0 } })];
+  const { handlers, changes, operations } = machinesServer(hosts, [machineBackend("host_n", "lab")]);
+  const slot = settings(handlers, "#backend/docker:lab");
+  expect(await slot.findByRole("heading", { name: /^Docker on lab/ })).toBeTruthy();
+  const card = (await slot.findByRole("heading", { name: "BB machine" })).closest("section") as HTMLElement;
+  await waitFor(() => expect(within(card).getByText("Cannot host boxes")).toBeTruthy());
+  expect(within(card).getByText("sudo usermod -aG docker bb")).toBeTruthy();
+  expect(within(card).getByRole("button", { name: "Copy the command: sudo usermod -aG docker bb" })).toBeTruthy();
+  fireEvent.click(within(card).getByRole("button", { name: "Check Docker on lab again" }));
+  await waitFor(() => expect(changes.some((change) => change.startsWith("check docker:lab "))).toBe(true));
+  await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "docker.hosts" && (call.input as { recheck?: string } | null)?.recheck === "host_n")).toBe(true));
+  expect(slot.queryByRole("textbox", { name: "Host" })).toBeNull();
+  expect(slot.queryByText("Docker on BB machines")).toBeNull();
+
+  const takes = slot.getByRole("switch", { name: "Docker on lab: takes new boxes" });
+  fireEvent.click(takes);
+  await waitFor(() => expect(changes.some((change) => change.startsWith("apply "))).toBe(true));
+  expect(changes.some((change) => change.startsWith("docker.host.set"))).toBe(false);
+  expect(bodyOf(changes.find((change) => change.startsWith("apply "))!).backends).toEqual([{ ...machineBackend("host_n", "lab"), enabled: false }]);
+  await waitFor(() => expect(slot.getByRole("switch", { name: "Docker on lab: takes new boxes" }).getAttribute("aria-checked")).toBe("false"));
+  expect(slot.getByRole("heading", { name: /^Docker on lab/ })).toBeTruthy();
+
+  fireEvent.click(slot.getByRole("switch", { name: "Docker on lab: takes new boxes" }));
+  await waitFor(() => expect(changes).toContain("docker.host.set host_n true"));
+  expect(operations).toHaveLength(2);
 });
 
 // The review of 22 October 2026: the paste hold, Shift and the stream switch together.

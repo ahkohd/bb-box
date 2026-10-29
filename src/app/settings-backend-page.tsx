@@ -17,7 +17,8 @@ import { backendPart, FieldCards, hasFormProblem, HostsSection, RemoveHostDialog
 import { bindingOf, fingerprintOf, formChecks, type FormCheck } from "./settings-checks.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { unplacedProblems } from "./settings-draft-fields.tsx";
-import { DockerHostsSection } from "./settings-docker-hosts.tsx";
+import { MachineCard, useMachineHosts, type Machines } from "./settings-docker-hosts.tsx";
+import { machineIdOf } from "./settings-machine-docker.ts";
 import { drafts } from "./settings-drafts.ts";
 import { Card, Group, NotHere, PageHeader, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendAt, candidateOf, hostPath, type Path, type PathEdit } from "./settings-paths.ts";
@@ -105,11 +106,11 @@ function clearedWords(binding: ReturnType<typeof bindingOf> | null): string | nu
   return null;
 }
 
-function HealthCard({ form, check, running, onCheck, id }: { form: BackendForm; check: FormCheck | null; running: boolean; onCheck: () => void; id: string }) {
+function HealthCard({ form, check, running, onCheck, id, machines }: { form: BackendForm; check: FormCheck | null; running: boolean; onCheck: () => void; id: string; machines: Machines | null }) {
   const { state, config, draft } = form;
   const [all, setAll] = useState(false);
   const now = Date.now();
-  const health = backendHealth(state, config, now);
+  const health = backendHealth(state, config, now, machines?.hosts ?? null);
   const live = state.backends.find((each) => each.id === config.id);
   const binding = check ? bindingOf(check, fingerprintOf(draft.latest.revision, draft.entry.edits)) : null;
   const ofDraft = check?.againstDraft && binding === "current" ? check : null;
@@ -140,7 +141,7 @@ function HealthCard({ form, check, running, onCheck, id }: { form: BackendForm; 
         <div className="min-w-0 flex-1 basis-56" id={id} role="status" aria-live="polite">
           <p className="flex items-start gap-1.5 text-sm text-foreground">
             <StatusDot tone={look.tone} />
-            <span className={cn("font-medium", look.tone === "bad" && "text-destructive-text", look.tone === "warn" && "text-warning-text")}>{look.words}</span>
+            <span className={cn("shrink-0 font-medium", look.tone === "bad" && "text-destructive-text", look.tone === "warn" && "text-warning-text")}>{look.words}</span>
             {report && !running && (ofDraft || health.status !== "off") ? <span className="hidden min-w-0 truncate text-muted-foreground sm:inline">· {report.summary}</span> : null}
           </p>
           <p className="mt-0.5 pl-3 text-xs leading-snug text-subtle-foreground">{line}</p>
@@ -418,6 +419,7 @@ function BackendEditor({ config }: { config: BackendConfig }) {
   const live = state.backends.find((candidate) => candidate.id === config.id);
   const chip = hostChip(config, label, live?.hosts);
   const machine = isMachineDocker(config);
+  const machines = useMachineHosts(machine);
   const key = switchKey.backend(config.id);
   const pending = instant.pendingValue<boolean>(key);
   const boxes = live?.boxes ?? 0;
@@ -439,6 +441,8 @@ function BackendEditor({ config }: { config: BackendConfig }) {
   const runCheck = () => {
     const candidate = candidateOf(draft.latest, draftEdits(draft));
     const fingerprint = fingerprintOf(draft.latest.revision, draft.entry.edits);
+    const hostId = machineIdOf(config);
+    if (hostId) void machines.recheck([hostId]);
     void checks.run(part, fingerprint, draft.changes > 0, () => rpc.call("config.check", { draft: candidate.document, test: config.id }), Date.now).then(() => refresh());
   };
   const notes = [instant.note(key), instant.note(switchKey.backendLabel(config.id)), instant.note(switchKey.removeBackend(config.id))];
@@ -526,12 +530,12 @@ function BackendEditor({ config }: { config: BackendConfig }) {
       </PageHeader>
       <RestoredNote draft={draft} />
       <Group title="Health">
-        <HealthCard form={form} check={check} running={running} onCheck={runCheck} id={healthId} />
+        <HealthCard form={form} check={check} running={running} onCheck={runCheck} id={healthId} machines={machine ? machines : null} />
       </Group>
+      {machine ? <MachineCard config={config} machines={machines} onCheck={runCheck} checking={running} /> : null}
       <InUseCard state={form.state} config={form.config} />
       <FieldCards form={form} groups={groups} forced={forced} />
       <HostsSection form={form} forced={forced} onRemove={setRemovingHost} />
-      {machine ? <DockerHostsSection /> : null}
       <GuideLine driver={driver} />
       <SaveBar
         draft={draft}

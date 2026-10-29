@@ -471,7 +471,7 @@ Usage:
   bb box docker-build <machine>
 
 Arguments:
-  <machine>  The BB machine's ID or name, from bb machine list. It must be turned on under Docker on BB machines. (required)
+  <machine>  The BB machine's ID or name, from bb machine list. Its Docker must be added in bb-box's settings, under Add backend. (required)
 ```
 
 ## bb box install-id

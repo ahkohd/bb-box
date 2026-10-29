@@ -5,7 +5,7 @@
 import { ReplyDrops, liveChecksOn } from "./live-checks.ts";
 import { tailnetDoctor } from "../core/tailnet-doctor.ts";
 import { hostname } from "node:os";
-import { machineAccessProblem, machineSetups, type AccessConfig, type MachineAccessProblem, type MachineSetup } from "./setup-offer.ts";
+import { dockerFix, machineAccessProblem, machineSetups, type AccessConfig, type MachineAccessProblem, type MachineSetup } from "./setup-offer.ts";
 import type { SetupFacts } from "../host/relay.ts";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import packageJson from "../../package.json" with { type: "json" };
@@ -1088,6 +1088,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const setupFactsOf = new Map<string, SetupFacts>();
   const dockerHosts = new DockerHosts({
     images: (hostId) => dockerImages.state(hostId),
+    fix: (view) => {
+      const known = setupFactsOf.get(view.hostId) ?? null;
+      return dockerFix(view, known, known?.hostname === hostname());
+    },
     machines: async () => (await bb.sdk.hosts.list({ includeCreating: false } as never)) as unknown as readonly MachineRecord[],
     document: () => configuration.document,
     providers: [MACHINE_PROVIDER_ID, NEW_BOX_PROVIDER_ID],

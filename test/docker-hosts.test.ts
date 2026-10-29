@@ -100,6 +100,7 @@ test("each machine shows Docker as it answers through the relay, kept a while, a
     absent: false,
     backend: { id: "docker:devpc", enabled: true, boxes: 2 },
     images: null,
+    fix: null,
   });
   assert.equal(listed.find((each) => each.name === "windows-pc")?.problem, "Docker there runs windows containers. Switch it to Linux containers.");
   // No Docker on a machine is normal: no problem to show, only absent.
@@ -118,6 +119,29 @@ test("each machine shows Docker as it answers through the relay, kept a while, a
   clock += 60_000;
   await hosts.list();
   assert.equal(calls, 5);
+});
+
+test("each machine carries the fix for what stands in the way of its Docker, from the view it is listed with", async () => {
+  const seen: string[] = [];
+  const hosts = new DockerHosts({
+    machines: async () => [machine("host_b", "devpc"), machine("host_l", "lab")],
+    document: () => ({ ...emptyDocument(1), backends: [{ id: "docker:lab", type: "docker", enabled: true, fields: { host: "bb:host_l" } }] }),
+    providers: ["bb-box"],
+    found: async (hostId) => {
+      if (hostId === "host_l") throw new Error("Docker's socket refused BB's daemon.");
+      return null;
+    },
+    docker: async () => info(),
+    boxes: async () => new Map(),
+    fix: (view) => {
+      seen.push(`${view.name} ${view.backend?.id ?? "-"} ${view.docker ? "docker" : view.problem}`);
+      return view.docker ? null : { problem: "BB's user, bb, cannot use it.", command: "sudo usermod -aG docker bb", restart: null };
+    },
+  });
+  const listed = await hosts.list();
+  assert.deepEqual(seen.sort(), ["devpc - docker", "lab docker:lab Docker did not answer: Docker's socket refused BB's daemon."]);
+  assert.equal(listed.find((each) => each.name === "devpc")?.fix, null);
+  assert.deepEqual(listed.find((each) => each.name === "lab")?.fix, { problem: "BB's user, bb, cannot use it.", command: "sudo usermod -aG docker bb", restart: null });
 });
 
 test("a machine BB shows connected but has not heard from for a minute is offline, saying why, and is not called", async () => {

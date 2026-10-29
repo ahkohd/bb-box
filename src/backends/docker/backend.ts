@@ -595,7 +595,7 @@ export class DockerBackend implements Backend {
     if (!machine) return otherwise;
     // By its name in BB, which the command takes, else by its ID.
     const named = this.#context.machines?.name(machine) ?? machine;
-    return `Run bb box docker-build ${/^[A-Za-z0-9_.-]+$/.test(named) ? named : machine}, or turn ${this.#host} off and on under Docker on BB machines in bb-box's settings, to build it there.`;
+    return `Run bb box docker-build ${/^[A-Za-z0-9_.-]+$/.test(named) ? named : machine}, or turn Docker on ${this.#host} off and on in bb-box's settings, to build it there.`;
   }
 
   /** The host's name for people: a BB machine's as BB has it, else as the daemon gives it once it has answered. */

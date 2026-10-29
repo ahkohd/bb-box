@@ -92,7 +92,7 @@ export function settingsWrites(rpc: { call: (...args: never[]) => Promise<unknow
       const path = `backends/${config.id}/enabled`;
       const write = pathWrite(state, switchKey.backend(config.id), what, path, plain(on), on, settingWords(path, onOff));
       const hostId = machineHostId(config);
-      if (!hostId) return write;
+      if (!hostId || !on) return write;
       return { ...write, send: (_transport, _built, _state, operation) => dockerHostSet(hostId, on, operation) };
     },
     backendLabel(state, config, label, what) {

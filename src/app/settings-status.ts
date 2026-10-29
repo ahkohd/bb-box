@@ -4,6 +4,7 @@ import type { BackendState, ConfigState, KindInfoView } from "../plugin/configur
 import { relativeTime, type Tone } from "./common.tsx";
 import { effectiveKind, problemsUnder } from "./config.ts";
 import type { SettingsView } from "./settings-route.ts";
+import { buildWords, machineOf, machineTrouble, type MachineHosts } from "./settings-machine-docker.ts";
 
 export const FRESH_CHECK_MS = 60 * 60_000;
 const SAME_AGE_MS = 5 * 60_000;
@@ -105,7 +106,7 @@ export function backendLabel(state: ConfigState, config: BackendConfig): string 
   return live?.label ?? config.label ?? state.drivers.find((driver) => driver.type === config.type)?.label ?? config.type;
 }
 
-export function backendHealth(state: ConfigState, config: BackendConfig, now: number): BackendHealth {
+export function backendHealth(state: ConfigState, config: BackendConfig, now: number, machines: MachineHosts = null): BackendHealth {
   const live: BackendState | undefined = state.backends.find((candidate) => candidate.id === config.id);
   const stored = problemsUnder(state.problems, `backends.${config.id}`);
   const doctor = live?.doctor ?? null;
@@ -116,6 +117,8 @@ export function backendHealth(state: ConfigState, config: BackendConfig, now: nu
     if (missing) return { status: "unfinished", tone: "warn", words: "Not finished", detail: missing, fix: "Finish its settings, then turn it on.", ...quiet };
     return { status: "off", tone: "off", words: "Off", detail: "takes no new boxes", fix: null, ...quiet };
   }
+  const trouble = machineTrouble(config, machines);
+  if (trouble) return { ...trouble, ...quiet };
   if (live?.state === "misconfigured") {
     const first = live.problems[0]?.message ?? stored[0]?.message ?? "Its settings have a problem.";
     return { status: "failing", tone: "bad", words: "Not working", detail: first, fix: "Open it and fix its settings.", ...quiet };
@@ -158,10 +161,10 @@ export interface StatusLine {
   readonly checkFirst: boolean;
 }
 
-export function statusLine(state: ConfigState, now: number, checking: number): StatusLine {
+export function statusLine(state: ConfigState, now: number, checking: number, machines: MachineHosts = null): StatusLine {
   const on = state.document.backends.filter((backend) => backend.enabled);
   const off = state.document.backends.length - on.length;
-  const healths = on.map((backend) => backendHealth(state, backend, now));
+  const healths = on.map((backend) => backendHealth(state, backend, now, machines));
   const offered = offeredKinds(state).length;
   if (checking) return { tone: "busy", headline: `Checking ${plural(checking, "backend")}, up to 30 s each, side by side…`, details: [], checkFirst: false };
   if (!state.document.backends.length) return { tone: "off", headline: "No backend yet", details: [], checkFirst: false };
@@ -257,14 +260,16 @@ export interface StatusItem {
   readonly open: SettingsView;
 }
 
-export function statusItems(state: ConfigState, now: number): StatusItem[] {
+export function statusItems(state: ConfigState, now: number, machines: MachineHosts = null): StatusItem[] {
   const items: StatusItem[] = [];
   for (const backend of state.document.backends) {
-    const health = backendHealth(state, backend, now);
+    const health = backendHealth(state, backend, now, machines);
     const label = backendLabel(state, backend);
     const open: SettingsView = { page: "backend", id: backend.id };
     if (health.status === "failing") items.push({ key: `backend-${backend.id}`, tone: health.tone, title: label, detail: health.detail ?? "", fix: health.fix, open });
     if (health.status === "unfinished") items.push({ key: `unfinished-${backend.id}`, tone: "warn", title: `${label} is not finished`, detail: health.detail ?? "", fix: health.fix, open });
+    const machine = backend.enabled ? machineOf(machines, backend) : null;
+    if (machine?.images?.state === "failed") items.push({ key: `images-${backend.id}`, tone: "bad", title: `The images on ${label} did not build`, detail: buildWords(machine)?.text ?? "", fix: `Run bb box docker-build ${machine.name}, or turn ${label} off and on.`, open });
     for (const short of state.backends.find((live) => live.id === backend.id)?.warmShort ?? []) {
       const kinds = short.kinds.map((kind) => state.kinds.find((info) => info.id === kind)).filter((info): info is KindInfoView => !!info);
       items.push({
