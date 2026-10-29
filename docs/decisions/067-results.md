@@ -1912,6 +1912,18 @@ selection, with the BB box's machine named bb-1 and the second box lab:
   could not tell how it restarts and said "restart BB there" in words. As
   a systemd user service it gives the `systemctl` line, as first run does.
 
+### After the look in production
+
+The look in production, in the owner's browser on 29 October 2026,
+found the overview, a BB machine's Docker page and Add backend as above,
+with one fault: Add backend listed "crisp-hill (spare, stopped) · Offline
+in BB", a spare box of bb-box's own. Spares and kept machines join BB
+through manual setup, so the filter on bb-box's machine providers missed
+it. The Docker host list now also leaves out every machine that holds one
+of bb-box's boxes, by its box records, unless the configuration uses it;
+`test/docker-hosts.test.ts` covers a spare, one of your machines, and one the
+configuration uses, which stays.
+
 ### Not done here
 
 - A look in production in the owner's browser, after the lead deploys.
