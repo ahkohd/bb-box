@@ -116,21 +116,33 @@ export function RowNote({ note, className }: { note: string | null; className?: 
   );
 }
 
-export function NavRow({ icon, title, value, tone, onClick, outward = false, rowKey, trailing, valueId, switchColumn = false }: { icon: ReactNode; title: string; value?: ReactNode; tone?: Tone; onClick: () => void; outward?: boolean; rowKey: string; trailing?: ReactNode; valueId?: string; switchColumn?: boolean }) {
+export function RowButton({ rowKey, label, describedBy, onClick }: { rowKey: string; label: string; describedBy?: string; onClick: () => void }) {
+  return <button type="button" data-row-key={rowKey} aria-label={label} aria-describedby={describedBy} onClick={onClick} className={cn("absolute inset-0 cursor-pointer", FOCUS_RING)} />;
+}
+
+export function RowControl({ children }: { children: ReactNode }) {
+  return <span className="relative z-10 flex shrink-0 items-center gap-1.5">{children}</span>;
+}
+
+export function NavRow({ icon, title, value, tone, onClick, outward = false, rowKey, control, valueId }: { icon: ReactNode; title: string; value?: ReactNode; tone?: Tone; onClick: () => void; outward?: boolean; rowKey: string; control?: ReactNode; valueId?: string }) {
   return (
-    <div className="flex items-center gap-3 pr-4 transition-colors duration-150 hover:bg-state-hover">
-      <button type="button" data-row-key={rowKey} onClick={onClick} aria-describedby={value ? valueId : undefined} className={cn("flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-x-3 gap-y-0.5 py-2.5 pl-4 text-left", FOCUS_RING)}>
-        <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
-        <span className="min-w-0 flex-1 text-sm text-foreground">{title}</span>
-        {value ? (
-          <span id={valueId} className={cn("flex min-w-0 basis-full items-center gap-1.5 pl-8 text-xs text-muted-foreground sm:basis-auto sm:pl-0", tone === "warn" && "text-warning-text")}>
-            {tone ? <StatusDot tone={tone} /> : null}
-            <span className="truncate">{value}</span>
-          </span>
-        ) : null}
+    <div className="relative flex flex-wrap items-center gap-x-3 gap-y-0.5 px-4 py-2.5 transition-colors duration-150 hover:bg-state-hover">
+      <RowButton rowKey={rowKey} label={title} describedBy={value ? valueId : undefined} onClick={onClick} />
+      <span className="pointer-events-none flex size-5 shrink-0 items-center justify-center text-muted-foreground">{icon}</span>
+      <span className="pointer-events-none text-sm text-foreground" aria-hidden>
+        {title}
+      </span>
+      {control ? <RowControl>{control}</RowControl> : null}
+      <span className="pointer-events-none min-w-0 flex-1" />
+      {value ? (
+        <span id={valueId} className={cn("pointer-events-none order-last flex min-w-0 basis-full items-center gap-1.5 pl-8 text-xs text-muted-foreground sm:order-none sm:basis-auto sm:pl-0", tone === "warn" && "text-warning-text")}>
+          {tone ? <StatusDot tone={tone} /> : null}
+          <span className="truncate">{value}</span>
+        </span>
+      ) : null}
+      <span className="pointer-events-none">
         <Chevron outward={outward} />
-      </button>
-      {switchColumn ? <span className="flex w-7 shrink-0 justify-end">{trailing}</span> : trailing}
+      </span>
     </div>
   );
 }
