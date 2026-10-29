@@ -6770,6 +6770,24 @@ test("F-19: iOS and Android are systems in the Boxes page's filters, after Linux
   expect(tagCounts(rows, "iphone", NO_FILTERS).systems).toEqual({ iOS: 2 });
 });
 
+test("a device box's Simulator or Emulator badge and a shared box's Shared badge are tags in the Boxes page's filters too", () => {
+  const rows = [box(), MAC_DESKTOP, SHARED_IOS, DEDICATED_IOS, ANDROID].map((one) => ({ box: one, words: [] }));
+  const names = (filters: typeof NO_FILTERS) => shown(rows, "", filters, { key: "name", ascending: true }).map((row) => row.box.name);
+  expect(rows.map((row) => { const tags = tagsOf(row.box); return `${row.box.name}: ${tags.forms.join()} | ${tags.has.join()}`; })).toEqual([
+    "calm-otter: Container | ",
+    "pool-mac: VM | Desktop,arm64",
+    "brisk-wren: Shared | Simulator,arm64",
+    "tall-ridge: VM | Simulator,Desktop,arm64",
+    "green-bay: VM | Emulator,KVM",
+  ]);
+  const listed = choices(rows.map((row) => row.box));
+  expect(listed.forms).toEqual(["VM", "Container", "Shared"]);
+  expect(listed.has).toEqual(["Simulator", "Emulator", "Desktop", "KVM", "arm64"]);
+  expect(names({ ...NO_FILTERS, has: ["Simulator"] })).toEqual(["brisk-wren", "tall-ridge"]);
+  expect(names({ ...NO_FILTERS, has: ["Emulator"] })).toEqual(["green-bay"]);
+  expect(names({ ...NO_FILTERS, forms: ["Shared"] })).toEqual(["brisk-wren"]);
+});
+
 test("F-19: on the Boxes page, the Filters menu offers iOS and Android under System, and ticking one lists only its device boxes", async () => {
   const { handlers } = server([box(), MAC_DESKTOP, SHARED_IOS, DEDICATED_IOS, ANDROID]);
   const list = boxesPage(handlers);
