@@ -216,6 +216,7 @@ function RunsOnRow({ draft, row, info, problemAt }: { draft: Draft; row: RunsOn;
   const shortId = `${ids}-short`;
   const problemId = `${ids}-problem`;
   const noteId = `${ids}-note`;
+  const chipsId = `${ids}-chips`;
   const conflict = draft.conflict(path);
   const openSharedHosts = () => nav.go({ page: "backend", id: row.config.id }, `${rowKey}-shared`, row.sharedIosField ? backendFieldPath(row.config.id, row.sharedIosField) : undefined);
   return (
@@ -224,9 +225,13 @@ function RunsOnRow({ draft, row, info, problemAt }: { draft: Draft; row: RunsOn;
         <ProviderGlyph type={row.config.type} className="mt-0.5" />
         <div className="min-w-0 flex-1 basis-48">
           <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <button type="button" data-row-key={rowKey} onClick={() => nav.go({ page: "backend", id: row.config.id }, rowKey)} className={cn("min-w-0 cursor-pointer truncate rounded-sm text-left text-sm text-foreground underline-offset-2 hover:underline", FOCUS_RING)}>
+            <button type="button" data-row-key={rowKey} aria-describedby={row.chip || row.bbMachine ? chipsId : undefined} onClick={() => nav.go({ page: "backend", id: row.config.id }, rowKey)} className={cn("min-w-0 cursor-pointer truncate rounded-sm text-left text-sm text-foreground underline-offset-2 hover:underline", FOCUS_RING)}>
               {row.label}
             </button>
+            <span id={chipsId} className="flex items-center gap-1.5 empty:hidden">
+              {row.chip ? <Badge>{row.chip}</Badge> : null}
+              {row.bbMachine ? <Badge>BB machine</Badge> : null}
+            </span>
             {row.form ? <Badge>{row.form}</Badge> : null}
             <ChangedChip show={draft.changed(path) && !conflict} />
           </span>
