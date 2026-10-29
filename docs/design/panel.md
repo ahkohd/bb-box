@@ -740,9 +740,10 @@ The Monitor's machine status (066) jumps to a box's views (the owner, 29
 October 2026: "if you already know the device name, to jump to see what is
 on view"). When it shows a box, its header has one small icon button
 between the machine's name and Reload, named "Open", with "Open a view of"
-and the box's name in its tooltip. It opens a menu of the box's views, each
-with the Boxes row's icon and words: "Open simulator" or "Open emulator",
-"Open desktop", "Open terminal". BB's server and BB machines that are not
+and the box's name in its tooltip, or "Views and threads of" and the name
+when its menu lists threads (the owner, 29 October 2026). It opens a menu
+of the box's views, each with the Boxes row's icon and words: "Open
+simulator" or "Open emulator", "Open desktop", "Open terminal". BB's server and BB machines that are not
 boxes have no button, so their header is unchanged. The owner chose one
 button over a button for each view: in BB's sidebar, 253 px wide, the
 header had 23 px to spare, and three buttons left the name about 19 px. The
