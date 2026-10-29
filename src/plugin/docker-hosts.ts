@@ -80,14 +80,16 @@ export function backendOn(document: ConfigDocument, hostId: string): BackendConf
 
 /**
  * Machines that may host boxes: persistent and not being removed, and not
- * made by bb-box's providers, since its own boxes, spares and your machines
- * are BB machines with Docker too (041). One the configuration already uses
- * stays listed whatever its state, so it can be turned off.
+ * bb-box's own, since its own boxes, spares and your machines are BB machines
+ * with Docker too (041): neither made by its providers nor holding one of its
+ * boxes, as a spare that joined through manual setup does. One the
+ * configuration already uses stays listed whatever its state, so it can be
+ * turned off.
  */
-export function machineHosts(machines: readonly MachineRecord[], document: ConfigDocument, providers: readonly string[]): MachineRecord[] {
+export function machineHosts(machines: readonly MachineRecord[], document: ConfigDocument, providers: readonly string[], boxMachines: ReadonlySet<string> = new Set()): MachineRecord[] {
   return machines.filter((machine) => {
     if (backendOn(document, machine.id)) return true;
-    if (machine.type !== "persistent" || machine.lifecycle.phase !== "active") return false;
+    if (machine.type !== "persistent" || machine.lifecycle.phase !== "active" || boxMachines.has(machine.id)) return false;
     return !(machine.machineProviderId && providers.includes(machine.machineProviderId));
   });
 }
@@ -103,6 +105,7 @@ export interface DockerHostsDeps {
   docker(hostId: string, signal: AbortSignal): Promise<DockerInfo>;
   /** Boxes bb-box holds on each backend, by backend ID. */
   boxes(): Promise<ReadonlyMap<string, number>>;
+  boxMachines?(): Promise<ReadonlySet<string>>;
   /** The machine's last image build, or the one running. */
   images?(hostId: string): ImageBuild | null;
   fix?(host: DockerHostView): DockerFix | null;
@@ -130,8 +133,8 @@ export class DockerHosts {
 
   async list(): Promise<DockerHostView[]> {
     const document = this.#deps.document();
-    const [machines, boxes] = await Promise.all([this.#deps.machines(), this.#deps.boxes()]);
-    const listed = machineHosts(machines, document, this.#deps.providers);
+    const [machines, boxes, boxMachines] = await Promise.all([this.#deps.machines(), this.#deps.boxes(), this.#deps.boxMachines?.() ?? new Set<string>()]);
+    const listed = machineHosts(machines, document, this.#deps.providers, boxMachines);
     return Promise.all(
       listed.map(async (machine): Promise<DockerHostView> => {
         const offline = machineOffline(machine, this.#deps.now?.() ?? Date.now());

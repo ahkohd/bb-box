@@ -68,6 +68,27 @@ test("the list holds persistent machines bb-box did not make, and any the config
   assert.deepEqual(listed.map((each) => each.name), ["devpc", "used"]);
 });
 
+test("a machine that holds one of bb-box's own boxes is left out, though it joined BB through manual setup, as a spare or a kept machine does, unless the configuration uses it", async () => {
+  const document: ConfigDocument = { ...emptyDocument(1), backends: [{ id: "docker:kept", type: "docker", enabled: true, fields: { host: "bb:host_kept" } }] };
+  const manual = { machineProviderId: "manual" };
+  const hosts = new DockerHosts({
+    machines: async () => [
+      machine("host_b", "devpc", manual),
+      machine("host_spare", "crisp-hill (spare, stopped)", { ...manual, status: "disconnected" }),
+      machine("host_mine", "your-machine", manual),
+      machine("host_kept", "kept", manual),
+    ],
+    document: () => document,
+    providers: ["bb-box", "bb-box-new"],
+    found: async () => null,
+    docker: async () => info(),
+    boxes: async () => new Map(),
+    boxMachines: async () => new Set(["host_spare", "host_mine", "host_kept"]),
+  });
+  assert.deepEqual((await hosts.list()).map((each) => each.name), ["devpc", "kept"]);
+  assert.deepEqual(machineHosts([machine("host_spare", "crisp-hill", manual)], emptyDocument(1), ["bb-box"]).length, 1, "without box records, as before");
+});
+
 test("each machine shows Docker as it answers through the relay, kept a while, and one that is offline or not Linux says why; looking opens a relay only where Docker is", async () => {
   let calls = 0;
   let asked: string[] = [];

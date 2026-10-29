@@ -1113,6 +1113,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       for (const box of await boxes.all()) if (box.state !== "gone") counts.set(box.backend, (counts.get(box.backend) ?? 0) + 1);
       return counts;
     },
+    async boxMachines() {
+      return new Set((await boxes.all()).flatMap((box) => (box.enrol.hostId ? [box.enrol.hostId] : [])));
+    },
   });
   /** Why a thread's desktop box was not made after its image was built (the setup plan's PR 4), by thread, until it asks again. */
   const desktopProblems = new Map<string, { message: string; at: number }>();
