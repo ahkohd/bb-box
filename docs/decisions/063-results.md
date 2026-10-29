@@ -3161,9 +3161,29 @@ driver reboots after appearance and text size for a uid other than 501 and
 not for 501; the answer's and the computer tools' words; the state's new
 field reads back.
 
-Still to check after the deploy, through production: Dark and Bold Text on
-a shared slot and on a dedicated box, by an agent's tap and by a person's
-in the panel, and the front app with Safari in front.
+### Live checks after the deploy
+
+Through production on 29 October 2026, device server version 31, an iPhone
+18 Pro on iOS 27.0, slim on. An agent's taps went through `computer_act`; a
+person's through the panel in the owner's browser, by mouse on the device's
+picture after Take control.
+
+| Check | Shared slot | Dedicated box |
+| --- | --- | --- |
+| Safari opened cold by URL | "Safari in front"; `computer_observe` listed the page's 6 texts and its link "Learn more" in a `web view`, then Safari's 5 controls | the same |
+| An agent's tap on Dark, by reference | the setting read dark (`UserInterfaceStyleMode = 2`), the screen stayed light, and the answer said to reboot to see it | dark at once, no such words |
+| An agent's tap on Bold Text, by reference | 0 to 1, with the same words; the labels stayed regular | 0 to 1, bold at once |
+| `box_device` reboot | 7.1 s; then Settings was dark and bold | not needed |
+| `box_device` appearance light | 10.1 s, with "The device rebooted to show it: on a shared box ..."; the screen light | not tried by the agent |
+| A person's taps in the panel, on Dark and on Bold Text's knob | the settings changed (dark, and Bold Text 0), the screen did not | Light and Bold Text off, shown at once |
+| A person's Reboot device in the panel | 6.8 s; then dark, labels regular | not needed |
+| A person's Dark appearance in the panel | the note "Set the iPhone 18 Pro to light in 10.1 s." and the reboot's reason, 10.5 s after the click | dark within 4 s, no reboot, no note of one |
+
+One fault came out: on the slot, the reboot words also followed a tap on
+Appearance in Settings' list, a tap that changes no setting, because the
+new page's switches counted as switches that changed. Now only a switch
+whose own value changed counts, as Bold Text's 0 to 1 does; a page of new
+switches does not.
 
 ### Follow-ups
 
