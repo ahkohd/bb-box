@@ -1,6 +1,6 @@
 # 067: The settings page is an overview, with a page one step in for each backend, kind and option
 
-Status: proposed, 29 October 2026, revised the same day after three rounds of independent review (see [What changed after the reviews](#what-changed-after-the-reviews), [after the second reviews](#what-changed-after-the-second-reviews) and [after the third review](#what-changed-after-the-third-review)). For the owner's review. Nothing is built.
+Status: accepted, 29 October 2026, after three rounds of independent review (see [What changed after the reviews](#what-changed-after-the-reviews), [after the second reviews](#what-changed-after-the-second-reviews) and [after the third review](#what-changed-after-the-third-review)). The owner accepted each default in [Open questions for the owner](#open-questions-for-the-owner). Being built in the units of [How it is built](#12-how-it-is-built).
 
 The prototype is [067-settings-page/prototype.html](067-settings-page/prototype.html):
 one file, opened in any browser, made from bb-box's own components. Its
@@ -770,8 +770,8 @@ group.
 
 ## Open questions for the owner
 
-Both reviews agreed with each default. The prototype shows them, and the
-build follows them unless the owner says otherwise.
+Both reviews agreed with each default, and the owner accepted all four on
+29 October 2026. The prototype shows them, and the build follows them.
 
 1. Machines leave the settings page for the Boxes page's Machines tab, with
    a row in Options that opens that tab, empty or not. Default: yes.
