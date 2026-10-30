@@ -18,6 +18,14 @@ export function threadTitle(thread: ThreadOnBox): string {
   return title || thread.id;
 }
 
+export function workingOnWords(threads: readonly ThreadOnBox[], boxName: string): string {
+  const [only] = threads;
+  if (threads.length === 1 && only) {
+    return only.unchecked ? `bb-box could not ask BB whether ${only.title ? threadTitle(only) : "its thread"} is working on ${boxName}` : `${threadTitle(only)} is working on ${boxName}`;
+  }
+  return threads.some((thread) => thread.unchecked) ? `${threads.length} threads may be working on ${boxName}` : `${threads.length} threads are working on ${boxName}`;
+}
+
 export function byActivity(threads: readonly ThreadOnBox[]): ThreadOnBox[] {
   return [...threads].sort((a, b) => Number(b.running) - Number(a.running) || (b.activeAt ?? 0) - (a.activeAt ?? 0));
 }
@@ -25,7 +33,7 @@ export function byActivity(threads: readonly ThreadOnBox[]): ThreadOnBox[] {
 const CHIP = "inline-flex h-6 min-w-0 max-w-56 items-center gap-1 whitespace-nowrap rounded-full border border-border px-2 text-xs leading-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 export function WorkingMark() {
-  return <Icon name="Loading" className="size-3 shrink-0 animate-spin text-muted-foreground" aria-label="Working" />;
+  return <Icon name="Loading" className="size-3 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" aria-label="Working" />;
 }
 
 function ThreadChip({ thread, onOpen }: { thread: ThreadOnBox; onOpen: (id: string) => void }) {

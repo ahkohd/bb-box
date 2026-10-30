@@ -333,30 +333,34 @@ function items(menu: HTMLElement): string[] {
 
 const TO_BOXES_PAGE = (subPath: string) => ({ method: "toPluginPanel", path: "desktop", options: { subPath } });
 
-test("a desktop box's Open menu offers its desktop and terminal, each opening the Boxes page's view as the Boxes row does", async () => {
+test("a desktop box's Open menu offers its page first, then its desktop and terminal, each opening the box's view, whose way back is its page", async () => {
   const monitor = openMonitor("box:bx_desk");
-  expect(items(await openViews())).toEqual(["Open desktop", "Open terminal"]);
+  expect(items(await openViews())).toEqual(["Page", "Open desktop", "Open terminal"]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Open desktop" }));
-  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("operator/bx_desk"));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_desk/desktop"));
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await openViews();
   fireEvent.click(screen.getByRole("menuitem", { name: "Open terminal" }));
-  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("operator/bx_desk/terminal"));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_desk/terminal"));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await openViews();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Page" }));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_desk"));
   expect(localStorage.getItem("bb-box:monitor:machine")).toBe("box:bx_desk");
 });
 
 test("a device box's Open menu offers its Simulator alone when it has no terminal, and it opens the device view", async () => {
   const monitor = openMonitor("host_slot");
-  expect(items(await openViews())).toEqual(["Open simulator"]);
+  expect(items(await openViews())).toEqual(["Page", "Open simulator"]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Open simulator" }));
-  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("thr_slot/bx_slot/device"));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_slot/device"));
 });
 
 test("a box with a desktop and an Emulator offers both, then its terminal", async () => {
   const monitor = openMonitor("box:bx_both");
-  expect(items(await openViews())).toEqual(["Open emulator", "Open desktop", "Open terminal"]);
+  expect(items(await openViews())).toEqual(["Page", "Open emulator", "Open desktop", "Open terminal"]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Open emulator" }));
-  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("thr_both/bx_both/device"));
+  expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_both/device"));
 });
 
 test("the Open button's tooltip names the box, as a view of it when its menu lists no threads", async () => {
@@ -368,8 +372,8 @@ test("the Open button's tooltip names the box, as a view of it when its menu lis
 test("a stopped box's views are in the menu, disabled, each with the reason, and open nothing", async () => {
   const monitor = openMonitor("host_stopped");
   const menu = await openViews();
-  expect(items(menu)).toEqual(["Open desktopdeep-elm is stopped (disabled)", "Open terminaldeep-elm is stopped (disabled)"]);
-  fireEvent.click(within(menu).getAllByRole("menuitem")[0]!);
+  expect(items(menu)).toEqual(["Page", "Open desktopdeep-elm is stopped (disabled)", "Open terminaldeep-elm is stopped (disabled)"]);
+  fireEvent.click(within(menu).getAllByRole("menuitem")[1]!);
   expect(monitor.inspection.navigateCalls.filter((call) => call.method === "toPluginPanel")).toEqual([]);
 });
 
@@ -415,9 +419,9 @@ test("the keyboard reaches Open after the name; Enter or Space opens the menu, a
   open.focus();
   fireEvent.keyDown(open, { key: " " });
   const menu = await screen.findByRole("menu");
-  await waitFor(() => expect(document.activeElement?.textContent).toBe("Open emulator"));
+  await waitFor(() => expect(document.activeElement?.textContent).toBe("Page"));
   fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
-  await waitFor(() => expect(document.activeElement?.textContent).toBe("Open desktop"));
+  await waitFor(() => expect(document.activeElement?.textContent).toBe("Open emulator"));
   const escapeBeyondMenu = vi.fn();
   window.addEventListener("keydown", escapeBeyondMenu);
   fireEvent.keyDown(menu, { key: "Escape" });
@@ -483,7 +487,7 @@ test("a thread's box lists, after a divider and a Threads label, the thread that
   const menu = await openViews();
   expect(within(menu).getAllByRole("separator")).toHaveLength(1);
   expect(within(menu).getByText("Threads")).toBeTruthy();
-  expect(items(menu)).toEqual(["Open terminal", "Builds the release", "Runs the tests on the box"]);
+  expect(items(menu)).toEqual(["Page", "Open terminal", "Builds the release", "Runs the tests on the box"]);
   expect(threadLabels(menu)).toEqual(["Builds the release, idle", "Runs the tests on the box, working"]);
   const working = within(menu).getByRole("menuitem", { name: "Runs the tests on the box, working" });
   expect(within(working).getByLabelText("Working")).toBeTruthy();
@@ -501,20 +505,20 @@ test("a kept machine lists the threads running on it, working first, then the mo
   expect(threadLabels(await openViews())).toEqual(["Starts the server, working", "Waits on a question, working", "Finished today, idle", "Finished last week, idle"]);
 });
 
-test("more than 5 threads: the first 5, then N more on the Boxes page, which opens the Boxes page where the box is listed", async () => {
+test("more than 5 threads: the first 5, then N more on the Boxes page, which opens the box's page", async () => {
   const seven = Array.from({ length: 7 }, (_, index) => sidebarThread(`thr_${index}`, `Thread ${index}`, { hostId: "host_desk", updatedAt: 10 - index }));
   const kept = openMonitor("box:bx_desk", seven);
   const menu = await openViews();
   expect(threadLabels(menu)).toEqual(["Thread 0, idle", "Thread 1, idle", "Thread 2, idle", "Thread 3, idle", "Thread 4, idle", "2 more on the Boxes page"]);
   fireEvent.click(within(menu).getByRole("menuitem", { name: "2 more on the Boxes page" }));
-  expect(kept.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("machines"));
+  expect(kept.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_desk"));
   cleanup();
   const children = Array.from({ length: 6 }, (_, index) => sidebarThread(`thr_${index}`, `Child ${index}`, { hostId: "host_lxc", updatedAt: 10 - index }));
   const held = openMonitor("host_lxc", [HOLDER, ...children]);
   const heldMenu = await openViews();
   expect(threadLabels(heldMenu).at(0)).toBe("Builds the release, idle");
   fireEvent.click(within(heldMenu).getByRole("menuitem", { name: "2 more on the Boxes page" }));
-  expect(held.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("threads"));
+  expect(held.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_lxc"));
 });
 
 test("when the menu lists threads, the Open button's tooltip says views and threads of the box", async () => {
@@ -526,7 +530,7 @@ test("when the menu lists threads, the Open button's tooltip says views and thre
 test("a box with no threads has no divider and no Threads section", async () => {
   openMonitor("box:bx_both", [ELSEWHERE]);
   const menu = await openViews();
-  expect(items(menu)).toEqual(["Open emulator", "Open desktop", "Open terminal"]);
+  expect(items(menu)).toEqual(["Page", "Open emulator", "Open desktop", "Open terminal"]);
   expect(within(menu).queryByRole("separator")).toBeNull();
   expect(within(menu).queryByText("Threads")).toBeNull();
 });
@@ -546,8 +550,8 @@ test("the keyboard moves from the views to the threads in order, past the divide
   fireEvent.keyDown(open, { key: "Enter" });
   await screen.findByRole("menu");
   const focused = () => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.textContent;
-  await waitFor(() => expect(focused()).toBe("Open desktop"));
-  for (const next of ["Open terminal", "First thread, working", "Second thread, idle"]) {
+  await waitFor(() => expect(focused()).toBe("Page"));
+  for (const next of ["Open desktop", "Open terminal", "First thread, working", "Second thread, idle"]) {
     fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
     await waitFor(() => expect(focused()).toBe(next));
   }
@@ -573,7 +577,7 @@ for (const [why, replacement] of [["missing", undefined], ["throws", () => { thr
       cleanup();
       openMonitor("host_lxc");
       const held = await openViews();
-      expect(items(held)).toEqual(["Open terminal"]);
+      expect(items(held)).toEqual(["Page", "Open terminal"]);
       expect(within(held).queryByRole("separator")).toBeNull();
     });
     vi.mocked(console.error).mockRestore();

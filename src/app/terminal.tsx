@@ -46,6 +46,7 @@ import {
   type Kept,
 } from "./kept.ts";
 import { BoxLine } from "./desktop.tsx";
+import { BoxName, type PageLink } from "./box-nav.tsx";
 import { XTERM_CSS } from "./xterm-css.ts";
 import { TerminalGlyph } from "./glyphs.tsx";
 
@@ -437,10 +438,12 @@ export function BoxTerminal({
   threadId,
   boxId,
   onBack,
+  page,
 }: {
   threadId: string;
   boxId: string;
   onBack?: BackTo;
+  page?: PageLink;
 }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
@@ -578,9 +581,7 @@ export function BoxTerminal({
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
         {onBack ? <BackControl back={onBack} /> : null}
         <TerminalGlyph className="text-muted-foreground" />
-        <span className="font-medium text-foreground">
-          {box?.name ?? lastName.current ?? "Terminal"}
-        </span>
+        <BoxName name={box?.name ?? lastName.current ?? "Terminal"} page={page} />
         <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
           <StatusDot tone={tone} />
           <span className="min-w-0">{words}</span>

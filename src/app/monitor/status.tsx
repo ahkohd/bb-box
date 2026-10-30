@@ -6,6 +6,7 @@ import { SERVER_MACHINE, useMonitorSnapshot } from "./use-snapshot.ts";
 import { useRevealOnLoad } from "./use-reveal-on-load.ts";
 import { machineKey, useMachines } from "./use-machines.ts";
 import { useBoxLookOf, useScreensOf, type BoxScreens, type LookOf } from "./box-screens.tsx";
+import { BoxGlyph } from "../glyphs.tsx";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "./menu.tsx";
 import { ThreadItems, ThreadsOnBox } from "./box-threads.tsx";
 import { cn } from "@/lib/utils";
@@ -120,6 +121,12 @@ function ScreenMenu({ screens, threads }: { screens: BoxScreens; threads: readon
         <TooltipContent side="top">{openTooltip(screens.boxName, threads.length > 0)}</TooltipContent>
       </Tooltip>
       <MenuContent side="bottom" className="max-w-64">
+        <MenuItem onSelect={screens.openOnBoxesPage}>
+          <span className="flex h-4 shrink-0 items-center text-muted-foreground">
+            <BoxGlyph className="size-3.5" />
+          </span>
+          <span className="min-w-0">Page</span>
+        </MenuItem>
         {screens.actions.map((action) => (
           <MenuItem key={action.key} disabled={action.closedBecause !== null} onSelect={action.open}>
             <span className={cn("flex h-4 shrink-0 items-center text-muted-foreground", action.closedBecause && "opacity-50")}>{action.glyph("size-3.5")}</span>

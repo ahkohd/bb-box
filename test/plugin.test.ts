@@ -5896,3 +5896,162 @@ test("the reach check follows a box that stops answering with the Monitor off, a
   const checked = (await harness.behavior.callRpc("refresh", { threadId: THREAD, box: box.name })) as { box: { reach: { is: string } } };
   assert.equal(checked.box.reach.is, "answers", "Check now checks it at once");
 });
+
+test("the panel's Stop and Release ask first while the box's own thread is working, as while a thread works on its BB machine; an idle thread's box stops at once (069 G3)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  const own = world.threads.get(THREAD)!;
+  world.threads.set(THREAD, { ...own, title: "Fix the sign-in flow", status: "active" });
+  for (const method of ["stop", "release"] as const) {
+    const asked = (await harness.behavior.callRpc(method, { threadId: THREAD, box: box.name })) as { box: { state: string }; threads: unknown[] };
+    assert.equal(asked.box.state, "ready", method);
+    assert.deepEqual(asked.threads, [{ id: THREAD, title: "Fix the sign-in flow", running: true, ...(typeof own.updatedAt === "number" ? { activeAt: own.updatedAt } : {}) }], method);
+  }
+  world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build the app", status: "active", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const both = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { threads: { id: string }[] };
+  assert.deepEqual(both.threads.map((thread) => thread.id), [THREAD, "thr_worker"], "its own thread first, then the threads on its BB machine");
+  const forced = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name, force: true })) as { box: { state: string }; error: string | null };
+  assert.equal(forced.error, null);
+  assert.equal(forced.box.state, "stopped", "Stop it anyway stops it");
+  await harness.behavior.callRpc("start", { threadId: THREAD, box: box.name });
+
+  world.onHost.set(box.enrol.hostId!, []);
+  world.threads.set(THREAD, { ...own, status: "idle" });
+  const idle = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { box: { state: string }; threads?: unknown[] };
+  assert.equal(idle.box.state, "stopped", "an idle thread's box stops at once");
+  assert.equal(idle.threads, undefined);
+});
+
+test("boxPage finds a box by its ID alone, with its thread, the threads on its BB machine and the Monitor's machine; a released box for 24 hours; a box whose release did not finish stays listed (069)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build the app", status: "idle", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
+  const page = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { id: string; name: string }; threadId: string; owner: string; thread: { id: string; running: boolean }; threads: { id: string }[]; monitor: { machineId: string | null; why: string | null }; ended: unknown };
+  assert.equal(page.box.name, box.name);
+  assert.equal(page.threadId, THREAD);
+  assert.equal(page.owner, "thread");
+  assert.equal(page.thread.id, THREAD);
+  assert.equal(page.thread.running, false);
+  assert.deepEqual(page.threads.map((thread) => thread.id), ["thr_worker"]);
+  assert.ok(page.monitor.machineId !== null || page.monitor.why !== null, "the Monitor's machine, or why it cannot read it");
+  assert.equal(page.ended, null);
+
+  const nothing = (await harness.behavior.callRpc("boxPage", { box: "bxnosuchbox000" })) as { box: unknown; ended: unknown };
+  assert.equal(nothing.box, null);
+  assert.equal(nothing.ended, null);
+
+  world.backend!.faults.release = new Error("Proxmox refused: the container is locked by a backup.");
+  await harness.behavior.callRpc("release", { threadId: THREAD, box: box.id });
+  const unfinished = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { state: string; log: { lastFailed: { operation: string } | null } } };
+  assert.equal(unfinished.box.state, "releasing");
+  assert.equal(unfinished.box.log.lastFailed?.operation, "release");
+  const listed = (await harness.behavior.callRpc("allBoxes", null)) as { box: { id: string; state: string } }[];
+  assert.deepEqual(listed.map((entry) => [entry.box.id, entry.box.state]), [[box.id, "releasing"]], "the list shows it with its failure, not hidden");
+
+  delete world.backend!.faults.release;
+  await harness.behavior.callRpc("release", { threadId: THREAD, box: box.id });
+  const released = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: unknown; ended: { name: string; how: string; by: unknown } };
+  assert.equal(released.box, null);
+  assert.equal(released.ended.name, box.name);
+  assert.equal(released.ended.how, "released");
+  assert.deepEqual(released.ended.by, { is: "person" });
+
+  const machine = await addMachine(harness, app, { kind: "linux", name: "build-1" });
+  const mine = (await harness.behavior.callRpc("boxPage", { box: machine.id })) as { owner: string; threadId: string; thread: unknown };
+  assert.equal(mine.owner, "yours");
+  assert.equal(mine.threadId, OPERATOR);
+  assert.equal(mine.thread, null);
+});
+
+test("the guard asks when BB cannot say whether the box's own thread works, and goes on for a thread that no longer exists (069 G3, lead decision)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  world.threads.set(THREAD, { ...world.threads.get(THREAD)!, status: "active" });
+  world.threadErrors.set(THREAD, new Error("fetch failed: ECONNRESET"));
+  for (const method of ["stop", "release"] as const) {
+    const asked = (await harness.behavior.callRpc(method, { threadId: THREAD, box: box.name })) as { box: { state: string }; threads?: { id: string; unchecked?: boolean; running: boolean }[]; error: string | null };
+    assert.equal(asked.box.state, "ready", `${method} leaves it for the person`);
+    assert.deepEqual(asked.threads, [{ id: THREAD, title: null, running: false, unchecked: true }], method);
+  }
+  world.threadErrors.set(THREAD, Object.assign(new Error("HTTP 404: Thread not found"), { status: 404, code: "thread_not_found" }));
+  const gone = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { box: { state: string }; threads?: unknown[] };
+  assert.equal(gone.box.state, "stopped", "a thread BB no longer has does not hold the box");
+  assert.equal(gone.threads, undefined);
+});
+
+test("a resize that restarts the box asks first while the box's own thread works, and goes on when forced (069, lead decision)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  world.backend!.resizeWays = { cores: "restart", memory: "restart", disk: "live", shrinks: true };
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  world.threads.set(THREAD, { ...world.threads.get(THREAD)!, title: "Fix the sign-in flow", status: "active" });
+  const asked = (await harness.behavior.callRpc("resize", { threadId: THREAD, box: box.id, size: { cores: 4 }, restart: true })) as { changed: boolean; error: string | null; threads?: { id: string }[] };
+  assert.equal(asked.changed, false);
+  assert.deepEqual(asked.threads?.map((thread) => thread.id), [THREAD]);
+  const forced = (await harness.behavior.callRpc("resize", { threadId: THREAD, box: box.id, size: { cores: 4 }, restart: true, force: true })) as { changed: boolean; error: string | null };
+  assert.equal(forced.error, null);
+  assert.equal(forced.changed, true);
+});
+
+test("a box that does not answer still stops through its backend, and is no longer marked so once it is seen stopped (069 G20, lead decision)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", { kind: "linux" });
+  const box = await app.boxes.enrolled(await only(app));
+  world.backend!.faults.silent = box.guest!.ref;
+  assert.ok(isError(await tool("box_run", { box: box.name, command: "true" })));
+  const before = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { reach: { is: string } } };
+  assert.equal(before.box.reach.is, "not-answering");
+  const stopped = (await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { box: { state: string; reach: { is: string } }; error: string | null };
+  assert.equal(stopped.error, null);
+  assert.equal(stopped.box.state, "stopped");
+  assert.equal(stopped.box.reach.is, "answers", "seen stopped: no longer marked as not answering");
+  assert.equal(app.reach.reach(box).is, "answers");
+});
+
+test("a backend whose listing fails is said not to answer on its boxes until it lists again (069 G20, lead decision)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  world.backend!.faults.held = new Error("connect ECONNREFUSED 192.0.2.10:8006");
+  await app.boxes.sweep();
+  const silent = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { reach: { is: string; error: string; since: number } } };
+  assert.equal(silent.box.reach.is, "backend-silent");
+  assert.match(silent.box.reach.error, /ECONNREFUSED/);
+  delete world.backend!.faults.held;
+  await app.boxes.sweep();
+  const back = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { reach: { is: string } } };
+  assert.equal(back.box.reach.is, "answers");
+});
+
+test("a start clears the last start's steps when it is asked, so a start under way shows only its own (069 section 7)", async (t) => {
+  const { harness, app, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await app.boxes.enrolled(await only(app));
+  await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name });
+  await harness.behavior.callRpc("start", { threadId: THREAD, box: box.name });
+  const started = (await app.boxes.find(box.id))!;
+  assert.ok(Object.keys(started.timings).some((step) => step.startsWith("start.")), "a finished start keeps its steps");
+  await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name });
+  const backend = world.backend!;
+  const startGuest = backend.start!.bind(backend);
+  let during: string[] | null = null;
+  Object.assign(backend, {
+    start: async (...args: Parameters<typeof startGuest>) => {
+      during = Object.keys((await app.boxes.find(box.id))!.timings).filter((step) => step.startsWith("start."));
+      return startGuest(...args);
+    },
+  });
+  await harness.behavior.callRpc("start", { threadId: THREAD, box: box.name });
+  assert.deepEqual(during, [], "no step of the last start while this one is under way");
+  assert.ok(Object.keys((await app.boxes.find(box.id))!.timings).some((step) => step.startsWith("start.")), "and this start's own once it is done");
+});

@@ -9,7 +9,7 @@ You can open a box's desktop from:
 - the Box panel: select **Open desktop** on the box's row, which opens a Desktop tab, with a monitor for its icon, in the thread's right panel. When the thread has another box with a desktop, the tab's name says which box, as in 'Desktop · box-2'. On a narrow screen, such as a phone's, that tab is named for the box alone, as in 'box-2', and its icon says it is a desktop
 - the thread's Desktop tab: it opens the thread's desktop straight away, lists them when there are several, or offers the Box panel when there is none
 - a browser tab of its own: select **Open in browser** in the box's menu
-- the Boxes page: the desktop shows on the page, with a back arrow to the list
+- the Boxes page: the desktop shows on the page, with a back arrow to where you opened it: the list or the box's page
 - the Monitor's machine status in BB's sidebar: when it shows a box, select **Open** beside the box's name, then **Open desktop**. The desktop shows on the Boxes page
 
 The thread's Desktop tab counts the machine the thread runs on, if it is a desktop.
@@ -209,7 +209,7 @@ The screen tells you why, and what you can do. It uses the box's name, here calm
 | The connection to the desktop ended. Trying again in 4 s | wait, or select **Reconnect now** |
 | calm-otter is stopped. | select **Start**, where the box can start again |
 | calm-otter is starting… | wait: the desktop shows once the box is ready |
-| This box has been released. | close the tab, or, on the Boxes page or in settings, select **Back to boxes** or **Back to settings** |
+| This box has been released. | close the tab, or, on the Boxes page, select **Back to boxes** or **Back to BB Box settings** |
 
 After a lost connection, the viewer tries again by itself, waiting a little longer each time, up to 15 seconds. **Reconnect** in the toolbar or its menu tries at once.
 

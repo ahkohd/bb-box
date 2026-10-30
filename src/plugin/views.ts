@@ -24,7 +24,10 @@ import { offeredWords } from "../core/mac-capabilities.ts";
 import type { BoxLogView } from "../core/box-log.ts";
 import type { Reach } from "../core/reach.ts";
 
-export type ReachView = Reach | { readonly is: "not-in-settings"; readonly backend: string; readonly lastAnswered: number | null };
+export type ReachView =
+  | Reach
+  | { readonly is: "not-in-settings"; readonly backend: string; readonly lastAnswered: number | null }
+  | { readonly is: "backend-silent"; readonly backend: string; readonly since: number; readonly error: string; readonly lastAnswered: number | null };
 
 export interface BoxTold {
   readonly log: BoxLogView | null;

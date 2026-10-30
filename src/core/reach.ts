@@ -87,6 +87,11 @@ export class ReachCheck {
     if (known) this.#cleared(box.id, known, "it answered a command", box);
   }
 
+  settled(box: BoxRecord): void {
+    const known = this.#unanswered.get(box.id);
+    if (known && box.state !== "ready") this.#cleared(box.id, known, `it is ${box.state} now`, box);
+  }
+
   failed(box: BoxRecord, error: string): void {
     if (this.#disposed || !this.#deps.checkable(box)) return;
     const known = this.#unanswered.get(box.id);

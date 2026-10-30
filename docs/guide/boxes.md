@@ -54,6 +54,7 @@ Select a row to see its details. They give the box's address, size, backend and 
 The buttons on a row open the box's desktop or terminal, and stop or start the box where its backend can. The menu at the end of the row has these and more:
 
 - Open in browser: shows the desktop on a page of its own
+- Open on the Boxes page: opens [the box's page](#a-boxs-page), in the Box panel only
 - Copy address: copies the box's network address
 - New thread on this box…: starts a child thread that works on this box in its own copy of the project, and is archived with this thread
 - Check now: asks the backend for the box's state again
@@ -66,7 +67,7 @@ The buttons on a row open the box's desktop or terminal, and stop or start the b
 
 Releasing a box deletes it and everything on its disk, so copy out anything you want to keep first. On a physical machine, releasing resets the machine and returns it to its pool. Everything in the box user's home is deleted.
 
-Release asks you first. If another thread is working on the box, it asks again, for example 'Release calm-otter anyway?', and shows the threads that would lose their machine. Stop asks the same way.
+Release asks you first. If the box's own thread is working, or another thread is working on the box's BB machine, it asks again, for example 'Release calm-otter anyway?', and names the threads: 'Fix the sign-in flow is working on calm-otter.' Stop asks the same way, from a row, a menu, a box's page and a notice's **Stop again**, and so does a resize that needs a restart. If BB cannot say whether the box's thread is working, they ask too, and say so. A box whose threads are all idle stops at once. One of your machines asks only when a thread is working on it.
 
 ### The machine a thread runs on
 
@@ -108,9 +109,35 @@ On Threads, each thread's card comes where its first box falls in that order.
 
 A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. 'New thread on this box…' is only in the Box panel.
 
-A desktop or terminal you open from the page shows on the page, with a back arrow to the list.
+A desktop or terminal you open from a row shows on the page, with a back arrow to the list. A row whose release did not finish says 'Release did not finish', and its menu has **Release again…**.
 
 The gear at the top right opens BB Box's settings. **New box** beside it adds one of your machines, since a box made on this page has no thread. To start a thread on a box of its own, use BB's new-thread screen: see [starting a thread on a new box](making-a-box.md#starting-a-thread-on-a-new-box).
+
+## A box's page
+
+Every box, and every machine of yours, has a page of its own on the Boxes page, at `/plugins/bb-box/desktop/box/` and the box's ID. Its address works in a new browser tab, after a reload and as a link you send. To open it:
+
+- in the Box panel, select **Open on the Boxes page** in a box's menu
+- in the Monitor's machine status, select **Open** beside a box's name, then **Page**
+- in a desktop, device or terminal on the Boxes page, select the box's name in its bar
+
+The page shows, from the top:
+
+- the box's name, system, device and badges, its state in words, such as 'Ready · up 2 h 14 min' or 'Stopped · 3 h 5 min ago, today at 3:53 PM, by you', its ID and **Copy link**, which copy with a click, and the thread it is for, with whether that thread is working now
+- its views, Desktop, Simulator or Emulator and Terminal, then Start or Stop and the menu. A view that cannot open now is greyed out and says why, such as 'calm-otter is stopped'. Hold Command or Ctrl as you select a view to open it in a new tab
+- notices, when there are any: a stop, start, resize or release that failed, with what BB Box saw of the box after it, a backend that is no longer in BB Box's settings, a box that does not answer, a box that did not start, a stop BB Box did not ask for, a device that did not boot, and a box that could not join BB
+- while the box starts, its steps so far and what it waits on
+- its kind, size, where it runs, address, system, whether it is a BB machine, when it was made, and who has control of its desktop or device
+- the other threads on its BB machine, with **New thread on this box…**
+- how it started: how long each step took, and when it last started, and who started it
+
+Who stopped or started a box comes from its log, so the page leaves it out where the log does not say.
+
+When a box's backend is no longer in BB Box's settings, or does not answer, its Stop, Start, Resize and New thread on this box are greyed out, and a line beside them says why. A box that does not answer itself can still be stopped, started, resized and released, as those go through its backend: only its views and New thread on this box are greyed out. It says when BB Box checks it again; select **Check now** to check at once. Once it is stopped, or answers, it no longer says it does not answer. For a box whose backend was removed, **Forget…** removes BB Box's record of it and deletes nothing: if it still runs on that backend, it keeps running.
+
+A release that did not finish says so, with the backend's words, and **Release again…**. For 24 hours after a box is released or forgotten, its page says which, when and by whom. After that, or for a link that is wrong, the page says 'This box is not here'.
+
+The back arrow on a desktop, device or terminal goes back to where you opened it from: the list, the box's page, or BB Box's settings, and says which. A link with no such place goes back to the box's page.
 
 ## Your machines
 

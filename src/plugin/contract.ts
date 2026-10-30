@@ -9,6 +9,7 @@ import type { DockerHostView } from "./docker-hosts.ts";
 import type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 import type { BackendView, BoxView, DoctorView, ImageOptionView, KindView, OfferRoom, ProviderProfile, SizeView } from "./views.ts";
 import type { ResizeWay, SizePart } from "../backends/types.ts";
+import type { EndedBox } from "../core/box-log.ts";
 
 export type { ApplyResult, CheckResult, ConfigState } from "./configuration.ts";
 
@@ -162,6 +163,28 @@ export interface ThreadOnBox {
   /** Working now: busy, or waiting on a question to the user. An idle thread has finished. */
   readonly running: boolean;
   readonly activeAt?: number;
+  readonly unchecked?: boolean;
+}
+
+export interface MonitorReach {
+  readonly machineId: string | null;
+  readonly why: string | null;
+}
+
+export interface DeviceBoot {
+  readonly model: string;
+  readonly words: string;
+}
+
+export interface BoxPageState {
+  readonly box: BoxView | null;
+  readonly threadId: string | null;
+  readonly owner: "thread" | "yours" | null;
+  readonly thread: ThreadOnBox | null;
+  readonly threads: readonly ThreadOnBox[];
+  readonly monitor: MonitorReach;
+  readonly deviceFailed: DeviceBoot | null;
+  readonly ended: EndedBox | null;
 }
 
 /** What starting a thread on a box returns: the new thread, or why it did not start. */
@@ -245,6 +268,7 @@ export const contract = defineRpcContract({
   desktopPaste: { input: viewer.extend({ text: z.string().max(MAX_PASTE_LENGTH) }), output: z.null() },
   /** Every box across threads, servers as well as desktops, and your machines (036), for the Boxes page. */
   allBoxes: { input: z.null(), output: z.custom<BoxEntry[]>() },
+  boxPage: { input: z.object({ box: z.string().min(1) }), output: z.custom<BoxPageState>() },
   /** Your machines (036), oldest first, and the kinds that can be yours: on offer, and able to become BB machines. */
   "machines.list": { input: z.null(), output: z.custom<MachinesState>() },
   /** Adds one: returns once it is recorded, and the "changed" signal for "operator" follows its progress. */

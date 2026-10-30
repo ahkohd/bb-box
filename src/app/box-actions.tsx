@@ -19,8 +19,9 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Contract, ThreadOnBox } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
-import { message } from "./common.tsx";
-import { ThreadChips } from "./thread-chips.tsx";
+import { message, OPERATOR } from "./common.tsx";
+import { ThreadChips, workingOnWords } from "./thread-chips.tsx";
+import type { BoxAction } from "./box-menu.tsx";
 
 /** A failure that needs action: red, and lasting until dismissed or the next action. Nothing when there is none. */
 export function ProblemLine({ problem, onDismiss, className }: { problem: string | null; onDismiss: () => void; className?: string }) {
@@ -47,13 +48,12 @@ export interface InUse<M extends string> {
 /** "Release calm-otter anyway?": who is working on the box, and the verb's "anyway" to go on. */
 export function InUseDialog<M extends string>({ inUse, words, onClose, onForce }: { inUse: InUse<M> | null; words: Readonly<Record<M, string>>; onClose: () => void; onForce: (inUse: InUse<M>) => void }) {
   const verb = inUse ? words[inUse.method] : "";
-  const count = inUse?.threads.length ?? 0;
   return (
     <AlertDialog open={inUse !== null} onOpenChange={(open) => !open && onClose()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{inUse ? `${verb} ${inUse.box.name} anyway?` : null}</AlertDialogTitle>
-          <AlertDialogDescription>{inUse ? `${count === 1 ? "A thread is" : `${count} threads are`} working on it, and would lose ${count === 1 ? "its" : "their"} machine.` : null}</AlertDialogDescription>
+          <AlertDialogDescription>{inUse ? `${workingOnWords(inUse.threads, inUse.box.name)}.` : null}</AlertDialogDescription>
           {inUse ? <ThreadChips threads={inUse.threads} /> : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -95,7 +95,7 @@ export type MachineMethod = "remove" | "stop";
 
 /** Your machines' Start, Stop and Remove, as settings does them: Remove asks first, and either asks again when threads work on the machine. */
 export function useMachineActions(refresh: () => Promise<unknown>): {
-  act: (method: MachineMethod | "start", box: BoxView, force?: boolean) => Promise<void>;
+  act: (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force?: boolean) => Promise<void>;
   busy: string | null;
   problem: string | null;
   setProblem: (problem: string | null) => void;
@@ -107,15 +107,29 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
   const [busy, setBusy] = useState<string | null>(null);
   const [inUse, setInUse] = useState<InUse<MachineMethod> | null>(null);
   const [removing, setRemoving] = useState<BoxView | null>(null);
-  const act = async (method: MachineMethod | "start", box: BoxView, force = false) => {
+  const call = (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force: boolean) => {
+    const input = { box: box.id, ...((method === "remove" || method === "stop") && force ? { force: true } : {}) };
+    switch (method) {
+      case "remove":
+        return rpc.call("machines.remove", input);
+      case "stop":
+        return rpc.call("machines.stop", input);
+      case "start":
+        return rpc.call("machines.start", input);
+      case "forget":
+        return rpc.call("forget", { threadId: OPERATOR, box: box.id });
+      case "refresh":
+        return rpc.call("refresh", { threadId: OPERATOR, box: box.id });
+    }
+  };
+  const act = async (method: MachineMethod | "start" | "forget" | "refresh", box: BoxView, force = false) => {
     setBusy(`${method}:${box.id}`);
     try {
-      const input = { box: box.id, ...(method !== "start" && force ? { force: true } : {}) };
       let refused: string | null;
       try {
-        const answer = await (method === "remove" ? rpc.call("machines.remove", input) : method === "stop" ? rpc.call("machines.stop", input) : rpc.call("machines.start", input));
+        const answer = await call(method, box, force);
         refused = answer.error;
-        if (method !== "start" && answer.threads?.length) setInUse({ method, box, threads: answer.threads });
+        if ((method === "remove" || method === "stop") && answer.threads?.length) setInUse({ method, box, threads: answer.threads });
       } catch (caught) {
         refused = message(caught);
       }
@@ -132,4 +146,39 @@ export function useMachineActions(refresh: () => Promise<unknown>): {
     </>
   );
   return { act, busy, problem, setProblem, askRemove: setRemoving, dialogs };
+}
+
+export type GuardedMethod = "release" | "stop";
+
+export interface ThreadBoxActions {
+  readonly act: (threadId: string, method: BoxAction, box: BoxView, force?: boolean) => Promise<void>;
+  readonly busy: string | null;
+  readonly problem: string | null;
+  readonly setProblem: (problem: string | null) => void;
+  readonly dialogs: ReactNode;
+}
+
+export function useThreadBoxActions(refresh: () => Promise<unknown>): ThreadBoxActions {
+  const rpc = useRpc<Contract>();
+  const [problem, setProblem] = useState<string | null>(null);
+  const [inUse, setInUse] = useState<(InUse<GuardedMethod> & { readonly threadId: string }) | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const act = async (threadId: string, method: BoxAction, box: BoxView, force = false) => {
+    const guarded = method === "release" || method === "stop";
+    let refused: string | null;
+    setBusy(`${method}:${box.id}`);
+    try {
+      const answer = await rpc.call(method, { threadId, box: box.id, ...(guarded && force ? { force: true } : {}) });
+      refused = answer.error;
+      if (guarded && answer.threads?.length) setInUse({ method, box, threads: answer.threads, threadId });
+    } catch (caught) {
+      refused = message(caught);
+    } finally {
+      setBusy(null);
+    }
+    await refresh();
+    setProblem(refused);
+  };
+  const dialogs = <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(inUse?.threadId ?? "", found.method, found.box, true)} />;
+  return { act, busy, problem, setProblem, dialogs };
 }

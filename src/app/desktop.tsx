@@ -50,7 +50,10 @@ import { SetupProgress } from "./first-run.tsx";
 import { BoxRow } from "./box-row.tsx";
 import type { BoxAction } from "./box-menu.tsx";
 import type { BoxOpens } from "./box-opens.tsx";
-import { InUseDialog, ProblemLine, useMachineActions, type InUse } from "./box-actions.tsx";
+import { ProblemLine, useMachineActions, useThreadBoxActions } from "./box-actions.tsx";
+import { BoxName, useBoxesNav, useListOpens, type PageLink } from "./box-nav.tsx";
+import { BoxPage, Loading, NotHere, useBoxPage } from "./box-page.tsx";
+import { otherView, pageOfView, routeOf, wayBack, type BoxViewRoute } from "./box-route.ts";
 import { MachineRow } from "./settings-machines.tsx";
 import { DEVICE_HUB_WORDS, SLOW_VIDEO_STILLS_WORDS, STILLS_WORDS, SelkiesSession, base64Bytes, canShowVideo, unicodeKeysym, type DeviceShown } from "./selkies.ts";
 import { DEFAULT_DEVICE_VIEW, type DeviceLayout, type DeviceView } from "./device-stage.ts";
@@ -1078,14 +1081,14 @@ function pageIsInsecure(): boolean {
   return typeof isSecureContext !== "undefined" && !isSecureContext;
 }
 
-type DesktopViewerProps = { threadId: string; boxId: string; newTab: boolean; onBack?: BackTo; screen?: Screen | null; openScreen?: (box: BoxView, screen: Screen) => void };
+type DesktopViewerProps = { threadId: string; boxId: string; newTab: boolean; onBack?: BackTo; screen?: Screen | null; openScreen?: (box: BoxView, screen: Screen) => void; page?: PageLink };
 
 export function DesktopViewer(props: DesktopViewerProps) {
   const viewer = useViewerId(props.boxId);
   return viewer === null ? null : <DesktopViewerAs {...props} viewer={viewer} />;
 }
 
-function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openScreen, viewer }: DesktopViewerProps & { viewer: string }) {
+function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openScreen, page, viewer }: DesktopViewerProps & { viewer: string }) {
   const rpc = useRpc<Contract>();
   const pluginId = experimental_usePluginId();
   const navigate = useBbNavigate();
@@ -1707,7 +1710,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface-recessed px-3 py-2 text-xs">
         {onBack ? <BackControl back={onBack} /> : null}
         <ScreenGlyph screen={shows} className="text-muted-foreground" />
-        <span className="font-medium text-foreground">{box?.name ?? lastName.current ?? "Desktop"}</span>
+        <BoxName name={box?.name ?? lastName.current ?? "Desktop"} page={page} />
         {deviceShown && showing && deviceModelNow && device ? (
           <DevicePicker model={deviceModelNow.name} offered={device.offered} bootedHere={device.bootedHere} state={device.state} compact={compact} takesFrom={takesFrom} onSwitch={switchDevice} />
         ) : null}
@@ -2170,34 +2173,31 @@ function useRetitleBareTabByWhatItShows(action: ScreenAction, title: string | nu
   }, [action, title]);
 }
 
-/** The Boxes page: every box across threads and your machines, or one box's desktop or terminal at <threadId>/<boxId>. */
+/** The Boxes page: every box across threads and your machines, a box's own page at box/<boxId>, or one of its views. */
 export function BoxesPage({ subPath }: { subPath: string }) {
-  const navigate = useBbNavigate();
-  const [threadId, boxId, ...rest] = subPath.split("/").map((part) => {
-    try {
-      return decodeURIComponent(part);
-    } catch {
-      return "";
-    }
-  });
-  // A view opened from the settings page goes back there: a machine of yours is not on the Boxes list the same way.
-  const fromSettings = rest.at(-1) === "from-settings";
-  const parts = fromSettings ? rest.slice(0, -1) : rest;
-  // Settings is a place in BB's app, so its way back is a link (see IconLink); the page's list is this plugin's own panel.
-  const back: BackTo = fromSettings ? { label: "Back to settings", href: SETTINGS_PATH } : { label: "Back to boxes", go: () => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: "" }) };
-  if (threadId && boxId && parts.length === 1 && parts[0] === "terminal") {
-    return <BoxTerminal key={`${threadId}/${boxId}/terminal`} threadId={threadId} boxId={boxId} onBack={back} />;
-  }
-  if (threadId && boxId && parts.length === 1 && parts[0] === "device") {
-    const openScreen = (box: BoxView, screen: Screen) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id, screen, fromSettings ? "settings" : undefined), replace: true });
-    return <DesktopViewer key={`${threadId}/${boxId}/device`} threadId={threadId} boxId={boxId} newTab={false} onBack={back} screen="device" openScreen={openScreen} />;
-  }
-  if (threadId && boxId && !parts.length) {
-    return <DesktopViewer key={`${threadId}/${boxId}`} threadId={threadId} boxId={boxId} newTab={false} onBack={back} />;
-  }
-  if (threadId === MACHINES_TAB && !boxId) return <BoxList key={MACHINES_TAB} opening={MACHINES_TAB} />;
-  if (threadId === THREADS_TAB && !boxId) return <BoxList key={THREADS_TAB} opening={THREADS_TAB} />;
+  const route = routeOf(subPath);
+  if (route.page === "box") return <BoxPage key={route.boxId} route={route} />;
+  if (route.page === "view") return <BoxViewPage key={`${route.boxId}/${route.view}`} route={route} />;
+  if (route.tab) return <BoxList key={route.tab} opening={route.tab} />;
   return <BoxList />;
+}
+
+function BoxViewPage({ route }: { route: BoxViewRoute }) {
+  const nav = useBoxesNav();
+  const { value: page, error } = useBoxPage(route.boxId);
+  const now = useNow(false);
+  const name = page?.box?.name ?? null;
+  const back = nav.back(route, name);
+  const toPage = pageOfView(route);
+  const backToPage = wayBack(route).to === "box";
+  const pageLink: PageLink = { href: nav.href(toPage), go: () => (backToPage && "go" in back ? back.go() : nav.go(toPage)) };
+  const threadId = route.threadId ?? page?.threadId ?? null;
+  if (page && !page.box) return <NotHere page={page} back={nav.back(toPage, null)} now={now} />;
+  if (!threadId) return <Loading back={back} error={error} />;
+  if (route.view === "terminal") return <BoxTerminal threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} />;
+  const switchView = (_box: BoxView, screen: Screen) => nav.go(otherView(route, screen), { replace: true });
+  const legacyDesktop = route.threadId !== null && route.view === "desktop";
+  return <DesktopViewer threadId={threadId} boxId={route.boxId} newTab={false} onBack={back} screen={legacyDesktop ? null : route.view} openScreen={legacyDesktop ? undefined : switchView} page={pageLink} />;
 }
 
 /** The titles of the threads whose boxes the page lists, fetched once each; a thread that cannot be read shows its ID. */
@@ -2227,19 +2227,6 @@ export function useThreadTitles(threadIds: readonly string[]): Record<string, st
   return titles;
 }
 
-/** Where the Boxes page shows one box's desktop, or its terminal; from settings, the back arrow returns there. */
-export function desktopSubPath(threadId: string, boxId: string, view: Screen | "terminal" = "desktop", from?: "settings"): string {
-  const base = `${encodeURIComponent(threadId)}/${encodeURIComponent(boxId)}`;
-  return [base, ...(view === "desktop" ? [] : [view]), ...(from === "settings" ? ["from-settings"] : [])].join("/");
-}
-
-export function opensOnBoxesPage(navigate: ReturnType<typeof useBbNavigate>, threadId: string): BoxOpens {
-  return {
-    screen: (box, screen) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id, screen) }),
-    terminal: (box) => navigate.toPluginPanel(DESKTOP_PAGE, { subPath: desktopSubPath(threadId, box.id, "terminal") }),
-  };
-}
-
 /** The page's tabs: your machines, and the threads' boxes by thread. */
 type BoxesTab = "machines" | "threads";
 
@@ -2262,8 +2249,8 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const onDemand = useDesktopOnDemand(machinesState?.desktopOnDemand, OPERATOR, refreshBoth);
   useDesktopProblemShownOnce(machinesState?.desktopProblem, setProblem);
   const [open, setOpen] = useState<string | null>(null);
-  /** A release or stop of a thread's box left alone because threads work on it, until the person says: the panel's question. */
-  const [inUse, setInUse] = useState<(InUse<"release" | "stop"> & { readonly threadId: string }) | null>(null);
+  const threadActions = useThreadBoxActions(() => refreshBoth());
+  const listOpens = useListOpens();
   // The tab chosen last, kept in the browser, so the way back from a box's desktop lands on the tab it left.
   const tabKey = `${pluginId}:boxes-tab`;
   const [chosenTab, setChosenTab] = useState<BoxesTab | null>(() => {
@@ -2301,20 +2288,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
     if (!refused) chooseTab("machines");
     return refused;
   };
-  /** A thread's box: the panel's Start, Stop, Release and Check now, as that thread, with the panel's in-use guard. */
-  const actOn = (threadId: string) => async (method: BoxAction, box: BoxView, force = false) => {
-    const guarded = method === "release" || method === "stop";
-    let refused: string | null;
-    try {
-      const answer = await rpc.call(method, { threadId, box: box.id, ...(guarded && force ? { force: true } : {}) });
-      refused = answer.error;
-      if (guarded && answer.threads?.length) setInUse({ method, box, threads: answer.threads, threadId });
-    } catch (caught) {
-      refused = message(caught);
-    }
-    await refreshBoth();
-    setProblem(refused);
-  };
+  const actOn = (threadId: string) => (method: BoxAction, box: BoxView) => threadActions.act(threadId, method, box);
   const entries = all ?? [];
   const threads = entries.filter((entry) => entry.owner !== "yours");
   const threadIds = [...new Set(threads.map((entry) => entry.threadId))];
@@ -2323,7 +2297,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
     entries.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting" || entry.box.state === "stopping") || machines.some((entry) => entry.box.state === "acquiring" || entry.box.state === "starting"),
     1000,
   );
-  const shownProblem = problem ?? machineActions.problem;
+  const shownProblem = problem ?? threadActions.problem ?? machineActions.problem;
   const tab: BoxesTab = chosenTab ?? (machines.length || !threads.length ? "machines" : "threads");
   const loaded = !!all && !!machinesState;
   // The filters offer what the tab lists, and keep only what it still offers. A machine's search words are the threads on it.
@@ -2372,6 +2346,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
             problem={shownProblem}
             onDismiss={() => {
               setProblem(null);
+              threadActions.setProblem(null);
               machineActions.setProblem(null);
             }}
           />
@@ -2388,10 +2363,10 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
                       entry={entry}
                       now={now}
                       busy={machineActions.busy}
-                      from="boxes"
                       onStop={() => void machineActions.act("stop", entry.box)}
                       onStart={() => void machineActions.act("start", entry.box)}
                       onRemove={() => machineActions.askRemove(entry.box)}
+                      onForget={() => void machineActions.act("forget", entry.box)}
                     />
                   ))}
                 </div>
@@ -2419,7 +2394,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
                           onToggle={() => setOpen((current) => (current === box.id ? null : box.id))}
                           act={actOn(threadId)}
                           now={now}
-                          opens={opensOnBoxesPage(navigate, threadId)}
+                          opens={listOpens}
                           meta={[hasViewer(box) && box.state === "ready" && !controlWord(box, new Set()) ? "The agent has control" : null]}
                           threading={false}
                         />
@@ -2431,7 +2406,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
           </div>
         </div>
         {machineActions.dialogs}
-        <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void actOn(inUse?.threadId ?? "")(found.method, found.box, true)} />
+        {threadActions.dialogs}
       </div>
     </div>
   );

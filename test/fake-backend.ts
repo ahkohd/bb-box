@@ -136,6 +136,8 @@ export interface FakeFaults {
   doctor?: string;
   /** The guest whose command transport does not answer, although it runs. */
   silent?: string;
+  /** Listing the guests fails, as when the provider's API does not answer. */
+  held?: Error;
 }
 
 interface GuestRecord {
@@ -531,6 +533,7 @@ export class FakeBackend implements Backend {
   }
 
   async held(): Promise<HeldGuest[]> {
+    if (this.faults.held) throw this.faults.held;
     const held: HeldGuest[] = [];
     const refs =
       this.nature === "real"
