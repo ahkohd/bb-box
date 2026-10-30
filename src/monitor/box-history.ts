@@ -313,11 +313,12 @@ export class BoxHistory {
     const answers = !this.#answeredWhilePaused.has(box.id);
     const answered = this.#deps.reach.lastAnswered(box.id);
     const alone = this.#now() - at > PAUSED_ALONE_MS && !this.#deps.reach.notAnswering(box.id);
-    if ((answers && answered !== null && answered > at) || alone) {
+    const foundAnswering = answers && answered !== null && answered > at;
+    if (foundAnswering || alone) {
       this.#pausedAt.delete(box.id);
       this.#answeredWhilePaused.delete(box.id);
       this.#failures.delete(box.id);
-      this.#deps.log?.(`Box history reads ${box.name} again: ${alone ? `${PAUSED_ALONE_MS / 60_000} minutes have passed` : "the reach check found it answers"}.`);
+      this.#deps.log?.(`Box history reads ${box.name} again: ${foundAnswering ? "the reach check found it answers" : `${PAUSED_ALONE_MS / 60_000} minutes have passed`}.`);
       return false;
     }
     return true;
