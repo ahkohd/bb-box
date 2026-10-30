@@ -1543,6 +1543,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
         });
       }
+      const resetChecks = await boxes.identityResetChecks();
+      if (resetChecks.length) {
+        sections.push({
+          title: "Identity resets",
+          report: { ok: resetChecks.every((check) => check.status !== "fail"), summary: "Boxes of bb-box's whose identity reset at a boot, which bb-box keeps and enrols again as new BB machines.", checks: resetChecks, notes: [] },
+        });
+      }
       const spareChecks = await boxes.spareChecks();
       if (spareChecks.length) {
         sections.push({

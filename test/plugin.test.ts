@@ -25,6 +25,8 @@ import { TestDriver } from "../src/device/test-driver.ts";
 import type { BoxPointer } from "../src/transports/types.ts";
 import { OPERATOR, SPARES, type BoxRecord } from "../src/core/boxes.ts";
 import { ACCESS_CHECK_EXITS } from "../src/core/in-box.ts";
+import { IDENTITY_RESETS } from "../src/core/identity.ts";
+import { quote } from "../src/transports/process.ts";
 import { INSTALL_ID_KEY, newInstallId } from "../src/core/install.ts";
 import { setDesktopSize } from "../src/core/rfb.ts";
 import { Phases, removeStaleApp, setAsideOtherMachines, withReachHint } from "../src/plugin/enrol.ts";
@@ -6111,4 +6113,126 @@ test("a start clears the last start's steps when it is asked, so a start under w
   await harness.behavior.callRpc("start", { threadId: THREAD, box: box.name });
   assert.deepEqual(during, [], "no step of the last start while this one is under way");
   assert.ok(Object.keys((await app.boxes.find(box.id))!.timings).some((step) => step.startsWith("start.")), "and this start's own once it is done");
+});
+
+const RESET_WHY = "the MAC addresses of its eth interfaces (bc:24:11:00:00:02) are not the marker's (bc:24:11:00:00:01)";
+
+async function identityResetIn(app: Awaited<ReturnType<typeof start>>["app"], box: BoxRecord, machines: string): Promise<void> {
+  const { command } = await app.boxes.transports(box);
+  const ran = await command!.run(`printf '%s\\n' ${quote(`2026-10-30T17:04:02Z ${RESET_WHY}; BB machines removed: ${machines}`)} >> ${IDENTITY_RESETS}`);
+  assert.equal(ran.exitCode, 0, ran.stderr);
+}
+
+async function enrolledAgain(app: Awaited<ReturnType<typeof start>>["app"], boxId: string): Promise<BoxRecord> {
+  return until("the box enrolled again", async () => {
+    const box = await app.boxes.find(boxId);
+    return box?.identityReset?.enrolledAgainAt && box.enrol.state === "enrolled" ? box : null;
+  });
+}
+
+test("a box whose own identity reset took its BB machine is kept, enrolled again as a new BB machine, logged in its box log, and named by the doctor (070)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  const machine = `host-${box.id}`;
+  await identityResetIn(app, box, machine);
+  world.hosts.set(machine, { ...world.hosts.get(machine)!, status: "disconnected" });
+  world.events.length = 0;
+  await app.enrolment.sweep();
+  const again = await enrolledAgain(app, box.id);
+  assert.equal(again.state, "ready");
+  assert.deepEqual(world.events.filter((event) => event === `delete ${machine}` || event === `create ${machine}`), [`delete ${machine}`, `create ${machine}`], "the old machine removed, so its credentials are revoked, then a new one made");
+  assert.deepEqual(world.bootstraps, [box.id, box.id], "BB's bootstrap of the new machine, never a reconnect of the old one");
+  assert.deepEqual(
+    { at: again.identityReset?.at, why: again.identityReset?.why, machine: again.identityReset?.machine, machineAgain: again.identityReset?.machineAgain },
+    { at: Date.parse("2026-10-30T17:04:02Z"), why: RESET_WHY, machine, machineAgain: machine },
+  );
+  const events = app.boxLog.events(box.id).filter((event) => event.kind === "identity-reset" || event.kind === "enrolled-again");
+  assert.deepEqual(events.map((event) => [event.kind, event.by.is]), [["identity-reset", "bb-box"], ["enrolled-again", "bb-box"]]);
+  assert.match(events[0]!.words ?? "", new RegExp(`^Box ${box.name} reset its identity at 2026-10-30 17:04:02 UTC, as the MAC addresses .*\\. BB's machine ${machine} went with it, so bb-box enrols the box again as a new BB machine, and keeps it\\.$`));
+  assert.match(events[1]!.words ?? "", new RegExp(`^Box ${box.name} joined BB again as machine ${machine}, in place of ${machine}, \\d+ s after bb-box found its identity reset\\.$`));
+  const doctor = JSON.parse((await harness.behavior.runCli(["doctor", "--json"])).stdout ?? "{}") as { sections: { title: string; report: { ok: boolean; checks: { id: string; status: string; detail: string }[] } }[] };
+  const section = doctor.sections.find((each) => each.title === "Identity resets");
+  assert.deepEqual(section?.report.checks.map((check) => [check.id, check.status]), [[`identity-reset.${box.name}`, "warn"]]);
+  assert.match(section!.report.checks[0]!.detail, /bb-box kept the box and enrolled it again, at .* UTC, as BB machine/);
+  await app.enrolment.sweep();
+  assert.deepEqual(world.bootstraps, [box.id, box.id], "once enrolled again, the old reset is not acted on again");
+});
+
+test("one of your machines whose BB machine BB removes after its identity reset is kept and enrolled again, never released (070)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box")!;
+  const box = await addMachine(harness, app, { kind: "linux", name: "build-1" });
+  const machine = box.enrol.hostId!;
+  await identityResetIn(app, box, machine);
+  world.hosts.delete(machine);
+  assert.deepEqual(await within(provider.remove({ resource: { boxId: box.id }, hostId: machine } as never), "BB's removal"), { status: "removed" });
+  const kept = await enrolledAgain(app, box.id);
+  assert.equal(kept.threadId, OPERATOR);
+  assert.equal(kept.state, "ready");
+  assert.equal(kept.name, "build-1");
+  assert.deepEqual(app.boxLog.events(box.id).map((event) => event.kind).filter((kind) => kind === "released" || kind === "release-asked"), []);
+
+  const quiet = await addMachine(harness, app, { kind: "linux", name: "build-2" });
+  (app.backends.get(quiet.backend) as FakeBackend).faults.silent = quiet.guest!.ref;
+  world.hosts.delete(quiet.enrol.hostId!);
+  assert.deepEqual(await within(provider.remove({ resource: { boxId: quiet.id }, hostId: quiet.enrol.hostId } as never), "BB's removal of a box that does not answer", 30_000), { status: "removed" });
+  const unread = await app.boxes.find(quiet.id);
+  assert.equal(unread?.state, "ready", "kept: bb-box could not read whether it reset");
+  assert.equal(unread?.enrol.state, "off");
+});
+
+test("a reset record that names another BB machine, as in a box copied from another, or none, as in the source of a clone made outside bb-box, changes nothing (070)", async (t) => {
+  const { harness, app, world, tool } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  const machine = `host-${box.id}`;
+  await identityResetIn(app, box, "host_of_its_source");
+  world.hosts.set(machine, { ...world.hosts.get(machine)!, status: "disconnected" });
+  world.events.length = 0;
+  await app.enrolment.sweep();
+  assert.deepEqual(world.bootstraps, [box.id, box.id], "its own machine reconnected, as after any reboot");
+  assert.ok(!world.events.includes(`delete ${machine}`), world.events.join("\n"));
+  const after = await app.boxes.find(box.id);
+  assert.equal(after?.identityReset ?? null, null);
+  assert.equal(after?.enrol.hostId, machine);
+
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box")!;
+  const mine = await addMachine(harness, app, { kind: "linux", name: "build-3" });
+  world.hosts.delete(mine.enrol.hostId!);
+  assert.deepEqual(await within(provider.remove({ resource: { boxId: mine.id }, hostId: mine.enrol.hostId } as never), "BB's removal"), { status: "removed" });
+  assert.equal(await app.boxes.find(mine.id), null, "with no reset of its own, removing one of your machines in BB still removes it (036)");
+  assert.deepEqual(app.boxLog.events(box.id).filter((event) => event.kind === "identity-reset"), []);
+});
+
+test("an enrolment again after an identity reset that fails is tried again at the next sweep, and the doctor fails until it works (070)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const box = await only(app);
+  await until("enrolment", async () => (await app.boxes.find(box.id))?.enrol.state === "enrolled");
+  const machine = `host-${box.id}`;
+  await identityResetIn(app, box, machine);
+  world.hosts.set(machine, { ...world.hosts.get(machine)!, status: "disconnected" });
+  world.bootstrapError = "BB's server did not answer";
+  await app.enrolment.sweep();
+  const failed = await until("the enrolment again failed", async () => {
+    const current = await app.boxes.find(box.id);
+    return current?.identityReset && current.enrol.state === "failed" ? current : null;
+  });
+  assert.equal(failed.identityReset?.enrolledAgainAt, null);
+  const doctor = async () =>
+    (JSON.parse((await harness.behavior.runCli(["doctor", "--json"])).stdout ?? "{}") as { sections: { title: string; report: { checks: { status: string; detail: string }[] } }[] }).sections.find((each) => each.title === "Identity resets")!.report.checks[0]!;
+  assert.equal((await doctor()).status, "fail");
+  assert.match((await doctor()).detail, /bb-box kept the box, and has not yet enrolled it again as a BB machine\. Its last try failed: .*BB's server did not answer/);
+  world.bootstrapError = null;
+  await app.enrolment.sweep();
+  const again = await enrolledAgain(app, box.id);
+  assert.equal(again.state, "ready");
+  assert.equal((await doctor()).status, "warn");
 });

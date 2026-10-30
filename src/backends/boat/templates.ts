@@ -39,6 +39,7 @@ export const TEMPLATE_FILES = [
   "proxmox-lxc/template/fetch-artifacts.sh",
   "proxmox-lxc/template/guest/baseline.sh",
   "proxmox-lxc/template/guest/bb-box-feature.sh",
+  "proxmox-lxc/template/guest/bb-box-identity.sh",
   "proxmox-lxc/template/guest/check-desktop.sh",
   "proxmox-lxc/template/guest/check-headless.sh",
   "proxmox-lxc/template/guest/customize-base.sh",

@@ -774,13 +774,29 @@ test("the box log's first migration is unchanged, and its next one keeps every e
   migrateFile(db, "main", "_migrations", before);
   db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 1, 'stopped', 'person')").run();
   assert.throws(() => db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 2, 'snapshot-taken', 'person')").run(), /CHECK constraint/);
-  assert.equal(migrateFile(db, "main", "_migrations", BOX_LOG_MIGRATIONS), 1);
+  assert.equal(migrateFile(db, "main", "_migrations", BOX_LOG_MIGRATIONS.slice(0, 4)), 1);
   db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 2, 'snapshot-taken', 'person')").run();
   assert.deepEqual(db.prepare("SELECT seq, kind FROM box_events ORDER BY seq").all(), [
     { seq: 1, kind: "stopped" },
     { seq: 2, kind: "snapshot-taken" },
   ]);
   assert.equal(createHash("sha256").update(BOX_LOG_MIGRATIONS[0]!).digest("hex"), FIRST_BOX_LOG_MIGRATION_HASH);
+});
+
+test("the box log's migration for identity resets keeps every event and allows identity-reset and enrolled-again (070 unit 2)", () => {
+  const root = tempDir("box-log-identity");
+  const db = new Database(join(root, "data.db"));
+  migrateFile(db, "main", "_migrations", BOX_LOG_MIGRATIONS.slice(0, 4));
+  db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 1, 'snapshot-taken', 'person')").run();
+  assert.throws(() => db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 2, 'identity-reset', 'bb-box')").run(), /CHECK constraint/);
+  assert.equal(migrateFile(db, "main", "_migrations", BOX_LOG_MIGRATIONS), 1);
+  db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 2, 'identity-reset', 'bb-box')").run();
+  db.prepare("INSERT INTO box_events (box, thread, name, at, kind, who) VALUES ('bx1', 'thr', 'amber-fox', 3, 'enrolled-again', 'bb-box')").run();
+  assert.deepEqual(db.prepare("SELECT seq, kind FROM box_events ORDER BY seq").all(), [
+    { seq: 1, kind: "snapshot-taken" },
+    { seq: 2, kind: "identity-reset" },
+    { seq: 3, kind: "enrolled-again" },
+  ]);
 });
 
 async function heldAt(state: World, step: "task" | "planned", work: () => Promise<unknown>): Promise<void> {

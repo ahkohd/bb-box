@@ -61,6 +61,8 @@ export const STORED_EVENT_KINDS = [
   "held-copy-started",
 ] as const;
 
+export const IDENTITY_EVENT_KINDS = [...STORED_EVENT_KINDS, "identity-reset", "enrolled-again"] as const;
+
 const eventsTable = (name: string, kinds: readonly string[]) => `CREATE TABLE ${SCHEMA}.${name} (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     box TEXT NOT NULL CHECK(length(CAST(box AS BLOB)) <= ${SHORT_BYTES}),
@@ -89,6 +91,14 @@ export const BOX_LOG_MIGRATIONS: readonly string[] = [
     `INSERT INTO ${SCHEMA}.box_events_070 SELECT * FROM ${SCHEMA}.box_events`,
     `DROP TABLE ${SCHEMA}.box_events`,
     `ALTER TABLE ${SCHEMA}.box_events_070 RENAME TO box_events`,
+    `CREATE INDEX ${SCHEMA}.box_events_by_box ON box_events(box, kind, seq)`,
+    `CREATE INDEX ${SCHEMA}.box_events_by_time ON box_events(at)`,
+  ].join(";\n"),
+  [
+    eventsTable("box_events_identity", IDENTITY_EVENT_KINDS),
+    `INSERT INTO ${SCHEMA}.box_events_identity SELECT * FROM ${SCHEMA}.box_events`,
+    `DROP TABLE ${SCHEMA}.box_events`,
+    `ALTER TABLE ${SCHEMA}.box_events_identity RENAME TO box_events`,
     `CREATE INDEX ${SCHEMA}.box_events_by_box ON box_events(box, kind, seq)`,
     `CREATE INDEX ${SCHEMA}.box_events_by_time ON box_events(at)`,
   ].join(";\n"),

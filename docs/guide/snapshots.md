@@ -69,6 +69,8 @@ The rest of its disk stays, threads' files included. A restart, a resize, a rena
 
 `/var/lib/bb-box/identity-resets` lists each reset, with why. If a reset cannot finish, the box keeps its network, SSH and BB's daemon off.
 
+A box of BB Box's own should never reset. If one does, its BB machine goes with the reset, but BB Box keeps the box: it removes the old machine from BB, so its credentials stop working, and enrols the box again as a new BB machine. This is so for your machines too, which BB Box would otherwise release when BB removes their machine. The box's log says so, and `bb box doctor` names the box under Identity resets. A copy made outside BB Box is not one of its boxes, so it stays out of BB.
+
 Each snapshot records whether its box had the reset when it was taken. A snapshot from before says "taken before amber-fox had the identity reset". Forks, which come later, will start only from snapshots that had it.
 
 Boxes made before their image had the reset, boxes BB Box made before it wrote markers, and boat.dev boxes have no marker yet, so they never reset.

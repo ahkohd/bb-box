@@ -459,7 +459,7 @@ this box", and deleted.
 
 ## Unit 2: the identity reset
 
-Built on 30 October 2026, on main `78e74984`.
+Built on 30 October 2026, on main `7bd9f833`.
 
 ### What changed
 
@@ -542,13 +542,11 @@ Built on 30 October 2026, on main `78e74984`.
 
 ### Tests
 
-On a Linux box, 8 cores, 16 GiB, Node 24.21, on this unit's commit over
-main `78e74984`: `npx tsc` passes; the node suite ran 3,013 tests,
-2,725 passed, 0 failed, 288 skipped (the live and conformance ones);
-vitest ran 380, all passed. The node suite includes the docs, site and
-reference checks. After two last fixes to the guest program (an option
-given no value, and a marker with an unknown source), `tsc` and the
-identity, snapshot and docs tests ran again: 61, all passed.
+On a Linux box, 8 cores, 16 GiB, Node 24.21, on this unit's two commits
+over main `7bd9f833`: `npx tsc` passes and the reference is current; the
+node suite ran 3,019 tests, 2,731 passed, 0 failed, 288 skipped (the live
+and conformance ones); vitest ran 380, all passed. The node suite includes
+the docs, site and reference checks.
 
 - `test/identity-reset.test.ts`, 12, which run the guest program on a fake
   root: a box made before the change, with the program and no marker, keeps
@@ -613,17 +611,31 @@ Tart Linux VM on arm64 (its card named at 59.125 s, the check from 59.406 to
 59.629, networkd at 60.197, ssh at 60.295), each rebooted with `boot=kept`.
 The LXC GPU and Wayland desktops, Android and boat were not checked.
 
-**Tailscale.** No tailnet key was used: tailscaled ran without a login, so
-`tailscale0` and its state were there, and its state was `{}` (sha256
-`44136fa3...`). A real node's removal from a clone was not checked.
+**Tailscale, with a real node.** In the checks above tailscaled ran without
+a login, so `tailscale0` and its state were there and its state was `{}`
+(sha256 `44136fa3...`). Then, with the owner's approval, the lead minted one
+auth key (single use, ephemeral, preauthorized, `tag:bb-box`, an hour) into
+a file in neat-fern, a production Proxmox LXC box with the unit installed
+from this branch; it joined the tailnet with it once, and the file was
+deleted. The lead cloned it with `pct snapshot` and `pct clone`, as above.
+The clone reset at its first boot, before networkd, ssh, `user@1000` and
+tailscaled: its Tailscale state was the empty one and tailscaled said
+`NeedsLogin`; host ID, credentials and access file gone; new machine ID and
+SSH host key. The source kept its node, its state (`333f403e...`), its
+host ID and machine ID, and stayed `Running` on the tailnet. It was then
+logged out and released.
 
 **A reset of one of bb-box's own boxes.** On production, a thread's Linux
 box with the unit installed was given a marker naming another MAC address
-and rebooted: it reset as a clone does. Within about 4 minutes BB removed
-its machine through bb-box's provider, and bb-box listed it "not enrolled
-... until it is released". So a reset that is not a copy costs a box its BB
-machine, and for one of your machines that removal releases the box. Unit
-7's first contact with a fork is where bb-box enrols a reset box again.
+and rebooted: it reset as a clone does, and within about 4 minutes bb-box
+listed it "not enrolled ... until it is released". On a fresh separate BB
+the same happened to one of its machines: the sweep found the machine
+disconnected and ran BB's bootstrap again with its old key, which failed in
+a box with no credentials, and the sweep's handling of that failure dropped
+the box's enrolment; BB kept the old machine, disconnected. Had BB removed
+the machine, bb-box would have released the box, as it does for one of
+your machines whose machine is removed in BB. The lead's answer: a reset
+must never cost a box. See [After the lead's answers](#after-the-leads-answers).
 
 ### Rollout
 
@@ -644,7 +656,10 @@ machine, and for one of your machines that removal releases the box. Unit
       nightly rebuild), which microsandbox imports when they change;
    5. Tart's Linux images on each Mac (`prepare-linux-image.sh`, or its
       nightly rebuild);
-   6. boat.dev's template at its next build: the unit comes with it, unarmed.
+   6. boat.dev's template: bb-box builds it again by itself when its
+      scripts change, as this merge does (`boat/templates.ts` now names the
+      identity script among the files its build reads); the unit comes with
+      it, unarmed.
    Warm guests and spares of an older build are replaced by the upkeep, as
    now, so their boxes are armed when claimed.
 3. **A box made before the change** keeps working as it does. From an old
@@ -661,6 +676,83 @@ machine, and for one of your machines that removal releases the box. Unit
    revert this unit and rebuild; boxes already armed keep a correct check.
 5. **Watch** `/var/lib/bb-box/identity-resets`, which stays empty in every
    box that is not a copy.
+
+### After the lead's answers
+
+**A reset never costs a box.** bb-box reads a box's
+`/var/lib/bb-box/identity-resets`, and when a line there names the box's own
+BB machine, it keeps the box and enrols it again as a new BB machine. It
+does so wherever that machine's loss would show (`src/plugin/enrol.ts`):
+
+- a reconnect, after bb-box starts a box and at each sweep for a box whose
+  machine BB shows disconnected, which would otherwise run BB's bootstrap
+  again with the old key;
+- the sweep's handling of a machine BB no longer has, which would otherwise
+  forget the box's enrolment;
+- BB's removal of the machine, which would otherwise release one of your
+  machines; and when bb-box cannot read the box's record then, as when it
+  does not answer, it keeps the box too, says so in its log, and leaves
+  removing it to the person;
+- the enrolment of a box the sweep restored, whose machine BB still has.
+
+It records the reset on the box, logs `identity-reset` in its box log,
+removes the old machine from BB, so its credentials no longer work, enrols
+the box as a new machine, counting the enrolment's time from then, writes
+its own marker in the box again, and logs `enrolled-again`. A failed
+enrolment is tried again at each sweep. The doctor has a section, Identity
+resets, with a check for each such box: a warning once it is enrolled
+again, naming both machines, and a failure until then. A box whose record
+names another machine, as one copied from another box would, or none is
+left as it was; a clone made outside bb-box is not in its records, so
+bb-box never enrols it. The box log gains the two kinds in a migration of
+its own, which keeps every event.
+
+Tests, in `test/plugin.test.ts`: a thread's box whose own reset took its
+machine, at a sweep: the old machine deleted, then a new one made and
+bootstrapped, never a reconnect of the old one; the box log's two events
+and their words; the doctor's warning; and no second action at the next
+sweep. One of your machines whose machine BB removes after its reset: kept,
+named as before, enrolled again, never released; and one that does not
+answer: kept, not enrolled. A record naming another machine: the box's own
+machine reconnects as after any reboot, nothing is deleted, and one of your
+machines whose machine BB removes is still released (036). An enrolment
+again that fails: tried again at the next sweep, the doctor failing with
+why until it works, then warning.
+
+**Live, on a fresh separate BB** (`npx bb-app` 0.48.1, no account, bb-box
+from this branch, its Docker backend with images built from it), one of its
+machines, keep-two (`host_3sa2732699`): its marker's value changed by hand
+as root in the box, then the box restarted from outside bb-box, at
+17:28:17. It reset at that start. The next sweep found it at 17:31:00 and
+logged `identity-reset` ("Box keep-two reset its identity at 2026-10-30
+17:28:18 UTC, as the value bb-box set on this guest is not the marker's.
+BB's machine host_3sa2732699 went with it, so bb-box enrols the box again
+as a new BB machine, and keeps it."); at 17:31:02 `enrolled-again` ("Box
+keep-two joined BB again as machine host_xz43czk3qi, in place of
+host_3sa2732699, 2 s after bb-box found its identity reset."). BB listed
+only `host_xz43czk3qi`, connected; `bb box list` said "enrolled as a BB
+machine in 1.9 s"; the box kept its name, record and owner, answered
+commands with its access file, had the new host ID, and its marker named
+the box again (`status`: `boot=reset marker=matches armed=yes
+box=bx7xnqt7yhhemj`). The doctor:
+
+```
+Identity resets: Boxes of bb-box's whose identity reset at a boot, which bb-box keeps and enrols again as new BB machines.
+  [warn] Identity reset of keep-two: Box keep-two reset its identity at 2026-10-30 17:28:18 UTC, as the value bb-box set on this guest is not the marker's, and BB's machine host_3sa2732699 went with it. bb-box kept the box and enrolled it again, at 2026-10-30 17:31:02 UTC, as BB machine host_xz43czk3qi.
+        Fix: A box that is not a copy of another should never reset: see /var/lib/bb-box/identity-resets and journalctl -u bb-box-identity in the box.
+```
+
+An earlier run of the same check, before bb-box wrote the marker again and
+timed the enrolment from the reset, behaved the same otherwise (keep-me,
+`host_t3v95jev38` for `host_4g2ax4tru9`, 2 s).
+
+The case that released a box before: another of its machines, keep-three
+(`host_uwahzewcjm`), reset the same way at 21:57:34, and 4 s later its
+machine was removed in BB (`bb host remove host_uwahzewcjm --yes`), before
+any sweep. BB called bb-box's provider, which read the box's record: at
+21:57:39 `identity-reset`, at 21:57:41 `enrolled-again` as
+`host_j2s53vjk7e`, connected. The box was kept, with its name and owner,
+and not released.
 
 ### Choices and deviations
 
@@ -679,9 +771,10 @@ machine, and for one of your machines that removal releases the box. Unit
 - **boat.dev** writes no marker in this unit: whether its stop and start keep
   a MAC address is not measured (its files are another worker's, and its
   boxes are paid). Unit 11 settles its source.
-- **After a reset** the unit writes the copy's own marker, with no box, where
-  070 has bb-box write it after each reset. bb-box writes one only at first
-  ready here; first contact with a fork is unit 7's.
+- **After a reset** the unit writes the copy's own marker, with no box, so
+  it does not reset again at its next boot. bb-box writes the box's own
+  marker again only after it enrols one of its own boxes again; a fork's
+  first contact is unit 7's.
 - **bb-box's authorized key** stays: it is the template's, and a fork's own
   key is unit 7's.
 - **The machine ID**: the reset writes a new one after systemd started, so

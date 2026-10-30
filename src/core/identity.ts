@@ -69,3 +69,35 @@ export async function writeIdentityMarker(command: CommandTransport, boxId: stri
   const said = (ran.stderr.trim() || ran.stdout.trim()).split("\n").at(-1) ?? "";
   return { written: false, why: ran.timedOut ? `writing it took over ${MARKER_WRITE_MS / 1000} s` : `writing it exited with ${ran.exitCode}${said ? `: ${said}` : ""}` };
 }
+
+export const IDENTITY_RESETS = "/var/lib/bb-box/identity-resets";
+export const RESETS_READ_MS = 15_000;
+const RESET_LINE = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) (.*); BB machines removed: (.*)$/;
+
+export interface IdentityReset {
+  readonly at: number;
+  readonly why: string;
+  readonly machines: readonly string[];
+}
+
+export function parseIdentityResets(text: string): IdentityReset[] {
+  return text.split("\n").flatMap((line) => {
+    const found = RESET_LINE.exec(line.trim());
+    if (!found) return [];
+    return [{ at: Date.parse(found[1]!), why: found[2]!, machines: found[3]!.split(/\s+/).filter((machine) => machine && machine !== "none") }];
+  });
+}
+
+export function resetThatRemoved(resets: readonly IdentityReset[], machine: string): IdentityReset | null {
+  return [...resets].reverse().find((reset) => reset.machines.includes(machine)) ?? null;
+}
+
+export function identityResetsScript(): string {
+  return `cat ${IDENTITY_RESETS} 2>/dev/null; exit 0`;
+}
+
+export async function readIdentityResets(command: CommandTransport, signal?: AbortSignal): Promise<IdentityReset[]> {
+  const ran = await command.run(identityResetsScript(), { timeoutMs: RESETS_READ_MS, signal, maxOutputBytes: 256 * 1024 });
+  if (ran.exitCode !== 0) throw new Error(`reading ${IDENTITY_RESETS} exited with ${ran.exitCode}${ran.timedOut ? ", out of time" : ""}`);
+  return parseIdentityResets(ran.stdout);
+}
