@@ -870,6 +870,8 @@ export interface InUse {
   readonly backends: ReadonlyMap<string, number>;
   /** Boxes by backend ID and the name of a host the configuration lists. */
   readonly hosts: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  /** Snapshots bb-box records by backend ID (070), with how many there are and their size and price in words. */
+  readonly snapshots?: ReadonlyMap<string, { readonly count: number; readonly words: string }>;
 }
 
 export const NOTHING_IN_USE: InUse = { backends: new Map(), hosts: new Map() };
@@ -959,6 +961,14 @@ export function checkDocument(
 
   for (const [id, count] of inUse.backends) {
     if (count > 0 && !seen.has(id)) problem(`backends.${id}`, `Backend ${id} has ${plural(count, "box")}, so it cannot be removed or renamed. Turn it off and release them first.`);
+  }
+  for (const [id, held] of inUse.snapshots ?? []) {
+    if (held.count > 0 && !seen.has(id)) {
+      problem(
+        `backends.${id}`,
+        `Backend ${id} holds ${held.words}, so it cannot be removed or renamed. Delete them first, or forget them with bb box snapshot forget ${id}: bb-box then drops its records of them, and they may still exist there and be billed.`,
+      );
+    }
   }
 
   // Projects' images (049): Linux kinds for now, and one image a project's boxes of a kind get.

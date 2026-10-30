@@ -4,7 +4,8 @@
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, providerFamily, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
-import { desktopDisplays, deviceDisplayOf, type Arch, type BoxForm, type BoxSize, type Capacity, type DoctorReport, type GpuRoom, type GuestOs, type Resizing, type Windowing } from "../backends/types.ts";
+import { desktopDisplays, deviceDisplayOf, type Arch, type BoxForm, type BoxSize, type Capacity, type DoctorReport, type GpuRoom, type GuestOs, type Resizing, type Snapshotting, type Windowing } from "../backends/types.ts";
+import { offerSnapshotWords } from "./snapshot-words.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
@@ -267,6 +268,7 @@ export interface OfferView {
   readonly devices?: string;
   /** What a box of this offer can resize, and how (061); absent when nothing. */
   readonly resizing?: Resizing;
+  readonly snapshotting?: Snapshotting;
   /** The box user can become root, or Administrator, on this backend. */
   readonly admin: boolean;
   /** Its desktop follows the viewer's size; null for a kind without a desktop. */
@@ -342,6 +344,7 @@ export function kindViews(
       ...(backend.offerNote?.(kind.id) ? { note: backend.offerNote(kind.id)! } : {}),
       ...(DEVICE_HOST_KINDS.has(kind.id) && offeredWords(backend.macCapabilities?.() ?? []) ? { devices: offeredWords(backend.macCapabilities!())! } : {}),
       ...(backend.resizing?.(kind.id) ? { resizing: backend.resizing(kind.id)! } : {}),
+      ...(backend.snapshotting?.(kind.id) ? { snapshotting: backend.snapshotting(kind.id)! } : {}),
       admin,
       resizable: desktopDisplays(kind.capabilities.displays)[0]?.resizable ?? null,
       typicalReadyMs: typical[key] ?? null,
@@ -971,4 +974,14 @@ export function kindResizeText(kind: KindView): string {
   if (able.length === kind.offers.length && same.size === 1) return `Resize: ${words(able[0]!)}.`;
   const others = able.length < kind.offers.length ? `; ${kind.offers.length - able.length === 1 ? "the other provider cannot" : "the other providers cannot"}` : "";
   return `Resize: ${able.map((offer) => `on ${offer.name}, ${words(offer)}`).join("; ")}${others}.`;
+}
+
+export function kindSnapshotText(kind: KindView): string {
+  const able = kind.offers.filter((offer) => offer.snapshotting);
+  if (!able.length) return "";
+  const words = (offer: OfferView) => offerSnapshotWords(offer.snapshotting!);
+  const same = new Set(able.map(words));
+  if (able.length === kind.offers.length && same.size === 1) return `Snapshots: ${words(able[0]!)}.`;
+  const others = able.length < kind.offers.length ? `; ${kind.offers.length - able.length === 1 ? "the other provider takes none" : "the other providers take none"}` : "";
+  return `Snapshots: ${able.map((offer) => `on ${offer.name}, ${words(offer)}`).join("; ")}${others}.`;
 }

@@ -37,6 +37,7 @@ import { hostEntry } from "../src/host/entry.ts";
 import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { waylandPointerScript } from "../src/backends/wayvnc.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, loseLastByteOfCopies, type FakeBackendOptions } from "./fake-backend.ts";
+import { FakeSnapshots } from "./fake-snapshots.ts";
 import { tasksDesktop, type FakeDesktop } from "./fake-cua.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeDaemon, fakeFfmpeg, joined, tempDir } from "./helpers.ts";
@@ -3191,7 +3192,7 @@ test("the panel lists, acquires, stops, starts and releases boxes over RPC", asy
   const backends = (await harness.behavior.callRpc("backends")) as { type: string; state: string }[];
   assert.deepEqual(backends.map((backend) => [backend.type, backend.state]), [["fake", "active"]]);
   const doctor = (await harness.behavior.callRpc("doctor")) as { ok: boolean; sections: { title: string }[] };
-  assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host", "Monitor", "Box log"]]);
+  assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host", "Monitor", "Snapshots", "Box log"]]);
 });
 
 /** Everything the plugin sent a desktop viewer, joined. */
@@ -3911,6 +3912,60 @@ test("bb box lists kinds and boxes, and acquires and releases for the thread it 
   assert.equal(missing.exitCode, 1);
   assert.match(missing.stderr ?? "", /no box "nope".*\(not_found\)/);
   assert.match((await harness.behavior.runCli(["release", box.name, "--thread", THREAD])).stdout ?? "", /Released box/);
+});
+
+test("bb box snapshot takes, lists and deletes a thread's box's snapshots; box_status and box_list say what it holds and offers; the doctor checks snapshots.db (070)", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const provider = new FakeSnapshots();
+  provider.attach(world.backend!, Date.now);
+  assert.equal((await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD])).exitCode, 0);
+  const box = await only(app);
+  assert.match(text(await tool("box_list", {})), /- linux: .* Snapshots: its disk, or its disk and memory, while it runs\. On:/);
+  assert.match(text(await tool("box_status", { box: box.name })), /\nSnapshots: none\. Fake host takes them of its disk, or its disk and memory, while it runs\.\n/);
+
+  const taken = await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--name", "before the migration", "--note", "schema v41"]);
+  assert.equal(taken.exitCode, 0, taken.stderr);
+  const [record] = app.snapshotStore.records();
+  assert.equal(
+    taken.stdout,
+    `Took snapshot "before the migration" (${record!.id}) of box ${box.name} in ${(record!.tookMs! / 1000).toFixed(1)} s: it holds its disk.\nSize: size unknown. Price: no charge.\nBox ${box.name} holds 1 of 5 snapshots.\n`,
+  );
+  assert.deepEqual(record!.by, { is: "command" });
+  assert.match(text(await tool("box_status", { box: box.name })), new RegExp(`\\nSnapshots: 1 of 5: "before the migration" \\(${record!.id}, \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} UTC, disk, ready\\)\\.\\n`));
+  assert.match(text(await tool("box_status", { box: box.name }, "thr_stranger")), /no box/, "another thread sees nothing of it");
+  assert.match((await harness.behavior.runCli(["status", box.name, "--thread", THREAD])).stdout ?? "", new RegExp(`\\nSnapshots: 1 of 5: "before the migration" \\(${record!.id}, `));
+
+  const listed = await harness.behavior.runCli(["snapshot", "list", "--thread", THREAD]);
+  assert.equal(listed.exitCode, 0, listed.stderr);
+  assert.match(listed.stdout ?? "", new RegExp(`^${box.name} \\(${box.id}\\) · Fake host · thread ${THREAD}\\n  "before the migration" \\(${record!.id}\\) · ready · taken .* · by a bb box command · disk · size unknown\\n  1 of 5 for this box\\.\\n$`));
+  const json = JSON.parse((await harness.behavior.runCli(["snapshot", "list", box.name, "--thread", THREAD, "--json"])).stdout ?? "[]") as { id: string; note: string }[];
+  assert.deepEqual(json.map((each) => [each.id, each.note]), [[record!.id, "schema v41"]]);
+  assert.equal((await harness.behavior.runCli(["snapshot", "list", "--all", "--kept"])).stdout, "There are no kept snapshots.\n");
+
+  const missing = await harness.behavior.runCli(["snapshot", "delete", box.name, "nope", "--thread", THREAD]);
+  assert.equal(missing.exitCode, 1);
+  assert.match(missing.stderr ?? "", /no snapshot "nope".*\(not_found\)/s);
+  const deleted = await harness.behavior.runCli(["snapshot", "delete", box.name, "before the migration", "--thread", THREAD]);
+  assert.equal(deleted.stdout, `Deleted snapshot "before the migration" (${record!.id}) of box ${box.name}: it freed what it no longer shared with its box.\n`);
+  assert.equal(provider.held.size, 0);
+  assert.deepEqual(
+    app.boxLog.events(box.id).map((event) => event.kind).filter((kind) => kind.startsWith("snapshot")),
+    ["snapshot-taken", "snapshot-deleted"],
+  );
+
+  const takeOnce = ["snapshot", "take", box.name, "--thread", THREAD, "--name", "once", "--request", "req-once"];
+  assert.equal((await harness.behavior.runCli(takeOnce)).exitCode, 0);
+  const once = app.snapshotStore.records().find((each) => each.name === "once")!;
+  const deleteOnce = ["snapshot", "delete", box.name, once.id, "--thread", THREAD, "--request", "req-gone"];
+  assert.equal((await harness.behavior.runCli(deleteOnce)).exitCode, 0);
+  assert.equal((await harness.behavior.runCli(deleteOnce)).stdout, `Snapshot ${once.id} of box ${box.name} was deleted already, with that request.\n`);
+  assert.equal((await harness.behavior.runCli(takeOnce)).stdout, `Snapshot ${once.id} of box ${box.name} was asked for with that request already, and is no longer in bb-box's records.\n`);
+
+  const doctor = JSON.parse((await harness.behavior.runCli(["doctor", "--json"])).stdout ?? "{}") as { sections: { title: string; report: { checks: { id: string; status: string }[] } }[] };
+  assert.deepEqual(doctor.sections.find((section) => section.title === "Snapshots")?.report.checks.map((check) => [check.id, check.status]), [["snapshots", "ok"]]);
+  assert.equal((await harness.behavior.runCli(["snapshot", "forget", "fake"])).stdout, "bb-box records no snapshots on backend fake.\n");
+  assert.equal((await harness.behavior.runCli(["snapshot", "hold-next"])).exitCode !== 0, true, "the live checks' hold is not there without BB_BOX_LIVE_CHECKS");
 });
 
 for (const via of ["bb box acquire", "box_acquire"] as const) {

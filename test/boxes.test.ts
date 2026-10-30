@@ -1709,7 +1709,7 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   world.enrolled.length = 0;
 
   const report = await boxes.sweep();
-  assert.deepEqual({ ...report }, { released: 0, leftovers: 0, adopted: 3, kept: 1, ending: 1, resumed: 0 });
+  assert.deepEqual({ ...report }, { released: 0, leftovers: 0, adopted: 3, kept: 1, ending: 1, resumed: 0, guarded: 0 });
   assert.deepEqual(world.enrolled, [`${running.name}, restored`], "only the box that runs and answers enrols again");
 
   for (const [before, state] of [[running, "ready"], [stopped, "stopped"]] as const) {
@@ -1747,7 +1747,7 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   // Records restored once are left alone; a thread BB confirms later gets its box back.
   // The silent box answers now, so it enrols, and its error goes.
   world.threads.set("thr_unsure", "live");
-  assert.deepEqual({ ...(await boxes.sweep()) }, { released: 0, leftovers: 0, adopted: 1, kept: 0, ending: 0, resumed: 0 });
+  assert.deepEqual({ ...(await boxes.sweep()) }, { released: 0, leftovers: 0, adopted: 1, kept: 0, ending: 0, resumed: 0, guarded: 0 });
   assert.equal((await boxes.find(unsure.id))?.name, unsure.name);
   assert.deepEqual(world.enrolled, [`${running.name}, restored`, `${unsure.name}, restored`, `${silent.name}, restored`]);
   const answering = await boxes.find(silent.id);

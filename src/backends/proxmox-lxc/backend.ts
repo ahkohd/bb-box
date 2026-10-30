@@ -39,6 +39,7 @@ import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
+import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata } from "../proxmox/snapshotting.ts";
 import {
   BUILD,
   TAG,
@@ -87,7 +88,17 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type BoxOwner,
+  type HeldSnapshot,
+  type SnapshotHooks,
+  type SnapshotPlan,
+  type SnapshotRef,
+  type SnapshotTake,
+  type SnapshotTaken,
+  type Snapshotting,
   type Started,
+  type TaskOutcome,
+  type TaskRef,
   type WarmShortfall,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
@@ -616,6 +627,7 @@ export class ProxmoxLxcBackend implements Backend {
   });
   /** Image boxes (049) from before their clone until their capture or removal, which no sweep counts. */
   readonly #imageBoxes = new Set<number>();
+  readonly #snapshots: ProxmoxSnapshotting;
 
   /**
    * Image operations (049): a box from a template, its capture as a template
@@ -648,6 +660,61 @@ export class ProxmoxLxcBackend implements Backend {
     this.hosts = [config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname];
     this.#warmStore = new WarmStore(this, config.proxmox.pool);
     this.#warm = new ReadyPool(this.#warmStore);
+    this.#snapshots = new ProxmoxSnapshotting(
+      {
+        label: this.label,
+        type: "lxc",
+        installId: context.installId,
+        pool: config.proxmox.pool,
+        client: () => this.client(),
+        vmid: (guest) => this.#vmid(guest),
+        ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
+        still: (api, guest, signal) => this.#still(api, guest, signal),
+        rootDisk: () => "rootfs",
+        disks: (config) => Object.keys(config).filter((key) => (key === "rootfs" || /^mp\d+$/.test(key)) && storageOfVolume(config[key]) !== null),
+        guests: (api, signal) => this.#boxGuests(api, signal),
+      },
+      ["disk"],
+    );
+  }
+
+  snapshotting(kind: string): Snapshotting | null {
+    return this.#offers().some((offer) => offer.kind.id === kind) ? this.#snapshots.offer() : null;
+  }
+
+  async planSnapshots(guest: Guest, kind: string, _snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    this.#offer(kind);
+    return this.#snapshots.plan(guest, signal);
+  }
+
+  snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    return this.#snapshots.take(guest, take, hooks, signal);
+  }
+
+  deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    return this.#snapshots.delete(ref, hooks, signal);
+  }
+
+  heldSnapshots(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    return this.#snapshots.held(signal);
+  }
+
+  providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
+    return this.#snapshots.task(task, signal);
+  }
+
+  findTasks(guest: Guest, operation: "take" | "delete", since: number, signal?: AbortSignal): Promise<readonly TaskRef[]> {
+    return this.#snapshots.findTasks(guest, operation, since, signal);
+  }
+
+  async #boxGuests(api: Proxmox, signal?: AbortSignal): Promise<{ guest: Guest; owner: BoxOwner | null }[]> {
+    const install = installTag(this.#context.installId);
+    return (await api.listPool(this.#config.proxmox.pool, signal))
+      .filter((guest) => guest.type === "lxc" && !guest.template && this.#inRange(guest.vmid) && guest.tags.includes(TAG) && guest.tags.includes(install))
+      .flatMap((guest) => {
+        const owner = ownerFromTags(guest.tags, guest.name || null);
+        return owner ? [{ guest: this.#guest(guest.node || api.node, guest.vmid, templateFromTags(guest.tags), owner.boxId), owner }] : [];
+      });
   }
 
   kinds(): BoxKind[] {
@@ -1474,7 +1541,8 @@ export class ProxmoxLxcBackend implements Backend {
       }
 
       const privileges = await poolPrivileges(api, pool, signal);
-      checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "lxc", privileges, storages: templateStorages }) });
+      const metadata = await storagesMetadata(api, templateStorages, signal);
+      checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "lxc", privileges, storages: templateStorages, metadata }) });
     }
     notes.unshift(`This install's ID is ${this.#context.installId}. Its containers carry the tag ${installTag(this.#context.installId)}.`);
 

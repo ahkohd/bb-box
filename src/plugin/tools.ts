@@ -24,7 +24,8 @@ import { ANDROID_ID_FIRST_BOOT_WORDS } from "../core/device-settings.ts";
 import { wantsDevice, type ClaimSwitch } from "./devices.ts";
 import { captionDeviceRecording, deviceClipWords, recordsDevice, startDeviceRecording, stopDeviceRecording, type DeviceRecordDeps } from "./record-device.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, deviceLines, devicesText, placementText, kindResizeText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
+import { snapshotStatusLine } from "./snapshot-words.ts";
+import { adminText, boxDetail, deviceLines, devicesText, placementText, kindResizeText, kindSnapshotText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
 export const RUN_OUTPUT_BYTES = 32 * 1024;
@@ -62,6 +63,9 @@ const HINTS: Record<BoxErrorCode, string> = {
   in_use: "Leave the box while that thread works. Ask the user if it should go anyway: they can release it from bb-box's panel.",
   restarting: "Run the command again in a few seconds, once bb-box is back.",
   reconnecting: "Wait about 30 s and try again: bb-box is usually back within a minute. Do not release the box: it, and the commands and jobs in it, go on.",
+  locked: "Ask the user to run the command this names on the host: bb-box cannot unlock a guest itself.",
+  failed: "Call box_status to see the box, then try again.",
+  reused_request: "Make a new request ID for a new take or delete; repeat one only to repeat the same call.",
 };
 
 export function failure(error: unknown, action: string): PluginAgentToolResult {
@@ -516,7 +520,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(list.length ? `This thread's boxes:\n${list.map(boxLine).join("\n")}` : "This thread has no boxes.");
         lines.push(
           kinds.length
-            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
+            ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind), kindSnapshotText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${imagesText(images, kind.id)}`).join("\n")}`
             : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         if (withheld.length) lines.push(`Kinds you cannot acquire now:\n${withheld.map((kind) => `- ${kind.kind}: ${kind.label}. ${kind.words}`).join("\n")}`);
@@ -537,11 +541,16 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     parameters: z.object({ box: boxParam }),
     async execute({ box: ref }, { threadId, signal }) {
       try {
-        const { owner, box: found } = await app.resolve(thread(threadId), ref, signal);
+        const { owner, box: found, runsOn } = await app.resolve(thread(threadId), ref, signal);
         const box = await boxes.refresh(owner, found.id, signal).catch(async (error) => {
           if (error instanceof BoxError && error.code === "backend_off") return boxes.get(owner, found.id);
           throw error;
         });
+        const snapshotLine = snapshotStatusLine(
+          box,
+          app.backends.get(box.backend)?.snapshotting?.(box.kind) ?? null,
+          app.snapshots.seen({ is: "agent", threadId: thread(threadId) }, { box: { id: box.id, threadId: box.threadId }, runsOn }),
+        );
         const hints: Record<string, string[]> = {
           ready: using(box),
           acquiring: [`Call box_status again in a few seconds.`],
@@ -552,7 +561,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         };
         const grants = await boxes.grants(box, signal);
         if (box.state === "ready") await app.devices.freshSettings(box);
-        return `${boxDetail(box, app.control(box))}${deviceText(app, box)}${grants ? grantsText(grants) : ""}${next(...(hints[box.state] ?? []))}`;
+        return `${boxDetail(box, app.control(box))}${snapshotLine ? `\n${snapshotLine}` : ""}${deviceText(app, box)}${grants ? grantsText(grants) : ""}${next(...(hints[box.state] ?? []))}`;
       } catch (error) {
         return failure(error, "Checking the box");
       }

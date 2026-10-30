@@ -76,6 +76,9 @@ import { roomWords } from "../core/encoder-ledger.ts";
 import { boxView, gpuRooms, kindViews, threadsWords, type BackendView, type BoxView, type DoctorView, type ImageOptionView, type KindView, type OfferRoom, type ProviderProfile, type ReachView } from "./views.ts";
 import { BOX_HISTORY_MIGRATIONS, openBoxFiles, unopenedFiles } from "./attached-files.ts";
 import { BOX_LOG_GAPS_KEY, BOX_LOG_MIGRATIONS, BoxLogStore, historyFileChecks } from "./box-log-store.ts";
+import { SNAPSHOT_MIGRATIONS, SnapshotStore } from "./snapshot-store.ts";
+import { Snapshots } from "../core/snapshots.ts";
+import { SnapshotHolds } from "./live-checks.ts";
 import { ReachCheck } from "../core/reach.ts";
 import type { Actor } from "../core/box-log.ts";
 
@@ -202,6 +205,9 @@ export interface BbBox {
   /** Who controls a box's desktop. */
   control(box: BoxRecord): ControlView;
   readonly boxLog: BoxLogStore;
+  readonly snapshots: Snapshots;
+  readonly snapshotStore: SnapshotStore;
+  readonly snapshotHolds: SnapshotHolds | null;
   readonly reach: ReachCheck;
   backendInSettings(box: BoxRecord): boolean;
   forget(threadId: string, ref: string, who: Actor): Promise<void>;
@@ -421,14 +427,15 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
 
   const storedFiles = (() => {
     try {
-      return openBoxFiles(bb.storage, { log: BOX_LOG_MIGRATIONS, history: BOX_HISTORY_MIGRATIONS });
+      return openBoxFiles(bb.storage, { log: BOX_LOG_MIGRATIONS, history: BOX_HISTORY_MIGRATIONS, snapshots: SNAPSHOT_MIGRATIONS });
     } catch (error) {
       logError("open bb-box's box log and box history", error);
       return unopenedFiles(error);
     }
   })();
   if (storedFiles.shared) bb.log.warn(`bb-box keeps its box log and box history in its own database, as BB's handle refused to attach their files: ${storedFiles.log.refusal}`);
-  for (const file of [storedFiles.log, storedFiles.history]) {
+  if (storedFiles.snapshotsMoved) bb.log.info(`Moved ${storedFiles.snapshotsMoved} snapshot records and operations from bb-box's database into snapshots.db, which BB's handle now attaches.`);
+  for (const file of [storedFiles.log, storedFiles.history, storedFiles.snapshots]) {
     if (file.problem) bb.log.warn(`bb-box could not set up ${file.spec.file}: ${file.problem}`);
     else bb.log.info(`Opened ${file.attached ? `${file.spec.file}, attached to bb-box's database` : `${file.spec.file}'s tables in bb-box's database`}: ${file.migrationsRun === 0 ? "no migration to run" : `ran ${file.migrationsRun} ${file.migrationsRun === 1 ? "migration" : "migrations"}`}.`);
   }
@@ -438,6 +445,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     gapsChanged: (gaps) => void kv.set(BOX_LOG_GAPS_KEY, gaps).catch((error) => logError("keep the box log's gaps", error)),
     logError,
   });
+  const snapshotStore = new SnapshotStore({ file: storedFiles.snapshots, logError });
+  const snapshotHolds = (options.liveChecks ?? liveChecksOn()) ? new SnapshotHolds() : null;
 
   // bb-box's host entry on BB machines (src/host/entry.ts).
   const host = bb.hosts.experimental_client({ contract: hostContract });
@@ -593,6 +602,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   });
   // The files for every box (#455), once the boxes are there.
   let files: BoxFiles | null = null;
+  let snapshotsHeld = (): ReadonlyMap<string, { readonly count: number; readonly words: string }> => new Map();
   let monitorChanged = () => {};
   let settleChangedImages = () => {};
   const configuration = await Configuration.load({
@@ -602,6 +612,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     // Read only once setup is done.
     boxes: () => boxes.all(),
     spareCounts: () => boxes.spareCounts(),
+    snapshotsHeld: () => snapshotsHeld(),
     changed: () => {
       notify(null);
       needsConfiguration();
@@ -784,6 +795,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       files?.recorded(box, deleted);
       deviceServers?.recorded(box, deleted);
     },
+    ended: (box, how) => snapshots.boxEnded(box, how),
+    keepsGuest: (backendId, guestRef) => snapshots.holdsGuest(backendId, guestRef),
     async thread(threadId): Promise<ThreadAnswer> {
       try {
         const thread = await bb.sdk.threads.get({ threadId });
@@ -827,6 +840,28 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     logError,
     log: (message) => bb.log.info(message),
   });
+  const snapshots: Snapshots = new Snapshots({
+    ledger: snapshotStore,
+    boxes,
+    backends,
+    events: boxLog,
+    notify,
+    logError,
+    log: (message) => bb.log.info(message),
+    ...(snapshotHolds ? { hold: (operation, step, signal) => snapshotHolds.hold(operation, step, signal, (message) => bb.log.info(message)) } : {}),
+  });
+  snapshotsHeld = () => {
+    const held = new Map<string, { count: number; words: string }>();
+    try {
+      for (const id of new Set(snapshotStore.records().map((record) => record.backend.id))) {
+        const on = snapshots.heldOn(id);
+        if (on) held.set(id, on);
+      }
+    } catch (error) {
+      logError("read the snapshots each backend holds", error);
+    }
+    return held;
+  };
   probeEncoder = (mac, signal) => boxes.probeEncoder(mac, signal);
   kindsChanged = () => {
     notify(null);
@@ -969,6 +1004,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.onDispose(() => enrolment.dispose());
   bb.onDispose(() => backends.dispose());
   bb.onDispose(() => boxes.dispose());
+  bb.onDispose(() => snapshots.dispose());
   bb.onDispose(() => desktop.dispose());
   bb.onDispose(() => terminal.dispose());
   bb.onDispose(() => computing.dispose());
@@ -1046,10 +1082,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
           if (!signal.aborted) logError(operation, error);
         });
       };
+      await step("settle snapshots cut short", () => snapshots.recover(signal));
       await step("resume enrolment", () => enrolment.resume());
       // What this release adds to a kind reaches boxes made before it (#215).
       await step("capabilities", () => boxes.refreshCapabilities(signal));
       while (!signal.aborted) {
+        await step("sweep snapshots", () => snapshots.sweep(signal));
         await step("sweep", () => boxes.sweep(signal));
         if (signal.aborted) break;
         await step("prune the box log", async () => boxLog.prune(new Set((await boxes.all()).map((box) => box.id))));
@@ -1338,6 +1376,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     general,
     view: (box) => boxView(box, boxes.canStopStart(box), control.view(box.id), backends.get(box.backend)?.resizing?.(box.kind) ?? null, { log: boxLog.view(box.id), reach: reachOf(box) }),
     boxLog,
+    snapshots,
+    snapshotStore,
+    snapshotHolds,
     reach,
     backendInSettings,
     async forget(threadId, ref, who) {
@@ -1519,6 +1560,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         });
       }
       sections.push({ title: "Monitor", report: { ok: true, summary: "Machine status in BB's sidebar footer, and background monitoring of BB's server.", checks: monitor.checks(), notes: [] } });
+      const snapshotChecks = snapshotStore.checks();
+      sections.push({ title: "Snapshots", report: { ok: snapshotChecks.every((check) => check.status !== "fail"), summary: "bb-box's records of snapshots and the operations that take and delete them.", checks: snapshotChecks, notes: [] } });
       const logChecks = [...boxLog.checks(), ...historyFileChecks(storedFiles.history)];
       sections.push({ title: "Box log", report: { ok: logChecks.every((check) => check.status !== "fail"), summary: "Who stopped, started, resized and released each box, and what bb-box saw after an operation failed.", checks: logChecks, notes: [] } });
       const overlaps = overlapChecks(backends.on());

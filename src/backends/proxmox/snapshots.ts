@@ -65,6 +65,7 @@ export interface SnapshotsCheckInput {
   readonly guest: GuestType;
   readonly privileges: ReadonlySet<string> | Error;
   readonly storages: readonly GuestDiskStorage[];
+  readonly metadata?: readonly { readonly storage: string; readonly unread: string | null }[];
 }
 
 function joinedWithAnd(names: readonly string[]): string {
@@ -111,6 +112,9 @@ export function snapshotsCheck(input: SnapshotsCheckInput): Pick<DoctorCheck, "s
   if (withoutSnapshots.length) {
     fixes.push(`For snapshots, put the templates on storage that takes them: ${storagesThatTakeSnapshots(input.guest)}.`);
   }
+  const unread = (input.metadata ?? []).filter((each) => each.unread !== null);
+  for (const each of unread) storageWords.push(`bb-box cannot read ${each.storage}'s thin metadata (${each.unread!.replace(/\.$/, "")}), so a take checks the pool's data use but not that its metadata is under 80% full.`);
+  if (unread.length) fixes.push("Reading a thin pool's metadata takes Sys.Audit on /, a read of the whole cluster, which host/setup-token.sh does not give. Watch the pool's metadata on the host, or give that right.");
   return {
     status: fixes.length ? "warn" : "ok",
     detail: [rights, ...storageWords].join(" "),

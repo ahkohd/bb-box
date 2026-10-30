@@ -20,14 +20,54 @@ export const BOX_LOG_GAPS_KEY = "box-log/gaps";
 const WHY_BYTES = 256;
 const SHORT_BYTES = 128;
 
-export const BOX_LOG_MIGRATIONS: readonly string[] = [
-  `CREATE TABLE ${SCHEMA}.box_events (
+const FIRST_EVENT_KINDS = [
+  "made",
+  "ready",
+  "start-asked",
+  "started",
+  "start-failed",
+  "stop-asked",
+  "stopped",
+  "stop-failed",
+  "stopped-unasked",
+  "resize-asked",
+  "resized",
+  "resize-failed",
+  "release-asked",
+  "released",
+  "release-failed",
+  "forgotten",
+] as const;
+
+export const STORED_EVENT_KINDS = [
+  ...FIRST_EVENT_KINDS,
+  "snapshot-taken",
+  "snapshot-failed",
+  "restore-asked",
+  "restored",
+  "restore-failed",
+  "restored-outside",
+  "restore-outside-failed",
+  "restore-outside-running",
+  "fork-asked",
+  "forked",
+  "fork-failed",
+  "snapshot-deleted",
+  "snapshot-kept",
+  "snapshot-unkept",
+  "snapshot-lost",
+  "snapshot-unavailable",
+  "held-copy-made",
+  "held-copy-started",
+] as const;
+
+const eventsTable = (name: string, kinds: readonly string[]) => `CREATE TABLE ${SCHEMA}.${name} (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     box TEXT NOT NULL CHECK(length(CAST(box AS BLOB)) <= ${SHORT_BYTES}),
     thread TEXT NOT NULL CHECK(length(CAST(thread AS BLOB)) <= ${SHORT_BYTES}),
     name TEXT NOT NULL CHECK(length(CAST(name AS BLOB)) <= ${SHORT_BYTES}),
     at INTEGER NOT NULL,
-    kind TEXT NOT NULL CHECK(kind IN (${BOX_EVENT_KINDS.map((kind) => `'${kind}'`).join(", ")})),
+    kind TEXT NOT NULL CHECK(kind IN (${kinds.map((kind) => `'${kind}'`).join(", ")})),
     who TEXT NOT NULL CHECK(who IN ('person', 'agent', 'command', 'bb-box', 'outside', 'unknown')),
     agent TEXT CHECK(agent IS NULL OR length(CAST(agent AS BLOB)) <= ${SHORT_BYTES}),
     why TEXT CHECK(why IS NULL OR length(CAST(why AS BLOB)) <= ${WHY_BYTES}),
@@ -38,9 +78,20 @@ export const BOX_LOG_MIGRATIONS: readonly string[] = [
     parts TEXT CHECK(parts IS NULL OR length(CAST(parts AS BLOB)) <= ${SHORT_BYTES}),
     backend TEXT CHECK(backend IS NULL OR length(CAST(backend AS BLOB)) <= ${SHORT_BYTES}),
     state TEXT CHECK(state IS NULL OR length(CAST(state AS BLOB)) <= ${SHORT_BYTES})
-  )`,
+  )`;
+
+export const BOX_LOG_MIGRATIONS: readonly string[] = [
+  eventsTable("box_events", FIRST_EVENT_KINDS),
   `CREATE INDEX ${SCHEMA}.box_events_by_box ON box_events(box, kind, seq)`,
   `CREATE INDEX ${SCHEMA}.box_events_by_time ON box_events(at)`,
+  [
+    eventsTable("box_events_070", STORED_EVENT_KINDS),
+    `INSERT INTO ${SCHEMA}.box_events_070 SELECT * FROM ${SCHEMA}.box_events`,
+    `DROP TABLE ${SCHEMA}.box_events`,
+    `ALTER TABLE ${SCHEMA}.box_events_070 RENAME TO box_events`,
+    `CREATE INDEX ${SCHEMA}.box_events_by_box ON box_events(box, kind, seq)`,
+    `CREATE INDEX ${SCHEMA}.box_events_by_time ON box_events(at)`,
+  ].join(";\n"),
 ];
 
 export const ATTACHED_ROW_CAP = 20_000;

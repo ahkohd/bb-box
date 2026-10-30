@@ -32,6 +32,7 @@ import type { CheckId } from "../../core/checks.ts";
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
+import { ProxmoxSnapshotting, storageOfVolume, storagesMetadata } from "../proxmox/snapshotting.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
   BUILD,
@@ -82,6 +83,16 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type BoxOwner,
+  type HeldSnapshot,
+  type SnapshotHooks,
+  type SnapshotPlan,
+  type SnapshotRef,
+  type SnapshotTake,
+  type SnapshotTaken,
+  type Snapshotting,
+  type TaskOutcome,
+  type TaskRef,
   type WarmShortfall,
   type WithheldKind,
 } from "../types.ts";
@@ -423,6 +434,7 @@ export class ProxmoxQemuBackend implements Backend {
   readonly #imageBoxes = new Set<number>();
   #androidDevices: { readonly offer: DeviceOffer | null; readonly at: number; readonly why: string | null } | null = null;
   #androidReading: Promise<void> | null = null;
+  readonly #snapshots: ProxmoxSnapshotting;
 
   /**
    * Image operations (054): a box from a template, its capture as a template
@@ -450,6 +462,69 @@ export class ProxmoxQemuBackend implements Backend {
       : proxmoxFetch({ ca: config.proxmox.caCertificate, fingerprint: config.proxmox.tlsFingerprint });
     this.label = `Proxmox QEMU on ${config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname}`;
     this.hosts = [config.proxmox.node ?? new URL(config.proxmox.apiUrl).hostname];
+    this.#snapshots = new ProxmoxSnapshotting(
+      {
+        label: this.label,
+        type: "qemu",
+        installId: context.installId,
+        pool: config.proxmox.pool,
+        client: () => this.client(),
+        vmid: (guest) => this.#vmid(guest),
+        ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
+        still: (api, guest, signal) => this.#still(api, guest, signal),
+        rootDisk: bootDisk,
+        disks: (config) => Object.keys(config).filter((key) => (isDisk(config, key) || /^(?:efidisk|tpmstate)\d+$/.test(key)) && storageOfVolume(config[key]) !== null),
+        guests: (api, signal) => this.#boxGuests(api, signal),
+      },
+      ["disk", "disk-and-memory"],
+    );
+  }
+
+  snapshotting(kind: string): Snapshotting | null {
+    return LINUX_KINDS.some((linux) => linux.id === kind) && this.kinds().some((offered) => offered.id === kind) ? this.#snapshots.offer() : null;
+  }
+
+  async planSnapshots(guest: Guest, kind: string, _snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    if (!this.snapshotting(kind)) throw new BackendError("unsupported", `${this.label} takes no snapshots of its ${kind} boxes.`);
+    return this.#snapshots.plan(guest, signal);
+  }
+
+  snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    return this.#snapshots.take(guest, take, hooks, signal);
+  }
+
+  deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    return this.#snapshots.delete(ref, hooks, signal);
+  }
+
+  heldSnapshots(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    return this.#snapshots.held(signal);
+  }
+
+  providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
+    return this.#snapshots.task(task, signal);
+  }
+
+  findTasks(guest: Guest, operation: "take" | "delete", since: number, signal?: AbortSignal): Promise<readonly TaskRef[]> {
+    return this.#snapshots.findTasks(guest, operation, since, signal);
+  }
+
+  async #ownConfig(api: Proxmox, guest: Guest, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const config = await this.#guestConfig(api, this.#vmid(guest), signal);
+    const names = config ? namesOf(config) : null;
+    const box = typeof guest.data?.box === "string" ? guest.data.box : null;
+    if (!config || names!.install !== this.#context.installId || names!.box !== box) throw gone(this.#vmid(guest));
+    return config;
+  }
+
+  async #boxGuests(api: Proxmox, signal?: AbortSignal): Promise<{ guest: Guest; owner: BoxOwner | null }[]> {
+    const install = installTag(this.#context.installId);
+    return (await api.listPool(this.#config.proxmox.pool, signal))
+      .filter((guest) => guest.type === "qemu" && !guest.template && this.#inRange(guest.vmid) && guest.tags.includes(TAG) && guest.tags.includes(install))
+      .flatMap((guest) => {
+        const owner = ownerFromTags(guest.tags, guest.name || null);
+        return owner ? [{ guest: this.#guest(guest.node || api.node, guest.vmid, templateFromTags(guest.tags), owner.boxId), owner }] : [];
+      });
   }
 
   kinds(): BoxKind[] {
@@ -1268,7 +1343,8 @@ export class ProxmoxQemuBackend implements Backend {
       }
 
       const privileges = await poolPrivileges(api, pool, signal);
-      checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "qemu", privileges, storages: templateStorages }) });
+      const metadata = await storagesMetadata(api, templateStorages, signal);
+      checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "qemu", privileges, storages: templateStorages, metadata }) });
     }
     notes.unshift(`This install's ID is ${this.#context.installId}. Its VMs carry the tag ${installTag(this.#context.installId)}.`);
 

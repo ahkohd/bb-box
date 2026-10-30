@@ -380,6 +380,8 @@ export interface BoxesDeps {
   notify(threadId: string): void;
   /** A box's record was written, or deleted when `deleted` is true. */
   recorded?(box: BoxRecord, deleted: boolean): void;
+  ended?(box: BoxRecord, how: "released" | "forgotten"): void;
+  keepsGuest?(backendId: string, guestRef: string): string | null;
   /**
    * Whether a thread still exists and is not archived, as BB says. The sweep
    * releases the thread's boxes and guests once BB says at two sweeps running
@@ -508,7 +510,10 @@ export type BoxErrorCode =
   /** bb-box is stopping, as for an update, and takes no new commands (#405). */
   | "restarting"
   /** The box does not answer while bb-box reconnects to the machine it runs on, as after an update (#415). */
-  | "reconnecting";
+  | "reconnecting"
+  | "locked"
+  | "failed"
+  | "reused_request";
 
 /** A job a box_run command left running when bb-box restarted (#405). */
 export type JobResult =
@@ -746,6 +751,7 @@ export interface SweepReport {
   readonly ending: number;
   /** Acquires and releases a restart interrupted, carried on. */
   readonly resumed: number;
+  readonly guarded: number;
 }
 
 export class Boxes {
@@ -786,6 +792,10 @@ export class Boxes {
     return queue.run(task);
   }
 
+  inTurn<T>(boxId: string, task: () => Promise<T>): Promise<T> {
+    return this.#chain(boxId, task);
+  }
+
   /** Runs `task` after the box's earlier tasks settle. */
   #chain<T>(boxId: string, task: () => Promise<T>): Promise<T> {
     const previous = this.#work.get(boxId) ?? Promise.resolve();
@@ -822,12 +832,13 @@ export class Boxes {
     return box;
   }
 
-  async #forget(box: BoxRecord): Promise<void> {
+  async #forget(box: BoxRecord, how: "released" | "forgotten" = "released"): Promise<void> {
     await this.#deps.kv.delete(recordKey(box.threadId, box.id));
     await this.#deps.kv.delete(indexKey(box.id));
     this.#deps.reach?.forget(box.id);
     this.#powerCheckedAt.delete(box.id);
     this.#deps.recorded?.(box, true);
+    this.#deps.ended?.(box, how);
     this.#deps.notify(box.threadId);
   }
 
@@ -2238,7 +2249,7 @@ export class Boxes {
       if (!current) return;
       this.#acquiring.get(current.id)?.abort(new BoxError("released", `Box ${current.name} was forgotten.`));
       this.#event(current, "forgotten", who, { backend: current.backendLabel, state: current.state });
-      await this.#forget(current);
+      await this.#forget(current, "forgotten");
       this.#deps.log?.(`Forgot ${describeBox(current)}: bb-box removed its record. Nothing was deleted: its guest on ${current.backendLabel}, if it still runs, keeps running.`);
     });
   }
@@ -3022,6 +3033,7 @@ export class Boxes {
     let kept = 0;
     let waiting = 0;
     let resumed = 0;
+    let guarded = 0;
 
     // First, as at the first start after an upgrade: this install's ID goes on
     // the guests of its boxes from before install IDs, which held() and the
@@ -3097,16 +3109,16 @@ export class Boxes {
           const owner = guest.owner;
           if (!owner) {
             // An acquire interrupted before its guest named a box: no box can own it.
-            await this.#releaseLeftover(backend, guest, "it names no box", signal);
-            leftovers++;
+            if (await this.#releaseLeftover(backend, guest, "it names no box", signal)) leftovers++;
+            else guarded++;
             continue;
           }
           const owned = records.find((box) => box.id === owner.boxId);
           if (owned) {
             // Its box has another guest now, or none, as after an acquire that tried again or failed.
             if (isAcquiring(owned) || this.#work.has(owned.id)) continue;
-            await this.#releaseLeftover(backend, guest, `its box ${owned.name} ${owned.guest ? `has guest ${owned.guest.ref} now` : "holds no guest"}`, signal);
-            leftovers++;
+            if (await this.#releaseLeftover(backend, guest, `its box ${owned.name} ${owned.guest ? `has guest ${owned.guest.ref} now` : "holds no guest"}`, signal)) leftovers++;
+            else guarded++;
             continue;
           }
           // Its record was lost, as when bb-box lost its storage. The guest
@@ -3115,8 +3127,8 @@ export class Boxes {
           if (state === "live") {
             if (await this.#restore(backend, guest, signal)) adopted++;
           } else if (state === "ended") {
-            await this.#releaseLeftover(backend, guest, `its box's thread ${owner.threadId} ended, as BB says at this sweep and the last. BB's answer: ${said}`, signal);
-            leftovers++;
+            if (await this.#releaseLeftover(backend, guest, `its box's thread ${owner.threadId} ended, as BB says at this sweep and the last. BB's answer: ${said}`, signal)) leftovers++;
+            else guarded++;
           } else if (state === "ending") {
             this.#deps.log?.(`Kept guest ${guest.ref} of box ${owner.boxId} without a record: BB says thread ${owner.threadId} ended, and the next sweep releases the guest if BB says so again. BB's answer: ${said}.`);
             waiting++;
@@ -3151,7 +3163,7 @@ export class Boxes {
       const recordedGuests = new Set(boxes.flatMap((box) => (box.backend === backend.id && box.guest ? [box.guest.ref] : [])));
       await backend.maintain?.(signal, recordedGuests).catch((error) => this.#deps.logError(`maintain ${backend.id}`, error));
     }
-    return { released, leftovers, adopted, kept, ending: waiting, resumed };
+    return { released, leftovers, adopted, kept, ending: waiting, resumed, guarded };
   }
 
   async #tellOfEnds(signal?: AbortSignal): Promise<void> {
@@ -3186,9 +3198,15 @@ export class Boxes {
     });
   }
 
-  async #releaseLeftover(backend: Backend, guest: HeldGuest, reason: string, signal?: AbortSignal): Promise<void> {
+  async #releaseLeftover(backend: Backend, guest: HeldGuest, reason: string, signal?: AbortSignal): Promise<boolean> {
+    const keep = this.#deps.keepsGuest?.(backend.id, guest.ref) ?? null;
+    if (keep) {
+      this.#deps.log?.(`Kept guest ${guest.ref}${guest.owner ? ` of box ${guest.owner.boxId}` : ""}, which no box records and ${reason}: ${keep}.`);
+      return false;
+    }
     this.#deps.log?.(`Releasing guest ${guest.ref}${guest.owner ? ` of box ${guest.owner.boxId}` : ""}, which no box records: ${reason}.`);
     await backend.release(guest, QUIET, signal);
+    return true;
   }
 
   /**

@@ -118,8 +118,10 @@ own, `snapshots.db`, attached to the SDK's database as 069 attaches
 `box-log.db`, with its own migrations and write-ahead log. Its records and
 its operations (section 6) are never evicted; pictures are kept in a table
 of their own, capped at 48 MB, and the oldest pictures of snapshots that
-are not kept go first. If the file cannot be written, every operation that
-would change a box is refused before it starts, and the doctor says so.
+are not kept go first. If the file cannot be written, every snapshot
+operation is refused before it starts, and the doctor says so; a box's
+start, stop, resize and release go on (see [Decided during unit
+1a](#decided-during-unit-1a)).
 
 | Field | Type | Example | Notes |
 | --- | --- | --- | --- |
@@ -1261,6 +1263,18 @@ The owner answered the two questions this note left him on 30 October
 The research's other questions are settled by the owner's earlier answers
 and the reviews: an agent never restores the box its thread runs on, and
 each box holds 5 snapshots with undos apart, which Settings can change.
+
+## Decided during unit 1a
+
+On 30 October 2026, during unit 1a:
+
+- **An unwritable `snapshots.db` stops snapshots only.** While bb-box
+  cannot write `snapshots.db`, it refuses every snapshot operation before it
+  starts (a take, a delete, and from later units a restore, a fork, a Keep
+  and a held copy), and the doctor's Snapshots' records check fails. A
+  box's start, stop, resize and release do not use the file, so they go on.
+  The lead decided this reading of section 1's "every operation that would
+  change a box".
 
 ## Alternatives considered
 

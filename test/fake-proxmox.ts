@@ -18,6 +18,15 @@ export interface FakeGuest {
   config: Record<string, string>;
   /** A started container's root filesystem size in bytes, as df gave it then. */
   filesystem?: number;
+  snapshots?: FakeSnapshot[];
+}
+
+export interface FakeSnapshot {
+  name: string;
+  description: string;
+  snaptime: number;
+  snapstate?: string;
+  vmstate?: boolean;
 }
 
 export interface FakeCall {
@@ -30,6 +39,7 @@ export interface FakeCall {
 interface FakeTask {
   exitstatus: string;
   pollsLeft: number;
+  start: number;
 }
 
 export const TOKEN_ROLE = [
@@ -82,6 +92,10 @@ export class FakeProxmox {
   readonly pools = new Set<string>(["bbbox"]);
   readonly privileges = new Map<string, Set<string>>([["/pool/bbbox", new Set(TOKEN_ROLE)]]);
   readonly bridges = new Set<string>(["vmbr0", "vmbr1"]);
+  killNextSnapshot = false;
+  snapshotTaskFailsWhole = false;
+  readonly storageConfigs = new Map<string, Record<string, unknown>>([["local-lvm", { storage: "local-lvm", type: "lvmthin", vgname: "pve", thinpool: "data", content: "rootdir,images" }]]);
+  readonly thinPools: { lv: string; vg: string; metadata_size: number; metadata_used: number }[] = [{ lv: "data", vg: "pve", metadata_size: 1024 ** 3, metadata_used: 100 * 1024 ** 2 }];
   /** Optional hook to fail a request: return a response to short-circuit. */
   intercept?: (call: FakeCall) => FetchResponse | undefined;
   /**
@@ -181,7 +195,7 @@ export class FakeProxmox {
 
   #task(type: string, id: number | string, exit?: string): string {
     const upid = `UPID:${this.node}:0000${++this.#taskCounter}:00:00:${type}:${id}:bb-box@pve!plugin:`;
-    this.#tasks.set(upid, { exitstatus: exit ?? this.nextTaskExit.get(type) ?? "OK", pollsLeft: this.taskPolls });
+    this.#tasks.set(upid, { exitstatus: exit ?? this.nextTaskExit.get(type) ?? "OK", pollsLeft: this.taskPolls, start: Math.floor(Date.now() / 1000) });
     this.nextTaskExit.delete(type);
     return upid;
   }
@@ -258,6 +272,64 @@ export class FakeProxmox {
           };
         }),
       );
+    }
+
+    if (method === "GET" && (match = /^\/nodes\/[^/]+\/disks\/lvmthin$/.exec(path))) return ok(this.thinPools);
+
+    if (method === "GET" && path === "/storage") return ok([...this.storageConfigs.values()]);
+
+    if (method === "GET" && (match = /^\/nodes\/[^/]+\/tasks$/.exec(path))) {
+      const all = params.source === "all";
+      const listed = [...this.#tasks.entries()].filter(
+        ([upid, task]) =>
+          (all || task.pollsLeft > 0) &&
+          (!params.vmid || upid.split(":")[6] === params.vmid) &&
+          (!params.typefilter || upid.split(":")[5] === params.typefilter) &&
+          (!params.since || task.start >= Number(params.since)),
+      );
+      return ok(listed.map(([upid, task]) => ({ upid, type: upid.split(":")[5], id: upid.split(":")[6], starttime: task.start, ...(task.pollsLeft > 0 ? {} : { status: task.exitstatus }) })));
+    }
+
+    if ((match = /^\/nodes\/[^/]+\/(lxc|qemu)\/(\d+)\/snapshot(?:\/([^/]+))?$/.exec(path))) {
+      const [, type = "lxc", id, name] = match;
+      const vmid = Number(id);
+      const guest = this.#of(type, vmid);
+      if (!guest) return this.#missing(vmid, type);
+      const prefix = type === "qemu" ? "qm" : "vz";
+      const what = type === "qemu" ? "VM" : "CT";
+      const snapshots = (guest.snapshots ??= []);
+      if (method === "GET" && !name) {
+        return ok([
+          ...snapshots.map((snapshot) => ({ name: snapshot.name, description: snapshot.description, snaptime: snapshot.snaptime, ...(snapshot.snapstate ? { snapstate: snapshot.snapstate } : {}), ...(type === "qemu" ? { vmstate: snapshot.vmstate ? 1 : 0 } : {}) })),
+          { name: "current", digest: "d1", running: guest.status === "running" ? 1 : 0 },
+        ]);
+      }
+      if (method === "POST" && !name) {
+        if (guest.config.lock) return ok(this.#task(`${prefix}snapshot`, vmid, `${what} is locked (${guest.config.lock})`));
+        if (snapshots.some((snapshot) => snapshot.name === params.snapname)) return ok(this.#task(`${prefix}snapshot`, vmid, `snapshot name '${params.snapname}' already used`));
+        const taken: FakeSnapshot = { name: params.snapname!, description: params.description ?? "", snaptime: Math.floor(Date.now() / 1000), ...(params.vmstate === "1" ? { vmstate: true } : {}) };
+        if (this.snapshotTaskFailsWhole) {
+          this.snapshotTaskFailsWhole = false;
+          snapshots.push(taken);
+          return ok(this.#task(`${prefix}snapshot`, vmid, "vmstate save failed"));
+        }
+        if (this.killNextSnapshot) {
+          this.killNextSnapshot = false;
+          snapshots.push({ ...taken, snapstate: "prepare" });
+          guest.config.lock = "snapshot";
+          return ok(this.#task(`${prefix}snapshot`, vmid, "received interrupt"));
+        }
+        if (!this.nextTaskExit.has(`${prefix}snapshot`)) snapshots.push(taken);
+        return ok(this.#task(`${prefix}snapshot`, vmid));
+      }
+      if (method === "DELETE" && name) {
+        const index = snapshots.findIndex((snapshot) => snapshot.name === decodeURIComponent(name));
+        if (index < 0) return respond(500, `snapshot '${name}' does not exist`, { data: null });
+        if (guest.config.lock) return ok(this.#task(`${prefix}delsnapshot`, vmid, `${what} is locked (${guest.config.lock})`));
+        if (this.nextTaskExit.has(`${prefix}delsnapshot`)) snapshots[index]!.snapstate = "delete";
+        else snapshots.splice(index, 1);
+        return ok(this.#task(`${prefix}delsnapshot`, vmid));
+      }
     }
 
     if (method === "GET" && (match = /^\/nodes\/([^/]+)\/(lxc|qemu)$/.exec(path))) {

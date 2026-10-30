@@ -53,11 +53,15 @@
 | [`bb box option get`](#bb-box-option-get) | Show one general or Monitor option: its value now, its default, and what it does. |
 | [`bb box option set`](#bb-box-option-set) | Set general and Monitor options, such as monitor.enabled=false or defaultKind=linux, in one checked save, as the settings page saves them. bb box option list lists them. |
 | [`bb box option unset`](#bb-box-option-unset) | Give general and Monitor options back their defaults, in one checked save. general.tailnet.mode turns the tailnet off and clears its client. |
+| [`bb box snapshot take`](#bb-box-snapshot-take) | Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it. A box holds at most 5. |
+| [`bb box snapshot list`](#bb-box-snapshot-list) | List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot bb-box records, those of released boxes too. |
+| [`bb box snapshot delete`](#bb-box-snapshot-delete) | Delete a snapshot of a thread's box, or with --machine one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list --all gives. |
+| [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes. |
 | [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
 | [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
 | [`bb box monitor logs`](#bb-box-monitor-logs) | Show background monitoring's diagnostic records, oldest first: the last 100, or --limit up to 500. --json gives JSON lines. |
 | [`bb box monitor test-alert`](#bb-box-monitor-test-alert) | Show a labelled preview of a pressure alert in every BB window that is open and visible. Needs background monitoring and its notifications on. |
-| [`bb box sweep`](#bb-box-sweep) | Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers. |
+| [`bb box sweep`](#bb-box-sweep) | Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers, and settle and check bb-box's snapshots against each backend's. |
 
 ## bb box doctor
 
@@ -910,6 +914,84 @@ Options:
   --help, -h           Show this help and exit
 ```
 
+## bb box snapshot take
+
+Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it. A box holds at most 5.
+
+```text
+Usage:
+  bb box snapshot take <box> [--thread <value>] [--machine] [--json] [--name <value>] [--note <value>] [--memory] [--request <value>]
+
+Arguments:
+  <box>  The box's name or ID. (required)
+
+Options:
+  --thread <value>   The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine          The box is one of your machines, from bb box machines, not a thread's.
+  --json             Print JSON.
+  --name <value>     Its name, at most 60 characters, unique on the box. The time, such as Thu 10:42, when left out.
+  --note <value>     A note, at most 1 KB.
+  --memory           Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower.
+  --request <value>  An ID you make, so a repeat of this command is the same take.
+  --help, -h         Show this help and exit
+```
+
+## bb box snapshot list
+
+List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot bb-box records, those of released boxes too.
+
+```text
+Usage:
+  bb box snapshot list [<box>] [--thread <value>] [--machine] [--json] [--all] [--kept]
+
+Arguments:
+  <box>  The box's name or ID. Every box of the thread, or of your machines, when left out.
+
+Options:
+  --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine         The box is one of your machines, from bb box machines, not a thread's.
+  --json            Print JSON.
+  --all             Every snapshot bb-box records, of every thread's boxes and of boxes that are gone.
+  --kept            Only kept snapshots.
+  --help, -h        Show this help and exit
+```
+
+## bb box snapshot delete
+
+Delete a snapshot of a thread's box, or with --machine one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list --all gives.
+
+```text
+Usage:
+  bb box snapshot delete <box> <snapshot> [--thread <value>] [--machine] [--json] [--request <value>]
+
+Arguments:
+  <box>       The box's name or ID. (required)
+  <snapshot>  The snapshot's name or ID. (required)
+
+Options:
+  --thread <value>   The thread whose boxes to use. Defaults to the thread this runs in.
+  --machine          The box is one of your machines, from bb box machines, not a thread's.
+  --json             Print JSON.
+  --request <value>  An ID you make, so a repeat of this command is the same delete.
+  --help, -h         Show this help and exit
+```
+
+## bb box snapshot forget
+
+Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes.
+
+```text
+Usage:
+  bb box snapshot forget <backend> [--yes]
+
+Arguments:
+  <backend>  The backend's ID, from bb box backend list. (required)
+
+Options:
+  --yes       Forget them.
+  --help, -h  Show this help and exit
+```
+
 ## bb box monitor snapshot
 
 Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history.
@@ -961,7 +1043,7 @@ Usage:
 
 ## bb box sweep
 
-Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers.
+Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers, and settle and check bb-box's snapshots against each backend's.
 
 ```text
 Usage:

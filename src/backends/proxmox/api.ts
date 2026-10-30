@@ -154,6 +154,23 @@ export interface StorageStatus {
   readonly type: string;
 }
 
+export interface StorageConfig {
+  readonly type: string;
+  readonly shared: boolean;
+  readonly path: string | null;
+  readonly vgname: string | null;
+  readonly thinpool: string | null;
+}
+
+export interface ProxmoxSnapshot {
+  readonly name: string;
+  readonly description: string;
+  readonly snaptime: number | null;
+  readonly parent: string | null;
+  readonly snapstate: string | null;
+  readonly vmstate: boolean;
+}
+
 export interface PoolGuest {
   readonly vmid: number;
   readonly name: string;
@@ -462,6 +479,75 @@ export class Proxmox {
     return { url: `${this.#base.replace(/^http/, "ws")}${this.#guest(vmid, "/vncwebsocket")}?${query}`, headers: { Authorization: this.#auth } };
   }
 
+  startSnapshot(vmid: number, input: { readonly name: string; readonly description: string; readonly memory: boolean }, signal?: AbortSignal): Promise<string> {
+    const params: Params = { snapname: input.name, description: input.description, ...(this.type === "qemu" ? { vmstate: input.memory } : {}) };
+    return this.#begin("POST", this.#guest(vmid, "/snapshot"), params, signal);
+  }
+
+  startSnapshotDelete(vmid: number, name: string, force: boolean, signal?: AbortSignal): Promise<string> {
+    return this.#begin("DELETE", this.#guest(vmid, `/snapshot/${enc(name)}`), force ? { force: 1 } : {}, signal);
+  }
+
+  async snapshots(vmid: number, signal?: AbortSignal): Promise<ProxmoxSnapshot[]> {
+    const data = await this.#request<Record<string, unknown>[]>("GET", this.#guest(vmid, "/snapshot"), undefined, signal);
+    return (data ?? [])
+      .filter((entry) => typeof entry.name === "string" && entry.name !== "current")
+      .map((entry) => ({
+        name: String(entry.name),
+        description: typeof entry.description === "string" ? entry.description : "",
+        snaptime: typeof entry.snaptime === "number" && entry.snaptime > 0 ? entry.snaptime : null,
+        parent: typeof entry.parent === "string" ? entry.parent : null,
+        snapstate: typeof entry.snapstate === "string" && entry.snapstate ? entry.snapstate : null,
+        vmstate: entry.vmstate === 1 || entry.vmstate === true || entry.vmstate === "1",
+      }));
+  }
+
+  async taskStatus(upid: string, signal?: AbortSignal): Promise<{ readonly running: boolean; readonly exit: string | null } | null> {
+    const node = upid.split(":")[1] || this.node;
+    try {
+      const data = await this.#request<{ status?: string; exitstatus?: string }>("GET", `/nodes/${enc(node)}/tasks/${enc(upid)}/status`, undefined, signal);
+      return { running: data?.status !== "stopped", exit: data?.status === "stopped" ? String(data.exitstatus ?? "") : null };
+    } catch (error) {
+      if (error instanceof ProxmoxError && (error.status === 404 || (error.status === 500 && /no such task|unable to parse worker upid/i.test(error.message)))) return null;
+      throw error;
+    }
+  }
+
+  async activeTasks(vmid: number, signal?: AbortSignal): Promise<{ readonly upid: string; readonly type: string }[]> {
+    const data = await this.#request<Record<string, unknown>[]>("GET", `/nodes/${enc(this.node)}/tasks`, { vmid, source: "active" }, signal);
+    return (data ?? []).filter((entry) => typeof entry.upid === "string").map((entry) => ({ upid: String(entry.upid), type: String(entry.type ?? "") }));
+  }
+
+  async tasksSince(vmid: number, type: string, sinceSeconds: number, signal?: AbortSignal): Promise<{ readonly upid: string; readonly start: number; readonly status: string | null }[]> {
+    const data = await this.#request<Record<string, unknown>[]>("GET", `/nodes/${enc(this.node)}/tasks`, { vmid, typefilter: type, since: sinceSeconds, source: "all" }, signal);
+    return (data ?? [])
+      .filter((entry) => typeof entry.upid === "string" && entry.type === type)
+      .map((entry) => ({ upid: String(entry.upid), start: Number(entry.starttime ?? 0), status: typeof entry.status === "string" ? entry.status : null }));
+  }
+
+  async storageConfigs(signal?: AbortSignal): Promise<Map<string, StorageConfig>> {
+    const data = await this.#request<Record<string, unknown>[]>("GET", "/storage", undefined, signal);
+    return new Map(
+      (data ?? [])
+        .filter((entry) => typeof entry.storage === "string")
+        .map((entry) => [
+          String(entry.storage),
+          {
+            type: String(entry.type ?? ""),
+            shared: entry.shared === 1 || entry.shared === true || entry.shared === "1",
+            path: typeof entry.path === "string" ? entry.path : null,
+            vgname: typeof entry.vgname === "string" ? entry.vgname : null,
+            thinpool: typeof entry.thinpool === "string" ? entry.thinpool : null,
+          },
+        ]),
+    );
+  }
+
+  async thinPools(signal?: AbortSignal): Promise<{ readonly lv: string; readonly vg: string; readonly metadataSize: number; readonly metadataUsed: number }[]> {
+    const data = await this.#request<Record<string, unknown>[]>("GET", `/nodes/${enc(this.node)}/disks/lvmthin`, undefined, signal);
+    return (data ?? []).map((entry) => ({ lv: String(entry.lv ?? ""), vg: String(entry.vg ?? ""), metadataSize: Number(entry.metadata_size ?? 0), metadataUsed: Number(entry.metadata_used ?? 0) }));
+  }
+
   async privilegesOn(path: string, signal?: AbortSignal): Promise<Set<string>> {
     const data = await this.#request<Record<string, Record<string, unknown>>>("GET", "/access/permissions", { path }, signal);
     return new Set(Object.keys(data?.[path] ?? {}));
@@ -566,6 +652,20 @@ export class Proxmox {
     for (;;) {
       try {
         return await this.waitTask(await this.#request<string>(method, path, params, signal), signal);
+      } catch (error) {
+        if (!(error instanceof ProxmoxError && error.locked) || Date.now() >= deadline) throw error;
+      }
+      await this.#sleep(LOCK_RETRY_MS, signal);
+    }
+  }
+
+  async #begin(method: "POST" | "DELETE", path: string, params: Params, signal?: AbortSignal): Promise<string> {
+    const deadline = Date.now() + this.#lockWaitMs;
+    for (;;) {
+      try {
+        const upid = await this.#request<string>(method, path, params, signal);
+        if (typeof upid !== "string" || !upid.startsWith("UPID:")) throw new ProxmoxError(method, path, 502, "the answer has no task");
+        return upid;
       } catch (error) {
         if (!(error instanceof ProxmoxError && error.locked) || Date.now() >= deadline) throw error;
       }
