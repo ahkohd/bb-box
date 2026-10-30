@@ -10,6 +10,7 @@ Computers for [BB](https://getbb.app) threads: Linux, Windows, macOS, iOS and An
 - **Any provider.** Docker, Proxmox, microsandbox, Macs with Tart, machines over SSH, or Hetzner Cloud, Namespace and boat.dev.
 - **Phones and tablets to test apps on.** An iPhone or iPad in the iOS Simulator, or an Android device in its emulator. See [device boxes](docs/guide/devices.md).
 - **Ready in seconds.** A box is usually ready in seconds, and a warm box at once.
+- **Resize as you go.** More cores, memory or disk when a build needs them, from the Box panel, the box's page or the agent. See [resizing a box](docs/guide/resizing.md).
 - **Keep boxes as your own machines.** Threads can run on them, such as an always-on agent with its own desktop.
 - **Shared desktops.** You and the agent use the same screen. The agent waits while you have control.
 - **Recordings that show the work.** An agent records its test run as a short clip, with each step and its result captioned. See [Recordings](docs/guide/recording.md).
