@@ -101,7 +101,7 @@ The Android kind's own sizes start at 8 cores and 16 GB, boat.dev's `large`, whi
 | Pixel Fold | 4 cores, 10 GiB |
 | Pixel Tablet | 4 cores, 10 GiB |
 
-So on the trial, whose largest size is boat.dev's `default`, 4 cores and 8 GB, boat.dev offers the Pixel 8 only: ask for 4 cores and 8 GiB. The Pixel Fold and Pixel Tablet need a paid plan. The doctor's **Android** check says the largest size your plan allows, and which devices it leaves out.
+So on the trial, whose largest size is boat.dev's `default`, 4 cores and 8 GB, boat.dev offers the Pixel 8 only: ask for 4 cores and 8 GiB. An Android box is ready once boat.dev has brought in all of the template's files, about 4 minutes after it starts, and its device boots after that. On the trial's 4 cores the device draws about 9 to 14 frames a second in the Box panel, and a tap shows in about 150 ms, slower while boat.dev saves the box's disk, which it does each minute. The Pixel Fold and Pixel Tablet need a paid plan. The doctor's **Android** check says the largest size your plan allows, and which devices it leaves out.
 
 ## Check that nothing is left running
 

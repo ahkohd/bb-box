@@ -296,7 +296,7 @@ display 0.2, restore 81.8, computer use 7.2. Mousepad then opened and took
 40 characters through Cua Driver, read back from its window, and Cua
 Driver still answered minutes later.
 
-## Android, before its live run
+## Android
 
 Phase 3's code is tested against the fake API: android is withheld, with
 its reason, until the Android SDK's licence is accepted in boat's settings
@@ -387,3 +387,60 @@ The phone kept more than 1 GiB free, so its least size is 4 cores and
 and their refusal says why. boat offers each device only where its plan's
 largest size meets the device's least size: on the trial, the Pixel 8. A
 box is refused a switch to a device it is too small for.
+
+### Android live in production
+
+After the per-device sizes were deployed (main `e1d1630b`), from an agent
+thread with BB's own tools and the owner's browser on the Box panel, with
+production's Android template of 08:20:
+
+| Step | Result |
+| --- | --- |
+| `box_acquire` android, 4 cores, 8 GiB, on boat.dev | ready in 146.6 s: fork 0.4, ready 10.1, ssh 22.3, settle 42.1, tailnet 70.4; a BB machine in 14.7 s. The Pixel 8 booted 107.5 s after, 25 s of it giving the device its own Android ID. boat finished restoring the sandbox 4 min 16 s after it was made |
+| `box_device` | Home, Back, Recents, rotate both ways, location: 0.1 to 0.2 s. Dark appearance, text size, battery, status bar, lock: 0.3 to 0.4 s. Wake 0.6 s. Network offline 1.3 s, online 2.3 s. The device's own battery back 6.1 s. A switch to the Pixel Fold refused: "This box has no Pixel Fold. Its devices are: Pixel 8." |
+| The panel | the device's stream did not connect: "The device server did not start within 10 s". See below |
+| After the fix below, by hand | the stream up 80 s after reconnecting, the device's boot included; control taken and handed back |
+| Typing in the panel | into the probe page's field: 'Typed in the panel on boat, a7?b8!' arrived exactly |
+| `box_release` | released; boat answered 404 for the sandbox |
+
+**Why the panel could not connect.** While boat restores a sandbox, the
+box's home is boat's FUSE file system, `ascii-lazyfs`. When the restore
+ends, boat retires that mount and puts the disk's own `/home/box` in its
+place. The device server had started when the acquire ended, 2 minutes
+before the restore did, so it listened on a socket in the retired mount;
+new clients found the disk's own file at the same path, with no listener,
+and were refused. Cua Driver's socket, in `~/.cache`, broke the same way
+on the desktop. So a device box now waits for boat's restore too, before
+the acquire ends, as a desktop does. For this box, the device server and
+the emulator were restarted by hand after the restore, and the emulator's
+stale lock files from before it removed.
+
+Measured in the panel, in a Chromium browser on a Mac, as for the desktop,
+on the probe page of 063 (unit 5.1):
+
+| Measure | Result | 063 on Proxmox QEMU, through BB |
+| --- | --- | --- |
+| Tap to screen, 3 runs of 30, 60 and 40 taps | all seen; median 221, 158 and 147 ms; p95 1034, 1198 and 865 ms; worst 2.1 s | 67 ms median, idle, 8 cores |
+| Frames in the panel while the device animates every frame | 8.8 to 14.1 fps | 41 fps busy at 8 cores, 23.5 at 4 (E17, at the encoder) |
+| Box's cores busy, of 4, while animating | 3.8 | |
+| Memory, after 40 minutes | 1.84 GiB available, 93 MiB swap, emulator 3.77 GiB resident, no OOM kill | |
+
+The device is slower on boat than on Proxmox QEMU for three reasons, each
+seen in the box:
+
+- **Half the cores.** The trial's largest size is 4 cores; the Proxmox
+  box had 8. 063 measured the Pixel 8 at 23.5 fps on 4 cores, against 41
+  on 8.
+- **boat's save each minute.** boat saves a running sandbox's disk each
+  minute. With the emulator writing to its disk, each save ran `tar` and
+  `ascii-capture` for 15 to 40 s at 0.6 to 1.4 cores. The slow taps, over
+  400 ms, fall in those saves; between them, taps took 112 to 180 ms.
+- **The restore.** In its first 4 minutes the box restores the template's
+  files on demand, at a load average of 16 on 4 cores, and the device's
+  first boot took 107 s against 063's 2 to 4 s from a snapshot.
+
+So an Android box on boat's trial works, with its stream, input and
+controls, but at about a third of the frame rate and twice the tap
+latency of Proxmox QEMU's 8-core box. A paid plan's `large`, 8 cores and
+16 GB, would match Proxmox's cores, and hold the Pixel Fold and Pixel
+Tablet; boat's saves would stay.

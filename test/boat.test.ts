@@ -456,9 +456,11 @@ test("an Android box forks the template, and shows its device, not a desktop", a
   assert.deepEqual(android.capabilities.device, { platform: "android", devices: ANDROID_DEVICES });
   assert.deepEqual(android.capabilities.features, ["docker", "kernel", "kvm"]);
   const recorded = hooks();
+  fake.startsRestoreForReads = 3;
   const guest = await backend.acquire(box("a1", "android", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, recorded.hooks, signal());
   assert.equal(fake.sandboxes.get(String(guest.data?.sandbox))?.forkedFrom, template.id);
-  assert.deepEqual(recorded.steps, ["fork", "ready", "ssh", "settle"], "no desktop to wait for");
+  assert.deepEqual(recorded.steps, ["fork", "ready", "ssh", "settle", "restore"], "no desktop to wait for, but boat's restore, as the device server starts after the acquire and must find the box's own files, not boat's while it restores them");
+  assert.equal(fake.sandboxes.get(String(guest.data?.sandbox))?.restoringReads, 0);
   const displays = (await backend.transports(guest, "android")).displays;
   assert.deepEqual(displays.map((display) => [display.id, display.protocol]), [["device", "selkies"]]);
   assert.equal((await backend.capacity("android", { cores: 8, memoryMiB: 16384, diskGiB: null }, [])).ok, false, "the kind's own preset needs a paid plan");
