@@ -3,6 +3,7 @@
 bb-box's own code is in this repository. This page lists the software of others that it uses:
 
 - what the plugin bundles
+- what the documentation site serves
 - what it installs on a host
 - what its setup scripts put in box images
 
@@ -18,6 +19,19 @@ bb-box does not redistribute the software it installs on hosts or puts in images
 | [Hugeicons](https://github.com/hugeicons/hugeicons-react)' free icons and React component (`@hugeicons/core-free-icons`, `@hugeicons/react`) | MIT | The Monitor's icons (066). |
 
 React, Radix's menus and dialogs, and the other packages BB shares with plugins come from BB at runtime. bb-box does not bundle them. The licence texts of everything bundled are in its package in `node_modules` after `npm install`.
+
+## In the documentation site
+
+The site in `site/` is built from these packages. Its pages carry their code, styles and fonts.
+
+| Software | Licence | Notes |
+| --- | --- | --- |
+| [Inter](https://github.com/rsms/inter), from npm (`@fontsource-variable/inter`) 5.3.0 | SIL Open Font License 1.1 | The site's typeface, served from the site itself as WOFF2 files, unchanged. Copyright 2016 The Inter Project Authors. The licence text is in [`site/public/licenses/inter-OFL.txt`](site/public/licenses/inter-OFL.txt), which the built site serves at `licenses/inter-OFL.txt` with the fonts. |
+| [Astro](https://github.com/withastro/astro) and [Starlight](https://github.com/withastro/starlight) (`astro`, `@astrojs/starlight`) | MIT | The site's framework and its documentation theme. |
+| [Pagefind](https://github.com/CloudCannon/pagefind) (`pagefind`, `@pagefind/default-ui`) | MIT | The site's search. |
+| [Expressive Code](https://github.com/expressive-code/expressive-code) (`astro-expressive-code`) | MIT | The site's code blocks. |
+
+`sharp`, under the Apache License 2.0, resizes the site's images while it is built, and is not part of the built site. The licence texts of the site's packages are in their packages in `site/node_modules` after `npm ci` there.
 
 ## In the tests
 
