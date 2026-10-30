@@ -122,6 +122,15 @@ h6 {
   border-radius: 8px;
 }
 
+.sl-markdown-content img[src*="-2x."]:not(:where(.not-content *)) {
+  zoom: 0.5;
+}
+
+:root:not([data-theme="light"]) .sl-markdown-content img + img[src*="-light"],
+:root[data-theme="light"] .sl-markdown-content img:has(+ img[src*="-light"]) {
+  display: none;
+}
+
 .sl-markdown-content :is(th, td):not(:where(.not-content *)) {
   border-bottom-color: var(--border);
 }
@@ -162,8 +171,16 @@ button[data-open-modal] kbd {
   color: var(--muted-foreground);
 }
 
-starlight-theme-select select {
-  font-size: 0.8125rem;
+.social-icons::after {
+  display: none;
+}
+
+.social-icons a {
+  color: var(--muted-foreground);
+}
+
+.social-icons a:hover {
+  color: var(--foreground);
 }
 
 .sidebar-pane {
@@ -179,7 +196,7 @@ starlight-theme-select select {
 .sidebar-content a {
   font-size: 0.8125rem;
   line-height: 20px;
-  padding-block: 4px;
+  padding-block: 3.5px;
   border-radius: 6px;
   color: var(--foreground);
 }
@@ -197,6 +214,10 @@ starlight-theme-select select {
 
 .sidebar-content ul ul li {
   border-inline-start: 0;
+}
+
+.sidebar-content ul ul li + li {
+  margin-top: 1px;
 }
 
 .right-sidebar-panel h2 {

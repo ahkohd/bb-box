@@ -1,8 +1,10 @@
 ---
 import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
 import { getEntry } from "astro:content";
-import demoPoster from "../../../docs/media/demo-poster.jpg";
-import demoVideo from "../../../docs/media/demo.mp4?url";
+import darkPoster from "../../../docs/media/demo-poster.jpg";
+import darkVideo from "../../../docs/media/demo.mp4?url";
+import lightPoster from "../../../docs/media/demo-light-poster.jpg";
+import lightVideo from "../../../docs/media/demo-light.mp4?url";
 import { pageUrl } from "../repo.ts";
 import { listUnder } from "../rendered.ts";
 
@@ -34,9 +36,26 @@ const ways = [
   }}
 >
   <figure class="demo not-content">
-    <video autoplay muted loop playsinline preload="auto" poster={demoPoster.src} width={demoPoster.width} height={demoPoster.height} aria-label="A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop to watch, then makes a server box and runs a command in its terminal.">
-      <source src={demoVideo} type="video/mp4" />
-    </video>
+    <video autoplay muted loop playsinline width={darkPoster.width} height={darkPoster.height} data-dark-src={darkVideo} data-dark-poster={darkPoster.src} data-light-src={lightVideo} data-light-poster={lightPoster.src} aria-label="A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal."></video>
+    <script is:inline>
+      (() => {
+        const video = document.currentScript.previousElementSibling;
+        const show = () => {
+          const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+          if (video.dataset.shown === theme) return;
+          const playedTo = video.currentTime;
+          video.dataset.shown = theme;
+          video.poster = video.dataset[`${theme}Poster`];
+          video.src = playedTo ? `${video.dataset[`${theme}Src`]}#t=${playedTo.toFixed(2)}` : video.dataset[`${theme}Src`];
+          video.play().catch(() => {});
+        };
+        show();
+        new MutationObserver(show).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+      })();
+    </script>
+    <noscript>
+      <video autoplay muted loop playsinline width={darkPoster.width} height={darkPoster.height} poster={darkPoster.src} src={darkVideo} aria-label="A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal."></video>
+    </noscript>
   </figure>
 
   <section class="column not-content" aria-labelledby="why-bb-box">
@@ -74,6 +93,24 @@ const ways = [
 <style>
   :global([data-has-hero] .site-title) {
     visibility: hidden;
+  }
+
+  :global([data-has-hero] button[data-open-modal]) {
+    display: none;
+  }
+
+  :global([data-has-hero] header.header) {
+    position: absolute;
+    border-bottom-color: transparent;
+    background-color: transparent;
+  }
+
+  :global([data-has-hero] .main-frame) {
+    padding-top: 0;
+  }
+
+  :global([data-has-hero] header .right-group) {
+    display: flex;
   }
 
   :global([data-has-hero] .hero) {
@@ -132,6 +169,9 @@ const ways = [
   .demo {
     max-width: 67.5rem;
     margin: 3rem auto 0;
+    padding: 6px;
+    border-radius: 14px;
+    background-color: var(--muted);
   }
 
   .demo video {
@@ -204,9 +244,5 @@ const ways = [
     font-size: 0.75rem;
     line-height: 1rem;
     color: var(--muted-foreground);
-  }
-
-  .column:last-child {
-    margin-bottom: 4rem;
   }
 </style>

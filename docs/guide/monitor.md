@@ -2,6 +2,8 @@
 
 The Monitor shows how BB's server, your machines and every box are doing: CPU, memory, disk, network and the busiest processes, in BB's sidebar. It can also watch BB's server while nobody looks, and tell you when its CPU or memory stays high.
 
+![The Monitor in BB's sidebar, on a Linux desktop box under load, with the box's Open menu: Open details, Open desktop, Open terminal and the thread that holds the box](../media/monitor.png)
+
 ## Opening it
 
 In BB's sidebar footer, select **Machine status**, which has a server for its icon. The panel opens above it, on the machine you looked at last, or on BB's server the first time.
@@ -58,6 +60,8 @@ After the views come the threads on the box, under **Threads**. A thread's box l
 When a box is not ready, its views stay in the menu, greyed out, each with the reason, as in 'brisk-wren is stopped'.
 
 BB's server and your other BB machines, the ones that are not boxes, have the arrow while threads are working there, or were active there in the past 24 hours. Its tooltip says 'Threads on' and the machine's name. Its menu lists those threads under **Threads**, those working first, then the most recently active, at most 5, then a note such as '2 more in BB's sidebar'. A machine with no such threads has no arrow.
+
+![The Threads menu of BB's server, listing five of its threads, two of them working, and '3 more in BB's sidebar'](../media/monitor-threads-2x.png)
 
 ## Background monitoring and pressure notifications
 

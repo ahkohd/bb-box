@@ -64,10 +64,23 @@ async function openPageOnDesktop(sessionId, clients, text) {
   say(sessionId, `${url} is open on ${box}'s desktop. Open the desktop from the Box panel to watch it.`);
 }
 
+const heldTurns = new Map();
+
+function holdTurn(id, sessionId) {
+  say(sessionId, "Working on it.");
+  heldTurns.set(sessionId, id);
+}
+
 async function prompt(id, params) {
   const session = sessions.get(params.sessionId);
   const text = params.prompt.map((block) => block.text ?? "").join("\n");
   trace(`prompt ${text.slice(0, 200)}`);
+  if (/\bWORK\b/.test(text)) return holdTurn(id, params.sessionId);
+  if (!/desktop/i.test(text)) {
+    say(params.sessionId, "Done.");
+    send({ id, result: { stopReason: "end_turn" } });
+    return;
+  }
   const clients = await session.clients;
   await openPageOnDesktop(params.sessionId, clients, text);
   send({ id, result: { stopReason: "end_turn" } });
@@ -95,8 +108,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         send({ id: message.id, result: { stopReason: "end_turn" } });
       });
       break;
-    case "session/cancel":
+    case "session/cancel": {
+      const held = heldTurns.get(message.params.sessionId);
+      if (held !== undefined) {
+        heldTurns.delete(message.params.sessionId);
+        send({ id: held, result: { stopReason: "cancelled" } });
+      }
       break;
+    }
     default:
       if (message.id !== undefined) send({ id: message.id, error: { code: -32601, message: `${message.method} is not supported` } });
   }

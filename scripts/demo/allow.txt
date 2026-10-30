@@ -1,0 +1,32 @@
+# bb-box's and BB's own words
+getbb
+linux
+macos
+arm64
+eth0
+ctrl
+nproc
+uname
+sudo
+python3
+workspaces
+mockups
+xtigervnc
+windowserver
+re:(?=[a-z]*[0-9])[a-z0-9]{10}
+
+# getbb.app, as the desktop's browser shows it
+agentic
+changelog
+applypromo
+formacos
+subagent
+appimage
+allgreen
+
+# getbb.app's words as tesseract misreads them on the desktop
+appelatest
+applypramots
+applmage
+allgteen
+alsoformacos
