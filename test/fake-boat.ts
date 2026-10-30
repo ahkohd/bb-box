@@ -20,6 +20,8 @@ export interface FakeSandbox {
   idempotencyKey: string | null;
   files: Record<string, string>;
   restoringReads: number;
+  archivingReads: number;
+  stopError: string | null;
 }
 
 export interface FakeCall {
@@ -48,6 +50,8 @@ export class FakeBoat {
   startsLeftThisMinute = 5;
   hostKeysChangeOnResume = true;
   startsRestoreForReads = 0;
+  stopsArchiveForReads = 0;
+  stopsFailWith: string | null = null;
   #next = 0;
   readonly #now: () => number;
 
@@ -82,6 +86,8 @@ export class FakeBoat {
       idempotencyKey: null,
       files: {},
       restoringReads: 0,
+      archivingReads: 0,
+      stopError: null,
       ...partial,
     };
     this.sandboxes.set(id, sandbox);
@@ -109,6 +115,7 @@ export class FakeBoat {
       ttlSeconds: sandbox.ttlSeconds,
       dataExpiredAt: null,
       hydrated: sandbox.restoringReads === 0,
+      stop: sandbox.state === "archiving" ? { id: `stop_${sandbox.id}`, status: sandbox.stopError ? "failing" : "pending", error: sandbox.stopError } : null,
       desktopAvailable: true,
       snapshotAvailable: true,
     };
@@ -172,6 +179,7 @@ export class FakeBoat {
       case "GET /sandboxes/:id": {
         const view = this.#view(id);
         if (id.state === "provisioning") id.state = "ready";
+        else if (id.state === "archiving" && !id.stopError && --id.archivingReads <= 0) id.state = "archived";
         else if (id.restoringReads > 0) id.restoringReads--;
         return reply(200, { type: "sandbox.info", sandbox: view });
       }
@@ -194,7 +202,9 @@ export class FakeBoat {
         return reply(202, { type: "sandbox.forking", sandbox: this.#view(made) });
       }
       case "POST /sandboxes/:id/stop":
-        id.state = "archived";
+        id.archivingReads = this.stopsArchiveForReads;
+        id.stopError = this.stopsFailWith;
+        id.state = id.archivingReads > 0 || id.stopError ? "archiving" : "archived";
         id.stoppedAt = this.#now();
         return reply(202, { type: "sandbox.stopping", status: "archiving" });
       case "POST /sandboxes/:id/resume":

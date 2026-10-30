@@ -468,7 +468,7 @@ export class BoatBackend implements Backend {
     if (isRunning(sandbox.state) && this.#context.tailnet?.()) await this.#leave(sandbox.id, ownerOf(sandbox)?.name ?? sandbox.id, signal);
     await this.#forget(sandbox.id);
     if (sandbox.state !== "archiving") await this.#api.stop(sandbox.id, signal);
-    await this.#api.waitFor(sandbox.id, (each) => each.state === "archived", this.#now() + STATE_WITHIN_MS, signal);
+    await this.#api.waitArchived(sandbox.id, this.#now() + STATE_WITHIN_MS, signal);
   }
 
   async stopped(guest: Guest, signal?: AbortSignal): Promise<StopReason | null> {
