@@ -1188,9 +1188,11 @@ again only every 10 minutes; its tests cover it.
 
 ## Unit 3: box history and the page's 1 h, 24 h and 7 d
 
-Built on 30 October 2026, on main `7bd9f833`. bb-box now reads every
-running box once a minute, keeps what it read, and a box's page shows it
-over 1 hour, 24 hours and 7 days.
+Built on 30 October 2026, on main `7bd9f833`, and rebased onto `354ec2a6`
+on 31 October. bb-box now reads every running box once a minute, keeps
+what it read, and a box's page shows it over 1 hour, 24 hours and 7 days.
+Every budget of 069's section 10 was met over the 24-hour run, so box
+history stays on by default.
 
 ### What it adds
 
@@ -1279,11 +1281,15 @@ changed `src/app/activity.tsx`, `activity-words.ts`, `history-chart.tsx`,
 ### Checked
 
 On a Linux box, 8 cores, in a clone of the commits delivered, on main
-`7bd9f833`: `tsc` clean; the node suite 3,023 tests, 2,735 passed, 288
-skipped, 0 failed, the docs and site tests among them; vitest 392 tests
-passed in 5 files, three runs in a row, and 393 with the slot's line on
-24 h and 7 d; `scripts/reference.ts` leaves the reference unchanged; the
-site builds, its 21,065 links none broken. New tests:
+`354ec2a6`, with the review's fixes: `tsc` clean; the node suite 3,166
+tests, 2,878 passed, 288 skipped, 0 failed, the docs and site tests among
+them; vitest 411 tests passed in 5 files; `scripts/reference.ts` leaves
+the reference unchanged; the site builds, its 21,245 links none broken.
+Before the fixes, vitest's 392 tests passed three runs in a row. Two runs
+of the node suite on earlier bases each failed one test that does not
+touch box history and timed out under the suite's load: a macOS desktop's
+clipboard, and 070's restore recovery; alone, each passed 3 times in 3.
+New tests:
 
 - `test/box-history.test.ts`, with a set clock and a real `box-history.db`
   where it matters:
@@ -1361,18 +1367,19 @@ again, at a quiet time, 16:30:30 to 16:40:30; history off 15:38:30 to
 20:18:30 to 21:18:30, then on to 22:18:30; the run ends at 07:18:30 on 31
 October.
 
-#### Budgets so far (the first 10 hours)
+#### Budgets, over the 24 hours
 
 | Budget | Measured | How, and what limits it |
 | --- | --- | --- |
-| bb-box's server under 1% of one core over an hour, its SSH and `docker exec` children included | 0.64% of one core: own +0.26, `docker exec` children +0.32, `ssh` about +0.03 | Hour 2 (history on, 1.273%) against hour 1 (off, 0.636%), the same 30 boxes, BB's whole server process with its children; each hour is the difference of two samples an hour apart. Hour 0 read 0.87% above hour 1, as it held the plugin's start and my first look at the page. Docker's daemons spent another 0.14% serving the execs, outside the server. The ssh figure is the live ssh processes' CPU, so it drops when a control master ends; it is under 0.06% either way |
-| Under 30 MB more memory | No difference: 563 to 574 MiB off, 568 to 570 on | The server's RSS, sampled each minute; history's own state is 30 counters and 200 durations |
-| A box under 0.2% of one core over a minute, children included, on a 2-core box | Docker, route: 0.0235% (0.0014% off); Docker BB machine: 0.0984% (0.0915% off); LXC BB machine: 0.094% (0.0995% off); LXC, route: 0.030% (0.011% off); VM, route: 0.035% (0.025% off) | Each box's whole CPU, from its cgroup or `/proc/stat`, over the same two hours. History's share is the difference, 0.010% to 0.022% through a route and within a BB machine's own idle work through the host entry |
+| bb-box's server under 1% of one core over an hour, its SSH and `docker exec` children included | 0.64% of one core: own +0.26, `docker exec` children +0.32, `ssh` about +0.03. Over the quiet hours 15 to 23, 1.23% to 1.44%, a mean of 1.30%: about 0.66% above hour 1 | Hour 2 (history on, 1.273%) against hour 1 (off, 0.636%), the same 30 boxes, BB's whole server process with its children; each hour is the difference of two samples an hour apart. Hour 0 read 0.87% above hour 1, as it held the plugin's start and my first look at the page. The hours above the quiet ones held the pages (6, 13 and 14), installs of bb-box (9), the half-way reload (12) and the Mac part (7 and 8). Docker's daemons spent another 0.14% serving the execs, outside the server. The ssh figure is the live ssh processes' CPU, so it drops when a control master ends; it is under 0.06% either way |
+| Under 30 MB more memory | No difference: 563 to 574 MiB off, 568 to 570 on | The server's RSS, sampled each minute; history's own state is 30 counters and 200 durations. After the half-way reload the RSS rose from 459 to 588 MiB by hour 21 and stayed at 587 to 600 MiB to the end; it is BB's whole server, so the rise cannot be put on history, whose state does not grow |
+| A box under 0.2% of one core over a minute, children included, on a 2-core box | Docker, route: 0.0235% (0.0014% off); Docker BB machine: 0.0984% (0.0915% off); LXC BB machine: 0.094% (0.0995% off); LXC, route: 0.030% (0.011% off); VM, route: 0.035% (0.025% off) | Each box's whole CPU, from its cgroup or `/proc/stat`, over the same two hours. History's share is the difference, 0.010% to 0.022% through a route and within a BB machine's own idle work through the host entry. Over hours 15 to 23, an idle routed Docker box read 0.026% to 0.028% and a Docker BB machine 0.10% to 0.14%, its BB daemon included |
+| A Mac with 3 shared slots: one Mac reading and 3 slot readings a minute under 0.5% of one core | Met, as the lead decided, from one slot's readings: about 0.14% of one core | Not a 3-slot run, as Namespace gave one slot (a known gap, below). A slot's reading with its Mac's part took 37.5 ms of CPU and one without it 24.5 ms, each the mean of 20 runs in the slot under `time`; one reading with the Mac's part and two without is 86.5 ms a minute, 0.14% of one core. It leaves out the admin session's `sudo`, `launchctl asuser` and SSH channel around each command, which a slot user cannot measure |
 | One command a minute for each box read through its route; one host call a minute for each BB machine | 60 `docker exec` an hour for each routed Docker box, none for a Docker BB machine | `docker events`, hour 0. The tallies count one reading a minute for every box, each one command or one call |
-| At least 99% of due readings taken within 10 s of their second; skipped and failed apart; boxes that do not answer apart | 15,447 of 15,454, 99.955%; none skipped; 7 failed; 65 not tried while their box did not answer | History's own hourly tallies. Readings took 27 to 48 ms on average; two workers were enough throughout |
-| Every box that answers has a point under 2 minutes old | 14,347 of 14,347 box-minutes | Each minute's sample of every box's newest point, leaving out the stopped, cut-off, off and restart windows |
-| With 5 pages open, the server within the first row's budget | 3.24% of one core with 5 pages on Live (hour 6) against 1.26% around it | Live's own readings, 5 boxes every 5 s, as unit 2 and 066 read them, make the difference; history's share while open is measured at 20:18 to 22:18 |
-| `box-history.db` under 10 MB after 7 days, its log under 4 MB | 2.7 MB after 7 days of 30 boxes, the log at most 1.0 MB; in the run, 0.8 MB after 10 hours, the log at most 0.4 MB | [`storage-week.ts`](069-boxes-page/unit-3/storage-week.ts) writes 7 days of 30 boxes through the store with a set clock, pruning each minute as the reader does. Before each minute's pruning truncated the log, it sat at its 4 MiB limit |
+| At least 99% of due readings taken within 10 s of their second; skipped and failed apart; boxes that do not answer apart | 39,371 of 39,378, 99.982%; none skipped; 7 failed; 65 not tried while their box did not answer | History's own hourly tallies over 26 hours, from `bb box monitor history --json --hours 26`. Every hour after the first, which held the false starts, was 99.83% or more, and 22 of the 26 were 100%. Readings took 27 to 48 ms on average; the slowest were the cut-off box's 10 s timeouts; two workers were enough throughout |
+| Every box that answers has a point under 2 minutes old | 38,077 of 38,077 box-minutes | Each minute's sample of every box's newest point, leaving out the stopped, cut-off, off and restart windows |
+| With 5 pages open, the server within the first row's budget | History adds 0.53% of one core with 5 pages open: 3.51% with history on (21:20 to 22:18) against 2.98% with it off (20:20 to 21:18); own +0.43, `docker exec` children +0.07, `ssh` +0.03 | The same server process, 58 minutes each, the same 5 pages on Live throughout. The pages' own cost, about 2.3% against hour 1's 0.64% with neither, is Live's readings, 5 boxes every 5 s, as unit 2 and 066 read them; it is not history's. Docker's daemons spent another 0.25% with history on |
+| `box-history.db` under 10 MB after 7 days, its log under 4 MB | 2.7 MB after 7 days of 30 boxes, the log at most 1.0 MB; in the run, 1.85 MB after 24 hours (38,579 minute points and 781 hours), the log at most 0.40 MB | [`storage-week.ts`](069-boxes-page/unit-3/storage-week.ts) writes 7 days of 30 boxes through the store with a set clock, pruning each minute as the reader does. Before each minute's pruning truncated the log, it sat at its 4 MiB limit |
 
 #### Gates, live
 
@@ -1383,8 +1390,10 @@ October.
 | G7 with history on | ready-cedar's host cut off for an hour: history paused it and asked the reach check at 11:51:22; the reach check's attempts came at 11:51:24, 11:56:26, 12:11:28, 12:26:30 and 12:41:32, five in the hour, each within 2 s of the time it gave; it answered check 6 at 12:56:32, and history read it again at its next second. A reading that times out is not a transport error, so a box is marked as not answering by the reach check, after history's three tries |
 | G13 | With the Monitor off 16:30:30 to 16:40:30, no `docker exec` to any box (90 in the 10 minutes before) and no reading due or point written; the routed LXC boxes' commands share one kept SSH connection, so their own logs cannot show it either way. The first window, at 15:18:30, held one burst of an exec in every Docker box at 15:19:43: bb-box refreshing each box's capabilities 6 s after I released the Namespace slot, as at 14:28 after other Namespace changes; never after a switch of the Monitor or history. The times history and the Monitor were off are kept and show as Not read (the screenshots below) |
 | G14 | In the run's 7 d of happy-moss, the 08:00 hour, read for 1,068 s before history was turned off, is marked partly read; 09:00, read for 2,472 s, is not; 07:00, which held G10's 5 minutes at 100%, has a mean of 8.6% and 100% as its busiest minute |
-| G12, G18 | In tests; the restart at 19:18:30 and the run's end report the live restart |
-| G19 | Run as above, except the Mac part (below) |
+| G2, history's part | Passed with the limit the lead decided: a 115 s build of 4,000 files read 89% of its CPU above idle, within 20%; builds of 16 and 18 s were missed, and a slot's 24 h and 7 d now say that work shorter than a minute may not show and that Live shows it |
+| G12 | bb-box reloaded half way, at 19:18:30: from 19:08:30 to 19:28:30, all 30 boxes' minute points run on with no hole between them, and none longer than 60 s, so no point was lost |
+| G18 | In tests |
+| G19 | Run for 24 hours as above, every budget met; the Mac's budget from one slot's readings (below) |
 
 **A stopped box and its words.** wise-cedar's 24 h after its hour stopped:
 "Not made yet" until 06:50, "Not read" 08:20 to 09:10 (history off), "Stopped"
@@ -1475,11 +1484,56 @@ settings with the switch ([1440](069-boxes-page/unit-3/settings-monitor-1440-lig
 tall enough to hold the whole page, as BB's own layout scrolls inside the
 window.
 
+### After the independent review
+
+The review of the delivered commits found 8 things to fix. Each is fixed,
+with a test that fails without its fix:
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| Default on before the 24-hour run | Decided by the run's numbers (below) | – |
+| Pruning stopped while history or the Monitor was off | The reader prunes each minute and at its start whatever the switches, and lists box records itself, so it does not take every box for gone | Through the reader, with a set clock: a released box's points go 24 hours after it with history off, a forgotten box's after a restart with the Monitor off, and nothing is read |
+| A short time off made a point across it | Off forgets each box's counters in memory and in the file; a reading begun before is dropped | 61 s off: no point spans it, and the next reading is a baseline; a reading begun before off and on again is dropped; started again off, the file's counters are gone |
+| Wall-clock steps stopped readings and bent rates | Schedule, durations and rates use monotonic time; a step of over 1 s starts a new baseline | The clock 5 minutes back: readings go on; 30 s forward: a baseline, then 100% for two busy cores, not 66.7%, and nothing late |
+| A step's value hid a stop inside it; coverage only under half | Known gaps at their own times inside steps with values; a step missing a minute or more says how long it was read | An hour read 40 minutes then stopped: Stopped from its 40th minute, and partly read; 61 s off inside 10 minutes: Not read for those 61 s |
+| A failed refresh showed old charts as current | The words line, both descriptions and a status message say the refresh failed and when the charts were read | A page opened again from kept charts whose refresh fails |
+| Summaries averaged steps and invented a minute | Each step weighted by the time read, for each measure; the busiest minute or highest value named by its step | One minute at 100% and an hour at 0% averages 2%, not 50%; "busiest minute 78% between … and …" |
+| Repeated hours lost their ticks | Ticks found every 15 minutes of elapsed time and kept at local tick times; a time shown twice carries its zone | America/New_York on 1 November 2026: all 9 quarter hours from 1:00 EDT to 2:00 EST, each told apart; 24 h on 0, 6, 12 and 18 local; 7 d on each local midnight |
+
+The fixes are in the reader and the page only. The run on the separate BB
+goes on with the build it started with, so its numbers measure the
+reading's cost, which the fixes do not change. The only new work is that
+the minute's pruning also runs while history is off.
+
+### The review's fixes, live
+
+After the run, the fixed build went onto the separate BB, with its 13
+Docker boxes; the Proxmox boxes were released at the run's end. With
+[`live-fixes.mjs`](069-boxes-page/unit-3/live-fixes.mjs) for the page:
+
+- History off at 07:25:54: the counters in `box-history.db` went from 32
+  to 0 within 3 s. While off, its minute points fell from 38,515 to
+  38,425 in 2.5 minutes as pruning went on, and none was written.
+- On again at 07:33:01: no point spans the 7 minutes it was off. Every
+  box's first point starts at 07:33:04, after a new baseline.
+- A box's 1 h says "Not read from 7:25 AM to 7:33 AM", with readings on
+  both sides ([1440](069-boxes-page/unit-3/fixed-1h-1440-light.png)).
+- wise-cedar's 24 h says Stopped from 9:48 AM to 10:48 AM, the stop's own
+  times, where the build before said 9:50 to 10:40. The step from 9:40,
+  read until the stop, has its value and says "partly read, 7 min of 10
+  minutes". The description names the step its busiest minute was in ([1440](069-boxes-page/unit-3/fixed-24h-1440-light.png)).
+- A start shorter than a minute read "Starting from yesterday at 10:48 AM
+  to yesterday at 10:48 AM". It now reads "Starting for under a minute
+  from yesterday at 10:48 AM", with a test.
+
 ### Not checked live, and why
 
-- Three shared slots on one Mac: Namespace gave no second slot (above).
-  No Tart shared host was reachable from the separate BB without
-  production's settings.
+- Three shared slots on one Mac, a known gap: Namespace gave no second
+  slot (above), and no Tart shared host was reachable from the separate BB
+  without production's settings. The Mac's budget is met from one slot's
+  readings, as the lead decided, not from a run of 3 slots, so 3 slots
+  reading their Mac in turn and their admin session's commands are not
+  measured together.
 - G12's 4-minute restart and G18's full file: tested with a set clock and
   a real `box-history.db`; the run's restarts are quick ones.
 - A slot's counters across a restart of bb-box: not kept in the file (a
