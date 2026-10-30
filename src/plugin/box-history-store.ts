@@ -61,6 +61,7 @@ export const BOX_HISTORY_MIGRATIONS: readonly string[] = [
     slowest_ms INTEGER NOT NULL DEFAULT 0,
     workers INTEGER NOT NULL DEFAULT 0
   )`,
+  `ALTER TABLE ${SCHEMA}.counters ADD COLUMN tick INTEGER`,
 ];
 
 export interface Quiet {
@@ -87,6 +88,9 @@ export interface MinuteRow {
 export interface HourRow {
   readonly hour: number;
   readonly covered: number;
+  readonly cpuCovered: number;
+  readonly memoryCovered: number;
+  readonly netCovered: number;
   readonly cpu: number | null;
   readonly cpuBusiest: number | null;
   readonly memory: number | null;
@@ -211,7 +215,7 @@ export class BoxHistoryStore {
 
   #keepCounters(key: string, kept: Kept): void {
     const reading = JSON.stringify({ ...kept.reading, own: null });
-    this.#file.db().prepare(`INSERT INTO ${this.#table("counters")} (key, at, reading) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET at = excluded.at, reading = excluded.reading`).run(key, kept.at, reading);
+    this.#file.db().prepare(`INSERT INTO ${this.#table("counters")} (key, at, tick, reading) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET at = excluded.at, tick = excluded.tick, reading = excluded.reading`).run(key, kept.at, kept.tick ?? null, reading);
   }
 
   record(key: string, point: Point, kept: Kept): boolean {
@@ -283,14 +287,23 @@ export class BoxHistoryStore {
     const kept = new Map<string, Kept>();
     if (!this.usable) return kept;
     try {
-      for (const row of this.#file.db().prepare(`SELECT key, at, reading FROM ${this.#table("counters")}`).all() as { key: string; at: number; reading: string }[]) {
+      for (const row of this.#file.db().prepare(`SELECT key, at, tick, reading FROM ${this.#table("counters")}`).all() as { key: string; at: number; tick: number | null; reading: string }[]) {
         const parsed = lightReadingSchema.safeParse(JSON.parse(row.reading));
-        if (parsed.success) kept.set(row.key, { at: row.at, reading: parsed.data });
+        if (parsed.success) kept.set(row.key, { at: row.at, tick: row.tick, reading: parsed.data });
       }
     } catch (error) {
       this.#logError("read box history's counters", error);
     }
     return kept;
+  }
+
+  dropCounters(): void {
+    if (!this.usable) return;
+    try {
+      this.#file.db().prepare(`DELETE FROM ${this.#table("counters")}`).run();
+    } catch (error) {
+      this.#once("forget box history's counters", error);
+    }
   }
 
   quiet(from: number, to: number): Quiet[] {
@@ -393,6 +406,9 @@ export class BoxHistoryStore {
         return {
           hour: row.hour! * 1000,
           covered: row.covered!,
+          cpuCovered: row.cpu_covered ?? 0,
+          memoryCovered: row.memory_covered ?? 0,
+          netCovered: row.net_covered ?? 0,
           cpu: mean(row.cpu_sum, row.cpu_covered),
           cpuBusiest: fromTenths(row.cpu_busiest ?? null),
           memory: mean(row.memory_sum, row.memory_covered),

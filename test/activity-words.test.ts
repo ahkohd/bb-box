@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GAP_WORDS, historyGapsWords, historySummary, historyTicks, partlyReadWords, readOutWords, bytesWords, gapsOf, hostAtStart, liveTicks, liveWindow, liveWords, memoryOfShare, networkSummary, percentOfShare, rateWords, slotCpuWords, slotLineWords, usageSummary } from "../src/app/activity-words.ts";
+import { GAP_WORDS, historyClock, historyGapsWords, historyNetworkSummary, historySummary, historyTicks, partlyReadWords, repeatsLocally, stepWhenWords, readOutWords, bytesWords, gapsOf, hostAtStart, liveTicks, liveWindow, liveWords, memoryOfShare, networkSummary, percentOfShare, rateWords, slotCpuWords, slotLineWords, usageSummary } from "../src/app/activity-words.ts";
 import { namedAfterReady } from "../src/app/box-words.ts";
 
 const T0 = Date.UTC(2026, 9, 30, 16, 0, 0);
@@ -88,14 +88,42 @@ test("history's ticks are every 15 minutes over 1 h, every 6 hours over 24 h and
   assert.ok(week.every((tick) => new Date(tick.at).getHours() === 0));
 });
 
-test("history's summary gives CPU's mean, its busiest minute and when, memory's last, and each gap with why", () => {
-  const times = [at(0), at(1), at(2), at(3)];
+test("history's summary gives CPU's mean weighted by the time read, its busiest minute and the step it was in, memory's last, and each gap with why", () => {
   const gaps = [{ from: at(2), to: at(3), kind: "stopped" as const }, { from: at(3), to: at(9), kind: "not-read" as const }];
-  const summary = historySummary("the last 24 hours, by 10 minutes", times, { cpu: { label: "CPU", values: [10, 30, null, null], peaks: [12, 78, null, null] }, memory: { label: "Memory", values: [50, 58, null, null] } }, gaps, words, at(5));
-  assert.equal(summary, "Over the last 24 hours, by 10 minutes: CPU averaged 20%, highest 78% at t1; memory last 58%. Stopped from t2 to t3; Not read from t3.");
+  const step = (index: number) => `between s${index} and e${index}`;
+  const summary = historySummary("the last 24 hours, by 10 minutes", { cpu: { label: "CPU", values: [10, 30, null, null], weights: [600, 600, 0, 0], peaks: [12, 78, null, null] }, memory: { label: "Memory", values: [50, 58, null, null], weights: [600, 600, 0, 0] } }, gaps, step, words, at(5));
+  assert.equal(summary, "Over the last 24 hours, by 10 minutes: CPU averaged 20%, busiest minute 78% between s1 and e1; memory last 58%. Stopped from t2 to t3; Not read from t3.");
   assert.equal(historyGapsWords([], words, at(5)), "");
+  assert.equal(historyGapsWords([{ from: at(1), to: at(2), kind: "starting" }], () => "yesterday at 10:48 AM", at(5)), " Starting for under a minute from yesterday at 10:48 AM.", "a gap that starts and ends in the same minute is not said as from 10:48 to 10:48");
   assert.equal(GAP_WORDS["no-reading"], "No reading");
   assert.equal(partlyReadWords("7d", 1200), "partly read, 20 min of the hour");
+});
+
+test("history's mean counts each step by the time it was read: one minute at 100% and an hour at 0% is about 2%, not 50%", () => {
+  const lines = { cpu: { label: "CPU", values: [100, 0], weights: [60, 3600] }, memory: { label: "Memory", values: [40, 40], weights: [60, 3600] } };
+  const summary = historySummary("the last 7 days, by the hour", lines, [], (index) => `in hour ${index}`, words, at(5));
+  assert.equal(summary, "Over the last 7 days, by the hour: CPU averaged 2%, highest 100% in hour 0; memory last 40%.");
+  const network = historyNetworkSummary("the last 7 days, by the hour", [1024 * 1024, 0], [0, 0], [60, 3600], [], (index) => `in hour ${index}`, words, at(5));
+  assert.match(network, /^Over the last 7 days, by the hour: download averaged 17 KB\/s, highest 1 MB\/s in hour 0; upload averaged 0 B\/s/);
+  assert.equal(stepWhenWords("24h", T0, 600_000, () => "today at 4:00 PM", "UTC"), "between today at 4:00 PM and " + new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(T0 + 600_000));
+  assert.equal(stepWhenWords("1h", T0, 60_000, () => "4:00 PM"), "at 4:00 PM");
+});
+
+test("on the night clocks go back, 1 h's ticks come every 15 minutes of elapsed time, and the repeated hour's times say which they are", () => {
+  const zone = "America/New_York";
+  const from = Date.UTC(2026, 10, 1, 5, 0);
+  const ticks = historyTicks("1h", { from, to: from + 2 * 3_600_000 }, zone);
+  assert.deepEqual(ticks.map((tick) => tick.at), Array.from({ length: 9 }, (_, index) => from + index * 15 * 60_000), "none of the repeated quarter hours goes missing");
+  assert.equal(new Set(ticks.map((tick) => tick.words)).size, 9, "1:00 before the change and 1:00 after it are told apart");
+  assert.ok(repeatsLocally(from, zone) && repeatsLocally(from + 3_600_000, zone));
+  assert.ok(!repeatsLocally(from + 2 * 3_600_000, zone), "2:00, after it, happens once");
+  assert.notEqual(historyClock(from, zone), historyClock(from + 3_600_000, zone));
+  const day = historyTicks("24h", { from: Date.UTC(2026, 10, 1, 0, 0), to: Date.UTC(2026, 10, 2, 0, 0) }, zone);
+  const local = (time: number) => Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone: zone }).format(time));
+  assert.deepEqual(day.map((tick) => local(tick.at)), [0, 6, 12, 18], "24 h's ticks stay on 0, 6, 12 and 18 local, across the change");
+  const week = historyTicks("7d", { from: Date.UTC(2026, 9, 28, 12, 0), to: Date.UTC(2026, 10, 4, 12, 0) }, zone);
+  assert.equal(week.length, 7);
+  assert.ok(week.every((tick) => local(tick.at) === 0), "7 d's ticks are each local midnight");
 });
 
 test("the read-out names the busiest minute only where it is 5 points or more above the mean, and adds a step's note", () => {

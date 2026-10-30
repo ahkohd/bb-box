@@ -191,6 +191,7 @@ export function parseLightOutput(os: LightOs, output: string): LightReading {
 
 export interface Kept {
   readonly at: number;
+  readonly tick?: number | null;
   readonly reading: LightReading;
 }
 
@@ -242,11 +243,12 @@ export interface Point {
   readonly high: number;
 }
 
-export type Baseline = "first" | "stale" | "started" | "rebooted" | "reset" | "resized";
+export type Baseline = "first" | "stale" | "clock" | "started" | "rebooted" | "reset" | "resized";
 
 export type Measured = { readonly is: "point"; readonly point: Point } | { readonly is: "baseline"; readonly why: Baseline };
 
 export const COUNTERS_LAST_MS = 150_000;
+export const CLOCK_STEP_MS = 1_000;
 
 const BOOT_SLACK_SECONDS = 2;
 
@@ -262,9 +264,20 @@ function sameCapacity(previous: LightReading, current: LightReading): boolean {
   return Math.abs(before.cores - now.cores) < 1e-6 && before.memoryBytes === now.memoryBytes && Boolean(previous.container) === Boolean(current.container);
 }
 
+function elapsedMs(previous: Kept, current: Kept): number {
+  return typeof previous.tick === "number" && typeof current.tick === "number" ? current.tick - previous.tick : current.at - previous.at;
+}
+
+export function clockStepped(previous: Kept, current: Kept): boolean {
+  if (typeof previous.tick !== "number" || typeof current.tick !== "number") return false;
+  return Math.abs(current.at - previous.at - (current.tick - previous.tick)) > CLOCK_STEP_MS;
+}
+
 export function baselineWhy(previous: Kept | null, current: Kept, lastStartAt: number | null): Baseline | null {
   if (!previous) return "first";
-  if (current.at - previous.at > COUNTERS_LAST_MS || current.at <= previous.at) return "stale";
+  if (clockStepped(previous, current)) return "clock";
+  const elapsed = elapsedMs(previous, current);
+  if (elapsed > COUNTERS_LAST_MS || elapsed <= 0 || current.at <= previous.at) return "stale";
   if (lastStartAt !== null && previous.at < lastStartAt) return "started";
   const bootBefore = previous.reading.bootAt;
   const bootNow = current.reading.bootAt;
@@ -277,7 +290,7 @@ export function baselineWhy(previous: Kept | null, current: Kept, lastStartAt: n
 function rates(previous: Kept, current: Kept): { down: number | null; up: number | null } {
   const before = previous.reading.network;
   const now = current.reading.network;
-  const seconds = (current.at - previous.at) / 1000;
+  const seconds = elapsedMs(previous, current) / 1000;
   if (!before || !now || before.interface !== now.interface || seconds <= 0 || now.rxBytes < before.rxBytes || now.txBytes < before.txBytes) return { down: null, up: null };
   return { down: (now.rxBytes - before.rxBytes) / seconds, up: (now.txBytes - before.txBytes) / seconds };
 }
@@ -296,7 +309,7 @@ export function machinePoint(previous: Kept, current: Kept): Point {
   const container = now.container;
   const capacity = capacityOf(now);
   const cpu = container
-    ? containerCpuPercent(previous.reading.container ? { usageMicros: previous.reading.container.usageMicros, at: previous.at } : null, { usageMicros: container.usageMicros, at: current.at }, capacity.cores)
+    ? containerCpuPercent(previous.reading.container ? { usageMicros: previous.reading.container.usageMicros, at: previous.at } : null, { usageMicros: container.usageMicros, at: previous.at + elapsedMs(previous, current) }, capacity.cores)
     : previous.reading.cpu && now.cpu
       ? calculateCpuUsage(previous.reading.cpu, now.cpu)
       : null;

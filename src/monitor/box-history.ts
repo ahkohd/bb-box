@@ -1,4 +1,4 @@
-import { baselineWhy, machinePoint, shareOf, slotPoint, type Kept, type LightOs, type LightReading, type LightRequest, type Point } from "./light.ts";
+import { CLOCK_STEP_MS, baselineWhy, machinePoint, shareOf, slotPoint, type Kept, type LightOs, type LightReading, type LightRequest, type Point } from "./light.ts";
 import { createOwnUsage, type OwnUsageMeter } from "./own-usage.ts";
 
 export const START_LATE_MS = 10_000;
@@ -45,6 +45,7 @@ export interface HistoryWrites {
   record(key: string, point: Point, kept: Kept): boolean;
   keep(key: string, kept: Kept): boolean;
   counters(): Map<string, Kept>;
+  dropCounters(): void;
   setQuiet(why: QuietWhy, quiet: boolean, at: number): void;
   tally(at: number, tally: Tally): void;
   prune(keep: (key: string) => boolean): number;
@@ -64,8 +65,13 @@ export interface BoxHistoryDeps {
   readonly retained: () => Promise<(key: string) => boolean>;
   readonly log?: (message: string) => void;
   readonly now?: () => number;
+  readonly monotonic?: () => number;
   readonly setTimer?: (task: () => void, ms: number) => unknown;
   readonly clearTimer?: (timer: unknown) => void;
+}
+
+export function monotonicMs(): number {
+  return Number(process.hrtime.bigint() / 1_000_000n);
 }
 
 export function macKey(host: string): string {
@@ -99,6 +105,13 @@ function ninetieth(values: readonly number[]): number {
 interface Due {
   readonly box: HistoryBox;
   readonly dueAt: number;
+  readonly lateWhenQueued: number;
+  readonly queuedTick: number;
+}
+
+interface Paused {
+  readonly at: number;
+  readonly tick: number;
 }
 
 interface Counting {
@@ -128,6 +141,7 @@ export interface HistoryStatus {
 export class BoxHistory {
   readonly #deps: BoxHistoryDeps;
   readonly #now: () => number;
+  readonly #monotonic: () => number;
   readonly #setTimer: (task: () => void, ms: number) => unknown;
   readonly #clearTimer: (timer: unknown) => void;
   #counters = new Map<string, Kept>();
@@ -138,7 +152,7 @@ export class BoxHistory {
   readonly #lastDue = new Map<string, number>();
   #seconds = new Map<string, number>();
   readonly #failures = new Map<string, number>();
-  readonly #pausedAt = new Map<string, number>();
+  readonly #pausedAt = new Map<string, Paused>();
   readonly #answeredWhilePaused = new Set<string>();
   readonly #macRead = new Map<string, number>();
   readonly #durations: number[] = [];
@@ -147,6 +161,8 @@ export class BoxHistory {
   #tally = counting();
   #minute = -1;
   #lastTick = 0;
+  #lastMonotonic = 0;
+  #session = 0;
   #timer: unknown = null;
   #started = false;
   #stopped = false;
@@ -156,6 +172,7 @@ export class BoxHistory {
   constructor(deps: BoxHistoryDeps) {
     this.#deps = deps;
     this.#now = deps.now ?? Date.now;
+    this.#monotonic = deps.monotonic ?? monotonicMs;
     this.#setTimer =
       deps.setTimer ??
       ((task, ms) => {
@@ -173,6 +190,7 @@ export class BoxHistory {
     this.#counters = this.#deps.store.counters();
     const now = this.#now();
     this.#lastTick = now;
+    this.#lastMonotonic = this.#monotonic();
     this.#minute = Math.floor(now / MINUTE_MS);
     this.#sync(this.#deps.switches(), now);
     this.#turn = this.#refresh(now);
@@ -216,6 +234,10 @@ export class BoxHistory {
   tick(): void {
     if (this.#stopped) return;
     const now = this.#now();
+    const tick = this.#monotonic();
+    const stepMs = now - this.#lastTick - (tick - this.#lastMonotonic);
+    const stepped = Math.abs(stepMs) > CLOCK_STEP_MS;
+    if (stepped) this.#clockMoved(stepMs);
     const minute = Math.floor(now / MINUTE_MS);
     if (minute !== this.#minute) {
       const ended = this.#minute;
@@ -223,7 +245,7 @@ export class BoxHistory {
       this.#flush(ended * MINUTE_MS);
       this.#turn = this.#refresh(now);
     }
-    if (this.#reading()) {
+    if (this.#reading() && !stepped) {
       for (const box of this.#boxes) {
         const second = this.#seconds.get(box.id) ?? secondOf(box.id);
         for (const at of [minute - 1, minute]) {
@@ -236,6 +258,12 @@ export class BoxHistory {
       this.#pump();
     }
     this.#lastTick = now;
+    this.#lastMonotonic = tick;
+  }
+
+  #clockMoved(stepMs: number): void {
+    this.#lastDue.clear();
+    this.#deps.log?.(`Box history found the clock moved ${stepMs > 0 ? "forward" : "back"} by ${Math.round(Math.abs(stepMs) / 1000)} s, so it starts each box's counters again rather than count the time between.`);
   }
 
   status(): HistoryStatus {
@@ -265,15 +293,26 @@ export class BoxHistory {
     this.#boxes = [];
     for (const entry of this.#queue) this.#busy.delete(entry.box.id);
     this.#queue.length = 0;
+    this.#forgetCounters();
+  }
+
+  #forgetCounters(): void {
+    this.#session++;
+    this.#meters.clear();
+    if (!this.#counters.size) return;
+    this.#counters.clear();
+    this.#deps.store.dropCounters();
   }
 
   async #refresh(now: number): Promise<void> {
     const switches = this.#deps.switches();
     this.#sync(switches, now);
-    if (!(switches.monitor && switches.history)) {
-      this.#drop();
-      return;
-    }
+    if (switches.monitor && switches.history) await this.#list();
+    else this.#drop();
+    await this.#prune();
+  }
+
+  async #list(): Promise<void> {
     try {
       this.#boxes = await this.#deps.boxes();
       this.#seconds = spreadSeconds(this.#boxes.map((box) => box.id));
@@ -283,6 +322,9 @@ export class BoxHistory {
     }
     const live = new Set(this.#boxes.map((box) => box.id));
     for (const id of this.#lastDue.keys()) if (!live.has(id)) this.#forget(id);
+  }
+
+  async #prune(): Promise<void> {
     try {
       const keep = await this.#deps.retained();
       this.#deps.store.prune(keep);
@@ -308,12 +350,12 @@ export class BoxHistory {
   }
 
   #paused(box: HistoryBox): boolean {
-    const at = this.#pausedAt.get(box.id);
-    if (at === undefined) return false;
+    const paused = this.#pausedAt.get(box.id);
+    if (paused === undefined) return false;
     const answers = !this.#answeredWhilePaused.has(box.id);
     const answered = this.#deps.reach.lastAnswered(box.id);
-    const alone = this.#now() - at > PAUSED_ALONE_MS && !this.#deps.reach.notAnswering(box.id);
-    const foundAnswering = answers && answered !== null && answered > at;
+    const alone = this.#monotonic() - paused.tick > PAUSED_ALONE_MS && !this.#deps.reach.notAnswering(box.id);
+    const foundAnswering = answers && answered !== null && answered > paused.at;
     if (foundAnswering || alone) {
       this.#pausedAt.delete(box.id);
       this.#answeredWhilePaused.delete(box.id);
@@ -335,12 +377,12 @@ export class BoxHistory {
       return;
     }
     this.#busy.add(box.id);
-    this.#queue.push({ box, dueAt });
+    this.#queue.push({ box, dueAt, lateWhenQueued: this.#now() - dueAt, queuedTick: this.#monotonic() });
   }
 
   #workers(): number {
-    const now = this.#now();
-    const elapsed = [...this.#runningSince.values()].map((since) => now - since);
+    const tick = this.#monotonic();
+    const elapsed = [...this.#runningSince.values()].map((since) => tick - since);
     return workersFor(this.#boxes.length, ninetieth([...this.#durations, ...elapsed]));
   }
 
@@ -349,7 +391,7 @@ export class BoxHistory {
     this.#tally.workers = Math.max(this.#tally.workers, target);
     while (this.#running < target && this.#queue.length) {
       const entry = this.#queue.shift()!;
-      if (this.#now() - entry.dueAt > START_LATE_MS) {
+      if (entry.lateWhenQueued + this.#monotonic() - entry.queuedTick > START_LATE_MS) {
         this.#tally.skipped++;
         this.#busy.delete(entry.box.id);
         continue;
@@ -381,7 +423,8 @@ export class BoxHistory {
 
   async #run({ box, dueAt }: Due): Promise<void> {
     this.#running++;
-    const started = this.#now();
+    const session = this.#session;
+    const started = this.#monotonic();
     this.#runningSince.set(box.id, started);
     const minute = Math.floor(dueAt / MINUTE_MS);
     const readsMac = box.slot !== null && this.#macRead.get(box.slot.host) !== minute;
@@ -397,7 +440,7 @@ export class BoxHistory {
       if (box.slot && readsMac) this.#macRead.delete(box.slot.host);
       this.#failed(box, error);
     } finally {
-      const took = this.#now() - started;
+      const took = this.#monotonic() - started;
       this.#durations.push(took);
       if (this.#durations.length > DURATIONS_KEPT) this.#durations.splice(0, this.#durations.length - DURATIONS_KEPT);
       this.#tally.readingMs += took;
@@ -406,9 +449,9 @@ export class BoxHistory {
       this.#runningSince.delete(box.id);
       this.#busy.delete(box.id);
     }
-    if (reading && !this.#stopped && this.#reading()) {
+    if (reading && !this.#stopped && this.#reading() && session === this.#session) {
       try {
-        this.#take(box, request, { at: this.#now(), reading });
+        this.#take(box, request, { at: this.#now(), tick: this.#monotonic(), reading });
       } catch (error) {
         this.#deps.log?.(`Box history could not keep ${box.name}'s reading: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -421,7 +464,7 @@ export class BoxHistory {
     this.#failures.set(box.id, failures);
     if (failures < FAILURES_BEFORE_PAUSE || this.#pausedAt.has(box.id)) return;
     const words = error instanceof Error ? error.message : String(error);
-    this.#pausedAt.set(box.id, this.#now());
+    this.#pausedAt.set(box.id, { at: this.#now(), tick: this.#monotonic() });
     this.#deps.log?.(`Box history could not read ${box.name} ${failures} times in a row (${words}), so it reads it again only once the reach check finds it answers.`);
     void this.#deps.reach.check(box.id).then(
       (answers) => {
@@ -435,7 +478,7 @@ export class BoxHistory {
 
   #take(box: HistoryBox, request: LightRequest, current: Kept): void {
     const store = this.#deps.store;
-    const kept: Kept = { at: current.at, reading: { ...current.reading, own: null } };
+    const kept: Kept = { at: current.at, tick: current.tick ?? null, reading: { ...current.reading, own: null } };
     const previous = this.#counters.get(box.id) ?? null;
     const why = baselineWhy(previous, kept, box.lastStartAt);
     if (!box.slot) {
@@ -450,7 +493,7 @@ export class BoxHistory {
       this.#meters.set(box.id, meter);
     }
     if (why) meter.reset();
-    const own = current.reading.own ? meter.take(current.reading.own, current.at) : null;
+    const own = current.reading.own ? meter.take(current.reading.own, current.tick ?? current.at) : null;
     const share = shareOf(current.reading.visibleCores, current.reading.memoryTotalBytes ?? 0, box.slot.most);
     if (why || !previous || !own) store.keep(box.id, kept);
     else store.record(box.id, slotPoint(previous, kept, own, share), kept);

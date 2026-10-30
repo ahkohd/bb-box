@@ -21,12 +21,14 @@ import {
   RANGE_LABELS,
   RANGE_WORDS,
   historyBoundsOf,
+  historyClock,
   historyNetworkSummary,
   historySummary,
   historyTicks,
   historyTimeWords,
   partlyReadWords,
   stepSpanWords,
+  stepWhenWords,
   bytesWords,
   clockWithSeconds,
   gapsOf,
@@ -528,12 +530,12 @@ function useBoxHistory(boxId: string, range: HistoryRange, state: string) {
 
 type HistoryLineKey = "cpu" | "memory" | "disk" | "host";
 
-function historyLines(steps: readonly HistoryStep[], range: HistoryRange, shared: boolean, host: string | null): (ChartSeries & { key: HistoryLineKey })[] {
+function historyLines(steps: readonly HistoryStep[], range: HistoryRange, shared: boolean, host: string | null): (ChartSeries & { key: HistoryLineKey; weights?: readonly number[] })[] {
   const busiest = range !== "1h";
   const labels = shared ? slotLabels(host) : { cpu: "CPU", memory: "Memory", host: "" };
   return [
-    { key: "cpu", label: labels.cpu, color: CHART_COLOURS.cpu, values: steps.map((step) => step.cpu), ...(busiest ? { peaks: steps.map((step) => step.cpuBusiest) } : {}), format: percentWords },
-    { key: "memory", label: labels.memory, color: CHART_COLOURS.memory, dash: DASHES.memory, values: steps.map((step) => step.memory), format: percentWords },
+    { key: "cpu", label: labels.cpu, color: CHART_COLOURS.cpu, values: steps.map((step) => step.cpu), weights: steps.map((step) => step.cpuCovered), ...(busiest ? { peaks: steps.map((step) => step.cpuBusiest) } : {}), format: percentWords },
+    { key: "memory", label: labels.memory, color: CHART_COLOURS.memory, dash: DASHES.memory, values: steps.map((step) => step.memory), weights: steps.map((step) => step.memoryCovered), format: percentWords },
     shared
       ? { key: "host", label: labels.host, color: CHART_COLOURS.host, dash: DASHES.host, values: steps.map((step) => step.host), format: percentWords }
       : { key: "disk", label: "Disk", color: CHART_COLOURS.down, dash: DASHES.disk, values: steps.map((step) => step.disk), format: percentWords },
@@ -546,7 +548,14 @@ function gapAtStep(view: BoxHistoryView, step: HistoryStep | undefined): string 
   return GAP_WORDS[gap?.kind ?? "no-reading"];
 }
 
-function HistoryWords({ view, range, held }: { view: BoxHistoryView | null; range: HistoryRange; held: boolean }) {
+function HistoryWords({ view, range, held, failed }: { view: BoxHistoryView | null; range: HistoryRange; held: boolean; failed: string | null }) {
+  if (view && failed) {
+    return (
+      <span data-history-stale className="text-warning-text" title={failed}>
+        Could not refresh: as read at {historyClock(view.now)}
+      </span>
+    );
+  }
   if (held) return <>Held while you read it</>;
   if (view && view.monitor && !view.kept) {
     return (
@@ -591,6 +600,7 @@ function HistoryCharts({ box, range }: { box: BoxView; range: HistoryRange }) {
   const timeWords = (centre: number) => stepSpanWords(range, centre - stepMs / 2, stepMs, clockOf);
   const host = view?.slot?.host ?? null;
   const lines = historyLines(steps, range, shared, host);
+  const stepWords = (index: number) => stepWhenWords(range, steps[index]?.at ?? shape.from, stepMs, clockOf);
   const cpuLine = lines.find((line) => line.key === "cpu")!;
   const memoryLine = lines.find((line) => line.key === "memory")!;
   const gaps = view?.gaps ?? [];
@@ -604,17 +614,26 @@ function HistoryCharts({ box, range }: { box: BoxView; range: HistoryRange }) {
     return step?.partial ? partlyReadWords(range, step.covered) : null;
   };
   const waiting = error ? `bb-box could not read ${box.name}'s history: ${error}` : "Reading its history…";
+  const failed = view && error ? error : null;
+  const staleWords = view && failed ? `bb-box could not read ${box.name}'s history again (${failed}), so this is as read at ${historyClock(view.now)}. ` : "";
   const common = { times, window, longestStepMs: stepMs * 1.5, timeWords, gapWords, notes, bands };
-  const usageSummaryWords = view ? historySummary(words, times, { cpu: cpuLine, memory: memoryLine }, gaps, clockOf, now) : waiting;
+  const usageSummaryWords = view ? `${staleWords}${historySummary(words, { cpu: cpuLine, memory: memoryLine }, gaps, stepWords, clockOf, now)}` : waiting;
   const shortWorkNote = shared && range !== "1h" ? SLOT_SHORT_WORK_WORDS : null;
-  const networkSummaryWords = !view ? waiting : shared ? `${hostAtStart(host ?? "its Mac")}'s network is every slot's, so box history keeps none of it for a slot; Live shows it.` : historyNetworkSummary(words, times, down, up, gaps, clockOf, now);
+  const networkSummaryWords = !view
+    ? waiting
+    : shared
+      ? `${staleWords}${hostAtStart(host ?? "its Mac")}'s network is every slot's, so box history keeps none of it for a slot; Live shows it.`
+      : `${staleWords}${historyNetworkSummary(words, down, up, steps.map((step) => step.netCovered), gaps, stepWords, clockOf, now)}`;
   return (
     <div ref={container} data-history={range} data-history-ready={view ? "" : undefined}>
+      <span role="status" className="sr-only" data-history-announce>
+        {staleWords.trim()}
+      </span>
       <ChartsBody
         lines={lines}
         hidden={hidden}
         onToggle={toggle}
-        words={view ? <HistoryWords view={view} range={range} held={Boolean(held)} /> : waiting}
+        words={view ? <HistoryWords view={view} range={range} held={Boolean(held)} failed={failed} /> : waiting}
         held={Boolean(held)}
         onFocus={holdWhileRead}
         onBlur={goOnWhenLeft}

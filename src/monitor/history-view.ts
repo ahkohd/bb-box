@@ -15,6 +15,9 @@ const PRECEDENCE: readonly Exclude<GapKind, "no-reading">[] = ["not-made", "stop
 export interface HistoryStep {
   readonly at: number;
   readonly covered: number;
+  readonly cpuCovered: number;
+  readonly memoryCovered: number;
+  readonly netCovered: number;
   readonly cpu: number | null;
   readonly cpuBusiest: number | null;
   readonly memory: number | null;
@@ -52,6 +55,9 @@ export interface HistoryMinute {
 export interface HistoryHour {
   readonly hour: number;
   readonly covered: number;
+  readonly cpuCovered: number;
+  readonly memoryCovered: number;
+  readonly netCovered: number;
   readonly cpu: number | null;
   readonly cpuBusiest: number | null;
   readonly memory: number | null;
@@ -91,7 +97,6 @@ export interface HistoryShape {
   readonly to: number;
   readonly steps: readonly HistoryStep[];
   readonly gaps: readonly HistoryGap[];
-  readonly stops: readonly Span[];
 }
 
 export function historyWindow(range: HistoryRange, now: number): { from: number; to: number; stepMs: number; steps: number } {
@@ -100,8 +105,10 @@ export function historyWindow(range: HistoryRange, now: number): { from: number;
   return { from: to - steps * stepMs, to, stepMs, steps };
 }
 
-export function partialHour(covered: number, stepMs: number): boolean {
-  return covered * 1000 < stepMs / 2;
+export const UNREAD_SHOWN_MS = 60_000;
+
+export function partlyRead(covered: number, stepMs: number): boolean {
+  return stepMs - covered * 1000 >= UNREAD_SHOWN_MS;
 }
 
 interface Sums {
@@ -184,11 +191,18 @@ function hourBuckets(count: number, from: number, stepMs: number, hours: readonl
 
 const mean = (sum: number, covered: number) => (covered > 0 ? sum / covered : null);
 
+function unread(at: number, host: number | null): HistoryStep {
+  return { at, covered: 0, cpuCovered: 0, memoryCovered: 0, netCovered: 0, cpu: null, cpuBusiest: null, memory: null, memoryHighest: null, disk: null, down: null, up: null, host, high: 0, partial: false };
+}
+
 function stepOfSums(at: number, bucket: Sums | null, host: number | null, partial: boolean, busiest: boolean): HistoryStep {
-  if (!bucket) return { at, covered: 0, cpu: null, cpuBusiest: null, memory: null, memoryHighest: null, disk: null, down: null, up: null, host, high: 0, partial: false };
+  if (!bucket) return unread(at, host);
   return {
     at,
     covered: bucket.covered,
+    cpuCovered: bucket.cpuCovered,
+    memoryCovered: bucket.memoryCovered,
+    netCovered: bucket.netCovered,
     cpu: mean(bucket.cpu, bucket.cpuCovered),
     cpuBusiest: busiest ? bucket.cpuBusiest : null,
     memory: mean(bucket.memory, bucket.memoryCovered),
@@ -203,8 +217,8 @@ function stepOfSums(at: number, bucket: Sums | null, host: number | null, partia
 }
 
 function stepOfHour(at: number, hour: HistoryHour | null, host: number | null, partial: boolean): HistoryStep {
-  if (!hour) return { at, covered: 0, cpu: null, cpuBusiest: null, memory: null, memoryHighest: null, disk: null, down: null, up: null, host, high: 0, partial: false };
-  return { at, covered: hour.covered, cpu: hour.cpu, cpuBusiest: hour.cpuBusiest, memory: hour.memory, memoryHighest: hour.memoryHighest, disk: hour.disk, down: hour.down, up: hour.up, host, high: hour.high, partial };
+  if (!hour) return unread(at, host);
+  return { at, covered: hour.covered, cpuCovered: hour.cpuCovered, memoryCovered: hour.memoryCovered, netCovered: hour.netCovered, cpu: hour.cpu, cpuBusiest: hour.cpuBusiest, memory: hour.memory, memoryHighest: hour.memoryHighest, disk: hour.disk, down: hour.down, up: hour.up, host, high: hour.high, partial };
 }
 
 export function lifeSpans(events: readonly LoggedEvent[], createdAt: number, now: number, state: string, readAfter: (at: number) => number | null): { stopped: Span[]; starting: Span[] } {
@@ -266,18 +280,52 @@ function kindOf(from: number, to: number, kinds: Readonly<Record<Exclude<GapKind
   return best;
 }
 
-export function gapsOf(steps: readonly HistoryStep[], stepMs: number, now: number, kinds: Readonly<Record<Exclude<GapKind, "no-reading">, readonly Span[]>>): HistoryGap[] {
+type KnownSpans = Readonly<Record<Exclude<GapKind, "no-reading">, readonly Span[]>>;
+
+function without(piece: Span, taken: Span): Span[] {
+  if (taken.to <= piece.from || taken.from >= piece.to) return [piece];
+  return [
+    { from: piece.from, to: taken.from },
+    { from: taken.to, to: piece.to },
+  ].filter((part) => part.to > part.from);
+}
+
+function knownWithin(from: number, to: number, kinds: KnownSpans): HistoryGap[] {
+  const found: HistoryGap[] = [];
+  for (const kind of PRECEDENCE) {
+    for (const span of kinds[kind]) {
+      let pieces: Span[] = [{ from: Math.max(span.from, from), to: Math.min(span.to, to) }].filter((piece) => piece.to > piece.from);
+      for (const taken of found) pieces = pieces.flatMap((piece) => without(piece, taken));
+      found.push(...pieces.map((piece) => ({ ...piece, kind })));
+    }
+  }
+  return found;
+}
+
+function joined(gaps: readonly HistoryGap[]): HistoryGap[] {
+  const out: HistoryGap[] = [];
+  for (const gap of [...gaps].sort((left, right) => left.from - right.from)) {
+    const last = out.at(-1);
+    if (last && last.kind === gap.kind && last.to >= gap.from) out[out.length - 1] = { ...last, to: Math.max(last.to, gap.to) };
+    else out.push(gap);
+  }
+  return out;
+}
+
+export function gapsOf(steps: readonly HistoryStep[], stepMs: number, now: number, kinds: KnownSpans): HistoryGap[] {
   const gaps: HistoryGap[] = [];
   for (const step of steps) {
-    if (step.cpu !== null || step.memory !== null || step.at >= now) continue;
+    if (step.at >= now) continue;
     const end = step.at + stepMs;
+    if (step.cpu !== null || step.memory !== null) {
+      gaps.push(...knownWithin(step.at, Math.min(end, now), kinds));
+      continue;
+    }
     const kind = kindOf(step.at, Math.min(end, now), kinds);
     if (kind === "no-reading" && end > now - PENDING_MS) continue;
-    const last = gaps.at(-1);
-    if (last && last.kind === kind && last.to === step.at) gaps[gaps.length - 1] = { ...last, to: end };
-    else gaps.push({ from: step.at, to: end, kind });
+    gaps.push({ from: step.at, to: end, kind });
   }
-  return gaps;
+  return joined(gaps);
 }
 
 export function historyShape(inputs: HistoryInputs): HistoryShape {
@@ -290,7 +338,7 @@ export function historyShape(inputs: HistoryInputs): HistoryShape {
     const host = inputs.host ? hourBuckets(count, from, stepMs, inputs.host.hours) : null;
     steps = own.map((hour, index) => {
       const at = from + index * stepMs;
-      return stepOfHour(at, hour, host?.[index]?.cpu ?? null, hour !== null && complete(at) && partialHour(hour.covered, stepMs));
+      return stepOfHour(at, hour, host?.[index]?.cpu ?? null, hour !== null && complete(at) && partlyRead(hour.covered, stepMs));
     });
   } else {
     const own = bucketsOf(count, from, stepMs, inputs.minutes);
@@ -298,7 +346,7 @@ export function historyShape(inputs: HistoryInputs): HistoryShape {
     steps = own.map((bucket, index) => {
       const at = from + index * stepMs;
       const hostBucket = host?.[index] ?? null;
-      const partial = range !== "1h" && bucket !== null && complete(at) && partialHour(bucket.covered, stepMs);
+      const partial = range !== "1h" && bucket !== null && complete(at) && partlyRead(bucket.covered, stepMs);
       return stepOfSums(at, bucket, hostBucket ? mean(hostBucket.cpu, hostBucket.cpuCovered) : null, partial, range !== "1h");
     });
   }
@@ -306,5 +354,5 @@ export function historyShape(inputs: HistoryInputs): HistoryShape {
   const life = lifeSpans(inputs.events, inputs.createdAt, now, inputs.state, readAfter);
   const quiet = inputs.quiet.map((span) => ({ from: span.from, to: span.to ?? now }));
   const kinds = { "not-made": [{ from: -Infinity, to: inputs.createdAt }], stopped: life.stopped, starting: life.starting, "not-read": quiet };
-  return { range, stepMs, from, to, steps, gaps: gapsOf(steps, stepMs, now, kinds), stops: life.stopped.filter((span) => span.to > from && span.from < to) };
+  return { range, stepMs, from, to, steps, gaps: gapsOf(steps, stepMs, now, kinds) };
 }

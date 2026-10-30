@@ -99,9 +99,8 @@ function historyView(range: HistoryRange, patch: Partial<BoxHistoryView> = {}, m
     stepMs,
     from,
     to,
-    steps: Array.from({ length: steps }, (_, index) => ({ at: from + index * stepMs, covered: stepMs / 1000, cpu: 30, cpuBusiest: range === "1h" ? null : 33, memory: 50, memoryHighest: 55, disk: 20, down: 1024, up: 512, host: null, high: 0, partial: false, ...make(index) })),
+    steps: Array.from({ length: steps }, (_, index) => ({ at: from + index * stepMs, covered: stepMs / 1000, cpuCovered: stepMs / 1000, memoryCovered: stepMs / 1000, netCovered: stepMs / 1000, cpu: 30, cpuBusiest: range === "1h" ? null : 33, memory: 50, memoryHighest: 55, disk: 20, down: 1024, up: 512, host: null, high: 0, partial: false, ...make(index) })),
     gaps: [],
-    stops: [],
     kept: true,
     monitor: true,
     full: null,
@@ -437,7 +436,7 @@ test("a stopped box opens on 24 h with its stops shown, and Live says why it can
   fireEvent.click(live);
   expect(live.getAttribute("aria-checked")).toBe("false");
   const usage = await within(card).findByRole("application", { name: "CPU and memory, the last 24 hours, by 10 minutes" });
-  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^Over the last 24 hours, by 10 minutes: CPU averaged 30%, highest 33% at .*; memory last 50%\. Stopped from (today|yesterday) at .*\.$/);
+  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^Over the last 24 hours, by 10 minutes: CPU averaged 30%, busiest minute 33% between .* and .*; memory last 50%\. Stopped from (today|yesterday) at .*\.$/);
   expect(usage.querySelector('[data-band="Stopped"]')).toBeTruthy();
   expect(usage.textContent).toContain("Stopped");
   usage.focus();
@@ -459,7 +458,31 @@ test("over 24 h the light band is each step's busiest minute, said where it is 5
   expect(said.textContent).toMatch(/: CPU 30%, busiest minute 78%, Memory 50%$/);
   fireEvent.keyDown(usage, { key: "ArrowLeft" });
   expect(said.textContent).toMatch(/: CPU 30%, Memory 50%; partly read, 2 min of 10 minutes$/);
-  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/highest 78% at /);
+  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/busiest minute 78% between (today|yesterday) at .* and /);
+});
+
+test("a refresh that fails keeps the charts, and says so and when they were read, in the words line, the charts' descriptions and aloud, also on a page opened again", async () => {
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot() }));
+  const first = await activity();
+  await waitFor(() => expect(first.querySelector("[data-history-ready]")).toBeTruthy());
+  expect(first.querySelector("[data-history-stale]")).toBeNull();
+  expect(first.querySelector("[data-history-announce]")!.textContent).toBe("");
+  cleanup();
+  forgetLive();
+  open(handlers({ page: () => page(boxView({ state: "stopped" }), { is: "not-running", machineId: null, why: null }), reading: () => snapshot(), history: () => {
+    throw new Error("BB did not answer.");
+  } }));
+  const card = await activity();
+  await waitFor(() => expect(card.querySelector("[data-history-stale]")).toBeTruthy());
+  const stale = card.querySelector("[data-history-stale]")!;
+  expect(stale.textContent).toMatch(/^Could not refresh: as read at /);
+  expect(stale.getAttribute("title")).toContain("BB did not answer.");
+  const announced = card.querySelector('[role="status"][data-history-announce]')!;
+  expect(announced.textContent).toMatch(/^bb-box could not read calm-otter's history again \(.*BB did not answer\.\), so this is as read at .*\.$/);
+  const usage = within(card).getByRole("application", { name: /^CPU and memory, the last 24 hours/ });
+  expect(document.getElementById(usage.getAttribute("aria-describedby")!)!.textContent).toMatch(/^bb-box could not read calm-otter's history again .* Over the last 24 hours/);
+  const network = within(card).getByRole("application", { name: /^Download and upload, the last 24 hours/ });
+  expect(document.getElementById(network.getAttribute("aria-describedby")!)!.textContent).toMatch(/^bb-box could not read calm-otter's history again/);
 });
 
 test("7 d is by the hour, with each midnight marked; a missing hour says why in the read-out", async () => {

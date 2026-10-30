@@ -225,73 +225,139 @@ export const GAP_WORDS: Readonly<Record<GapKind, string>> = {
   "no-reading": "No reading",
 };
 
-export function historyTimeWords(range: HistoryRange, now: number): (at: number) => string {
-  return range === "1h" ? (at) => clock(at) : (at) => dayAndClock(at, now);
+const QUARTER_HOUR_MS = 15 * 60_000;
+const REPEAT_OFFSETS_MS = [30 * 60_000, 60 * 60_000];
+
+const formats = new Map<string, Intl.DateTimeFormat>();
+
+function formatOf(zone: string | undefined, options: Intl.DateTimeFormatOptions, locale?: string): Intl.DateTimeFormat {
+  const key = JSON.stringify([zone ?? "", locale ?? "", options]);
+  let format = formats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, { ...options, ...(zone ? { timeZone: zone } : {}) });
+    formats.set(key, format);
+  }
+  return format;
 }
 
-function localTicks(from: number, to: number, first: Date, advance: (date: Date) => void, words: (at: number) => string): Tick[] {
+function wallClock(at: number, zone: string | undefined): { hour: number; minute: number; words: string } {
+  const parts = formatOf(zone, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }, "en-GB").formatToParts(at);
+  const part = (type: string) => parts.find((each) => each.type === type)?.value ?? "";
+  return { hour: Number(part("hour")), minute: Number(part("minute")), words: parts.map((each) => each.value).join("") };
+}
+
+export function repeatsLocally(at: number, zone?: string): boolean {
+  const here = wallClock(at, zone).words;
+  return REPEAT_OFFSETS_MS.some((offset) => wallClock(at - offset, zone).words === here || wallClock(at + offset, zone).words === here);
+}
+
+export function historyClock(at: number, zone?: string): string {
+  return formatOf(zone, { hour: "numeric", minute: "2-digit", ...(repeatsLocally(at, zone) ? { timeZoneName: "short" } : {}) }).format(at);
+}
+
+export function historyTimeWords(range: HistoryRange, now: number, zone?: string): (at: number) => string {
+  if (range === "1h") return (at) => historyClock(at, zone);
+  return (at) => {
+    const words = dayAndClock(at, now);
+    return repeatsLocally(at, zone) ? words.replace(clock(at), historyClock(at, zone)) : words;
+  };
+}
+
+function ticksWhere(window: { readonly from: number; readonly to: number }, zone: string | undefined, shown: (wall: { hour: number; minute: number }) => boolean, words: (at: number) => string): Tick[] {
   const ticks: Tick[] = [];
-  for (let guard = 0; first.getTime() <= to && guard < 400; guard++) {
-    const at = first.getTime();
-    if (at >= from) ticks.push({ at, words: words(at) });
-    advance(first);
+  for (let at = Math.ceil(window.from / QUARTER_HOUR_MS) * QUARTER_HOUR_MS; at <= window.to; at += QUARTER_HOUR_MS) {
+    if (shown(wallClock(at, zone))) ticks.push({ at, words: words(at) });
   }
   return ticks;
 }
 
-export function historyTicks(range: HistoryRange, window: { readonly from: number; readonly to: number }): Tick[] {
-  const first = new Date(window.from);
-  if (range === "1h") {
-    first.setMinutes(Math.floor(first.getMinutes() / 15) * 15, 0, 0);
-    return localTicks(window.from, window.to, first, (date) => date.setMinutes(date.getMinutes() + 15), clock);
-  }
-  if (range === "24h") {
-    first.setHours(Math.floor(first.getHours() / 6) * 6, 0, 0, 0);
-    return localTicks(window.from, window.to, first, (date) => date.setHours(date.getHours() + 6), clock);
-  }
-  first.setHours(0, 0, 0, 0);
-  return localTicks(window.from, window.to, first, (date) => date.setDate(date.getDate() + 1), (at) => new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(at));
+export function historyTicks(range: HistoryRange, window: { readonly from: number; readonly to: number }, zone?: string): Tick[] {
+  const clockWords = (at: number) => historyClock(at, zone);
+  if (range === "1h") return ticksWhere(window, zone, (wall) => wall.minute % 15 === 0, clockWords);
+  if (range === "24h") return ticksWhere(window, zone, (wall) => wall.minute === 0 && wall.hour % 6 === 0, clockWords);
+  return ticksWhere(window, zone, (wall) => wall.minute === 0 && wall.hour === 0, (at) => formatOf(zone, { weekday: "short" }).format(at));
+}
+
+function gapSpanWords(gap: HistoryGap, timeWords: (at: number) => string, now: number): string {
+  const from = timeWords(gap.from);
+  if (gap.to >= now) return `${GAP_WORDS[gap.kind]} from ${from}`;
+  const to = timeWords(gap.to);
+  return from === to ? `${GAP_WORDS[gap.kind]} for under a minute from ${from}` : `${GAP_WORDS[gap.kind]} from ${from} to ${to}`;
 }
 
 export function historyGapsWords(gaps: readonly HistoryGap[], timeWords: (at: number) => string, now: number): string {
   if (!gaps.length) return "";
-  return ` ${gaps.map((gap) => `${GAP_WORDS[gap.kind]} from ${timeWords(gap.from)}${gap.to >= now ? "" : ` to ${timeWords(gap.to)}`}`).join("; ")}.`;
+  return ` ${gaps.map((gap) => gapSpanWords(gap, timeWords, now)).join("; ")}.`;
 }
 
 export interface HistoryLine {
   readonly label: string;
   readonly values: readonly (number | null)[];
   readonly peaks?: readonly (number | null)[];
+  readonly weights?: readonly number[];
 }
 
-export function historySummary(words: string, times: readonly number[], lines: { readonly cpu: HistoryLine; readonly memory: HistoryLine }, gaps: readonly HistoryGap[], timeWords: (at: number) => string, now: number): string {
-  const cpu = measure(times, lines.cpu.values);
-  const busiest = measure(times, lines.cpu.values.map((value, index) => lines.cpu.peaks?.[index] ?? value));
-  const memory = measure(times, lines.memory.values);
+interface Weighed {
+  readonly mean: number;
+  readonly highest: number;
+  readonly highestIndex: number;
+  readonly last: number;
+}
+
+function weighed(values: readonly (number | null)[], weights: readonly number[] | undefined, peaks?: readonly (number | null)[]): Weighed | null {
+  let sum = 0;
+  let covered = 0;
+  let highest = -Infinity;
+  let highestIndex = -1;
+  let last = 0;
+  values.forEach((value, index) => {
+    if (value === null) return;
+    const weight = weights ? (weights[index] ?? 0) : 1;
+    sum += value * weight;
+    covered += weight;
+    last = value;
+    const top = peaks?.[index] ?? value;
+    if (top > highest) {
+      highest = top;
+      highestIndex = index;
+    }
+  });
+  return highestIndex >= 0 && covered > 0 ? { mean: sum / covered, highest, highestIndex, last } : null;
+}
+
+export function historySummary(words: string, lines: { readonly cpu: HistoryLine; readonly memory: HistoryLine }, gaps: readonly HistoryGap[], stepWords: (index: number) => string, timeWords: (at: number) => string, now: number): string {
+  const cpu = weighed(lines.cpu.values, lines.cpu.weights, lines.cpu.peaks);
+  const memory = weighed(lines.memory.values, lines.memory.weights);
   const gapWords = historyGapsWords(gaps, timeWords, now);
   if (!cpu && !memory) return `No readings over ${words}.${gapWords}`;
+  const peak = lines.cpu.peaks ? "busiest minute" : "highest";
   const parts = [
-    cpu && busiest ? `${lines.cpu.label} averaged ${percent(cpu.mean)}, highest ${percent(busiest.highest)} at ${timeWords(busiest.highestAt)}` : `${lines.cpu.label} not read`,
+    cpu ? `${lines.cpu.label} averaged ${percent(cpu.mean)}, ${peak} ${percent(cpu.highest)} ${stepWords(cpu.highestIndex)}` : `${lines.cpu.label} not read`,
     memory ? `${lines.memory.label.toLowerCase() === "memory" ? "memory" : lines.memory.label} last ${percent(memory.last)}` : null,
   ].filter(Boolean);
   return `Over ${words}: ${parts.join("; ")}.${gapWords}`;
 }
 
-export function historyNetworkSummary(words: string, times: readonly number[], down: readonly (number | null)[], up: readonly (number | null)[], gaps: readonly HistoryGap[], timeWords: (at: number) => string, now: number): string {
-  const received = measure(times, down);
-  const sent = measure(times, up);
+export function historyNetworkSummary(words: string, down: readonly (number | null)[], up: readonly (number | null)[], weights: readonly number[], gaps: readonly HistoryGap[], stepWords: (index: number) => string, timeWords: (at: number) => string, now: number): string {
+  const received = weighed(down, weights);
+  const sent = weighed(up, weights);
   const gapWords = historyGapsWords(gaps, timeWords, now);
   if (!received && !sent) return `No network readings over ${words}.${gapWords}`;
   const parts = [
-    received ? `download averaged ${rateWords(received.mean)}, highest ${rateWords(received.highest)} at ${timeWords(received.highestAt)}` : null,
-    sent ? `upload averaged ${rateWords(sent.mean)}, highest ${rateWords(sent.highest)} at ${timeWords(sent.highestAt)}` : null,
+    received ? `download averaged ${rateWords(received.mean)}, highest ${rateWords(received.highest)} ${stepWords(received.highestIndex)}` : null,
+    sent ? `upload averaged ${rateWords(sent.mean)}, highest ${rateWords(sent.highest)} ${stepWords(sent.highestIndex)}` : null,
   ].filter(Boolean);
   return `Over ${words}: ${parts.join("; ")}.${gapWords}`;
 }
 
-export function stepSpanWords(range: HistoryRange, at: number, stepMs: number, timeWords: (at: number) => string): string {
+export function stepWhenWords(range: HistoryRange, at: number, stepMs: number, timeWords: (at: number) => string, zone?: string): string {
+  if (range === "1h") return `at ${timeWords(at)}`;
+  return `between ${timeWords(at)} and ${historyClock(at + stepMs, zone)}`;
+}
+
+export function stepSpanWords(range: HistoryRange, at: number, stepMs: number, timeWords: (at: number) => string, zone?: string): string {
   if (range === "1h") return timeWords(at);
-  return `${timeWords(at)} to ${clock(at + stepMs)}`;
+  return `${timeWords(at)} to ${historyClock(at + stepMs, zone)}`;
 }
 
 export function partlyReadWords(range: HistoryRange, coveredSeconds: number): string {

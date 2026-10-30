@@ -183,7 +183,11 @@ export function createBoxHistory(deps: BoxHistoryAppDeps) {
       const config = deps.config();
       return { monitor: config.enabled, history: config.boxHistory };
     },
-    retained: async () => retainedKeys([...records.values()], (boxId) => deps.boxLog.ended(boxId)),
+    retained: async () => {
+      const all = await deps.boxes.all();
+      records = new Map(all.map((box) => [box.id, box]));
+      return retainedKeys(all, (boxId) => deps.boxLog.ended(boxId));
+    },
     log: deps.log,
     now,
   });

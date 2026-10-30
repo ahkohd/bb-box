@@ -165,13 +165,14 @@ interface Timer {
 
 class FakeClock {
   now: number;
+  monotonic = 5_000_000;
   #timers: Timer[] = [];
   #ids = 0;
   constructor(now: number) {
     this.now = now;
   }
   setTimer = (task: () => void, ms: number) => {
-    const timer = { at: this.now + ms, task, id: ++this.#ids };
+    const timer = { at: this.monotonic + ms, task, id: ++this.#ids };
     this.#timers.push(timer);
     return timer;
   };
@@ -179,17 +180,24 @@ class FakeClock {
     this.#timers = this.#timers.filter((each) => each !== timer);
   };
   async advance(ms: number): Promise<void> {
-    const end = this.now + ms;
+    const end = this.monotonic + ms;
     for (;;) {
       await settle();
       const next = this.#timers.reduce<Timer | null>((best, timer) => (timer.at <= end && (!best || timer.at < best.at || (timer.at === best.at && timer.id < best.id)) ? timer : best), null);
       if (!next) break;
       this.#timers = this.#timers.filter((timer) => timer !== next);
-      this.now = Math.max(this.now, next.at);
+      this.#move(Math.max(0, next.at - this.monotonic));
       next.task();
     }
-    this.now = end;
+    this.#move(end - this.monotonic);
     await settle();
+  }
+  setWallClock(by: number): void {
+    this.now += by;
+  }
+  #move(ms: number): void {
+    this.monotonic += ms;
+    this.now += ms;
   }
 }
 
@@ -249,6 +257,7 @@ class MemoryWrites implements HistoryWrites {
   baselines = new Map<string, number>();
   tallies: Tally[] = [];
   quiet: { why: string; quiet: boolean; at: number }[] = [];
+  drops = 0;
   #counters = new Map<string, Kept>();
   record(key: string, point: Point, kept: Kept) {
     this.points.set(key, [...(this.points.get(key) ?? []), point]);
@@ -262,6 +271,10 @@ class MemoryWrites implements HistoryWrites {
   }
   counters() {
     return new Map(this.#counters);
+  }
+  dropCounters() {
+    this.drops++;
+    this.#counters.clear();
   }
   setQuiet(why: "monitor" | "history", quiet: boolean, at: number) {
     this.quiet.push({ why, quiet, at });
@@ -278,15 +291,17 @@ function sumOf(tallies: readonly Tally[]): Tally {
   return tallies.reduce((sum, row) => ({ due: sum.due + row.due, taken: sum.taken + row.taken, skipped: sum.skipped + row.skipped, failed: sum.failed + row.failed, unanswered: sum.unanswered + row.unanswered, readingMs: sum.readingMs + row.readingMs, slowestMs: Math.max(sum.slowestMs, row.slowestMs), workers: Math.max(sum.workers, row.workers) }), { due: 0, taken: 0, skipped: 0, failed: 0, unanswered: 0, readingMs: 0, slowestMs: 0, workers: 0 });
 }
 
-function reader(options: { clock: FakeClock; boxes: () => readonly HistoryBox[]; read: (box: HistoryBox, signal: AbortSignal) => Promise<LightReading>; store: HistoryWrites; reach?: HistoryReach; switches?: () => Switches }) {
+function reader(options: { clock: FakeClock; boxes: () => readonly HistoryBox[]; read: (box: HistoryBox, signal: AbortSignal) => Promise<LightReading>; store: HistoryWrites; reach?: HistoryReach; switches?: () => Switches; retained?: () => Promise<(key: string) => boolean>; log?: (message: string) => void }) {
   const history = new BoxHistory({
     boxes: async () => options.boxes(),
     read: (box, _request, signal) => options.read(box, signal),
     reach: options.reach ?? answering(),
     store: options.store,
     switches: options.switches ?? (() => ({ monitor: true, history: true })),
-    retained: async () => () => true,
+    retained: options.retained ?? (async () => () => true),
+    ...(options.log ? { log: options.log } : {}),
     now: () => options.clock.now,
+    monotonic: () => options.clock.monotonic,
     setTimer: options.clock.setTimer,
     clearTimer: options.clock.clearTimer,
   });
@@ -523,6 +538,137 @@ test("G13: with the Monitor off nothing is read; with box history off for 3 minu
   reopened.source.close();
 });
 
+test("pruning runs each minute whether box history is on or off, and after a restart while off: released and forgotten boxes' points go 24 hours after them", async () => {
+  const clock = new FakeClock(T0 + 40 * MINUTE + 23 * HOUR);
+  const opened = openedHistory(tempDir("history-prune-off"), () => clock.now);
+  const [released, forgotten, live] = ["bxreleasedoff01", "bxforgottenoff1", "bxliveoff000001"];
+  for (const box of [released, forgotten, live]) points(opened.store, box, T0, 30, {});
+  opened.log.record({ box: released, thread: "thr_one", name: "amber-fox", at: T0 + 40 * MINUTE, kind: "released", by: BY_PERSON });
+  opened.log.record({ box: forgotten, thread: "thr_one", name: "maple-row", at: T0 + 160 * MINUTE, kind: "forgotten", by: BY_COMMAND });
+  const retained = async () => retainedKeys([record(live)], (id) => opened.log.ended(id));
+  let reads = 0;
+  const off = reader({ clock, boxes: () => [], store: opened.store, switches: () => ({ monitor: true, history: false }), retained, read: async () => (reads++, parseLightOutput("linux", linuxOutput({}))) });
+  await clock.advance(MINUTE);
+  assert.ok(opened.store.hours(released, 0, T0 * 2).length > 0, "kept within its 24 hours");
+  await clock.advance(2 * HOUR);
+  assert.deepEqual(opened.store.hours(released, 0, T0 * 2), [], "with box history off, the reader's own minute still prunes a released box");
+  assert.deepEqual(opened.store.minutes(live, 0, T0 * 2), [], "and minute points older than 24 hours");
+  assert.ok(opened.store.hours(live, 0, T0 * 2).length > 0, "a box still here keeps its hours");
+  assert.ok(opened.store.hours(forgotten, 0, T0 * 2).length > 0, "the forgotten box has an hour to go");
+  off.stop();
+
+  await clock.advance(HOUR);
+  const restarted = reader({ clock, boxes: () => [], store: opened.store, switches: () => ({ monitor: false, history: true }), retained, read: async () => (reads++, parseLightOutput("linux", linuxOutput({}))) });
+  await clock.advance(MINUTE);
+  assert.deepEqual(opened.store.hours(forgotten, 0, T0 * 2), [], "started again with the Monitor off, it prunes too");
+  assert.ok(opened.store.hours(live, 0, T0 * 2).length > 0);
+  assert.equal(reads, 0, "and reads nothing");
+  restarted.stop();
+  opened.source.close();
+});
+
+test("turning box history off forgets each box's counters, in memory and in its file, and drops a reading begun before, so no point spans the time it was off", async () => {
+  const clock = new FakeClock(T0);
+  const box = new FakeBox("bxoffandon00001", 2, T0);
+  box.busyCores = 1;
+  const store = new MemoryWrites();
+  let switches: Switches = { monitor: true, history: true };
+  let slow = false;
+  const history = reader({
+    clock,
+    boxes: () => [box.box],
+    store,
+    switches: () => switches,
+    read: () =>
+      new Promise((resolve) => {
+        if (!slow) return resolve(box.reading(clock.now));
+        clock.setTimer(() => resolve(box.reading(clock.now)), 5_000);
+      }),
+  });
+  await clock.advance(4 * MINUTE);
+  const before = store.points.get(box.id)?.length ?? 0;
+  assert.ok(before >= 2);
+  const offAt = clock.now;
+  switches = { monitor: true, history: false };
+  history.configure();
+  assert.equal(store.drops, 1, "its counters are forgotten in its file");
+  assert.equal(store.counters().size, 0);
+  await clock.advance(61_000);
+  const onAt = clock.now;
+  switches = { monitor: true, history: true };
+  history.configure();
+  await clock.advance(4 * MINUTE);
+  const spanning = (store.points.get(box.id) ?? []).filter((point) => point.start < onAt && point.end > offAt);
+  assert.deepEqual(spanning, [], "61 s off, the first reading after is a new baseline, not a point across the off time");
+  assert.ok((store.baselines.get(box.id) ?? 0) >= 2);
+
+  slow = true;
+  const second = spreadSeconds([box.id]).get(box.id)! * 1000;
+  await clock.advance(MINUTE - (clock.now % MINUTE) + second + 1_000);
+  const pointsBefore = store.points.get(box.id)?.length ?? 0;
+  const baselinesBefore = store.baselines.get(box.id) ?? 0;
+  switches = { monitor: true, history: false };
+  history.configure();
+  switches = { monitor: true, history: true };
+  history.configure();
+  await clock.advance(5_000);
+  assert.equal(store.points.get(box.id)?.length ?? 0, pointsBefore, "a reading begun before history was off is dropped");
+  assert.equal(store.baselines.get(box.id) ?? 0, baselinesBefore);
+  history.stop();
+
+  const folder = tempDir("history-off-restart");
+  const opened = openedHistory(folder, () => clock.now);
+  const kept = reader({ clock, boxes: () => [box.box], store: opened.store, read: async () => box.reading(clock.now) });
+  await clock.advance(3 * MINUTE);
+  kept.stop();
+  assert.ok(opened.store.counters().has(box.id), "while on, its counters are in the file for a restart");
+  const offAgain = reader({ clock, boxes: () => [box.box], store: opened.store, switches: () => ({ monitor: true, history: false }), read: async () => box.reading(clock.now) });
+  await clock.advance(1_000);
+  assert.equal(opened.store.counters().size, 0, "started again with history off, it forgets the counters in its file too");
+  offAgain.stop();
+  opened.source.close();
+});
+
+test("a step of the wall clock, back or forward, neither stops readings nor counts the time between: the reading after it starts a new baseline", async () => {
+  const clock = new FakeClock(T0);
+  const box = new FakeBox("bxclockstep0001", 2, clock.monotonic);
+  box.busyCores = 2;
+  const store = new MemoryWrites();
+  const logged: string[] = [];
+  let reads = 0;
+  const history = reader({ clock, boxes: () => [box.box], store, log: (message) => void logged.push(message), read: async () => (reads++, box.reading(clock.monotonic)) });
+  await clock.advance(4 * MINUTE);
+  const baselines = store.baselines.get(box.id) ?? 0;
+  const readsBefore = reads;
+  clock.setWallClock(-5 * MINUTE);
+  await clock.advance(3 * MINUTE);
+  assert.ok(reads >= readsBefore + 2, `read ${reads - readsBefore} times in the 3 minutes after the clock went back 5 minutes`);
+  assert.equal(store.baselines.get(box.id), baselines + 1, "the first reading after starts a new baseline");
+  assert.match(logged.join("\n"), /clock moved back by 300 s/);
+
+  const pointsBefore = store.points.get(box.id)!.length;
+  clock.setWallClock(30_000);
+  await clock.advance(3 * MINUTE);
+  const after = store.points.get(box.id)!.slice(pointsBefore);
+  assert.ok(after.length >= 1);
+  assert.equal(store.baselines.get(box.id), baselines + 2, "a 30 s step forward starts a new baseline too");
+  assert.ok(after.every((point) => Math.round(point.cpu!) === 100), "and two busy cores read 100%, not 66.7%");
+  assert.ok(after.every((point) => point.end - point.start < 70_000), "no point claims the 30 s it did not see");
+  history.stop();
+  assert.equal(sumOf(store.tallies).skipped, 0, "the step made no reading late");
+});
+
+test("a container's CPU is measured over monotonic time: a reading whose wall time moved 30 s more than its monotonic time is a new baseline, and a small skew does not bend the rate", () => {
+  const before: Kept = { at: T0, tick: 1_000_000, reading: lxc(1000, "0-1", 2 * GiB) };
+  const stepped: Kept = { at: T0 + 90_000, tick: 1_060_000, reading: lxc(1000 + 120, "0-1", 2 * GiB) };
+  assert.equal(baselineWhy(before, stepped, null), "clock");
+  const skewed: Kept = { at: T0 + 60_500, tick: 1_060_000, reading: lxc(1000 + 120, "0-1", 2 * GiB) };
+  assert.equal(baselineWhy(before, skewed, null), null);
+  assert.equal(Math.round(machinePoint(before, skewed).cpu! * 10) / 10, 100, "two busy cores over 60 s of monotonic time read 100%");
+  const older: Kept = { at: T0, reading: lxc(1000, "0-1", 2 * GiB) };
+  assert.equal(baselineWhy(older, skewed, null), null, "counters kept before ticks were kept are measured by wall time, as before");
+});
+
 function points(store: BoxHistoryStore, key: string, from: number, minutes: number, values: Partial<Point>): void {
   for (let index = 0; index < minutes; index++) {
     const end = from + (index + 1) * MINUTE;
@@ -722,9 +868,58 @@ test("a box's history says why each gap is there: not made yet, starting, stoppe
   assert.equal(kindAt(T0 + 60 * MINUTE), "starting");
   assert.equal(kindAt(T0 + 90 * MINUTE), "not-read");
   assert.equal(kindAt(T0 + 2 * HOUR), null, "the step whose reading may still come shows no gap");
-  assert.deepEqual(shown.stops, [{ from: T0 + 30 * MINUTE, to: T0 + 60 * MINUTE }]);
+  assert.deepEqual(
+    shown.gaps.filter((gap) => gap.kind === "stopped"),
+    [{ from: T0 + 30 * MINUTE, to: T0 + 60 * MINUTE }].map((span) => ({ ...span, kind: "stopped" })),
+  );
   const hourly = historyShape({ ...inputs, range: "1h", minutes: running.filter((each) => each.at <= T0 + 104 * MINUTE) });
   assert.equal(hourly.gaps.find((gap) => gap.from === T0 + 104 * MINUTE)?.kind, "no-reading", "a missing minute with nothing to say why is No reading");
+});
+
+test("a step read in part keeps its known gaps at their own times and says how much was read: an hour read 40 minutes then stopped, 10 minutes with a minute off inside", () => {
+  const now = T0 + 3 * HOUR;
+  const hourly = historyShape({
+    range: "7d",
+    now,
+    createdAt: T0 - 24 * HOUR,
+    state: "stopped",
+    minutes: [],
+    hours: [{ hour: T0, covered: 2400, cpuCovered: 2400, memoryCovered: 2400, netCovered: 2400, cpu: 50, cpuBusiest: 60, memory: 40, memoryHighest: 45, disk: 10, down: 1, up: 1, high: 0 }],
+    host: null,
+    events: [{ kind: "stopped", at: T0 + 40 * MINUTE }],
+    quiet: [],
+  });
+  const hour = hourly.steps.find((step) => step.at === T0)!;
+  assert.equal(hour.cpu, 50);
+  assert.equal(hour.partial, true, "read for 40 of its 60 minutes, more than half, it still says it was read in part");
+  assert.equal(hour.cpuCovered, 2400);
+  const stopped = hourly.gaps.find((gap) => gap.kind === "stopped")!;
+  assert.equal(stopped.from, T0 + 40 * MINUTE, "the stop shows from when it began, inside the hour that has a value");
+  assert.ok(stopped.to >= now - HOUR);
+
+  const minute = (at: number, covered = 60) => ({ at, covered, cpu: 20, memory: 30, disk: 10, down: 1, up: 1, high: 0 });
+  const daily = historyShape({
+    range: "24h",
+    now,
+    createdAt: T0 - 24 * HOUR,
+    state: "ready",
+    minutes: [...Array.from({ length: 18 }, (_, index) => minute(T0 + (index - 9) * MINUTE)), minute(T0 + 10 * MINUTE + 30_000)],
+    hours: [],
+    host: null,
+    events: [],
+    quiet: [{ from: T0 + 8 * MINUTE, to: T0 + 9 * MINUTE + 1_000 }],
+  });
+  const step = daily.steps.find((each) => each.at === T0)!;
+  assert.equal(step.covered, 510);
+  assert.equal(step.partial, true, "8 minutes and 30 s of 10 are said");
+  assert.deepEqual(
+    daily.gaps.filter((gap) => gap.from < T0 + 10 * MINUTE && gap.to > T0),
+    [{ from: T0 + 8 * MINUTE, to: T0 + 9 * MINUTE + 1_000, kind: "not-read" }],
+    "the 61 s off is Not read at its own times, though the step has a value",
+  );
+  const whole = daily.steps.find((each) => each.at === T0 - 10 * MINUTE)!;
+  assert.equal(whole.covered, 600);
+  assert.equal(whole.partial, false, "a step read whole says nothing");
 });
 
 test("the doctor says whether box history reads, and its coverage this hour and the last", () => {
