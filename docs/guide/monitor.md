@@ -43,7 +43,7 @@ A container is a warning when its tasks waited for CPU for 25% of the last minut
 
 An `ios` box on a shared Mac is a macOS user of its own on that Mac. Its labels also name the Mac it is on, and how much of the Mac's video encoder is in use. Its CPU section says 'host load', as the load is the whole Mac's. Its processes are only its own.
 
-## Opening a box's views and threads
+## The Open menu
 
 When the panel shows a box, **Open**, an arrow, is beside its name. Its menu starts with **Page**, which opens [the box's page](boxes.md#a-boxs-page), then lists the box's views:
 
@@ -53,9 +53,11 @@ When the panel shows a box, **Open**, an arrow, is beside its name. Its menu sta
 
 Each opens on the Boxes page, as the same item on the box's row there does.
 
-After the views come the threads on the box, under **Threads**. A thread's box lists the thread that holds it first, then the threads running on it. One of your machines lists the threads running on it. Of the threads running on a box, those working come first, then the most recently active. A thread that is working has a spinning mark at its right end. The menu lists at most 5, then a line such as '2 more on the Boxes page', which opens the box's page.
+After the views come the threads on the box, under **Threads**. A thread's box lists the thread that holds it first, then the threads running on it. One of your machines lists the threads running on it. Of the threads running on a box, those working come first, then the most recently active. A thread that is working has a spinning mark at its right end. Threads archived or hidden in BB's sidebar are left out. The menu lists at most 5, then a line such as '2 more on the Boxes page', which opens the box's page.
 
 When a box is not ready, its views stay in the menu, greyed out, each with the reason, as in 'brisk-wren is stopped'.
+
+BB's server and your other BB machines, the ones that are not boxes, have the arrow while threads are working there, or were active there in the past 24 hours. Its tooltip says 'Threads on' and the machine's name. Its menu lists those threads under **Threads**, those working first, then the most recently active, at most 5, then a note such as '2 more in BB's sidebar'. A machine with no such threads has no arrow.
 
 ## Background monitoring and pressure notifications
 
