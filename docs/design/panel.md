@@ -766,7 +766,8 @@ machine list's `boxId`, and the box itself from the Boxes page's list,
 After the views come the threads on the box (the owner, 29 October 2026:
 "list of threads that this machine is working"): a divider, a "Threads"
 label, then one item for each thread, with its title and, while it works,
-the spinning mark the Boxes row's thread chips have. A thread's box lists
+the spinning mark the Boxes row's thread chips have, at the item's right end
+as BB's sidebar shows it, with no space kept for it when the thread is idle. A thread's box lists
 the thread that holds it first, then the threads running on it as a BB
 machine. A kept machine lists the threads running on it, the ones its
 Boxes row shows as chips. Both are in the chips' order: working first,
