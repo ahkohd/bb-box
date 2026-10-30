@@ -605,9 +605,24 @@ function liveWhyNot(page: BoxPageState, box: BoxView): string | null {
   return reach.why ?? `bb-box cannot read ${box.name}`;
 }
 
+const chosenRanges = new Map<string, ActivityRange>();
+
+function useChosenRange(boxId: string): [ActivityRange | null, (range: ActivityRange) => void] {
+  const [chosen, setChosen] = useState<ActivityRange | null>(() => chosenRanges.get(boxId) ?? null);
+  const choose = (range: ActivityRange) => {
+    chosenRanges.set(boxId, range);
+    setChosen(range);
+  };
+  return [chosenRanges.get(boxId) ?? chosen, choose];
+}
+
+export function forgetChosenRanges(): void {
+  chosenRanges.clear();
+}
+
 export function Activity({ page, box, now }: { page: BoxPageState; box: BoxView; now: number }) {
   const reach = page.monitor;
-  const [chosen, setChosen] = useState<ActivityRange | null>(null);
+  const [chosen, setChosen] = useChosenRange(box.id);
   const liveWhy = liveWhyNot(page, box);
   const range: ActivityRange = chosen === "live" && liveWhy ? "24h" : (chosen ?? (liveWhy ? "24h" : "live"));
   const group = <RangeGroup value={range} onChange={setChosen} liveWhy={liveWhy} />;

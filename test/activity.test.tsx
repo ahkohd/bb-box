@@ -6,6 +6,7 @@ import type { BoxHistoryView, BoxPageState, Contract, HistoryRange, HistoryStep,
 import { HISTORY_RANGES } from "../src/monitor/history-view.ts";
 import type { BoxView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
+import { forgetChosenRanges } from "../src/app/activity.tsx";
 import { upWords } from "../src/app/monitor/status.tsx";
 import { sidebarTitle } from "../src/app/desktop.tsx";
 
@@ -167,6 +168,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   forgetLive();
+  forgetChosenRanges();
 });
 
 function open(rpc: PluginRpcTestHandlers<Contract>) {
@@ -499,4 +501,15 @@ test("disk starts hidden as it moves slowly, and its chip shows it", async () =>
   usage.focus();
   fireEvent.keyDown(usage, { key: "End" });
   expect(usage.querySelector("[data-read-out]")!.textContent).toMatch(/Disk 20%$/);
+});
+
+test("the range chosen for a box is kept while the session lasts, as BB may draw the page again when the window narrows", async () => {
+  open(handlers({ page: () => page(boxView()), reading: () => snapshot() }));
+  fireEvent.click(await within(await activity()).findByRole("radio", { name: "7 d" }));
+  expect(await within(await activity()).findByRole("application", { name: "CPU and memory, the last 7 days, by the hour" })).toBeTruthy();
+  cleanup();
+  forgetLive();
+  open(handlers({ page: () => page(boxView()), reading: () => snapshot() }));
+  const group = await within(await activity()).findByRole("radiogroup", { name: "Time range" });
+  expect(within(group).getByRole("radio", { name: "7 d" }).getAttribute("aria-checked")).toBe("true");
 });
