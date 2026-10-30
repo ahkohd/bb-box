@@ -16,7 +16,7 @@ export default defineConfig({
       customCss: ["@fontsource-variable/inter", "./src/styles/theme.css"],
       expressiveCode: { themes: codeThemes, styleOverrides: codeStyle },
       social: [{ icon: "github", label: "GitHub", href: repository }],
-      components: { ThemeSelect: "./src/components/ThemeToggle.astro" },
+      components: { ThemeSelect: "./src/components/ThemeToggle.astro", Footer: "./src/components/Footer.astro" },
       sidebar: sidebar(readPages()),
     }),
   ],

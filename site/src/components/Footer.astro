@@ -1,0 +1,41 @@
+---
+import StarlightFooter from "@astrojs/starlight/components/Footer.astro";
+import { repository, repositoryRef } from "../repo.ts";
+
+const fileUrl = (path: string) => `${repository}/blob/${repositoryRef}/${path}`;
+---
+
+<StarlightFooter {...Astro.props} />
+<p class="site-footer">
+  <a href={fileUrl("LICENSE")}>MIT licence</a>
+  <span aria-hidden="true">·</span>
+  <a href={fileUrl("THIRD-PARTY.md")}>Third-party software</a>
+</p>
+
+<style>
+  .site-footer {
+    display: flex;
+    gap: 0.5rem;
+    margin: 3rem 0 0;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: var(--muted-foreground);
+  }
+
+  :global([data-has-hero]) .site-footer {
+    max-width: 42rem;
+    margin: 3rem auto 4rem;
+  }
+
+  a {
+    color: inherit;
+    text-decoration-line: underline;
+    text-decoration-color: var(--muted-foreground);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+
+  a:hover {
+    text-decoration-color: var(--foreground);
+  }
+</style>
