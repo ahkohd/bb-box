@@ -1,0 +1,8 @@
+Namespace suspend, 30 October 2026, 00:50 UTC, with namespace-suspend.sh run
+by the lead with bb-box's Namespace token, against the instance of a linux
+small box (2 vCPU, 4 GB, amd64) that bb-box had just made.
+
+instance: {'virtualCpu': 2, 'memoryMegabytes': 4096, 'machineArch': 'amd64', 'os': 'linux'}, status RUNNING
+SuspendInstance: HTTP 501 (not implemented)
+
+Nothing was suspended or made. The box was released.
