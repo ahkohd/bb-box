@@ -9405,3 +9405,23 @@ test("070 unit 4: Find finds each snapshot setting with its value, and a refused
   expect(problemPath("general.snapshots.ceilings.fake:pc-1", {})).toBe("snapshots/ceilings/fake:pc-1");
   expect(problemPath("general.snapshots.perBox", {})).toBe("snapshots/perBox");
 });
+
+test("070 unit 4: two backends of one type are told apart in What each backend offers by the overview's own host chips", async () => {
+  const twins = (type: string) => ["pc-1", "pc-2"].map((host) => ({ id: `${type}:${host}`, type, enabled: true, fields: { host: `ssh://box@${host}` } }));
+  applied = { schema: 1, revision: 5, backends: [...twins("docker"), ...twins("microsandbox")], kinds: {}, general: {} };
+  const labels: Record<string, string> = { docker: "Docker", microsandbox: "microsandbox" };
+  const backends = configState({}).backends.map((backend) => ({ ...backend, label: labels[backend.type]! }));
+  const { handlers } = server([], { config: { backends } });
+  const chipsOf = (row: HTMLElement) => document.getElementById(row.getAttribute("aria-describedby")!.split(" ")[0]!)?.textContent;
+  const page = settings(handlers, "#option/snapshots");
+  await page.findByText("What each backend offers");
+  const offered = (name: string) => page.getAllByRole("button", { name: new RegExp(`^${name}$`) }).filter((row) => row.dataset.rowKey?.startsWith("snapshot-offer-"));
+  expect(offered("Docker").map(chipsOf)).toEqual(["pc-1", "pc-2"]);
+  expect(offered("microsandbox").map(chipsOf)).toEqual(["pc-1", "pc-2"]);
+  cleanup();
+  const overview = settings(handlers);
+  await overview.findByText("Options");
+  const listed = (name: string) => overview.getAllByRole("button", { name: new RegExp(`^${name}$`) }).filter((row) => row.dataset.rowKey?.startsWith("backend-"));
+  expect(listed("Docker").map(chipsOf)).toEqual(["pc-1", "pc-2"]);
+  expect(listed("microsandbox").map(chipsOf)).toEqual(["pc-1", "pc-2"]);
+});

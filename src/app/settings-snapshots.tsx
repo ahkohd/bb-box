@@ -6,7 +6,7 @@ import type { BackendState, ConfigState } from "../plugin/configuration.ts";
 import { useSettings } from "./settings-context.tsx";
 import { DraftNumberRow, unplacedProblems } from "./settings-draft-fields.tsx";
 import { SNAPSHOTS_PART } from "./settings-drafts.ts";
-import { Card, Chevron, Group, ProviderGlyph, RowButton, Rows } from "./settings-parts.tsx";
+import { BackendChips, Card, Chevron, Group, ProviderGlyph, RowButton, Rows } from "./settings-parts.tsx";
 import { ceilingPath, snapshotPath } from "./settings-paths.ts";
 import { RestoredNote, SaveBar, useDraft, type Draft } from "./settings-saving.tsx";
 import { backendLabel, kindName } from "./settings-status.ts";
@@ -84,15 +84,21 @@ function OfferRow({ state, config }: { state: ConfigState; config: BackendConfig
   const warn = check !== undefined && check.status !== "ok";
   const title = backendLabel(state, config);
   const valueId = `settings-snapshot-offer-${config.id}`;
+  const chipsId = `settings-snapshot-offer-chips-${config.id}`;
   return (
     <div className="relative flex items-start gap-3 px-4 py-2.5 transition-colors duration-150 hover:bg-state-hover">
-      <RowButton rowKey={`snapshot-offer-${config.id}`} label={title} describedBy={valueId} onClick={() => nav.go({ page: "backend", id: config.id }, `snapshot-offer-${config.id}`)} />
+      <RowButton rowKey={`snapshot-offer-${config.id}`} label={title} describedBy={`${chipsId} ${valueId}`} onClick={() => nav.go({ page: "backend", id: config.id }, `snapshot-offer-${config.id}`)} />
       <span className="pointer-events-none mt-0.5 flex size-5 shrink-0 items-center justify-center text-muted-foreground">
         <ProviderGlyph type={config.type} />
       </span>
       <span className="pointer-events-none min-w-0 flex-1">
-        <span className="block text-sm text-foreground" aria-hidden>
-          {title}
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-foreground">
+          <span className="min-w-0 truncate" aria-hidden>
+            {title}
+          </span>
+          <span id={chipsId} className="flex items-center gap-1.5 empty:hidden">
+            <BackendChips state={state} config={config} />
+          </span>
         </span>
         <span id={valueId} className="mt-0.5 block space-y-0.5 text-xs leading-snug text-muted-foreground">
           {offerLines(state, live).map((line) => (
