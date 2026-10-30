@@ -16,7 +16,7 @@ import { backendPart, checkDocument, type BackendConfig, type ConfigDocument, ty
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { driverFields } from "../src/plugin/configuration.ts";
 import { generateKeyPair } from "../src/transports/ssh.ts";
-import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
+import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, lxcConfig, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
@@ -702,6 +702,7 @@ test("doctor passes on a complete setup, and warns that a template from build.sh
       ["template.9104.image", "Image of Windows template 9104", "warn"],
       ["proxmox.bridge", "Network bridge", "ok"],
       ["proxmox.vmids", "VMID range", "ok"],
+      ["proxmox.snapshots", "Snapshots", "ok"],
       ["ssh.key", "SSH key", "warn"],
     ],
   );
@@ -712,6 +713,41 @@ test("doctor passes on a complete setup, and warns that a template from build.sh
   const stored = await storage.get<{ privateKey: string; publicKey: string }>("ssh-key");
   assert.ok(stored?.privateKey.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"));
   assert.doesNotMatch(JSON.stringify(report), /PRIVATE KEY|s3cret-token-value/);
+});
+
+test("doctor names the snapshot right a VM token lacks, and what Ceph RBD, ZFS and qcow2 files restore (070)", async () => {
+  const { backend, proxmox } = setup({ "windows-templates": "9104 9105 9106" });
+  proxmox.addVmTemplate(9106);
+  proxmox.privileges.set("/pool/bbbox", new Set(TOKEN_ROLE.filter((privilege) => privilege !== "VM.Snapshot.Rollback")));
+  for (const [name, type] of [["ceph", "rbd"], ["tank", "zfspool"], ["files", "nfs"]] as const) {
+    proxmox.storage.set(name, { total: 900 * GiB, avail: 600 * GiB });
+    proxmox.storageTypes.set(name, type);
+  }
+  proxmox.guests.get(9104)!.config.scsi0 = "ceph:base-9104-disk-1,discard=on,size=64G";
+  proxmox.guests.get(9105)!.config.scsi0 = "tank:base-9105-disk-1,discard=on,size=64G";
+  proxmox.guests.get(9106)!.config.scsi0 = "files:9106/base-9106-disk-1.qcow2,discard=on,size=64G";
+  const report = await backend.doctor();
+  const snapshots = report.checks.find((check) => check.id === "proxmox.snapshots")!;
+  assert.deepEqual([snapshots.status, snapshots.detail, snapshots.fix], [
+    "warn",
+    "The token lacks VM.Snapshot.Rollback on /pool/bbbox, so bb-box cannot restore snapshots. " +
+      "ceph (Ceph RBD) restores any snapshot. tank (ZFS) restores only the newest snapshot. files (NFS, qcow2 files) restores any snapshot.",
+    "Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on pve. It keeps the token and its secret, and adds the missing rights to the token's role.",
+  ]);
+  for (const part of [FAKE_TOKEN.tokenSecret, FAKE_TOKEN.tokenId]) assert.ok(!JSON.stringify(report).includes(part), "the report never names the token");
+});
+
+test("doctor says a VM's raw disk on directory storage takes no snapshots (070)", async () => {
+  const { backend, proxmox } = setup();
+  proxmox.storage.set("files", { total: 900 * GiB, avail: 600 * GiB });
+  proxmox.storageTypes.set("files", "dir");
+  proxmox.guests.get(9104)!.config.scsi0 = "files:9104/base-9104-disk-1.raw,discard=on,size=64G";
+  const snapshots = (await backend.doctor()).checks.find((check) => check.id === "proxmox.snapshots")!;
+  assert.deepEqual([snapshots.status, snapshots.detail, snapshots.fix], [
+    "warn",
+    "The token may take, delete and restore snapshots on /pool/bbbox. files (directory, raw files) takes no snapshots.",
+    "For snapshots, put the templates on storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory.",
+  ]);
 });
 
 test("doctor judges each Windows template's image by the record in its description, and that its boxes can join BB (049, #539)", async () => {

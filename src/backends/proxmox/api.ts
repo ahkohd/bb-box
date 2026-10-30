@@ -462,6 +462,11 @@ export class Proxmox {
     return { url: `${this.#base.replace(/^http/, "ws")}${this.#guest(vmid, "/vncwebsocket")}?${query}`, headers: { Authorization: this.#auth } };
   }
 
+  async privilegesOn(path: string, signal?: AbortSignal): Promise<Set<string>> {
+    const data = await this.#request<Record<string, Record<string, unknown>>>("GET", "/access/permissions", { path }, signal);
+    return new Set(Object.keys(data?.[path] ?? {}));
+  }
+
   /** False when the resource pool does not exist. */
   async poolExists(pool: string, signal?: AbortSignal): Promise<boolean> {
     try {

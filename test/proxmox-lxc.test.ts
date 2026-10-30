@@ -11,7 +11,7 @@ import { BackendError, type AcquireHooks, type BoxIdentity, type BoxSize, type G
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { quote } from "../src/transports/process.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
-import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
+import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "./fake-proxmox.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, lxcConfig, lxcWarm, tempDir, testContext } from "./helpers.ts";
 
 const GiB = 2 ** 30;
@@ -1637,6 +1637,7 @@ test("doctor passes on a complete setup and shows the generated public key", asy
       ["gpu.gpu-a", "GPU gpu-a", "skipped"],
       ["proxmox.bridge", "Network bridge", "ok"],
       ["proxmox.vmids", "VMID range", "ok"],
+      ["proxmox.snapshots", "Snapshots", "ok"],
       ["ssh.key", "SSH key", "ok"],
     ],
   );
@@ -1851,6 +1852,49 @@ test("doctor says what is missing", async () => {
   assert.match(byId["template.9001"]!.fix!, /remove it from the GPU desktop templates/);
   assert.match(byId["proxmox.bridge"]!.detail, /pve has no vmbr1/);
   assert.match(report.summary, /^Resource pool: /);
+});
+
+test("doctor names the snapshot rights a token made before 070 lacks, without the token, and what each template's storage restores (070)", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-ssh-private-key": "" });
+  proxmox.privileges.set("/pool/bbbox", new Set(TOKEN_ROLE.filter((privilege) => !privilege.startsWith("VM.Snapshot"))));
+  proxmox.storage.set("tank", { total: 900 * GiB, avail: 600 * GiB });
+  proxmox.storageTypes.set("tank", "zfspool");
+  proxmox.guests.get(9001)!.config.rootfs = "tank:base-9001-disk-0,size=8G";
+  const report = await backend.doctor();
+  assert.equal(report.ok, true, JSON.stringify(report.checks.filter((check) => check.status === "fail")));
+  const snapshots = report.checks.find((check) => check.id === "proxmox.snapshots")!;
+  assert.deepEqual([snapshots.status, snapshots.detail, snapshots.fix], [
+    "warn",
+    "The token lacks VM.Snapshot and VM.Snapshot.Rollback on /pool/bbbox, so bb-box cannot take or restore snapshots. " +
+      "local-lvm (LVM-thin) restores any snapshot. tank (ZFS) restores only the newest snapshot.",
+    "Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on pve. It keeps the token and its secret, and adds the missing rights to the token's role.",
+  ]);
+  for (const part of [FAKE_TOKEN.tokenSecret, FAKE_TOKEN.tokenId]) assert.ok(!JSON.stringify(report).includes(part), "the report never names the token");
+  assert.deepEqual(
+    proxmox.calls.filter((call) => call.path === "/access/permissions").map((call) => [call.method, call.params.path]),
+    [["GET", "/pool/bbbox"]],
+  );
+
+  proxmox.privileges.set("/pool/bbbox", new Set(TOKEN_ROLE));
+  const fixed = (await backend.doctor()).checks.find((check) => check.id === "proxmox.snapshots")!;
+  assert.deepEqual([fixed.status, fixed.detail, fixed.fix], [
+    "ok",
+    "The token may take, delete and restore snapshots on /pool/bbbox. local-lvm (LVM-thin) restores any snapshot. tank (ZFS) restores only the newest snapshot.",
+    null,
+  ]);
+});
+
+test("doctor says a container on directory storage takes no snapshots (070)", async () => {
+  const { backend, proxmox } = setup();
+  proxmox.storage.set("files", { total: 900 * GiB, avail: 600 * GiB });
+  proxmox.storageTypes.set("files", "dir");
+  proxmox.guests.get(9001)!.config.rootfs = "files:9001/base-9001-disk-0.raw,size=8G";
+  const snapshots = (await backend.doctor()).checks.find((check) => check.id === "proxmox.snapshots")!;
+  assert.deepEqual([snapshots.status, snapshots.detail, snapshots.fix], [
+    "warn",
+    "The token may take, delete and restore snapshots on /pool/bbbox. local-lvm (LVM-thin) restores any snapshot. files (directory) takes no snapshots of containers.",
+    "For snapshots, put the templates on storage that takes them: LVM-thin, ZFS, Ceph RBD or BTRFS.",
+  ]);
 });
 
 test("doctor warns, without failing, when every VMID is in use", async () => {

@@ -96,6 +96,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.bridge` | Network bridge | The bridge exists on the node. |
 | `proxmox.vmids` | VMID range | The VMID range is free of guests bb-box did not make. |
 | `proxmox.sizes` | Room for each kind | The node holds a box of each kind at its default size. |
+| `proxmox.snapshots` | Snapshots | Whether the token may take and restore snapshots, with VM.Snapshot and VM.Snapshot.Rollback on the pool, and what each template's storage restores: any snapshot on LVM-thin, Ceph RBD, BTRFS and qcow2 files, the newest only on ZFS, none on LVM or raw files (070). |
 | `template.<vmid>` | &lt;flavour> template &lt;vmid> | A template is there, is a template, and has what its kind needs. |
 | `template.<vmid>.image` | Image of &lt;flavour> template &lt;vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
 | `proxmox.gpu-report` | Host's GPU report | The host's report of each GPU's memory, which bb-box-gpu-memory.timer writes in a VM's notes: there, current, and naming each GPU. |
@@ -113,6 +114,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.bridge` | Network bridge | The bridge exists on the node. |
 | `proxmox.vmids` | VMID range | The VMID range is free of guests bb-box did not make. |
 | `proxmox.sizes` | Room for each kind | The node holds a box of each kind at its default size. |
+| `proxmox.snapshots` | Snapshots | Whether the token may take and restore snapshots, with VM.Snapshot and VM.Snapshot.Rollback on the pool, and what each template's storage restores: any snapshot on LVM-thin, Ceph RBD, BTRFS and qcow2 files, the newest only on ZFS, none on LVM or raw files (070). |
 | `template.<vmid>` | &lt;flavour> template &lt;vmid> | A template is there, is a template, and has what its kind needs. |
 | `template.<vmid>.image` | Image of &lt;flavour> template &lt;vmid> | The template's image record: its age, pins and tools, against this bb-box's. |
 | `proxmox.android-kvm` | KVM for Android | Where Android templates are listed, the host allows nested virtualization, as the linux-kvm setting says: the Android emulator needs KVM. |
