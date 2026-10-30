@@ -58,4 +58,48 @@ await page.keyboard.press("Enter");
 await pause(2000);
 await shoot("terminal-box");
 
+await button("Box", { exact: true }).click();
+await pause(800);
+const desktopBox = (await page.locator('button[aria-label$=": details"]').first().getAttribute("aria-label")).replace(/: details$/, "");
+await button("Open terminal").first().click();
+await page.getByText("Connected").first().waitFor({ timeout: 60000 });
+await pause(1500);
+await page.locator(".xterm").last().click();
+await page.keyboard.type("clear; sudo apt-get install -y -qq stress-ng >/dev/null 2>&1; stress-ng --cpu 3 --vm 1 --vm-bytes 3G --timeout 120s >/dev/null 2>&1 &", { delay: 10 });
+await page.keyboard.press("Enter");
+await pause(25000);
+
+await button("Desktop", { exact: true }).click();
+await pause(1500);
+await button("Machine status").click();
+await pause(1500);
+await button("Machine", { exact: true }).click();
+await pause(800);
+await page.getByRole("listbox", { name: "Machines" }).locator("[data-machine-index]").filter({ hasText: desktopBox }).first().click();
+await pause(15000);
+await button("Open", { exact: true }).click();
+await pause(1000);
+await page.screenshot({ path: `${out}/monitor.png` });
+console.log("monitor");
+
+await page.keyboard.press("Escape");
+await pause(500);
+await button("Box", { exact: true }).click();
+await pause(800);
+await button("Machine", { exact: true }).click();
+await pause(800);
+await page.getByRole("listbox", { name: "Machines" }).locator("[data-machine-index]").first().click();
+await pause(8000);
+await page.getByRole("button", { name: /^Threads on / }).click();
+await pause(1000);
+const around = async (locator) => locator.boundingBox();
+const panel = await around(page.locator("[data-bb-box-monitor-shell]"));
+const menu = await around(page.getByRole("menu"));
+const left = Math.min(panel.x, menu.x) - 8;
+const top = Math.min(panel.y, menu.y) - 8;
+const right = Math.max(panel.x + panel.width, menu.x + menu.width) + 8;
+const bottom = Math.min(panel.y + 260, 800);
+await page.screenshot({ path: `${out}/monitor-threads.png`, clip: { x: left, y: top, width: right - left, height: bottom - top } });
+console.log("monitor-threads");
+
 await browser.close().catch(() => {});
