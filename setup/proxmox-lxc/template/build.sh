@@ -290,7 +290,7 @@ pct exec "$ct" -- timeout 60 systemctl is-system-running --wait >/dev/null || tr
 # The Linux template's check keeps its earlier name, which templates have.
 check=bb-box-check-$kind
 [ "$kind" != linux ] || check=bb-box-check-headless
-pct exec "$ct" -- runuser -u box -- env PATH=/home/box/.cargo/bin:/usr/local/bin:/usr/bin:/bin \
+pct exec "$ct" -- runuser -u box -- env PATH=/home/box/.local/bin:/home/box/.cargo/bin:/usr/local/bin:/usr/bin:/bin \
   XDG_RUNTIME_DIR=/run/user/1000 "$check" | tee "$stage/check.txt"
 if grep -q '^[^ ].* FAIL ' "$stage/check.txt"; then
   die "checks failed; the build CT $ct is left running for a look"
