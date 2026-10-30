@@ -126,6 +126,11 @@ h6 {
   zoom: 0.5;
 }
 
+:root:not([data-theme="light"]) .sl-markdown-content img + img[src*="-light"],
+:root[data-theme="light"] .sl-markdown-content img:has(+ img[src*="-light"]) {
+  display: none;
+}
+
 .sl-markdown-content :is(th, td):not(:where(.not-content *)) {
   border-bottom-color: var(--border);
 }

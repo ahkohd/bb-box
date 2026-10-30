@@ -8,12 +8,14 @@ mkdirSync(out, { recursive: true });
 const browser = await chromium.connectOverCDP(process.env.DEMO_CDP_URL ?? "http://127.0.0.1:9222");
 const context = browser.contexts()[0];
 const page = context.pages()[0];
-await page.emulateMedia({ colorScheme: "dark" });
+const theme = process.env.DEMO_THEME === "light" ? "light" : "dark";
+await page.emulateMedia({ colorScheme: theme });
+const fileFor = (name) => `${out}/${theme === "light" ? name.replace(/(-2x)?$/, "-light$1") : name}.png`;
 const pause = (ms) => page.waitForTimeout(ms);
 const shoot = async (name) => {
   await page.mouse.move(1279, 799);
   await pause(800);
-  await page.screenshot({ path: `${out}/${name}.png` });
+  await page.screenshot({ path: fileFor(name) });
   console.log(name);
 };
 const button = (name, options = {}) => page.getByRole("button", { name, ...options });
@@ -93,7 +95,7 @@ await page.getByRole("listbox", { name: "Machines" }).locator("[data-machine-ind
 await pause(15000);
 await button("Open", { exact: true }).click();
 await pause(1000);
-await page.screenshot({ path: `${out}/monitor.png` });
+await page.screenshot({ path: fileFor("monitor") });
 console.log("monitor");
 
 await page.keyboard.press("Escape");
@@ -124,7 +126,7 @@ const left = Math.min(panel.x, menu.x) - 8;
 const top = Math.min(panel.y, menu.y) - 8;
 const right = Math.max(panel.x + panel.width, menu.x + menu.width) + 8;
 const bottom = Math.max(menu.y + menu.height, panel.y + 200) + 8;
-await page.screenshot({ path: `${out}/monitor-threads-2x.png`, clip: { x: left, y: top, width: right - left, height: bottom - top } });
+await page.screenshot({ path: fileFor("monitor-threads-2x"), clip: { x: left, y: top, width: right - left, height: bottom - top } });
 console.log("monitor-threads-2x");
 
 await browser.close().catch(() => {});

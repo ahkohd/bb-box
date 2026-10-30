@@ -116,6 +116,24 @@ function sectionOf(body: string, heading: string, file: string): Section {
   return section;
 }
 
+export const lightTwinOf = (path: string) => path.replace(/(-2x)?(\.[a-z]+)$/i, "-light$1$2");
+
+export function withLightTwins(body: string, file: string): string {
+  const code = blankedCode(body);
+  let paired = "";
+  let copiedUpTo = 0;
+  for (const image of code.matchAll(/!\[([^\]]*)\]\(([^)\s]+)\)/g)) {
+    const [markdown, alt, path] = image;
+    if (hasScheme(path!) || /-light(-2x)?\.[a-z]+$/i.test(path!)) continue;
+    const twin = lightTwinOf(path!);
+    if (twin === path || !existsSync(join(repoRoot, posix.join(dirname(file), twin)))) continue;
+    const end = image.index + markdown.length;
+    paired += body.slice(copiedUpTo, end) + `![${alt}](${twin})`;
+    copiedUpTo = end;
+  }
+  return paired + body.slice(copiedUpTo);
+}
+
 function pageFrom(source: Source): Page {
   const { frontmatter, content } = withoutFrontmatter(readText(source.file));
   const { title, body } = splitTitle(content);
@@ -136,7 +154,7 @@ function pageFrom(source: Source): Page {
     title: source.title ?? (title || source.id),
     titleAnchor,
     description: frontmatter.description,
-    body: pageBody.trim() + "\n",
+    body: withLightTwins(pageBody.trim(), source.file) + "\n",
   };
 }
 

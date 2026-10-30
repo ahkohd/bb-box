@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { anchor } from "../scripts/reference.ts";
-import { blankedCode, pagesByFile, readPages, repoRoot, repository, siteHref, type Page } from "../site/src/repo.ts";
+import { readdirSync } from "node:fs";
+import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, type Page } from "../site/src/repo.ts";
 import { sidebar } from "../site/src/sidebar.ts";
 
 const pages = readPages();
@@ -54,4 +55,13 @@ test("every link on a page of the site leads to a page of the site, or to a file
     }
   }
   assert.deepEqual(broken, []);
+});
+
+test("each screenshot in docs/media with a light twin is followed by it on the site, which shows the one for its theme", () => {
+  const twins = readdirSync(`${repoRoot}docs/media`).filter((name) => /-light(-2x)?\.[a-z]+$/.test(name));
+  const unpaired = twins.filter((twin) => {
+    const dark = twin.replace(/-light(-2x)?\./, "$1.");
+    return !pages.some((page) => new RegExp(`\\]\\([^)]*/${dark}\\)!\\[[^\\]]*\\]\\([^)]*/${lightTwinOf(dark)}\\)`).test(page.body));
+  });
+  assert.deepEqual(unpaired, []);
 });
