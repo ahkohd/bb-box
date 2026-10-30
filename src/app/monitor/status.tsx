@@ -5,10 +5,10 @@ import { STALL_LIMITS } from "../../monitor/health.ts";
 import { SERVER_MACHINE, useMonitorSnapshot } from "./use-snapshot.ts";
 import { useRevealOnLoad } from "./use-reveal-on-load.ts";
 import { machineKey, useMachines } from "./use-machines.ts";
-import { useBoxLookOf, useScreensOf, type BoxScreens, type LookOf } from "./box-screens.tsx";
+import { useBoxLookOf, useOpensOf, type BoxScreens, type LookOf, type MachineOpens } from "./box-screens.tsx";
 import { BoxGlyph } from "../glyphs.tsx";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "./menu.tsx";
-import { ThreadItems, ThreadsOnBox } from "./box-threads.tsx";
+import { ThreadItems, ThreadsOnMachine } from "./box-threads.tsx";
 import { cn } from "@/lib/utils";
 import { PressureNotifications, bindStatusOpener } from "./pressure-notifications.tsx";
 import { MachinePicker, selectedMachine } from "./machine-picker.tsx";
@@ -100,45 +100,60 @@ function HeaderButton({ label, tooltip, onClick, disabled, busy, children }: { l
   );
 }
 
-function openTooltip(boxName: string, listsThreads: boolean): string {
-  return listsThreads ? `Views and threads of ${boxName}` : `Open a view of ${boxName}`;
+function openTooltip(machineName: string, listsThreads: boolean): string {
+  return listsThreads ? `Views and threads of ${machineName}` : `Open a view of ${machineName}`;
 }
 
-function HeaderScreenMenu({ screens }: { screens: BoxScreens | null }) {
-  if (!screens) return null;
-  return <ThreadsOnBox box={screens}>{(threads) => <ScreenMenu screens={screens} threads={threads} />}</ThreadsOnBox>;
+function threadsOnWords(machineName: string): string {
+  return `Threads on ${machineName}`;
 }
 
-function ScreenMenu({ screens, threads }: { screens: BoxScreens; threads: readonly ThreadOnBox[] }) {
+function HeaderOpenMenu({ opens }: { opens: MachineOpens | null }) {
+  if (!opens) return null;
+  return <ThreadsOnMachine machine={opens}>{(threads) => <OpenMenu opens={opens} threads={threads} />}</ThreadsOnMachine>;
+}
+
+function OpenMenu({ opens, threads }: { opens: MachineOpens; threads: readonly ThreadOnBox[] }) {
+  if (!opens.box && !threads.length) return null;
+  const name = opens.box ? "Open" : threadsOnWords(opens.machineName);
+  const tooltip = opens.box ? openTooltip(opens.machineName, threads.length > 0) : threadsOnWords(opens.machineName);
   return (
     <Menu>
       <Tooltip delayDuration={350} disableHoverableContent>
         <TooltipTrigger asChild>
-          <MenuTrigger className={cn(HEADER_BUTTON_CLASS, "-ml-1 shrink-0 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-foreground")} aria-label="Open">
+          <MenuTrigger className={cn(HEADER_BUTTON_CLASS, "-ml-1 shrink-0 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-foreground")} aria-label={name}>
             <Icon name="ArrowUpRight" className="size-3.5" aria-hidden />
           </MenuTrigger>
         </TooltipTrigger>
-        <TooltipContent side="top">{openTooltip(screens.boxName, threads.length > 0)}</TooltipContent>
+        <TooltipContent side="top">{tooltip}</TooltipContent>
       </Tooltip>
       <MenuContent side="bottom" className="max-w-64">
-        <MenuItem onSelect={screens.openOnBoxesPage}>
-          <span className="flex h-4 shrink-0 items-center text-muted-foreground">
-            <BoxGlyph className="size-3.5" />
-          </span>
-          <span className="min-w-0">Page</span>
-        </MenuItem>
-        {screens.actions.map((action) => (
-          <MenuItem key={action.key} disabled={action.closedBecause !== null} onSelect={action.open}>
-            <span className={cn("flex h-4 shrink-0 items-center text-muted-foreground", action.closedBecause && "opacity-50")}>{action.glyph("size-3.5")}</span>
-            <span className="min-w-0">
-              <span className={cn("block", action.closedBecause && "text-muted-foreground")}>{action.words}</span>
-              {action.closedBecause ? <span className="block text-muted-foreground">{action.closedBecause}</span> : null}
-            </span>
-          </MenuItem>
-        ))}
-        <ThreadItems box={screens} threads={threads} />
+        {opens.box ? <BoxViewItems box={opens.box} /> : null}
+        <ThreadItems machine={opens} threads={threads} />
       </MenuContent>
     </Menu>
+  );
+}
+
+function BoxViewItems({ box }: { box: BoxScreens }) {
+  return (
+    <>
+      <MenuItem onSelect={box.openOnBoxesPage}>
+        <span className="flex h-4 shrink-0 items-center text-muted-foreground">
+          <BoxGlyph className="size-3.5" />
+        </span>
+        <span className="min-w-0">Page</span>
+      </MenuItem>
+      {box.actions.map((action) => (
+        <MenuItem key={action.key} disabled={action.closedBecause !== null} onSelect={action.open}>
+          <span className={cn("flex h-4 shrink-0 items-center text-muted-foreground", action.closedBecause && "opacity-50")}>{action.glyph("size-3.5")}</span>
+          <span className="min-w-0">
+            <span className={cn("block", action.closedBecause && "text-muted-foreground")}>{action.words}</span>
+            {action.closedBecause ? <span className="block text-muted-foreground">{action.closedBecause}</span> : null}
+          </span>
+        </MenuItem>
+      ))}
+    </>
   );
 }
 
@@ -564,13 +579,13 @@ function StatusPopover({ snapshot, isServer, expected, waitingFor }: { snapshot:
   );
 }
 
-function MachineHeader({ machines, selected, onSelect, onOpen, screens, lookOf, actions }: { machines: Machine[] | null; selected: string; onSelect: (machineId: string) => void; onOpen: () => void; screens: BoxScreens | null; lookOf: LookOf; actions: ReactNode }) {
+function MachineHeader({ machines, selected, onSelect, onOpen, opens, lookOf, actions }: { machines: Machine[] | null; selected: string; onSelect: (machineId: string) => void; onOpen: () => void; opens: MachineOpens | null; lookOf: LookOf; actions: ReactNode }) {
   return (
     <div data-bb-box-monitor-header className="sticky top-0 z-10 bg-sidebar">
       <div className="flex h-9 min-w-0 items-center gap-1 bg-sidebar-accent/50 px-1.5">
         <span className="flex min-w-0 items-center">
           <MachinePicker machines={machines} selected={selected} onSelect={onSelect} onOpen={onOpen} lookOf={lookOf} />
-          <HeaderScreenMenu screens={screens} />
+          <HeaderOpenMenu opens={opens} />
         </span>
         <span className="flex-1" />
         {actions}
@@ -624,7 +639,7 @@ function ServerMark({ className }: { className?: string }) {
 
 function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps) {
   const { machines, selected, setSelected, refresh: refreshMachines } = useMachines();
-  const screensOf = useScreensOf();
+  const opensOf = useOpensOf();
   const lookOf = useBoxLookOf();
   const { container, active, snapshot, error, reload, reloading } = useMonitorSnapshot(selected);
   const machineName = selectedMachine(machines, selected).name;
@@ -648,7 +663,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
         selected={selected}
         onSelect={setSelected}
         onOpen={() => void refreshMachines()}
-        screens={screensOf(machines?.find((machine) => machineKey(machine) === selected))}
+        opens={opensOf(machines?.find((machine) => machineKey(machine) === selected))}
         lookOf={lookOf}
         actions={<>
           <ReloadButton onReload={reload} reloading={reloading} loading={!snapshot && !error} updatedAt={snapshot?.timestamp ?? null} />

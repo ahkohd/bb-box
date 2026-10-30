@@ -744,7 +744,7 @@ and the box's name in its tooltip, or "Views and threads of" and the name
 when its menu lists threads (the owner, 29 October 2026). It opens a menu
 of the box's views, each with the Boxes row's icon and words: "Open
 simulator" or "Open emulator", "Open desktop", "Open terminal". BB's server and BB machines that are not
-boxes have no button, so their header is unchanged. The owner chose one
+boxes have the button only while threads are on them (see below). The owner chose one
 button over a button for each view: in BB's sidebar, 253 px wide, the
 header had 23 px to spare, and three buttons left the name about 19 px. The
 machine picker lists names only, as before; a button on each row was
@@ -752,7 +752,8 @@ noise.
 
 The header has no settings gear (the owner, 29 October 2026): the
 Monitor's settings are on BB Box's settings page, under Monitor. It holds
-the name, Open for a box, Reload and Hide.
+the name, Open for a box or for a machine with threads on it, Reload and
+Hide.
 
 Each item opens what the Boxes page's row opens, through the same code:
 `openActions` (`src/app/box-opens.tsx`) gives the views a box has, and
@@ -781,7 +782,10 @@ Threads; the arrows move from the views to the threads in order.
 
 The threads come from BB's own live thread list
 (`experimental_useSidebarThreads`): those whose machine is the box's BB
-machine, and the holder by its ID, not archived. That list costs no
+machine, and the holder by its ID, not archived and not hidden. A hidden
+thread, such as a helper a plugin starts, is one BB's own sidebar keeps out
+of its list, so the Monitor shows what BB's sidebar shows (the lead, 30
+October 2026). That list costs no
 request and changes when BB's sidebar does; the chips' list,
 `machines.list`, refreshes only on a box's events. "Working" is the
 chips' rule, `threadOnBox` (`src/plugin/thread-on-box.ts`): starting,
@@ -790,12 +794,37 @@ experimental, so when it is missing or throws, a kept machine lists the
 threads from `machines.list`, as its chips do, and a thread's box lists
 none (`src/app/monitor/box-threads.tsx`).
 
+BB's server and every other BB machine that is not a box list their
+threads too (the owner, 30 October 2026: "Should BB machines also list the
+threads they are working on? ... the ones that are currently active, that
+are not archived"). The same button sits beside the machine's name, with
+the same icon, but only while the machine has threads that are not
+archived or hidden and that are working or were last active in the past
+24 hours (the lead, 30 October 2026); with none, the header is unchanged.
+On BB's server, every idle thread would otherwise count, and the list
+would run to hundreds. A box keeps every such thread, however long ago it
+was active: its threads are few, and all of them hold or use it. A
+machine's button has no views to open, so its name for screen readers and its tooltip say "Threads on" and the
+machine's name, as in "Threads on build-server", and its menu is the
+"Threads" group alone, with no Page, no views and no divider. The threads
+are BB's live list's, matched by the machine's ID, which is its BB host's,
+in the same order and with the same 5 at most. "Last active" is the
+thread's `updatedAt` in that list. After them, "2 more in BB's sidebar"
+counts only the threads that qualify, and is a note, not an item: there
+is no page that lists a machine's threads to open, and a count tells the
+reader the list is cut.
+A machine counts as one that is not a box when the machine list gives it
+no `boxId`; a box whose entry the Boxes page's list does not have yet
+shows no button until it does, so a box's menu never starts as threads
+alone. When BB's live list is missing or throws, these machines list none,
+so they have no button.
+
 A box that is not ready keeps its items, disabled, each with the reason
 under its words, as in "brisk-wren is stopped". The Box panel's row hides
 its buttons instead, as before. The menu is the Monitor's own, styled as
 its picker's popover (`src/app/monitor/menu.tsx`), not BB's, which becomes
 a drawer on a narrow screen. Enter, Space or Down opens it, the arrows
-move, Escape closes it and focus returns to Open. The menu and the picker
+move, Escape closes it and focus returns to the button. The menu and the picker
 keep Escape to themselves: BB's sidebar footer closes the whole Monitor on
 Escape.
 

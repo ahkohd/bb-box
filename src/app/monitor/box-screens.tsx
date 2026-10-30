@@ -8,18 +8,22 @@ import { boxPage } from "../box-route.ts";
 
 export interface BoxScreens {
   readonly boxId: string;
-  readonly boxName: string;
   readonly actions: readonly OpenAction[];
   readonly kept: boolean;
   readonly holderThreadId: string | null;
-  readonly hostId: string | null;
-  readonly openThread: (threadId: string) => void;
   readonly openOnBoxesPage: () => void;
 }
 
-export type ScreensOf = (machine: Machine | undefined) => BoxScreens | null;
+export interface MachineOpens {
+  readonly machineName: string;
+  readonly hostId: string | null;
+  readonly box: BoxScreens | null;
+  readonly openThread: (threadId: string) => void;
+}
 
-export function useScreensOf(): ScreensOf {
+export type OpensOf = (machine: Machine | undefined) => MachineOpens | null;
+
+export function useOpensOf(): OpensOf {
   const rpc = useRpc<Contract>();
   const navigate = useBbNavigate();
   const nav = useBoxesNav();
@@ -27,19 +31,23 @@ export function useScreensOf(): ScreensOf {
   const entryOf = useMemo(() => new Map((entries ?? []).map((entry) => [entry.box.id, entry])), [entries]);
   return useCallback(
     (machine) => {
-      const entry = machine?.boxId ? entryOf.get(machine.boxId) : undefined;
+      if (!machine) return null;
+      const openThread = (threadId: string) => navigate.toThread(threadId);
+      if (machine.boxId === null) return { machineName: machine.name, hostId: machine.id, box: null, openThread };
+      const entry = entryOf.get(machine.boxId);
       if (!entry) return null;
-      const actions = openActions(entry.box, opensFrom(nav, []));
       const kept = entry.owner === "yours";
       return {
-        boxId: entry.box.id,
-        boxName: entry.box.name,
-        actions,
-        kept,
-        holderThreadId: kept ? null : entry.threadId,
+        machineName: entry.box.name,
         hostId: entry.box.enrol.hostId,
-        openThread: (threadId) => navigate.toThread(threadId),
-        openOnBoxesPage: () => nav.go(boxPage(entry.box.id)),
+        box: {
+          boxId: entry.box.id,
+          actions: openActions(entry.box, opensFrom(nav, [])),
+          kept,
+          holderThreadId: kept ? null : entry.threadId,
+          openOnBoxesPage: () => nav.go(boxPage(entry.box.id)),
+        },
+        openThread,
       };
     },
     [entryOf, navigate, nav],
