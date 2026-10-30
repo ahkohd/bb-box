@@ -95,6 +95,7 @@ import {
   type TaskRef,
   type WarmShortfall,
   type WithheldKind,
+  type IdentitySource,
 } from "../types.ts";
 import { sizesCheck } from "../fit.ts";
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, recordInDescription } from "../images.ts";
@@ -478,6 +479,10 @@ export class ProxmoxQemuBackend implements Backend {
       },
       ["disk", "disk-and-memory"],
     );
+  }
+
+  identitySource(kind: string): IdentitySource | null {
+    return kind === "linux" && this.kinds().some((offered) => offered.id === kind) ? "device" : null;
   }
 
   snapshotting(kind: string): Snapshotting | null {

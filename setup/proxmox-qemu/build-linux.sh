@@ -158,6 +158,7 @@ BB_URL="$BBBOX_BB_URL"
 DESKTOP_GPU=none
 BUILD_ID=$build
 ANDROID_X264=$x264
+BOX_IDENTITY_RESET=$([ "$kind" = linux ] && echo on || echo off)
 EOF
 for f in "$cache"/*; do
   case "${f##*/}" in *.run | *.run.sha256sum | *.deb | cua-driver-* | rustup-init) [ "$kind" = linux-desktop ] || continue ;; esac

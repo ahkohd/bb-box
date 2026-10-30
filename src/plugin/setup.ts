@@ -1061,7 +1061,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   }
   bb.events.on("experimental_host.deleted", ({ host }) => {
     holders.forget(host.id);
-    void forPurpose("host deleted", () => enrolment.forgetHost(host.id)).catch((error) => logError("host deleted", error));
+    void forPurpose("host deleted", () => enrolment.machineDeleted(host.id)).catch((error) => logError("host deleted", error));
   });
 
   // The nightly rebuilds (049) behind General's switch: BB runs this schedule while bb-box is loaded, and a run goes on
@@ -1541,6 +1541,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         sections.push({
           title: "Kinds",
           report: { ok: true, summary: "Offers of each kind agree.", checks: offers, notes: [] },
+        });
+      }
+      const resetChecks = await boxes.identityResetChecks();
+      if (resetChecks.length) {
+        sections.push({
+          title: "Identity resets",
+          report: { ok: resetChecks.every((check) => check.status !== "fail"), summary: "Boxes of bb-box's whose identity reset at a boot, which bb-box keeps and enrols again as new BB machines.", checks: resetChecks, notes: [] },
         });
       }
       const spareChecks = await boxes.spareChecks();

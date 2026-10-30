@@ -283,6 +283,12 @@ install -m 0755 "$build/guest/check-headless.sh" /usr/local/bin/bb-box-check-hea
 # Dev Container features for a project image's script (049).
 install -m 0755 "$build/guest/bb-box-feature.sh" /usr/local/bin/bb-box-feature
 
+install -m 0755 "$build/guest/bb-box-identity.sh" /usr/local/sbin/bb-box-identity
+/usr/local/sbin/bb-box-identity disable
+if [ "${BOX_IDENTITY_RESET:-off}" = on ]; then
+  if [ "$runtime" = docker ]; then /usr/local/sbin/bb-box-identity enable --no-unit; else /usr/local/sbin/bb-box-identity enable; fi
+fi
+
 # What `uv tool install` and pipx put in ~/.local/bin runs by name, as it
 # does in a login shell. Once: a refresh (049) runs this on a built image,
 # where a later step may have put another directory first.

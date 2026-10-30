@@ -125,6 +125,8 @@ export interface GeneralSettings {
    * BB's server. Off unless set; first-run setup turns it on.
    */
   readonly nightlyImages?: boolean;
+  /** The backends whose new Linux boxes get an identity marker, so that a copy of one resets its identity (070). None by default. */
+  readonly identityResetBackends?: readonly string[];
   /**
    * Advanced: whether linux, linux-desktop-cpu, macos and macos-desktop boxes offer the test device (063), a test card
    * served by bb-box's device server in place of a phone, for checking the device path with no simulator or emulator.
@@ -329,6 +331,8 @@ export interface GeneralConfig {
   readonly sizes: SizeChanges;
   /** Spare boxes to keep, by kind (032). A kind that is off keeps none. */
   readonly spares: Readonly<Record<string, number>>;
+  /** The backends whose new Linux boxes get an identity marker (070). */
+  readonly identityResetBackends?: readonly string[];
 }
 
 export function generalConfig(document: ConfigDocument): GeneralConfig {
@@ -341,6 +345,7 @@ export function generalConfig(document: ConfigDocument): GeneralConfig {
     spares: Object.fromEntries(
       Object.entries(document.kinds).flatMap(([kind, config]) => (config.spares && kindOn(document, kind) ? [[kind, config.spares]] : [])),
     ),
+    identityResetBackends: document.general.identityResetBackends ?? [],
   };
 }
 
@@ -464,7 +469,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
 
   const general: Record<string, unknown> = {};
   if (input.general !== undefined) {
-    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger, iosEncoder, tailnet and snapshots.");
+    if (!isRecord(input.general)) problem("general", "general must be an object with boxesPerThread, enrol, defaultKind, files, video, nightlyImages, identityResetBackends, testDevice, encoderLedger, iosEncoder, tailnet and snapshots.");
     else {
       for (const [key, value] of Object.entries(input.general)) {
         if (value === undefined || value === null) continue;
@@ -486,6 +491,9 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "nightlyImages") {
           if (typeof value === "boolean") general[key] = value;
           else problem("general.nightlyImages", "nightlyImages is true or false.");
+        } else if (key === "identityResetBackends") {
+          if (Array.isArray(value) && value.every((id) => typeof id === "string" && id)) general[key] = [...new Set(value as string[])];
+          else problem("general.identityResetBackends", "identityResetBackends is a list of backend IDs.");
         } else if (key === "testDevice") {
           if (typeof value === "boolean") general[key] = value;
           else problem("general.testDevice", "testDevice is true or false.");
@@ -503,7 +511,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "snapshots") {
           const snapshots = readSnapshots(value, problem);
           if (snapshots) general[key] = snapshots;
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, testDevice, encoderLedger, iosEncoder, tailnet and snapshots.`);
+        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, identityResetBackends, testDevice, encoderLedger, iosEncoder, tailnet and snapshots.`);
       }
     }
   }

@@ -474,6 +474,8 @@ export class BackendError extends Error {
  * registry retries after restarts and the sweep calls `release` for boxes
  * whose release was interrupted.
  */
+export type IdentitySource = "eth" | "device" | "value";
+
 export interface Backend {
   /** Unique among active backends, stable across restarts. Stored with each box. */
   readonly id: string;
@@ -707,6 +709,7 @@ export interface Backend {
   heldSnapshots?(signal?: AbortSignal): Promise<readonly HeldSnapshot[]>;
   providerTask?(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome>;
   findTasks?(guest: Guest, operation: "take" | "delete", since: number, signal?: AbortSignal): Promise<readonly TaskRef[]>;
+  identitySource?(kind: string): IdentitySource | null;
 
   /** Pool members and their state, for the panel. */
   members?(signal?: AbortSignal): Promise<readonly PoolMember[]>;

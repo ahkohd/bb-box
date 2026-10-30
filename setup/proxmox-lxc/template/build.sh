@@ -236,6 +236,7 @@ BB_URL="$BBBOX_BB_URL"
 DESKTOP_GPU=$desktop_gpu
 DESKTOP_SESSION=${wayland:+wayland}
 BUILD_ID=$build
+BOX_IDENTITY_RESET=$([ "$kind" = linux ] && echo on || echo off)
 EOF
 for f in "$cache"/*; do
   case "${f##*/}" in

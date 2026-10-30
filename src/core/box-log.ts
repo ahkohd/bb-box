@@ -43,6 +43,8 @@ export const BOX_EVENT_KINDS = [
   "snapshot-deleted",
   "snapshot-lost",
   "snapshot-unavailable",
+  "identity-reset",
+  "enrolled-again",
 ] as const;
 
 export type BoxEventKind = (typeof BOX_EVENT_KINDS)[number];

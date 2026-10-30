@@ -24,6 +24,11 @@ export const CHECKS = {
   "box-history": { name: "Box history's file", from: ["bb-box"], what: "Where bb-box will keep each box's readings over time (069): box-history.db beside its database, attached with its own cap, or its database itself where BB's handle refused to attach the file." },
   "box-log": { name: "Box log", from: ["bb-box"], what: "Where bb-box keeps who stopped, started, resized and released each box (069): box-log.db beside its database, or its database itself where BB's handle refused to attach the file; and whether its writes failed." },
   "snapshots": { name: "Snapshots' records", from: ["bb-box"], what: "Where bb-box keeps its records of snapshots and their operations (070): snapshots.db beside its database, or its database itself where BB's handle refused to attach the file; and whether its writes failed. While it cannot write them, bb-box takes and deletes no snapshots." },
+  "identity-reset.<box>": {
+    name: "Identity reset of <box>",
+    from: ["bb-box"],
+    what: "A box of bb-box's whose identity reset at a boot (070), which took its BB machine with it: bb-box keeps the box and enrols it again as a new BB machine. It warns once that is done, and fails until it is. A box that is not a copy of another should never reset.",
+  },
   "images.nightly": { name: "Nightly rebuilds", from: ["bb-box"], what: "When bb box images refresh last ended. It warns when no run ended for 8 days." },
   "images.bb-update": { name: "Refresh after a BB update", from: ["bb-box"], what: "After a BB update, which Linux images have another build of BB's app than BB's server gives, and when their refresh starts. Only while Rebuild each night is on." },
   "images.<backend>/<ref>": { name: "Rebuild of <backend>/<ref>", from: ["bb-box"], what: "A standard image whose last rebuild failed, or waits for room." },
