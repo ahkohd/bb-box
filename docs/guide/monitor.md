@@ -45,7 +45,7 @@ An `ios` box on a shared Mac is a macOS user of its own on that Mac. Its labels 
 
 ## The Open menu
 
-When the panel shows a box, **Open**, an arrow, is beside its name. Its menu starts with **Page**, which opens [the box's page](boxes.md#a-boxs-page), then lists the box's views:
+When the panel shows a box, **Open**, an arrow, is beside its name. Its menu starts with **Open details**, which opens [the box's page](boxes.md#a-boxs-page), then lists the box's views:
 
 - **Open simulator** or **Open emulator**, for a device box
 - **Open desktop**, for a desktop box

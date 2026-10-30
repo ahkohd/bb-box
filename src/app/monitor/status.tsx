@@ -6,7 +6,6 @@ import { SERVER_MACHINE, useMonitorSnapshot } from "./use-snapshot.ts";
 import { useRevealOnLoad } from "./use-reveal-on-load.ts";
 import { machineKey, useMachines } from "./use-machines.ts";
 import { useBoxLookOf, useOpensOf, type BoxScreens, type LookOf, type MachineOpens } from "./box-screens.tsx";
-import { BoxGlyph } from "../glyphs.tsx";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "./menu.tsx";
 import { ThreadItems, ThreadsOnMachine } from "./box-threads.tsx";
 import { cn } from "@/lib/utils";
@@ -140,9 +139,9 @@ function BoxViewItems({ box }: { box: BoxScreens }) {
     <>
       <MenuItem onSelect={box.openOnBoxesPage}>
         <span className="flex h-4 shrink-0 items-center text-muted-foreground">
-          <BoxGlyph className="size-3.5" />
+          <Icon name="Info" className="size-3.5" aria-hidden />
         </span>
-        <span className="min-w-0">Page</span>
+        <span className="min-w-0">Open details</span>
       </MenuItem>
       {box.actions.map((action) => (
         <MenuItem key={action.key} disabled={action.closedBecause !== null} onSelect={action.open}>

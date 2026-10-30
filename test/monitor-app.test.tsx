@@ -335,7 +335,7 @@ const TO_BOXES_PAGE = (subPath: string) => ({ method: "toPluginPanel", path: "de
 
 test("a desktop box's Open menu offers its page first, then its desktop and terminal, each opening the box's view, whose way back is its page", async () => {
   const monitor = openMonitor("box:bx_desk");
-  expect(items(await openViews())).toEqual(["Page", "Open desktop", "Open terminal"]);
+  expect(items(await openViews())).toEqual(["Open details", "Open desktop", "Open terminal"]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Open desktop" }));
   expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_desk/desktop"));
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
@@ -344,21 +344,21 @@ test("a desktop box's Open menu offers its page first, then its desktop and term
   expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_desk/terminal"));
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await openViews();
-  fireEvent.click(screen.getByRole("menuitem", { name: "Page" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open details" }));
   expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_desk"));
   expect(localStorage.getItem("bb-box:monitor:machine")).toBe("box:bx_desk");
 });
 
 test("a device box's Open menu offers its Simulator alone when it has no terminal, and it opens the device view", async () => {
   const monitor = openMonitor("host_slot");
-  expect(items(await openViews())).toEqual(["Page", "Open simulator"]);
+  expect(items(await openViews())).toEqual(["Open details", "Open simulator"]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Open simulator" }));
   expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_slot/device"));
 });
 
 test("a box with a desktop and an Emulator offers both, then its terminal", async () => {
   const monitor = openMonitor("box:bx_both");
-  expect(items(await openViews())).toEqual(["Page", "Open emulator", "Open desktop", "Open terminal"]);
+  expect(items(await openViews())).toEqual(["Open details", "Open emulator", "Open desktop", "Open terminal"]);
   fireEvent.click(screen.getByRole("menuitem", { name: "Open emulator" }));
   expect(monitor.inspection.navigateCalls.at(-1)).toEqual(TO_BOXES_PAGE("box/bx_both/device"));
 });
@@ -372,7 +372,7 @@ test("the Open button's tooltip names the box, as a view of it when its menu lis
 test("a stopped box's views are in the menu, disabled, each with the reason, and open nothing", async () => {
   const monitor = openMonitor("host_stopped");
   const menu = await openViews();
-  expect(items(menu)).toEqual(["Page", "Open desktopdeep-elm is stopped (disabled)", "Open terminaldeep-elm is stopped (disabled)"]);
+  expect(items(menu)).toEqual(["Open details", "Open desktopdeep-elm is stopped (disabled)", "Open terminaldeep-elm is stopped (disabled)"]);
   fireEvent.click(within(menu).getAllByRole("menuitem")[1]!);
   expect(monitor.inspection.navigateCalls.filter((call) => call.method === "toPluginPanel")).toEqual([]);
 });
@@ -419,7 +419,7 @@ test("the keyboard reaches Open after the name; Enter or Space opens the menu, a
   open.focus();
   fireEvent.keyDown(open, { key: " " });
   const menu = await screen.findByRole("menu");
-  await waitFor(() => expect(document.activeElement?.textContent).toBe("Page"));
+  await waitFor(() => expect(document.activeElement?.textContent).toBe("Open details"));
   fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
   await waitFor(() => expect(document.activeElement?.textContent).toBe("Open emulator"));
   const escapeBeyondMenu = vi.fn();
@@ -493,7 +493,7 @@ test("a thread's box lists, after a divider and a Threads label, the thread that
   const menu = await openViews();
   expect(within(menu).getAllByRole("separator")).toHaveLength(1);
   expect(within(menu).getByText("Threads")).toBeTruthy();
-  expect(items(menu)).toEqual(["Page", "Open terminal", "Builds the release", "Runs the tests on the box"]);
+  expect(items(menu)).toEqual(["Open details", "Open terminal", "Builds the release", "Runs the tests on the box"]);
   expect(threadLabels(menu)).toEqual(["Builds the release, idle", "Runs the tests on the box, working"]);
   const working = within(menu).getByRole("menuitem", { name: "Runs the tests on the box, working" });
   expect(within(working).getByLabelText("Working")).toBeTruthy();
@@ -536,7 +536,7 @@ test("when the menu lists threads, the Open button's tooltip says views and thre
 test("a box with no threads has no divider and no Threads section", async () => {
   openMonitor("box:bx_both", [ELSEWHERE]);
   const menu = await openViews();
-  expect(items(menu)).toEqual(["Page", "Open emulator", "Open desktop", "Open terminal"]);
+  expect(items(menu)).toEqual(["Open details", "Open emulator", "Open desktop", "Open terminal"]);
   expect(within(menu).queryByRole("separator")).toBeNull();
   expect(within(menu).queryByText("Threads")).toBeNull();
 });
@@ -556,7 +556,7 @@ test("the keyboard moves from the views to the threads in order, past the divide
   fireEvent.keyDown(open, { key: "Enter" });
   await screen.findByRole("menu");
   const focused = () => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.textContent;
-  await waitFor(() => expect(focused()).toBe("Page"));
+  await waitFor(() => expect(focused()).toBe("Open details"));
   for (const next of ["Open desktop", "Open terminal", "First thread, working", "Second thread, idle"]) {
     fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
     await waitFor(() => expect(focused()).toBe(next));
@@ -583,7 +583,7 @@ for (const [why, replacement] of [["missing", undefined], ["throws", () => { thr
       cleanup();
       openMonitor("host_lxc");
       const held = await openViews();
-      expect(items(held)).toEqual(["Page", "Open terminal"]);
+      expect(items(held)).toEqual(["Open details", "Open terminal"]);
       expect(within(held).queryByRole("separator")).toBeNull();
       cleanup();
       openMonitor("host_build");
@@ -605,7 +605,7 @@ const ON_BUILD_SERVER = [
   ON_GLAD_CORAL,
 ];
 
-test("a BB machine that is not a box lists its threads alone, working or active in the past 24 hours, working first, then the most recent, with no views, no Page and no divider; hidden and archived threads are not listed", async () => {
+test("a BB machine that is not a box lists its threads alone, working or active in the past 24 hours, working first, then the most recent, with no views, no Open details and no divider; hidden and archived threads are not listed", async () => {
   openMonitor("host_build", ON_BUILD_SERVER);
   const menu = await openViews("Threads on build-server");
   expect(items(menu)).toEqual(["Runs the benchmarks", "Runs the soak test", "Finished the build", "Cleaned the cache"]);

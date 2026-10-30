@@ -123,7 +123,7 @@ Every box, and every machine of yours, has a page of its own on the Boxes page, 
 
 - on the Boxes page, select a box's row, its name or the arrow at its end
 - in the Box panel, select **Open on the Boxes page** in a box's menu
-- in the Monitor's machine status, select **Open** beside a box's name, then **Page**
+- in the Monitor's machine status, select **Open** beside a box's name, then **Open details**
 - in a desktop, device or terminal on the Boxes page, select the box's name in its bar
 
 The page shows, from the top:
