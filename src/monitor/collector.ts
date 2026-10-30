@@ -11,6 +11,7 @@ import { readMacSensors } from "./mac-sensors.ts";
 import { containerCapacity, containerCpuPercent, containerMemory, readContainer, type ContainerCounters } from "./container.ts";
 import { assessHealth } from "./health.ts";
 import { clampPercentage } from "./numbers.ts";
+import { createOwnUsage, developerToolsLook, parseOwnReading, psOwnArgs, readMacOwn, type OwnReading, type OwnUsage } from "./own-usage.ts";
 
 export { clampPercentage } from "./numbers.ts";
 
@@ -285,6 +286,28 @@ async function readProcesses(signal: AbortSignal, scope: ProcessScope): Promise<
   }
 }
 
+async function runQuietly(file: string, args: readonly string[], signal: AbortSignal): Promise<string> {
+  return (await execFileAsync(file, [...args], { timeout: 3000, maxBuffer: 1024 * 1024, signal, env: { ...process.env, LC_ALL: "C" } })).stdout;
+}
+
+const developerToolsThere = developerToolsLook((file, args) => runQuietly(file, args, AbortSignal.timeout(3000)));
+
+async function ownProcessList(signal: AbortSignal, uid: number): Promise<string> {
+  const run = (file: string, args: readonly string[]) => runQuietly(file, args, signal);
+  if (platform() === "darwin") return readMacOwn(run, uid, developerToolsThere);
+  return run("ps", psOwnArgs(uid));
+}
+
+async function readOwnProcesses(signal: AbortSignal): Promise<OwnReading | null> {
+  const uid = process.getuid?.();
+  if (uid === undefined) return null;
+  try {
+    return parseOwnReading(await ownProcessList(signal, uid));
+  } catch {
+    return null;
+  }
+}
+
 export function pushHistory(history: MetricPoint[], point: MetricPoint): MetricPoint[] {
   history.push(point);
   if (history.length > HISTORY_LIMIT) history.splice(0, history.length - HISTORY_LIMIT);
@@ -310,6 +333,7 @@ export interface CollectorOptions {
   readonly refreshIntervalMs: () => number;
   readonly scope?: ProcessScope;
   readonly readContainer?: (signal: AbortSignal) => Promise<ContainerCounters | null>;
+  readonly readOwn?: (signal: AbortSignal) => Promise<OwnReading | null>;
 }
 
 function noReading(): Promise<null> {
@@ -326,6 +350,13 @@ export function createCollector(options: CollectorOptions) {
   let previousNetworkTotals: NetworkTotals | null = null;
   let previousNetworkTimestamp: number | null = null;
   const history: MetricPoint[] = [];
+  const ownUsage = createOwnUsage();
+  const readOwn = scope === "user" ? options.readOwn ?? readOwnProcesses : noReading;
+
+  async function takeOwn(signal: AbortSignal): Promise<OwnUsage | null> {
+    const reading = await readOwn(signal);
+    return reading ? ownUsage.take(reading, performance.now()) : null;
+  }
 
   async function takeBaseline(signal: AbortSignal) {
     previousNetworkTotals = await readNetworkTotals(signal);
@@ -335,6 +366,7 @@ export function createCollector(options: CollectorOptions) {
     previousPerCoreTimes = cpuList.map(cpuTimesFor);
     const container = await readOwnContainer(signal);
     previousContainerUsage = container ? { usageMicros: container.usageMicros, at: performance.now() } : null;
+    await takeOwn(signal);
     await sleep(BASELINE_WINDOW_MS, undefined, { signal });
   }
 
@@ -371,6 +403,7 @@ export function createCollector(options: CollectorOptions) {
     previousCpuTimes = cpuTimes;
     previousPerCoreTimes = perCoreTimes;
     previousContainerUsage = container ? { usageMicros: container.usageMicros, at: containerAt } : null;
+    const userUsage = await takeOwn(signal);
 
     const [networkReading, [memoryDetails, disk, processes, tailscale, battery, sensors]] = await Promise.all([
       readNetworkTotals(signal).then((totals) => ({ totals, time: performance.now() })),
@@ -428,6 +461,7 @@ export function createCollector(options: CollectorOptions) {
       battery,
       sensors,
       processes,
+      ...(userUsage ? { own: userUsage } : {}),
       runtime: runtimeNow(),
       health: assessHealth({
         cpuPercent: usagePercent,
@@ -444,6 +478,7 @@ export function createCollector(options: CollectorOptions) {
         networkRxBytesPerSecond: network?.rxBytesPerSecond ?? null,
         networkTxBytesPerSecond: network?.txBytesPerSecond ?? null,
         gpuPercent: sensors?.gpuPercent ?? null,
+        ...(userUsage ? { ownCpuCores: userUsage.cpuCores, ownMemoryBytes: userUsage.memoryBytes } : {}),
       }),
     };
   }
@@ -455,6 +490,7 @@ export function createCollector(options: CollectorOptions) {
     previousNetworkTotals = null;
     previousNetworkTimestamp = null;
     history.length = 0;
+    ownUsage.reset();
   }
 
   return { collect, reset };

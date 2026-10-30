@@ -3,6 +3,7 @@ import { CONTAINER_FILES, containerCapacity, containerCpuPercent, containerMemor
 import { NO_PROCESSES, PROCESS_COLUMNS, calculateCpuUsage, calculateNetworkRates, diskFrom, memoryDetailsFrom, parseMeminfo, parseNetDev, parseNetstatLinks, parseProcStat, parseProcesses, parseVmStatUsedBytes, pushHistory, type CpuTimes, type NetworkTotals, type ProcessScope } from "./collector.ts";
 import { assessHealth } from "./health.ts";
 import { clampPercentage } from "./numbers.ts";
+import { createOwnUsage, macOwnCommand, parseOwnReading, psOwnCommand, type OwnUsage } from "./own-usage.ts";
 
 export type RouteOs = "linux" | "macos";
 
@@ -17,7 +18,7 @@ function processCommand(scope: ProcessScope): string {
 }
 
 export function routeScript(os: RouteOs, scope: ProcessScope): string {
-  const common = [section("uname", "uname -srm"), section("hostname", "hostname"), section("df", "df -Pk / | tail -n 1"), section("ps", processCommand(scope))];
+  const common = [section("uname", "uname -srm"), section("hostname", "hostname"), section("df", "df -Pk / | tail -n 1"), section("ps", processCommand(scope)), ...(scope === "user" ? [section("own", os === "macos" ? macOwnCommand() : psOwnCommand())] : [])];
   if (os === "macos") {
     return [
       ...common,
@@ -110,6 +111,12 @@ export function createRouteCollector(options: RouteOptions) {
   let previousNetwork: NetworkTotals | null = null;
   let previousNetworkAt: number | null = null;
   const history: MetricPoint[] = [];
+  const ownUsage = createOwnUsage();
+
+  function ownOf(sections: Map<string, string>, at: number): OwnUsage | null {
+    if (options.scope !== "user" || !sections.has("own")) return null;
+    return ownUsage.take(parseOwnReading(sections.get("own") ?? ""), at);
+  }
 
   function snapshot(reading: RouteReading): MonitorSnapshot {
     const { sections } = reading;
@@ -118,8 +125,17 @@ export function createRouteCollector(options: RouteOptions) {
     const disk = parseDfRoot(sections.get("df"));
     const processes = sections.has("ps") ? parseProcesses(sections.get("ps") ?? "", (command) => command.split("/").pop() ?? command) : NO_PROCESSES;
     const timestamp = Date.now();
-    if (options.os === "macos") return macSnapshot(sections, uname, hostname, disk, processes, timestamp, reading.receivedAt);
-    return linuxSnapshot(sections, uname, hostname, disk, processes, timestamp);
+    const own = ownOf(sections, reading.receivedAt);
+    const read = options.os === "macos" ? macSnapshot(sections, uname, hostname, disk, processes, timestamp, reading.receivedAt) : linuxSnapshot(sections, uname, hostname, disk, processes, timestamp);
+    return own ? withOwn(read, own) : read;
+  }
+
+  function withOwn(read: MonitorSnapshot, own: OwnUsage): MonitorSnapshot {
+    const latest = history.at(-1);
+    if (latest) {
+      history[history.length - 1] = { ...latest, ownCpuCores: own.cpuCores, ownMemoryBytes: own.memoryBytes };
+    }
+    return { ...read, own, history: [...history] };
   }
 
   function network(totals: NetworkTotals | null, at: number) {
@@ -225,6 +241,7 @@ export function createRouteCollector(options: RouteOptions) {
     previousNetwork = null;
     previousNetworkAt = null;
     history.length = 0;
+    ownUsage.reset();
   }
 
   return { snapshot, reset };

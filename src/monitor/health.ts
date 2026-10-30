@@ -5,7 +5,7 @@ export const STALL_LIMITS = { cpu: { warning: 25, critical: 50 }, memory: { warn
 
 export interface HealthReadings {
   readonly cpuPercent: number | null;
-  readonly memoryPercent: number;
+  readonly memoryPercent: number | null;
   readonly diskPercent: number | null;
   readonly load: { readonly fiveMinutes: number; readonly cores: number } | null;
   readonly cpuStall?: Stall | null;
@@ -19,7 +19,7 @@ export function assessHealth(readings: HealthReadings): Health {
     else if (value >= 85) issues.push({ severity: "warning", label, message: `${label} is at ${value.toFixed(1)}%.` });
   };
   if (readings.cpuPercent !== null) addThresholdIssue("CPU", readings.cpuPercent);
-  addThresholdIssue("Memory", readings.memoryPercent);
+  if (readings.memoryPercent !== null) addThresholdIssue("Memory", readings.memoryPercent);
   if (readings.diskPercent !== null) addThresholdIssue("Disk", readings.diskPercent);
   if (readings.load) {
     const { fiveMinutes, cores } = readings.load;

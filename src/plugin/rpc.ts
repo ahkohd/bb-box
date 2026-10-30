@@ -19,7 +19,7 @@ import { GENERAL_DEFAULTS } from "../core/document.ts";
 import { withPurposes } from "../transports/spawns.ts";
 import { desktopDisplays } from "../backends/types.ts";
 import { DEVICE_COPY_NEEDS_CONTROL_WORDS } from "./devices.ts";
-import { MONITOR_OFF_WORDS, monitorRpcHandlers, unreadableWords } from "./monitor.ts";
+import { MONITOR_OFF_WORDS, monitorRpcHandlers, offlineMachineWords, readableState, unreadableWords } from "./monitor.ts";
 import { DROPPED_REPLY_MESSAGE } from "./live-checks.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
@@ -56,7 +56,7 @@ async function heapSnapshot(bb: BbPluginApi): Promise<string> {
   return `kept at ${file}, written in ${Math.round(performance.now() - began)} ms`;
 }
 
-const NOT_HERE: BoxPageState = { box: null, threadId: null, owner: null, thread: null, threads: [], monitor: { machineId: null, why: null }, deviceFailed: null, ended: null };
+const NOT_HERE: BoxPageState = { box: null, threadId: null, owner: null, thread: null, threads: [], monitor: { is: "not-running", machineId: null, why: null }, deviceFailed: null, ended: null };
 
 function listed(box: BoxRecord): boolean {
   return ownedByThread(box.threadId) || box.threadId === OPERATOR;
@@ -66,10 +66,11 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
 
   const monitorReach = async (box: BoxRecord): Promise<MonitorReach> => {
-    if (!app.monitor.config().enabled) return { machineId: null, why: MONITOR_OFF_WORDS };
-    if (box.state !== "ready") return { machineId: null, why: `${box.name} is not running.` };
+    if (!app.monitor.config().enabled) return { is: "off", machineId: null, why: MONITOR_OFF_WORDS };
+    if (!readableState(box.state)) return { is: "not-running", machineId: null, why: `${box.name} is not running.` };
     const machine = (await app.monitor.machines().catch(() => [])).find((each) => each.boxId === box.id);
-    return machine ? { machineId: machine.id, why: null } : { machineId: null, why: unreadableWords(box.name) };
+    if (machine) return { is: "read", machineId: machine.id, why: null };
+    return { is: "unreadable", machineId: null, why: box.enrol.state === "enrolled" ? offlineMachineWords(box.name) : unreadableWords(box.name) };
   };
 
   const deviceFailed = (box: BoxRecord): DeviceBoot | null => {

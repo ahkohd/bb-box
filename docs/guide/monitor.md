@@ -18,7 +18,7 @@ The list has every running Linux or macOS box, whether or not it has joined BB a
 
 ## What it shows
 
-A row of labels at the top gives the machine's health, its system and architecture, its memory, its cores and how long it has been up. For BB's server, it also says how long BB has been running, as in 'bb up 2h 5m'.
+A row of labels at the top gives the machine's health, its system and architecture, its memory, its cores and how long it has been up. For BB's server, it also says how long BB has been running, as in 'bb up 2h 5m'. For a box, it says 'system up', how long its system has run since it booted, or 'host up' for a container or a shared box, whose clock is its host's. The box's own page counts 'up' from when the box last started, so the two can differ.
 
 Health is **Healthy**, **Warning** or **Critical**. Point at it to see why. It is a warning when CPU, memory or disk use reaches 85%, or when the five-minute load average reaches the number of cores. It is critical at 95%, or at a load of 1.5 times the cores.
 
@@ -41,7 +41,7 @@ A container is a warning when its tasks waited for CPU for 25% of the last minut
 
 ### Shared iOS boxes
 
-An `ios` box on a shared Mac is a macOS user of its own on that Mac. Its labels also name the Mac it is on, and how much of the Mac's video encoder is in use. Its CPU section says 'host load', as the load is the whole Mac's. Its processes are only its own.
+An `ios` box on a shared Mac is a macOS user of its own on that Mac. Its labels also name the Mac it is on, and how much of the Mac's video encoder is in use. Its CPU section says 'host load', as the load is the whole Mac's. Its processes are only its own. Its health is judged on its own CPU and memory, against its share of the Mac, not on the Mac's: see [Activity](boxes.md#activity) on the box's page.
 
 ## The Open menu
 

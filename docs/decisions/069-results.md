@@ -906,3 +906,282 @@ the list: [light](069-boxes-page/unit-1d/page-from-list-1440-light.png).
 - The terminal keeps Tab, so its back arrow cannot be reached from the
   keyboard (unit 1c's open question); the browser's Back works and now
   lands on the row's name.
+
+## Unit 2: Activity on the box's page
+
+Built on 30 October 2026, on main `7647080c`. A box's page now shows how
+the box is doing now: Activity, read through the Monitor, and its top
+processes. The lead chose Live only until unit 3 brings box history (see
+[Decided during unit 2](069-boxes-page.md#decided-during-unit-2)).
+
+### What it adds
+
+- **Activity** (`src/app/activity.tsx`, words in `activity-words.ts`). It
+  reads `boxPage`'s `monitor`, which now says what it is (`read`, `off`,
+  `not-running` or `unreadable`), and reads the box through the Monitor's
+  own `useMonitorSnapshot`, so the page and the Monitor share one reading.
+  The card's heading has "Read at 5:18:24 AM".
+  - Four tiles: CPU with the load, or the pressure in a container; memory
+    with Normal, High or Critical; free disk with its size; network down
+    and up. A fifth for a GPU where the reading has one.
+  - The chart (`src/app/history-chart.tsx`): CPU and memory as % used over
+    the last 72 readings, placed by time, a gap where a reading failed or
+    came late, ticks every 2 minutes, legend chips that hide a line, and
+    the Monitor's colours in a darker tone on the light theme (CPU
+    `#15803d`, memory `#a16207`, download `#1d4ed8`, upload `#6d28d9`,
+    the Mac `#525252`). Memory and upload are dashed, the Mac
+    long-dashed. Network below, on its own scale, with the same width.
+  - Reading a point: hover, or with focus Left and Right, Page Up and
+    Page Down by 10, Home and End, Escape to clear; none scrolls the
+    page. A polite live region, always in the page, says each point.
+  - Each chart is described by its numbers: "Over the last 6 min, every 5
+    s: CPU averaged 31%, highest 78% at 4:10:05 PM; memory last 58%",
+    and the network's averages and highest points, with the gaps (G17).
+  - The charts hold the reading they had while focus is on them, and say
+    "Held at 5:18:24 AM while you read it".
+  - Not read: the Monitor off, with "Turn it on in Monitor settings"
+    (linking to `#option/monitor`); a stopped box, "amber-coral is
+    stopped, so bb-box is not reading it. It stopped 3 min ago, today at
+    5:18 AM."; a box it cannot read, with the Monitor's words. A reading
+    that fails after one worked keeps the numbers under "Can't reach
+    amber-coral. Showing data from 5:18 AM."
+  - G16: a stopping box stays readable (`readableState` in
+    `src/plugin/monitor.ts`), so Live goes on until the stop is confirmed.
+- **Top processes**: name, PID, CPU and memory; 100% or more in amber;
+  the PID column goes below 640 px; long names cut in the middle; the
+  note that CPU is per core and that bb-box reads names and PIDs only.
+- **A shared slot** (G1, G2). Its reading adds `own` (its user's CPU in
+  cores and memory) to the snapshot and to each history point, and
+  `slot.share`: the Mac's cores and memory divided by the slots it can
+  hold (the placement's `most`). Its health is judged on its own numbers
+  against its share, never the Mac's; without its own reading, its CPU
+  and memory are not read and only the shared disk can warn. The page shows "This slot's CPU",
+  "This slot's memory", "mac-1, all slots" (busy at 85% CPU or a load of
+  its cores), "mac-1's encoder" and "mac-1's disk", the line that says
+  how it is judged, the slot's chart with the Mac's CPU as a third line,
+  hidden at first, and "This slot's processes".
+- **How a slot is read** (`src/monitor/own-usage.ts`). On a Mac, a few
+  lines of Python run by `/usr/bin/python3` read, for each of the slot
+  user's processes, `proc_pid_rusage`'s own CPU time, children's CPU time,
+  memory footprint and start, into the whole 160-byte `rusage_info_v2`
+  with a canary after it, and `proc_pidinfo`'s parent. It runs only where
+  `xcode-select -p` finds Xcode or the command line tools, as without them
+  `/usr/bin/python3` asks on the Mac's screen to install them; otherwise,
+  and where Python fails, `ps` is read, without exited children. The host
+  entry and the command route both use it. Between two readings, CPU is
+  each process's growth, a process known by its PID and start; a process
+  that ended is owed by its nearest running ancestor and settled against
+  that ancestor's children's growth for at most two readings; a change of
+  reader starts a new baseline (see the decision's section).
+- **The follow-ups from unit 1c's look in production**:
+  - Activity reads the Monitor data the page already has; an enrolled box
+    whose BB machine is offline and has no shell route now says "its BB
+    machine is not answering BB", not "it is not a BB machine".
+  - The two "up" times: the Monitor's label for a box now says whose clock
+    it counts, "system up" or, for a container or shared slot, "host up";
+    the page's "up" stays from the last start. The guide says so.
+  - How it started for a claimed spare: a spare that keeps its name is
+    named after it is ready, so that step leaves the bar and the longest
+    steps, and a line says "Once it was ready, bb-box named it for its
+    thread in 0.3 s." (`namedAfterReady`).
+  - A thread with no title: the SDK 0.6.15 gives a thread's
+    `titleFallback`, which BB's sidebar shows (its first prompt), so the
+    Threads tab's card is headed by it, then by the ID only when it has
+    neither.
+- The page's headings, the box's name and notices' titles are set at
+  weight 400, as the owner's style guide asks; the chart's tooltip has a
+  border and no shadow.
+- The guide's chapter on the Boxes page has a section on Activity; the
+  Monitor's chapter says what its "up" counts and how a slot's health is
+  judged. 069 has a section, [Decided during unit 2](069-boxes-page.md#decided-during-unit-2).
+
+Files: new `src/app/activity.tsx`, `activity-words.ts`,
+`history-chart.tsx` and `src/monitor/own-usage.ts`; changed
+`src/app/box-page.tsx`, `box-words.ts`, `desktop.tsx`,
+`monitor/status.tsx`, `src/monitor/collector.ts`, `route.ts`,
+`snapshot.ts`, and `src/plugin/contract.ts`, `monitor.ts`, `rpc.ts` and
+`setup.ts`.
+
+### Checked
+
+On a Linux box, 8 cores, in a clone of the commit delivered: `tsc` clean;
+vitest 373 tests passed in 5 files; the node suite 2,916 tests, 2,628
+passed, 288 skipped, 0 failed, the docs and site tests among them;
+`scripts/reference.ts --check` passes. (Before main's fix to the reach
+check's timing, #1301, its G7 test failed here once in 9 runs.) New tests:
+
+- `test/own-usage.test.ts`: ps's CPU times in both forms; the Mac reader's
+  shape, its guard and its `ps` fallback; that the host entry never runs
+  `/usr/bin/python3` where `xcode-select -p` fails, and looks again after
+  10 minutes; CPU between readings; children that exit
+  into a live parent; a build service its tool did not wait for; a new
+  process, a reused PID and a tree that ends whole; G1's share (2 of 4
+  cores is 50%) through the command route; a busy Mac leaving a calm slot
+  healthy.
+- `test/activity-words.test.ts`: Live's window and ticks; gaps; the chart's
+  and the network's summaries (G17); the read-out's words; a slot's words;
+  sizes and rates; a spare named after it was ready.
+- `test/activity.test.tsx`, the page in the SDK's harness: the tiles; the
+  charts' names and summaries; the read-out's keys and live region; a
+  hidden line; the processes; a slot's tiles (G1); the Monitor off; G16
+  through a stop; a box it cannot read; a failed reading; the charts held
+  while focused; the Monitor's up labels; the untitled thread's words.
+- `test/monitor.test.ts` and `test/plugin.test.ts`: a slot's share in the
+  reading; `boxPage`'s `monitor.is` and the offline machine's words.
+
+### Live check on a separate BB
+
+A Linux box, 8 cores, 16 GiB, ran a fresh `npx bb-app` 0.48.1 with no
+account, set up by [`live-setup.sh`](069-boxes-page/unit-2/live-setup.sh)
+as unit 1c's was, with bb-box installed from a clone of this branch and
+Docker on the box as its backend. The agent's `box_acquire` made
+amber-coral, a Docker box of 4 cores and 2 GiB, and a BB machine.
+[`live-check.mjs`](069-boxes-page/unit-2/live-check.mjs) drives headless
+Chromium. [Run 1](069-boxes-page/unit-2/run-1.md), on a first build
+before the slot reader's and the chart's fixes, passed its 9 checks;
+[run 2](069-boxes-page/unit-2/run-2.md) and
+[run 3](069-boxes-page/unit-2/run-3.md), on the code delivered, passed 10
+of 10 each, the tenth being the untitled thread's card.
+
+| Check | Run 2 | Run 3 |
+| --- | --- | --- |
+| CPU: `stress-ng --cpu 2`, typed into the page's own Terminal view with `top -d 5` beside it, against `top -b -d 5` in the box over 40 s. `top`'s figure is every process's %CPU over the box's 4 cores; its `%Cpu(s)` line is the host's, not the container's | page 48.2% (9 readings), `top` 47.7% (8 frames): 0.5 points | page 49.2%, `top` 49.9%: 0.7 points |
+| Processes | stress-ng twice, at 97.5% and 92.0% | the same |
+| The Monitor off, then on (`bb box option set monitor.enabled=…`) | the off words and the settings link within seconds, the processes gone; Live back on | the same |
+| G16: Stop with Docker's stop slowed by 20 s | "Read at 5:18:37 AM", then "Read at 5:18:47 AM" while Stopping; then "amber-coral is stopped, so bb-box is not reading it. It stopped just now, today at 5:18 AM." | the same |
+| Started again | Live back on its own | the same |
+| A failed reading (`docker pause`) | "Can't reach amber-coral. Showing data from 5:18 AM.", the last numbers kept | the same |
+| The keyboard | role `application`, "chart"; held while focused; End "5:18:24 AM: CPU 45%, Memory 19%", Left the reading before; Page Down did not scroll | the same |
+| The untitled thread's card | headed "CALL box_list", its first prompt, not its ID | the same |
+
+Run 1, on the first build, had the same results (CPU gap 0.3 points).
+
+### Gates
+
+| Gate | Result | How |
+| --- | --- | --- |
+| G1 | Passed, on a 12-core host holding up to 9 slots, not a 12-core Mac with 3 | No free 3-slot Mac: the pool's Mac was lent whole to another box, and the Namespace Mac gave no second slot twice (see Follow-ups). Three slots on one Tart shared iOS host, 12 cores and 22 GiB, which holds up to 9, so a share is 1.33 cores. This branch's collector ran in each slot, as the host entry does, every 5 s. With the host at 88 to 100% CPU from the other two slots (their new simulators kept it near a load of 20), the quiet slot read 2 to 13% of its share throughout. The loaded slot read 10.5 cores, 787% of its share and 87% of the host, under 10 busy processes. A slot over its share is judged on its own numbers (tested), and the 2-of-4-cores case is tested through the command route; it could not be reproduced on a 9-slot host |
+| G2 | Passed against the Mac's own counters; `time xcodebuild` cannot be the yardstick | In a Namespace slot, an `xcodebuild` of a Swift package of 360 files for the iOS Simulator, run from a shell that stays open, as a terminal is. Over the build the slot read 36.1 CPU-seconds above its idle level; the Mac, with no other slot busy, 36.5: 1% apart. `time xcodebuild` reported 1.1 s, as Xcode's build service, which runs the compilers, is not a child `xcodebuild` waits for. With `ps -S`, as 069 first said, the slot read almost nothing of the build: macOS 26's `ps -S` adds no exited child's time. Unit 3's history part waits for unit 3 |
+| G16 | Passed | Above, three runs |
+| G17 | Passed in tests and with NVDA | NVDA read "Download and upload, the last 6 min, every 5 s", then "download averaged 957 B/s, highest 5 KB/s at 4:56:28 AM; upload averaged 1.1 KB/s, highest 5.3 KB/s at 4:56:28 AM" |
+
+The guard, on a Tart shared iOS slot with Xcode 27, the command route's
+whole script for a slot run by `sh` and by `zsh`: with Xcode there, the
+Python reader answered for 151 processes; with an `xcode-select` that
+fails first on the `PATH`, `ps` answered, and Python was not run.
+
+### Screen readers
+
+NVDA 2026.2, portable, in Edge on a Windows desktop box, with its speech
+logged ([what it said](069-boxes-page/unit-2/nvda-speech.md)). The first
+look found two faults, both fixed: as an image, the chart kept NVDA in
+browse mode, so the arrow keys moved NVDA's own cursor and never reached
+the read-out; and NVDA said the chart's summary again at every reading,
+as it changed while focused. After the fix, Tab from the box's name
+reached the ID, Copy link, the thread, Terminal, Stop, the menu, the
+legend's CPU and Memory ("toggle button, pressed") and the chart: "CPU
+and memory, the last 6 min, every 5 s, chart", then its summary; End said
+"4:59:15 AM: CPU 0%, Memory 30%", Left the reading before, Home the first,
+and nothing more was said while it waited. Page Up and Page Down did not
+reach the page through the desktop tool's key names; they are checked in
+Chromium.
+
+VoiceOver was not checked: a Mac desktop box on Tart cannot reach the
+separate BB's network, the Namespace and pool Macs were not free as
+desktops, and a fresh BB on a Mac box has no backend to make a box with.
+NVDA stands in, with the attributes VoiceOver reads (`application`,
+`aria-roledescription` "chart", the summary by `aria-describedby`, a
+polite live region) under test.
+
+### Screenshots
+
+From run 2, at 1440, 760 and 390 px, light and dark: under load
+([1440](069-boxes-page/unit-2/ready-load-1440-light.png),
+[dark](069-boxes-page/unit-2/ready-load-1440-dark.png),
+[760](069-boxes-page/unit-2/ready-load-760-light.png),
+[760 dark](069-boxes-page/unit-2/ready-load-760-dark.png),
+[390](069-boxes-page/unit-2/ready-load-390-light.png),
+[390 dark](069-boxes-page/unit-2/ready-load-390-dark.png)); the Monitor off
+([1440](069-boxes-page/unit-2/monitor-off-1440-light.png),
+[dark](069-boxes-page/unit-2/monitor-off-1440-dark.png),
+[390 dark](069-boxes-page/unit-2/monitor-off-390-dark.png)); stopped
+([1440](069-boxes-page/unit-2/stopped-1440-light.png),
+[760](069-boxes-page/unit-2/stopped-760-light.png),
+[390 dark](069-boxes-page/unit-2/stopped-390-dark.png)); stopping
+([1440](069-boxes-page/unit-2/stopping-1440-light.png)); a failed reading
+([1440](069-boxes-page/unit-2/stale-1440-light.png)); the box's terminal
+with `top` ([1440](069-boxes-page/unit-2/terminal-top-1440.png)); and the
+Threads tab ([1440](069-boxes-page/unit-2/threads-1440-light.png)). The
+others of each set are in the same folder. No shared slot is shown: none
+was read by the separate BB.
+
+### Not checked live, and why
+
+- A shared slot's page in a browser: the separate BB has no Mac. Its
+  numbers were measured in real slots with this branch's collector; its
+  tiles and words are covered by tests.
+- VoiceOver: above.
+- A GPU tile, and a box read through its command route rather than as a
+  BB machine: the box here was a BB machine with no GPU. Their tests
+  cover them.
+- The spare named after ready, and the Monitor's "system up" and "host
+  up": no spares were kept on the separate BB, and the Monitor's machine
+  status was not opened there. Both have tests, and both show in
+  production: a claimed Windows spare this thread used said "naming it
+  for its owner 0.3 s" after its total.
+- A look in production in the owner's browser waits for the lead's deploy.
+
+### Deviations from 069
+
+- No range group until unit 3, by the lead's decision; G16 reads as above.
+- A slot's own CPU is read with `proc_pid_rusage`, not `ps -S`, and its
+  memory as footprints, not resident sizes (see the decision's section).
+  It runs only where `xcode-select -p` finds Xcode or the command line
+  tools; without them, exited children are not counted.
+- G2's yardstick is the Mac's own CPU, not `time xcodebuild`.
+- The chart is `role="application"` with the role description "chart",
+  not an image, and holds still while focused.
+- A slot's share is the Mac's cores and memory over the slots it can hold;
+  064's per-slot cores and memory are not used, as a pool Mac's slots set
+  none. "mac-1's disk" gives the Mac's free disk without the slot's own
+  files beside it: measuring a home folder at each reading costs too much.
+- Live has no disk line: the Monitor's 72 readings keep CPU, memory and
+  network only. Unit 3's history has disk.
+- The line under a slot's tiles says "one of up to 3 slots there", the
+  slots the Mac can hold, not how many other slots are held now, which
+  bb-box knows only for its own install.
+
+### Open questions
+
+- For VoiceOver in a later unit: should a separate BB for a Mac check run
+  on a Mac box with a backend it can reach, or should the live BB's box
+  get a route a Tart VM can reach?
+
+### After the independent review
+
+The review of `3dfaf0b3` said to merge after five fixes. Each has its
+tests; 1 to 3 were checked again on a Tart shared iOS slot, macOS 27 with
+Xcode 27, with this branch's collector, as the host entry runs it.
+
+| # | Finding | Fix | Tests | On the Mac |
+| --- | --- | --- | --- | --- |
+| 1 | The reader's ctypes structure was 112 bytes, but `proc_pid_rusage` flavour 2 writes the 160-byte `rusage_info_v2` | The whole structure, 18 counters after the UUID, with a 64-byte canary after it: a structure of another size, or a canary not as it was, ends the reader with an error before it prints, and `ps` is read | `own-usage.test.ts`: the reader's fields add to 160 bytes, its size and offset check, the canary's fill and check, and that it prints once at the end | A probe: a 112-byte buffer had 48 bytes written past it, a 160-byte one none. The reader ran with its canary untouched |
+| 2 | A zombie answers `proc_pid_rusage` but not `proc_pidinfo`, so it was dropped and its time counted again at the wait; a reused PID broke the counters | A process is known by its PID and start. A zombie is kept, with the parent it had. A process that ended is owed by its nearest running ancestor and settled against that ancestor's children's growth in that reading or the next, then lapses | `own-usage.test.ts`: a zombie waited for late, one never seen alive, a reused PID with a lower and a higher counter, compilers that exit, a build service not waited for, a debt that lapses | The reader listed the zombie with no parent (`4747 -1 3.000`). A child using 8 s of CPU, then a zombie for 6 s, then waited for: 1.25 and 0.74 cores while it ran, and nothing at the wait beyond the slot's idle 0.04 to 0.6 |
+| 3 | `ps` has no children's counters, so an exited child's credit took a parent's new time, and a change of reader could make a spike | A reading says which counters it has; with `ps`'s alone nothing is owed; a change of reader starts a new baseline | `own-usage.test.ts`: an exited child under `ps`, and changes from the Python reader to `ps` and back | With `xcode-select` failing, the same child: 0.9 cores while it ran, nothing at its exit or wait, no spike; `ps` loses its last seconds, as a zombie reads 0:00.00 there |
+| 4 | A slot's percentages were capped at 100 before the summary, the tooltip and the read-out | Raw values everywhere but the drawn line, which the chart already stops at the top | `activity.test.tsx`: a slot at 787% of its share and 125% of its memory says so in its tile, summary and read-out, and its line is drawn at the top | |
+| 5 | When a slot's own reading failed, its health fell back to the whole Mac's | Its CPU and memory are then not read, and only the shared disk can warn; the page says "not read" | `own-usage.test.ts` and `monitor.test.ts`: a busy Mac with no own reading leaves the slot healthy, a full disk warns; `activity.test.tsx`: the tiles say "not read" | |
+
+On a Linux box, in a clone of the commit delivered: `tsc` clean; vitest
+373 tests passed in 5 files; the node suite 2,916 tests, 2,628 passed,
+288 skipped, 0 failed; `scripts/reference.ts --check` passes. The change
+between readers was not seen live: the host entry looks for the tools
+again only every 10 minutes; its tests cover it.
+
+### Follow-ups
+
+- The Namespace Mac made for the first ios box gave no slot to a second
+  or third, twice ("gave box … no slot within 5 minutes"), though it said
+  slot 1 of 4. Not part of unit 2.
+- Unit 3: read a slot's history with `own-usage.ts`, and add the range
+  group, history's disk line, and the busiest minute.
+- Unit 4: busy from a slot's own share, as its health is now.

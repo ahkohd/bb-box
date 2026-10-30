@@ -17,6 +17,7 @@ import { myViewers } from "./box-row.tsx";
 import { boxesUrl, useBoxesNav, type WayBackTo } from "./box-nav.tsx";
 import { boxPage, viewFromPage, type BoxPageRoute, type BoxViewName } from "./box-route.ts";
 import { useThreadTitles } from "./desktop.tsx";
+import { Activity } from "./activity.tsx";
 import {
   acquireSteps,
   actorWords,
@@ -27,6 +28,7 @@ import {
   headline,
   hostOf,
   joinedAfter,
+  namedAfterReady,
   NOT_HERE_TITLE,
   NOT_HERE_WORDS,
   backendNotice,
@@ -245,7 +247,7 @@ function Header({ page, box, route, now, titles, actions, menu }: { page: BoxPag
           </span>
           <div className="min-w-0">
             <h1 ref={heading} tabIndex={-1} data-page-heading className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 focus:outline-none">
-              <span className="truncate text-lg font-medium leading-tight tracking-[-0.01em] text-foreground">{box.name}</span>
+              <span className="truncate text-lg font-normal leading-tight tracking-[-0.01em] text-foreground">{box.name}</span>
               <span className="text-sm font-normal text-muted-foreground">{systemName(box)}</span>
               {deviceModelOf(box) ? <span className="text-sm font-normal text-foreground">{deviceModelOf(box)}</span> : null}
               <span className="flex items-center gap-1 self-center">
@@ -304,7 +306,7 @@ function PageNotice({ tone, title, children, actions }: { tone: "bad" | "warn"; 
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} data-notice={tone} className={cn("rounded-lg border px-4 py-3", tone === "bad" ? "border-surface-destructive-border bg-surface-destructive" : "border-warning/40 bg-warning/5")}>
-      <h2 id={headingId} className={cn("text-sm font-medium", tone === "bad" ? "text-destructive-text" : "text-warning-text")}>
+      <h2 id={headingId} className={cn("text-sm font-normal", tone === "bad" ? "text-destructive-text" : "text-warning-text")}>
         {title}
       </h2>
       {children ? <div className="mt-1 text-sm text-foreground">{children}</div> : null}
@@ -610,7 +612,7 @@ function ThreadsCard({ page, box, onNewThread }: { page: BoxPageState; box: BoxV
   const none = online ? "None now. A thread can run on its BB machine." : box.enrol.state === "enrolled" ? "None. Its BB machine is offline now." : "None. It is not a BB machine, so no thread can run on it.";
   return (
     <section aria-labelledby="threads-heading" className="rounded-lg border border-border bg-card px-4 py-3">
-      <h2 id="threads-heading" className="text-sm font-medium text-foreground">
+      <h2 id="threads-heading" className="text-sm font-normal text-foreground">
         {yours ? "Threads on this machine" : "Other threads on it"}
       </h2>
       {others.length ? <ThreadChips threads={others} className="mt-2" /> : <p className="mt-1 text-xs text-muted-foreground">{none}</p>}
@@ -624,7 +626,8 @@ function ThreadsCard({ page, box, onNewThread }: { page: BoxPageState; box: BoxV
 }
 
 function HowItStarted({ box, now, titles }: { box: BoxView; now: number; titles: ThreadTitles }) {
-  const steps = acquireSteps(box.timings).filter(([, ms]) => ms > 0);
+  const afterwards = namedAfterReady(box.timings);
+  const steps = acquireSteps(box.timings).filter(([step, ms]) => ms > 0 && !(afterwards !== null && step === "relabel"));
   const total = box.timings.total ?? steps.reduce((sum, [, ms]) => sum + ms, 0);
   const longest = new Set([...steps].sort((a, b) => b[1] - a[1]).slice(0, LONGEST_STEPS).map(([step]) => step));
   const joined = joinedAfter(box.timings);
@@ -633,11 +636,11 @@ function HowItStarted({ box, now, titles }: { box: BoxView; now: number; titles:
   const restartSteps = startSteps(box.timings).filter(([step]) => step !== "start.total");
   const by = restart ? actorWords(restart.by, titles) : null;
   const quicker = steps.length - longest.size;
-  const summary = [quicker > 0 ? `And ${quicker} quicker ${quicker === 1 ? "step" : "steps"}.` : null, joined !== null ? `It joined BB ${stepTime(joined)} later.` : null, `Made ${dayAndClock(box.createdAt, now)}.`].filter(Boolean).join(" ");
+  const summary = [quicker > 0 ? `And ${quicker} quicker ${quicker === 1 ? "step" : "steps"}.` : null, afterwards !== null ? `Once it was ready, bb-box named it for its thread in ${stepTime(afterwards)}.` : null, joined !== null ? `It joined BB ${stepTime(joined)} later.` : null, `Made ${dayAndClock(box.createdAt, now)}.`].filter(Boolean).join(" ");
   return (
     <section aria-labelledby="started-heading" className="rounded-lg border border-border bg-card px-4 py-3">
       <div className="flex items-baseline justify-between gap-2">
-        <h2 id="started-heading" className="text-sm font-medium text-foreground">
+        <h2 id="started-heading" className="text-sm font-normal text-foreground">
           How it started
         </h2>
         <span className="text-xs tabular-nums text-muted-foreground">{box.state === "failed" ? "Did not finish" : total > 0 ? `Ready in ${stepTime(total)}` : ""}</span>
@@ -685,7 +688,7 @@ export function NotHere({ page, back, now }: { page: BoxPageState | null; back: 
     <PageFrame>
       <Trail back={back} here={ended?.name ?? "Not here"} />
       <EmptyPanel>
-        <p ref={heading} tabIndex={-1} className="font-medium text-foreground focus:outline-none">
+        <p ref={heading} tabIndex={-1} className="font-normal text-foreground focus:outline-none">
           {words.title}
         </p>
         <p className="mt-1">{words.words}</p>
@@ -772,6 +775,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
         {announced}
       </p>
       {starting ? <Starting box={box} now={now} /> : null}
+      {starting ? null : <Activity page={page} box={box} now={now} />}
       {starting ? null : <Facts box={box} now={now} />}
       {starting ? null : failed ? (
         <HowItStarted box={box} now={now} titles={titles} />

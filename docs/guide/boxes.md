@@ -132,11 +132,27 @@ The page shows, from the top:
 - its views, Desktop, Simulator or Emulator and Terminal, then Start or Stop and the menu. A view that cannot open now is greyed out and says why, such as 'calm-otter is stopped'. Hold Command or Ctrl as you select a view to open it in a new tab
 - notices, when there are any: a stop, start, resize or release that failed, with what BB Box saw of the box after it, a backend that is no longer in BB Box's settings, a box that does not answer, a box that did not start, a stop BB Box did not ask for, a device that did not boot, and a box that could not join BB
 - while the box starts, its steps so far and what it waits on
+- [Activity](#activity): its CPU, memory, disk and network now and over the last few minutes, then its top processes
 - its kind, size, where it runs, address, system, whether it is a BB machine, when it was made, and who has control of its desktop or device
 - the other threads on its BB machine, with **New thread on this box…**
 - how it started: how long each step took, and when it last started, and who started it
 
 Who stopped or started a box comes from its log, so the page leaves it out where the log does not say.
+
+### Activity
+
+While a box runs and the page is shown, Activity reads it through the Monitor, every 5 seconds unless you set the Monitor's interval otherwise. The Monitor's machine status and the page share one reading. At the top right it says when it last read the box.
+
+- Four tiles give its CPU, with the load or, in a container, the pressure; its memory, marked **Normal**, **High** or **Critical**; its free disk; and its network down and up. A box with GPU readings has a fifth.
+- A chart shows its CPU and memory, as % used, over the last 6 minutes. Select **CPU** or **Memory** above it to hide or show a line. A second chart shows its download and upload.
+- Point at a chart to read its numbers at that time. With the keyboard, Tab to a chart, then Left and Right move from reading to reading, Page Up and Page Down 10 at a time, Home and End to the first and last, and Escape clears it. A screen reader hears each reading, and a summary of the chart, such as 'CPU averaged 31%, highest 78% at 4:10:05 PM; memory last 58%', with any gaps.
+- **Top processes** lists its 6 busiest processes, by name, PID, CPU and memory. CPU is per core, so a build on four cores shows 400%; 100% or more is in amber. BB Box reads names and PIDs only, never a process's arguments or environment.
+
+A shared iOS or macOS box is a macOS user on a Mac shared with other boxes. Its tiles are its own: **This slot's CPU** and **This slot's memory** are its own processes', against its share of the Mac, which is the Mac's cores and memory divided by the slots the Mac can hold. On a Mac of 12 cores that holds 3 slots, a slot using 2 cores is at 50% of its share. Then come the Mac's own numbers for all slots, its video encoder and its disk. The Mac's numbers never make the slot's health a warning; only its own do. Its chart has a third line, the Mac's CPU, hidden until you select it. A slot's CPU counts the processes its own user ran, those that have ended included, as long as a process of its user waited for them.
+
+When the box is stopped, or not running, Activity says it is not read, and when it stopped. While it stops, it keeps reading until the stop is confirmed. If a reading fails after one worked, it keeps the last numbers and says which time they are from. A box that BB Box cannot read, such as a Windows box that is not a BB machine, says why. When the Monitor is off, BB Box reads nothing, and Activity has a link to the Monitor's settings to turn it on.
+
+Activity shows only the last few minutes for now: BB Box keeps no history of a box yet.
 
 When a box's backend is no longer in BB Box's settings, or does not answer, its Stop, Start, Resize and New thread on this box are greyed out, and a line beside them says why. A box that does not answer itself can still be stopped, started, resized and released, as those go through its backend: only its views and New thread on this box are greyed out. It says when BB Box checks it again; select **Check now** to check at once. Once it is stopped, or answers, it no longer says it does not answer. For a box whose backend was removed, **Forget…** removes BB Box's record of it and deletes nothing: if it still runs on that backend, it keeps running.
 

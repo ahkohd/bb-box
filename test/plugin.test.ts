@@ -5930,7 +5930,7 @@ test("boxPage finds a box by its ID alone, with its thread, the threads on its B
   await tool("box_acquire", {});
   const box = await app.boxes.enrolled(await only(app));
   world.onHost.set(box.enrol.hostId!, [{ id: "thr_worker", title: "Build the app", status: "idle", hasPendingInteraction: false, archivedAt: null, deletedAt: null }]);
-  const page = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { id: string; name: string }; threadId: string; owner: string; thread: { id: string; running: boolean }; threads: { id: string }[]; monitor: { machineId: string | null; why: string | null }; ended: unknown };
+  const page = (await harness.behavior.callRpc("boxPage", { box: box.id })) as { box: { id: string; name: string }; threadId: string; owner: string; thread: { id: string; running: boolean }; threads: { id: string }[]; monitor: { is: string; machineId: string | null; why: string | null }; ended: unknown };
   assert.equal(page.box.name, box.name);
   assert.equal(page.threadId, THREAD);
   assert.equal(page.owner, "thread");
@@ -5938,6 +5938,8 @@ test("boxPage finds a box by its ID alone, with its thread, the threads on its B
   assert.equal(page.thread.running, false);
   assert.deepEqual(page.threads.map((thread) => thread.id), ["thr_worker"]);
   assert.ok(page.monitor.machineId !== null || page.monitor.why !== null, "the Monitor's machine, or why it cannot read it");
+  if (page.monitor.is === "read") assert.ok(page.monitor.machineId);
+  else assert.match(page.monitor.why ?? "", /its BB machine is not answering BB|not a BB machine/, "an enrolled box the Monitor cannot reach is not called no BB machine");
   assert.equal(page.ended, null);
 
   const nothing = (await harness.behavior.callRpc("boxPage", { box: "bxnosuchbox000" })) as { box: unknown; ended: unknown };
