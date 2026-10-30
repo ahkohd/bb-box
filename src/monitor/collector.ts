@@ -147,7 +147,7 @@ export function diskFrom(blocks: number, freeBlocks: number, availableBlocks: nu
   };
 }
 
-async function readDisk() {
+export async function readDisk() {
   try {
     const stats = await statfs(ROOT_MOUNT);
     return diskFrom(stats.blocks, stats.bfree, stats.bavail, stats.bsize);
@@ -184,7 +184,7 @@ export function parseNetDev(source: string): NetworkTotals | null {
   }));
 }
 
-async function readMacNetworkTotals(signal: AbortSignal): Promise<NetworkTotals | null> {
+export async function readMacNetworkTotals(signal: AbortSignal): Promise<NetworkTotals | null> {
   try {
     const { stdout } = await execFileAsync("netstat", ["-ibn"], { timeout: 1500, maxBuffer: 512 * 1024, signal, env: { ...process.env, LC_ALL: "C" } });
     return parseNetstatLinks(stdout);
@@ -231,7 +231,7 @@ async function readWindowsNetworkTotals(signal: AbortSignal): Promise<NetworkTot
 
 let windowsCountersSeen = false;
 
-async function readNetworkTotals(signal: AbortSignal): Promise<NetworkTotals | null> {
+export async function readNetworkTotals(signal: AbortSignal): Promise<NetworkTotals | null> {
   if (platform() === "darwin") return readMacNetworkTotals(signal);
   if (await isWsl()) {
     const windows = await readWindowsNetworkTotals(signal);
@@ -298,7 +298,7 @@ async function ownProcessList(signal: AbortSignal, uid: number): Promise<string>
   return run("ps", psOwnArgs(uid));
 }
 
-async function readOwnProcesses(signal: AbortSignal): Promise<OwnReading | null> {
+export async function readOwnProcesses(signal: AbortSignal): Promise<OwnReading | null> {
   const uid = process.getuid?.();
   if (uid === undefined) return null;
   try {

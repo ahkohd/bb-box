@@ -777,7 +777,7 @@ function server(initial: BoxView[], options: { monitor?: MonitorReach; holder?: 
       }
       return { result: { ok: true, state: configState(options.config ?? {}), problems: [] }, hosts: dockerHosts };
     },
-    "monitor.state": () => ({ enabled: false, backgroundMonitoring: false, pressureNotifications: true }),
+    "monitor.state": () => ({ enabled: false, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true, historyFull: null }),
     "monitor.server": () => {
       throw new Error("The Monitor is off.");
     },
@@ -786,6 +786,7 @@ function server(initial: BoxView[], options: { monitor?: MonitorReach; holder?: 
       throw new Error("The Monitor is off.");
     },
     "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
+    "monitor.history": () => null,
   };
   return { handlers, changes, asked, copyInBox, operations, receipts };
 }
@@ -822,7 +823,7 @@ function configState(overrides: Partial<ConfigState> & { document?: ConfigDocume
     revision: document.revision,
     defaults: {
       general: { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true, iosEncoder: "auto" },
-      monitor: { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true },
+      monitor: { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true },
       kinds: {
         linux: { enabled: true, presets: { small: size(2, 4), medium: size(4, 8), large: size(8, 16) }, default: "small", largest: size(16, 32, 256) },
         "linux-desktop": { enabled: true, presets: { small: size(4, 8), medium: size(8, 16), large: size(16, 32) }, default: "small", largest: size(32, 64, 256) },

@@ -2,12 +2,18 @@ import { createCollector, type Collector, type ProcessScope } from "../monitor/c
 import { createDemandSampler } from "../monitor/demand-sampler.ts";
 import { stopMacSensors } from "../monitor/mac-sensors.ts";
 import type { MonitorSnapshot } from "../monitor/snapshot.ts";
+import { readLightHere } from "../monitor/light-local.ts";
+import type { LightReading, LightRequest, LightWire } from "../monitor/light.ts";
+
+const LIGHT_TIMEOUT_MS = 8_000;
 
 export interface MonitorOptions {
   readonly collector?: (scope: ProcessScope, refreshIntervalMs: () => number) => Collector;
+  readonly light?: (request: LightRequest, signal: AbortSignal) => Promise<LightReading>;
 }
 
 export function monitorHandlers(options: MonitorOptions = {}) {
+  const readLight = options.light ?? readLightHere;
   const makeCollector = options.collector ?? ((scope, refreshIntervalMs) => createCollector({ refreshIntervalMs, scope }));
   let refreshIntervalMs = 5000;
   const samplers = new Map<ProcessScope, ReturnType<typeof createDemandSampler<MonitorSnapshot>>>();
@@ -26,6 +32,7 @@ export function monitorHandlers(options: MonitorOptions = {}) {
         refreshIntervalMs = requested;
         return { ...(await samplerFor(scope ?? "machine").sample(force)), refreshIntervalMs };
       },
+      "monitor.light": async (request: LightRequest) => (await readLight(request, AbortSignal.timeout(LIGHT_TIMEOUT_MS))) as LightWire,
     },
     async dispose() {
       for (const sampler of samplers.values()) sampler.dispose();

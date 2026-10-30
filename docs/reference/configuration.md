@@ -124,6 +124,7 @@ The Monitor (066): machine status in BB's sidebar footer for BB's server, your m
 | `refreshIntervalSeconds` | `number` | `5` | Seconds between readings while the machine status is open, 2 to 60. Background monitoring keeps its own 30 seconds. |
 | `backgroundMonitoring` | `boolean` | `false` | Whether bb-box checks BB's server's CPU and memory every 30 seconds while nobody looks, and keeps diagnostic logs for bb box monitor logs. Off unless set. |
 | `pressureNotifications` | `boolean` | `true` | Whether background monitoring shows a toast in BB when CPU or memory stays high, and when it recovers. On unless set off. |
+| `boxHistory` | `boolean` | `true` | Whether bb-box keeps each box's history: a light reading of every running box once a minute, kept 24 hours by the minute and 7 days by the hour, for the 1 h, 24 h and 7 d of a box's page (069). Off, nothing is read in the background, and what was kept stays until it ages out. On unless set off. |
 
 ## Each backend's fields
 

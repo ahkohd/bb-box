@@ -62,6 +62,7 @@
 | [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
 | [`bb box monitor logs`](#bb-box-monitor-logs) | Show background monitoring's diagnostic records, oldest first: the last 100, or --limit up to 500. --json gives JSON lines. |
 | [`bb box monitor test-alert`](#bb-box-monitor-test-alert) | Show a labelled preview of a pressure alert in every BB window that is open and visible. Needs background monitoring and its notifications on. |
+| [`bb box monitor history`](#bb-box-monitor-history) | Show box history (069): whether it reads boxes, how many readings were due, taken, skipped and failed each hour, each box's newest point, and the room its file uses. --hours chooses how many hours, 24 by default. |
 | [`bb box sweep`](#bb-box-sweep) | Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers, and settle and check bb-box's snapshots against each backend's. |
 
 ## bb box doctor
@@ -1065,6 +1066,20 @@ Show a labelled preview of a pressure alert in every BB window that is open and 
 ```text
 Usage:
   bb box monitor test-alert
+```
+
+## bb box monitor history
+
+Show box history (069): whether it reads boxes, how many readings were due, taken, skipped and failed each hour, each box's newest point, and the room its file uses. --hours chooses how many hours, 24 by default.
+
+```text
+Usage:
+  bb box monitor history [--json] [--hours <1-168>]
+
+Options:
+  --json           Print JSON.
+  --hours <1-168>  How many of the last hours to tally, 1 to 168. 24 by default.
+  --help, -h       Show this help and exit
 ```
 
 ## bb box sweep

@@ -15,7 +15,7 @@ function state(backends: { id: string; enabled?: boolean; checkedAgo?: number | 
     revision: 7,
     defaults: {
       general: { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true, iosEncoder: "auto" },
-      monitor: { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true },
+      monitor: { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true },
       kinds: { linux: { enabled: true, presets: { small: size, medium: size, large: size }, default: "small", largest: size }, android: { enabled: true, presets: { small: size, medium: size, large: size }, default: "small", largest: size } },
     },
     kinds: [

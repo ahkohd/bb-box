@@ -690,7 +690,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         ...(app.replyDrops ? replyDropCommands(app.replyDrops) : {}),
         ...configCommands(app.configuration),
         ...snapshotCommands(app),
-        ...monitorCommands(bb, app.monitor),
+        ...monitorCommands(bb, app.monitor, app.history),
         sweep: cliCommand({
           summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers, and settle and check bb-box's snapshots against each backend's.",
           options: jsonOption,

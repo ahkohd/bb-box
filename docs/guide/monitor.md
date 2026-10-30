@@ -76,6 +76,20 @@ After it is back to normal, BB Box waits at least 5 minutes before it warns abou
 
 To see what a notification looks like, run `bb box monitor test-alert`. It shows a labelled preview, and needs background monitoring and its notifications on.
 
+## Box history
+
+Box history is on by default. BB Box reads every running box once a minute and keeps what it read: each minute for 24 hours, and each hour for 7 days. A box's page shows it over [1 hour, 24 hours and 7 days](boxes.md#over-1-hour-24-hours-and-7-days).
+
+- A reading is light: CPU time, memory, the box's limits in a container, CPU and memory pressure, load, disk and network, with no processes. For a box that is not a BB machine it is one command, whose answer is under 1 KB; for a BB machine, one call to BB Box's host entry. A shared slot reads its own user's processes, and one slot a minute also reads its Mac for all of them.
+- Each box has its own second in the minute, so readings spread out. Up to 8 run at once, as many as the minute's readings need. A reading that does not answer within 10 s fails. A box whose readings fail 3 times in a row is read again once BB Box finds it answers.
+- It keeps its counters between readings, so each point is the mean since the last reading. After a restart of BB Box of under about 2 minutes, nothing is lost.
+- It keeps its points in `box-history.db`, beside BB Box's database, capped at 64 MB. A released or forgotten box's points go 24 hours after it. If the file ever fills, box history stops writing and says so in Monitor settings and the doctor, and starts again once old points make room. Nothing else is affected.
+- It sends no notifications. It does not read BB's server or your other BB machines that are not boxes: that is background monitoring.
+
+To turn it off, turn off **Keep each box's history** under Monitor in BB Box's settings, or run `bb box option set monitor.boxHistory=false`. Off, BB Box reads no box in the background; a box's page and the Monitor still read it while they are open, and what was kept stays until it ages out. The times it was off show as Not read.
+
+`bb box monitor history` shows whether it reads, how many readings were due, taken, skipped and failed each hour, each box's newest point and the room its file uses.
+
 ## Changing the settings or turning it off
 
 In BB's settings, open BB Box, then go to Monitor:
@@ -84,8 +98,9 @@ In BB's settings, open BB Box, then go to Monitor:
 - **Refresh every** sets the seconds between readings while the panel is open: 5 by default, from 2 to 60.
 - **Background monitoring** turns background monitoring on or off. It is off by default.
 - **Pressure notifications** turns notifications on or off. They are on by default.
+- **Keep each box's history** turns [box history](#box-history) on or off. It is on by default.
 
-When **Machine status** is off, nothing of the Monitor runs: no readings, no background monitoring and no notifications. The sidebar keeps its entry until BB next loads, so select **Reload BB now** to remove it. Turning it on again adds the entry back after a reload.
+When **Machine status** is off, nothing of the Monitor runs: no readings, no background monitoring, no box history and no notifications. The sidebar keeps its entry until BB next loads, so select **Reload BB now** to remove it. Turning it on again adds the entry back after a reload.
 
 From a terminal, `bb box option set monitor.enabled=false` turns it off, and `bb box option list` lists the Monitor's options. See the [command-line reference](../reference/cli.md#bb-box-option-set).
 
@@ -99,5 +114,6 @@ The Monitor only reads. It changes no settings, stops no process and calls no ou
 - `bb box monitor health` shows the pressure on BB's server, and exits with 2 when it is critical.
 - `bb box monitor logs` shows background monitoring's records.
 - `bb box monitor test-alert` shows a preview notification.
+- `bb box monitor history` shows what box history reads and keeps.
 
 Each is in the [command-line reference](../reference/cli.md#bb-box-monitor-snapshot).

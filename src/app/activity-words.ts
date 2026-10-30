@@ -1,6 +1,6 @@
-import type { MetricPoint, MonitorSnapshot } from "../plugin/contract.ts";
-import { span } from "./box-words.ts";
-import type { ChartSeries } from "./history-chart.tsx";
+import type { GapKind, HistoryGap, HistoryRange, MetricPoint, MonitorSnapshot } from "../plugin/contract.ts";
+import { clock, dayAndClock, span } from "./box-words.ts";
+import type { ChartSeries, Tick } from "./history-chart.tsx";
 
 export const LIVE_POINTS = 72;
 
@@ -196,8 +196,108 @@ export function hostBusy(snapshot: MonitorSnapshot): boolean {
   return (cpu !== null && cpu >= 85) || (load !== undefined && load / snapshot.cpu.cores >= 1);
 }
 
-export function readOutWords(series: readonly ChartSeries[], index: number, when: string, gap: string): string {
-  const read = series.map((line) => ({ line, value: line.values[index] ?? null }));
+export const BUSIEST_ABOVE = 5;
+
+export function busiestShown(value: number | null, peak: number | null | undefined): peak is number {
+  return value !== null && peak !== null && peak !== undefined && peak - value >= BUSIEST_ABOVE;
+}
+
+export function readOutWords(series: readonly ChartSeries[], index: number, when: string, gap: string, note: string | null = null): string {
+  const read = series.map((line) => ({ line, value: line.values[index] ?? null, peak: line.peaks?.[index] ?? null }));
   if (!read.some((each) => each.value !== null)) return `${when}: ${gap}`;
-  return `${when}: ${read.map(({ line, value }) => `${line.label} ${value === null ? "no reading" : line.format(value)}`).join(", ")}`;
+  const values = read.map(({ line, value, peak }) => `${line.label} ${value === null ? "no reading" : line.format(value)}${busiestShown(value, peak) ? `, busiest minute ${line.format(peak)}` : ""}`).join(", ");
+  return `${when}: ${values}${note ? `; ${note}` : ""}`;
+}
+
+export const RANGE_LABELS: Readonly<Record<HistoryRange, string>> = { "1h": "1 h", "24h": "24 h", "7d": "7 d" };
+
+export const RANGE_WORDS: Readonly<Record<HistoryRange, string>> = {
+  "1h": "the last hour, by the minute",
+  "24h": "the last 24 hours, by 10 minutes",
+  "7d": "the last 7 days, by the hour",
+};
+
+export const GAP_WORDS: Readonly<Record<GapKind, string>> = {
+  "not-made": "Not made yet",
+  starting: "Starting",
+  stopped: "Stopped",
+  "not-read": "Not read",
+  "no-reading": "No reading",
+};
+
+export function historyTimeWords(range: HistoryRange, now: number): (at: number) => string {
+  return range === "1h" ? (at) => clock(at) : (at) => dayAndClock(at, now);
+}
+
+function localTicks(from: number, to: number, first: Date, advance: (date: Date) => void, words: (at: number) => string): Tick[] {
+  const ticks: Tick[] = [];
+  for (let guard = 0; first.getTime() <= to && guard < 400; guard++) {
+    const at = first.getTime();
+    if (at >= from) ticks.push({ at, words: words(at) });
+    advance(first);
+  }
+  return ticks;
+}
+
+export function historyTicks(range: HistoryRange, window: { readonly from: number; readonly to: number }): Tick[] {
+  const first = new Date(window.from);
+  if (range === "1h") {
+    first.setMinutes(Math.floor(first.getMinutes() / 15) * 15, 0, 0);
+    return localTicks(window.from, window.to, first, (date) => date.setMinutes(date.getMinutes() + 15), clock);
+  }
+  if (range === "24h") {
+    first.setHours(Math.floor(first.getHours() / 6) * 6, 0, 0, 0);
+    return localTicks(window.from, window.to, first, (date) => date.setHours(date.getHours() + 6), clock);
+  }
+  first.setHours(0, 0, 0, 0);
+  return localTicks(window.from, window.to, first, (date) => date.setDate(date.getDate() + 1), (at) => new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(at));
+}
+
+export function historyGapsWords(gaps: readonly HistoryGap[], timeWords: (at: number) => string, now: number): string {
+  if (!gaps.length) return "";
+  return ` ${gaps.map((gap) => `${GAP_WORDS[gap.kind]} from ${timeWords(gap.from)}${gap.to >= now ? "" : ` to ${timeWords(gap.to)}`}`).join("; ")}.`;
+}
+
+export interface HistoryLine {
+  readonly label: string;
+  readonly values: readonly (number | null)[];
+  readonly peaks?: readonly (number | null)[];
+}
+
+export function historySummary(words: string, times: readonly number[], lines: { readonly cpu: HistoryLine; readonly memory: HistoryLine }, gaps: readonly HistoryGap[], timeWords: (at: number) => string, now: number): string {
+  const cpu = measure(times, lines.cpu.values);
+  const busiest = measure(times, lines.cpu.values.map((value, index) => lines.cpu.peaks?.[index] ?? value));
+  const memory = measure(times, lines.memory.values);
+  const gapWords = historyGapsWords(gaps, timeWords, now);
+  if (!cpu && !memory) return `No readings over ${words}.${gapWords}`;
+  const parts = [
+    cpu && busiest ? `${lines.cpu.label} averaged ${percent(cpu.mean)}, highest ${percent(busiest.highest)} at ${timeWords(busiest.highestAt)}` : `${lines.cpu.label} not read`,
+    memory ? `${lines.memory.label.toLowerCase() === "memory" ? "memory" : lines.memory.label} last ${percent(memory.last)}` : null,
+  ].filter(Boolean);
+  return `Over ${words}: ${parts.join("; ")}.${gapWords}`;
+}
+
+export function historyNetworkSummary(words: string, times: readonly number[], down: readonly (number | null)[], up: readonly (number | null)[], gaps: readonly HistoryGap[], timeWords: (at: number) => string, now: number): string {
+  const received = measure(times, down);
+  const sent = measure(times, up);
+  const gapWords = historyGapsWords(gaps, timeWords, now);
+  if (!received && !sent) return `No network readings over ${words}.${gapWords}`;
+  const parts = [
+    received ? `download averaged ${rateWords(received.mean)}, highest ${rateWords(received.highest)} at ${timeWords(received.highestAt)}` : null,
+    sent ? `upload averaged ${rateWords(sent.mean)}, highest ${rateWords(sent.highest)} at ${timeWords(sent.highestAt)}` : null,
+  ].filter(Boolean);
+  return `Over ${words}: ${parts.join("; ")}.${gapWords}`;
+}
+
+export function stepSpanWords(range: HistoryRange, at: number, stepMs: number, timeWords: (at: number) => string): string {
+  if (range === "1h") return timeWords(at);
+  return `${timeWords(at)} to ${clock(at + stepMs)}`;
+}
+
+export function partlyReadWords(range: HistoryRange, coveredSeconds: number): string {
+  return `partly read, ${span(coveredSeconds * 1000)} of ${range === "7d" ? "the hour" : "10 minutes"}`;
+}
+
+export function historyBoundsOf(from: number, to: number, stepMs: number): { readonly from: number; readonly to: number } {
+  return { from: from + stepMs / 2, to: to - stepMs / 2 };
 }

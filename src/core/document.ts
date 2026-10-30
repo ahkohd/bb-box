@@ -271,6 +271,8 @@ export interface MonitorSettings {
   readonly backgroundMonitoring?: boolean;
   /** Whether background monitoring shows a toast in BB when CPU or memory stays high, and when it recovers. On unless set off. */
   readonly pressureNotifications?: boolean;
+  /** Whether bb-box keeps each box's history: a light reading of every running box once a minute, kept 24 hours by the minute and 7 days by the hour, for the 1 h, 24 h and 7 d of a box's page (069). Off, nothing is read in the background, and what was kept stays until it ages out. On unless set off. */
+  readonly boxHistory?: boolean;
 }
 
 export interface ConfigDocument {
@@ -300,7 +302,7 @@ export interface Problem {
 
 export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true, iosEncoder: "auto" } as const;
 
-export const MONITOR_DEFAULTS = { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true } as const;
+export const MONITOR_DEFAULTS = { enabled: true, refreshIntervalSeconds: 5, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true } as const;
 export const MONITOR_REFRESH_SECONDS = { least: 2, most: 60 } as const;
 
 export type MonitorConfig = { readonly [Key in keyof typeof MONITOR_DEFAULTS]: (typeof MONITOR_DEFAULTS)[Key] extends boolean ? boolean : number };
@@ -312,6 +314,7 @@ export function monitorConfig(document: Pick<ConfigDocument, "monitor">): Monito
     refreshIntervalSeconds: monitor.refreshIntervalSeconds ?? MONITOR_DEFAULTS.refreshIntervalSeconds,
     backgroundMonitoring: monitor.backgroundMonitoring ?? MONITOR_DEFAULTS.backgroundMonitoring,
     pressureNotifications: monitor.pressureNotifications ?? MONITOR_DEFAULTS.pressureNotifications,
+    boxHistory: monitor.boxHistory ?? MONITOR_DEFAULTS.boxHistory,
   };
 }
 
@@ -440,7 +443,7 @@ export type SecretChanges = Readonly<Record<string, Readonly<Record<string, stri
 function readMonitor(input: unknown, problem: (path: string, message: string) => void): MonitorSettings | null {
   if (input === undefined || input === null) return null;
   if (!isRecord(input)) {
-    problem("monitor", "monitor must be an object with enabled, refreshIntervalSeconds, backgroundMonitoring and pressureNotifications.");
+    problem("monitor", "monitor must be an object with enabled, refreshIntervalSeconds, backgroundMonitoring, pressureNotifications and boxHistory.");
     return null;
   }
   const monitor: Record<string, unknown> = {};
@@ -449,10 +452,10 @@ function readMonitor(input: unknown, problem: (path: string, message: string) =>
     if (key === "refreshIntervalSeconds") {
       if (isWhole(value, MONITOR_REFRESH_SECONDS.least, MONITOR_REFRESH_SECONDS.most)) monitor[key] = value;
       else problem("monitor.refreshIntervalSeconds", `Use a whole number of seconds from ${MONITOR_REFRESH_SECONDS.least} to ${MONITOR_REFRESH_SECONDS.most}.`);
-    } else if (key === "enabled" || key === "backgroundMonitoring" || key === "pressureNotifications") {
+    } else if (key === "enabled" || key === "backgroundMonitoring" || key === "pressureNotifications" || key === "boxHistory") {
       if (typeof value === "boolean") monitor[key] = value;
       else problem(`monitor.${key}`, `${key} is true or false.`);
-    } else problem(`monitor.${key}`, `There is no monitor setting "${key}". There are enabled, refreshIntervalSeconds, backgroundMonitoring and pressureNotifications.`);
+    } else problem(`monitor.${key}`, `There is no monitor setting "${key}". There are enabled, refreshIntervalSeconds, backgroundMonitoring, pressureNotifications and boxHistory.`);
   }
   return Object.keys(monitor).length ? (monitor as MonitorSettings) : null;
 }

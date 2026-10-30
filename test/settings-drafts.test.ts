@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { Backends } from "../src/backends/index.ts";
 import type { Backend, BackendDriver, FieldProblem } from "../src/backends/types.ts";
 import { GENERAL_SECRETS, contentKey } from "../src/core/box-files.ts";
-import type { ConfigDocument } from "../src/core/document.ts";
+import { monitorConfig, type ConfigDocument } from "../src/core/document.ts";
 import { RECEIPTS_KEPT_AT_MOST, RECEIPTS_KEPT_MS } from "../src/core/receipt-window.ts";
 import { Configuration, type ApplyResult, type ConfigState } from "../src/plugin/configuration.ts";
 import { withGeneral, withMonitor } from "../src/app/config.ts";
@@ -542,6 +542,37 @@ test("a switch is saved with its receipt; refusals, three refusals in a row and 
 
   assert.deepEqual(await registry.runInstant(switchWrite(latest(), "general/boxesPerThread", plain(-1), "Boxes per thread")), { kind: "refused" });
   assert.match(registry.instant("general/boxesPerThread").note!.text, /^Boxes per thread was not changed: /);
+});
+
+test("box history's switch saved while another setting is being saved: each lands on the other's revision, and both are kept (069 unit 3)", async () => {
+  const { registry, server } = await started();
+  const hold = deferred();
+  let held = false;
+  server.faults.push({ before: async () => ((held = true), await hold.promise) });
+  registry.set(MONITOR_PART, "monitor/refreshIntervalSeconds", plain("12"));
+  const saving = registry.save(MONITOR_PART);
+  await until(() => held);
+  assert.deepEqual(await registry.runInstant(switchWrite(registry.latest!, "monitor/boxHistory", plain(false), "Keep each box's history")), { kind: "saved", revision: server.stored().revision });
+  assert.equal(server.stored().monitor?.boxHistory, false);
+  hold.release();
+  await saving;
+  assert.equal(registry.part(MONITOR_PART).outcome?.kind, "saved");
+  assert.equal(server.stored().monitor?.refreshIntervalSeconds, 12);
+  assert.equal(server.stored().monitor?.boxHistory, false, "the switch saved meanwhile is kept");
+
+  const again = deferred();
+  held = false;
+  server.faults.push({ before: async () => ((held = true), await again.promise) });
+  const switching = registry.runInstant(switchWrite(registry.latest!, "monitor/boxHistory", plain(true), "Keep each box's history"));
+  await until(() => held);
+  registry.set(BOXES_PART, "general/boxesPerThread", plain("4"));
+  await registry.save(BOXES_PART);
+  assert.equal(server.stored().general.boxesPerThread, 4);
+  again.release();
+  assert.equal((await switching)?.kind, "saved");
+  assert.equal(monitorConfig(server.stored()).boxHistory, true, "on again, which is its default");
+  assert.equal(server.stored().general.boxesPerThread, 4, "the other setting saved meanwhile is kept");
+  assert.equal(registry.instant("monitor/boxHistory").saved, true);
 });
 
 test("Discard puts back the saved values of a part's edits and nothing else", async () => {

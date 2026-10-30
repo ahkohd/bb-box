@@ -85,7 +85,7 @@ const SUMMARY_LATE_MS = 3 * 60_000;
 export function monitorWords(config: MonitorConfig): string {
   if (!config.enabled) return "Off: no machine status in the sidebar, no sampling, no background monitoring and no Mac sensors helper.";
   const background = config.backgroundMonitoring ? `Background monitoring is on, with its notifications ${config.pressureNotifications ? "on" : "off"}.` : "Background monitoring is off.";
-  return `On. Machine status reads every ${config.refreshIntervalSeconds} s while it is open. ${background}`;
+  return `On. Machine status reads every ${config.refreshIntervalSeconds} s while it is open. ${background} Box history is ${config.boxHistory ? "on" : "off"}.`;
 }
 
 export function monitorChecks(config: MonitorConfig, latest: readonly { type: string; timestamp: number }[], now = Date.now()): DoctorCheck[] {
@@ -302,11 +302,11 @@ export function startMonitor(bb: BbPluginApi, deps: MonitorDeps): Monitor {
   return monitor;
 }
 
-export function monitorRpcHandlers(monitor: Monitor) {
+export function monitorRpcHandlers(monitor: Monitor, historyFull: () => string | null = () => null) {
   return {
     "monitor.state": async () => {
-      const { enabled, backgroundMonitoring, pressureNotifications } = monitor.config();
-      return { enabled, backgroundMonitoring, pressureNotifications };
+      const { enabled, backgroundMonitoring, pressureNotifications, boxHistory } = monitor.config();
+      return { enabled, backgroundMonitoring, pressureNotifications, boxHistory, historyFull: historyFull() };
     },
     "monitor.server": ({ force }: { force: boolean }) => monitor.server(force),
     "monitor.machines": async () => ({ machines: await monitor.machines() }),

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readOutWords, bytesWords, gapsOf, hostAtStart, liveTicks, liveWindow, liveWords, memoryOfShare, networkSummary, percentOfShare, rateWords, slotCpuWords, slotLineWords, usageSummary } from "../src/app/activity-words.ts";
+import { GAP_WORDS, historyGapsWords, historySummary, historyTicks, partlyReadWords, readOutWords, bytesWords, gapsOf, hostAtStart, liveTicks, liveWindow, liveWords, memoryOfShare, networkSummary, percentOfShare, rateWords, slotCpuWords, slotLineWords, usageSummary } from "../src/app/activity-words.ts";
 import { namedAfterReady } from "../src/app/box-words.ts";
 
 const T0 = Date.UTC(2026, 9, 30, 16, 0, 0);
@@ -74,4 +74,32 @@ test("a claimed spare that keeps its name is named after it was ready, so that s
   assert.equal(namedAfterReady({ spare: 300, total: 700, relabel: 400 }), null);
   assert.equal(namedAfterReady({ spare: 300, spareResume: 900, total: 1200, relabel: 400 }), 400);
   assert.equal(namedAfterReady({ warm: 300, clone: 1100, total: 3600 }), null);
+});
+
+test("history's ticks are every 15 minutes over 1 h, every 6 hours over 24 h and at each midnight over 7 d, in local time", () => {
+  const hour = historyTicks("1h", { from: T0 - 59 * 60_000, to: T0 });
+  assert.ok(hour.length >= 4 && hour.length <= 5);
+  assert.ok(hour.every((tick) => new Date(tick.at).getMinutes() % 15 === 0));
+  const day = historyTicks("24h", { from: T0 - 24 * 3_600_000, to: T0 });
+  assert.equal(day.length, 4);
+  assert.ok(day.every((tick) => new Date(tick.at).getHours() % 6 === 0 && new Date(tick.at).getMinutes() === 0));
+  const week = historyTicks("7d", { from: T0 - 7 * 24 * 3_600_000, to: T0 });
+  assert.ok(week.length >= 6 && week.length <= 7);
+  assert.ok(week.every((tick) => new Date(tick.at).getHours() === 0));
+});
+
+test("history's summary gives CPU's mean, its busiest minute and when, memory's last, and each gap with why", () => {
+  const times = [at(0), at(1), at(2), at(3)];
+  const gaps = [{ from: at(2), to: at(3), kind: "stopped" as const }, { from: at(3), to: at(9), kind: "not-read" as const }];
+  const summary = historySummary("the last 24 hours, by 10 minutes", times, { cpu: { label: "CPU", values: [10, 30, null, null], peaks: [12, 78, null, null] }, memory: { label: "Memory", values: [50, 58, null, null] } }, gaps, words, at(5));
+  assert.equal(summary, "Over the last 24 hours, by 10 minutes: CPU averaged 20%, highest 78% at t1; memory last 58%. Stopped from t2 to t3; Not read from t3.");
+  assert.equal(historyGapsWords([], words, at(5)), "");
+  assert.equal(GAP_WORDS["no-reading"], "No reading");
+  assert.equal(partlyReadWords("7d", 1200), "partly read, 20 min of the hour");
+});
+
+test("the read-out names the busiest minute only where it is 5 points or more above the mean, and adds a step's note", () => {
+  const series = [{ key: "cpu", label: "CPU", color: "", values: [30, 30], peaks: [34, 35], format: (value: number) => `${value}%` }];
+  assert.equal(readOutWords(series, 0, "t0", "No reading"), "t0: CPU 30%");
+  assert.equal(readOutWords(series, 1, "t1", "No reading", "partly read"), "t1: CPU 30%, busiest minute 35%; partly read");
 });

@@ -123,7 +123,7 @@ The client's ID and secret are kept secret: the page shows only whether each is 
 
 ### Monitor
 
-The Monitor's machine status in BB's sidebar, how often it refreshes, background monitoring and pressure notifications. Machine status also has its switch on the overview's row. When you turn it on or off, the sidebar changes when BB next loads: select **Reload BB now**.
+The Monitor's machine status in BB's sidebar, how often it refreshes, background monitoring, pressure notifications, and whether BB Box keeps each box's history. If box history's file ever fills, a line here says so. Machine status also has its switch on the overview's row. When you turn it on or off, the sidebar changes when BB next loads: select **Reload BB now**.
 
 ### Configuration
 

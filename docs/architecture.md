@@ -811,7 +811,7 @@ field by field in the [configuration reference](reference/configuration.md).
 | Standard images and builds of projects' images | the provider | the operator, and bb-box for rebuilds | rebuilt each night, or by the setup scripts |
 | Who holds each desktop's input | plugin memory, and plugin storage while a person holds it | core | after a restart, the agent's unless the holder's viewer connects within 60 s |
 | The box log: each box's starts, stops, resizes and releases, who asked, and what bb-box saw after a failure (069) | `box-log.db` beside the plugin's `data.db`, attached to its handle, capped at 8 MB; inside `data.db` under a row cap where the handle refuses to attach it | core | a box's last 7 days and its latest event of each kind; a released or forgotten box's for 24 hours |
-| Box history (069, unit 3) | `box-history.db`, attached the same way, capped at 64 MB | core | |
+| Box history: each running box's light readings, a point a minute and a rollup an hour, its counters between readings, when it was off, and each hour's tallies of readings due, taken, skipped and failed (069) | `box-history.db`, attached the same way, capped at 64 MB; inside `data.db` under 200,000 minute points where the handle refuses to attach it | the plugin's reader (`src/monitor/box-history.ts`) | minute points 24 hours, hourly points and off times 7 days; a released or forgotten box's 24 hours after it; a full file stops history's writes alone, until pruning makes room |
 
 ## Backends
 
