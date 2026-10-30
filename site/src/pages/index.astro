@@ -1,8 +1,9 @@
 ---
 import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
-import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
-import demo from "../../../docs/media/demo.webp";
+import { LinkCard } from "@astrojs/starlight/components";
+import { Image } from "astro:assets";
 import { getEntry } from "astro:content";
+import desktopBox from "../../../docs/media/desktop-box.png";
 import { pageUrl } from "../repo.ts";
 import { listUnder } from "../rendered.ts";
 
@@ -14,55 +15,240 @@ const reasons = listUnder(introduction?.rendered?.html ?? "", "why-bb-box");
 <StarlightPage
   frontmatter={{
     title: "bb-box",
-    description: "Computers for BB threads: Linux, macOS or Windows boxes for you and the thread's agent.",
+    description: "Computers for BB threads: Linux, macOS and Windows boxes, and simulated iOS and Android devices, for you and the thread's agent.",
     template: "splash",
     hero: {
-      title: "bb-box",
-      tagline: "Computers for BB threads. Each thread gets boxes of its own: Linux, macOS or Windows, virtual or physical, with or without a desktop.",
+      title: "Computers for BB threads",
+      tagline: "Each thread gets boxes of its own: Linux, macOS or Windows computers, or simulated iOS and Android phones and tablets. You and the agent share them.",
       actions: [
         { text: "Make your first box", link: pageUrl(base, "start/quick-start"), icon: "right-arrow" },
-        { text: "Choose a backend", link: `${pageUrl(base, "setup")}#choose-a-backend`, variant: "minimal" },
+        { text: "Choose a backend", link: `${pageUrl(base, "setup")}#choose-a-backend`, variant: "secondary" },
       ],
     },
   }}
 >
-  <img
-    class="demo"
-    src={demo.src}
-    width={demo.width}
-    height={demo.height}
-    alt="A person makes a desktop box in a BB thread, the agent opens Chrome in it, then the person makes a server box and runs a command in its terminal"
-  />
+  <figure class="shot not-content">
+    <Image
+      src={desktopBox}
+      widths={[640, 960, 1280, 1920, 2560]}
+      sizes="(min-width: 72rem) 67.5rem, calc(100vw - 2rem)"
+      loading="eager"
+      fetchpriority="high"
+      alt="A BB thread with a Linux desktop box open in its panel. The agent has control, and has opened Chrome on the box."
+    />
+  </figure>
 
-  <h2>Why bb-box</h2>
-  <CardGrid>
-    {reasons.map((reason) => (
-      <Card title={reason.title}>
-        <Fragment set:html={reason.html} />
-      </Card>
-    ))}
-  </CardGrid>
+  <section class="section not-content" aria-labelledby="why-bb-box">
+    <h2 id="why-bb-box">Why bb-box</h2>
+    <ul class="reasons">
+      {reasons.map((reason) => (
+        <li class="reason">
+          <h3>{reason.title}</h3>
+          <p set:html={reason.html} />
+        </li>
+      ))}
+    </ul>
+    <p class="trust">bb-box assumes one trusted user. It is not a sandbox for code you do not trust.</p>
+  </section>
 
-  <p class="note">bb-box assumes one trusted user. It is not a sandbox for code you do not trust.</p>
-
-  <h2>Find your way</h2>
-  <CardGrid>
-    <LinkCard title="Quick start" description="Install the plugin, set up Docker and make a box." href={pageUrl(base, "start/quick-start")} />
-    <LinkCard title="User guide" description="The Box panel, desktops, the terminal, images, files and settings." href={pageUrl(base, "guide")} />
-    <LinkCard title="Backends" description="Docker, Proxmox, Tart, SSH host pools and cloud machines." href={pageUrl(base, "setup")} />
-    <LinkCard title="Reference" description="Every agent tool, bb box command, setting, kind and check." href={pageUrl(base, "reference")} />
-  </CardGrid>
+  <section class="section not-content" aria-labelledby="find-your-way">
+    <h2 id="find-your-way">Find your way</h2>
+    <div class="ways">
+      <LinkCard title="Quick start" description="Install the plugin, set up Docker and make a box." href={pageUrl(base, "start/quick-start")} />
+      <LinkCard title="User guide" description="The Box panel, desktops and devices, the terminal, images, files and settings." href={pageUrl(base, "guide")} />
+      <LinkCard title="Backends" description="Docker, Proxmox, microsandbox, Tart, SSH host pools and cloud machines." href={pageUrl(base, "setup")} />
+      <LinkCard title="Reference" description="Every agent tool, bb box command, setting, kind and check." href={pageUrl(base, "reference")} />
+    </div>
+  </section>
 </StarlightPage>
 
 <style>
-  .demo {
+  :global([data-has-hero] .hero) {
+    grid-template-columns: 100%;
+    padding-block: clamp(2.5rem, 1rem + 7vw, 6.5rem) clamp(2rem, 1rem + 3vw, 3.5rem);
+  }
+
+  :global([data-has-hero] .hero .stack) {
+    align-items: center;
+    text-align: center;
+    gap: 2rem;
+  }
+
+  :global([data-has-hero] .hero .copy) {
+    align-items: center;
+    gap: 1.25rem;
+  }
+
+  :global([data-has-hero] .hero h1) {
+    max-width: 14ch;
+    font-size: clamp(2.5rem, 1rem + 5.2vw, 4.5rem);
+    font-weight: 650;
+    line-height: 1.04;
+    letter-spacing: -0.04em;
+    text-wrap: balance;
+  }
+
+  :global([data-has-hero] .hero .tagline) {
+    max-width: 38rem;
+    font-size: clamp(1.0625rem, 0.9rem + 0.6vw, 1.25rem);
+    line-height: 1.55;
+    color: var(--sl-color-gray-3);
+    text-wrap: balance;
+  }
+
+  :global([data-has-hero] .hero .actions) {
+    justify-content: center;
+    gap: 0.75rem;
+  }
+
+  :global([data-has-hero] .hero .sl-link-button) {
+    height: 2.75rem;
+    padding: 0 1.25rem;
+    font-size: var(--sl-text-sm);
+  }
+
+  :global([data-has-hero] .hero .sl-link-button svg) {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+
+  @media (max-width: 30rem) {
+    :global([data-has-hero] .hero .actions) {
+      flex-direction: column;
+      align-self: stretch;
+      align-items: stretch;
+    }
+
+    :global([data-has-hero] .hero .sl-link-button) {
+      justify-content: center;
+    }
+  }
+
+  .shot {
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid var(--sl-color-hairline-light);
+    border-radius: 0.75rem;
+    background-color: #1b1b1b;
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.04),
+      0 12px 32px -8px rgb(0 0 0 / 0.12);
+  }
+
+  .shot img {
+    display: block;
     width: 100%;
     height: auto;
-    border-radius: 0.5rem;
-    border: 1px solid var(--sl-color-gray-5);
   }
-  .note {
-    color: var(--sl-color-gray-2);
-    font-style: italic;
+
+  .section {
+    margin-top: clamp(3.5rem, 2rem + 5vw, 6rem);
+  }
+
+  .section h2 {
+    margin: 0 0 1.5rem;
+    font-size: clamp(1.5rem, 1.1rem + 1.2vw, 2rem);
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.03em;
+    color: var(--sl-color-white);
+  }
+
+  .reasons {
+    display: grid;
+    grid-template-columns: 100%;
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    list-style: none;
+    border: 1px solid var(--sl-color-hairline-light);
+    border-radius: 0.75rem;
+    background-color: var(--sl-color-hairline-light);
+  }
+
+  .reason {
+    margin: 0;
+    padding: 1.5rem;
+    background-color: var(--sl-color-black);
+  }
+
+  .reason h3 {
+    margin: 0;
+    font-size: var(--sl-text-base);
+    font-weight: 600;
+    line-height: 1.4;
+    letter-spacing: -0.01em;
+    color: var(--sl-color-white);
+  }
+
+  .reason p {
+    margin: 0.5rem 0 0;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    color: var(--sl-color-gray-3);
+  }
+
+  .reason p :global(a) {
+    color: var(--sl-color-white);
+    text-decoration-color: var(--sl-color-gray-4);
+    text-underline-offset: 0.2em;
+  }
+
+  .reason p :global(a:hover) {
+    text-decoration-color: currentColor;
+  }
+
+  .trust {
+    margin: 1rem 0 0;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+
+  .ways {
+    display: grid;
+    grid-template-columns: 100%;
+    gap: 0.75rem;
+  }
+
+  .ways :global(.sl-link-card) {
+    padding: 1.25rem 1.25rem 1.25rem 1.5rem;
+    border-color: var(--sl-color-hairline-light);
+    border-radius: 0.75rem;
+    box-shadow: none;
+  }
+
+  .ways :global(.sl-link-card:hover) {
+    background-color: var(--sl-color-gray-7);
+    border-color: var(--sl-color-gray-4);
+  }
+
+  .ways :global(.sl-link-card .title) {
+    font-size: var(--sl-text-base);
+    letter-spacing: -0.01em;
+  }
+
+  .ways :global(.sl-link-card .description) {
+    font-size: 0.9375rem;
+  }
+
+  @media (min-width: 40rem) {
+    .reasons {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .ways {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 72rem) {
+    .reasons {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  :global([data-theme="dark"]) .shot {
+    box-shadow: none;
   }
 </style>

@@ -7,9 +7,10 @@ Computers for [BB](https://getbb.app) threads. Each thread gets boxes of its own
 ## Why bb-box
 
 - **Each thread gets its own computers.** Boxes have the thread's Git access, its variables and BB itself.
+- **Any provider.** Docker, Proxmox, microsandbox, Macs with Tart, machines over SSH, or cloud machines from Hetzner Cloud, Namespace and boat.dev, made when boxes need them.
+- **Phones and tablets to test apps on.** An iPhone or iPad in the iOS Simulator, or a Pixel phone, foldable or tablet in the Android emulator.
+- **Ready in seconds.** A box is usually ready in seconds, and a warm box at once.
 - **Keep boxes as your own machines.** Threads can run on them, such as an always-on agent with its own desktop.
-- **Any provider.** Docker, Proxmox, microsandbox, Macs with Tart, machines over SSH, or cloud machines from Hetzner Cloud and Namespace, made when boxes need them.
-- **Ready in seconds.** A warm box is ready at once.
 - **Shared desktops.** You and the agent use the same screen. The agent waits while you have control.
 - **Recordings that show the work.** An agent records its test run as a short clip, with each step and its result captioned. See [Recordings](docs/guide/recording.md).
 
