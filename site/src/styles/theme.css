@@ -187,7 +187,7 @@ button[data-open-modal] kbd {
 .sidebar-content a {
   font-size: 0.8125rem;
   line-height: 20px;
-  padding-block: 4px;
+  padding-block: 3.5px;
   border-radius: 6px;
   color: var(--foreground);
 }
@@ -205,6 +205,10 @@ button[data-open-modal] kbd {
 
 .sidebar-content ul ul li {
   border-inline-start: 0;
+}
+
+.sidebar-content ul ul li + li {
+  margin-top: 1px;
 }
 
 .right-sidebar-panel h2 {
